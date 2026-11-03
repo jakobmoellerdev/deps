@@ -2,6 +2,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 jobs:
   test:
@@ -9,3 +10,28 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - run: task ci
+  # Release tags reuse the test job's result instead of running task ci again.
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: task release:build VERSION="${GITHUB_REF_NAME}"
+      - name: Check binaries are static
+        run: |
+          set -euo pipefail
+          # The action runs these on arbitrary runner images: no dynamic loader allowed.
+          for f in dist/deps_linux_*; do
+            if readelf -l "$f" | grep -q 'Requesting program interpreter'; then echo "$f is not static" >&2; exit 1; fi
+          done
+      - name: Publish release
+        # gt (the Gitea CLI, preinstalled on the runner) uses GITEA_TOKEN and the Actions server URL.
+        env:
+          GITEA_TOKEN: ${{ github.token }}
+          GITEA_CLI_NO_UPDATE_NOTIFIER: "1"
+        run: |
+          gt release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --no-input \
+            dist/deps_linux_amd64 dist/deps_linux_arm64 dist/checksums.txt
