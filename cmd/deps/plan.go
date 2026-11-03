@@ -41,7 +41,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	if write {
 		tidy = goTidier{}
 	}
-	changes, buildErrs := engine.Build(ctx, s.root, res.Updates, tidy)
+	changes, buildErrs := engine.Build(ctx, s.root, s.managers, res.Updates, tidy)
 	if write {
 		for _, c := range changes {
 			if err := os.WriteFile(s.abs(c.Path), c.New, c.Mode); err != nil {

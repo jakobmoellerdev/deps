@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
@@ -31,10 +32,15 @@ type FileChange struct {
 // tidySem bounds concurrent `go mod tidy` processes across all Build calls.
 var tidySem = make(chan struct{}, 4)
 
-// Build re-reads the files touched by updates, patches their byte spans and, when tidy is
-// non-nil, runs go mod tidy for go.mod files. A failing file (and its go.sum) is dropped and
-// its error returned; the remaining changes are returned sorted by Path.
-func Build(ctx context.Context, root string, updates []dep.Update, tidy Tidier) ([]FileChange, []error) {
+// Build re-reads the files touched by updates, patches them with the byte edits of each
+// update's manager (looked up by dep.Dep.Manager in managers) and, when tidy is non-nil,
+// runs go mod tidy for files with gomod updates. A failing file (and its go.sum) is dropped
+// and its error returned; the remaining changes are returned sorted by Path.
+func Build(ctx context.Context, root string, managers []manager.Manager, updates []dep.Update, tidy Tidier) ([]FileChange, []error) {
+	byName := make(map[string]manager.Manager, len(managers))
+	for _, m := range managers {
+		byName[m.Name()] = m
+	}
 	byFile := map[string][]dep.Update{}
 	var files []string
 	for _, u := range updates {
@@ -50,7 +56,7 @@ func Build(ctx context.Context, root string, updates []dep.Update, tidy Tidier) 
 	var wg sync.WaitGroup
 	for i, f := range files {
 		wg.Go(func() {
-			results[i], errs[i] = buildFile(ctx, root, f, byFile[f], tidy)
+			results[i], errs[i] = buildFile(ctx, root, f, byName, byFile[f], tidy)
 			if errs[i] != nil {
 				errs[i] = fmt.Errorf("%s: %w", f, errs[i])
 			}
@@ -72,7 +78,21 @@ func Build(ctx context.Context, root string, updates []dep.Update, tidy Tidier) 
 	return out, errList
 }
 
-func buildFile(ctx context.Context, root, file string, ups []dep.Update, tidy Tidier) ([]FileChange, error) {
+func buildFile(ctx context.Context, root, file string, managers map[string]manager.Manager, ups []dep.Update, tidy Tidier) ([]FileChange, error) {
+	edits := make([]patch.Edit, 0, len(ups)+1)
+	isMod := false
+	for _, u := range ups {
+		m := managers[u.Dep.Manager]
+		if m == nil {
+			return nil, fmt.Errorf("unknown manager %q", u.Dep.Manager)
+		}
+		e, err := m.Edits(u)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", u.Dep.Name, err)
+		}
+		edits = append(edits, e...)
+		isMod = isMod || u.Dep.Manager == gomod.Name
+	}
 	abs := filepath.Join(root, filepath.FromSlash(file))
 	st, err := os.Stat(abs)
 	if err != nil {
@@ -82,30 +102,13 @@ func buildFile(ctx context.Context, root, file string, ups []dep.Update, tidy Ti
 	if err != nil {
 		return nil, err
 	}
-	edits := make([]patch.Edit, 0, len(ups)+1)
-	for _, u := range ups {
-		d := u.Dep
-		switch {
-		case u.NewDigest == "":
-			edits = append(edits, patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion})
-		case d.Digest != "":
-			edits = append(edits, patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Digest, New: u.NewDigest})
-			if u.NewVersion != d.Version {
-				edits = append(edits, patch.Edit{Start: d.VersionSpan.Start, End: d.VersionSpan.End, Old: d.Version, New: u.NewVersion})
-			}
-		default:
-			edits = append(edits,
-				patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewDigest},
-				patch.Edit{Start: d.CommentInsert, End: d.CommentInsert, New: " # " + u.NewVersion})
-		}
-	}
 	patched, err := patch.Apply(old, edits)
 	if err != nil {
 		return nil, err
 	}
 	slog.DebugContext(ctx, "file patched", "file", file, "edits", len(edits))
 	changes := []FileChange{{Path: file, Mode: st.Mode().Perm(), Old: old, New: patched}}
-	if ups[0].Dep.Manager != gomod.Name || tidy == nil {
+	if !isMod || tidy == nil {
 		return changes, nil
 	}
 

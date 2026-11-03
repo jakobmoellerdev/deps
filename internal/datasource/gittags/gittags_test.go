@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
@@ -312,6 +314,36 @@ func TestTagsV2SkipsNonTagsAndParsesLargePackets(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Tags = %+v, want %+v", got, want)
+	}
+}
+
+func TestDatasource(t *testing.T) {
+	var posts atomic.Int32
+	h := v2Handler(pkts("2222222222222222222222222222222222222222 refs/tags/v2\n") + "0000")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+		}
+		h(w, r)
+	}))
+	defer srv.Close()
+	var ds datasource.Datasource = New(srv.Client(), nil, nil)
+	d := dep.Dep{Source: srv.URL + "/a/b/"}
+	rels, err := ds.Releases(t.Context(), d, "")
+	if err != nil || !reflect.DeepEqual(rels, []datasource.Release{{Version: "v2", Digest: "2222222222222222222222222222222222222222"}}) {
+		t.Fatalf("Releases = %+v, %v", rels, err)
+	}
+	if c, err := ds.Digest(t.Context(), d, "v2"); err != nil || c != "2222222222222222222222222222222222222222" {
+		t.Errorf("Digest(v2) = %q, %v", c, err)
+	}
+	if _, err := ds.Digest(t.Context(), d, "v3"); err == nil || err.Error() != "tag v3 not found upstream" {
+		t.Errorf("Digest(v3) err = %v", err)
+	}
+	if posts.Load() != 1 {
+		t.Errorf("ls-refs requests = %d, want 1 (deduped)", posts.Load())
+	}
+	if _, err := ds.Digest(t.Context(), dep.Dep{Source: "https://h/%zz"}, "v1"); err == nil {
+		t.Error("Digest on failing repo: want error")
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
@@ -67,22 +68,27 @@ func envToken() string {
 
 // session is the state shared by plan, apply and run.
 type session struct {
-	root   string
-	cfg    *config.Config
-	client *http.Client
-	src    engine.Sources
-	host   string
-	stderr io.Writer
+	root     string
+	cfg      *config.Config
+	client   *http.Client
+	managers []manager.Manager
+	sources  map[string]engine.Datasource
+	env      manager.Env
+	stderr   io.Writer
 }
 
-// newSession loads the config and wires the datasources onto one HTTP client and one
-// request semaphore.
+// newSession loads the config and wires the managers and datasources onto one HTTP client
+// and one request semaphore.
 func newSession(o *rootOpts, info platform.Info, token string, client *http.Client, stderr io.Writer) (*session, error) {
 	root, err := filepath.Abs(o.dir)
 	if err != nil {
 		return nil, err
 	}
 	cfg, err := config.Load(root, o.config)
+	if err != nil {
+		return nil, err
+	}
+	managers, err := engine.Managers(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -95,17 +101,21 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	slog.Info("actions default host", "host", host, "source", source)
 	slog.Debug("config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
 	return &session{
-		root:   root,
-		cfg:    cfg,
-		client: client,
-		src:    engine.Sources{Tags: gittags.New(client, auth, sem), Go: goproxy.New(client, sem)},
-		host:   host,
+		root:     root,
+		cfg:      cfg,
+		client:   client,
+		managers: managers,
+		sources: map[string]engine.Datasource{
+			"git-tags": gittags.New(client, auth, sem),
+			"go":       goproxy.New(client, sem),
+		},
+		env:    manager.Env{DefaultHost: host},
 		stderr: stderr,
 	}, nil
 }
 
 func (s *session) resolve(ctx context.Context) (*engine.Result, error) {
-	return engine.Resolve(ctx, s.root, s.cfg, s.host, s.src)
+	return engine.Resolve(ctx, s.root, s.cfg, s.env, engine.Options{Managers: s.managers, Datasources: s.sources})
 }
 
 func (s *session) abs(rel string) string { return filepath.Join(s.root, filepath.FromSlash(rel)) }

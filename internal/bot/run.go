@@ -14,6 +14,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
@@ -33,6 +34,7 @@ type Options struct {
 	Base, AuthorName, AuthorEmail string
 	DryRun                        bool
 	MaxNewPRs                     int
+	Managers                      []manager.Manager // edit the updates' files (engine.Build)
 }
 
 // Action statuses.
@@ -104,7 +106,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy e
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			changes, errs := engine.Build(ctx, root, groups[i].Updates, tidy)
+			changes, errs := engine.Build(ctx, root, o.Managers, groups[i].Updates, tidy)
 			built[i], buildErrs[i] = changes, errors.Join(errs...)
 		})
 	}

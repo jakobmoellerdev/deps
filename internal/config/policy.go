@@ -2,24 +2,35 @@ package config
 
 import (
 	"path"
+	"slices"
 
 	"github.com/Masterminds/semver/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
 
 // Policy is the effective rule outcome for one dep.
 type Policy struct {
-	Ignore  bool
-	Pin     string
-	Allow   *semver.Constraints
-	Updates map[dep.UpdateType]bool
+	Ignore   bool
+	Pin      string
+	Allow    *semver.Constraints
+	Updates  map[dep.UpdateType]bool
+	Group    string        // "" = own PR
+	Schedule *schedule.Set // nil = always
+	Rules    []int         // indices of the matching rules, in order
 }
 
 // Policy evaluates rules top-to-bottom; each set field of a matching rule
-// overwrites the policy (Updates is replaced, not merged).
+// overwrites the policy (Updates is replaced, not merged). Indirect Go requirements
+// and go directives are ignored unless a rule sets `ignore: false`.
 func (c *Config) Policy(d dep.Dep) Policy {
-	p := Policy{Pin: c.Pin, Updates: make(map[dep.UpdateType]bool, len(dep.UpdateTypes))}
+	p := Policy{
+		Ignore:   d.DepType == "indirect" || d.DepType == "go",
+		Pin:      c.Pin,
+		Updates:  make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
+		Schedule: c.schedule,
+	}
 	for _, t := range dep.UpdateTypes {
 		p.Updates[t] = true
 	}
@@ -31,6 +42,10 @@ func (c *Config) Policy(d dep.Dep) Policy {
 		if len(r.Names) > 0 && !matchAny(r.Names, d.Name) {
 			continue
 		}
+		if len(r.DepTypes) > 0 && !slices.Contains(r.DepTypes, d.DepType) {
+			continue
+		}
+		p.Rules = append(p.Rules, i)
 		if r.Ignore != nil {
 			p.Ignore = *r.Ignore
 		}
@@ -45,6 +60,12 @@ func (c *Config) Policy(d dep.Dep) Policy {
 			for _, u := range r.Updates {
 				p.Updates[dep.UpdateType(u)] = true
 			}
+		}
+		if r.Group != "" {
+			p.Group = r.Group
+		}
+		if r.Schedule != nil {
+			p.Schedule = r.schedule
 		}
 	}
 	return p
@@ -61,5 +82,18 @@ func matchAny(globs []string, name string) bool {
 
 // Accepts reports whether an update of kind to version v is allowed.
 func (p Policy) Accepts(kind dep.UpdateType, v *semver.Version) bool {
-	return p.Updates[kind] && (p.Allow == nil || (v != nil && p.Allow.Check(v)))
+	ok, _ := p.Check(kind, v)
+	return ok
+}
+
+// Check is Accepts with the reason for a rejection: "update type <kind> not allowed"
+// or "outside allow <constraint>".
+func (p Policy) Check(kind dep.UpdateType, v *semver.Version) (bool, string) {
+	if !p.Updates[kind] {
+		return false, "update type " + string(kind) + " not allowed"
+	}
+	if p.Allow != nil && (v == nil || !p.Allow.Check(v)) {
+		return false, "outside allow " + p.Allow.String()
+	}
+	return true, ""
 }

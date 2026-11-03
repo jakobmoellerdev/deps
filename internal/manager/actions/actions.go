@@ -3,12 +3,15 @@ package actions
 
 import (
 	"bytes"
+	"errors"
 	"regexp"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -20,18 +23,51 @@ var (
 	actionRe   = regexp.MustCompile(`(^|/)action\.ya?ml$`)
 )
 
-// Match reports whether the slash path is a workflow or action file.
-func Match(path string) bool { return workflowRe.MatchString(path) || actionRe.MatchString(path) }
+type actionsManager struct{}
 
-// Extract returns every `uses:` reference in src with byte spans into src.
-func Extract(file string, src []byte, defaultHost string) ([]dep.Dep, error) {
+// New returns the github-actions manager.
+func New() manager.Manager { return actionsManager{} }
+
+func (actionsManager) Name() string { return Name }
+
+// Match reports whether the slash path is a workflow or action file.
+func (actionsManager) Match(path string) bool {
+	return workflowRe.MatchString(path) || actionRe.MatchString(path)
+}
+
+// Extract returns every `uses:` reference in src with byte spans into src;
+// owner/repo refs resolve against env.DefaultHost.
+func (actionsManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(src, &root); err != nil {
 		return nil, err
 	}
-	x := extractor{file: file, src: src, host: defaultHost, lines: lineStarts(src)}
+	x := extractor{file: file, src: src, host: env.DefaultHost, lines: lineStarts(src)}
 	x.walk(&root)
 	return x.deps, nil
+}
+
+// Edits rewrites the ref: tag → tag, pinned → new digest plus comment version, or
+// tag → digest with " # <version>" inserted after the value.
+func (actionsManager) Edits(u dep.Update) ([]patch.Edit, error) {
+	d := u.Dep
+	switch {
+	case u.NewDigest == "":
+		if d.Digest != "" {
+			return nil, errors.New("cannot unpin a digest-pinned action")
+		}
+		return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+	case d.Digest != "":
+		edits := []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Digest, New: u.NewDigest}}
+		if u.NewVersion != d.Version {
+			edits = append(edits, patch.Edit{Start: d.VersionSpan.Start, End: d.VersionSpan.End, Old: d.Version, New: u.NewVersion})
+		}
+		return edits, nil
+	}
+	return []patch.Edit{
+		{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewDigest},
+		{Start: d.InsertAt, End: d.InsertAt, New: " # " + u.NewVersion},
+	}, nil
 }
 
 type extractor struct {
@@ -92,7 +128,7 @@ func (x *extractor) walk(n *yaml.Node) {
 }
 
 func (x *extractor) add(v *yaml.Node) {
-	d := dep.Dep{Manager: Name, File: x.file, Line: v.Line}
+	d := dep.Dep{Manager: Name, Datasource: "git-tags", Versioning: "tag", DepType: "action", File: x.file, Line: v.Line}
 	u := ParseUses(v.Value, x.host)
 	d.Name, d.Source, d.Skip = u.Name, u.Source, u.Skip
 	if d.Skip != "" {
@@ -117,15 +153,15 @@ func (x *extractor) add(v *yaml.Node) {
 	}
 	end := start + len(v.Value)
 	d.RefSpan = dep.Span{Start: end - len(u.Ref), End: end}
-	d.CommentInsert = end
+	d.InsertAt = end
 	if q := quoteChar(v.Style); q != 0 && end < le && x.src[end] == q {
-		d.CommentInsert++
+		d.InsertAt++
 	}
 
 	switch {
 	case isDigest(u.Ref):
 		d.Digest = u.Ref
-		if sp, ver, ok := x.commentVersion(d.CommentInsert, le); ok {
+		if sp, ver, ok := x.commentVersion(d.InsertAt, le); ok {
 			d.Version, d.VersionSpan = ver, sp
 		} else {
 			d.Skip = "pinned without version comment"

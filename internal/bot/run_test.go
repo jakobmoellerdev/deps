@@ -10,8 +10,12 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
+
+var managers = []manager.Manager{actions.New()}
 
 const head = "1111111111111111111111111111111111111111"
 
@@ -151,7 +155,7 @@ func fingerprintOf(t *testing.T, root string, res *engine.Result, name string) s
 	t.Helper()
 	for _, g := range engine.GroupUpdates(res.Updates) {
 		if g.Name == name {
-			changes, errs := engine.Build(t.Context(), root, g.Updates, nil)
+			changes, errs := engine.Build(t.Context(), root, managers, g.Updates, nil)
 			if len(errs) > 0 {
 				t.Fatal(errs)
 			}
@@ -350,6 +354,7 @@ func TestRun(t *testing.T) {
 			}
 			o := tt.opts
 			o.AuthorEmail = email
+			o.Managers = managers
 			if o.MaxNewPRs == 0 {
 				o.MaxNewPRs = 10
 			}
@@ -388,7 +393,7 @@ func TestRun(t *testing.T) {
 func TestRunRejectsStaleCheckout(t *testing.T) {
 	root, res := fixture(t)
 	g := &staleGit{}
-	_, errs := Run(t.Context(), Options{MaxNewPRs: 10}, root, res, nil, &fakePC{}, g)
+	_, errs := Run(t.Context(), Options{MaxNewPRs: 10, Managers: managers}, root, res, nil, &fakePC{}, g)
 	if len(errs) != 1 || g.pushed != nil {
 		t.Fatalf("errs = %v, pushed = %v", errs, g.pushed)
 	}
@@ -419,7 +424,7 @@ func TestRunStateErrors(t *testing.T) {
 			root, res := fixture(t)
 			g := &fakeGit{fail: tt.gitFail}
 			pc := &fakePC{fail: tt.pcFail}
-			acts, errs := Run(t.Context(), Options{MaxNewPRs: 10, AuthorEmail: email}, root, res, nil, pc, g)
+			acts, errs := Run(t.Context(), Options{MaxNewPRs: 10, AuthorEmail: email, Managers: managers}, root, res, nil, pc, g)
 			if len(errs) != 1 || errs[0].Error() != tt.want || !errors.Is(errs[0], errBoom) {
 				t.Fatalf("errs = %v, want [%s]", errs, tt.want)
 			}

@@ -5,14 +5,17 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 )
 
 func sha(s string) string {
@@ -20,28 +23,57 @@ func sha(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
+var (
+	managers = []manager.Manager{actions.New(), gomod.New()}
+	env      = manager.Env{DefaultHost: "github.com"}
+)
+
 type fakeTags map[string][]string // repo URL -> tag names; commit = sha(url+"@"+name)
 
-func (f fakeTags) Tags(_ context.Context, url string) ([]gittags.Tag, error) {
-	names, ok := f[url]
+func (f fakeTags) Releases(_ context.Context, d dep.Dep, _ string) ([]Release, error) {
+	names, ok := f[d.Source]
 	if !ok {
 		return nil, errors.New("upstream unavailable")
 	}
-	out := make([]gittags.Tag, len(names))
+	out := make([]Release, len(names))
 	for i, n := range names {
-		out[i] = gittags.Tag{Name: n, Commit: sha(url + "@" + n)}
+		out[i] = Release{Version: n, Digest: sha(d.Source + "@" + n)}
 	}
 	return out, nil
 }
 
+func (fakeTags) Digest(_ context.Context, _ dep.Dep, v string) (string, error) {
+	return "", fmt.Errorf("tag %s not found upstream", v)
+}
+
 type fakeGo map[string][]string
 
-func (f fakeGo) Versions(_ context.Context, mod, _ string) ([]string, error) {
-	vs, ok := f[mod]
+func (f fakeGo) Releases(_ context.Context, d dep.Dep, _ string) ([]Release, error) {
+	vs, ok := f[d.Name]
 	if !ok {
-		return nil, errors.New("no proxy has " + mod)
+		return nil, errors.New("no proxy has " + d.Name)
 	}
-	return vs, nil
+	out := make([]Release, len(vs))
+	for i, v := range vs {
+		out[i] = Release{Version: v}
+	}
+	return out, nil
+}
+
+func (fakeGo) Digest(context.Context, dep.Dep, string) (string, error) {
+	return "", errors.New("no digests")
+}
+
+// sources builds Options with the given datasources (nil ones are left out).
+func sources(tags fakeTags, gos fakeGo) Options {
+	o := Options{Managers: managers, Datasources: map[string]Datasource{}}
+	if tags != nil {
+		o.Datasources["git-tags"] = tags
+	}
+	if gos != nil {
+		o.Datasources["go"] = gos
+	}
+	return o
 }
 
 type fakeTidy struct{}
@@ -162,7 +194,7 @@ func TestResolveAndBuildActions(t *testing.T) {
 				"node_modules/.github/workflows/z.yml": workflow,
 			})
 			cfg.IgnorePaths = []string{"ignored/**"}
-			res, err := Resolve(t.Context(), root, cfg, "github.com", Sources{Tags: tags})
+			res, err := Resolve(t.Context(), root, cfg, env, sources(tags, nil))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,7 +209,7 @@ func TestResolveAndBuildActions(t *testing.T) {
 			if tt.wantSkip != "" && (len(res.Skipped) != 1 || res.Skipped[0].Skip != tt.wantSkip) {
 				t.Errorf("skipped = %+v, want %q", res.Skipped, tt.wantSkip)
 			}
-			changes, errs := Build(t.Context(), root, res.Updates, nil)
+			changes, errs := Build(t.Context(), root, managers, res.Updates, nil)
 			if len(errs) > 0 {
 				t.Fatal(errs)
 			}
@@ -199,14 +231,14 @@ func TestResolveAndBuildActions(t *testing.T) {
 func TestResolveAndBuildGomod(t *testing.T) {
 	mod := "module example.com/x\n\ngo 1.24\n\nrequire example.com/a v1.0.0\n"
 	root, cfg := setup(t, "", map[string]string{"go.mod": mod})
-	res, err := Resolve(t.Context(), root, cfg, "github.com", Sources{Go: fakeGo{"example.com/a": {"v1.0.0", "v1.1.0", "v1.2.0-rc.1", "v2.0.0"}}})
+	res, err := Resolve(t.Context(), root, cfg, env, sources(nil, fakeGo{"example.com/a": {"v1.0.0", "v1.1.0", "v1.2.0-rc.1", "v2.0.0"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res.Updates) != 1 || res.Updates[0].NewVersion != "v1.1.0" || res.Updates[0].Type != dep.Minor {
 		t.Fatalf("updates = %+v", res.Updates)
 	}
-	changes, errs := Build(t.Context(), root, res.Updates, fakeTidy{})
+	changes, errs := Build(t.Context(), root, managers, res.Updates, fakeTidy{})
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
@@ -274,10 +306,7 @@ func TestResolveErrors(t *testing.T) {
 	if err := os.Chmod(filepath.Join(root, ".github", "workflows", "locked.yml"), 0); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Resolve(t.Context(), root, cfg, "github.com", Sources{
-		Tags: tags,
-		Go:   fakeGo{"example.com/a": {"v1.0.0", "v1.0.1"}, "example.com/c": {"v1.0.0"}},
-	})
+	res, err := Resolve(t.Context(), root, cfg, env, sources(tags, fakeGo{"example.com/a": {"v1.0.0", "v1.0.1"}, "example.com/c": {"v1.0.0"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +339,7 @@ func TestResolveErrors(t *testing.T) {
 func TestResolveFailures(t *testing.T) {
 	t.Run("missing root", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "nope")
-		_, err := Resolve(t.Context(), root, config.Default(), "github.com", Sources{})
+		_, err := Resolve(t.Context(), root, config.Default(), env, sources(nil, nil))
 		if !errors.Is(err, os.ErrNotExist) || !strings.HasPrefix(err.Error(), "walk "+root+": ") {
 			t.Fatalf("err = %v", err)
 		}
@@ -319,7 +348,7 @@ func TestResolveFailures(t *testing.T) {
 		root, cfg := setup(t, "", map[string]string{".github/workflows/ci.yml": workflow})
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		res, err := Resolve(ctx, root, cfg, "github.com", Sources{Tags: tags})
+		res, err := Resolve(ctx, root, cfg, env, sources(tags, nil))
 		if !errors.Is(err, context.Canceled) || res != nil {
 			t.Fatalf("res = %+v, err = %v", res, err)
 		}
@@ -334,7 +363,7 @@ func TestDiscoverSkipsSymlinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "real.yml"), filepath.Join(root, ".github", "workflows", "ci.yml")); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Resolve(t.Context(), root, cfg, "github.com", Sources{Tags: tags})
+	res, err := Resolve(t.Context(), root, cfg, env, sources(tags, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +413,7 @@ func TestBuildErrorsDropFile(t *testing.T) {
 		}
 		return mod, append(append([]byte(nil), sum...), "new\n"...), nil
 	})
-	changes, errs := Build(t.Context(), root, []dep.Update{good, failing, sumDir, mismatch, missing}, tidy)
+	changes, errs := Build(t.Context(), root, managers, []dep.Update{good, failing, sumDir, mismatch, missing}, tidy)
 
 	if len(errs) != 4 {
 		t.Fatalf("errs = %v, want 4", errs)
@@ -428,7 +457,7 @@ func TestBuildCanceledWhileWaitingForTidy(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	called := false
-	changes, errs := Build(ctx, root, []dep.Update{up}, tidyFunc(func(context.Context, string, []byte, []byte) ([]byte, []byte, error) {
+	changes, errs := Build(ctx, root, managers, []dep.Update{up}, tidyFunc(func(context.Context, string, []byte, []byte) ([]byte, []byte, error) {
 		called = true
 		return nil, nil, nil
 	}))
@@ -449,7 +478,7 @@ func TestBuildUnreadableFile(t *testing.T) {
 	if err := os.Chmod(filepath.Join(root, "go.mod"), 0); err != nil {
 		t.Fatal(err)
 	}
-	changes, errs := Build(t.Context(), root, []dep.Update{up}, nil)
+	changes, errs := Build(t.Context(), root, managers, []dep.Update{up}, nil)
 	if len(errs) != 1 || !errors.Is(errs[0], os.ErrPermission) || !strings.HasPrefix(errs[0].Error(), "go.mod: ") {
 		t.Fatalf("errs = %v, want go.mod permission error", errs)
 	}

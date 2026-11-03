@@ -99,6 +99,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		AuthorEmail: r.authorEmail,
 		DryRun:      r.dryRun,
 		MaxNewPRs:   r.maxNewPRs,
+		Managers:    s.managers,
 	}
 	actions, botErrs := bot.Run(ctx, bo, s.root, res, goTidier{}, platform.NewClient(info, token, client), repo)
 

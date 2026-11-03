@@ -8,22 +8,18 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 )
 
 // prunedDirs are never descended into.
 var prunedDirs = map[string]bool{".git": true, "node_modules": true, "vendor": true, "testdata": true}
 
-// discovered lists matched files per manager, as slash paths relative to root.
-type discovered struct {
-	actions []string
-	gomod   []string
-}
-
-// discover walks root once, pruning ignored directories, and matches paths without opening files.
-func discover(root string, ignore []string) (discovered, error) {
-	var out discovered
+// discover walks root once, pruning ignored directories, and matches paths without opening
+// files. A file goes to every manager that matches it (a custom manager may target a file a
+// built-in one handles too); the result holds the sorted slash paths (relative to root) per
+// manager, indexed like managers.
+func discover(root string, ignore []string, managers []manager.Manager) ([][]string, error) {
+	out := make([][]string, len(managers))
 	ignored := func(rel string) bool {
 		for _, p := range ignore {
 			if ok, _ := doublestar.Match(p, rel); ok {
@@ -54,15 +50,15 @@ func discover(root string, ignore []string) (discovered, error) {
 		if !d.Type().IsRegular() || ignored(rel) {
 			return nil
 		}
-		switch {
-		case actions.Match(rel):
-			out.actions = append(out.actions, rel)
-		case gomod.Match(rel):
-			out.gomod = append(out.gomod, rel)
+		for i, m := range managers {
+			if m.Match(rel) {
+				out[i] = append(out[i], rel)
+			}
 		}
 		return nil
 	})
-	slices.Sort(out.actions)
-	slices.Sort(out.gomod)
+	for _, files := range out {
+		slices.Sort(files)
+	}
 	return out, err
 }

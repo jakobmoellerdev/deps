@@ -48,47 +48,108 @@ const (Major UpdateType = "major"; Minor = "minor"; Patch = "patch"; Digest = "d
 type Span struct{ Start, End int } // byte offsets, End exclusive
 
 type Dep struct {
-    Manager       string // "github-actions" | "gomod"
-    File          string // slash path relative to --dir
-    Line          int    // 1-based
-    Name          string // actions: owner/repo[/sub]; gomod: module path
-    Source        string // actions: https://<host>/<owner>/<repo>; gomod: ""
-    Version       string // current version (ref tag, comment version, or module version)
-    Digest        string // actions: full SHA when pinned, else ""
-    RefSpan       Span   // actions: ref after '@'; gomod: version token
-    VersionSpan   Span   // actions: version token in trailing comment (pinned only)
-    CommentInsert int    // actions: offset after the uses value incl. closing quote
-    Skip          string // non-empty = not updatable, with the reason
+    Manager     string // "github-actions" | "gomod" | "docker" | "custom"
+    Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases"
+    Versioning  string // "tag" | "go" | "docker" | "semver"
+    DepType     string // gomod: direct|indirect|go|toolchain; actions: action; docker: dockerfile|compose|workflow|action; custom: annotation|regex
+    File        string // slash path relative to --dir
+    Line        int    // 1-based
+    Name        string // actions: owner/repo[/sub]; gomod: module path
+    Source      string // actions: https://<host>/<owner>/<repo>; gomod: ""
+    Version     string // current version (ref tag, comment version, or module version)
+    Digest      string // actions: full SHA when pinned, else ""
+    RefSpan     Span   // actions: ref after '@'; gomod: version token
+    VersionSpan Span   // actions: version token in trailing comment (pinned only)
+    DigestSpan  Span   // docker/custom: digest token stored apart from RefSpan
+    InsertAt    int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
+    Skip        string // non-empty = not updatable, with the reason
 }
+
+type Advisory struct{ ID, Summary, URL string }
 
 type Update struct {
     Dep        Dep
     Type       UpdateType
     NewVersion string
-    NewDigest  string // "" unless the result is digest-pinned
+    NewDigest  string        // "" unless the result is digest-pinned
+    Group      string        // policy group, "" = own PR
+    Schedule   *schedule.Set // nil = always
+    Advisories []Advisory    // non-empty = security update
 }
 ```
 
 ```go
-// internal/engine
-type TagSource interface{ Tags(ctx context.Context, repoURL string) ([]gittags.Tag, error) }
-type GoSource  interface{ Versions(ctx context.Context, modPath, dir string) ([]string, error) }
-type Tidier    interface{ Tidy(ctx context.Context, dir string, mod, sum []byte) ([]byte, []byte, error) }
-type Sources   struct{ Tags TagSource; Go GoSource }
+// internal/manager
+type Env struct {
+    DefaultHost string                // actions default host
+    Vendored    func(dir string) bool // slash dir relative to root; engine supplies a stat check when nil
+}
+type Manager interface {
+    Name() string
+    Match(path string) bool
+    Extract(file string, src []byte, env Env) ([]dep.Dep, error)
+    Edits(u dep.Update) ([]patch.Edit, error) // byte edits for one update; the engine merges them per file
+}
+// actions.New(), gomod.New() return the built-in managers.
+```
 
+```go
+// internal/datasource (leaf package; aliased as engine.Release, engine.Datasource, engine.Vuln, engine.SecuritySource)
+type Release struct{ Version, Digest string }
+type Datasource interface {
+    Releases(ctx context.Context, d dep.Dep, dir string) ([]Release, error)
+    Digest(ctx context.Context, d dep.Dep, version string) (string, error) // when Release.Digest == ""
+}
+type Vuln struct{ Advisory dep.Advisory; Fixed []string }
+type SecuritySource interface {
+    Advisories(ctx context.Context, deps []dep.Dep) ([][]Vuln, error)
+}
+// gittags.Lister ("git-tags") and goproxy.Source ("go") implement Datasource.
+```
+
+```go
+// internal/versioning
+type Scheme interface {
+    Valid(v string) bool
+    Compare(a, b string) int
+    Kind(cur, next string) dep.UpdateType
+    Semver(v string) *semver.Version
+    Best(cur string, cands []string, accept func(v string, kind dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool)
+    Compatible(cur, next string) bool
+}
+func Get(name string) (Scheme, bool) // "tag", "go", "docker", "semver"
+```
+
+```go
+// internal/engine
+type Tidier interface{ Tidy(ctx context.Context, dir string, mod, sum []byte) ([]byte, []byte, error) }
+type Options struct {
+    Managers    []manager.Manager
+    Datasources map[string]Datasource // by Dep.Datasource
+    Security    SecuritySource        // nil = off
+    Filter      func(dep.Dep) bool    // nil = all
+    Trace       func(Trace)           // nil = off
+}
+type Trace struct {
+    Dep        dep.Dep
+    Rules      []int
+    Policy     config.Policy
+    Candidates int
+    Rejected   map[string][]string // reason -> versions
+    Update     *dep.Update
+    Err        error
+}
 type Result     struct{ Updates []dep.Update; Skipped []dep.Dep; Errors []error }
 type FileChange struct{ Path string; Mode fs.FileMode; Old, New []byte }
 type Group      struct{ Manager, Name, Branch, Title string; Updates []dep.Update }
 
-func Resolve(ctx context.Context, root string, cfg *config.Config, defaultHost string, src Sources) (*Result, error)
-func Build(ctx context.Context, root string, updates []dep.Update, tidy Tidier) ([]FileChange, []error)
+func Managers(cfg *config.Config) ([]manager.Manager, error)
+func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.Env, o Options) (*Result, error)
+func Build(ctx context.Context, root string, managers []manager.Manager, updates []dep.Update, tidy Tidier) ([]FileChange, []error)
 func GroupUpdates(updates []dep.Update) []Group
 ```
 
-```go
-// internal/datasource/gittags
-type Tag struct{ Name, Commit string } // Commit is the peeled commit for annotated tags
-```
+**Resolve order per dep:** datasource releases → `Scheme.Best` under the policy → digest pin/refresh (`tag`/`docker` versioning on the digest-capable managers github-actions and docker) → security. With advisories, the minimum fix F is the highest, over all vulns, of each vuln's lowest compatible fixed version. If there is no normal update or it is below F, the smallest compatible release ≥ F is chosen regardless of `allow`/`updates` (`ignore` still wins). The advisories the chosen version fixes are attached; such security updates get no group and no schedule. Every file goes to every manager that matches it.
 
 ```go
 // internal/platform
@@ -121,7 +182,7 @@ type Git interface {
     DeleteBranch(ctx context.Context, branch string) error
     BranchAuthorEmail(ctx context.Context, branch string) (string, error)
 }
-type Options struct{ Base, AuthorName, AuthorEmail string; DryRun bool; MaxNewPRs int }
+type Options struct{ Base, AuthorName, AuthorEmail string; DryRun bool; MaxNewPRs int; Managers []manager.Manager }
 type Action  struct{ Branch, Title, Status, URL string; Number int }
 func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy engine.Tidier, pc platform.Client, g Git) ([]Action, []error)
 ```
@@ -134,6 +195,9 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy e
   - prereleases, unless the current version is a prerelease;
   - `+incompatible` versions, unless the current version has it;
   - other majors, except the step from v0 to v1.
+- **Docker tags (`docker`).** `^(v?)(\d+(?:\.\d+)*)(.*)$` → prefix, numeric parts, suffix. Candidates must have the same prefix, the same number of parts and an identical suffix; `latest` and other non-numeric tags are invalid.
+- **Semver (`semver`).** Masterminds loose semver. Prereleases only if the current version is one; any precision. The result keeps the current version's `v` prefix style.
+- Every scheme reports each dropped candidate with a reason (`invalid`, `prerelease`, `precision`, `prefix`, `suffix`, `major`, `not newer`, `policy: <why>`) for `Trace`.
 
 ## 5. Platforms
 
@@ -336,38 +400,48 @@ When debug is disabled, the HTTP transport skips timing entirely after one `Enab
 
 Config file: `.deps.yaml`, falling back to `.deps.yml`, or the path given with `--config` (which must exist). If no file is found, the defaults `{version: 1, pin: keep}` apply, and an empty file also yields the defaults.
 
-### M1 schema
+### Schema
 
 ```yaml
 version: 1                  # optional; must be 1 if set
-pin: keep                   # keep | digest (default keep); github-actions only
+pin: keep                   # keep | digest (default keep); github-actions (and docker) only
+timezone: ""                # IANA zone for schedules; "" = UTC
+schedule: []                # cron windows ("* <hour> <dom> <month> <dow>", minute must be *); empty = always
+security: true              # OSV security lookups (default true)
 actions:
   defaultHost: ""           # host for `owner/repo@ref`; "" = auto (section 5)
 ignorePaths: []             # doublestar globs on slash paths relative to --dir
 rules:
-  - manager: github-actions # optional: github-actions | gomod
+  - manager: github-actions # optional: github-actions | gomod | docker | custom
     names: ["actions/*"]    # optional path.Match globs on the dependency name
+    depTypes: [direct]      # optional: direct indirect go toolchain action dockerfile compose workflow annotation regex
     ignore: true            # optional
     pin: digest             # optional: keep | digest
     allow: "< 7"            # optional Masterminds semver constraint
     updates: [major, minor, patch, digest, pin]   # optional allowed update types
+    group: "name"           # optional: one PR for all deps with this group
+    schedule: ["* 0-5 * * *"] # optional: overrides the top-level schedule ([] = always)
+custom:
+  - files: ["**/Makefile"]  # required doublestar globs
+    match: 'TOOL_VERSION = (?P<version>\S+)'  # optional RE2; absent = annotation mode; needs a version group
+    datasource: go          # git-tags | github-releases | go | docker; regex mode: required unless a datasource group
+    name: golang.org/x/tools # regex mode: required unless a name group
+    versioning: semver      # tag | go | docker | semver (default semver)
 ```
 
 **Semantics:**
 - The file is decoded strictly: unknown keys are errors and report their line. All validation errors are reported together, each as `<path>: <field>: <msg>`.
-- **Rule evaluation:** the policy starts as `{pin: <top-level pin>, updates: all five}`. Each rule matches when its `manager` is empty or equal, and its `names` are empty or any glob matches. Rules are applied in file order. Every field a matching rule sets overwrites the policy; `updates` is replaced, not merged.
+- **Rule evaluation:** the policy starts as `{pin: <top-level pin>, updates: all five, schedule: <top-level>}`, with `ignore` true for `indirect` and `go` dependency types (opt in with a rule `ignore: false`). Each rule matches when its `manager` is empty or equal, its `names` are empty or any glob matches, and its `depTypes` are empty or contain the dependency type. Rules are applied in file order. Every field a matching rule sets overwrites the policy; `updates` is replaced, not merged.
 - **Acceptance:** an update is accepted when its type is in `updates` and the new version satisfies `allow` (if set).
 - **`pin: digest`:** pins tag refs to the tag's commit SHA and appends `# <tag>`. Already-pinned refs stay pinned and are refreshed. The `pin` setting is ignored for gomod.
+- **Schedules:** a time is in schedule when any expression matches it in `timezone`. Like cron, when both day of month and day of week are restricted, either may match.
 
-### Planned keys (not accepted in M1)
+### Planned keys (not accepted yet)
 
 | Key | Milestone |
 |---|---|
-| `rules[].group` | M4 |
 | `rules[].automerge` | M4 |
 | `rules[].paths` | M4 |
-| `schedule` | M4 |
-| `custom[]` | M3 |
 
 ## 9. Why Go
 

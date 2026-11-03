@@ -4,8 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -72,6 +74,21 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{allow: '>>1'}]\n", "rules[0].allow"},
 		{"rules: [{updates: [huge]}]\n", "rules[0].updates[0]"},
 		{"ignorePaths: ['[']\n", "ignorePaths[0]"},
+		{"timezone: Mars/Olympus\n", `timezone: unknown time zone "Mars/Olympus"`},
+		{"timezone: Mars/Olympus\nschedule: ['0 * * * *']\n", "schedule[0]: \"0 * * * *\": minute field must be *"},
+		{"schedule: ['* 25 * * *']\n", "schedule[0]"},
+		{"rules: [{schedule: ['* * * *']}]\n", "rules[0].schedule[0]"},
+		{"rules: [{depTypes: [weird]}]\n", "rules[0].depTypes[0]: must be one of direct, indirect"},
+		{"security: maybe\n", "line 1"},
+		{"custom: [{}]\n", "custom[0].files: must not be empty"},
+		{"custom: [{files: ['[']}]\n", "custom[0].files[0]: invalid glob"},
+		{"custom: [{files: [x], datasource: npm}]\n", "custom[0].datasource: must be one of git-tags"},
+		{"custom: [{files: [x], versioning: calver}]\n", "custom[0].versioning: must be one of tag"},
+		{"custom: [{files: [x], match: '('}]\n", "custom[0].match: invalid RE2"},
+		{"custom: [{files: [x], match: '(?=x)'}]\n", "custom[0].match: invalid RE2"},
+		{"custom: [{files: [x], match: 'v(\\d+)', datasource: go, name: x}]\n", "custom[0].match: must have a (?P<version>...) group"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+)', name: x}]\n", "custom[0].datasource: required"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+)', datasource: go}]\n", "custom[0].name: required"},
 	} {
 		_, err := load(t, ".deps.yaml", tc.body)
 		var ce *Error
@@ -118,5 +135,87 @@ rules:
 	}
 	if !c.Policy(dep.Dep{Manager: "gomod", Name: "x"}).Ignore {
 		t.Error("gomod ignore")
+	}
+}
+
+func TestNewKeys(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `timezone: Europe/Berlin
+schedule: ["* 0-5 * * *"]
+security: false
+rules:
+  - depTypes: [indirect]
+    ignore: false
+    group: go-indirect
+  - names: ["x/*"]
+    schedule: []
+  - names: ["x/y"]
+    group: xy
+    schedule: ["* * * * 6"]
+custom:
+  - files: ["**/*.txt"]
+  - files: [Makefile]
+    match: 'TOOL_(?P<name>\w+) = (?P<version>\S+)'
+    datasource: go
+    versioning: go
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SecurityEnabled() || !Default().SecurityEnabled() {
+		t.Error("SecurityEnabled")
+	}
+	if len(c.Custom) != 2 || c.Custom[0].Versioning != "semver" || c.Custom[1].Versioning != "go" || c.Custom[1].Datasource != "go" {
+		t.Errorf("custom = %+v", c.Custom)
+	}
+	monday3 := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC) // 04:00 in Berlin
+	monday12 := monday3.Add(9 * time.Hour)
+
+	top := c.Policy(dep.Dep{Manager: "gomod", Name: "a/b", DepType: "direct"})
+	if top.Ignore || top.Group != "" || top.Schedule == nil || !top.Schedule.Contains(monday3) || top.Schedule.Contains(monday12) || len(top.Rules) != 0 {
+		t.Errorf("top: %+v", top)
+	}
+	ind := c.Policy(dep.Dep{Manager: "gomod", Name: "a/b", DepType: "indirect"})
+	if ind.Ignore || ind.Group != "go-indirect" || !slices.Equal(ind.Rules, []int{0}) {
+		t.Errorf("indirect opted in: %+v", ind)
+	}
+	always := c.Policy(dep.Dep{Manager: "custom", Name: "x/z"})
+	if always.Schedule != nil || !slices.Equal(always.Rules, []int{1}) {
+		t.Errorf("schedule [] overrides to always: %+v", always)
+	}
+	xy := c.Policy(dep.Dep{Manager: "custom", Name: "x/y"})
+	if xy.Group != "xy" || xy.Schedule == nil || xy.Schedule.Contains(monday3) || !slices.Equal(xy.Rules, []int{1, 2}) {
+		t.Errorf("x/y: %+v", xy)
+	}
+}
+
+func TestDefaultIgnore(t *testing.T) {
+	c := Default()
+	for typ, want := range map[string]bool{"indirect": true, "go": true, "direct": false, "toolchain": false, "": false} {
+		if got := c.Policy(dep.Dep{Manager: "gomod", DepType: typ}).Ignore; got != want {
+			t.Errorf("depType %q: Ignore = %v, want %v", typ, got, want)
+		}
+	}
+}
+
+func TestPolicyCheck(t *testing.T) {
+	c, err := load(t, ".deps.yaml", "rules: [{allow: '< 2', updates: [minor]}]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := c.Policy(dep.Dep{})
+	for _, tc := range []struct {
+		kind dep.UpdateType
+		v    *semver.Version
+		ok   bool
+		why  string
+	}{
+		{dep.Minor, GoTestVer("1.1.0"), true, ""},
+		{dep.Major, GoTestVer("1.1.0"), false, "update type major not allowed"},
+		{dep.Minor, GoTestVer("2.1.0"), false, "outside allow <2"},
+		{dep.Minor, nil, false, "outside allow <2"},
+	} {
+		if ok, why := p.Check(tc.kind, tc.v); ok != tc.ok || why != tc.why {
+			t.Errorf("Check(%s, %v) = %v %q, want %v %q", tc.kind, tc.v, ok, why, tc.ok, tc.why)
+		}
 	}
 }

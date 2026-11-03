@@ -1,4 +1,5 @@
-// Package versioning parses and compares Actions tags and Go module versions.
+// Package versioning parses, compares and selects versions per versioning scheme
+// (Actions tags, Go modules, Docker tags, semver).
 package versioning
 
 import (
@@ -78,26 +79,4 @@ func part(t Tag, i int) int {
 // Semver returns the tag as a semver version, padding missing parts with 0.
 func (t Tag) Semver() *semver.Version {
 	return semver.New(uint64(part(t, 0)), uint64(part(t, 1)), uint64(part(t, 2)), "", "")
-}
-
-// BestTag returns the highest name with cur's prefix and precision that is
-// greater than cur and accepted.
-func BestTag(cur Tag, names []string, accept func(Tag) bool) (string, bool) {
-	var best string
-	var bestT Tag
-	found := false
-	for _, n := range names {
-		t, ok := ParseTag(n)
-		if !ok || t.Prefix != cur.Prefix || len(t.Parts) != len(cur.Parts) || CompareTag(t, cur) <= 0 {
-			continue
-		}
-		if found && CompareTag(t, bestT) <= 0 {
-			continue
-		}
-		if accept != nil && !accept(t) {
-			continue
-		}
-		best, bestT, found = n, t, true
-	}
-	return best, found
 }

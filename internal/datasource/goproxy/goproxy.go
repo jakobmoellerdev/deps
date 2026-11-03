@@ -15,6 +15,8 @@ import (
 
 	"golang.org/x/mod/module"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gotool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
@@ -37,6 +39,7 @@ type Source struct {
 type entry struct {
 	once     sync.Once
 	versions []string
+	rels     []datasource.Release
 	err      error
 }
 
@@ -49,6 +52,23 @@ func New(client *http.Client, sem chan struct{}) *Source {
 // Versions returns the known versions of modPath. dir is the module directory used when the
 // go command has to be run. Results are deduped by modPath; the slice must not be modified.
 func (s *Source) Versions(ctx context.Context, modPath, dir string) ([]string, error) {
+	e := s.get(ctx, modPath, dir)
+	return e.versions, e.err
+}
+
+// Releases implements datasource.Datasource for module d.Name; releases carry no digest.
+// The slice is shared between callers and must not be modified.
+func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
+	e := s.get(ctx, d.Name, dir)
+	return e.rels, e.err
+}
+
+// Digest always fails: Go module versions are not digest-pinned.
+func (*Source) Digest(_ context.Context, d dep.Dep, version string) (string, error) {
+	return "", fmt.Errorf("%s@%s: go modules have no digests", d.Name, version)
+}
+
+func (s *Source) get(ctx context.Context, modPath, dir string) *entry {
 	s.mu.Lock()
 	e := s.cache[modPath]
 	if e == nil {
@@ -56,8 +76,14 @@ func (s *Source) Versions(ctx context.Context, modPath, dir string) ([]string, e
 		s.cache[modPath] = e
 	}
 	s.mu.Unlock()
-	e.once.Do(func() { e.versions, e.err = s.resolve(ctx, modPath, dir) })
-	return e.versions, e.err
+	e.once.Do(func() {
+		e.versions, e.err = s.resolve(ctx, modPath, dir)
+		e.rels = make([]datasource.Release, len(e.versions))
+		for i, v := range e.versions {
+			e.rels[i] = datasource.Release{Version: v}
+		}
+	})
+	return e
 }
 
 func (s *Source) resolve(ctx context.Context, modPath, dir string) ([]string, error) {

@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
@@ -38,6 +40,7 @@ type Lister struct {
 type entry struct {
 	once sync.Once
 	tags []Tag
+	rels []datasource.Release
 	err  error
 }
 
@@ -50,6 +53,32 @@ func New(client *http.Client, auth *httpx.Auth, sem chan struct{}) *Lister {
 // Tags returns the tags of the repository at repoURL (e.g. https://github.com/actions/checkout).
 // The returned slice is shared between callers and must not be modified.
 func (l *Lister) Tags(ctx context.Context, repoURL string) ([]Tag, error) {
+	e := l.get(ctx, repoURL)
+	return e.tags, e.err
+}
+
+// Releases implements datasource.Datasource: the tags of d.Source, each with its commit as
+// digest. The slice is shared between callers and must not be modified.
+func (l *Lister) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
+	e := l.get(ctx, d.Source)
+	return e.rels, e.err
+}
+
+// Digest returns the commit of tag version in d.Source.
+func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string, error) {
+	e := l.get(ctx, d.Source)
+	if e.err != nil {
+		return "", e.err
+	}
+	for _, t := range e.tags {
+		if t.Name == version {
+			return t.Commit, nil
+		}
+	}
+	return "", fmt.Errorf("tag %s not found upstream", version)
+}
+
+func (l *Lister) get(ctx context.Context, repoURL string) *entry {
 	repoURL = strings.TrimSuffix(repoURL, "/")
 	l.mu.Lock()
 	e := l.cache[repoURL]
@@ -58,8 +87,14 @@ func (l *Lister) Tags(ctx context.Context, repoURL string) ([]Tag, error) {
 		l.cache[repoURL] = e
 	}
 	l.mu.Unlock()
-	e.once.Do(func() { e.tags, e.err = l.fetch(ctx, repoURL) })
-	return e.tags, e.err
+	e.once.Do(func() {
+		e.tags, e.err = l.fetch(ctx, repoURL)
+		e.rels = make([]datasource.Release, len(e.tags))
+		for i, t := range e.tags {
+			e.rels[i] = datasource.Release{Version: t.Name, Digest: t.Commit}
+		}
+	})
+	return e
 }
 
 // session carries the credentials of one repository fetch across its requests.

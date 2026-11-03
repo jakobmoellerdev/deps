@@ -3,7 +3,13 @@ package actions
 import (
 	"strings"
 	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
+
+var env = manager.Env{DefaultHost: "github.com"}
 
 const sha = "1af3b93b6815bc44a9784bd300feb67ff0d1eeb3"
 
@@ -40,7 +46,7 @@ func TestExtract(t *testing.T) {
 	for name, src := range map[string]string{"lf": fixture, "crlf": strings.ReplaceAll(fixture, "\n", "\r\n")} {
 		t.Run(name, func(t *testing.T) {
 			b := []byte(src)
-			deps, err := Extract(".github/workflows/ci.yml", b, "github.com")
+			deps, err := New().Extract(".github/workflows/ci.yml", b, env)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,7 +76,8 @@ func TestExtract(t *testing.T) {
 			}
 			for i, w := range wants {
 				d := deps[i]
-				if d.Manager != Name || d.Name != w.name || d.Source != w.source || d.Version != w.version || d.Digest != w.digest || d.Skip != w.skip {
+				if d.Manager != Name || d.Name != w.name || d.Source != w.source || d.Version != w.version || d.Digest != w.digest || d.Skip != w.skip ||
+					d.Datasource != "git-tags" || d.Versioning != "tag" || d.DepType != "action" {
 					t.Errorf("%d: got %+v, want %+v", i, d, w)
 				}
 				if w.skip == "" || w.skip == "non-version ref" || w.skip == "pinned without version comment" {
@@ -83,16 +90,16 @@ func TestExtract(t *testing.T) {
 						t.Errorf("%d: version span %q, want %q", i, got, w.vspan)
 					}
 				}
-				if w.afterInsert != "" && !strings.HasPrefix(string(b[d.CommentInsert:]), w.afterInsert) {
-					t.Errorf("%d: after CommentInsert %q", i, b[d.CommentInsert:d.CommentInsert+10])
+				if w.afterInsert != "" && !strings.HasPrefix(string(b[d.InsertAt:]), w.afterInsert) {
+					t.Errorf("%d: after InsertAt %q", i, b[d.InsertAt:d.InsertAt+10])
 				}
 			}
-			// quoted: CommentInsert is past the closing quote
-			if c := b[deps[2].CommentInsert-1]; c != '\'' {
-				t.Errorf("single-quoted CommentInsert after %q", c)
+			// quoted: InsertAt is past the closing quote
+			if c := b[deps[2].InsertAt-1]; c != '\'' {
+				t.Errorf("single-quoted InsertAt after %q", c)
 			}
-			if c := b[deps[3].CommentInsert-1]; c != '"' {
-				t.Errorf("double-quoted CommentInsert after %q", c)
+			if c := b[deps[3].InsertAt-1]; c != '"' {
+				t.Errorf("double-quoted InsertAt after %q", c)
 			}
 			if deps[1].Line != 8 {
 				t.Errorf("line = %d", deps[1].Line)
@@ -102,7 +109,7 @@ func TestExtract(t *testing.T) {
 }
 
 func TestExtractParseError(t *testing.T) {
-	if _, err := Extract("a.yml", []byte("a: [\n"), "github.com"); err == nil {
+	if _, err := New().Extract("a.yml", []byte("a: [\n"), env); err == nil {
 		t.Fatal("want error")
 	}
 }
@@ -114,7 +121,7 @@ func TestExtractSkips(t *testing.T) {
 		"  - uses: a/b@" + strings.Repeat("g", 40) + "\n" +
 		"  - uses:\n      a/c@v1\n" +
 		"  - uses: \"a/d\\x40v1\"\n"
-	deps, err := Extract("action.yml", []byte(src), "github.com")
+	deps, err := New().Extract("action.yml", []byte(src), env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,9 +158,48 @@ func TestMatch(t *testing.T) {
 		".github/dependabot.yml":       false,
 		".github/workflows/README.md":  false,
 	} {
-		if Match(p) != want {
+		if New().Match(p) != want {
 			t.Errorf("Match(%q) != %v", p, want)
 		}
+	}
+}
+
+func TestEdits(t *testing.T) {
+	src := "- uses: a/b@v1 # c\n- uses: 'a/c@" + sha + "' # v1.0.0\n- uses: \"a/d@v2\"\n"
+	deps, err := New().Extract("action.yml", []byte(src), env)
+	if err != nil || len(deps) != 3 {
+		t.Fatalf("deps = %+v, err = %v", deps, err)
+	}
+	sha2 := strings.Repeat("b", 40)
+	tests := []struct {
+		u    dep.Update
+		want string
+	}{
+		{dep.Update{Dep: deps[0], NewVersion: "v2"}, "- uses: a/b@v2 # c\n"},
+		{dep.Update{Dep: deps[1], NewVersion: "v1.1.0", NewDigest: sha2}, "- uses: 'a/c@" + sha2 + "' # v1.1.0\n"},
+		{dep.Update{Dep: deps[1], NewVersion: "v1.0.0", NewDigest: sha2}, "- uses: 'a/c@" + sha2 + "' # v1.0.0\n"},
+		{dep.Update{Dep: deps[2], NewVersion: "v3", NewDigest: sha2}, "- uses: \"a/d@" + sha2 + "\" # v3\n"},
+	}
+	lines := strings.SplitAfter(src, "\n")
+	for i, tt := range tests {
+		edits, err := New().Edits(tt.u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := patch.Apply([]byte(src), edits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l := tt.u.Dep.Line - 1
+		if got := strings.SplitAfter(string(out), "\n")[l]; got != tt.want {
+			t.Errorf("%d: got %q, want %q (was %q)", i, got, tt.want, lines[l])
+		}
+	}
+	if _, err := New().Edits(dep.Update{Dep: deps[1], NewVersion: "v2"}); err == nil {
+		t.Error("unpinning: want error")
+	}
+	if New().Name() != Name {
+		t.Error("Name")
 	}
 }
 

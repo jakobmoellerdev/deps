@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gotool"
 )
 
@@ -145,6 +147,25 @@ func TestVersionsEnvError(t *testing.T) {
 	s.env = func(context.Context) (gotool.GoEnv, error) { return gotool.GoEnv{}, errors.New("boom") }
 	if _, err := s.Versions(context.Background(), "example.com/m", "."); err == nil || err.Error() != "boom" {
 		t.Fatalf("err = %v, want boom", err)
+	}
+}
+
+func TestDatasource(t *testing.T) {
+	s := New(http.DefaultClient, nil)
+	s.env = func(context.Context) (gotool.GoEnv, error) { return gotool.GoEnv{Proxy: "direct"}, nil }
+	var gotDir string
+	s.list = func(_ context.Context, dir, _ string) ([]string, error) {
+		gotDir = dir
+		return []string{"v1.0.0", "v1.1.0"}, nil
+	}
+	var ds datasource.Datasource = s
+	d := dep.Dep{Name: "example.com/m"}
+	rels, err := ds.Releases(t.Context(), d, "/mod")
+	if err != nil || !reflect.DeepEqual(rels, []datasource.Release{{Version: "v1.0.0"}, {Version: "v1.1.0"}}) || gotDir != "/mod" {
+		t.Fatalf("Releases = %+v, %v (dir %q)", rels, err, gotDir)
+	}
+	if _, err := ds.Digest(t.Context(), d, "v1.0.0"); err == nil || err.Error() != "example.com/m@v1.0.0: go modules have no digests" {
+		t.Errorf("Digest err = %v", err)
 	}
 }
 
