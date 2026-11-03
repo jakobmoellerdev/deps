@@ -40,7 +40,7 @@ The platform is only detected from CI environment variables. Locally, lookups ru
 
 ## `deps run`
 
-Without arguments, `run` detects the platform, resolves, builds one commit per group on a temporary index (no checkout, and the working tree is never modified), pushes `--force-with-lease`, and creates or updates PRs. Obsolete PRs under `branchPrefix` are closed and their branches deleted, but only when the run had no errors. The local `HEAD` must be the tip of `origin/<base>`.
+Without arguments, `run` detects the platform, resolves, builds one commit per group on a temporary index (no checkout, and the working tree is never modified), pushes `--force-with-lease`, and creates or updates PRs. PRs whose updates all [automerge](configuration.md#automerge-automergestrategy-automergetype) get platform auto-merge requested. With [`dependencyDashboard`](configuration.md#dependencydashboard-dependencydashboardtitle-dependencydashboardlabels), the dashboard issue is read first (its ticked checkboxes apply to this run) and written last. Obsolete PRs under `branchPrefix` are closed and their branches deleted, but only when the run had no errors. The local `HEAD` must be the tip of `origin/<base>`.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -52,7 +52,7 @@ Without arguments, `run` detects the platform, resolves, builds one commit per g
 | `--author-name` | `deps[bot]` | commit author name |
 | `--author-email` | `deps-bot@noreply.invalid` | commit author email |
 | `--max-new-prs` | `10` | PRs created per run; `0` = unlimited |
-| `--dry-run` | `false` | report without pushing or calling write APIs; works without a token |
+| `--dry-run` | `false` | report without pushing or calling write APIs (no PR, merge or issue writes); works without a token |
 
 **Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then [`gitAuthor`](configuration.md#gitauthor-gitignoredauthors), then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2.
 
@@ -111,7 +111,8 @@ skip    <file>:<line>  <name>  <reason>                       (with -v)
 error   <message>
 note    go.sum changes are computed by apply/run              (plan, when a gomod update exists)
 note    package-lock.json changes are computed by apply/run   (plan, when an npm update exists)
-pr      <status>  <branch>  <title>  <url>                    (run)
+pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
+dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```
 
 - For digest and pin updates, `<from>`/`<to>` read `<version>@<sha7>`.
@@ -121,11 +122,11 @@ pr      <status>  <branch>  <title>  <url>                    (run)
 
 ```
 <n> updates in <m> files, <k> skipped, <e> errors                                  (plan, apply)
-<c> created, <u> updated, <x> closed, <s> up-to-date, <k> skipped, <e> errors     (run)
-... (dry run: <w> would change)                                                    (run --dry-run, appended)
+<c> created, <u> updated, <x> closed, <s> up-to-date, <k> skipped, <a> automerge, <e> errors     (run)
+... (dry run: <w> would change, <m> would automerge)                                              (run --dry-run, appended)
 ```
 
-`rebased` counts as updated.
+`rebased` counts as updated. `<a>` counts auto-merge requests and direct merges (`automerge`, `merged`); the dashboard line is not counted.
 
 **PR statuses:**
 
@@ -133,19 +134,32 @@ pr      <status>  <branch>  <title>  <url>                    (run)
 |---|---|
 | `created` | new PR |
 | `updated` | content changed or the PR was unmergeable; force-pushed and PR edited |
-| `rebased` | unchanged content rebuilt on a moved base (`rebaseWhen: behind-base-branch`) |
+| `rebased` | unchanged content rebuilt on a moved base (`rebaseWhen: behind-base-branch`), or on request from the dashboard |
 | `up-to-date` | nothing to do |
 | `closed` | obsolete PR closed and branch deleted |
 | `would-create`, `would-update`, `would-rebase` | `--dry-run` |
-| `skipped: closed PR for this version` | an unmerged closed PR has the same branch and title |
-| `skipped: outside schedule` | outside the schedule window |
-| `skipped: new PR limit reached` | a PR limit is exhausted |
-| `skipped: branch modified by someone else` | the branch tip's author is neither the bot nor in `gitIgnoredAuthors` |
+| `skipped: closed PR for this version` | an unmerged closed PR has the same branch and title (the dashboard's recreate checkbox overrides it) |
+| `skipped: outside schedule` | outside the schedule window (the dashboard's create checkbox overrides it) |
+| `skipped: new PR limit reached` | a PR limit is exhausted (dashboard checkboxes override it) |
+| `skipped: branch modified by someone else` | the branch tip's author is neither the bot nor in `gitIgnoredAuthors` (the dashboard's rebase checkbox discards those commits) |
+
+**Automerge outcomes** (appended to the PR status, e.g. `created, automerge`):
+
+| Outcome | Meaning |
+|---|---|
+| `automerge` | platform auto-merge requested (or already scheduled); the forge merges once required checks pass |
+| `automerge enabled` | GitHub reports auto-merge enabled already; not requested again |
+| `automerge pending` | Gitea/Forgejo cannot schedule it yet (mergeability check of a fresh push still running); the next run asks again |
+| `automerge waiting for checks` | GitHub will not auto-merge (auto-merge disallowed, or nothing to wait for) and the PR is not mergeable yet or its statuses/check runs are not all green; the next run checks again |
+| `merged` | GitHub fallback: merged directly, mergeable with all statuses and check runs green |
+| `would-automerge` | `--dry-run` |
+
+**Dashboard statuses:** `created`, `updated`, `up-to-date` (body unchanged, not edited), `would-create`, `would-update` (`--dry-run`), and `skipped: issues disabled` (the repository has no issue tracker; not an error).
 
 **Diagnostics.** Diagnostics are written with `log/slog` to stderr, filtered by `--log-level`.
 - `info`: the detected platform and how it was detected, the actions default host and its source, phase counts and durations, and the bot's view of the repository.
 - `debug`: every HTTP request (credential-free URL), every `git`/`go`/`npm` process, credential-helper outcomes (never secrets), and per-dep and per-PR decisions.
-- `warn`: obsolete PRs left open because the run had errors.
+- `warn`: obsolete PRs left open because the run had errors, a dashboard skipped because issues are disabled, and dashboard labels that do not exist (Gitea/Forgejo).
 
 **Step summary.** If `GITHUB_STEP_SUMMARY` (or else `GITEA_STEP_SUMMARY`) is set, a `## deps` markdown table is appended to that file:
 - `plan`/`apply`: `| Dependency | File | From | To | Type |`;

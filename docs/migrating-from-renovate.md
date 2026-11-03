@@ -42,8 +42,13 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `customDatasources` (`defaultRegistryUrlTemplate`, `format`, `transformTemplates`) | `customDatasources` (`url`, `format`, `versions` selector + `versionRegex` instead of JSONata) |
 | `github-release-attachments` digests | `custom[].checksum.asset` / `checksum.url` |
 | `hostRules` (tokens) | env tokens, `.npmrc`, Docker credentials, git credential helper; retries are built in |
-| `automerge`, `automergeType` | not supported yet (roadmap) |
-| `:dependencyDashboard` | not supported yet (roadmap) |
+| `automerge` | `automerge` / `rules[].automerge` (platform auto-merge once required checks pass; a PR automerges when all its updates do) |
+| `automergeType: pr` | `automergeType: pr` (the only accepted value; `branch` is an error) |
+| `automergeStrategy` | `automergeStrategy`: `auto`, `merge`, `squash`, `rebase` (Renovate's `merge-commit` = `merge`; `fast-forward` and `rebase-merge` are not offered) |
+| `platformAutomerge` | always on: deps only automerges through the platform (GitHub falls back to a direct merge once checks are green) |
+| `ignoreTests` | not supported: deps never merges a PR without green checks |
+| `:dependencyDashboard`, `dependencyDashboardTitle`, `dependencyDashboardLabels` | `dependencyDashboard: true`, `dependencyDashboardTitle`, `dependencyDashboardLabels` |
+| `dependencyDashboardApproval` | not supported (the dashboard's checkboxes create PRs that wait for schedule or limits) |
 | Mend badges, `security:openssf-scorecard` | not supported (release age as text in PR bodies) |
 | `git-submodules` | not supported |
 | repository cache | not applicable (no persistent cache) |
@@ -84,6 +89,8 @@ With `branchPrefix: renovate/`, deps manages the branches and PRs Renovate creat
 - **Release age.** An unknown release time never blocks an update. Digest refreshes, pins and security updates are always exempt, so Renovate's `minimumReleaseAge: null` rule for those update types needs no translation.
 - **Indirect Go requirements** are ignored by default, as in Renovate. Opt in with `depTypes: [indirect], ignore: false`.
 - **PR limits.** Renovate defaults to `prConcurrentLimit: 10`, `prHourlyLimit: 2`; deps to `0`/`0` (unlimited), plus the per-run `--max-new-prs 10`. The effective limit is the minimum of the non-zero limits.
+- **Automerge.** deps always uses the platform's auto-merge (Renovate's `platformAutomerge: true`) and never merges by itself while checks are pending. On GitHub repositories that disallow auto-merge, deps merges directly, but only a mergeable PR with at least one status or check run, all green; a repository without any checks is never merged that way, and there is no `ignoreTests` to change that.
+- **Dependency dashboard.** The checkboxes are `create` (awaiting schedule, rate-limited), `recreate` (closed PRs) and `rebase` (open PRs, modified branches). There is no approval mode, no "pending status checks" section and no deprecation warnings; the dashboard additionally lists the run's errors. Detected dependencies are listed per manager and file, capped to stay below GitHub's body limit.
 - **One PR per dependency or group.** Renovate's `<depName>-<major>.x` style branch-per-major-line maps to PR buckets.
 
 ### Presets
@@ -112,7 +119,9 @@ How the pieces map:
 | `extends: docker:pinDigests, helpers:pinGitHubActionDigests` | `pin: digest` |
 | `extends: :rebaseStalePrs` | `rebaseWhen: behind-base-branch` |
 | `extends: group:kubernetesMonorepo, group:goOpenapi` | built-in monorepos (default) |
-| `branchPrefix`, `gitAuthor`, `gitIgnoredAuthors`, `prConcurrentLimit: 0`, `prHourlyLimit: 0`, `separateMinorPatch`, `separateMultipleMajor`, `updateNotScheduled`, `minimumReleaseAge: 28 days` | same keys |
+| `branchPrefix`, `gitAuthor`, `gitIgnoredAuthors`, `prConcurrentLimit: 0`, `prHourlyLimit: 0`, `separateMinorPatch`, `separateMultipleMajor`, `updateNotScheduled`, `minimumReleaseAge: 28 days`, `automerge: false`, `automergeType: pr` | same keys |
+| `extends: :dependencyDashboard` | `dependencyDashboard: true` |
+| rule `matchUpdateTypes: [minor, patch]`, `automerge: true` | rule `updateTypes: [minor, patch]`, `automerge: true` (rule 20) |
 | rule `matchFileNames: [chart/**]` + `groupName` | `paths` + `group` |
 | `matchManagers: [github-actions]` + `separateMinorPatch: false` + schedule | `manager: github-actions` rule |
 | `matchManagers` + `matchUpdateTypes: [minor, patch]` + `groupName` | `updateTypes: [minor, patch]` + `group` |
@@ -151,4 +160,4 @@ rules:
     schedule: ['* * * * 0']
 ```
 
-These are not translated: `automerge` (minor/patch), `:dependencyDashboard`, `security:openssf-scorecard`, `git-submodules` (OCM has no `.gitmodules`) and `lockFileMaintenance` (disabled in OCM anyway).
+These are not translated: `security:openssf-scorecard`, `git-submodules` (OCM has no `.gitmodules`) and `lockFileMaintenance` (disabled in OCM anyway).

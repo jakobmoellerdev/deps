@@ -52,6 +52,8 @@ type Options struct {
 	Managers       []manager.Manager // edit the updates' files (engine.Build)
 	Now            time.Time         // schedule evaluation time; zero = time.Now()
 	Notes          Notes             // release ages and notes in PR bodies; nil = none
+	// Dashboard maintains the dependency dashboard issue; nil leaves an existing one alone.
+	Dashboard *DashboardOptions
 }
 
 // Notes renders release information for PR bodies (implemented by releasenotes.Notes).
@@ -74,12 +76,35 @@ const (
 	StatusSkipLimit    = "skipped: new PR limit reached"
 	StatusSkipModified = "skipped: branch modified by someone else"
 	StatusSkipSchedule = "skipped: outside schedule"
+	StatusSkipIssues   = "skipped: issues disabled" // dashboard only: the repository has no issue tracker
 )
 
-// Action is what happened to one branch/PR.
+// Automerge outcomes (Action.Automerge).
+const (
+	AutomergeRequested = "automerge"                    // platform auto-merge requested
+	AutomergeEnabled   = "automerge enabled"            // already enabled, not requested again
+	AutomergePending   = "automerge pending"            // the forge cannot schedule it yet; next run retries
+	AutomergeWaiting   = "automerge waiting for checks" // GitHub fallback: not mergeable or checks not green yet
+	AutomergeMerged    = "merged"                       // GitHub fallback: merged directly
+	AutomergeWould     = "would-automerge"              // dry run
+)
+
+// Action is what happened to one branch/PR, or to the dependency dashboard issue
+// (Dashboard set, Status created, updated, up-to-date, would-create, would-update or
+// StatusSkipIssues).
 type Action struct {
 	Branch, Title, Status, URL string
 	Number                     int
+	Automerge                  string // automerge outcome; "" = not an automerge PR
+	Dashboard                  bool
+}
+
+// Display is Status with the automerge outcome appended ("created, automerge").
+func (a Action) Display() string {
+	if a.Automerge == "" {
+		return a.Status
+	}
+	return a.Status + ", " + a.Automerge
 }
 
 var fingerprintRe = regexp.MustCompile(`<!-- deps:fingerprint=([0-9a-f]+) -->`)
@@ -127,14 +152,31 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	if now.IsZero() {
 		now = time.Now()
 	}
+	var errs []error
+	var dash *dashboard
+	dashDisabled := false
+	if o.Dashboard != nil {
+		d, err := loadDashboard(ctx, pc, o.Dashboard.Title)
+		switch {
+		case errors.Is(err, platform.ErrIssuesDisabled):
+			slog.WarnContext(ctx, "dependency dashboard skipped", "err", err)
+			dashDisabled = true
+		case err != nil:
+			errs = append(errs, fmt.Errorf("dependency dashboard: %w", err))
+		default:
+			dash = d
+		}
+	}
 	groups := engine.GroupUpdates(res.Updates, prefix)
 	built := make([][]engine.FileChange, len(groups))
 	buildErrs := make([]error, len(groups))
 	inSchedule := make([]bool, len(groups))
+	forced := make([]force, len(groups))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
 	for i := range groups {
-		inSchedule[i] = scheduled(groups[i].Updates, now)
+		forced[i] = dash.force(groups[i].Branch)
+		inSchedule[i] = forced[i].any() || scheduled(groups[i].Updates, now)
 		if !inSchedule[i] && !(o.UpdateNotScheduled && hasPR(open, groups[i].Branch)) {
 			continue // nothing is pushed, so don't build
 		}
@@ -148,7 +190,6 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	wg.Wait()
 
 	var actions []Action
-	var errs []error
 	created := 0
 	limit := newPRLimit(o, open, closed, now)
 	slog.DebugContext(ctx, "new PR limit", "limit", limit, "maxNewPRs", o.MaxNewPRs, "prConcurrentLimit", o.ConcurrentLimit, "prHourlyLimit", o.HourlyLimit)
@@ -159,42 +200,116 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, buildErrs[i]))
 			continue
 		}
-		a, err := handle(ctx, o, base, head, grp, built[i], inSchedule[i], branches, open, closed, limit, &created, pc, g)
+		a, target, err := handle(ctx, o, base, head, grp, built[i], inSchedule[i], forced[i], branches, open, closed, limit, &created, pc, g)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
 			continue
 		}
+		if grp.Automerge && target != nil {
+			if err := automerge(ctx, o, grp, &a, *target, pc); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
+			}
+		}
 		actions = append(actions, a)
 	}
 
-	if len(errs) > 0 || len(res.Errors) > 0 || o.DryRun {
-		if !o.DryRun {
-			slog.WarnContext(ctx, "not closing obsolete PRs because of errors", "errors", len(errs)+len(res.Errors))
-		}
-		return actions, errs
-	}
-	for _, pr := range open {
-		if wanted[pr.Head] {
-			continue
-		}
-		if err := pc.ClosePR(ctx, pr.Number); err != nil {
-			errs = append(errs, fmt.Errorf("close #%d: %w", pr.Number, err))
-			continue
-		}
-		if _, ok := branches["refs/heads/"+pr.Head]; ok {
-			if err := g.DeleteBranch(ctx, pr.Head); err != nil {
-				errs = append(errs, fmt.Errorf("delete %s: %w", pr.Head, err))
+	switch {
+	case o.DryRun:
+	case len(errs) > 0 || len(res.Errors) > 0:
+		slog.WarnContext(ctx, "not closing obsolete PRs because of errors", "errors", len(errs)+len(res.Errors))
+	default:
+		for _, pr := range open {
+			if wanted[pr.Head] {
+				continue
 			}
+			if err := pc.ClosePR(ctx, pr.Number); err != nil {
+				errs = append(errs, fmt.Errorf("close #%d: %w", pr.Number, err))
+				continue
+			}
+			if _, ok := branches["refs/heads/"+pr.Head]; ok {
+				if err := g.DeleteBranch(ctx, pr.Head); err != nil {
+					errs = append(errs, fmt.Errorf("delete %s: %w", pr.Head, err))
+				}
+			}
+			actions = append(actions, Action{Branch: pr.Head, Title: pr.Title, Status: StatusClosed, URL: pr.URL, Number: pr.Number})
 		}
-		actions = append(actions, Action{Branch: pr.Head, Title: pr.Title, Status: StatusClosed, URL: pr.URL, Number: pr.Number})
+	}
+	switch {
+	case dashDisabled:
+		actions = append(actions, Action{Dashboard: true, Title: o.Dashboard.Title, Status: StatusSkipIssues})
+	case dash != nil:
+		a, err := dash.write(ctx, o, pc, renderDashboard(actions, slices.Concat(res.Errors, errs), res.Deps))
+		if err != nil {
+			errs = append(errs, fmt.Errorf("dependency dashboard: %w", err))
+		} else {
+			actions = append(actions, a)
+		}
 	}
 	return actions, errs
 }
 
-func handle(ctx context.Context, o Options, base, head string, grp engine.Group, changes []engine.FileChange, inSchedule bool,
+// force is what the dependency dashboard checkboxes request for one branch.
+type force struct {
+	create   bool // create the PR now: bypass schedule and PR limits
+	recreate bool // create a PR again although one for this version was closed
+	rebase   bool // rebuild the branch even if unchanged or modified by someone else
+}
+
+func (f force) any() bool { return f.create || f.recreate || f.rebase }
+
+// automerge requests platform auto-merge for target, the PR of an automerge group after it was
+// created, updated, rebased or found up to date, and records the outcome in a.Automerge. When
+// the forge will not auto-merge (GitHub: disallowed in the repository, or nothing left to wait
+// for) the PR is merged directly, but only once the forge reports it mergeable and all its
+// commit statuses and check runs succeeded; otherwise the next run checks again.
+func automerge(ctx context.Context, o Options, grp engine.Group, a *Action, target platform.PR, pc platform.Client) error {
+	switch {
+	case target.AutoMerge:
+		a.Automerge = AutomergeEnabled
+		return nil
+	case o.DryRun:
+		a.Automerge = AutomergeWould
+		return nil
+	}
+	err := pc.EnableAutoMerge(ctx, target, grp.AutomergeStrategy)
+	switch {
+	case err == nil:
+		a.Automerge = AutomergeRequested
+		return nil
+	case errors.Is(err, platform.ErrAutoMergePending):
+		slog.DebugContext(ctx, "auto-merge not possible yet", "branch", grp.Branch, "number", target.Number, "err", err)
+		a.Automerge = AutomergePending
+		return nil
+	case !errors.Is(err, platform.ErrAutoMergeUnavailable):
+		return err
+	}
+	slog.DebugContext(ctx, "auto-merge unavailable, merging directly once checks pass", "branch", grp.Branch, "number", target.Number, "err", err)
+	full, err := pc.GetPR(ctx, target.Number)
+	if err != nil {
+		return err
+	}
+	a.Automerge = AutomergeWaiting
+	if full.Mergeable == nil || !*full.Mergeable || full.HeadSHA == "" {
+		return nil
+	}
+	ok, err := pc.ChecksPassed(ctx, full.HeadSHA)
+	if err != nil || !ok {
+		return err
+	}
+	if err := pc.MergePR(ctx, full, grp.AutomergeStrategy); err != nil {
+		return err
+	}
+	a.Automerge = AutomergeMerged
+	return nil
+}
+
+// handle creates, updates or skips the PR of one group. target is the PR an automerge group
+// requests auto-merge for: the open, created or pushed PR (with the pushed head), an empty
+// PR in a dry run, nil when the group was skipped.
+func handle(ctx context.Context, o Options, base, head string, grp engine.Group, changes []engine.FileChange, inSchedule bool, f force,
 	branches map[string]string, open, closed []platform.PR, limit int, created *int, pc platform.Client, g Git,
-) (Action, error) {
-	a := Action{Branch: grp.Branch, Title: grp.Title}
+) (a Action, target *platform.PR, err error) {
+	a = Action{Branch: grp.Branch, Title: grp.Title}
 
 	var pr *platform.PR
 	for i := range open {
@@ -205,11 +320,11 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 	}
 	if pr != nil {
 		a.Number, a.URL = pr.Number, pr.URL
-	} else {
+	} else if !f.recreate {
 		for _, c := range closed {
 			if c.Head == grp.Branch && !c.Merged && c.Title == grp.Title {
 				a.Status, a.Number, a.URL = StatusSkipClosed, c.Number, c.URL
-				return a, nil
+				return a, nil, nil
 			}
 		}
 	}
@@ -220,7 +335,7 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 	default:
 		slog.DebugContext(ctx, "outside schedule", "branch", grp.Branch)
 		a.Status = StatusSkipSchedule
-		return a, nil
+		return a, nil, nil
 	}
 
 	ref := "refs/heads/" + grp.Branch
@@ -247,16 +362,20 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 	if pr != nil {
 		slog.DebugContext(ctx, "open PR found", "branch", grp.Branch, "number", pr.Number, "fingerprint", fp, "prFingerprint", bodyFingerprint(pr.Body))
 	}
-	if pr != nil && bodyFingerprint(pr.Body) == fp {
+	switch {
+	case pr != nil && bodyFingerprint(pr.Body) == fp && f.rebase:
+		slog.DebugContext(ctx, "rebase requested on the dependency dashboard", "branch", grp.Branch, "number", pr.Number)
+		rebase = true
+	case pr != nil && bodyFingerprint(pr.Body) == fp:
 		if o.RebaseWhen == config.RebaseNever {
 			a.Status = StatusUpToDate
-			return a, nil
+			return a, pr, nil
 		}
 		mergeable := pr.Mergeable
 		if mergeable == nil {
 			full, err := pc.GetPR(ctx, pr.Number)
 			if err != nil {
-				return a, err
+				return a, nil, err
 			}
 			mergeable = full.Mergeable
 		}
@@ -265,31 +384,32 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 		} else {
 			if o.RebaseWhen != config.RebaseBehindBase || !exists {
 				a.Status = StatusUpToDate
-				return a, nil
+				return a, pr, nil
 			}
 			if err := tip(); err != nil {
-				return a, err
+				return a, nil, err
 			}
 			// deps branches are one commit on top of base; any other parent means base moved.
 			if ownAuthor(o, author) && len(parents) == 1 && parents[0] == head {
 				a.Status = StatusUpToDate
-				return a, nil
+				return a, pr, nil
 			}
 			slog.DebugContext(ctx, "branch behind base, rebasing", "branch", grp.Branch, "number", pr.Number, "head", short(head))
 			rebase = true
 		}
 	}
-	if pr == nil && limit >= 0 && *created >= limit {
+	// Dashboard requests bypass the PR limits.
+	if pr == nil && !f.any() && limit >= 0 && *created >= limit {
 		a.Status = StatusSkipLimit
-		return a, nil
+		return a, nil, nil
 	}
-	if exists {
+	if exists && !f.rebase {
 		if err := tip(); err != nil {
-			return a, err
+			return a, nil, err
 		}
 		if !ownAuthor(o, author) {
 			a.Status = StatusSkipModified
-			return a, nil
+			return a, nil, nil
 		}
 	}
 	if o.DryRun {
@@ -300,40 +420,47 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 			a.Status = StatusWouldUpdate
 		default:
 			a.Status = StatusWouldCreate
+			return a, &platform.PR{}, nil
 		}
-		return a, nil
+		return a, pr, nil
 	}
 
 	commit, err := g.Commit(ctx, head, changes, commitMessage(grp), o.AuthorName, o.AuthorEmail)
 	if err != nil {
-		return a, err
+		return a, nil, err
 	}
 	slog.DebugContext(ctx, "pushing", "branch", grp.Branch, "commit", short(commit), "expected", short(expected))
 	if err := g.Push(ctx, commit, grp.Branch, expected); err != nil {
-		return a, err
+		return a, nil, err
+	}
+	if pr != nil {
+		pushed := *pr
+		pushed.HeadSHA = commit
+		target = &pushed
 	}
 	if rebase {
 		// Content and fingerprint are unchanged, so the PR title and body stay as they are.
 		a.Status = StatusRebased
-		return a, nil
+		return a, target, nil
 	}
 	// Notes are fetched only for PRs that are actually written; the fingerprint covers file
 	// contents only, so changing upstream notes never churns PRs.
 	body := prBody(ctx, o.Notes, grp.Updates, fp)
 	if pr != nil {
 		if err := pc.UpdatePR(ctx, pr.Number, grp.Title, body); err != nil {
-			return a, err
+			return a, nil, err
 		}
 		a.Status = StatusUpdated
-		return a, nil
+		return a, target, nil
 	}
 	np, err := pc.CreatePR(ctx, grp.Branch, base, grp.Title, body)
 	if err != nil {
-		return a, err
+		return a, nil, err
 	}
 	*created++
 	a.Status, a.Number, a.URL = StatusCreated, np.Number, np.URL
-	return a, nil
+	np.HeadSHA = cmp.Or(np.HeadSHA, commit)
+	return a, &np, nil
 }
 
 // newPRLimit returns how many PRs this run may create (-1 = unlimited): the minimum of

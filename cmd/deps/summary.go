@@ -47,7 +47,11 @@ func writeRunSummary(actions []bot.Action) {
 		if a.URL != "" {
 			pr = fmt.Sprintf("[#%d](%s)", a.Number, a.URL)
 		}
-		fmt.Fprintf(&b, "| %s | %s | %s |\n", a.Title, a.Status, pr)
+		status := a.Display()
+		if a.Dashboard {
+			status = "dashboard " + status
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", a.Title, status, pr)
 	}
 	appendSummary(b.String())
 }

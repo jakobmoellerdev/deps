@@ -147,11 +147,24 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		BranchPrefix:       s.cfg.Prefix(),
 		Notes:              releasenotes.New(client, s.sem, s.auth, s.gh, s.sources),
 	}
+	if s.cfg.DependencyDashboard {
+		bo.Dashboard = &bot.DashboardOptions{Title: s.cfg.DashboardTitle(), Labels: s.cfg.DependencyDashboardLabels}
+	}
 	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(), platform.NewClient(info, token, client), repo)
 
-	var created, updated, closed, upToDate, skipped, would int
+	var created, updated, closed, upToDate, skipped, would, automerged, wouldAutomerge int
 	for _, a := range actions {
-		fmt.Fprintf(stderr, "pr      %s  %s  %s  %s\n", a.Status, a.Branch, a.Title, a.URL)
+		if a.Dashboard {
+			fmt.Fprintf(stderr, "dashboard %s  %s  %s\n", a.Status, a.Title, a.URL)
+			continue
+		}
+		fmt.Fprintf(stderr, "pr      %s  %s  %s  %s\n", a.Display(), a.Branch, a.Title, a.URL)
+		switch a.Automerge {
+		case bot.AutomergeRequested, bot.AutomergeMerged:
+			automerged++
+		case bot.AutomergeWould:
+			wouldAutomerge++
+		}
 		switch {
 		case a.Status == bot.StatusCreated:
 			created++
@@ -171,9 +184,9 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		fmt.Fprintf(stderr, "error   %v\n", e)
 	}
 	nErr := len(res.Errors) + len(botErrs)
-	fmt.Fprintf(stderr, "%d created, %d updated, %d closed, %d up-to-date, %d skipped, %d errors", created, updated, closed, upToDate, skipped, nErr)
+	fmt.Fprintf(stderr, "%d created, %d updated, %d closed, %d up-to-date, %d skipped, %d automerge, %d errors", created, updated, closed, upToDate, skipped, automerged, nErr)
 	if r.dryRun {
-		fmt.Fprintf(stderr, " (dry run: %d would change)", would)
+		fmt.Fprintf(stderr, " (dry run: %d would change, %d would automerge)", would, wouldAutomerge)
 	}
 	fmt.Fprintln(stderr)
 	writeRunSummary(actions)

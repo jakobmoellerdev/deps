@@ -44,6 +44,21 @@ type fakeNet struct {
 	mux     *http.ServeMux
 	mu      sync.Mutex
 	created []map[string]string
+	merges  []map[string]any // POST .../pulls/7/merge bodies
+	issues  []map[string]any // POST .../issues bodies
+}
+
+// record decodes a JSON request body into *dst under f.mu.
+func (f *fakeNet) record(w http.ResponseWriter, r *http.Request, dst *[]map[string]any) bool {
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return false
+	}
+	f.mu.Lock()
+	*dst = append(*dst, body)
+	f.mu.Unlock()
+	return true
 }
 
 func (f *fakeNet) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -119,6 +134,23 @@ func newFakeNet(t *testing.T) *fakeNet {
 		f.created = append(f.created, body)
 		f.mu.Unlock()
 		fmt.Fprintf(w, `{"number":7,"html_url":"https://git.test/o/r/pulls/7","head":{"ref":%q}}`, body["head"])
+	})
+	f.mux.HandleFunc("POST git.test/api/v1/repos/o/r/pulls/7/merge", func(w http.ResponseWriter, r *http.Request) {
+		if f.record(w, r, &f.merges) {
+			w.WriteHeader(http.StatusCreated)
+		}
+	})
+	f.mux.HandleFunc("GET git.test/api/v1/repos/o/r/issues", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `[]`)
+	})
+	f.mux.HandleFunc("GET git.test/api/v1/repos/o/r/labels", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `[{"id":11,"name":"dependencies"}]`)
+	})
+	f.mux.HandleFunc("POST git.test/api/v1/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		if f.record(w, r, &f.issues) {
+			w.WriteHeader(http.StatusCreated)
+			io.WriteString(w, `{"number":3,"html_url":"https://git.test/o/r/issues/3"}`)
+		}
 	})
 	prev := newHTTPClient
 	newHTTPClient = func() *http.Client { return &http.Client{Transport: f} }
@@ -447,7 +479,7 @@ func TestRunCreatesBranchAndPR(t *testing.T) {
 	const branch = "deps/github-actions/actions-checkout-major" // v6 -> v7 is a major: its own bucket
 	for _, want := range []string{
 		"pr      created  " + branch + "  chore(deps): update actions/checkout to v7.0.1  https://git.test/o/r/pulls/7\n",
-		"1 created, 0 updated, 0 closed, 0 up-to-date, 0 skipped, 0 errors\n",
+		"1 created, 0 updated, 0 closed, 0 up-to-date, 0 skipped, 0 automerge, 0 errors\n",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
@@ -488,7 +520,7 @@ func TestRunDryRunAndToken(t *testing.T) {
 		t.Fatalf("dry run exit %d\n%s", code, stderr)
 	}
 	if !strings.Contains(stderr, "pr      would-create  deps/github-actions/actions-checkout-major") ||
-		!strings.Contains(stderr, "(dry run: 1 would change)") {
+		!strings.Contains(stderr, "(dry run: 1 would change, 0 would automerge)") {
 		t.Errorf("stderr:\n%s", stderr)
 	}
 	if len(f.created) != 0 || git(t, origin, "branch", "--list", "deps/*") != "" {

@@ -16,6 +16,9 @@ import (
 type Group struct {
 	Manager, Name, Branch, Title string
 	Updates                      []dep.Update
+	// Automerge is set when every update automerges; AutomergeStrategy is the first update's.
+	Automerge         bool
+	AutomergeStrategy string
 }
 
 // GroupManager is the Group.Manager of policy groups.
@@ -49,7 +52,12 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 		groups[i].Updates = append(groups[i].Updates, u)
 	}
 	for i := range groups {
-		groups[i].Title = groupTitle(groups[i])
+		g := &groups[i]
+		g.Title = groupTitle(*g)
+		g.Automerge = !slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return !u.Automerge })
+		if g.Automerge {
+			g.AutomergeStrategy = g.Updates[0].AutomergeStrategy
+		}
 	}
 	slices.SortFunc(groups, func(a, b Group) int {
 		return cmp.Or(strings.Compare(a.Manager, b.Manager), strings.Compare(a.Name, b.Name), strings.Compare(a.Branch, b.Branch))

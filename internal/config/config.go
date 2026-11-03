@@ -42,6 +42,23 @@ const (
 // RebaseWhens are the accepted rebaseWhen values.
 var RebaseWhens = []string{RebaseConflicted, RebaseBehindBase, RebaseNever}
 
+// Automerge strategies of automergeStrategy; auto uses the repository's default merge style.
+const (
+	StrategyAuto   = "auto"
+	StrategyMerge  = "merge"
+	StrategySquash = "squash"
+	StrategyRebase = "rebase"
+)
+
+// AutomergeStrategies are the accepted automergeStrategy values.
+var AutomergeStrategies = []string{StrategyAuto, StrategyMerge, StrategySquash, StrategyRebase}
+
+// AutomergeTypePR is the only supported automergeType: the platform merges the PR.
+const AutomergeTypePR = "pr"
+
+// DefaultDashboardTitle is the dependency dashboard issue title when none is configured.
+const DefaultDashboardTitle = "Dependency Dashboard"
+
 // Known values for validation.
 var (
 	Managers = []string{"github-actions", "gomod", "docker", "npm", "custom"}
@@ -107,12 +124,19 @@ type Config struct {
 	IgnorePaths       []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When absent: node_modules, bower_components, vendor, examples, __tests__, test, tests and __fixtures__ directories; any list (also []) replaces that default."`
 	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
 	// same names); rules override them.
-	SeparateMajorMinor    *bool    `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update."`
-	SeparateMultipleMajor *bool    `yaml:"separateMultipleMajor" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: one PR per newer major version (branch suffix -v<N>, newest release of each major) instead of one for the newest major."`
-	SeparateMinorPatch    *bool    `yaml:"separateMinorPatch" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch)."`
-	UpdateNotScheduled    *bool    `yaml:"updateNotScheduled" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
-	Rules                 []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
-	Custom                []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
+	SeparateMajorMinor    *bool  `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update."`
+	SeparateMultipleMajor *bool  `yaml:"separateMultipleMajor" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: one PR per newer major version (branch suffix -v<N>, newest release of each major) instead of one for the newest major."`
+	SeparateMinorPatch    *bool  `yaml:"separateMinorPatch" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch)."`
+	UpdateNotScheduled    *bool  `yaml:"updateNotScheduled" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
+	Automerge             bool   `yaml:"automerge" jsonschema:"default=false" jsonschema_description:"Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only."`
+	AutomergeStrategy     string `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase,default=auto" jsonschema_description:"Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase."`
+	AutomergeType         string `yaml:"automergeType" jsonschema:"enum=pr,default=pr" jsonschema_description:"How updates are automerged; only pr (platform auto-merge of the PR) is supported."`
+	// DependencyDashboard* configure the dashboard issue (Renovate's :dependencyDashboard).
+	DependencyDashboard       bool     `yaml:"dependencyDashboard" jsonschema:"default=false" jsonschema_description:"Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched."`
+	DependencyDashboardTitle  string   `yaml:"dependencyDashboardTitle" jsonschema:"default=Dependency Dashboard" jsonschema_description:"Title of the dependency dashboard issue; the issue is found by this exact title."`
+	DependencyDashboardLabels []string `yaml:"dependencyDashboardLabels" jsonschema_description:"Labels set when the dashboard issue is created (by name; on Gitea and Forgejo they must exist in the repository or its organization)."`
+	Rules                     []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
+	Custom                    []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
 	// CustomDatasources are referenced as datasource custom.<name>.
 	CustomDatasources map[string]CustomDatasource `yaml:"customDatasources" jsonschema_description:"User-defined datasources by name; deps (custom[] entries, annotations, Renovate markers) refer to them as datasource custom.<name>. The version list is fetched once per run."`
 
@@ -131,6 +155,26 @@ func (c *Config) MonoreposEnabled() bool { return c.Monorepos == nil || *c.Monor
 // (default true).
 func (c *Config) UpdateNotScheduledEnabled() bool {
 	return c.UpdateNotScheduled == nil || *c.UpdateNotScheduled
+}
+
+// DashboardTitle returns DependencyDashboardTitle, or DefaultDashboardTitle when unset.
+func (c *Config) DashboardTitle() string {
+	return cmp.Or(c.DependencyDashboardTitle, DefaultDashboardTitle)
+}
+
+// validateAutomerge checks automergeStrategy and automergeType of the top level (f "") or
+// a rule (f "rules[i].").
+func validateAutomerge(f, strategy, typ string, add addFunc) {
+	if strategy != "" && !slices.Contains(AutomergeStrategies, strategy) {
+		add(f+"automergeStrategy", "must be one of %s, got %q", list(AutomergeStrategies), strategy)
+	}
+	switch typ {
+	case "", AutomergeTypePR:
+	case "branch":
+		add(f+"automergeType", "branch is not supported: deps automerges through the platform's pull request auto-merge; use automergeType: pr")
+	default:
+		add(f+"automergeType", "must be pr, got %q", typ)
+	}
 }
 
 // Author is a parsed gitAuthor.
@@ -186,6 +230,9 @@ type Rule struct {
 	Schedule              []string `yaml:"schedule" jsonschema_description:"Cron windows overriding the top-level schedule; [] means always."` // non-nil overrides the top-level schedule; [] = always
 	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
 	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
+	Automerge         *bool  `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
+	AutomergeStrategy string `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
+	AutomergeType     string `yaml:"automergeType" jsonschema:"enum=pr" jsonschema_description:"Accepted for Renovate compatibility; only pr is supported."`
 
 	allow    *Allowed
 	schedule *schedule.Set
@@ -439,6 +486,15 @@ func (c *Config) Validate() error {
 	if c.RebaseWhen != "" && !slices.Contains(RebaseWhens, c.RebaseWhen) {
 		add("rebaseWhen", "must be one of %s, got %q", list(RebaseWhens), c.RebaseWhen)
 	}
+	validateAutomerge("", c.AutomergeStrategy, c.AutomergeType, add)
+	if c.DependencyDashboardTitle != "" && (strings.TrimSpace(c.DependencyDashboardTitle) == "" || strings.ContainsAny(c.DependencyDashboardTitle, "\r\n")) {
+		add("dependencyDashboardTitle", "must be a non-blank single line, got %q", c.DependencyDashboardTitle)
+	}
+	for i, l := range c.DependencyDashboardLabels {
+		if strings.TrimSpace(l) == "" || strings.Contains(l, ",") {
+			add(fmt.Sprintf("dependencyDashboardLabels[%d]", i), "must be a non-blank label name without ',', got %q", l)
+		}
+	}
 	c.minAge = 0
 	if c.MinimumReleaseAge != "" {
 		if d, err := ParseAge(c.MinimumReleaseAge); err != nil {
@@ -555,6 +611,7 @@ func (c *Config) validateRule(i int, tz string, add addFunc) {
 	if r.CommitScope != nil && *r.CommitScope != "" && !commitScopeRe.MatchString(*r.CommitScope) {
 		add(f+".commitScope", "must match %s, got %q", commitScopeRe, *r.CommitScope)
 	}
+	validateAutomerge(f+".", r.AutomergeStrategy, r.AutomergeType, add)
 	r.schedule = parseSchedule(f+".schedule", r.Schedule, tz, add)
 	r.minAge = nil
 	if r.MinimumReleaseAge != "" {

@@ -3,9 +3,11 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -90,11 +92,23 @@ func (g *fakeGit) BranchTip(_ context.Context, branch string) (string, []string,
 type fakePC struct {
 	open, closed []platform.PR
 	mergeable    *bool // returned by GetPR
-	fail         map[string]error
-	got          []int    // GetPR numbers
-	created      []string // heads
+	headSHA      string
+	fail         map[string]error // EnableAutoMerge errors are keyed by the PR number
+	got          []int            // GetPR numbers
+	created      []string         // heads
 	updated      []int
 	closedNow    []int
+
+	checksPassed bool
+	automerge    []string // EnableAutoMerge "<number>:<strategy>@<head sha>"
+	checked      []string // ChecksPassed shas
+	merged       []string // MergePR "<number>:<strategy>@<head sha>"
+
+	issues        []platform.Issue
+	issuePages    int
+	createdIssues []platform.Issue // title, body
+	issueLabels   [][]string
+	updatedIssues []platform.Issue // number, body
 }
 
 func (c *fakePC) DefaultBranch(context.Context) (string, error) {
@@ -114,7 +128,7 @@ func (c *fakePC) GetPR(_ context.Context, n int) (platform.PR, error) {
 		return platform.PR{}, err
 	}
 	c.got = append(c.got, n)
-	return platform.PR{Number: n, Mergeable: c.mergeable}, nil
+	return platform.PR{Number: n, Mergeable: c.mergeable, HeadSHA: c.headSHA}, nil
 }
 func (c *fakePC) CreatePR(_ context.Context, head, _, _, _ string) (platform.PR, error) {
 	if err := fail(c.fail, "CreatePR", head); err != nil {
@@ -135,6 +149,40 @@ func (c *fakePC) ClosePR(_ context.Context, n int) error {
 		return err
 	}
 	c.closedNow = append(c.closedNow, n)
+	return nil
+}
+func (c *fakePC) EnableAutoMerge(_ context.Context, pr platform.PR, strategy string) error {
+	c.automerge = append(c.automerge, fmt.Sprintf("%d:%s@%s", pr.Number, strategy, pr.HeadSHA))
+	return fail(c.fail, "EnableAutoMerge", strconv.Itoa(pr.Number))
+}
+func (c *fakePC) ChecksPassed(_ context.Context, sha string) (bool, error) {
+	c.checked = append(c.checked, sha)
+	return c.checksPassed, fail(c.fail, "ChecksPassed", "")
+}
+func (c *fakePC) MergePR(_ context.Context, pr platform.PR, strategy string) error {
+	if err := fail(c.fail, "MergePR", ""); err != nil {
+		return err
+	}
+	c.merged = append(c.merged, fmt.Sprintf("%d:%s@%s", pr.Number, strategy, pr.HeadSHA))
+	return nil
+}
+func (c *fakePC) ListIssues(_ context.Context, maxPages int) ([]platform.Issue, error) {
+	c.issuePages = maxPages
+	return c.issues, fail(c.fail, "ListIssues", "")
+}
+func (c *fakePC) CreateIssue(_ context.Context, title, body string, labels []string) (platform.Issue, error) {
+	if err := fail(c.fail, "CreateIssue", ""); err != nil {
+		return platform.Issue{}, err
+	}
+	c.createdIssues = append(c.createdIssues, platform.Issue{Title: title, Body: body})
+	c.issueLabels = append(c.issueLabels, labels)
+	return platform.Issue{Number: 500, Title: title, Body: body, URL: "https://forge/issues/500"}, nil
+}
+func (c *fakePC) UpdateIssue(_ context.Context, n int, body string) error {
+	if err := fail(c.fail, "UpdateIssue", ""); err != nil {
+		return err
+	}
+	c.updatedIssues = append(c.updatedIssues, platform.Issue{Number: n, Body: body})
 	return nil
 }
 

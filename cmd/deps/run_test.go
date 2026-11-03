@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -62,7 +63,7 @@ func TestRunRebasesBehindBase(t *testing.T) {
 	}
 	for _, want := range []string{
 		"pr      rebased  " + branch + "  ",
-		"0 created, 1 updated, 0 closed, 0 up-to-date, 0 skipped, 0 errors\n",
+		"0 created, 1 updated, 0 closed, 0 up-to-date, 0 skipped, 0 automerge, 0 errors\n",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
@@ -81,7 +82,7 @@ func TestRunRebasesBehindBase(t *testing.T) {
 	// Already on top of base: up to date, no push.
 	tip := git(t, origin, "rev-parse", branch)
 	if _, stderr, code = execute(t, "run", "--dir", work, "--author-email", "bot@example.invalid"); code != 0 ||
-		!strings.Contains(stderr, "0 created, 0 updated, 0 closed, 1 up-to-date, 0 skipped, 0 errors\n") {
+		!strings.Contains(stderr, "0 created, 0 updated, 0 closed, 1 up-to-date, 0 skipped, 0 automerge, 0 errors\n") {
 		t.Errorf("third run: exit %d\n%s", code, stderr)
 	}
 	if got := git(t, origin, "rev-parse", branch); got != tip {
@@ -145,5 +146,66 @@ func TestRunGitAuthorFromConfig(t *testing.T) {
 	const branch = "deps/github-actions/actions-checkout-major"
 	if got := git(t, origin, "log", "-1", "--format=%an <%ae>|%cn <%ce>", branch); got != "OCM Bot <ocm-bot@example.com>|OCM Bot <ocm-bot@example.com>" {
 		t.Errorf("author|committer = %q", got)
+	}
+}
+
+// automerge and dependencyDashboard end to end on Gitea: the created PR is scheduled for
+// auto-merge and the dashboard issue is created with resolved label ids; a dry run only reports.
+func TestRunAutomergeAndDashboard(t *testing.T) {
+	cleanEnv(t)
+	f := newFakeNet(t)
+	giteaEnv(t)
+	t.Setenv("DEPS_TOKEN", "tok")
+	origin, work := gitRepo(t, map[string]string{
+		".github/workflows/ci.yml": workflow,
+		".deps.yaml":               "automerge: true\nautomergeStrategy: squash\ndependencyDashboard: true\ndependencyDashboardLabels: [dependencies]\n",
+	})
+	const branch = "deps/github-actions/actions-checkout-major"
+
+	_, stderr, code := execute(t, "run", "--dir", work, "--dry-run")
+	if code != 0 || len(f.merges)+len(f.issues)+len(f.created) != 0 {
+		t.Fatalf("dry run: exit %d merges %v issues %v\n%s", code, f.merges, f.issues, stderr)
+	}
+	for _, want := range []string{
+		"pr      would-create, would-automerge  " + branch,
+		"dashboard would-create  Dependency Dashboard  \n",
+		"(dry run: 1 would change, 1 would automerge)\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("dry run stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+
+	_, stderr, code = execute(t, "run", "--dir", work, "--author-email", "bot@example.invalid")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		"pr      created, automerge  " + branch + "  chore(deps): update actions/checkout to v7.0.1  https://git.test/o/r/pulls/7\n",
+		"dashboard created  Dependency Dashboard  https://git.test/o/r/issues/3\n",
+		"1 created, 0 updated, 0 closed, 0 up-to-date, 0 skipped, 1 automerge, 0 errors\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	tip := git(t, origin, "rev-parse", branch)
+	if len(f.merges) != 1 || f.merges[0]["do"] != "squash" || f.merges[0]["merge_when_checks_succeed"] != true ||
+		f.merges[0]["delete_branch_after_merge"] != true || f.merges[0]["head_commit_id"] != tip {
+		t.Errorf("merge requests = %v (tip %s)", f.merges, tip)
+	}
+	if len(f.issues) != 1 || f.issues[0]["title"] != "Dependency Dashboard" || fmt.Sprint(f.issues[0]["labels"]) != "[11]" {
+		t.Fatalf("issues = %v", f.issues)
+	}
+	body, _ := f.issues[0]["body"].(string)
+	for _, want := range []string{
+		"- [ ] <!-- deps:rebase=" + branch + " --> chore(deps): update actions/checkout to v7.0.1 ([#7](https://git.test/o/r/pulls/7))\n",
+		"<details><summary>.github/workflows/ci.yml</summary>",
+		"- `actions/checkout v6.0.0`\n",
+		"<!-- deps:dashboard -->",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard body lacks %q:\n%s", want, body)
+		}
 	}
 }

@@ -84,6 +84,8 @@ jobs:
 |---|---|
 | push `<branchPrefix>*` branches, delete obsolete ones | contents: write |
 | list, create, edit and close PRs | pull-requests: write |
+| request auto-merge (`automerge`) | contents: write and pull-requests: write, and merge rights on the base branch. GitHub also needs "Allow auto-merge" in the repository settings; without it deps merges directly once checks are green, which reads commit statuses and check runs (statuses: read, checks: read) |
+| find, create and edit the dashboard issue (`dependencyDashboard`) | issues: write |
 | read private actions, modules, release notes | read access to those repositories (the same host's token, `DEPS_GITHUB_COM_TOKEN` for github.com, or the git credential helper) |
 
 `deps run --dry-run` needs none of these and works anonymously.

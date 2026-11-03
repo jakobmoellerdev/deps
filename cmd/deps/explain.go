@@ -251,6 +251,12 @@ func describeRule(r config.Rule) string {
 			add(b.k, strconv.FormatBool(*b.v))
 		}
 	}
+	if r.Automerge != nil {
+		add("automerge", strconv.FormatBool(*r.Automerge))
+	}
+	if r.AutomergeStrategy != "" {
+		add("automergeStrategy", r.AutomergeStrategy)
+	}
 	if len(f) == 0 {
 		return "(matches all)"
 	}
@@ -276,6 +282,9 @@ func describePolicy(p config.Policy) string {
 		p.Pin, allow, orDash(strings.Join(updates, ",")), orDash(p.Group), p.Schedule.String(), minAge)
 	if p.Versioning != "" {
 		s += " versioning=" + p.Versioning
+	}
+	if p.Automerge {
+		s += " automerge=" + p.AutomergeStrategy
 	}
 	return s
 }

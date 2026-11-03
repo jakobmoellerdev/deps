@@ -1,0 +1,280 @@
+package bot
+
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
+)
+
+const dashTitle = "Dependency Dashboard"
+
+var dashNow = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+
+// dashFixture is the bot fixture with detected deps (one skipped) for the dashboard.
+func dashFixture(t *testing.T) (string, *engine.Result) {
+	t.Helper()
+	root, res := fixture(t)
+	local := dep.Dep{Manager: "github-actions", File: "wf.yml", Line: 4, Name: "./local", Skip: "local action"}
+	res.Deps = []dep.Dep{res.Updates[1].Dep, res.Updates[0].Dep, local}
+	res.Skipped = []dep.Dep{local}
+	return root, res
+}
+
+// rateLimited makes newPRLimit 0: one managed PR was created in the last hour.
+func rateLimited() ([]platform.PR, Options) {
+	return []platform.PR{{Number: 50, Head: "deps/gomod/old", Merged: true, CreatedAt: dashNow.Add(-10 * time.Minute)}}, Options{HourlyLimit: 1}
+}
+
+func dashRun(t *testing.T, o Options, res *engine.Result, root string, pc *fakePC, g *fakeGit) ([]Action, []error, Action) {
+	t.Helper()
+	o.AuthorEmail, o.Managers, o.Now = email, managers, dashNow
+	if o.Dashboard == nil {
+		o.Dashboard = &DashboardOptions{Title: dashTitle, Labels: []string{"dependencies"}}
+	}
+	acts, errs := Run(t.Context(), o, root, res, nil, pc, g)
+	var dash Action
+	for _, a := range acts {
+		if a.Dashboard {
+			dash = a
+		}
+	}
+	return acts, errs, dash
+}
+
+func statusOf(acts []Action, branch string) string {
+	for _, a := range acts {
+		if a.Branch == branch && !a.Dashboard {
+			return a.Status
+		}
+	}
+	return ""
+}
+
+func TestDashboardCreate(t *testing.T) {
+	root, res := dashFixture(t)
+	pc := &fakePC{}
+	_, errs, dash := dashRun(t, Options{}, res, root, pc, &fakeGit{})
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if dash.Status != StatusCreated || dash.Number != 500 || dash.URL != "https://forge/issues/500" || dash.Title != dashTitle {
+		t.Fatalf("dashboard action %+v", dash)
+	}
+	if pc.issuePages != dashboardIssuePages || len(pc.createdIssues) != 1 || len(pc.updatedIssues) != 0 {
+		t.Fatalf("issues: pages %d created %v updated %v", pc.issuePages, pc.createdIssues, pc.updatedIssues)
+	}
+	if is := pc.createdIssues[0]; is.Title != dashTitle || !slices.Equal(pc.issueLabels[0], []string{"dependencies"}) {
+		t.Errorf("created %q labels %v", is.Title, pc.issueLabels[0])
+	}
+	body := pc.createdIssues[0].Body
+	for _, want := range []string{
+		"## Open\n\nThese PRs are open. Tick one to rebuild its branch.\n\n" +
+			"- [ ] <!-- deps:rebase=" + branchA + " --> " + titleA + " (#101)\n" +
+			"- [ ] <!-- deps:rebase=" + branchB + " --> chore(deps): update b/y to v2 (#102)\n",
+		"## Detected dependencies\n\n<details><summary>github-actions</summary>\n\n<details><summary>wf.yml</summary>\n\n" +
+			"- `a/x v1`\n- `b/y v1`\n- `./local`\n</details>\n\n</details>\n",
+		"\n" + dashboardMarker + "\n",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "## Errors") || strings.Contains(body, "## Awaiting schedule") {
+		t.Errorf("empty sections rendered:\n%s", body)
+	}
+}
+
+func TestDashboardUnchangedNoWrite(t *testing.T) {
+	root, res := dashFixture(t)
+	closed, o := rateLimited()
+	first := &fakePC{closed: closed}
+	acts, errs, dash := dashRun(t, o, res, root, first, &fakeGit{})
+	if len(errs) > 0 || dash.Status != StatusCreated || statusOf(acts, branchA) != StatusSkipLimit {
+		t.Fatalf("first run: %v %+v %+v", errs, dash, acts)
+	}
+	body := first.createdIssues[0].Body
+	if !strings.Contains(body, "## Rate-limited\n\nThese updates wait for the PR limits. Tick one to create its PR now.\n\n- [ ] <!-- deps:create="+branchA+" --> "+titleA+"\n") {
+		t.Errorf("rate-limited section missing:\n%s", body)
+	}
+
+	// The forge returns CRLF bodies after a web edit; a same-titled issue without the marker is
+	// not the dashboard.
+	issues := []platform.Issue{
+		{Number: 3, Title: dashTitle, Body: "my own notes"},
+		{Number: 7, Title: dashTitle, Body: strings.ReplaceAll(body, "\n", "\r\n"), URL: "https://forge/issues/7"},
+	}
+	second := &fakePC{closed: closed, issues: issues}
+	_, errs, dash = dashRun(t, o, res, root, second, &fakeGit{})
+	if len(errs) > 0 || dash.Status != StatusUpToDate || dash.Number != 7 || len(second.createdIssues)+len(second.updatedIssues) != 0 {
+		t.Fatalf("second run: %v %+v created %v updated %v", errs, dash, second.createdIssues, second.updatedIssues)
+	}
+
+	// Dry runs report but never write.
+	o.DryRun = true
+	dry := &fakePC{closed: closed}
+	if _, _, dash = dashRun(t, o, res, root, dry, &fakeGit{}); dash.Status != StatusWouldCreate || len(dry.createdIssues) != 0 {
+		t.Errorf("dry run without issue: %+v", dash)
+	}
+	dry = &fakePC{closed: closed, issues: []platform.Issue{{Number: 7, Title: dashTitle, Body: "old " + dashboardMarker}}}
+	if _, _, dash = dashRun(t, o, res, root, dry, &fakeGit{}); dash.Status != StatusWouldUpdate || len(dry.updatedIssues) != 0 {
+		t.Errorf("dry run with stale issue: %+v", dash)
+	}
+}
+
+func TestDashboardCheckboxCreateBypassesScheduleAndLimit(t *testing.T) {
+	root, res := dashFixture(t)
+	night, err := schedule.Parse([]string{"* 0-5 * * *"}, "UTC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Updates[0].Schedule = night // a/x is outside its schedule at dashNow
+	closed, o := rateLimited()
+	issue := platform.Issue{Number: 7, Title: dashTitle, Body: "x\n- [x] <!-- deps:create=" + branchA + " --> " + titleA + "\n" + dashboardMarker}
+	pc := &fakePC{closed: closed, issues: []platform.Issue{issue}}
+	g := &fakeGit{}
+	acts, errs, dash := dashRun(t, o, res, root, pc, g)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if statusOf(acts, branchA) != StatusCreated || statusOf(acts, branchB) != StatusSkipLimit || !slices.Equal(g.pushed, []string{branchA}) {
+		t.Fatalf("actions %+v pushed %v", acts, g.pushed)
+	}
+	if dash.Status != StatusUpdated || len(pc.updatedIssues) != 1 || pc.updatedIssues[0].Number != 7 {
+		t.Fatalf("dashboard %+v updated %v", dash, pc.updatedIssues)
+	}
+	body := pc.updatedIssues[0].Body
+	if strings.Contains(body, "[x]") || !strings.Contains(body, "- [ ] <!-- deps:rebase="+branchA+" -->") || !strings.Contains(body, "- [ ] <!-- deps:create="+branchB+" -->") {
+		t.Errorf("regenerated body:\n%s", body)
+	}
+
+	// Without the checkbox a/x waits for its schedule and is listed as such.
+	pc = &fakePC{closed: closed}
+	acts, _, _ = dashRun(t, o, res, root, pc, &fakeGit{})
+	if statusOf(acts, branchA) != StatusSkipSchedule || !strings.Contains(pc.createdIssues[0].Body, "## Awaiting schedule\n\nThese updates wait for their schedule window. Tick one to create its PR now.\n\n- [ ] <!-- deps:create="+branchA+" -->") {
+		t.Errorf("actions %+v body:\n%s", acts, pc.createdIssues[0].Body)
+	}
+}
+
+func TestDashboardRecreateClosed(t *testing.T) {
+	root, res := dashFixture(t)
+	closed := []platform.PR{{Number: 4, Head: branchA, Title: titleA, URL: "https://forge/pulls/4"}}
+	pc := &fakePC{closed: closed}
+	acts, _, _ := dashRun(t, Options{}, res, root, pc, &fakeGit{})
+	if statusOf(acts, branchA) != StatusSkipClosed {
+		t.Fatalf("actions %+v", acts)
+	}
+	if want := "## Ignored or blocked\n\n- [ ] <!-- deps:recreate=" + branchA + " --> " + titleA + " ([#4](https://forge/pulls/4) closed without merging; tick to recreate it)\n"; !strings.Contains(pc.createdIssues[0].Body, want) {
+		t.Errorf("body lacks %q:\n%s", want, pc.createdIssues[0].Body)
+	}
+
+	issue := platform.Issue{Number: 7, Title: dashTitle, Body: strings.Replace(pc.createdIssues[0].Body, "- [ ] <!-- deps:recreate=", "- [X] <!-- deps:recreate=", 1)}
+	pc = &fakePC{closed: closed, issues: []platform.Issue{issue}}
+	acts, errs, _ := dashRun(t, Options{}, res, root, pc, &fakeGit{})
+	if len(errs) > 0 || statusOf(acts, branchA) != StatusCreated || !slices.Contains(pc.created, branchA) {
+		t.Fatalf("recreate: %v %+v created %v", errs, acts, pc.created)
+	}
+}
+
+func TestDashboardRebase(t *testing.T) {
+	yes := true
+	root, res := dashFixture(t)
+	fpA := fingerprintOf(t, root, res, "a/x")
+	open := []platform.PR{{Number: 1, Head: branchA, Title: titleA, URL: "u1", Mergeable: &yes, Body: "x\n<!-- deps:fingerprint=" + fpA + " -->\n"}}
+	branches := map[string]string{"refs/heads/" + branchA: "a", "refs/heads/" + branchB: "b"}
+	authors := map[string]string{branchA: email, branchB: "human@example.invalid"}
+
+	// Unticked: a/x is up to date, b/y was modified by someone else.
+	pc := &fakePC{open: open}
+	g := &fakeGit{branches: branches, authors: authors}
+	acts, _, _ := dashRun(t, Options{}, res, root, pc, g)
+	if statusOf(acts, branchA) != StatusUpToDate || statusOf(acts, branchB) != StatusSkipModified || len(g.pushed) != 0 {
+		t.Fatalf("actions %+v pushed %v", acts, g.pushed)
+	}
+	body := pc.createdIssues[0].Body
+	if !strings.Contains(body, "- [ ] <!-- deps:rebase="+branchB+" --> chore(deps): update b/y to v2 (branch modified by someone else; tick to discard those commits and rebuild it)\n") ||
+		!strings.Contains(body, "- [ ] <!-- deps:rebase="+branchA+" --> "+titleA+" ([#1](u1))\n") {
+		t.Fatalf("body:\n%s", body)
+	}
+
+	// Ticked: both branches are rebuilt.
+	ticked := strings.ReplaceAll(body, "- [ ] <!-- deps:rebase=", "- [x] <!-- deps:rebase=")
+	pc = &fakePC{open: open, issues: []platform.Issue{{Number: 7, Title: dashTitle, Body: ticked}}}
+	g = &fakeGit{branches: branches, authors: authors}
+	acts, errs, dash := dashRun(t, Options{}, res, root, pc, g)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if statusOf(acts, branchA) != StatusRebased || statusOf(acts, branchB) != StatusCreated || !slices.Equal(g.pushed, []string{branchA, branchB}) {
+		t.Fatalf("actions %+v pushed %v", acts, g.pushed)
+	}
+	if dash.Status != StatusUpdated || strings.Contains(pc.updatedIssues[0].Body, "[x]") {
+		t.Errorf("dashboard %+v body:\n%s", dash, pc.updatedIssues[0].Body)
+	}
+}
+
+func TestDashboardErrorsAndSizeCap(t *testing.T) {
+	root, res := dashFixture(t)
+	for i := range 25 {
+		res.Errors = append(res.Errors, fmt.Errorf("f%d.yml: `boom`\nsecond line %s", i, strings.Repeat("x", 400)))
+	}
+	long := strings.Repeat("n", 200)
+	for i := range 2000 {
+		res.Deps = append(res.Deps, dep.Dep{Manager: "gomod", File: fmt.Sprintf("m%03d/go.mod", i/10), Name: fmt.Sprintf("%s/%d", long, i), Version: "v1.0.0"})
+	}
+	pc := &fakePC{}
+	_, errs, dash := dashRun(t, Options{}, res, root, pc, &fakeGit{})
+	if len(errs) > 0 || dash.Status != StatusCreated {
+		t.Fatalf("%v %+v", errs, dash)
+	}
+	body := pc.createdIssues[0].Body
+	if len(body) > dashboardMaxBytes {
+		t.Errorf("body is %d bytes, cap %d", len(body), dashboardMaxBytes)
+	}
+	if !strings.HasSuffix(body, dashboardMarker+"\n") || strings.Count(body, "<details>") != strings.Count(body, "</details>") {
+		t.Errorf("body not closed properly:\n%s", body[len(body)-500:])
+	}
+	if !strings.Contains(body, "more dependencies not listed (dashboard size limit)") || !strings.Contains(body, "- … and 5 more (see the run log)\n") {
+		t.Errorf("truncation notes missing")
+	}
+	if strings.Count(body, "\n- `f") != dashboardMaxErrors || !strings.Contains(body, "- `f0.yml: 'boom' second line xxx") || strings.Contains(body, strings.Repeat("x", 300)) {
+		t.Errorf("errors not flattened and truncated:\n%s", body[:3000])
+	}
+}
+
+func TestDashboardDisabledAndLoadError(t *testing.T) {
+	root, res := dashFixture(t)
+	pc := &fakePC{issues: []platform.Issue{{Number: 7, Title: dashTitle, Body: dashboardMarker}}}
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, &fakeGit{})
+	if len(errs) > 0 || pc.issuePages != 0 || len(pc.createdIssues)+len(pc.updatedIssues) != 0 || slices.ContainsFunc(acts, func(a Action) bool { return a.Dashboard }) {
+		t.Fatalf("disabled dashboard touched: %v pages %d %+v", errs, pc.issuePages, acts)
+	}
+
+	pc = &fakePC{fail: map[string]error{"ListIssues": errBoom}}
+	acts, errs, dash := dashRun(t, Options{}, res, root, pc, &fakeGit{})
+	if len(errs) != 1 || errs[0].Error() != "dependency dashboard: list issues: boom" || !errors.Is(errs[0], errBoom) {
+		t.Fatalf("errs = %v", errs)
+	}
+	if dash.Dashboard || len(pc.createdIssues) != 0 || statusOf(acts, branchA) != StatusCreated {
+		t.Errorf("dashboard %+v created %v actions %+v", dash, pc.createdIssues, acts)
+	}
+}
+
+func TestDashboardIssuesDisabled(t *testing.T) {
+	root, res := dashFixture(t)
+	pc := &fakePC{fail: map[string]error{"ListIssues": fmt.Errorf("%w: GET /repos/o/r/issues: 404", platform.ErrIssuesDisabled)}}
+	acts, errs, dash := dashRun(t, Options{}, res, root, pc, &fakeGit{})
+	if len(errs) > 0 || dash.Status != StatusSkipIssues || dash.Title != dashTitle || len(pc.createdIssues) != 0 {
+		t.Fatalf("errs %v dashboard %+v created %v", errs, dash, pc.createdIssues)
+	}
+	if statusOf(acts, branchA) != StatusCreated {
+		t.Errorf("PRs not processed: %+v", acts)
+	}
+}

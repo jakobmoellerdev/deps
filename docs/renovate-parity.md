@@ -51,9 +51,9 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | L4 | age column in PR body (Mend "Age" badge) | preset | release time as text | done |
 | L5 | Mend adoption / passing / confidence badges | preset | needs Mend's service | open (decide: external badge URLs or drop) |
 | L6 | OpenSSF scorecard badge (`security:openssf-scorecard`) | preset | — | open |
-| L7 | `automerge` / `automergeType: pr` | minor+patch | — | open |
+| L7 | `automerge` / `automergeType: pr` | minor+patch | `automerge` and `automergeStrategy` top level and per rule (with `updateTypes`: `[minor, patch]`); a PR automerges when all its updates do. Gitea/Forgejo: `merge_when_checks_succeed`; GitHub: `enablePullRequestAutoMerge`, falling back to a direct merge once the PR is mergeable with green statuses and check runs. `automergeType` accepts only `pr` | done |
 | L8 | `:rebaseStalePrs` | preset | `rebaseWhen: behind-base-branch` (also `conflicted`, the default, and `never`); unchanged PRs are rebuilt on the moved base and force-pushed (`rebased`) | done |
-| L9 | `:dependencyDashboard` | preset | — | open |
+| L9 | `:dependencyDashboard` | preset | `dependencyDashboard` (+ `dependencyDashboardTitle`, `dependencyDashboardLabels`): one issue with awaiting-schedule, rate-limited, ignored/blocked and open sections, errors and detected dependencies; checkboxes create (bypassing schedule and limits), recreate closed PRs and rebase branches on the next run; edited only when the body changes, never closed | done |
 | L10 | `prConcurrentLimit: 0` / `prHourlyLimit: 0` (unlimited) | global | `prConcurrentLimit`/`prHourlyLimit` (0 = unlimited, the deps default; Renovate defaults to 10/2); `--max-new-prs` stays a per-run cap; the smallest non-zero limit wins | done |
 | L10a | `prConcurrentLimit` | global | open managed PRs + PRs created this run must stay below it | done |
 | L10b | `prHourlyLimit` | global | managed PRs (open and closed) created in the last hour, by `created_at`, count against it | done |

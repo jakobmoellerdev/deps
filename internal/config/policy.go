@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"time"
@@ -36,6 +37,9 @@ type Policy struct {
 	Kind         dep.UpdateType // update type of a PolicyFor result, "" for Policy
 	MinAge       time.Duration  // minimum release age of new versions, 0 = off
 	Versioning   string         // versioning scheme set by a rule, "" = the dep's own
+	Automerge    bool           // request platform auto-merge for the PR
+	// AutomergeStrategy is the merge method of an automerged PR (AutomergeStrategies).
+	AutomergeStrategy string
 	// PR buckets (separateMajorMinor, separateMultipleMajor, separateMinorPatch).
 	SeparateMajorMinor, SeparateMultipleMajor, SeparateMinorPatch bool
 }
@@ -95,6 +99,8 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		SeparateMajorMinor:    c.SeparateMajorMinor == nil || *c.SeparateMajorMinor,
 		SeparateMultipleMajor: c.SeparateMultipleMajor != nil && *c.SeparateMultipleMajor,
 		SeparateMinorPatch:    c.SeparateMinorPatch != nil && *c.SeparateMinorPatch,
+		Automerge:             c.Automerge,
+		AutomergeStrategy:     cmp.Or(c.AutomergeStrategy, StrategyAuto),
 	}
 	if production(d) {
 		p.CommitType = CommitFix
@@ -162,6 +168,12 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		}
 		if r.SeparateMinorPatch != nil {
 			p.SeparateMinorPatch = *r.SeparateMinorPatch
+		}
+		if r.Automerge != nil {
+			p.Automerge = *r.Automerge
+		}
+		if r.AutomergeStrategy != "" {
+			p.AutomergeStrategy = r.AutomergeStrategy
 		}
 	}
 	return p

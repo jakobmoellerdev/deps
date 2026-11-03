@@ -210,6 +210,8 @@ type Update struct {
     CommitType  string        // policy commit type (fix, chore, ...)
     CommitScope string        // policy commit scope; "" = none
     Bucket      string        // PR bucket among the dep's updates: "" (only or non-major), "major", "v<N>", "minor", "patch"
+    Automerge   bool          // policy automerge of the update's type
+    AutomergeStrategy string  // policy automergeStrategy: auto, merge, squash, rebase
 }
 ```
 
@@ -299,9 +301,9 @@ type Trace struct {
     Err        error
 }
 type TraceUpdate struct{ Update dep.Update; Policy *config.Policy } // Policy: of Update.Type (updateTypes rules included)
-type Result     struct{ Updates []dep.Update; Skipped []dep.Dep; Errors []error }
+type Result     struct{ Updates []dep.Update; Skipped []dep.Dep; Errors []error; Deps []dep.Dep } // Deps: every extracted dep, Skipped included (dashboard)
 type FileChange struct{ Path string; Mode fs.FileMode; Old, New []byte }
-type Group      struct{ Manager, Name, Branch, Title string; Updates []dep.Update }
+type Group      struct{ Manager, Name, Branch, Title string; Updates []dep.Update; Automerge bool; AutomergeStrategy string } // Automerge: all updates automerge; strategy of the first
 
 func Managers(cfg *config.Config) ([]manager.Manager, error)
 func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.Env, o Options) (*Result, error)
@@ -322,13 +324,20 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) // the on
   - A major candidate whose release time predates the current version's is rejected as `older than current`. This drops legacy pre-module tags such as `k8s.io/client-go v1.5.2` (2016) when the current version is `v0.37.1`.
   - With a `minimumReleaseAge` in the policy of the candidate's kind, a candidate released less than that long before `Options.Now` is rejected as `too new (released <date>, minimum <age>)`; the bucket's next lower candidate is tried. Without `separateMajorMinor` all kinds share one bucket, so a too-new major falls back to an old enough minor.
   - Unknown times (zero, or a lookup error, logged at debug level) never reject. Digest refreshes and pins (no new version) and security updates are exempt from the age.
-- The chosen update (also digest, pin and security updates) takes `CommitType`/`CommitScope` and, unless it is a security update, `Group`/`Schedule` from the policy of its type (`config.Policy` also has `Monorepo`, the built-in group that applied, and `Kind`, the type a `PolicyFor` result is for).
+- The chosen update (also digest, pin and security updates) takes `CommitType`/`CommitScope` and `Automerge`/`AutomergeStrategy` and, unless it is a security update, `Group`/`Schedule` from the policy of its type (`config.Policy` also has `Monorepo`, the built-in group that applied, and `Kind`, the type a `PolicyFor` result is for).
 
 ```go
 // internal/platform
 type Kind string // "github" | "gitea" | "forgejo"
 type Info struct{ Kind Kind; ServerURL, APIURL, Host, Repo string } // Repo = "owner/name"
-type PR struct{ Number int; Title, Body, Head, State, URL string; Merged bool; Mergeable *bool; CreatedAt time.Time } // CreatedAt zero when omitted
+type PR struct {
+    Number int; Title, Body, Head, HeadSHA, State, URL string; Merged bool; Mergeable *bool
+    CreatedAt time.Time // zero when omitted
+    NodeID    string    // GitHub GraphQL id; "" on Gitea/Forgejo
+    AutoMerge bool      // GitHub auto_merge non-null; always false on Gitea/Forgejo (not reported)
+}
+type Issue struct{ Number int; Title, Body, URL string }
+var ErrAutoMergePending, ErrAutoMergeUnavailable, ErrIssuesDisabled error
 type Client interface {
     DefaultBranch(ctx context.Context) (string, error)
     ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) // "open" | "closed"
@@ -336,6 +345,12 @@ type Client interface {
     CreatePR(ctx context.Context, head, base, title, body string) (PR, error)
     UpdatePR(ctx context.Context, number int, title, body string) error
     ClosePR(ctx context.Context, number int) error
+    EnableAutoMerge(ctx context.Context, pr PR, strategy string) error // ErrAutoMergePending, ErrAutoMergeUnavailable
+    ChecksPassed(ctx context.Context, sha string) (bool, error)        // >= 1 status or check run, all green
+    MergePR(ctx context.Context, pr PR, strategy string) error         // pinned to pr.HeadSHA
+    ListIssues(ctx context.Context, maxPages int) ([]Issue, error)     // open, PRs excluded; ErrIssuesDisabled
+    CreateIssue(ctx context.Context, title, body string, labels []string) (Issue, error)
+    UpdateIssue(ctx context.Context, number int, body string) error
 }
 type Overrides struct{ Kind, APIURL, Repo string } // from flags; "" = auto
 func FromEnv(getenv func(string) string) (Info, bool)
@@ -367,12 +382,18 @@ type Options struct {
     Managers                      []manager.Manager
     Now                           time.Time // schedule evaluation; zero = time.Now()
     Notes                         Notes     // nil = no ages/notes
+    Dashboard                     *DashboardOptions // nil = no dashboard; an existing one is left alone
 }
+type DashboardOptions struct{ Title string; Labels []string }
 type Notes interface { // implemented by releasenotes.Notes
     Section(ctx context.Context, ups []dep.Update) string
     Age(ctx context.Context, u dep.Update) string
 }
-type Action  struct{ Branch, Title, Status, URL string; Number int }
+type Action struct {
+    Branch, Title, Status, URL string; Number int
+    Automerge string // automerge outcome appended to the status ("created, automerge"); "" = not automerged
+    Dashboard bool   // the dashboard issue, not a PR
+}
 func Run(ctx context.Context, o Options, root string, res *engine.Result, post map[string]engine.PostProcessor, pc platform.Client, g Git) ([]Action, []error)
 ```
 
@@ -424,24 +445,36 @@ The composite action passes `${{ gitea.gitea_default_actions_url }}` into `DEPS_
 
 | Method | Endpoint |
 |---|---|
-| DefaultBranch | `GET {api}/repos/{repo}` → `.default_branch` |
+| DefaultBranch | `GET {api}/repos/{repo}` → `.default_branch` (the repository JSON is fetched once per run and also gives `allow_auto_merge`, `allow_merge_commit`, `allow_squash_merge`, `allow_rebase_merge`, `has_issues`) |
 | ListPRs | `GET {api}/repos/{repo}/pulls?state=<s>&sort=updated&direction=desc&per_page=100&page=N` |
-| GetPR | `GET .../pulls/{n}` (nullable `mergeable`) |
+| GetPR | `GET .../pulls/{n}` (nullable `mergeable`, `node_id`, `head.sha`, nullable `auto_merge`) |
 | CreatePR | `POST .../pulls {title,head,base,body}` |
 | UpdatePR | `PATCH .../pulls/{n} {title,body}` |
 | ClosePR | `PATCH .../pulls/{n} {state:"closed"}` |
+| EnableAutoMerge | `POST {graphql}` mutation `enablePullRequestAutoMerge(input:{pullRequestId:<node_id>, mergeMethod:MERGE\|SQUASH\|REBASE})`; not sent when `allow_auto_merge` is `false` |
+| ChecksPassed | `GET .../commits/{sha}/status` (`state`, `total_count`) and `GET .../commits/{sha}/check-runs?per_page=100&page=N` (`status`, `conclusion`) |
+| MergePR | `PUT .../pulls/{n}/merge {merge_method, sha}` |
+| ListIssues | `GET {api}/repos/{repo}/issues?state=open&per_page=100&page=N`, entries with `pull_request` dropped; 410 → issues disabled |
+| CreateIssue | `POST .../issues {title,body,labels:[names]}` |
+| UpdateIssue | `PATCH .../issues/{n} {body}` |
 
-On GitHub, `Merged` is `merged_at != null`.
+On GitHub, `Merged` is `merged_at != null` and `AutoMerge` is `auto_merge != null`. `{graphql}` is `https://api.github.com/graphql`, or `https://<host>/api/graphql` on GHES.
 
 **Gitea / Forgejo.** Header: `Authorization: token <t>`.
 
 | Method | Endpoint |
 |---|---|
-| DefaultBranch | `GET {api}/repos/{repo}` |
+| DefaultBranch | `GET {api}/repos/{repo}` (also `default_merge_style`, `has_issues`, `external_tracker`) |
 | ListPRs | `GET {api}/repos/{repo}/pulls?state=<s>&sort=recentupdate&limit=50&page=N` |
 | GetPR / CreatePR / UpdatePR / ClosePR | same paths and bodies as GitHub |
+| EnableAutoMerge | `POST .../pulls/{n}/merge {do, merge_when_checks_succeed: true, delete_branch_after_merge: true, head_commit_id}`; the style field is `do` on Gitea 28 and `Do` on Forgejo (both `swagger.v1.json`). 409 `already scheduled` is success; 405 `Please try again later` is pending. |
+| ChecksPassed | `GET .../commits/{sha}/status` (Actions report commit statuses) |
+| MergePR | `POST .../pulls/{n}/merge {do, delete_branch_after_merge: true, head_commit_id}` |
+| ListIssues | `GET {api}/repos/{repo}/issues?state=open&type=issues&limit=50&page=N`; a 404 with `has_issues: false` or an `external_tracker` → issues disabled |
+| CreateIssue | `POST .../issues {title,body,labels:[ids]}`; ids from `GET .../labels` and `GET {api}/orgs/{owner}/labels` (case-insensitive names) |
+| UpdateIssue | `PATCH .../issues/{n} {body}` |
 
-On Gitea and Forgejo, `Merged` is the `merged` field and `Mergeable` is the `mergeable` field.
+On Gitea and Forgejo, `Merged` is the `merged` field and `Mergeable` is the `mergeable` field. Their PR JSON does not report a scheduled auto-merge, so `AutoMerge` is always false and the request is repeated (idempotently) on later runs.
 
 Both clients share these rules:
 - `Head` = `head.ref`; `URL` = `html_url`.
@@ -469,7 +502,8 @@ Both clients share these rules:
 3. **State:**
    - remote `refs/heads/<branchPrefix>*` (`branchPrefix`, default `deps/`);
    - open PRs (up to 20 pages) and closed PRs (up to 4 pages);
-   - both PR lists are filtered to head branches under `branchPrefix`; the bot never touches other branches or PRs.
+   - both PR lists are filtered to head branches under `branchPrefix`; the bot never touches other branches or PRs;
+   - with `dependencyDashboard`, the dashboard issue and its ticked checkboxes (see [Dependency dashboard](#dependency-dashboard)). A failed issue list is an error and the dashboard is not written this run; a repository without issues skips the dashboard (`skipped: issues disabled`, a warning).
 4. **Grouping:**
    - Updates whose policy sets `group` form one group per group name: branch `<prefix>group/<slug(group)>`, title `<type>(<scope>): update <group> (<n> dependencies)`, `update <group> to <v>` when all members move to one version, or the single-dependency title below when only one dependency is in it.
    - Every other update forms one group per (manager, name): branch `<prefix><manager>/<slug(name)>`.
@@ -488,6 +522,7 @@ Both clients share these rules:
    - The PR body is a `| File | From | To | Type |` table (with an *Age* column when release notes are enabled), a `### Security` section listing the advisories (if any), the release notes section, then `<!-- deps:fingerprint=<fp> -->`.
    - The commit message is the title, a blank line, then one line per update: `- <file>:<line> <from> -> <to>`.
 6. **Per-group decision**, first match wins:
+   Dashboard requests for a branch apply first: `create` and `recreate` bypass the schedule (the group is built) and the new-PR limit, `recreate` also bypasses rule 1, and `rebase` bypasses the schedule, the limit and rule 5 and turns an unchanged open PR into a rebuild (`rebased`).
    1. No open PR exists, and a closed PR has the same branch, was not merged and has the same title → `skipped: closed PR for this version`.
    2. A non-security update of the group is outside its schedule (evaluated at run time in `timezone`): with `updateNotScheduled: true` (the default, as in Renovate) a group with an open PR continues below, so content changes, conflicts and `rebaseWhen` keep the PR current, and only creating a new PR waits for the window → `skipped: outside schedule`. With `updateNotScheduled: false` every out-of-schedule group is `skipped: outside schedule`. Nothing is built or pushed for skipped groups.
    3. The open PR's fingerprint matches (its content is unchanged):
@@ -503,7 +538,26 @@ Both clients share these rules:
    **Branch tip fetch:** `BranchTip` runs `git fetch --no-tags origin refs/heads/<b>` (with `--depth=1` in shallow clones, so full clones stay full) and parses the raw `git cat-file commit FETCH_HEAD` header for the author email and parents; the raw object still lists the parent when a shallow graft hides it. It is fetched at most once per group and only when the branch exists and the author or parent is needed.
 
    A build, git or API error in one group is recorded, and the next group is processed.
-7. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open PR under `branchPrefix` whose branch matches no current group is closed and its branch deleted (`closed`). Groups that are outside their schedule still count as current, so their PRs are never closed as obsolete. This guard ensures that a failed upstream lookup never closes a valid PR.
+8. **Automerge:** for a group whose updates all automerge, after `created`, `updated`, `rebased` or `up-to-date` (see [Automerge](#automerge)). An automerge error is recorded; the PR's action is kept.
+9. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open PR under `branchPrefix` whose branch matches no current group is closed and its branch deleted (`closed`). Groups that are outside their schedule still count as current, so their PRs are never closed as obsolete. This guard ensures that a failed upstream lookup never closes a valid PR.
+10. **Dashboard:** with `dependencyDashboard`, the body is rendered from the actions, the engine and bot errors and `Result.Deps`, then the issue is created (with `dependencyDashboardLabels`), edited when the body changed, or left alone (`up-to-date`). A dry run reports `would-create`/`would-update`.
+
+### Automerge
+
+A group automerges when every update in it has `Automerge` from the policy of its type; its strategy is the first update's `AutomergeStrategy`. Mixed groups are not automerged. The request goes to the PR deps just created, updated or rebased (with the pushed head), or to the up-to-date open PR:
+
+- **Already enabled** (GitHub `auto_merge` non-null) → `automerge enabled`, no request.
+- **Dry run** → `would-automerge`, no request.
+- **Gitea / Forgejo:** `POST /pulls/{n}/merge` with `merge_when_checks_succeed: true` schedules the merge; the forge merges once the required status checks succeed (right away when they already did) and deletes the branch. 201/200 and 409 `already scheduled` → `automerge`. 405 `Please try again later` (the mergeability check of a fresh push is still running, or the PR conflicts) → `automerge pending`, retried next run without an error. `head_commit_id` pins the head deps pushed or saw.
+- **GitHub:** `enablePullRequestAutoMerge` → `automerge`. GitHub refuses it when auto-merge is disallowed in the repository (also known up front from `allow_auto_merge: false`) or when the PR has nothing left to wait for (`Pull request is in clean status`, also `unstable`/`has_hooks`). Then deps falls back to merging directly, but only when a fresh `GetPR` reports `mergeable: true` and `ChecksPassed(head.sha)` is true: at least one commit status or check run exists, the combined status is `success` (when there are statuses) and every check run is `completed` with `success`, `neutral` or `skipped`. Then `PUT /pulls/{n}/merge` with `sha` = the checked head → `merged`. Otherwise → `automerge waiting for checks`, and the next run checks again. A repository without any checks therefore never merges through the fallback.
+- `auto` maps to the repository default: Gitea/Forgejo `default_merge_style` (else `merge`); GitHub the first allowed of merge commit, squash, rebase (else `MERGE`).
+- Security updates follow the same policy.
+
+### Dependency dashboard
+
+- **Finding it.** The first open issue (lowest number) among up to 10 pages of open issues whose title equals `dependencyDashboardTitle` and whose body contains `<!-- deps:dashboard -->`. GitHub lists PRs as issues; they are dropped. deps never closes it; with `dependencyDashboard: false` it is neither read nor written.
+- **Checkboxes.** `- [x] <!-- deps:<action>=<branch> -->` lines (`x` or `X`) are requests for the next run: `create` (awaiting schedule, rate-limited), `recreate` (closed without merging), `rebase` (open PRs, and branches modified by someone else, whose commits are then discarded). Every body deps writes has all boxes unticked.
+- **Body.** Sections in this order, each left out when empty: `Awaiting schedule`, `Rate-limited`, `Ignored or blocked`, `Open` (PR links), `Errors` (at most 20, flattened to one line of at most 300 characters), `Detected dependencies` (`<details>` per manager and per file, one `` `name version` `` line per extracted dep, sorted by manager, file, line and name). Items follow the group order, so the body is deterministic and an unchanged run does not edit the issue (line endings and surrounding whitespace are ignored in the comparison). The body is capped at 60 000 bytes (GitHub allows 65 536 characters); lists that do not fit end with a `not listed` note, and open `<details>` are always closed.
 
 ### Release age and notes
 
@@ -625,8 +679,6 @@ Editor support: `deps schema > deps.schema.json`, then start `.deps.yaml` with `
 
 Open items from [renovate-parity.md](renovate-parity.md) and the performance plan:
 
-- per-rule `automerge` / `automergeType: pr` (L7);
-- a dependency dashboard issue (L9);
 - PR body badges: Mend adoption/passing/confidence (L5; external badge URLs or drop) and the OpenSSF scorecard (L6);
 - GitHub hosting (O1): release binaries and a GitHub-hosted action, so GitHub workflows need no `go run`;
 - the final OCM translation (O4): `examples-ocm.deps.yaml` plus the remaining groups listed in [migrating-from-renovate.md](migrating-from-renovate.md#worked-example-open-component-model);
@@ -643,7 +695,7 @@ The user-facing reference (every key, its default and validation, rule semantics
 - **Pre-policy vs per-type policy.** Decisions needed before an update exists (`ignore` of the dep, `pin`, `versioning`, whether to look it up) come from rules without `updateTypes`; everything else is evaluated per candidate type (section 4), which is why `pin` and `versioning` are rejected on `updateTypes` rules.
 - **Renovate-compatible defaults where they matter.** Default `ignorePaths`, default-ignored dep types (indirect, `go`, peerDependencies, engines), semantic commit prefixes and built-in monorepo groups replace the presets OCM relies on; the PR limits default to unlimited (`prConcurrentLimit`/`prHourlyLimit` 0), capped per run by `--max-new-prs`.
 - **Validated at load.** Constraints, `allow` regexes, schedules, ages and regex versioning schemes are compiled in `Validate`; custom `match` expressions and datasource selectors are checked there too, so a bad config never starts a lookup.
-- **Not accepted yet:** `rules[].automerge` (roadmap).
+- **Automerge through the platform only.** `automergeType` accepts only `pr`; `branch` (Renovate's merge without a PR) is rejected, because deps never pushes to the base branch.
 
 ## 10. Why Go
 

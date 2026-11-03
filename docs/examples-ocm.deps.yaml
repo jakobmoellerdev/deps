@@ -1,4 +1,4 @@
-# open-component-model renovate.json5 packageRules relevant to P1-P3, P7-P12, P15, P17 and L8, translated.
+# open-component-model renovate.json5 packageRules relevant to P1-P3, P7-P12, P15, P17, L7, L8 and L9, translated.
 branchPrefix: renovate/
 rebaseWhen: behind-base-branch # :rebaseStalePrs
 gitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>'
@@ -10,6 +10,9 @@ minimumReleaseAge: 28 days # digest/pin updates are always exempt (the minimumRe
 separateMinorPatch: true
 separateMultipleMajor: true
 updateNotScheduled: true # the default: open PRs are kept current outside their schedule
+automerge: false # the default; rule 20 automerges minor and patch updates
+automergeType: pr # the only supported type
+dependencyDashboard: true # :dependencyDashboard
 customDatasources:
   # renovate.json5 customDatasources.envtest: the JSONata transform (keys of .releases without
   # the leading v) becomes a selector plus versionRegex. Used by the custom.envtest markers in
@@ -97,3 +100,5 @@ rules:
     group: Helm
     separateMinorPatch: false
     schedule: ['* * * * 0']
+  - updateTypes: [minor, patch]                                # 20 automerge minor/patch once checks pass
+    automerge: true

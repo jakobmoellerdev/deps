@@ -110,7 +110,8 @@ func TestSchema(t *testing.T) {
 		}
 	}
 	if want := []string{"version", "pin", "timezone", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "actions", "minimumReleaseAge", "ignorePaths",
-		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "rules", "custom", "customDatasources"}; len(s.Properties) != len(want) {
+		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType",
+		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "rules", "custom", "customDatasources"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
 		for _, k := range want {
@@ -134,7 +135,9 @@ func TestSchema(t *testing.T) {
 	}
 	if s.Properties["pin"].Default != "keep" || s.Properties["security"].Default != true || custom.Properties["versioning"].Default != "semver" ||
 		s.Properties["separateMajorMinor"].Default != true || s.Properties["separateMultipleMajor"].Default != false ||
-		s.Properties["separateMinorPatch"].Default != false || s.Properties["updateNotScheduled"].Default != true {
+		s.Properties["separateMinorPatch"].Default != false || s.Properties["updateNotScheduled"].Default != true ||
+		s.Properties["automerge"].Default != false || s.Properties["automergeStrategy"].Default != "auto" ||
+		s.Properties["dependencyDashboard"].Default != false || s.Properties["dependencyDashboardTitle"].Default != config.DefaultDashboardTitle {
 		t.Error("defaults missing")
 	}
 	if _, stderr, code := execute(t, "schema", "x"); code != 2 || !strings.Contains(stderr, "unexpected arguments") {

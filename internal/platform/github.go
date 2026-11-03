@@ -4,29 +4,61 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
 // NewClient returns the pull request client for info.Kind (gitea and forgejo share one).
 func NewClient(info Info, token string, c *http.Client) Client {
-	r := rest{api: info.APIURL, repo: info.Repo, token: token, c: c}
-	if info.Kind == GitHub {
-		return &githubClient{r}
+	switch info.Kind {
+	case GitHub:
+		return &githubClient{api: info.APIURL, repo: info.Repo, token: token, c: c}
+	case Forgejo:
+		return &giteaClient{api: info.APIURL, repo: info.Repo, token: token, c: c, forgejo: true}
 	}
-	return &giteaClient{r}
+	return &giteaClient{api: info.APIURL, repo: info.Repo, token: token, c: c}
 }
 
 // rest is the shared JSON-over-HTTP core of both clients.
 type rest struct {
 	api, repo, token string
 	c                *http.Client
+
+	mu   sync.Mutex
+	info *apiRepo // GET /repos/{repo}, cached after the first success
+}
+
+// statusError is a non-2xx API response.
+type statusError struct {
+	method, path, status string
+	code                 int
+	body                 []byte // first 200 bytes
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("%s %s: %s: %s", e.method, e.path, e.status, e.body)
+}
+
+// hasStatus reports whether err is an API response with code whose body contains substr
+// (case-insensitive).
+func hasStatus(err error, code int, substr string) bool {
+	var se *statusError
+	return errors.As(err, &se) && se.code == code && strings.Contains(strings.ToLower(string(se.body)), substr)
 }
 
 func (r *rest) do(ctx context.Context, method, path string, in, out any, setHeaders func(http.Header)) error {
+	return r.doURL(ctx, method, r.api+path, path, in, out, setHeaders)
+}
+
+// doURL sends a JSON request to url; errors name the request as "<method> <label>".
+func (r *rest) doURL(ctx context.Context, method, url, label string, in, out any, setHeaders func(http.Header)) error {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -35,7 +67,7 @@ func (r *rest) do(ctx context.Context, method, path string, in, out any, setHead
 		}
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, r.api+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return err
 	}
@@ -45,41 +77,75 @@ func (r *rest) do(ctx context.Context, method, path string, in, out any, setHead
 	setHeaders(req.Header)
 	resp, err := r.c.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", method, path, err)
+		return fmt.Errorf("%s %s: %w", method, label, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
-		return fmt.Errorf("%s %s: %s: %s", method, path, resp.Status, b)
+		return &statusError{method: method, path: label, status: resp.Status, code: resp.StatusCode, body: b}
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("%s %s: decode: %w", method, path, err)
+		return fmt.Errorf("%s %s: decode: %w", method, label, err)
 	}
 	return nil
 }
 
+// apiRepo covers the repository JSON of GitHub and Gitea/Forgejo.
+type apiRepo struct {
+	DefaultBranch string `json:"default_branch"`
+	// GitHub; only reported to tokens with push access, so nil means unknown.
+	AllowAutoMerge   *bool `json:"allow_auto_merge"`
+	AllowMergeCommit *bool `json:"allow_merge_commit"`
+	AllowSquashMerge *bool `json:"allow_squash_merge"`
+	AllowRebaseMerge *bool `json:"allow_rebase_merge"`
+	// Gitea and Forgejo.
+	DefaultMergeStyle string `json:"default_merge_style"`
+	// Both: has_issues false disables the tracker; Gitea/Forgejo also report an external
+	// tracker (external_tracker non-null), which leaves the issue API at 404.
+	HasIssues       *bool           `json:"has_issues"`
+	ExternalTracker json.RawMessage `json:"external_tracker"`
+}
+
+// repository returns the repository JSON, fetched once per client.
+func (r *rest) repository(ctx context.Context, h func(http.Header)) (*apiRepo, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.info != nil {
+		return r.info, nil
+	}
+	var v apiRepo
+	if err := r.do(ctx, http.MethodGet, "/repos/"+r.repo, nil, &v, h); err != nil {
+		return nil, err
+	}
+	r.info = &v
+	return r.info, nil
+}
+
 // apiPR covers the PR JSON of GitHub and Gitea/Forgejo.
 type apiPR struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	Body      string    `json:"body"`
-	State     string    `json:"state"`
-	HTMLURL   string    `json:"html_url"`
-	Merged    bool      `json:"merged"`
-	MergedAt  *string   `json:"merged_at"`
-	Mergeable *bool     `json:"mergeable"`
-	CreatedAt time.Time `json:"created_at"`
+	Number    int             `json:"number"`
+	NodeID    string          `json:"node_id"`
+	Title     string          `json:"title"`
+	Body      string          `json:"body"`
+	State     string          `json:"state"`
+	HTMLURL   string          `json:"html_url"`
+	Merged    bool            `json:"merged"`
+	MergedAt  *string         `json:"merged_at"`
+	Mergeable *bool           `json:"mergeable"`
+	AutoMerge json.RawMessage `json:"auto_merge"`
+	CreatedAt time.Time       `json:"created_at"`
 	Head      struct {
 		Ref string `json:"ref"`
+		SHA string `json:"sha"`
 	} `json:"head"`
 }
 
 func (p *apiPR) pr() PR {
-	return PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, State: p.State, URL: p.HTMLURL, CreatedAt: p.CreatedAt}
+	return PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, HeadSHA: p.Head.SHA, State: p.State, URL: p.HTMLURL, CreatedAt: p.CreatedAt}
 }
 
 type prEdit struct {
@@ -95,6 +161,22 @@ type prCreate struct {
 	Body  string `json:"body"`
 }
 
+// apiIssue covers the issue JSON of GitHub and Gitea/Forgejo.
+type apiIssue struct {
+	Number      int             `json:"number"`
+	Title       string          `json:"title"`
+	Body        string          `json:"body"`
+	HTMLURL     string          `json:"html_url"`
+	PullRequest json.RawMessage `json:"pull_request"` // non-null for PRs in issue lists
+}
+
+func (i *apiIssue) issue() Issue {
+	return Issue{Number: i.Number, Title: i.Title, Body: i.Body, URL: i.HTMLURL}
+}
+
+// isPR reports whether an issue list entry is a pull request.
+func (i *apiIssue) isPR() bool { return len(i.PullRequest) > 0 && string(i.PullRequest) != "null" }
+
 type githubClient struct{ rest }
 
 func (g *githubClient) headers(h http.Header) {
@@ -109,6 +191,8 @@ func (g *githubClient) toPR(p *apiPR) PR {
 	pr := p.pr()
 	pr.Merged = p.MergedAt != nil
 	pr.Mergeable = p.Mergeable
+	pr.NodeID = p.NodeID
+	pr.AutoMerge = len(p.AutoMerge) > 0 && string(p.AutoMerge) != "null"
 	return pr
 }
 
@@ -148,13 +232,180 @@ func (g *githubClient) ClosePR(ctx context.Context, n int) error {
 	return g.do(ctx, http.MethodPatch, prPath(g.repo, n), prEdit{State: "closed"}, nil, g.headers)
 }
 
-func prPath(repo string, n int) string { return "/repos/" + repo + "/pulls/" + strconv.Itoa(n) }
+// githubUnavailableRe matches enablePullRequestAutoMerge errors after which GitHub will not
+// auto-merge the PR: the repository disallows auto-merge, or the PR can be merged right away
+// ("Pull request Pull request is in clean status"), so there is nothing to wait for.
+var githubUnavailableRe = regexp.MustCompile(`(?i)auto.merge is not allowed|not allowed for this repository|is in (clean|unstable|has_hooks) status`)
+
+const enableAutoMergeMutation = `mutation($id: ID!, $method: PullRequestMergeMethod) {
+  enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: $method}) { clientMutationId }
+}`
+
+// EnableAutoMerge runs the GraphQL enablePullRequestAutoMerge mutation. A repository known to
+// disallow auto-merge (allow_auto_merge false) is not asked.
+func (g *githubClient) EnableAutoMerge(ctx context.Context, pr PR, strategy string) error {
+	if pr.NodeID == "" {
+		return fmt.Errorf("enable auto-merge #%d: no node_id", pr.Number)
+	}
+	method, repo, err := g.method(ctx, strategy)
+	if err != nil {
+		return err
+	}
+	if repo.AllowAutoMerge != nil && !*repo.AllowAutoMerge {
+		return fmt.Errorf("enable auto-merge #%d: %w: disabled in the repository settings", pr.Number, ErrAutoMergeUnavailable)
+	}
+	in := map[string]any{
+		"query":     enableAutoMergeMutation,
+		"variables": map[string]string{"id": pr.NodeID, "method": strings.ToUpper(method)},
+	}
+	var out struct {
+		Errors []struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := g.doURL(ctx, http.MethodPost, graphqlURL(g.api), "/graphql enablePullRequestAutoMerge", in, &out, g.headers); err != nil {
+		return err
+	}
+	if len(out.Errors) == 0 {
+		return nil
+	}
+	msgs := make([]string, len(out.Errors))
+	for i, e := range out.Errors {
+		msgs[i] = e.Message
+	}
+	msg := strings.Join(msgs, "; ")
+	if githubUnavailableRe.MatchString(msg) {
+		return fmt.Errorf("enable auto-merge #%d: %w: %s", pr.Number, ErrAutoMergeUnavailable, msg)
+	}
+	return fmt.Errorf("enable auto-merge #%d: %s", pr.Number, msg)
+}
+
+// method maps strategy to a GitHub merge method (merge, squash, rebase); auto picks the first
+// method the repository allows, merge when that is unknown.
+func (g *githubClient) method(ctx context.Context, strategy string) (string, *apiRepo, error) {
+	repo, err := g.repository(ctx, g.headers)
+	if err != nil {
+		return "", nil, err
+	}
+	switch strategy {
+	case "merge", "squash", "rebase":
+		return strategy, repo, nil
+	case "", "auto":
+		for _, m := range []struct {
+			name    string
+			allowed *bool
+		}{{"merge", repo.AllowMergeCommit}, {"squash", repo.AllowSquashMerge}, {"rebase", repo.AllowRebaseMerge}} {
+			if m.allowed != nil && *m.allowed {
+				return m.name, repo, nil
+			}
+		}
+		return "merge", repo, nil
+	}
+	return "", nil, fmt.Errorf("unknown merge strategy %q", strategy)
+}
+
+// graphqlURL derives the GraphQL endpoint from the REST API URL: https://api.github.com ->
+// https://api.github.com/graphql, GHES https://host/api/v3 -> https://host/api/graphql.
+func graphqlURL(api string) string {
+	api = strings.TrimSuffix(api, "/")
+	if base, ok := strings.CutSuffix(api, "/v3"); ok {
+		return base + "/graphql"
+	}
+	return api + "/graphql"
+}
+
+// ChecksPassed combines the commit statuses and the check runs of sha. A combined status of a
+// commit without statuses is "pending", so statuses only count when there are some.
+func (g *githubClient) ChecksPassed(ctx context.Context, sha string) (bool, error) {
+	var st struct {
+		State      string `json:"state"`
+		TotalCount int    `json:"total_count"`
+	}
+	if err := g.do(ctx, http.MethodGet, "/repos/"+g.repo+"/commits/"+sha+"/status", nil, &st, g.headers); err != nil {
+		return false, err
+	}
+	if st.TotalCount > 0 && st.State != "success" {
+		return false, nil
+	}
+	runs := 0
+	for page := 1; page <= 10; page++ {
+		var cr struct {
+			TotalCount int `json:"total_count"`
+			CheckRuns  []struct {
+				Status     string `json:"status"`
+				Conclusion string `json:"conclusion"`
+			} `json:"check_runs"`
+		}
+		path := "/repos/" + g.repo + "/commits/" + sha + "/check-runs?per_page=100&page=" + strconv.Itoa(page)
+		if err := g.do(ctx, http.MethodGet, path, nil, &cr, g.headers); err != nil {
+			return false, err
+		}
+		for _, r := range cr.CheckRuns {
+			switch {
+			case r.Status != "completed":
+				return false, nil
+			case r.Conclusion != "success" && r.Conclusion != "neutral" && r.Conclusion != "skipped":
+				return false, nil
+			}
+		}
+		runs += len(cr.CheckRuns)
+		if len(cr.CheckRuns) < 100 || runs >= cr.TotalCount {
+			break
+		}
+	}
+	return st.TotalCount+runs > 0, nil
+}
+
+// MergePR merges with PUT /pulls/{n}/merge; sha makes GitHub refuse a head that moved.
+func (g *githubClient) MergePR(ctx context.Context, pr PR, strategy string) error {
+	method, _, err := g.method(ctx, strategy)
+	if err != nil {
+		return err
+	}
+	in := struct {
+		MergeMethod string `json:"merge_method"`
+		SHA         string `json:"sha,omitempty"`
+	}{method, pr.HeadSHA}
+	return g.do(ctx, http.MethodPut, prPath(g.repo, pr.Number)+"/merge", in, nil, g.headers)
+}
+
+// ListIssues pages through open issues; GitHub lists PRs as issues, they are dropped. GitHub
+// answers 410 Gone when issues are disabled.
+func (g *githubClient) ListIssues(ctx context.Context, maxPages int) ([]Issue, error) {
+	is, err := listIssues(ctx, &g.rest, g.headers, 100, maxPages, func(page int) string {
+		return "/repos/" + g.repo + "/issues?state=open&per_page=100&page=" + strconv.Itoa(page)
+	})
+	if hasStatus(err, http.StatusGone, "") {
+		return nil, fmt.Errorf("%w: %w", ErrIssuesDisabled, err)
+	}
+	return is, err
+}
+
+// CreateIssue creates an issue; GitHub takes label names (and creates missing labels).
+func (g *githubClient) CreateIssue(ctx context.Context, title, body string, labels []string) (Issue, error) {
+	in := struct {
+		Title  string   `json:"title"`
+		Body   string   `json:"body"`
+		Labels []string `json:"labels,omitempty"`
+	}{title, body, labels}
+	var out apiIssue
+	if err := g.do(ctx, http.MethodPost, "/repos/"+g.repo+"/issues", in, &out, g.headers); err != nil {
+		return Issue{}, err
+	}
+	return out.issue(), nil
+}
+
+func (g *githubClient) UpdateIssue(ctx context.Context, n int, body string) error {
+	return g.do(ctx, http.MethodPatch, issuePath(g.repo, n), map[string]string{"body": body}, nil, g.headers)
+}
+
+func prPath(repo string, n int) string    { return "/repos/" + repo + "/pulls/" + strconv.Itoa(n) }
+func issuePath(repo string, n int) string { return "/repos/" + repo + "/issues/" + strconv.Itoa(n) }
 
 func defaultBranch(ctx context.Context, r *rest, h func(http.Header)) (string, error) {
-	var v struct {
-		DefaultBranch string `json:"default_branch"`
-	}
-	if err := r.do(ctx, http.MethodGet, "/repos/"+r.repo, nil, &v, h); err != nil {
+	v, err := r.repository(ctx, h)
+	if err != nil {
 		return "", err
 	}
 	if v.DefaultBranch == "" {
@@ -174,6 +425,26 @@ func listPRs(ctx context.Context, r *rest, h func(http.Header), conv func(*apiPR
 			out = append(out, conv(&ps[i]))
 		}
 		if len(ps) < per {
+			break
+		}
+	}
+	return out, nil
+}
+
+// listIssues pages through an issue list; a short page (PRs included) ends it.
+func listIssues(ctx context.Context, r *rest, h func(http.Header), per, maxPages int, path func(int) string) ([]Issue, error) {
+	var out []Issue
+	for page := 1; page <= maxPages; page++ {
+		var is []apiIssue
+		if err := r.do(ctx, http.MethodGet, path(page), nil, &is, h); err != nil {
+			return nil, err
+		}
+		for i := range is {
+			if !is[i].isPR() {
+				out = append(out, is[i].issue())
+			}
+		}
+		if len(is) < per {
 			break
 		}
 	}

@@ -3,6 +3,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -30,14 +31,41 @@ type PR struct {
 	Title     string
 	Body      string
 	Head      string
+	HeadSHA   string // head.sha
 	State     string
 	URL       string
 	Merged    bool
 	Mergeable *bool
 	CreatedAt time.Time // zero when the API omits created_at
+	NodeID    string    // GitHub GraphQL node id (node_id); "" on Gitea and Forgejo
+	// AutoMerge reports auto-merge as already enabled (GitHub auto_merge non-null). Gitea and
+	// Forgejo do not report it, so it is always false there and requests are idempotent.
+	AutoMerge bool
 }
 
-// Client is the pull request API of a forge.
+// Issue is the subset of issue fields deps uses.
+type Issue struct {
+	Number int
+	Title  string
+	Body   string
+	URL    string
+}
+
+// Errors the caller handles without reporting an error.
+var (
+	// ErrAutoMergePending means the forge cannot schedule the merge yet (Gitea/Forgejo: the
+	// mergeability check of a fresh push is still running); the next run asks again.
+	ErrAutoMergePending = errors.New("pull request not ready for auto-merge yet")
+	// ErrAutoMergeUnavailable means the forge will not auto-merge this PR (GitHub: auto-merge
+	// is disallowed in the repository, or the PR is already mergeable, "clean status"); the
+	// caller may merge it directly once its checks passed.
+	ErrAutoMergeUnavailable = errors.New("auto-merge not available")
+	// ErrIssuesDisabled means ListIssues found no issue tracker: issues are disabled, or
+	// Gitea/Forgejo use an external tracker.
+	ErrIssuesDisabled = errors.New("issues are disabled in the repository")
+)
+
+// Client is the pull request and issue API of a forge.
 type Client interface {
 	DefaultBranch(ctx context.Context) (string, error)
 	ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) // "open" | "closed"
@@ -45,6 +73,19 @@ type Client interface {
 	CreatePR(ctx context.Context, head, base, title, body string) (PR, error)
 	UpdatePR(ctx context.Context, number int, title, body string) error
 	ClosePR(ctx context.Context, number int) error
+	// EnableAutoMerge asks the forge to merge pr with strategy (config.AutomergeStrategies;
+	// auto = the repository default) once its required checks pass. It returns
+	// ErrAutoMergePending or ErrAutoMergeUnavailable (wrapped) when that is not possible now;
+	// a merge that is already scheduled counts as success.
+	EnableAutoMerge(ctx context.Context, pr PR, strategy string) error
+	// ChecksPassed reports whether commit sha has at least one commit status or check run and
+	// all of them succeeded.
+	ChecksPassed(ctx context.Context, sha string) (bool, error)
+	// MergePR merges pr now with strategy, provided its head is still pr.HeadSHA.
+	MergePR(ctx context.Context, pr PR, strategy string) error
+	ListIssues(ctx context.Context, maxPages int) ([]Issue, error) // open issues, PRs excluded; ErrIssuesDisabled
+	CreateIssue(ctx context.Context, title, body string, labels []string) (Issue, error)
+	UpdateIssue(ctx context.Context, number int, body string) error
 }
 
 // Overrides replace detected Info fields; "" means auto.

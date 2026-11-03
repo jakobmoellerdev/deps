@@ -80,6 +80,10 @@ type Update struct {
 	// with separateMultipleMajor), "minor" or "patch" (separateMinorPatch). A non-empty bucket
 	// is appended to the branch as "-<bucket>".
 	Bucket string
+	// Automerge requests platform auto-merge of the update's PR with AutomergeStrategy
+	// (config.AutomergeStrategies); a PR automerges only when all of its updates do.
+	Automerge         bool
+	AutomergeStrategy string
 }
 
 // FromTo renders the old and new version; digest-pinned sides are `<version>@<digest7>`.

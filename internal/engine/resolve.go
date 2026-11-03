@@ -68,6 +68,9 @@ type Result struct {
 	Updates []dep.Update
 	Skipped []dep.Dep
 	Errors  []error
+	// Deps are all extracted deps (Skipped included, with Skip set) in discovery order: by
+	// manager, then file and position; the dependency dashboard lists them.
+	Deps []dep.Dep
 }
 
 // digestManagers support digest pinning (pin: digest, digest refresh).
@@ -153,6 +156,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			}
 			skip := func() {
 				res.Skipped = append(res.Skipped, d)
+				res.Deps = append(res.Deps, d)
 				if o.Trace != nil {
 					t := Trace{Dep: d}
 					if pol != nil {
@@ -177,6 +181,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 				continue
 			}
 			todo = append(todo, d)
+			res.Deps = append(res.Deps, d)
 			pols = append(pols, pol)
 		}
 	}
@@ -463,10 +468,12 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 		return nil, err
 	}
 	for i := range ups {
-		// Commit and grouping settings come from the policy of the update's type.
+		// Commit, grouping and automerge settings come from the policy of the update's type;
+		// security updates follow it too, apart from group and schedule.
 		up := &ups[i]
 		kp := r.pol.of(up.Type)
 		up.CommitType, up.CommitScope = kp.CommitType, kp.CommitScope
+		up.Automerge, up.AutomergeStrategy = kp.Automerge, kp.AutomergeStrategy
 		if len(up.Advisories) == 0 {
 			up.Group, up.Schedule = kp.Group, kp.Schedule
 		}

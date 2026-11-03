@@ -41,6 +41,12 @@ deps schema > deps.schema.json
 | `separateMultipleMajor` | bool | `false` | |
 | `separateMinorPatch` | bool | `false` | |
 | `updateNotScheduled` | bool | `true` | |
+| `automerge` | bool | `false` | |
+| `automergeStrategy` | `auto` \| `merge` \| `squash` \| `rebase` | `auto` | enum |
+| `automergeType` | `pr` | `pr` | only `pr`; `branch` is an error |
+| `dependencyDashboard` | bool | `false` | |
+| `dependencyDashboardTitle` | string | `Dependency Dashboard` | non-blank, one line |
+| `dependencyDashboardLabels` | list of strings | `[]` | non-blank, no `,` |
 | `rules` | list of [rules](#rules) | `[]` | per field, below |
 | `custom` | list of [custom managers](#custom-managers) | `[]` | per field, below |
 | `customDatasources` | map name → [datasource](#custom-datasources) | `{}` | per field, below |
@@ -215,6 +221,39 @@ These keys split one dep's candidate updates into **PR buckets**. Each bucket yi
 
 Out-of-schedule PRs are never closed as obsolete.
 
+### `automerge`, `automergeStrategy`, `automergeType`
+
+`automerge: true` makes `deps run` ask the platform to merge an update PR once its required checks pass (platform auto-merge). deps itself never merges red or pending PRs. Rules override `automerge` and `automergeStrategy` per dep or per update type, so Renovate's `matchUpdateTypes: [minor, patch], automerge: true` is:
+
+```yaml
+rules:
+  - updateTypes: [minor, patch]
+    automerge: true
+```
+
+- A PR automerges only when **every** update in it does; a group that mixes an automerged minor with a major does not. The strategy comes from the PR's first update.
+- `automergeStrategy`: `merge`, `squash` or `rebase`. `auto` (the default) uses the repository's default: Gitea/Forgejo `default_merge_style`, and on GitHub the first method the repository allows (merge commit, then squash, then rebase).
+- `automergeType` exists for Renovate compatibility. Only `pr` is accepted. `automergeType: branch` (merging the branch without a PR) fails with `automergeType: branch is not supported: deps automerges through the platform's pull request auto-merge; use automergeType: pr`.
+- The request is sent after the PR is created, updated or rebased, and on every run for an up-to-date automerge PR, until the platform reports it scheduled. Security updates follow the same policy.
+- Platform behavior and the GitHub fallback are described in [design.md](design.md#automerge).
+
+### `dependencyDashboard`, `dependencyDashboardTitle`, `dependencyDashboardLabels`
+
+`dependencyDashboard: true` makes `deps run` maintain one open issue titled `dependencyDashboardTitle`. It lists, in this order:
+
+1. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.
+2. **Ignored or blocked**: updates whose PR was closed without merging (checkbox: recreate the PR), and branches someone else pushed to (checkbox: discard those commits and rebuild the branch).
+3. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.
+4. **Errors** of the run (at most 20, each cut to 300 characters).
+5. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.
+
+- The body is capped at 60 000 bytes (GitHub allows 65 536 characters). Lists that do not fit end with a `… not listed` note.
+- The body is deterministic: the issue is only edited when its content changes. Every run regenerates it, so ticked checkboxes are unticked again once handled.
+- The issue is found by its exact title and the `<!-- deps:dashboard -->` marker in its body, among the first 1 000 (GitHub) or 500 (Gitea/Forgejo) open issues.
+- `dependencyDashboardLabels` are set when the issue is created. GitHub creates missing labels; Gitea and Forgejo look the names up in the repository's and its organization's labels and leave out unknown ones (with a warning).
+- deps never closes the dashboard. `dependencyDashboard: false` leaves an existing dashboard untouched.
+- A repository without issues (disabled, or an external tracker on Gitea/Forgejo) reports `dashboard skipped: issues disabled` and is not an error.
+
 ## Rules
 
 `rules` is an ordered list. A rule **matches** a dep when every selector it sets matches. Every field it sets then **overrides** the value from earlier rules (field-wise); `updates` replaces the earlier list, it is not merged.
@@ -247,6 +286,9 @@ Dep types: `direct indirect go toolchain action setup dockerfile compose workflo
 | `commitType` | `fix` `chore` `build` `ci` `docs` `feat` `perf` `refactor` `revert` `style` `test` | conventional commit type of the commit and PR title |
 | `commitScope` | string | scope; must match `^[A-Za-z0-9][A-Za-z0-9._/-]*$`; `""` drops the scope (`chore: update …`) |
 | `separateMajorMinor`, `separateMultipleMajor`, `separateMinorPatch` | bool | override the top-level bucket options; with `updateTypes`, for candidates of those types |
+| `automerge` | bool | overrides the top-level `automerge`; with `updateTypes`, for updates of those types |
+| `automergeStrategy` | `auto` \| `merge` \| `squash` \| `rebase` | overrides the top-level strategy |
+| `automergeType` | `pr` | accepted for Renovate compatibility; only `pr` |
 
 ### Evaluation
 
@@ -255,7 +297,7 @@ Dep types: `direct indirect go toolchain action setup dockerfile compose workflo
 3. **Built-in monorepo groups** set `group: <name> monorepo` (unless `monorepos: false`).
 4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`.
 5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
-6. The chosen update takes `group`, `schedule`, `commitType` and `commitScope` from the policy of its type. Security updates take only the commit scope.
+6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `automerge` and `automergeStrategy` from the policy of its type. Security updates take only the commit scope and the automerge settings.
 
 `updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only.
 
@@ -449,12 +491,17 @@ gitAuthor: 'deps[bot] <deps-bot@noreply.invalid>'
 prConcurrentLimit: 10
 prHourlyLimit: 2
 separateMinorPatch: false
+dependencyDashboard: true
+dependencyDashboardLabels: [dependencies]
 separateMultipleMajor: true
 ignorePaths: ['**/node_modules/**', '**/testdata/**', 'third_party/**']
 rules:
   - manager: github-actions         # minor+patch of all actions in one PR
     updateTypes: [minor, patch]
     group: actions
+  - updateTypes: [minor, patch]     # automerge minor and patch updates once checks pass
+    automerge: true
+    automergeStrategy: squash
   - datasources: [git-tags, docker] # digest refreshes in one weekly PR
     updateTypes: [digest, pin]
     group: digest-pins
