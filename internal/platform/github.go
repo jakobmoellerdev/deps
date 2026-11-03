@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 // NewClient returns the pull request client for info.Kind (gitea and forgejo share one).
@@ -63,21 +64,22 @@ func (r *rest) do(ctx context.Context, method, path string, in, out any, setHead
 
 // apiPR covers the PR JSON of GitHub and Gitea/Forgejo.
 type apiPR struct {
-	Number    int     `json:"number"`
-	Title     string  `json:"title"`
-	Body      string  `json:"body"`
-	State     string  `json:"state"`
-	HTMLURL   string  `json:"html_url"`
-	Merged    bool    `json:"merged"`
-	MergedAt  *string `json:"merged_at"`
-	Mergeable *bool   `json:"mergeable"`
+	Number    int       `json:"number"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	State     string    `json:"state"`
+	HTMLURL   string    `json:"html_url"`
+	Merged    bool      `json:"merged"`
+	MergedAt  *string   `json:"merged_at"`
+	Mergeable *bool     `json:"mergeable"`
+	CreatedAt time.Time `json:"created_at"`
 	Head      struct {
 		Ref string `json:"ref"`
 	} `json:"head"`
 }
 
 func (p *apiPR) pr() PR {
-	return PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, State: p.State, URL: p.HTMLURL}
+	return PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, State: p.State, URL: p.HTMLURL, CreatedAt: p.CreatedAt}
 }
 
 type prEdit struct {

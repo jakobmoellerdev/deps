@@ -1,7 +1,10 @@
 // Package platform detects the code forge (GitHub, Gitea, Forgejo) and talks to its pull request API.
 package platform
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Kind is the forge type.
 type Kind string
@@ -31,6 +34,7 @@ type PR struct {
 	URL       string
 	Merged    bool
 	Mergeable *bool
+	CreatedAt time.Time // zero when the API omits created_at
 }
 
 // Client is the pull request API of a forge.

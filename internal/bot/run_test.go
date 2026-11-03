@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -247,6 +248,57 @@ func TestRun(t *testing.T) {
 			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: "human@example.com"}},
 			wantStatus: map[string]string{branchA: StatusSkipModified, branchB: StatusCreated},
 			wantPushed: 1, wantCreated: 1, wantTips: 1,
+		},
+		{
+			name:       "ignored author on branch is updated",
+			opts:       Options{IgnoredAuthors: []string{"other@example.com", "Human@Example.COM"}},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: "human@example.com"}},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated},
+			wantPushed: 2, wantCreated: 2, wantTips: 1,
+		},
+		{
+			name:       "non-ignored author still skipped",
+			opts:       Options{IgnoredAuthors: []string{"other@example.com"}},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: "human@example.com"}},
+			wantStatus: map[string]string{branchA: StatusSkipModified, branchB: StatusCreated},
+			wantPushed: 1, wantCreated: 1, wantTips: 1,
+		},
+		{
+			name:       "own email matched case-insensitively",
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: strings.ToUpper(email)}},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated},
+			wantPushed: 2, wantCreated: 2, wantTips: 1,
+		},
+		{
+			name:       "concurrent limit counts open managed PRs",
+			opts:       Options{ConcurrentLimit: 2},
+			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}, {Number: 10, Head: "feature/x"}}},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusSkipLimit, "deps/gomod/gone": StatusClosed},
+			wantPushed: 1, wantCreated: 1, wantClosed: 1,
+		},
+		{
+			name:       "concurrent limit reached still updates open PRs",
+			opts:       Options{ConcurrentLimit: 1},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Body: "<!-- deps:fingerprint=0000000000000000 -->"}}},
+			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusSkipLimit},
+			wantPushed: 1, wantUpdated: 1, wantTips: 1,
+		},
+		{
+			name: "hourly limit counts PRs created in the last hour",
+			opts: Options{HourlyLimit: 2},
+			pc: fakePC{closed: []platform.PR{
+				{Number: 7, Head: "deps/gomod/old", Merged: true, CreatedAt: time.Now().Add(-10 * time.Minute)},
+				{Number: 8, Head: "deps/gomod/older", Merged: true, CreatedAt: time.Now().Add(-2 * time.Hour)},
+			}},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusSkipLimit},
+			wantPushed: 1, wantCreated: 1,
+		},
+		{
+			name:       "smallest limit wins",
+			opts:       Options{MaxNewPRs: 5, ConcurrentLimit: 10, HourlyLimit: 1},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusSkipLimit},
+			wantPushed: 1, wantCreated: 1,
 		},
 		{
 			name:       "dry run writes nothing",

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // openPRNet serves pr as the only open PR and delegates everything else to next.
@@ -84,5 +86,64 @@ func TestRunRebasesBehindBase(t *testing.T) {
 	}
 	if got := git(t, origin, "rev-parse", branch); got != tip {
 		t.Errorf("up-to-date run moved the branch to %s", got)
+	}
+}
+
+func TestCommitAuthorPrecedence(t *testing.T) {
+	const env, cfg = "Env Bot <env@example.com>", "Cfg Bot <cfg@example.com>"
+	for _, tc := range []struct {
+		name, env, cfg    string
+		flags             map[string]string
+		wantName, wantEml string
+	}{
+		{name: "default", wantName: "deps[bot]", wantEml: "deps-bot@noreply.invalid"},
+		{name: "config", cfg: cfg, wantName: "Cfg Bot", wantEml: "cfg@example.com"},
+		{name: "env over config", env: env, cfg: cfg, wantName: "Env Bot", wantEml: "env@example.com"},
+		{name: "flags over env and config", env: env, cfg: cfg, flags: map[string]string{"author-name": "Flag", "author-email": "flag@example.com"}, wantName: "Flag", wantEml: "flag@example.com"},
+		{name: "flags field by field", cfg: cfg, flags: map[string]string{"author-email": "flag@example.com"}, wantName: "Cfg Bot", wantEml: "flag@example.com"},
+		{name: "flag set to the default still wins", cfg: cfg, flags: map[string]string{"author-name": "deps[bot]"}, wantName: "deps[bot]", wantEml: "cfg@example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newRun(&rootOpts{})
+			for k, v := range tc.flags {
+				if err := cmd.Flags().Set(k, v); err != nil {
+					t.Fatal(err)
+				}
+			}
+			name, email, err := commitAuthor(cmd, flagOpts(t, cmd), tc.env, tc.cfg)
+			if err != nil || name != tc.wantName || email != tc.wantEml {
+				t.Errorf("commitAuthor = %q, %q, %v; want %q, %q", name, email, err, tc.wantName, tc.wantEml)
+			}
+		})
+	}
+	if _, _, err := commitAuthor(newRun(&rootOpts{}), &runOpts{}, "no-angle@example.com", ""); err == nil || !strings.Contains(err.Error(), "DEPS_GIT_AUTHOR: must be 'Name <email>'") {
+		t.Errorf("invalid env error = %v", err)
+	}
+}
+
+// flagOpts reads the author flag values back from cmd.
+func flagOpts(t *testing.T, cmd *cobra.Command) *runOpts {
+	t.Helper()
+	n, _ := cmd.Flags().GetString("author-name")
+	e, _ := cmd.Flags().GetString("author-email")
+	return &runOpts{authorName: n, authorEmail: e}
+}
+
+// gitAuthor in .deps.yaml sets the commit author and committer of pushed branches.
+func TestRunGitAuthorFromConfig(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	giteaEnv(t)
+	t.Setenv("DEPS_TOKEN", "tok")
+	origin, work := gitRepo(t, map[string]string{
+		".github/workflows/ci.yml": workflow,
+		".deps.yaml":               "gitAuthor: 'OCM Bot <ocm-bot@example.com>'\n",
+	})
+	if _, stderr, code := execute(t, "run", "--dir", work); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	const branch = "deps/github-actions/actions-checkout-major"
+	if got := git(t, origin, "log", "-1", "--format=%an <%ae>|%cn <%ce>", branch); got != "OCM Bot <ocm-bot@example.com>|OCM Bot <ocm-bot@example.com>" {
+		t.Errorf("author|committer = %q", got)
 	}
 }

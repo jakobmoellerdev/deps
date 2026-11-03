@@ -96,7 +96,12 @@ type Config struct {
 	BranchPrefix string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
 	RebaseWhen   string   `yaml:"rebaseWhen" jsonschema:"enum=conflicted,enum=behind-base-branch,enum=never,default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
 	Monorepos    *bool    `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group."`
-	Actions      Actions  `yaml:"actions" jsonschema_description:"github-actions manager settings."`
+	GitAuthor    string   `yaml:"gitAuthor" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags; default 'deps[bot] <deps-bot@noreply.invalid>'."`
+	// GitIgnoredAuthors are emails whose commits on an update branch count as the bot's own.
+	GitIgnoredAuthors []string `yaml:"gitIgnoredAuthors" jsonschema_description:"Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased."`
+	PRConcurrentLimit int      `yaml:"prConcurrentLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited."`
+	PRHourlyLimit     int      `yaml:"prHourlyLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of managed PRs created per hour, counting existing PRs by creation time. 0 means unlimited."`
+	Actions           Actions  `yaml:"actions" jsonschema_description:"github-actions manager settings."`
 	// MinimumReleaseAge is a string, not a duration, so "28 days" style values are accepted.
 	MinimumReleaseAge string   `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt."`
 	IgnorePaths       []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When absent: node_modules, bower_components, vendor, examples, __tests__, test, tests and __fixtures__ directories; any list (also []) replaces that default."`
@@ -126,6 +131,27 @@ func (c *Config) MonoreposEnabled() bool { return c.Monorepos == nil || *c.Monor
 // (default true).
 func (c *Config) UpdateNotScheduledEnabled() bool {
 	return c.UpdateNotScheduled == nil || *c.UpdateNotScheduled
+}
+
+// Author is a parsed gitAuthor.
+type Author struct{ Name, Email string }
+
+// authorRe and emailRe accept git identities, including GitHub bot noreply addresses
+// such as 'ocmbot[bot] <1+ocmbot[bot]@users.noreply.github.com>' that RFC 5322 parsers
+// (net/mail) reject; git itself only forbids '<', '>' and newlines.
+var (
+	authorRe = regexp.MustCompile(`^([^<>\n]*[^<>\s])\s*<([^<>\s@]+@[^<>\s@]+)>$`)
+	emailRe  = regexp.MustCompile(`^[^<>\s@]+@[^<>\s@]+$`)
+)
+
+// ParseAuthor parses a 'Name <email>' git author (Renovate's gitAuthor format); both parts
+// are required.
+func ParseAuthor(s string) (Author, error) {
+	m := authorRe.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return Author{}, fmt.Errorf("must be 'Name <email>', got %q", s)
+	}
+	return Author{Name: m[1], Email: m[2]}, nil
 }
 
 // Prefix returns BranchPrefix, or DefaultBranchPrefix when unset.
@@ -393,6 +419,22 @@ func (c *Config) Validate() error {
 		if msg := checkBranchPrefix(c.BranchPrefix); msg != "" {
 			add("branchPrefix", "%s, got %q", msg, c.BranchPrefix)
 		}
+	}
+	if c.GitAuthor != "" {
+		if _, err := ParseAuthor(c.GitAuthor); err != nil {
+			add("gitAuthor", "%v", err)
+		}
+	}
+	for i, e := range c.GitIgnoredAuthors {
+		if !emailRe.MatchString(e) {
+			add(fmt.Sprintf("gitIgnoredAuthors[%d]", i), "must be an email address, got %q", e)
+		}
+	}
+	if c.PRConcurrentLimit < 0 {
+		add("prConcurrentLimit", "must be >= 0, got %d", c.PRConcurrentLimit)
+	}
+	if c.PRHourlyLimit < 0 {
+		add("prHourlyLimit", "must be >= 0, got %d", c.PRHourlyLimit)
 	}
 	if c.RebaseWhen != "" && !slices.Contains(RebaseWhens, c.RebaseWhen) {
 		add("rebaseWhen", "must be one of %s, got %q", list(RebaseWhens), c.RebaseWhen)

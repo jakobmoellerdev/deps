@@ -75,6 +75,13 @@ func TestLoadErrors(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
 		{"pinn: digest\n", "line 1"},
 		{"version: 2\n", "version: must be 1"},
+		{"gitAuthor: bot@example.com\n", "gitAuthor: must be 'Name <email>'"},
+		{"gitAuthor: 'Bot <nope>'\n", "gitAuthor: must be 'Name <email>'"},
+		{"gitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com', 'a b@c']\n", "gitIgnoredAuthors[1]: must be an email address"},
+		{"gitIgnoredAuthors: ['Bot <b@example.com>']\n", "gitIgnoredAuthors[0]: must be an email address"},
+		{"gitIgnoredAuthors: [nope]\n", "gitIgnoredAuthors[0]: must be an email address"},
+		{"prConcurrentLimit: -1\n", "prConcurrentLimit: must be >= 0"},
+		{"prHourlyLimit: -2\n", "prHourlyLimit: must be >= 0"},
 		{"pin: always\n", "pin: must be keep or digest"},
 		{"rules: [{manager: pip}]\n", "rules[0].manager"},
 		{"rules: [{names: ['[']}]\n", "rules[0].names[0]"},
@@ -375,6 +382,29 @@ func TestCustomRegexGroupAliases(t *testing.T) {
 		if _, err := load(t, ".deps.yaml", "custom: [{files: [x], datasource: "+ds+"}]\n"); err != nil {
 			t.Errorf("datasource %s: %v", ds, err)
 		}
+	}
+}
+
+func TestGitAuthorAndLimits(t *testing.T) {
+	c, err := load(t, ".deps.yaml", "gitAuthor: 'OCM Bot <bot@ocm.example>'\ngitIgnoredAuthors: [a@example.com]\nprConcurrentLimit: 3\nprHourlyLimit: 1\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := ParseAuthor(c.GitAuthor)
+	if err != nil || a.Name != "OCM Bot" || a.Email != "bot@ocm.example" {
+		t.Errorf("ParseAuthor = %v, %v", a, err)
+	}
+	const ocm = "ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>" // GitHub app identity
+	if a, err := ParseAuthor(ocm); err != nil || a.Name != "ocmbot[bot]" || a.Email != "125909804+ocmbot[bot]@users.noreply.github.com" {
+		t.Errorf("ParseAuthor(%q) = %v, %v", ocm, a, err)
+	}
+	for _, bad := range []string{"", "x@y", "<x@y>", "A <b>", "A <b@c> d", "A <b c@d>", "A < <b@c>"} {
+		if _, err := ParseAuthor(bad); err == nil {
+			t.Errorf("ParseAuthor(%q) accepted", bad)
+		}
+	}
+	if len(c.GitIgnoredAuthors) != 1 || c.PRConcurrentLimit != 3 || c.PRHourlyLimit != 1 {
+		t.Errorf("config = %+v", c)
 	}
 }
 

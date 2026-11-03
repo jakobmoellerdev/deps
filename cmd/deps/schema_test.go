@@ -109,7 +109,7 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%s pattern %q is too loose", name, n.Pattern)
 		}
 	}
-	if want := []string{"version", "pin", "timezone", "schedule", "security", "branchPrefix", "rebaseWhen", "monorepos", "actions", "minimumReleaseAge", "ignorePaths",
+	if want := []string{"version", "pin", "timezone", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "actions", "minimumReleaseAge", "ignorePaths",
 		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "rules", "custom", "customDatasources"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {

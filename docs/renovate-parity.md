@@ -52,9 +52,11 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | L7 | `automerge` / `automergeType: pr` | minor+patch | — | open |
 | L8 | `:rebaseStalePrs` | preset | `rebaseWhen: behind-base-branch` (also `conflicted`, the default, and `never`); unchanged PRs are rebuilt on the moved base and force-pushed (`rebased`) | done |
 | L9 | `:dependencyDashboard` | preset | — | open |
-| L10 | `prConcurrentLimit: 0` / `prHourlyLimit: 0` (unlimited) | global | `--max-new-prs 0` = unlimited | done |
-| L11 | `gitAuthor` | ocmbot | `--author-name/--author-email` | done |
-| L12 | `gitIgnoredAuthors` (list) | ocmbot | single `--author-email` compared | open |
+| L10 | `prConcurrentLimit: 0` / `prHourlyLimit: 0` (unlimited) | global | `prConcurrentLimit`/`prHourlyLimit` (0 = unlimited, the deps default; Renovate defaults to 10/2); `--max-new-prs` stays a per-run cap; the smallest non-zero limit wins | done |
+| L10a | `prConcurrentLimit` | global | open managed PRs + PRs created this run must stay below it | done |
+| L10b | `prHourlyLimit` | global | managed PRs (open and closed) created in the last hour, by `created_at`, count against it | done |
+| L11 | `gitAuthor` | ocmbot | `gitAuthor: 'Name <email>'`; precedence `--author-name`/`--author-email` > `$DEPS_GIT_AUTHOR` > `gitAuthor` > `deps[bot] <deps-bot@noreply.invalid>` | done |
+| L12 | `gitIgnoredAuthors` (list) | ocmbot | `gitIgnoredAuthors`: branch tips by these emails (case-insensitive) count as the bot's own and are updated/rebased | done |
 | L13 | lockFileMaintenance | disabled | not implemented | n/a |
 
 ## Operations

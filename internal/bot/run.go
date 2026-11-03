@@ -42,10 +42,16 @@ type Options struct {
 	// UpdateNotScheduled keeps updating and rebasing open PRs outside their schedule; only
 	// new PRs wait for the window (Renovate's updateNotScheduled). false skips such groups.
 	UpdateNotScheduled bool
-	MaxNewPRs          int               // PRs created per run; 0 = unlimited
-	Managers           []manager.Manager // edit the updates' files (engine.Build)
-	Now                time.Time         // schedule evaluation time; zero = time.Now()
-	Notes              Notes             // release ages and notes in PR bodies; nil = none
+	MaxNewPRs          int // PRs created per run; 0 = unlimited
+	// ConcurrentLimit caps open managed PRs and HourlyLimit managed PRs created in the last
+	// hour (open and closed, by creation time); 0 = unlimited. New PRs are created only
+	// while every non-zero limit leaves room.
+	ConcurrentLimit, HourlyLimit int
+	// IgnoredAuthors are emails (case-insensitive) whose branch tips count as the bot's own.
+	IgnoredAuthors []string
+	Managers       []manager.Manager // edit the updates' files (engine.Build)
+	Now            time.Time         // schedule evaluation time; zero = time.Now()
+	Notes          Notes             // release ages and notes in PR bodies; nil = none
 }
 
 // Notes renders release information for PR bodies (implemented by releasenotes.Notes).
@@ -144,6 +150,8 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	var actions []Action
 	var errs []error
 	created := 0
+	limit := newPRLimit(o, open, closed, now)
+	slog.DebugContext(ctx, "new PR limit", "limit", limit, "maxNewPRs", o.MaxNewPRs, "prConcurrentLimit", o.ConcurrentLimit, "prHourlyLimit", o.HourlyLimit)
 	wanted := map[string]bool{}
 	for i, grp := range groups {
 		wanted[grp.Branch] = true // out-of-schedule branches are still wanted: keep their PRs open
@@ -151,7 +159,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, buildErrs[i]))
 			continue
 		}
-		a, err := handle(ctx, o, base, head, grp, built[i], inSchedule[i], branches, open, closed, &created, pc, g)
+		a, err := handle(ctx, o, base, head, grp, built[i], inSchedule[i], branches, open, closed, limit, &created, pc, g)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
 			continue
@@ -184,7 +192,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 }
 
 func handle(ctx context.Context, o Options, base, head string, grp engine.Group, changes []engine.FileChange, inSchedule bool,
-	branches map[string]string, open, closed []platform.PR, created *int, pc platform.Client, g Git,
+	branches map[string]string, open, closed []platform.PR, limit int, created *int, pc platform.Client, g Git,
 ) (Action, error) {
 	a := Action{Branch: grp.Branch, Title: grp.Title}
 
@@ -230,7 +238,7 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 			return err
 		}
 		author, parents, fetched = a, p, true
-		slog.DebugContext(ctx, "branch tip", "branch", grp.Branch, "author", author, "want", o.AuthorEmail, "parents", parents)
+		slog.DebugContext(ctx, "branch tip", "branch", grp.Branch, "author", author, "want", o.AuthorEmail, "ignored", o.IgnoredAuthors, "parents", parents)
 		return nil
 	}
 
@@ -263,7 +271,7 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 				return a, err
 			}
 			// deps branches are one commit on top of base; any other parent means base moved.
-			if author == o.AuthorEmail && len(parents) == 1 && parents[0] == head {
+			if ownAuthor(o, author) && len(parents) == 1 && parents[0] == head {
 				a.Status = StatusUpToDate
 				return a, nil
 			}
@@ -271,7 +279,7 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 			rebase = true
 		}
 	}
-	if pr == nil && o.MaxNewPRs > 0 && *created >= o.MaxNewPRs {
+	if pr == nil && limit >= 0 && *created >= limit {
 		a.Status = StatusSkipLimit
 		return a, nil
 	}
@@ -279,7 +287,7 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 		if err := tip(); err != nil {
 			return a, err
 		}
-		if author != o.AuthorEmail {
+		if !ownAuthor(o, author) {
 			a.Status = StatusSkipModified
 			return a, nil
 		}
@@ -326,6 +334,47 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 	*created++
 	a.Status, a.Number, a.URL = StatusCreated, np.Number, np.URL
 	return a, nil
+}
+
+// newPRLimit returns how many PRs this run may create (-1 = unlimited): the minimum of
+// MaxNewPRs, the room below ConcurrentLimit and the room below HourlyLimit.
+func newPRLimit(o Options, open, closed []platform.PR, now time.Time) int {
+	limit := -1
+	tighten := func(n int) {
+		n = max(n, 0)
+		if limit < 0 || n < limit {
+			limit = n
+		}
+	}
+	if o.MaxNewPRs > 0 {
+		tighten(o.MaxNewPRs)
+	}
+	if o.ConcurrentLimit > 0 {
+		tighten(o.ConcurrentLimit - len(open))
+	}
+	if o.HourlyLimit > 0 {
+		recent := 0
+		for _, pr := range slices.Concat(open, closed) {
+			if !pr.CreatedAt.IsZero() && now.Sub(pr.CreatedAt) < time.Hour {
+				recent++
+			}
+		}
+		tighten(o.HourlyLimit - recent)
+	}
+	return limit
+}
+
+// ownAuthor reports whether a branch tip by author counts as the bot's own.
+func ownAuthor(o Options, author string) bool {
+	if strings.EqualFold(author, o.AuthorEmail) {
+		return true
+	}
+	for _, e := range o.IgnoredAuthors {
+		if strings.EqualFold(author, e) {
+			return true
+		}
+	}
+	return false
 }
 
 // scheduled reports whether every non-security update is in its schedule at now.

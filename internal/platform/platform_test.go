@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func envFunc(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
@@ -237,7 +238,7 @@ func fakeAPI(t *testing.T, kind Kind, totalPRs int) (*httptest.Server, *[]record
 			}
 			io.WriteString(w, "["+strings.Join(items, ",")+"]")
 		case p == "/repos/o/r/pulls/1":
-			io.WriteString(w, `{"number":1,"title":"t","body":"b","state":"closed","html_url":"u","merged":true,"merged_at":"2026-01-01T00:00:00Z","mergeable":null,"head":{"ref":"deps/a"}}`)
+			io.WriteString(w, `{"number":1,"title":"t","body":"b","state":"closed","html_url":"u","merged":true,"merged_at":"2026-01-01T00:00:00Z","mergeable":null,"created_at":"2026-01-01T00:00:00Z","head":{"ref":"deps/a"}}`)
 		case p == "/repos/o/r/pulls/2":
 			io.WriteString(w, `{"number":2,"state":"open","merged":false,"merged_at":null,"mergeable":true,"head":{"ref":"deps/b"}}`)
 		case p == "/repos/o/r/pulls/3":
@@ -291,7 +292,7 @@ func TestClients(t *testing.T) {
 				t.Fatalf("ListPRs maxPages len %d %v", len(prs), err)
 			}
 			p1, err := c.GetPR(ctx, 1)
-			if err != nil || !p1.Merged || p1.Head != "deps/a" || p1.URL != "u" || p1.Title != "t" || !eqPtr(p1.Mergeable, tc.mergeable1) {
+			if err != nil || !p1.Merged || p1.Head != "deps/a" || p1.URL != "u" || p1.Title != "t" || !p1.CreatedAt.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) || !eqPtr(p1.Mergeable, tc.mergeable1) {
 				t.Fatalf("GetPR 1 %+v %v", p1, err)
 			}
 			p2, _ := c.GetPR(ctx, 2)

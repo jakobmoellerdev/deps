@@ -1,6 +1,10 @@
 # open-component-model renovate.json5 packageRules relevant to P1-P3, P7-P12, P15, P17 and L8, translated.
 branchPrefix: renovate/
 rebaseWhen: behind-base-branch # :rebaseStalePrs
+gitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>'
+gitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com']
+prConcurrentLimit: 0 # unlimited (also the deps default)
+prHourlyLimit: 0 # unlimited (also the deps default)
 pin: digest # docker:pinDigests + helpers:pinGitHubActionDigests
 minimumReleaseAge: 28 days # digest/pin updates are always exempt (the minimumReleaseAge: null rule)
 separateMinorPatch: true
