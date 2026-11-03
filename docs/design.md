@@ -159,6 +159,8 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy e
 2. `DEPS_DEFAULT_ACTIONS_URL` (source `env`).
 3. Platform default (source `platform default`): forgejo → `data.forgejo.org`; github, gitea or unknown → `github.com`.
 
+The composite action passes `${{ gitea.gitea_default_actions_url }}` into `DEPS_DEFAULT_ACTIONS_URL`. Gitea puts `gitea_default_actions_url` into the task context, but the Gitea 28 runner does not expose it to expressions (neither via `github.` nor `gitea.`; observed empty on git.jakob-moeller.cloud), so in practice the platform default applies. Instances with a non-default `DEFAULT_ACTIONS_URL` set `actions.defaultHost` in `.deps.yaml`.
+
 ### Endpoints
 
 **GitHub.** Headers: `Authorization: Bearer <t>`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`.
