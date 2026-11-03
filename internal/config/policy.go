@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"path"
 	"slices"
 
@@ -12,13 +13,14 @@ import (
 
 // Policy is the effective rule outcome for one dep.
 type Policy struct {
-	Ignore   bool
-	Pin      string
-	Allow    *semver.Constraints
-	Updates  map[dep.UpdateType]bool
-	Group    string        // "" = own PR
-	Schedule *schedule.Set // nil = always
-	Rules    []int         // indices of the matching rules, in order
+	Ignore       bool
+	IgnoreReason string // why Ignore is set: default for the dep type, or the deciding rule
+	Pin          string
+	Allow        *semver.Constraints
+	Updates      map[dep.UpdateType]bool
+	Group        string        // "" = own PR
+	Schedule     *schedule.Set // nil = always
+	Rules        []int         // indices of the matching rules, in order
 }
 
 // Policy evaluates rules top-to-bottom; each set field of a matching rule
@@ -26,10 +28,13 @@ type Policy struct {
 // and go directives are ignored unless a rule sets `ignore: false`.
 func (c *Config) Policy(d dep.Dep) Policy {
 	p := Policy{
-		Ignore:   d.DepType == "indirect" || d.DepType == "go",
 		Pin:      c.Pin,
 		Updates:  make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
 		Schedule: c.schedule,
+	}
+	if d.DepType == "indirect" || d.DepType == "go" {
+		p.Ignore = true
+		p.IgnoreReason = "ignored by default (" + d.DepType + "; enable with a rule setting ignore: false)"
 	}
 	for _, t := range dep.UpdateTypes {
 		p.Updates[t] = true
@@ -48,6 +53,7 @@ func (c *Config) Policy(d dep.Dep) Policy {
 		p.Rules = append(p.Rules, i)
 		if r.Ignore != nil {
 			p.Ignore = *r.Ignore
+			p.IgnoreReason = fmt.Sprintf("ignored by rule #%d", i)
 		}
 		if r.Pin != "" {
 			p.Pin = r.Pin

@@ -122,7 +122,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			}
 			p := cfg.Policy(d)
 			if p.Ignore {
-				d.Skip = "ignored by rule"
+				d.Skip = p.IgnoreReason
 				res.Skipped = append(res.Skipped, d)
 				if o.Trace != nil {
 					o.Trace(Trace{Dep: d, Rules: p.Rules, Policy: p})
@@ -304,7 +304,10 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 	}
 	accept := func(v string, kind dep.UpdateType) (bool, string) { return r.p.Check(kind, scheme.Semver(v)) }
 
-	digests := digestManagers[d.Manager] && (d.Versioning == "tag" || d.Versioning == "docker")
+	// Custom deps can only refresh a digest they already carry (regex `digest` group); they
+	// have no place to insert a new one.
+	digests := digestManagers[d.Manager] && (d.Versioning == "tag" || d.Versioning == "docker") ||
+		d.Manager == "custom" && d.Digest != ""
 	pinned := d.Digest != ""
 	wantDigest := digests && (pinned || r.p.Pin == config.PinDigest)
 

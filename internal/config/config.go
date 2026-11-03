@@ -37,15 +37,15 @@ var (
 
 // Config is the parsed .deps.yaml.
 type Config struct {
-	Version     int      `yaml:"version"`
-	Pin         string   `yaml:"pin"`
-	Timezone    string   `yaml:"timezone"`
-	Schedule    []string `yaml:"schedule"`
-	Security    *bool    `yaml:"security"`
-	Actions     Actions  `yaml:"actions"`
-	IgnorePaths []string `yaml:"ignorePaths"`
-	Rules       []Rule   `yaml:"rules"`
-	Custom      []Custom `yaml:"custom"`
+	Version     int      `yaml:"version" jsonschema:"enum=1,default=1" jsonschema_description:"Config format version; must be 1 if set."`
+	Pin         string   `yaml:"pin" jsonschema:"enum=keep,enum=digest,default=keep" jsonschema_description:"Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment."`
+	Timezone    string   `yaml:"timezone" jsonschema_description:"IANA time zone for schedule windows; empty means UTC."`
+	Schedule    []string `yaml:"schedule" jsonschema_description:"Cron windows (5 fields, minute must be *) in which update PRs may be created or updated; empty means always."`
+	Security    *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, updates and schedule."`
+	Actions     Actions  `yaml:"actions" jsonschema_description:"github-actions manager settings."`
+	IgnorePaths []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned."`
+	Rules       []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
+	Custom      []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
 
 	path     string        // source path for error messages
 	schedule *schedule.Set // parsed Schedule
@@ -56,20 +56,20 @@ func (c *Config) SecurityEnabled() bool { return c.Security == nil || *c.Securit
 
 // Actions holds github-actions manager settings.
 type Actions struct {
-	DefaultHost string `yaml:"defaultHost"`
+	DefaultHost string `yaml:"defaultHost" jsonschema_description:"Host for owner/repo@ref actions; empty means auto-detected from the platform."`
 }
 
 // Rule overrides the policy for matching deps.
 type Rule struct {
-	Manager  string   `yaml:"manager"`
-	Names    []string `yaml:"names"`
-	DepTypes []string `yaml:"depTypes"`
-	Ignore   *bool    `yaml:"ignore"`
-	Pin      string   `yaml:"pin"`
-	Allow    string   `yaml:"allow"`
-	Updates  []string `yaml:"updates"`
-	Group    string   `yaml:"group"`
-	Schedule []string `yaml:"schedule"` // non-nil overrides the top-level schedule; [] = always
+	Manager  string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=custom" jsonschema_description:"Only match deps of this manager."`
+	Names    []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these path.Match globs."`
+	DepTypes []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
+	Ignore   *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements and go directives in."`
+	Pin      string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
+	Allow    string   `yaml:"allow" jsonschema_description:"Semver constraint new versions must satisfy, e.g. '< 7'."`
+	Updates  []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
+	Group    string   `yaml:"group" jsonschema_description:"Group name: all deps with the same group share one PR."`
+	Schedule []string `yaml:"schedule" jsonschema_description:"Cron windows overriding the top-level schedule; [] means always."` // non-nil overrides the top-level schedule; [] = always
 
 	allow    *semver.Constraints
 	schedule *schedule.Set
@@ -77,11 +77,11 @@ type Rule struct {
 
 // Custom is a custom manager: annotation mode when Match is empty, regex mode otherwise.
 type Custom struct {
-	Files      []string `yaml:"files"`
-	Match      string   `yaml:"match"`
-	Datasource string   `yaml:"datasource"`
-	Name       string   `yaml:"name"`
-	Versioning string   `yaml:"versioning"` // default semver
+	Files      []string `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans."`
+	Match      string   `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) group and optional name, datasource and digest groups; empty means annotation mode."`
+	Datasource string   `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=docker" jsonschema_description:"Datasource of the matched deps; required in regex mode unless match has a (?P<datasource>) group."`
+	Name       string   `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>) group."`
+	Versioning string   `yaml:"versioning" jsonschema:"enum=tag,enum=go,enum=docker,enum=semver,default=semver" jsonschema_description:"Versioning scheme of the matched versions."` // default semver
 }
 
 // Error marks an invalid configuration (parse, unknown key or validation

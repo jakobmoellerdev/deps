@@ -63,7 +63,7 @@ func TestExtract(t *testing.T) {
 				{"actions/checkout", "https://github.com/actions/checkout", "", sha, sha, "", "pinned without version comment", ""},
 				{"./local", "", "", "", "", "", "local action", ""},
 				{"$/x/y@v1", "", "", "", "", "", "local action", ""},
-				{"docker://alpine:3", "", "", "", "", "", "docker reference (not supported yet)", ""},
+				{"docker://alpine:3", "", "", "", "", "", "docker reference (docker manager)", ""},
 				{"actions/checkout", "https://github.com/actions/checkout", "", "", "main", "", "non-version ref", ""},
 				{"github/codeql-action/init", "https://github.com/github/codeql-action", "v3", "", "v3", "", "", ""},
 				{"actions/checkout", "https://gitea.com/actions/checkout", "v4", "", "v4", "", "", ""},

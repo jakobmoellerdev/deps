@@ -1,6 +1,6 @@
 # deps design
 
-`deps` is a dependency updater written in Go and intended to replace Renovate. This document holds the complete design. Milestone 1 (M1) covers GitHub/Gitea/Forgejo Actions `uses:` references, Go modules, and a PR bot for GitHub, Gitea and Forgejo.
+`deps` is a dependency updater written in Go and intended to replace Renovate. This document holds the complete design. It covers GitHub/Gitea/Forgejo Actions `uses:` references, Go modules (requirements and `go`/`toolchain` directives), container images, custom annotation/regex dependencies, OSV security updates, and a PR bot for GitHub, Gitea and Forgejo with groups and schedules.
 
 ## 1. Goals
 
@@ -21,19 +21,73 @@ flowchart LR
     B --> O{output}
     O -->|plan| O1[unified diff]
     O -->|apply| O2[write files]
-    O -->|run| O3[branch + PR per dependency]
+    O -->|run| O3[branch + PR per dependency or group]
 ```
+
+### Managers
+
+Every discovered file goes to every manager whose `Match` is true. Each dep carries `Manager`, `DepType`, `Datasource` and `Versioning`.
+
+| Manager | Files | DepTypes | Datasource / versioning |
+|---|---|---|---|
+| `github-actions` | `.github`/`.gitea`/`.forgejo` `workflows`/`actions` and `workflow-templates` YAML, `action.y(a)ml` | `action` | `git-tags` / `tag` |
+| `gomod` | `go.mod` | `direct`, `indirect`, `go`, `toolchain` | `go` / `go`; directives `go-toolchain` / `tag` |
+| `docker` | `Dockerfile`, `Containerfile` (also `Dockerfile.x`, `x.Dockerfile`), `(docker-)compose*.y(a)ml`, workflows, `action.y(a)ml` | `dockerfile`, `compose`, `workflow`, `action` | `docker` / `docker` |
+| `custom` | `custom[].files` globs | `annotation`, `regex` | per entry or per match |
+
+**github-actions.** `uses:` values outside `with:`/`env:`. Skips: `local action` (`./`, `$/`), `docker reference (docker manager)`, `unrecognized uses`, `non-version ref`, `pinned without version comment`, `cannot locate value`.
+
+**gomod.** Every `require` plus the `go` and `toolchain` directives (the `toolchain` span covers only the version after `go`). Skips: `replaced`, `pseudo-version`, `vendored module (not supported)`, `prerelease toolchain`. By default `indirect` requirements and the `go` directive are ignored; a rule with `ignore: false` opts in. `toolchain` is updated by default. `go mod tidy` runs after any gomod change.
+
+**docker.**
+- Dockerfile: every `FROM` (case-insensitive, `--flag`s skipped, line continuations and the `# escape=` directive honored). `scratch` and earlier stage names (`AS <name>`) are not dependencies.
+- Compose: `services.*.image`.
+- Workflows: `jobs.*.container` (string or `.image`), `jobs.*.services.*.image`, `uses: docker://…` steps. Actions: `runs.image: docker://…` (when `runs.using: docker`) and `uses: docker://…` in `runs.steps`.
+- References are parsed with distribution/reference; `Name` is the familiar name (`postgres`), the datasource uses the canonical one. Skips: `variable reference` (`$`), `cannot locate value`, `invalid reference`, `no tag`, `digest without tag`, `non-version tag` (e.g. `latest`).
+- Digests: `image:tag@sha256:…` is refreshed in place (tag and digest). With `pin: digest`, `@sha256:<index digest>` is appended after the tag. Digests come from a HEAD of the tag's manifest, so multi-platform images get the index digest. Credentials come from the Docker config and credential helpers.
+
+**custom, annotation mode** (no `match`). A comment `deps: <datasource> <name> [versioning=<scheme>]` after `#`, `//`, `--`, `;` or `<!--` annotates the next line; its first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Otherwise `no version on next line`.
+
+```dockerfile
+# deps: github-releases golangci/golangci-lint
+ARG GOLANGCI_VERSION=v2.5.0
+# deps: go golang.org/x/tools versioning=go
+RUN go install golang.org/x/tools/cmd/goimports@v0.38.0
+```
+
+**custom, regex mode.** `match` is an RE2 run over the whole file; every match is one dep. Named groups: `version` (required), `name`, `datasource`, `digest` (optional; override or supply the entry's `name`/`datasource`). Empty groups skip the match (`empty version`, `empty name`, `empty datasource`). A `digest` group is replaced together with the version.
+
+```yaml
+custom:
+  - files: ["**/*.mk"]
+    match: '(?P<name>[a-z0-9-]+/[a-z0-9-]+)@(?P<version>v\d+\.\d+\.\d+)'
+    datasource: github-releases
+```
+
+### Datasources
+
+| Datasource | Name form | Source |
+|---|---|---|
+| `git-tags` | repository URL (`https://host/path` or `host/path`) | git smart-HTTP `ls-refs`, tags with peeled commits |
+| `go` | module path | GOPROXY `@v/list`, or `go list -m -versions` for GONOPROXY/direct |
+| `go-toolchain` | `go` / `toolchain` | `https://go.dev/dl/?mode=json&include=all` |
+| `docker` | image reference | registry `tags/list` and manifest HEAD (go-containerregistry) |
+| `github-releases` | `owner/repo` (github.com) or `https://host/owner/repo` (GHES, API `/api/v3`) | `GET /repos/{repo}/releases`, non-draft non-prerelease tag names, up to 5 pages of 100 |
+
+Custom entries may use `git-tags`, `github-releases`, `go` and `docker`.
 
 ## 3. Performance and memory design
 
-M1 implements exactly the following:
+The following is implemented:
 
 - **Discovery.** A single `filepath.WalkDir`. It prunes `.git`, `node_modules`, `vendor`, `testdata` and `ignorePaths` directories via `fs.SkipDir`. Paths are matched before any file is opened, and only matched files are read.
 - **Extraction.** Runs on `runtime.GOMAXPROCS(0)` workers. Each worker keeps only `[]Dep` (spans and strings); parse trees and file bytes are dropped immediately. Files are re-read when changes are built, so memory is O(deps), not O(repo).
 - **HTTP.** One shared `http.Client` (HTTP/2, keep-alive) handles every network call.
 - **Lookup dedupe.** Lookups are deduped within a run per key (one `sync.Once` per cache entry). A global semaphore caps concurrent requests at 16.
 - **Actions tags.** Fetched with a native git smart-HTTP protocol v2 `ls-refs` call using `ref-prefix refs/tags/` and `peel`. No `git` process is spawned per action, only tag refs travel over the wire, and the pkt-line response is parsed as a stream.
-- **Go versions.** Fetched from the GOPROXY `@v/list` endpoint over HTTP. `go list` is used only for GOPRIVATE/direct modules.
+- **Go versions.** Fetched from the GOPROXY `@v/list` endpoint over HTTP. `go list` is used only for GOPRIVATE/direct modules. Go toolchain releases come from one `go.dev/dl/?mode=json&include=all` fetch per run.
+- **Registries.** Docker tags come from `tags/list` (all pages; Docker Hub with page size 10000), digests from a manifest HEAD. One shared go-containerregistry puller per run, so ping and token exchange happen once per repository.
+- **Security.** OSV is queried in batches of up to 1000 packages; each advisory document is fetched once.
 - **Child processes.** Spawned only where unavoidable: `go mod tidy` (at most 4 concurrently) and `git` for commit and push.
 - **Commits.** Built with git plumbing on a temporary index. `run` does no checkout, creates no worktree, and never mutates the working tree.
 - **No persistent cache.** Runs are infrequent (scheduled), so in-run dedupe already removes the repeated lookups.
@@ -90,7 +144,7 @@ type Manager interface {
     Extract(file string, src []byte, env Env) ([]dep.Dep, error)
     Edits(u dep.Update) ([]patch.Edit, error) // byte edits for one update; the engine merges them per file
 }
-// actions.New(), gomod.New() return the built-in managers.
+// actions.New(), gomod.New(), docker.New() return the built-in managers; custom.New(cfg.Custom) one per custom[] entry.
 ```
 
 ```go
@@ -104,7 +158,8 @@ type Vuln struct{ Advisory dep.Advisory; Fixed []string }
 type SecuritySource interface {
     Advisories(ctx context.Context, deps []dep.Dep) ([][]Vuln, error)
 }
-// gittags.Lister ("git-tags") and goproxy.Source ("go") implement Datasource.
+// gittags.Lister ("git-tags"), goproxy.Source ("go"), gotoolchain ("go-toolchain"),
+// dockerds ("docker") and githubreleases ("github-releases") implement Datasource; osv implements SecuritySource.
 ```
 
 ```go
@@ -196,8 +251,9 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy e
   - `+incompatible` versions, unless the current version has it;
   - other majors, except the step from v0 to v1.
 - **Docker tags (`docker`).** `^(v?)(\d+(?:\.\d+)*)(.*)$` → prefix, numeric parts, suffix. Candidates must have the same prefix, the same number of parts and an identical suffix; `latest` and other non-numeric tags are invalid.
-- **Semver (`semver`).** Masterminds loose semver. Prereleases only if the current version is one; any precision. The result keeps the current version's `v` prefix style.
-- Every scheme reports each dropped candidate with a reason (`invalid`, `prerelease`, `precision`, `prefix`, `suffix`, `major`, `not newer`, `policy: <why>`) for `Trace`.
+- **Semver (`semver`).** Masterminds loose semver. Prereleases only if the current version is one; any precision. The result keeps the current version's `v` prefix style. Default for `custom[]`.
+- **`go`/`toolchain` directives** use `tag` versioning against the `go-toolchain` releases: every stable `X.Y.Z` plus a derived `X.Y` per minor, so `go 1.26` moves to `go 1.27` and `go 1.26.1` to `go 1.27.1`. Prerelease toolchains (`go1.27rc1`) are skipped.
+- Every scheme reports each dropped candidate with a reason (`invalid`, `prerelease`, `precision`, `prefix`, `suffix`, `major`, `not newer`, `policy: <why>`) for `Trace`; policy reasons are `update type <k> not allowed` and `outside allow <constraint>`.
 
 ## 5. Platforms
 
@@ -275,27 +331,41 @@ Both clients share these rules:
    - remote `refs/heads/deps/*`;
    - open PRs (up to 20 pages) and closed PRs (up to 4 pages);
    - both PR lists are filtered to head branches starting with `deps/`.
-4. **Grouping:** one group per (manager, name).
-   - Branch: `deps/<manager>/<slug(name)>`.
-   - Title, first match wins:
+4. **Grouping:**
+   - Updates whose policy sets `group` form one group per group name: branch `deps/group/<slug(group)>`, title `chore(deps): update <group> (<n> dependencies)`, or the single-dependency title below when only one dependency is in it.
+   - Every other update forms one group per (manager, name): branch `deps/<manager>/<slug(name)>`.
+   - Security updates (with advisories) are never put into a policy group. Title: `fix(deps): update <name> to <ver> [security]`, or `fix(deps): update <name> [security]` when versions differ.
+   - Other titles, first match wins:
      - every update is a pin with the same digest: `chore(deps): pin <name> to <sha7>`;
      - every update is a digest refresh with the same digest: `chore(deps): update <name> digest to <sha7>`;
      - every update shares one new version: `chore(deps): update <name> to <ver>`;
      - otherwise: `chore(deps): update <name>`.
-   - Changes are built for at most 4 groups concurrently, then the groups are handled one after another.
+   - `slug` lowercases, maps bytes outside `[a-z0-9._-]` to `-`, collapses runs of `-` and trims `-`.
+   - Changes are built for at most 4 in-schedule groups concurrently, then the groups are handled one after another.
 5. **Fingerprint:** the first 16 hex characters of sha256 over the sorted `path\x00newcontent` pairs.
-   - The PR body is a `| File | From | To | Type |` table followed by `<!-- deps:fingerprint=<fp> -->`.
+   - The PR body is a `| File | From | To | Type |` table, a `### Security` section listing the advisories (if any), then `<!-- deps:fingerprint=<fp> -->`.
    - The commit message is the title, a blank line, then one line per update: `- <file>:<line> <from> -> <to>`.
 6. **Per-group decision**, first match wins:
    1. No open PR exists, and a closed PR has the same branch, was not merged and has the same title → `skipped: closed PR for this version`.
-   2. The open PR's fingerprint matches and it is not unmergeable → `up-to-date`. On GitHub, a nil `mergeable` triggers a `GetPR` call; nil still counts as mergeable.
-   3. No open PR exists and the created count is at least `--max-new-prs` → `skipped: new PR limit reached`.
-   4. The branch exists and the author email of its last commit is not the bot's → `skipped: branch modified by someone else`.
-   5. `--dry-run` → `would-create` or `would-update`, with no git or API writes.
-   6. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet). Then update the PR (`updated`) or create one (`created`).
+   2. A non-security update of the group is outside its schedule (evaluated at run time in `timezone`) → `skipped: outside schedule`. Nothing is built or pushed.
+   3. The open PR's fingerprint matches and it is not unmergeable → `up-to-date`. On GitHub, a nil `mergeable` triggers a `GetPR` call; nil still counts as mergeable.
+   4. No open PR exists and the created count is at least `--max-new-prs` → `skipped: new PR limit reached`.
+   5. The branch exists and the author email of its last commit is not the bot's → `skipped: branch modified by someone else`.
+   6. `--dry-run` → `would-create` or `would-update`, with no git or API writes.
+   7. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet). Then update the PR (`updated`) or create one (`created`).
 
    A build, git or API error in one group is recorded, and the next group is processed.
-7. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open `deps/` PR whose branch matches no current group is closed and its branch deleted (`closed`). This guard ensures that a failed upstream lookup never closes a valid PR.
+7. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open `deps/` PR whose branch matches no current group is closed and its branch deleted (`closed`). Groups that are outside their schedule still count as current, so their PRs are never closed as obsolete. This guard ensures that a failed upstream lookup never closes a valid PR.
+
+### Security updates (OSV)
+
+- **Source.** `api.osv.dev`: one `/v1/querybatch` round per 1000 distinct packages, then one `/v1/vulns/{id}` fetch per distinct advisory (deduped per run). Runs once per run, concurrently with the release lookups. Disabled with `security: false`.
+- **Ecosystems.**
+  - `Go`: gomod deps of type `direct` or `indirect`, queried with module path and version; OSV matches server-side. Fixed versions get the module `v` prefix.
+  - `GitHub Actions`: github-actions deps hosted on github.com, package `owner/repo` (subpath dropped). OSV does not evaluate ranges for this ecosystem, so the package is queried without a version and the ranges are evaluated locally. A floating tag with fewer than three parts (`v4`, `v4.1`) is affected only when every release of its line is. Fixed versions are rendered in the dep's style (prefix, part count).
+- **Dedupe.** Withdrawn advisories are skipped. Aliases (`GO-2024-2687` / `GHSA-4v7x-pqxf-cx7m`) are reported once, preferring the ecosystem's native ID.
+- **Decision.** The minimum fix F is the max over vulns of each vuln's lowest fix compatible with the current version (vulns without one are ignored). If there is no normal update, or it is below F, the smallest compatible release ≥ F is chosen, bypassing `allow`, `updates` and `schedule`; `ignore` still wins. No such release: the normal update (or none) stays, without error.
+- **Failure.** A failed lookup adds `security advisories: <err>` to the errors and resolution continues without advisories (so obsolete PRs are not closed that run).
 
 ## 6. Running in CI
 
@@ -369,7 +439,7 @@ jobs:
 
 Results and diagnostics are separate streams of stderr content:
 
-- **Results** are always printed: `update`, `error` and `pr` lines and the final count line; `skip` lines with `-v`. `plan` writes the diff to stdout.
+- **Results** are always printed: `update`, `error` and `pr` lines and the final count line; `skip` lines with `-v`. `plan` writes the diff to stdout. `explain` writes its report to stdout.
 - **Diagnostics** go through `log/slog` to stderr, filtered by `--log-level` (`debug|info|warn|error`, env `DEPS_LOG_LEVEL`, default `warn`) and formatted by `--log-format` (`text|json`, env `DEPS_LOG_FORMAT`, default `text`). An invalid value exits 2.
   - `info`: detected platform and how (`ci environment`, `remote host`, `api probe`, `--platform`), the actions default host and its source, per-phase counts and durations (discover, extract, resolve), and the bot's view of the repo (base, head, deps branches, open/closed PRs).
   - `debug`: every HTTP request (method, credential-free URL, status, protocol, time to headers), every `git` and `go` process (args, duration, error), credential-helper outcome per host (never the secret), GOPROXY resolution per module, per-file extraction, per-dependency verdict, patch/tidy steps, and the bot's per-PR decision inputs (fingerprints, mergeability, branch author).
@@ -377,26 +447,31 @@ Results and diagnostics are separate streams of stderr content:
 
 When debug is disabled, the HTTP transport skips timing entirely after one `Enabled` check; other debug calls are cheap level-filtered no-ops.
 
-## 7. Roadmap
+## 7. CLI reference
 
-- **M2 `docker`:**
-  - Dockerfile `FROM`, compose `image:`, workflow `container:`/`services:`/`docker://`, and `runs.image`.
-  - Uses go-containerregistry and distribution/reference.
-  - Tag versioning matches on prefix, part count and suffix.
-  - Pins `@sha256:` digests.
-- **M3 `custom`:**
-  - `# deps: <datasource> <name>` annotations, which update the first version token on the next line.
-  - RE2 regex managers with named groups `name`, `version` and `digest`.
-- **M4:**
-  - per-rule `group`, `schedule` (cron) and `automerge`;
-  - OSV security updates that bypass `allow` and the schedule;
-  - `actions.lock` via `github.com/github/actions-lockfile/go`;
-  - `go`/`toolchain` directive updates;
-  - indirect Go dependencies;
-  - `deps explain <name>` and `deps schema` (invopop/jsonschema);
-  - a dependency dashboard issue.
+| Command | Behavior |
+|---|---|
+| `deps plan` | Unified diff on stdout, report on stderr. go.sum changes are not computed (`note    go.sum changes are computed by apply/run`). |
+| `deps apply` | Writes the changes, including `go mod tidy` output. |
+| `deps run` | Branch and PR per group (section 5). Flags: `--platform`, `--api-url`, `--repo`, `--token`, `--base`, `--author-name`, `--author-email`, `--max-new-prs`, `--dry-run`. |
+| `deps explain <name-glob>...` | Resolves only deps whose name matches any `path.Match` glob. Prints per occurrence `<name>  <file>:<line>  (<manager>, <depType>, <datasource>, <versioning>)`, then `current`, `rules` (`#<i> <fields>` or `none`), `policy`, `candidates`, `rejected` (versions by reason, up to 3 each), `result` (`update <from> -> <to> (<type>)`, `up to date`, `skipped: <reason>` or `error: <err>`) and one `security` line per advisory. A glob matching nothing is an error. |
+| `deps schema` | Prints the JSON Schema (draft 2020-12) of `.deps.yaml`, reflected from `internal/config` with invopop/jsonschema. Unknown keys are rejected, as in `Load`. |
+| `deps version` | Prints the version set via `-ldflags "-X main.version=…"`. |
 
-## 8. Config reference
+`plan`/`apply` update lines carry advisories as a suffix: `update  <file>:<line>  <name>  <from> -> <to>  (<type>)  security: <id>,<id>`.
+
+Editor support: `deps schema > deps.schema.json`, then start `.deps.yaml` with `# yaml-language-server: $schema=./deps.schema.json`.
+
+## 8. Roadmap
+
+- per-rule `automerge`;
+- `actions.lock` via `github.com/github/actions-lockfile/go`;
+- a dependency dashboard issue;
+- GitHub release checksum updates: when a version bump changes a release download, also update the companion `<X>_SHA256` value;
+- HTTP retries and rate-limit handling (`Retry-After`, GitHub secondary limits);
+- an engine benchmark over a large fixture tree to guard the performance targets.
+
+## 9. Config reference
 
 Config file: `.deps.yaml`, falling back to `.deps.yml`, or the path given with `--config` (which must exist). If no file is found, the defaults `{version: 1, pin: keep}` apply, and an empty file also yields the defaults.
 
@@ -433,21 +508,47 @@ custom:
 - The file is decoded strictly: unknown keys are errors and report their line. All validation errors are reported together, each as `<path>: <field>: <msg>`.
 - **Rule evaluation:** the policy starts as `{pin: <top-level pin>, updates: all five, schedule: <top-level>}`, with `ignore` true for `indirect` and `go` dependency types (opt in with a rule `ignore: false`). Each rule matches when its `manager` is empty or equal, its `names` are empty or any glob matches, and its `depTypes` are empty or contain the dependency type. Rules are applied in file order. Every field a matching rule sets overwrites the policy; `updates` is replaced, not merged.
 - **Acceptance:** an update is accepted when its type is in `updates` and the new version satisfies `allow` (if set).
-- **`pin: digest`:** pins tag refs to the tag's commit SHA and appends `# <tag>`. Already-pinned refs stay pinned and are refreshed. The `pin` setting is ignored for gomod.
-- **Schedules:** a time is in schedule when any expression matches it in `timezone`. Like cron, when both day of month and day of week are restricted, either may match.
+- **`pin: digest`:** github-actions: pins tag refs to the tag's commit SHA and appends `# <tag>`. docker: appends `@sha256:<digest>` after the tag. Already-pinned refs stay pinned and are refreshed. The `pin` setting is ignored for gomod and custom.
+- **Schedules:** a time is in schedule when any expression matches it in `timezone`. Like cron, when both day of month and day of week are restricted, either may match. A rule's `schedule` replaces the top-level one; `[]` means always. Steps (`/s`) are allowed only on `*` or a range; day of week is 0-7 (0 and 7 are Sunday).
+- **Groups:** all non-security updates whose policy has the same `group` share one branch and PR (section 5).
+- **Security:** with `security: true` (the default), OSV advisories can force an update that bypasses `allow`, `updates` and `schedule`, but never `ignore` (section 5).
+- **`custom[]`:** validated in both modes: `datasource` and `versioning` must be known, `files` non-empty valid globs, `match` a valid RE2 with a `version` group. See section 2.
+
+### Example
+
+```yaml
+# yaml-language-server: $schema=./deps.schema.json
+timezone: Europe/Berlin
+schedule: ["* 0-5 * * 1-5"]
+rules:
+  - manager: github-actions
+    pin: digest
+    group: actions
+  - manager: gomod
+    updates: [minor, patch]
+  - names: ["golang.org/x/*"]
+    group: golang-x
+  - manager: docker
+    names: ["postgres"]
+    allow: "< 18"
+custom:
+  - files: ["Makefile"]
+    match: 'GOLANGCI_VERSION \?= (?P<version>v\S+)'
+    datasource: github-releases
+    name: golangci/golangci-lint
+```
 
 ### Planned keys (not accepted yet)
 
-| Key | Milestone |
+| Key | Status |
 |---|---|
-| `rules[].automerge` | M4 |
-| `rules[].paths` | M4 |
+| `rules[].automerge` | roadmap |
 
-## 9. Why Go
+## 10. Why Go
 
 - **Ecosystem.**
   - `golang.org/x/mod` gives exact Go module semantics: modfile parsing, semver, pseudo-versions and path escaping.
-  - go-containerregistry and distribution/reference cover Docker (M2).
-  - The Gitea SDK lineage exists, and `actions-lockfile` (M4) is a Go module.
+  - go-containerregistry and distribution/reference cover Docker registries and image references.
+  - The Gitea SDK lineage exists, and `actions-lockfile` (roadmap) is a Go module.
   - Forges are mostly written in Go, so their behavior is easy to reference.
 - **I/O-bound work.** The job is mostly HTTP and git. Goroutines, one shared HTTP/2 client and a semaphore cover it without a runtime, an interpreter or node_modules. The result is one static binary that starts instantly and has a small memory footprint.

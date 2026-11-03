@@ -1,0 +1,274 @@
+package custom
+
+import (
+	"strings"
+	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+)
+
+func one(t *testing.T, c config.Custom) manager.Manager {
+	t.Helper()
+	ms, err := New([]config.Custom{c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ms) != 1 || ms[0].Name() != Name {
+		t.Fatalf("got %d managers", len(ms))
+	}
+	return ms[0]
+}
+
+func extract(t *testing.T, m manager.Manager, src string) []dep.Dep {
+	t.Helper()
+	deps, err := m.Extract("f", []byte(src), manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return deps
+}
+
+// want describes an extracted dep; ref is the text at RefSpan, digest the text at DigestSpan.
+type want struct {
+	line                             int
+	datasource, name, source, versio string
+	version, digest, skip            string
+}
+
+func check(t *testing.T, src string, deps []dep.Dep, depType string, wants []want) {
+	t.Helper()
+	if len(deps) != len(wants) {
+		t.Fatalf("got %d deps, want %d: %+v", len(deps), len(wants), deps)
+	}
+	for i, w := range wants {
+		d := deps[i]
+		if d.Manager != Name || d.DepType != depType || d.File != "f" || d.Line != w.line || d.Datasource != w.datasource ||
+			d.Name != w.name || d.Source != w.source || d.Versioning != w.versio || d.Version != w.version ||
+			d.Digest != w.digest || d.Skip != w.skip {
+			t.Errorf("dep %d = %+v, want %+v", i, d, w)
+			continue
+		}
+		if got := src[d.RefSpan.Start:d.RefSpan.End]; got != w.version {
+			t.Errorf("dep %d RefSpan text %q, want %q", i, got, w.version)
+		}
+		if got := src[d.DigestSpan.Start:d.DigestSpan.End]; got != w.digest {
+			t.Errorf("dep %d DigestSpan text %q, want %q", i, got, w.digest)
+		}
+	}
+}
+
+func TestAnnotations(t *testing.T) {
+	src := strings.Join([]string{
+		"# deps: go golang.org/x/tools",                                     // 1
+		"TOOLS_VERSION ?= v0.30.0 # next: 1.2.3",                            // 2
+		"// deps: github-releases golangci/golangci-lint versioning=semver", // 3
+		`const lint = "2.5.0"`,                                              // 4
+		"  -- deps: docker nginx versioning=docker",                         // 5
+		"image: nginx:1.27.3-alpine",                                        // 6
+		"; deps: git-tags github.com/actions/checkout",                      // 7
+		"ref=@v6.0.1.", // 8
+		"<!-- deps: git-tags https://gitea.com/o/r -->", // 9
+		"go1.2.3 x1.2 1.2.3abc 1.2.3-rc.1+b5, more",     // 10
+		"# deps: docker alpine",                         // 11
+		"# deps: go example.com/m",                      // 12 annotation on annotation's next line
+		"v1.0.0",                                        // 13
+		"# deps: nuget Foo",                             // 14
+		"1.0.0",                                         // 15
+		"# deps: go example.com/v versioning=bogus",     // 16
+		"1.0.0",                         // 17
+		"# deps: git-tags ftp://x/y",    // 18
+		"1.0.0",                         // 19
+		"# deps: github-releases a/b/c", // 20
+		"1.0.0",                         // 21
+		"# deps: go example.com/none",   // 22
+		"version v1 only",               // 23
+		"deps: go not.annotated",        // 24 no comment marker
+		"1.0.0",                         // 25
+		"# deps: go example.com/last",   // 26 last line
+	}, "\n")
+	for name, s := range map[string]string{"lf": src, "crlf": strings.ReplaceAll(src, "\n", "\r\n")} {
+		t.Run(name, func(t *testing.T) {
+			m := one(t, config.Custom{Files: []string{"**/Makefile"}})
+			check(t, s, extract(t, m, s), DepTypeAnnotation, []want{
+				{2, "go", "golang.org/x/tools", "", "semver", "v0.30.0", "", ""},
+				{4, "github-releases", "golangci/golangci-lint", "https://github.com/golangci/golangci-lint", "semver", "2.5.0", "", ""},
+				{6, "docker", "nginx", "", "docker", "1.27.3-alpine", "", ""},
+				{8, "git-tags", "github.com/actions/checkout", "https://github.com/actions/checkout", "semver", "v6.0.1", "", ""},
+				{10, "git-tags", "https://gitea.com/o/r", "https://gitea.com/o/r", "semver", "1.2.3-rc.1+b5", "", ""},
+				{12, "docker", "alpine", "", "semver", "", "", "no version on next line"},
+				{13, "go", "example.com/m", "", "semver", "v1.0.0", "", ""},
+				{15, "nuget", "Foo", "", "semver", "", "", `unknown datasource "nuget"`},
+				{17, "go", "example.com/v", "", "bogus", "", "", `unknown versioning "bogus"`},
+				{19, "git-tags", "ftp://x/y", "", "semver", "", "", `invalid git-tags name "ftp://x/y"`},
+				{21, "github-releases", "a/b/c", "", "semver", "", "", `invalid github-releases name "a/b/c"`},
+				{23, "go", "example.com/none", "", "semver", "", "", "no version on next line"},
+				{26, "go", "example.com/last", "", "semver", "", "", "no version on next line"},
+			})
+		})
+	}
+}
+
+func TestAnnotationEntryVersioning(t *testing.T) {
+	m := one(t, config.Custom{Files: []string{"x"}, Versioning: "tag"})
+	src := "# deps: git-tags https://github.com/o/r/\nv1.2\n"
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "git-tags", "https://github.com/o/r/", "https://github.com/o/r", "tag", "v1.2", "", ""},
+	})
+}
+
+func TestRegex(t *testing.T) {
+	src := "FROM a\n" +
+		"ARG LINT=v2.5.0 # golangci/golangci-lint\n" +
+		"ARG GH=2.80.0 # cli/cli\n" +
+		"ARG BAD= # x/y\n" +
+		"ARG IMG=nginx:1.27.3@sha256:abc123 # img\n"
+	cases := []struct {
+		name  string
+		cfg   config.Custom
+		wants []want
+	}{
+		{
+			name: "name group, fixed datasource",
+			cfg:  config.Custom{Files: []string{"Dockerfile"}, Match: `ARG \w+=(?P<version>v?[\d.]*) # (?P<name>\S+)`, Datasource: "github-releases"},
+			wants: []want{
+				{2, "github-releases", "golangci/golangci-lint", "https://github.com/golangci/golangci-lint", "semver", "v2.5.0", "", ""},
+				{3, "github-releases", "cli/cli", "https://github.com/cli/cli", "semver", "2.80.0", "", ""},
+				{4, "github-releases", "x/y", "", "semver", "", "", "empty version"},
+			},
+		},
+		{
+			name: "digest and datasource groups, fixed name",
+			cfg: config.Custom{Files: []string{"Dockerfile"}, Name: "nginx", Versioning: "docker",
+				Match: `=(?P<image>\w+):(?P<version>[\w.-]+)@(?P<digest>sha256:[0-9a-f]+) # (?P<datasource>img)`},
+			wants: []want{
+				{5, "img", "nginx", "", "docker", "1.27.3", "sha256:abc123", `unknown datasource "img"`},
+			},
+		},
+		{
+			name: "datasource group",
+			cfg:  config.Custom{Files: []string{"Dockerfile"}, Name: "golang.org/x/tools", Match: `(?P<datasource>go)?=(?P<version>v2\S+)`},
+			wants: []want{
+				{2, "", "golang.org/x/tools", "", "semver", "", "", "empty datasource"},
+			},
+		},
+		{
+			name: "empty name group",
+			cfg:  config.Custom{Files: []string{"Dockerfile"}, Datasource: "go", Match: `(?P<name>z*)GH=(?P<version>\S+)`},
+			wants: []want{
+				{3, "go", "", "", "semver", "", "", "empty name"},
+			},
+		},
+		{
+			name: "optional version group absent",
+			cfg:  config.Custom{Files: []string{"Dockerfile"}, Datasource: "go", Name: "m", Match: `FROM (?P<version>\d+)?`},
+			wants: []want{
+				{1, "go", "m", "", "semver", "", "", "empty version"},
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			check(t, src, extract(t, one(t, c.cfg), src), DepTypeRegex, c.wants)
+		})
+	}
+}
+
+func TestMatch(t *testing.T) {
+	m := one(t, config.Custom{Files: []string{"**/Makefile", "tools/*.mk"}})
+	for path, ok := range map[string]bool{
+		"Makefile": true, "a/b/Makefile": true, "tools/x.mk": true, "tools/a/x.mk": false, "Makefile.bak": false,
+	} {
+		if got := m.Match(path); got != ok {
+			t.Errorf("Match(%q) = %v, want %v", path, got, ok)
+		}
+	}
+}
+
+func TestNewErrors(t *testing.T) {
+	for _, c := range []struct {
+		cfg  config.Custom
+		want string
+	}{
+		{config.Custom{}, "custom[1]: files: must not be empty"},
+		{config.Custom{Files: []string{"a/[b"}}, `files: invalid glob "a/[b"`},
+		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: unknown "nope"`},
+		{config.Custom{Files: []string{"x"}, Datasource: "npm"}, `datasource: unknown "npm"`},
+		{config.Custom{Files: []string{"x"}, Match: "("}, "match: error parsing regexp"},
+		{config.Custom{Files: []string{"x"}, Match: "a", Datasource: "go", Name: "n"}, "match: must have a (?P<version>...) group"},
+		{config.Custom{Files: []string{"x"}, Match: "(?P<version>a)", Name: "n"}, "datasource: required unless"},
+		{config.Custom{Files: []string{"x"}, Match: "(?P<version>a)", Datasource: "go"}, "name: required unless"},
+	} {
+		ms, err := New([]config.Custom{{Files: []string{"ok"}}, c.cfg})
+		if err == nil || ms != nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("New(%+v) = %v, %v; want error containing %q", c.cfg, ms, err, c.want)
+		}
+	}
+}
+
+func TestNewMany(t *testing.T) {
+	ms, err := New([]config.Custom{{Files: []string{"a"}}, {Files: []string{"b"}, Match: "(?P<version>x)(?P<name>y)(?P<datasource>z)"}})
+	if err != nil || len(ms) != 2 || !ms[0].Match("a") || !ms[1].Match("b") || ms[0].Match("b") {
+		t.Fatalf("New = %v, %v", ms, err)
+	}
+}
+
+func TestEdits(t *testing.T) {
+	src := "# deps: go golang.org/x/tools\nTOOLS ?= v0.30.0\n" +
+		"IMG=nginx:1.27.3@sha256:aaa\n"
+	ann := one(t, config.Custom{Files: []string{"x"}})
+	re := one(t, config.Custom{Files: []string{"x"}, Datasource: "docker", Name: "nginx", Versioning: "docker",
+		Match: `nginx:(?P<version>[\w.-]+)@(?P<digest>sha256:\w+)`})
+	a := extract(t, ann, src)[0]
+	r := extract(t, re, src)[0]
+
+	cases := []struct {
+		name    string
+		updates []dep.Update
+		want    string
+		err     string
+	}{
+		{
+			name: "version and digest",
+			updates: []dep.Update{
+				{Dep: a, NewVersion: "v0.31.0"},
+				{Dep: r, NewVersion: "1.27.4", NewDigest: "sha256:bbbb"},
+			},
+			want: "# deps: go golang.org/x/tools\nTOOLS ?= v0.31.0\nIMG=nginx:1.27.4@sha256:bbbb\n",
+		},
+		{
+			name:    "digest only",
+			updates: []dep.Update{{Dep: r, NewVersion: "1.27.3", NewDigest: "sha256:cc"}},
+			want:    "# deps: go golang.org/x/tools\nTOOLS ?= v0.30.0\nIMG=nginx:1.27.3@sha256:cc\n",
+		},
+		{name: "digest without span", updates: []dep.Update{{Dep: a, NewVersion: "v0.31.0", NewDigest: "sha256:x"}}, err: "no digest to update"},
+		{name: "stale digest", updates: []dep.Update{{Dep: r, NewVersion: "1.27.4"}}, err: "digest must be updated"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var edits []patch.Edit
+			for _, u := range c.updates {
+				e, err := ann.Edits(u) // any custom manager edits any custom dep
+				if err != nil {
+					if c.err == "" || !strings.Contains(err.Error(), c.err) {
+						t.Fatalf("Edits: %v, want %q", err, c.err)
+					}
+					return
+				}
+				edits = append(edits, e...)
+			}
+			if c.err != "" {
+				t.Fatalf("Edits succeeded, want %q", c.err)
+			}
+			got, err := patch.Apply([]byte(src), edits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}

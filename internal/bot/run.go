@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
@@ -35,6 +36,7 @@ type Options struct {
 	DryRun                        bool
 	MaxNewPRs                     int
 	Managers                      []manager.Manager // edit the updates' files (engine.Build)
+	Now                           time.Time         // schedule evaluation time; zero = time.Now()
 }
 
 // Action statuses.
@@ -48,6 +50,7 @@ const (
 	StatusSkipClosed   = "skipped: closed PR for this version"
 	StatusSkipLimit    = "skipped: new PR limit reached"
 	StatusSkipModified = "skipped: branch modified by someone else"
+	StatusSkipSchedule = "skipped: outside schedule"
 )
 
 // Action is what happened to one branch/PR.
@@ -97,12 +100,21 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy e
 	}
 	slog.InfoContext(ctx, "bot state", "base", base, "head", short(head), "depsBranches", len(branches), "openPRs", len(open), "closedPRs", len(closed))
 
+	now := o.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
 	groups := engine.GroupUpdates(res.Updates)
 	built := make([][]engine.FileChange, len(groups))
 	buildErrs := make([]error, len(groups))
+	inSchedule := make([]bool, len(groups))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
 	for i := range groups {
+		inSchedule[i] = scheduled(groups[i].Updates, now)
+		if !inSchedule[i] {
+			continue // nothing is pushed, so don't build
+		}
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -117,12 +129,12 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy e
 	created := 0
 	wanted := map[string]bool{}
 	for i, grp := range groups {
-		wanted[grp.Branch] = true
+		wanted[grp.Branch] = true // out-of-schedule branches are still wanted: keep their PRs open
 		if buildErrs[i] != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, buildErrs[i]))
 			continue
 		}
-		a, err := handle(ctx, o, base, head, grp, built[i], branches, open, closed, &created, pc, g)
+		a, err := handle(ctx, o, base, head, grp, built[i], inSchedule[i], branches, open, closed, &created, pc, g)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
 			continue
@@ -154,12 +166,10 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy e
 	return actions, errs
 }
 
-func handle(ctx context.Context, o Options, base, head string, grp engine.Group, changes []engine.FileChange,
+func handle(ctx context.Context, o Options, base, head string, grp engine.Group, changes []engine.FileChange, inSchedule bool,
 	branches map[string]string, open, closed []platform.PR, created *int, pc platform.Client, g Git,
 ) (Action, error) {
 	a := Action{Branch: grp.Branch, Title: grp.Title}
-	fp := fingerprint(changes)
-	body := prBody(grp.Updates, fp)
 
 	var pr *platform.PR
 	for i := range open {
@@ -178,7 +188,14 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 			}
 		}
 	}
+	if !inSchedule {
+		slog.DebugContext(ctx, "outside schedule", "branch", grp.Branch)
+		a.Status = StatusSkipSchedule
+		return a, nil
+	}
 
+	fp := fingerprint(changes)
+	body := prBody(grp.Updates, fp)
 	if pr != nil {
 		slog.DebugContext(ctx, "open PR found", "branch", grp.Branch, "number", pr.Number, "fingerprint", fp, "prFingerprint", bodyFingerprint(pr.Body))
 	}
@@ -246,6 +263,17 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 	return a, nil
 }
 
+// scheduled reports whether every non-security update is in its schedule at now.
+// Security updates are always in schedule.
+func scheduled(ups []dep.Update, now time.Time) bool {
+	for _, u := range ups {
+		if len(u.Advisories) == 0 && !u.Schedule.Contains(now) {
+			return false
+		}
+	}
+	return true
+}
+
 func listDeps(ctx context.Context, pc platform.Client, state string, maxPages int) ([]platform.PR, error) {
 	prs, err := pc.ListPRs(ctx, state, maxPages)
 	if err != nil {
@@ -285,6 +313,25 @@ func prBody(ups []dep.Update, fp string) string {
 	for _, u := range ups {
 		from, to := u.FromTo()
 		fmt.Fprintf(&b, "| `%s:%d` | `%s` | `%s` | %s |\n", u.Dep.File, u.Dep.Line, from, to, u.Type)
+	}
+	var adv []dep.Advisory
+	for _, u := range ups {
+		adv = append(adv, u.Advisories...)
+	}
+	if len(adv) > 0 {
+		b.WriteString("\n### Security\n\n")
+		seen := map[string]bool{}
+		for _, a := range adv {
+			if seen[a.ID] {
+				continue
+			}
+			seen[a.ID] = true
+			id := a.ID
+			if a.URL != "" {
+				id = "[" + a.ID + "](" + a.URL + ")"
+			}
+			fmt.Fprintf(&b, "- %s: %s\n", id, a.Summary)
+		}
 	}
 	fmt.Fprintf(&b, "\n<!-- deps:fingerprint=%s -->\n", fp)
 	return b.String()

@@ -1,7 +1,11 @@
 // Package dep holds the types shared by managers, datasources, the engine and the bot.
 package dep
 
-import "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
+import (
+	"strings"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
+)
 
 // UpdateType classifies an update.
 type UpdateType string
@@ -53,14 +57,23 @@ type Update struct {
 	Advisories []Advisory    // non-empty = security update
 }
 
-// FromTo renders the old and new version; digest-pinned sides are `<version>@<sha7>`.
+// FromTo renders the old and new version; digest-pinned sides are `<version>@<digest7>`.
 func (u Update) FromTo() (from, to string) {
 	from, to = u.Dep.Version, u.NewVersion
 	if u.Dep.Digest != "" {
-		from += "@" + u.Dep.Digest[:min(7, len(u.Dep.Digest))]
+		from += "@" + ShortDigest(u.Dep.Digest)
 	}
 	if u.NewDigest != "" {
-		to += "@" + u.NewDigest[:min(7, len(u.NewDigest))]
+		to += "@" + ShortDigest(u.NewDigest)
 	}
 	return from, to
+}
+
+// ShortDigest returns the first 7 hex characters of a git SHA or an OCI digest
+// ("sha256:abc…" → "abc…" cut to 7).
+func ShortDigest(d string) string {
+	if i := strings.IndexByte(d, ':'); i >= 0 {
+		d = d[i+1:]
+	}
+	return d[:min(7, len(d))]
 }

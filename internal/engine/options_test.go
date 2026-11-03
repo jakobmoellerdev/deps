@@ -85,7 +85,7 @@ func TestSecurityUpdates(t *testing.T) {
 		{name: "fix not released and no normal update", cfg: "rules: [{allow: '< 1'}]\n",
 			vulns: []Vuln{vuln("A", "v1.3.0")}},
 		{name: "ignore still wins", cfg: "rules: [{ignore: true}]\n",
-			vulns: []Vuln{vuln("A", "v1.1.0")}, wantSkip: "ignored by rule", wantNoAsks: true},
+			vulns: []Vuln{vuln("A", "v1.1.0")}, wantSkip: "ignored by rule #0", wantNoAsks: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -212,7 +212,7 @@ func TestTrace(t *testing.T) {
 	if tr := byName["./local"]; tr.Dep.Skip != "local action" || tr.Update != nil {
 		t.Errorf("local: %+v", tr)
 	}
-	if tr := byName["actions/cache"]; !tr.Policy.Ignore || !slices.Equal(tr.Rules, []int{0, 1}) || tr.Dep.Skip != "ignored by rule" {
+	if tr := byName["actions/cache"]; !tr.Policy.Ignore || !slices.Equal(tr.Rules, []int{0, 1}) || tr.Dep.Skip != "ignored by rule #1" {
 		t.Errorf("cache: %+v", tr)
 	}
 	if tr := byName["owner/broken"]; tr.Err == nil || !strings.HasSuffix(tr.Err.Error(), "owner/broken: upstream unavailable") {
@@ -377,8 +377,25 @@ func TestResolveUnparsableVersion(t *testing.T) {
 }
 
 func TestManagersRegistry(t *testing.T) {
+	names := func(ms []manager.Manager) []string {
+		var out []string
+		for _, m := range ms {
+			out = append(out, m.Name())
+		}
+		return out
+	}
 	ms, err := Managers(config.Default())
-	if err != nil || len(ms) != 2 || ms[0].Name() != "github-actions" || ms[1].Name() != "gomod" {
-		t.Fatalf("Managers = %v, %v", ms, err)
+	if err != nil || !slices.Equal(names(ms), []string{"github-actions", "gomod", "docker"}) {
+		t.Fatalf("default managers = %v, %v", names(ms), err)
+	}
+	cfg := config.Default()
+	cfg.Custom = []config.Custom{{Files: []string{"Taskfile.yml"}}, {Files: []string{"Makefile"}, Match: `V=(?P<version>\S+)`, Datasource: "go", Name: "example.com/x"}}
+	ms, err = Managers(cfg)
+	if err != nil || !slices.Equal(names(ms), []string{"github-actions", "gomod", "docker", "custom", "custom"}) {
+		t.Fatalf("custom managers = %v, %v", names(ms), err)
+	}
+	cfg.Custom = []config.Custom{{}}
+	if _, err := Managers(cfg); err == nil {
+		t.Fatal("invalid custom entry accepted")
 	}
 }

@@ -12,8 +12,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -45,7 +49,7 @@ func newRoot() *cobra.Command {
 	pf.BoolVarP(&o.verbose, "verbose", "v", false, "also print skipped dependencies")
 	pf.StringVar(&o.log.level, "log-level", envOr("DEPS_LOG_LEVEL", "warn"), "log level: debug, info, warn, error (env DEPS_LOG_LEVEL)")
 	pf.StringVar(&o.log.format, "log-format", envOr("DEPS_LOG_FORMAT", "text"), "log format: text, json (env DEPS_LOG_FORMAT)")
-	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion())
+	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newSchema())
 	return root
 }
 
@@ -73,6 +77,7 @@ type session struct {
 	client   *http.Client
 	managers []manager.Manager
 	sources  map[string]engine.Datasource
+	security engine.SecuritySource // nil when security: false
 	env      manager.Env
 	stderr   io.Writer
 }
@@ -100,22 +105,35 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	}
 	slog.Info("actions default host", "host", host, "source", source)
 	slog.Debug("config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
+	var security engine.SecuritySource
+	if cfg.SecurityEnabled() {
+		security = osv.New(client, sem)
+	}
 	return &session{
 		root:     root,
 		cfg:      cfg,
 		client:   client,
 		managers: managers,
 		sources: map[string]engine.Datasource{
-			"git-tags": gittags.New(client, auth, sem),
-			"go":       goproxy.New(client, sem),
+			"git-tags":          gittags.New(client, auth, sem),
+			"go":                goproxy.New(client, sem),
+			gotoolchain.Name:    gotoolchain.New(client, sem),
+			"docker":            dockerds.New(client, sem),
+			githubreleases.Name: githubreleases.New(client, auth, sem),
 		},
-		env:    manager.Env{DefaultHost: host},
-		stderr: stderr,
+		security: security,
+		env:      manager.Env{DefaultHost: host},
+		stderr:   stderr,
 	}, nil
 }
 
+// options returns the engine options of this session; callers add Filter/Trace.
+func (s *session) options() engine.Options {
+	return engine.Options{Managers: s.managers, Datasources: s.sources, Security: s.security}
+}
+
 func (s *session) resolve(ctx context.Context) (*engine.Result, error) {
-	return engine.Resolve(ctx, s.root, s.cfg, s.env, engine.Options{Managers: s.managers, Datasources: s.sources})
+	return engine.Resolve(ctx, s.root, s.cfg, s.env, s.options())
 }
 
 func (s *session) abs(rel string) string { return filepath.Join(s.root, filepath.FromSlash(rel)) }

@@ -65,8 +65,35 @@ func newFakeNet(t *testing.T) *fakeNet {
 			pkt(sha701+" refs/tags/v7.0.1^{}\n")+
 			"0000")
 	})
+	// OSV: only example.com/vuln has an advisory (fixed in v1.0.1).
+	f.mux.HandleFunc("POST api.osv.dev/v1/querybatch", func(w http.ResponseWriter, r *http.Request) {
+		var q struct {
+			Queries []struct {
+				Package struct{ Name string }
+			}
+		}
+		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		results := make([]string, len(q.Queries))
+		for i, qq := range q.Queries {
+			results[i] = "{}"
+			if qq.Package.Name == "example.com/vuln" {
+				results[i] = `{"vulns":[{"id":"GO-TEST-1"}]}`
+			}
+		}
+		io.WriteString(w, `{"results":[`+strings.Join(results, ",")+`]}`)
+	})
+	f.mux.HandleFunc("GET api.osv.dev/v1/vulns/GO-TEST-1", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"id":"GO-TEST-1","summary":"bad bug","affected":[{"package":{"name":"example.com/vuln","ecosystem":"Go"},`+
+			`"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.0.1"}]}]}]}`)
+	})
 	f.mux.HandleFunc("GET proxy.test/example.com/a/@v/list", func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, "v1.0.0\nv1.1.0\nv2.0.0\n")
+	})
+	f.mux.HandleFunc("GET proxy.test/example.com/vuln/@v/list", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, "v1.0.0\nv1.1.0\nv1.2.0\n")
 	})
 	f.mux.HandleFunc("GET git.test/api/v1/repos/o/r", func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"default_branch":"main"}`)
@@ -175,7 +202,7 @@ func TestPlan(t *testing.T) {
 		"update  go.mod:5  example.com/a  v1.0.0 -> v1.1.0  (minor)\n",
 		"skip    .github/workflows/ci.yml:8  ./local  local action\n",
 		"note    go.sum changes are computed by apply/run\n",
-		"3 updates in 2 files, 1 skipped, 0 errors\n",
+		"3 updates in 2 files, 2 skipped, 0 errors\n",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
@@ -190,6 +217,26 @@ func TestPlan(t *testing.T) {
 	}
 	if !strings.Contains(string(sum), "| `example.com/a` | `go.mod:5` | `v1.0.0` | `v1.1.0` | minor |") {
 		t.Errorf("summary:\n%s", sum)
+	}
+}
+
+func TestPlanSecurityUpdate(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	const mod = "module example.com/x\n\ngo 1.24\n\nrequire example.com/vuln v1.0.0\n"
+	// Only patch updates are allowed, so v1.1.0 is chosen solely because it fixes GO-TEST-1;
+	// with security disabled nothing is proposed.
+	for _, tt := range []struct{ cfg, want string }{
+		{"rules: [{manager: gomod, updates: [patch]}]\n",
+			"update  go.mod:5  example.com/vuln  v1.0.0 -> v1.1.0  (minor)  security: GO-TEST-1\n"},
+		{"security: false\nrules: [{manager: gomod, updates: [patch]}]\n", "0 updates in 0 files"},
+	} {
+		dir := t.TempDir()
+		writeFiles(t, dir, map[string]string{"go.mod": mod, ".deps.yaml": tt.cfg})
+		_, stderr, code := execute(t, "plan", "--dir", dir)
+		if code != 0 || !strings.Contains(stderr, tt.want) {
+			t.Errorf("cfg %q: exit %d, stderr lacks %q:\n%s", tt.cfg, code, tt.want, stderr)
+		}
 	}
 }
 

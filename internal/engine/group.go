@@ -2,25 +2,35 @@ package engine
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-// Group is all updates of one dependency; it becomes one branch and one pull request.
+// Group is the updates that become one branch and one pull request: all updates of one
+// dependency, or all non-security updates sharing a policy group (Manager "group").
 type Group struct {
 	Manager, Name, Branch, Title string
 	Updates                      []dep.Update
 }
 
-// GroupUpdates groups updates by (Manager, Name), sorted by Manager then Name.
+// GroupManager is the Group.Manager of policy groups.
+const GroupManager = "group"
+
+// GroupUpdates groups updates by policy group name, or by (Manager, Name) for ungrouped and
+// security updates (security updates are never batched into a policy group). Sorted by
+// Manager then Name.
 func GroupUpdates(updates []dep.Update) []Group {
 	type key struct{ manager, name string }
 	idx := map[key]int{}
 	var groups []Group
 	for _, u := range updates {
 		k := key{u.Dep.Manager, u.Dep.Name}
+		if u.Group != "" && len(u.Advisories) == 0 {
+			k = key{GroupManager, u.Group}
+		}
 		i, ok := idx[k]
 		if !ok {
 			i = len(groups)
@@ -30,12 +40,37 @@ func GroupUpdates(updates []dep.Update) []Group {
 		groups[i].Updates = append(groups[i].Updates, u)
 	}
 	for i := range groups {
-		groups[i].Title = title(groups[i].Name, groups[i].Updates)
+		groups[i].Title = groupTitle(groups[i])
 	}
 	slices.SortFunc(groups, func(a, b Group) int {
 		return cmp.Or(strings.Compare(a.Manager, b.Manager), strings.Compare(a.Name, b.Name))
 	})
 	return groups
+}
+
+func groupTitle(g Group) string {
+	if g.Manager == GroupManager {
+		names := map[string]bool{}
+		for _, u := range g.Updates {
+			names[u.Dep.Name] = true
+		}
+		if len(names) > 1 {
+			return fmt.Sprintf("chore(deps): update %s (%d dependencies)", g.Name, len(names))
+		}
+		return title(g.Updates[0].Dep.Name, g.Updates)
+	}
+	for _, u := range g.Updates {
+		if len(u.Advisories) > 0 {
+			v := g.Updates[0].NewVersion
+			for _, o := range g.Updates {
+				if o.NewVersion != v {
+					return "fix(deps): update " + g.Name + " [security]"
+				}
+			}
+			return "fix(deps): update " + g.Name + " to " + v + " [security]"
+		}
+	}
+	return title(g.Name, g.Updates)
 }
 
 func title(name string, ups []dep.Update) string {
@@ -59,7 +94,7 @@ func title(name string, ups []dep.Update) string {
 	return "chore(deps): update " + name
 }
 
-func short(sha string) string { return sha[:min(7, len(sha))] }
+func short(digest string) string { return dep.ShortDigest(digest) }
 
 // slug lowercases s, maps bytes outside [a-z0-9._-] to '-', collapses runs of '-' and trims '-'.
 func slug(s string) string {

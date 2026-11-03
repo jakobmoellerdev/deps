@@ -1,10 +1,11 @@
-// Package gomod extracts direct requirements from go.mod files.
+// Package gomod extracts requirements and go/toolchain directives from go.mod files.
 package gomod
 
 import (
 	"bytes"
 	"path"
 	"regexp"
+	"strings"
 
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
@@ -12,6 +13,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Name is the manager name.
@@ -37,7 +39,13 @@ func (gomodManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep
 		return nil, err
 	}
 	vendored := env.Vendored != nil && env.Vendored(path.Dir(file))
-	deps := make([]dep.Dep, 0, len(f.Require))
+	deps := make([]dep.Dep, 0, len(f.Require)+2)
+	if f.Go != nil {
+		deps = append(deps, directive(file, src, "go", f.Go.Version, f.Go.Syntax))
+	}
+	if f.Toolchain != nil {
+		deps = append(deps, directive(file, src, "toolchain", f.Toolchain.Name, f.Toolchain.Syntax))
+	}
 	for _, r := range f.Require {
 		v := r.Mod.Version
 		d := dep.Dep{
@@ -52,8 +60,6 @@ func (gomodManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep
 			d.RefSpan = dep.Span{Start: s + i, End: s + i + len(v)}
 		}
 		switch {
-		case r.Indirect:
-			d.Skip = "indirect"
 		case replaced(f, r.Mod.Path):
 			d.Skip = "replaced"
 		case module.IsPseudoVersion(v):
@@ -64,6 +70,30 @@ func (gomodManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep
 		deps = append(deps, d)
 	}
 	return deps, nil
+}
+
+// directive builds the dep for a go or toolchain directive; the toolchain value drops its
+// "go" prefix and RefSpan covers only the numeric part.
+func directive(file string, src []byte, name, value string, x *modfile.Line) dep.Dep {
+	v := value
+	if name == "toolchain" {
+		v = strings.TrimPrefix(value, "go")
+	}
+	d := dep.Dep{
+		Manager: Name, Datasource: "go-toolchain", Versioning: "tag", DepType: name,
+		File: file, Name: name, Version: v, Line: x.Start.Line,
+	}
+	s, e := x.Start.Byte, x.End.Byte
+	if i := bytes.LastIndex(src[s:e], []byte(value)); i >= 0 {
+		start := s + i + len(value) - len(v)
+		d.RefSpan = dep.Span{Start: start, End: start + len(v)}
+	} else {
+		d.Skip = "cannot locate value"
+	}
+	if _, ok := versioning.ParseTag(v); !ok && d.Skip == "" {
+		d.Skip = "prerelease toolchain"
+	}
+	return d
 }
 
 // Edits replaces the version token.

@@ -19,7 +19,7 @@ func ParseUses(value, defaultHost string) Uses {
 	case strings.HasPrefix(value, "./"), strings.HasPrefix(value, "$/"):
 		return Uses{Skip: "local action"}
 	case strings.HasPrefix(value, "docker://"):
-		return Uses{Skip: "docker reference (not supported yet)"}
+		return Uses{Skip: "docker reference (docker manager)"}
 	}
 	p, ref, found := strings.CutLast(value, "@")
 	if !found {

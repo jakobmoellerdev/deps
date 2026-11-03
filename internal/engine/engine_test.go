@@ -172,7 +172,7 @@ func TestResolveAndBuildActions(t *testing.T) {
 			name:      "ignore",
 			cfg:       "rules:\n  - names: [actions/checkout]\n    ignore: true\n",
 			wantLines: map[int]string{6: "      - uses: actions/checkout@v4.1.0"},
-			wantSkip:  "ignored by rule",
+			wantSkip:  "ignored by rule #0",
 		},
 		{
 			name:      "pin digest",

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/aymanbagabas/go-udiff"
 	"github.com/spf13/cobra"
@@ -77,7 +78,15 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 func report(w io.Writer, verbose bool, res *engine.Result, errs []error) {
 	for _, u := range res.Updates {
 		from, to := u.FromTo()
-		fmt.Fprintf(w, "update  %s:%d  %s  %s -> %s  (%s)\n", u.Dep.File, u.Dep.Line, u.Dep.Name, from, to, u.Type)
+		sec := ""
+		if len(u.Advisories) > 0 {
+			ids := make([]string, len(u.Advisories))
+			for i, a := range u.Advisories {
+				ids[i] = a.ID
+			}
+			sec = "  security: " + strings.Join(ids, ",")
+		}
+		fmt.Fprintf(w, "update  %s:%d  %s  %s -> %s  (%s)%s\n", u.Dep.File, u.Dep.Line, u.Dep.Name, from, to, u.Type, sec)
 	}
 	if verbose {
 		for _, d := range res.Skipped {
