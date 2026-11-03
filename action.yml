@@ -16,5 +16,5 @@ runs:
     - shell: bash
       env:
         DEPS_TOKEN: ${{ inputs.token }}
-        DEPS_DEFAULT_ACTIONS_URL: ${{ github.gitea_default_actions_url }}
+        DEPS_DEFAULT_ACTIONS_URL: ${{ gitea.gitea_default_actions_url }}
       run: '"$RUNNER_TEMP/deps" ${{ inputs.args }}'
