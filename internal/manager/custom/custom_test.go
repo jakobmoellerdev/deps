@@ -195,7 +195,7 @@ func TestNewErrors(t *testing.T) {
 		{config.Custom{}, "custom[1]: files: must not be empty"},
 		{config.Custom{Files: []string{"a/[b"}}, `files: invalid glob "a/[b"`},
 		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: unknown "nope"`},
-		{config.Custom{Files: []string{"x"}, Datasource: "npm"}, `datasource: unknown "npm"`},
+		{config.Custom{Files: []string{"x"}, Datasource: "nuget"}, `datasource: unknown "nuget"`},
 		{config.Custom{Files: []string{"x"}, Match: "("}, "match: error parsing regexp"},
 		{config.Custom{Files: []string{"x"}, Match: "a", Datasource: "go", Name: "n"}, "match: must have a (?P<version>...) group"},
 		{config.Custom{Files: []string{"x"}, Match: "(?P<version>a)", Name: "n"}, "datasource: required unless"},
@@ -327,4 +327,108 @@ func TestChecksum(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRenovateMarkers uses the marker shapes of open-component-model's .env, workflows,
+// envtest.go, netlify.toml and yaml fixtures.
+func TestRenovateMarkers(t *testing.T) {
+	const dockleDigest = "sha256:eade932f793742de0aa8755406c7677cd7696f8675b6180926f7eeffa7abe6b9"
+	const scapDigest = "sha256:065ffd57a1b45e9249fa52f514da4baa0b62d35ac27fd1cc56f4d195c2a9f43e"
+	src := strings.Join([]string{
+		"# renovate: datasource=github-releases depName=golangci/golangci-lint",                      // 1
+		"GOLANGCI_LINT_VERSION=v2.15.0",                                                              // 2
+		"# renovate: datasource=docker depName=goodwithtech/dockle",                                  // 3
+		"DOCKLE_IMAGE=goodwithtech/dockle:v0.4.15@" + dockleDigest,                                   // 4
+		"# renovate: datasource=docker depName=cgr.dev/chainguard/openscap",                          // 5
+		"OPENSCAP_IMAGE=cgr.dev/chainguard/openscap:latest@" + scapDigest,                            // 6
+		"          # renovate: datasource=github-releases depName=helm/helm",                         // 7
+		"          version: v4.3.0",                                                                  // 8
+		"  # renovate: datasource=github-releases depName=open-component-model/open-component-model", // 9
+		"  semver: 0.16.0", // 10
+		"// renovate: datasource=custom.envtest depName=envtest",  // 11
+		`const DefaultEnvTestVersion = "1.36.0"`,                  // 12
+		"  # renovate: datasource=golang-version depName=go",      // 13
+		`  GO_VERSION = "1.27.1"`,                                 // 14
+		"  # renovate: datasource=node-version depName=node",      // 15
+		`  NODE_VERSION = "26.5.0"`,                               // 16
+		"  # renovate: datasource=npm depName=npm",                // 17
+		`  NPM_VERSION = "12.2.0"`,                                // 18
+		"# renovate: datasource=go depName=k8s.io/code-generator", // 19
+		"DEEPCOPY_GEN_VERSION=v0.37.1",                            // 20
+		"# renovate: depName=x/y datasource=github-tags packageName=o/r versioning=tag registryUrl=https://x", // 21
+		"REF=v1.2", // 22
+		"<!-- renovate: datasource=docker depName=nginx -->", // 23
+		"image: nginx:1.27.3-alpine",                         // 24
+		"# renovate: datasource=docker depName=alpine",       // 25
+		"ALPINE=3.20",               // 26 no image ref: version token
+		"# renovate: depName=x",     // 27
+		"1.0.0",                     // 28
+		"# renovate: datasource=go", // 29
+		"1.0.0",                     // 30
+		"# renovate: datasource=go depName=a versioning=loose", // 31
+		"1.0.0", // 32
+		"# renovate: datasource=github-release-attachments depName=o/r", // 33
+		"# renovate: datasource=docker depName=busybox",                 // 34 marker on marker's next line
+		"busybox:1.36", // 35
+	}, "\n")
+	m := one(t, config.Custom{Files: []string{"**/.env"}})
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "github-releases", "golangci/golangci-lint", "https://github.com/golangci/golangci-lint", "semver", "v2.15.0", "", ""},
+		{4, "docker", "goodwithtech/dockle", "", "docker", "v0.4.15", dockleDigest, ""},
+		{6, "docker", "cgr.dev/chainguard/openscap", "", "docker", "latest", scapDigest, ""},
+		{8, "github-releases", "helm/helm", "https://github.com/helm/helm", "semver", "v4.3.0", "", ""},
+		{10, "github-releases", "open-component-model/open-component-model", "https://github.com/open-component-model/open-component-model", "semver", "0.16.0", "", ""},
+		{12, "custom.envtest", "envtest", "", "semver", "", "", `unknown datasource "custom.envtest"`},
+		{14, "go-toolchain", "go", "", "semver", "1.27.1", "", ""},
+		{16, "node-version", "node", "", "semver", "", "", `unknown datasource "node-version"`},
+		{18, "npm", "npm", "", "semver", "12.2.0", "", ""},
+		{20, "go", "k8s.io/code-generator", "", "semver", "v0.37.1", "", ""},
+		{22, "git-tags", "o/r", "https://github.com/o/r", "tag", "v1.2", "", ""},
+		{24, "docker", "nginx", "", "docker", "1.27.3-alpine", "", ""},
+		{26, "docker", "alpine", "", "docker", "3.20", "", ""},
+		{28, "", "x", "", "", "", "", "renovate marker without datasource"},
+		{30, "go", "", "", "", "", "", "renovate marker without depName"},
+		{32, "go", "a", "", "loose", "", "", `unknown versioning "loose"`},
+		{34, "github-releases", "o/r", "https://github.com/o/r", "semver", "", "", "no version on next line"},
+		{35, "docker", "busybox", "", "docker", "1.36", "", ""},
+	})
+}
+
+func TestDockerRefBoundaries(t *testing.T) {
+	for _, c := range []struct{ line, tag string }{
+		{"X=a/b:1.2 y", "1.2"},
+		{"X=a/b:1.2@sha256:short c:3", "3"},
+		{"key: value", ""},
+		{"localhost:5000/img:v1", "v1"},
+	} {
+		loc := firstDockerRef([]byte(c.line))
+		got := ""
+		if loc != nil {
+			got = c.line[loc[2]:loc[3]]
+		}
+		if got != c.tag {
+			t.Errorf("firstDockerRef(%q) tag = %q, want %q", c.line, got, c.tag)
+		}
+	}
+}
+
+// TestRegexRenovateGroups covers Renovate's named groups (OCM renovate.json5 shapes).
+func TestRegexRenovateGroups(t *testing.T) {
+	const digest = "sha256:eade932f793742de0aa8755406c7677cd7696f8675b6180926f7eeffa7abe6b9"
+	src := "# renovate: datasource=docker depName=goodwithtech/dockle\nDOCKLE_IMAGE=goodwithtech/dockle:v0.4.15@" + digest + "\n" +
+		"# renovate: datasource=golang-version depName=go\nGO_VERSION = \"1.27.1\"\n" +
+		"# renovate: datasource=github-tags depName=x packageName=o/r versioning=tag\nREF = \"1.2.3\"\n"
+	m := one(t, config.Custom{Files: []string{"x"}, Match: `# renovate: datasource=docker depName=(?P<depName>\S+)\s+\w+_IMAGE=\S+?:(?P<currentValue>[^@\s]+)@(?P<currentDigest>sha256:[a-f0-9]{64})`, Datasource: "docker", Versioning: "docker"})
+	check(t, src, extract(t, m, src), DepTypeRegex, []want{
+		{2, "docker", "goodwithtech/dockle", "", "docker", "v0.4.15", digest, ""},
+	})
+	m = one(t, config.Custom{Files: []string{"x"}, Match: `# renovate: datasource=(?P<datasource>\S+) depName=(?P<depName>\S+)(?: packageName=(?P<packageName>\S+))?(?: versioning=(?P<versioning>\S+))?\s+\w+ = "(?P<currentValue>[^"]+)"`})
+	check(t, src, extract(t, m, src), DepTypeRegex, []want{
+		{4, "go-toolchain", "go", "", "semver", "1.27.1", "", ""},
+		{6, "git-tags", "o/r", "https://github.com/o/r", "tag", "1.2.3", "", ""},
+	})
+	m = one(t, config.Custom{Files: []string{"x"}, Match: `(?P<versioning>bogus) (?P<currentValue>1\.0)`, Datasource: "go", Name: "n"})
+	check(t, "bogus 1.0", extract(t, m, "bogus 1.0"), DepTypeRegex, []want{
+		{1, "go", "n", "", "bogus", "1.0", "", `unknown versioning "bogus"`},
+	})
 }

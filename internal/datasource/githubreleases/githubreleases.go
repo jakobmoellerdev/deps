@@ -41,10 +41,16 @@ type Source struct {
 }
 
 type entry struct {
-	once   sync.Once
-	rels   []datasource.Release
-	assets map[string][]Asset // by tag name
-	err    error
+	once  sync.Once
+	rels  []datasource.Release
+	byTag map[string]tagInfo
+	err   error
+}
+
+// tagInfo is what deps keeps of a published release besides its tag name.
+type tagInfo struct {
+	assets    []Asset
+	published time.Time
 }
 
 // Asset is a release asset; Digest is the API `digest` ("sha256:<hex>"), "" if GitHub has none.
@@ -111,7 +117,7 @@ func (s *Source) lookup(ctx context.Context, name string) (*entry, error) {
 		s.cache[key] = e
 	}
 	s.mu.Unlock()
-	e.once.Do(func() { e.rels, e.assets, e.err = s.fetch(ctx, r) })
+	e.once.Do(func() { e.rels, e.byTag, e.err = s.fetch(ctx, r) })
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -126,19 +132,11 @@ func (s *Source) AssetDigest(ctx context.Context, name, version, asset string) (
 	if err != nil {
 		return "", err
 	}
-	tag := version
-	assets, ok := e.assets[tag]
+	tag, info, ok := e.release(version)
 	if !ok {
-		if strings.HasPrefix(version, "v") {
-			tag = version[1:]
-		} else {
-			tag = "v" + version
-		}
-		if assets, ok = e.assets[tag]; !ok {
-			return "", fmt.Errorf("no release %s in %s", version, name)
-		}
+		return "", fmt.Errorf("no release %s in %s", version, name)
 	}
-	for _, a := range assets {
+	for _, a := range info.assets {
 		if a.Name != asset {
 			continue
 		}
@@ -150,19 +148,43 @@ func (s *Source) AssetDigest(ctx context.Context, name, version, asset string) (
 	return "", fmt.Errorf("release %s has no digest for asset %s", tag, asset)
 }
 
+// release returns the published release of version: the tag equal to version, or to version
+// with a leading "v" added or removed.
+func (e *entry) release(version string) (tag string, info tagInfo, ok bool) {
+	if info, ok = e.byTag[version]; ok {
+		return version, info, true
+	}
+	if tag, ok = strings.CutPrefix(version, "v"); !ok {
+		tag = "v" + version
+	}
+	info, ok = e.byTag[tag]
+	return tag, info, ok
+}
+
+// ReleaseTime implements datasource.Timer with the `published_at` of version's release (see
+// AssetDigest for the tag match) from the cached release list; zero when there is none.
+func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
+	e, err := s.lookup(ctx, d.Name)
+	if err != nil {
+		return time.Time{}, err
+	}
+	_, info, _ := e.release(version)
+	return info.published, nil
+}
+
 // Digest is unsupported: releases carry no digest.
 func (*Source) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }
 
-func (s *Source) fetch(ctx context.Context, r repo) (rels []datasource.Release, assets map[string][]Asset, err error) {
+func (s *Source) fetch(ctx context.Context, r repo) (rels []datasource.Release, byTag map[string]tagInfo, err error) {
 	start, pages := time.Now(), 0
 	defer func() {
 		slog.DebugContext(ctx, "github releases listed", "repo", r.path, "api", r.api, "pages", pages,
 			"releases", len(rels), "duration", time.Since(start), "err", err)
 	}()
 	_, token, authed := s.auth.Static(r.host)
-	assets = make(map[string][]Asset)
+	byTag = make(map[string]tagInfo)
 	for page := 1; page <= maxPages; page++ {
-		n, err := s.page(ctx, r, page, token, authed, &rels, assets)
+		n, err := s.page(ctx, r, page, token, authed, &rels, byTag)
 		pages = page
 		if err != nil {
 			return nil, nil, err
@@ -171,19 +193,20 @@ func (s *Source) fetch(ctx context.Context, r repo) (rels []datasource.Release, 
 			break
 		}
 	}
-	return rels, assets, nil
+	return rels, byTag, nil
 }
 
 type release struct {
-	TagName    string  `json:"tag_name"`
-	Draft      bool    `json:"draft"`
-	Prerelease bool    `json:"prerelease"`
-	Assets     []Asset `json:"assets"`
+	TagName     string     `json:"tag_name"`
+	Draft       bool       `json:"draft"`
+	Prerelease  bool       `json:"prerelease"`
+	Assets      []Asset    `json:"assets"`
+	PublishedAt *time.Time `json:"published_at"`
 }
 
 // page fetches one page, appends its published releases to rels and returns the number of
 // entries on the page. The array is decoded element by element so only one release is buffered.
-func (s *Source) page(ctx context.Context, r repo, page int, token string, authed bool, rels *[]datasource.Release, assets map[string][]Asset) (int, error) {
+func (s *Source) page(ctx context.Context, r repo, page int, token string, authed bool, rels *[]datasource.Release, byTag map[string]tagInfo) (int, error) {
 	if err := s.acquire(ctx); err != nil {
 		return 0, err
 	}
@@ -231,7 +254,11 @@ func (s *Source) page(ctx context.Context, r repo, page int, token string, authe
 		n++
 		if !rel.Draft && !rel.Prerelease && rel.TagName != "" {
 			*rels = append(*rels, datasource.Release{Version: rel.TagName})
-			assets[rel.TagName] = rel.Assets
+			info := tagInfo{assets: rel.Assets}
+			if rel.PublishedAt != nil {
+				info.published = *rel.PublishedAt
+			}
+			byTag[rel.TagName] = info
 		}
 	}
 	if _, err := dec.Token(); err != nil {

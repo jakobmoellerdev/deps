@@ -5,6 +5,7 @@ package datasource
 
 import (
 	"context"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
@@ -20,6 +21,22 @@ type Datasource interface {
 	Releases(ctx context.Context, d dep.Dep, dir string) ([]Release, error)
 	// Digest returns the digest of version; used when Release.Digest is "".
 	Digest(ctx context.Context, d dep.Dep, version string) (string, error)
+}
+
+// Timer is implemented by datasources that know when a version was published. It is optional
+// and called lazily, only for versions that end up in a pull request.
+type Timer interface {
+	// ReleaseTime returns when version of d was published; the zero time with a nil error
+	// means unknown.
+	ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error)
+}
+
+// SourceRepo is implemented by datasources that know the source repository of a package
+// (npm `repository`, OCI `org.opencontainers.image.source`). It is optional.
+type SourceRepo interface {
+	// SourceRepo returns the repository reference of version of d as published (for example
+	// `git+https://github.com/o/r.git` or `github:o/r`), or "" when unknown; callers normalize it.
+	SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error)
 }
 
 // Vuln is an advisory affecting a dependency and the versions that fix it.

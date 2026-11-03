@@ -112,7 +112,7 @@ func TestPRBodySecurity(t *testing.T) {
 		Advisories: []dep.Advisory{{ID: "GO-1", Summary: "rce", URL: "https://pkg.go.dev/vuln/GO-1"}, {ID: "GO-2", Summary: "dos"}},
 	}
 	dup := u
-	body := prBody([]dep.Update{u, dup}, "abc")
+	body := prBody(t.Context(), nil, []dep.Update{u, dup}, "abc")
 	for _, want := range []string{"| `go.mod:3` | `v1.0.0` | `v1.0.1` | patch |", "### Security", "- [GO-1](https://pkg.go.dev/vuln/GO-1): rce\n", "- GO-2: dos\n", "<!-- deps:fingerprint=abc -->"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q:\n%s", want, body)
@@ -121,7 +121,7 @@ func TestPRBodySecurity(t *testing.T) {
 	if strings.Count(body, "GO-2") != 1 {
 		t.Errorf("advisory duplicated:\n%s", body)
 	}
-	if strings.Contains(prBody([]dep.Update{{Dep: dep.Dep{Version: "v1"}, NewVersion: "v2"}}, "x"), "Security") {
+	if strings.Contains(prBody(t.Context(), nil, []dep.Update{{Dep: dep.Dep{Version: "v1"}, NewVersion: "v2"}}, "x"), "Security") {
 		t.Error("security section without advisories")
 	}
 }

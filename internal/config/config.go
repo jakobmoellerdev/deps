@@ -2,12 +2,13 @@
 package config
 
 import (
+	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -31,21 +32,35 @@ const (
 var (
 	Managers          = []string{"github-actions", "gomod", "docker", "npm", "custom"}
 	DepTypes          = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "annotation", "regex"}
-	CustomDatasources = []string{"git-tags", "github-releases", "go", "docker"}
+	CustomDatasources = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "golang-version", "github-tags", "github-release-attachments"}
 	Versionings       = []string{"tag", "go", "docker", "semver"}
+	// CommitTypes are the accepted conventional-commit types of rules[].commitType.
+	CommitTypes = []string{"fix", "chore", "build", "ci", "docs", "feat", "perf", "refactor", "revert", "style", "test"}
 )
+
+// DefaultBranchPrefix is the branch prefix used when branchPrefix is not set.
+const DefaultBranchPrefix = "deps/"
+
+// DefaultIgnorePaths are used when the config file has no ignorePaths key: dependency
+// trees, examples and tests are not scanned.
+var DefaultIgnorePaths = []string{
+	"**/node_modules/**", "**/bower_components/**", "**/vendor/**", "**/examples/**",
+	"**/__tests__/**", "**/test/**", "**/tests/**", "**/__fixtures__/**",
+}
 
 // Config is the parsed .deps.yaml.
 type Config struct {
-	Version     int      `yaml:"version" jsonschema:"enum=1,default=1" jsonschema_description:"Config format version; must be 1 if set."`
-	Pin         string   `yaml:"pin" jsonschema:"enum=keep,enum=digest,default=keep" jsonschema_description:"Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment."`
-	Timezone    string   `yaml:"timezone" jsonschema_description:"IANA time zone for schedule windows; empty means UTC."`
-	Schedule    []string `yaml:"schedule" jsonschema_description:"Cron windows (5 fields, minute must be *) in which update PRs may be created or updated; empty means always."`
-	Security    *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, updates and schedule."`
-	Actions     Actions  `yaml:"actions" jsonschema_description:"github-actions manager settings."`
-	IgnorePaths []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned."`
-	Rules       []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
-	Custom      []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
+	Version      int      `yaml:"version" jsonschema:"enum=1,default=1" jsonschema_description:"Config format version; must be 1 if set."`
+	Pin          string   `yaml:"pin" jsonschema:"enum=keep,enum=digest,default=keep" jsonschema_description:"Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment."`
+	Timezone     string   `yaml:"timezone" jsonschema_description:"IANA time zone for schedule windows; empty means UTC."`
+	Schedule     []string `yaml:"schedule" jsonschema_description:"Cron windows (5 fields, minute must be *) in which update PRs may be created or updated; empty means always."`
+	Security     *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, updates and schedule."`
+	BranchPrefix string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
+	Monorepos    *bool    `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group."`
+	Actions      Actions  `yaml:"actions" jsonschema_description:"github-actions manager settings."`
+	IgnorePaths  []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When absent: node_modules, bower_components, vendor, examples, __tests__, test, tests and __fixtures__ directories; any list (also []) replaces that default."`
+	Rules        []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
+	Custom       []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
 
 	path     string        // source path for error messages
 	schedule *schedule.Set // parsed Schedule
@@ -54,6 +69,12 @@ type Config struct {
 // SecurityEnabled reports whether OSV lookups are on (default true).
 func (c *Config) SecurityEnabled() bool { return c.Security == nil || *c.Security }
 
+// MonoreposEnabled reports whether the built-in monorepo groups apply (default true).
+func (c *Config) MonoreposEnabled() bool { return c.Monorepos == nil || *c.Monorepos }
+
+// Prefix returns BranchPrefix, or DefaultBranchPrefix when unset.
+func (c *Config) Prefix() string { return cmp.Or(c.BranchPrefix, DefaultBranchPrefix) }
+
 // Actions holds github-actions manager settings.
 type Actions struct {
 	DefaultHost string `yaml:"defaultHost" jsonschema_description:"Host for owner/repo@ref actions; empty means auto-detected from the platform."`
@@ -61,15 +82,17 @@ type Actions struct {
 
 // Rule overrides the policy for matching deps.
 type Rule struct {
-	Manager  string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=custom" jsonschema_description:"Only match deps of this manager."`
-	Names    []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these path.Match globs."`
-	DepTypes []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
-	Ignore   *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives and npm peerDependencies in."`
-	Pin      string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
-	Allow    string   `yaml:"allow" jsonschema_description:"Semver constraint new versions must satisfy, e.g. '< 7'."`
-	Updates  []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
-	Group    string   `yaml:"group" jsonschema_description:"Group name: all deps with the same group share one PR."`
-	Schedule []string `yaml:"schedule" jsonschema_description:"Cron windows overriding the top-level schedule; [] means always."` // non-nil overrides the top-level schedule; [] = always
+	Manager     string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=custom" jsonschema_description:"Only match deps of this manager."`
+	Names       []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates)."`
+	DepTypes    []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
+	Ignore      *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives and npm peerDependencies in."`
+	Pin         string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
+	Allow       string   `yaml:"allow" jsonschema_description:"Semver constraint new versions must satisfy, e.g. '< 7'."`
+	Updates     []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
+	Group       string   `yaml:"group" jsonschema_description:"Group name: all deps with the same group share one PR."`
+	CommitType  string   `yaml:"commitType" jsonschema:"enum=fix,enum=chore,enum=build,enum=ci,enum=docs,enum=feat,enum=perf,enum=refactor,enum=revert,enum=style,enum=test" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm dependencies), chore otherwise. Security updates always use fix."`
+	CommitScope *string  `yaml:"commitScope" jsonschema_description:"Conventional commit scope; default deps, empty string means no scope ('chore: ...')."`
+	Schedule    []string `yaml:"schedule" jsonschema_description:"Cron windows overriding the top-level schedule; [] means always."` // non-nil overrides the top-level schedule; [] = always
 
 	allow    *semver.Constraints
 	schedule *schedule.Set
@@ -78,9 +101,9 @@ type Rule struct {
 // Custom is a custom manager: annotation mode when Match is empty, regex mode otherwise.
 type Custom struct {
 	Files      []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans."`
-	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) group and optional name, datasource, digest and checksum groups; empty means annotation mode."`
-	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=docker" jsonschema_description:"Datasource of the matched deps; required in regex mode unless match has a (?P<datasource>) group."`
-	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>) group."`
+	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
+	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=golang-version,enum=github-tags,enum=github-release-attachments" jsonschema_description:"Datasource of the matched deps; required in regex mode unless match has a (?P<datasource>) group."`
+	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
 	Versioning string    `yaml:"versioning" jsonschema:"enum=tag,enum=go,enum=docker,enum=semver,default=semver" jsonschema_description:"Versioning scheme of the matched versions."` // default semver
 	Checksum   *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
 }
@@ -135,7 +158,9 @@ func (e *Error) Error() string { return e.Err.Error() }
 func (e *Error) Unwrap() error { return e.Err }
 
 // Default returns the configuration used when no file exists.
-func Default() *Config { return &Config{Version: 1, Pin: PinKeep} }
+func Default() *Config {
+	return &Config{Version: 1, Pin: PinKeep, IgnorePaths: slices.Clone(DefaultIgnorePaths)}
+}
 
 // Load reads explicitPath (which must exist) or, if empty, .deps.yaml then
 // .deps.yml in dir, falling back to Default. All failures are *Error.
@@ -166,11 +191,18 @@ func Load(dir, explicitPath string) (*Config, error) {
 	}
 	defer f.Close()
 
+	src, err := io.ReadAll(f)
+	if err != nil {
+		return nil, &Error{fmt.Errorf("%s: %w", p, err)}
+	}
 	c := &Config{}
-	dec := yaml.NewDecoder(f)
+	dec := yaml.NewDecoder(bytes.NewReader(src))
 	dec.KnownFields(true)
 	if err := dec.Decode(c); err != nil && !errors.Is(err, io.EOF) {
 		return nil, &Error{fmt.Errorf("%s: %w", p, err)}
+	}
+	if c.IgnorePaths == nil && !hasTopLevelKey(src, "ignorePaths") {
+		c.IgnorePaths = slices.Clone(DefaultIgnorePaths)
 	}
 	c.path = p
 	if c.Version == 0 {
@@ -190,6 +222,22 @@ func Load(dir, explicitPath string) (*Config, error) {
 	return c, nil
 }
 
+// hasTopLevelKey reports whether the yaml document src has key at the top level, also
+// when its value is null (`ignorePaths:` or `ignorePaths: ~`).
+func hasTopLevelKey(src []byte, key string) bool {
+	var doc yaml.Node
+	if yaml.Unmarshal(src, &doc) != nil || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return false
+	}
+	m := doc.Content[0].Content
+	for i := 0; i+1 < len(m); i += 2 {
+		if m[i].Value == key {
+			return true
+		}
+	}
+	return false
+}
+
 // Validate checks every field and compiles rule constraints and schedules. Errors
 // are joined and formatted as "<path>: <field>: <msg>".
 func (c *Config) Validate() error {
@@ -206,6 +254,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Pin != "" && c.Pin != PinKeep && c.Pin != PinDigest {
 		add("pin", "must be keep or digest, got %q", c.Pin)
+	}
+	if c.BranchPrefix != "" {
+		if msg := checkBranchPrefix(c.BranchPrefix); msg != "" {
+			add("branchPrefix", "%s, got %q", msg, c.BranchPrefix)
+		}
 	}
 	tz := c.Timezone
 	if _, err := schedule.Parse(nil, tz); err != nil {
@@ -253,7 +306,7 @@ func (c *Config) validateRule(i int, tz string, add addFunc) {
 		add(f+".manager", "must be one of %s, got %q", list(Managers), r.Manager)
 	}
 	for j, n := range r.Names {
-		if _, err := path.Match(n, ""); err != nil {
+		if _, err := doublestar.Match(n, ""); err != nil {
 			add(fmt.Sprintf("%s.names[%d]", f, j), "invalid glob %q: %v", n, err)
 		}
 	}
@@ -278,6 +331,12 @@ func (c *Config) validateRule(i int, tz string, add addFunc) {
 		if !slices.Contains(dep.UpdateTypes, dep.UpdateType(u)) {
 			add(fmt.Sprintf("%s.updates[%d]", f, j), "must be one of major, minor, patch, digest, pin, got %q", u)
 		}
+	}
+	if r.CommitType != "" && !slices.Contains(CommitTypes, r.CommitType) {
+		add(f+".commitType", "must be one of %s, got %q", list(CommitTypes), r.CommitType)
+	}
+	if r.CommitScope != nil && *r.CommitScope != "" && !commitScopeRe.MatchString(*r.CommitScope) {
+		add(f+".commitScope", "must match %s, got %q", commitScopeRe, *r.CommitScope)
 	}
 	r.schedule = parseSchedule(f+".schedule", r.Schedule, tz, add)
 }
@@ -309,14 +368,14 @@ func (cu *Custom) validate(f string, add addFunc) {
 		return
 	}
 	groups := re.SubexpNames()
-	if !slices.Contains(groups, "version") {
-		add(f+".match", "must have a (?P<version>...) group")
+	if !slices.Contains(groups, "version") && !slices.Contains(groups, "currentValue") {
+		add(f+".match", "must have a (?P<version>...) or (?P<currentValue>...) group")
 	}
 	if cu.Datasource == "" && !slices.Contains(groups, "datasource") {
 		add(f+".datasource", "required unless match has a (?P<datasource>...) group")
 	}
-	if cu.Name == "" && !slices.Contains(groups, "name") {
-		add(f+".name", "required unless match has a (?P<name>...) group")
+	if cu.Name == "" && !slices.ContainsFunc(groups, func(g string) bool { return g == "name" || g == "depName" || g == "packageName" }) {
+		add(f+".name", "required unless match has a (?P<name>...), (?P<depName>...) or (?P<packageName>...) group")
 	}
 	hasGroup := slices.Contains(groups, "checksum")
 	switch {
@@ -331,3 +390,24 @@ func (cu *Custom) validate(f string, add addFunc) {
 }
 
 func list(vs []string) string { return strings.Join(vs, ", ") }
+
+// commitScopeRe is the accepted conventional-commit scope syntax.
+var commitScopeRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+
+// checkBranchPrefix returns why prefix cannot start a git branch name (git check-ref-format
+// rules for the prefix's components), or "" when it is valid.
+func checkBranchPrefix(prefix string) string {
+	if !strings.HasSuffix(prefix, "/") {
+		return "must end with /"
+	}
+	if strings.ContainsFunc(prefix, func(r rune) bool { return r < 0x20 || r == 0x7f || strings.ContainsRune(" ~^:?*[\\", r) }) ||
+		strings.Contains(prefix, "..") || strings.Contains(prefix, "@{") {
+		return "must be a valid git ref prefix (no spaces, control characters, ~^:?*[\\, '..' or '@{')"
+	}
+	for comp := range strings.SplitSeq(strings.TrimSuffix(prefix, "/"), "/") {
+		if comp == "" || strings.HasPrefix(comp, ".") || strings.HasSuffix(comp, ".lock") {
+			return "must be a valid git ref prefix (empty components, components starting with '.' or ending with '.lock')"
+		}
+	}
+	return ""
+}

@@ -290,7 +290,7 @@ func TestGroupUpdates(t *testing.T) {
 		{Dep: d("a/b"), Type: dep.Digest, NewVersion: "v1", NewDigest: "1234567890"},
 		{Dep: d("a/c"), Type: dep.Major, NewVersion: "v2"},
 		{Dep: d("a/c"), Type: dep.Major, NewVersion: "v2"},
-	})
+	}, "")
 	want := []struct{ branch, title string }{
 		{"deps/github-actions/github-codeql-action-init", "chore(deps): pin Github/CodeQL-Action/init to abcdef0"},
 		{"deps/github-actions/a-b", "chore(deps): update a/b digest to 1234567"},
@@ -308,7 +308,7 @@ func TestGroupUpdates(t *testing.T) {
 }
 
 func TestGroupBranchSlug(t *testing.T) {
-	groups := GroupUpdates([]dep.Update{{Dep: dep.Dep{Manager: "gomod", Name: "--Example.com//Foo__Bar--"}, Type: dep.Minor, NewVersion: "v1.1.0"}})
+	groups := GroupUpdates([]dep.Update{{Dep: dep.Dep{Manager: "gomod", Name: "--Example.com//Foo__Bar--"}, Type: dep.Minor, NewVersion: "v1.1.0"}}, "")
 	if len(groups) != 1 || groups[0].Branch != "deps/gomod/example.com-foo__bar" {
 		t.Fatalf("groups = %+v", groups)
 	}

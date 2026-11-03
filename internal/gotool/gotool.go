@@ -62,6 +62,23 @@ func ListVersions(ctx context.Context, dir, path string) ([]string, error) {
 	return m.Versions, nil
 }
 
+// ModuleTime returns the publication time of module path at version via
+// `go list -m -json path@version`, run in dir; zero when the origin reports none.
+func ModuleTime(ctx context.Context, dir, path, version string) (time.Time, error) {
+	out, err := run(ctx, dir, []string{"GOFLAGS=-mod=mod", "GOWORK=off"}, "list", "-m", "-json", path+"@"+version)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var m struct{ Time *time.Time }
+	if err := json.Unmarshal(out, &m); err != nil {
+		return time.Time{}, fmt.Errorf("go list -m %s@%s: %w", path, version, err)
+	}
+	if m.Time == nil {
+		return time.Time{}, nil
+	}
+	return *m.Time, nil
+}
+
 // Tidy runs `go mod tidy` in dir against copies of mod and sum (sum may be nil) and returns
 // the tidied contents. The real go.mod and go.sum in dir are never touched.
 func Tidy(ctx context.Context, dir string, mod, sum []byte) (newMod, newSum []byte, err error) {

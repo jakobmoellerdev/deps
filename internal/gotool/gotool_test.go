@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTail(t *testing.T) {
@@ -77,5 +78,60 @@ func TestTidyOffline(t *testing.T) {
 	_, err = Tidier{}.Process(context.Background(), dir, map[string][]byte{"go.mod": []byte("this is not a go.mod\n")}, nil)
 	if err == nil || !strings.HasPrefix(err.Error(), "go mod tidy in "+dir+": ") {
 		t.Fatalf("err = %v, want go mod tidy in %s: ...", err, dir)
+	}
+}
+
+// TestModuleTime serves a module from a file:// GOPROXY, which needs no network.
+func TestModuleTime(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go not in PATH")
+	}
+	proxy := t.TempDir()
+	v := filepath.Join(proxy, "example.com", "m", "@v")
+	if err := os.MkdirAll(v, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"list":        "v1.0.0\nv1.1.0\n",
+		"v1.0.0.info": `{"Version":"v1.0.0","Time":"2026-10-30T12:00:00Z"}`,
+		"v1.0.0.mod":  "module example.com/m\n",
+		"v1.1.0.info": `{"Version":"v1.1.0"}`,
+		"v1.1.0.mod":  "module example.com/m\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(v, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GOPROXY", "file://"+filepath.ToSlash(proxy))
+	t.Setenv("GOSUMDB", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOMODCACHE", t.TempDir())
+	t.Setenv("GOFLAGS", "-modcacherw")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/x\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		version, want, wantErr string
+	}{
+		{version: "v1.0.0", want: "2026-10-30T12:00:00Z"},
+		{version: "v1.1.0", want: "0001-01-01T00:00:00Z"},
+		{version: "v9.0.0", wantErr: "go list -m -json example.com/m@v9.0.0"},
+	}
+	for _, tt := range tests {
+		got, err := ModuleTime(context.Background(), dir, "example.com/m", tt.version)
+		if tt.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("%s: err = %v, want %q", tt.version, err, tt.wantErr)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", tt.version, err)
+		}
+		if s := got.UTC().Format(time.RFC3339); s != tt.want {
+			t.Errorf("%s: time = %s, want %s", tt.version, s, tt.want)
+		}
 	}
 }

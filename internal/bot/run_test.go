@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -36,6 +37,7 @@ type fakeGit struct {
 	fail     map[string]error
 	pushed   []string // branches
 	deleted  []string
+	patterns []string // LsRemote patterns
 }
 
 func (g *fakeGit) RevParse(context.Context, string) (string, error) {
@@ -43,6 +45,7 @@ func (g *fakeGit) RevParse(context.Context, string) (string, error) {
 }
 func (g *fakeGit) RemoteURL(context.Context) (string, error) { return "", nil }
 func (g *fakeGit) LsRemote(_ context.Context, pattern string) (map[string]string, error) {
+	g.patterns = append(g.patterns, pattern)
 	if err := fail(g.fail, "LsRemote", pattern); err != nil {
 		return nil, err
 	}
@@ -153,7 +156,7 @@ func fixture(t *testing.T) (string, *engine.Result) {
 // fingerprintOf returns the fingerprint the bot computes for one group.
 func fingerprintOf(t *testing.T, root string, res *engine.Result, name string) string {
 	t.Helper()
-	for _, g := range engine.GroupUpdates(res.Updates) {
+	for _, g := range engine.GroupUpdates(res.Updates, "") {
 		if g.Name == name {
 			changes, errs := engine.Build(t.Context(), root, managers, g.Updates, nil)
 			if len(errs) > 0 {
@@ -396,6 +399,29 @@ func TestRunRejectsStaleCheckout(t *testing.T) {
 	_, errs := Run(t.Context(), Options{MaxNewPRs: 10, Managers: managers}, root, res, nil, &fakePC{}, g)
 	if len(errs) != 1 || g.pushed != nil {
 		t.Fatalf("errs = %v, pushed = %v", errs, g.pushed)
+	}
+}
+
+func TestRunBranchPrefixAndUnlimitedPRs(t *testing.T) {
+	root, res := fixture(t)
+	g := &fakeGit{branches: map[string]string{"refs/heads/bot/gomod/gone": "x"}}
+	pc := &fakePC{open: []platform.PR{{Number: 9, Head: "bot/gomod/gone"}, {Number: 10, Head: "deps/gomod/foreign"}}}
+	o := Options{BranchPrefix: "bot/", AuthorEmail: email, Managers: managers} // MaxNewPRs 0 = unlimited
+	acts, errs := Run(t.Context(), o, root, res, nil, pc, g)
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if want := []string{"refs/heads/main", "refs/heads/bot/*"}; !slices.Equal(g.patterns, want) {
+		t.Errorf("LsRemote patterns = %v, want %v", g.patterns, want)
+	}
+	if want := []string{"bot/github-actions/a-x", "bot/github-actions/b-y"}; !slices.Equal(pc.created, want) {
+		t.Errorf("created = %v, want %v", pc.created, want)
+	}
+	if !slices.Equal(pc.closedNow, []int{9}) || !slices.Equal(g.deleted, []string{"bot/gomod/gone"}) {
+		t.Errorf("closed = %v deleted = %v; only PRs under the prefix are managed", pc.closedNow, g.deleted)
+	}
+	if len(acts) != 3 {
+		t.Errorf("actions = %+v", acts)
 	}
 }
 

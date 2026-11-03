@@ -83,6 +83,8 @@ type session struct {
 	checksums engine.ChecksumSource
 	env       manager.Env
 	stderr    io.Writer
+	auth      *httpx.Auth
+	sem       chan struct{}
 }
 
 // newSession loads the config and wires the managers and datasources onto one HTTP client
@@ -130,6 +132,8 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		checksums: checksum.New(client, sem, releases),
 		env:       manager.Env{DefaultHost: host},
 		stderr:    stderr,
+		auth:      auth,
+		sem:       sem,
 	}, nil
 }
 

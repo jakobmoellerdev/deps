@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,12 +30,20 @@ type Tag struct{ Name, Commit string }
 
 // Lister fetches tags once per repository URL per run; concurrent callers share the result.
 type Lister struct {
-	client *http.Client
-	auth   *httpx.Auth
-	sem    chan struct{}
+	client    *http.Client
+	auth      *httpx.Auth
+	sem       chan struct{}
+	githubAPI string // API base for github.com repositories
 
 	mu    sync.Mutex
 	cache map[string]*entry
+	times map[string]*timeEntry // repository URL + "@" + tag
+}
+
+type timeEntry struct {
+	once sync.Once
+	t    time.Time
+	err  error
 }
 
 type entry struct {
@@ -47,7 +56,10 @@ type entry struct {
 // New returns a Lister. sem bounds concurrent requests and is shared with other datasources;
 // auth may be nil for anonymous access.
 func New(client *http.Client, auth *httpx.Auth, sem chan struct{}) *Lister {
-	return &Lister{client: client, auth: auth, sem: sem, cache: make(map[string]*entry)}
+	return &Lister{
+		client: client, auth: auth, sem: sem, githubAPI: "https://api.github.com",
+		cache: make(map[string]*entry), times: make(map[string]*timeEntry),
+	}
 }
 
 // Tags returns the tags of the repository at repoURL (e.g. https://github.com/actions/checkout).
@@ -76,6 +88,76 @@ func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string,
 		}
 	}
 	return "", fmt.Errorf("tag %s not found upstream", version)
+}
+
+// ReleaseTime implements datasource.Timer with the `published_at` of the release of tag version
+// in d.Source, via the GitHub API for github.com and the Gitea/Forgejo API
+// (`<server>/api/v1`) for other hosts. Tags are not dated, so a tag without a release, or a
+// host without either API, is unknown (zero). Results are deduped per (repository, tag).
+func (l *Lister) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
+	key := strings.TrimSuffix(d.Source, "/") + "@" + version
+	l.mu.Lock()
+	e := l.times[key]
+	if e == nil {
+		e = &timeEntry{}
+		l.times[key] = e
+	}
+	l.mu.Unlock()
+	e.once.Do(func() {
+		e.t, e.err = l.releaseTime(ctx, d.Source, version)
+		slog.DebugContext(ctx, "tag release time", "repo", d.Source, "tag", version, "time", e.t, "err", e.err)
+	})
+	return e.t, e.err
+}
+
+func (l *Lister) releaseTime(ctx context.Context, repoURL, tag string) (time.Time, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Host == "" {
+		return time.Time{}, fmt.Errorf("release %s: invalid repository %q", tag, repoURL)
+	}
+	repo := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+	segs := strings.Split(tag, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	path := "/repos/" + repo + "/releases/tags/" + strings.Join(segs, "/")
+	_, token, authed := l.auth.Static(u.Hostname())
+	target, scheme := u.Scheme+"://"+u.Host+"/api/v1"+path, "token "
+	if strings.EqualFold(u.Hostname(), "github.com") {
+		target, scheme = l.githubAPI+path, "Bearer "
+	}
+	if err := l.acquire(ctx); err != nil {
+		return time.Time{}, err
+	}
+	defer l.release()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("release %s of %s: %w", tag, repo, err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", httpx.UserAgent())
+	if authed {
+		req.Header.Set("Authorization", scheme+token)
+	}
+	resp, err := l.client.Do(req)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("release %s of %s: %w", tag, repo, err)
+	}
+	defer closeBody(resp)
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		return time.Time{}, nil
+	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		return time.Time{}, fmt.Errorf("release %s of %s: HTTP %d", tag, repo, resp.StatusCode)
+	}
+	var rel struct {
+		PublishedAt *time.Time `json:"published_at"`
+	}
+	// A host without the API may answer with a web page: unknown, not an error.
+	if json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&rel) != nil || rel.PublishedAt == nil {
+		return time.Time{}, nil
+	}
+	return *rel.PublishedAt, nil
 }
 
 func (l *Lister) get(ctx context.Context, repoURL string) *entry {

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -286,6 +287,41 @@ func TestAssetDigest(t *testing.T) {
 		t.Errorf("Releases after AssetDigest: %v, %v, reqs %d", rels, err, reqs.Load())
 	}
 	if _, err := s.AssetDigest(ctx, "bad", "1", "a"); err == nil {
+		t.Error("invalid repo: no error")
+	}
+}
+
+func TestReleaseTime(t *testing.T) {
+	var reqs atomic.Int32
+	s, _ := newSource(t, func(w http.ResponseWriter, _ *http.Request) {
+		reqs.Add(1)
+		_, _ = w.Write([]byte(`[
+{"tag_name":"v2.60.0","published_at":"2026-10-30T12:00:00Z"},
+{"tag_name":"1.0.0","published_at":null},
+{"tag_name":"v3.0.0-rc1","prerelease":true,"published_at":"2026-11-01T00:00:00Z"}]`))
+	}, nil)
+	var timer datasource.Timer = s
+	d := dep.Dep{Name: "o/r"}
+	for _, c := range []struct{ version, want string }{
+		{"2.60.0", "2026-10-30T12:00:00Z"},
+		{"v2.60.0", "2026-10-30T12:00:00Z"},
+		{"1.0.0", ""},
+		{"3.0.0-rc1", ""}, // prereleases are not kept
+		{"9.9.9", ""},
+	} {
+		got, err := timer.ReleaseTime(t.Context(), d, c.version)
+		str := ""
+		if !got.IsZero() {
+			str = got.Format(time.RFC3339)
+		}
+		if err != nil || str != c.want {
+			t.Errorf("ReleaseTime(%s) = %v, %v; want %q", c.version, got, err, c.want)
+		}
+	}
+	if reqs.Load() != 1 {
+		t.Errorf("requests = %d, want 1 (cached)", reqs.Load())
+	}
+	if _, err := timer.ReleaseTime(t.Context(), dep.Dep{Name: "bad"}, "1"); err == nil {
 		t.Error("invalid repo: no error")
 	}
 }

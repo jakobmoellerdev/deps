@@ -19,6 +19,7 @@ import (
 	"github.com/distribution/reference"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
@@ -37,6 +38,7 @@ type Source struct {
 	mu      sync.Mutex
 	tags    map[string]*tagsEntry   // canonical repository
 	digests map[string]*digestEntry // canonical repository + ":" + tag
+	configs map[string]*configEntry // canonical repository + ":" + tag
 }
 
 type tagsEntry struct {
@@ -50,6 +52,17 @@ type digestEntry struct {
 	digest string
 	err    error
 }
+
+// configEntry is what deps keeps of a tag's image config: its creation time and source label.
+type configEntry struct {
+	once    sync.Once
+	created time.Time
+	source  string
+	err     error
+}
+
+// sourceLabel is the OCI annotation (and image label) naming the image's source repository.
+const sourceLabel = "org.opencontainers.image.source"
 
 // New returns the docker datasource. Requests go through client's transport; sem bounds
 // concurrent registry operations and is shared with other datasources (nil = unbounded).
@@ -73,6 +86,7 @@ func newSource(client *http.Client, sem chan struct{}, kc authn.Keychain) *Sourc
 		sem:     sem,
 		tags:    map[string]*tagsEntry{},
 		digests: map[string]*digestEntry{},
+		configs: map[string]*configEntry{},
 	}
 }
 
@@ -136,6 +150,87 @@ func (s *Source) Digest(ctx context.Context, d dep.Dep, version string) (string,
 	s.mu.Unlock()
 	e.once.Do(func() { e.digest, e.err = s.head(ctx, tag) })
 	return e.digest, e.err
+}
+
+// ReleaseTime implements datasource.Timer with the `created` time of the image config of tag
+// version (for an index: of its first platform image); zero when the config has none.
+func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
+	e := s.config(ctx, d, version)
+	return e.created, e.err
+}
+
+// SourceRepo implements datasource.SourceRepo with the image's
+// `org.opencontainers.image.source` label, from the same config fetch as ReleaseTime.
+func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error) {
+	e := s.config(ctx, d, version)
+	return e.source, e.err
+}
+
+// config fetches the image config of tag version once per (repository, tag).
+func (s *Source) config(ctx context.Context, d dep.Dep, version string) *configEntry {
+	repo, err := repository(d)
+	if err != nil {
+		return &configEntry{err: err}
+	}
+	tag := repo.Tag(version)
+	key := tag.Name()
+	s.mu.Lock()
+	e := s.configs[key]
+	if e == nil {
+		e = &configEntry{}
+		s.configs[key] = e
+	}
+	s.mu.Unlock()
+	e.once.Do(func() {
+		e.created, e.source, e.err = s.fetchConfig(ctx, tag)
+		slog.DebugContext(ctx, "image config fetched", "ref", key, "created", e.created, "source", e.source, "err", e.err)
+	})
+	return e
+}
+
+// fetchConfig reads the config blob of tag: manifest, (index: first platform manifest), config.
+func (s *Source) fetchConfig(ctx context.Context, tag name.Tag) (time.Time, string, error) {
+	if err := s.acquire(ctx); err != nil {
+		return time.Time{}, "", err
+	}
+	defer s.release()
+	desc, err := s.pullerFor(tag.Repository).Get(ctx, tag)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("image config %s: %w", tag.Name(), err)
+	}
+	var img v1.Image
+	if desc.MediaType.IsIndex() {
+		img, err = firstImage(desc)
+	} else {
+		img, err = desc.Image()
+	}
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("image config %s: %w", tag.Name(), err)
+	}
+	cf, err := img.ConfigFile()
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("image config %s: %w", tag.Name(), err)
+	}
+	return cf.Created.Time, cf.Config.Labels[sourceLabel], nil
+}
+
+// firstImage returns the first platform image of an index, skipping attestation manifests
+// (platform unknown/unknown).
+func firstImage(desc *remote.Descriptor) (v1.Image, error) {
+	idx, err := desc.ImageIndex()
+	if err != nil {
+		return nil, err
+	}
+	im, err := idx.IndexManifest()
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range im.Manifests {
+		if m.MediaType.IsImage() && (m.Platform == nil || m.Platform.OS != "unknown") {
+			return idx.Image(m.Digest)
+		}
+	}
+	return nil, errors.New("index has no platform image")
 }
 
 func (s *Source) list(ctx context.Context, repo name.Repository) (rels []datasource.Release, err error) {

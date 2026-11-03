@@ -9,8 +9,10 @@ package npmds
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -50,10 +52,23 @@ type Source struct {
 	getenv func(string) string
 
 	mu       sync.Mutex
-	packages map[string]*entry   // registry + "\x00" + name
-	rcs      map[string]*rcEntry // package.json directory -> effective .npmrc
-	wsDirs   map[string]*wsEntry // package.json directory -> names of its workspace's packages
-	wsRoots  map[string]*wsEntry // workspace root directory -> names of its packages
+	packages map[string]*entry    // registry + "\x00" + name
+	docs     map[string]*docEntry // registry + "\x00" + name: full packument subset
+	located  map[string]location  // file + "\x00" + name -> registry of the last Releases lookup
+	rcs      map[string]*rcEntry  // package.json directory -> effective .npmrc
+	wsDirs   map[string]*wsEntry  // package.json directory -> names of its workspace's packages
+	wsRoots  map[string]*wsEntry  // workspace root directory -> names of its packages
+}
+
+// location is the registry (with trailing slash) and token a dependency resolved against.
+type location struct{ reg, token string }
+
+// docEntry is what deps keeps of a full packument: the top-level `time` and `repository`.
+type docEntry struct {
+	once  sync.Once
+	times map[string]string // version -> RFC 3339 publish time
+	repo  string            // repository URL as published
+	err   error
 }
 
 type entry struct {
@@ -79,8 +94,8 @@ type wsEntry struct {
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) datasource.Datasource {
 	return &Source{
 		client: client, sem: sem, getenv: getenv,
-		packages: make(map[string]*entry), rcs: make(map[string]*rcEntry),
-		wsDirs: make(map[string]*wsEntry), wsRoots: make(map[string]*wsEntry),
+		packages: make(map[string]*entry), docs: make(map[string]*docEntry), located: make(map[string]location),
+		rcs: make(map[string]*rcEntry), wsDirs: make(map[string]*wsEntry), wsRoots: make(map[string]*wsEntry),
 	}
 }
 
@@ -104,7 +119,23 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 	if err != nil {
 		return nil, err
 	}
-	reg := rc.registryFor(d.Name)
+	loc := s.locate(rc, d.Name)
+	key := loc.reg + "\x00" + d.Name
+	s.mu.Lock()
+	s.located[d.File+"\x00"+d.Name] = loc
+	e := s.packages[key]
+	if e == nil {
+		e = &entry{}
+		s.packages[key] = e
+	}
+	s.mu.Unlock()
+	e.once.Do(func() { e.rels, e.err = s.fetch(ctx, loc.reg, d.Name, loc.token) })
+	return e.rels, e.err
+}
+
+// locate returns the registry of package name: rc's, then NPM_CONFIG_REGISTRY, then the default.
+func (s *Source) locate(rc *npmrc, name string) location {
+	reg := rc.registryFor(name)
 	if reg == "" {
 		reg = s.getenv("NPM_CONFIG_REGISTRY")
 	}
@@ -115,16 +146,50 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 		reg = DefaultRegistry
 	}
 	reg = strings.TrimSuffix(reg, "/") + "/"
-	key := reg + "\x00" + d.Name
+	return location{reg: reg, token: rc.tokenFor(reg)}
+}
+
+// ReleaseTime implements datasource.Timer from the `time` object of the full packument. The
+// registry is the one of d's earlier Releases lookup (else NPM_CONFIG_REGISTRY or the default).
+func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
+	e := s.doc(ctx, d)
+	if e.err != nil {
+		return time.Time{}, e.err
+	}
+	v, ok := e.times[version]
+	if !ok {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("package %s: time of %s: %w", d.Name, version, err)
+	}
+	return t, nil
+}
+
+// SourceRepo implements datasource.SourceRepo with the packument's top-level `repository`
+// (the latest version's), fetched together with ReleaseTime.
+func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, error) {
+	e := s.doc(ctx, d)
+	return e.repo, e.err
+}
+
+// doc returns the packument subset of d, fetched once per (registry, name).
+func (s *Source) doc(ctx context.Context, d dep.Dep) *docEntry {
 	s.mu.Lock()
-	e := s.packages[key]
+	loc, ok := s.located[d.File+"\x00"+d.Name]
+	if !ok {
+		loc = s.locate(&npmrc{}, d.Name)
+	}
+	key := loc.reg + "\x00" + d.Name
+	e := s.docs[key]
 	if e == nil {
-		e = &entry{}
-		s.packages[key] = e
+		e = &docEntry{}
+		s.docs[key] = e
 	}
 	s.mu.Unlock()
-	e.once.Do(func() { e.rels, e.err = s.fetch(ctx, reg, d.Name, rc.tokenFor(reg)) })
-	return e.rels, e.err
+	e.once.Do(func() { e.times, e.repo, e.err = s.fetchDoc(ctx, loc, d.Name) })
+	return e
 }
 
 // Digest is unsupported: npm versions are not digest-pinned.
@@ -308,11 +373,25 @@ func (s *Source) fetch(ctx context.Context, reg, name, token string) (rels []dat
 	}
 	defer s.release()
 	target := reg + escapeName(name)
+	resp, err := s.get(ctx, target, name, abbreviated, token)
+	if err != nil {
+		return nil, err
+	}
+	defer closeBody(resp)
+	rels, deprecated, err = decodeVersions(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("npm registry %s: malformed response: %w", target, err)
+	}
+	return rels, nil
+}
+
+// get sends a GET for package name's document target and fails on a non-2xx status.
+func (s *Source) get(ctx context.Context, target, name, accept, token string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("npm registry %s: %w", target, err)
 	}
-	req.Header.Set("Accept", abbreviated)
+	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -321,18 +400,117 @@ func (s *Source) fetch(ctx context.Context, reg, name, token string) (rels []dat
 	if err != nil {
 		return nil, fmt.Errorf("npm registry %s: %w", target, err)
 	}
-	defer closeBody(resp)
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
+		closeBody(resp)
 		return nil, fmt.Errorf("package %s not found", name)
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		closeBody(resp)
 		return nil, fmt.Errorf("npm registry %s: HTTP %d", target, resp.StatusCode)
 	}
-	rels, deprecated, err = decodeVersions(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("npm registry %s: malformed response: %w", target, err)
+	return resp, nil
+}
+
+// fetchDoc streams the full packument (the abbreviated one has no `time`) and keeps only its
+// top-level `time` and `repository`.
+func (s *Source) fetchDoc(ctx context.Context, loc location, name string) (times map[string]string, repo string, err error) {
+	start := time.Now()
+	defer func() {
+		slog.DebugContext(ctx, "npm packument fetched", "name", name, "registry", loc.reg, "authenticated", loc.token != "",
+			"times", len(times), "repository", repo, "duration", time.Since(start), "err", err)
+	}()
+	if err := s.acquire(ctx); err != nil {
+		return nil, "", err
 	}
-	return rels, nil
+	defer s.release()
+	target := loc.reg + escapeName(name)
+	resp, err := s.get(ctx, target, name, "application/json", loc.token)
+	if err != nil {
+		return nil, "", err
+	}
+	defer closeBody(resp)
+	times, repo, err = decodeDoc(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("npm registry %s: malformed response: %w", target, err)
+	}
+	return times, repo, nil
+}
+
+// decodeDoc reads the top-level `time` (version -> timestamp) and `repository` (string or
+// {url}) of a packument. Every other member, notably the multi-megabyte `versions` and
+// `readme`, is skipped token by token without being held in memory; decoding stops as soon as
+// both members were seen.
+func decodeDoc(r io.Reader) (times map[string]string, repo string, err error) {
+	dec := jsontext.NewDecoder(r)
+	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '{' {
+		return nil, "", cmp.Or(err, errors.New("not an object"))
+	}
+	seenTime, seenRepo := false, false
+	for dec.PeekKind() != '}' && !(seenTime && seenRepo) {
+		key, err := dec.ReadToken()
+		if err != nil {
+			return nil, "", err
+		}
+		switch name := key.String(); {
+		case name == "time" && dec.PeekKind() == '{':
+			seenTime = true
+			if times, err = decodeTimes(dec); err != nil {
+				return nil, "", err
+			}
+		case name == "repository":
+			seenRepo = true
+			v, err := dec.ReadValue()
+			if err != nil {
+				return nil, "", err
+			}
+			var ref struct {
+				URL string `json:"url"`
+			}
+			if v.Kind() == '"' {
+				err = json.Unmarshal(v, &repo)
+			} else if v.Kind() == '{' {
+				err = json.Unmarshal(v, &ref)
+				repo = ref.URL
+			}
+			if err != nil {
+				return nil, "", err
+			}
+		default:
+			if err := dec.SkipValue(); err != nil {
+				return nil, "", err
+			}
+		}
+	}
+	return times, repo, nil
+}
+
+// decodeTimes reads the `time` object; values other than strings (`unpublished` is an
+// object) are skipped.
+func decodeTimes(dec *jsontext.Decoder) (map[string]string, error) {
+	if _, err := dec.ReadToken(); err != nil { // '{'
+		return nil, err
+	}
+	times := map[string]string{}
+	for dec.PeekKind() != '}' {
+		k, err := dec.ReadToken()
+		if err != nil {
+			return nil, err
+		}
+		version := k.String() // tokens are only valid until the next read
+		if dec.PeekKind() != '"' {
+			if err := dec.SkipValue(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		v, err := dec.ReadToken()
+		if err != nil {
+			return nil, err
+		}
+		times[version] = v.String()
+	}
+	_, err := dec.ReadToken() // '}'
+	return times, err
 }
 
 // decodeVersions streams the metadata document and returns the versions that are not

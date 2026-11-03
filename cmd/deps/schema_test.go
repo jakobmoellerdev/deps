@@ -77,6 +77,7 @@ func TestSchema(t *testing.T) {
 		{"rules.manager", rule.Properties["manager"], config.Managers},
 		{"rules.depTypes", rule.Properties["depTypes"].Items, config.DepTypes},
 		{"rules.updates", rule.Properties["updates"].Items, updates},
+		{"rules.commitType", rule.Properties["commitType"], config.CommitTypes},
 		{"custom.datasource", custom.Properties["datasource"], config.CustomDatasources},
 		{"custom.versioning", custom.Properties["versioning"], config.Versionings},
 	}
@@ -85,7 +86,7 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%s enum = %v, want %v (keep the jsonschema tags in sync)", e.name, got, e.want)
 		}
 	}
-	if want := []string{"version", "pin", "timezone", "schedule", "security", "actions", "ignorePaths", "rules", "custom"}; len(s.Properties) != len(want) {
+	if want := []string{"version", "pin", "timezone", "schedule", "security", "branchPrefix", "monorepos", "actions", "ignorePaths", "rules", "custom"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
 		for _, k := range want {

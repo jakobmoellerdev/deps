@@ -9,12 +9,17 @@ Dependency update automation written in Go, with a small, strictly validated con
 - npm `package.json`: dependencies, devDependencies, optionalDependencies, peerDependencies (opt-in) and `packageManager`;
   ranges are bumped in place (`^1.2.3` → `^1.4.0`), `.npmrc` registries and tokens; workspaces, with
   `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock` regenerated
-- Custom dependencies via `# deps: <datasource> <name>` annotations or RE2 regex managers
-  (datasources `git-tags`, `github-releases`, `go`, `docker`), optionally pinning a release checksum next to the version
+- Custom dependencies via `# deps: <datasource> <name>` annotations, Renovate `# renovate: datasource=… depName=…` markers
+  or RE2 regex managers (Renovate group names `currentValue`/`depName`/`packageName`/`currentDigest` accepted;
+  datasources `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm` and the Renovate aliases
+  `golang-version`, `github-tags`, `github-release-attachments`), optionally pinning a release checksum next to the version
 - OSV security updates (Go, GitHub Actions, npm) that bypass `allow`/`updates`/schedules
-- Groups and cron schedules per rule
+- Groups and cron schedules per rule; built-in monorepo groups (kubernetes, opentelemetry-go, babel, ...; `monorepos: false` disables)
+- Renovate-style defaults: `ignorePaths` skips node_modules, vendor, examples and test directories unless set;
+  semantic titles (`fix(deps):` for production deps, `chore(deps):` otherwise; `commitType`/`commitScope` per rule)
 - HTTP retries with backoff and rate-limit handling (`Retry-After`)
-- One branch and pull request per dependency or group on GitHub, Gitea and Forgejo (auto-detected)
+- One branch and pull request per dependency or group on GitHub, Gitea and Forgejo (auto-detected), under a
+  configurable `branchPrefix` (default `deps/`), with release ages and release notes in the PR body
 
 Design and roadmap: [docs/design.md](docs/design.md).
 

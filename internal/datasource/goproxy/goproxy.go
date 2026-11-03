@@ -5,13 +5,17 @@ package goproxy
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/mod/module"
 
@@ -27,26 +31,38 @@ type Source struct {
 	sem    chan struct{}
 	env    func(ctx context.Context) (gotool.GoEnv, error)
 	list   func(ctx context.Context, dir, path string) ([]string, error)
+	info   func(ctx context.Context, dir, path, version string) (time.Time, error)
 
 	envOnce sync.Once
 	goEnv   gotool.GoEnv
 	envErr  error
 
 	mu    sync.Mutex
-	cache map[string]*entry
+	cache map[string]*entry     // module path
+	times map[string]*timeEntry // module@version
 }
 
 type entry struct {
+	dir      string // directory of the first lookup, for `go list`
 	once     sync.Once
 	versions []string
 	rels     []datasource.Release
 	err      error
 }
 
-// New returns a Source using gotool.Env and gotool.ListVersions. sem bounds concurrent requests
-// (including `go list` runs) and is shared with other datasources.
+type timeEntry struct {
+	once sync.Once
+	t    time.Time
+	err  error
+}
+
+// New returns a Source using gotool.Env, gotool.ListVersions and gotool.ModuleTime. sem bounds
+// concurrent requests (including `go list` runs) and is shared with other datasources.
 func New(client *http.Client, sem chan struct{}) *Source {
-	return &Source{client: client, sem: sem, env: gotool.Env, list: gotool.ListVersions, cache: make(map[string]*entry)}
+	return &Source{
+		client: client, sem: sem, env: gotool.Env, list: gotool.ListVersions, info: gotool.ModuleTime,
+		cache: make(map[string]*entry), times: make(map[string]*timeEntry),
+	}
 }
 
 // Versions returns the known versions of modPath. dir is the module directory used when the
@@ -72,7 +88,7 @@ func (s *Source) get(ctx context.Context, modPath, dir string) *entry {
 	s.mu.Lock()
 	e := s.cache[modPath]
 	if e == nil {
-		e = &entry{}
+		e = &entry{dir: dir}
 		s.cache[modPath] = e
 	}
 	s.mu.Unlock()
@@ -86,22 +102,94 @@ func (s *Source) get(ctx context.Context, modPath, dir string) *entry {
 	return e
 }
 
+// ReleaseTime implements datasource.Timer: the Time of the version's `@v/<version>.info`, or
+// `go list -m -json` for direct and GONOPROXY/GOPRIVATE modules (run in the directory of the
+// module's earlier Releases lookup). Results are deduped per module@version.
+func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
+	key := d.Name + "@" + version
+	s.mu.Lock()
+	te := s.times[key]
+	if te == nil {
+		te = &timeEntry{}
+		s.times[key] = te
+	}
+	dir := "."
+	if e := s.cache[d.Name]; e != nil && e.dir != "" {
+		dir = e.dir
+	}
+	s.mu.Unlock()
+	te.once.Do(func() {
+		te.t, te.err = s.releaseTime(ctx, d.Name, version, dir)
+		slog.DebugContext(ctx, "module release time", "module", d.Name, "version", version, "time", te.t, "err", te.err)
+	})
+	return te.t, te.err
+}
+
+func (s *Source) releaseTime(ctx context.Context, modPath, version, dir string) (time.Time, error) {
+	escVersion, err := module.EscapeVersion(version)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var t time.Time
+	err = s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
+		if base == "" {
+			if err := s.acquire(ctx); err != nil {
+				return false, err
+			}
+			defer s.release()
+			t, err = s.info(ctx, dir, modPath, version)
+			return false, err
+		}
+		target := base + "/" + escaped + "/@v/" + escVersion + ".info"
+		resp, notFound, err := s.get2xx(ctx, target)
+		if err != nil {
+			return notFound, err
+		}
+		defer resp.Body.Close()
+		var info struct{ Time *time.Time }
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&info); err != nil {
+			return false, fmt.Errorf("GET %s: %w", target, err)
+		}
+		if info.Time != nil {
+			t = *info.Time
+		}
+		return false, nil
+	})
+	return t, err
+}
+
 func (s *Source) resolve(ctx context.Context, modPath, dir string) ([]string, error) {
+	var vs []string
+	err := s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
+		if base == "" {
+			vs, err = s.direct(ctx, dir, modPath)
+		} else {
+			vs, notFound, err = s.fetch(ctx, base+"/"+escaped+"/@v/list")
+		}
+		slog.DebugContext(ctx, "module versions", "module", modPath, "source", cmp.Or(base, "direct"), "versions", len(vs), "err", err)
+		return notFound, err
+	})
+	return vs, err
+}
+
+// walk runs step for modPath along GOPROXY until one succeeds. step gets a proxy base URL and
+// the escaped module path, or base "" when the go command must be used (a `direct` entry, or a
+// GONOPROXY/GOPRIVATE module); a notFound (404/410) result falls through to the next entry.
+func (s *Source) walk(ctx context.Context, modPath string, step func(base, escaped string) (notFound bool, err error)) error {
 	s.envOnce.Do(func() {
 		s.goEnv, s.envErr = s.env(ctx)
 		slog.DebugContext(ctx, "go env", "goproxy", s.goEnv.Proxy, "noProxy", s.goEnv.NoProxy, "err", s.envErr)
 	})
 	if s.envErr != nil {
-		return nil, s.envErr
+		return s.envErr
 	}
 	if module.MatchPrefixPatterns(s.goEnv.NoProxy, modPath) {
-		vs, err := s.direct(ctx, dir, modPath)
-		slog.DebugContext(ctx, "module versions", "module", modPath, "source", "direct (GONOPROXY/GOPRIVATE)", "versions", len(vs), "err", err)
-		return vs, err
+		_, err := step("", "")
+		return err
 	}
 	escaped, err := module.EscapePath(modPath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	rest := s.goEnv.Proxy
 	for rest != "" {
@@ -114,30 +202,25 @@ func (s *Source) resolve(ctx context.Context, modPath, dir string) ([]string, er
 			rest = ""
 		}
 		entry = strings.TrimSpace(entry)
-		var (
-			vs       []string
-			err      error
-			notFound bool
-		)
+		var notFound bool
 		switch entry {
 		case "":
 			continue
 		case "off":
-			return nil, errors.New("GOPROXY=off")
+			return errors.New("GOPROXY=off")
 		case "direct":
-			vs, err = s.direct(ctx, dir, modPath)
+			_, err = step("", "")
 		default:
-			vs, notFound, err = s.fetch(ctx, strings.TrimSuffix(entry, "/")+"/"+escaped+"/@v/list")
+			notFound, err = step(strings.TrimSuffix(entry, "/"), escaped)
 		}
-		slog.DebugContext(ctx, "module versions", "module", modPath, "source", entry, "versions", len(vs), "err", err)
 		if err == nil {
-			return vs, nil
+			return nil
 		}
 		if !notFound && !anyErr {
-			return nil, err
+			return err
 		}
 	}
-	return nil, fmt.Errorf("no proxy has %s", modPath)
+	return fmt.Errorf("no proxy has %s", modPath)
 }
 
 func (s *Source) direct(ctx context.Context, dir, modPath string) ([]string, error) {
@@ -148,8 +231,9 @@ func (s *Source) direct(ctx context.Context, dir, modPath string) ([]string, err
 	return s.list(ctx, dir, modPath)
 }
 
-// fetch GETs a proxy list endpoint; notFound reports a 404 or 410.
-func (s *Source) fetch(ctx context.Context, url string) (versions []string, notFound bool, err error) {
+// get2xx GETs url holding a semaphore slot until the response headers arrive; notFound reports
+// a 404 or 410. The caller closes the body of a successful response.
+func (s *Source) get2xx(ctx context.Context, url string) (resp *http.Response, notFound bool, err error) {
 	if err := s.acquire(ctx); err != nil {
 		return nil, false, err
 	}
@@ -159,15 +243,25 @@ func (s *Source) fetch(ctx context.Context, url string) (versions []string, notF
 		return nil, false, err
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req)
+	resp, err = s.client.Do(req)
 	if err != nil {
 		return nil, false, err
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
 		code := resp.StatusCode
 		return nil, code == http.StatusNotFound || code == http.StatusGone, fmt.Errorf("GET %s: HTTP %d", url, code)
 	}
+	return resp, false, nil
+}
+
+// fetch GETs a proxy list endpoint; notFound reports a 404 or 410.
+func (s *Source) fetch(ctx context.Context, url string) (versions []string, notFound bool, err error) {
+	resp, notFound, err := s.get2xx(ctx, url)
+	if err != nil {
+		return nil, notFound, err
+	}
+	defer resp.Body.Close()
 	sc := bufio.NewScanner(resp.Body)
 	for sc.Scan() {
 		// Each line is "<version>[ <extra>]"; only the first field is the version.

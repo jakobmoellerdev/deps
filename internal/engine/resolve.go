@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -110,6 +111,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		for _, d := range e.deps {
 			if o.Filter != nil && !o.Filter(d) {
 				continue
+			}
+			if s, ok := versioning.Get(d.Versioning); d.Skip == "" && ok && !s.Valid(d.Version) {
+				d.Skip = "non-version value " + strconv.Quote(d.Version)
 			}
 			if d.Skip != "" {
 				res.Skipped = append(res.Skipped, d)
@@ -311,7 +315,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 	wantDigest := digests && (pinned || r.p.Pin == config.PinDigest)
 
 	var up *dep.Update
-	if best, ok := scheme.Best(d.Version, names, accept, reject); ok {
+	if best, ok := r.best(scheme, names, accept, reject); ok {
 		up = &dep.Update{Dep: d, Type: scheme.Kind(d.Version, best), NewVersion: best}
 	} else if digests {
 		switch {
@@ -344,10 +348,42 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 			return nil, err
 		}
 	}
+	if up != nil {
+		up.CommitType, up.CommitScope = r.p.CommitType, r.p.CommitScope
+	}
 	if up != nil && len(up.Advisories) == 0 {
 		up.Group, up.Schedule = r.p.Group, r.p.Schedule
 	}
 	return up, nil
+}
+
+// maxOlderMajors bounds how many stale major candidates best skips before giving up.
+const maxOlderMajors = 3
+
+// best wraps scheme.Best with one guard: a major update whose release predates the current
+// version is a legacy tag (k8s.io/client-go v1.5.2 from 2016 versus v0.37.1), not an upgrade.
+// Release times are only asked for such major candidates, and only when the datasource has
+// them; unknown times never reject.
+func (r *resolver) best(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool) {
+	cur := r.d.Version
+	timer, _ := r.ds.(datasource.Timer)
+	for range maxOlderMajors {
+		best, ok := scheme.Best(cur, names, accept, reject)
+		if !ok || timer == nil || scheme.Kind(cur, best) != dep.Major {
+			return best, ok
+		}
+		tb, errB := timer.ReleaseTime(r.ctx, r.d, best)
+		tc, errC := timer.ReleaseTime(r.ctx, r.d, cur)
+		if errB != nil || errC != nil || tb.IsZero() || tc.IsZero() || !tb.Before(tc) {
+			return best, ok
+		}
+		slog.DebugContext(r.ctx, "major candidate older than current", "name", r.d.Name, "current", cur, "candidate", best)
+		if reject != nil {
+			reject(best, "older than current")
+		}
+		names = slices.DeleteFunc(slices.Clone(names), func(v string) bool { return v == best })
+	}
+	return "", false
 }
 
 // digestOf returns the digest of version from the releases, asking the datasource when the

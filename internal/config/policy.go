@@ -2,13 +2,20 @@ package config
 
 import (
 	"fmt"
-	"path"
 	"slices"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/bmatcuk/doublestar/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
+)
+
+// Commit types and the default scope.
+const (
+	CommitFix    = "fix"
+	CommitChore  = "chore"
+	DefaultScope = "deps"
 )
 
 // Policy is the effective rule outcome for one dep.
@@ -20,20 +27,40 @@ type Policy struct {
 	Updates      map[dep.UpdateType]bool
 	Group        string        // "" = own PR
 	Schedule     *schedule.Set // nil = always
-	Rules        []int         // indices of the matching rules, in order
+	Rules        []int         // indices of the matching user rules, in order
+	Monorepo     string        // built-in monorepo that set the initial Group, "" = none
+	CommitType   string        // conventional commit type: fix for production deps, chore otherwise
+	CommitScope  string        // conventional commit scope, "" = none
+}
+
+// production reports whether d is a production dep, which gets the fix commit type by
+// default (Renovate's :semanticPrefixFixDepsChoreOthers).
+func production(d dep.Dep) bool {
+	return d.Manager == "gomod" && d.DepType == "direct" || d.Manager == "npm" && d.DepType == "dependencies"
 }
 
 // defaultIgnored are the dep types ignored unless a rule sets `ignore: false`.
 var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true}
 
-// Policy evaluates rules top-to-bottom; each set field of a matching rule
-// overwrites the policy (Updates is replaced, not merged). Indirect Go requirements,
-// go directives and npm peerDependencies are ignored unless a rule sets `ignore: false`.
+// Policy evaluates the built-in monorepo rule (unless monorepos is false), then the user
+// rules top-to-bottom; each set field of a matching rule overwrites the policy (Updates is
+// replaced, not merged). Indirect Go requirements, go directives and npm peerDependencies
+// are ignored unless a rule sets `ignore: false`.
 func (c *Config) Policy(d dep.Dep) Policy {
 	p := Policy{
-		Pin:      c.Pin,
-		Updates:  make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
-		Schedule: c.schedule,
+		Pin:         c.Pin,
+		Updates:     make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
+		Schedule:    c.schedule,
+		CommitType:  CommitChore,
+		CommitScope: DefaultScope,
+	}
+	if production(d) {
+		p.CommitType = CommitFix
+	}
+	if c.MonoreposEnabled() {
+		if m := monorepoOf(d.Manager, d.Name); m != nil {
+			p.Monorepo, p.Group = m.Name, MonorepoGroup(m.Name)
+		}
 	}
 	if defaultIgnored[d.DepType] {
 		p.Ignore = true
@@ -76,13 +103,19 @@ func (c *Config) Policy(d dep.Dep) Policy {
 		if r.Schedule != nil {
 			p.Schedule = r.schedule
 		}
+		if r.CommitType != "" {
+			p.CommitType = r.CommitType
+		}
+		if r.CommitScope != nil {
+			p.CommitScope = *r.CommitScope
+		}
 	}
 	return p
 }
 
 func matchAny(globs []string, name string) bool {
 	for _, g := range globs {
-		if ok, _ := path.Match(g, name); ok {
+		if ok, _ := doublestar.Match(g, name); ok {
 			return true
 		}
 	}

@@ -2,6 +2,7 @@
 package bot
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -33,10 +35,18 @@ type Git interface {
 // Options configure Run.
 type Options struct {
 	Base, AuthorName, AuthorEmail string
+	BranchPrefix                  string // managed branch prefix, ending in '/'; "" = config.DefaultBranchPrefix
 	DryRun                        bool
-	MaxNewPRs                     int
+	MaxNewPRs                     int               // PRs created per run; 0 = unlimited
 	Managers                      []manager.Manager // edit the updates' files (engine.Build)
 	Now                           time.Time         // schedule evaluation time; zero = time.Now()
+	Notes                         Notes             // release ages and notes in PR bodies; nil = none
+}
+
+// Notes renders release information for PR bodies (implemented by releasenotes.Notes).
+type Notes interface {
+	Section(ctx context.Context, ups []dep.Update) string
+	Age(ctx context.Context, u dep.Update) string
 }
 
 // Action statuses.
@@ -58,8 +68,6 @@ type Action struct {
 	Branch, Title, Status, URL string
 	Number                     int
 }
-
-const branchPrefix = "deps/"
 
 var fingerprintRe = regexp.MustCompile(`<!-- deps:fingerprint=([0-9a-f]+) -->`)
 
@@ -87,15 +95,16 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		return nil, []error{fmt.Errorf("checkout HEAD %s is not the tip of origin/%s (%s); check out the latest %s", short(head), base, short(tip), base)}
 	}
 
-	branches, err := g.LsRemote(ctx, "refs/heads/"+branchPrefix+"*")
+	prefix := cmp.Or(o.BranchPrefix, config.DefaultBranchPrefix)
+	branches, err := g.LsRemote(ctx, "refs/heads/"+prefix+"*")
 	if err != nil {
 		return nil, []error{err}
 	}
-	open, err := listDeps(ctx, pc, "open", 20)
+	open, err := listDeps(ctx, pc, "open", 20, prefix)
 	if err != nil {
 		return nil, []error{err}
 	}
-	closed, err := listDeps(ctx, pc, "closed", 4)
+	closed, err := listDeps(ctx, pc, "closed", 4, prefix)
 	if err != nil {
 		return nil, []error{err}
 	}
@@ -105,7 +114,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	if now.IsZero() {
 		now = time.Now()
 	}
-	groups := engine.GroupUpdates(res.Updates)
+	groups := engine.GroupUpdates(res.Updates, prefix)
 	built := make([][]engine.FileChange, len(groups))
 	buildErrs := make([]error, len(groups))
 	inSchedule := make([]bool, len(groups))
@@ -196,7 +205,6 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 	}
 
 	fp := fingerprint(changes)
-	body := prBody(grp.Updates, fp)
 	if pr != nil {
 		slog.DebugContext(ctx, "open PR found", "branch", grp.Branch, "number", pr.Number, "fingerprint", fp, "prFingerprint", bodyFingerprint(pr.Body))
 	}
@@ -215,7 +223,7 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 		}
 		slog.DebugContext(ctx, "PR not mergeable, rebuilding", "branch", grp.Branch, "number", pr.Number)
 	}
-	if pr == nil && *created >= o.MaxNewPRs {
+	if pr == nil && o.MaxNewPRs > 0 && *created >= o.MaxNewPRs {
 		a.Status = StatusSkipLimit
 		return a, nil
 	}
@@ -248,6 +256,9 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 	if err := g.Push(ctx, commit, grp.Branch, expected); err != nil {
 		return a, err
 	}
+	// Notes are fetched only for PRs that are actually written; the fingerprint covers file
+	// contents only, so changing upstream notes never churns PRs.
+	body := prBody(ctx, o.Notes, grp.Updates, fp)
 	if pr != nil {
 		if err := pc.UpdatePR(ctx, pr.Number, grp.Title, body); err != nil {
 			return a, err
@@ -275,14 +286,15 @@ func scheduled(ups []dep.Update, now time.Time) bool {
 	return true
 }
 
-func listDeps(ctx context.Context, pc platform.Client, state string, maxPages int) ([]platform.PR, error) {
+// listDeps lists the PRs in state whose head branch is under prefix.
+func listDeps(ctx context.Context, pc platform.Client, state string, maxPages int, prefix string) ([]platform.PR, error) {
 	prs, err := pc.ListPRs(ctx, state, maxPages)
 	if err != nil {
 		return nil, fmt.Errorf("list %s PRs: %w", state, err)
 	}
 	out := prs[:0]
 	for _, p := range prs {
-		if strings.HasPrefix(p.Head, branchPrefix) {
+		if strings.HasPrefix(p.Head, prefix) {
 			out = append(out, p)
 		}
 	}
@@ -308,12 +320,20 @@ func bodyFingerprint(body string) string {
 	return ""
 }
 
-func prBody(ups []dep.Update, fp string) string {
+func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp string) string {
 	var b strings.Builder
-	b.WriteString("| File | From | To | Type |\n|---|---|---|---|\n")
+	if notes == nil {
+		b.WriteString("| File | From | To | Type |\n|---|---|---|---|\n")
+	} else {
+		b.WriteString("| File | From | To | Type | Age |\n|---|---|---|---|---|\n")
+	}
 	for _, u := range ups {
 		from, to := u.FromTo()
-		fmt.Fprintf(&b, "| `%s:%d` | `%s` | `%s` | %s |\n", u.Dep.File, u.Dep.Line, from, to, u.Type)
+		fmt.Fprintf(&b, "| `%s:%d` | `%s` | `%s` | %s |", u.Dep.File, u.Dep.Line, from, to, u.Type)
+		if notes != nil {
+			fmt.Fprintf(&b, " %s |", notes.Age(ctx, u))
+		}
+		b.WriteByte('\n')
 	}
 	var adv []dep.Advisory
 	for _, u := range ups {
@@ -332,6 +352,12 @@ func prBody(ups []dep.Update, fp string) string {
 				id = "[" + a.ID + "](" + a.URL + ")"
 			}
 			fmt.Fprintf(&b, "- %s: %s\n", id, a.Summary)
+		}
+	}
+	if notes != nil {
+		if s := notes.Section(ctx, ups); s != "" {
+			b.WriteString("\n")
+			b.WriteString(s)
 		}
 	}
 	fmt.Fprintf(&b, "\n<!-- deps:fingerprint=%s -->\n", fp)

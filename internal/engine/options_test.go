@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -327,7 +328,7 @@ func TestResolveGenericManagers(t *testing.T) {
 	}}
 	custom := stubManager{name: "custom", deps: []dep.Dep{
 		d("cal", "docker", "calver", "3", 10),
-		d("nods", "npm", "semver", "x", 12),
+		d("nods", "npm", "semver", "1.0.0", 12),
 	}}
 	root, cfg := setup(t, "pin: digest\n", map[string]string{"stub.txt": src})
 	o := Options{Managers: []manager.Manager{docker, custom}, Datasources: map[string]Datasource{"docker": dockerish{}}}
@@ -367,12 +368,14 @@ func TestResolveGenericManagers(t *testing.T) {
 	}
 }
 
+// A current value the scheme cannot parse (`latest`) is a skip, not an error: nothing can be
+// compared against it.
 func TestResolveUnparsableVersion(t *testing.T) {
 	m := stubManager{name: "custom", deps: []dep.Dep{{Datasource: "docker", Versioning: "docker", Name: "x", Version: "latest", Line: 1}}}
 	root, cfg := setup(t, "", map[string]string{"stub.txt": "latest\n"})
 	res, err := Resolve(t.Context(), root, cfg, env, Options{Managers: []manager.Manager{m}, Datasources: map[string]Datasource{"docker": dockerish{}}})
-	if err != nil || len(res.Errors) != 1 || res.Errors[0].Error() != `stub.txt:1: x: unparsable version "latest"` {
-		t.Fatalf("err = %v, errors = %v", err, res.Errors)
+	if err != nil || len(res.Errors) != 0 || len(res.Skipped) != 1 || res.Skipped[0].Skip != `non-version value "latest"` {
+		t.Fatalf("err = %v, errors = %v, skipped = %+v", err, res.Errors, res.Skipped)
 	}
 }
 
@@ -397,5 +400,49 @@ func TestManagersRegistry(t *testing.T) {
 	cfg.Custom = []config.Custom{{}}
 	if _, err := Managers(cfg); err == nil {
 		t.Fatal("invalid custom entry accepted")
+	}
+}
+
+// timedGo lists Go versions and reports release times; v1.5.2 is a legacy tag older than v0.37.1.
+type timedGo struct{ legacyNewer bool }
+
+func (timedGo) Releases(context.Context, dep.Dep, string) ([]Release, error) {
+	return []Release{{Version: "v0.37.1"}, {Version: "v0.38.0"}, {Version: "v1.5.2"}}, nil
+}
+
+func (timedGo) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }
+
+func (g timedGo) ReleaseTime(_ context.Context, _ dep.Dep, v string) (time.Time, error) {
+	switch v {
+	case "v1.5.2":
+		if g.legacyNewer {
+			return time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), nil
+		}
+		return time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC), nil
+	case "v0.37.1":
+		return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), nil
+	}
+	return time.Time{}, nil
+}
+
+func TestResolveSkipsMajorsOlderThanCurrent(t *testing.T) {
+	for _, tt := range []struct {
+		legacyNewer bool
+		want        string
+	}{{false, "v0.38.0"}, {true, "v1.5.2"}} {
+		m := stubManager{name: "gomod", deps: []dep.Dep{{Datasource: "go", Versioning: "go", Name: "k8s.io/client-go", Version: "v0.37.1", Line: 1}}}
+		root, cfg := setup(t, "", map[string]string{"stub.txt": "v0.37.1\n"})
+		var tr Trace
+		res, err := Resolve(t.Context(), root, cfg, env, Options{
+			Managers:    []manager.Manager{m},
+			Datasources: map[string]Datasource{"go": timedGo{legacyNewer: tt.legacyNewer}},
+			Trace:       func(x Trace) { tr = x },
+		})
+		if err != nil || len(res.Updates) != 1 || res.Updates[0].NewVersion != tt.want {
+			t.Fatalf("legacyNewer=%v: updates = %+v, err = %v", tt.legacyNewer, res.Updates, err)
+		}
+		if !tt.legacyNewer && !slices.Equal(tr.Rejected["older than current"], []string{"v1.5.2"}) {
+			t.Errorf("rejected = %v", tr.Rejected)
+		}
 	}
 }

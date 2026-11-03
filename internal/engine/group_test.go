@@ -12,6 +12,7 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 	adv := []dep.Advisory{{ID: "GHSA-1"}}
 	tests := []struct {
 		name    string
+		prefix  string
 		updates []dep.Update
 		want    []Group // Updates compared by count only
 		counts  []int
@@ -59,10 +60,53 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 			want:   []Group{{Manager: "gomod", Name: "example.com/a", Branch: "deps/gomod/example.com-a", Title: "fix(deps): update example.com/a [security]"}},
 			counts: []int{2},
 		},
+		{
+			name:   "branch prefix",
+			prefix: "renovate/",
+			updates: []dep.Update{
+				{Dep: gomod("example.com/a"), NewVersion: "v1.2.0"},
+				{Dep: gomod("example.com/b"), NewVersion: "v1.3.0", Group: "All Go"},
+			},
+			want: []Group{
+				{Manager: "gomod", Name: "example.com/a", Branch: "renovate/gomod/example.com-a", Title: "chore(deps): update example.com/a to v1.2.0"},
+				{Manager: "group", Name: "All Go", Branch: "renovate/group/all-go", Title: "chore(deps): update example.com/b to v1.3.0"},
+			},
+			counts: []int{1, 1},
+		},
+		{
+			name: "commit types and scopes",
+			updates: []dep.Update{
+				{Dep: gomod("example.com/fix"), NewVersion: "v1.2.0", CommitType: "fix", CommitScope: "deps"},
+				{Dep: gomod("example.com/ci"), NewVersion: "v2", CommitType: "ci", CommitScope: ""},
+				{Dep: gomod("example.com/build"), NewVersion: "v3", Type: dep.Pin, NewDigest: "abcdef0123", CommitType: "build", CommitScope: "tools"},
+				{Dep: gomod("example.com/sec"), NewVersion: "v1.0.1", CommitType: "chore", CommitScope: "", Advisories: adv},
+			},
+			want: []Group{
+				{Manager: "gomod", Name: "example.com/build", Branch: "deps/gomod/example.com-build", Title: "build(tools): pin example.com/build to abcdef0"},
+				{Manager: "gomod", Name: "example.com/ci", Branch: "deps/gomod/example.com-ci", Title: "ci: update example.com/ci to v2"},
+				{Manager: "gomod", Name: "example.com/fix", Branch: "deps/gomod/example.com-fix", Title: "fix(deps): update example.com/fix to v1.2.0"},
+				{Manager: "gomod", Name: "example.com/sec", Branch: "deps/gomod/example.com-sec", Title: "fix: update example.com/sec to v1.0.1 [security]"},
+			},
+			counts: []int{1, 1, 1, 1},
+		},
+		{
+			name: "group type is fix if any member is fix, scope from first",
+			updates: []dep.Update{
+				{Dep: gomod("k8s.io/api"), NewVersion: "v0.35.0", Group: "kubernetes monorepo", CommitType: "chore", CommitScope: "k8s"},
+				{Dep: gomod("k8s.io/client-go"), NewVersion: "v0.35.0", Group: "kubernetes monorepo", CommitType: "fix", CommitScope: "deps"},
+				{Dep: gha("a/x"), NewVersion: "v2", Group: "ci", CommitType: "ci", CommitScope: "gha"},
+				{Dep: gha("a/y"), NewVersion: "v3", Group: "ci", CommitType: "chore", CommitScope: "deps"},
+			},
+			want: []Group{
+				{Manager: "group", Name: "ci", Branch: "deps/group/ci", Title: "ci(gha): update ci (2 dependencies)"},
+				{Manager: "group", Name: "kubernetes monorepo", Branch: "deps/group/kubernetes-monorepo", Title: "fix(k8s): update kubernetes monorepo to v0.35.0"},
+			},
+			counts: []int{2, 2},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := GroupUpdates(tt.updates)
+			got := GroupUpdates(tt.updates, tt.prefix)
 			if len(got) != len(tt.want) {
 				t.Fatalf("groups = %+v", got)
 			}

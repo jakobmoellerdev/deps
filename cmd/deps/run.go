@@ -12,6 +12,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/releasenotes"
 )
 
 type runOpts struct {
@@ -39,7 +40,7 @@ func newRun(o *rootOpts) *cobra.Command {
 	f.StringVar(&r.base, "base", "", "base branch (default: the repository's default branch)")
 	f.StringVar(&r.authorName, "author-name", "deps[bot]", "commit author name")
 	f.StringVar(&r.authorEmail, "author-email", "deps-bot@noreply.invalid", "commit author email")
-	f.IntVar(&r.maxNewPRs, "max-new-prs", 10, "maximum number of pull requests to create per run")
+	f.IntVar(&r.maxNewPRs, "max-new-prs", 10, "maximum number of pull requests to create per run (0 = unlimited)")
 	f.BoolVar(&r.dryRun, "dry-run", false, "report what would change without pushing or calling write APIs")
 	return cmd
 }
@@ -94,12 +95,14 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	}
 	report(stderr, o.verbose, res, res.Errors)
 	bo := bot.Options{
-		Base:        r.base,
-		AuthorName:  r.authorName,
-		AuthorEmail: r.authorEmail,
-		DryRun:      r.dryRun,
-		MaxNewPRs:   r.maxNewPRs,
-		Managers:    s.managers,
+		Base:         r.base,
+		AuthorName:   r.authorName,
+		AuthorEmail:  r.authorEmail,
+		DryRun:       r.dryRun,
+		MaxNewPRs:    r.maxNewPRs,
+		Managers:     s.managers,
+		BranchPrefix: s.cfg.Prefix(),
+		Notes:        releasenotes.New(client, s.sem, s.auth, s.sources),
 	}
 	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(), platform.NewClient(info, token, client), repo)
 

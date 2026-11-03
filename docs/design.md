@@ -62,6 +62,8 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 
 **custom, annotation mode** (no `match`). A comment `deps: <datasource> <name> [versioning=<scheme>]` after `#`, `//`, `--`, `;` or `<!--` annotates the next line; its first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Otherwise `no version on next line`.
 
+**Renovate markers.** Annotation mode also accepts `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]` (fields in any order; `packageName` wins over `depName`; `registryUrl` and unknown keys are ignored); it annotates the next line like `deps:`. Skips: `renovate marker without datasource`, `renovate marker without depName`. For the docker datasource the next line's first tagged image reference is used instead: the tag after the last `:` is the version and an adjacent `@sha256:` digest is captured, so tag and digest are rewritten together. Renovate datasource names are aliased: `golang-version` → `go-toolchain`, `github-tags` → `git-tags` (`owner/repo` on github.com), `github-release-attachments` → `github-releases`. Unknown ones (e.g. `node-version`, `custom.*`) are skipped as `unknown datasource "<ds>"`.
+
 ```dockerfile
 # deps: github-releases golangci/golangci-lint
 ARG GOLANGCI_VERSION=v2.5.0
@@ -69,7 +71,7 @@ ARG GOLANGCI_VERSION=v2.5.0
 RUN go install golang.org/x/tools/cmd/goimports@v0.38.0
 ```
 
-**custom, regex mode.** `match` is an RE2 run over the whole file; every match is one dep. Named groups: `version` (required), `name`, `datasource`, `digest` (optional; override or supply the entry's `name`/`datasource`). Empty groups skip the match (`empty version`, `empty name`, `empty datasource`). A `digest` group is replaced together with the version.
+**custom, regex mode.** `match` is an RE2 run over the whole file; every match is one dep. Named groups: `version` (required; alias `currentValue`), `name` (aliases `depName`, `packageName`; `packageName` wins over `depName`), `datasource`, `versioning`, `digest` (alias `currentDigest`); groups override or supply the entry's `name`/`datasource`. Empty groups skip the match (`empty version`, `empty name`, `empty datasource`). A `digest` group is replaced together with the version.
 
 ```yaml
 custom:
@@ -107,7 +109,7 @@ custom:
 
 | `npm` | package name (`@scope/name` requested as `@scope%2fname`) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata), streamed: only the `versions` keys and each version's `deprecated`; deprecated versions are dropped |
 
-Custom entries may use `git-tags`, `github-releases`, `go` and `docker`.
+Custom entries may use `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker` and `npm`, plus the Renovate aliases `golang-version`, `github-tags` and `github-release-attachments`.
 
 **npm registry and auth.** Per package.json directory, the nearest `.npmrc` walking up to the scanned root is read (once per directory per run): `@scope:registry=` for scoped names, then `registry=`. Without one, `NPM_CONFIG_REGISTRY` (or `npm_config_registry`), else `https://registry.npmjs.org/`. A `//host/path/:_authToken=` entry whose key is the longest prefix of the registry URL (without scheme) sends `Authorization: Bearer <token>`. `${VAR}` and `${VAR?}` in keys and values expand from the environment (empty when unset); values may be quoted. Lookups are deduped per (registry, name). A 404 is `package <name> not found`. npm has no digests.
 
@@ -127,7 +129,7 @@ Custom entries may use `git-tags`, `github-releases`, `go` and `docker`.
 
 The following is implemented:
 
-- **Discovery.** A single `filepath.WalkDir`. It prunes `.git`, `node_modules`, `vendor`, `testdata` and `ignorePaths` directories via `fs.SkipDir`. Paths are matched before any file is opened, and only matched files are read.
+- **Discovery.** A single `filepath.WalkDir`. It prunes `.git`, `node_modules`, `vendor`, `testdata` and directories matching `ignorePaths` via `fs.SkipDir`. When `ignorePaths` is absent the default is `**/{node_modules,bower_components,vendor,examples,__tests__,test,tests,__fixtures__}/**` (Renovate's `:ignoreModulesAndTests`). Paths are matched before any file is opened, and only matched files are read.
 - **Extraction.** Runs on `runtime.GOMAXPROCS(0)` workers. Each worker keeps only `[]Dep` (spans and strings); parse trees and file bytes are dropped immediately. Files are re-read when changes are built, so memory is O(deps), not O(repo).
 - **HTTP.** One shared `http.Client` (HTTP/2, keep-alive) handles every network call.
 - **Retries and rate limits.** The shared transport retries idempotent requests: GET/HEAD/OPTIONS, and read-only POSTs marked with `httpx.Idempotent` (git ls-refs, OSV querybatch). It retries connection errors and 429/500/502/503/504, at most 3 times, with full-jitter exponential backoff (500ms base, 10s cap), honouring `Retry-After`. Platform writes are never retried. A 429, or a 403 with `X-RateLimit-Remaining: 0` or `Retry-After`, is a rate limit: if it resets within 60s deps waits (info log); otherwise the request fails fast with `rate limited by <host> until <time>` (`httpx.ErrRateLimited`) instead of stalling the run. go-containerregistry's own retry is disabled so attempts are not multiplied. Each attempt is logged at debug, with `X-RateLimit-Remaining` when present.
@@ -190,6 +192,8 @@ type Update struct {
     Schedule    *schedule.Set // nil = always
     Advisories  []Advisory    // non-empty = security update
     NewChecksum string        // "" unless Dep.ChecksumSource is set and the version changes
+    CommitType  string        // policy commit type (fix, chore, ...)
+    CommitScope string        // policy commit scope; "" = none
 }
 ```
 
@@ -221,6 +225,12 @@ type SecuritySource interface {
 }
 type ChecksumSource interface {
     Checksum(ctx context.Context, d dep.Dep, version string) (string, error) // lowercase hex
+}
+type Timer interface { // optional: release times for ages and the older-than-current check
+    ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error)
+}
+type SourceRepo interface { // optional: source repository for release notes
+    SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error)
 }
 // gittags.Lister ("git-tags"), goproxy.Source ("go"), gotoolchain ("go-toolchain"),
 // dockerds ("docker"), githubreleases ("github-releases") and npmds ("npm") implement Datasource; osv implements SecuritySource;
@@ -273,10 +283,13 @@ type Group      struct{ Manager, Name, Branch, Title string; Updates []dep.Updat
 func Managers(cfg *config.Config) ([]manager.Manager, error)
 func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.Env, o Options) (*Result, error)
 func Build(ctx context.Context, root string, managers []manager.Manager, updates []dep.Update, post map[string]PostProcessor) ([]FileChange, []error) // post by manager name; nil = none
-func GroupUpdates(updates []dep.Update) []Group
+func GroupUpdates(updates []dep.Update, branchPrefix string) []Group // "" = config.DefaultBranchPrefix
 ```
 
 **Resolve order per dep:** datasource releases → `Scheme.Best` under the policy → digest pin/refresh (`tag`/`docker` versioning on the digest-capable managers github-actions and docker) → security. With advisories, the minimum fix F is the highest, over all vulns, of each vuln's lowest compatible fixed version. If there is no normal update or it is below F, the smallest compatible release ≥ F is chosen regardless of `allow`/`updates` (`ignore` still wins). The advisories the chosen version fixes are attached; such security updates get no group and no schedule. Every file goes to every manager that matches it.
+- A current value the dep's versioning scheme cannot parse (e.g. a `latest` docker tag) is skipped as `non-version value "<v>"` before any lookup, not reported as an error.
+- A major candidate whose release time (via `datasource.Timer`) predates the current version's is rejected as `older than current` and the next best candidate is tried (at most 3). This drops legacy pre-module tags such as `k8s.io/client-go v1.5.2` (2016) when the current version is `v0.37.1`. Unknown times never reject.
+- The chosen update carries the policy's `CommitType`/`CommitScope` (`config.Policy` also has `Monorepo`, the built-in group that applied).
 
 ```go
 // internal/platform
@@ -309,7 +322,19 @@ type Git interface {
     DeleteBranch(ctx context.Context, branch string) error
     BranchAuthorEmail(ctx context.Context, branch string) (string, error)
 }
-type Options struct{ Base, AuthorName, AuthorEmail string; DryRun bool; MaxNewPRs int; Managers []manager.Manager }
+type Options struct {
+    Base, AuthorName, AuthorEmail string
+    BranchPrefix                  string // ending in '/'; "" = config.DefaultBranchPrefix
+    DryRun                        bool
+    MaxNewPRs                     int    // 0 = unlimited
+    Managers                      []manager.Manager
+    Now                           time.Time // schedule evaluation; zero = time.Now()
+    Notes                         Notes     // nil = no ages/notes
+}
+type Notes interface { // implemented by releasenotes.Notes
+    Section(ctx context.Context, ups []dep.Update) string
+    Age(ctx context.Context, u dep.Update) string
+}
 type Action  struct{ Branch, Title, Status, URL string; Number int }
 func Run(ctx context.Context, o Options, root string, res *engine.Result, post map[string]engine.PostProcessor, pc platform.Client, g Git) ([]Action, []error)
 ```
@@ -400,34 +425,44 @@ Both clients share these rules:
 1. **Base branch:** `--base`, or the repo's default branch.
 2. **Freshness check:** local `HEAD` must equal the remote tip of `origin/<base>`. Otherwise deps fails with `checkout HEAD <h7> is not the tip of origin/<base> (<r7>); check out the latest <base>`.
 3. **State:**
-   - remote `refs/heads/deps/*`;
+   - remote `refs/heads/<branchPrefix>*` (`branchPrefix`, default `deps/`);
    - open PRs (up to 20 pages) and closed PRs (up to 4 pages);
-   - both PR lists are filtered to head branches starting with `deps/`.
+   - both PR lists are filtered to head branches under `branchPrefix`; the bot never touches other branches or PRs.
 4. **Grouping:**
-   - Updates whose policy sets `group` form one group per group name: branch `deps/group/<slug(group)>`, title `chore(deps): update <group> (<n> dependencies)`, or the single-dependency title below when only one dependency is in it.
-   - Every other update forms one group per (manager, name): branch `deps/<manager>/<slug(name)>`.
-   - Security updates (with advisories) are never put into a policy group. Title: `fix(deps): update <name> to <ver> [security]`, or `fix(deps): update <name> [security]` when versions differ.
-   - Other titles, first match wins:
-     - every update is a pin with the same digest: `chore(deps): pin <name> to <sha7>`;
-     - every update is a digest refresh with the same digest: `chore(deps): update <name> digest to <sha7>`;
-     - every update shares one new version: `chore(deps): update <name> to <ver>`;
-     - otherwise: `chore(deps): update <name>`.
+   - Updates whose policy sets `group` form one group per group name: branch `<prefix>group/<slug(group)>`, title `<type>(<scope>): update <group> (<n> dependencies)`, `update <group> to <v>` when all members move to one version, or the single-dependency title below when only one dependency is in it.
+   - Every other update forms one group per (manager, name): branch `<prefix><manager>/<slug(name)>`.
+   - **Built-in monorepo groups:** a curated list of about 60 single-repository monorepos (kubernetes staging modules, opentelemetry-go, aws-sdk-go-v2, babel, typescript-eslint, angular, ...) is applied as implicit rules before the user rules, setting only `group: <name> monorepo`. Any user rule overrides it; `monorepos: false` disables the list; `deps explain` shows them as `builtin`.
+   - Security updates (with advisories) are never put into a policy group. Title: `fix(<scope>): update <name> to <ver> [security]`, or `fix(<scope>): update <name> [security]` when versions differ.
+   - **Semantic prefix** (Renovate's `:semanticPrefixFixDepsChoreOthers`): production deps (gomod `direct`, npm `dependencies`) use `fix(deps):`, everything else `chore(deps):`, security updates always `fix`. Rules override with `commitType` and `commitScope` (`""` drops the scope: `chore: ...`). A group uses `fix` if any member is `fix`, else the first member's type, and always the first member's scope.
+   - Other titles, first match wins (`<p>` = the semantic prefix):
+     - every update is a pin with the same digest: `<p> pin <name> to <sha7>`;
+     - every update is a digest refresh with the same digest: `<p> update <name> digest to <sha7>`;
+     - every update shares one new version: `<p> update <name> to <ver>`;
+     - otherwise: `<p> update <name>`.
    - `slug` lowercases, maps bytes outside `[a-z0-9._-]` to `-`, collapses runs of `-` and trims `-`.
    - Changes are built for at most 4 in-schedule groups concurrently, then the groups are handled one after another.
 5. **Fingerprint:** the first 16 hex characters of sha256 over the sorted `path\x00newcontent` pairs.
-   - The PR body is a `| File | From | To | Type |` table, a `### Security` section listing the advisories (if any), then `<!-- deps:fingerprint=<fp> -->`.
+   - The PR body is a `| File | From | To | Type |` table (with an *Age* column when release notes are enabled), a `### Security` section listing the advisories (if any), the release notes section, then `<!-- deps:fingerprint=<fp> -->`.
    - The commit message is the title, a blank line, then one line per update: `- <file>:<line> <from> -> <to>`.
 6. **Per-group decision**, first match wins:
    1. No open PR exists, and a closed PR has the same branch, was not merged and has the same title → `skipped: closed PR for this version`.
    2. A non-security update of the group is outside its schedule (evaluated at run time in `timezone`) → `skipped: outside schedule`. Nothing is built or pushed.
    3. The open PR's fingerprint matches and it is not unmergeable → `up-to-date`. On GitHub, a nil `mergeable` triggers a `GetPR` call; nil still counts as mergeable.
-   4. No open PR exists and the created count is at least `--max-new-prs` → `skipped: new PR limit reached`.
+   4. No open PR exists and `--max-new-prs` is non-zero and the created count has reached it → `skipped: new PR limit reached` (`0` = unlimited).
    5. The branch exists and the author email of its last commit is not the bot's → `skipped: branch modified by someone else`.
    6. `--dry-run` → `would-create` or `would-update`, with no git or API writes.
    7. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet). Then update the PR (`updated`) or create one (`created`).
 
    A build, git or API error in one group is recorded, and the next group is processed.
-7. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open `deps/` PR whose branch matches no current group is closed and its branch deleted (`closed`). Groups that are outside their schedule still count as current, so their PRs are never closed as obsolete. This guard ensures that a failed upstream lookup never closes a valid PR.
+7. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open PR under `branchPrefix` whose branch matches no current group is closed and its branch deleted (`closed`). Groups that are outside their schedule still count as current, so their PRs are never closed as obsolete. This guard ensures that a failed upstream lookup never closes a valid PR.
+
+### Release age and notes
+
+- **When.** Only for PRs that are created or updated; never for up-to-date, skipped or dry-run groups.
+- **Age.** From the optional `datasource.Timer`: `@v/<v>.info` (or `go list -m -json` for private modules), the npm packument's `time` (stream-decoded keeping only `time` and `repository`), GitHub releases `published_at`, git tags on github.com or Gitea/Forgejo via their releases API, and the image config's `created`. Go toolchains have no date.
+- **Notes.** One page of the source repository's GitHub or Gitea/Forgejo releases per run. The repository is the action's, the module's forge repository (plus a small vanity table: golang.org/x, k8s.io, sigs.k8s.io, google.golang.org/{grpc,protobuf}, go.yaml.in/yaml), npm's `repository`, or the OCI `org.opencontainers.image.source` label. Versions in (current, new] are listed newest first, each body capped at 2 KiB and the section at 40 KiB, plus a compare link when both tags exist.
+- **Sanitising.** Quoted bodies are neutralised: no `@mention` pings, upstream `#123` links, `redirect.github.com`.
+- **Cost.** Lookups are lazy, deduped and bounded by the shared semaphore; failures only drop the notes. The fingerprint covers file contents only, so changing notes never churns PRs.
 
 ### Security updates (OSV)
 
@@ -546,7 +581,7 @@ Editor support: `deps schema > deps.schema.json`, then start `.deps.yaml` with `
 
 ## 9. Config reference
 
-Config file: `.deps.yaml`, falling back to `.deps.yml`, or the path given with `--config` (which must exist). If no file is found, the defaults `{version: 1, pin: keep}` apply, and an empty file also yields the defaults.
+Config file: `.deps.yaml`, falling back to `.deps.yml`, or the path given with `--config` (which must exist). If no file is found, the defaults `{version: 1, pin: keep, branchPrefix: deps/, monorepos: true}` and the default `ignorePaths` apply; an empty file also yields the defaults.
 
 ### Schema
 
@@ -556,12 +591,14 @@ pin: keep                   # keep | digest (default keep); github-actions (and 
 timezone: ""                # IANA zone for schedules; "" = UTC
 schedule: []                # cron windows ("* <hour> <dom> <month> <dow>", minute must be *); empty = always
 security: true              # OSV security lookups (default true)
+branchPrefix: deps/         # update branch prefix; must end with / and be a valid git ref prefix
+monorepos: true             # built-in monorepo groups (default true)
 actions:
   defaultHost: ""           # host for `owner/repo@ref`; "" = auto (section 5)
-ignorePaths: []             # doublestar globs on slash paths relative to --dir
+ignorePaths: []             # doublestar globs on slash paths relative to --dir; absent = **/{node_modules,bower_components,vendor,examples,__tests__,test,tests,__fixtures__}/**
 rules:
   - manager: github-actions # optional: github-actions | gomod | docker | npm | custom
-    names: ["actions/*"]    # optional path.Match globs on the dependency name
+    names: ["actions/*"]    # optional doublestar globs on the dependency name (* within a segment, ** across, {a,b})
     depTypes: [direct]      # optional: direct indirect go toolchain action dockerfile compose workflow kubernetes helm dependencies devDependencies optionalDependencies peerDependencies packageManager annotation regex
     ignore: true            # optional
     pin: digest             # optional: keep | digest
@@ -569,10 +606,12 @@ rules:
     updates: [major, minor, patch, digest, pin]   # optional allowed update types
     group: "name"           # optional: one PR for all deps with this group
     schedule: ["* 0-5 * * *"] # optional: overrides the top-level schedule ([] = always)
+    commitType: chore       # optional: fix | chore | build | ci | docs | feat | perf | refactor | revert | style | test
+    commitScope: deps       # optional: [A-Za-z0-9][A-Za-z0-9._/-]*; "" = no scope
 custom:
   - files: ["**/Makefile"]  # required doublestar globs
     match: 'TOOL_VERSION = (?P<version>\S+)'  # optional RE2; absent = annotation mode; needs a version group
-    datasource: go          # git-tags | github-releases | go | docker; regex mode: required unless a datasource group
+    datasource: go          # git-tags | github-releases | go | go-toolchain | docker | npm | golang-version | github-tags | github-release-attachments; regex mode: required unless a datasource group
     name: golang.org/x/tools # regex mode: required unless a name group
     versioning: semver      # tag | go | docker | semver (default semver)
     checksum:               # optional, regex mode only; requires a (?P<checksum>) group in match
@@ -587,7 +626,10 @@ custom:
 - **Acceptance:** an update is accepted when its type is in `updates` and the new version satisfies `allow` (if set).
 - **`pin: digest`:** github-actions: pins tag refs to the tag's commit SHA and appends `# <tag>`. docker: appends `@sha256:<digest>` after the tag. Already-pinned refs stay pinned and are refreshed. The `pin` setting is ignored for gomod, npm and custom.
 - **Schedules:** a time is in schedule when any expression matches it in `timezone`. Like cron, when both day of month and day of week are restricted, either may match. A rule's `schedule` replaces the top-level one; `[]` means always. Steps (`/s`) are allowed only on `*` or a range; day of week is 0-7 (0 and 7 are Sunday).
-- **Groups:** all non-security updates whose policy has the same `group` share one branch and PR (section 5).
+- **Groups:** all non-security updates whose policy has the same `group` share one branch and PR (section 5). Built-in monorepo groups apply before user rules unless `monorepos: false`.
+- **`ignorePaths`:** when the key is absent the default list applies; any explicit list, including `[]`, replaces it.
+- **`branchPrefix`:** branches are `<prefix><manager>/<slug>` and `<prefix>group/<slug>`; only branches and PRs under the prefix are managed.
+- **Commit titles:** default type `fix` for gomod `direct` and npm `dependencies`, `chore` otherwise (security always `fix`); default scope `deps`.
 - **Security:** with `security: true` (the default), OSV advisories can force an update that bypasses `allow`, `updates` and `schedule`, but never `ignore` (section 5).
 - **`custom[]`:** validated in both modes: `datasource` and `versioning` must be known, `files` non-empty valid globs, `match` a valid RE2 with a `version` group. See section 2.
 

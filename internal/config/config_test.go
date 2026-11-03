@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/bmatcuk/doublestar/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
@@ -82,13 +83,26 @@ func TestLoadErrors(t *testing.T) {
 		{"security: maybe\n", "line 1"},
 		{"custom: [{}]\n", "custom[0].files: must not be empty"},
 		{"custom: [{files: ['[']}]\n", "custom[0].files[0]: invalid glob"},
-		{"custom: [{files: [x], datasource: npm}]\n", "custom[0].datasource: must be one of git-tags"},
+		{"custom: [{files: [x], datasource: pip}]\n", "custom[0].datasource: must be one of git-tags"},
 		{"custom: [{files: [x], versioning: calver}]\n", "custom[0].versioning: must be one of tag"},
 		{"custom: [{files: [x], match: '('}]\n", "custom[0].match: invalid RE2"},
 		{"custom: [{files: [x], match: '(?=x)'}]\n", "custom[0].match: invalid RE2"},
-		{"custom: [{files: [x], match: 'v(\\d+)', datasource: go, name: x}]\n", "custom[0].match: must have a (?P<version>...) group"},
+		{"custom: [{files: [x], match: 'v(\\d+)', datasource: go, name: x}]\n", "custom[0].match: must have a (?P<version>...) or (?P<currentValue>...) group"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+)', name: x}]\n", "custom[0].datasource: required"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+)', datasource: go}]\n", "custom[0].name: required"},
+		{"branchPrefix: deps\n", `branchPrefix: must end with /, got "deps"`},
+		{"branchPrefix: 'a b/'\n", "branchPrefix: must be a valid git ref prefix"},
+		{"branchPrefix: 'a..b/'\n", "branchPrefix: must be a valid git ref prefix"},
+		{"branchPrefix: 'a@{/'\n", "branchPrefix: must be a valid git ref prefix"},
+		{"branchPrefix: 'x~/'\n", "branchPrefix: must be a valid git ref prefix"},
+		{"branchPrefix: '/x/'\n", "branchPrefix: must be a valid git ref prefix"},
+		{"branchPrefix: 'a//'\n", "branchPrefix: must be a valid git ref prefix"},
+		{"branchPrefix: '.x/'\n", "branchPrefix: must be a valid git ref prefix"},
+		{"branchPrefix: 'x.lock/'\n", "branchPrefix: must be a valid git ref prefix"},
+		{"monorepos: maybe\n", "line 1"},
+		{"rules: [{commitType: feature}]\n", "rules[0].commitType: must be one of fix, chore"},
+		{"rules: [{commitScope: 'a b'}]\n", "rules[0].commitScope: must match"},
+		{"rules: [{names: ['{a']}]\n", "rules[0].names[0]"},
 		{"custom: [{files: [x], checksum: {url: u}}]\n", "custom[0].checksum: requires match (regex mode)"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+)', datasource: go, name: x, checksum: {url: u}}]\n", "custom[0].checksum: requires a (?P<checksum>...) group in match"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x}]\n", "custom[0].match: (?P<checksum>...) group requires checksum"},
@@ -254,5 +268,172 @@ func TestCustomChecksum(t *testing.T) {
 	}
 	if got := *c.Custom[1].Checksum; got != (Checksum{URL: "https://example.com/v{{version}}/sums.txt", File: "x_{{version}}.tgz"}) {
 		t.Errorf("custom[1].checksum = %+v", got)
+	}
+}
+
+func TestCustomRegexGroupAliases(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `custom:
+  - files: [a]
+    match: 'datasource=(?P<datasource>\S+) depName=(?P<depName>\S+)\s+version: (?P<currentValue>\S+)'
+  - files: [b]
+    match: 'pkg=(?P<packageName>\S+) (?P<version>\S+)'
+    datasource: npm
+  - files: [c]
+    match: '(?P<currentValue>\S+)'
+    datasource: github-release-attachments
+    name: o/r
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Custom) != 3 {
+		t.Fatalf("custom = %+v", c.Custom)
+	}
+	for _, ds := range CustomDatasources {
+		if _, err := load(t, ".deps.yaml", "custom: [{files: [x], datasource: "+ds+"}]\n"); err != nil {
+			t.Errorf("datasource %s: %v", ds, err)
+		}
+	}
+}
+
+func TestBranchPrefix(t *testing.T) {
+	if p := Default().Prefix(); p != "deps/" {
+		t.Errorf("default prefix = %q", p)
+	}
+	for _, ok := range []string{"renovate/", "bots/deps/", "a.b-c_d/"} {
+		c, err := load(t, ".deps.yaml", "branchPrefix: '"+ok+"'\n")
+		if err != nil || c.Prefix() != ok {
+			t.Errorf("%q: prefix %v err %v", ok, c, err)
+		}
+	}
+}
+
+func TestCommitTypeAndScope(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `rules:
+  - manager: github-actions
+    commitType: ci
+  - names: ["example.com/**"]
+    commitType: build
+    commitScope: ""
+  - names: ["example.com/keep"]
+    commitScope: tools
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		d          dep.Dep
+		typ, scope string
+	}{
+		{dep.Dep{Manager: "gomod", DepType: "direct", Name: "a/b"}, "fix", "deps"},
+		{dep.Dep{Manager: "gomod", DepType: "toolchain", Name: "go"}, "chore", "deps"},
+		{dep.Dep{Manager: "npm", DepType: "dependencies", Name: "x"}, "fix", "deps"},
+		{dep.Dep{Manager: "npm", DepType: "devDependencies", Name: "x"}, "chore", "deps"},
+		{dep.Dep{Manager: "docker", DepType: "dockerfile", Name: "x"}, "chore", "deps"},
+		{dep.Dep{Manager: "github-actions", DepType: "action", Name: "actions/checkout"}, "ci", "deps"},
+		{dep.Dep{Manager: "gomod", DepType: "direct", Name: "example.com/x/y"}, "build", ""},
+		{dep.Dep{Manager: "gomod", DepType: "direct", Name: "example.com/keep"}, "build", "tools"},
+	} {
+		if p := c.Policy(tc.d); p.CommitType != tc.typ || p.CommitScope != tc.scope {
+			t.Errorf("%s %s: %q(%q), want %q(%q)", tc.d.Manager, tc.d.Name, p.CommitType, p.CommitScope, tc.typ, tc.scope)
+		}
+	}
+}
+
+func TestMonorepos(t *testing.T) {
+	c, err := load(t, ".deps.yaml", "rules: [{names: ['k8s.io/client-go'], group: k8s-client}]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	off, err := load(t, ".deps.yaml", "monorepos: false\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		cfg           *Config
+		d             dep.Dep
+		group, mono   string
+		wantUserRules []int
+	}{
+		{c, dep.Dep{Manager: "gomod", Name: "k8s.io/api"}, "kubernetes monorepo", "kubernetes", nil},
+		{c, dep.Dep{Manager: "gomod", Name: "k8s.io/client-go"}, "k8s-client", "kubernetes", []int{0}},
+		{c, dep.Dep{Manager: "gomod", Name: "go.opentelemetry.io/otel"}, "opentelemetry-go monorepo", "opentelemetry-go", nil},
+		{c, dep.Dep{Manager: "gomod", Name: "go.opentelemetry.io/otel/sdk/metric"}, "opentelemetry-go monorepo", "opentelemetry-go", nil},
+		{c, dep.Dep{Manager: "gomod", Name: "go.opentelemetry.io/otelx"}, "", "", nil},
+		{c, dep.Dep{Manager: "gomod", Name: "sigs.k8s.io/controller-runtime"}, "", "", nil},
+		{c, dep.Dep{Manager: "npm", Name: "@babel/core"}, "babel monorepo", "babel", nil},
+		{c, dep.Dep{Manager: "npm", Name: "@typescript-eslint/parser"}, "typescript-eslint monorepo", "typescript-eslint", nil},
+		{c, dep.Dep{Manager: "npm", Name: "@types/react"}, "", "", nil},
+		{c, dep.Dep{Manager: "npm", Name: "@tanstack/react-query"}, "tanstack-query monorepo", "tanstack-query", nil},
+		{c, dep.Dep{Manager: "gomod", Name: "react"}, "", "", nil},
+		{c, dep.Dep{Manager: "github-actions", Name: "github/codeql-action/init"}, "codeql-action monorepo", "codeql-action", nil},
+		{off, dep.Dep{Manager: "gomod", Name: "k8s.io/api"}, "", "", nil},
+	} {
+		p := tc.cfg.Policy(tc.d)
+		if p.Group != tc.group || p.Monorepo != tc.mono || !slices.Equal(p.Rules, tc.wantUserRules) {
+			t.Errorf("%s %s: group %q monorepo %q rules %v, want %q %q %v", tc.d.Manager, tc.d.Name, p.Group, p.Monorepo, p.Rules, tc.group, tc.mono, tc.wantUserRules)
+		}
+	}
+}
+
+func TestMonorepoList(t *testing.T) {
+	seen := map[string]bool{}
+	for _, m := range Monorepos {
+		if m.Name == "" || seen[m.Name] || len(m.Names) == 0 || len(m.Managers) == 0 {
+			t.Errorf("bad entry %+v", m)
+		}
+		seen[m.Name] = true
+		for _, mgr := range m.Managers {
+			if !slices.Contains(Managers, mgr) {
+				t.Errorf("%s: unknown manager %q", m.Name, mgr)
+			}
+		}
+		for _, g := range m.Names {
+			if !doublestar.ValidatePattern(g) {
+				t.Errorf("%s: invalid glob %q", m.Name, g)
+			}
+		}
+	}
+}
+
+func TestDefaultIgnorePaths(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       []string
+	}{
+		{"", "", DefaultIgnorePaths},
+		{".deps.yaml", "", DefaultIgnorePaths},
+		{".deps.yaml", "rules: []\n", DefaultIgnorePaths},
+		{".deps.yaml", "ignorePaths: []\n", []string{}},
+		{".deps.yaml", "ignorePaths:\n", nil},
+		{".deps.yaml", "ignorePaths: ['a/**']\n", []string{"a/**"}},
+	} {
+		c, err := load(t, tc.name, tc.body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(c.IgnorePaths, tc.want) {
+			t.Errorf("%q %q: ignorePaths = %q, want %q", tc.name, tc.body, c.IgnorePaths, tc.want)
+		}
+	}
+	c := Default()
+	c.IgnorePaths[0] = "changed"
+	if DefaultIgnorePaths[0] != "**/node_modules/**" {
+		t.Error("Default aliases DefaultIgnorePaths")
+	}
+}
+
+func TestRuleNamesDoublestar(t *testing.T) {
+	c, err := load(t, ".deps.yaml", "rules: [{names: ['go.opentelemetry.io/**', 'actions/*', '@scope/{a,b}'], ignore: true}]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{
+		"go.opentelemetry.io/otel/sdk": true, "actions/checkout": true, "actions/cache/save": false,
+		"@scope/a": true, "@scope/c": false,
+	} {
+		if got := c.Policy(dep.Dep{Manager: "npm", Name: name}).Ignore; got != want {
+			t.Errorf("%s: ignore = %v, want %v", name, got, want)
+		}
 	}
 }

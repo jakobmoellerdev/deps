@@ -125,7 +125,10 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 		line("result", "skipped: %s", d.Skip)
 		return
 	}
-	if len(t.Rules) == 0 {
+	if t.Policy.Monorepo != "" {
+		line("builtin", "monorepo %s -> group %q", t.Policy.Monorepo, config.MonorepoGroup(t.Policy.Monorepo))
+	}
+	if len(t.Rules) == 0 && t.Policy.Monorepo == "" {
 		line("rules", "none")
 	}
 	for i, r := range t.Rules {

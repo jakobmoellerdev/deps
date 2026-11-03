@@ -73,6 +73,8 @@ type Update struct {
 	Schedule    *schedule.Set // nil = always in schedule
 	Advisories  []Advisory    // non-empty = security update
 	NewChecksum string        // "" unless Dep.ChecksumSource is set and the version changes
+	CommitType  string        // policy conventional-commit type; "" = unset (titles use chore(deps))
+	CommitScope string        // policy commit scope, "" = no scope; only used when CommitType is set
 }
 
 // FromTo renders the old and new version; digest-pinned sides are `<version>@<digest7>`.
