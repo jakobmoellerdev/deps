@@ -1,0 +1,66 @@
+version: "3"
+
+vars:
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+
+tasks:
+  default:
+    desc: Run the CI checks
+    cmds:
+      - task: ci
+
+  ci:
+    desc: Everything CI runs (vet, race tests, formatting, tidy check)
+    cmds:
+      - task: vet
+      - task: test
+      - task: fmt:check
+      - task: tidy:check
+
+  build:
+    desc: Build bin/deps
+    cmds:
+      - go build -trimpath -ldflags "-X main.version={{.VERSION}}" -o bin/deps ./cmd/deps
+
+  test:
+    desc: Run tests with the race detector
+    cmds:
+      - go test -race ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Format all Go files
+    cmds:
+      - gofmt -w .
+
+  fmt:check:
+    desc: Fail if any Go file is not gofmt-formatted
+    cmds:
+      - test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+  tidy:
+    desc: go mod tidy
+    cmds:
+      - go mod tidy
+
+  tidy:check:
+    desc: Fail if go.mod/go.sum are not tidy
+    cmds:
+      - go mod tidy -diff
+
+  plan:
+    desc: Show the updates deps would make to this repo
+    deps: [build]
+    cmds:
+      - bin/deps plan -v
+
+  dry-run:
+    desc: Show the PRs deps would create for this repo
+    deps: [build]
+    cmds:
+      - bin/deps run --dry-run -v
