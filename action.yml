@@ -57,8 +57,13 @@ runs:
         base="$repo/releases/download/$VERSION"
         dir="$RUNNER_TEMP/deps-$VERSION"
         mkdir -p "$dir"
-        curl -fsSL -o "$dir/checksums.txt" "$base/checksums.txt"
-        curl -fsSL -o "$dir/deps_linux_$arch" "$base/deps_linux_$arch"
+        if [ "$host" = https://github.com ] && [ "$SERVER_URL" = https://github.com ] && command -v gh >/dev/null; then
+          # gh downloads through the API with the job token, which also works for private repositories.
+          GH_TOKEN="$TOKEN" gh release download "$VERSION" -R "$path" -D "$dir" -p checksums.txt -p "deps_linux_$arch"
+        else
+          curl -fsSL -o "$dir/checksums.txt" "$base/checksums.txt"
+          curl -fsSL -o "$dir/deps_linux_$arch" "$base/deps_linux_$arch"
+        fi
         (cd "$dir" && grep " deps_linux_$arch\$" checksums.txt | sha256sum -c --quiet -)
         install -m 0755 "$dir/deps_linux_$arch" "$RUNNER_TEMP/deps"
         "$RUNNER_TEMP/deps" version
