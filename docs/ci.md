@@ -11,7 +11,7 @@ The repository root has a composite `action.yml`. It downloads a released static
 | `token` | `${{ github.token }}` (the job token on GitHub, Gitea and Forgejo) | exported as `DEPS_TOKEN`; needs contents:write and pull-requests:write (issues:write for the dashboard) |
 | `args` | `run` | arguments for `deps` |
 | `version` | the action's ref if it is a release tag (`@v0.1.0`), else the latest release | release tag to download, e.g. `v0.1.0` |
-| `repository` | `https://git.jakob-moeller.cloud/jakobmoellerdev/deps` | where releases are downloaded from: a Gitea/Forgejo repository URL (latest via `<host>/api/v1/repos/<repo>/releases/latest`) or a `https://github.com/<owner>/<repo>` URL (latest via `api.github.com`) |
+| `repository` | `https://github.com/jakobmoellerdev/deps` on github.com runners, `https://git.jakob-moeller.cloud/jakobmoellerdev/deps` elsewhere | where releases are downloaded from: a Gitea/Forgejo repository URL (latest via `<host>/api/v1/repos/<repo>/releases/latest`) or a GitHub repository URL (latest via api.github.com; on github.com runners assets are fetched with `gh release download` and the job token, so private repositories work) |
 
 Only linux/amd64 and linux/arm64 runners are supported; on any other OS or architecture the download step fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`. Pin a release tag (`@v0.1.0`) so runs are reproducible; `@main` downloads the latest release.
 
@@ -152,6 +152,10 @@ Use `deps_linux_arm64` on arm64 runners.
 3. **npm:** `.npmrc` `_authToken` entries. **docker:** the Docker credential chain.
 
 ## Releases (maintainers)
+
+Every release is published on both forges: on Gitea by the `release` job below, and on the GitHub mirror by `.github/workflows/release.yml`, which runs when the push mirror delivers the tag (or via `workflow_dispatch` with a `tag` input to republish an existing tag). GitHub runners download from the mirror because the Gitea instance's edge blocks GitHub's datacenter IPs (HTTP 403). The mirror's workflow `.github/workflows/deps.yml` runs `deps plan` daily: pull requests and issues are disabled on the mirror and the push mirror prunes foreign branches, so PRs are only made on Gitea.
+
+The Gitea push mirror needs a GitHub token with the `workflow` scope, otherwise GitHub rejects pushes that change `.github/workflows/*`.
 
 Pushing a `v*` tag runs `.gitea/workflows/ci.yml`: the `test` job runs `task ci` once (Go from `actions/setup-go@v7.0.0` with `go-version-file: go.mod`, i.e. `toolchain go1.27.3`, and `cache: true`), then the `release` job (`needs: test`, `contents: write`):
 

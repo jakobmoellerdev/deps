@@ -594,7 +594,7 @@ The action downloads a released static binary instead of building from source, s
 | `token` | `${{ github.token }}` (the job token on GitHub, Gitea and Forgejo) |
 | `args` | `run` |
 | `version` | action ref if it is a release tag, else latest release |
-| `repository` | `https://git.jakob-moeller.cloud/jakobmoellerdev/deps` (GitHub repository URLs supported) |
+| `repository` | the GitHub mirror on github.com runners, the Gitea repository elsewhere (any Gitea/Forgejo or GitHub repository URL) |
 
 The action uses only `github.*` expressions, so it runs unchanged on GitHub Actions and Gitea/Forgejo with default settings.
 

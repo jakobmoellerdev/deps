@@ -60,7 +60,7 @@ jobs:
 
 Use the full URL: a short `jakobmoellerdev/deps@…` is resolved against the instance's `DEFAULT_ACTIONS_URL` (github.com by default).
 
-**GitHub** (`.github/workflows/deps.yml`), using the mirror [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps):
+**GitHub** (`.github/workflows/deps.yml`), using the mirror [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps); on github.com the action downloads the binary from the mirror's releases:
 
 ```yaml
 name: deps
