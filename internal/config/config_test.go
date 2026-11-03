@@ -31,8 +31,32 @@ func TestLoadDefaults(t *testing.T) {
 			t.Errorf("%q: %+v %v", tc.name, c, err)
 		}
 	}
-	if _, err := Load(t.TempDir(), "missing.yaml"); err == nil {
-		t.Error("explicit missing path must error")
+	_, err := Load(t.TempDir(), "missing.yaml")
+	var ce *Error
+	if !errors.As(err, &ce) || !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("explicit missing path: err = %v, want *Error wrapping ErrNotExist", err)
+	}
+}
+
+func TestLoadUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read mode 000 files")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".deps.yaml"), []byte("pin: digest\n"), 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(dir, "")
+	var ce *Error
+	if !errors.As(err, &ce) || !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("err = %v, want *Error wrapping ErrPermission (no silent fallback to defaults)", err)
+	}
+}
+
+func TestValidateWithoutPath(t *testing.T) {
+	err := (&Config{Version: 1, Pin: "always"}).Validate()
+	if err == nil || err.Error() != ".deps.yaml: pin: must be keep or digest, got \"always\"" {
+		t.Fatalf("err = %v", err)
 	}
 }
 

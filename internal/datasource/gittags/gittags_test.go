@@ -2,11 +2,13 @@ package gittags
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -252,6 +254,20 @@ func TestTagsErrors(t *testing.T) {
 		{"server ERR", func(w http.ResponseWriter, r *http.Request) {
 			io.WriteString(w, pkts("ERR access denied\n"))
 		}, "access denied"},
+		{"length below header size", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "0003") }, "malformed pkt-line"},
+		{"truncated large packet", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "1400"+strings.Repeat("x", 100)) }, "malformed pkt-line"},
+		{"service header then EOF", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, pkts(serviceHeader)) }, "malformed pkt-line"},
+		{"service header without flush", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, pkts(serviceHeader, "x\n")) }, "malformed pkt-line"},
+		{"service header and flush then EOF", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, pkts(serviceHeader, "0000")) }, "malformed pkt-line"},
+		{"v2 capabilities truncated", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, pkts("version 2\n", "ls-refs\n")) }, "malformed pkt-line"},
+		{"v2 capabilities with delim", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, pkts("version 2\n", "0001")) }, "malformed pkt-line"},
+		{"v0 advertisement ends with delim", func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, pkts(serviceHeader, "0000", "1111111111111111111111111111111111111111 refs/tags/v1\n", "0001"))
+		}, "malformed pkt-line"},
+		{"ls-refs truncated", v2Handler(pkts("1111111111111111111111111111111111111111 refs/tags/v1\n")), "malformed pkt-line"},
+		{"ls-refs delim", v2Handler(pkts("0001")), "malformed pkt-line"},
+		{"ls-refs ERR", v2Handler(pkts("ERR repository gone\n")), "repository gone"},
+		{"ls-refs line without oid", v2Handler(pkts("refs/tags/v1\n", "0000")), "malformed pkt-line"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -263,4 +279,126 @@ func TestTagsErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// v2Handler advertises protocol v2 and answers ls-refs with lsRefs.
+func v2Handler(lsRefs string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			io.WriteString(w, pkts(serviceHeader, "0000", "version 2\n", "0000"))
+			return
+		}
+		io.WriteString(w, lsRefs)
+	}
+}
+
+func TestTagsV2SkipsNonTagsAndParsesLargePackets(t *testing.T) {
+	longName := "v1-" + strings.Repeat("x", 5000) // exceeds the bufio buffer
+	tagLine := pkts("2222222222222222222222222222222222222222 refs/tags/v2\n")
+	// Uppercase hex lengths are valid pkt-line framing.
+	upper := strings.ToUpper(tagLine[:4]) + tagLine[4:]
+	srv := httptest.NewServer(v2Handler(pkts(
+		"1111111111111111111111111111111111111111 refs/heads/main\n",
+		"3333333333333333333333333333333333333333 refs/tags/"+longName+"\n",
+	) + upper + "0002"))
+	defer srv.Close()
+	got, err := New(srv.Client(), nil, nil).Tags(t.Context(), srv.URL+"/a/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Tag{
+		{Name: longName, Commit: "3333333333333333333333333333333333333333"},
+		{Name: "v2", Commit: "2222222222222222222222222222222222222222"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Tags = %+v, want %+v", got, want)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type errReader struct{ err error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.err }
+
+func TestTagsTransportErrors(t *testing.T) {
+	boom := errors.New("boom")
+	tests := []struct {
+		name string
+		rt   roundTripFunc
+		want string
+	}{
+		{
+			name: "request fails",
+			rt:   func(*http.Request) (*http.Response, error) { return nil, boom },
+			want: `ls-refs https://h/a/b: Get "https://h/a/b/info/refs?service=git-upload-pack": boom`,
+		},
+		{
+			name: "body read fails",
+			rt: func(*http.Request) (*http.Response, error) {
+				body := io.MultiReader(strings.NewReader(pkts(serviceHeader, "0000")), errReader{boom})
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body)}, nil
+			},
+			want: "ls-refs https://h/a/b: boom",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(&http.Client{Transport: tt.rt}, nil, nil).Tags(t.Context(), "https://h/a/b")
+			if err == nil || err.Error() != tt.want || !errors.Is(err, boom) {
+				t.Fatalf("err = %v, want %s", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestTagsInvalidURL(t *testing.T) {
+	_, err := New(http.DefaultClient, nil, nil).Tags(t.Context(), "https://h/%zz")
+	if err == nil || !strings.HasPrefix(err.Error(), "ls-refs https://h/%zz: ") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestTagsCanceledWaitingForSlot(t *testing.T) {
+	t.Run("info/refs", func(t *testing.T) {
+		sem := make(chan struct{}, 1)
+		sem <- struct{}{}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err := New(http.DefaultClient, nil, sem).Tags(ctx, "https://h/a/b")
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	})
+	t.Run("ls-refs", func(t *testing.T) {
+		sem := make(chan struct{}, 2)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var posts atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				posts.Add(1)
+				return
+			}
+			adv := pkts(serviceHeader, "0000", "version 2\n", "0000")
+			w.Header().Set("Content-Length", strconv.Itoa(len(adv)))
+			io.WriteString(w, adv)
+			w.(http.Flusher).Flush()
+			// Take every slot once the client releases the info/refs slot, then cancel, so the
+			// ls-refs request can only give up.
+			sem <- struct{}{}
+			sem <- struct{}{}
+			cancel()
+		}))
+		defer srv.Close()
+		_, err := New(srv.Client(), nil, sem).Tags(ctx, srv.URL+"/a/b")
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+		if posts.Load() != 0 {
+			t.Errorf("ls-refs was sent without a slot")
+		}
+	})
 }

@@ -107,6 +107,37 @@ func TestExtractParseError(t *testing.T) {
 	}
 }
 
+func TestExtractSkips(t *testing.T) {
+	src := "steps:\n" +
+		"  - uses: a/b@" + sha + " # ratchet:exclude\n" +
+		"  - uses: a/b@" + sha + " # main\n" +
+		"  - uses: a/b@" + strings.Repeat("g", 40) + "\n" +
+		"  - uses:\n      a/c@v1\n" +
+		"  - uses: \"a/d\\x40v1\"\n"
+	deps, err := Extract("action.yml", []byte(src), "github.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		name, skip string
+		line       int
+	}{
+		{"a/b", "pinned without version comment", 2},
+		{"a/b", "pinned without version comment", 3},
+		{"a/b", "non-version ref", 4},
+		{"a/c", "cannot locate value", 6}, // value on a continuation line
+		{"a/d", "cannot locate value", 7}, // escaped in the source
+	}
+	if len(deps) != len(want) {
+		t.Fatalf("got %d deps: %+v", len(deps), deps)
+	}
+	for i, w := range want {
+		if d := deps[i]; d.Name != w.name || d.Skip != w.skip || d.Line != w.line {
+			t.Errorf("%d: got %+v, want %+v", i, d, w)
+		}
+	}
+}
+
 func TestMatch(t *testing.T) {
 	for p, want := range map[string]bool{
 		".github/workflows/ci.yml":     true,
@@ -131,6 +162,9 @@ func TestParseUses(t *testing.T) {
 		{"noat", "unrecognized uses"},
 		{"single@v1", "unrecognized uses"},
 		{"a/b@", "unrecognized uses"},
+		{"a/@v1", "unrecognized uses"},
+		{"https:///a/b@v1", "unrecognized uses"},
+		{"https://h%zz/a/b@v1", "unrecognized uses"},
 	} {
 		if got := ParseUses(tc.in, "github.com"); got.Skip != tc.skip {
 			t.Errorf("%q: %+v", tc.in, got)

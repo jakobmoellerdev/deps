@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -14,62 +15,109 @@ import (
 
 const head = "1111111111111111111111111111111111111111"
 
+var boom = errors.New("boom")
+
+// fail returns the injected error for a method, keyed by "<method>:<arg>" (branch, PR head,
+// ref pattern or state) or by the method name alone.
+func fail(m map[string]error, method, arg string) error {
+	if err := m[method+":"+arg]; err != nil {
+		return err
+	}
+	return m[method]
+}
+
 type fakeGit struct {
 	branches map[string]string // ref -> sha
 	authors  map[string]string // branch -> email
-	pushed   []string          // branches
+	fail     map[string]error
+	pushed   []string // branches
 	deleted  []string
 }
 
-func (g *fakeGit) RevParse(context.Context, string) (string, error) { return head, nil }
-func (g *fakeGit) RemoteURL(context.Context) (string, error)        { return "", nil }
+func (g *fakeGit) RevParse(context.Context, string) (string, error) {
+	return head, fail(g.fail, "RevParse", "")
+}
+func (g *fakeGit) RemoteURL(context.Context) (string, error) { return "", nil }
 func (g *fakeGit) LsRemote(_ context.Context, pattern string) (map[string]string, error) {
+	if err := fail(g.fail, "LsRemote", pattern); err != nil {
+		return nil, err
+	}
 	if pattern == "refs/heads/main" {
 		return map[string]string{"refs/heads/main": head}, nil
 	}
 	return g.branches, nil
 }
 func (g *fakeGit) Commit(context.Context, string, []engine.FileChange, string, string, string) (string, error) {
+	if err := fail(g.fail, "Commit", ""); err != nil {
+		return "", err
+	}
 	return "2222222222222222222222222222222222222222", nil
 }
 func (g *fakeGit) Push(_ context.Context, _, branch, _ string) error {
+	if err := fail(g.fail, "Push", branch); err != nil {
+		return err
+	}
 	g.pushed = append(g.pushed, branch)
 	return nil
 }
 func (g *fakeGit) DeleteBranch(_ context.Context, branch string) error {
+	if err := fail(g.fail, "DeleteBranch", branch); err != nil {
+		return err
+	}
 	g.deleted = append(g.deleted, branch)
 	return nil
 }
 func (g *fakeGit) BranchAuthorEmail(_ context.Context, branch string) (string, error) {
-	return g.authors[branch], nil
+	return g.authors[branch], fail(g.fail, "BranchAuthorEmail", branch)
 }
 
 type fakePC struct {
 	open, closed []platform.PR
+	mergeable    *bool // returned by GetPR
+	fail         map[string]error
+	got          []int    // GetPR numbers
 	created      []string // heads
 	updated      []int
 	closedNow    []int
 }
 
-func (c *fakePC) DefaultBranch(context.Context) (string, error) { return "main", nil }
+func (c *fakePC) DefaultBranch(context.Context) (string, error) {
+	return "main", fail(c.fail, "DefaultBranch", "")
+}
 func (c *fakePC) ListPRs(_ context.Context, state string, _ int) ([]platform.PR, error) {
+	if err := fail(c.fail, "ListPRs", state); err != nil {
+		return nil, err
+	}
 	if state == "open" {
 		return c.open, nil
 	}
 	return c.closed, nil
 }
 func (c *fakePC) GetPR(_ context.Context, n int) (platform.PR, error) {
-	return platform.PR{Number: n}, nil
+	if err := fail(c.fail, "GetPR", ""); err != nil {
+		return platform.PR{}, err
+	}
+	c.got = append(c.got, n)
+	return platform.PR{Number: n, Mergeable: c.mergeable}, nil
 }
 func (c *fakePC) CreatePR(_ context.Context, head, _, _, _ string) (platform.PR, error) {
+	if err := fail(c.fail, "CreatePR", head); err != nil {
+		return platform.PR{}, err
+	}
 	c.created = append(c.created, head)
 	return platform.PR{Number: 100 + len(c.created), Head: head}, nil
 }
 func (c *fakePC) UpdatePR(_ context.Context, n int, _, _ string) error {
+	if err := fail(c.fail, "UpdatePR", ""); err != nil {
+		return err
+	}
 	c.updated = append(c.updated, n)
 	return nil
 }
 func (c *fakePC) ClosePR(_ context.Context, n int) error {
+	if err := fail(c.fail, "ClosePR", ""); err != nil {
+		return err
+	}
 	c.closedNow = append(c.closedNow, n)
 	return nil
 }
@@ -122,12 +170,15 @@ func TestRun(t *testing.T) {
 		git         fakeGit
 		pc          fakePC
 		engineErr   bool
+		extra       []dep.Update // appended to the fixture's updates
 		wantStatus  map[string]string
+		wantErrs    []string // substrings, one per returned error, in order
 		wantPushed  int
 		wantCreated int
 		wantUpdated int
 		wantClosed  int
 		wantDeleted int
+		wantGetPR   int
 	}{
 		{
 			name:        "create both",
@@ -201,6 +252,88 @@ func TestRun(t *testing.T) {
 			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated},
 			wantPushed: 2, wantCreated: 2,
 		},
+		{
+			name:       "unknown mergeability is looked up and treated as mergeable",
+			opts:       Options{Base: "main"},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A"}}, fail: map[string]error{"DefaultBranch": boom}},
+			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
+			wantPushed: 1, wantCreated: 1, wantGetPR: 1,
+		},
+		{
+			name:       "looked up conflicting PR is rebuilt",
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A"}}, mergeable: &no},
+			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated},
+			wantPushed: 2, wantCreated: 1, wantUpdated: 1, wantGetPR: 1,
+		},
+		{
+			name:       "GetPR failure isolated to its group",
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A"}}, fail: map[string]error{"GetPR": boom}},
+			wantStatus: map[string]string{branchB: StatusCreated},
+			wantErrs:   []string{branchA + ": boom"},
+			wantPushed: 1, wantCreated: 1,
+		},
+		{
+			name:       "build error isolates its group and keeps obsolete PRs",
+			extra:      []dep.Update{{Dep: dep.Dep{Manager: "github-actions", File: "missing.yml", Line: 1, Name: "c/z", Version: "v1", RefSpan: dep.Span{Start: 0, End: 2}}, Type: dep.Major, NewVersion: "v2"}},
+			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated},
+			wantErrs:   []string{"deps/github-actions/c-z: missing.yml: "},
+			wantPushed: 2, wantCreated: 2,
+		},
+		{
+			name:       "push failure isolated to its group and keeps obsolete PRs",
+			git:        fakeGit{fail: map[string]error{"Push:" + branchA: boom}},
+			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
+			wantStatus: map[string]string{branchB: StatusCreated},
+			wantErrs:   []string{branchA + ": boom"},
+			wantPushed: 1, wantCreated: 1,
+		},
+		{
+			name:       "commit failure",
+			git:        fakeGit{fail: map[string]error{"Commit": boom}},
+			wantStatus: map[string]string{},
+			wantErrs:   []string{branchA + ": boom", branchB + ": boom"},
+		},
+		{
+			name:       "branch author lookup failure",
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, fail: map[string]error{"BranchAuthorEmail:" + branchA: boom}},
+			wantStatus: map[string]string{branchB: StatusCreated},
+			wantErrs:   []string{branchA + ": boom"},
+			wantPushed: 1, wantCreated: 1,
+		},
+		{
+			name:       "CreatePR failure after push",
+			pc:         fakePC{fail: map[string]error{"CreatePR:" + branchA: boom}},
+			wantStatus: map[string]string{branchB: StatusCreated},
+			wantErrs:   []string{branchA + ": boom"},
+			wantPushed: 2, wantCreated: 1,
+		},
+		{
+			name:       "UpdatePR failure after push",
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA}}, fail: map[string]error{"UpdatePR": boom}},
+			wantStatus: map[string]string{branchB: StatusCreated},
+			wantErrs:   []string{branchA + ": boom"},
+			wantPushed: 2, wantCreated: 1,
+		},
+		{
+			name:       "ClosePR failure keeps the branch",
+			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}},
+			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}, fail: map[string]error{"ClosePR": boom}},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated},
+			wantErrs:   []string{"close #9: boom"},
+			wantPushed: 2, wantCreated: 2,
+		},
+		{
+			name:       "DeleteBranch failure still reports the closed PR",
+			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}, fail: map[string]error{"DeleteBranch": boom}},
+			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
+			wantErrs:   []string{"delete deps/gomod/gone: boom"},
+			wantPushed: 2, wantCreated: 2, wantClosed: 1,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -208,6 +341,7 @@ func TestRun(t *testing.T) {
 			if tt.engineErr {
 				res.Errors = []error{errors.New("upstream down")}
 			}
+			res.Updates = append(res.Updates, tt.extra...)
 			fpA := fingerprintOf(t, root, res, "a/x")
 			for i := range tt.pc.open {
 				if tt.pc.open[i].Body == "FP_A" {
@@ -220,8 +354,16 @@ func TestRun(t *testing.T) {
 				o.MaxNewPRs = 10
 			}
 			acts, errs := Run(t.Context(), o, root, res, nil, &tt.pc, &tt.git)
-			if len(errs) > 0 {
-				t.Fatal(errs)
+			if len(errs) != len(tt.wantErrs) {
+				t.Fatalf("errs = %v, want %q", errs, tt.wantErrs)
+			}
+			for i, want := range tt.wantErrs {
+				if !strings.Contains(errs[i].Error(), want) {
+					t.Errorf("err %d = %q, want it to contain %q", i, errs[i], want)
+				}
+			}
+			if len(tt.pc.got) != tt.wantGetPR {
+				t.Errorf("GetPR calls = %v, want %d", tt.pc.got, tt.wantGetPR)
 			}
 			got := map[string]string{}
 			for _, a := range acts {
@@ -256,4 +398,34 @@ type staleGit struct{ fakeGit }
 
 func (g *staleGit) LsRemote(_ context.Context, pattern string) (map[string]string, error) {
 	return map[string]string{"refs/heads/main": "3333333333333333333333333333333333333333"}, nil
+}
+
+func TestRunStateErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		gitFail map[string]error
+		pcFail  map[string]error
+		want    string
+	}{
+		{name: "default branch", pcFail: map[string]error{"DefaultBranch": boom}, want: "default branch: boom"},
+		{name: "rev-parse", gitFail: map[string]error{"RevParse": boom}, want: "boom"},
+		{name: "base tip", gitFail: map[string]error{"LsRemote:refs/heads/main": boom}, want: "boom"},
+		{name: "deps branches", gitFail: map[string]error{"LsRemote:refs/heads/deps/*": boom}, want: "boom"},
+		{name: "open PRs", pcFail: map[string]error{"ListPRs:open": boom}, want: "list open PRs: boom"},
+		{name: "closed PRs", pcFail: map[string]error{"ListPRs:closed": boom}, want: "list closed PRs: boom"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root, res := fixture(t)
+			g := &fakeGit{fail: tt.gitFail}
+			pc := &fakePC{fail: tt.pcFail}
+			acts, errs := Run(t.Context(), Options{MaxNewPRs: 10, AuthorEmail: email}, root, res, nil, pc, g)
+			if len(errs) != 1 || errs[0].Error() != tt.want || !errors.Is(errs[0], boom) {
+				t.Fatalf("errs = %v, want [%s]", errs, tt.want)
+			}
+			if acts != nil || g.pushed != nil || pc.created != nil {
+				t.Errorf("acted despite state error: actions=%v pushed=%v created=%v", acts, g.pushed, pc.created)
+			}
+		})
+	}
 }

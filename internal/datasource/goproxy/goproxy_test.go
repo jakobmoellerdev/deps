@@ -87,6 +87,12 @@ func TestVersions(t *testing.T) {
 		},
 		{name: "off", proxy: "off", modPath: "example.com/m", wantErr: "GOPROXY=off"},
 		{name: "exhausted", proxy: "{}/nf", modPath: "example.com/m", wantErr: "no proxy has example.com/m"},
+		{
+			name: "empty entries skipped", proxy: " ,{}/nf,, {}/ok", modPath: "example.com/m",
+			want: []string{"v1.0.0", "v1.1.0", "example.com/m/@v/list"}, wantHits: map[string]int32{"nf": 1, "ok": 1},
+		},
+		{name: "invalid module path", proxy: "{}/ok", modPath: "example.com/a b", wantErr: "malformed module path", wantHits: map[string]int32{"ok": 0}},
+		{name: "invalid proxy URL stops on comma", proxy: "http://%zz,{}/ok", modPath: "example.com/m", wantErr: "invalid URL escape", wantHits: map[string]int32{"ok": 0}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -139,5 +145,76 @@ func TestVersionsEnvError(t *testing.T) {
 	s.env = func(context.Context) (gotool.GoEnv, error) { return gotool.GoEnv{}, errors.New("boom") }
 	if _, err := s.Versions(context.Background(), "example.com/m", "."); err == nil || err.Error() != "boom" {
 		t.Fatalf("err = %v, want boom", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type errReader struct{ err error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.err }
+
+func TestVersionsTransportErrors(t *testing.T) {
+	boom := errors.New("boom")
+	const list = "https://proxy.test/example.com/m/@v/list"
+	tests := []struct {
+		name string
+		rt   roundTripFunc
+		want string
+	}{
+		{
+			name: "request fails",
+			rt:   func(*http.Request) (*http.Response, error) { return nil, boom },
+			want: `Get "` + list + `": boom`,
+		},
+		{
+			name: "body read fails",
+			rt: func(*http.Request) (*http.Response, error) {
+				body := io.MultiReader(strings.NewReader("v1.0.0\n"), errReader{boom})
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body)}, nil
+			},
+			want: "GET " + list + ": boom",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New(&http.Client{Transport: tt.rt}, nil)
+			s.env = func(context.Context) (gotool.GoEnv, error) {
+				return gotool.GoEnv{Proxy: "https://proxy.test,direct"}, nil
+			}
+			s.list = func(context.Context, string, string) ([]string, error) {
+				t.Error("comma must not fall through on a transport error")
+				return nil, nil
+			}
+			vs, err := s.Versions(t.Context(), "example.com/m", ".")
+			if err == nil || err.Error() != tt.want || !errors.Is(err, boom) || vs != nil {
+				t.Fatalf("Versions = %q, %v; want error %s", vs, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestVersionsCanceledWaitingForSlot(t *testing.T) {
+	for _, proxy := range []string{"https://proxy.test", "direct"} {
+		t.Run(proxy, func(t *testing.T) {
+			sem := make(chan struct{}, 1)
+			sem <- struct{}{}
+			s := New(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				t.Error("request sent without a slot")
+				return nil, errors.New("unexpected")
+			})}, sem)
+			s.env = func(context.Context) (gotool.GoEnv, error) { return gotool.GoEnv{Proxy: proxy}, nil }
+			s.list = func(context.Context, string, string) ([]string, error) {
+				t.Error("go list run without a slot")
+				return nil, nil
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			if _, err := s.Versions(ctx, "example.com/m", "."); !errors.Is(err, context.Canceled) {
+				t.Fatalf("err = %v, want context.Canceled", err)
+			}
+		})
 	}
 }

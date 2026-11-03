@@ -65,7 +65,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	if err != nil {
 		return err
 	}
-	client := httpx.NewClient()
+	client := newHTTPClient()
 	info, err := platform.Detect(ctx, os.Getenv, remote, ov, client)
 	if err != nil {
 		return err

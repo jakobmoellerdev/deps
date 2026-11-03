@@ -11,10 +11,10 @@ tasks:
       - task: ci
 
   ci:
-    desc: Everything CI runs (vet, race tests, formatting, tidy check)
+    desc: Everything CI runs (vet, race tests, coverage gate, formatting, tidy check)
     cmds:
       - task: vet
-      - task: test
+      - task: cover
       - task: fmt:check
       - task: tidy:check
 
@@ -32,6 +32,17 @@ tasks:
     desc: Run go vet
     cmds:
       - go vet ./...
+
+  cover:
+    desc: Run race tests with coverage; fail below {{.MIN_COVERAGE}}%
+    vars:
+      MIN_COVERAGE: 90
+    cmds:
+      - go test -race -coverprofile=coverage.out ./...
+      - |
+        total=$(go tool cover -func=coverage.out | awk '/^total:/ {sub("%","",$3); print $3}')
+        echo "total coverage: ${total}%"
+        awk -v t="$total" 'BEGIN { exit !(t >= {{.MIN_COVERAGE}}) }' || { echo "coverage below {{.MIN_COVERAGE}}%"; exit 1; }
 
   fmt:
     desc: Format all Go files

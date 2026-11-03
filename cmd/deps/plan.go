@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
@@ -30,7 +29,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	ctx := cmd.Context()
 	stderr := cmd.ErrOrStderr()
 	info, _ := platform.FromEnv(os.Getenv)
-	s, err := newSession(o, info, envToken(), httpx.NewClient(), stderr)
+	s, err := newSession(o, info, envToken(), newHTTPClient(), stderr)
 	if err != nil {
 		return err
 	}

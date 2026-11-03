@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,6 +39,9 @@ func TestFromEnv(t *testing.T) {
 			"FORGEJO_ACTIONS": "true", "GITHUB_SERVER_URL": "https://f.example",
 			"GITHUB_API_URL": "https://f.example/api/v1", "GITHUB_REPOSITORY": "o/r",
 		}, Info{Forgejo, "https://f.example", "https://f.example/api/v1", "f.example", "o/r"}, true},
+		{"ghes without api url", map[string]string{
+			"GITHUB_ACTIONS": "true", "GITHUB_SERVER_URL": "https://ghe.example/", "GITHUB_REPOSITORY": "o/r",
+		}, Info{GitHub, "https://ghe.example", "https://ghe.example/api/v3", "ghe.example", "o/r"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -62,10 +66,34 @@ func TestParseRemote(t *testing.T) {
 			t.Errorf("%s: got %q %q %q %v", tt.in, hp, h, r, err)
 		}
 	}
-	for _, bad := range []string{"", "/local/path", "https://h/onlyowner", "file:///x/o/r"} {
+	for _, bad := range []string{"", "/local/path", "https://h/onlyowner", "file:///x/o/r", "https://h/%zz/r"} {
 		if _, _, _, err := parseRemote(bad); err == nil {
 			t.Errorf("%q: want error", bad)
 		}
+	}
+	if _, _, _, err := parseRemote("https://h/%zz/r"); err == nil || !strings.HasPrefix(err.Error(), `parse remote "https://h/%zz/r": `) {
+		t.Errorf("parse error = %v", err)
+	}
+}
+
+func TestDetectFailures(t *testing.T) {
+	down := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("connection refused")
+	})}
+	tests := []struct {
+		name, remote, want string
+	}{
+		{"unsupported remote", "/local/path", `unsupported remote "/local/path"`},
+		{"probes unreachable", "https://h.example/o/r", "cannot detect platform for h.example; pass --platform and --api-url"},
+		{"probe URL invalid", "git@ho st:o/r", "cannot detect platform for ho st; pass --platform and --api-url"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, err := Detect(t.Context(), envFunc(nil), tt.remote, Overrides{}, down)
+			if err == nil || err.Error() != tt.want || info != (Info{}) {
+				t.Fatalf("Detect = %+v, %v; want error %s", info, err, tt.want)
+			}
+		})
 	}
 }
 
@@ -195,6 +223,10 @@ func fakeAPI(t *testing.T, kind Kind, totalPRs int) (*httptest.Server, *[]record
 		switch {
 		case p == "/repos/o/r" && r.Method == http.MethodGet:
 			io.WriteString(w, `{"default_branch":"main"}`)
+		case p == "/repos/o/empty":
+			io.WriteString(w, `{}`)
+		case p == "/repos/o/badjson":
+			io.WriteString(w, `not json`)
 		case p == "/repos/o/r/pulls" && r.Method == http.MethodGet:
 			var page int
 			fmt.Sscan(r.URL.Query().Get("page"), &page)
@@ -337,3 +369,50 @@ func TestGitHubNoToken(t *testing.T) {
 }
 
 func eqPtr(a, b *bool) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+
+func TestClientErrors(t *testing.T) {
+	for _, kind := range []Kind{GitHub, Gitea} {
+		t.Run(string(kind), func(t *testing.T) {
+			srv, _ := fakeAPI(t, kind, 0)
+			ctx := t.Context()
+			client := func(repo string) Client {
+				return NewClient(Info{Kind: kind, APIURL: srv.URL, Repo: repo}, "tok", srv.Client())
+			}
+			missing := client("o/missing")
+			_, err := missing.DefaultBranch(ctx)
+			assertErrPrefix(t, "DefaultBranch", err, "GET /repos/o/missing: 404 Not Found: ")
+			_, err = missing.ListPRs(ctx, "open", 3)
+			assertErrPrefix(t, "ListPRs", err, "GET /repos/o/missing/pulls?state=open&")
+			_, err = missing.GetPR(ctx, 1)
+			assertErrPrefix(t, "GetPR", err, "GET /repos/o/missing/pulls/1: 404 Not Found: ")
+			_, err = missing.CreatePR(ctx, "deps/a", "main", "t", "b")
+			assertErrPrefix(t, "CreatePR", err, "POST /repos/o/missing/pulls: 404 Not Found: ")
+
+			_, err = client("o/empty").DefaultBranch(ctx)
+			assertErrPrefix(t, "empty default branch", err, "GET /repos/o/empty: empty default_branch")
+			_, err = client("o/badjson").DefaultBranch(ctx)
+			assertErrPrefix(t, "bad json", err, "GET /repos/o/badjson: decode: ")
+
+			boom := errors.New("boom")
+			down := NewClient(Info{Kind: kind, APIURL: "https://api.test", Repo: "o/r"}, "tok", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, boom
+			})})
+			_, err = down.DefaultBranch(ctx)
+			assertErrPrefix(t, "transport", err, `GET /repos/o/r: Get "https://api.test/repos/o/r": boom`)
+			if !errors.Is(err, boom) {
+				t.Errorf("transport error %v does not wrap the cause", err)
+			}
+
+			badURL := NewClient(Info{Kind: kind, APIURL: "https://%zz", Repo: "o/r"}, "tok", srv.Client())
+			_, err = badURL.DefaultBranch(ctx)
+			assertErrPrefix(t, "invalid api url", err, `parse "https://%zz/repos/o/r": `)
+		})
+	}
+}
+
+func assertErrPrefix(t *testing.T, op string, err error, prefix string) {
+	t.Helper()
+	if err == nil || !strings.HasPrefix(err.Error(), prefix) {
+		t.Errorf("%s: err = %v, want prefix %q", op, err, prefix)
+	}
+}

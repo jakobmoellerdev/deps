@@ -7,7 +7,7 @@ import (
 )
 
 func TestParseTag(t *testing.T) {
-	for s, ok := range map[string]bool{"v4": true, "4.1": true, "v7.0.1": true, "v1.2.3.4": false, "v1-beta": false, "v1.0.0-rc1": false, "main": false, "": false} {
+	for s, ok := range map[string]bool{"v4": true, "4.1": true, "v7.0.1": true, "v1.2.3.4": false, "v1-beta": false, "v1.0.0-rc1": false, "main": false, "": false, "v99999999999999999999": false} {
 		if _, got := ParseTag(s); got != ok {
 			t.Errorf("ParseTag(%q) = %v", s, got)
 		}
@@ -31,6 +31,25 @@ func TestBestTag(t *testing.T) {
 		got, ok := BestTag(cur, names, tc.accept)
 		if got != tc.want || ok != (tc.want != "") {
 			t.Errorf("BestTag(%s) = %q", tc.cur, got)
+		}
+	}
+	// The highest candidate wins regardless of order.
+	cur, _ := ParseTag("v1.1")
+	if got, ok := BestTag(cur, []string{"v1.3", "v1.2", "v1.4", "v1.0"}, nil); !ok || got != "v1.4" {
+		t.Errorf("BestTag unordered = %q", got)
+	}
+}
+
+func TestCompareTag(t *testing.T) {
+	p := func(s string) Tag { t, _ := ParseTag(s); return t }
+	for _, tc := range []struct {
+		a, b string
+		want int
+	}{
+		{"v1", "v2", -1}, {"v2.0", "v1.9", 1}, {"v1", "v1.0", -1}, {"v1.0.0", "v1.0", 1}, {"v1.2", "1.2", 0},
+	} {
+		if got := CompareTag(p(tc.a), p(tc.b)); got != tc.want {
+			t.Errorf("CompareTag(%s, %s) = %d, want %d", tc.a, tc.b, got, tc.want)
 		}
 	}
 }

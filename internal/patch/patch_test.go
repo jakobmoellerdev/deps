@@ -18,6 +18,9 @@ func TestApply(t *testing.T) {
 		{"none", nil, string(src), ""},
 		{"overlap", []Edit{{6, 10, "a@v1", "x"}, {8, 10, "v1", "y"}}, "", "edits overlap at 6 and 8"},
 		{"mismatch", []Edit{{8, 10, "v9", "x"}}, "", `edit at 8: expected "v9", found "v1"`},
+		{"past end", []Edit{{20, 30, "v2\n", "x"}}, "", "edit at 20: out of range"},
+		{"negative start", []Edit{{-1, 2, "", "x"}}, "", "edit at -1: out of range"},
+		{"end before start", []Edit{{8, 7, "", "x"}}, "", "edit at 8: out of range"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Apply(src, tc.edits)
