@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/spf13/cobra"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
@@ -28,7 +28,7 @@ func newExplain(o *rootOpts) *cobra.Command {
 	return &cobra.Command{
 		Use:   "explain <name-glob>...",
 		Short: "Explain the rules, candidates and decision for each matching dependency",
-		Long: "Explain resolves only the dependencies whose name matches any of the path.Match globs\n" +
+		Long: "Explain resolves only the dependencies whose name matches any of the doublestar globs (as rule names)\n" +
 			"and prints, per occurrence, the matching rules, the effective policy, the rejected\n" +
 			"candidates by reason and the resulting update.",
 		Args: globArgs,
@@ -43,7 +43,7 @@ func globArgs(_ *cobra.Command, args []string) error {
 		return &usageError{errors.New("requires at least one name glob")}
 	}
 	for _, g := range args {
-		if _, err := path.Match(g, ""); err != nil {
+		if _, err := doublestar.Match(g, ""); err != nil {
 			return &usageError{fmt.Errorf("invalid glob %q: %w", g, err)}
 		}
 	}
@@ -64,7 +64,7 @@ func explain(cmd *cobra.Command, o *rootOpts, globs []string) error {
 	opts.Filter = func(d dep.Dep) bool {
 		ok := false
 		for i, g := range globs {
-			if m, _ := path.Match(g, d.Name); m {
+			if m, _ := doublestar.Match(g, d.Name); m {
 				matched[i], ok = true, true
 			}
 		}

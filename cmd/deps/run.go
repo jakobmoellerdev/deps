@@ -37,7 +37,7 @@ func newRun(o *rootOpts) *cobra.Command {
 	f.StringVar(&r.platform, "platform", "auto", "forge type: auto|github|gitea|forgejo")
 	f.StringVar(&r.apiURL, "api-url", "", "API base URL (default: detected)")
 	f.StringVar(&r.repo, "repo", "", "repository owner/name (default: detected)")
-	f.StringVar(&r.token, "token", "", "API and git token (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, git credential helper)")
+	f.StringVar(&r.token, "token", "", "platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, git credential helper)")
 	f.StringVar(&r.base, "base", "", "base branch (default: the repository's default branch)")
 	f.StringVar(&r.authorName, "author-name", defaultAuthorName, "commit author name (default: $DEPS_GIT_AUTHOR, then gitAuthor of the config)")
 	f.StringVar(&r.authorEmail, "author-email", defaultAuthorEmail, "commit author email (default: $DEPS_GIT_AUTHOR, then gitAuthor of the config)")

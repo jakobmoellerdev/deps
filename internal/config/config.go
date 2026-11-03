@@ -319,7 +319,7 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // Default returns the configuration used when no file exists.
 func Default() *Config {
-	return &Config{Version: 1, Pin: PinKeep, IgnorePaths: slices.Clone(DefaultIgnorePaths)}
+	return &Config{Version: 1, Pin: PinKeep, BranchPrefix: DefaultBranchPrefix, Monorepos: new(true), IgnorePaths: slices.Clone(DefaultIgnorePaths)}
 }
 
 // Load reads explicitPath (which must exist) or, if empty, .deps.yaml then

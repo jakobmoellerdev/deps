@@ -113,7 +113,7 @@ custom:
 
 | `npm` | package name (`@scope/name` requested as `@scope%2fname`) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata), streamed: only the `versions` keys and each version's `deprecated`; deprecated versions are dropped |
 | `node-version` | `node` (any name) | `GET https://nodejs.org/dist/index.json` once per run (base URL overridable with `DEPS_NODE_DIST_URL` for mirrors), streamed element by element: `version` and `date` (release time) |
-| `custom.<name>` | free-form (all deps share the list) | `customDatasources.<name>`: one `GET <url>` per run (unauthenticated, at most 10 MiB), decoded as json, yaml or plain text, selected and optionally regex-filtered (section 9) |
+| `custom.<name>` | free-form (all deps share the list) | `customDatasources.<name>`: one `GET <url>` per run (unauthenticated, at most 10 MiB), decoded as json, yaml or plain text, selected and optionally regex-filtered (below) |
 
 Custom entries may use `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm` and `node-version`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments` and `node`, and `custom.<name>` of a defined custom datasource.
 
@@ -328,7 +328,7 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) // the on
 // internal/platform
 type Kind string // "github" | "gitea" | "forgejo"
 type Info struct{ Kind Kind; ServerURL, APIURL, Host, Repo string } // Repo = "owner/name"
-type PR struct{ Number int; Title, Body, Head, State, URL string; Merged bool; Mergeable *bool }
+type PR struct{ Number int; Title, Body, Head, State, URL string; Merged bool; Mergeable *bool; CreatedAt time.Time } // CreatedAt zero when omitted
 type Client interface {
     DefaultBranch(ctx context.Context) (string, error)
     ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) // "open" | "closed"
@@ -360,10 +360,12 @@ type Options struct {
     BranchPrefix                  string // ending in '/'; "" = config.DefaultBranchPrefix
     DryRun                        bool
     RebaseWhen                    string // config.RebaseWhens; "" = conflicted
-    MaxNewPRs                     int    // 0 = unlimited
+    UpdateNotScheduled            bool   // update and rebase open PRs outside their schedule (config updateNotScheduled)
+    MaxNewPRs                     int    // PRs created per run (--max-new-prs); 0 = unlimited
+    ConcurrentLimit, HourlyLimit  int    // prConcurrentLimit, prHourlyLimit; 0 = unlimited
+    IgnoredAuthors                []string // gitIgnoredAuthors: branch-tip emails that count as the bot's own
     Managers                      []manager.Manager
     Now                           time.Time // schedule evaluation; zero = time.Now()
-    UpdateNotScheduled            bool      // update and rebase open PRs outside their schedule (config updateNotScheduled)
     Notes                         Notes     // nil = no ages/notes
 }
 type Notes interface { // implemented by releasenotes.Notes
@@ -493,8 +495,8 @@ Both clients share these rules:
       - The PR is not unmergeable and `rebaseWhen` is `conflicted` (the default), or the branch does not exist → `up-to-date`. On GitHub, a nil `mergeable` triggers a `GetPR` call; nil still counts as mergeable.
       - The PR is not unmergeable and `rebaseWhen: behind-base-branch`: the branch tip is fetched (`BranchTip`). If it is the bot's and its only parent is the base head → `up-to-date`; otherwise it is rebuilt on the base head (step 7, status `rebased`). deps branches are one commit on top of base, so the parent alone tells whether base moved.
       - An unmergeable PR falls through and is rebuilt (`updated`).
-   4. No open PR exists and `--max-new-prs` is non-zero and the created count has reached it → `skipped: new PR limit reached` (`0` = unlimited).
-   5. The branch exists and the author email of its last commit is not the bot's → `skipped: branch modified by someone else`. Such branches are never rebased.
+   4. No open PR exists and the new-PR limit is exhausted → `skipped: new PR limit reached`. The limit of a run is the minimum over the non-zero limits: `--max-new-prs` (default 10) minus PRs created this run; `prConcurrentLimit` minus the open managed PRs; `prHourlyLimit` minus the managed PRs (open and closed) whose `created_at` is within the last hour. `0` means unlimited for each; `prConcurrentLimit` and `prHourlyLimit` default to 0 (Renovate defaults to 10 and 2).
+   5. The branch exists and the author email of its last commit is neither the bot's (`AuthorEmail`) nor in `gitIgnoredAuthors` (case-insensitive) → `skipped: branch modified by someone else`. Such branches are never rebased.
    6. `--dry-run` → `would-create`, `would-update` or `would-rebase`, with no git or API writes.
    7. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet). Then update the PR (`updated`) or create one (`created`). A rebase only pushes: content, title and body are unchanged, so the PR is not edited and no release notes are fetched (`rebased`, counted as updated in the run summary line).
 
@@ -560,12 +562,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: jakobmoellerdev/deps@main   # or ./ inside this repo
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@main   # or ./ inside this repo
 ```
 
 If the job token cannot push or open PRs, or cannot read private action repos, store a PAT as a secret. Pass it to both `actions/checkout` (`token:`) and the action (`token:`).
 
-Repositories with `package-lock.json` files need `npm` on the runner (e.g. `actions/setup-node` before the action); without it those files fail with `npm not found in PATH` and are not updated.
+Lockfile regeneration needs the package manager: the binary on `PATH`, else `npx --yes <tool>[@<packageManager version>]`, so `npm`/`npx` on the runner (e.g. `actions/setup-node`) suffices. Without them, those manifests fail with `<tool> not found (needed to update <lock>)` and are not updated. Workflows, tokens and runner tools in detail: [ci.md](ci.md).
 
 ### GitHub workflow
 
@@ -610,8 +612,8 @@ When debug is disabled, the HTTP transport skips timing entirely after one `Enab
 |---|---|
 | `deps plan` | Unified diff on stdout, report on stderr. Post-processors do not run: go.sum and package-lock.json changes are not computed (`note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run`). A dep with updates in several PR buckets contributes one of them to the diff (`engine.Local`: the newest non-major update, else the lowest major); every update gets an `update` line, the others with `(<type>, separate PR)`. The summary line counts all of them. |
 | `deps apply` | Writes the changes, including `go mod tidy` output and regenerated package-lock.json files; the same one update per dep as `plan`. |
-| `deps run` | Branch and PR per group (section 5). Flags: `--platform`, `--api-url`, `--repo`, `--token`, `--base`, `--author-name`, `--author-email`, `--max-new-prs`, `--dry-run`. |
-| `deps explain <name-glob>...` | Resolves only deps whose name matches any `path.Match` glob. Prints per occurrence `<name>  <file>:<line>  (<manager>, <depType>, <datasource>, <versioning>)` (the versioning after a rule's override), then `current`, `rules` (`#<i> <fields>` or `none`; for updates, the `updateTypes` rules that applied to their types follow as `#<i> <fields> (applies to <type>)`), `policy` (`pin= allow= updates= group= schedule= minAge=`, plus `versioning=` when a rule set it; the pre-policy, then `<type>: <policy>` per type whose `updateTypes` rules applied), `candidates`, `rejected` (versions by reason, up to 3 each, e.g. `ignored by rule #4 for major`, `outside allow /^\d+\.\d+$/`, `too new (released 2026-11-01, minimum 28 days)`), one `result` line per PR bucket (`update <from> -> <to> (<type>)`, with `, bucket <b>` for a non-empty bucket), or `up to date`, `skipped: <reason>` or `error: <err>`, and one `security` line per advisory after its update. A glob matching nothing is an error. |
+| `deps run` | Branch and PR per group (section 5). Flags: `--platform`, `--api-url`, `--repo`, `--token`, `--base`, `--author-name`, `--author-email`, `--max-new-prs` (default 10, `0` = unlimited), `--dry-run`. The commit author resolves per field: explicitly set flag > `$DEPS_GIT_AUTHOR` > `gitAuthor` > `deps[bot] <deps-bot@noreply.invalid>`. |
+| `deps explain <name-glob>...` | Resolves only deps whose name matches any doublestar glob (as rule `names`). Prints per occurrence `<name>  <file>:<line>  (<manager>, <depType>, <datasource>, <versioning>)` (the versioning after a rule's override), then `current`, `rules` (`#<i> <fields>` or `none`; for updates, the `updateTypes` rules that applied to their types follow as `#<i> <fields> (applies to <type>)`), `policy` (`pin= allow= updates= group= schedule= minAge=`, plus `versioning=` when a rule set it; the pre-policy, then `<type>: <policy>` per type whose `updateTypes` rules applied), `candidates`, `rejected` (versions by reason, up to 3 each, e.g. `ignored by rule #4 for major`, `outside allow /^\d+\.\d+$/`, `too new (released 2026-11-01, minimum 28 days)`), one `result` line per PR bucket (`update <from> -> <to> (<type>)`, with `, bucket <b>` for a non-empty bucket), or `up to date`, `skipped: <reason>` or `error: <err>`, and one `security` line per advisory after its update. A glob matching nothing is an error. |
 | `deps schema` | Prints the JSON Schema (draft 2020-12) of `.deps.yaml`, reflected from `internal/config` with invopop/jsonschema. Unknown keys are rejected, as in `Load`. |
 | `deps version` | Prints the version set via `-ldflags "-X main.version=…"`. |
 
@@ -621,139 +623,27 @@ Editor support: `deps schema > deps.schema.json`, then start `.deps.yaml` with `
 
 ## 8. Roadmap
 
-- per-rule `automerge`;
+Open items from [renovate-parity.md](renovate-parity.md) and the performance plan:
+
+- per-rule `automerge` / `automergeType: pr` (L7);
+- a dependency dashboard issue (L9);
+- PR body badges: Mend adoption/passing/confidence (L5; external badge URLs or drop) and the OpenSSF scorecard (L6);
+- GitHub hosting (O1): release binaries and a GitHub-hosted action, so GitHub workflows need no `go run`;
+- the final OCM translation (O4): `examples-ocm.deps.yaml` plus the remaining groups listed in [migrating-from-renovate.md](migrating-from-renovate.md#worked-example-open-component-model);
 - `actions.lock` via `github.com/github/actions-lockfile/go`;
-- a dependency dashboard issue;
-- running `BenchmarkResolve` in CI with a regression threshold (the benchmark exists; CI does not run it yet);
-- Go proxy request volume (next performance phase): on open-component-model about 370 `@v/list` and 250 `@v/<v>.info` requests are the critical path (release times are already served from GOMODCACHE where cached). There is no batch endpoint for lists, so the remaining option is an opt-in cross-run cache.
+- a benchmark gate: `BenchmarkResolve` in CI with a regression threshold (the benchmark exists; CI does not run it yet);
+- Go proxy request volume (next performance phase): on open-component-model about 370 `@v/list` and 250 `@v/<v>.info` requests are the critical path (release times are already served from GOMODCACHE where cached). There is no batch endpoint for lists, so the remaining option is an opt-in cross-run Go proxy cache.
 
-## 9. Config reference
+## 9. Configuration
 
-Config file: `.deps.yaml`, falling back to `.deps.yml`, or the path given with `--config` (which must exist). If no file is found, the defaults `{version: 1, pin: keep, branchPrefix: deps/, monorepos: true}` and the default `ignorePaths` apply; an empty file also yields the defaults.
+The user-facing reference (every key, its default and validation, rule semantics, versioning schemes, custom managers and datasources) is [configuration.md](configuration.md); `deps schema` is the authoritative key list. The design decisions behind it:
 
-### Schema
-
-```yaml
-version: 1                  # optional; must be 1 if set
-pin: keep                   # keep | digest (default keep); github-actions (and docker) only
-timezone: ""                # IANA zone for schedules; "" = UTC
-schedule: []                # cron windows ("* <hour> <dom> <month> <dow>", minute must be *); empty = always
-security: true              # OSV security lookups (default true)
-branchPrefix: deps/         # update branch prefix; must end with / and be a valid git ref prefix
-rebaseWhen: conflicted      # conflicted | behind-base-branch | never (default conflicted)
-monorepos: true             # built-in monorepo groups (default true)
-actions:
-  defaultHost: ""           # host for `owner/repo@ref`; "" = auto (section 5)
-minimumReleaseAge: ""       # e.g. "28 days", "1 day", "3d", "12h", "90m" or a Go duration; "" or "0" = off
-ignorePaths: []             # doublestar globs on slash paths relative to --dir; absent = **/{node_modules,bower_components,vendor,examples,__tests__,test,tests,__fixtures__}/**
-separateMajorMinor: true    # PR buckets (section 4): the newest major apart from the newest minor/patch (default true)
-separateMultipleMajor: false # one PR per newer major (branch suffix -v<N>) instead of one for the newest (default false)
-separateMinorPatch: false   # newest minor (-minor) and newest patch of the current minor (-patch) apart (default false)
-updateNotScheduled: true    # keep updating/rebasing open PRs outside their schedule; only new PRs wait (default true)
-rules:
-  - manager: github-actions # optional: github-actions | gomod | docker | npm | custom
-    names: ["actions/*"]    # optional doublestar globs on the dependency name (* within a segment, ** across, {a,b})
-    depTypes: [direct]      # optional: direct indirect go toolchain action setup dockerfile compose workflow kubernetes helm dependencies devDependencies optionalDependencies peerDependencies packageManager engines volta annotation regex
-    paths: ["chart/**"]     # optional doublestar globs on the file (slash path relative to --dir)
-    datasources: [docker]   # optional: git-tags github-releases go go-toolchain docker npm node-version custom.<name> (Renovate aliases golang-version github-tags github-release-attachments node accepted)
-    updateTypes: [minor, patch] # optional: major minor patch digest pin; the rule applies to candidate updates of these types (no pin key)
-    ignore: true            # optional
-    pin: digest             # optional: keep | digest
-    allow: "< 7"            # optional Masterminds semver constraint, or Renovate's regex form '/^\d+\.\d+$/' ('!/re/' negates, flag i)
-    updates: [major, minor, patch, digest, pin]   # optional allowed update types
-    group: "name"           # optional: one PR for all deps with this group
-    schedule: ["* 0-5 * * *"] # optional: overrides the top-level schedule ([] = always)
-    commitType: chore       # optional: fix | chore | build | ci | docs | feat | perf | refactor | revert | style | test
-    commitScope: deps       # optional: [A-Za-z0-9][A-Za-z0-9._/-]*; "" = no scope
-    minimumReleaseAge: 3 days # optional: overrides the top-level age; "0" / "0 days" disables it
-    versioning: loose       # optional: tag | go | docker | semver | loose | regex:<RE2>; replaces the manager's scheme (not with updateTypes)
-    separateMajorMinor: true    # optional overrides of the top-level bucket options (with updateTypes: for those types)
-    separateMultipleMajor: true
-    separateMinorPatch: false
-custom:
-  - files: ["**/Makefile"]  # required doublestar globs
-    match: 'TOOL_VERSION = (?P<version>\S+)'  # optional RE2; absent = annotation mode; needs a version group
-    datasource: go          # git-tags | github-releases | go | go-toolchain | docker | npm | node-version | custom.<name> | golang-version | github-tags | github-release-attachments | node; regex mode: required unless a datasource group
-    name: golang.org/x/tools # regex mode: required unless a name group
-    versioning: semver      # tag | go | docker | semver | loose | regex:<RE2> (default semver); marker fields take the names only
-    checksum:               # optional, regex mode only; requires a (?P<checksum>) group in match
-      asset: ""             # github-releases only: release asset whose API digest is used; exclusive with url
-      url: ""               # checksum document URL ({{version}} expands)
-      file: ""              # url only: entry name in a sha256sum-style list; "" = first hex token
-customDatasources:          # used as datasource custom.<name>; name: [A-Za-z0-9][A-Za-z0-9._-]*
-  envtest:
-    url: https://raw.githubusercontent.com/kubernetes-sigs/controller-tools/master/envtest-releases.yaml  # required http(s) URL
-    format: yaml            # json | yaml | plain (one version per line, # comments) (default json)
-    versions: .releases | keys   # json/yaml: selector (section 2); default .releases[].version; not with plain
-    versionRegex: '^v?(?P<version>\d+\.\d+\.\d+)$'  # optional RE2 filter; the version group (else the match) is the version
-```
-
-**Semantics:**
-- The file is decoded strictly: unknown keys are errors and report their line. All validation errors are reported together, each as `<path>: <field>: <msg>`.
-- **Rule evaluation:** the policy starts as `{pin: <top-level pin>, updates: all five, schedule: <top-level>}`, with `ignore` true for the `indirect`, `go`, `peerDependencies` and `engines` dependency types (opt in with a rule `ignore: false`). Each rule matches when its `manager` is empty or equal, its `names` are empty or any glob matches the name, its `depTypes` are empty or contain the dependency type, its `paths` are empty or any glob matches the file, and its `datasources` are empty or contain the dep's datasource (Renovate names are normalized first: `golang-version` = `go-toolchain`, `github-tags` = `git-tags`, so it also matches actions, `github-release-attachments` = `github-releases`, `node` = `node-version`; `custom.<name>` must be defined in `customDatasources`). Rules are applied in file order. Every field a matching rule sets overwrites the policy; `updates` is replaced, not merged.
-- **`updateTypes` (Renovate's `matchUpdateTypes`):** a rule with `updateTypes` additionally matches only candidate updates of those types, so it is evaluated once the type of a candidate is known, at its position in file order. Rules without it form the dep's pre-policy, which decides `pin`, `versioning` and whether the dep is ignored; rules with it decide per type, e.g. `group`, `schedule`, `commitType`, `allow`, `updates`, the `separate*` bucket options, or `ignore: true` (reject updates of that type; the bucket's next best candidate is chosen) and `ignore: false` (opt a default-ignored dep in for those types only). `pin` and `versioning` cannot be combined with `updateTypes` (both are decided before an update exists), and `updateTypes: []` is rejected. Security fixes ignore `updateTypes` rules; only a pre-policy `ignore` blocks them.
-- **Acceptance:** an update is accepted when the policy of its type does not ignore it, its type is in `updates` and the new version satisfies `allow` (if set). A constraint `allow` checks the scheme's Masterminds conversion of the candidate (built from the parsed parts; unrepresentable versions are rejected). A regex `allow` (`/<RE2>/`, Renovate's `allowedVersions` regex form; `!/<RE2>/` rejects matches; flag `i` only) matches the candidate as written and never converts it. Invalid constraints and regexes are config errors (`rules[i].allow: invalid regex "/(/": ...`).
-- **`versioning`:** see section 4, *Versioning*. Invalid names and regex schemes are config errors (`rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group "x" (allowed: ...)`, `regex: invalid RE2 regexp: ...`), as is `versioning` together with `updateTypes`.
-- **`separateMajorMinor` / `separateMultipleMajor` / `separateMinorPatch`:** top level and per rule (section 4, *PR buckets*); a dep with several buckets gets one branch and PR per bucket with an update.
-- **`updateNotScheduled`:** section 5, per-group decision 2.
-- **`pin: digest`:** github-actions: pins tag refs to the tag's commit SHA and appends `# <tag>`. docker: appends `@sha256:<digest>` after the tag. Already-pinned refs stay pinned and are refreshed. The `pin` setting is ignored for gomod, npm and custom.
-- **Schedules:** a time is in schedule when any expression matches it in `timezone`. Like cron, when both day of month and day of week are restricted, either may match. A rule's `schedule` replaces the top-level one; `[]` means always. Steps (`/s`) are allowed only on `*` or a range; day of week is 0-7 (0 and 7 are Sunday).
-- **Groups:** all non-security updates whose policy has the same `group` share one branch and PR (section 5). Built-in monorepo groups apply before user rules unless `monorepos: false`.
-- **`ignorePaths`:** when the key is absent the default list applies; any explicit list, including `[]`, replaces it.
-- **`branchPrefix`:** branches are `<prefix><manager>/<slug>` and `<prefix>group/<slug>`; only branches and PRs under the prefix are managed.
-- **`rebaseWhen`:** when an open PR whose content is unchanged is rebuilt on the current base: `conflicted` only when it is not mergeable, `behind-base-branch` also when its branch is not a single commit on the base head, `never` not at all (content changes still update it). Branches with foreign commits are never rebuilt (section 5).
-- **`minimumReleaseAge`:** `<n> <unit>` with unit minutes, hours, days or weeks (singular, plural or the first letter, the space optional), `0`, or a Go duration; negative or unparsable values are errors. A new version is proposed only once it is at least that old; younger candidates are skipped in favour of the next older one (section 4). A rule's value overrides earlier ones, so `0 days` re-enables immediate updates for matching deps, and with `updateTypes` it applies per update type. Releases without a known time (datasource without `Timer`, Go toolchains, failed lookups) are allowed. Digest refreshes, pins and security updates are exempt.
-- **Commit titles:** default type `fix` for gomod `direct` and npm `dependencies`, `chore` otherwise (security always `fix`); default scope `deps`.
-- **Security:** with `security: true` (the default), OSV advisories can force an update that bypasses `allow`, `updates`, `schedule` and `updateTypes` rules, but never a pre-policy `ignore` (section 5).
-- **`customDatasources`:** each key must match `[A-Za-z0-9][A-Za-z0-9._-]*`; `url` is a required http(s) URL, `format` json/yaml/plain, `versions` a valid selector (not with plain), `versionRegex` a valid RE2 (`customDatasources.<name>.<field>: …`). Renovate's `defaultRegistryUrlTemplate` is `url`; `transformTemplates` (JSONata) is replaced by `versions` + `versionRegex`.
-- **`custom[]`:** validated in both modes: `datasource` and `versioning` must be known (`custom.<name>` only when defined) (`versioning` may be a `regex:` scheme; `versioning=` marker fields and the `versioning` regex group accept the scheme names, a marker inherits the entry's scheme), `files` non-empty valid globs, `match` a valid RE2 with a `version` group. See section 2.
-
-### Example
-
-```yaml
-# yaml-language-server: $schema=./deps.schema.json
-timezone: Europe/Berlin
-schedule: ["* 0-5 * * 1-5"]
-rules:
-  - manager: github-actions
-    pin: digest
-  - manager: github-actions      # minor and patch bumps in one PR, majors alone
-    updateTypes: [minor, patch]
-    group: actions
-  - datasources: [git-tags, docker]  # digest-only refreshes of actions and images
-    updateTypes: [digest, pin]
-    group: digest-pins
-  - manager: gomod
-    depTypes: [indirect]
-    ignore: false
-  - manager: gomod              # no majors for indirect requirements; minors still apply
-    depTypes: [indirect]
-    updateTypes: [major]
-    ignore: true
-  - paths: ["deploy/chart/**"]
-    group: chart
-  - manager: gomod
-    updates: [minor, patch]
-  - names: ["golang.org/x/*"]
-    group: golang-x
-  - manager: docker
-    names: ["postgres"]
-    allow: "< 18"
-  - manager: npm
-    depTypes: [devDependencies]
-    group: npm-dev
-custom:
-  - files: ["Makefile"]
-    match: 'GOLANGCI_VERSION \?= (?P<version>v\S+)'
-    datasource: github-releases
-    name: golangci/golangci-lint
-```
-
-### Planned keys (not accepted yet)
-
-| Key | Status |
-|---|---|
-| `rules[].automerge` | roadmap |
+- **Strict decoding.** `yaml.Decoder.KnownFields(true)`: a typo is an error with its line, never a silently ignored key. All validation errors are joined (`<path>: <field>: <msg>`), so one run reports every problem. Config errors exit 2.
+- **Ordered rules with field-wise override.** Rules are evaluated top to bottom; each matching rule overwrites only the fields it sets (`updates` is replaced, not merged). This is Renovate's packageRules model without presets, so the effective policy of a dep is always the file read top to bottom (`deps explain` prints it).
+- **Pre-policy vs per-type policy.** Decisions needed before an update exists (`ignore` of the dep, `pin`, `versioning`, whether to look it up) come from rules without `updateTypes`; everything else is evaluated per candidate type (section 4), which is why `pin` and `versioning` are rejected on `updateTypes` rules.
+- **Renovate-compatible defaults where they matter.** Default `ignorePaths`, default-ignored dep types (indirect, `go`, peerDependencies, engines), semantic commit prefixes and built-in monorepo groups replace the presets OCM relies on; the PR limits default to unlimited (`prConcurrentLimit`/`prHourlyLimit` 0), capped per run by `--max-new-prs`.
+- **Validated at load.** Constraints, `allow` regexes, schedules, ages and regex versioning schemes are compiled in `Validate`; custom `match` expressions and datasource selectors are checked there too, so a bad config never starts a lookup.
+- **Not accepted yet:** `rules[].automerge` (roadmap).
 
 ## 10. Why Go
 

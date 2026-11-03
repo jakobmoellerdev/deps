@@ -23,6 +23,8 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | P15 | `updateNotScheduled: true` | global | `updateNotScheduled` (default true): open PRs outside their schedule are still updated and rebased, only new PRs wait; `false` skips them | done |
 | P16 | `postUpdateOptions: [gomodTidy]` | golang category, Helm group | always `go mod tidy` | done |
 | P17 | rule `minimumReleaseAge: null` for digest/pin/lockfile types | global | built in: digest refreshes, pins and security updates are always exempt; lockfile regeneration has no version | done |
+| P18 | `rangeStrategy: bump` | "Golang versions" rule (`matchDatasources: [golang-version]`) | not configurable: npm ranges are always bumped in place (`^1.2.3` → `^1.4.0`, Renovate's `bump`); go.mod `go`/`toolchain` directives, setup inputs and markers replace the exact version at its precision, which is what `bump` does for `golang-version` | done |
+| P19 | `matchCategories` | `[golang]` rule (enable + gomodTidy + schedule) | not supported; `manager: gomod` (plus `datasources: [golang-version]` where toolchain markers should match) expresses OCM's rule; tidy is always on | config |
 
 ## Managers and datasources
 
@@ -37,7 +39,7 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | M7 | `with:` version inputs of setup actions (`actions/setup-node node-version`, `setup-go go-version`) | `ci.yml` `node-version: 26` | DepType `setup` for setup-node, setup-go, setup-helm, setup-kubectl, setup-terraform, golangci-lint-action; full versions semver, partial ones tag versioning (26 → 27) | done |
 | M8 | npm `engines` / `volta` | `engines.node ^26.0.0` | DepTypes `engines` (ignored by default, like Renovate) and `volta`; node via `node-version`, npm/pnpm/yarn via `npm`; `^26` partials bumped with tag versioning | done |
 | M9 | `git-submodules` | enabled, but OCM has no `.gitmodules` | — | n/a |
-| M10 | `packageManager` field | website `npm@12.2.0` | done | done |
+| M10 | `packageManager` field | website `npm@12.2.0` | DepType `packageManager` (`npm@x`, `pnpm@x`, `yarn@x`; hash suffixes skipped); its version also selects the `npx` fallback for lockfile regeneration | done |
 
 ## PR lifecycle
 
@@ -66,4 +68,4 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | O1 | runs on GitHub with an App token (`renovate.yml`, environment `automation`) | workflow | GitHub client and token input exist; the action is only consumable from Gitea | open (release binaries + GitHub-hosted action) |
 | O2 | `hostRules` timeout/abortOnError for registry.npmjs.org | global | retries + rate-limit handling | done |
 | O3 | repository cache | workflow | no cache by design (in-run dedupe) | n/a |
-| O4 | config translation `renovate.json5` -> `.deps.yaml` for OCM | — | — | open (after P1–P3) |
+| O4 | config translation `renovate.json5` -> `.deps.yaml` for OCM | — | `docs/examples-ocm.deps.yaml` covers the parity rules; `docs/migrating-from-renovate.md` lists the remaining groups (Kubernetes, Docker, golang.org/x, google.golang.org, spf13) | open (merge into one final config) |
