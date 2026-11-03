@@ -13,4 +13,4 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: ./
         with:
-          args: run -v
+          args: run -v --log-level info

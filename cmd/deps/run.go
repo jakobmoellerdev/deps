@@ -83,7 +83,6 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	if token == "" && !r.dryRun {
 		return fmt.Errorf("no token for %s", info.Host)
 	}
-	fmt.Fprintf(stderr, "platform %s api=%s repo=%s\n", info.Kind, info.APIURL, info.Repo)
 
 	s, err := newSession(o, info, token, client, stderr)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ type rootOpts struct {
 	dir     string
 	config  string
 	verbose bool
+	log     logOpts
 }
 
 func newRoot() *cobra.Command {
@@ -31,12 +33,17 @@ func newRoot() *cobra.Command {
 		Short:         "Update GitHub/Gitea/Forgejo Actions and Go module dependencies",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			return setupLogger(o.log, cmd.ErrOrStderr())
+		},
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err} })
 	pf := root.PersistentFlags()
 	pf.StringVar(&o.dir, "dir", ".", "repository directory to scan")
 	pf.StringVar(&o.config, "config", "", "config file (default <dir>/.deps.yaml or .deps.yml)")
-	pf.BoolVarP(&o.verbose, "verbose", "v", false, "print skipped dependencies and diagnostics")
+	pf.BoolVarP(&o.verbose, "verbose", "v", false, "also print skipped dependencies")
+	pf.StringVar(&o.log.level, "log-level", envOr("DEPS_LOG_LEVEL", "warn"), "log level: debug, info, warn, error (env DEPS_LOG_LEVEL)")
+	pf.StringVar(&o.log.format, "log-format", envOr("DEPS_LOG_FORMAT", "text"), "log format: text, json (env DEPS_LOG_FORMAT)")
 	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion())
 	return root
 }
@@ -85,9 +92,8 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	if host == "" {
 		host, source = platform.DefaultActionsHost(info, os.Getenv)
 	}
-	if o.verbose {
-		fmt.Fprintf(stderr, "actions default host %s (%s)\n", host, source)
-	}
+	slog.Info("actions default host", "host", host, "source", source)
+	slog.Debug("config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
 	return &session{
 		root:   root,
 		cfg:    cfg,

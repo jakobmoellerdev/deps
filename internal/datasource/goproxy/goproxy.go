@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -60,12 +61,17 @@ func (s *Source) Versions(ctx context.Context, modPath, dir string) ([]string, e
 }
 
 func (s *Source) resolve(ctx context.Context, modPath, dir string) ([]string, error) {
-	s.envOnce.Do(func() { s.goEnv, s.envErr = s.env(ctx) })
+	s.envOnce.Do(func() {
+		s.goEnv, s.envErr = s.env(ctx)
+		slog.DebugContext(ctx, "go env", "GOPROXY", s.goEnv.Proxy, "noProxy", s.goEnv.NoProxy, "err", s.envErr)
+	})
 	if s.envErr != nil {
 		return nil, s.envErr
 	}
 	if module.MatchPrefixPatterns(s.goEnv.NoProxy, modPath) {
-		return s.direct(ctx, dir, modPath)
+		vs, err := s.direct(ctx, dir, modPath)
+		slog.DebugContext(ctx, "module versions", "module", modPath, "source", "direct (GONOPROXY/GOPRIVATE)", "versions", len(vs), "err", err)
+		return vs, err
 	}
 	escaped, err := module.EscapePath(modPath)
 	if err != nil {
@@ -97,6 +103,7 @@ func (s *Source) resolve(ctx context.Context, modPath, dir string) ([]string, er
 		default:
 			vs, notFound, err = s.fetch(ctx, strings.TrimSuffix(entry, "/")+"/"+escaped+"/@v/list")
 		}
+		slog.DebugContext(ctx, "module versions", "module", modPath, "source", entry, "versions", len(vs), "err", err)
 		if err == nil {
 			return vs, nil
 		}

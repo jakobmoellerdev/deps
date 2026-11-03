@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -110,6 +111,7 @@ func parseRemote(remote string) (hostport, hostname, repo string, err error) {
 // Non-empty Overrides fields replace detected ones.
 func Detect(ctx context.Context, getenv func(string) string, remoteURL string, o Overrides, c *http.Client) (Info, error) {
 	info, ok := FromEnv(getenv)
+	via := "ci environment"
 	if !ok {
 		hostport, hostname, repo, err := parseRemote(remoteURL)
 		if err != nil {
@@ -118,15 +120,15 @@ func Detect(ctx context.Context, getenv func(string) string, remoteURL string, o
 		info = Info{ServerURL: "https://" + hostport, Host: hostname, Repo: repo}
 		switch {
 		case o.Kind != "":
-			// Kind given: skip probing.
+			via = "--platform"
 		case hostname == "github.com":
-			info.Kind = GitHub
+			info.Kind, via = GitHub, "remote host"
 		default:
 			k, err := probe(ctx, c, hostport)
 			if err != nil {
 				return Info{}, err
 			}
-			info.Kind = k
+			info.Kind, via = k, "api probe"
 		}
 		if info.Kind != "" {
 			info.APIURL = apiURL(info.Kind, info.ServerURL, info.Host)
@@ -144,6 +146,7 @@ func Detect(ctx context.Context, getenv func(string) string, remoteURL string, o
 	if o.Repo != "" {
 		info.Repo = o.Repo
 	}
+	slog.InfoContext(ctx, "platform detected", "kind", info.Kind, "via", via, "api", info.APIURL, "repo", info.Repo)
 	return info, nil
 }
 
@@ -173,6 +176,7 @@ func probeOK(ctx context.Context, c *http.Client, u string, needVersion, signInJ
 	}
 	resp, err := c.Do(req)
 	if err != nil {
+		slog.DebugContext(ctx, "platform probe failed", "url", u, "err", err)
 		return false
 	}
 	defer resp.Body.Close()

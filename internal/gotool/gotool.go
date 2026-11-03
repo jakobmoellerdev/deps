@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // DefaultProxy is the GOPROXY used when the go command is unavailable and GOPROXY is unset.
@@ -118,7 +120,10 @@ func run(ctx context.Context, dir string, env []string, args ...string) ([]byte,
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	start := time.Now()
+	err := cmd.Run()
+	slog.DebugContext(ctx, "go command", "args", args, "dir", dir, "duration", time.Since(start), "err", err)
+	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return nil, err
 		}

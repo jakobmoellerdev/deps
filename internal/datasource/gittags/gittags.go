@@ -12,10 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
@@ -70,11 +72,15 @@ type session struct {
 	triedHelper bool
 }
 
-func (l *Lister) fetch(ctx context.Context, repoURL string) ([]Tag, error) {
+func (l *Lister) fetch(ctx context.Context, repoURL string) (tags []Tag, err error) {
 	u, err := url.Parse(repoURL)
 	if err != nil {
 		return nil, fmt.Errorf("ls-refs %s: %w", repoURL, err)
 	}
+	start, protocol := time.Now(), "v0"
+	defer func() {
+		slog.DebugContext(ctx, "tags listed", "repo", repoURL, "protocol", protocol, "tags", len(tags), "duration", time.Since(start), "err", err)
+	}()
 	s := &session{l: l, url: repoURL, host: u.Host}
 	s.user, s.pass, s.hasCreds = l.auth.Static(u.Hostname())
 
@@ -82,6 +88,7 @@ func (l *Lister) fetch(ctx context.Context, repoURL string) ([]Tag, error) {
 	if err != nil || caps == nil {
 		return tags, err
 	}
+	protocol = "v2"
 	return s.lsRefs(ctx, caps)
 }
 

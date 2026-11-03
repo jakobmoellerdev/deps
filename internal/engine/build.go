@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
@@ -101,6 +103,7 @@ func buildFile(ctx context.Context, root, file string, ups []dep.Update, tidy Ti
 	if err != nil {
 		return nil, err
 	}
+	slog.DebugContext(ctx, "file patched", "file", file, "edits", len(edits))
 	changes := []FileChange{{Path: file, Mode: st.Mode().Perm(), Old: old, New: patched}}
 	if ups[0].Dep.Manager != gomod.Name || tidy == nil {
 		return changes, nil
@@ -126,11 +129,13 @@ func buildFile(ctx context.Context, root, file string, ups []dep.Update, tidy Ti
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	start := time.Now()
 	newMod, newSum, err := tidy.Tidy(ctx, filepath.Dir(abs), patched, oldSum)
 	<-tidySem
 	if err != nil {
 		return nil, err
 	}
+	slog.DebugContext(ctx, "go mod tidy", "file", file, "goSumChanged", !bytes.Equal(newSum, oldSum), "duration", time.Since(start))
 	changes[0].New = newMod
 	if !bytes.Equal(newSum, oldSum) {
 		changes = append(changes, FileChange{Path: sumPath, Mode: sumMode, Old: oldSum, New: newSum})

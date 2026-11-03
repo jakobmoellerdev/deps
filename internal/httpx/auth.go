@@ -3,6 +3,7 @@ package httpx
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -81,7 +82,10 @@ func (a *Auth) Helper(ctx context.Context, host string) (user, pass string, ok b
 		a.helper[host] = c
 	}
 	a.mu.Unlock()
-	c.once.Do(func() { c.user, c.pass, c.ok = a.fill(ctx, host) })
+	c.once.Do(func() {
+		c.user, c.pass, c.ok = a.fill(ctx, host)
+		slog.DebugContext(ctx, "git credential helper", "host", host, "found", c.ok)
+	})
 	return c.user, c.pass, c.ok
 }
 

@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 )
@@ -27,7 +29,10 @@ func (r Repo) run(ctx context.Context, stdin []byte, env []string, args ...strin
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	start := time.Now()
+	err := cmd.Run()
+	slog.DebugContext(ctx, "git command", "args", args, "duration", time.Since(start), "err", err)
+	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil

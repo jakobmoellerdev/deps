@@ -2,6 +2,7 @@ package engine
 
 import (
 	"io/fs"
+	"log/slog"
 	"path/filepath"
 	"slices"
 
@@ -45,6 +46,7 @@ func discover(root string, ignore []string) (discovered, error) {
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
 			if prunedDirs[d.Name()] || ignored(rel) {
+				slog.Debug("directory pruned", "dir", rel)
 				return fs.SkipDir
 			}
 			return nil

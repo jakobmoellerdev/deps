@@ -4,6 +4,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
@@ -62,10 +64,12 @@ type extracted struct {
 // The returned error is non-nil only for walk failures or context cancellation;
 // per-file and per-dependency failures are collected in Result.Errors.
 func Resolve(ctx context.Context, root string, cfg *config.Config, defaultHost string, src Sources) (*Result, error) {
+	start := time.Now()
 	found, err := discover(root, cfg.IgnorePaths)
 	if err != nil {
 		return nil, fmt.Errorf("walk %s: %w", root, err)
 	}
+	slog.InfoContext(ctx, "files discovered", "actions", len(found.actions), "gomod", len(found.gomod), "duration", time.Since(start))
 	jobs := make([]job, 0, len(found.actions)+len(found.gomod))
 	for _, f := range found.actions {
 		jobs = append(jobs, job{f, actions.Name})
@@ -74,6 +78,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, defaultHost s
 		jobs = append(jobs, job{f, gomod.Name})
 	}
 
+	start = time.Now()
 	ex := extractAll(root, jobs, defaultHost)
 
 	res := &Result{}
@@ -84,6 +89,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, defaultHost s
 			res.Errors = append(res.Errors, fmt.Errorf("%s: %w", jobs[i].file, e.err))
 			continue
 		}
+		slog.DebugContext(ctx, "file extracted", "file", jobs[i].file, "manager", jobs[i].manager, "deps", len(e.deps))
 		for _, d := range e.deps {
 			if d.Skip != "" {
 				res.Skipped = append(res.Skipped, d)
@@ -99,6 +105,8 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, defaultHost s
 			policies = append(policies, p)
 		}
 	}
+	slog.InfoContext(ctx, "dependencies extracted", "files", len(jobs), "updatable", len(todo), "skipped", len(res.Skipped), "duration", time.Since(start))
+	start = time.Now()
 
 	type out struct {
 		up  *dep.Update
@@ -119,6 +127,10 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, defaultHost s
 			}
 			if err != nil {
 				err = fmt.Errorf("%s:%d: %s: %w", d.File, d.Line, d.Name, err)
+			} else if up == nil {
+				slog.DebugContext(ctx, "dependency up to date", "file", d.File, "line", d.Line, "name", d.Name, "version", d.Version)
+			} else {
+				slog.DebugContext(ctx, "update found", "file", d.File, "line", d.Line, "name", d.Name, "from", d.Version, "to", up.NewVersion, "type", up.Type)
 			}
 			outs[i] = out{up, err}
 		})
@@ -140,6 +152,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, defaultHost s
 		}
 		return a.Dep.Line - b.Dep.Line
 	})
+	slog.InfoContext(ctx, "dependencies resolved", "updates", len(res.Updates), "errors", len(res.Errors), "duration", time.Since(start))
 	return res, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -92,6 +93,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy e
 	if err != nil {
 		return nil, []error{err}
 	}
+	slog.InfoContext(ctx, "bot state", "base", base, "head", short(head), "depsBranches", len(branches), "openPRs", len(open), "closedPRs", len(closed))
 
 	groups := engine.GroupUpdates(res.Updates)
 	built := make([][]engine.FileChange, len(groups))
@@ -127,6 +129,9 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy e
 	}
 
 	if len(errs) > 0 || len(res.Errors) > 0 || o.DryRun {
+		if !o.DryRun {
+			slog.WarnContext(ctx, "not closing obsolete PRs because of errors", "errors", len(errs)+len(res.Errors))
+		}
 		return actions, errs
 	}
 	for _, pr := range open {
@@ -172,6 +177,9 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 		}
 	}
 
+	if pr != nil {
+		slog.DebugContext(ctx, "open PR found", "branch", grp.Branch, "number", pr.Number, "fingerprint", fp, "prFingerprint", bodyFingerprint(pr.Body))
+	}
 	if pr != nil && bodyFingerprint(pr.Body) == fp {
 		mergeable := pr.Mergeable
 		if mergeable == nil {
@@ -185,6 +193,7 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 			a.Status = StatusUpToDate
 			return a, nil
 		}
+		slog.DebugContext(ctx, "PR not mergeable, rebuilding", "branch", grp.Branch, "number", pr.Number)
 	}
 	if pr == nil && *created >= o.MaxNewPRs {
 		a.Status = StatusSkipLimit
@@ -197,6 +206,7 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 		if err != nil {
 			return a, err
 		}
+		slog.DebugContext(ctx, "branch author", "branch", grp.Branch, "email", email, "want", o.AuthorEmail)
 		if email != o.AuthorEmail {
 			a.Status = StatusSkipModified
 			return a, nil
@@ -214,6 +224,7 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 	if err != nil {
 		return a, err
 	}
+	slog.DebugContext(ctx, "pushing", "branch", grp.Branch, "commit", short(commit), "expected", short(expected))
 	if err := g.Push(ctx, commit, grp.Branch, expected); err != nil {
 		return a, err
 	}
