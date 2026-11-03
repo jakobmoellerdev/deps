@@ -35,16 +35,51 @@ go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest
 
 or from a clone, `task build` builds a static `bin/deps` (`CGO_ENABLED=0`, `-trimpath`).
 
-In GitHub, Gitea or Forgejo Actions, use the composite action. It downloads the released binary for the runner and verifies its checksum, so the runner needs no Go (only for `go mod tidy` on go.mod updates):
+## Usage in CI
+
+The composite action downloads the released static binary for the runner (linux/amd64 or linux/arm64) and verifies its checksum; the runner needs no Go (only for `go mod tidy` on go.mod updates). Defaults work on both forges: the token is `github.token`, the platform is detected from the job environment.
+
+**Gitea / Forgejo** (`.gitea/workflows/deps.yml` or `.forgejo/workflows/deps.yml`):
 
 ```yaml
-permissions: {contents: write, pull-requests: write}
-steps:
-  - uses: actions/checkout@v7.0.1
-  - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
+name: deps
+on:
+  schedule: [{cron: "0 5 * * *"}]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write          # only for dependencyDashboard
+jobs:
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
 ```
 
-GitHub workflows cannot `uses:` a Gitea-hosted action; [docs/ci.md](docs/ci.md#github) shows a mirror and a plain download step, plus tokens, runner tools and the release process.
+Use the full URL: a short `jakobmoellerdev/deps@…` is resolved against the instance's `DEFAULT_ACTIONS_URL` (github.com by default).
+
+**GitHub** (`.github/workflows/deps.yml`), using the mirror [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps):
+
+```yaml
+name: deps
+on:
+  schedule: [{cron: "0 5 * * *"}]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write          # only for dependencyDashboard
+jobs:
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: jakobmoellerdev/deps@v0.1.0
+```
+
+PRs opened with `GITHUB_TOKEN` do not trigger other workflows, so CI does not run on them. To get CI on deps PRs (needed for `automerge`), pass a GitHub App token or PAT to both `actions/checkout` (`token:`) and the action (`token:`); see [docs/ci.md](docs/ci.md#github).
 
 ## Quickstart
 
