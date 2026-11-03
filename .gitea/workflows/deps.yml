@@ -1,0 +1,16 @@
+name: deps
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.0
+      - uses: ./
+        with:
+          args: run -v

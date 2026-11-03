@@ -1,0 +1,143 @@
+package goproxy
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gotool"
+)
+
+// proxyServer serves "/<name>/<module>/@v/list": "ok" proxies answer with a list, "nf" with 404,
+// "gone" with 410 and "err" with 500. hits counts requests per proxy name.
+func proxyServer(t *testing.T, hits map[string]*atomic.Int32) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		if c := hits[name]; c != nil {
+			c.Add(1)
+		}
+		if !strings.HasSuffix(rest, "/@v/list") {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		switch name {
+		case "ok":
+			io.WriteString(w, "v1.0.0\nv1.1.0 2024-01-01T00:00:00Z\n\n"+rest+"\n")
+		case "nf":
+			http.NotFound(w, r)
+		case "gone":
+			w.WriteHeader(http.StatusGone)
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestVersions(t *testing.T) {
+	listed := []string{"v0.1.0", "v0.2.0"}
+	tests := []struct {
+		name     string
+		proxy    string // "{}" is replaced by the server URL
+		noProxy  string
+		modPath  string
+		want     []string
+		wantErr  string // substring
+		wantHits map[string]int32
+		wantList int32
+	}{
+		{
+			name: "first proxy answers", proxy: "{}/ok,direct", modPath: "example.com/m",
+			want: []string{"v1.0.0", "v1.1.0", "example.com/m/@v/list"}, wantHits: map[string]int32{"ok": 1},
+		},
+		{
+			name: "404 falls through on comma", proxy: "{}/nf,{}/ok", modPath: "example.com/m",
+			want: []string{"v1.0.0", "v1.1.0", "example.com/m/@v/list"}, wantHits: map[string]int32{"nf": 1, "ok": 1},
+		},
+		{
+			name: "410 falls through on comma", proxy: "{}/gone,{}/ok", modPath: "example.com/m",
+			want: []string{"v1.0.0", "v1.1.0", "example.com/m/@v/list"}, wantHits: map[string]int32{"gone": 1, "ok": 1},
+		},
+		{
+			name: "500 stops on comma", proxy: "{}/err,{}/ok", modPath: "example.com/m",
+			wantErr: "/err/example.com/m/@v/list: HTTP 500", wantHits: map[string]int32{"err": 1, "ok": 0},
+		},
+		{
+			name: "500 falls through on pipe", proxy: "{}/err|{}/ok", modPath: "example.com/m",
+			want: []string{"v1.0.0", "v1.1.0", "example.com/m/@v/list"}, wantHits: map[string]int32{"err": 1, "ok": 1},
+		},
+		{
+			name: "404 then direct", proxy: "{}/nf,direct", modPath: "example.com/m",
+			want: listed, wantHits: map[string]int32{"nf": 1}, wantList: 1,
+		},
+		{
+			name: "noproxy uses go list", proxy: "{}/ok", noProxy: "corp.example/*,example.com/private",
+			modPath: "example.com/private/x", want: listed, wantHits: map[string]int32{"ok": 0}, wantList: 1,
+		},
+		{
+			name: "path escaping", proxy: "{}/ok/", modPath: "github.com/Masterminds/semver/v3",
+			want: []string{"v1.0.0", "v1.1.0", "github.com/!masterminds/semver/v3/@v/list"},
+		},
+		{name: "off", proxy: "off", modPath: "example.com/m", wantErr: "GOPROXY=off"},
+		{name: "exhausted", proxy: "{}/nf", modPath: "example.com/m", wantErr: "no proxy has example.com/m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hits := map[string]*atomic.Int32{"ok": {}, "nf": {}, "gone": {}, "err": {}}
+			srv := proxyServer(t, hits)
+			var envCalls, listCalls atomic.Int32
+			s := New(srv.Client(), make(chan struct{}, 1))
+			s.env = func(context.Context) (gotool.GoEnv, error) {
+				envCalls.Add(1)
+				return gotool.GoEnv{Proxy: strings.ReplaceAll(tt.proxy, "{}", srv.URL), NoProxy: tt.noProxy}, nil
+			}
+			s.list = func(_ context.Context, dir, path string) ([]string, error) {
+				listCalls.Add(1)
+				if dir != "/mod/dir" || path != tt.modPath {
+					t.Errorf("list(%q, %q)", dir, path)
+				}
+				return listed, nil
+			}
+
+			for range 2 { // second call must be served from the in-run cache
+				got, err := s.Versions(context.Background(), tt.modPath, "/mod/dir")
+				if tt.wantErr != "" {
+					if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+						t.Fatalf("err = %v, want %q", err, tt.wantErr)
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(got, tt.want) {
+					t.Fatalf("Versions = %q, want %q", got, tt.want)
+				}
+			}
+			for name, want := range tt.wantHits {
+				if got := hits[name].Load(); got != want {
+					t.Errorf("hits[%s] = %d, want %d", name, got, want)
+				}
+			}
+			if got := listCalls.Load(); got != tt.wantList {
+				t.Errorf("list calls = %d, want %d", got, tt.wantList)
+			}
+			if got := envCalls.Load(); got != 1 {
+				t.Errorf("env calls = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestVersionsEnvError(t *testing.T) {
+	s := New(http.DefaultClient, nil)
+	s.env = func(context.Context) (gotool.GoEnv, error) { return gotool.GoEnv{}, errors.New("boom") }
+	if _, err := s.Versions(context.Background(), "example.com/m", "."); err == nil || err.Error() != "boom" {
+		t.Fatalf("err = %v, want boom", err)
+	}
+}
