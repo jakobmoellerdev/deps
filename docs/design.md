@@ -597,7 +597,8 @@ Editor support: `deps schema > deps.schema.json`, then start `.deps.yaml` with `
 - per-rule `automerge`;
 - `actions.lock` via `github.com/github/actions-lockfile/go`;
 - a dependency dashboard issue;
-- an engine benchmark over a large fixture tree to guard the performance targets.
+- running `BenchmarkResolve` in CI with a regression threshold (the benchmark exists; CI does not run it yet);
+- Go proxy request volume (next performance phase): on open-component-model about 370 `@v/list` and 250 `@v/<v>.info` requests are the critical path. There is no batch endpoint, so the options are an opt-in cross-run cache or fewer `.info` lookups.
 
 ## 9. Config reference
 
