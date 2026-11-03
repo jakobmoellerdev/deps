@@ -15,14 +15,14 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | P7 | `allowedVersions` (regex form `/^\d+\.\d+$/`) | gardenlinux fips | `allow` is a semver constraint only; the docker scheme already drops `amd64-*` tags | open (regex form) |
 | P8 | `versioning: 'regex:…'` per rule | OCM cosign `vX.Y.Z+ocm.N` / `-ocm.N` | fixed schemes (tag, go, docker, semver) | open |
 | P9 | `versioning: 'loose'` per rule | gardenlinux fips | per-dep scheme chosen by manager | open |
-| P10 | `minimumReleaseAge` (global 28d, per-datasource, `0 days` override, exempt digest/pin) | global, npm, cosign | release times exist for PR bodies (see R2) but are not used for filtering | open |
+| P10 | `minimumReleaseAge` (global 28d, per-datasource, `0 days` override, exempt digest/pin) | global, npm, cosign | `minimumReleaseAge` top-level and per rule (`28 days`, `3d`, `12h`, Go durations; `0`/`0 days` disables), per update type via `updateTypes`; too-new candidates fall back to the next older one; unknown release times are allowed | done |
 | P11 | `separateMultipleMajor` | global | one PR per dependency with the newest allowed version | open |
 | P12 | `separateMinorPatch` | global (overridden per manager) | — | open |
 | P13 | built-in monorepo groups (`group:monorepos`, `group:kubernetesMonorepo`, `group:goOpenapi`) | presets | curated built-in list, `monorepos: false` disables | done |
 | P14 | `ignorePaths` defaults (`:ignoreModulesAndTests`) | preset | Renovate's default list when `ignorePaths` is absent | done |
 | P15 | `updateNotScheduled: true` | global | out-of-window branches are never touched | open |
 | P16 | `postUpdateOptions: [gomodTidy]` | golang category, Helm group | always `go mod tidy` | done |
-| P17 | rule `minimumReleaseAge: null` for digest/pin/lockfile types | global | follows P10 | open |
+| P17 | rule `minimumReleaseAge: null` for digest/pin/lockfile types | global | built in: digest refreshes, pins and security updates are always exempt; lockfile regeneration has no version | done |
 
 ## Managers and datasources
 
@@ -33,7 +33,7 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | M3 | datasource `node-version` | netlify `NODE_VERSION` | — | open |
 | M4 | `customDatasources` (`envtest`: YAML from URL + JSONata transform) | controller `.env`, `envtest.go` | — | open |
 | M5 | datasource `github-release-attachments` (version + digest of an asset) | sigstore handler `.env` (`COSIGN_CHECKSUMS_SHA256`) | alias of `github-releases`; `checksum.asset` gives asset digests | open (needs P8 for `+ocm.N`, and an end-to-end test) |
-| M6 | digest refresh for non-version tags (`latest@sha256:…`) | `.env` OPENSCAP_IMAGE, controller chart `tag: latest@sha256:…` | skipped (`non-version tag` in the docker manager, `non-version value "<v>"` for custom markers) instead of erroring; digest refresh not implemented | open |
+| M6 | digest refresh for non-version tags (`latest@sha256:…`) | `.env` OPENSCAP_IMAGE, controller chart `tag: latest@sha256:…` | docker-datasource deps with a non-version tag (docker manager, custom markers with a digest) get digest-only resolution: pinned → digest refresh, unpinned + `pin: digest` → pin, else skipped as `non-version tag`; other non-version values are skipped as `non-version value "<v>"` | done |
 | M7 | `with:` version inputs of setup actions (`actions/setup-node node-version`, `setup-go go-version`) | `ci.yml` `node-version: 26` | `with:` is never read | open |
 | M8 | npm `engines` / `volta` | `engines.node ^26.0.0` | not extracted | open |
 | M9 | `git-submodules` | enabled, but OCM has no `.gitmodules` | — | n/a |
@@ -50,7 +50,7 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | L5 | Mend adoption / passing / confidence badges | preset | needs Mend's service | open (decide: external badge URLs or drop) |
 | L6 | OpenSSF scorecard badge (`security:openssf-scorecard`) | preset | — | open |
 | L7 | `automerge` / `automergeType: pr` | minor+patch | — | open |
-| L8 | `:rebaseStalePrs` | preset | rebuild only on conflict or content change | open |
+| L8 | `:rebaseStalePrs` | preset | `rebaseWhen: behind-base-branch` (also `conflicted`, the default, and `never`); unchanged PRs are rebuilt on the moved base and force-pushed (`rebased`) | done |
 | L9 | `:dependencyDashboard` | preset | — | open |
 | L10 | `prConcurrentLimit: 0` / `prHourlyLimit: 0` (unlimited) | global | `--max-new-prs 0` = unlimited | done |
 | L11 | `gitAuthor` | ocmbot | `--author-name/--author-email` | done |

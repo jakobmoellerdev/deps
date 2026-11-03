@@ -122,19 +122,43 @@ func (r Repo) DeleteBranch(ctx context.Context, branch string) error {
 	return err
 }
 
-// BranchAuthorEmail returns the author email of the tip of branch on origin. Shallow clones
-// (CI) fetch with --depth=1; full clones fetch normally so they are not turned shallow.
-func (r Repo) BranchAuthorEmail(ctx context.Context, branch string) (string, error) {
+// BranchTip returns the author email and parent ids of the tip of branch on origin. Shallow
+// clones (CI) fetch with --depth=1; full clones fetch normally so they are not turned shallow.
+// The raw commit object is parsed, so parents are reported even when shallow grafts hide them.
+func (r Repo) BranchTip(ctx context.Context, branch string) (author string, parents []string, err error) {
 	shallow, err := r.run(ctx, nil, nil, "rev-parse", "--is-shallow-repository")
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	args := []string{"fetch", "--no-tags", "origin", "refs/heads/" + branch}
 	if shallow == "true" {
 		args = []string{"fetch", "--no-tags", "--depth=1", "origin", "refs/heads/" + branch}
 	}
 	if _, err := r.run(ctx, nil, nil, args...); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return r.run(ctx, nil, nil, "log", "-1", "--format=%ae", "FETCH_HEAD")
+	obj, err := r.run(ctx, nil, nil, "cat-file", "commit", "FETCH_HEAD")
+	if err != nil {
+		return "", nil, err
+	}
+	author, parents = parseCommitHeader(obj)
+	return author, parents, nil
+}
+
+// parseCommitHeader returns the author email and parents from a raw commit object.
+func parseCommitHeader(obj string) (email string, parents []string) {
+	for line := range strings.Lines(obj) {
+		line = strings.TrimSuffix(line, "\n")
+		if line == "" {
+			break // end of header
+		}
+		if p, ok := strings.CutPrefix(line, "parent "); ok {
+			parents = append(parents, p)
+		} else if a, ok := strings.CutPrefix(line, "author "); ok {
+			if i, j := strings.IndexByte(a, '<'), strings.LastIndexByte(a, '>'); i >= 0 && j > i {
+				email = a[i+1 : j]
+			}
+		}
+	}
+	return email, parents
 }

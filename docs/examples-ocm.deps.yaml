@@ -1,6 +1,8 @@
-# open-component-model renovate.json5 packageRules relevant to P1-P3, translated.
+# open-component-model renovate.json5 packageRules relevant to P1-P3, P10, P17 and L8, translated.
 branchPrefix: renovate/
+rebaseWhen: behind-base-branch # :rebaseStalePrs
 pin: digest # docker:pinDigests + helpers:pinGitHubActionDigests
+minimumReleaseAge: 28 days # digest/pin updates are always exempt (the minimumReleaseAge: null rule)
 custom:
   - files: ['**/.env', '**/.env.local', '**/netlify.toml', '.github/workflows/*.yml', '**/envtest.go']
 rules:
@@ -50,3 +52,7 @@ rules:
   - manager: gomod                                             # 14 golang directive off
     depTypes: [go]
     ignore: true
+  - datasources: [npm]                                         # 15
+    minimumReleaseAge: 28 days
+  - names: ['open-component-model/cosign', 'ghcr.io/open-component-model/cosign']  # 16 own fork, gated by its CI
+    minimumReleaseAge: 0 days

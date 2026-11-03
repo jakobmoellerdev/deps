@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/bmatcuk/doublestar/v4"
@@ -27,6 +28,16 @@ const (
 	PinKeep   = "keep"
 	PinDigest = "digest"
 )
+
+// Rebase modes of rebaseWhen.
+const (
+	RebaseConflicted = "conflicted"
+	RebaseBehindBase = "behind-base-branch"
+	RebaseNever      = "never"
+)
+
+// RebaseWhens are the accepted rebaseWhen values.
+var RebaseWhens = []string{RebaseConflicted, RebaseBehindBase, RebaseNever}
 
 // Known values for validation.
 var (
@@ -75,14 +86,18 @@ type Config struct {
 	Schedule     []string `yaml:"schedule" jsonschema_description:"Cron windows (5 fields, minute must be *) in which update PRs may be created or updated; empty means always."`
 	Security     *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, updates and schedule."`
 	BranchPrefix string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
+	RebaseWhen   string   `yaml:"rebaseWhen" jsonschema:"enum=conflicted,enum=behind-base-branch,enum=never,default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
 	Monorepos    *bool    `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group."`
 	Actions      Actions  `yaml:"actions" jsonschema_description:"github-actions manager settings."`
-	IgnorePaths  []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When absent: node_modules, bower_components, vendor, examples, __tests__, test, tests and __fixtures__ directories; any list (also []) replaces that default."`
-	Rules        []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
-	Custom       []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
+	// MinimumReleaseAge is a string, not a duration, so "28 days" style values are accepted.
+	MinimumReleaseAge string   `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt."`
+	IgnorePaths       []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When absent: node_modules, bower_components, vendor, examples, __tests__, test, tests and __fixtures__ directories; any list (also []) replaces that default."`
+	Rules             []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
+	Custom            []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
 
 	path     string        // source path for error messages
 	schedule *schedule.Set // parsed Schedule
+	minAge   time.Duration // parsed MinimumReleaseAge
 }
 
 // SecurityEnabled reports whether OSV lookups are on (default true).
@@ -115,9 +130,12 @@ type Rule struct {
 	CommitType  string   `yaml:"commitType" jsonschema:"enum=fix,enum=chore,enum=build,enum=ci,enum=docs,enum=feat,enum=perf,enum=refactor,enum=revert,enum=style,enum=test" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm dependencies), chore otherwise. Security updates always use fix."`
 	CommitScope *string  `yaml:"commitScope" jsonschema_description:"Conventional commit scope; default deps, empty string means no scope ('chore: ...')."`
 	Schedule    []string `yaml:"schedule" jsonschema_description:"Cron windows overriding the top-level schedule; [] means always."` // non-nil overrides the top-level schedule; [] = always
+	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
+	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
 
 	allow    *semver.Constraints
 	schedule *schedule.Set
+	minAge   *time.Duration // parsed MinimumReleaseAge; nil = not set
 }
 
 // Custom is a custom manager: annotation mode when Match is empty, regex mode otherwise.
@@ -282,6 +300,17 @@ func (c *Config) Validate() error {
 			add("branchPrefix", "%s, got %q", msg, c.BranchPrefix)
 		}
 	}
+	if c.RebaseWhen != "" && !slices.Contains(RebaseWhens, c.RebaseWhen) {
+		add("rebaseWhen", "must be one of %s, got %q", list(RebaseWhens), c.RebaseWhen)
+	}
+	c.minAge = 0
+	if c.MinimumReleaseAge != "" {
+		if d, err := ParseAge(c.MinimumReleaseAge); err != nil {
+			add("minimumReleaseAge", "%v", err)
+		} else {
+			c.minAge = d
+		}
+	}
 	tz := c.Timezone
 	if _, err := schedule.Parse(nil, tz); err != nil {
 		add("timezone", "%v", err)
@@ -382,6 +411,14 @@ func (c *Config) validateRule(i int, tz string, add addFunc) {
 		add(f+".commitScope", "must match %s, got %q", commitScopeRe, *r.CommitScope)
 	}
 	r.schedule = parseSchedule(f+".schedule", r.Schedule, tz, add)
+	r.minAge = nil
+	if r.MinimumReleaseAge != "" {
+		if d, err := ParseAge(r.MinimumReleaseAge); err != nil {
+			add(f+".minimumReleaseAge", "%v", err)
+		} else {
+			r.minAge = &d
+		}
+	}
 }
 
 func (cu *Custom) validate(f string, add addFunc) {

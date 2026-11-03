@@ -44,8 +44,9 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 - Dockerfile: every `FROM` (case-insensitive, `--flag`s skipped, line continuations and the `# escape=` directive honored). `scratch` and earlier stage names (`AS <name>`) are not dependencies.
 - Compose: `services.*.image`.
 - Workflows: `jobs.*.container` (string or `.image`), `jobs.*.services.*.image`, `uses: docker://…` steps. Actions: `runs.image: docker://…` (when `runs.using: docker`) and `uses: docker://…` in `runs.steps`.
-- References are parsed with distribution/reference; `Name` is the familiar name (`postgres`), the datasource uses the canonical one. Skips: `variable reference` (`$`), `cannot locate value`, `invalid reference`, `no tag`, `digest without tag`, `non-version tag` (e.g. `latest`).
+- References are parsed with distribution/reference; `Name` is the familiar name (`postgres`), the datasource uses the canonical one. Skips: `variable reference` (`$`), `cannot locate value`, `invalid reference`, `no tag`, `digest without tag`.
 - Digests: `image:tag@sha256:…` is refreshed in place (tag and digest). With `pin: digest`, `@sha256:<index digest>` is appended after the tag. Digests come from a HEAD of the tag's manifest, so multi-platform images get the index digest. Credentials come from the Docker config and credential helpers.
+- Non-version tags (`latest`, `bookworm`, `ubuntu-26.04`, `stable`) are extracted too; the engine only maintains their digest (section 4, Resolve order). This also covers Helm `tag: latest@sha256:…`.
 
 **Dockerfile stage references and ARGs.** Besides `FROM`, the docker manager extracts `COPY --from=<image>` and `RUN --mount=…,from=<image>`; stage names, numeric stage indexes and `scratch` are not images. A reference that is exactly `$X`/`${X}` resolves to `ARG X=<image>` declared before the first `FROM` or in the current stage; the dep sits at the ARG default (once per ARG), so the update rewrites the ARG line. Defaults that are themselves variable or quoted with escapes are skipped as `variable reference`.
 
@@ -266,6 +267,7 @@ type Options struct {
     Checksums   ChecksumSource        // nil = deps with a checksum source cannot be updated
     Filter      func(dep.Dep) bool    // nil = all
     Trace       func(Trace)           // nil = off
+    Now         time.Time             // reference time of minimumReleaseAge; zero = time.Now()
 }
 type Trace struct {
     Dep          dep.Dep
@@ -287,11 +289,14 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 func GroupUpdates(updates []dep.Update, branchPrefix string) []Group // "" = config.DefaultBranchPrefix
 ```
 
-**Resolve order per dep:** datasource releases → `Scheme.Best` under the per-kind policy → digest pin/refresh (`tag`/`docker` versioning on the digest-capable managers github-actions and docker) → security. With advisories, the minimum fix F is the highest, over all vulns, of each vuln's lowest compatible fixed version. If there is no normal update or it is below F, the smallest compatible release ≥ F is chosen regardless of `allow`/`updates` and of rules with `updateTypes` (a pre-policy `ignore` still wins). The advisories the chosen version fixes are attached; such security updates get no group and no schedule. Every file goes to every manager that matches it.
+**Resolve order per dep:** datasource releases → `Scheme.Best` under the per-kind policy, with the release-time guards below → digest pin/refresh (`tag`/`docker` versioning on the digest-capable managers github-actions and docker, and custom deps that carry a digest) → security. With advisories, the minimum fix F is the highest, over all vulns, of each vuln's lowest compatible fixed version. If there is no normal update or it is below F, the smallest compatible release ≥ F is chosen regardless of `allow`/`updates`, `minimumReleaseAge` and of rules with `updateTypes` (a pre-policy `ignore` still wins). The advisories the chosen version fixes are attached; such security updates get no group and no schedule. Every file goes to every manager that matches it.
 - **Per-kind policy.** `config.Policy(d)` is the pre-policy (rules without `updateTypes`); it decides `ignore` for the dep, `pin`, and whether the dep is looked up at all. `config.PolicyFor(d, kind)` evaluates all rules in file order, those with `updateTypes` only when they list `kind`. The engine caches the five per-kind policies of a dep (evaluated lazily, and only when the config has `updateTypes` rules). Each candidate is accepted under the policy of its own kind: an ignoring per-kind policy rejects it as `ignored by rule #i for <kind>` (or the default-ignore reason), otherwise `updates`/`allow` decide as before; `Best` then falls back to the next candidate, so ignoring indirect majors keeps their minor and patch updates. Digest refresh and pin need `digest`/`pin` enabled and not ignored in their per-kind policy.
 - A dep the pre-policy ignores is still resolved when some per-kind policy un-ignores it (`updateTypes: [patch], ignore: false`), only for those kinds; it gets no security lookup.
-- A current value the dep's versioning scheme cannot parse (e.g. a `latest` docker tag) is skipped as `non-version value "<v>"` before any lookup, not reported as an error.
-- A major candidate whose release time (via `datasource.Timer`) predates the current version's is rejected as `older than current` and the next best candidate is tried (at most 3). This drops legacy pre-module tags such as `k8s.io/client-go v1.5.2` (2016) when the current version is `v0.37.1`. Unknown times never reject.
+- **Non-version values.** A current value the dep's versioning scheme cannot parse is skipped as `non-version value "<v>"` before any lookup, not reported as an error. The exception is a docker-datasource dep whose digest can be maintained (docker manager, or a custom dep with a digest), e.g. `latest@sha256:…`: it gets digest-only resolution without listing releases or asking OSV. Pinned → the digest of the same tag is refreshed (`digest`, no update when unchanged); unpinned with `pin: digest` → `pin`; unpinned with `pin: keep` → skipped as `non-version tag`.
+- **Release-time guards** (only when the datasource implements `datasource.Timer`; each candidate's time is asked at most once per dep). After `Best` picks a candidate, it is rejected and `Best` re-runs without it (bounded: 3 `older than current`, 50 rejections in total, then no update):
+  - A major candidate whose release time predates the current version's is rejected as `older than current`. This drops legacy pre-module tags such as `k8s.io/client-go v1.5.2` (2016) when the current version is `v0.37.1`.
+  - With a `minimumReleaseAge` in the policy of the candidate's kind, a candidate released less than that long before `Options.Now` is rejected as `too new (released <date>, minimum <age>)`; the next lower candidate (possibly of another kind) is tried, so a too-new major can fall back to an old enough minor.
+  - Unknown times (zero, or a lookup error, logged at debug level) never reject. Digest refreshes and pins (no new version) and security updates are exempt from the age.
 - The chosen update (also digest, pin and security updates) takes `CommitType`/`CommitScope` and, unless it is a security update, `Group`/`Schedule` from the policy of its type (`config.Policy` also has `Monorepo`, the built-in group that applied, and `Kind`, the type a `PolicyFor` result is for).
 
 ```go
@@ -323,12 +328,13 @@ type Git interface {
     Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, name, email string) (string, error)
     Push(ctx context.Context, commit, branch, expected string) error
     DeleteBranch(ctx context.Context, branch string) error
-    BranchAuthorEmail(ctx context.Context, branch string) (string, error)
+    BranchTip(ctx context.Context, branch string) (author string, parents []string, err error)
 }
 type Options struct {
     Base, AuthorName, AuthorEmail string
     BranchPrefix                  string // ending in '/'; "" = config.DefaultBranchPrefix
     DryRun                        bool
+    RebaseWhen                    string // config.RebaseWhens; "" = conflicted
     MaxNewPRs                     int    // 0 = unlimited
     Managers                      []manager.Manager
     Now                           time.Time // schedule evaluation; zero = time.Now()
@@ -450,18 +456,24 @@ Both clients share these rules:
 6. **Per-group decision**, first match wins:
    1. No open PR exists, and a closed PR has the same branch, was not merged and has the same title → `skipped: closed PR for this version`.
    2. A non-security update of the group is outside its schedule (evaluated at run time in `timezone`) → `skipped: outside schedule`. Nothing is built or pushed.
-   3. The open PR's fingerprint matches and it is not unmergeable → `up-to-date`. On GitHub, a nil `mergeable` triggers a `GetPR` call; nil still counts as mergeable.
+   3. The open PR's fingerprint matches (its content is unchanged):
+      - `rebaseWhen: never` → `up-to-date`, even when the PR conflicts.
+      - The PR is not unmergeable and `rebaseWhen` is `conflicted` (the default), or the branch does not exist → `up-to-date`. On GitHub, a nil `mergeable` triggers a `GetPR` call; nil still counts as mergeable.
+      - The PR is not unmergeable and `rebaseWhen: behind-base-branch`: the branch tip is fetched (`BranchTip`). If it is the bot's and its only parent is the base head → `up-to-date`; otherwise it is rebuilt on the base head (step 7, status `rebased`). deps branches are one commit on top of base, so the parent alone tells whether base moved.
+      - An unmergeable PR falls through and is rebuilt (`updated`).
    4. No open PR exists and `--max-new-prs` is non-zero and the created count has reached it → `skipped: new PR limit reached` (`0` = unlimited).
-   5. The branch exists and the author email of its last commit is not the bot's → `skipped: branch modified by someone else`.
-   6. `--dry-run` → `would-create` or `would-update`, with no git or API writes.
-   7. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet). Then update the PR (`updated`) or create one (`created`).
+   5. The branch exists and the author email of its last commit is not the bot's → `skipped: branch modified by someone else`. Such branches are never rebased.
+   6. `--dry-run` → `would-create`, `would-update` or `would-rebase`, with no git or API writes.
+   7. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet). Then update the PR (`updated`) or create one (`created`). A rebase only pushes: content, title and body are unchanged, so the PR is not edited and no release notes are fetched (`rebased`, counted as updated in the run summary line).
+
+   **Branch tip fetch:** `BranchTip` runs `git fetch --no-tags origin refs/heads/<b>` (with `--depth=1` in shallow clones, so full clones stay full) and parses the raw `git cat-file commit FETCH_HEAD` header for the author email and parents; the raw object still lists the parent when a shallow graft hides it. It is fetched at most once per group and only when the branch exists and the author or parent is needed.
 
    A build, git or API error in one group is recorded, and the next group is processed.
 7. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open PR under `branchPrefix` whose branch matches no current group is closed and its branch deleted (`closed`). Groups that are outside their schedule still count as current, so their PRs are never closed as obsolete. This guard ensures that a failed upstream lookup never closes a valid PR.
 
 ### Release age and notes
 
-- **When.** Only for PRs that are created or updated; never for up-to-date, skipped or dry-run groups.
+- **When.** Only for PRs that are created or updated; never for up-to-date, skipped or dry-run groups. Independently, `minimumReleaseAge` asks the same `Timer` during resolve, once per chosen candidate (section 4); the datasources dedupe these lookups, so a PR body reuses them.
 - **Age.** From the optional `datasource.Timer`: `@v/<v>.info` (or `go list -m -json` for private modules), the npm packument's `time` (stream-decoded keeping only `time` and `repository`), GitHub releases `published_at`, git tags on github.com or Gitea/Forgejo via their releases API, and the image config's `created`. Go toolchains have no date.
 - **Notes.** One page of the source repository's GitHub or Gitea/Forgejo releases per run. The repository is the action's, the module's forge repository (plus a small vanity table: golang.org/x, k8s.io, sigs.k8s.io, google.golang.org/{grpc,protobuf}, go.yaml.in/yaml), npm's `repository`, or the OCI `org.opencontainers.image.source` label. Versions in (current, new] are listed newest first, each body capped at 2 KiB and the section at 40 KiB, plus a compare link when both tags exist.
 - **Sanitising.** Quoted bodies are neutralised: no `@mention` pings, upstream `#123` links, `redirect.github.com`.
@@ -567,7 +579,7 @@ When debug is disabled, the HTTP transport skips timing entirely after one `Enab
 | `deps plan` | Unified diff on stdout, report on stderr. Post-processors do not run: go.sum and package-lock.json changes are not computed (`note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run`). |
 | `deps apply` | Writes the changes, including `go mod tidy` output and regenerated package-lock.json files. |
 | `deps run` | Branch and PR per group (section 5). Flags: `--platform`, `--api-url`, `--repo`, `--token`, `--base`, `--author-name`, `--author-email`, `--max-new-prs`, `--dry-run`. |
-| `deps explain <name-glob>...` | Resolves only deps whose name matches any `path.Match` glob. Prints per occurrence `<name>  <file>:<line>  (<manager>, <depType>, <datasource>, <versioning>)`, then `current`, `rules` (`#<i> <fields>` or `none`; for an update, the `updateTypes` rules that applied to its type follow as `#<i> <fields> (applies to <type>)`), `policy` (the pre-policy, then `<type>: <policy>` when `updateTypes` rules applied), `candidates`, `rejected` (versions by reason, up to 3 each, e.g. `ignored by rule #4 for major`), `result` (`update <from> -> <to> (<type>)`, `up to date`, `skipped: <reason>` or `error: <err>`) and one `security` line per advisory. A glob matching nothing is an error. |
+| `deps explain <name-glob>...` | Resolves only deps whose name matches any `path.Match` glob. Prints per occurrence `<name>  <file>:<line>  (<manager>, <depType>, <datasource>, <versioning>)`, then `current`, `rules` (`#<i> <fields>` or `none`; for an update, the `updateTypes` rules that applied to its type follow as `#<i> <fields> (applies to <type>)`), `policy` (`pin= allow= updates= group= schedule= minAge=`; the pre-policy, then `<type>: <policy>` when `updateTypes` rules applied), `candidates`, `rejected` (versions by reason, up to 3 each, e.g. `ignored by rule #4 for major`, `too new (released 2026-11-01, minimum 28 days)`), `result` (`update <from> -> <to> (<type>)`, `up to date`, `skipped: <reason>` or `error: <err>`) and one `security` line per advisory. A glob matching nothing is an error. |
 | `deps schema` | Prints the JSON Schema (draft 2020-12) of `.deps.yaml`, reflected from `internal/config` with invopop/jsonschema. Unknown keys are rejected, as in `Load`. |
 | `deps version` | Prints the version set via `-ldflags "-X main.version=…"`. |
 
@@ -595,9 +607,11 @@ timezone: ""                # IANA zone for schedules; "" = UTC
 schedule: []                # cron windows ("* <hour> <dom> <month> <dow>", minute must be *); empty = always
 security: true              # OSV security lookups (default true)
 branchPrefix: deps/         # update branch prefix; must end with / and be a valid git ref prefix
+rebaseWhen: conflicted      # conflicted | behind-base-branch | never (default conflicted)
 monorepos: true             # built-in monorepo groups (default true)
 actions:
   defaultHost: ""           # host for `owner/repo@ref`; "" = auto (section 5)
+minimumReleaseAge: ""       # e.g. "28 days", "1 day", "3d", "12h", "90m" or a Go duration; "" or "0" = off
 ignorePaths: []             # doublestar globs on slash paths relative to --dir; absent = **/{node_modules,bower_components,vendor,examples,__tests__,test,tests,__fixtures__}/**
 rules:
   - manager: github-actions # optional: github-actions | gomod | docker | npm | custom
@@ -614,6 +628,7 @@ rules:
     schedule: ["* 0-5 * * *"] # optional: overrides the top-level schedule ([] = always)
     commitType: chore       # optional: fix | chore | build | ci | docs | feat | perf | refactor | revert | style | test
     commitScope: deps       # optional: [A-Za-z0-9][A-Za-z0-9._/-]*; "" = no scope
+    minimumReleaseAge: 3 days # optional: overrides the top-level age; "0" / "0 days" disables it
 custom:
   - files: ["**/Makefile"]  # required doublestar globs
     match: 'TOOL_VERSION = (?P<version>\S+)'  # optional RE2; absent = annotation mode; needs a version group
@@ -636,6 +651,8 @@ custom:
 - **Groups:** all non-security updates whose policy has the same `group` share one branch and PR (section 5). Built-in monorepo groups apply before user rules unless `monorepos: false`.
 - **`ignorePaths`:** when the key is absent the default list applies; any explicit list, including `[]`, replaces it.
 - **`branchPrefix`:** branches are `<prefix><manager>/<slug>` and `<prefix>group/<slug>`; only branches and PRs under the prefix are managed.
+- **`rebaseWhen`:** when an open PR whose content is unchanged is rebuilt on the current base: `conflicted` only when it is not mergeable, `behind-base-branch` also when its branch is not a single commit on the base head, `never` not at all (content changes still update it). Branches with foreign commits are never rebuilt (section 5).
+- **`minimumReleaseAge`:** `<n> <unit>` with unit minutes, hours, days or weeks (singular, plural or the first letter, the space optional), `0`, or a Go duration; negative or unparsable values are errors. A new version is proposed only once it is at least that old; younger candidates are skipped in favour of the next older one (section 4). A rule's value overrides earlier ones, so `0 days` re-enables immediate updates for matching deps, and with `updateTypes` it applies per update type. Releases without a known time (datasource without `Timer`, Go toolchains, failed lookups) are allowed. Digest refreshes, pins and security updates are exempt.
 - **Commit titles:** default type `fix` for gomod `direct` and npm `dependencies`, `chore` otherwise (security always `fix`); default scope `deps`.
 - **Security:** with `security: true` (the default), OSV advisories can force an update that bypasses `allow`, `updates`, `schedule` and `updateTypes` rules, but never a pre-policy `ignore` (section 5).
 - **`custom[]`:** validated in both modes: `datasource` and `versioning` must be known, `files` non-empty valid globs, `match` a valid RE2 with a `version` group. See section 2.

@@ -100,7 +100,7 @@ func TestExtractDockerfile(t *testing.T) {
 				{line: 9, name: "python", source: "docker.io/library/python", version: "3.12-slim", digest: sha1, depT: TypeDockerfile, insert: "@sha256:1111"},
 				{line: 13, name: "golang:${GO}", depT: TypeDockerfile, skip: "variable reference"},
 				{line: 14, name: "alpine", source: "docker.io/library/alpine", depT: TypeDockerfile, skip: "no tag"},
-				{line: 15, name: "ubuntu", source: "docker.io/library/ubuntu", version: "latest", depT: TypeDockerfile, skip: "non-version tag"},
+				{line: 15, name: "ubuntu", source: "docker.io/library/ubuntu", version: "latest", depT: TypeDockerfile},
 				{line: 16, name: "ghcr.io/org/img", source: "ghcr.io/org/img", digest: sha1, depT: TypeDockerfile, skip: "digest without tag"},
 				{line: 17, name: "redis", source: "docker.io/library/redis", version: "7.2", depT: TypeDockerfile, insert: " AS cache"},
 				{line: 19, name: "UPPER:1", depT: TypeDockerfile, skip: "invalid reference"},

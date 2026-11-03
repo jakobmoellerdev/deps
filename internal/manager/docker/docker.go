@@ -14,7 +14,6 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Name is the manager name.
@@ -148,9 +147,8 @@ func (x *extractor) add(depType string, line, off int, ref string) {
 	x.deps = append(x.deps, d)
 }
 
-var dockerScheme, _ = versioning.Get("docker")
-
-// parseRef fills d from ref, which starts at byte offset off.
+// parseRef fills d from ref, which starts at byte offset off. Tags that are not versions
+// (latest, bookworm) are kept: the engine refreshes or pins their digest.
 func parseRef(d *dep.Dep, off int, ref string) {
 	named, err := reference.ParseNormalizedNamed(ref)
 	if err != nil {
@@ -174,8 +172,5 @@ func parseRef(d *dep.Dep, off int, ref string) {
 	default:
 		d.Version = t.Tag()
 		d.RefSpan = dep.Span{Start: end - len(d.Version), End: end}
-		if !dockerScheme.Valid(d.Version) {
-			d.Skip = "non-version tag"
-		}
 	}
 }

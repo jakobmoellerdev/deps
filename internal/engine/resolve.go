@@ -42,6 +42,7 @@ type Options struct {
 	Checksums   ChecksumSource        // nil = deps with a checksum source cannot be updated
 	Filter      func(dep.Dep) bool    // nil = all; deps it rejects are dropped before any lookup
 	Trace       func(Trace)           // nil = off; called sequentially from the Resolve goroutine
+	Now         time.Time             // reference time of minimumReleaseAge; zero = time.Now()
 }
 
 // Trace explains the decision for one dep.
@@ -65,6 +66,21 @@ type Result struct {
 
 // digestManagers support digest pinning (pin: digest, digest refresh).
 var digestManagers = map[string]bool{"github-actions": true, "docker": true}
+
+// digestCapable reports whether d's digest can be refreshed, or pinned when d has none.
+// Custom deps can only refresh a digest they already carry (regex `digest` group or an
+// annotated `@sha256:`); they have no place to insert a new one.
+func digestCapable(d dep.Dep) bool {
+	return digestManagers[d.Manager] && (d.Versioning == "tag" || d.Versioning == "docker") ||
+		d.Manager == "custom" && d.Digest != ""
+}
+
+// tagOnly reports whether d is a docker image whose tag is not a version (latest, bookworm)
+// but whose digest can be maintained: such deps get digest-only resolution.
+func tagOnly(d dep.Dep) bool {
+	s, ok := versioning.Get(d.Versioning)
+	return ok && d.Datasource == "docker" && digestCapable(d) && !s.Valid(d.Version)
+}
 
 type job struct {
 	file string
@@ -116,7 +132,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			if o.Filter != nil && !o.Filter(d) {
 				continue
 			}
-			if s, ok := versioning.Get(d.Versioning); d.Skip == "" && ok && !s.Valid(d.Version) {
+			if s, ok := versioning.Get(d.Versioning); d.Skip == "" && ok && !s.Valid(d.Version) && !tagOnly(d) {
 				d.Skip = "non-version value " + strconv.Quote(d.Version)
 			}
 			if d.Skip != "" {
@@ -135,6 +151,15 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 				}
 				continue
 			}
+			// A non-version tag without a digest can only be pinned.
+			if d.Digest == "" && pol.pre.Pin != config.PinDigest && tagOnly(d) {
+				d.Skip = "non-version tag"
+				res.Skipped = append(res.Skipped, d)
+				if o.Trace != nil {
+					o.Trace(Trace{Dep: d, Rules: pol.pre.Rules, Policy: pol.pre})
+				}
+				continue
+			}
 			todo = append(todo, d)
 			pols = append(pols, pol)
 		}
@@ -143,15 +168,20 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	start = time.Now()
 
 	// Security updates bypass per-kind rules but not a pre-policy ignore: deps resolved only
-	// because an updateTypes rule opted some update types in are not looked up.
+	// because an updateTypes rule opted some update types in are not looked up. Non-version
+	// tags have no version to look up.
 	var secDeps []dep.Dep
 	secIdx := make([]int, len(todo))
 	for i, d := range todo {
 		secIdx[i] = -1
-		if !pols[i].pre.Ignore {
+		if !pols[i].pre.Ignore && !tagOnly(d) {
 			secIdx[i] = len(secDeps)
 			secDeps = append(secDeps, d)
 		}
+	}
+	now := o.Now
+	if now.IsZero() {
+		now = time.Now()
 	}
 	sec := lookupSecurity(ctx, o.Security, secDeps)
 	outs := make([]Trace, len(todo))
@@ -159,7 +189,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	for i := range todo {
 		wg.Go(func() {
 			d := todo[i]
-			r := resolver{ctx: ctx, root: root, d: d, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil}
+			r := resolver{ctx: ctx, root: root, d: d, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now}
 			t := r.run(func() []Vuln { return sec.of(secIdx[i]) })
 			switch {
 			case t.Err != nil:
@@ -334,8 +364,10 @@ type resolver struct {
 	ds    Datasource
 	cs    ChecksumSource
 	trace bool
+	now   time.Time
 
-	rels []Release
+	rels  []Release
+	times map[string]time.Time // release times asked so far; zero = unknown
 }
 
 // run resolves in order: datasource → Best under policy → digest pin/refresh → security.
@@ -358,9 +390,32 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 	if r.ds == nil {
 		return nil, fmt.Errorf("no datasource %q", d.Datasource)
 	}
+	var up *dep.Update
+	var err error
 	if !scheme.Valid(d.Version) {
-		return nil, fmt.Errorf("unparsable version %q", d.Version)
+		// Resolve only lets non-version docker tags through (tagOnly): their digest is kept
+		// current; there are no releases to compare and no advisories to look up.
+		if up, err = r.digestUpdate(); err != nil {
+			return nil, err
+		}
+	} else if up, err = r.versionUpdate(t, scheme, vulns); err != nil {
+		return nil, err
 	}
+	if up != nil {
+		// Commit and grouping settings come from the policy of the chosen update type.
+		kp := r.pol.of(up.Type)
+		up.CommitType, up.CommitScope = kp.CommitType, kp.CommitScope
+		if len(up.Advisories) == 0 {
+			up.Group, up.Schedule = kp.Group, kp.Schedule
+		}
+	}
+	return up, nil
+}
+
+// versionUpdate resolves a dep with a valid version: Best under policy, else the digest
+// refresh or pin of the current version, then security, digest and checksum of the result.
+func (r *resolver) versionUpdate(t *Trace, scheme versioning.Scheme, vulns func() []Vuln) (*dep.Update, error) {
+	d := r.d
 	rels, err := r.ds.Releases(r.ctx, d, filepath.Join(r.root, filepath.FromSlash(path.Dir(d.File))))
 	if err != nil {
 		return nil, err
@@ -378,32 +433,15 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 	}
 	accept := func(v string, kind dep.UpdateType) (bool, string) { return r.pol.check(kind, scheme.Semver(v)) }
 
-	// Custom deps can only refresh a digest they already carry (regex `digest` group); they
-	// have no place to insert a new one.
-	digests := digestManagers[d.Manager] && (d.Versioning == "tag" || d.Versioning == "docker") ||
-		d.Manager == "custom" && d.Digest != ""
-	pinned := d.Digest != ""
-	wantDigest := digests && (pinned || r.pol.pre.Pin == config.PinDigest)
+	digests := digestCapable(d)
+	wantDigest := digests && (d.Digest != "" || r.pol.pre.Pin == config.PinDigest)
 
 	var up *dep.Update
 	if best, ok := r.best(scheme, names, accept, reject); ok {
 		up = &dep.Update{Dep: d, Type: scheme.Kind(d.Version, best), NewVersion: best}
 	} else if digests {
-		switch {
-		case pinned && r.pol.allows(dep.Digest):
-			c, err := r.digestOf(d.Version)
-			if err != nil {
-				return nil, err
-			}
-			if !strings.EqualFold(c, d.Digest) {
-				up = &dep.Update{Dep: d, Type: dep.Digest, NewVersion: d.Version, NewDigest: c}
-			}
-		case !pinned && r.pol.pre.Pin == config.PinDigest && r.pol.allows(dep.Pin):
-			c, err := r.digestOf(d.Version)
-			if err != nil {
-				return nil, err
-			}
-			up = &dep.Update{Dep: d, Type: dep.Pin, NewVersion: d.Version, NewDigest: c}
+		if up, err = r.digestUpdate(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -419,44 +457,119 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 			return nil, err
 		}
 	}
-	if up != nil {
-		// Commit and grouping settings come from the policy of the chosen update type.
-		kp := r.pol.of(up.Type)
-		up.CommitType, up.CommitScope = kp.CommitType, kp.CommitScope
-		if len(up.Advisories) == 0 {
-			up.Group, up.Schedule = kp.Group, kp.Schedule
-		}
-	}
 	return up, nil
 }
 
-// maxOlderMajors bounds how many stale major candidates best skips before giving up.
-const maxOlderMajors = 3
+// digestUpdate keeps the current version and refreshes its digest when pinned (Type digest,
+// nil when unchanged), or pins it under pin: digest (Type pin). It has no new version, so
+// allow and minimumReleaseAge do not apply.
+func (r *resolver) digestUpdate() (*dep.Update, error) {
+	d := r.d
+	switch {
+	case d.Digest != "" && r.pol.allows(dep.Digest):
+		c, err := r.digestOf(d.Version)
+		if err != nil {
+			return nil, err
+		}
+		if !strings.EqualFold(c, d.Digest) {
+			return &dep.Update{Dep: d, Type: dep.Digest, NewVersion: d.Version, NewDigest: c}, nil
+		}
+	case d.Digest == "" && r.pol.pre.Pin == config.PinDigest && r.pol.allows(dep.Pin):
+		c, err := r.digestOf(d.Version)
+		if err != nil {
+			return nil, err
+		}
+		return &dep.Update{Dep: d, Type: dep.Pin, NewVersion: d.Version, NewDigest: c}, nil
+	}
+	return nil, nil
+}
 
-// best wraps scheme.Best with one guard: a major update whose release predates the current
-// version is a legacy tag (k8s.io/client-go v1.5.2 from 2016 versus v0.37.1), not an upgrade.
-// Release times are only asked for such major candidates, and only when the datasource has
-// them; unknown times never reject.
+// Bounds of best's retries: stale major candidates skipped before giving up, and candidates
+// rejected in total (stale or too new).
+const (
+	maxOlderMajors = 3
+	maxRetries     = 50
+)
+
+// best wraps scheme.Best with two release-time guards, each re-running Best without the
+// rejected candidate (so the next best one is considered):
+//   - a major update whose release predates the current version is a legacy tag
+//     (k8s.io/client-go v1.5.2 from 2016 versus v0.37.1), not an upgrade;
+//   - a candidate released less than the minimumReleaseAge of its update type ago is too new.
+//
+// Release times are only asked when a guard applies and the datasource has them, at most
+// once per version; unknown times (zero or an error) never reject.
 func (r *resolver) best(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool) {
 	cur := r.d.Version
 	timer, _ := r.ds.(datasource.Timer)
-	for range maxOlderMajors {
-		best, ok := scheme.Best(cur, names, accept, reject)
-		if !ok || timer == nil || scheme.Kind(cur, best) != dep.Major {
+	older := 0
+	for i := range maxRetries {
+		rej := reject
+		if i > 0 {
+			rej = nil // Best's rejections of the remaining names were recorded by the first call
+		}
+		best, ok := scheme.Best(cur, names, accept, rej)
+		if !ok || timer == nil {
 			return best, ok
 		}
-		tb, errB := timer.ReleaseTime(r.ctx, r.d, best)
-		tc, errC := timer.ReleaseTime(r.ctx, r.d, cur)
-		if errB != nil || errC != nil || tb.IsZero() || tc.IsZero() || !tb.Before(tc) {
-			return best, ok
+		kind := scheme.Kind(cur, best)
+		var reason string
+		if kind == dep.Major && r.olderThanCurrent(timer, best) {
+			slog.DebugContext(r.ctx, "major candidate older than current", "name", r.d.Name, "current", cur, "candidate", best)
+			reason = "older than current"
+			older++
+		} else if age := r.pol.of(kind).MinAge; age > 0 {
+			if tb := r.releaseTime(timer, best); tb.IsZero() {
+				slog.DebugContext(r.ctx, "release time unknown, minimum release age not enforced", "name", r.d.Name, "candidate", best)
+			} else if r.now.Sub(tb) < age {
+				slog.DebugContext(r.ctx, "candidate too new", "name", r.d.Name, "candidate", best, "released", tb, "minimumReleaseAge", age)
+				reason = fmt.Sprintf("too new (released %s, minimum %s)", tb.UTC().Format(time.DateOnly), config.FormatAge(age))
+			}
 		}
-		slog.DebugContext(r.ctx, "major candidate older than current", "name", r.d.Name, "current", cur, "candidate", best)
+		if reason == "" {
+			return best, true
+		}
 		if reject != nil {
-			reject(best, "older than current")
+			reject(best, reason)
 		}
-		names = slices.DeleteFunc(slices.Clone(names), func(v string) bool { return v == best })
+		if older == maxOlderMajors {
+			return "", false
+		}
+		if i == 0 {
+			names = slices.Clone(names) // the releases may be shared
+		}
+		names = slices.DeleteFunc(names, func(v string) bool { return v == best })
 	}
 	return "", false
+}
+
+// olderThanCurrent reports whether candidate was released before the current version; false
+// when either time is unknown.
+func (r *resolver) olderThanCurrent(timer datasource.Timer, candidate string) bool {
+	tb := r.releaseTime(timer, candidate)
+	if tb.IsZero() {
+		return false
+	}
+	tc := r.releaseTime(timer, r.d.Version)
+	return !tc.IsZero() && tb.Before(tc)
+}
+
+// releaseTime returns when version was released, asking the datasource once per version;
+// zero when unknown (errors are logged and treated as unknown).
+func (r *resolver) releaseTime(timer datasource.Timer, version string) time.Time {
+	if t, ok := r.times[version]; ok {
+		return t
+	}
+	t, err := timer.ReleaseTime(r.ctx, r.d, version)
+	if err != nil {
+		slog.DebugContext(r.ctx, "release time lookup failed", "name", r.d.Name, "version", version, "err", err)
+		t = time.Time{}
+	}
+	if r.times == nil {
+		r.times = make(map[string]time.Time, 2)
+	}
+	r.times[version] = t
+	return t
 }
 
 // digestOf returns the digest of version from the releases, asking the datasource when the

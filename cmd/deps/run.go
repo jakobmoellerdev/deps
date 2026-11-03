@@ -99,6 +99,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		AuthorName:   r.authorName,
 		AuthorEmail:  r.authorEmail,
 		DryRun:       r.dryRun,
+		RebaseWhen:   s.cfg.RebaseWhen,
 		MaxNewPRs:    r.maxNewPRs,
 		Managers:     s.managers,
 		BranchPrefix: s.cfg.Prefix(),
@@ -112,7 +113,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		switch {
 		case a.Status == bot.StatusCreated:
 			created++
-		case a.Status == bot.StatusUpdated:
+		case a.Status == bot.StatusUpdated || a.Status == bot.StatusRebased:
 			updated++
 		case a.Status == bot.StatusClosed:
 			closed++

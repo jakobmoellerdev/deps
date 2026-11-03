@@ -29,7 +29,7 @@ type Git interface {
 	Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, name, email string) (string, error)
 	Push(ctx context.Context, commit, branch, expected string) error
 	DeleteBranch(ctx context.Context, branch string) error
-	BranchAuthorEmail(ctx context.Context, branch string) (string, error)
+	BranchTip(ctx context.Context, branch string) (author string, parents []string, err error)
 }
 
 // Options configure Run.
@@ -37,6 +37,7 @@ type Options struct {
 	Base, AuthorName, AuthorEmail string
 	BranchPrefix                  string // managed branch prefix, ending in '/'; "" = config.DefaultBranchPrefix
 	DryRun                        bool
+	RebaseWhen                    string            // config.RebaseWhens; "" = config.RebaseConflicted
 	MaxNewPRs                     int               // PRs created per run; 0 = unlimited
 	Managers                      []manager.Manager // edit the updates' files (engine.Build)
 	Now                           time.Time         // schedule evaluation time; zero = time.Now()
@@ -53,9 +54,11 @@ type Notes interface {
 const (
 	StatusCreated      = "created"
 	StatusUpdated      = "updated"
+	StatusRebased      = "rebased"
 	StatusUpToDate     = "up-to-date"
 	StatusWouldCreate  = "would-create"
 	StatusWouldUpdate  = "would-update"
+	StatusWouldRebase  = "would-rebase"
 	StatusClosed       = "closed"
 	StatusSkipClosed   = "skipped: closed PR for this version"
 	StatusSkipLimit    = "skipped: new PR limit reached"
@@ -204,11 +207,35 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 		return a, nil
 	}
 
+	ref := "refs/heads/" + grp.Branch
+	expected, exists := branches[ref]
+	// The branch tip is fetched at most once, and only when the author or parent is needed.
+	var author string
+	var parents []string
+	fetched := false
+	tip := func() error {
+		if fetched {
+			return nil
+		}
+		a, p, err := g.BranchTip(ctx, grp.Branch)
+		if err != nil {
+			return err
+		}
+		author, parents, fetched = a, p, true
+		slog.DebugContext(ctx, "branch tip", "branch", grp.Branch, "author", author, "want", o.AuthorEmail, "parents", parents)
+		return nil
+	}
+
 	fp := fingerprint(changes)
+	rebase := false
 	if pr != nil {
 		slog.DebugContext(ctx, "open PR found", "branch", grp.Branch, "number", pr.Number, "fingerprint", fp, "prFingerprint", bodyFingerprint(pr.Body))
 	}
 	if pr != nil && bodyFingerprint(pr.Body) == fp {
+		if o.RebaseWhen == config.RebaseNever {
+			a.Status = StatusUpToDate
+			return a, nil
+		}
 		mergeable := pr.Mergeable
 		if mergeable == nil {
 			full, err := pc.GetPR(ctx, pr.Number)
@@ -217,33 +244,46 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 			}
 			mergeable = full.Mergeable
 		}
-		if mergeable == nil || *mergeable {
-			a.Status = StatusUpToDate
-			return a, nil
+		if mergeable != nil && !*mergeable {
+			slog.DebugContext(ctx, "PR not mergeable, rebuilding", "branch", grp.Branch, "number", pr.Number)
+		} else {
+			if o.RebaseWhen != config.RebaseBehindBase || !exists {
+				a.Status = StatusUpToDate
+				return a, nil
+			}
+			if err := tip(); err != nil {
+				return a, err
+			}
+			// deps branches are one commit on top of base; any other parent means base moved.
+			if author == o.AuthorEmail && len(parents) == 1 && parents[0] == head {
+				a.Status = StatusUpToDate
+				return a, nil
+			}
+			slog.DebugContext(ctx, "branch behind base, rebasing", "branch", grp.Branch, "number", pr.Number, "head", short(head))
+			rebase = true
 		}
-		slog.DebugContext(ctx, "PR not mergeable, rebuilding", "branch", grp.Branch, "number", pr.Number)
 	}
 	if pr == nil && o.MaxNewPRs > 0 && *created >= o.MaxNewPRs {
 		a.Status = StatusSkipLimit
 		return a, nil
 	}
-	ref := "refs/heads/" + grp.Branch
-	expected, exists := branches[ref]
 	if exists {
-		email, err := g.BranchAuthorEmail(ctx, grp.Branch)
-		if err != nil {
+		if err := tip(); err != nil {
 			return a, err
 		}
-		slog.DebugContext(ctx, "branch author", "branch", grp.Branch, "email", email, "want", o.AuthorEmail)
-		if email != o.AuthorEmail {
+		if author != o.AuthorEmail {
 			a.Status = StatusSkipModified
 			return a, nil
 		}
 	}
 	if o.DryRun {
-		a.Status = StatusWouldCreate
-		if pr != nil {
+		switch {
+		case rebase:
+			a.Status = StatusWouldRebase
+		case pr != nil:
 			a.Status = StatusWouldUpdate
+		default:
+			a.Status = StatusWouldCreate
 		}
 		return a, nil
 	}
@@ -255,6 +295,11 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 	slog.DebugContext(ctx, "pushing", "branch", grp.Branch, "commit", short(commit), "expected", short(expected))
 	if err := g.Push(ctx, commit, grp.Branch, expected); err != nil {
 		return a, err
+	}
+	if rebase {
+		// Content and fingerprint are unchanged, so the PR title and body stay as they are.
+		a.Status = StatusRebased
+		return a, nil
 	}
 	// Notes are fetched only for PRs that are actually written; the fingerprint covers file
 	// contents only, so changing upstream notes never churns PRs.

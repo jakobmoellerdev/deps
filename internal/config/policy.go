@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/bmatcuk/doublestar/v4"
@@ -33,6 +34,7 @@ type Policy struct {
 	CommitType   string         // conventional commit type: fix for production deps, chore otherwise
 	CommitScope  string         // conventional commit scope, "" = none
 	Kind         dep.UpdateType // update type of a PolicyFor result, "" for Policy
+	MinAge       time.Duration  // minimum release age of new versions, 0 = off
 }
 
 // production reports whether d is a production dep, which gets the fix commit type by
@@ -81,6 +83,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		Pin:         c.Pin,
 		Updates:     make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
 		Schedule:    c.schedule,
+		MinAge:      c.minAge,
 		CommitType:  CommitChore,
 		CommitScope: DefaultScope,
 		Kind:        kind,
@@ -136,6 +139,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		}
 		if r.CommitScope != nil {
 			p.CommitScope = *r.CommitScope
+		}
+		if r.minAge != nil {
+			p.MinAge = *r.minAge
 		}
 	}
 	return p

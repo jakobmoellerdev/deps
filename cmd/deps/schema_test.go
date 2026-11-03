@@ -82,13 +82,14 @@ func TestSchema(t *testing.T) {
 		{"rules.commitType", rule.Properties["commitType"], config.CommitTypes},
 		{"custom.datasource", custom.Properties["datasource"], config.DatasourceNames},
 		{"custom.versioning", custom.Properties["versioning"], config.Versionings},
+		{"rebaseWhen", s.Properties["rebaseWhen"], config.RebaseWhens},
 	}
 	for _, e := range enums {
 		if got := strs(e.got.Enum); !slices.Equal(got, e.want) {
 			t.Errorf("%s enum = %v, want %v (keep the jsonschema tags in sync)", e.name, got, e.want)
 		}
 	}
-	if want := []string{"version", "pin", "timezone", "schedule", "security", "branchPrefix", "monorepos", "actions", "ignorePaths", "rules", "custom"}; len(s.Properties) != len(want) {
+	if want := []string{"version", "pin", "timezone", "schedule", "security", "branchPrefix", "rebaseWhen", "monorepos", "actions", "minimumReleaseAge", "ignorePaths", "rules", "custom"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
 		for _, k := range want {

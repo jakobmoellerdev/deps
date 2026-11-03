@@ -120,6 +120,11 @@ func TestLoadErrors(t *testing.T) {
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: 'u/{{version}', file: f}}]\n", "custom[0].checksum.url: unbalanced template braces"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, file: '{{name}}'}}]\n", "custom[0].checksum.file: unknown template variable {{name}}"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, pathh: f}}]\n", "line 1"},
+		{"rebaseWhen: always\n", `rebaseWhen: must be one of conflicted, behind-base-branch, never, got "always"`},
+		{"minimumReleaseAge: soon\n", `minimumReleaseAge: invalid age "soon"`},
+		{"minimumReleaseAge: -1h\n", `minimumReleaseAge: invalid age "-1h"`},
+		{"minimumReleaseAge: 99999999999999999 weeks\n", "minimumReleaseAge: age \"99999999999999999 weeks\" out of range"},
+		{"rules: [{minimumReleaseAge: 3 fortnights}]\n", `rules[0].minimumReleaseAge: invalid age "3 fortnights"`},
 	} {
 		_, err := load(t, ".deps.yaml", tc.body)
 		var ce *Error
@@ -570,5 +575,67 @@ func TestPolicyFor(t *testing.T) {
 	ca := c.PolicyFor(cache, dep.Minor)
 	if ca.CommitType != "ci" || ca.Allow == nil || ca.Schedule == nil || !ca.Accepts(dep.Minor, GoTestVer("4.1.0")) || ca.Accepts(dep.Minor, GoTestVer("5.0.0")) {
 		t.Errorf("cache minor: %+v", ca)
+	}
+}
+
+func TestParseAge(t *testing.T) {
+	day := 24 * time.Hour
+	for in, want := range map[string]time.Duration{
+		"28 days": 28 * day, "1 day": day, "3d": 3 * day, "12h": 12 * time.Hour, "90m": 90 * time.Minute,
+		"2 weeks": 14 * day, "1w": 7 * day, "5 minutes": 5 * time.Minute, "3 hours": 3 * time.Hour, "1h30m": 90 * time.Minute,
+		"0": 0, "0 days": 0, "0s": 0,
+	} {
+		if got, err := ParseAge(in); err != nil || got != want {
+			t.Errorf("ParseAge(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "soon", "-3h", "3 months", "days", "1.5 days"} {
+		if _, err := ParseAge(in); err == nil {
+			t.Errorf("ParseAge(%q): no error", in)
+		}
+	}
+	for d, want := range map[time.Duration]string{0: "0", day: "1 day", 28 * day: "28 days", 12 * time.Hour: "12h", 90 * time.Minute: "90m", 90 * time.Second: "1m30s"} {
+		if got := FormatAge(d); got != want {
+			t.Errorf("FormatAge(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestMinimumReleaseAgePolicy(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `minimumReleaseAge: 28 days
+rebaseWhen: behind-base-branch
+rules:
+  - manager: npm
+    minimumReleaseAge: 3d
+  - names: ["cosign"]
+    minimumReleaseAge: 0 days
+  - manager: gomod
+    updateTypes: [patch]
+    minimumReleaseAge: 12h
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RebaseWhen != RebaseBehindBase {
+		t.Errorf("rebaseWhen = %q", c.RebaseWhen)
+	}
+	day := 24 * time.Hour
+	for _, tc := range []struct {
+		d    dep.Dep
+		kind dep.UpdateType
+		want time.Duration
+	}{
+		{dep.Dep{Manager: "docker", Name: "alpine"}, "", 28 * day},
+		{dep.Dep{Manager: "npm", Name: "react"}, "", 3 * day},
+		{dep.Dep{Manager: "npm", Name: "cosign"}, "", 0},
+		{dep.Dep{Manager: "gomod", Name: "x"}, dep.Minor, 28 * day},
+		{dep.Dep{Manager: "gomod", Name: "x"}, dep.Patch, 12 * time.Hour},
+	} {
+		if got := c.PolicyFor(tc.d, tc.kind).MinAge; got != tc.want {
+			t.Errorf("%s %s: MinAge = %v, want %v", tc.d.Name, tc.kind, got, tc.want)
+		}
+	}
+	if got := Default().Policy(dep.Dep{}).MinAge; got != 0 {
+		t.Errorf("default MinAge = %v", got)
 	}
 }

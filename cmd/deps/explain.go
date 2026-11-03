@@ -218,6 +218,9 @@ func describeRule(r config.Rule) string {
 	if r.Schedule != nil {
 		add("schedule", "["+strings.Join(r.Schedule, "; ")+"]")
 	}
+	if r.MinimumReleaseAge != "" {
+		add("minimumReleaseAge", r.MinimumReleaseAge)
+	}
 	if len(f) == 0 {
 		return "(matches all)"
 	}
@@ -235,8 +238,12 @@ func describePolicy(p config.Policy) string {
 			updates = append(updates, string(u))
 		}
 	}
-	return fmt.Sprintf("pin=%s allow=%s updates=%s group=%s schedule=%s",
-		p.Pin, allow, orDash(strings.Join(updates, ",")), orDash(p.Group), p.Schedule.String())
+	minAge := "-"
+	if p.MinAge > 0 {
+		minAge = config.FormatAge(p.MinAge)
+	}
+	return fmt.Sprintf("pin=%s allow=%s updates=%s group=%s schedule=%s minAge=%s",
+		p.Pin, allow, orDash(strings.Join(updates, ",")), orDash(p.Group), p.Schedule.String(), minAge)
 }
 
 // describeRejected renders "<reason>: <n> (<newest versions>, ...)" per reason, the most

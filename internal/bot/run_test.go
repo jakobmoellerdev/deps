@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -32,12 +33,14 @@ func fail(m map[string]error, method, arg string) error {
 }
 
 type fakeGit struct {
-	branches map[string]string // ref -> sha
-	authors  map[string]string // branch -> email
+	branches map[string]string   // ref -> sha
+	authors  map[string]string   // branch -> email
+	parents  map[string][]string // branch -> tip parents; unset = [head]
 	fail     map[string]error
 	pushed   []string // branches
 	deleted  []string
 	patterns []string // LsRemote patterns
+	tips     []string // BranchTip branches
 }
 
 func (g *fakeGit) RevParse(context.Context, string) (string, error) {
@@ -74,8 +77,13 @@ func (g *fakeGit) DeleteBranch(_ context.Context, branch string) error {
 	g.deleted = append(g.deleted, branch)
 	return nil
 }
-func (g *fakeGit) BranchAuthorEmail(_ context.Context, branch string) (string, error) {
-	return g.authors[branch], fail(g.fail, "BranchAuthorEmail", branch)
+func (g *fakeGit) BranchTip(_ context.Context, branch string) (string, []string, error) {
+	g.tips = append(g.tips, branch)
+	parents, ok := g.parents[branch]
+	if !ok {
+		parents = []string{head}
+	}
+	return g.authors[branch], parents, fail(g.fail, "BranchTip", branch)
 }
 
 type fakePC struct {
@@ -186,6 +194,7 @@ func TestRun(t *testing.T) {
 		wantClosed  int
 		wantDeleted int
 		wantGetPR   int
+		wantTips    int // BranchTip fetches
 	}{
 		{
 			name:        "create both",
@@ -206,14 +215,14 @@ func TestRun(t *testing.T) {
 			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &no}}},
 			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated},
-			wantPushed: 2, wantCreated: 1, wantUpdated: 1,
+			wantPushed: 2, wantCreated: 1, wantUpdated: 1, wantTips: 1,
 		},
 		{
 			name:       "fingerprint change updates",
 			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Body: "<!-- deps:fingerprint=0000000000000000 -->"}}},
 			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated},
-			wantPushed: 2, wantCreated: 1, wantUpdated: 1,
+			wantPushed: 2, wantCreated: 1, wantUpdated: 1, wantTips: 1,
 		},
 		{
 			name:       "closed unmerged PR with same title is respected",
@@ -237,7 +246,7 @@ func TestRun(t *testing.T) {
 			name:       "foreign commit on branch",
 			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: "human@example.com"}},
 			wantStatus: map[string]string{branchA: StatusSkipModified, branchB: StatusCreated},
-			wantPushed: 1, wantCreated: 1,
+			wantPushed: 1, wantCreated: 1, wantTips: 1,
 		},
 		{
 			name:       "dry run writes nothing",
@@ -272,7 +281,7 @@ func TestRun(t *testing.T) {
 			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A"}}, mergeable: &no},
 			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated},
-			wantPushed: 2, wantCreated: 1, wantUpdated: 1, wantGetPR: 1,
+			wantPushed: 2, wantCreated: 1, wantUpdated: 1, wantGetPR: 1, wantTips: 1,
 		},
 		{
 			name:       "GetPR failure isolated to its group",
@@ -305,10 +314,10 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:       "branch author lookup failure",
-			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, fail: map[string]error{"BranchAuthorEmail:" + branchA: errBoom}},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, fail: map[string]error{"BranchTip:" + branchA: errBoom}},
 			wantStatus: map[string]string{branchB: StatusCreated},
 			wantErrs:   []string{branchA + ": boom"},
-			wantPushed: 1, wantCreated: 1,
+			wantPushed: 1, wantCreated: 1, wantTips: 1,
 		},
 		{
 			name:       "CreatePR failure after push",
@@ -323,7 +332,7 @@ func TestRun(t *testing.T) {
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA}}, fail: map[string]error{"UpdatePR": errBoom}},
 			wantStatus: map[string]string{branchB: StatusCreated},
 			wantErrs:   []string{branchA + ": boom"},
-			wantPushed: 2, wantCreated: 1,
+			wantPushed: 2, wantCreated: 1, wantTips: 1,
 		},
 		{
 			name:       "ClosePR failure keeps the branch",
@@ -340,6 +349,86 @@ func TestRun(t *testing.T) {
 			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantErrs:   []string{"delete deps/gomod/gone: boom"},
 			wantPushed: 2, wantCreated: 2, wantClosed: 1,
+		},
+		{
+			name:       "behind base, same content, mergeable is rebased",
+			opts:       Options{RebaseWhen: config.RebaseBehindBase},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}, parents: map[string][]string{branchA: {"old"}}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
+			wantStatus: map[string]string{branchA: StatusRebased, branchB: StatusCreated},
+			wantPushed: 2, wantCreated: 1, wantTips: 1,
+		},
+		{
+			name:       "behind base in conflicted mode is up to date without fetching",
+			opts:       Options{RebaseWhen: config.RebaseConflicted},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}, parents: map[string][]string{branchA: {"old"}}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
+			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
+			wantPushed: 1, wantCreated: 1,
+		},
+		{
+			name:       "parent is base head is up to date",
+			opts:       Options{RebaseWhen: config.RebaseBehindBase},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
+			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
+			wantPushed: 1, wantCreated: 1, wantTips: 1,
+		},
+		{
+			name:       "behind base with foreign author is skipped",
+			opts:       Options{RebaseWhen: config.RebaseBehindBase},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: "human@example.com"}, parents: map[string][]string{branchA: {"old"}}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
+			wantStatus: map[string]string{branchA: StatusSkipModified, branchB: StatusCreated},
+			wantPushed: 1, wantCreated: 1, wantTips: 1,
+		},
+		{
+			name:       "behind base with open PR but no branch is up to date",
+			opts:       Options{RebaseWhen: config.RebaseBehindBase},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
+			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
+			wantPushed: 1, wantCreated: 1,
+		},
+		{
+			name:       "behind base tip fetch failure",
+			opts:       Options{RebaseWhen: config.RebaseBehindBase},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, fail: map[string]error{"BranchTip:" + branchA: errBoom}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
+			wantStatus: map[string]string{branchB: StatusCreated},
+			wantErrs:   []string{branchA + ": boom"},
+			wantPushed: 1, wantCreated: 1, wantTips: 1,
+		},
+		{
+			name:       "conflicted PR in behind mode is rebuilt with one fetch",
+			opts:       Options{RebaseWhen: config.RebaseBehindBase},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}, parents: map[string][]string{branchA: {"old"}}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &no}}},
+			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated},
+			wantPushed: 2, wantCreated: 1, wantUpdated: 1, wantTips: 1,
+		},
+		{
+			name:       "never mode leaves a conflicted PR alone",
+			opts:       Options{RebaseWhen: config.RebaseNever},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}, parents: map[string][]string{branchA: {"old"}}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &no}}},
+			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
+			wantPushed: 1, wantCreated: 1,
+		},
+		{
+			name:       "never mode still updates changed content",
+			opts:       Options{RebaseWhen: config.RebaseNever},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Body: "<!-- deps:fingerprint=0000000000000000 -->"}}},
+			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated},
+			wantPushed: 2, wantCreated: 1, wantUpdated: 1, wantTips: 1,
+		},
+		{
+			name:       "dry run would rebase",
+			opts:       Options{RebaseWhen: config.RebaseBehindBase, DryRun: true},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}, parents: map[string][]string{branchA: {"old"}}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
+			wantStatus: map[string]string{branchA: StatusWouldRebase, branchB: StatusWouldCreate},
+			wantTips:   1,
 		},
 	}
 	for _, tt := range tests {
@@ -372,6 +461,9 @@ func TestRun(t *testing.T) {
 			}
 			if len(tt.pc.got) != tt.wantGetPR {
 				t.Errorf("GetPR calls = %v, want %d", tt.pc.got, tt.wantGetPR)
+			}
+			if len(tt.git.tips) != tt.wantTips {
+				t.Errorf("BranchTip calls = %v, want %d", tt.git.tips, tt.wantTips)
 			}
 			got := map[string]string{}
 			for _, a := range acts {

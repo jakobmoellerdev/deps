@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,13 +38,22 @@ type Lister struct {
 
 	mu    sync.Mutex
 	cache map[string]*entry
-	times map[string]*timeEntry // repository URL + "@" + tag
+	lists map[string]*listEntry // repository URL -> first page of releases
+	times map[string]*timeEntry // repository URL + "@" + tag, for tags not in the list
 }
 
 type timeEntry struct {
 	once sync.Once
 	t    time.Time
 	err  error
+}
+
+// listEntry is one page of a repository's releases.
+type listEntry struct {
+	once     sync.Once
+	times    map[string]time.Time // tag -> published_at; drafts are omitted
+	complete bool                 // the page holds every release: absent tags have none
+	err      error
 }
 
 type entry struct {
@@ -58,7 +68,7 @@ type entry struct {
 func New(client *http.Client, auth *httpx.Auth, sem chan struct{}) *Lister {
 	return &Lister{
 		client: client, auth: auth, sem: sem, githubAPI: "https://api.github.com",
-		cache: make(map[string]*entry), times: make(map[string]*timeEntry),
+		cache: make(map[string]*entry), lists: make(map[string]*listEntry), times: make(map[string]*timeEntry),
 	}
 }
 
@@ -93,9 +103,33 @@ func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string,
 // ReleaseTime implements datasource.Timer with the `published_at` of the release of tag version
 // in d.Source, via the GitHub API for github.com and the Gitea/Forgejo API
 // (`<server>/api/v1`) for other hosts. Tags are not dated, so a tag without a release, or a
-// host without either API, is unknown (zero). Results are deduped per (repository, tag).
+// host without either API, is unknown (zero).
+//
+// The first page of the repository's releases is fetched once per repository and serves every
+// tag on it; only tags missing from a full page are looked up individually, once per tag.
 func (l *Lister) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
-	key := strings.TrimSuffix(d.Source, "/") + "@" + version
+	repoURL := strings.TrimSuffix(d.Source, "/")
+	l.mu.Lock()
+	le := l.lists[repoURL]
+	if le == nil {
+		le = &listEntry{}
+		l.lists[repoURL] = le
+	}
+	l.mu.Unlock()
+	le.once.Do(func() {
+		le.times, le.complete, le.err = l.releaseList(ctx, repoURL)
+		slog.DebugContext(ctx, "releases listed", "repo", repoURL, "releases", len(le.times), "complete", le.complete, "err", le.err)
+	})
+	if le.err != nil {
+		return time.Time{}, le.err
+	}
+	if t, ok := le.times[version]; ok {
+		return t, nil
+	}
+	if le.complete {
+		return time.Time{}, nil
+	}
+	key := repoURL + "@" + version
 	l.mu.Lock()
 	e := l.times[key]
 	if e == nil {
@@ -104,10 +138,51 @@ func (l *Lister) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 	}
 	l.mu.Unlock()
 	e.once.Do(func() {
-		e.t, e.err = l.releaseTime(ctx, d.Source, version)
-		slog.DebugContext(ctx, "tag release time", "repo", d.Source, "tag", version, "time", e.t, "err", e.err)
+		e.t, e.err = l.releaseTime(ctx, repoURL, version)
+		slog.DebugContext(ctx, "tag release time", "repo", repoURL, "tag", version, "time", e.t, "err", e.err)
 	})
 	return e.t, e.err
+}
+
+// Page sizes of the releases list: GitHub allows 100, Gitea/Forgejo cap at MAX_RESPONSE_ITEMS
+// (default 50).
+const (
+	githubListSize = 100
+	giteaListSize  = 50
+)
+
+// releaseList fetches the first page of releases of repoURL. A host without the API (404 or a
+// non-JSON answer) yields a complete, empty list: every tag is unknown without further requests.
+// A page shorter than requested is complete.
+func (l *Lister) releaseList(ctx context.Context, repoURL string) (map[string]time.Time, bool, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Host == "" {
+		return nil, false, fmt.Errorf("releases: invalid repository %q", repoURL)
+	}
+	repo := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+	path, size := "/repos/"+repo+"/releases?limit="+strconv.Itoa(giteaListSize), giteaListSize
+	if strings.EqualFold(u.Hostname(), "github.com") {
+		path, size = "/repos/"+repo+"/releases?per_page="+strconv.Itoa(githubListSize), githubListSize
+	}
+	var rels []struct {
+		TagName     string     `json:"tag_name"`
+		Draft       bool       `json:"draft"`
+		PublishedAt *time.Time `json:"published_at"`
+	}
+	found, err := l.getJSON(ctx, u, path, &rels)
+	if err != nil {
+		return nil, false, fmt.Errorf("releases of %s: %w", repo, err)
+	}
+	if !found {
+		return nil, true, nil
+	}
+	times := make(map[string]time.Time, len(rels))
+	for _, r := range rels {
+		if !r.Draft && r.PublishedAt != nil && r.TagName != "" {
+			times[r.TagName] = *r.PublishedAt
+		}
+	}
+	return times, len(rels) < size, nil
 }
 
 func (l *Lister) releaseTime(ctx context.Context, repoURL, tag string) (time.Time, error) {
@@ -120,19 +195,34 @@ func (l *Lister) releaseTime(ctx context.Context, repoURL, tag string) (time.Tim
 	for i, s := range segs {
 		segs[i] = url.PathEscape(s)
 	}
-	path := "/repos/" + repo + "/releases/tags/" + strings.Join(segs, "/")
+	var rel struct {
+		PublishedAt *time.Time `json:"published_at"`
+	}
+	found, err := l.getJSON(ctx, u, "/repos/"+repo+"/releases/tags/"+strings.Join(segs, "/"), &rel)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("release %s of %s: %w", tag, repo, err)
+	}
+	if !found || rel.PublishedAt == nil {
+		return time.Time{}, nil
+	}
+	return *rel.PublishedAt, nil
+}
+
+// getJSON GETs path from the forge API of repository u into v. found is false on 404 or when
+// the body is not JSON (a host without the API may answer with a web page): unknown, not an error.
+func (l *Lister) getJSON(ctx context.Context, u *url.URL, path string, v any) (found bool, err error) {
 	_, token, authed := l.auth.Static(u.Hostname())
 	target, scheme := u.Scheme+"://"+u.Host+"/api/v1"+path, "token "
 	if strings.EqualFold(u.Hostname(), "github.com") {
 		target, scheme = l.githubAPI+path, "Bearer "
 	}
 	if err := l.acquire(ctx); err != nil {
-		return time.Time{}, err
+		return false, err
 	}
 	defer l.release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("release %s of %s: %w", tag, repo, err)
+		return false, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", httpx.UserAgent())
@@ -141,23 +231,19 @@ func (l *Lister) releaseTime(ctx context.Context, repoURL, tag string) (time.Tim
 	}
 	resp, err := l.client.Do(req)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("release %s of %s: %w", tag, repo, err)
+		return false, err
 	}
 	defer closeBody(resp)
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return time.Time{}, nil
+		return false, nil
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		return time.Time{}, fmt.Errorf("release %s of %s: HTTP %d", tag, repo, resp.StatusCode)
+		return false, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	var rel struct {
-		PublishedAt *time.Time `json:"published_at"`
+	if json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(v) != nil {
+		return false, nil
 	}
-	// A host without the API may answer with a web page: unknown, not an error.
-	if json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&rel) != nil || rel.PublishedAt == nil {
-		return time.Time{}, nil
-	}
-	return *rel.PublishedAt, nil
+	return true, nil
 }
 
 func (l *Lister) get(ctx context.Context, repoURL string) *entry {

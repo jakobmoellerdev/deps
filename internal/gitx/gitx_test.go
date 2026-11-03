@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -205,23 +206,23 @@ func TestPushDeleteAuthor(t *testing.T) {
 	}
 
 	// Full clone: fetch must not make it shallow.
-	email, err := r.BranchAuthorEmail(ctx, br)
-	if err != nil || email != "bot@example.com" {
-		t.Fatalf("BranchAuthorEmail = %q, %v", email, err)
+	author, parents, err := r.BranchTip(ctx, br)
+	if err != nil || author != "bot@example.com" || !slices.Equal(parents, []string{parent}) {
+		t.Fatalf("BranchTip = %q, %v, %v; want parent %s", author, parents, err, parent)
 	}
 	if s := git(t, clone, "rev-parse", "--is-shallow-repository"); s != "false" {
 		t.Fatalf("full clone became shallow: %s", s)
 	}
 
-	// Shallow clone.
+	// Shallow clone: the fetched tip is grafted, but its recorded parent is still reported.
 	shallow := filepath.Join(t.TempDir(), "shallow")
 	git(t, clone, "clone", "-q", "--depth=1", "file://"+origin, shallow)
 	if s := git(t, shallow, "rev-parse", "--is-shallow-repository"); s != "true" {
 		t.Fatalf("clone not shallow: %s", s)
 	}
-	email, err = (Repo{Dir: shallow}).BranchAuthorEmail(ctx, br)
-	if err != nil || email != "bot@example.com" {
-		t.Fatalf("shallow BranchAuthorEmail = %q, %v", email, err)
+	author, parents, err = (Repo{Dir: shallow}).BranchTip(ctx, br)
+	if err != nil || author != "bot@example.com" || !slices.Equal(parents, []string{parent}) {
+		t.Fatalf("shallow BranchTip = %q, %v, %v; want parent %s", author, parents, err, parent)
 	}
 
 	if err := r.DeleteBranch(ctx, br); err != nil {
@@ -230,10 +231,28 @@ func TestPushDeleteAuthor(t *testing.T) {
 	if tip() != "" {
 		t.Fatalf("branch still exists at %s", tip())
 	}
-	if _, err := r.BranchAuthorEmail(ctx, br); err == nil {
-		t.Fatal("BranchAuthorEmail of deleted branch succeeded")
+	if _, _, err := r.BranchTip(ctx, br); err == nil {
+		t.Fatal("BranchTip of deleted branch succeeded")
 	}
-	if _, err := (Repo{Dir: t.TempDir()}).BranchAuthorEmail(ctx, br); err == nil {
-		t.Fatal("BranchAuthorEmail outside a repo succeeded")
+	if _, _, err := (Repo{Dir: t.TempDir()}).BranchTip(ctx, br); err == nil {
+		t.Fatal("BranchTip outside a repo succeeded")
+	}
+}
+
+func TestParseCommitHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name, obj, email string
+		parents          []string
+	}{
+		{"root", "tree t\nauthor A B <a@b> 1 +0000\ncommitter C <c@d> 1 +0000\n\nmsg\n", "a@b", nil},
+		{"merge", "tree t\nparent p1\nparent p2\nauthor A <a@b> 1 +0000\n\nparent fake\n", "a@b", []string{"p1", "p2"}},
+		{"malformed author", "tree t\nparent p\nauthor nobody\n", "", []string{"p"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			email, parents := parseCommitHeader(tc.obj)
+			if email != tc.email || !slices.Equal(parents, tc.parents) {
+				t.Errorf("got %q %v, want %q %v", email, parents, tc.email, tc.parents)
+			}
+		})
 	}
 }

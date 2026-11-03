@@ -5,7 +5,8 @@
 // [versioning=<scheme>] [registryUrl=<url>]` annotates the next line, whose first version
 // token is the dependency version. For the docker datasource the next line's first image
 // reference with a tag wins instead: its tag is the version and a following `@sha256:` digest
-// is captured, so tag and digest update together.
+// is captured, so tag and digest update together; a non-version tag (`latest`) with a digest
+// keeps its tag and only gets its digest refreshed.
 // Regex mode: an RE2 `match` with a required `version` (alias `currentValue`) group and
 // optional `name` (aliases `depName`, `packageName`), `datasource`, `versioning` and `digest`
 // (alias `currentDigest`) groups is run over the whole file; every match is a dependency.
