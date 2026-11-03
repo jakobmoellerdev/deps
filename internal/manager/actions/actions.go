@@ -6,9 +6,10 @@ import (
 	"regexp"
 	"strings"
 
+	"go.yaml.in/yaml/v3"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
-	"go.yaml.in/yaml/v3"
 )
 
 // Name is the manager name.

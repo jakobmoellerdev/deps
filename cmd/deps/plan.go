@@ -51,7 +51,9 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	} else {
 		out := cmd.OutOrStdout()
 		for _, c := range changes {
-			io.WriteString(out, udiff.Unified("a/"+c.Path, "b/"+c.Path, string(c.Old), string(c.New)))
+			if _, err := io.WriteString(out, udiff.Unified("a/"+c.Path, "b/"+c.Path, string(c.Old), string(c.New))); err != nil {
+				return fmt.Errorf("write diff: %w", err)
+			}
 		}
 	}
 	errs := append(append([]error(nil), res.Errors...), buildErrs...)

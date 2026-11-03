@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,7 +145,7 @@ func TestCommit(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(clone, "sub", "run.sh")); !os.IsNotExist(err) {
 		t.Errorf("run.sh created in working tree: %v", err)
 	}
-	if after, _ := os.ReadFile(filepath.Join(clone, ".git", "index")); string(after) != string(indexBefore) {
+	if after, _ := os.ReadFile(filepath.Join(clone, ".git", "index")); !bytes.Equal(after, indexBefore) {
 		t.Error("real index modified")
 	}
 	if s := git(t, clone, "status", "--porcelain"); s != "" {

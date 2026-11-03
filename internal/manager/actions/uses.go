@@ -21,11 +21,10 @@ func ParseUses(value, defaultHost string) Uses {
 	case strings.HasPrefix(value, "docker://"):
 		return Uses{Skip: "docker reference (not supported yet)"}
 	}
-	at := strings.LastIndexByte(value, '@')
-	if at < 0 {
+	p, ref, found := strings.CutLast(value, "@")
+	if !found {
 		return Uses{Skip: "unrecognized uses"}
 	}
-	p, ref := value[:at], value[at+1:]
 	host := defaultHost
 	if strings.HasPrefix(p, "https://") || strings.HasPrefix(p, "http://") {
 		u, err := url.Parse(p)

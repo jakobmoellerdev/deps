@@ -125,11 +125,12 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, defaultHost s
 			case gomod.Name:
 				up, err = resolveGo(ctx, root, d, policies[i], src.Go)
 			}
-			if err != nil {
+			switch {
+			case err != nil:
 				err = fmt.Errorf("%s:%d: %s: %w", d.File, d.Line, d.Name, err)
-			} else if up == nil {
+			case up == nil:
 				slog.DebugContext(ctx, "dependency up to date", "file", d.File, "line", d.Line, "name", d.Name, "version", d.Version)
-			} else {
+			default:
 				slog.DebugContext(ctx, "update found", "file", d.File, "line", d.Line, "name", d.Name, "from", d.Version, "to", up.NewVersion, "type", up.Type)
 			}
 			outs[i] = out{up, err}

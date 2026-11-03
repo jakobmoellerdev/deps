@@ -224,7 +224,7 @@ func TestApplyWritesFiles(t *testing.T) {
 	if stdout != "" {
 		t.Errorf("apply printed a diff: %q", stdout)
 	}
-	got, _ := os.ReadFile(filepath.Join(dir, ".github/workflows/ci.yml"))
+	got, _ := os.ReadFile(filepath.Join(dir, ".github", "workflows", "ci.yml"))
 	want := strings.NewReplacer("checkout@v6.0.0", "checkout@v7.0.1", sha600+" # v6.0.0", sha701+" # v7.0.1").Replace(workflow)
 	if string(got) != want {
 		t.Errorf("file:\n%s\nwant:\n%s", got, want)

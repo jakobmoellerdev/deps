@@ -3,8 +3,9 @@ package config
 import (
 	"path"
 
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"github.com/Masterminds/semver/v3"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 // Policy is the effective rule outcome for one dep.

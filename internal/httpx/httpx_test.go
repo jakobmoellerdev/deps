@@ -32,7 +32,7 @@ func TestClientLogging(t *testing.T) {
 	c := NewClient()
 
 	get := func(url string) error {
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -15,7 +15,7 @@ import (
 
 const head = "1111111111111111111111111111111111111111"
 
-var boom = errors.New("boom")
+var errBoom = errors.New("boom")
 
 // fail returns the injected error for a method, keyed by "<method>:<arg>" (branch, PR head,
 // ref pattern or state) or by the method name alone.
@@ -256,7 +256,7 @@ func TestRun(t *testing.T) {
 			name:       "unknown mergeability is looked up and treated as mergeable",
 			opts:       Options{Base: "main"},
 			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
-			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A"}}, fail: map[string]error{"DefaultBranch": boom}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A"}}, fail: map[string]error{"DefaultBranch": errBoom}},
 			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
 			wantPushed: 1, wantCreated: 1, wantGetPR: 1,
 		},
@@ -269,7 +269,7 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:       "GetPR failure isolated to its group",
-			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A"}}, fail: map[string]error{"GetPR": boom}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A"}}, fail: map[string]error{"GetPR": errBoom}},
 			wantStatus: map[string]string{branchB: StatusCreated},
 			wantErrs:   []string{branchA + ": boom"},
 			wantPushed: 1, wantCreated: 1,
@@ -284,7 +284,7 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:       "push failure isolated to its group and keeps obsolete PRs",
-			git:        fakeGit{fail: map[string]error{"Push:" + branchA: boom}},
+			git:        fakeGit{fail: map[string]error{"Push:" + branchA: errBoom}},
 			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
 			wantStatus: map[string]string{branchB: StatusCreated},
 			wantErrs:   []string{branchA + ": boom"},
@@ -292,20 +292,20 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:       "commit failure",
-			git:        fakeGit{fail: map[string]error{"Commit": boom}},
+			git:        fakeGit{fail: map[string]error{"Commit": errBoom}},
 			wantStatus: map[string]string{},
 			wantErrs:   []string{branchA + ": boom", branchB + ": boom"},
 		},
 		{
 			name:       "branch author lookup failure",
-			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, fail: map[string]error{"BranchAuthorEmail:" + branchA: boom}},
+			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, fail: map[string]error{"BranchAuthorEmail:" + branchA: errBoom}},
 			wantStatus: map[string]string{branchB: StatusCreated},
 			wantErrs:   []string{branchA + ": boom"},
 			wantPushed: 1, wantCreated: 1,
 		},
 		{
 			name:       "CreatePR failure after push",
-			pc:         fakePC{fail: map[string]error{"CreatePR:" + branchA: boom}},
+			pc:         fakePC{fail: map[string]error{"CreatePR:" + branchA: errBoom}},
 			wantStatus: map[string]string{branchB: StatusCreated},
 			wantErrs:   []string{branchA + ": boom"},
 			wantPushed: 2, wantCreated: 1,
@@ -313,7 +313,7 @@ func TestRun(t *testing.T) {
 		{
 			name:       "UpdatePR failure after push",
 			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
-			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA}}, fail: map[string]error{"UpdatePR": boom}},
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA}}, fail: map[string]error{"UpdatePR": errBoom}},
 			wantStatus: map[string]string{branchB: StatusCreated},
 			wantErrs:   []string{branchA + ": boom"},
 			wantPushed: 2, wantCreated: 1,
@@ -321,14 +321,14 @@ func TestRun(t *testing.T) {
 		{
 			name:       "ClosePR failure keeps the branch",
 			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}},
-			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}, fail: map[string]error{"ClosePR": boom}},
+			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}, fail: map[string]error{"ClosePR": errBoom}},
 			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated},
 			wantErrs:   []string{"close #9: boom"},
 			wantPushed: 2, wantCreated: 2,
 		},
 		{
 			name:       "DeleteBranch failure still reports the closed PR",
-			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}, fail: map[string]error{"DeleteBranch": boom}},
+			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}, fail: map[string]error{"DeleteBranch": errBoom}},
 			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
 			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantErrs:   []string{"delete deps/gomod/gone: boom"},
@@ -407,12 +407,12 @@ func TestRunStateErrors(t *testing.T) {
 		pcFail  map[string]error
 		want    string
 	}{
-		{name: "default branch", pcFail: map[string]error{"DefaultBranch": boom}, want: "default branch: boom"},
-		{name: "rev-parse", gitFail: map[string]error{"RevParse": boom}, want: "boom"},
-		{name: "base tip", gitFail: map[string]error{"LsRemote:refs/heads/main": boom}, want: "boom"},
-		{name: "deps branches", gitFail: map[string]error{"LsRemote:refs/heads/deps/*": boom}, want: "boom"},
-		{name: "open PRs", pcFail: map[string]error{"ListPRs:open": boom}, want: "list open PRs: boom"},
-		{name: "closed PRs", pcFail: map[string]error{"ListPRs:closed": boom}, want: "list closed PRs: boom"},
+		{name: "default branch", pcFail: map[string]error{"DefaultBranch": errBoom}, want: "default branch: boom"},
+		{name: "rev-parse", gitFail: map[string]error{"RevParse": errBoom}, want: "boom"},
+		{name: "base tip", gitFail: map[string]error{"LsRemote:refs/heads/main": errBoom}, want: "boom"},
+		{name: "deps branches", gitFail: map[string]error{"LsRemote:refs/heads/deps/*": errBoom}, want: "boom"},
+		{name: "open PRs", pcFail: map[string]error{"ListPRs:open": errBoom}, want: "list open PRs: boom"},
+		{name: "closed PRs", pcFail: map[string]error{"ListPRs:closed": errBoom}, want: "list closed PRs: boom"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -420,7 +420,7 @@ func TestRunStateErrors(t *testing.T) {
 			g := &fakeGit{fail: tt.gitFail}
 			pc := &fakePC{fail: tt.pcFail}
 			acts, errs := Run(t.Context(), Options{MaxNewPRs: 10, AuthorEmail: email}, root, res, nil, pc, g)
-			if len(errs) != 1 || errs[0].Error() != tt.want || !errors.Is(errs[0], boom) {
+			if len(errs) != 1 || errs[0].Error() != tt.want || !errors.Is(errs[0], errBoom) {
 				t.Fatalf("errs = %v, want [%s]", errs, tt.want)
 			}
 			if acts != nil || g.pushed != nil || pc.created != nil {

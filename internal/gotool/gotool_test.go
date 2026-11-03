@@ -1,6 +1,7 @@
 package gotool
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -35,8 +36,8 @@ func TestTidyOffline(t *testing.T) {
 	t.Setenv("GOPROXY", "off")
 	t.Setenv("GOTOOLCHAIN", "local")
 	dir := t.TempDir()
-	real := []byte("module example.com/x\n\ngo 1.21\n")
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), real, 0o644); err != nil {
+	orig := []byte("module example.com/x\n\ngo 1.21\n")
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), orig, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
@@ -57,7 +58,7 @@ func TestTidyOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(real) {
+	if !bytes.Equal(got, orig) {
 		t.Errorf("real go.mod changed:\n%s", got)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "go.sum")); !os.IsNotExist(err) {

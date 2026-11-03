@@ -5,8 +5,9 @@ import (
 	"regexp"
 	"strconv"
 
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"github.com/Masterminds/semver/v3"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 var tagRe = regexp.MustCompile(`^(v?)(\d+)(?:\.(\d+))?(?:\.(\d+))?$`)

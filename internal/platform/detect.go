@@ -170,7 +170,7 @@ func probe(ctx context.Context, c *http.Client, hostport string) (Kind, error) {
 func probeOK(ctx context.Context, c *http.Client, u string, needVersion, signInJSON bool) bool {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return false
 	}

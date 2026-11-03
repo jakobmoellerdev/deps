@@ -7,8 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"github.com/Masterminds/semver/v3"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 func GoTestVer(s string) *semver.Version { return semver.MustParse(s) }

@@ -63,7 +63,7 @@ func (s *Source) Versions(ctx context.Context, modPath, dir string) ([]string, e
 func (s *Source) resolve(ctx context.Context, modPath, dir string) ([]string, error) {
 	s.envOnce.Do(func() {
 		s.goEnv, s.envErr = s.env(ctx)
-		slog.DebugContext(ctx, "go env", "GOPROXY", s.goEnv.Proxy, "noProxy", s.goEnv.NoProxy, "err", s.envErr)
+		slog.DebugContext(ctx, "go env", "goproxy", s.goEnv.Proxy, "noProxy", s.goEnv.NoProxy, "err", s.envErr)
 	})
 	if s.envErr != nil {
 		return nil, s.envErr
@@ -128,7 +128,7 @@ func (s *Source) fetch(ctx context.Context, url string) (versions []string, notF
 		return nil, false, err
 	}
 	defer s.release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, false, err
 	}

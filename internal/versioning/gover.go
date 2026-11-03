@@ -3,10 +3,11 @@ package versioning
 import (
 	"strings"
 
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	msemver "github.com/Masterminds/semver/v3"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 // BestGo returns the highest acceptable Go module version above cur.

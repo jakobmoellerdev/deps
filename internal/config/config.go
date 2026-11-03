@@ -11,10 +11,11 @@ import (
 	"path/filepath"
 	"slices"
 
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"github.com/Masterminds/semver/v3"
 	"github.com/bmatcuk/doublestar/v4"
 	"go.yaml.in/yaml/v3"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 // Pin modes.

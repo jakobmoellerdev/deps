@@ -5,9 +5,10 @@ import (
 	"bytes"
 	"regexp"
 
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 // Name is the manager name.
