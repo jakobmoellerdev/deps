@@ -14,6 +14,16 @@ vars:
       else
         echo "${TMPDIR:-/tmp}/deps-tools/golangci-lint-{{.GOLANGCI_LINT_VERSION}}"
       fi
+  GIT_CLIFF_VERSION: 2.14.2
+  # Pinned git-cliff (release notes / CHANGELOG.md), installed by changelog:install unless the
+  # same version is on PATH.
+  GIT_CLIFF:
+    sh: |
+      if command -v git-cliff >/dev/null && [ "$(git-cliff --version 2>/dev/null)" = "git-cliff {{.GIT_CLIFF_VERSION}}" ]; then
+        command -v git-cliff
+      else
+        echo "${TMPDIR:-/tmp}/deps-tools/git-cliff-{{.GIT_CLIFF_VERSION}}/git-cliff"
+      fi
 
 tasks:
   default:
@@ -60,6 +70,41 @@ tasks:
         mkdir -p "$(dirname "{{.GOLANGCI_LINT_BIN}}")"
         mv "$tmp/$name/golangci-lint" "{{.GOLANGCI_LINT_BIN}}"
         echo "installed {{.GOLANGCI_LINT_BIN}}"
+
+  changelog:install:
+    desc: Download and checksum-verify git-cliff v{{.GIT_CLIFF_VERSION}} unless present
+    status:
+      - test -x "{{.GIT_CLIFF}}"
+    cmds:
+      - |
+        set -eu
+        case "$(uname -m)" in
+          x86_64|amd64) arch=x86_64; sum=26d1f7c8ea2400f2ccb0b2e7f321635f600b583bf4cd1f7afaa5e8c24068ad1088a2504e0a4d9f4333d4bb20a80329327d9462634343ee3af91e1a7fbdc6f18a ;;
+          aarch64|arm64) arch=aarch64; sum=fd27768ea76fea8c3ba3f3247fef2f6604988b629f15e48bf40be5eaa08b8fef2e4087cc9c8af16bc522bc19cc369611fa7692101b513f63469ad58522708600 ;;
+          *) echo "git-cliff: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+        esac
+        name="git-cliff-{{.GIT_CLIFF_VERSION}}-$arch-unknown-linux-gnu.tar.gz"
+        tmp=$(mktemp -d)
+        trap 'rm -rf "$tmp"' EXIT
+        curl -sSfL -o "$tmp/$name" "https://github.com/orhun/git-cliff/releases/download/v{{.GIT_CLIFF_VERSION}}/$name"
+        echo "$sum  $tmp/$name" | sha512sum -c --quiet -
+        dest="${TMPDIR:-/tmp}/deps-tools"
+        mkdir -p "$dest"
+        tar -xzf "$tmp/$name" -C "$dest"
+        echo "installed $dest/git-cliff-{{.GIT_CLIFF_VERSION}}/git-cliff"
+
+  changelog:
+    desc: Regenerate CHANGELOG.md (pass `-- --tag vX.Y.Z` to name the unreleased section before tagging)
+    deps: [changelog:install]
+    cmds:
+      - "{{.GIT_CLIFF}} --output CHANGELOG.md {{.CLI_ARGS}}"
+
+  release:notes:
+    desc: Write the release notes of the current tag to dist/RELEASE_NOTES.md
+    deps: [changelog:install]
+    cmds:
+      - mkdir -p dist
+      - "{{.GIT_CLIFF}} --latest --strip header --output dist/RELEASE_NOTES.md"
 
   build:
     desc: Build bin/deps (static, no cgo, trimmed)

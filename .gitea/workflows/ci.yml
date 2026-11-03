@@ -23,11 +23,14 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0 # git-cliff needs the history and tags for the notes
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
       - run: task release:build VERSION="${GITHUB_REF_NAME}"
+      - run: task release:notes
       - name: Check binaries are static
         run: |
           set -euo pipefail
@@ -41,5 +44,5 @@ jobs:
           GITEA_TOKEN: ${{ github.token }}
           GITEA_CLI_NO_UPDATE_NOTIFIER: "1"
         run: |
-          gt release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --no-input \
+          gt release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md --no-input \
             dist/deps_linux_amd64 dist/deps_linux_arm64 dist/checksums.txt

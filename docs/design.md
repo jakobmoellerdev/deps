@@ -679,7 +679,7 @@ Editor support: `deps schema > deps.schema.json`, then start `.deps.yaml` with `
 Open items from [renovate-parity.md](renovate-parity.md) and the performance plan:
 
 - PR body badges: Mend adoption/passing/confidence (L5; external badge URLs or drop) and the OpenSSF scorecard (L6);
-- GitHub hosting (O1), partially done: static linux/amd64 and linux/arm64 binaries are released (from v0.1.0) and the action downloads them; remaining: a GitHub mirror so GitHub workflows can `uses:` the action;
+- GitHub hosting (O1), partially done: static linux/amd64 and linux/arm64 binaries are released on `v*` tags (notes by git-cliff) and the action downloads them; remaining: a GitHub mirror so GitHub workflows can `uses:` the action;
 - the final OCM translation (O4): `examples-ocm.deps.yaml` plus the remaining groups listed in [migrating-from-renovate.md](migrating-from-renovate.md#worked-example-open-component-model);
 - `actions.lock` via `github.com/github/actions-lockfile/go`;
 - a benchmark gate: `BenchmarkResolve` in CI with a regression threshold (the benchmark exists; CI does not run it yet);

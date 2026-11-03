@@ -157,12 +157,17 @@ Pushing a `v*` tag runs `.gitea/workflows/ci.yml`: the `test` job runs `task ci`
 
 1. `task release:build VERSION=<tag>` builds `dist/deps_linux_amd64` and `dist/deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath` and `-ldflags "-s -w -buildid= -X main.version=<tag>"`, and writes `dist/checksums.txt` (`sha256sum`).
 2. Each binary is checked to be static (no `Requesting program interpreter` in `readelf -l`), because the action runs it on arbitrary runner images.
-3. `gt release create <tag> --verify-tag` (the Gitea CLI on the runner, authenticated with `GITEA_TOKEN` = the job token) publishes the release with the three assets.
+3. `task release:notes` runs [git-cliff](https://git-cliff.org) (pinned v2.14.2, installed and sha512-verified by `task changelog:install`; the checkout uses `fetch-depth: 0` so it sees all commits and tags) with `cliff.toml` and writes the notes of the tag, `git-cliff --latest --strip header`, to `dist/RELEASE_NOTES.md`.
+4. `gt release create <tag> --verify-tag --notes-file dist/RELEASE_NOTES.md` (the Gitea CLI on the runner, authenticated with `GITEA_TOKEN` = the job token) publishes the release with the notes and the three assets.
 
-To release:
+git-cliff is installed from its GitHub release instead of through `orhun/git-cliff-action`: that action always sends `github.token` to api.github.com to find the release, and on Gitea that token is a Gitea token, so the request fails with 401.
+
+**Release notes and CHANGELOG.md.** `cliff.toml` groups conventional commits (`feat`, `fix`, `perf`, `docs`, `ci`/`build`, `chore`/`refactor`/`style`/`test`, and `chore(deps)`/`fix(deps)` as Dependencies); other commit subjects are kept under "Changes"; merge commits are skipped. Use conventional commit subjects to get grouped notes. To update the changelog in the repository before a release:
 
 ```sh
-git tag v0.2.0 && git push origin v0.2.0
+task changelog -- --tag v0.2.0     # names the unreleased section v0.2.0
+git add CHANGELOG.md && git commit -m "docs: changelog for v0.2.0"
+git tag -a v0.2.0 -m "deps v0.2.0" && git push origin main v0.2.0
 ```
 
-The first release is [v0.1.0](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/tag/v0.1.0). Workflows that use the action at `@main` or without a release ref pick up a new release automatically; workflows pinned to `@vX.Y.Z` get it when deps (or Renovate) bumps their `uses:` ref.
+There is no release yet; the action's latest-release lookup fails until the first tag is pushed. Workflows that use the action at `@main` or without a release ref pick up a new release automatically; workflows pinned to `@vX.Y.Z` get it when deps (or Renovate) bumps their `uses:` ref.
