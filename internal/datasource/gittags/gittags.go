@@ -244,7 +244,8 @@ func (s *session) lsRefs(ctx context.Context, caps *v2caps) ([]Tag, error) {
 		return nil, err
 	}
 	defer s.l.release()
-	resp, err := s.do(ctx, http.MethodPost, s.url+"/git-upload-pack", body)
+	// ls-refs only reads: retry it like a GET.
+	resp, err := s.do(httpx.Idempotent(ctx), http.MethodPost, s.url+"/git-upload-pack", body)
 	if err != nil {
 		return nil, err
 	}

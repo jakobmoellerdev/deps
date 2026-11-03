@@ -241,7 +241,7 @@ func (s *Source) queryBatch(ctx context.Context, queries []query) ([]batchResult
 	var res struct {
 		Results []batchResult `json:"results"`
 	}
-	err = s.do(ctx, http.MethodPost, u, body, &res)
+	err = s.do(httpx.Idempotent(ctx), http.MethodPost, u, body, &res) // a read-only query: retry like a GET
 	if err == nil && len(res.Results) != len(queries) {
 		err = fmt.Errorf("POST %s: got %d results for %d queries", u, len(res.Results), len(queries))
 	}

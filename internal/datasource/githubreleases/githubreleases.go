@@ -41,14 +41,22 @@ type Source struct {
 }
 
 type entry struct {
-	once sync.Once
-	rels []datasource.Release
-	err  error
+	once   sync.Once
+	rels   []datasource.Release
+	assets map[string][]Asset // by tag name
+	err    error
+}
+
+// Asset is a release asset; Digest is the API `digest` ("sha256:<hex>"), "" if GitHub has none.
+type Asset struct {
+	Name   string `json:"name"`
+	Digest string `json:"digest"`
+	URL    string `json:"browser_download_url"`
 }
 
 // New returns the github-releases datasource. sem bounds concurrent requests and is shared with
 // other datasources; auth may be nil for anonymous access.
-func New(client *http.Client, auth *httpx.Auth, sem chan struct{}) datasource.Datasource {
+func New(client *http.Client, auth *httpx.Auth, sem chan struct{}) *Source {
 	return &Source{client: client, auth: auth, sem: sem, githubAPI: "https://api.github.com", cache: make(map[string]*entry)}
 }
 
@@ -82,7 +90,16 @@ func (s *Source) parseRepo(name string) (repo, error) {
 // 500); Version is the tag name and Digest is empty. The slice is shared between callers and
 // must not be modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
-	r, err := s.parseRepo(d.Name)
+	e, err := s.lookup(ctx, d.Name)
+	if err != nil {
+		return nil, err
+	}
+	return e.rels, nil
+}
+
+// lookup returns the cached (fetched once) releases of the repository name.
+func (s *Source) lookup(ctx context.Context, name string) (*entry, error) {
+	r, err := s.parseRepo(name)
 	if err != nil {
 		return nil, err
 	}
@@ -94,42 +111,79 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 		s.cache[key] = e
 	}
 	s.mu.Unlock()
-	e.once.Do(func() { e.rels, e.err = s.fetch(ctx, r) })
-	return e.rels, e.err
+	e.once.Do(func() { e.rels, e.assets, e.err = s.fetch(ctx, r) })
+	if e.err != nil {
+		return nil, e.err
+	}
+	return e, nil
+}
+
+// AssetDigest returns the hex sha256 of asset in the release of version of repository name
+// (see parseRepo), from the cached release list. version matches the tag exactly or with a
+// leading "v" added or removed.
+func (s *Source) AssetDigest(ctx context.Context, name, version, asset string) (string, error) {
+	e, err := s.lookup(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	tag := version
+	assets, ok := e.assets[tag]
+	if !ok {
+		if strings.HasPrefix(version, "v") {
+			tag = version[1:]
+		} else {
+			tag = "v" + version
+		}
+		if assets, ok = e.assets[tag]; !ok {
+			return "", fmt.Errorf("no release %s in %s", version, name)
+		}
+	}
+	for _, a := range assets {
+		if a.Name != asset {
+			continue
+		}
+		if algo, hex, ok := strings.Cut(a.Digest, ":"); ok && algo == "sha256" && hex != "" {
+			return hex, nil
+		}
+		break
+	}
+	return "", fmt.Errorf("release %s has no digest for asset %s", tag, asset)
 }
 
 // Digest is unsupported: releases carry no digest.
 func (*Source) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }
 
-func (s *Source) fetch(ctx context.Context, r repo) (rels []datasource.Release, err error) {
+func (s *Source) fetch(ctx context.Context, r repo) (rels []datasource.Release, assets map[string][]Asset, err error) {
 	start, pages := time.Now(), 0
 	defer func() {
 		slog.DebugContext(ctx, "github releases listed", "repo", r.path, "api", r.api, "pages", pages,
 			"releases", len(rels), "duration", time.Since(start), "err", err)
 	}()
 	_, token, authed := s.auth.Static(r.host)
+	assets = make(map[string][]Asset)
 	for page := 1; page <= maxPages; page++ {
-		n, err := s.page(ctx, r, page, token, authed, &rels)
+		n, err := s.page(ctx, r, page, token, authed, &rels, assets)
 		pages = page
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if n < perPage {
 			break
 		}
 	}
-	return rels, nil
+	return rels, assets, nil
 }
 
 type release struct {
-	TagName    string `json:"tag_name"`
-	Draft      bool   `json:"draft"`
-	Prerelease bool   `json:"prerelease"`
+	TagName    string  `json:"tag_name"`
+	Draft      bool    `json:"draft"`
+	Prerelease bool    `json:"prerelease"`
+	Assets     []Asset `json:"assets"`
 }
 
 // page fetches one page, appends its published releases to rels and returns the number of
 // entries on the page. The array is decoded element by element so only one release is buffered.
-func (s *Source) page(ctx context.Context, r repo, page int, token string, authed bool, rels *[]datasource.Release) (int, error) {
+func (s *Source) page(ctx context.Context, r repo, page int, token string, authed bool, rels *[]datasource.Release, assets map[string][]Asset) (int, error) {
 	if err := s.acquire(ctx); err != nil {
 		return 0, err
 	}
@@ -177,6 +231,7 @@ func (s *Source) page(ctx context.Context, r repo, page int, token string, authe
 		n++
 		if !rel.Draft && !rel.Prerelease && rel.TagName != "" {
 			*rels = append(*rels, datasource.Release{Version: rel.TagName})
+			assets[rel.TagName] = rel.Assets
 		}
 	}
 	if _, err := dec.Token(); err != nil {

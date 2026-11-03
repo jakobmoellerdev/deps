@@ -16,9 +16,10 @@ var Version = "dev"
 func UserAgent() string { return "deps/" + Version }
 
 // NewClient returns the HTTP client shared by all packages (HTTP/2, keep-alive, proxy from
-// environment). Every request is logged at debug level.
+// environment). Idempotent requests are retried (see Idempotent) and rate limits waited out
+// briefly; every attempt is logged at debug level.
 func NewClient() *http.Client {
-	return &http.Client{Transport: logTransport{&http.Transport{
+	return &http.Client{Transport: newRetryTransport(logTransport{&http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -29,10 +30,11 @@ func NewClient() *http.Client {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
-	}}}
+	}})}
 }
 
-// logTransport logs method, URL (without credentials), status and time to first response byte.
+// logTransport logs method, URL (without credentials), status, time to first response byte and
+// X-RateLimit-Remaining when the server sends it.
 type logTransport struct{ next http.RoundTripper }
 
 func (t logTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -47,6 +49,10 @@ func (t logTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		slog.DebugContext(ctx, "http request failed", append(attrs, "err", err)...)
 		return resp, err
 	}
-	slog.DebugContext(ctx, "http request", append(attrs, "status", resp.StatusCode, "proto", resp.Proto)...)
+	attrs = append(attrs, "status", resp.StatusCode, "proto", resp.Proto)
+	if v := resp.Header.Get("X-RateLimit-Remaining"); v != "" {
+		attrs = append(attrs, "rateLimitRemaining", v)
+	}
+	slog.DebugContext(ctx, "http request", attrs...)
 	return resp, nil
 }

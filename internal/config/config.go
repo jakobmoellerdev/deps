@@ -30,7 +30,7 @@ const (
 // Known values for validation.
 var (
 	Managers          = []string{"github-actions", "gomod", "docker", "npm", "custom"}
-	DepTypes          = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "annotation", "regex"}
+	DepTypes          = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "annotation", "regex"}
 	CustomDatasources = []string{"git-tags", "github-releases", "go", "docker"}
 	Versionings       = []string{"tag", "go", "docker", "semver"}
 )
@@ -63,7 +63,7 @@ type Actions struct {
 type Rule struct {
 	Manager  string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=custom" jsonschema_description:"Only match deps of this manager."`
 	Names    []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these path.Match globs."`
-	DepTypes []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
+	DepTypes []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
 	Ignore   *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives and npm peerDependencies in."`
 	Pin      string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
 	Allow    string   `yaml:"allow" jsonschema_description:"Semver constraint new versions must satisfy, e.g. '< 7'."`
@@ -77,11 +77,53 @@ type Rule struct {
 
 // Custom is a custom manager: annotation mode when Match is empty, regex mode otherwise.
 type Custom struct {
-	Files      []string `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans."`
-	Match      string   `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) group and optional name, datasource and digest groups; empty means annotation mode."`
-	Datasource string   `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=docker" jsonschema_description:"Datasource of the matched deps; required in regex mode unless match has a (?P<datasource>) group."`
-	Name       string   `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>) group."`
-	Versioning string   `yaml:"versioning" jsonschema:"enum=tag,enum=go,enum=docker,enum=semver,default=semver" jsonschema_description:"Versioning scheme of the matched versions."` // default semver
+	Files      []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans."`
+	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) group and optional name, datasource, digest and checksum groups; empty means annotation mode."`
+	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=docker" jsonschema_description:"Datasource of the matched deps; required in regex mode unless match has a (?P<datasource>) group."`
+	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>) group."`
+	Versioning string    `yaml:"versioning" jsonschema:"enum=tag,enum=go,enum=docker,enum=semver,default=semver" jsonschema_description:"Versioning scheme of the matched versions."` // default semver
+	Checksum   *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
+}
+
+// Checksum locates the sha256/sha512 checksum written next to a version. Its fields are
+// templates; {{version}} is the new version exactly as written into the file.
+type Checksum struct {
+	Asset string `yaml:"asset" jsonschema_description:"github-releases only: release asset whose API digest is the checksum, e.g. 'gh_{{version}}_linux_amd64.tar.gz'. Exclusive with url."`
+	URL   string `yaml:"url" jsonschema_description:"URL of a checksum document (sha256sum style or a bare hex digest). Exclusive with asset."`
+	File  string `yaml:"file" jsonschema_description:"Entry name inside the url document ('<hex>  <name>' or '<hex> *<name>'); empty means the first hex token of the body."`
+}
+
+// templateVarRe finds {{...}} template references.
+var templateVarRe = regexp.MustCompile(`\{\{[^{}]*\}\}`)
+
+// validateTemplate reports references other than {{version}} and unbalanced braces.
+func validateTemplate(field, t string, add addFunc) {
+	for _, v := range templateVarRe.FindAllString(t, -1) {
+		if v != "{{version}}" {
+			add(field, "unknown template variable %s (only {{version}})", v)
+		}
+	}
+	if rest := templateVarRe.ReplaceAllString(t, ""); strings.Contains(rest, "{{") || strings.Contains(rest, "}}") {
+		add(field, "unbalanced template braces in %q", t)
+	}
+}
+
+func (ch *Checksum) validate(f, datasource string, add addFunc) {
+	switch {
+	case ch.Asset == "" && ch.URL == "":
+		add(f, "one of asset and url is required")
+	case ch.Asset != "" && ch.URL != "":
+		add(f, "asset and url are mutually exclusive")
+	}
+	if ch.Asset != "" && datasource != "github-releases" {
+		add(f+".asset", "requires datasource github-releases")
+	}
+	if ch.File != "" && ch.URL == "" {
+		add(f+".file", "only allowed with url")
+	}
+	validateTemplate(f+".asset", ch.Asset, add)
+	validateTemplate(f+".url", ch.URL, add)
+	validateTemplate(f+".file", ch.File, add)
 }
 
 // Error marks an invalid configuration (parse, unknown key or validation
@@ -256,6 +298,9 @@ func (cu *Custom) validate(f string, add addFunc) {
 		add(f+".versioning", "must be one of %s, got %q", list(Versionings), cu.Versioning)
 	}
 	if cu.Match == "" {
+		if cu.Checksum != nil {
+			add(f+".checksum", "requires match (regex mode)")
+		}
 		return
 	}
 	re, err := regexp.Compile(cu.Match)
@@ -272,6 +317,16 @@ func (cu *Custom) validate(f string, add addFunc) {
 	}
 	if cu.Name == "" && !slices.Contains(groups, "name") {
 		add(f+".name", "required unless match has a (?P<name>...) group")
+	}
+	hasGroup := slices.Contains(groups, "checksum")
+	switch {
+	case cu.Checksum != nil && !hasGroup:
+		add(f+".checksum", "requires a (?P<checksum>...) group in match")
+	case cu.Checksum == nil && hasGroup:
+		add(f+".match", "(?P<checksum>...) group requires checksum")
+	}
+	if cu.Checksum != nil {
+		cu.Checksum.validate(f+".checksum", cu.Datasource, add)
 	}
 }
 

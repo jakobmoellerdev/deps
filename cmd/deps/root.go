@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
@@ -73,14 +74,15 @@ func envToken() string {
 
 // session is the state shared by plan, apply and run.
 type session struct {
-	root     string
-	cfg      *config.Config
-	client   *http.Client
-	managers []manager.Manager
-	sources  map[string]engine.Datasource
-	security engine.SecuritySource // nil when security: false
-	env      manager.Env
-	stderr   io.Writer
+	root      string
+	cfg       *config.Config
+	client    *http.Client
+	managers  []manager.Manager
+	sources   map[string]engine.Datasource
+	security  engine.SecuritySource // nil when security: false
+	checksums engine.ChecksumSource
+	env       manager.Env
+	stderr    io.Writer
 }
 
 // newSession loads the config and wires the managers and datasources onto one HTTP client
@@ -110,6 +112,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	if cfg.SecurityEnabled() {
 		security = osv.New(client, sem)
 	}
+	releases := githubreleases.New(client, auth, sem)
 	return &session{
 		root:     root,
 		cfg:      cfg,
@@ -120,18 +123,19 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 			"go":                goproxy.New(client, sem),
 			gotoolchain.Name:    gotoolchain.New(client, sem),
 			"docker":            dockerds.New(client, sem),
-			githubreleases.Name: githubreleases.New(client, auth, sem),
+			githubreleases.Name: releases,
 			npmds.Name:          npmds.New(client, sem, os.Getenv),
 		},
-		security: security,
-		env:      manager.Env{DefaultHost: host},
-		stderr:   stderr,
+		security:  security,
+		checksums: checksum.New(client, sem, releases),
+		env:       manager.Env{DefaultHost: host},
+		stderr:    stderr,
 	}, nil
 }
 
 // options returns the engine options of this session; callers add Filter/Trace.
 func (s *session) options() engine.Options {
-	return engine.Options{Managers: s.managers, Datasources: s.sources, Security: s.security}
+	return engine.Options{Managers: s.managers, Datasources: s.sources, Security: s.security, Checksums: s.checksums}
 }
 
 func (s *session) resolve(ctx context.Context) (*engine.Result, error) {

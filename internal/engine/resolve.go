@@ -3,6 +3,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,6 +28,7 @@ type (
 	Datasource     = datasource.Datasource
 	SecuritySource = datasource.SecuritySource
 	Vuln           = datasource.Vuln
+	ChecksumSource = datasource.ChecksumSource
 )
 
 // Options configures Resolve.
@@ -34,6 +36,7 @@ type Options struct {
 	Managers    []manager.Manager
 	Datasources map[string]Datasource // by dep.Dep.Datasource
 	Security    SecuritySource        // nil = no security lookups
+	Checksums   ChecksumSource        // nil = deps with a checksum source cannot be updated
 	Filter      func(dep.Dep) bool    // nil = all; deps it rejects are dropped before any lookup
 	Trace       func(Trace)           // nil = off; called sequentially from the Resolve goroutine
 }
@@ -137,7 +140,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	for i := range todo {
 		wg.Go(func() {
 			d := todo[i]
-			r := resolver{ctx: ctx, root: root, d: d, p: policies[i], ds: o.Datasources[d.Datasource], trace: o.Trace != nil}
+			r := resolver{ctx: ctx, root: root, d: d, p: policies[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil}
 			t := r.run(func() []Vuln { return sec.of(i) })
 			switch {
 			case t.Err != nil:
@@ -257,6 +260,7 @@ type resolver struct {
 	d     dep.Dep
 	p     config.Policy
 	ds    Datasource
+	cs    ChecksumSource
 	trace bool
 
 	rels []Release
@@ -335,6 +339,11 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 			return nil, err
 		}
 	}
+	if up != nil && d.ChecksumSource != nil && up.NewVersion != d.Version {
+		if up.NewChecksum, err = r.checksumOf(up.NewVersion); err != nil {
+			return nil, err
+		}
+	}
 	if up != nil && len(up.Advisories) == 0 {
 		up.Group, up.Schedule = r.p.Group, r.p.Schedule
 	}
@@ -350,6 +359,24 @@ func (r *resolver) digestOf(version string) (string, error) {
 		}
 	}
 	return r.ds.Digest(r.ctx, r.d, version)
+}
+
+// checksumOf fetches the checksum of version, in the letter case and length of the current one.
+func (r *resolver) checksumOf(version string) (string, error) {
+	if r.cs == nil {
+		return "", errors.New("no checksum source")
+	}
+	c, err := r.cs.Checksum(r.ctx, r.d, version)
+	if err != nil {
+		return "", fmt.Errorf("checksum of %s: %w", version, err)
+	}
+	if len(c) != len(r.d.Checksum) {
+		return "", fmt.Errorf("checksum of %s: checksum length mismatch: have %d hex digits, got %d", version, len(r.d.Checksum), len(c))
+	}
+	if strings.ToUpper(r.d.Checksum) == r.d.Checksum && strings.ToLower(r.d.Checksum) != r.d.Checksum {
+		return strings.ToUpper(c), nil
+	}
+	return strings.ToLower(c), nil
 }
 
 // applySecurity raises up to a fixing version when d has advisories. The minimum fix F is the

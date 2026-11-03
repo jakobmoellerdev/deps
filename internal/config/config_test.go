@@ -89,6 +89,17 @@ func TestLoadErrors(t *testing.T) {
 		{"custom: [{files: [x], match: 'v(\\d+)', datasource: go, name: x}]\n", "custom[0].match: must have a (?P<version>...) group"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+)', name: x}]\n", "custom[0].datasource: required"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+)', datasource: go}]\n", "custom[0].name: required"},
+		{"custom: [{files: [x], checksum: {url: u}}]\n", "custom[0].checksum: requires match (regex mode)"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+)', datasource: go, name: x, checksum: {url: u}}]\n", "custom[0].checksum: requires a (?P<checksum>...) group in match"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x}]\n", "custom[0].match: (?P<checksum>...) group requires checksum"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {}}]\n", "custom[0].checksum: one of asset and url is required"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: github-releases, name: o/r, checksum: {asset: a, url: u}}]\n", "custom[0].checksum: asset and url are mutually exclusive"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {asset: a}}]\n", "custom[0].checksum.asset: requires datasource github-releases"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: github-releases, name: o/r, checksum: {asset: a, file: f}}]\n", "custom[0].checksum.file: only allowed with url"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: github-releases, name: o/r, checksum: {asset: 'a_{{ver}}'}}]\n", "custom[0].checksum.asset: unknown template variable {{ver}}"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: 'u/{{version}', file: f}}]\n", "custom[0].checksum.url: unbalanced template braces"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, file: '{{name}}'}}]\n", "custom[0].checksum.file: unknown template variable {{name}}"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, pathh: f}}]\n", "line 1"},
 	} {
 		_, err := load(t, ".deps.yaml", tc.body)
 		var ce *Error
@@ -217,5 +228,31 @@ func TestPolicyCheck(t *testing.T) {
 		if ok, why := p.Check(tc.kind, tc.v); ok != tc.ok || why != tc.why {
 			t.Errorf("Check(%s, %v) = %v %q, want %v %q", tc.kind, tc.v, ok, why, tc.ok, tc.why)
 		}
+	}
+}
+
+func TestCustomChecksum(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `custom:
+  - files: [Dockerfile]
+    match: 'ARG GH_VERSION=(?P<version>\S+)\nARG GH_SHA256=(?P<checksum>[0-9a-f]{64})'
+    datasource: github-releases
+    name: cli/cli
+    checksum: {asset: 'gh_{{version}}_linux_amd64.tar.gz'}
+  - files: [Dockerfile]
+    match: 'X=(?P<version>\S+) (?P<checksum>\S+)'
+    datasource: git-tags
+    name: example.com/x
+    checksum:
+      url: 'https://example.com/v{{version}}/sums.txt'
+      file: 'x_{{version}}.tgz'
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := *c.Custom[0].Checksum; got != (Checksum{Asset: "gh_{{version}}_linux_amd64.tar.gz"}) {
+		t.Errorf("custom[0].checksum = %+v", got)
+	}
+	if got := *c.Custom[1].Checksum; got != (Checksum{URL: "https://example.com/v{{version}}/sums.txt", File: "x_{{version}}.tgz"}) {
+		t.Errorf("custom[1].checksum = %+v", got)
 	}
 }

@@ -2,10 +2,16 @@ package docker
 
 import (
 	"bytes"
+	"errors"
+	"io"
+	"log/slog"
 	"strings"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 const dockerPrefix = "docker://"
@@ -20,6 +26,94 @@ func (x *extractor) yaml(walk func(root *yaml.Node)) error {
 		walk(doc.Content[0])
 	}
 	return nil
+}
+
+// manifestParses counts YAML parses of manifests mode (tests assert the byte prefilter).
+var manifestParses atomic.Int64
+
+// manifests extracts Kubernetes container images and Helm image values from every document
+// of a multi-document YAML file. Unparsable files (Helm templates) yield no deps, no error.
+func (x *extractor) manifests() {
+	manifestParses.Add(1)
+	dec := yaml.NewDecoder(bytes.NewReader(x.src))
+	for {
+		var doc yaml.Node
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		if err != nil {
+			slog.Debug("skipping unparsable yaml", "file", x.file, "err", err)
+			x.deps = nil
+			return
+		}
+		x.walk(&doc)
+	}
+}
+
+var containerKeys = map[string]bool{"containers": true, "initContainers": true, "ephemeralContainers": true}
+
+// walk visits every mapping below n.
+func (x *extractor) walk(n *yaml.Node) {
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i].Value, n.Content[i+1]
+			switch {
+			case containerKeys[k] && v.Kind == yaml.SequenceNode:
+				for _, c := range v.Content {
+					x.scalar(TypeKubernetes, get(c, "image"), "")
+				}
+			case v.Kind == yaml.MappingNode && strings.HasSuffix(strings.ToLower(k), "image"):
+				x.helm(v)
+			}
+		}
+	}
+	for _, c := range n.Content {
+		x.walk(c)
+	}
+}
+
+// helm extracts `{registry?, repository, tag, digest?}` image values with RefSpan on the tag.
+func (x *extractor) helm(m *yaml.Node) {
+	repo, tag := str(get(m, "repository")), str(get(m, "tag"))
+	if repo == nil || tag == nil || repo.Value == "" {
+		return
+	}
+	name := repo.Value
+	if r := str(get(m, "registry")); r != nil && r.Value != "" {
+		name = r.Value + "/" + name
+	}
+	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeHelm, File: x.file, Line: tag.Line, Name: name}
+	off := x.locate(tag)
+	switch {
+	case strings.Contains(name, "{{") || strings.Contains(tag.Value, "{{"):
+		d.Skip = "template value"
+	case strings.Contains(name, "$") || strings.Contains(tag.Value, "$"):
+		d.Skip = "variable reference"
+	case tag.Value == "":
+		parseRef(&d, 0, name)
+	case off < 0:
+		d.Skip = "cannot locate value"
+	default:
+		ref := name + ":" + tag.Value
+		parseRef(&d, off+len(tag.Value)-len(ref), ref)
+		if dg := str(get(m, "digest")); d.Skip == "" && d.Digest == "" && dg != nil && strings.HasPrefix(dg.Value, "sha256:") {
+			if o := x.locate(dg); o >= 0 {
+				d.Digest, d.DigestSpan = dg.Value, dep.Span{Start: o, End: o + len(dg.Value)}
+			} else {
+				d.Skip = "cannot locate value"
+			}
+		}
+	}
+	x.deps = append(x.deps, d)
+}
+
+// str returns n if it is a scalar, else nil.
+func str(n *yaml.Node) *yaml.Node {
+	if n == nil || n.Kind != yaml.ScalarNode {
+		return nil
+	}
+	return n
 }
 
 // compose extracts services.*.image.

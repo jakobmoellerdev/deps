@@ -4,20 +4,23 @@ Dependency update automation written in Go, with a small, strictly validated con
 
 - GitHub/Gitea/Forgejo Actions `uses:` (tags, SHA pins with `# vX` comments)
 - Go modules: requirements, `go`/`toolchain` directives, `go mod tidy`
-- Container images: Dockerfile `FROM`, compose, workflow `container:`/`services:`/`docker://`, `runs.image`; `@sha256:` pinning
+- Container images: Dockerfile `FROM`, `COPY --from`/`RUN --mount=from` and `ARG` defaults, compose, workflow `container:`/`services:`/`docker://`, `runs.image`,
+  Kubernetes manifests and Helm values; `@sha256:` pinning
 - npm `package.json`: dependencies, devDependencies, optionalDependencies, peerDependencies (opt-in) and `packageManager`;
-  ranges are bumped in place (`^1.2.3` → `^1.4.0`), `.npmrc` registries and tokens, `package-lock.json` regenerated
+  ranges are bumped in place (`^1.2.3` → `^1.4.0`), `.npmrc` registries and tokens; workspaces, with
+  `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock` regenerated
 - Custom dependencies via `# deps: <datasource> <name>` annotations or RE2 regex managers
-  (datasources `git-tags`, `github-releases`, `go`, `docker`)
+  (datasources `git-tags`, `github-releases`, `go`, `docker`), optionally pinning a release checksum next to the version
 - OSV security updates (Go, GitHub Actions, npm) that bypass `allow`/`updates`/schedules
 - Groups and cron schedules per rule
+- HTTP retries with backoff and rate-limit handling (`Retry-After`)
 - One branch and pull request per dependency or group on GitHub, Gitea and Forgejo (auto-detected)
 
 Design and roadmap: [docs/design.md](docs/design.md).
 
 ```sh
 deps plan            # unified diff of all updates on stdout, report on stderr
-deps apply           # write the updates (go mod tidy for go.mod, npm for package-lock.json)
+deps apply           # write the updates (go mod tidy for go.mod, npm/pnpm/yarn for lockfiles)
 deps run --dry-run   # show which pull requests would be created or updated
 deps run             # push deps/<manager>/<name> and deps/group/<group> branches, open/update PRs
 deps explain 'actions/*'   # why a dependency is (not) updated

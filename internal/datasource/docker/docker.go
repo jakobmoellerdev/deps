@@ -76,9 +76,13 @@ func newSource(client *http.Client, sem chan struct{}, kc authn.Keychain) *Sourc
 	}
 }
 
+// noRetry makes go-containerregistry send each request once: the shared httpx transport already
+// retries, and nesting both would multiply attempts.
+var noRetry = remote.WithRetryBackoff(remote.Backoff{Steps: 1})
+
 func newPuller(tr http.RoundTripper, kc authn.Keychain, extra ...remote.Option) *remote.Puller {
-	opts := make([]remote.Option, 0, 3+len(extra))
-	opts = append(opts, remote.WithTransport(tr), remote.WithAuthFromKeychain(kc), remote.WithUserAgent(httpx.UserAgent()))
+	opts := make([]remote.Option, 0, 4+len(extra))
+	opts = append(opts, remote.WithTransport(tr), remote.WithAuthFromKeychain(kc), remote.WithUserAgent(httpx.UserAgent()), noRetry)
 	p, err := remote.NewPuller(append(opts, extra...)...)
 	if err != nil {
 		// Only conflicting auth options fail, and only a keychain is passed.

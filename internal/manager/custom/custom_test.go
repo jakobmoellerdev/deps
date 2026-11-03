@@ -200,6 +200,8 @@ func TestNewErrors(t *testing.T) {
 		{config.Custom{Files: []string{"x"}, Match: "a", Datasource: "go", Name: "n"}, "match: must have a (?P<version>...) group"},
 		{config.Custom{Files: []string{"x"}, Match: "(?P<version>a)", Name: "n"}, "datasource: required unless"},
 		{config.Custom{Files: []string{"x"}, Match: "(?P<version>a)", Datasource: "go"}, "name: required unless"},
+		{config.Custom{Files: []string{"x"}, Match: "(?P<version>a)", Datasource: "go", Name: "n", Checksum: &config.Checksum{URL: "u"}}, "checksum: requires a (?P<checksum>...) group"},
+		{config.Custom{Files: []string{"x"}, Match: "(?P<version>a)(?P<checksum>b)", Datasource: "go", Name: "n"}, "checksum: requires a (?P<checksum>...) group"},
 	} {
 		ms, err := New([]config.Custom{{Files: []string{"ok"}}, c.cfg})
 		if err == nil || ms != nil || !strings.Contains(err.Error(), c.want) {
@@ -268,6 +270,60 @@ func TestEdits(t *testing.T) {
 			}
 			if string(got) != c.want {
 				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestChecksum(t *testing.T) {
+	h1, h2 := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	src := "FROM x\nARG GH_VERSION=2.60.0\nARG GH_SHA256=" + h1 + "\n" +
+		"ARG GH_VERSION=2.61.0\nARG GH_SHA256=" + h1[:10] + "\n"
+	cs := &config.Checksum{Asset: "gh_{{version}}_linux_amd64.tar.gz"}
+	m := one(t, config.Custom{Files: []string{"x"}, Datasource: "github-releases", Name: "cli/cli", Checksum: cs,
+		Match: `ARG GH_VERSION=(?P<version>\S+)\nARG GH_SHA256=(?P<checksum>[0-9a-f]+)`})
+	deps := extract(t, m, src)
+	if len(deps) != 2 {
+		t.Fatalf("deps = %+v", deps)
+	}
+	d := deps[0]
+	if d.Skip != "" || d.Line != 2 || d.Checksum != h1 || src[d.ChecksumSpan.Start:d.ChecksumSpan.End] != h1 ||
+		src[d.RefSpan.Start:d.RefSpan.End] != "2.60.0" || *d.ChecksumSource != (dep.ChecksumSource{Asset: cs.Asset}) {
+		t.Errorf("dep = %+v", d)
+	}
+	if deps[1].Skip != "checksum is not 64 or 128 hex digits" {
+		t.Errorf("short checksum: skip = %q", deps[1].Skip)
+	}
+
+	for _, c := range []struct {
+		name string
+		u    dep.Update
+		want string
+		err  string
+	}{
+		{"version and checksum", dep.Update{Dep: d, NewVersion: "2.61.0", NewChecksum: h2},
+			"FROM x\nARG GH_VERSION=2.61.0\nARG GH_SHA256=" + h2 + "\n", ""},
+		{"missing checksum", dep.Update{Dep: d, NewVersion: "2.61.0"}, "", "checksum must be updated together with the version"},
+		{"length mismatch", dep.Update{Dep: d, NewVersion: "2.61.0", NewChecksum: h2 + h2}, "", "checksum length mismatch"},
+		{"no checksum span", dep.Update{Dep: dep.Dep{Version: "1", RefSpan: d.RefSpan}, NewVersion: "2", NewChecksum: h2}, "", "no checksum to update"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			edits, err := m.Edits(c.u)
+			if c.err != "" {
+				if err == nil || !strings.Contains(err.Error(), c.err) {
+					t.Fatalf("Edits: %v, want %q", err, c.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := patch.Apply([]byte(src), edits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(string(got), c.want) {
+				t.Errorf("got %q, want prefix %q", got, c.want)
 			}
 		})
 	}

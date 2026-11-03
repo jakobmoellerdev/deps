@@ -1,5 +1,6 @@
 // Package docker extracts container image references from Dockerfiles, compose files,
-// workflows (`container:`, `services:`, `uses: docker://`) and Docker actions (`runs.image`).
+// workflows (`container:`, `services:`, `uses: docker://`), Docker actions (`runs.image`),
+// Kubernetes manifests (container `image:`) and Helm values (`*image: {repository, tag}`).
 package docker
 
 import (
@@ -25,6 +26,8 @@ const (
 	TypeCompose    = "compose"
 	TypeWorkflow   = "workflow"
 	TypeAction     = "action"
+	TypeKubernetes = "kubernetes"
+	TypeHelm       = "helm"
 )
 
 var (
@@ -33,6 +36,7 @@ var (
 	composeRe       = regexp.MustCompile(`(^|/)(docker-)?compose(\.[^/]*)?\.ya?ml$`)
 	workflowRe      = regexp.MustCompile(`(^|/)(workflow-templates|\.(github|gitea|forgejo)/(workflows|actions))/.+\.ya?ml$`)
 	actionRe        = regexp.MustCompile(`(^|/)action\.ya?ml$`)
+	yamlRe          = regexp.MustCompile(`\.ya?ml$`)
 )
 
 type dockerManager struct{}
@@ -42,10 +46,10 @@ func New() manager.Manager { return dockerManager{} }
 
 func (dockerManager) Name() string { return Name }
 
-// Match reports whether the slash path is a Dockerfile/Containerfile, a compose file, or a
-// workflow or action file.
+// Match reports whether the slash path is a Dockerfile/Containerfile or a YAML file (compose,
+// workflow, action, or any other YAML scanned for Kubernetes and Helm images).
 func (dockerManager) Match(path string) bool {
-	return isDockerfile(path) || composeRe.MatchString(path) || workflowRe.MatchString(path) || actionRe.MatchString(path)
+	return isDockerfile(path) || yamlRe.MatchString(path)
 }
 
 // isDockerfile excludes `Dockerfile.dockerignore`, which is an ignore file, not a Dockerfile.
@@ -55,15 +59,24 @@ func isDockerfile(path string) bool {
 
 // Extract returns every image reference in src with byte spans into src.
 func (dockerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
-	x := extractor{file: file, src: src, lines: lineStarts(src)}
 	switch {
 	case isDockerfile(file):
+		x := extractor{file: file, src: src, lines: lineStarts(src)}
 		x.dockerfile()
 		return x.deps, nil
 	case composeRe.MatchString(file):
+		x := extractor{file: file, src: src, lines: lineStarts(src)}
 		return x.deps, x.yaml(x.compose)
+	case workflowRe.MatchString(file) || actionRe.MatchString(file):
+		x := extractor{file: file, src: src, lines: lineStarts(src)}
+		return x.deps, x.yaml(x.workflow)
 	}
-	return x.deps, x.yaml(x.workflow)
+	if !bytes.Contains(src, []byte("image:")) && !bytes.Contains(src, []byte("repository:")) {
+		return nil, nil
+	}
+	x := extractor{file: file, src: src, lines: lineStarts(src)}
+	x.manifests()
+	return x.deps, nil
 }
 
 // Edits rewrites the reference: tag → tag, pinned → new digest (and tag when the version
@@ -122,6 +135,8 @@ func (x *extractor) lineOf(off int) int {
 func (x *extractor) add(depType string, line, off int, ref string) {
 	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: depType, File: x.file, Line: line, Name: ref}
 	switch {
+	case depType == TypeKubernetes && strings.Contains(ref, "{{"):
+		d.Skip = "template value"
 	case strings.Contains(ref, "$"):
 		d.Skip = "variable reference"
 	case off < 0:

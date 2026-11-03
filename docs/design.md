@@ -32,7 +32,7 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 |---|---|---|---|
 | `github-actions` | `.github`/`.gitea`/`.forgejo` `workflows`/`actions` and `workflow-templates` YAML, `action.y(a)ml` | `action` | `git-tags` / `tag` |
 | `gomod` | `go.mod` | `direct`, `indirect`, `go`, `toolchain` | `go` / `go`; directives `go-toolchain` / `tag` |
-| `docker` | `Dockerfile`, `Containerfile` (also `Dockerfile.x`, `x.Dockerfile`), `(docker-)compose*.y(a)ml`, workflows, `action.y(a)ml` | `dockerfile`, `compose`, `workflow`, `action` | `docker` / `docker` |
+| `docker` | `Dockerfile`, `Containerfile` (also `Dockerfile.x`, `x.Dockerfile`), `(docker-)compose*.y(a)ml`, workflows, `action.y(a)ml`, other `*.y(a)ml` (Kubernetes, Helm values) | `dockerfile`, `compose`, `workflow`, `action`, `kubernetes`, `helm` | `docker` / `docker` |
 | `npm` | `package.json` | `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager` | `npm` / `semver` |
 | `custom` | `custom[].files` globs | `annotation`, `regex` | per entry or per match |
 
@@ -47,11 +47,18 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 - References are parsed with distribution/reference; `Name` is the familiar name (`postgres`), the datasource uses the canonical one. Skips: `variable reference` (`$`), `cannot locate value`, `invalid reference`, `no tag`, `digest without tag`, `non-version tag` (e.g. `latest`).
 - Digests: `image:tag@sha256:…` is refreshed in place (tag and digest). With `pin: digest`, `@sha256:<index digest>` is appended after the tag. Digests come from a HEAD of the tag's manifest, so multi-platform images get the index digest. Credentials come from the Docker config and credential helpers.
 
+**Dockerfile stage references and ARGs.** Besides `FROM`, the docker manager extracts `COPY --from=<image>` and `RUN --mount=…,from=<image>`; stage names, numeric stage indexes and `scratch` are not images. A reference that is exactly `$X`/`${X}` resolves to `ARG X=<image>` declared before the first `FROM` or in the current stage; the dep sits at the ARG default (once per ARG), so the update rewrites the ARG line. Defaults that are themselves variable or quoted with escapes are skipped as `variable reference`.
+
+**Kubernetes and Helm YAML.** Every other `*.ya?ml` file is a candidate but is only parsed when its bytes contain `image:` or `repository:`; documents are decoded one by one and a parse error (typically Helm templates) yields no deps and no error.
+- `kubernetes`: scalar `image` in `containers`/`initContainers`/`ephemeralContainers` items anywhere.
+- `helm`: `*image` mappings with `repository` + `tag` (optional `registry` prefix; digest from `tag: x@sha256:…` or a sibling `digest:`); the tag scalar is rewritten in place.
+- Values containing `{{` are skipped as `template value`.
+
 **npm.** `package.json` is streamed with `encoding/json` tokens; `InputOffset` after each string value gives its byte span, which must equal the quoted value in the file (otherwise, e.g. with `\u` escapes, `cannot locate value`). Sections: `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies` (the section name is the `DepType`) and `packageManager` (`npm@x`, `pnpm@x`, `yarn@x`; `Name` is the tool). `overrides`, `resolutions`, `engines` and `bundleDependencies` are not extracted; `node_modules` is pruned by discovery.
 - **Range grammar:** an optional operator `^`, `~`, `>=` or `=`, then a full `MAJOR.MINOR.PATCH[-prerelease]`. `Version` is the bare version and `RefSpan` covers only the version bytes, so the operator is kept: the range is *bumped* (`^1.2.3` → `^1.4.0`), not widened or replaced.
 - **Skips:** `npm alias` (`npm:`), `local dependency` (`file:`, `link:`, `workspace:`, `./`, `../`, `/`, `~/`), `git dependency` (`github:`, `gitlab:`, `bitbucket:`, `gist:`, `git+`, `git://`, `git@`, `owner/repo[#ref]`), `url dependency` (`http(s)://` tarballs), `tag` (dist-tags such as `latest`, `next`), `unsupported range` (`||`, spaces, `x`/`*` wildcards, partial versions, `<`, hyphen ranges, `v1.2.3`, empty), `cannot locate value`; for `packageManager` also `packageManager with hash` (`+sha512…` suffix) and `unsupported packageManager`.
 - **peerDependencies** are ignored by default, like indirect Go requirements; a rule with `depTypes: [peerDependencies]` and `ignore: false` opts in.
-- **Lockfile:** after a package.json change, `apply`/`run` regenerate a sibling `package-lock.json` (see *Post-processors* below).
+- **Lockfile:** after a package.json change, `apply`/`run` regenerate the workspace's `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock` (see *Post-processors* below). Dependencies naming a member of the manifest's own workspace are never updated (any range form).
 
 **custom, annotation mode** (no `match`). A comment `deps: <datasource> <name> [versioning=<scheme>]` after `#`, `//`, `--`, `;` or `<!--` annotates the next line; its first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Otherwise `no version on next line`.
 
@@ -69,6 +76,23 @@ custom:
   - files: ["**/*.mk"]
     match: '(?P<name>[a-z0-9-]+/[a-z0-9-]+)@(?P<version>v\d+\.\d+\.\d+)'
     datasource: github-releases
+```
+
+**Release checksums.** A regex entry can pin a checksum next to the version (`ARG GH_VERSION=…` / `ARG GH_SHA256=…`): a `(?P<checksum>…)` group in `match` plus a `checksum:` block, required together. Exactly one source:
+- `asset` (github-releases only): the release asset's API `digest` from the already-fetched release list (no extra request);
+- `url`: a checksum document downloaded once per URL (streamed, 1 MiB cap); with `file`, the entry is looked up in a sha256sum-style list (`<hex>  <name>` / `<hex> *<name>`), else the first hex token is taken.
+
+The only template variable is `{{version}}` (the new version as written into the file), validated at load. sha256 (64 hex) and sha512 (128 hex) are accepted; the new checksum must have the current length and keeps its letter case. The checksum is fetched only after an update is chosen; a failure is that dependency's error (no update), so version and checksum always change together.
+
+```yaml
+custom:
+  - files: [Dockerfile]
+    match: 'ARG GH_VERSION=(?P<version>\S+)\nARG GH_SHA256=(?P<checksum>[0-9a-f]{64})'
+    datasource: github-releases
+    name: cli/cli
+    checksum:
+      url: 'https://github.com/cli/cli/releases/download/v{{version}}/gh_{{version}}_checksums.txt'
+      file: 'gh_{{version}}_linux_amd64.tar.gz'
 ```
 
 ### Datasources
@@ -89,10 +113,15 @@ Custom entries may use `git-tags`, `github-releases`, `go` and `docker`.
 
 ### Post-processors
 
-`engine.Build` patches each file, then runs the post-processor registered for the file's managers (`plan` passes none). A post-processor names the sibling files it needs; the engine reads the existing ones, calls it under a global bound of 4 concurrent runs, replaces the manifest when the result contains the manifest's name, and adds a change for every sibling whose content differs (keeping its mode, `0644` for new files). A failure drops the file and its siblings and is reported as `<file>: <err>`.
+`engine.Build` patches every file, then asks the post-processor registered for the file's manager for the file's **scope**: the directory owning its derived files (`plan` passes none). Manifests of one manager sharing a scope are post-processed together, once per scope, under a global bound of 4 concurrent runs. The engine reads the scope dir's existing siblings; a result under a manifest's path (relative to the scope) replaces that manifest; every sibling whose content differs becomes a change (mode kept, `0644` for new files). A manifest without a scope is only patched. A failing scope drops all its manifests and siblings (`<file>[, <file>…]: <err>`).
 
-- **gomod** (`gotool.Tidier`, siblings `go.sum`): `go mod tidy -modfile=<tmp>/go.mod` in the module directory on copies of go.mod and go.sum.
-- **npm** (`nodetool.Locker`, siblings `package-lock.json`, `.npmrc` read-only): copies the patched package.json, package-lock.json and `.npmrc` to a temporary directory, runs `npm install --package-lock-only --ignore-scripts --no-audit --no-fund` there (env `npm_config_update_notifier=false`; the user's `~/.npmrc` still applies) and returns package-lock.json only if it changed. Without a package-lock.json nothing is done (no lockfile is created). A `yarn.lock` or `pnpm-lock.yaml` next to package.json fails the file with `lockfile <name> not supported`. `npm` missing from PATH is `npm not found in PATH (needed to update package-lock.json)`; an npm failure is `npm install in <dir>: <last 20 stderr lines>`. npm-shrinkwrap.json is not handled (npm 12 no longer reads or writes it). Because npm runs in a copy, `file:` dependencies relative to the package and workspaces (whose lockfile lives at the workspace root) are not supported.
+- **gomod** (`gotool.Tidier`, scope = module dir, siblings `go.sum`): `go mod tidy -modfile=<tmp>/go.mod` on copies.
+- **npm** (`nodetool.Locker`, siblings `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` + read-only `.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`).
+  - Scope (lock root): nearest dir at/above the package.json (within `--dir`) holding one of the lockfiles, accepted if it is the manifest's own dir or its package.json `workspaces` (array or `{packages}`) / `pnpm-workspace.yaml` `packages` doublestar globs match the manifest dir (`!glob` excludes); otherwise no lockfile (none is created).
+  - Temp copy: root + all member package.json (patched where changed) at relative paths, the lockfile, config files, and local files referenced by `.yarnrc.yml` `yarnPath`/`plugins` (member discovery walks each glob's literal base, skipping node_modules/.git).
+  - Commands: npm `install --package-lock-only --ignore-scripts --no-audit --no-fund`; pnpm `install --lockfile-only --ignore-scripts --no-frozen-lockfile`; yarn berry (`.yarnrc.yml` or `__metadata` in the lock) `install --mode=update-lockfile` with `YARN_ENABLE_SCRIPTS=0 YARN_ENABLE_IMMUTABLE_INSTALLS=0`; yarn classic `install --ignore-scripts --ignore-engines --non-interactive --no-progress`. Env `npm_config_update_notifier=false`, `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`.
+  - Tool resolution: binary on PATH; else `npx --yes <tool>@<version>` when root `packageManager` names it (berry: `npx --yes --package=@yarnpkg/cli-dist@<version> -- yarn`); else `npx --yes <tool>`; else `<tool> not found (needed to update <lock>)`.
+  - Several lockfiles in one root: the `packageManager` tool's lockfile wins, else package-lock, pnpm, yarn. Only the lockfile is read back and returned when changed; failure `<tool> install in <dir>: <last 20 output lines>`. npm-shrinkwrap.json is not handled.
 
 ## 3. Performance and memory design
 
@@ -101,13 +130,14 @@ The following is implemented:
 - **Discovery.** A single `filepath.WalkDir`. It prunes `.git`, `node_modules`, `vendor`, `testdata` and `ignorePaths` directories via `fs.SkipDir`. Paths are matched before any file is opened, and only matched files are read.
 - **Extraction.** Runs on `runtime.GOMAXPROCS(0)` workers. Each worker keeps only `[]Dep` (spans and strings); parse trees and file bytes are dropped immediately. Files are re-read when changes are built, so memory is O(deps), not O(repo).
 - **HTTP.** One shared `http.Client` (HTTP/2, keep-alive) handles every network call.
+- **Retries and rate limits.** The shared transport retries idempotent requests: GET/HEAD/OPTIONS, and read-only POSTs marked with `httpx.Idempotent` (git ls-refs, OSV querybatch). It retries connection errors and 429/500/502/503/504, at most 3 times, with full-jitter exponential backoff (500ms base, 10s cap), honouring `Retry-After`. Platform writes are never retried. A 429, or a 403 with `X-RateLimit-Remaining: 0` or `Retry-After`, is a rate limit: if it resets within 60s deps waits (info log); otherwise the request fails fast with `rate limited by <host> until <time>` (`httpx.ErrRateLimited`) instead of stalling the run. go-containerregistry's own retry is disabled so attempts are not multiplied. Each attempt is logged at debug, with `X-RateLimit-Remaining` when present.
 - **Lookup dedupe.** Lookups are deduped within a run per key (one `sync.Once` per cache entry). A global semaphore caps concurrent requests at 16.
 - **Actions tags.** Fetched with a native git smart-HTTP protocol v2 `ls-refs` call using `ref-prefix refs/tags/` and `peel`. No `git` process is spawned per action, only tag refs travel over the wire, and the pkt-line response is parsed as a stream.
 - **Go versions.** Fetched from the GOPROXY `@v/list` endpoint over HTTP. `go list` is used only for GOPRIVATE/direct modules. Go toolchain releases come from one `go.dev/dl/?mode=json&include=all` fetch per run.
 - **Registries.** Docker tags come from `tags/list` (all pages; Docker Hub with page size 10000), digests from a manifest HEAD. One shared go-containerregistry puller per run, so ping and token exchange happen once per repository.
 - **npm metadata.** Abbreviated documents are stream-decoded; only one version object is buffered at a time.
 - **Security.** OSV is queried in batches of up to 1000 packages; each advisory document is fetched once.
-- **Child processes.** Spawned only where unavoidable: post-processors (`go mod tidy`, `npm install --package-lock-only`; at most 4 concurrently in total) and `git` for commit and push.
+- **Child processes.** Spawned only where unavoidable: post-processors (`go mod tidy`, npm/pnpm/yarn lockfile installs; at most 4 concurrently in total) and `git` for commit and push.
 - **Commits.** Built with git plumbing on a temporary index. `run` does no checkout, creates no worktree, and never mutates the working tree.
 - **No persistent cache.** Runs are infrequent (scheduled), so in-run dedupe already removes the repeated lookups.
 
@@ -124,7 +154,7 @@ type Dep struct {
     Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "custom"
     Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm"
     Versioning  string // "tag" | "go" | "docker" | "semver"
-    DepType     string // gomod: direct|indirect|go|toolchain; actions: action; docker: dockerfile|compose|workflow|action; npm: dependencies|devDependencies|optionalDependencies|peerDependencies|packageManager; custom: annotation|regex
+    DepType     string // gomod: direct|indirect|go|toolchain; actions: action; docker: dockerfile|compose|workflow|action|kubernetes|helm; npm: dependencies|devDependencies|optionalDependencies|peerDependencies|packageManager; custom: annotation|regex
     File        string // slash path relative to --dir
     Line        int    // 1-based
     Name        string // actions: owner/repo[/sub]; gomod: module path
@@ -136,18 +166,30 @@ type Dep struct {
     DigestSpan  Span   // docker/custom: digest token stored apart from RefSpan
     InsertAt    int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
     Skip        string // non-empty = not updatable, with the reason
+
+    Checksum       string          // custom: current sha256/sha512 hex pinned next to the version
+    ChecksumSpan   Span            // custom: checksum token
+    ChecksumSource *ChecksumSource // custom: where the checksum of a new version comes from; nil = none
+}
+
+// Asset and URL/File are templates over {{version}}; exactly one of Asset and URL is set.
+type ChecksumSource struct {
+    Asset string // github-releases: release asset whose API digest is used
+    URL   string // checksums document to download
+    File  string // entry name in a sha256sum-style URL document; "" = first hex token
 }
 
 type Advisory struct{ ID, Summary, URL string }
 
 type Update struct {
-    Dep        Dep
-    Type       UpdateType
-    NewVersion string
-    NewDigest  string        // "" unless the result is digest-pinned
-    Group      string        // policy group, "" = own PR
-    Schedule   *schedule.Set // nil = always
-    Advisories []Advisory    // non-empty = security update
+    Dep         Dep
+    Type        UpdateType
+    NewVersion  string
+    NewDigest   string        // "" unless the result is digest-pinned
+    Group       string        // policy group, "" = own PR
+    Schedule    *schedule.Set // nil = always
+    Advisories  []Advisory    // non-empty = security update
+    NewChecksum string        // "" unless Dep.ChecksumSource is set and the version changes
 }
 ```
 
@@ -167,7 +209,7 @@ type Manager interface {
 ```
 
 ```go
-// internal/datasource (leaf package; aliased as engine.Release, engine.Datasource, engine.Vuln, engine.SecuritySource)
+// internal/datasource (leaf package; aliased as engine.Release, engine.Datasource, engine.Vuln, engine.SecuritySource, engine.ChecksumSource)
 type Release struct{ Version, Digest string }
 type Datasource interface {
     Releases(ctx context.Context, d dep.Dep, dir string) ([]Release, error)
@@ -177,8 +219,12 @@ type Vuln struct{ Advisory dep.Advisory; Fixed []string }
 type SecuritySource interface {
     Advisories(ctx context.Context, deps []dep.Dep) ([][]Vuln, error)
 }
+type ChecksumSource interface {
+    Checksum(ctx context.Context, d dep.Dep, version string) (string, error) // lowercase hex
+}
 // gittags.Lister ("git-tags"), goproxy.Source ("go"), gotoolchain ("go-toolchain"),
-// dockerds ("docker"), githubreleases ("github-releases") and npmds ("npm") implement Datasource; osv implements SecuritySource.
+// dockerds ("docker"), githubreleases ("github-releases") and npmds ("npm") implement Datasource; osv implements SecuritySource;
+// checksum.Source implements ChecksumSource.
 ```
 
 ```go
@@ -197,14 +243,17 @@ func Get(name string) (Scheme, bool) // "tag", "go", "docker", "semver"
 ```go
 // internal/engine
 type PostProcessor interface {
-    Siblings() []string // sibling file names read or regenerated
-    // Process returns regenerated files by base name; the manifest's own name replaces the patched manifest.
-    Process(ctx context.Context, dir string, manifest []byte, files map[string][]byte) (map[string][]byte, error)
+    Scope(root, manifest string) (dir string, ok bool) // slash dir relative to root owning the derived files; !ok = patch only
+    Siblings() []string                                // file names in the scope dir read or regenerated
+    // manifests: patched content by path relative to dir; files: existing siblings by name.
+    // A result under a manifest's path replaces it, one under a sibling's name the sibling.
+    Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error)
 }
 type Options struct {
     Managers    []manager.Manager
     Datasources map[string]Datasource // by Dep.Datasource
     Security    SecuritySource        // nil = off
+    Checksums   ChecksumSource        // nil = deps with a checksum source cannot be updated
     Filter      func(dep.Dep) bool    // nil = all
     Trace       func(Trace)           // nil = off
 }
@@ -493,8 +542,6 @@ Editor support: `deps schema > deps.schema.json`, then start `.deps.yaml` with `
 - per-rule `automerge`;
 - `actions.lock` via `github.com/github/actions-lockfile/go`;
 - a dependency dashboard issue;
-- GitHub release checksum updates: when a version bump changes a release download, also update the companion `<X>_SHA256` value;
-- HTTP retries and rate-limit handling (`Retry-After`, GitHub secondary limits);
 - an engine benchmark over a large fixture tree to guard the performance targets.
 
 ## 9. Config reference
@@ -515,7 +562,7 @@ ignorePaths: []             # doublestar globs on slash paths relative to --dir
 rules:
   - manager: github-actions # optional: github-actions | gomod | docker | npm | custom
     names: ["actions/*"]    # optional path.Match globs on the dependency name
-    depTypes: [direct]      # optional: direct indirect go toolchain action dockerfile compose workflow dependencies devDependencies optionalDependencies peerDependencies packageManager annotation regex
+    depTypes: [direct]      # optional: direct indirect go toolchain action dockerfile compose workflow kubernetes helm dependencies devDependencies optionalDependencies peerDependencies packageManager annotation regex
     ignore: true            # optional
     pin: digest             # optional: keep | digest
     allow: "< 7"            # optional Masterminds semver constraint
@@ -528,6 +575,10 @@ custom:
     datasource: go          # git-tags | github-releases | go | docker; regex mode: required unless a datasource group
     name: golang.org/x/tools # regex mode: required unless a name group
     versioning: semver      # tag | go | docker | semver (default semver)
+    checksum:               # optional, regex mode only; requires a (?P<checksum>) group in match
+      asset: ""             # github-releases only: release asset whose API digest is used; exclusive with url
+      url: ""               # checksum document URL ({{version}} expands)
+      file: ""              # url only: entry name in a sha256sum-style list; "" = first hex token
 ```
 
 **Semantics:**

@@ -9,10 +9,12 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // fakeOSV serves /v1/querybatch from results (keyed by "ecosystem|name|version|pageToken")
@@ -392,6 +394,31 @@ func TestAdvisoriesResultMismatch(t *testing.T) {
 	_, err := newSource(srv.Client(), nil, srv.URL).Advisories(t.Context(), []dep.Dep{goDep("example.com/m", "v1.0.0")})
 	if err == nil || !strings.Contains(err.Error(), "got 0 results for 1 queries") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TestQueryBatchRetried checks the querybatch POST is marked idempotent, so the shared client
+// retries it and re-sends the body.
+func TestQueryBatchRetried(t *testing.T) {
+	f := newFake(t)
+	f.results["Go|example.com/m|v1.0.0|"] = result{ids: []string{"GO-A"}}
+	f.vulns["GO-A"] = `{"id":"GO-A","affected":[{"package":{"ecosystem":"Go","name":"example.com/m"},"versions":["v1.0.0"]}]}`
+	var posts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && posts.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		f.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	got, err := newSource(httpx.NewClient(), nil, srv.URL).Advisories(t.Context(), []dep.Dep{goDep("example.com/m", "v1.0.0")})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("Advisories = %+v, %v", got, err)
+	}
+	if posts.Load() != 2 || len(f.batches) != 1 || len(f.batches[0]) != 1 {
+		t.Errorf("posts = %d, decoded batches = %+v; want 2 posts, 1 full batch", posts.Load(), f.batches)
 	}
 }
 

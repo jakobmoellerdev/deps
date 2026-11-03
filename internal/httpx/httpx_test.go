@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
@@ -26,10 +28,12 @@ func captureLog(t *testing.T, level slog.Level) *bytes.Buffer {
 
 func TestClientLogging(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "42")
 		w.WriteHeader(http.StatusTeapot)
 	}))
 	t.Cleanup(srv.Close)
 	c := NewClient()
+	c.Transport.(*retryTransport).sleep = func(context.Context, time.Duration) error { return nil }
 
 	get := func(url string) error {
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
@@ -53,7 +57,7 @@ func TestClientLogging(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := buf.String()
-		for _, want := range []string{`msg="http request"`, "method=GET", "url=http://user:xxxxx@", "/path", "status=418"} {
+		for _, want := range []string{`msg="http request"`, "method=GET", "url=http://user:xxxxx@", "/path", "status=418", "rateLimitRemaining=42"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("log lacks %q:\n%s", want, out)
 			}
@@ -71,8 +75,12 @@ func TestClientLogging(t *testing.T) {
 		if err := get(url); err == nil {
 			t.Fatal("request to closed server succeeded")
 		}
-		if out := buf.String(); !strings.Contains(out, `msg="http request failed"`) || !strings.Contains(out, "err=") {
+		out := buf.String()
+		if !strings.Contains(out, `msg="http request failed"`) || !strings.Contains(out, "err=") {
 			t.Errorf("log = %s", out)
+		}
+		if n := strings.Count(out, `msg="http retry"`); n != maxRetries {
+			t.Errorf("logged %d retries, want %d:\n%s", n, maxRetries, out)
 		}
 	})
 

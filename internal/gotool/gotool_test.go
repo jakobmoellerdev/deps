@@ -44,12 +44,17 @@ func TestTidyOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := Tidier{}.Process(context.Background(), dir, []byte("module   example.com/x\n\n\n\ngo 1.21\n"), map[string][]byte{})
+	out, err := Tidier{}.Process(context.Background(), dir, map[string][]byte{"go.mod": []byte("module   example.com/x\n\n\n\ngo 1.21\n")}, map[string][]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if names := (Tidier{}).Siblings(); len(names) != 1 || names[0] != "go.sum" {
 		t.Errorf("Siblings = %v", names)
+	}
+	for manifest, want := range map[string]string{"a/b/go.mod": "a/b", "go.mod": "."} {
+		if scope, ok := (Tidier{}).Scope(dir, manifest); scope != want || !ok {
+			t.Errorf("Scope(%s) = %q, %v, want %q", manifest, scope, ok, want)
+		}
 	}
 	mod, sum := out["go.mod"], out["go.sum"]
 	if !strings.HasPrefix(string(mod), "module example.com/x\n") {
@@ -69,7 +74,7 @@ func TestTidyOffline(t *testing.T) {
 		t.Errorf("real go.sum created: %v", err)
 	}
 
-	_, err = Tidier{}.Process(context.Background(), dir, []byte("this is not a go.mod\n"), nil)
+	_, err = Tidier{}.Process(context.Background(), dir, map[string][]byte{"go.mod": []byte("this is not a go.mod\n")}, nil)
 	if err == nil || !strings.HasPrefix(err.Error(), "go mod tidy in "+dir+": ") {
 		t.Fatalf("err = %v, want go mod tidy in %s: ...", err, dir)
 	}

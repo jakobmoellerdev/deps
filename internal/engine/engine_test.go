@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -81,24 +82,33 @@ func fakeTidy(_ context.Context, _ string, mod, _ []byte) ([]byte, []byte, error
 	return append(append([]byte(nil), mod...), "// tidied\n"...), []byte("sum\n"), nil
 }
 
-// postFunc adapts a function to a PostProcessor reading siblings.
+// postFunc adapts a function to a PostProcessor reading siblings; scope nil scopes every
+// manifest to its own directory.
 type postFunc struct {
 	siblings []string
-	f        func(ctx context.Context, dir string, manifest []byte, files map[string][]byte) (map[string][]byte, error)
+	f        func(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error)
+	scope    func(root, manifest string) (string, bool)
+}
+
+func (p postFunc) Scope(root, manifest string) (string, bool) {
+	if p.scope == nil {
+		return path.Dir(manifest), true
+	}
+	return p.scope(root, manifest)
 }
 
 func (p postFunc) Siblings() []string { return p.siblings }
 
-func (p postFunc) Process(ctx context.Context, dir string, manifest []byte, files map[string][]byte) (map[string][]byte, error) {
-	return p.f(ctx, dir, manifest, files)
+func (p postFunc) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
+	return p.f(ctx, dir, manifests, files)
 }
 
 // tidyFunc is a go mod tidy stand-in; post registers it as the gomod post-processor.
 type tidyFunc func(ctx context.Context, dir string, mod, sum []byte) ([]byte, []byte, error)
 
 func (f tidyFunc) post() map[string]PostProcessor {
-	return map[string]PostProcessor{gomod.Name: postFunc{[]string{"go.sum"}, func(ctx context.Context, dir string, mod []byte, files map[string][]byte) (map[string][]byte, error) {
-		newMod, newSum, err := f(ctx, dir, mod, files["go.sum"])
+	return map[string]PostProcessor{gomod.Name: postFunc{siblings: []string{"go.sum"}, f: func(ctx context.Context, dir string, mods, files map[string][]byte) (map[string][]byte, error) {
+		newMod, newSum, err := f(ctx, dir, mods["go.mod"], files["go.sum"])
 		if err != nil {
 			return nil, err
 		}
@@ -548,12 +558,12 @@ func TestResolveAndBuildNpm(t *testing.T) {
 	}
 
 	var seen map[string][]byte
-	post := map[string]PostProcessor{"npm": postFunc{[]string{"package-lock.json", ".npmrc"}, func(_ context.Context, dir string, manifest []byte, files map[string][]byte) (map[string][]byte, error) {
+	post := map[string]PostProcessor{"npm": postFunc{siblings: []string{"package-lock.json", ".npmrc"}, f: func(_ context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
 		if dir != filepath.Join(root, "web") {
 			t.Errorf("dir = %s", dir)
 		}
 		seen = files
-		return map[string][]byte{"package-lock.json": append([]byte("lock for "), manifest[:20]...), ".npmrc": files[".npmrc"]}, nil
+		return map[string][]byte{"package-lock.json": append([]byte("lock for "), manifests["package.json"][:20]...), ".npmrc": files[".npmrc"]}, nil
 	}}}
 	changes, errs := Build(t.Context(), root, o.Managers, res.Updates, post)
 	if len(errs) > 0 {

@@ -34,3 +34,9 @@ type SecuritySource interface {
 	// once per run with all updatable deps.
 	Advisories(ctx context.Context, deps []dep.Dep) ([][]Vuln, error)
 }
+
+// ChecksumSource looks up the checksum of a release artifact of d (see dep.ChecksumSource).
+type ChecksumSource interface {
+	// Checksum returns the lowercase hex checksum for version.
+	Checksum(ctx context.Context, d dep.Dep, version string) (string, error)
+}

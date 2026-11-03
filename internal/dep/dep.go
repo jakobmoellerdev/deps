@@ -41,6 +41,23 @@ type Dep struct {
 	DigestSpan  Span   // docker/custom: digest token, when the digest is stored apart from RefSpan
 	InsertAt    int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
 	Skip        string // non-empty = not updatable, with the reason
+
+	Checksum       string          // custom: current sha256/sha512 hex pinned next to the version
+	ChecksumSpan   Span            // custom: checksum token
+	ChecksumSource *ChecksumSource // custom: where the checksum of a new version comes from; nil = none
+}
+
+// ChecksumSource locates the checksum of a version. Asset and URL/File are templates in which
+// `{{version}}` is the new version as written into the file; exactly one of Asset and URL is set.
+type ChecksumSource struct {
+	Asset string // github-releases: release asset whose API digest is used
+	URL   string // checksums document to download
+	File  string // entry name in a sha256sum-style URL document; "" = first hex token
+}
+
+// ExpandVersion substitutes `{{version}}` in tmpl.
+func ExpandVersion(tmpl, version string) string {
+	return strings.ReplaceAll(tmpl, "{{version}}", version)
 }
 
 // Advisory is a security advisory fixed by an update.
@@ -48,13 +65,14 @@ type Advisory struct{ ID, Summary, URL string }
 
 // Update is a proposed change to one Dep.
 type Update struct {
-	Dep        Dep
-	Type       UpdateType
-	NewVersion string
-	NewDigest  string        // "" unless the result is digest-pinned
-	Group      string        // policy group name, "" = own PR
-	Schedule   *schedule.Set // nil = always in schedule
-	Advisories []Advisory    // non-empty = security update
+	Dep         Dep
+	Type        UpdateType
+	NewVersion  string
+	NewDigest   string        // "" unless the result is digest-pinned
+	Group       string        // policy group name, "" = own PR
+	Schedule    *schedule.Set // nil = always in schedule
+	Advisories  []Advisory    // non-empty = security update
+	NewChecksum string        // "" unless Dep.ChecksumSource is set and the version changes
 }
 
 // FromTo renders the old and new version; digest-pinned sides are `<version>@<digest7>`.

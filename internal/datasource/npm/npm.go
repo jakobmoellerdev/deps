@@ -29,6 +29,8 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/nodetool"
 )
 
 // Name is the datasource name.
@@ -50,6 +52,8 @@ type Source struct {
 	mu       sync.Mutex
 	packages map[string]*entry   // registry + "\x00" + name
 	rcs      map[string]*rcEntry // package.json directory -> effective .npmrc
+	wsDirs   map[string]*wsEntry // package.json directory -> names of its workspace's packages
+	wsRoots  map[string]*wsEntry // workspace root directory -> names of its packages
 }
 
 type entry struct {
@@ -64,17 +68,39 @@ type rcEntry struct {
 	err  error
 }
 
+type wsEntry struct {
+	once  sync.Once
+	names map[string]bool
+	err   error
+}
+
 // New returns the npm datasource. sem bounds concurrent requests and is shared with the other
 // datasources; getenv supplies NPM_CONFIG_REGISTRY and the .npmrc ${VAR} expansions.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) datasource.Datasource {
-	return &Source{client: client, sem: sem, getenv: getenv, packages: make(map[string]*entry), rcs: make(map[string]*rcEntry)}
+	return &Source{
+		client: client, sem: sem, getenv: getenv,
+		packages: make(map[string]*entry), rcs: make(map[string]*rcEntry),
+		wsDirs: make(map[string]*wsEntry), wsRoots: make(map[string]*wsEntry),
+	}
 }
 
 // Releases lists the non-deprecated versions of d.Name. dir is the absolute directory of
-// d.File; the scanned root is derived from it and d.File. The slice is shared between
-// callers and must not be modified.
+// d.File; the scanned root is derived from it and d.File. A dependency on a package of the
+// manifest's own workspace (linked locally whatever its range) has no releases. The slice is
+// shared between callers and must not be modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
-	rc, err := s.config(dir, rootOf(d.File, dir))
+	root := rootOf(d.File, dir)
+	if d.DepType != npm.DepTypePackageManager {
+		names, err := s.workspacePackages(dir, root)
+		if err != nil {
+			return nil, err
+		}
+		if names[d.Name] {
+			slog.DebugContext(ctx, "workspace member", "name", d.Name, "file", d.File)
+			return nil, nil
+		}
+	}
+	rc, err := s.config(dir, root)
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +130,44 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 // Digest is unsupported: npm versions are not digest-pinned.
 func (*Source) Digest(context.Context, dep.Dep, string) (string, error) {
 	return "", errors.New("npm: digests are not supported")
+}
+
+// workspacePackages returns the package names of the workspace containing the package.json
+// directory dir (nil outside a workspace); the workspace root is looked up once per directory
+// and its packages are read once per root.
+func (s *Source) workspacePackages(dir, root string) (map[string]bool, error) {
+	e := s.wsEntry(s.wsDirs, dir)
+	e.once.Do(func() {
+		rel, err := filepath.Rel(root, dir)
+		if err != nil {
+			e.err = err
+			return
+		}
+		ws, ok := nodetool.WorkspaceRoot(root, filepath.ToSlash(rel))
+		if !ok {
+			return
+		}
+		abs := filepath.Join(root, filepath.FromSlash(ws))
+		re := s.wsEntry(s.wsRoots, abs)
+		re.once.Do(func() {
+			if re.names, re.err = nodetool.WorkspacePackages(abs); re.err != nil {
+				re.err = fmt.Errorf("workspace %s: %w", abs, re.err)
+			}
+		})
+		e.names, e.err = re.names, re.err
+	})
+	return e.names, e.err
+}
+
+func (s *Source) wsEntry(m map[string]*wsEntry, key string) *wsEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := m[key]
+	if e == nil {
+		e = &wsEntry{}
+		m[key] = e
+	}
+	return e
 }
 
 // rootOf returns the scanned root: dir without the directory part of the slash path file.

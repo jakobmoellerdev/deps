@@ -53,7 +53,7 @@ const src = `{
   "bundleDependencies": ["caret"],
   "overrides": {"caret": "1.0.0"},
   "resolutions": {"caret": "1.0.0"},
-  "engines": {"node": ">=18"},
+  "engines": {"node": ">=18"}, "workspaces": {"packages": ["packages/*"], "dependencies": {"no": "1.0.0"}},
   "packageManager": "npm@12.2.0"
 }
 `

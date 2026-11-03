@@ -275,7 +275,7 @@ func TestMatch(t *testing.T) {
 		"compose.override.yml":         true,
 		"deploy/docker-compose.yml":    true,
 		"docker-compose.prod.yaml":     true,
-		"my-compose.yml":               false,
+		"my-compose.yml":               true,
 		".github/workflows/ci.yml":     true,
 		".gitea/workflows/ci.yaml":     true,
 		".forgejo/actions/a/x.yml":     true,
@@ -283,7 +283,9 @@ func TestMatch(t *testing.T) {
 		"action.yml":                   true,
 		"sub/action.yaml":              true,
 		"README.md":                    false,
-		"config/app.yml":               false,
+		"config/app.yml":               true,
+		"charts/c/values.yaml":         true,
+		"x.yaml.bak":                   false,
 		".github/workflows/readme.txt": false,
 	} {
 		if got := m.Match(path); got != ok {
@@ -341,5 +343,201 @@ func TestEditsYAML(t *testing.T) {
 	out, err := patch.Apply([]byte(src), edits)
 	if want := "services:\n  a:\n    image: 'redis:7.4@" + sha2 + "'\n"; err != nil || string(out) != want {
 		t.Errorf("got %q, %v; want %q", out, err, want)
+	}
+}
+
+const dockerfileArgs = `ARG BASE=golang:1.22
+ARG Q="alpine:3.20"
+ARG V=${BASE}
+ARG E="a\"b"
+FROM ${BASE} AS build
+FROM $Q
+FROM ${V}
+FROM ${E}
+FROM $BASE
+FROM $UNKNOWN
+ARG TOOL=ghcr.io/o/tool:1.0
+COPY --from=build /a /b
+COPY --from=0 /a /b
+COPY --chown=1 --from=busybox:1.36 /bin/sh /sh
+COPY --from=$TOOL /t /t
+COPY --from=${MISSING} /x /x
+RUN --mount=type=cache,target=/c --mount=type=bind,from=ghcr.io/o/src:2.0,source=/,target=/s make
+RUN --mount=type=bind,from=build,target=/b true
+COPY --from=nginx /x /y
+COPY a b
+ARG BASE
+COPY --from=$BASE x y
+ARG S=build
+COPY --from=${S} x y
+COPY --from=scratch x y
+`
+
+func TestExtractDockerfileArgsAndFrom(t *testing.T) {
+	for name, src := range variants(dockerfileArgs) {
+		t.Run(name, func(t *testing.T) {
+			check(t, []byte(src), extract(t, "Dockerfile", src), []want{
+				{line: 1, name: "golang", source: "docker.io/library/golang", version: "1.22", depT: TypeDockerfile},
+				{line: 2, name: "alpine", source: "docker.io/library/alpine", version: "3.20", depT: TypeDockerfile, insert: `"`},
+				{line: 3, name: "${V}", depT: TypeDockerfile, skip: "variable reference"},
+				{line: 4, name: "${E}", depT: TypeDockerfile, skip: "variable reference"},
+				{line: 10, name: "$UNKNOWN", depT: TypeDockerfile, skip: "variable reference"},
+				{line: 14, name: "busybox", source: "docker.io/library/busybox", version: "1.36", depT: TypeDockerfile, insert: " /bin/sh"},
+				{line: 11, name: "ghcr.io/o/tool", source: "ghcr.io/o/tool", version: "1.0", depT: TypeDockerfile},
+				{line: 17, name: "ghcr.io/o/src", source: "ghcr.io/o/src", version: "2.0", depT: TypeDockerfile, insert: ",source"},
+				{line: 19, name: "nginx", source: "docker.io/library/nginx", depT: TypeDockerfile, skip: "no tag"},
+			})
+		})
+	}
+}
+
+func TestVarName(t *testing.T) {
+	for in, want := range map[string]string{"$X": "X", "${a_1}": "a_1", "$": "", "${}": "", "$1a": "", "${X}y": "", "x": "", "$X-y": ""} {
+		if got := varName(in); got != want {
+			t.Errorf("varName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+const kube = `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: init
+          image: busybox:1.36
+      containers:
+        - name: app
+          image: "ghcr.io/stefanprodan/podinfo:6.5.0"
+        - name: tpl
+          image: "{{ .Values.image }}"
+        - name: side
+          image: nginx@` + sha1 + `
+---
+apiVersion: v1
+kind: Pod
+spec:
+  ephemeralContainers:
+    - image: alpine:3.20
+  containers: notalist
+  other:
+    image: not:1.0
+`
+
+func TestExtractKubernetes(t *testing.T) {
+	for name, src := range variants(kube) {
+		t.Run(name, func(t *testing.T) {
+			check(t, []byte(src), extract(t, "deploy/app.yaml", src), []want{
+				{line: 8, name: "busybox", source: "docker.io/library/busybox", version: "1.36", depT: TypeKubernetes},
+				{line: 11, name: "ghcr.io/stefanprodan/podinfo", source: "ghcr.io/stefanprodan/podinfo", version: "6.5.0", depT: TypeKubernetes, insert: `"`},
+				{line: 13, name: "{{ .Values.image }}", depT: TypeKubernetes, skip: "template value"},
+				{line: 15, name: "nginx", source: "docker.io/library/nginx", digest: sha1, depT: TypeKubernetes, skip: "digest without tag"},
+				{line: 21, name: "alpine", source: "docker.io/library/alpine", version: "3.20", depT: TypeKubernetes},
+			})
+		})
+	}
+}
+
+const helmValues = `image:
+  registry: ghcr.io
+  repository: org/controller
+  tag: v1.2.3
+sidecarImage:
+  repository: bitnami/kubectl
+  tag: "1.30.1@` + sha1 + `"
+proxyImage:
+  repository: envoyproxy/envoy
+  tag: v1.31.0
+  digest: ` + sha2 + `
+tplImage:
+  repository: x/y
+  tag: "{{ .Chart.AppVersion }}"
+emptyImage:
+  repository: x/z
+  tag: ""
+notimg:
+  repository: a/b
+  tag: "1.0"
+nested:
+  initImage: {repository: busybox, tag: '1.36'}
+varImage: {repository: $R, tag: "1"}
+escImage: {repository: a, tag: "\x31.0"}
+badImage: {repository: "UP", tag: "1"}
+dgImage: {repository: a, tag: "1.0", digest: "sha256:\x31"}
+noTag: {repository: a}
+`
+
+func TestExtractHelm(t *testing.T) {
+	for name, src := range variants(helmValues) {
+		t.Run(name, func(t *testing.T) {
+			check(t, []byte(src), extract(t, "charts/c/values.yaml", src), []want{
+				{line: 4, name: "ghcr.io/org/controller", source: "ghcr.io/org/controller", version: "v1.2.3", depT: TypeHelm},
+				{line: 7, name: "bitnami/kubectl", source: "docker.io/bitnami/kubectl", version: "1.30.1", digest: sha1, depT: TypeHelm, insert: "@"},
+				{line: 10, name: "envoyproxy/envoy", source: "docker.io/envoyproxy/envoy", version: "v1.31.0", digest: sha2, depT: TypeHelm},
+				{line: 14, name: "x/y", depT: TypeHelm, skip: "template value"},
+				{line: 17, name: "x/z", source: "docker.io/x/z", depT: TypeHelm, skip: "no tag"},
+				{line: 23, name: "$R", depT: TypeHelm, skip: "variable reference"},
+				{line: 24, name: "a", depT: TypeHelm, skip: "cannot locate value"},
+				{line: 25, name: "UP", depT: TypeHelm, skip: "invalid reference"},
+				{line: 26, name: "a", source: "docker.io/library/a", version: "1.0", depT: TypeHelm, skip: "cannot locate value"},
+				{line: 22, name: "busybox", source: "docker.io/library/busybox", version: "1.36", depT: TypeHelm, insert: "'"},
+			})
+		})
+	}
+}
+
+func TestExtractManifestsPrefilterAndErrors(t *testing.T) {
+	big := strings.Repeat("key: [unterminated\n", 10000)
+	before := manifestParses.Load()
+	if deps, err := New().Extract("big.yaml", []byte(big), manager.Env{}); err != nil || deps != nil {
+		t.Errorf("big: %v %v", deps, err)
+	}
+	if manifestParses.Load() != before {
+		t.Error("file without image:/repository: was parsed")
+	}
+	// helm templates: parse errors are not errors, and drop deps of earlier documents
+	for _, src := range []string{"containers:\n  - image: a:1\n---\n{{ bad\n", "image: {{ .Values.image }}\n"} {
+		if deps, err := New().Extract("templates/d.yaml", []byte(src), manager.Env{}); err != nil || len(deps) != 0 {
+			t.Errorf("%q: %v %v", src, deps, err)
+		}
+	}
+	if manifestParses.Load() != before+2 {
+		t.Errorf("parses = %d, want 2", manifestParses.Load()-before)
+	}
+}
+
+func TestEditsManifests(t *testing.T) {
+	for _, c := range []struct {
+		file, src string
+		u         func(d dep.Dep) dep.Update
+		want      string
+	}{
+		{"values.yaml", "image:\n  repository: a/b\n  tag: \"1.0\"\n  digest: " + sha1 + "\n",
+			func(d dep.Dep) dep.Update {
+				return dep.Update{Dep: d, Type: dep.Minor, NewVersion: "1.1", NewDigest: sha2}
+			},
+			"image:\n  repository: a/b\n  tag: \"1.1\"\n  digest: " + sha2 + "\n"},
+		{"values.yaml", "image:\n  repository: a/b\n  tag: 1.0\n",
+			func(d dep.Dep) dep.Update {
+				return dep.Update{Dep: d, Type: dep.Pin, NewVersion: "1.0", NewDigest: sha2}
+			},
+			"image:\n  repository: a/b\n  tag: 1.0@" + sha2 + "\n"},
+		{"k8s.yml", "containers:\n- image: a/b:1.0\n",
+			func(d dep.Dep) dep.Update { return dep.Update{Dep: d, Type: dep.Major, NewVersion: "2.0"} },
+			"containers:\n- image: a/b:2.0\n"},
+		{"Dockerfile", "ARG B=\"a/b:1.0\"\nFROM $B\nCOPY --from=c/d:2 x y\n",
+			func(d dep.Dep) dep.Update { return dep.Update{Dep: d, Type: dep.Minor, NewVersion: "1.1"} },
+			"ARG B=\"a/b:1.1\"\nFROM $B\nCOPY --from=c/d:2 x y\n"},
+	} {
+		d := extract(t, c.file, c.src)[0]
+		edits, err := New().Edits(c.u(d))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := patch.Apply([]byte(c.src), edits)
+		if err != nil || string(out) != c.want {
+			t.Errorf("%s: got %q, %v; want %q", c.file, out, err, c.want)
+		}
 	}
 }

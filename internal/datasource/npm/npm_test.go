@@ -228,3 +228,58 @@ func TestReleasesTransportErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestReleasesSkipsWorkspaceMembers(t *testing.T) {
+	reg := newRegistry(t, nil) // serves 1.0.0 … 1.2.0 for every name, so "a" has newer versions
+	root := write(t, t.TempDir(), map[string]string{
+		"package.json":            `{"name": "ws", "private": true, "workspaces": ["packages/*"]}`,
+		"packages/a/package.json": `{"name": "a", "version": "1.0.0"}`,
+		"packages/b/package.json": `{"name": "b", "dependencies": {"a": "1.0.0", "lib": "^1.0.0"}}`,
+		"examples/package.json":   `{"dependencies": {"a": "1.0.0"}}`,
+	})
+	s := New(reg.srv.Client(), nil, env(map[string]string{"NPM_CONFIG_REGISTRY": reg.srv.URL}))
+	b := filepath.Join(root, "packages", "b")
+	for _, c := range []struct {
+		d    dep.Dep
+		dir  string
+		want int // number of releases
+	}{
+		{dep.Dep{Name: "a", File: "packages/b/package.json", DepType: "dependencies"}, b, 0},
+		{dep.Dep{Name: "ws", File: "packages/b/package.json", DepType: "devDependencies"}, b, 0},
+		{dep.Dep{Name: "b", File: "package.json", DepType: "dependencies"}, root, 0},
+		{dep.Dep{Name: "lib", File: "packages/b/package.json", DepType: "dependencies"}, b, 3},
+		// Not a workspace member: examples/ is outside the globs.
+		{dep.Dep{Name: "a", File: "examples/package.json", DepType: "dependencies"}, filepath.Join(root, "examples"), 3},
+		// packageManager names a tool, never a member.
+		{dep.Dep{Name: "a", File: "packages/b/package.json", DepType: "packageManager"}, b, 3},
+	} {
+		rels, err := s.Releases(t.Context(), c.d, c.dir)
+		if err != nil || len(rels) != c.want {
+			t.Errorf("%s (%s) in %s: %d releases, err %v; want %d", c.d.Name, c.d.DepType, c.d.File, len(rels), err, c.want)
+		}
+	}
+	if !slices.Equal(reg.reqs, []string{"/lib", "/a"}) {
+		t.Errorf("requests = %v, want no request for workspace packages", reg.reqs)
+	}
+
+	t.Run("unreadable workspace", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads mode 000 directories")
+		}
+		root := write(t, t.TempDir(), map[string]string{
+			"package.json":              `{"workspaces": ["packages/**"]}`,
+			"packages/x/package.json":   `{"name": "x"}`,
+			"packages/locked/README.md": "",
+		})
+		locked := filepath.Join(root, "packages", "locked")
+		if err := os.Chmod(locked, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+		s := New(reg.srv.Client(), nil, env(map[string]string{"NPM_CONFIG_REGISTRY": reg.srv.URL}))
+		_, err := s.Releases(t.Context(), dep.Dep{Name: "y", File: "packages/x/package.json"}, filepath.Join(root, "packages", "x"))
+		if err == nil || !strings.HasPrefix(err.Error(), "workspace "+root+": ") {
+			t.Errorf("err = %v", err)
+		}
+	})
+}

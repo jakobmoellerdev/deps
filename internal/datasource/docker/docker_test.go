@@ -189,6 +189,28 @@ func TestErrors(t *testing.T) {
 	}
 }
 
+// TestNoRegistryRetry checks go-containerregistry sends each request once (the shared httpx
+// transport owns retries); its default would retry the 503 with seconds of backoff.
+func TestNoRegistryRetry(t *testing.T) {
+	var lists atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" {
+			return
+		}
+		lists.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	host := strings.TrimPrefix(srv.URL, "http://")
+	_, err := newSource(srv.Client(), nil, anon).Releases(t.Context(), dep.Dep{Name: host + "/img"}, "")
+	if err == nil || !strings.HasPrefix(err.Error(), "list tags "+host+"/img: ") {
+		t.Errorf("err = %v", err)
+	}
+	if n := lists.Load(); n != 1 {
+		t.Errorf("tags/list requests = %d, want 1", n)
+	}
+}
+
 func TestKeychain(t *testing.T) {
 	f := newFixture(t)
 	f.set(func() { f.user, f.pass = "u", "p" })

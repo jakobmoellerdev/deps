@@ -50,8 +50,9 @@ type customManager struct {
 	datasource string
 	name       string
 	versioning string
+	checksum   *dep.ChecksumSource // nil = no checksum group
 	// submatch group numbers in re; -1 = absent
-	gVersion, gName, gDatasource, gDigest int
+	gVersion, gName, gDatasource, gDigest, gChecksum int
 }
 
 // New returns one manager per config entry, in order. Entries are validated again here so the
@@ -83,7 +84,7 @@ func newManager(c config.Custom) (*customManager, error) {
 		}
 	}
 	m := &customManager{files: c.Files, datasource: c.Datasource, name: c.Name, versioning: c.Versioning,
-		gVersion: -1, gName: -1, gDatasource: -1, gDigest: -1}
+		gVersion: -1, gName: -1, gDatasource: -1, gDigest: -1, gChecksum: -1}
 	if m.versioning == "" {
 		m.versioning = defaultVersioning
 	}
@@ -105,6 +106,7 @@ func newManager(c config.Custom) (*customManager, error) {
 	m.gName = re.SubexpIndex("name")
 	m.gDatasource = re.SubexpIndex("datasource")
 	m.gDigest = re.SubexpIndex("digest")
+	m.gChecksum = re.SubexpIndex("checksum")
 	switch {
 	case m.gVersion < 0:
 		return nil, errors.New("match: must have a (?P<version>...) group")
@@ -112,6 +114,11 @@ func newManager(c config.Custom) (*customManager, error) {
 		return nil, errors.New("datasource: required unless match has a (?P<datasource>...) group")
 	case m.name == "" && m.gName < 0:
 		return nil, errors.New("name: required unless match has a (?P<name>...) group")
+	case (c.Checksum != nil) != (m.gChecksum >= 0):
+		return nil, errors.New("checksum: requires a (?P<checksum>...) group in match and vice versa")
+	}
+	if c.Checksum != nil {
+		m.checksum = &dep.ChecksumSource{Asset: c.Checksum.Asset, URL: c.Checksum.URL, File: c.Checksum.File}
 	}
 	return m, nil
 }
@@ -136,17 +143,24 @@ func (m *customManager) Extract(file string, src []byte, _ manager.Env) ([]dep.D
 	return m.matches(file, src), nil
 }
 
-// Edits replaces the version, and the digest when the dep stores one. The edits depend only on
-// the dep's spans, so any custom manager can edit any custom dep (the engine picks the first
-// manager named "custom").
+// Edits replaces the version, and the digest and checksum when the dep stores them. The edits
+// depend only on the dep's spans, so any custom manager can edit any custom dep (the engine
+// picks the first manager named "custom").
 func (*customManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	hasDigest := d.DigestSpan.End > d.DigestSpan.Start
+	hasChecksum := d.ChecksumSpan.End > d.ChecksumSpan.Start
 	switch {
 	case u.NewDigest != "" && !hasDigest:
 		return nil, errors.New("dependency has no digest to update")
 	case u.NewDigest == "" && hasDigest && u.NewVersion != d.Version:
 		return nil, errors.New("digest must be updated together with the version, but no digest was resolved")
+	case u.NewChecksum != "" && !hasChecksum:
+		return nil, errors.New("dependency has no checksum to update")
+	case u.NewChecksum == "" && hasChecksum && u.NewVersion != d.Version:
+		return nil, errors.New("checksum must be updated together with the version, but no checksum was resolved")
+	case u.NewChecksum != "" && len(u.NewChecksum) != len(d.Checksum):
+		return nil, errors.New("checksum length mismatch")
 	}
 	var edits []patch.Edit
 	if u.NewVersion != d.Version {
@@ -154,6 +168,9 @@ func (*customManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	}
 	if u.NewDigest != "" && u.NewDigest != d.Digest {
 		edits = append(edits, patch.Edit{Start: d.DigestSpan.Start, End: d.DigestSpan.End, Old: d.Digest, New: u.NewDigest})
+	}
+	if u.NewChecksum != "" && u.NewChecksum != d.Checksum {
+		edits = append(edits, patch.Edit{Start: d.ChecksumSpan.Start, End: d.ChecksumSpan.End, Old: d.Checksum, New: u.NewChecksum})
 	}
 	return edits, nil
 }
@@ -267,6 +284,11 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 			d.Digest = string(src[s:e])
 			d.DigestSpan = dep.Span{Start: s, End: e}
 		}
+		if s, e, ok := group(loc, m.gChecksum); ok && e > s {
+			d.Checksum = string(src[s:e])
+			d.ChecksumSpan = dep.Span{Start: s, End: e}
+			d.ChecksumSource = m.checksum
+		}
 		switch {
 		case !ok || ve == vs:
 			d.Skip = "empty version"
@@ -274,6 +296,8 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 			d.Skip = "empty name"
 		case d.Datasource == "":
 			d.Skip = "empty datasource"
+		case m.gChecksum >= 0 && !isChecksum(d.Checksum):
+			d.Skip = "checksum is not 64 or 128 hex digits"
 		default:
 			d.Version = string(src[vs:ve])
 			d.RefSpan = dep.Span{Start: vs, End: ve}
@@ -282,6 +306,19 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 		deps = append(deps, d)
 	}
 	return deps
+}
+
+// isChecksum reports whether s is a sha256 or sha512 hex digest.
+func isChecksum(s string) bool {
+	if len(s) != 64 && len(s) != 128 {
+		return false
+	}
+	for i := range len(s) {
+		if c := s[i]; !('0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // classify checks the datasource and derives Source from Name; failures set Skip.

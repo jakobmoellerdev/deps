@@ -35,7 +35,7 @@ func newSource(t *testing.T, h http.HandlerFunc, auth *httpx.Auth) (*Source, *ht
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	s := New(srv.Client(), auth, make(chan struct{}, 2)).(*Source)
+	s := New(srv.Client(), auth, make(chan struct{}, 2))
 	s.githubAPI = srv.URL
 	return s, srv
 }
@@ -236,15 +236,56 @@ func TestReleasesTransportAndContext(t *testing.T) {
 	}
 
 	// A full semaphore and a canceled context fail fast without a request.
-	s2 := New(http.DefaultClient, nil, make(chan struct{})).(*Source)
+	s2 := New(http.DefaultClient, nil, make(chan struct{}))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := s2.Releases(ctx, dep.Dep{Name: "o/r"}, ""); !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled: %v", err)
 	}
-	s3 := New(http.DefaultClient, nil, nil).(*Source)
+	s3 := New(http.DefaultClient, nil, nil)
 	s3.githubAPI = "http://[::1"
 	if _, err := s3.Releases(context.Background(), dep.Dep{Name: "o/r"}, ""); err == nil {
 		t.Error("bad api url: no error")
+	}
+}
+
+func TestAssetDigest(t *testing.T) {
+	const hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	var reqs atomic.Int32
+	s, _ := newSource(t, func(w http.ResponseWriter, _ *http.Request) {
+		reqs.Add(1)
+		_, _ = w.Write([]byte(`[
+{"tag_name":"v2.60.0","assets":[
+  {"name":"gh_2.60.0_linux_amd64.tar.gz","digest":"sha256:` + hex + `","browser_download_url":"https://x/gh.tgz"},
+  {"name":"old.tar.gz","digest":null},
+  {"name":"md5.tar.gz","digest":"md5:abc"}]},
+{"tag_name":"1.0.0","assets":[{"name":"a","digest":"sha256:` + hex + `"}]},
+{"tag_name":"v3.0.0-rc1","prerelease":true,"assets":[{"name":"a","digest":"sha256:` + hex + `"}]}]`))
+	}, nil)
+	ctx := context.Background()
+	for _, c := range []struct{ version, asset, want, err string }{
+		{"2.60.0", "gh_2.60.0_linux_amd64.tar.gz", hex, ""},
+		{"v2.60.0", "gh_2.60.0_linux_amd64.tar.gz", hex, ""},
+		{"v1.0.0", "a", hex, ""},
+		{"1.0.0", "a", hex, ""},
+		{"2.60.0", "missing", "", "release v2.60.0 has no digest for asset missing"},
+		{"2.60.0", "old.tar.gz", "", "release v2.60.0 has no digest for asset old.tar.gz"},
+		{"2.60.0", "md5.tar.gz", "", "release v2.60.0 has no digest for asset md5.tar.gz"},
+		{"3.0.0-rc1", "a", "", "no release 3.0.0-rc1 in o/r"},
+	} {
+		got, err := s.AssetDigest(ctx, "o/r", c.version, c.asset)
+		if got != c.want || (err == nil) != (c.err == "") || err != nil && err.Error() != c.err {
+			t.Errorf("AssetDigest(%s, %s) = %q, %v; want %q, %q", c.version, c.asset, got, err, c.want, c.err)
+		}
+	}
+	if reqs.Load() != 1 {
+		t.Errorf("requests = %d, want 1 (cached)", reqs.Load())
+	}
+	rels, err := s.Releases(ctx, dep.Dep{Name: "o/r"}, "")
+	if err != nil || len(rels) != 2 || reqs.Load() != 1 {
+		t.Errorf("Releases after AssetDigest: %v, %v, reqs %d", rels, err, reqs.Load())
+	}
+	if _, err := s.AssetDigest(ctx, "bad", "1", "a"); err == nil {
+		t.Error("invalid repo: no error")
 	}
 }

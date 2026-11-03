@@ -347,6 +347,39 @@ func TestDatasource(t *testing.T) {
 	}
 }
 
+// TestLsRefsRetried checks the ls-refs POST is marked idempotent, so the shared client retries
+// it with the same body.
+func TestLsRefsRetried(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		bodies []string
+	)
+	h := v2Handler(pkts("2222222222222222222222222222222222222222 refs/tags/v2\n") + "0000")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			bodies = append(bodies, string(b))
+			first := len(bodies) == 1
+			mu.Unlock()
+			if first {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+		}
+		h(w, r)
+	}))
+	defer srv.Close()
+	tags, err := New(httpx.NewClient(), nil, nil).Tags(t.Context(), srv.URL+"/a/b")
+	if err != nil || len(tags) != 1 {
+		t.Fatalf("Tags = %+v, %v", tags, err)
+	}
+	if len(bodies) != 2 || bodies[0] != bodies[1] || bodies[0] == "" {
+		t.Errorf("ls-refs bodies = %q, want two identical", bodies)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

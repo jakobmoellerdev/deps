@@ -99,13 +99,21 @@ func Tidy(ctx context.Context, dir string, mod, sum []byte) (newMod, newSum []by
 // go.sum.
 type Tidier struct{}
 
+// Scope is the module directory: every go.mod is post-processed on its own.
+func (Tidier) Scope(_, manifest string) (string, bool) {
+	if dir, _, ok := strings.CutLast(manifest, "/"); ok {
+		return dir, true
+	}
+	return ".", true
+}
+
 // Siblings lists go.sum.
 func (Tidier) Siblings() []string { return []string{"go.sum"} }
 
 // Process tidies the patched go.mod and returns the tidied go.mod and go.sum (nil when tidy
 // wrote none).
-func (Tidier) Process(ctx context.Context, dir string, mod []byte, files map[string][]byte) (map[string][]byte, error) {
-	newMod, newSum, err := Tidy(ctx, dir, mod, files["go.sum"])
+func (Tidier) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
+	newMod, newSum, err := Tidy(ctx, dir, manifests["go.mod"], files["go.sum"])
 	if err != nil {
 		return nil, err
 	}
