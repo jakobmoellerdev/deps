@@ -1,4 +1,5 @@
-// Package npm extracts dependencies and the packageManager field from package.json files.
+// Package npm extracts dependencies, the packageManager field and the engines/volta tool
+// versions from package.json files.
 package npm
 
 import (
@@ -18,14 +19,21 @@ import (
 // Name is the manager name.
 const Name = "npm"
 
-// DepTypePackageManager is the DepType of the packageManager field.
-const DepTypePackageManager = "packageManager"
+// DepTypes of the packageManager field and of the engines and volta tool versions.
+const (
+	DepTypePackageManager = "packageManager"
+	DepTypeEngines        = "engines"
+	DepTypeVolta          = "volta"
+)
 
 var (
 	matchRe = regexp.MustCompile(`(^|/)package\.json$`)
 	// rangeRe is the supported range grammar: an optional ^, ~, >= or = operator and a full
 	// MAJOR.MINOR.PATCH[-prerelease] version (group 2).
-	rangeRe   = regexp.MustCompile(`^(\^|~|>=|=)?(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$`)
+	rangeRe = regexp.MustCompile(`^(\^|~|>=|=)?(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$`)
+	// partialRe is an optional operator and a MAJOR[.MINOR] version (group 2), matched with
+	// the precision-keeping tag versioning (^26 -> ^27).
+	partialRe = regexp.MustCompile(`^(\^|~|>=|=)?(\d+(?:\.\d+)?)$`)
 	versionRe = regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 	tagRe     = regexp.MustCompile(`^[A-Za-z][0-9A-Za-z._-]*$`)
 	// shorthandRe is a GitHub `owner/repo[#ref]` shorthand.
@@ -39,6 +47,9 @@ var sections = map[string]bool{
 	"optionalDependencies": true,
 	"peerDependencies":     true,
 }
+
+// tools maps the engines/volta tool keys to their datasource.
+var tools = map[string]string{"node": "node-version", "npm": "npm", "pnpm": "npm", "yarn": "npm"}
 
 // packageManagers are the tools a packageManager field may name.
 var packageManagers = map[string]bool{"npm": true, "pnpm": true, "yarn": true}
@@ -102,6 +113,8 @@ func (x *extractor) run() error {
 			err = x.section(key)
 		case key == "packageManager":
 			err = x.packageManager()
+		case key == DepTypeEngines || key == DepTypeVolta:
+			err = x.tools(key)
 		default:
 			err = skipValue(x.dec)
 		}
@@ -185,6 +198,49 @@ func (x *extractor) section(depType string) error {
 		}
 		d := x.newDep(depType, name, raw, span)
 		ver, off, skip := classify(raw)
+		x.finish(&d, span, ver, off, skip)
+		x.deps = append(x.deps, d)
+	}
+	_, err = x.dec.Token()
+	return err
+}
+
+// tools extracts the node/npm/pnpm/yarn entries of the engines or volta object; other keys
+// are ignored.
+func (x *extractor) tools(depType string) error {
+	tok, err := x.dec.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return skipRest(x.dec, tok)
+	}
+	for x.dec.More() {
+		name, err := x.key()
+		if err != nil {
+			return err
+		}
+		ds, known := tools[name]
+		if !known {
+			if err := skipValue(x.dec); err != nil {
+				return err
+			}
+			continue
+		}
+		raw, span, ok, err := x.value()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		d := x.newDep(depType, name, raw, span)
+		d.Datasource = ds
+		ver, off, skip := classify(raw)
+		if m := partialRe.FindStringSubmatchIndex(raw); m != nil {
+			ver, off, skip = raw[m[4]:m[5]], m[4], ""
+			d.Versioning = "tag"
+		}
 		x.finish(&d, span, ver, off, skip)
 		x.deps = append(x.deps, d)
 	}

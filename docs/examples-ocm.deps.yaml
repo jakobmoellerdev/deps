@@ -6,8 +6,19 @@ minimumReleaseAge: 28 days # digest/pin updates are always exempt (the minimumRe
 separateMinorPatch: true
 separateMultipleMajor: true
 updateNotScheduled: true # the default: open PRs are kept current outside their schedule
+customDatasources:
+  # renovate.json5 customDatasources.envtest: the JSONata transform (keys of .releases without
+  # the leading v) becomes a selector plus versionRegex. Used by the custom.envtest markers in
+  # the controller .env and internal/test/envtest.go; the latter sits below the default
+  # ignorePaths' **/test/** (Renovate's :ignoreModulesAndTests), so, as with Renovate, it is
+  # only scanned with an ignorePaths list that leaves test/ out.
+  envtest:
+    url: https://raw.githubusercontent.com/kubernetes-sigs/controller-tools/master/envtest-releases.yaml
+    format: yaml
+    versions: .releases | keys
+    versionRegex: '^v?(?P<version>\d+\.\d+\.\d+)$'
 custom:
-  # Renovate markers in .env, netlify.toml, workflows and envtest.go. The sigstore handler's
+  # Renovate markers in .env, netlify.toml (node-version NODE_VERSION), workflows and envtest.go. The sigstore handler's
   # .env is left to the cosign entry below, which also maintains the checksum next to the version.
   - files: ['.env', 'bindings/go/kubernetes/controller/.env', 'bindings/go/sigstore/integration/.env', 'conformance/**/.env',
       '**/netlify.toml', '.github/workflows/*.yml', '**/envtest.go']

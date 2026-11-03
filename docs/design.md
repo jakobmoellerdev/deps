@@ -30,13 +30,15 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 
 | Manager | Files | DepTypes | Datasource / versioning |
 |---|---|---|---|
-| `github-actions` | `.github`/`.gitea`/`.forgejo` `workflows`/`actions` and `workflow-templates` YAML, `action.y(a)ml` | `action` | `git-tags` / `tag` |
+| `github-actions` | `.github`/`.gitea`/`.forgejo` `workflows`/`actions` and `workflow-templates` YAML, `action.y(a)ml` | `action`, `setup` | `git-tags` / `tag`; setup inputs per action (below) |
 | `gomod` | `go.mod` | `direct`, `indirect`, `go`, `toolchain` | `go` / `go`; directives `go-toolchain` / `tag` |
 | `docker` | `Dockerfile`, `Containerfile` (also `Dockerfile.x`, `x.Dockerfile`), `(docker-)compose*.y(a)ml`, workflows, `action.y(a)ml`, other `*.y(a)ml` (Kubernetes, Helm values) | `dockerfile`, `compose`, `workflow`, `action`, `kubernetes`, `helm` | `docker` / `docker` |
-| `npm` | `package.json` | `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager` | `npm` / `semver` |
+| `npm` | `package.json` | `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager`, `engines`, `volta` | `npm` / `semver`; node in `engines`/`volta` `node-version` |
 | `custom` | `custom[].files` globs | `annotation`, `regex` | per entry or per match |
 
 **github-actions.** `uses:` values outside `with:`/`env:`. Skips: `local action` (`./`, `$/`), `docker reference (docker manager)`, `unrecognized uses`, `non-version ref`, `pinned without version comment`, `cannot locate value`.
+
+**Actions setup inputs.** For `uses:` of a well-known setup action the version input in `with:` is a dep (DepType `setup`, manager github-actions): actions/setup-node `node-version` (node-version datasource, name node), actions/setup-go `go-version` (go-toolchain, go), azure/setup-helm `version` (github-releases helm/helm), azure/setup-kubectl `version` (kubernetes/kubernetes), hashicorp/setup-terraform `terraform_version` (hashicorp/terraform), golangci/golangci-lint-action `version` (golangci/golangci-lint). setup-python/setup-java are not extracted (no datasource). Only literal values: full `[v]X.Y.Z` uses semver versioning (the `v` style is kept: `version: 3.16.0` becomes `3.17.0`), partial `26`/`1.27`/`v2.1` uses tag versioning (precision kept: 26 → 27). Skips: `expression` (`${{ }}`), `non-version value` (lts/*, stable, latest), `unsupported range` (1.27.x, >=24, block scalars), `cannot locate value`. The span is the value bytes (quoted or plain, flow mappings too). If the line above the input is a `# deps:`/`# renovate:` marker, the input is left to the custom manager (no double extraction).
 
 **gomod.** Every `require` plus the `go` and `toolchain` directives (the `toolchain` span covers only the version after `go`). Skips: `replaced`, `pseudo-version`, `vendored module (not supported)`, `prerelease toolchain`. By default `indirect` requirements and the `go` directive are ignored; a rule with `ignore: false` opts in. `toolchain` is updated by default. `go mod tidy` runs after any gomod change.
 
@@ -55,15 +57,16 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 - `helm`: `*image` mappings with `repository` + `tag` (optional `registry` prefix; digest from `tag: x@sha256:…` or a sibling `digest:`); the tag scalar is rewritten in place.
 - Values containing `{{` are skipped as `template value`.
 
-**npm.** `package.json` is streamed with `encoding/json` tokens; `InputOffset` after each string value gives its byte span, which must equal the quoted value in the file (otherwise, e.g. with `\u` escapes, `cannot locate value`). Sections: `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies` (the section name is the `DepType`) and `packageManager` (`npm@x`, `pnpm@x`, `yarn@x`; `Name` is the tool). `overrides`, `resolutions`, `engines` and `bundleDependencies` are not extracted; `node_modules` is pruned by discovery.
+**npm.** `package.json` is streamed with `encoding/json` tokens; `InputOffset` after each string value gives its byte span, which must equal the quoted value in the file (otherwise, e.g. with `\u` escapes, `cannot locate value`). Sections: `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies` (the section name is the `DepType`) and `packageManager` (`npm@x`, `pnpm@x`, `yarn@x`; `Name` is the tool). `overrides`, `resolutions` and `bundleDependencies` are not extracted; `node_modules` is pruned by discovery.
 - **Range grammar:** an optional operator `^`, `~`, `>=` or `=`, then a full `MAJOR.MINOR.PATCH[-prerelease]`. `Version` is the bare version and `RefSpan` covers only the version bytes, so the operator is kept: the range is *bumped* (`^1.2.3` → `^1.4.0`), not widened or replaced.
 - **Skips:** `npm alias` (`npm:`), `local dependency` (`file:`, `link:`, `workspace:`, `./`, `../`, `/`, `~/`), `git dependency` (`github:`, `gitlab:`, `bitbucket:`, `gist:`, `git+`, `git://`, `git@`, `owner/repo[#ref]`), `url dependency` (`http(s)://` tarballs), `tag` (dist-tags such as `latest`, `next`), `unsupported range` (`||`, spaces, `x`/`*` wildcards, partial versions, `<`, hyphen ranges, `v1.2.3`, empty), `cannot locate value`; for `packageManager` also `packageManager with hash` (`+sha512…` suffix) and `unsupported packageManager`.
+- **engines and volta:** `engines.{node,npm,pnpm,yarn}` (DepType `engines`, ignored by default; enable with a rule `depTypes: [engines], ignore: false`) and `volta.{node,npm,pnpm,yarn}` (DepType `volta`, updated). node uses the node-version datasource, the others npm. The range grammar is that of dependencies; additionally an optional ^/~/>=/= plus a MAJOR[.MINOR] partial (`^26`, `10.2`) uses tag versioning on the numeric part (^26 → ^27). Other keys and non-string values are ignored.
 - **peerDependencies** are ignored by default, like indirect Go requirements; a rule with `depTypes: [peerDependencies]` and `ignore: false` opts in.
 - **Lockfile:** after a package.json change, `apply`/`run` regenerate the workspace's `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock` (see *Post-processors* below). Dependencies naming a member of the manifest's own workspace are never updated (any range form).
 
 **custom, annotation mode** (no `match`). A comment `deps: <datasource> <name> [versioning=<scheme>]` after `#`, `//`, `--`, `;` or `<!--` annotates the next line; its first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Otherwise `no version on next line`.
 
-**Renovate markers.** Annotation mode also accepts `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]` (fields in any order; `packageName` wins over `depName`; `registryUrl` and unknown keys are ignored); it annotates the next line like `deps:`. Skips: `renovate marker without datasource`, `renovate marker without depName`. For the docker datasource the next line's first tagged image reference is used instead: the tag after the last `:` is the version and an adjacent `@sha256:` digest is captured, so tag and digest are rewritten together. Renovate datasource names are aliased: `golang-version` → `go-toolchain`, `github-tags` → `git-tags` (`owner/repo` on github.com), `github-release-attachments` → `github-releases`. Unknown ones (e.g. `node-version`, `custom.*`) are skipped as `unknown datasource "<ds>"`.
+**Renovate markers.** Annotation mode also accepts `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]` (fields in any order; `packageName` wins over `depName`; `registryUrl` and unknown keys are ignored); it annotates the next line like `deps:`. Skips: `renovate marker without datasource`, `renovate marker without depName`. For the docker datasource the next line's first tagged image reference is used instead: the tag after the last `:` is the version and an adjacent `@sha256:` digest is captured, so tag and digest are rewritten together. Renovate datasource names are aliased: `golang-version` → `go-toolchain`, `github-tags` → `git-tags` (`owner/repo` on github.com), `github-release-attachments` → `github-releases`, `node` → `node-version`. `custom.<name>` names a datasource of `customDatasources`; undefined ones, like other unknown names, are skipped as `unknown datasource "<ds>"`.
 
 ```dockerfile
 # deps: github-releases golangci/golangci-lint
@@ -109,8 +112,16 @@ custom:
 | `github-releases` | `owner/repo` (github.com) or `https://host/owner/repo` (GHES) | non-draft non-prerelease tag names, up to 5 pages of 100: GraphQL `releases` with a token for the host, else `GET /repos/{repo}/releases` (section 3) |
 
 | `npm` | package name (`@scope/name` requested as `@scope%2fname`) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata), streamed: only the `versions` keys and each version's `deprecated`; deprecated versions are dropped |
+| `node-version` | `node` (any name) | `GET https://nodejs.org/dist/index.json` once per run (base URL overridable with `DEPS_NODE_DIST_URL` for mirrors), streamed element by element: `version` and `date` (release time) |
+| `custom.<name>` | free-form (all deps share the list) | `customDatasources.<name>`: one `GET <url>` per run (unauthenticated, at most 10 MiB), decoded as json, yaml or plain text, selected and optionally regex-filtered (section 9) |
 
-Custom entries may use `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker` and `npm`, plus the Renovate aliases `golang-version`, `github-tags` and `github-release-attachments`.
+Custom entries may use `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm` and `node-version`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments` and `node`, and `custom.<name>` of a defined custom datasource.
+
+**node-version.** Releases are returned as published (`v26.13.0`, prereleases included; the schemes drop them unless the current version is one), followed by a derived `X.Y` and `X` without `v` per stable release line, so partial values (`node-version: 26`, engines `^26`) have candidates of their precision under `tag` versioning. The derived entries come last so that semver, which reads `27` as 27.0.0, prefers the published `v27.0.0` on a tie. Semver keeps the file's `v` style (`NODE_VERSION = "26.5.0"` → `26.13.0`). A derived entry's release time is that of the line's first release. No digests. Renovate's `node` versioning (LTS-aware stability) is not reproduced; use `allow` to restrict majors.
+
+**Custom datasources.** The document is fetched once per run and shared by every dep of that datasource. json is decoded with numbers kept as written; yaml is decoded to nodes so scalars keep their text (`1.20` is not the number 1.2). The `versions` selector (a jq subset, below) yields the values; nulls are dropped, non-scalars are errors. With `versionRegex` a value must match and its `version` group (else the whole match) is the version. Duplicates are removed, document order is kept; an empty result is `no versions`. No release times, no digests. Errors read `custom.<name>: GET <url>: HTTP 404`, `custom.<name>: <url>: selector ".a[]": cannot iterate over null`.
+
+Selector grammar: stages joined by `|`; a stage is `keys` (sorted keys of an object) or a path of steps `.` (identity), `.field` (identifier `[A-Za-z_][A-Za-z0-9_-]*`) and `[]` / `.[]` (array elements or object values), which may start with `[]`. Like jq, a missing field or a field of null is null, and iterating null or indexing/iterating the wrong type is an error. Examples: `.releases[].version` (the default, Renovate's custom datasource shape), `.releases | keys` (controller-tools' envtest-releases.yaml), `[].tag_name` (a GitHub releases list). JSONata `transformTemplates` are not supported; `versionRegex` covers the common `$replace(…, /^v/, "")` case.
 
 **npm registry and auth.** Per package.json directory, the nearest `.npmrc` walking up to the scanned root is read (once per directory per run): `@scope:registry=` for scoped names, then `registry=`. Without one, `NPM_CONFIG_REGISTRY` (or `npm_config_registry`), else `https://registry.npmjs.org/`. A `//host/path/:_authToken=` entry whose key is the longest prefix of the registry URL (without scheme) sends `Authorization: Bearer <token>`. `${VAR}` and `${VAR?}` in keys and values expand from the environment (empty when unset); values may be quoted. Lookups are deduped per (registry, name). A 404 is `package <name> not found`. npm has no digests.
 
@@ -158,9 +169,9 @@ type Span struct{ Start, End int } // byte offsets, End exclusive
 
 type Dep struct {
     Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "custom"
-    Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm"
+    Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "custom.<name>"
     Versioning  string // "tag" | "go" | "docker" | "semver" | "loose" | "regex:<RE2>"; a rule's versioning replaces the manager's
-    DepType     string // gomod: direct|indirect|go|toolchain; actions: action; docker: dockerfile|compose|workflow|action|kubernetes|helm; npm: dependencies|devDependencies|optionalDependencies|peerDependencies|packageManager; custom: annotation|regex
+    DepType     string // gomod: direct|indirect|go|toolchain; actions: action|setup; docker: dockerfile|compose|workflow|action|kubernetes|helm; npm: dependencies|devDependencies|optionalDependencies|peerDependencies|packageManager|engines|volta; custom: annotation|regex
     File        string // slash path relative to --dir
     Line        int    // 1-based
     Name        string // actions: owner/repo[/sub]; gomod: module path
@@ -214,7 +225,7 @@ type Manager interface {
     Extract(file string, src []byte, env Env) ([]dep.Dep, error)
     Edits(u dep.Update) ([]patch.Edit, error) // byte edits for one update; the engine merges them per file
 }
-// actions.New(), gomod.New(), docker.New(), npm.New() return the built-in managers; custom.New(cfg.Custom) one per custom[] entry.
+// actions.New(), gomod.New(), docker.New(), npm.New() return the built-in managers; custom.New(cfg) one per cfg.Custom entry (accepting custom.<name> of cfg.CustomDatasources).
 ```
 
 ```go
@@ -238,7 +249,8 @@ type SourceRepo interface { // optional: source repository for release notes
     SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error)
 }
 // gittags.Lister ("git-tags"), goproxy.Source ("go"), gotoolchain ("go-toolchain"),
-// dockerds ("docker"), githubreleases ("github-releases") and npmds ("npm") implement Datasource; osv implements SecuritySource;
+// dockerds ("docker"), githubreleases ("github-releases"), npmds ("npm"), nodeversion ("node-version")
+// and customds ("custom.<name>", one per customDatasources entry) implement Datasource; osv implements SecuritySource;
 // checksum.Source implements ChecksumSource.
 ```
 
@@ -641,9 +653,9 @@ updateNotScheduled: true    # keep updating/rebasing open PRs outside their sche
 rules:
   - manager: github-actions # optional: github-actions | gomod | docker | npm | custom
     names: ["actions/*"]    # optional doublestar globs on the dependency name (* within a segment, ** across, {a,b})
-    depTypes: [direct]      # optional: direct indirect go toolchain action dockerfile compose workflow kubernetes helm dependencies devDependencies optionalDependencies peerDependencies packageManager annotation regex
+    depTypes: [direct]      # optional: direct indirect go toolchain action setup dockerfile compose workflow kubernetes helm dependencies devDependencies optionalDependencies peerDependencies packageManager engines volta annotation regex
     paths: ["chart/**"]     # optional doublestar globs on the file (slash path relative to --dir)
-    datasources: [docker]   # optional: git-tags github-releases go go-toolchain docker npm (Renovate aliases golang-version github-tags github-release-attachments accepted)
+    datasources: [docker]   # optional: git-tags github-releases go go-toolchain docker npm node-version custom.<name> (Renovate aliases golang-version github-tags github-release-attachments node accepted)
     updateTypes: [minor, patch] # optional: major minor patch digest pin; the rule applies to candidate updates of these types (no pin key)
     ignore: true            # optional
     pin: digest             # optional: keep | digest
@@ -661,18 +673,24 @@ rules:
 custom:
   - files: ["**/Makefile"]  # required doublestar globs
     match: 'TOOL_VERSION = (?P<version>\S+)'  # optional RE2; absent = annotation mode; needs a version group
-    datasource: go          # git-tags | github-releases | go | go-toolchain | docker | npm | golang-version | github-tags | github-release-attachments; regex mode: required unless a datasource group
+    datasource: go          # git-tags | github-releases | go | go-toolchain | docker | npm | node-version | custom.<name> | golang-version | github-tags | github-release-attachments | node; regex mode: required unless a datasource group
     name: golang.org/x/tools # regex mode: required unless a name group
     versioning: semver      # tag | go | docker | semver | loose | regex:<RE2> (default semver); marker fields take the names only
     checksum:               # optional, regex mode only; requires a (?P<checksum>) group in match
       asset: ""             # github-releases only: release asset whose API digest is used; exclusive with url
       url: ""               # checksum document URL ({{version}} expands)
       file: ""              # url only: entry name in a sha256sum-style list; "" = first hex token
+customDatasources:          # used as datasource custom.<name>; name: [A-Za-z0-9][A-Za-z0-9._-]*
+  envtest:
+    url: https://raw.githubusercontent.com/kubernetes-sigs/controller-tools/master/envtest-releases.yaml  # required http(s) URL
+    format: yaml            # json | yaml | plain (one version per line, # comments) (default json)
+    versions: .releases | keys   # json/yaml: selector (section 2); default .releases[].version; not with plain
+    versionRegex: '^v?(?P<version>\d+\.\d+\.\d+)$'  # optional RE2 filter; the version group (else the match) is the version
 ```
 
 **Semantics:**
 - The file is decoded strictly: unknown keys are errors and report their line. All validation errors are reported together, each as `<path>: <field>: <msg>`.
-- **Rule evaluation:** the policy starts as `{pin: <top-level pin>, updates: all five, schedule: <top-level>}`, with `ignore` true for the `indirect`, `go` and `peerDependencies` dependency types (opt in with a rule `ignore: false`). Each rule matches when its `manager` is empty or equal, its `names` are empty or any glob matches the name, its `depTypes` are empty or contain the dependency type, its `paths` are empty or any glob matches the file, and its `datasources` are empty or contain the dep's datasource (Renovate names are normalized first: `golang-version` = `go-toolchain`, `github-tags` = `git-tags`, so it also matches actions, `github-release-attachments` = `github-releases`). Rules are applied in file order. Every field a matching rule sets overwrites the policy; `updates` is replaced, not merged.
+- **Rule evaluation:** the policy starts as `{pin: <top-level pin>, updates: all five, schedule: <top-level>}`, with `ignore` true for the `indirect`, `go`, `peerDependencies` and `engines` dependency types (opt in with a rule `ignore: false`). Each rule matches when its `manager` is empty or equal, its `names` are empty or any glob matches the name, its `depTypes` are empty or contain the dependency type, its `paths` are empty or any glob matches the file, and its `datasources` are empty or contain the dep's datasource (Renovate names are normalized first: `golang-version` = `go-toolchain`, `github-tags` = `git-tags`, so it also matches actions, `github-release-attachments` = `github-releases`, `node` = `node-version`; `custom.<name>` must be defined in `customDatasources`). Rules are applied in file order. Every field a matching rule sets overwrites the policy; `updates` is replaced, not merged.
 - **`updateTypes` (Renovate's `matchUpdateTypes`):** a rule with `updateTypes` additionally matches only candidate updates of those types, so it is evaluated once the type of a candidate is known, at its position in file order. Rules without it form the dep's pre-policy, which decides `pin`, `versioning` and whether the dep is ignored; rules with it decide per type, e.g. `group`, `schedule`, `commitType`, `allow`, `updates`, the `separate*` bucket options, or `ignore: true` (reject updates of that type; the bucket's next best candidate is chosen) and `ignore: false` (opt a default-ignored dep in for those types only). `pin` and `versioning` cannot be combined with `updateTypes` (both are decided before an update exists), and `updateTypes: []` is rejected. Security fixes ignore `updateTypes` rules; only a pre-policy `ignore` blocks them.
 - **Acceptance:** an update is accepted when the policy of its type does not ignore it, its type is in `updates` and the new version satisfies `allow` (if set). A constraint `allow` checks the scheme's Masterminds conversion of the candidate (built from the parsed parts; unrepresentable versions are rejected). A regex `allow` (`/<RE2>/`, Renovate's `allowedVersions` regex form; `!/<RE2>/` rejects matches; flag `i` only) matches the candidate as written and never converts it. Invalid constraints and regexes are config errors (`rules[i].allow: invalid regex "/(/": ...`).
 - **`versioning`:** see section 4, *Versioning*. Invalid names and regex schemes are config errors (`rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group "x" (allowed: ...)`, `regex: invalid RE2 regexp: ...`), as is `versioning` together with `updateTypes`.
@@ -687,7 +705,8 @@ custom:
 - **`minimumReleaseAge`:** `<n> <unit>` with unit minutes, hours, days or weeks (singular, plural or the first letter, the space optional), `0`, or a Go duration; negative or unparsable values are errors. A new version is proposed only once it is at least that old; younger candidates are skipped in favour of the next older one (section 4). A rule's value overrides earlier ones, so `0 days` re-enables immediate updates for matching deps, and with `updateTypes` it applies per update type. Releases without a known time (datasource without `Timer`, Go toolchains, failed lookups) are allowed. Digest refreshes, pins and security updates are exempt.
 - **Commit titles:** default type `fix` for gomod `direct` and npm `dependencies`, `chore` otherwise (security always `fix`); default scope `deps`.
 - **Security:** with `security: true` (the default), OSV advisories can force an update that bypasses `allow`, `updates`, `schedule` and `updateTypes` rules, but never a pre-policy `ignore` (section 5).
-- **`custom[]`:** validated in both modes: `datasource` and `versioning` must be known (`versioning` may be a `regex:` scheme; `versioning=` marker fields and the `versioning` regex group accept the scheme names, a marker inherits the entry's scheme), `files` non-empty valid globs, `match` a valid RE2 with a `version` group. See section 2.
+- **`customDatasources`:** each key must match `[A-Za-z0-9][A-Za-z0-9._-]*`; `url` is a required http(s) URL, `format` json/yaml/plain, `versions` a valid selector (not with plain), `versionRegex` a valid RE2 (`customDatasources.<name>.<field>: …`). Renovate's `defaultRegistryUrlTemplate` is `url`; `transformTemplates` (JSONata) is replaced by `versions` + `versionRegex`.
+- **`custom[]`:** validated in both modes: `datasource` and `versioning` must be known (`custom.<name>` only when defined) (`versioning` may be a `regex:` scheme; `versioning=` marker fields and the `versioning` regex group accept the scheme names, a marker inherits the entry's scheme), `files` non-empty valid globs, `match` a valid RE2 with a `version` group. See section 2.
 
 ### Example
 

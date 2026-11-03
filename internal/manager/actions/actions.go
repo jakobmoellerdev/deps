@@ -1,4 +1,5 @@
-// Package actions extracts GitHub/Gitea/Forgejo Actions `uses:` references.
+// Package actions extracts GitHub/Gitea/Forgejo Actions `uses:` references and the version
+// inputs of well-known setup actions (DepType setup).
 package actions
 
 import (
@@ -111,18 +112,26 @@ func (x *extractor) walk(n *yaml.Node) {
 			x.walk(c)
 		}
 	case yaml.MappingNode:
+		var uses, with *yaml.Node
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k, v := n.Content[i], n.Content[i+1]
 			switch k.Value {
-			case "with", "env":
+			case "with":
+				with = v
+				continue
+			case "env":
 				continue
 			case "uses":
 				if v.Kind == yaml.ScalarNode && v.Style&(yaml.LiteralStyle|yaml.FoldedStyle) == 0 {
+					uses = v
 					x.add(v)
 					continue
 				}
 			}
 			x.walk(v)
+		}
+		if uses != nil && with != nil {
+			x.setup(uses.Value, with)
 		}
 	}
 }

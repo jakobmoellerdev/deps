@@ -13,11 +13,13 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
@@ -132,19 +134,28 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	}
 	gh := githubapi.New(client, auth, sem)
 	releases := githubreleases.New(gh)
+	sources := map[string]engine.Datasource{
+		"git-tags":          gittags.New(client, auth, sem, gh),
+		"go":                goproxy.New(client, sem),
+		gotoolchain.Name:    gotoolchain.New(client, sem),
+		"docker":            dockerds.New(client, sem),
+		githubreleases.Name: releases,
+		npmds.Name:          npmds.New(client, sem, os.Getenv),
+		nodeversion.Name:    nodeversion.New(client, sem, os.Getenv),
+	}
+	for name, cd := range cfg.CustomDatasources {
+		ds, err := customds.New(client, sem, name, cd.Spec())
+		if err != nil {
+			return nil, &config.Error{Err: err}
+		}
+		sources[customds.Prefix+name] = ds
+	}
 	return &session{
-		root:     root,
-		cfg:      cfg,
-		client:   client,
-		managers: managers,
-		sources: map[string]engine.Datasource{
-			"git-tags":          gittags.New(client, auth, sem, gh),
-			"go":                goproxy.New(client, sem),
-			gotoolchain.Name:    gotoolchain.New(client, sem),
-			"docker":            dockerds.New(client, sem),
-			githubreleases.Name: releases,
-			npmds.Name:          npmds.New(client, sem, os.Getenv),
-		},
+		root:      root,
+		cfg:       cfg,
+		client:    client,
+		managers:  managers,
+		sources:   sources,
 		security:  security,
 		checksums: checksum.New(client, sem, releases),
 		env:       manager.Env{DefaultHost: host},

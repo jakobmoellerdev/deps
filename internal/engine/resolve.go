@@ -22,6 +22,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -73,11 +74,12 @@ type Result struct {
 var digestManagers = map[string]bool{"github-actions": true, "docker": true}
 
 // digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
-// github-actions and docker deps whatever their versioning (a rule may override it). Custom
-// deps can only refresh a digest they already carry (regex `digest` group or an annotated
-// `@sha256:`); they have no place to insert a new one.
+// github-actions and docker deps whatever their versioning (a rule may override it), except
+// setup-action version inputs, which are plain values. Custom deps can only refresh a digest
+// they already carry (regex `digest` group or an annotated `@sha256:`); they have no place to
+// insert a new one.
 func digestCapable(d dep.Dep) bool {
-	return digestManagers[d.Manager] || d.Manager == "custom" && d.Digest != ""
+	return digestManagers[d.Manager] && d.DepType != actions.DepTypeSetup || d.Manager == "custom" && d.Digest != ""
 }
 
 // tagOnly reports whether d is a docker image whose tag is not a version (latest, bookworm)

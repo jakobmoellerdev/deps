@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,6 +20,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"go.yaml.in/yaml/v3"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
@@ -42,18 +45,21 @@ var RebaseWhens = []string{RebaseConflicted, RebaseBehindBase, RebaseNever}
 // Known values for validation.
 var (
 	Managers = []string{"github-actions", "gomod", "docker", "npm", "custom"}
-	DepTypes = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "annotation", "regex"}
-	// Datasources are the deps datasource names (dep.Dep.Datasource).
-	Datasources = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm"}
+	DepTypes = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "setup", "engines", "volta", "annotation", "regex"}
+	// Datasources are the deps datasource names (dep.Dep.Datasource); custom datasources add
+	// custom.<name> (CustomDatasourcePrefix).
+	Datasources = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version"}
 	// DatasourceAliases maps Renovate datasource names to deps datasource names.
 	DatasourceAliases = map[string]string{
 		"golang-version":             "go-toolchain",
 		"github-tags":                "git-tags",
 		"github-release-attachments": "github-releases",
+		"node":                       "node-version",
 	}
 	// DatasourceNames are the accepted datasource names of custom[].datasource and
-	// rules[].datasources: Datasources followed by the DatasourceAliases keys.
-	DatasourceNames = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "golang-version", "github-tags", "github-release-attachments"}
+	// rules[].datasources: Datasources followed by the DatasourceAliases keys (plus
+	// custom.<name> of customDatasources, see Config.KnownDatasource).
+	DatasourceNames = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version", "golang-version", "github-tags", "github-release-attachments", "node"}
 	// Versionings are the versioning scheme names; rules[].versioning and custom[].versioning
 	// also accept regex:<RE2> (versioning.RegexPrefix).
 	Versionings = versioning.Names
@@ -102,6 +108,8 @@ type Config struct {
 	UpdateNotScheduled    *bool    `yaml:"updateNotScheduled" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
 	Rules                 []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
 	Custom                []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
+	// CustomDatasources are referenced as datasource custom.<name>.
+	CustomDatasources map[string]CustomDatasource `yaml:"customDatasources" jsonschema_description:"User-defined datasources by name; deps (custom[] entries, annotations, Renovate markers) refer to them as datasource custom.<name>. The version list is fetched once per run."`
 
 	path     string        // source path for error messages
 	schedule *schedule.Set // parsed Schedule
@@ -132,11 +140,11 @@ type Actions struct {
 type Rule struct {
 	Manager     string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=custom" jsonschema_description:"Only match deps of this manager."`
 	Names       []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates)."`
-	DepTypes    []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
+	DepTypes    []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
 	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'."`
-	Datasources []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=golang-version,enum=github-tags,enum=github-release-attachments" jsonschema_description:"Only match deps looked up with these datasources; Renovate names (golang-version, github-tags, github-release-attachments) match their deps datasource."`
+	Datasources []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource."`
 	UpdateTypes []string `yaml:"updateTypes" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`
-	Ignore      *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives and npm peerDependencies in. With updateTypes: reject updates of these types."`
+	Ignore      *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types."`
 	Pin         string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
 	Allow       string   `yaml:"allow" jsonschema_description:"New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written."`
 	Updates     []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
@@ -162,7 +170,7 @@ type Rule struct {
 type Custom struct {
 	Files      []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans."`
 	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
-	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=golang-version,enum=github-tags,enum=github-release-attachments" jsonschema_description:"Datasource of the matched deps; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments) are aliases."`
+	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node) are aliases."`
 	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
 	Versioning string    `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|regex:.+)$,default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names."` // default semver
 	Checksum   *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
@@ -174,6 +182,72 @@ type Checksum struct {
 	Asset string `yaml:"asset" jsonschema_description:"github-releases only: release asset whose API digest is the checksum, e.g. 'gh_{{version}}_linux_amd64.tar.gz'. Exclusive with url."`
 	URL   string `yaml:"url" jsonschema_description:"URL of a checksum document (sha256sum style or a bare hex digest). Exclusive with asset."`
 	File  string `yaml:"file" jsonschema_description:"Entry name inside the url document ('<hex>  <name>' or '<hex> *<name>'); empty means the first hex token of the body."`
+}
+
+// CustomDatasourcePrefix starts the datasource name of a custom datasource: custom.<name>.
+const CustomDatasourcePrefix = customds.Prefix
+
+// CustomDatasourceNamePattern is the accepted syntax of customDatasources keys.
+const CustomDatasourceNamePattern = `^[A-Za-z0-9][A-Za-z0-9._-]*$`
+
+var customDatasourceNameRe = regexp.MustCompile(CustomDatasourceNamePattern)
+
+// CustomDatasource is a version list fetched from a URL (Renovate's customDatasources).
+type CustomDatasource struct {
+	URL          string `yaml:"url" jsonschema:"required" jsonschema_description:"http(s) URL of the version document, fetched once per run (unauthenticated, at most 10 MiB)."`
+	Format       string `yaml:"format" jsonschema:"enum=json,enum=yaml,enum=plain,default=json" jsonschema_description:"Document format: json, yaml, or plain (one version per line; empty lines and # comments are skipped)."`
+	Versions     string `yaml:"versions" jsonschema:"default=.releases[].version" jsonschema_description:"json/yaml only: selector of the version strings, a jq subset of stages joined by '|': paths of .field and [] steps ('.releases[].version', '[].tag_name') and keys (sorted object keys, '.releases | keys')."`
+	VersionRegex string `yaml:"versionRegex" jsonschema_description:"RE2 regexp the selected values must match; its (?P<version>) group, else the whole match, is the version (e.g. '^v?(?P<version>\\d+\\.\\d+\\.\\d+)$' strips a leading v)."`
+}
+
+// Spec returns the datasource spec of cd.
+func (cd CustomDatasource) Spec() customds.Spec {
+	return customds.Spec{URL: cd.URL, Format: cd.Format, Versions: cd.Versions, VersionRegex: cd.VersionRegex}
+}
+
+// KnownDatasource reports whether name is a datasource name (alias included) or custom.<name>
+// of a defined custom datasource.
+func (c *Config) KnownDatasource(name string) bool {
+	if n, ok := strings.CutPrefix(name, CustomDatasourcePrefix); ok {
+		_, ok := c.CustomDatasources[n]
+		return ok
+	}
+	return slices.Contains(DatasourceNames, name)
+}
+
+func (c *Config) validateCustomDatasources(add addFunc) {
+	for _, name := range slices.Sorted(maps.Keys(c.CustomDatasources)) {
+		cd := c.CustomDatasources[name]
+		f := "customDatasources." + name
+		if !customDatasourceNameRe.MatchString(name) {
+			add(f, "name must match %s", customDatasourceNameRe)
+		}
+		if u, err := url.Parse(cd.URL); cd.URL == "" {
+			add(f+".url", "required")
+		} else if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			add(f+".url", "must be an http(s) URL, got %q", cd.URL)
+		}
+		if cd.Format != "" && !slices.Contains(customds.Formats, cd.Format) {
+			add(f+".format", "must be one of %s, got %q", list(customds.Formats), cd.Format)
+		}
+		if cd.Versions != "" {
+			if cd.Format == customds.FormatPlain {
+				add(f+".versions", "not allowed with format plain")
+			} else if _, err := customds.ParseSelector(cd.Versions); err != nil {
+				add(f+".versions", "%v", err)
+			}
+		}
+		if cd.VersionRegex != "" {
+			if _, err := regexp.Compile(cd.VersionRegex); err != nil {
+				add(f+".versionRegex", "invalid RE2 regexp: %v", err)
+			}
+		}
+	}
+}
+
+// unknownDatasource is the message of an unknown datasource name.
+func unknownDatasource(name string) string {
+	return fmt.Sprintf("must be one of %s or custom.<name> of customDatasources, got %q", list(DatasourceNames), name)
 }
 
 // templateVarRe finds {{...}} template references.
@@ -198,7 +272,7 @@ func (ch *Checksum) validate(f, datasource string, add addFunc) {
 	case ch.Asset != "" && ch.URL != "":
 		add(f, "asset and url are mutually exclusive")
 	}
-	if ch.Asset != "" && datasource != "github-releases" {
+	if ch.Asset != "" && CanonicalDatasource(datasource) != "github-releases" {
 		add(f+".asset", "requires datasource github-releases")
 	}
 	if ch.File != "" && ch.URL == "" {
@@ -346,8 +420,9 @@ func (c *Config) Validate() error {
 		c.validateRule(i, tz, add)
 	}
 	for i := range c.Custom {
-		c.Custom[i].validate(fmt.Sprintf("custom[%d]", i), add)
+		c.Custom[i].validate(fmt.Sprintf("custom[%d]", i), c.KnownDatasource, add)
 	}
+	c.validateCustomDatasources(add)
 	return errors.Join(errs...)
 }
 
@@ -392,8 +467,8 @@ func (c *Config) validateRule(i int, tz string, add addFunc) {
 		}
 	}
 	for j, ds := range r.Datasources {
-		if !slices.Contains(DatasourceNames, ds) {
-			add(fmt.Sprintf("%s.datasources[%d]", f, j), "must be one of %s, got %q", list(DatasourceNames), ds)
+		if !c.KnownDatasource(ds) {
+			add(fmt.Sprintf("%s.datasources[%d]", f, j), "%s", unknownDatasource(ds))
 		}
 	}
 	if r.UpdateTypes != nil && len(r.UpdateTypes) == 0 {
@@ -449,7 +524,7 @@ func (c *Config) validateRule(i int, tz string, add addFunc) {
 	}
 }
 
-func (cu *Custom) validate(f string, add addFunc) {
+func (cu *Custom) validate(f string, known func(string) bool, add addFunc) {
 	if len(cu.Files) == 0 {
 		add(f+".files", "must not be empty")
 	}
@@ -458,8 +533,8 @@ func (cu *Custom) validate(f string, add addFunc) {
 			add(fmt.Sprintf("%s.files[%d]", f, j), "invalid glob %q: %v", g, err)
 		}
 	}
-	if cu.Datasource != "" && !slices.Contains(DatasourceNames, cu.Datasource) {
-		add(f+".datasource", "must be one of %s, got %q", list(DatasourceNames), cu.Datasource)
+	if cu.Datasource != "" && !known(cu.Datasource) {
+		add(f+".datasource", "%s", unknownDatasource(cu.Datasource))
 	}
 	if cu.Versioning != "" {
 		if _, err := versioning.Parse(cu.Versioning); err != nil {

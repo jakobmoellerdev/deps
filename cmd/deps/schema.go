@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 
 	"github.com/invopop/jsonschema"
 	"github.com/spf13/cobra"
@@ -40,11 +41,25 @@ func configSchema() ([]byte, error) {
 	}
 	s := r.Reflect(&config.Config{})
 	s.Title = "deps configuration (.deps.yaml)"
+	allowCustomDatasources(s)
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal schema: %w", err)
 	}
 	return append(unescapeHTML(b), '\n'), nil
+}
+
+// allowCustomDatasources lets the datasource fields take custom.<name> besides the enum of
+// built-in names (an enum alone would reject them), and constrains customDatasources keys.
+func allowCustomDatasources(s *jsonschema.Schema) {
+	custom := &jsonschema.Schema{Type: "string", Pattern: `^` + regexp.QuoteMeta(config.CustomDatasourcePrefix) + config.CustomDatasourceNamePattern[1:]}
+	anyOf := func(p *jsonschema.Schema) {
+		p.AnyOf = []*jsonschema.Schema{{Type: "string", Enum: p.Enum}, custom}
+		p.Type, p.Enum = "", nil
+	}
+	anyOf(s.Definitions["Custom"].Properties.Value("datasource"))
+	anyOf(s.Definitions["Rule"].Properties.Value("datasources").Items)
+	s.Properties.Value("customDatasources").PropertyNames = &jsonschema.Schema{Pattern: config.CustomDatasourceNamePattern}
 }
 
 // unescapeHTML undoes encoding/json's HTML escaping of <, > and & so descriptions like

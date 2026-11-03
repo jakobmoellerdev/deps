@@ -27,9 +27,9 @@ type Span struct{ Start, End int }
 // Dep is a single dependency occurrence extracted from a file.
 type Dep struct {
 	Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "custom"
-	Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm"
+	Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "custom.<name>"
 	Versioning  string // "tag" | "go" | "docker" | "semver" | "loose" | "regex:<RE2>" (rules[].versioning overrides the manager's)
-	DepType     string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"; docker: "dockerfile"|"compose"|"workflow"|"action"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"; custom: "annotation"|"regex"
+	DepType     string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"|"setup"; docker: "dockerfile"|"compose"|"workflow"|"action"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"|"engines"|"volta"; custom: "annotation"|"regex"
 	File        string // slash path relative to --dir
 	Line        int    // 1-based
 	Name        string // actions: owner/repo[/sub]; gomod: module path

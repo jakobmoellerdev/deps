@@ -12,7 +12,13 @@ import (
 
 func one(t *testing.T, c config.Custom) manager.Manager {
 	t.Helper()
-	ms, err := New([]config.Custom{c})
+	return oneWith(t, &config.Config{Custom: []config.Custom{c}})
+}
+
+// oneWith returns the manager of the single cfg.Custom entry.
+func oneWith(t *testing.T, cfg *config.Config) manager.Manager {
+	t.Helper()
+	ms, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,6 +214,7 @@ func TestNewErrors(t *testing.T) {
 		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose or regex:<RE2>, got "nope"`},
 		{config.Custom{Files: []string{"x"}, Versioning: "regex:(?<minor>1)"}, `versioning: regex: must have a (?<major>...) group`},
 		{config.Custom{Files: []string{"x"}, Datasource: "nuget"}, `datasource: unknown "nuget"`},
+		{config.Custom{Files: []string{"x"}, Datasource: "custom.envtest"}, `datasource: unknown "custom.envtest"`},
 		{config.Custom{Files: []string{"x"}, Match: "("}, "match: error parsing regexp"},
 		{config.Custom{Files: []string{"x"}, Match: "a", Datasource: "go", Name: "n"}, "match: must have a (?P<version>...) group"},
 		{config.Custom{Files: []string{"x"}, Match: "(?P<version>a)", Name: "n"}, "datasource: required unless"},
@@ -215,7 +222,7 @@ func TestNewErrors(t *testing.T) {
 		{config.Custom{Files: []string{"x"}, Match: "(?P<version>a)", Datasource: "go", Name: "n", Checksum: &config.Checksum{URL: "u"}}, "checksum: requires a (?P<checksum>...) group"},
 		{config.Custom{Files: []string{"x"}, Match: "(?P<version>a)(?P<checksum>b)", Datasource: "go", Name: "n"}, "checksum: requires a (?P<checksum>...) group"},
 	} {
-		ms, err := New([]config.Custom{{Files: []string{"ok"}}, c.cfg})
+		ms, err := New(&config.Config{Custom: []config.Custom{{Files: []string{"ok"}}, c.cfg}})
 		if err == nil || ms != nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("New(%+v) = %v, %v; want error containing %q", c.cfg, ms, err, c.want)
 		}
@@ -223,10 +230,23 @@ func TestNewErrors(t *testing.T) {
 }
 
 func TestNewMany(t *testing.T) {
-	ms, err := New([]config.Custom{{Files: []string{"a"}}, {Files: []string{"b"}, Match: "(?P<version>x)(?P<name>y)(?P<datasource>z)"}})
+	ms, err := New(&config.Config{Custom: []config.Custom{{Files: []string{"a"}}, {Files: []string{"b"}, Match: "(?P<version>x)(?P<name>y)(?P<datasource>z)"}}})
 	if err != nil || len(ms) != 2 || !ms[0].Match("a") || !ms[1].Match("b") || ms[0].Match("b") {
 		t.Fatalf("New = %v, %v", ms, err)
 	}
+}
+
+// A regex entry may use a defined custom datasource (OCM's controller .env envtest entry).
+func TestRegexCustomDatasource(t *testing.T) {
+	m := oneWith(t, &config.Config{
+		Custom: []config.Custom{{Files: []string{".env"}, Datasource: "custom.envtest", Name: "envtest",
+			Match: `ENVTEST_K8S_VERSION=v?(?P<version>\d+\.\d+\.\d+)`}},
+		CustomDatasources: map[string]config.CustomDatasource{"envtest": {URL: "https://x/envtest.yaml", Format: "yaml"}},
+	})
+	src := "# renovate: datasource=custom.envtest depName=envtest\nENVTEST_K8S_VERSION=1.36.0\n"
+	check(t, src, extract(t, m, src), DepTypeRegex, []want{
+		{2, "custom.envtest", "envtest", "", "semver", "1.36.0", "", ""},
+	})
 }
 
 func TestEdits(t *testing.T) {
@@ -382,17 +402,22 @@ func TestRenovateMarkers(t *testing.T) {
 		"# renovate: datasource=github-release-attachments depName=o/r", // 33
 		"# renovate: datasource=docker depName=busybox",                 // 34 marker on marker's next line
 		"busybox:1.36", // 35
+		"# renovate: datasource=custom.missing depName=x", // 36 undefined custom datasource
+		"1.0.0", // 37
+		"# renovate: datasource=node depName=node", // 38 Renovate's old name
+		"NODE=v26.5.0", // 39
 	}, "\n")
-	m := one(t, config.Custom{Files: []string{"**/.env"}})
+	m := oneWith(t, &config.Config{Custom: []config.Custom{{Files: []string{"**/.env"}}},
+		CustomDatasources: map[string]config.CustomDatasource{"envtest": {URL: "https://x/envtest.yaml"}}})
 	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
 		{2, "github-releases", "golangci/golangci-lint", "https://github.com/golangci/golangci-lint", "semver", "v2.15.0", "", ""},
 		{4, "docker", "goodwithtech/dockle", "", "docker", "v0.4.15", dockleDigest, ""},
 		{6, "docker", "cgr.dev/chainguard/openscap", "", "docker", "latest", scapDigest, ""},
 		{8, "github-releases", "helm/helm", "https://github.com/helm/helm", "semver", "v4.3.0", "", ""},
 		{10, "github-releases", "open-component-model/open-component-model", "https://github.com/open-component-model/open-component-model", "semver", "0.16.0", "", ""},
-		{12, "custom.envtest", "envtest", "", "semver", "", "", `unknown datasource "custom.envtest"`},
+		{12, "custom.envtest", "envtest", "", "semver", "1.36.0", "", ""},
 		{14, "go-toolchain", "go", "", "semver", "1.27.1", "", ""},
-		{16, "node-version", "node", "", "semver", "", "", `unknown datasource "node-version"`},
+		{16, "node-version", "node", "", "semver", "26.5.0", "", ""},
 		{18, "npm", "npm", "", "semver", "12.2.0", "", ""},
 		{20, "go", "k8s.io/code-generator", "", "semver", "v0.37.1", "", ""},
 		{22, "git-tags", "o/r", "https://github.com/o/r", "tag", "v1.2", "", ""},
@@ -403,6 +428,8 @@ func TestRenovateMarkers(t *testing.T) {
 		{32, "go", "a", "", "loose", "1.0.0", "", ""},
 		{34, "github-releases", "o/r", "https://github.com/o/r", "semver", "", "", "no version on next line"},
 		{35, "docker", "busybox", "", "docker", "1.36", "", ""},
+		{37, "custom.missing", "x", "", "semver", "", "", `unknown datasource "custom.missing"`},
+		{39, "node-version", "node", "", "semver", "v26.5.0", "", ""},
 	})
 }
 

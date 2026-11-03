@@ -2,6 +2,7 @@ package npm
 
 import (
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,6 +75,8 @@ func TestExtract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// engines/volta are covered by TestEnginesVolta.
+	deps = slices.DeleteFunc(deps, func(d dep.Dep) bool { return d.DepType == DepTypeEngines || d.DepType == DepTypeVolta })
 	ws := []want{
 		{"caret", "dependencies", "1.2.3", "", 0},
 		{"tilde", "dependencies", "2.0.0", "", 0},

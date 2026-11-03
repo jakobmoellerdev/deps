@@ -14,7 +14,8 @@
 // The entry's `versioning` accepts every scheme including `regex:<RE2>`; the versioning
 // fields of markers and the `versioning` group accept the scheme names (config.Versionings),
 // since a regex does not fit a marker field. Renovate datasource names are mapped to deps
-// names (see config.DatasourceAliases).
+// names (see config.DatasourceAliases); `custom.<name>` is accepted when customDatasources
+// defines name.
 package custom
 
 import (
@@ -63,6 +64,7 @@ var (
 )
 
 type customManager struct {
+	known      func(datasource string) bool // config.Config.KnownDatasource
 	files      []string
 	re         *regexp.Regexp // nil = annotation mode
 	datasource string
@@ -73,13 +75,13 @@ type customManager struct {
 	gVersion, gName, gDepName, gPackageName, gDatasource, gVersioning, gDigest, gChecksum int
 }
 
-// New returns one manager per config entry, in order. Entries are validated again here so the
-// managers are usable with configs that did not go through config.Load.
-func New(cfg []config.Custom) ([]manager.Manager, error) {
-	ms := make([]manager.Manager, 0, len(cfg))
+// New returns one manager per cfg.Custom entry, in order. Entries are validated again here so
+// the managers are usable with configs that did not go through config.Load.
+func New(cfg *config.Config) ([]manager.Manager, error) {
+	ms := make([]manager.Manager, 0, len(cfg.Custom))
 	var errs []error
-	for i, c := range cfg {
-		m, err := newManager(c)
+	for i, c := range cfg.Custom {
+		m, err := newManager(c, cfg.KnownDatasource)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("custom[%d]: %w", i, err))
 			continue
@@ -92,7 +94,7 @@ func New(cfg []config.Custom) ([]manager.Manager, error) {
 	return ms, nil
 }
 
-func newManager(c config.Custom) (*customManager, error) {
+func newManager(c config.Custom, known func(string) bool) (*customManager, error) {
 	if len(c.Files) == 0 {
 		return nil, errors.New("files: must not be empty")
 	}
@@ -101,7 +103,7 @@ func newManager(c config.Custom) (*customManager, error) {
 			return nil, fmt.Errorf("files: invalid glob %q", g)
 		}
 	}
-	m := &customManager{files: c.Files, datasource: c.Datasource, name: c.Name, versioning: c.Versioning,
+	m := &customManager{known: known, files: c.Files, datasource: c.Datasource, name: c.Name, versioning: c.Versioning,
 		gVersion: -1, gName: -1, gDepName: -1, gPackageName: -1, gDatasource: -1, gVersioning: -1, gDigest: -1, gChecksum: -1}
 	if m.versioning == "" {
 		m.versioning = defaultVersioning
@@ -109,7 +111,7 @@ func newManager(c config.Custom) (*customManager, error) {
 	if _, err := versioning.Parse(m.versioning); err != nil {
 		return nil, fmt.Errorf("versioning: %w", err)
 	}
-	if m.datasource != "" && !slices.Contains(config.DatasourceNames, m.datasource) {
+	if m.datasource != "" && !known(m.datasource) {
 		return nil, fmt.Errorf("datasource: unknown %q", m.datasource)
 	}
 	if c.Match == "" {
@@ -252,7 +254,7 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 			if ann[6] >= 0 {
 				d.Versioning = string(line[ann[6]:ann[7]])
 			}
-			classify(&d)
+			m.classify(&d)
 			if d.Skip == "" && !m.knownVersioning(d.Versioning) {
 				d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
 			}
@@ -300,7 +302,7 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 		d.Skip = "renovate marker without depName"
 		return d
 	}
-	classify(&d)
+	m.classify(&d)
 	switch {
 	case scheme != "":
 		d.Versioning = scheme
@@ -436,7 +438,7 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 		default:
 			d.Version = string(src[vs:ve])
 			d.RefSpan = dep.Span{Start: vs, End: ve}
-			classify(&d)
+			m.classify(&d)
 			if d.Skip == "" && !m.knownVersioning(d.Versioning) {
 				d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
 			}
@@ -465,8 +467,10 @@ func isChecksum(s string) bool {
 //     Renovate alias github-tags takes `owner/repo` on github.com.
 //   - github-releases: Name is `owner/repo` (github.com) or `https://host/owner/repo` (GHES);
 //     Source is the repository URL.
-//   - go, go-toolchain, docker, npm: Name is the module path, image or package; Source is empty.
-func classify(d *dep.Dep) {
+//   - go, go-toolchain, docker, npm, node-version: Name is the module path, image or package;
+//     Source is empty.
+//   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
+func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
 	d.Datasource = config.CanonicalDatasource(ds)
 	switch d.Datasource {
@@ -492,9 +496,11 @@ func classify(d *dep.Dep) {
 			return
 		}
 		d.Source = src
-	case "go", "go-toolchain", "docker", "npm":
+	case "go", "go-toolchain", "docker", "npm", "node-version":
 	default:
-		d.Skip = fmt.Sprintf("unknown datasource %q", ds)
+		if !strings.HasPrefix(d.Datasource, config.CustomDatasourcePrefix) || !m.known(d.Datasource) {
+			d.Skip = fmt.Sprintf("unknown datasource %q", ds)
+		}
 	}
 }
 

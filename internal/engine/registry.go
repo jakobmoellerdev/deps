@@ -13,7 +13,7 @@ import (
 // Managers returns the managers enabled by cfg, in discovery order: the built-in managers,
 // then one custom manager per cfg.Custom entry.
 func Managers(cfg *config.Config) ([]manager.Manager, error) {
-	cs, err := custom.New(cfg.Custom)
+	cs, err := custom.New(cfg)
 	if err != nil {
 		return nil, err
 	}

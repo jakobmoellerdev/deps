@@ -142,6 +142,18 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{separateMultipleMajor: 1}]\n", "line 1"},
 		{"updateNotScheduled: sometimes\n", "line 1"},
 		{"rules: [{minimumReleaseAge: 3 fortnights}]\n", `rules[0].minimumReleaseAge: invalid age "3 fortnights"`},
+		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, github-releases, go, go-toolchain, docker, npm, node-version, golang-version, github-tags, github-release-attachments, node or custom.<name> of customDatasources, got "custom.envtest"`},
+		{"custom: [{files: [x], datasource: custom.envtest}]\n", `custom[0].datasource: must be one of git-tags`},
+		{"customDatasources: {envtest: {}}\n", "customDatasources.envtest.url: required"},
+		{"customDatasources: {envtest: {url: 'ftp://x/y'}}\n", `customDatasources.envtest.url: must be an http(s) URL, got "ftp://x/y"`},
+		{"customDatasources: {envtest: {url: 'https://'}}\n", `customDatasources.envtest.url: must be an http(s) URL`},
+		{"customDatasources: {envtest: {url: '%zz'}}\n", `customDatasources.envtest.url: must be an http(s) URL`},
+		{"customDatasources: {'-x': {url: 'https://x/y'}}\n", "customDatasources.-x: name must match"},
+		{"customDatasources: {e: {url: 'https://x/y', format: toml}}\n", `customDatasources.e.format: must be one of json, yaml, plain, got "toml"`},
+		{"customDatasources: {e: {url: 'https://x/y', format: plain, versions: .a}}\n", "customDatasources.e.versions: not allowed with format plain"},
+		{"customDatasources: {e: {url: 'https://x/y', versions: 'a'}}\n", `customDatasources.e.versions: selector "a"`},
+		{"customDatasources: {e: {url: 'https://x/y', versionRegex: '('}}\n", "customDatasources.e.versionRegex: invalid RE2 regexp"},
+		{"customDatasources: {e: {url: 'https://x/y', transformTemplates: []}}\n", "line 1"},
 	} {
 		_, err := load(t, ".deps.yaml", tc.body)
 		var ce *Error
@@ -243,7 +255,7 @@ custom:
 
 func TestDefaultIgnore(t *testing.T) {
 	c := Default()
-	for typ, want := range map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "direct": false, "toolchain": false, "dependencies": false, "packageManager": false, "": false} {
+	for typ, want := range map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "engines": true, "volta": false, "setup": false, "direct": false, "toolchain": false, "dependencies": false, "packageManager": false, "": false} {
 		if got := c.Policy(dep.Dep{Manager: "gomod", DepType: typ}).Ignore; got != want {
 			t.Errorf("depType %q: Ignore = %v, want %v", typ, got, want)
 		}
@@ -538,6 +550,41 @@ func TestRulePathsAndDatasources(t *testing.T) {
 		p := c.Policy(dep.Dep{File: tc.file, Datasource: tc.datasource})
 		if p.Group != tc.group || !slices.Equal(p.Rules, tc.rules) {
 			t.Errorf("%s (%s): group %q rules %v, want %q %v", tc.file, tc.datasource, p.Group, p.Rules, tc.group, tc.rules)
+		}
+	}
+}
+
+func TestCustomDatasources(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `customDatasources:
+  envtest:
+    url: https://raw.githubusercontent.com/kubernetes-sigs/controller-tools/master/envtest-releases.yaml
+    format: yaml
+    versions: .releases | keys
+    versionRegex: '^v?(?P<version>\d+\.\d+\.\d+)$'
+custom:
+  - files: [.env]
+    match: 'ENVTEST_K8S_VERSION=(?P<version>\S+)'
+    datasource: custom.envtest
+    name: envtest
+rules:
+  - datasources: [custom.envtest, node]
+    group: test tools
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cd := c.CustomDatasources["envtest"]
+	if sp := cd.Spec(); sp.Format != "yaml" || sp.Versions != ".releases | keys" || sp.URL != cd.URL || sp.VersionRegex != cd.VersionRegex {
+		t.Errorf("spec = %+v", sp)
+	}
+	for name, want := range map[string]bool{"custom.envtest": true, "custom.other": false, "custom.": false, "node": true, "node-version": true, "envtest": false} {
+		if got := c.KnownDatasource(name); got != want {
+			t.Errorf("KnownDatasource(%q) = %v", name, got)
+		}
+	}
+	for ds, group := range map[string]string{"custom.envtest": "test tools", "node-version": "test tools", "npm": ""} {
+		if got := c.Policy(dep.Dep{Datasource: ds}).Group; got != group {
+			t.Errorf("%s: group %q, want %q", ds, got, group)
 		}
 	}
 }

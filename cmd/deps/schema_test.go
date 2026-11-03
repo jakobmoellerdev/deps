@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
@@ -21,9 +22,11 @@ type schemaNode struct {
 	Enum                 []any                  `json:"enum"`
 	Default              any                    `json:"default"`
 	Required             []string               `json:"required"`
-	AdditionalProperties *bool                  `json:"additionalProperties"`
+	AdditionalProperties any                    `json:"additionalProperties"` // false or a schema
 	Properties           map[string]*schemaNode `json:"properties"`
 	Items                *schemaNode            `json:"items"`
+	AnyOf                []*schemaNode          `json:"anyOf"`
+	PropertyNames        *schemaNode            `json:"propertyNames"`
 	Defs                 map[string]*schemaNode `json:"$defs"`
 }
 
@@ -50,12 +53,12 @@ func TestSchema(t *testing.T) {
 	if s.Schema != "https://json-schema.org/draft/2020-12/schema" || s.Type != "object" || s.ID != "" {
 		t.Errorf("$schema %q $id %q type %q", s.Schema, s.ID, s.Type)
 	}
-	rule, custom, actions := s.Defs["Rule"], s.Defs["Custom"], s.Defs["Actions"]
-	if rule == nil || custom == nil || actions == nil {
+	rule, custom, actions, customDS := s.Defs["Rule"], s.Defs["Custom"], s.Defs["Actions"], s.Defs["CustomDatasource"]
+	if rule == nil || custom == nil || actions == nil || customDS == nil {
 		t.Fatalf("$defs = %v", s.Defs)
 	}
-	for name, n := range map[string]*schemaNode{"root": &s, "Rule": rule, "Custom": custom, "Actions": actions} {
-		if n.AdditionalProperties == nil || *n.AdditionalProperties {
+	for name, n := range map[string]*schemaNode{"root": &s, "Rule": rule, "Custom": custom, "Actions": actions, "CustomDatasource": customDS} {
+		if n.AdditionalProperties != false {
 			t.Errorf("%s: additionalProperties must be false", name)
 		}
 		for k, p := range n.Properties {
@@ -78,11 +81,12 @@ func TestSchema(t *testing.T) {
 		{"rules.pin", rule.Properties["pin"], pins},
 		{"rules.manager", rule.Properties["manager"], config.Managers},
 		{"rules.depTypes", rule.Properties["depTypes"].Items, config.DepTypes},
-		{"rules.datasources", rule.Properties["datasources"].Items, config.DatasourceNames},
+		{"rules.datasources", datasourceEnum(t, "rules.datasources", rule.Properties["datasources"].Items), config.DatasourceNames},
 		{"rules.updates", rule.Properties["updates"].Items, updates},
 		{"rules.updateTypes", rule.Properties["updateTypes"].Items, updates},
 		{"rules.commitType", rule.Properties["commitType"], config.CommitTypes},
-		{"custom.datasource", custom.Properties["datasource"], config.DatasourceNames},
+		{"custom.datasource", datasourceEnum(t, "custom.datasource", custom.Properties["datasource"]), config.DatasourceNames},
+		{"customDatasources.format", customDS.Properties["format"], customds.Formats},
 		{"rebaseWhen", s.Properties["rebaseWhen"], config.RebaseWhens},
 	}
 	for _, e := range enums {
@@ -106,7 +110,7 @@ func TestSchema(t *testing.T) {
 		}
 	}
 	if want := []string{"version", "pin", "timezone", "schedule", "security", "branchPrefix", "rebaseWhen", "monorepos", "actions", "minimumReleaseAge", "ignorePaths",
-		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "rules", "custom"}; len(s.Properties) != len(want) {
+		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "rules", "custom", "customDatasources"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
 		for _, k := range want {
@@ -114,6 +118,13 @@ func TestSchema(t *testing.T) {
 				t.Errorf("root lacks %q", k)
 			}
 		}
+	}
+	cds := s.Properties["customDatasources"]
+	if ap, _ := cds.AdditionalProperties.(map[string]any); cds.Type != "object" || ap["$ref"] != "#/$defs/CustomDatasource" || cds.PropertyNames == nil || cds.PropertyNames.Pattern != config.CustomDatasourceNamePattern {
+		t.Errorf("customDatasources = %+v", cds)
+	}
+	if !slices.Equal(customDS.Required, []string{"url"}) || customDS.Properties["format"].Default != "json" || customDS.Properties["versions"].Default != customds.DefaultVersions {
+		t.Errorf("CustomDatasource required %v, defaults %v %v", customDS.Required, customDS.Properties["format"].Default, customDS.Properties["versions"].Default)
 	}
 	if s.Properties["rules"].Items.Ref != "#/$defs/Rule" || s.Properties["custom"].Items.Ref != "#/$defs/Custom" || s.Properties["actions"].Ref != "#/$defs/Actions" {
 		t.Error("rules/custom/actions do not reference their $defs")
@@ -129,6 +140,25 @@ func TestSchema(t *testing.T) {
 	if _, stderr, code := execute(t, "schema", "x"); code != 2 || !strings.Contains(stderr, "unexpected arguments") {
 		t.Errorf("extra args: exit %d\n%s", code, stderr)
 	}
+}
+
+// datasourceEnum returns the enum of a datasource field, which is anyOf the built-in names and
+// a custom.<name> pattern.
+func datasourceEnum(t *testing.T, name string, n *schemaNode) *schemaNode {
+	t.Helper()
+	if len(n.AnyOf) != 2 || n.Enum != nil {
+		t.Fatalf("%s: want anyOf [enum, custom pattern], got %+v", name, n)
+	}
+	re, err := regexp.Compile(n.AnyOf[1].Pattern)
+	if err != nil {
+		t.Fatalf("%s: custom pattern: %v", name, err)
+	}
+	for v, want := range map[string]bool{"custom.envtest": true, "custom.a.b-c_1": true, "custom.": false, "envtest": false, "custom.-x": false} {
+		if re.MatchString(v) != want {
+			t.Errorf("%s: pattern %q matches %q = %v", name, re, v, !want)
+		}
+	}
+	return n.AnyOf[0]
 }
 
 func TestUnescapeHTML(t *testing.T) {

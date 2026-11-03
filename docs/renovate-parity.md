@@ -30,12 +30,12 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 |---|---|---|---|---|
 | M1 | `# renovate: datasource=… depName=…` markers | 31 markers in `.env`, workflows, yaml, `envtest.go`, `netlify.toml` | accepted in annotation mode (plus `# deps:`); Renovate group names in regex mode | done |
 | M2 | datasource `golang-version` | toolchain, netlify `GO_VERSION` | alias of `go-toolchain` | done |
-| M3 | datasource `node-version` | netlify `NODE_VERSION` | — | open |
-| M4 | `customDatasources` (`envtest`: YAML from URL + JSONata transform) | controller `.env`, `envtest.go` | — | open |
-| M5 | datasource `github-release-attachments` (version + digest of an asset) | sigstore handler `.env` (`COSIGN_CHECKSUMS_SHA256`) | alias of `github-releases`; `checksum.asset` gives asset digests; P8's regex versioning orders `+ocm.N`; `docs/examples-ocm.deps.yaml` has the cosign entry (a manual run moved `v3.1.4+ocm.5` to `+ocm.6` with the release's real checksum) | open (end-to-end test) |
+| M3 | datasource `node-version` | netlify `NODE_VERSION` | `node-version` (alias `node`): nodejs.org `dist/index.json` once per run (`DEPS_NODE_DIST_URL` for mirrors), release dates as release times, derived `X`/`X.Y` for partial values; `v` style of the file kept | done |
+| M4 | `customDatasources` (`envtest`: YAML from URL + JSONata transform) | controller `.env`, `envtest.go` | `customDatasources.<name>` with `url`, `format` (json/yaml/plain), `versions` (jq-subset selector, e.g. `.releases \| keys`) and `versionRegex` instead of JSONata; deps use `custom.<name>`; fetched once per run | done |
+| M5 | datasource `github-release-attachments` (version + digest of an asset) | sigstore handler `.env` (`COSIGN_CHECKSUMS_SHA256`) | alias of `github-releases`; `checksum.asset` gives asset digests; P8's regex versioning orders `+ocm.N`; `docs/examples-ocm.deps.yaml` has the cosign entry (a manual run moved `v3.1.4+ocm.5` to `+ocm.6` with the release's real checksum); `cmd/deps` test `TestApplyCosignVersionAndChecksum` covers plan + apply end to end | done |
 | M6 | digest refresh for non-version tags (`latest@sha256:…`) | `.env` OPENSCAP_IMAGE, controller chart `tag: latest@sha256:…` | docker-datasource deps with a non-version tag (docker manager, custom markers with a digest) get digest-only resolution: pinned → digest refresh, unpinned + `pin: digest` → pin, else skipped as `non-version tag`; other non-version values are skipped as `non-version value "<v>"` | done |
-| M7 | `with:` version inputs of setup actions (`actions/setup-node node-version`, `setup-go go-version`) | `ci.yml` `node-version: 26` | `with:` is never read | open |
-| M8 | npm `engines` / `volta` | `engines.node ^26.0.0` | not extracted | open |
+| M7 | `with:` version inputs of setup actions (`actions/setup-node node-version`, `setup-go go-version`) | `ci.yml` `node-version: 26` | DepType `setup` for setup-node, setup-go, setup-helm, setup-kubectl, setup-terraform, golangci-lint-action; full versions semver, partial ones tag versioning (26 → 27) | done |
+| M8 | npm `engines` / `volta` | `engines.node ^26.0.0` | DepTypes `engines` (ignored by default, like Renovate) and `volta`; node via `node-version`, npm/pnpm/yarn via `npm`; `^26` partials bumped with tag versioning | done |
 | M9 | `git-submodules` | enabled, but OCM has no `.gitmodules` | — | n/a |
 | M10 | `packageManager` field | website `npm@12.2.0` | done | done |
 
