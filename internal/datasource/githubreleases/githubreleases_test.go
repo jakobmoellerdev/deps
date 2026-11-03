@@ -102,6 +102,41 @@ func TestReleasesPagination(t *testing.T) {
 	}
 }
 
+// Pages are fetched only until the dep's current version is listed: newer releases precede
+// it. Callers with older versions page further; the list is shared.
+func TestReleasesStopAtCurrentVersion(t *testing.T) {
+	var reqs atomic.Int32
+	s, _ := newSource(t, func(w http.ResponseWriter, r *http.Request) {
+		reqs.Add(1)
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		_, _ = w.Write([]byte(pageJSON((page-1)*100, 100)))
+	}, nil)
+	for _, c := range []struct {
+		version  string
+		requests int32
+		releases bool // the result must contain the version
+	}{
+		{"v1.50.0", 1, true},
+		{"1.50.0", 1, true},   // v-less match, no new request
+		{"v1.150.0", 2, true}, // page 2
+		{"v1.21.0", 2, true},  // already listed
+		{"v9.0.0", 5, false},  // not released: all pages up to the cap
+		{"v1.450.0", 5, true}, // within the five pages already read
+	} {
+		rels, err := s.Releases(t.Context(), dep.Dep{Name: "o/r", Version: c.version}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := reqs.Load(); got != c.requests {
+			t.Errorf("%s: %d requests, want %d", c.version, got, c.requests)
+		}
+		v := "v" + strings.TrimPrefix(c.version, "v")
+		if has := slices.ContainsFunc(rels, func(r datasource.Release) bool { return r.Version == v }); has != c.releases {
+			t.Errorf("%s: listed = %v, want %v", c.version, has, c.releases)
+		}
+	}
+}
+
 func TestReleasesDedupe(t *testing.T) {
 	var reqs atomic.Int32
 	s, _ := newSource(t, func(w http.ResponseWriter, _ *http.Request) {

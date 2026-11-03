@@ -26,10 +26,18 @@ var errReported = errors.New("errors reported")
 // newHTTPClient builds the one HTTP client of a command; tests replace it with a fake network.
 var newHTTPClient = httpx.NewClient
 
+// activeProfiler is set once flags are parsed so main can flush profiles after any outcome.
+var activeProfiler *profiler
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := newRoot().ExecuteContext(ctx)
 	stop()
+	if activeProfiler != nil {
+		if perr := activeProfiler.stop(); perr != nil {
+			fmt.Fprintf(os.Stderr, "deps: %v\n", perr)
+		}
+	}
 	os.Exit(exitCode(err, os.Stderr))
 }
 

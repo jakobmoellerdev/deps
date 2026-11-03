@@ -3,7 +3,6 @@
 package versioning
 
 import (
-	"regexp"
 	"strconv"
 
 	"github.com/Masterminds/semver/v3"
@@ -11,31 +10,44 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-var tagRe = regexp.MustCompile(`^(v?)(\d+)(?:\.(\d+))?(?:\.(\d+))?$`)
-
 // Tag is a 1–3 part numeric version with an optional "v" prefix.
 type Tag struct {
 	Prefix string
 	Parts  []int
 }
 
-// ParseTag parses s; suffixed and prerelease tags never parse.
+// ParseTag parses `^(v?)(\d+)(?:\.(\d+))?(?:\.(\d+))?$`; suffixed and prerelease tags never
+// parse. It is a hand-written scanner: it runs for every candidate of every dependency, and
+// invalid input allocates nothing.
 func ParseTag(s string) (Tag, bool) {
-	m := tagRe.FindStringSubmatch(s)
-	if m == nil {
-		return Tag{}, false
+	var t Tag
+	if s != "" && s[0] == 'v' {
+		t.Prefix, s = "v", s[1:]
 	}
-	t := Tag{Prefix: m[1], Parts: make([]int, 0, 3)}
-	for _, p := range m[2:] {
-		if p == "" {
-			break
+	var parts [3]int
+	n := 0
+	for {
+		i := 0
+		for i < len(s) && '0' <= s[i] && s[i] <= '9' {
+			i++
 		}
-		n, err := strconv.Atoi(p)
-		if err != nil {
+		if i == 0 || n == len(parts) {
 			return Tag{}, false
 		}
-		t.Parts = append(t.Parts, n)
+		v, err := strconv.Atoi(s[:i])
+		if err != nil {
+			return Tag{}, false // overflow
+		}
+		parts[n], n, s = v, n+1, s[i:]
+		if s == "" {
+			break
+		}
+		if s[0] != '.' {
+			return Tag{}, false
+		}
+		s = s[1:]
 	}
+	t.Parts = append(make([]int, 0, n), parts[:n]...)
 	return t, true
 }
 

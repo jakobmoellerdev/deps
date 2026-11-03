@@ -27,10 +27,12 @@ import (
 )
 
 type rootOpts struct {
-	dir     string
-	config  string
-	verbose bool
-	log     logOpts
+	dir         string
+	config      string
+	verbose     bool
+	log         logOpts
+	prof        profiler
+	concurrency int
 }
 
 func newRoot() *cobra.Command {
@@ -41,7 +43,14 @@ func newRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			return setupLogger(o.log, cmd.ErrOrStderr())
+			if err := setupLogger(o.log, cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+			if o.concurrency < 1 {
+				return &usageError{fmt.Errorf("--concurrency: must be at least 1, got %d", o.concurrency)}
+			}
+			activeProfiler = &o.prof
+			return o.prof.start()
 		},
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err} })
@@ -51,6 +60,11 @@ func newRoot() *cobra.Command {
 	pf.BoolVarP(&o.verbose, "verbose", "v", false, "also print skipped dependencies")
 	pf.StringVar(&o.log.level, "log-level", envOr("DEPS_LOG_LEVEL", "warn"), "log level: debug, info, warn, error (env DEPS_LOG_LEVEL)")
 	pf.StringVar(&o.log.format, "log-format", envOr("DEPS_LOG_FORMAT", "text"), "log format: text, json (env DEPS_LOG_FORMAT)")
+	pf.IntVar(&o.concurrency, "concurrency", 32, "maximum concurrent network requests and lookups")
+	pf.StringVar(&o.prof.cpu, "cpuprofile", "", "write a CPU profile to this file")
+	pf.StringVar(&o.prof.mem, "memprofile", "", "write an allocation profile to this file on exit")
+	_ = pf.MarkHidden("cpuprofile")
+	_ = pf.MarkHidden("memprofile")
 	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newSchema())
 	return root
 }
@@ -102,7 +116,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	if err != nil {
 		return nil, err
 	}
-	sem := make(chan struct{}, 16)
+	sem := make(chan struct{}, o.concurrency)
 	auth := httpx.NewAuth(info, token, os.Getenv)
 	host, source := cfg.Actions.DefaultHost, "config"
 	if host == "" {

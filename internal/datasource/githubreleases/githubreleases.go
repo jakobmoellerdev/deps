@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,8 +41,11 @@ type Source struct {
 	cache map[string]*entry
 }
 
+// entry is the release list of one repository, fetched page by page on demand.
 type entry struct {
-	once  sync.Once
+	mu    sync.Mutex
+	pages int  // pages fetched
+	done  bool // last page seen, maxPages reached, or an error
 	rels  []datasource.Release
 	byTag map[string]tagInfo
 	err   error
@@ -92,47 +96,74 @@ func (s *Source) parseRepo(name string) (repo, error) {
 	return r, nil
 }
 
-// Releases lists the non-draft, non-prerelease releases of d.Name (newest first, at most
-// 500); Version is the tag name and Digest is empty. The slice is shared between callers and
-// must not be modified.
+// Releases lists the non-draft, non-prerelease releases of d.Name, newest first. Pages are
+// fetched only until d.Version's release is listed (everything newer precedes it; at most
+// 500 releases); Version is the tag name and Digest is empty. The slice must not be modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
-	e, err := s.lookup(ctx, d.Name)
-	if err != nil {
-		return nil, err
-	}
-	return e.rels, nil
+	var rels []datasource.Release
+	err := s.with(ctx, d.Name, d.Version, func(e *entry) { rels = slices.Clip(e.rels) })
+	return rels, err
 }
 
-// lookup returns the cached (fetched once) releases of the repository name.
-func (s *Source) lookup(ctx context.Context, name string) (*entry, error) {
+// with runs fn on the repository's entry after fetching pages until version's release is
+// listed or no pages are left; fn runs under the entry lock.
+func (s *Source) with(ctx context.Context, name, version string, fn func(e *entry)) error {
 	r, err := s.parseRepo(name)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	key := strings.ToLower(r.api + "/repos/" + r.path) // GitHub names are case-insensitive
 	s.mu.Lock()
 	e := s.cache[key]
 	if e == nil {
-		e = &entry{}
+		e = &entry{byTag: make(map[string]tagInfo)}
 		s.cache[key] = e
 	}
 	s.mu.Unlock()
-	e.once.Do(func() { e.rels, e.byTag, e.err = s.fetch(ctx, r) })
-	if e.err != nil {
-		return nil, e.err
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for !e.done && (e.pages == 0 || !e.has(version)) {
+		s.next(ctx, r, e)
 	}
-	return e, nil
+	if e.err != nil {
+		return e.err
+	}
+	fn(e)
+	return nil
+}
+
+func (e *entry) has(version string) bool {
+	_, _, ok := e.release(version)
+	return ok
+}
+
+// next fetches the entry's next page; a short page, maxPages or an error ends the list.
+func (s *Source) next(ctx context.Context, r repo, e *entry) {
+	start := time.Now()
+	_, token, authed := s.auth.Static(r.host)
+	n, err := s.page(ctx, r, e.pages+1, token, authed, &e.rels, e.byTag)
+	e.pages++
+	slog.DebugContext(ctx, "github releases page", "repo", r.path, "api", r.api, "page", e.pages,
+		"releases", len(e.rels), "duration", time.Since(start), "err", err)
+	switch {
+	case err != nil:
+		e.err, e.done = err, true
+	case n < perPage || e.pages >= maxPages:
+		e.done = true
+	}
 }
 
 // AssetDigest returns the hex sha256 of asset in the release of version of repository name
 // (see parseRepo), from the cached release list. version matches the tag exactly or with a
 // leading "v" added or removed.
 func (s *Source) AssetDigest(ctx context.Context, name, version, asset string) (string, error) {
-	e, err := s.lookup(ctx, name)
-	if err != nil {
+	var tag string
+	var info tagInfo
+	var ok bool
+	if err := s.with(ctx, name, version, func(e *entry) { tag, info, ok = e.release(version) }); err != nil {
 		return "", err
 	}
-	tag, info, ok := e.release(version)
 	if !ok {
 		return "", fmt.Errorf("no release %s in %s", version, name)
 	}
@@ -164,37 +195,16 @@ func (e *entry) release(version string) (tag string, info tagInfo, ok bool) {
 // ReleaseTime implements datasource.Timer with the `published_at` of version's release (see
 // AssetDigest for the tag match) from the cached release list; zero when there is none.
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
-	e, err := s.lookup(ctx, d.Name)
-	if err != nil {
-		return time.Time{}, err
-	}
-	_, info, _ := e.release(version)
-	return info.published, nil
+	var published time.Time
+	err := s.with(ctx, d.Name, version, func(e *entry) {
+		_, info, _ := e.release(version)
+		published = info.published
+	})
+	return published, err
 }
 
 // Digest is unsupported: releases carry no digest.
 func (*Source) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }
-
-func (s *Source) fetch(ctx context.Context, r repo) (rels []datasource.Release, byTag map[string]tagInfo, err error) {
-	start, pages := time.Now(), 0
-	defer func() {
-		slog.DebugContext(ctx, "github releases listed", "repo", r.path, "api", r.api, "pages", pages,
-			"releases", len(rels), "duration", time.Since(start), "err", err)
-	}()
-	_, token, authed := s.auth.Static(r.host)
-	byTag = make(map[string]tagInfo)
-	for page := 1; page <= maxPages; page++ {
-		n, err := s.page(ctx, r, page, token, authed, &rels, byTag)
-		pages = page
-		if err != nil {
-			return nil, nil, err
-		}
-		if n < perPage {
-			break
-		}
-	}
-	return rels, byTag, nil
-}
 
 type release struct {
 	TagName     string     `json:"tag_name"`

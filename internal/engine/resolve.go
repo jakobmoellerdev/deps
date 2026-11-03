@@ -16,8 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Masterminds/semver/v3"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -340,12 +338,17 @@ func (p *policies) anyKind() bool {
 
 // check is the acceptance of a candidate of kind to version v under the kind's policy: an
 // ignoring per-kind policy rejects with its ignore reason, otherwise Policy.Check decides.
-func (p *policies) check(kind dep.UpdateType, v *semver.Version) (bool, string) {
+// v is converted to a Masterminds version only when an allow constraint needs it: the
+// conversion is regexp-based and candidates number in the hundreds per dependency.
+func (p *policies) check(kind dep.UpdateType, v string, scheme versioning.Scheme) (bool, string) {
 	kp := p.of(kind)
 	if kp.Ignore {
 		return false, kp.IgnoreReason
 	}
-	return kp.Check(kind, v)
+	if kp.Allow == nil {
+		return kp.Check(kind, nil)
+	}
+	return kp.Check(kind, scheme.Semver(v))
 }
 
 // allows reports whether updates of kind are enabled (digest refresh and pin, which have
@@ -431,7 +434,7 @@ func (r *resolver) versionUpdate(t *Trace, scheme versioning.Scheme, vulns func(
 		t.Rejected = map[string][]string{}
 		reject = func(v, reason string) { t.Rejected[reason] = append(t.Rejected[reason], v) }
 	}
-	accept := func(v string, kind dep.UpdateType) (bool, string) { return r.pol.check(kind, scheme.Semver(v)) }
+	accept := func(v string, kind dep.UpdateType) (bool, string) { return r.pol.check(kind, v, scheme) }
 
 	digests := digestCapable(d)
 	wantDigest := digests && (d.Digest != "" || r.pol.pre.Pin == config.PinDigest)
@@ -502,15 +505,14 @@ const (
 func (r *resolver) best(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool) {
 	cur := r.d.Version
 	timer, _ := r.ds.(datasource.Timer)
-	older := 0
-	for i := range maxRetries {
-		rej := reject
-		if i > 0 {
-			rej = nil // Best's rejections of the remaining names were recorded by the first call
-		}
-		best, ok := scheme.Best(cur, names, accept, rej)
-		if !ok || timer == nil {
-			return best, ok
+	if timer == nil {
+		return scheme.Best(cur, names, accept, reject) // no guard can apply: one O(n) pass
+	}
+	older, prefetched := 0, false
+	ranked := scheme.Rank(cur, names, accept, reject) // parsed and filtered once
+	for i, best := range ranked {
+		if i == maxRetries {
+			break
 		}
 		kind := scheme.Kind(cur, best)
 		var reason string
@@ -533,14 +535,49 @@ func (r *resolver) best(scheme versioning.Scheme, names []string, accept func(st
 			reject(best, reason)
 		}
 		if older == maxOlderMajors {
-			return "", false
+			break
 		}
-		if i == 0 {
-			names = slices.Clone(names) // the releases may be shared
+		if !prefetched {
+			// One rejection suggests a frequently released dependency: fetch the next
+			// candidates' times concurrently instead of one round trip per candidate.
+			prefetched = true
+			end := min(i+1+prefetchWindow, len(ranked), maxRetries)
+			r.prefetchTimes(timer, ranked[i+1:end])
 		}
-		names = slices.DeleteFunc(names, func(v string) bool { return v == best })
 	}
 	return "", false
+}
+
+// prefetchWindow is how many release times best fetches concurrently once a candidate was
+// rejected; the shared semaphore still bounds the requests.
+const prefetchWindow = 8
+
+// prefetchTimes fills the release-time cache for versions concurrently.
+func (r *resolver) prefetchTimes(timer datasource.Timer, versions []string) {
+	times := make([]time.Time, len(versions))
+	var wg sync.WaitGroup
+	for i, v := range versions {
+		if _, ok := r.times[v]; ok {
+			continue
+		}
+		wg.Go(func() {
+			t, err := timer.ReleaseTime(r.ctx, r.d, v)
+			if err != nil {
+				slog.DebugContext(r.ctx, "release time lookup failed", "name", r.d.Name, "version", v, "err", err)
+				t = time.Time{}
+			}
+			times[i] = t
+		})
+	}
+	wg.Wait()
+	if r.times == nil {
+		r.times = make(map[string]time.Time, len(versions))
+	}
+	for i, v := range versions {
+		if _, ok := r.times[v]; !ok {
+			r.times[v] = times[i]
+		}
+	}
 }
 
 // olderThanCurrent reports whether candidate was released before the current version; false

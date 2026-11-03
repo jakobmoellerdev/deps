@@ -328,6 +328,7 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 		{"extra args", []string{"plan", "x"}, "unexpected arguments: [x]"},
 		{"log level", []string{"plan", "--dir", dir, "--log-level", "loud"}, `--log-level: invalid value "loud"`},
 		{"log format", []string{"plan", "--dir", dir, "--log-format", "xml"}, `--log-format: invalid value "xml"`},
+		{"concurrency", []string{"plan", "--dir", dir, "--concurrency", "0"}, "--concurrency: must be at least 1, got 0"},
 		{"config", []string{"plan", "--dir", bad}, "line 1: field pinn not found"},
 		{"missing explicit config", []string{"plan", "--dir", dir, "--config", filepath.Join(dir, "nope.yaml")}, "nope.yaml"},
 		{"platform", []string{"run", "--dir", dir, "--platform", "gitlab"}, `--platform: invalid value "gitlab"`},

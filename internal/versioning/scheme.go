@@ -2,6 +2,7 @@ package versioning
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,10 @@ type Scheme interface {
 	// "prerelease", "precision", "prefix", "suffix", "major", "not newer" or
 	// "policy: <why>". accept may be nil (accept all).
 	Best(cur string, cands []string, accept func(v string, kind dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool)
+	// Rank returns every candidate Best would accept, best first, so callers that need to
+	// skip candidates (release age) parse and filter the list once. Rejections are reported
+	// as in Best.
+	Rank(cur string, cands []string, accept func(v string, kind dep.UpdateType) (bool, string), reject func(v, reason string)) []string
 	// Compatible reports whether next is a valid upgrade target for cur ignoring
 	// policy: compatible under the scheme's rules and newer.
 	Compatible(cur, next string) bool
@@ -132,6 +137,47 @@ func (s impl[T]) Best(cur string, cands []string, accept func(string, dep.Update
 	return best, found
 }
 
+func (s impl[T]) Rank(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) []string {
+	c, ok := s.parse(cur)
+	if !ok {
+		return nil
+	}
+	type cand struct {
+		raw string
+		v   T
+	}
+	var kept []cand
+	for _, raw := range cands {
+		n, ok := s.parse(raw)
+		var why string
+		switch {
+		case !ok:
+			why = "invalid"
+		case s.compat(c, n) != "":
+			why = s.compat(c, n)
+		case s.cmp(n, c) <= 0:
+			why = "not newer"
+		case accept != nil:
+			if ok, w := accept(raw, s.kind(c, n)); !ok {
+				why = "policy: " + w
+			}
+		}
+		if why != "" {
+			if reject != nil {
+				reject(raw, why)
+			}
+			continue
+		}
+		kept = append(kept, cand{raw, n})
+	}
+	slices.SortStableFunc(kept, func(a, b cand) int { return s.cmp(b.v, a.v) })
+	out := make([]string, len(kept))
+	for i, k := range kept {
+		out[i] = k.raw
+	}
+	return out
+}
+
 // tag
 
 func tagCompat(cur, next Tag) string {
@@ -218,6 +264,23 @@ func (t dockerTag) semver() *msemver.Version { return Tag{Parts: t.parts}.Semver
 // semverScheme is Masterminds loose semver. Best rewrites the result to cur's "v" prefix
 // style, so `1.2.3` with candidate `v1.3.0` yields `1.3.0`.
 type semverScheme struct{ impl[*msemver.Version] }
+
+func (s semverScheme) Rank(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) []string {
+	ranked := s.impl.Rank(cur, cands, accept, reject)
+	for i, v := range ranked {
+		ranked[i] = s.style(cur, v)
+	}
+	return ranked
+}
+
+// style writes v with cur's "v" prefix convention.
+func (semverScheme) style(cur, v string) string {
+	v = strings.TrimPrefix(v, "v")
+	if strings.HasPrefix(cur, "v") {
+		return "v" + v
+	}
+	return v
+}
 
 func (s semverScheme) Best(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) (string, bool) {
 	best, ok := s.impl.Best(cur, cands, accept, reject)

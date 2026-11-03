@@ -141,7 +141,7 @@ jobs:
 
 func line(n int, s string) string { return strings.Split(s, "\n")[n-1] }
 
-func setup(t *testing.T, cfgYAML string, files map[string]string) (string, *config.Config) {
+func setup(t testing.TB, cfgYAML string, files map[string]string) (string, *config.Config) {
 	t.Helper()
 	root := t.TempDir()
 	if cfgYAML != "" {

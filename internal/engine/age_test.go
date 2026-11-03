@@ -215,3 +215,43 @@ func TestMinimumReleaseAgeExempt(t *testing.T) {
 		t.Errorf("security: updates = %+v, want v1.2.0 fixing GO-1 despite its age", res.Updates)
 	}
 }
+
+// slowTimes reports every version as released yesterday and records how many lookups
+// overlap, so the prefetch after the first too-new rejection is observable.
+type slowTimes struct {
+	timedReleases
+	inFlight, maxInFlight int
+}
+
+func (s *slowTimes) ReleaseTime(ctx context.Context, d dep.Dep, v string) (time.Time, error) {
+	s.mu.Lock()
+	s.inFlight++
+	s.maxInFlight = max(s.maxInFlight, s.inFlight)
+	s.mu.Unlock()
+	time.Sleep(5 * time.Millisecond)
+	s.mu.Lock()
+	s.inFlight--
+	s.mu.Unlock()
+	return daysAgo(1), nil
+}
+
+// After one too-new rejection, the next candidates' release times are fetched concurrently
+// instead of one round trip per candidate; the outcome is unchanged.
+func TestMinimumReleaseAgePrefetch(t *testing.T) {
+	var versions []string
+	for i := range 12 {
+		versions = append(versions, fmt.Sprintf("v1.%d.0", i))
+	}
+	ds := &slowTimes{versions: versions}
+	goDep := []dep.Dep{{Datasource: "go", Versioning: "semver", Name: "example.com/a", Version: "v1.0.0", Line: 1}}
+	res, tr := resolveStub(t, "minimumReleaseAge: 28 days\n", "gomod", goDep, ds, nil)
+	if len(res.Updates) != 0 {
+		t.Fatalf("updates = %+v, want none (all too new)", res.Updates)
+	}
+	if n := len(tr.Rejected[tooNew(1, "28 days")]); n != 11 {
+		t.Errorf("too-new rejections = %d, want 11", n)
+	}
+	if ds.maxInFlight < 2 {
+		t.Errorf("release-time lookups never overlapped (max in flight %d)", ds.maxInFlight)
+	}
+}
