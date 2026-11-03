@@ -53,8 +53,11 @@ Without arguments, `run` detects the platform, resolves, builds one commit per g
 | `--author-email` | `deps-bot@noreply.invalid` | commit author email |
 | `--max-new-prs` | `10` | PRs created per run; `0` = unlimited |
 | `--dry-run` | `false` | report without pushing or calling write APIs (no PR, merge or issue writes); works without a token |
+| `--trigger-schedule` | `$DEPS_TRIGGER_SCHEDULE`, else detected | act as if a workflow cron triggered the run (validated as a 5-field cron, invalid exits 2) |
 
 **Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then [`gitAuthor`](configuration.md#gitauthor-gitignoredauthors), then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2.
+
+**Trigger:** [schedules](configuration.md#schedule) are matched against what started the run, not against the clock. `--trigger-schedule`, then `$DEPS_TRIGGER_SCHEDULE`, then `$GITHUB_EVENT_NAME` with the `schedule` field of the payload at `$GITHUB_EVENT_PATH`. Runs that were not triggered by a cron (`workflow_dispatch`, `push`, a local run without CI variables) are in schedule for every group. Logged at info as `trigger event=<event> cron=<cron>`. For example, `deps run --dry-run --trigger-schedule '0 0 * * 0'` shows what the Sunday run would do.
 
 **New-PR limit:** the minimum of `--max-new-prs` and the room left below [`prConcurrentLimit`/`prHourlyLimit`](configuration.md#prconcurrentlimit-prhourlylimit), counting only the non-zero ones.
 
@@ -139,7 +142,7 @@ dashboard <status>  <title>  <url>                            (run, with depende
 | `closed` | obsolete PR closed and branch deleted |
 | `would-create`, `would-update`, `would-rebase` | `--dry-run` |
 | `skipped: closed PR for this version` | an unmerged closed PR has the same branch and title (the dashboard's recreate checkbox overrides it) |
-| `skipped: outside schedule` | outside the schedule window (the dashboard's create checkbox overrides it) |
+| `skipped: outside schedule` | the run was triggered by a cron that is not in the group's `schedule` (the dashboard's create checkbox overrides it) |
 | `skipped: new PR limit reached` | a PR limit is exhausted (dashboard checkboxes override it) |
 | `skipped: branch modified by someone else` | the branch tip's author is neither the bot nor in `gitIgnoredAuthors` (the dashboard's rebase checkbox discards those commits) |
 
@@ -157,9 +160,9 @@ dashboard <status>  <title>  <url>                            (run, with depende
 **Dashboard statuses:** `created`, `updated`, `up-to-date` (body unchanged, not edited), `would-create`, `would-update` (`--dry-run`), and `skipped: issues disabled` (the repository has no issue tracker; not an error).
 
 **Diagnostics.** Diagnostics are written with `log/slog` to stderr, filtered by `--log-level`.
-- `info`: the detected platform and how it was detected, the actions default host and its source, phase counts and durations, and the bot's view of the repository.
+- `info`: the run trigger (`run`), the detected platform and how it was detected, the actions default host and its source, phase counts and durations, and the bot's view of the repository.
 - `debug`: every HTTP request (credential-free URL), every `git`/`go`/`npm` process, credential-helper outcomes (never secrets), and per-dep and per-PR decisions.
-- `warn`: obsolete PRs left open because the run had errors, a dashboard skipped because issues are disabled, and dashboard labels that do not exist (Gitea/Forgejo).
+- `warn`: obsolete PRs left open because the run had errors, a schedule event whose cron cannot be read (every schedule matches), a dashboard skipped because issues are disabled, and dashboard labels that do not exist (Gitea/Forgejo).
 
 **Step summary.** If `GITHUB_STEP_SUMMARY` (or else `GITEA_STEP_SUMMARY`) is set, a `## deps` markdown table is appended to that file:
 - `plan`/`apply`: `| Dependency | File | From | To | Type |`;
@@ -171,7 +174,7 @@ dashboard <status>  <title>  <url>                            (run, with depende
 |---|---|
 | `0` | success, no errors |
 | `1` | any error, including per-dep lookup errors and per-PR errors (already printed as `error` lines), or a fatal error printed as `deps: <err>` |
-| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, or any config error |
+| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE`, or any config error |
 
 ## Environment
 
@@ -182,6 +185,8 @@ dashboard <status>  <title>  <url>                            (run, with depende
 | `DEPS_DEFAULT_ACTIONS_URL` | all | default host of `owner/repo@ref` actions (hostname, or a URL whose host is used); overridden by `actions.defaultHost` |
 | `DEPS_NODE_DIST_URL` | `node-version` | base URL of a nodejs.org `dist` mirror (default `https://nodejs.org/dist`) |
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the flags and `gitAuthor` |
+| `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
+| `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
 | `NPM_CONFIG_REGISTRY`, `npm_config_registry` | `npm` | registry when no `.npmrc` sets one (default `https://registry.npmjs.org/`) |
 | `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GOMODCACHE` | `go` | read via `go env -json`. `GOMODCACHE`'s `cache/download/**/@v/*.info` files provide release times without network. |

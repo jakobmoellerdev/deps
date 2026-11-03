@@ -108,8 +108,7 @@ Without a `.deps.yaml` the defaults apply: every direct dependency is updated, w
 
 ```yaml
 # yaml-language-server: $schema=./deps.schema.json
-schedule: ["* 0-5 * * 1-5"]      # weekday nights (minute must be *)
-timezone: Europe/Berlin
+schedule: ["0 5 * * 1-5"]        # new PRs only in runs triggered by this workflow cron
 pin: digest                       # pin actions to SHAs and images to digests
 minimumReleaseAge: 3 days
 rules:

@@ -107,8 +107,7 @@ var DefaultIgnorePaths = []string{
 type Config struct {
 	Version      int      `yaml:"version" jsonschema:"enum=1,default=1" jsonschema_description:"Config format version; must be 1 if set."`
 	Pin          string   `yaml:"pin" jsonschema:"enum=keep,enum=digest,default=keep" jsonschema_description:"Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment."`
-	Timezone     string   `yaml:"timezone" jsonschema_description:"IANA time zone for schedule windows; empty means UTC."`
-	Schedule     []string `yaml:"schedule" jsonschema_description:"Cron windows (5 fields, minute must be *) in which update PRs may be created or updated; empty means always."`
+	Schedule     []string `yaml:"schedule" jsonschema_description:"Cron expressions (5 fields) equal to cron triggers of the workflow running deps: new update PRs are created only in runs triggered by one of them (non-schedule triggers such as workflow_dispatch, push or a local run act immediately); empty means every run."`
 	Security     *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, updates and schedule."`
 	BranchPrefix string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
 	RebaseWhen   string   `yaml:"rebaseWhen" jsonschema:"enum=conflicted,enum=behind-base-branch,enum=never,default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
@@ -227,7 +226,7 @@ type Rule struct {
 	Group                 string   `yaml:"group" jsonschema_description:"Group name: all deps with the same group share one PR."`
 	CommitType            string   `yaml:"commitType" jsonschema:"enum=fix,enum=chore,enum=build,enum=ci,enum=docs,enum=feat,enum=perf,enum=refactor,enum=revert,enum=style,enum=test" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm dependencies), chore otherwise. Security updates always use fix."`
 	CommitScope           *string  `yaml:"commitScope" jsonschema_description:"Conventional commit scope; default deps, empty string means no scope ('chore: ...')."`
-	Schedule              []string `yaml:"schedule" jsonschema_description:"Cron windows overriding the top-level schedule; [] means always."` // non-nil overrides the top-level schedule; [] = always
+	Schedule              []string `yaml:"schedule" jsonschema_description:"Workflow cron triggers overriding the top-level schedule; [] means every run."` // non-nil overrides the top-level schedule; [] = always
 	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
 	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
 	Automerge         *bool  `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
@@ -503,19 +502,14 @@ func (c *Config) Validate() error {
 			c.minAge = d
 		}
 	}
-	tz := c.Timezone
-	if _, err := schedule.Parse(nil, tz); err != nil {
-		add("timezone", "%v", err)
-		tz = ""
-	}
-	c.schedule = parseSchedule("schedule", c.Schedule, tz, add)
+	c.schedule = parseSchedule("schedule", c.Schedule, add)
 	for i, g := range c.IgnorePaths {
 		if _, err := doublestar.Match(g, ""); err != nil {
 			add(fmt.Sprintf("ignorePaths[%d]", i), "invalid glob %q: %v", g, err)
 		}
 	}
 	for i := range c.Rules {
-		c.validateRule(i, tz, add)
+		c.validateRule(i, add)
 	}
 	for i := range c.Custom {
 		c.Custom[i].validate(fmt.Sprintf("custom[%d]", i), c.KnownDatasource, add)
@@ -528,22 +522,22 @@ type addFunc func(field, format string, a ...any)
 
 // parseSchedule validates each expression separately for precise errors and returns the
 // parsed set, or nil when exprs is empty or invalid.
-func parseSchedule(field string, exprs []string, tz string, add addFunc) *schedule.Set {
+func parseSchedule(field string, exprs []string, add addFunc) *schedule.Set {
 	ok := true
 	for i, e := range exprs {
-		if _, err := schedule.Parse([]string{e}, ""); err != nil {
-			add(fmt.Sprintf("%s[%d]", field, i), "%v", err)
+		if err := schedule.Validate(e); err != nil {
+			add(fmt.Sprintf("%s[%d]", field, i), "%q: %v", e, err)
 			ok = false
 		}
 	}
 	if !ok {
 		return nil
 	}
-	s, _ := schedule.Parse(exprs, tz) // expressions and tz are valid here
+	s, _ := schedule.Parse(exprs) // expressions are valid here
 	return s
 }
 
-func (c *Config) validateRule(i int, tz string, add addFunc) {
+func (c *Config) validateRule(i int, add addFunc) {
 	r := &c.Rules[i]
 	f := fmt.Sprintf("rules[%d]", i)
 	if r.Manager != "" && !slices.Contains(Managers, r.Manager) {
@@ -612,7 +606,7 @@ func (c *Config) validateRule(i int, tz string, add addFunc) {
 		add(f+".commitScope", "must match %s, got %q", commitScopeRe, *r.CommitScope)
 	}
 	validateAutomerge(f+".", r.AutomergeStrategy, r.AutomergeType, add)
-	r.schedule = parseSchedule(f+".schedule", r.Schedule, tz, add)
+	r.schedule = parseSchedule(f+".schedule", r.Schedule, add)
 	r.minAge = nil
 	if r.MinimumReleaseAge != "" {
 		if d, err := ParseAge(r.MinimumReleaseAge); err != nil {

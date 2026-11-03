@@ -1,27 +1,33 @@
-// Package schedule parses cron expressions used as time windows.
+// Package schedule matches update schedules against the CI trigger of the run.
+//
+// A schedule lists cron expressions that equal cron triggers of the workflow running
+// deps. A run triggered by one of them is in schedule; the expressions are never
+// evaluated as time windows. Crons are only parsed to reject typos early.
 package schedule
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 )
 
-// Set is a union of cron windows evaluated in one time zone. A nil *Set
-// always contains every time.
+// EventSchedule is the event name of cron-triggered workflow runs.
+const EventSchedule = "schedule"
+
+// Set is a union of cron triggers. A nil *Set matches every trigger.
 type Set struct {
-	exprs []expr
-	src   []string
-	loc   *time.Location
+	src  []string // as written
+	norm []string // whitespace-normalized
 }
 
-// expr holds one parsed expression as bitsets per field.
-type expr struct {
-	hour, dom, month, dow uint64
-	domStar, dowStar      bool
+// Trigger describes what started the run.
+type Trigger struct {
+	Event string // GITHUB_EVENT_NAME; "" outside CI
+	Cron  string // the triggering cron of a schedule event; "" if unknown
 }
 
 type field struct {
@@ -37,32 +43,20 @@ var fields = [...]field{
 	{"day of week", 0, 7},
 }
 
-// Parse parses 5-field cron expressions. The minute field must be "*" because
-// schedules are windows, not trigger times. Each other field accepts "*", n,
-// a-b, comma lists and "/step" on "*" or ranges; day of week is 0-7 with 0 and 7
-// both Sunday. tz "" means UTC, otherwise an IANA zone name. No expressions
-// yield a nil Set (always).
-func Parse(exprs []string, tz string) (*Set, error) {
-	loc := time.UTC
-	if tz != "" {
-		l, err := time.LoadLocation(tz)
-		if err != nil {
-			return nil, fmt.Errorf("unknown time zone %q", tz)
-		}
-		loc = l
-	}
+// Parse validates 5-field cron expressions and returns them as a Set. Each field
+// accepts "*", n, a-b, comma lists and "/step" on "*" or ranges; day of week is
+// 0-7. No expressions yield a nil Set (always).
+func Parse(exprs []string) (*Set, error) {
 	if len(exprs) == 0 {
 		return nil, nil
 	}
-	s := &Set{exprs: make([]expr, 0, len(exprs)), src: slices.Clone(exprs), loc: loc}
+	s := &Set{src: slices.Clone(exprs), norm: make([]string, len(exprs))}
 	var errs []error
-	for _, e := range exprs {
-		x, err := parseExpr(e)
-		if err != nil {
+	for i, e := range exprs {
+		if err := Validate(e); err != nil {
 			errs = append(errs, fmt.Errorf("%q: %w", e, err))
-			continue
 		}
-		s.exprs = append(s.exprs, x)
+		s.norm[i] = Normalize(e)
 	}
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
@@ -70,42 +64,30 @@ func Parse(exprs []string, tz string) (*Set, error) {
 	return s, nil
 }
 
-func parseExpr(s string) (expr, error) {
+// Validate reports whether s is a valid 5-field cron expression.
+func Validate(s string) error {
 	f := strings.Fields(s)
 	if len(f) != len(fields) {
-		return expr{}, fmt.Errorf("want %d fields, got %d", len(fields), len(f))
+		return fmt.Errorf("want %d fields, got %d", len(fields), len(f))
 	}
-	if f[0] != "*" {
-		return expr{}, errors.New("minute field must be * (schedules are windows)")
-	}
-	var bits [len(fields)]uint64
-	for i := 1; i < len(fields); i++ {
-		b, err := parseField(f[i], fields[i])
-		if err != nil {
-			return expr{}, fmt.Errorf("%s: %w", fields[i].name, err)
+	for i, fl := range fields {
+		if err := parseField(f[i], fl); err != nil {
+			return fmt.Errorf("%s: %w", fl.name, err)
 		}
-		bits[i] = b
 	}
-	dow := bits[4]
-	if dow&(1<<7) != 0 {
-		dow |= 1 // 7 is Sunday
-	}
-	return expr{hour: bits[1], dom: bits[2], month: bits[3], dow: dow, domStar: isStar(f[2]), dowStar: isStar(f[4])}, nil
+	return nil
 }
 
-func isStar(s string) bool { return s == "*" || strings.HasPrefix(s, "*/") }
+// Normalize collapses whitespace so crons compare as written by humans.
+func Normalize(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-func parseField(s string, f field) (uint64, error) {
-	var bits uint64
+func parseField(s string, f field) error {
 	for part := range strings.SplitSeq(s, ",") {
 		rng, stepStr, hasStep := strings.Cut(part, "/")
-		step := 1
 		if hasStep {
-			n, err := strconv.Atoi(stepStr)
-			if err != nil || n < 1 {
-				return 0, fmt.Errorf("invalid step %q", stepStr)
+			if n, err := strconv.Atoi(stepStr); err != nil || n < 1 {
+				return fmt.Errorf("invalid step %q", stepStr)
 			}
-			step = n
 		}
 		lo, hi := f.min, f.max
 		switch {
@@ -114,29 +96,26 @@ func parseField(s string, f field) (uint64, error) {
 			a, b, _ := strings.Cut(rng, "-")
 			var err error
 			if lo, err = num(a, f); err != nil {
-				return 0, err
+				return err
 			}
 			if hi, err = num(b, f); err != nil {
-				return 0, err
-			}
-			if lo > hi {
-				return 0, fmt.Errorf("invalid range %q", rng)
+				return err
 			}
 		default:
 			if hasStep {
-				return 0, fmt.Errorf("step needs * or a range, got %q", part)
+				return fmt.Errorf("step needs * or a range, got %q", part)
 			}
 			n, err := num(rng, f)
 			if err != nil {
-				return 0, err
+				return err
 			}
 			lo, hi = n, n
 		}
-		for v := lo; v <= hi; v += step {
-			bits |= 1 << v
+		if lo > hi {
+			return fmt.Errorf("invalid range %q", rng)
 		}
 	}
-	return bits, nil
+	return nil
 }
 
 func num(s string, f field) (int, error) {
@@ -150,37 +129,60 @@ func num(s string, f field) (int, error) {
 	return n, nil
 }
 
-// Contains reports whether t falls in any window, evaluated in the Set's zone.
-// Like cron, when both day of month and day of week are restricted, either may match.
-func (s *Set) Contains(t time.Time) bool {
-	if s == nil {
+// Matches reports whether a run started by t is in schedule. Runs not triggered by a
+// cron (dispatch, push, local) act immediately; so does a schedule event whose cron is
+// unknown. Otherwise the trigger cron must equal one of the Set's crons.
+func (s *Set) Matches(t Trigger) bool {
+	if s == nil || t.Event != EventSchedule || t.Cron == "" {
 		return true
 	}
-	t = t.In(s.loc)
-	for _, e := range s.exprs {
-		if e.match(t) {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.norm, Normalize(t.Cron))
 }
 
-func (e expr) match(t time.Time) bool {
-	if e.hour&(1<<t.Hour()) == 0 || e.month&(1<<int(t.Month())) == 0 {
-		return false
+// Crons returns the normalized crons; nil for a nil Set.
+func (s *Set) Crons() []string {
+	if s == nil {
+		return nil
 	}
-	dom := e.dom&(1<<t.Day()) != 0
-	dow := e.dow&(1<<int(t.Weekday())) != 0
-	if !e.domStar && !e.dowStar {
-		return dom || dow
-	}
-	return dom && dow
+	return s.norm
 }
 
-// String renders the expressions and zone, e.g. `* 0-5 * * 1-5 (UTC)`; nil is "always".
+// String renders the crons, e.g. `0 0 * * *; 0 0 * * 0`; nil is "always".
 func (s *Set) String() string {
 	if s == nil {
 		return "always"
 	}
-	return strings.Join(s.src, "; ") + " (" + s.loc.String() + ")"
+	return strings.Join(s.src, "; ")
+}
+
+// Detect determines the run trigger. A non-empty override (--trigger-schedule) is a
+// schedule event with that cron. Otherwise the event comes from GITHUB_EVENT_NAME
+// (GitHub, Gitea and Forgejo set it); for schedule events the cron is the `schedule`
+// field of the payload at GITHUB_EVENT_PATH, which GitHub and Gitea (verified
+// in 28.3: services/actions/schedule_tasks.go) both fill. The error reports an unreadable payload; the trigger is still
+// usable and then matches every schedule.
+func Detect(getenv func(string) string, override string) (Trigger, error) {
+	if override != "" {
+		return Trigger{Event: EventSchedule, Cron: Normalize(override)}, nil
+	}
+	t := Trigger{Event: getenv("GITHUB_EVENT_NAME")}
+	if t.Event != EventSchedule {
+		return t, nil
+	}
+	path := getenv("GITHUB_EVENT_PATH")
+	if path == "" {
+		return t, errors.New("GITHUB_EVENT_PATH is not set")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return t, err
+	}
+	var payload struct {
+		Schedule string `json:"schedule"`
+	}
+	if err := json.Unmarshal(b, &payload); err != nil {
+		return t, fmt.Errorf("%s: %w", path, err)
+	}
+	t.Cron = Normalize(payload.Schedule)
+	return t, nil
 }

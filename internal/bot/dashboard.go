@@ -126,7 +126,8 @@ func sameBody(a, b string) bool {
 func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 	var schedule, limited, blocked, open []string
 	for _, a := range actions {
-		if a.Dashboard || a.Status == StatusClosed {
+		// A PR deps merged directly (GitHub fallback) in this run is no longer open.
+		if a.Dashboard || a.Status == StatusClosed || a.Automerge == AutomergeMerged {
 			continue
 		}
 		switch {
@@ -137,7 +138,7 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 		case a.Status == StatusSkipLimit:
 			limited = append(limited, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
 		case a.Status == StatusSkipSchedule && a.Number == 0:
-			schedule = append(schedule, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
+			schedule = append(schedule, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s (%s)", a.Branch, a.Title, waits(a.Waits)))
 		case a.Number > 0:
 			open = append(open, fmt.Sprintf("- [ ] <!-- deps:rebase=%s --> %s (%s)", a.Branch, a.Title, prLink(a)))
 		}
@@ -145,7 +146,7 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 
 	w := &budget{left: dashboardMaxBytes - len(dashboardMarker) - 2}
 	w.text("This issue lists the dependency updates [deps](https://git.jakob-moeller.cloud/jakobmoellerdev/deps) manages. Tick a checkbox to make the next run act on it.\n")
-	w.section("Awaiting schedule", "These updates wait for their schedule window. Tick one to create its PR now.", schedule)
+	w.section("Awaiting schedule", "These updates wait for a run triggered by one of their crons. Tick one to create its PR now.", schedule)
 	w.section("Rate-limited", "These updates wait for the PR limits. Tick one to create its PR now.", limited)
 	w.section("Ignored or blocked", "", blocked)
 	w.section("Open", "These PRs are open. Tick one to rebuild its branch.", open)
@@ -276,4 +277,12 @@ func (w *budget) detected(deps []dep.Dep) {
 		w.text(open.String() + line)
 	}
 	w.text(closeFile + "\n" + closeManager)
+}
+
+// waits renders the crons an out-of-schedule group waits for.
+func waits(crons []string) string {
+	if len(crons) == 0 {
+		return "no single cron matches all of its updates"
+	}
+	return "waits for `" + strings.Join(crons, "` or `") + "`"
 }

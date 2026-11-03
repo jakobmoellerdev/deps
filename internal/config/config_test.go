@@ -13,6 +13,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
 
 // sv converts like a scheme's Semver: nil when v is not a version.
@@ -89,8 +90,8 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{allow: '>>1'}]\n", "rules[0].allow"},
 		{"rules: [{updates: [huge]}]\n", "rules[0].updates[0]"},
 		{"ignorePaths: ['[']\n", "ignorePaths[0]"},
-		{"timezone: Mars/Olympus\n", `timezone: unknown time zone "Mars/Olympus"`},
-		{"timezone: Mars/Olympus\nschedule: ['0 * * * *']\n", "schedule[0]: \"0 * * * *\": minute field must be *"},
+		{"timezone: Europe/Berlin\n", "line 1: field timezone not found"},
+		{"schedule: ['60 5 * * *']\n", `schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`},
 		{"schedule: ['* 25 * * *']\n", "schedule[0]"},
 		{"rules: [{schedule: ['* * * *']}]\n", "rules[0].schedule[0]"},
 		{"rules: [{depTypes: [weird]}]\n", "rules[0].depTypes[0]: must be one of direct, indirect"},
@@ -222,8 +223,7 @@ rules:
 }
 
 func TestNewKeys(t *testing.T) {
-	c, err := load(t, ".deps.yaml", `timezone: Europe/Berlin
-schedule: ["* 0-5 * * *"]
+	c, err := load(t, ".deps.yaml", `schedule: ["0 5 * * *", "0 5 * * 0"]
 security: false
 rules:
   - depTypes: [indirect]
@@ -233,7 +233,7 @@ rules:
     schedule: []
   - names: ["x/y"]
     group: xy
-    schedule: ["* * * * 6"]
+    schedule: ["0  5 * * 0"]
 custom:
   - files: ["**/*.txt"]
   - files: [Makefile]
@@ -250,11 +250,12 @@ custom:
 	if len(c.Custom) != 2 || c.Custom[0].Versioning != "semver" || c.Custom[1].Versioning != "go" || c.Custom[1].Datasource != "go" {
 		t.Errorf("custom = %+v", c.Custom)
 	}
-	monday3 := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC) // 04:00 in Berlin
-	monday12 := monday3.Add(9 * time.Hour)
+	daily := schedule.Trigger{Event: schedule.EventSchedule, Cron: "0 5 * * *"}
+	weekly := schedule.Trigger{Event: schedule.EventSchedule, Cron: "0 5 * * 0"}
+	other := schedule.Trigger{Event: schedule.EventSchedule, Cron: "0 6 * * *"}
 
 	top := c.Policy(dep.Dep{Manager: "gomod", Name: "a/b", DepType: "direct"})
-	if top.Ignore || top.Group != "" || top.Schedule == nil || !top.Schedule.Contains(monday3) || top.Schedule.Contains(monday12) || len(top.Rules) != 0 {
+	if top.Ignore || top.Group != "" || top.Schedule == nil || !top.Schedule.Matches(daily) || !top.Schedule.Matches(weekly) || top.Schedule.Matches(other) || len(top.Rules) != 0 {
 		t.Errorf("top: %+v", top)
 	}
 	ind := c.Policy(dep.Dep{Manager: "gomod", Name: "a/b", DepType: "indirect"})
@@ -266,7 +267,7 @@ custom:
 		t.Errorf("schedule [] overrides to always: %+v", always)
 	}
 	xy := c.Policy(dep.Dep{Manager: "custom", Name: "x/y"})
-	if xy.Group != "xy" || xy.Schedule == nil || xy.Schedule.Contains(monday3) || !slices.Equal(xy.Rules, []int{1, 2}) {
+	if xy.Group != "xy" || xy.Schedule == nil || xy.Schedule.Matches(daily) || !xy.Schedule.Matches(weekly) || !slices.Equal(xy.Rules, []int{1, 2}) {
 		t.Errorf("x/y: %+v", xy)
 	}
 }

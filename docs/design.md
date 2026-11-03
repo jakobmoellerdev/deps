@@ -204,7 +204,7 @@ type Update struct {
     NewVersion  string
     NewDigest   string        // "" unless the result is digest-pinned
     Group       string        // policy group, "" = own PR
-    Schedule    *schedule.Set // nil = always
+    Schedule    *schedule.Set // workflow crons that put it in schedule; nil = every run
     Advisories  []Advisory    // non-empty = security update
     NewChecksum string        // "" unless Dep.ChecksumSource is set and the version changes
     CommitType  string        // policy commit type (fix, chore, ...)
@@ -380,7 +380,8 @@ type Options struct {
     ConcurrentLimit, HourlyLimit  int    // prConcurrentLimit, prHourlyLimit; 0 = unlimited
     IgnoredAuthors                []string // gitIgnoredAuthors: branch-tip emails that count as the bot's own
     Managers                      []manager.Manager
-    Now                           time.Time // schedule evaluation; zero = time.Now()
+    Now                           time.Time // prHourlyLimit reference; zero = time.Now()
+    Trigger                       schedule.Trigger // what started the run (schedule.Detect)
     Notes                         Notes     // nil = no ages/notes
     Dashboard                     *DashboardOptions // nil = no dashboard; an existing one is left alone
 }
@@ -524,7 +525,7 @@ Both clients share these rules:
 6. **Per-group decision**, first match wins:
    Dashboard requests for a branch apply first: `create` and `recreate` bypass the schedule (the group is built) and the new-PR limit, `recreate` also bypasses rule 1, and `rebase` bypasses the schedule, the limit and rule 5 and turns an unchanged open PR into a rebuild (`rebased`).
    1. No open PR exists, and a closed PR has the same branch, was not merged and has the same title → `skipped: closed PR for this version`.
-   2. A non-security update of the group is outside its schedule (evaluated at run time in `timezone`): with `updateNotScheduled: true` (the default, as in Renovate) a group with an open PR continues below, so content changes, conflicts and `rebaseWhen` keep the PR current, and only creating a new PR waits for the window → `skipped: outside schedule`. With `updateNotScheduled: false` every out-of-schedule group is `skipped: outside schedule`. Nothing is built or pushed for skipped groups.
+   2. A non-security update of the group is outside its schedule: the run was triggered by a cron (`GITHUB_EVENT_NAME=schedule`) whose expression, read from the `schedule` field of the event payload (`GITHUB_EVENT_PATH`; filled by GitHub and by Gitea 28.3, `services/actions/schedule_tasks.go`) or from `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE`, is not in the update's `schedule` (compared after collapsing whitespace; never evaluated as a time window). Other triggers (`workflow_dispatch`, `push`, local runs) and schedule events without a readable cron (warned) are in schedule for every group. With `updateNotScheduled: true` (the default, as in Renovate) a group with an open PR continues below, so content changes, conflicts and `rebaseWhen` keep the PR current, and only creating a new PR waits for a matching trigger → `skipped: outside schedule`. With `updateNotScheduled: false` every out-of-schedule group is `skipped: outside schedule`. Nothing is built or pushed for skipped groups.
    3. The open PR's fingerprint matches (its content is unchanged):
       - `rebaseWhen: never` → `up-to-date`, even when the PR conflicts.
       - The PR is not unmergeable and `rebaseWhen` is `conflicted` (the default), or the branch does not exist → `up-to-date`. On GitHub, a nil `mergeable` triggers a `GetPR` call; nil still counts as mergeable.
@@ -557,7 +558,7 @@ A group automerges when every update in it has `Automerge` from the policy of it
 
 - **Finding it.** The first open issue (lowest number) among up to 10 pages of open issues whose title equals `dependencyDashboardTitle` and whose body contains `<!-- deps:dashboard -->`. GitHub lists PRs as issues; they are dropped. deps never closes it; with `dependencyDashboard: false` it is neither read nor written.
 - **Checkboxes.** `- [x] <!-- deps:<action>=<branch> -->` lines (`x` or `X`) are requests for the next run: `create` (awaiting schedule, rate-limited), `recreate` (closed without merging), `rebase` (open PRs, and branches modified by someone else, whose commits are then discarded). Every body deps writes has all boxes unticked.
-- **Body.** Sections in this order, each left out when empty: `Awaiting schedule`, `Rate-limited`, `Ignored or blocked`, `Open` (PR links), `Errors` (at most 20, flattened to one line of at most 300 characters), `Detected dependencies` (`<details>` per manager and per file, one `` `name version` `` line per extracted dep, sorted by manager, file, line and name). Items follow the group order, so the body is deterministic and an unchanged run does not edit the issue (line endings and surrounding whitespace are ignored in the comparison). The body is capped at 60 000 bytes (GitHub allows 65 536 characters); lists that do not fit end with a `not listed` note, and open `<details>` are always closed.
+- **Body.** Sections in this order, each left out when empty: `Awaiting schedule` (each item names the crons it waits for: the intersection of its updates' schedules, ``(waits for `0 0 * * 0`)``), `Rate-limited`, `Ignored or blocked`, `Open` (PR links), `Errors` (at most 20, flattened to one line of at most 300 characters), `Detected dependencies` (`<details>` per manager and per file, one `` `name version` `` line per extracted dep, sorted by manager, file, line and name). Items follow the group order, so the body is deterministic and an unchanged run does not edit the issue (line endings and surrounding whitespace are ignored in the comparison). The body is capped at 60 000 bytes (GitHub allows 65 536 characters); lists that do not fit end with a `not listed` note, and open `<details>` are always closed.
 
 ### Release age and notes
 
@@ -653,9 +654,9 @@ Results and diagnostics are separate streams of stderr content:
 
 - **Results** are always printed: `update`, `error` and `pr` lines and the final count line; `skip` lines with `-v`. `plan` writes the diff to stdout. `explain` writes its report to stdout.
 - **Diagnostics** go through `log/slog` to stderr, filtered by `--log-level` (`debug|info|warn|error`, env `DEPS_LOG_LEVEL`, default `warn`) and formatted by `--log-format` (`text|json`, env `DEPS_LOG_FORMAT`, default `text`). An invalid value exits 2.
-  - `info`: detected platform and how (`ci environment`, `remote host`, `api probe`, `--platform`), the actions default host and its source, per-phase counts and durations (discover, extract, resolve), and the bot's view of the repo (base, head, deps branches, open/closed PRs).
+  - `info`: the run trigger (`trigger event=<GITHUB_EVENT_NAME> cron=<cron>`, `run` only), detected platform and how (`ci environment`, `remote host`, `api probe`, `--platform`), the actions default host and its source, per-phase counts and durations (discover, extract, resolve), and the bot's view of the repo (base, head, deps branches, open/closed PRs).
   - `debug`: every HTTP request (method, credential-free URL, status, protocol, time to headers), every `git`, `go` and `npm` process (args, duration, error), credential-helper outcome per host (never the secret), GOPROXY resolution per module, per-file extraction, per-dependency verdict, patch and post-processor steps, `.npmrc` loads, npm metadata fetches (registry, versions, deprecated), and the bot's per-PR decision inputs (fingerprints, mergeability, branch author).
-  - `warn`: obsolete PRs left open because the run had errors.
+  - `warn`: obsolete PRs left open because the run had errors; a schedule event whose cron cannot be read (every schedule then matches).
 
 When debug is disabled, the HTTP transport skips timing entirely after one `Enabled` check; other debug calls are cheap level-filtered no-ops.
 

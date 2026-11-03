@@ -19,8 +19,8 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `allowedVersions` | `rules[].allow` (semver constraint or `/regex/`, `!/regex/`) |
 | `versioning` | `rules[].versioning` (`semver`, `loose`, `regex:…`, plus deps' `tag`, `go`, `docker`) |
 | `groupName` | `rules[].group` (`groupSlug` is derived: `slug(group)`) |
-| `schedule` | `schedule` / `rules[].schedule`, as cron windows only; natural-language schedules (`before 6am`) are not supported |
-| `timezone` | `timezone` |
+| `schedule` | `schedule` / `rules[].schedule`, as crons of the workflow's `on.schedule` triggers (see below) |
+| `timezone` | not supported: workflow crons are UTC |
 | `updateNotScheduled` | `updateNotScheduled` |
 | `minimumReleaseAge` | `minimumReleaseAge` / `rules[].minimumReleaseAge` (`null` → `0 days`) |
 | `separateMajorMinor`, `separateMultipleMajor`, `separateMinorPatch` | same names, top level and per rule |
@@ -85,7 +85,7 @@ With `branchPrefix: renovate/`, deps manages the branches and PRs Renovate creat
 - **`rangeStrategy`.** For npm, deps always bumps the version inside the range (`^1.2.3` → `^1.4.0`), which is Renovate's `bump`. It never widens (`^1 || ^2`) or pins ranges, and it skips unsupported range forms (`||`, `x`, hyphen ranges) as `unsupported range`. OCM's `rangeStrategy: bump` for `golang-version` needs no translation: go.mod `toolchain` and `go` directives are replaced at their precision.
 - **`matchCategories`** is not supported. Write the managers or datasources explicitly.
 - **Presets are not supported.** The built-ins below cover the common ones.
-- **Schedules** gate only creating PRs (and updating them with `updateNotScheduled: false`). Natural-language schedules must be rewritten as cron windows with `*` minutes, e.g. `* 0-5 * * 1-5` for weeknights.
+- **Schedules** are not time windows. A `schedule` entry is a cron trigger of the workflow that runs deps, and a run creates PRs for a group only when it was started by one of the group's crons (manual and push runs act on everything). They gate only creating PRs (and updating them with `updateNotScheduled: false`). Translate a Renovate window into a workflow cron inside it plus the same string in `schedule`: OCM's `* * * * 0` (Sunday) becomes `0 0 * * 0` in both `on.schedule` and the rules, next to a daily `0 0 * * *` cron for unscheduled deps. Natural-language schedules (`before 6am`) and `timezone` have no equivalent; crons are UTC.
 - **Release age.** An unknown release time never blocks an update. Digest refreshes, pins and security updates are always exempt, so Renovate's `minimumReleaseAge: null` rule for those update types needs no translation.
 - **Indirect Go requirements** are ignored by default, as in Renovate. Opt in with `depTypes: [indirect], ignore: false`.
 - **PR limits.** Renovate defaults to `prConcurrentLimit: 10`, `prHourlyLimit: 2`; deps to `0`/`0` (unlimited), plus the per-run `--max-new-prs 10`. The effective limit is the minimum of the non-zero limits.
@@ -145,19 +145,19 @@ The example covers the rules needed for the parity items. A complete OCM config 
 rules:
   - names: ['sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools', 'k8s.io/*', 'envtest']
     group: Kubernetes dependencies
-    schedule: ['* * * * 0']
+    schedule: ['0 0 * * 0']
   - names: ['github.com/docker/{/,}**']
     group: Docker dependencies
-    schedule: ['* * * * 0']
+    schedule: ['0 0 * * 0']
   - names: ['golang.org/x/{/,}**']
     group: Golang X Repositories
-    schedule: ['* * * * 0']
+    schedule: ['0 0 * * 0']
   - names: ['google.golang.org/{/,}**']
     group: Google Golang Repositories
-    schedule: ['* * * * 0']
+    schedule: ['0 0 * * 0']
   - names: ['github.com/spf13/{/,}**']
     group: spf13 repositories
-    schedule: ['* * * * 0']
+    schedule: ['0 0 * * 0']
 ```
 
 These are not translated: `security:openssf-scorecard`, `git-submodules` (OCM has no `.gitmodules`) and `lockFileMaintenance` (disabled in OCM anyway).

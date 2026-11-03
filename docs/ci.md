@@ -98,6 +98,20 @@ Use `deps_linux_arm64` on arm64 runners.
 
 **App identity.** If the commits should appear as the App, set `gitAuthor` (or `DEPS_GIT_AUTHOR`) to its noreply identity, e.g. `my-app[bot] <123+my-app[bot]@users.noreply.github.com>`. If the identity ever changes, list the old email in `gitIgnoredAuthors`; otherwise existing branches are reported as `skipped: branch modified by someone else`.
 
+## Schedules
+
+[`schedule`](configuration.md#schedule) entries must be cron triggers of the workflow. deps reads the triggering cron from the event payload (`GITHUB_EVENT_PATH`, field `schedule`; GitHub and Gitea 28.3 fill it) and creates PRs only for groups whose schedule lists it. `workflow_dispatch` and other non-cron triggers act on every group. For a daily run with weekly groups:
+
+```yaml
+on:
+  schedule:
+    - cron: "0 0 * * *"   # daily: deps without a schedule
+    - cron: "0 0 * * 0"   # weekly: also groups with schedule: ["0 0 * * 0"]
+  workflow_dispatch:
+```
+
+Both crons fire on Sunday at 00:00, so that day has two runs; the second finds the PRs of the first up to date. On runners that do not provide the payload, pass the cron explicitly, e.g. `args: run --trigger-schedule "0 0 * * 0"` in a workflow with only that cron (a `schedule` event without a readable cron matches every schedule, with a warning).
+
 ## Permissions
 
 | Operation | Needs |
@@ -150,6 +164,24 @@ Use `deps_linux_arm64` on arm64 runners.
    - `DEPS_GITHUB_COM_TOKEN` is used for github.com when the platform is elsewhere, e.g. for actions and GitHub releases looked up from a Gitea job.
    - On a 401 without a static token, deps runs `git credential fill` once per host and retries.
 3. **npm:** `.npmrc` `_authToken` entries. **docker:** the Docker credential chain.
+
+## GitHub end-to-end test
+
+`task e2e:github` builds `bin/deps` and runs `hack/e2e-github/e2e.sh`, which drives `deps run` against the real repository `<gh user>/deps-e2e` (override with `DEPS_E2E_REPO=owner/name`). It is not part of `task ci`: it needs network, a `gh` login for github.com with the `repo` and `workflow` scopes, and `git`, `go` and `jq`. A full run takes about 3 minutes, mostly waiting for the `check` workflow.
+
+**Setup (idempotent, every run).** The repository is created if missing (public, so branch protection works on the free plan). Settings: issues on, `allow_auto_merge: true`, `delete_branch_on_merge: true`; branch protection on `main` requires the status check `check` (from `.github/workflows/check.yml`, `on: pull_request`), with `enforce_admins: false` and force pushes allowed so the test can reset and push to `main`.
+
+**Reset (before and after the scenario).** `main` is force-pushed to a fixed commit of `hack/e2e-github/testdata/repo` (same SHA every time): a never-running workflow with `actions/setup-node@v7.0.0` and `actions/setup-python@v7.0.0`, a `go.mod` requiring `github.com/spf13/cobra v1.10.1`, and a `.deps.yaml` with `dependencyDashboard: true`, `pin: digest` for setup-python, `automerge: true` for patch updates, and `allow` bounds so new upstream releases do not change the update types. Open PRs are closed, and closed unmerged PRs are retitled `[e2e reset] …` so the next run does not skip them as "closed PR for this version". Branches other than `main` are deleted and open issues are closed. `hack/e2e-github/e2e.sh reset` runs only the reset.
+
+**Scenario.** Each step runs `deps run -v` with `DEPS_TOKEN=$(gh auth token)` on a fresh clone of `main` and checks the result through the GitHub API. The script stops at the first mismatch.
+
+1. **First run.** Three PRs are created on `deps/github-actions/actions-setup-node`, `deps/github-actions/actions-setup-python` and `deps/gomod/github.com-spf13-cobra`. The script checks the titles, the body (update table with ages, `### Release notes`, fingerprint), the digest pin with its `# v7.x.y` comment, and the tidied `go.sum`. It also checks that the dashboard issue exists with a rebase checkbox per PR, and that GitHub auto-merge is enabled on the cobra patch PR. GitHub must then merge that PR within 5 minutes (`DEPS_E2E_MERGE_TIMEOUT`).
+2. **Second run.** The run after the merge reports the other PRs `up-to-date`. One more run must leave the dashboard unedited (same `updated_at`), and the dashboard must be the only open issue.
+3. **Rebase checkbox.** Ticking the setup-node rebase box through the API makes the next run report `rebased`. The branch moves to a new commit on top of `main`, the PR number stays the same, and the box is unticked again.
+4. **Obsolete PR.** A push to `main` adds a rule ignoring `actions/setup-python`. The next run reports `closed`: the PR is closed and its branch deleted.
+5. **Direct merge.** With `allow_auto_merge` disabled, `main` is pushed back to cobra v1.10.1. The run creates the PR with `automerge waiting for checks`. Once the `check` run is green, later runs report `up-to-date, merged`. The PR must be merged by the token's user (deps), and the dashboard must no longer list it.
+
+The summary prints the duration of each step and of each `deps run`. Set `DEPS_E2E_LOGS=<dir>` to keep each run's debug log (`--log-level debug`). GitHub's issue list lags a few seconds behind a new issue, so the script reads the dashboard by the number from the run's `dashboard` line. deps itself only lists issues at the start of a run, and scheduled runs are far enough apart.
 
 ## Releases (maintainers)
 

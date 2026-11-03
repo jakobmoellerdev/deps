@@ -131,12 +131,13 @@ func TestDashboardUnchangedNoWrite(t *testing.T) {
 
 func TestDashboardCheckboxCreateBypassesScheduleAndLimit(t *testing.T) {
 	root, res := dashFixture(t)
-	night, err := schedule.Parse([]string{"* 0-5 * * *"}, "UTC")
+	weekly, err := schedule.Parse([]string{"0 0 * * 0", "0 6 * * 1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Updates[0].Schedule = night // a/x is outside its schedule at dashNow
+	res.Updates[0].Schedule = weekly // a/x is outside its schedule in the daily run
 	closed, o := rateLimited()
+	o.Trigger = schedule.Trigger{Event: schedule.EventSchedule, Cron: "0 0 * * *"}
 	issue := platform.Issue{Number: 7, Title: dashTitle, Body: "x\n- [x] <!-- deps:create=" + branchA + " --> " + titleA + "\n" + dashboardMarker}
 	pc := &fakePC{closed: closed, issues: []platform.Issue{issue}}
 	g := &fakeGit{}
@@ -158,7 +159,7 @@ func TestDashboardCheckboxCreateBypassesScheduleAndLimit(t *testing.T) {
 	// Without the checkbox a/x waits for its schedule and is listed as such.
 	pc = &fakePC{closed: closed}
 	acts, _, _ = dashRun(t, o, res, root, pc, &fakeGit{})
-	if statusOf(acts, branchA) != StatusSkipSchedule || !strings.Contains(pc.createdIssues[0].Body, "## Awaiting schedule\n\nThese updates wait for their schedule window. Tick one to create its PR now.\n\n- [ ] <!-- deps:create="+branchA+" -->") {
+	if statusOf(acts, branchA) != StatusSkipSchedule || !strings.Contains(pc.createdIssues[0].Body, "## Awaiting schedule\n\nThese updates wait for a run triggered by one of their crons. Tick one to create its PR now.\n\n- [ ] <!-- deps:create="+branchA+" --> "+titleA+" (waits for `0 0 * * 0` or `0 6 * * 1`)\n") {
 		t.Errorf("actions %+v body:\n%s", acts, pc.createdIssues[0].Body)
 	}
 }
@@ -276,5 +277,29 @@ func TestDashboardIssuesDisabled(t *testing.T) {
 	}
 	if statusOf(acts, branchA) != StatusCreated {
 		t.Errorf("PRs not processed: %+v", acts)
+	}
+}
+
+// A PR deps merges directly (GitHub without auto-merge) is gone from the dashboard's open list
+// in the same run; found in the GitHub end-to-end test.
+func TestDashboardOmitsPRMergedByDeps(t *testing.T) {
+	root, res := dashFixture(t)
+	res.Updates[0].Automerge = true
+	yes := true
+	fp := fingerprintOf(t, root, res, "a/x")
+	pc := &fakePC{
+		open:         []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "<!-- deps:fingerprint=" + fp + " -->", HeadSHA: "aaaa", Mergeable: &yes, URL: "https://forge/pulls/1"}},
+		mergeable:    &yes,
+		headSHA:      "aaaa",
+		checksPassed: true,
+		fail:         map[string]error{"EnableAutoMerge": fmt.Errorf("enable auto-merge #1: %w: disabled in the repository settings", platform.ErrAutoMergeUnavailable)},
+	}
+	acts, errs, _ := dashRun(t, Options{}, res, root, pc, &fakeGit{})
+	if len(errs) > 0 || len(pc.merged) != 1 {
+		t.Fatalf("errs %v merged %v actions %+v", errs, pc.merged, acts)
+	}
+	body := pc.createdIssues[0].Body
+	if strings.Contains(body, "deps:rebase="+branchA) || !strings.Contains(body, "deps:rebase="+branchB) {
+		t.Errorf("open section should list only %s:\n%s", branchB, body)
 	}
 }

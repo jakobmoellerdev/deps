@@ -1,0 +1,12 @@
+# deps end-to-end test fixture (hack/e2e-github in the deps repository).
+dependencyDashboard: true
+rules:
+  - names: [actions/setup-node]
+    allow: "< 8"
+  - names: [actions/setup-python]
+    allow: "< 8"
+    pin: digest
+  - names: [github.com/spf13/cobra]
+    allow: "~1.10"
+  - updateTypes: [patch]
+    automerge: true

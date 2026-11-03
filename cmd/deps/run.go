@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,10 +16,12 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/releasenotes"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
 
 type runOpts struct {
 	platform, apiURL, repo, token, base string
+	triggerSchedule                     string
 	authorName, authorEmail             string
 	maxNewPRs                           int
 	dryRun                              bool
@@ -43,6 +47,7 @@ func newRun(o *rootOpts) *cobra.Command {
 	f.StringVar(&r.authorEmail, "author-email", defaultAuthorEmail, "commit author email (default: $DEPS_GIT_AUTHOR, then gitAuthor of the config)")
 	f.IntVar(&r.maxNewPRs, "max-new-prs", 10, "maximum number of pull requests to create per run (0 = unlimited)")
 	f.BoolVar(&r.dryRun, "dry-run", false, "report what would change without pushing or calling write APIs")
+	f.StringVar(&r.triggerSchedule, "trigger-schedule", "", "act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE)")
 	return cmd
 }
 
@@ -79,6 +84,29 @@ func commitAuthor(cmd *cobra.Command, r *runOpts, env, cfg string) (name, email 
 	return name, email, nil
 }
 
+// detectTrigger resolves what started the run: --trigger-schedule, then
+// $DEPS_TRIGGER_SCHEDULE, then the CI event. A schedule event whose cron cannot be read
+// matches every schedule, with a warning.
+func detectTrigger(ctx context.Context, flag string, getenv func(string) string) (schedule.Trigger, error) {
+	override, src := flag, "--trigger-schedule"
+	if override == "" {
+		override, src = getenv("DEPS_TRIGGER_SCHEDULE"), "DEPS_TRIGGER_SCHEDULE"
+	}
+	if override != "" {
+		if err := schedule.Validate(override); err != nil {
+			return schedule.Trigger{}, &usageError{fmt.Errorf("%s: %q: %w", src, override, err)}
+		}
+	}
+	t, err := schedule.Detect(getenv, override)
+	if err != nil {
+		slog.WarnContext(ctx, "cannot read the triggering cron; every schedule matches", "err", err)
+	} else if t.Event == schedule.EventSchedule && t.Cron == "" {
+		slog.WarnContext(ctx, "schedule event without a cron in the payload; every schedule matches")
+	}
+	slog.InfoContext(ctx, "trigger", "event", t.Event, "cron", t.Cron)
+	return t, nil
+}
+
 func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	ctx := cmd.Context()
 	stderr := cmd.ErrOrStderr()
@@ -86,6 +114,10 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	case "auto", "github", "gitea", "forgejo":
 	default:
 		return &usageError{fmt.Errorf("--platform: invalid value %q", r.platform)}
+	}
+	trigger, err := detectTrigger(ctx, r.triggerSchedule, os.Getenv)
+	if err != nil {
+		return err
 	}
 	ov := platform.Overrides{APIURL: r.apiURL, Repo: r.repo}
 	if r.platform != "auto" {
@@ -142,6 +174,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		DryRun:             r.dryRun,
 		RebaseWhen:         s.cfg.RebaseWhen,
 		UpdateNotScheduled: s.cfg.UpdateNotScheduledEnabled(),
+		Trigger:            trigger,
 		MaxNewPRs:          r.maxNewPRs,
 		Managers:           s.managers,
 		BranchPrefix:       s.cfg.Prefix(),

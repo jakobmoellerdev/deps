@@ -20,6 +20,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
 
 // Git is the git plumbing the bot needs; implemented by gitx.Repo.
@@ -40,7 +41,8 @@ type Options struct {
 	DryRun                        bool
 	RebaseWhen                    string // config.RebaseWhens; "" = config.RebaseConflicted
 	// UpdateNotScheduled keeps updating and rebasing open PRs outside their schedule; only
-	// new PRs wait for the window (Renovate's updateNotScheduled). false skips such groups.
+	// new PRs wait for a run triggered by one of their crons (Renovate's
+	// updateNotScheduled). false skips such groups.
 	UpdateNotScheduled bool
 	MaxNewPRs          int // PRs created per run; 0 = unlimited
 	// ConcurrentLimit caps open managed PRs and HourlyLimit managed PRs created in the last
@@ -50,8 +52,11 @@ type Options struct {
 	// IgnoredAuthors are emails (case-insensitive) whose branch tips count as the bot's own.
 	IgnoredAuthors []string
 	Managers       []manager.Manager // edit the updates' files (engine.Build)
-	Now            time.Time         // schedule evaluation time; zero = time.Now()
-	Notes          Notes             // release ages and notes in PR bodies; nil = none
+	Now            time.Time         // reference time of prHourlyLimit; zero = time.Now()
+	// Trigger is what started the run; groups are in schedule when it matches all their
+	// non-security updates' schedules (schedule.Set.Matches).
+	Trigger schedule.Trigger
+	Notes   Notes // release ages and notes in PR bodies; nil = none
 	// Dashboard maintains the dependency dashboard issue; nil leaves an existing one alone.
 	Dashboard *DashboardOptions
 }
@@ -95,7 +100,8 @@ const (
 type Action struct {
 	Branch, Title, Status, URL string
 	Number                     int
-	Automerge                  string // automerge outcome; "" = not an automerge PR
+	Automerge                  string   // automerge outcome; "" = not an automerge PR
+	Waits                      []string // StatusSkipSchedule: the crons that would put the group in schedule
 	Dashboard                  bool
 }
 
@@ -176,7 +182,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	sem := make(chan struct{}, 4)
 	for i := range groups {
 		forced[i] = dash.force(groups[i].Branch)
-		inSchedule[i] = forced[i].any() || scheduled(groups[i].Updates, now)
+		inSchedule[i] = forced[i].any() || scheduled(groups[i].Updates, o.Trigger)
 		if !inSchedule[i] && !(o.UpdateNotScheduled && hasPR(open, groups[i].Branch)) {
 			continue // nothing is pushed, so don't build
 		}
@@ -333,8 +339,8 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 	case pr != nil && o.UpdateNotScheduled:
 		slog.DebugContext(ctx, "outside schedule, updating the open PR", "branch", grp.Branch, "number", pr.Number)
 	default:
-		slog.DebugContext(ctx, "outside schedule", "branch", grp.Branch)
-		a.Status = StatusSkipSchedule
+		a.Status, a.Waits = StatusSkipSchedule, waitCrons(grp.Updates)
+		slog.DebugContext(ctx, "outside schedule", "branch", grp.Branch, "waits", a.Waits)
 		return a, nil, nil
 	}
 
@@ -504,15 +510,33 @@ func ownAuthor(o Options, author string) bool {
 	return false
 }
 
-// scheduled reports whether every non-security update is in its schedule at now.
+// scheduled reports whether every non-security update is in schedule for trigger t.
 // Security updates are always in schedule.
-func scheduled(ups []dep.Update, now time.Time) bool {
+func scheduled(ups []dep.Update, t schedule.Trigger) bool {
 	for _, u := range ups {
-		if len(u.Advisories) == 0 && !u.Schedule.Contains(now) {
+		if len(u.Advisories) == 0 && !u.Schedule.Matches(t) {
 			return false
 		}
 	}
 	return true
+}
+
+// waitCrons returns the crons that put every non-security update of ups in schedule:
+// the intersection of their schedules, in the order of the first one.
+func waitCrons(ups []dep.Update) []string {
+	var crons []string
+	first := true
+	for _, u := range ups {
+		if len(u.Advisories) > 0 || u.Schedule == nil {
+			continue
+		}
+		if first {
+			crons, first = slices.Clone(u.Schedule.Crons()), false
+			continue
+		}
+		crons = slices.DeleteFunc(crons, func(c string) bool { return !slices.Contains(u.Schedule.Crons(), c) })
+	}
+	return crons
 }
 
 // hasPR reports whether an open PR has branch as its head.

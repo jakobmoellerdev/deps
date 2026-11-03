@@ -24,8 +24,7 @@ deps schema > deps.schema.json
 |---|---|---|---|
 | `version` | integer | `1` | must be `1` if set |
 | `pin` | `keep` \| `digest` | `keep` | enum |
-| `timezone` | string | `""` (UTC) | IANA zone name (`unknown time zone "<tz>"`) |
-| `schedule` | list of cron strings | `[]` (always) | 5 fields, minute must be `*` |
+| `schedule` | list of cron strings | `[]` (every run) | valid 5-field crons |
 | `security` | bool | `true` | |
 | `branchPrefix` | string | `deps/` | must end with `/` and be a valid git ref prefix |
 | `rebaseWhen` | `conflicted` \| `behind-base-branch` \| `never` | `conflicted` | enum |
@@ -70,21 +69,36 @@ gomod, npm and custom deps ignore `pin`.
 pin: digest
 ```
 
-### `timezone`, `schedule`
+### `schedule`
 
-`schedule` lists cron *windows*. A time is in schedule when any expression matches it, evaluated in `timezone` (an IANA name; empty means UTC).
+`schedule` lists cron expressions that are **cron triggers of the workflow running deps**. deps never evaluates them as time windows: a group is in schedule when the run was started by one of its crons.
 
-- There are 5 fields: `minute hour day-of-month month day-of-week`. The minute field must be `*`, because a schedule is a window, not a trigger time.
-- Each field accepts `*`, `n`, `a-b` and comma lists. `/step` is only allowed on `*` or a range. Day of week is `0-7`, where 0 and 7 are both Sunday. Names (`MON`, `JAN`) are not accepted.
-- As in cron, when both day of month and day of week are restricted, either may match.
+- The trigger is read from the CI environment: `GITHUB_EVENT_NAME` (GitHub, Gitea and Forgejo set it) and, for `schedule` events, the `schedule` field of the event payload at `GITHUB_EVENT_PATH`. GitHub and Gitea (verified in 28.3) put the triggering cron there. `--trigger-schedule <cron>` or `DEPS_TRIGGER_SCHEDULE` override the detection (for local tests or runners that lack the payload).
+- Crons are compared as strings after collapsing whitespace: `0 0 * * 0` matches `0  0 * * 0` but not the equivalent `0 0 * * 7`. Copy them verbatim from `on.schedule`.
+- Runs not started by a cron (`workflow_dispatch`, `push`, a local `deps run`) act immediately: every schedule matches. A `schedule` event whose cron cannot be read also matches every schedule, with a warning.
+- Cron triggers of CI systems are UTC, so there is no time zone setting.
+- Each entry must be a valid 5-field cron (`minute hour day-of-month month day-of-week`; `*`, `n`, `a-b`, comma lists, `/step` on `*` or a range; day of week `0-7`; no names). Errors look like `schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`.
 - The schedule only gates creating new PRs and, with `updateNotScheduled: false`, updating existing ones. Security updates ignore schedules.
 
-Errors look like `schedule[0]: "0 5 * * *": minute field must be * (schedules are windows)`.
+A daily workflow cron plus a weekly one, with the weekly cron reserved for some groups:
 
 ```yaml
-timezone: Europe/Berlin
-schedule: ["* 0-5 * * 1-5"]    # weekdays, 00:00-05:59 Berlin time
+# .github/workflows/deps.yml
+on:
+  schedule:
+    - cron: "0 0 * * *"   # daily
+    - cron: "0 0 * * 0"   # weekly, Sunday
 ```
+
+```yaml
+# .deps.yaml
+rules:
+  - updateTypes: [digest, pin]
+    group: digest-pins
+    schedule: ["0 0 * * 0"]   # PRs are created only by the Sunday run
+```
+
+Other deps have no schedule, so both crons create their PRs.
 
 ### `security`
 
@@ -216,7 +230,7 @@ These keys split one dep's candidate updates into **PR buckets**. Each bucket yi
 
 ### `updateNotScheduled`
 
-- `true` (the default): open PRs outside their schedule are still updated (content changes, conflicts, `rebaseWhen`). Only *creating* a PR waits for the window.
+- `true` (the default): open PRs outside their schedule are still updated (content changes, conflicts, `rebaseWhen`). Only *creating* a PR waits for a run triggered by one of their crons.
 - `false`: out-of-schedule groups are left untouched (`skipped: outside schedule`).
 
 Out-of-schedule PRs are never closed as obsolete.
@@ -241,7 +255,7 @@ rules:
 
 `dependencyDashboard: true` makes `deps run` maintain one open issue titled `dependencyDashboardTitle`. It lists, in this order:
 
-1. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.
+1. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Awaiting-schedule items name the crons they wait for, e.g. ``(waits for `0 0 * * 0`)``. Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.
 2. **Ignored or blocked**: updates whose PR was closed without merging (checkbox: recreate the PR), and branches someone else pushed to (checkbox: discard those commits and rebuild the branch).
 3. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.
 4. **Errors** of the run (at most 20, each cut to 300 characters).
@@ -281,7 +295,7 @@ Dep types: `direct indirect go toolchain action setup dockerfile compose workflo
 | `updates` | list of update types | allowed update types; replaces the earlier list |
 | `versioning` | `tag` \| `go` \| `docker` \| `semver` \| `loose` \| `regex:<RE2>` | replaces the manager's scheme. Not allowed with `updateTypes`. |
 | `group` | string | all deps with this group share one branch `<prefix>group/<slug>` and one PR |
-| `schedule` | list of cron strings | overrides the top-level schedule; `[]` means always |
+| `schedule` | list of cron strings | overrides the top-level schedule; `[]` means every run |
 | `minimumReleaseAge` | string | overrides the top-level age; `0` disables it |
 | `commitType` | `fix` `chore` `build` `ci` `docs` `feat` `perf` `refactor` `revert` `style` `test` | conventional commit type of the commit and PR title |
 | `commitScope` | string | scope; must match `^[A-Za-z0-9][A-Za-z0-9._/-]*$`; `""` drops the scope (`chore: update …`) |
@@ -480,8 +494,7 @@ custom:
 ```yaml
 # yaml-language-server: $schema=./deps.schema.json
 version: 1
-timezone: Europe/Berlin
-schedule: ["* 0-5 * * 1-5"]        # create PRs on weekday nights
+schedule: ["0 5 * * 1-5"]          # create PRs in the weekday run (a cron of the workflow)
 pin: digest                         # pin actions to SHAs and images to digests
 minimumReleaseAge: 3 days
 security: true
@@ -505,7 +518,7 @@ rules:
   - datasources: [git-tags, docker] # digest refreshes in one weekly PR
     updateTypes: [digest, pin]
     group: digest-pins
-    schedule: ['* * * * 0']
+    schedule: ['0 5 * * 0']         # the workflow's Sunday cron
   - manager: gomod                  # include indirect requirements...
     depTypes: [indirect]
     ignore: false

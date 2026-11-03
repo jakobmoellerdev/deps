@@ -185,12 +185,12 @@ func TestSecurityFailures(t *testing.T) {
 }
 
 func TestGroupAndScheduleFromPolicy(t *testing.T) {
-	root, cfg := setup(t, "timezone: UTC\nschedule: ['* 1 * * *']\nrules: [{group: all}]\n", map[string]string{"go.mod": modA})
+	root, cfg := setup(t, "schedule: ['0 1 * * *']\nrules: [{group: all}]\n", map[string]string{"go.mod": modA})
 	res, err := Resolve(t.Context(), root, cfg, env, sources(nil, goVersions))
 	if err != nil || len(res.Updates) != 1 {
 		t.Fatalf("err = %v, res = %+v", err, res)
 	}
-	if u := res.Updates[0]; u.Group != "all" || u.Schedule == nil || u.Schedule.String() != "* 1 * * * (UTC)" {
+	if u := res.Updates[0]; u.Group != "all" || u.Schedule == nil || u.Schedule.String() != "0 1 * * *" {
 		t.Errorf("update group %q schedule %v", u.Group, u.Schedule)
 	}
 }

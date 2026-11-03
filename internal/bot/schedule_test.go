@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -13,15 +12,15 @@ import (
 )
 
 func TestRunSchedule(t *testing.T) {
-	night, err := schedule.Parse([]string{"* 0-5 * * *"}, "UTC")
+	weekly, err := schedule.Parse([]string{"0 0 * * 0"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	inWindow := time.Date(2026, 11, 3, 3, 0, 0, 0, time.UTC)
-	outWindow := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	inWindow := schedule.Trigger{Event: schedule.EventSchedule, Cron: "0  0 * * 0"}
+	outWindow := schedule.Trigger{Event: schedule.EventSchedule, Cron: "0 0 * * *"}
 	tests := []struct {
 		name               string
-		now                time.Time
+		trigger            schedule.Trigger
 		security           bool
 		updateNotScheduled bool
 		noPR               bool // branchA exists without an open PR
@@ -31,27 +30,27 @@ func TestRunSchedule(t *testing.T) {
 		wantClosed         []int
 	}{
 		{
-			name:       "in window",
-			now:        inWindow,
+			name:       "triggered by its cron",
+			trigger:    inWindow,
 			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantPushed: 2, wantClosed: []int{9},
 		},
 		{
-			name:       "out of window keeps PR open",
-			now:        outWindow,
+			name:       "other cron keeps PR open",
+			trigger:    outWindow,
 			wantStatus: map[string]string{branchA: StatusSkipSchedule, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantPushed: 1, wantClosed: []int{9},
 		},
 		{
 			name:               "updateNotScheduled updates the open PR out of window",
-			now:                outWindow,
+			trigger:            outWindow,
 			updateNotScheduled: true,
 			wantStatus:         map[string]string{branchA: StatusUpdated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantPushed:         2, wantClosed: []int{9},
 		},
 		{
 			name:               "updateNotScheduled keeps an unchanged PR",
-			now:                outWindow,
+			trigger:            outWindow,
 			updateNotScheduled: true,
 			fresh:              true,
 			wantStatus:         map[string]string{branchA: StatusUpToDate, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
@@ -59,15 +58,32 @@ func TestRunSchedule(t *testing.T) {
 		},
 		{
 			name:               "updateNotScheduled never creates out of window",
-			now:                outWindow,
+			trigger:            outWindow,
 			updateNotScheduled: true,
 			noPR:               true,
 			wantStatus:         map[string]string{branchA: StatusSkipSchedule, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantPushed:         1, wantClosed: []int{9},
 		},
 		{
+			name:       "workflow_dispatch acts immediately",
+			trigger:    schedule.Trigger{Event: "workflow_dispatch"},
+			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
+			wantPushed: 2, wantClosed: []int{9},
+		},
+		{
+			name:       "local run acts immediately",
+			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
+			wantPushed: 2, wantClosed: []int{9},
+		},
+		{
+			name:       "schedule event without cron matches",
+			trigger:    schedule.Trigger{Event: schedule.EventSchedule},
+			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
+			wantPushed: 2, wantClosed: []int{9},
+		},
+		{
 			name:       "security ignores schedule",
-			now:        outWindow,
+			trigger:    outWindow,
 			security:   true,
 			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantPushed: 2, wantClosed: []int{9},
@@ -76,7 +92,7 @@ func TestRunSchedule(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root, res := fixture(t)
-			res.Updates[0].Schedule = night
+			res.Updates[0].Schedule = weekly
 			if tt.security {
 				res.Updates[0].Advisories = []dep.Advisory{{ID: "GHSA-x", Summary: "bad", URL: "https://example.invalid/GHSA-x"}}
 			}
@@ -92,7 +108,7 @@ func TestRunSchedule(t *testing.T) {
 			if !tt.noPR {
 				pc.open = append(pc.open, platform.PR{Number: 1, Head: branchA, Body: body, Mergeable: new(true)})
 			}
-			o := Options{AuthorEmail: email, Managers: managers, MaxNewPRs: 10, Now: tt.now, UpdateNotScheduled: tt.updateNotScheduled}
+			o := Options{AuthorEmail: email, Managers: managers, MaxNewPRs: 10, Trigger: tt.trigger, UpdateNotScheduled: tt.updateNotScheduled}
 			acts, errs := Run(t.Context(), o, root, res, nil, pc, g)
 			if len(errs) != 0 {
 				t.Fatal(errs)
@@ -122,19 +138,25 @@ func TestRunSchedule(t *testing.T) {
 	}
 }
 
-func TestScheduledZeroNowUsesClock(t *testing.T) {
-	root, res := fixture(t)
-	never, err := schedule.Parse([]string{"* * 31 2 *"}, "")
-	if err != nil {
-		t.Fatal(err)
+func TestWaitCrons(t *testing.T) {
+	set := func(c ...string) *schedule.Set {
+		s, err := schedule.Parse(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
 	}
-	for i := range res.Updates {
-		res.Updates[i].Schedule = never
+	ups := []dep.Update{
+		{Schedule: set("0 0 * * 0", "0 6 * * 1")},
+		{}, // always
+		{Schedule: set("0 6 * * 1")},
+		{Schedule: set("0 9 * * *"), Advisories: []dep.Advisory{{ID: "GO-1"}}}, // security: ignored
 	}
-	g := &fakeGit{}
-	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers, MaxNewPRs: 10}, root, res, nil, &fakePC{}, g)
-	if len(errs) != 0 || len(g.pushed) != 0 || len(acts) != 2 || acts[0].Status != StatusSkipSchedule {
-		t.Fatalf("acts = %+v errs = %v pushed = %v", acts, errs, g.pushed)
+	if got := waitCrons(ups); !slices.Equal(got, []string{"0 6 * * 1"}) {
+		t.Errorf("waitCrons = %q", got)
+	}
+	if got := waitCrons(ups[:2]); !slices.Equal(got, []string{"0 0 * * 0", "0 6 * * 1"}) || ups[0].Schedule.Crons()[0] != "0 0 * * 0" {
+		t.Errorf("waitCrons = %q", got)
 	}
 }
 

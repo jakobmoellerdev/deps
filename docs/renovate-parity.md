@@ -20,7 +20,7 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | P12 | `separateMinorPatch` | global (overridden per manager) | top level and per rule (`-minor` / `-patch` branches); `plan`/`apply` write one update per dep and mark the others `separate PR` | done |
 | P13 | built-in monorepo groups (`group:monorepos`, `group:kubernetesMonorepo`, `group:goOpenapi`) | presets | curated built-in list, `monorepos: false` disables | done |
 | P14 | `ignorePaths` defaults (`:ignoreModulesAndTests`) | preset | Renovate's default list when `ignorePaths` is absent | done |
-| P15 | `updateNotScheduled: true` | global | `updateNotScheduled` (default true): open PRs outside their schedule are still updated and rebased, only new PRs wait; `false` skips them | done |
+| P15 | `updateNotScheduled: true` | global | `updateNotScheduled` (default true): open PRs outside their schedule are still updated and rebased, only new PRs wait for a run triggered by one of their workflow crons (schedules match the CI trigger, not the clock); `false` skips them | done |
 | P16 | `postUpdateOptions: [gomodTidy]` | golang category, Helm group | always `go mod tidy` | done |
 | P17 | rule `minimumReleaseAge: null` for digest/pin/lockfile types | global | built in: digest refreshes, pins and security updates are always exempt; lockfile regeneration has no version | done |
 | P18 | `rangeStrategy: bump` | "Golang versions" rule (`matchDatasources: [golang-version]`) | not configurable: npm ranges are always bumped in place (`^1.2.3` → `^1.4.0`, Renovate's `bump`); go.mod `go`/`toolchain` directives, setup inputs and markers replace the exact version at its precision, which is what `bump` does for `golang-version` | done |

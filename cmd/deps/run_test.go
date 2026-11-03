@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
 
 // openPRNet serves pr as the only open PR and delegates everything else to next.
@@ -206,6 +209,36 @@ func TestRunAutomergeAndDashboard(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dashboard body lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestDetectTrigger(t *testing.T) {
+	env := func(kv map[string]string) func(string) string { return func(k string) string { return kv[k] } }
+	tests := []struct {
+		name, flag string
+		env        map[string]string
+		want       schedule.Trigger
+		wantErr    string
+	}{
+		{name: "flag", flag: "0 0 * * 0", env: map[string]string{"DEPS_TRIGGER_SCHEDULE": "0 5 * * *", "GITHUB_EVENT_NAME": "push"}, want: schedule.Trigger{Event: "schedule", Cron: "0 0 * * 0"}},
+		{name: "env", env: map[string]string{"DEPS_TRIGGER_SCHEDULE": "0  5 * * *", "GITHUB_EVENT_NAME": "push"}, want: schedule.Trigger{Event: "schedule", Cron: "0 5 * * *"}},
+		{name: "ci event", env: map[string]string{"GITHUB_EVENT_NAME": "workflow_dispatch"}, want: schedule.Trigger{Event: "workflow_dispatch"}},
+		{name: "unreadable payload warns", env: map[string]string{"GITHUB_EVENT_NAME": "schedule", "GITHUB_EVENT_PATH": "/nonexistent"}, want: schedule.Trigger{Event: "schedule"}},
+		{name: "invalid flag", flag: "0 5 * *", wantErr: `--trigger-schedule: "0 5 * *": want 5 fields, got 4`},
+		{name: "invalid env", env: map[string]string{"DEPS_TRIGGER_SCHEDULE": "x"}, wantErr: `DEPS_TRIGGER_SCHEDULE: "x": want 5 fields, got 1`},
+	}
+	for _, tt := range tests {
+		got, err := detectTrigger(t.Context(), tt.flag, env(tt.env))
+		var ue *usageError
+		if tt.wantErr != "" {
+			if !errors.As(err, &ue) || err.Error() != tt.wantErr {
+				t.Errorf("%s: err = %v, want usage error %q", tt.name, err, tt.wantErr)
+			}
+			continue
+		}
+		if err != nil || got != tt.want {
+			t.Errorf("%s: got %+v, %v; want %+v", tt.name, got, err, tt.want)
 		}
 	}
 }

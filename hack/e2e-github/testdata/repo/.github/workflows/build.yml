@@ -1,0 +1,9 @@
+# Never runs; holds outdated actions for deps to update.
+name: build
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-python@v7.0.0

@@ -1,0 +1,9 @@
+# Required status check of the deps GitHub end-to-end test repository.
+name: check
+on: pull_request
+permissions: {}
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
