@@ -1,20 +1,55 @@
 name: deps
-description: Update dependencies and open one pull request per dependency
+description: Update dependencies and open one pull request per dependency or group
 inputs:
   token:
-    description: "Token with contents:write and pull-requests:write"
+    description: "Token with contents:write and pull-requests:write (issues:write for the dashboard)"
     default: "${{ github.token }}"
   args:
     description: "Arguments for deps"
     default: "run"
+  version:
+    description: "Release tag to download, e.g. v0.1.0. Default: the action's ref when it is a release tag, else the latest release"
+    default: ""
+  repository:
+    description: "Where releases are published (Gitea/Forgejo or GitHub repository URL)"
+    default: "https://git.jakob-moeller.cloud/jakobmoellerdev/deps"
 runs:
   using: composite
   steps:
-    - shell: bash
-      working-directory: ${{ github.action_path }}
-      run: go build -trimpath -o "$RUNNER_TEMP/deps" ./cmd/deps
-    - shell: bash
+    - name: Download deps
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+        REPOSITORY: ${{ inputs.repository }}
+      run: |
+        set -euo pipefail
+        case "$(uname -s)/$(uname -m)" in
+          Linux/x86_64|Linux/amd64) arch=amd64 ;;
+          Linux/aarch64|Linux/arm64) arch=arm64 ;;
+          *) echo "deps: unsupported runner $(uname -s)/$(uname -m); only linux/amd64 and linux/arm64 are released" >&2; exit 1 ;;
+        esac
+        repo="${REPOSITORY%/}"
+        host="${repo%/*/*}"; path="${repo#"$host"/}"
+        if [ -z "$VERSION" ] && [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then VERSION="$ACTION_REF"; fi
+        if [ -z "$VERSION" ]; then
+          case "$host" in
+            https://github.com) api="https://api.github.com/repos/$path/releases/latest" ;;
+            *) api="$host/api/v1/repos/$path/releases/latest" ;;
+          esac
+          VERSION=$(curl -fsSL "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+          [ -n "$VERSION" ] || { echo "deps: no release found at $api" >&2; exit 1; }
+        fi
+        base="$repo/releases/download/$VERSION"
+        dir="$RUNNER_TEMP/deps-$VERSION"
+        mkdir -p "$dir"
+        curl -fsSL -o "$dir/checksums.txt" "$base/checksums.txt"
+        curl -fsSL -o "$dir/deps_linux_$arch" "$base/deps_linux_$arch"
+        (cd "$dir" && grep " deps_linux_$arch\$" checksums.txt | sha256sum -c --quiet -)
+        install -m 0755 "$dir/deps_linux_$arch" "$RUNNER_TEMP/deps"
+        "$RUNNER_TEMP/deps" version
+    - name: Run deps
+      shell: bash
       env:
         DEPS_TOKEN: ${{ inputs.token }}
-        DEPS_DEFAULT_ACTIONS_URL: ${{ gitea.gitea_default_actions_url }}
       run: '"$RUNNER_TEMP/deps" ${{ inputs.args }}'

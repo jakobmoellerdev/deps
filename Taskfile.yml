@@ -62,9 +62,21 @@ tasks:
         echo "installed {{.GOLANGCI_LINT_BIN}}"
 
   build:
-    desc: Build bin/deps
+    desc: Build bin/deps (static, no cgo, trimmed)
+    env:
+      CGO_ENABLED: "0"
     cmds:
-      - go build -trimpath -ldflags "-X main.version={{.VERSION}}" -o bin/deps ./cmd/deps
+      - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o bin/deps ./cmd/deps
+
+  release:build:
+    desc: Build static linux/amd64 and linux/arm64 release binaries and checksums into dist/
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - rm -rf dist && mkdir -p dist
+      - for: [amd64, arm64]
+        cmd: GOOS=linux GOARCH={{.ITEM}} go build -trimpath -ldflags "-s -w -buildid= -X main.version={{.VERSION}}" -o dist/deps_linux_{{.ITEM}} ./cmd/deps
+      - cd dist && sha256sum deps_linux_amd64 deps_linux_arm64 > checksums.txt
 
   test:
     desc: Run tests with the race detector

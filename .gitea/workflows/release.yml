@@ -1,0 +1,34 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - run: task ci
+      - run: task release:build VERSION="${GITHUB_REF_NAME}"
+      - name: Publish release
+        env:
+          TOKEN: ${{ github.token }}
+          API: ${{ github.api_url }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # The binaries must be static: the action runs them on arbitrary runner images.
+          for f in dist/deps_linux_*; do
+            if readelf -l "$f" 2>/dev/null | grep -q 'Requesting program interpreter'; then echo "$f is not static" >&2; exit 1; fi
+          done
+          id=$(curl -fsS -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\"}" "$API/repos/$REPO/releases" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          for f in dist/deps_linux_amd64 dist/deps_linux_arm64 dist/checksums.txt; do
+            curl -fsS -X POST -H "Authorization: token $TOKEN" -F "attachment=@$f" \
+              "$API/repos/$REPO/releases/$id/assets?name=$(basename "$f")" >/dev/null
+          done
+          echo "released $TAG"
