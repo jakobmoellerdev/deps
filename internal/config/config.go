@@ -29,8 +29,8 @@ const (
 
 // Known values for validation.
 var (
-	Managers          = []string{"github-actions", "gomod", "docker", "custom"}
-	DepTypes          = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "annotation", "regex"}
+	Managers          = []string{"github-actions", "gomod", "docker", "npm", "custom"}
+	DepTypes          = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "annotation", "regex"}
 	CustomDatasources = []string{"git-tags", "github-releases", "go", "docker"}
 	Versionings       = []string{"tag", "go", "docker", "semver"}
 )
@@ -61,10 +61,10 @@ type Actions struct {
 
 // Rule overrides the policy for matching deps.
 type Rule struct {
-	Manager  string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=custom" jsonschema_description:"Only match deps of this manager."`
+	Manager  string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=custom" jsonschema_description:"Only match deps of this manager."`
 	Names    []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these path.Match globs."`
-	DepTypes []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
-	Ignore   *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements and go directives in."`
+	DepTypes []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
+	Ignore   *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives and npm peerDependencies in."`
 	Pin      string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
 	Allow    string   `yaml:"allow" jsonschema_description:"Semver constraint new versions must satisfy, e.g. '< 7'."`
 	Updates  []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`

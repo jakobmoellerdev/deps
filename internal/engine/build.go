@@ -17,7 +17,6 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -29,14 +28,29 @@ type FileChange struct {
 	Old, New []byte
 }
 
-// tidySem bounds concurrent `go mod tidy` processes across all Build calls.
-var tidySem = make(chan struct{}, 4)
+// PostProcessor regenerates the files derived from a manifest (go.sum, package-lock.json)
+// after deps patched it. Implementations work on copies and never touch the working tree.
+type PostProcessor interface {
+	// Siblings lists the names of the files next to the manifest that Process reads or
+	// regenerates.
+	Siblings() []string
+	// Process returns regenerated files by base name. dir is the absolute directory of the
+	// manifest, manifest its patched content and files the current content of every existing
+	// sibling. A result under the manifest's own name replaces the patched manifest; siblings
+	// absent from the result are unchanged.
+	Process(ctx context.Context, dir string, manifest []byte, files map[string][]byte) (map[string][]byte, error)
+}
+
+// postSem bounds concurrent post-processor runs (go mod tidy, npm install) across all Build
+// calls.
+var postSem = make(chan struct{}, 4)
 
 // Build re-reads the files touched by updates, patches them with the byte edits of each
-// update's manager (looked up by dep.Dep.Manager in managers) and, when tidy is non-nil,
-// runs go mod tidy for files with gomod updates. A failing file (and its go.sum) is dropped
-// and its error returned; the remaining changes are returned sorted by Path.
-func Build(ctx context.Context, root string, managers []manager.Manager, updates []dep.Update, tidy Tidier) ([]FileChange, []error) {
+// update's manager (looked up by dep.Dep.Manager in managers) and runs the post-processor
+// registered for that manager in post (nil = none, as for plan). A failing file (and its
+// regenerated siblings) is dropped and its error returned; the remaining changes are returned
+// sorted by Path.
+func Build(ctx context.Context, root string, managers []manager.Manager, updates []dep.Update, post map[string]PostProcessor) ([]FileChange, []error) {
 	byName := make(map[string]manager.Manager, len(managers))
 	for _, m := range managers {
 		byName[m.Name()] = m
@@ -56,7 +70,7 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 	var wg sync.WaitGroup
 	for i, f := range files {
 		wg.Go(func() {
-			results[i], errs[i] = buildFile(ctx, root, f, byName, byFile[f], tidy)
+			results[i], errs[i] = buildFile(ctx, root, f, byName, byFile[f], post)
 			if errs[i] != nil {
 				errs[i] = fmt.Errorf("%s: %w", f, errs[i])
 			}
@@ -78,9 +92,9 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 	return out, errList
 }
 
-func buildFile(ctx context.Context, root, file string, managers map[string]manager.Manager, ups []dep.Update, tidy Tidier) ([]FileChange, error) {
+func buildFile(ctx context.Context, root, file string, managers map[string]manager.Manager, ups []dep.Update, post map[string]PostProcessor) ([]FileChange, error) {
 	edits := make([]patch.Edit, 0, len(ups)+1)
-	isMod := false
+	var procs []string // managers of the file with a post-processor, in update order
 	for _, u := range ups {
 		m := managers[u.Dep.Manager]
 		if m == nil {
@@ -91,7 +105,9 @@ func buildFile(ctx context.Context, root, file string, managers map[string]manag
 			return nil, fmt.Errorf("%s: %w", u.Dep.Name, err)
 		}
 		edits = append(edits, e...)
-		isMod = isMod || u.Dep.Manager == gomod.Name
+		if post[u.Dep.Manager] != nil && !slices.Contains(procs, u.Dep.Manager) {
+			procs = append(procs, u.Dep.Manager)
+		}
 	}
 	abs := filepath.Join(root, filepath.FromSlash(file))
 	st, err := os.Stat(abs)
@@ -108,40 +124,69 @@ func buildFile(ctx context.Context, root, file string, managers map[string]manag
 	}
 	slog.DebugContext(ctx, "file patched", "file", file, "edits", len(edits))
 	changes := []FileChange{{Path: file, Mode: st.Mode().Perm(), Old: old, New: patched}}
-	if !isMod || tidy == nil {
-		return changes, nil
-	}
-
-	sumPath := path.Join(path.Dir(file), "go.sum")
-	sumAbs := filepath.Join(root, filepath.FromSlash(sumPath))
-	sumMode := fs.FileMode(0o644)
-	oldSum, err := os.ReadFile(sumAbs)
-	switch {
-	case err == nil:
-		if sst, err := os.Stat(sumAbs); err == nil {
-			sumMode = sst.Mode().Perm()
+	for _, name := range procs {
+		if changes, err = postProcess(ctx, root, file, name, post[name], changes); err != nil {
+			return nil, err
 		}
-	case errors.Is(err, fs.ErrNotExist):
-		oldSum = nil
-	default:
-		return nil, err
+	}
+	return changes, nil
+}
+
+// sibling is the current state of a file next to a manifest.
+type sibling struct {
+	path    string // slash path relative to the root
+	mode    fs.FileMode
+	content []byte // nil when the file does not exist
+}
+
+// postProcess runs p on the manifest (changes[0]) and merges its output: the manifest is
+// replaced, a sibling is added when its content changed (mode 0644 when it is new).
+func postProcess(ctx context.Context, root, file, managerName string, p PostProcessor, changes []FileChange) ([]FileChange, error) {
+	dir := path.Dir(file)
+	names := p.Siblings()
+	sibs := make(map[string]sibling, len(names))
+	files := make(map[string][]byte, len(names))
+	for _, n := range names {
+		s := sibling{path: path.Join(dir, n), mode: 0o644}
+		sAbs := filepath.Join(root, filepath.FromSlash(s.path))
+		b, err := os.ReadFile(sAbs)
+		switch {
+		case err == nil:
+			s.content = b
+			files[n] = b
+			if sst, err := os.Stat(sAbs); err == nil {
+				s.mode = sst.Mode().Perm()
+			}
+		case !errors.Is(err, fs.ErrNotExist):
+			return nil, err
+		}
+		sibs[n] = s
 	}
 
 	select {
-	case tidySem <- struct{}{}:
+	case postSem <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 	start := time.Now()
-	newMod, newSum, err := tidy.Tidy(ctx, filepath.Dir(abs), patched, oldSum)
-	<-tidySem
+	out, err := p.Process(ctx, filepath.Join(root, filepath.FromSlash(dir)), changes[0].New, files)
+	<-postSem
 	if err != nil {
 		return nil, err
 	}
-	slog.DebugContext(ctx, "go mod tidy", "file", file, "goSumChanged", !bytes.Equal(newSum, oldSum), "duration", time.Since(start))
-	changes[0].New = newMod
-	if !bytes.Equal(newSum, oldSum) {
-		changes = append(changes, FileChange{Path: sumPath, Mode: sumMode, Old: oldSum, New: newSum})
+	var changed []string
+	if b, ok := out[path.Base(file)]; ok {
+		changes[0].New = b
 	}
+	for _, n := range names {
+		b, ok := out[n]
+		s := sibs[n]
+		if !ok || bytes.Equal(b, s.content) {
+			continue
+		}
+		changed = append(changed, n)
+		changes = append(changes, FileChange{Path: s.path, Mode: s.mode, Old: s.content, New: b})
+	}
+	slog.DebugContext(ctx, "post-processed", "file", file, "manager", managerName, "changed", changed, "duration", time.Since(start))
 	return changes, nil
 }

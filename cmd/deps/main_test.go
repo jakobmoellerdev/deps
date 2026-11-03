@@ -95,6 +95,13 @@ func newFakeNet(t *testing.T) *fakeNet {
 	f.mux.HandleFunc("GET proxy.test/example.com/vuln/@v/list", func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, "v1.0.0\nv1.1.0\nv1.2.0\n")
 	})
+	f.mux.HandleFunc("GET registry.npmjs.org/@s%2fpad", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept") != "application/vnd.npm.install-v1+json" {
+			http.Error(w, "want abbreviated metadata", http.StatusNotAcceptable)
+			return
+		}
+		io.WriteString(w, `{"versions":{"1.0.0":{},"1.3.0":{},"1.4.0":{"deprecated":"broken"}}}`)
+	})
 	f.mux.HandleFunc("GET git.test/api/v1/repos/o/r", func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"default_branch":"main"}`)
 	})
@@ -126,6 +133,7 @@ func cleanEnv(t *testing.T) {
 		"GITHUB_ACTIONS", "GITEA_ACTIONS", "FORGEJO_ACTIONS", "GITHUB_STEP_SUMMARY", "GITEA_STEP_SUMMARY",
 		"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", "DEPS_GITHUB_COM_TOKEN",
 		"DEPS_DEFAULT_ACTIONS_URL", "DEPS_LOG_LEVEL", "DEPS_LOG_FORMAT", "GONOPROXY", "GOPRIVATE",
+		"NPM_CONFIG_REGISTRY", "npm_config_registry",
 	} {
 		t.Setenv(k, "")
 	}
@@ -217,6 +225,33 @@ func TestPlan(t *testing.T) {
 	}
 	if !strings.Contains(string(sum), "| `example.com/a` | `go.mod:5` | `v1.0.0` | `v1.1.0` | minor |") {
 		t.Errorf("summary:\n%s", sum)
+	}
+}
+
+func TestPlanNpm(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"package.json": `{"dependencies": {"@s/pad": "^1.0.0", "x": "latest"}}` + "\n"})
+	stdout, stderr, code := execute(t, "plan", "-v", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if want := `+{"dependencies": {"@s/pad": "^1.3.0", "x": "latest"}}` + "\n"; !strings.Contains(stdout, want) {
+		t.Errorf("diff lacks %q:\n%s", want, stdout)
+	}
+	for _, want := range []string{
+		"update  package.json:1  @s/pad  1.0.0 -> 1.3.0  (minor)\n",
+		"skip    package.json:1  x  tag\n",
+		"note    package-lock.json changes are computed by apply/run\n",
+		"1 updates in 1 files, 1 skipped, 0 errors\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, "go.sum") {
+		t.Errorf("go.sum note without gomod updates:\n%s", stderr)
 	}
 }
 

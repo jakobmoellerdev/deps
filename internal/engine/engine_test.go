@@ -16,6 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 )
 
 func sha(s string) string {
@@ -76,17 +77,33 @@ func sources(tags fakeTags, gos fakeGo) Options {
 	return o
 }
 
-type fakeTidy struct{}
-
-func (fakeTidy) Tidy(_ context.Context, _ string, mod, _ []byte) ([]byte, []byte, error) {
+func fakeTidy(_ context.Context, _ string, mod, _ []byte) ([]byte, []byte, error) {
 	return append(append([]byte(nil), mod...), "// tidied\n"...), []byte("sum\n"), nil
 }
 
-// tidyFunc adapts a function to Tidier.
+// postFunc adapts a function to a PostProcessor reading siblings.
+type postFunc struct {
+	siblings []string
+	f        func(ctx context.Context, dir string, manifest []byte, files map[string][]byte) (map[string][]byte, error)
+}
+
+func (p postFunc) Siblings() []string { return p.siblings }
+
+func (p postFunc) Process(ctx context.Context, dir string, manifest []byte, files map[string][]byte) (map[string][]byte, error) {
+	return p.f(ctx, dir, manifest, files)
+}
+
+// tidyFunc is a go mod tidy stand-in; post registers it as the gomod post-processor.
 type tidyFunc func(ctx context.Context, dir string, mod, sum []byte) ([]byte, []byte, error)
 
-func (f tidyFunc) Tidy(ctx context.Context, dir string, mod, sum []byte) ([]byte, []byte, error) {
-	return f(ctx, dir, mod, sum)
+func (f tidyFunc) post() map[string]PostProcessor {
+	return map[string]PostProcessor{gomod.Name: postFunc{[]string{"go.sum"}, func(ctx context.Context, dir string, mod []byte, files map[string][]byte) (map[string][]byte, error) {
+		newMod, newSum, err := f(ctx, dir, mod, files["go.sum"])
+		if err != nil {
+			return nil, err
+		}
+		return map[string][]byte{"go.mod": newMod, "go.sum": newSum}, nil
+	}}}
 }
 
 const (
@@ -238,7 +255,7 @@ func TestResolveAndBuildGomod(t *testing.T) {
 	if len(res.Updates) != 1 || res.Updates[0].NewVersion != "v1.1.0" || res.Updates[0].Type != dep.Minor {
 		t.Fatalf("updates = %+v", res.Updates)
 	}
-	changes, errs := Build(t.Context(), root, managers, res.Updates, fakeTidy{})
+	changes, errs := Build(t.Context(), root, managers, res.Updates, tidyFunc(fakeTidy).post())
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
@@ -413,7 +430,7 @@ func TestBuildErrorsDropFile(t *testing.T) {
 		}
 		return mod, append(append([]byte(nil), sum...), "new\n"...), nil
 	})
-	changes, errs := Build(t.Context(), root, managers, []dep.Update{good, failing, sumDir, mismatch, missing}, tidy)
+	changes, errs := Build(t.Context(), root, managers, []dep.Update{good, failing, sumDir, mismatch, missing}, tidy.post())
 
 	if len(errs) != 4 {
 		t.Fatalf("errs = %v, want 4", errs)
@@ -442,14 +459,14 @@ func TestBuildErrorsDropFile(t *testing.T) {
 	}
 }
 
-func TestBuildCanceledWhileWaitingForTidy(t *testing.T) {
-	// Occupy every tidy slot so the only way out is cancellation.
-	for range cap(tidySem) {
-		tidySem <- struct{}{}
+func TestBuildCanceledWhileWaitingForPostProcessor(t *testing.T) {
+	// Occupy every post-processor slot so the only way out is cancellation.
+	for range cap(postSem) {
+		postSem <- struct{}{}
 	}
 	t.Cleanup(func() {
-		for range cap(tidySem) {
-			<-tidySem
+		for range cap(postSem) {
+			<-postSem
 		}
 	})
 	root := t.TempDir()
@@ -460,7 +477,7 @@ func TestBuildCanceledWhileWaitingForTidy(t *testing.T) {
 	changes, errs := Build(ctx, root, managers, []dep.Update{up}, tidyFunc(func(context.Context, string, []byte, []byte) ([]byte, []byte, error) {
 		called = true
 		return nil, nil, nil
-	}))
+	}).post())
 	if len(errs) != 1 || !errors.Is(errs[0], context.Canceled) || !strings.HasPrefix(errs[0].Error(), "go.mod: ") {
 		t.Fatalf("errs = %v, want go.mod: context canceled", errs)
 	}
@@ -484,5 +501,76 @@ func TestBuildUnreadableFile(t *testing.T) {
 	}
 	if changes != nil {
 		t.Errorf("changes = %+v", changes)
+	}
+}
+
+func TestResolveAndBuildNpm(t *testing.T) {
+	pkg := `{
+  "dependencies": {"a": "^1.0.0", "local": "file:../x"},
+  "devDependencies": {"@s/b": "~2.0.0"},
+  "peerDependencies": {"a": ">=1.0.0"},
+  "packageManager": "npm@12.1.0"
+}
+`
+	root, cfg := setup(t, "", map[string]string{
+		"web/package.json":                pkg,
+		"web/package-lock.json":           "old lock\n",
+		"web/.npmrc":                      "registry=x\n",
+		"web/node_modules/z/package.json": `{"dependencies": {"a": "1.0.0"}}`,
+	})
+	o := Options{Managers: []manager.Manager{npm.New()}, Datasources: map[string]Datasource{"npm": fakeGo{
+		"a":    {"1.0.0", "1.1.0", "2.0.0-rc.1"},
+		"@s/b": {"2.0.0", "2.0.1", "3.0.0"},
+		"npm":  {"12.1.0", "12.2.0"},
+	}}}
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil || len(res.Errors) > 0 {
+		t.Fatal(err, res.Errors)
+	}
+	var got []string
+	for _, u := range res.Updates {
+		got = append(got, fmt.Sprintf("%s:%d %s %s->%s %s", u.Dep.File, u.Dep.Line, u.Dep.Name, u.Dep.Version, u.NewVersion, u.Type))
+	}
+	want := []string{
+		"web/package.json:2 a 1.0.0->1.1.0 minor",
+		"web/package.json:3 @s/b 2.0.0->3.0.0 major",
+		"web/package.json:5 npm 12.1.0->12.2.0 minor",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("updates =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	var skips []string
+	for _, d := range res.Skipped {
+		skips = append(skips, d.Name+": "+d.Skip)
+	}
+	if len(skips) != 2 || skips[0] != "local: local dependency" || !strings.HasPrefix(skips[1], "a: ignored by default (peerDependencies;") {
+		t.Errorf("skipped = %q", skips)
+	}
+
+	var seen map[string][]byte
+	post := map[string]PostProcessor{"npm": postFunc{[]string{"package-lock.json", ".npmrc"}, func(_ context.Context, dir string, manifest []byte, files map[string][]byte) (map[string][]byte, error) {
+		if dir != filepath.Join(root, "web") {
+			t.Errorf("dir = %s", dir)
+		}
+		seen = files
+		return map[string][]byte{"package-lock.json": append([]byte("lock for "), manifest[:20]...), ".npmrc": files[".npmrc"]}, nil
+	}}}
+	changes, errs := Build(t.Context(), root, o.Managers, res.Updates, post)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if string(seen["package-lock.json"]) != "old lock\n" || string(seen[".npmrc"]) != "registry=x\n" {
+		t.Errorf("post-processor files = %q", seen)
+	}
+	wantPkg := strings.NewReplacer(`"^1.0.0"`, `"^1.1.0"`, `"~2.0.0"`, `"~3.0.0"`, "npm@12.1.0", "npm@12.2.0").Replace(pkg)
+	if len(changes) != 2 || changes[0].Path != "web/package-lock.json" || changes[1].Path != "web/package.json" ||
+		string(changes[1].New) != wantPkg || string(changes[0].Old) != "old lock\n" || !strings.HasPrefix(string(changes[0].New), "lock for {") {
+		t.Fatalf("changes = %+v", changes)
+	}
+
+	// plan: no post-processing, only package.json.
+	changes, errs = Build(t.Context(), root, o.Managers, res.Updates, nil)
+	if len(errs) > 0 || len(changes) != 1 || string(changes[0].New) != wantPkg {
+		t.Errorf("plan changes = %+v, %v", changes, errs)
 	}
 }

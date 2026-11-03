@@ -101,7 +101,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		MaxNewPRs:   r.maxNewPRs,
 		Managers:    s.managers,
 	}
-	actions, botErrs := bot.Run(ctx, bo, s.root, res, goTidier{}, platform.NewClient(info, token, client), repo)
+	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(), platform.NewClient(info, token, client), repo)
 
 	var created, updated, closed, upToDate, skipped, would int
 	for _, a := range actions {

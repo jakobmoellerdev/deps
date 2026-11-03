@@ -63,9 +63,10 @@ const branchPrefix = "deps/"
 
 var fingerprintRe = regexp.MustCompile(`<!-- deps:fingerprint=([0-9a-f]+) -->`)
 
-// Run creates, updates and closes dependency PRs for res. Obsolete PRs are only closed when
-// neither the engine nor the bot reported an error, so a transient failure never closes PRs.
-func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy engine.Tidier, pc platform.Client, g Git) ([]Action, []error) {
+// Run creates, updates and closes dependency PRs for res; post regenerates lockfiles per
+// manager (engine.Build). Obsolete PRs are only closed when neither the engine nor the bot
+// reported an error, so a transient failure never closes PRs.
+func Run(ctx context.Context, o Options, root string, res *engine.Result, post map[string]engine.PostProcessor, pc platform.Client, g Git) ([]Action, []error) {
 	base := o.Base
 	if base == "" {
 		b, err := pc.DefaultBranch(ctx)
@@ -118,7 +119,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, tidy e
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			changes, errs := engine.Build(ctx, root, o.Managers, groups[i].Updates, tidy)
+			changes, errs := engine.Build(ctx, root, o.Managers, groups[i].Updates, post)
 			built[i], buildErrs[i] = changes, errors.Join(errs...)
 		})
 	}

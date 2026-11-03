@@ -23,16 +23,19 @@ type Policy struct {
 	Rules        []int         // indices of the matching rules, in order
 }
 
+// defaultIgnored are the dep types ignored unless a rule sets `ignore: false`.
+var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true}
+
 // Policy evaluates rules top-to-bottom; each set field of a matching rule
-// overwrites the policy (Updates is replaced, not merged). Indirect Go requirements
-// and go directives are ignored unless a rule sets `ignore: false`.
+// overwrites the policy (Updates is replaced, not merged). Indirect Go requirements,
+// go directives and npm peerDependencies are ignored unless a rule sets `ignore: false`.
 func (c *Config) Policy(d dep.Dep) Policy {
 	p := Policy{
 		Pin:      c.Pin,
 		Updates:  make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
 		Schedule: c.schedule,
 	}
-	if d.DepType == "indirect" || d.DepType == "go" {
+	if defaultIgnored[d.DepType] {
 		p.Ignore = true
 		p.IgnoreReason = "ignored by default (" + d.DepType + "; enable with a rule setting ignore: false)"
 	}

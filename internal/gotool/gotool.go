@@ -95,6 +95,23 @@ func Tidy(ctx context.Context, dir string, mod, sum []byte) (newMod, newSum []by
 	return newMod, newSum, nil
 }
 
+// Tidier is the gomod post-processor (engine.PostProcessor): Tidy on copies of go.mod and
+// go.sum.
+type Tidier struct{}
+
+// Siblings lists go.sum.
+func (Tidier) Siblings() []string { return []string{"go.sum"} }
+
+// Process tidies the patched go.mod and returns the tidied go.mod and go.sum (nil when tidy
+// wrote none).
+func (Tidier) Process(ctx context.Context, dir string, mod []byte, files map[string][]byte) (map[string][]byte, error) {
+	newMod, newSum, err := Tidy(ctx, dir, mod, files["go.sum"])
+	if err != nil {
+		return nil, err
+	}
+	return map[string][]byte{"go.mod": newMod, "go.sum": newSum}, nil
+}
+
 // cmdError is a failed go command with the tail of its stderr.
 type cmdError struct {
 	args   string

@@ -11,6 +11,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
@@ -38,11 +39,11 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	if err != nil {
 		return err
 	}
-	var tidy engine.Tidier
+	var post map[string]engine.PostProcessor
 	if write {
-		tidy = goTidier{}
+		post = postProcessors()
 	}
-	changes, buildErrs := engine.Build(ctx, s.root, s.managers, res.Updates, tidy)
+	changes, buildErrs := engine.Build(ctx, s.root, s.managers, res.Updates, post)
 	if write {
 		for _, c := range changes {
 			if err := os.WriteFile(s.abs(c.Path), c.New, c.Mode); err != nil {
@@ -59,8 +60,11 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	}
 	errs := append(append([]error(nil), res.Errors...), buildErrs...)
 	report(stderr, o.verbose, res, errs)
-	if !write && hasGomod(res) {
+	if !write && hasManager(res, gomod.Name) {
 		fmt.Fprintln(stderr, "note    go.sum changes are computed by apply/run")
+	}
+	if !write && hasManager(res, npm.Name) {
+		fmt.Fprintln(stderr, "note    package-lock.json changes are computed by apply/run")
 	}
 	files := map[string]bool{}
 	for _, u := range res.Updates {
@@ -98,9 +102,9 @@ func report(w io.Writer, verbose bool, res *engine.Result, errs []error) {
 	}
 }
 
-func hasGomod(res *engine.Result) bool {
+func hasManager(res *engine.Result, name string) bool {
 	for _, u := range res.Updates {
-		if u.Dep.Manager == gomod.Name {
+		if u.Dep.Manager == name {
 			return true
 		}
 	}

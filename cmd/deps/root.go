@@ -17,6 +17,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
+	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
@@ -35,7 +36,7 @@ func newRoot() *cobra.Command {
 	o := &rootOpts{}
 	root := &cobra.Command{
 		Use:           "deps",
-		Short:         "Update GitHub/Gitea/Forgejo Actions and Go module dependencies",
+		Short:         "Update GitHub/Gitea/Forgejo Actions, Go module, container image and npm dependencies",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
@@ -120,6 +121,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 			gotoolchain.Name:    gotoolchain.New(client, sem),
 			"docker":            dockerds.New(client, sem),
 			githubreleases.Name: githubreleases.New(client, auth, sem),
+			npmds.Name:          npmds.New(client, sem, os.Getenv),
 		},
 		security: security,
 		env:      manager.Env{DefaultHost: host},

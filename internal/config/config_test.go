@@ -68,7 +68,7 @@ func TestLoadErrors(t *testing.T) {
 		{"pinn: digest\n", "line 1"},
 		{"version: 2\n", "version: must be 1"},
 		{"pin: always\n", "pin: must be keep or digest"},
-		{"rules: [{manager: npm}]\n", "rules[0].manager"},
+		{"rules: [{manager: pip}]\n", "rules[0].manager"},
 		{"rules: [{names: ['[']}]\n", "rules[0].names[0]"},
 		{"rules: [{pin: x}]\n", "rules[0].pin"},
 		{"rules: [{allow: '>>1'}]\n", "rules[0].allow"},
@@ -190,7 +190,7 @@ custom:
 
 func TestDefaultIgnore(t *testing.T) {
 	c := Default()
-	for typ, want := range map[string]bool{"indirect": true, "go": true, "direct": false, "toolchain": false, "": false} {
+	for typ, want := range map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "direct": false, "toolchain": false, "dependencies": false, "packageManager": false, "": false} {
 		if got := c.Policy(dep.Dep{Manager: "gomod", DepType: typ}).Ignore; got != want {
 			t.Errorf("depType %q: Ignore = %v, want %v", typ, got, want)
 		}

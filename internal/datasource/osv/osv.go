@@ -16,6 +16,8 @@
 //     when every possible release of the line is. Fixed versions are rendered in the dep's
 //     style: its "v" prefix and its part count (padded with 0 or truncated, e.g. "41" →
 //     "v41.0.0" for "v35.0.0", "46.0.1" → "v46" for "v35").
+//   - npm deps are queried as ecosystem "npm" with the package name and the bare version;
+//     OSV matches server-side. Fixed versions are bare semver ("4.17.21").
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -50,6 +52,7 @@ const (
 
 	ecoGo      = "Go"
 	ecoActions = "GitHub Actions"
+	ecoNpm     = "npm"
 )
 
 // Source queries OSV. Advisory documents are fetched once per ID per run.
@@ -148,6 +151,11 @@ func targetOf(d dep.Dep) *target {
 			return nil
 		}
 		return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoGo}, Version: d.Version}}
+	case "npm":
+		if d.Name == "" || d.Version == "" {
+			return nil
+		}
+		return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoNpm}, Version: d.Version}}
 	case "github-actions":
 		u, err := url.Parse(d.Source)
 		if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
@@ -399,7 +407,7 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 		}
 	}
 	native := "GO-"
-	if t.q.Package.Ecosystem == ecoActions {
+	if t.q.Package.Ecosystem != ecoGo {
 		native = "GHSA-"
 	}
 	slices.SortFunc(cands, func(a, b *vuln) int {
@@ -419,12 +427,15 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 		}
 		entries := v.entries(t.q.Package)
 		var fixed []string
-		if t.q.Package.Ecosystem == ecoActions {
+		switch t.q.Package.Ecosystem {
+		case ecoActions:
 			if !t.affectedBy(entries) {
 				continue
 			}
 			fixed = t.actionsFixed(entries)
-		} else {
+		case ecoNpm:
+			fixed = npmFixed(entries)
+		default:
 			fixed = goFixed(entries)
 		}
 		seen[v.ID] = true
@@ -493,6 +504,16 @@ func goFixed(entries []affected) []string {
 	var out []string
 	fixedEvents(entries, func(f string) {
 		if f = "v" + strings.TrimPrefix(f, "v"); !slices.Contains(out, f) {
+			out = append(out, f)
+		}
+	})
+	return out
+}
+
+func npmFixed(entries []affected) []string {
+	var out []string
+	fixedEvents(entries, func(f string) {
+		if f = strings.TrimPrefix(f, "v"); !slices.Contains(out, f) {
 			out = append(out, f)
 		}
 	})

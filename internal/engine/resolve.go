@@ -29,11 +29,6 @@ type (
 	Vuln           = datasource.Vuln
 )
 
-// Tidier runs `go mod tidy` on a copy of go.mod/go.sum.
-type Tidier interface {
-	Tidy(ctx context.Context, dir string, mod, sum []byte) ([]byte, []byte, error)
-}
-
 // Options configures Resolve.
 type Options struct {
 	Managers    []manager.Manager

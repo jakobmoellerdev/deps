@@ -44,10 +44,14 @@ func TestTidyOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mod, sum, err := Tidy(context.Background(), dir, []byte("module   example.com/x\n\n\n\ngo 1.21\n"), nil)
+	out, err := Tidier{}.Process(context.Background(), dir, []byte("module   example.com/x\n\n\n\ngo 1.21\n"), map[string][]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if names := (Tidier{}).Siblings(); len(names) != 1 || names[0] != "go.sum" {
+		t.Errorf("Siblings = %v", names)
+	}
+	mod, sum := out["go.mod"], out["go.sum"]
 	if !strings.HasPrefix(string(mod), "module example.com/x\n") {
 		t.Errorf("tidied go.mod not reformatted:\n%s", mod)
 	}
@@ -65,7 +69,7 @@ func TestTidyOffline(t *testing.T) {
 		t.Errorf("real go.sum created: %v", err)
 	}
 
-	_, _, err = Tidy(context.Background(), dir, []byte("this is not a go.mod\n"), nil)
+	_, err = Tidier{}.Process(context.Background(), dir, []byte("this is not a go.mod\n"), nil)
 	if err == nil || !strings.HasPrefix(err.Error(), "go mod tidy in "+dir+": ") {
 		t.Fatalf("err = %v, want go mod tidy in %s: ...", err, dir)
 	}

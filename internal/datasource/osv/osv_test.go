@@ -435,3 +435,31 @@ func TestAdvisorySummaryTruncated(t *testing.T) {
 		t.Errorf("advisory = %+v", a)
 	}
 }
+
+func TestAdvisoriesNpm(t *testing.T) {
+	f := newFake(t)
+	f.results["npm|lodash|4.17.20|"] = result{ids: []string{"GHSA-35jh-r3h4-6jhm", "CVE-ALIAS"}}
+	f.vulns["GHSA-35jh-r3h4-6jhm"] = `{"id":"GHSA-35jh-r3h4-6jhm","summary":"Command injection","aliases":["CVE-ALIAS"],
+		"affected":[{"package":{"name":"lodash","ecosystem":"npm"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"4.17.21"}]}]},
+		            {"package":{"name":"lodash-es","ecosystem":"npm"},"ranges":[{"type":"SEMVER","events":[{"fixed":"9.9.9"}]}]}]}`
+	f.vulns["CVE-ALIAS"] = `{"id":"CVE-ALIAS","affected":[{"package":{"name":"lodash","ecosystem":"npm"},"ranges":[{"type":"ECOSYSTEM","events":[{"fixed":"v4.17.21"}]}]}]}`
+	s := f.start(nil)
+	deps := []dep.Dep{
+		{Manager: "npm", DepType: "dependencies", Name: "lodash", Version: "4.17.20"},
+		{Manager: "npm", DepType: "dependencies", Name: "unversioned"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]datasource.Vuln{
+		{{Advisory: dep.Advisory{ID: "GHSA-35jh-r3h4-6jhm", Summary: "Command injection", URL: "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm"}, Fixed: []string{"4.17.21"}}},
+		nil,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if len(f.batches) != 1 || len(f.batches[0]) != 1 || f.batches[0][0].Package.Ecosystem != "npm" {
+		t.Errorf("batches = %+v", f.batches)
+	}
+}
