@@ -437,7 +437,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 2. `DEPS_DEFAULT_ACTIONS_URL` (source `env`).
 3. Platform default (source `platform default`): forgejo → `data.forgejo.org`; github, gitea or unknown → `github.com`.
 
-The composite action passes `${{ gitea.gitea_default_actions_url }}` into `DEPS_DEFAULT_ACTIONS_URL`. Gitea puts `gitea_default_actions_url` into the task context, but the Gitea 28 runner does not expose it to expressions (neither via `github.` nor `gitea.`; observed empty on git.jakob-moeller.cloud), so in practice the platform default applies. Instances with a non-default `DEFAULT_ACTIONS_URL` set `actions.defaultHost` in `.deps.yaml`.
+`DEPS_DEFAULT_ACTIONS_URL` is not set by the composite action (it uses no `gitea.` expressions, so it runs unchanged on GitHub). Gitea's `gitea_default_actions_url` is not exposed to expressions by the Gitea 28 runner anyway, so the platform default applies. Instances with a non-default `DEFAULT_ACTIONS_URL` set `actions.defaultHost` in `.deps.yaml`.
 
 ### Endpoints
 
@@ -582,26 +582,23 @@ A group automerges when every update in it has `Automerge` from the policy of it
 
 ### Composite action (`action.yml`)
 
-The action builds the binary from the action's own checkout, so no release artifacts are needed.
+The action downloads a released static binary instead of building from source, so runners need no Go to run it:
 
-```yaml
-name: deps
-description: Update dependencies and open one pull request per dependency
-inputs:
-  token: {description: "Token with contents:write and pull-requests:write", default: "${{ github.token }}"}
-  args: {description: "Arguments for deps", default: "run"}
-runs:
-  using: composite
-  steps:
-    - shell: bash
-      working-directory: ${{ github.action_path }}
-      run: go build -trimpath -o "$RUNNER_TEMP/deps" ./cmd/deps
-    - shell: bash
-      env:
-        DEPS_TOKEN: ${{ inputs.token }}
-        DEPS_DEFAULT_ACTIONS_URL: ${{ gitea.gitea_default_actions_url }}
-      run: '"$RUNNER_TEMP/deps" ${{ inputs.args }}'
-```
+1. Map `uname -s`/`uname -m` to `linux/amd64` or `linux/arm64`; anything else fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`.
+2. Version: the `version` input, else `github.action_ref` when it is a release tag (`vX.Y.Z…`), else the latest release of `repository` (Gitea/Forgejo: `<host>/api/v1/repos/<repo>/releases/latest`; `https://github.com/...`: `api.github.com/repos/<repo>/releases/latest`).
+3. Download `deps_linux_<arch>` and `checksums.txt` from `<repository>/releases/download/<version>/`, verify with `sha256sum -c`, install to `$RUNNER_TEMP/deps`, print `deps version`.
+4. Run `"$RUNNER_TEMP/deps" <args>` with `DEPS_TOKEN` from the `token` input.
+
+| Input | Default |
+|---|---|
+| `token` | `${{ github.token }}` (the job token on GitHub, Gitea and Forgejo) |
+| `args` | `run` |
+| `version` | action ref if it is a release tag, else latest release |
+| `repository` | `https://git.jakob-moeller.cloud/jakobmoellerdev/deps` (GitHub repository URLs supported) |
+
+The action uses only `github.*` expressions, so it runs unchanged on GitHub Actions and Gitea/Forgejo with default settings.
+
+Releases: a `v*` tag runs the `release` job of `.gitea/workflows/ci.yml` after `test` (`task ci` runs once). `task release:build` builds `deps_linux_amd64` and `deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w -buildid= -X main.version=<tag>"`, plus `checksums.txt`; the job checks the binaries are static and publishes them with `gt release create`. Details: [ci.md](ci.md#releases-maintainers).
 
 ### Gitea / Forgejo workflow
 
@@ -615,8 +612,8 @@ jobs:
   deps:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@main   # or ./ inside this repo
+      - uses: actions/checkout@v7.0.1
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0   # or ./ inside this repo
 ```
 
 If the job token cannot push or open PRs, or cannot read private action repos, store a PAT as a secret. Pass it to both `actions/checkout` (`token:`) and the action (`token:`).
@@ -625,7 +622,7 @@ Lockfile regeneration needs the package manager: the binary on `PATH`, else `npx
 
 ### GitHub workflow
 
-GitHub workflows cannot `uses:` an action hosted on Gitea, so the binary is run with `go run`:
+GitHub workflows cannot `uses:` an action hosted on Gitea. Either mirror the repository to GitHub and use `uses: <owner>/deps@v0.1.0` (the defaults keep downloading from the Gitea releases), or download the binary directly (no Go needed):
 
 ```yaml
 on:
@@ -636,12 +633,14 @@ jobs:
   deps:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.1
         with:
           token: ${{ secrets.DEPS_TOKEN }}
-      - uses: actions/setup-go@v6
-        with: {go-version: stable}
-      - run: go run git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@main run
+      - run: |
+          base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.1.0
+          cd "$RUNNER_TEMP" && curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
+          grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 deps
+      - run: '"$RUNNER_TEMP/deps" run'
         env:
           DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
 ```
@@ -680,7 +679,7 @@ Editor support: `deps schema > deps.schema.json`, then start `.deps.yaml` with `
 Open items from [renovate-parity.md](renovate-parity.md) and the performance plan:
 
 - PR body badges: Mend adoption/passing/confidence (L5; external badge URLs or drop) and the OpenSSF scorecard (L6);
-- GitHub hosting (O1): release binaries and a GitHub-hosted action, so GitHub workflows need no `go run`;
+- GitHub hosting (O1), partially done: static linux/amd64 and linux/arm64 binaries are released (from v0.1.0) and the action downloads them; remaining: a GitHub mirror so GitHub workflows can `uses:` the action;
 - the final OCM translation (O4): `examples-ocm.deps.yaml` plus the remaining groups listed in [migrating-from-renovate.md](migrating-from-renovate.md#worked-example-open-component-model);
 - `actions.lock` via `github.com/github/actions-lockfile/go`;
 - a benchmark gate: `BenchmarkResolve` in CI with a regression threshold (the benchmark exists; CI does not run it yet);

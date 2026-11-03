@@ -11,7 +11,7 @@ deps [command] [flags]
 | `deps run` | push one branch and open or update one PR per dependency or group |
 | `deps explain <name-glob>...` | explain the rules, candidates and decision for matching deps |
 | `deps schema` | print the JSON Schema (draft 2020-12) of `.deps.yaml` |
-| `deps version` | print the version (set with `-ldflags "-X main.version=…"`, default `dev`) |
+| `deps version` | print the version (set with `-ldflags "-X main.version=…"`, default `dev`; release binaries print their tag, e.g. `v0.1.0`, and the action prints it after download) |
 | `deps completion <shell>` | shell completion script (cobra) |
 
 ## Global flags

@@ -19,26 +19,32 @@ Dependency update automation in one Go binary: a Renovate replacement with a sma
 
 ## Install
 
+Download a static binary (linux/amd64, linux/arm64) from the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) and verify it against `checksums.txt`:
+
+```sh
+base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.1.0
+curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
+grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 ~/.local/bin/deps
+```
+
+`go install` still works:
+
 ```sh
 go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest
 ```
 
-or from a clone:
+or from a clone, `task build` builds a static `bin/deps` (`CGO_ENABLED=0`, `-trimpath`).
 
-```sh
-go build -o bin/deps ./cmd/deps
-```
-
-In Gitea/Forgejo Actions, use the composite action, which builds the binary from source:
+In GitHub, Gitea or Forgejo Actions, use the composite action. It downloads the released binary for the runner and verifies its checksum, so the runner needs no Go (only for `go mod tidy` on go.mod updates):
 
 ```yaml
 permissions: {contents: write, pull-requests: write}
 steps:
   - uses: actions/checkout@v7.0.1
-  - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@main
+  - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
 ```
 
-For GitHub workflows, tokens and runner tools, see [docs/ci.md](docs/ci.md).
+GitHub workflows cannot `uses:` a Gitea-hosted action; [docs/ci.md](docs/ci.md#github) shows a mirror and a plain download step, plus tokens, runner tools and the release process.
 
 ## Quickstart
 

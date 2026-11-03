@@ -2,16 +2,22 @@
 
 deps behaves the same locally and in CI. In CI it detects the platform from the runner environment and uses the job token, unless you pass another.
 
-## Gitea / Forgejo: composite action
+## Composite action
 
-The repository root has a composite `action.yml`. It builds the binary from the action's own checkout, so no release artifacts are needed, and then runs it:
+The repository root has a composite `action.yml`. It downloads a released static binary for the runner, verifies it against the release's `checksums.txt` with `sha256sum`, prints `deps version`, and runs it. Go is not needed to run the action. The same `action.yml` works unchanged on GitHub Actions and on Gitea/Forgejo Actions with default settings.
 
 | Input | Default | Meaning |
 |---|---|---|
-| `token` | `${{ github.token }}` | exported as `DEPS_TOKEN`; needs contents:write and pull-requests:write |
+| `token` | `${{ github.token }}` (the job token on GitHub, Gitea and Forgejo) | exported as `DEPS_TOKEN`; needs contents:write and pull-requests:write (issues:write for the dashboard) |
 | `args` | `run` | arguments for `deps` |
+| `version` | the action's ref if it is a release tag (`@v0.1.0`), else the latest release | release tag to download, e.g. `v0.1.0` |
+| `repository` | `https://git.jakob-moeller.cloud/jakobmoellerdev/deps` | where releases are downloaded from: a Gitea/Forgejo repository URL (latest via `<host>/api/v1/repos/<repo>/releases/latest`) or a `https://github.com/<owner>/<repo>` URL (latest via `api.github.com`) |
 
-The action also sets `DEPS_DEFAULT_ACTIONS_URL` from `${{ gitea.gitea_default_actions_url }}`. The Gitea 28 runner leaves that expression empty in practice, so the platform default applies (`github.com`, or `data.forgejo.org` on Forgejo). Instances with a non-default `DEFAULT_ACTIONS_URL` should set [`actions.defaultHost`](configuration.md#actionsdefaulthost).
+Only linux/amd64 and linux/arm64 runners are supported; on any other OS or architecture the download step fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`. Pin a release tag (`@v0.1.0`) so runs are reproducible; `@main` downloads the latest release.
+
+The default host for short `owner/repo@ref` actions is the platform default (`github.com`, or `data.forgejo.org` on Forgejo). Instances with a non-default `DEFAULT_ACTIONS_URL` should set [`actions.defaultHost`](configuration.md#actionsdefaulthost) or `DEPS_DEFAULT_ACTIONS_URL`.
+
+## Gitea / Forgejo
 
 ```yaml
 # .gitea/workflows/deps.yml (or .forgejo/workflows/deps.yml)
@@ -27,25 +33,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@main
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
         with:
           args: run -v --log-level info
 ```
 
-Use the full URL in `uses:`. A short `jakobmoellerdev/deps@main` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. Inside this repository, the dogfood workflow uses `uses: ./`.
+Use the full URL in `uses:`. A short `jakobmoellerdev/deps@v0.1.0` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. Inside this repository, the dogfood workflow uses `uses: ./`.
 
 If the job token cannot push, open PRs, or read private action/module repositories (`GITEA_TOKEN` cannot read other private repos by default), store a personal access token as a secret and pass it to both steps:
 
 ```yaml
       - uses: actions/checkout@v7.0.1
         with: {token: "${{ secrets.DEPS_TOKEN }}"}
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@main
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
         with: {token: "${{ secrets.DEPS_TOKEN }}"}
 ```
 
 ## GitHub
 
-A GitHub workflow cannot `uses:` an action hosted on Gitea, so it runs deps with `go run`:
+A GitHub workflow cannot `uses:` an action hosted on Gitea. There are two options.
+
+**(a) Mirror the repository to GitHub** and use the action from the mirror. The defaults still download the binary from the Gitea releases; the `@v0.1.0` ref selects that release. Set `repository: https://github.com/<owner>/deps` only if the mirror also publishes the release assets.
 
 ```yaml
 name: deps
@@ -64,15 +72,27 @@ jobs:
         with:
           app-id: ${{ vars.DEPS_APP_ID }}
           private-key: ${{ secrets.DEPS_APP_KEY }}
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.1
         with:
           token: ${{ steps.app.outputs.token }}
-      - uses: actions/setup-go@v6
-        with: {go-version: stable}
-      - run: go run git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@main run
+      - uses: <owner>/deps@v0.1.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+```
+
+**(b) Without a mirror**, download and verify the binary in a `run` step instead of the action step:
+
+```yaml
+      - run: |
+          base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.1.0
+          cd "$RUNNER_TEMP" && curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
+          grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 deps
+      - run: '"$RUNNER_TEMP/deps" run'
         env:
           DEPS_TOKEN: ${{ steps.app.outputs.token }}
 ```
+
+Use `deps_linux_arm64` on arm64 runners.
 
 **Token caveat.** PRs and pushes made with `GITHUB_TOKEN` do not trigger workflows (`pull_request`, `push`), so CI never runs on bot PRs. Use a GitHub App installation token (as above) or a PAT. Pass it as `DEPS_TOKEN` (or `--token`) **and** as `actions/checkout`'s `token:`. deps pushes with the checkout's git credentials, so the branches it pushes then trigger CI.
 
@@ -95,7 +115,7 @@ jobs:
 | Tool | Needed for |
 |---|---|
 | `git` | always for `run`: remote URL, `ls-remote`, commits via plumbing, push; the checkout's credentials are used |
-| `go` | building the action or `go run`; `go mod tidy` for go.mod changes; `go env` (falls back to the environment without it); `go list` for GOPRIVATE/direct modules |
+| `go` | not needed to run deps; only for `go mod tidy` on go.mod updates, `go env` (falls back to the environment without it); `go list` for GOPRIVATE/direct modules |
 | `npm`, `pnpm`, `yarn` | regenerating lockfiles. If the tool is not on `PATH`, deps runs it via `npx --yes <tool>[@<packageManager version>]`, so having `npm`/`npx` (e.g. from `actions/setup-node`) is enough. With none of them, the lockfile's manifests fail with `<tool> not found (needed to update <lock>)`. |
 | Docker credentials | private registries: `~/.docker/config.json` or credential helpers (e.g. after `docker login`) |
 
@@ -130,3 +150,19 @@ jobs:
    - `DEPS_GITHUB_COM_TOKEN` is used for github.com when the platform is elsewhere, e.g. for actions and GitHub releases looked up from a Gitea job.
    - On a 401 without a static token, deps runs `git credential fill` once per host and retries.
 3. **npm:** `.npmrc` `_authToken` entries. **docker:** the Docker credential chain.
+
+## Releases (maintainers)
+
+Pushing a `v*` tag runs `.gitea/workflows/ci.yml`: the `test` job runs `task ci` once (Go from `actions/setup-go@v7.0.0` with `go-version-file: go.mod`, i.e. `toolchain go1.27.3`, and `cache: true`), then the `release` job (`needs: test`, `contents: write`):
+
+1. `task release:build VERSION=<tag>` builds `dist/deps_linux_amd64` and `dist/deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath` and `-ldflags "-s -w -buildid= -X main.version=<tag>"`, and writes `dist/checksums.txt` (`sha256sum`).
+2. Each binary is checked to be static (no `Requesting program interpreter` in `readelf -l`), because the action runs it on arbitrary runner images.
+3. `gt release create <tag> --verify-tag` (the Gitea CLI on the runner, authenticated with `GITEA_TOKEN` = the job token) publishes the release with the three assets.
+
+To release:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The first release is [v0.1.0](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/tag/v0.1.0). Workflows that use the action at `@main` or without a release ref pick up a new release automatically; workflows pinned to `@vX.Y.Z` get it when deps (or Renovate) bumps their `uses:` ref.

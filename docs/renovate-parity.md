@@ -65,7 +65,7 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 
 | ID | Renovate feature | Used by OCM for | deps today | Status |
 |---|---|---|---|---|
-| O1 | runs on GitHub with an App token (`renovate.yml`, environment `automation`) | workflow | GitHub client and token input exist; the action is only consumable from Gitea | open (release binaries + GitHub-hosted action) |
+| O1 | runs on GitHub with an App token (`renovate.yml`, environment `automation`) | workflow | GitHub client and token input exist; static linux/amd64 and linux/arm64 binaries are released (from v0.1.0) and the action downloads them, so it runs unchanged on GitHub; GitHub workflows still cannot `uses:` it from Gitea, so they mirror the repo or download the binary in a `run` step ([ci.md](ci.md#github)) | partial (remaining: a GitHub mirror) |
 | O2 | `hostRules` timeout/abortOnError for registry.npmjs.org | global | retries + rate-limit handling | done |
 | O3 | repository cache | workflow | no cache by design (in-run dedupe) | n/a |
 | O4 | config translation `renovate.json5` -> `.deps.yaml` for OCM | — | `docs/examples-ocm.deps.yaml` covers the parity rules; `docs/migrating-from-renovate.md` lists the remaining groups (Kubernetes, Docker, golang.org/x, google.golang.org, spf13) | open (merge into one final config) |
