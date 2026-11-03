@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -45,14 +47,19 @@ type Options struct {
 
 // Trace explains the decision for one dep.
 type Trace struct {
-	Dep          dep.Dep
-	Rules        []int // indices of matching rules of the pre-policy
-	Policy       config.Policy
-	UpdatePolicy *config.Policy      // per-kind policy of Update.Type; nil = no update
-	Candidates   int                 // releases returned by the datasource
-	Rejected     map[string][]string // reason -> versions
-	Update       *dep.Update         // nil = none
-	Err          error
+	Dep        dep.Dep
+	Rules      []int // indices of matching rules of the pre-policy
+	Policy     config.Policy
+	Candidates int                 // releases returned by the datasource
+	Rejected   map[string][]string // reason -> versions
+	Updates    []TraceUpdate       // one per PR bucket, lowest version first; nil = none
+	Err        error
+}
+
+// TraceUpdate is one update of a Trace with the policy of its type.
+type TraceUpdate struct {
+	Update dep.Update
+	Policy *config.Policy // per-kind policy of Update.Type (updateTypes rules included)
 }
 
 // Result is the outcome of Resolve.
@@ -65,12 +72,12 @@ type Result struct {
 // digestManagers support digest pinning (pin: digest, digest refresh).
 var digestManagers = map[string]bool{"github-actions": true, "docker": true}
 
-// digestCapable reports whether d's digest can be refreshed, or pinned when d has none.
-// Custom deps can only refresh a digest they already carry (regex `digest` group or an
-// annotated `@sha256:`); they have no place to insert a new one.
+// digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
+// github-actions and docker deps whatever their versioning (a rule may override it). Custom
+// deps can only refresh a digest they already carry (regex `digest` group or an annotated
+// `@sha256:`); they have no place to insert a new one.
 func digestCapable(d dep.Dep) bool {
-	return digestManagers[d.Manager] && (d.Versioning == "tag" || d.Versioning == "docker") ||
-		d.Manager == "custom" && d.Digest != ""
+	return digestManagers[d.Manager] || d.Manager == "custom" && d.Digest != ""
 }
 
 // tagOnly reports whether d is a docker image whose tag is not a version (latest, bookworm)
@@ -130,32 +137,41 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			if o.Filter != nil && !o.Filter(d) {
 				continue
 			}
+			// The pre-policy comes first: a rule's versioning replaces the dep's scheme before
+			// the current value is validated.
+			var pol *policies
+			if d.Skip == "" {
+				pol = newPolicies(cfg, d, kindRules)
+				if v := pol.pre.Versioning; v != "" {
+					d.Versioning, pol.d.Versioning = v, v
+				}
+			}
 			if s, ok := versioning.Get(d.Versioning); d.Skip == "" && ok && !s.Valid(d.Version) && !tagOnly(d) {
 				d.Skip = "non-version value " + strconv.Quote(d.Version)
 			}
-			if d.Skip != "" {
+			skip := func() {
 				res.Skipped = append(res.Skipped, d)
 				if o.Trace != nil {
-					o.Trace(Trace{Dep: d})
+					t := Trace{Dep: d}
+					if pol != nil {
+						t.Rules, t.Policy = pol.pre.Rules, pol.pre
+					}
+					o.Trace(t)
 				}
+			}
+			if d.Skip != "" {
+				skip()
 				continue
 			}
-			pol := newPolicies(cfg, d, kindRules)
 			if pol.pre.Ignore && !pol.anyKind() {
 				d.Skip = pol.pre.IgnoreReason
-				res.Skipped = append(res.Skipped, d)
-				if o.Trace != nil {
-					o.Trace(Trace{Dep: d, Rules: pol.pre.Rules, Policy: pol.pre})
-				}
+				skip()
 				continue
 			}
 			// A non-version tag without a digest can only be pinned.
 			if d.Digest == "" && pol.pre.Pin != config.PinDigest && tagOnly(d) {
 				d.Skip = "non-version tag"
-				res.Skipped = append(res.Skipped, d)
-				if o.Trace != nil {
-					o.Trace(Trace{Dep: d, Rules: pol.pre.Rules, Policy: pol.pre})
-				}
+				skip()
 				continue
 			}
 			todo = append(todo, d)
@@ -183,21 +199,24 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	}
 	sec := lookupSecurity(ctx, o.Security, secDeps)
 	outs := make([]Trace, len(todo))
+	ups := make([][]dep.Update, len(todo))
 	var wg sync.WaitGroup
 	for i := range todo {
 		wg.Go(func() {
 			d := todo[i]
 			r := resolver{ctx: ctx, root: root, d: d, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now}
-			t := r.run(func() []Vuln { return sec.of(secIdx[i]) })
+			t, u := r.run(func() []Vuln { return sec.of(secIdx[i]) })
 			switch {
 			case t.Err != nil:
 				t.Err = fmt.Errorf("%s:%d: %s: %w", d.File, d.Line, d.Name, t.Err)
-			case t.Update == nil:
+			case u == nil:
 				slog.DebugContext(ctx, "dependency up to date", "file", d.File, "line", d.Line, "name", d.Name, "version", d.Version)
 			default:
-				slog.DebugContext(ctx, "update found", "file", d.File, "line", d.Line, "name", d.Name, "from", d.Version, "to", t.Update.NewVersion, "type", t.Update.Type)
+				for _, up := range u {
+					slog.DebugContext(ctx, "update found", "file", d.File, "line", d.Line, "name", d.Name, "from", d.Version, "to", up.NewVersion, "type", up.Type, "bucket", up.Bucket)
+				}
 			}
-			outs[i] = t
+			outs[i], ups[i] = t, u
 		})
 	}
 	wg.Wait()
@@ -207,12 +226,11 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	if err := sec.wait(); err != nil {
 		res.Errors = append(res.Errors, fmt.Errorf("security advisories: %w", err))
 	}
-	for _, t := range outs {
+	for i, t := range outs {
 		if t.Err != nil {
 			res.Errors = append(res.Errors, t.Err)
-		} else if t.Update != nil {
-			res.Updates = append(res.Updates, *t.Update)
 		}
+		res.Updates = append(res.Updates, ups[i]...)
 		if o.Trace != nil {
 			o.Trace(t)
 		}
@@ -338,18 +356,50 @@ func (p *policies) anyKind() bool {
 
 // check is the acceptance of a candidate of kind to version v under the kind's policy: an
 // ignoring per-kind policy rejects with its ignore reason, otherwise Policy.Check decides.
-// v is converted to a Masterminds version only when an allow constraint needs it: the
-// conversion is regexp-based and candidates number in the hundreds per dependency.
-func (p *policies) check(kind dep.UpdateType, v string, scheme versioning.Scheme) (bool, string) {
+// semverOf (the scheme's Semver) is only called when an allow constraint needs it: the
+// conversion can be regexp-based and candidates number in the hundreds per dependency.
+func (p *policies) check(kind dep.UpdateType, v string, semverOf func(string) *semver.Version) (bool, string) {
 	kp := p.of(kind)
 	if kp.Ignore {
 		return false, kp.IgnoreReason
 	}
-	if kp.Allow == nil {
-		return kp.Check(kind, nil)
-	}
-	return kp.Check(kind, scheme.Semver(v))
+	return kp.Check(kind, v, semverOf)
 }
+
+// bucketKey identifies a PR bucket without allocating: name is "", "major", "minor", "patch"
+// or "v" (one bucket per major, with major set).
+type bucketKey struct{ name, major string }
+
+// label renders the bucket as dep.Update.Bucket.
+func (k bucketKey) label() string {
+	if k.name == "v" {
+		return "v" + k.major
+	}
+	return k.name
+}
+
+// bucket returns the PR bucket of candidate c under the policy of its kind (Renovate's
+// getBucket): without separateMajorMinor every candidate shares one bucket; otherwise majors
+// go to "major" (or "v<N>" per major with separateMultipleMajor) and minors and patches share
+// the non-major bucket "", or get "minor" and "patch" with separateMinorPatch.
+func (p *policies) bucket(c versioning.Candidate) bucketKey {
+	kp := p.of(c.Kind)
+	switch {
+	case !kp.SeparateMajorMinor:
+		return bucketKey{}
+	case c.Kind == dep.Major && kp.SeparateMultipleMajor:
+		return bucketKey{name: "v", major: c.Major}
+	case c.Kind == dep.Major:
+		return bucketKey{name: "major"}
+	case kp.SeparateMinorPatch:
+		return bucketKey{name: string(c.Kind)}
+	}
+	return bucketKey{}
+}
+
+// singleBucket reports whether every candidate lands in the same bucket, so the first
+// accepted candidate is the only update.
+func (p *policies) singleBucket() bool { return !p.kindRules && !p.pre.SeparateMajorMinor }
 
 // allows reports whether updates of kind are enabled (digest refresh and pin, which have
 // no new version for allow).
@@ -373,18 +423,23 @@ type resolver struct {
 	times map[string]time.Time // release times asked so far; zero = unknown
 }
 
-// run resolves in order: datasource → Best under policy → digest pin/refresh → security.
-// vulns blocks until the advisories of this dep are known.
-func (r *resolver) run(vulns func() []Vuln) Trace {
+// run resolves in order: datasource → candidates ranked under policy, one per PR bucket, with
+// the release-time guards → digest pin/refresh → security. vulns blocks until the advisories
+// of this dep are known. Trace.Updates is only filled when tracing.
+func (r *resolver) run(vulns func() []Vuln) (Trace, []dep.Update) {
 	t := Trace{Dep: r.d, Rules: r.pol.pre.Rules, Policy: r.pol.pre}
-	t.Update, t.Err = r.resolve(&t, vulns)
-	if t.Update != nil {
-		t.UpdatePolicy = r.pol.of(t.Update.Type)
+	ups, err := r.resolve(&t, vulns)
+	t.Err = err
+	if r.trace && len(ups) > 0 {
+		t.Updates = make([]TraceUpdate, len(ups))
+		for i, u := range ups {
+			t.Updates[i] = TraceUpdate{Update: u, Policy: r.pol.of(u.Type)}
+		}
 	}
-	return t
+	return t, ups
 }
 
-func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
+func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) {
 	d := r.d
 	scheme, ok := versioning.Get(d.Versioning)
 	if !ok {
@@ -393,31 +448,35 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 	if r.ds == nil {
 		return nil, fmt.Errorf("no datasource %q", d.Datasource)
 	}
-	var up *dep.Update
+	var ups []dep.Update
 	var err error
 	if !scheme.Valid(d.Version) {
 		// Resolve only lets non-version docker tags through (tagOnly): their digest is kept
 		// current; there are no releases to compare and no advisories to look up.
-		if up, err = r.digestUpdate(); err != nil {
-			return nil, err
-		}
-	} else if up, err = r.versionUpdate(t, scheme, vulns); err != nil {
+		ups, err = r.digestUpdate()
+	} else {
+		ups, err = r.versionUpdates(t, scheme, vulns)
+	}
+	if err != nil {
 		return nil, err
 	}
-	if up != nil {
-		// Commit and grouping settings come from the policy of the chosen update type.
+	for i := range ups {
+		// Commit and grouping settings come from the policy of the update's type.
+		up := &ups[i]
 		kp := r.pol.of(up.Type)
 		up.CommitType, up.CommitScope = kp.CommitType, kp.CommitScope
 		if len(up.Advisories) == 0 {
 			up.Group, up.Schedule = kp.Group, kp.Schedule
 		}
 	}
-	return up, nil
+	return ups, nil
 }
 
-// versionUpdate resolves a dep with a valid version: Best under policy, else the digest
-// refresh or pin of the current version, then security, digest and checksum of the result.
-func (r *resolver) versionUpdate(t *Trace, scheme versioning.Scheme, vulns func() []Vuln) (*dep.Update, error) {
+// versionUpdates resolves a dep with a valid version: the best candidate under policy per PR
+// bucket, else the digest refresh or pin of the current version, then security, and the
+// digest and checksum of every resulting version. Updates are ordered by version, lowest
+// first.
+func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func() []Vuln) ([]dep.Update, error) {
 	d := r.d
 	rels, err := r.ds.Releases(r.ctx, d, filepath.Join(r.root, filepath.FromSlash(path.Dir(d.File))))
 	if err != nil {
@@ -434,39 +493,41 @@ func (r *resolver) versionUpdate(t *Trace, scheme versioning.Scheme, vulns func(
 		t.Rejected = map[string][]string{}
 		reject = func(v, reason string) { t.Rejected[reason] = append(t.Rejected[reason], v) }
 	}
-	accept := func(v string, kind dep.UpdateType) (bool, string) { return r.pol.check(kind, v, scheme) }
+	semverOf := scheme.Semver
+	accept := func(v string, kind dep.UpdateType) (bool, string) { return r.pol.check(kind, v, semverOf) }
 
 	digests := digestCapable(d)
 	wantDigest := digests && (d.Digest != "" || r.pol.pre.Pin == config.PinDigest)
 
-	var up *dep.Update
-	if best, ok := r.best(scheme, names, accept, reject); ok {
-		up = &dep.Update{Dep: d, Type: scheme.Kind(d.Version, best), NewVersion: best}
-	} else if digests {
-		if up, err = r.digestUpdate(); err != nil {
+	ups := r.picks(scheme, names, accept, reject)
+	if len(ups) == 0 && digests {
+		if ups, err = r.digestUpdate(); err != nil {
 			return nil, err
 		}
 	}
 
-	up = applySecurity(up, d, scheme, names, vulns())
+	ups = r.applySecurity(ups, scheme, names, vulns())
 
-	if up != nil && up.Type != dep.Digest && up.Type != dep.Pin && wantDigest {
-		if up.NewDigest, err = r.digestOf(up.NewVersion); err != nil {
-			return nil, err
+	for i := range ups {
+		up := &ups[i]
+		if up.Type != dep.Digest && up.Type != dep.Pin && wantDigest {
+			if up.NewDigest, err = r.digestOf(up.NewVersion); err != nil {
+				return nil, err
+			}
+		}
+		if d.ChecksumSource != nil && up.NewVersion != d.Version {
+			if up.NewChecksum, err = r.checksumOf(up.NewVersion); err != nil {
+				return nil, err
+			}
 		}
 	}
-	if up != nil && d.ChecksumSource != nil && up.NewVersion != d.Version {
-		if up.NewChecksum, err = r.checksumOf(up.NewVersion); err != nil {
-			return nil, err
-		}
-	}
-	return up, nil
+	return ups, nil
 }
 
 // digestUpdate keeps the current version and refreshes its digest when pinned (Type digest,
-// nil when unchanged), or pins it under pin: digest (Type pin). It has no new version, so
+// none when unchanged), or pins it under pin: digest (Type pin). It has no new version, so
 // allow and minimumReleaseAge do not apply.
-func (r *resolver) digestUpdate() (*dep.Update, error) {
+func (r *resolver) digestUpdate() ([]dep.Update, error) {
 	d := r.d
 	switch {
 	case d.Digest != "" && r.pol.allows(dep.Digest):
@@ -475,81 +536,138 @@ func (r *resolver) digestUpdate() (*dep.Update, error) {
 			return nil, err
 		}
 		if !strings.EqualFold(c, d.Digest) {
-			return &dep.Update{Dep: d, Type: dep.Digest, NewVersion: d.Version, NewDigest: c}, nil
+			return []dep.Update{{Dep: d, Type: dep.Digest, NewVersion: d.Version, NewDigest: c}}, nil
 		}
 	case d.Digest == "" && r.pol.pre.Pin == config.PinDigest && r.pol.allows(dep.Pin):
 		c, err := r.digestOf(d.Version)
 		if err != nil {
 			return nil, err
 		}
-		return &dep.Update{Dep: d, Type: dep.Pin, NewVersion: d.Version, NewDigest: c}, nil
+		return []dep.Update{{Dep: d, Type: dep.Pin, NewVersion: d.Version, NewDigest: c}}, nil
 	}
 	return nil, nil
 }
 
-// Bounds of best's retries: stale major candidates skipped before giving up, and candidates
-// rejected in total (stale or too new).
+// Bounds of the retries per PR bucket: stale major candidates skipped before giving up, and
+// candidates rejected in total (stale or too new).
 const (
 	maxOlderMajors = 3
 	maxRetries     = 50
 )
 
-// best wraps scheme.Best with two release-time guards, each re-running Best without the
-// rejected candidate (so the next best one is considered):
+// picks ranks the candidates once and chooses at most one per PR bucket (policies.bucket):
+// the best one of the bucket that passes two release-time guards, each falling back to the
+// bucket's next best candidate:
 //   - a major update whose release predates the current version is a legacy tag
 //     (k8s.io/client-go v1.5.2 from 2016 versus v0.37.1), not an upgrade;
 //   - a candidate released less than the minimumReleaseAge of its update type ago is too new.
 //
 // Release times are only asked when a guard applies and the datasource has them, at most
-// once per version; unknown times (zero or an error) never reject.
-func (r *resolver) best(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool) {
+// once per version; unknown times (zero or an error) never reject. The updates are returned
+// lowest version first.
+func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) []dep.Update {
 	cur := r.d.Version
 	timer, _ := r.ds.(datasource.Timer)
-	if timer == nil {
-		return scheme.Best(cur, names, accept, reject) // no guard can apply: one O(n) pass
-	}
-	older, prefetched := 0, false
-	ranked := scheme.Rank(cur, names, accept, reject) // parsed and filtered once
-	for i, best := range ranked {
-		if i == maxRetries {
-			break
+	single := r.pol.singleBucket()
+	if timer == nil && single {
+		// No guard can apply and there is one bucket: one O(n) pass without ranking.
+		best, ok := scheme.Best(cur, names, accept, reject)
+		if !ok {
+			return nil
 		}
-		kind := scheme.Kind(cur, best)
+		return []dep.Update{{Dep: r.d, Type: scheme.Kind(cur, best), NewVersion: best}}
+	}
+	ranked := scheme.Rank(cur, names, accept, reject) // parsed and filtered once
+	type state struct {
+		key              bucketKey
+		tries, older     int
+		prefetched, done bool
+	}
+	states := make([]state, 0, 4) // a handful of buckets: a linear scan beats a map
+	var out []dep.Update
+	for i := range ranked.Len() {
+		c := ranked.At(i)
+		key := r.pol.bucket(c)
+		j := slices.IndexFunc(states, func(s state) bool { return s.key == key })
+		if j < 0 {
+			j = len(states)
+			states = append(states, state{key: key})
+		}
+		st := &states[j]
+		if st.done {
+			continue
+		}
+		if st.tries == maxRetries {
+			st.done = true
+			continue
+		}
+		st.tries++
 		var reason string
-		if kind == dep.Major && r.olderThanCurrent(timer, best) {
-			slog.DebugContext(r.ctx, "major candidate older than current", "name", r.d.Name, "current", cur, "candidate", best)
-			reason = "older than current"
-			older++
-		} else if age := r.pol.of(kind).MinAge; age > 0 {
-			if tb := r.releaseTime(timer, best); tb.IsZero() {
-				slog.DebugContext(r.ctx, "release time unknown, minimum release age not enforced", "name", r.d.Name, "candidate", best)
-			} else if r.now.Sub(tb) < age {
-				slog.DebugContext(r.ctx, "candidate too new", "name", r.d.Name, "candidate", best, "released", tb, "minimumReleaseAge", age)
-				reason = fmt.Sprintf("too new (released %s, minimum %s)", tb.UTC().Format(time.DateOnly), config.FormatAge(age))
-			}
+		if timer != nil {
+			reason = r.guard(timer, c)
 		}
 		if reason == "" {
-			return best, true
+			out = append(out, dep.Update{Dep: r.d, Type: c.Kind, NewVersion: c.Version, Bucket: key.label()})
+			st.done = true
+			if single {
+				break
+			}
+			continue
 		}
 		if reject != nil {
-			reject(best, reason)
+			reject(c.Version, reason)
 		}
-		if older == maxOlderMajors {
-			break
+		if reason == reasonOlder {
+			st.older++
+			if st.older == maxOlderMajors {
+				st.done = true
+				continue
+			}
 		}
-		if !prefetched {
-			// One rejection suggests a frequently released dependency: fetch the next
+		if !st.prefetched {
+			// One rejection suggests a frequently released dependency: fetch the bucket's next
 			// candidates' times concurrently instead of one round trip per candidate.
-			prefetched = true
-			end := min(i+1+prefetchWindow, len(ranked), maxRetries)
-			r.prefetchTimes(timer, ranked[i+1:end])
+			st.prefetched = true
+			limit := min(prefetchWindow, maxRetries-st.tries)
+			next := make([]string, 0, limit)
+			for n := i + 1; n < ranked.Len() && len(next) < limit; n++ {
+				if nc := ranked.At(n); r.pol.bucket(nc) == key {
+					next = append(next, nc.Version)
+				}
+			}
+			r.prefetchTimes(timer, next)
 		}
 	}
-	return "", false
+	slices.Reverse(out)
+	return out
 }
 
-// prefetchWindow is how many release times best fetches concurrently once a candidate was
-// rejected; the shared semaphore still bounds the requests.
+// reasonOlder rejects a major candidate released before the current version.
+const reasonOlder = "older than current"
+
+// guard returns why candidate c fails a release-time guard, or "".
+func (r *resolver) guard(timer datasource.Timer, c versioning.Candidate) string {
+	if c.Kind == dep.Major && r.olderThanCurrent(timer, c.Version) {
+		slog.DebugContext(r.ctx, "major candidate older than current", "name", r.d.Name, "current", r.d.Version, "candidate", c.Version)
+		return reasonOlder
+	}
+	age := r.pol.of(c.Kind).MinAge
+	if age <= 0 {
+		return ""
+	}
+	tb := r.releaseTime(timer, c.Version)
+	switch {
+	case tb.IsZero():
+		slog.DebugContext(r.ctx, "release time unknown, minimum release age not enforced", "name", r.d.Name, "candidate", c.Version)
+	case r.now.Sub(tb) < age:
+		slog.DebugContext(r.ctx, "candidate too new", "name", r.d.Name, "candidate", c.Version, "released", tb, "minimumReleaseAge", age)
+		return fmt.Sprintf("too new (released %s, minimum %s)", tb.UTC().Format(time.DateOnly), config.FormatAge(age))
+	}
+	return ""
+}
+
+// prefetchWindow is how many release times picks fetches concurrently once a candidate of a
+// bucket was rejected; the shared semaphore still bounds the requests.
 const prefetchWindow = 8
 
 // prefetchTimes fills the release-time cache for versions concurrently.
@@ -638,12 +756,15 @@ func (r *resolver) checksumOf(version string) (string, error) {
 	return strings.ToLower(c), nil
 }
 
-// applySecurity raises up to a fixing version when d has advisories. The minimum fix F is the
-// highest, over all vulns, of each vuln's lowest compatible fixed version. If there is no
-// update or it is below F, the smallest compatible release ≥ F is chosen regardless of policy.
-// The advisories whose fix the resulting version includes are attached. Vulns without a
-// compatible fix, or a missing fixing release, leave up unchanged.
-func applySecurity(up *dep.Update, d dep.Dep, s versioning.Scheme, names []string, vulns []Vuln) *dep.Update {
+// applySecurity raises the updates of d to a fixing version when d has advisories. The
+// minimum fix F is the highest, over all vulns, of each vuln's lowest compatible fixed
+// version. The lowest update at or above F becomes the security update. If there is none, the
+// smallest compatible release ≥ F is chosen regardless of policy: it replaces the update of
+// its PR bucket (which is below F) and any digest or pin update. The advisories whose fix the
+// resulting version includes are attached to that one update. Vulns without a compatible fix,
+// or a missing fixing release, leave ups unchanged. ups and the result are ordered by version.
+func (r *resolver) applySecurity(ups []dep.Update, s versioning.Scheme, names []string, vulns []Vuln) []dep.Update {
+	d := r.d
 	cur := d.Version
 	var fix string
 	for _, v := range vulns {
@@ -652,9 +773,12 @@ func applySecurity(up *dep.Update, d dep.Dep, s versioning.Scheme, names []strin
 		}
 	}
 	if fix == "" {
-		return up
+		return ups
 	}
-	if up == nil || s.Compare(up.NewVersion, fix) < 0 {
+	sec := slices.IndexFunc(ups, func(u dep.Update) bool {
+		return u.Type != dep.Digest && u.Type != dep.Pin && s.Compare(u.NewVersion, fix) >= 0
+	})
+	if sec < 0 {
 		var chosen string
 		for _, n := range names {
 			if s.Compatible(cur, n) && s.Compare(n, fix) >= 0 && (chosen == "" || s.Compare(n, chosen) < 0) {
@@ -662,18 +786,25 @@ func applySecurity(up *dep.Update, d dep.Dep, s versioning.Scheme, names []strin
 			}
 		}
 		if chosen == "" {
-			return up
+			return ups
 		}
-		// Best on the single compatible candidate renders it in cur's style (semver "v" prefix).
-		chosen, _ = s.Best(cur, []string{chosen}, nil, nil)
-		up = &dep.Update{Dep: d, Type: s.Kind(cur, chosen), NewVersion: chosen}
+		// Ranking the single compatible candidate gives its kind and major and renders it in
+		// cur's style (semver "v" prefix).
+		c := s.Rank(cur, []string{chosen}, nil, nil).At(0)
+		bucket := r.pol.bucket(c).label()
+		ups = slices.DeleteFunc(ups, func(u dep.Update) bool {
+			return u.Bucket == bucket || u.Type == dep.Digest || u.Type == dep.Pin
+		})
+		sec, _ = slices.BinarySearchFunc(ups, c.Version, func(u dep.Update, v string) int { return s.Compare(u.NewVersion, v) })
+		ups = slices.Insert(ups, sec, dep.Update{Dep: d, Type: c.Kind, NewVersion: c.Version, Bucket: bucket})
 	}
+	up := &ups[sec]
 	for _, v := range vulns {
 		if m := minFix(s, cur, v); m != "" && s.Compare(up.NewVersion, m) >= 0 {
 			up.Advisories = append(up.Advisories, v.Advisory)
 		}
 	}
-	return up
+	return ups
 }
 
 // minFix returns v's lowest fixed version that is a compatible upgrade of cur, or "".

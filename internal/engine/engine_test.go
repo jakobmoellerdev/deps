@@ -174,8 +174,8 @@ func TestResolveAndBuildActions(t *testing.T) {
 		{
 			name: "defaults keep style, refresh digests",
 			wantLines: map[int]string{
-				6: "      - uses: actions/checkout@v5.0.1",
-				7: `      - uses: "actions/setup-go@` + sha(setupGo+"@v6.0.0") + `" # v6.0.0`,
+				6: "      - uses: actions/checkout@v4.2.0", // v5.0.1 is a separate major update
+				7: `      - uses: "actions/setup-go@` + sha(setupGo+"@v5.1.0") + `" # v5.1.0`,
 				8: "      - uses: actions/cache@" + sha(cache+"@v4") + " # v4",
 			},
 		},
@@ -204,7 +204,7 @@ func TestResolveAndBuildActions(t *testing.T) {
 		{
 			name:      "pin digest",
 			cfg:       "pin: digest\n",
-			wantLines: map[int]string{6: "      - uses: actions/checkout@" + sha(checkout+"@v5.0.1") + " # v5.0.1"},
+			wantLines: map[int]string{6: "      - uses: actions/checkout@" + sha(checkout+"@v4.2.0") + " # v4.2.0"},
 		},
 		{
 			name:      "pin digest without newer version pins current",
@@ -236,7 +236,8 @@ func TestResolveAndBuildActions(t *testing.T) {
 			if tt.wantSkip != "" && (len(res.Skipped) != 1 || res.Skipped[0].Skip != tt.wantSkip) {
 				t.Errorf("skipped = %+v, want %q", res.Skipped, tt.wantSkip)
 			}
-			changes, errs := Build(t.Context(), root, managers, res.Updates, nil)
+			updates, _ := Local(res.Updates) // as plan and apply
+			changes, errs := Build(t.Context(), root, managers, updates, nil)
 			if len(errs) > 0 {
 				t.Fatal(errs)
 			}
@@ -352,10 +353,12 @@ func TestResolveErrors(t *testing.T) {
 			t.Errorf("error %d = %q, want prefix %q", i, res.Errors[i], w)
 		}
 	}
-	// Updates are sorted by file; example.com/c is current and yields none.
-	if len(res.Updates) != 2 ||
-		res.Updates[0].Dep.File != ".github/workflows/z.yml" || res.Updates[0].NewDigest != sha(checkout+"@v5.0.1") ||
-		res.Updates[1].Dep.Name != "example.com/a" || res.Updates[1].NewVersion != "v1.0.1" || res.Updates[1].Type != dep.Patch {
+	// Updates are sorted by file, a dep's buckets by version; example.com/c is current and
+	// yields none.
+	if len(res.Updates) != 3 ||
+		res.Updates[0].Dep.File != ".github/workflows/z.yml" || res.Updates[0].NewDigest != sha(checkout+"@v4.2.0") || res.Updates[0].Bucket != "" ||
+		res.Updates[1].Dep.File != ".github/workflows/z.yml" || res.Updates[1].NewDigest != sha(checkout+"@v5.0.1") || res.Updates[1].Bucket != "major" ||
+		res.Updates[2].Dep.Name != "example.com/a" || res.Updates[2].NewVersion != "v1.0.1" || res.Updates[2].Type != dep.Patch {
 		t.Errorf("updates = %+v", res.Updates)
 	}
 	if len(res.Skipped) != 1 || res.Skipped[0].Skip != "local action" || res.Skipped[0].Line != 4 {
@@ -543,6 +546,7 @@ func TestResolveAndBuildNpm(t *testing.T) {
 	}
 	want := []string{
 		"web/package.json:2 a 1.0.0->1.1.0 minor",
+		"web/package.json:3 @s/b 2.0.0->2.0.1 patch",
 		"web/package.json:3 @s/b 2.0.0->3.0.0 major",
 		"web/package.json:5 npm 12.1.0->12.2.0 minor",
 	}
@@ -565,21 +569,22 @@ func TestResolveAndBuildNpm(t *testing.T) {
 		seen = files
 		return map[string][]byte{"package-lock.json": append([]byte("lock for "), manifests["package.json"][:20]...), ".npmrc": files[".npmrc"]}, nil
 	}}}
-	changes, errs := Build(t.Context(), root, o.Managers, res.Updates, post)
+	updates, _ := Local(res.Updates) // @s/b's major is a separate PR
+	changes, errs := Build(t.Context(), root, o.Managers, updates, post)
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
 	if string(seen["package-lock.json"]) != "old lock\n" || string(seen[".npmrc"]) != "registry=x\n" {
 		t.Errorf("post-processor files = %q", seen)
 	}
-	wantPkg := strings.NewReplacer(`"^1.0.0"`, `"^1.1.0"`, `"~2.0.0"`, `"~3.0.0"`, "npm@12.1.0", "npm@12.2.0").Replace(pkg)
+	wantPkg := strings.NewReplacer(`"^1.0.0"`, `"^1.1.0"`, `"~2.0.0"`, `"~2.0.1"`, "npm@12.1.0", "npm@12.2.0").Replace(pkg)
 	if len(changes) != 2 || changes[0].Path != "web/package-lock.json" || changes[1].Path != "web/package.json" ||
 		string(changes[1].New) != wantPkg || string(changes[0].Old) != "old lock\n" || !strings.HasPrefix(string(changes[0].New), "lock for {") {
 		t.Fatalf("changes = %+v", changes)
 	}
 
 	// plan: no post-processing, only package.json.
-	changes, errs = Build(t.Context(), root, o.Managers, res.Updates, nil)
+	changes, errs = Build(t.Context(), root, o.Managers, updates, nil)
 	if len(errs) > 0 || len(changes) != 1 || string(changes[0].New) != wantPkg {
 		t.Errorf("plan changes = %+v, %v", changes, errs)
 	}

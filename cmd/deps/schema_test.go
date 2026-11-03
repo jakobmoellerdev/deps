@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ type schemaNode struct {
 	Ref                  string                 `json:"$ref"`
 	Type                 string                 `json:"type"`
 	Description          string                 `json:"description"`
+	Pattern              string                 `json:"pattern"`
 	Enum                 []any                  `json:"enum"`
 	Default              any                    `json:"default"`
 	Required             []string               `json:"required"`
@@ -81,7 +83,6 @@ func TestSchema(t *testing.T) {
 		{"rules.updateTypes", rule.Properties["updateTypes"].Items, updates},
 		{"rules.commitType", rule.Properties["commitType"], config.CommitTypes},
 		{"custom.datasource", custom.Properties["datasource"], config.DatasourceNames},
-		{"custom.versioning", custom.Properties["versioning"], config.Versionings},
 		{"rebaseWhen", s.Properties["rebaseWhen"], config.RebaseWhens},
 	}
 	for _, e := range enums {
@@ -89,7 +90,23 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%s enum = %v, want %v (keep the jsonschema tags in sync)", e.name, got, e.want)
 		}
 	}
-	if want := []string{"version", "pin", "timezone", "schedule", "security", "branchPrefix", "rebaseWhen", "monorepos", "actions", "minimumReleaseAge", "ignorePaths", "rules", "custom"}; len(s.Properties) != len(want) {
+	// versioning takes the scheme names or regex:<RE2>, so it is a pattern instead of an enum.
+	for name, n := range map[string]*schemaNode{"rules.versioning": rule.Properties["versioning"], "custom.versioning": custom.Properties["versioning"]} {
+		re, err := regexp.Compile(n.Pattern)
+		if err != nil {
+			t.Fatalf("%s pattern %q: %v", name, n.Pattern, err)
+		}
+		for _, v := range append(slices.Clone(config.Versionings), `regex:^v(?<major>\d+)$`) {
+			if !re.MatchString(v) {
+				t.Errorf("%s pattern %q rejects %q (keep the jsonschema tag in sync)", name, n.Pattern, v)
+			}
+		}
+		if re.MatchString("calver") || re.MatchString("regex:") {
+			t.Errorf("%s pattern %q is too loose", name, n.Pattern)
+		}
+	}
+	if want := []string{"version", "pin", "timezone", "schedule", "security", "branchPrefix", "rebaseWhen", "monorepos", "actions", "minimumReleaseAge", "ignorePaths",
+		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "rules", "custom"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
 		for _, k := range want {
@@ -104,7 +121,9 @@ func TestSchema(t *testing.T) {
 	if !slices.Equal(custom.Required, []string{"files"}) || rule.Required != nil || s.Required != nil {
 		t.Errorf("required: root %v rule %v custom %v", s.Required, rule.Required, custom.Required)
 	}
-	if s.Properties["pin"].Default != "keep" || s.Properties["security"].Default != true || custom.Properties["versioning"].Default != "semver" {
+	if s.Properties["pin"].Default != "keep" || s.Properties["security"].Default != true || custom.Properties["versioning"].Default != "semver" ||
+		s.Properties["separateMajorMinor"].Default != true || s.Properties["separateMultipleMajor"].Default != false ||
+		s.Properties["separateMinorPatch"].Default != false || s.Properties["updateNotScheduled"].Default != true {
 		t.Error("defaults missing")
 	}
 	if _, stderr, code := execute(t, "schema", "x"); code != 2 || !strings.Contains(stderr, "unexpected arguments") {

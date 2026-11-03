@@ -216,7 +216,7 @@ func TestTrace(t *testing.T) {
 	if len(traces) != 4 {
 		t.Fatalf("traces = %+v", traces)
 	}
-	if tr := byName["./local"]; tr.Dep.Skip != "local action" || tr.Update != nil {
+	if tr := byName["./local"]; tr.Dep.Skip != "local action" || tr.Updates != nil {
 		t.Errorf("local: %+v", tr)
 	}
 	if tr := byName["actions/cache"]; !tr.Policy.Ignore || !slices.Equal(tr.Rules, []int{0, 1}) || tr.Dep.Skip != "ignored by rule #1" {
@@ -226,7 +226,7 @@ func TestTrace(t *testing.T) {
 		t.Errorf("broken: %+v", tr)
 	}
 	co := byName["actions/checkout"]
-	if co.Update == nil || co.Update.NewVersion != "v4.2.0" || !slices.Equal(co.Rules, []int{0}) || co.Candidates != len(tags[checkout]) || co.Err != nil {
+	if len(co.Updates) != 1 || co.Updates[0].Update.NewVersion != "v4.2.0" || !slices.Equal(co.Rules, []int{0}) || co.Candidates != len(tags[checkout]) || co.Err != nil {
 		t.Fatalf("checkout: %+v", co)
 	}
 	want := map[string][]string{
@@ -276,7 +276,7 @@ func TestFilter(t *testing.T) {
 	if !slices.Equal(sec.asked, []string{"actions/checkout"}) {
 		t.Errorf("security asked %v", sec.asked)
 	}
-	if len(res.Updates) != 1 || res.Updates[0].Dep.Name != "actions/checkout" || len(res.Errors) != 0 || len(res.Skipped) != 0 {
+	if len(res.Updates) != 2 || res.Updates[0].Dep.Name != "actions/checkout" || res.Updates[1].Bucket != "major" || len(res.Errors) != 0 || len(res.Skipped) != 0 {
 		t.Errorf("res = %+v", res)
 	}
 }
@@ -434,8 +434,8 @@ func (g timedGo) ReleaseTime(_ context.Context, _ dep.Dep, v string) (time.Time,
 func TestResolveSkipsMajorsOlderThanCurrent(t *testing.T) {
 	for _, tt := range []struct {
 		legacyNewer bool
-		want        string
-	}{{false, "v0.38.0"}, {true, "v1.5.2"}} {
+		want        []string // the minor bucket, then the major bucket unless it is stale
+	}{{false, []string{"v0.38.0"}}, {true, []string{"v0.38.0", "v1.5.2"}}} {
 		m := stubManager{name: "gomod", deps: []dep.Dep{{Datasource: "go", Versioning: "go", Name: "k8s.io/client-go", Version: "v0.37.1", Line: 1}}}
 		root, cfg := setup(t, "", map[string]string{"stub.txt": "v0.37.1\n"})
 		var tr Trace
@@ -444,8 +444,12 @@ func TestResolveSkipsMajorsOlderThanCurrent(t *testing.T) {
 			Datasources: map[string]Datasource{"go": timedGo{legacyNewer: tt.legacyNewer}},
 			Trace:       func(x Trace) { tr = x },
 		})
-		if err != nil || len(res.Updates) != 1 || res.Updates[0].NewVersion != tt.want {
-			t.Fatalf("legacyNewer=%v: updates = %+v, err = %v", tt.legacyNewer, res.Updates, err)
+		var got []string
+		for _, u := range res.Updates {
+			got = append(got, u.NewVersion)
+		}
+		if err != nil || !slices.Equal(got, tt.want) {
+			t.Fatalf("legacyNewer=%v: updates = %v, err = %v", tt.legacyNewer, got, err)
 		}
 		if !tt.legacyNewer && !slices.Equal(tr.Rejected["older than current"], []string{"v1.5.2"}) {
 			t.Errorf("rejected = %v", tr.Rejected)

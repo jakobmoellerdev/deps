@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
@@ -128,10 +127,24 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 	if t.Policy.Monorepo != "" {
 		line("builtin", "monorepo %s -> group %q", t.Policy.Monorepo, config.MonorepoGroup(t.Policy.Monorepo))
 	}
-	// Rules with updateTypes that applied to the chosen update, after the pre-policy rules.
-	var kindRules []int
-	if up := t.UpdatePolicy; up != nil {
-		kindRules = slices.DeleteFunc(slices.Clone(up.Rules), func(r int) bool { return len(cfg.Rules[r].UpdateTypes) == 0 })
+	// Rules with updateTypes that applied to the updates, after the pre-policy rules, and the
+	// per-type policies they produced (once per type).
+	type kindRule struct {
+		rule int
+		kind dep.UpdateType
+	}
+	var kindRules []kindRule
+	var kindPolicies []*config.Policy
+	for _, tu := range t.Updates {
+		n := len(kindRules)
+		for _, r := range tu.Policy.Rules {
+			if kr := (kindRule{r, tu.Policy.Kind}); len(cfg.Rules[r].UpdateTypes) > 0 && !slices.Contains(kindRules, kr) {
+				kindRules = append(kindRules, kr)
+			}
+		}
+		if len(kindRules) > n {
+			kindPolicies = append(kindPolicies, tu.Policy)
+		}
 	}
 	if len(t.Rules) == 0 && len(kindRules) == 0 && t.Policy.Monorepo == "" {
 		line("rules", "none")
@@ -143,16 +156,16 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 		}
 		line(label, "#%d %s", r, describeRule(cfg.Rules[r]))
 	}
-	for i, r := range kindRules {
+	for i, kr := range kindRules {
 		label := ""
 		if i == 0 && len(t.Rules) == 0 {
 			label = "rules"
 		}
-		line(label, "#%d %s (applies to %s)", r, describeRule(cfg.Rules[r]), t.UpdatePolicy.Kind)
+		line(label, "#%d %s (applies to %s)", kr.rule, describeRule(cfg.Rules[kr.rule]), kr.kind)
 	}
 	line("policy", "%s", describePolicy(t.Policy))
-	if len(kindRules) > 0 {
-		line("", "%s: %s", t.UpdatePolicy.Kind, describePolicy(*t.UpdatePolicy))
+	for _, kp := range kindPolicies {
+		line("", "%s: %s", kp.Kind, describePolicy(*kp))
 	}
 	if d.Skip != "" {
 		line("result", "skipped: %s", d.Skip)
@@ -163,12 +176,18 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 	switch {
 	case t.Err != nil:
 		line("result", "error: %v", t.Err)
-	case t.Update == nil:
+	case t.Updates == nil:
 		line("result", "up to date")
-	default:
-		from, to := t.Update.FromTo()
-		line("result", "update %s -> %s (%s)", from, to, t.Update.Type)
-		for _, a := range t.Update.Advisories {
+	}
+	for _, tu := range t.Updates {
+		u := tu.Update
+		from, to := u.FromTo()
+		bucket := ""
+		if u.Bucket != "" {
+			bucket = ", bucket " + u.Bucket
+		}
+		line("result", "update %s -> %s (%s%s)", from, to, u.Type, bucket)
+		for _, a := range u.Advisories {
 			line("security", "%s", strings.Join(nonEmpty(a.ID, a.Summary, a.URL), "  "))
 		}
 	}
@@ -204,8 +223,8 @@ func describeRule(r config.Rule) string {
 	}
 	if r.Allow != "" {
 		allow := r.Allow
-		if c, err := semver.NewConstraint(allow); err == nil { // validated by config.Load
-			allow = c.String()
+		if a, err := config.ParseAllowed(allow); err == nil { // validated by config.Load
+			allow = a.String()
 		}
 		add("allow", allow)
 	}
@@ -220,6 +239,17 @@ func describeRule(r config.Rule) string {
 	}
 	if r.MinimumReleaseAge != "" {
 		add("minimumReleaseAge", r.MinimumReleaseAge)
+	}
+	if r.Versioning != "" {
+		add("versioning", r.Versioning)
+	}
+	for _, b := range []struct {
+		k string
+		v *bool
+	}{{"separateMajorMinor", r.SeparateMajorMinor}, {"separateMultipleMajor", r.SeparateMultipleMajor}, {"separateMinorPatch", r.SeparateMinorPatch}} {
+		if b.v != nil {
+			add(b.k, strconv.FormatBool(*b.v))
+		}
 	}
 	if len(f) == 0 {
 		return "(matches all)"
@@ -242,8 +272,12 @@ func describePolicy(p config.Policy) string {
 	if p.MinAge > 0 {
 		minAge = config.FormatAge(p.MinAge)
 	}
-	return fmt.Sprintf("pin=%s allow=%s updates=%s group=%s schedule=%s minAge=%s",
+	s := fmt.Sprintf("pin=%s allow=%s updates=%s group=%s schedule=%s minAge=%s",
 		p.Pin, allow, orDash(strings.Join(updates, ",")), orDash(p.Group), p.Schedule.String(), minAge)
+	if p.Versioning != "" {
+		s += " versioning=" + p.Versioning
+	}
+	return s
 }
 
 // describeRejected renders "<reason>: <n> (<newest versions>, ...)" per reason, the most

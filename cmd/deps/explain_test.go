@@ -46,7 +46,7 @@ func TestExplain(t *testing.T) {
   policy    pin=keep allow=- updates=major,minor,patch,digest,pin group=- schedule=always minAge=-
   candidates 2
   rejected  not newer: 1 (v6.0.0)
-  result    update v6.0.0 -> v7.0.1 (major)
+  result    update v6.0.0 -> v7.0.1 (major, bucket major)
 
 actions/checkout  .github/workflows/ci.yml:7  (github-actions, action, git-tags, tag)
   current   v6.0.0@1af3b93
@@ -54,7 +54,7 @@ actions/checkout  .github/workflows/ci.yml:7  (github-actions, action, git-tags,
   policy    pin=keep allow=- updates=major,minor,patch,digest,pin group=- schedule=always minAge=-
   candidates 2
   rejected  not newer: 1 (v6.0.0)
-  result    update v6.0.0@1af3b93 -> v7.0.1@3d3c42e (major)
+  result    update v6.0.0@1af3b93 -> v7.0.1@3d3c42e (major, bucket major)
 `,
 		},
 		{
@@ -206,6 +206,7 @@ func TestWriteTrace(t *testing.T) {
 		{DepTypes: []string{"direct"}, Ignore: &yes, Schedule: []string{"* 0-5 * * *", "* * * * 0"}},
 		{Paths: []string{"chart/**"}, Datasources: []string{"docker"}},
 		{MinimumReleaseAge: "28 days"},
+		{Allow: `/^\d+\.\d+$/`, Versioning: "loose", SeparateMultipleMajor: &yes},
 	}}
 	d := dep.Dep{Manager: "custom", DepType: "regex", Datasource: "docker", Versioning: "docker", File: "Dockerfile", Line: 1, Name: "golang", Version: "1.24-alpine"}
 	tests := []struct {
@@ -225,10 +226,10 @@ func TestWriteTrace(t *testing.T) {
 					"invalid":   {"latest"},
 					"precision": {"1.25.1-alpine"},
 				},
-				Update: &dep.Update{Dep: d, Type: dep.Minor, NewVersion: "1.25-alpine", Advisories: []dep.Advisory{
+				Updates: []engine.TraceUpdate{{Policy: &config.Policy{Kind: dep.Minor}, Update: dep.Update{Dep: d, Type: dep.Minor, NewVersion: "1.25-alpine", Advisories: []dep.Advisory{
 					{ID: "GO-2026-1", Summary: "bad", URL: "https://osv.dev/GO-2026-1"},
 					{ID: "GO-2026-2"},
-				}},
+				}}}},
 			},
 			want: `golang  Dockerfile:1  (custom, regex, docker, docker)
   current   1.24-alpine
@@ -278,6 +279,28 @@ func TestWriteTrace(t *testing.T) {
   candidates 3
   rejected  too new (released 2026-10-30, minimum 28 days): 1 (1.1.0)  too new (released 2026-11-01, minimum 28 days): 1 (1.2.0)
   result    up to date
+`,
+		},
+		{
+			name: "one result per bucket, rule versioning",
+			t: engine.Trace{
+				Dep:        dep.Dep{Name: "x", File: "f", Line: 4, Versioning: "loose", Version: "1877.25"},
+				Rules:      []int{4},
+				Policy:     config.Policy{Pin: "keep", Updates: map[dep.UpdateType]bool{dep.Minor: true, dep.Major: true}, Versioning: "loose"},
+				Candidates: 4,
+				Updates: []engine.TraceUpdate{
+					{Policy: &config.Policy{Kind: dep.Minor}, Update: dep.Update{Type: dep.Minor, NewVersion: "1877.28", Dep: dep.Dep{Version: "1877.25"}}},
+					{Policy: &config.Policy{Kind: dep.Major}, Update: dep.Update{Type: dep.Major, NewVersion: "1878.1", Bucket: "v1878", Dep: dep.Dep{Version: "1877.25"}}},
+				},
+			},
+			want: `x  f:4  (-, -, -, loose)
+  current   1877.25
+  rules     #4 allow=/^\d+\.\d+$/ versioning=loose separateMultipleMajor=true
+  policy    pin=keep allow=- updates=major,minor group=- schedule=always minAge=- versioning=loose
+  candidates 4
+  rejected  none
+  result    update 1877.25 -> 1877.28 (minor)
+  result    update 1877.25 -> 1878.1 (major, bucket v1878)
 `,
 		},
 	}

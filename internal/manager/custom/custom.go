@@ -11,7 +11,10 @@
 // optional `name` (aliases `depName`, `packageName`), `datasource`, `versioning` and `digest`
 // (alias `currentDigest`) groups is run over the whole file; every match is a dependency.
 //
-// Renovate datasource names are mapped to deps names (see config.DatasourceAliases).
+// The entry's `versioning` accepts every scheme including `regex:<RE2>`; the versioning
+// fields of markers and the `versioning` group accept the scheme names (config.Versionings),
+// since a regex does not fit a marker field. Renovate datasource names are mapped to deps
+// names (see config.DatasourceAliases).
 package custom
 
 import (
@@ -30,6 +33,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Name is the manager name shared by every custom manager.
@@ -102,8 +106,8 @@ func newManager(c config.Custom) (*customManager, error) {
 	if m.versioning == "" {
 		m.versioning = defaultVersioning
 	}
-	if !slices.Contains(config.Versionings, m.versioning) {
-		return nil, fmt.Errorf("versioning: unknown %q", m.versioning)
+	if _, err := versioning.Parse(m.versioning); err != nil {
+		return nil, fmt.Errorf("versioning: %w", err)
 	}
 	if m.datasource != "" && !slices.Contains(config.DatasourceNames, m.datasource) {
 		return nil, fmt.Errorf("datasource: unknown %q", m.datasource)
@@ -249,7 +253,7 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 				d.Versioning = string(line[ann[6]:ann[7]])
 			}
 			classify(&d)
-			if d.Skip == "" && !slices.Contains(config.Versionings, d.Versioning) {
+			if d.Skip == "" && !m.knownVersioning(d.Versioning) {
 				d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
 			}
 			pending = &d
@@ -273,7 +277,7 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 // a versioning field docker deps use docker versioning, others the entry's versioning.
 func (m *customManager) renovateMarker(file string, lineNo int, fields string) dep.Dep {
 	d := dep.Dep{Manager: Name, DepType: DepTypeAnnotation, File: file, Line: lineNo}
-	var depName, pkgName, versioning string
+	var depName, pkgName, scheme string
 	for f := range strings.FieldsSeq(strings.TrimSuffix(strings.TrimSpace(fields), "-->")) {
 		k, v, _ := strings.Cut(f, "=")
 		switch k {
@@ -284,7 +288,7 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 		case "packageName":
 			pkgName = v
 		case "versioning":
-			versioning = v
+			scheme = v
 		}
 	}
 	d.Name = cmp.Or(pkgName, depName)
@@ -298,17 +302,23 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 	}
 	classify(&d)
 	switch {
-	case versioning != "":
-		d.Versioning = versioning
+	case scheme != "":
+		d.Versioning = scheme
 	case d.Datasource == "docker":
 		d.Versioning = "docker"
 	default:
 		d.Versioning = m.versioning
 	}
-	if d.Skip == "" && !slices.Contains(config.Versionings, d.Versioning) {
+	if d.Skip == "" && !m.knownVersioning(d.Versioning) {
 		d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
 	}
 	return d
+}
+
+// knownVersioning reports whether a dep may use versioning v: the entry's own (validated by
+// newManager, also a regex scheme) or a scheme name.
+func (m *customManager) knownVersioning(v string) bool {
+	return v == m.versioning || slices.Contains(config.Versionings, v)
 }
 
 // nextLineVersion sets the version (and for docker refs the digest) of d from the annotated
@@ -427,7 +437,7 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 			d.Version = string(src[vs:ve])
 			d.RefSpan = dep.Span{Start: vs, End: ve}
 			classify(&d)
-			if d.Skip == "" && !slices.Contains(config.Versionings, d.Versioning) {
+			if d.Skip == "" && !m.knownVersioning(d.Versioning) {
 				d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
 			}
 		}

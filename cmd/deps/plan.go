@@ -43,7 +43,9 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	if write {
 		post = postProcessors()
 	}
-	changes, buildErrs := engine.Build(ctx, s.root, s.managers, res.Updates, post)
+	// A dep with several PR buckets gets one local update; report marks the others.
+	updates, separate := engine.Local(res.Updates)
+	changes, buildErrs := engine.Build(ctx, s.root, s.managers, updates, post)
 	if write {
 		for _, c := range changes {
 			if err := os.WriteFile(s.abs(c.Path), c.New, c.Mode); err != nil {
@@ -59,7 +61,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 		}
 	}
 	errs := append(append([]error(nil), res.Errors...), buildErrs...)
-	report(stderr, o.verbose, res, errs)
+	report(stderr, o.verbose, res, errs, separate)
 	if !write && hasManager(res, gomod.Name) {
 		fmt.Fprintln(stderr, "note    go.sum changes are computed by apply/run")
 	}
@@ -78,9 +80,10 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	return nil
 }
 
-// report prints update, skip (verbose) and error lines.
-func report(w io.Writer, verbose bool, res *engine.Result, errs []error) {
-	for _, u := range res.Updates {
+// report prints update, skip (verbose) and error lines. separate (nil for run) marks the
+// updates plan/apply leave to their own PR: their type gets a ", separate PR" hint.
+func report(w io.Writer, verbose bool, res *engine.Result, errs []error, separate []bool) {
+	for i, u := range res.Updates {
 		from, to := u.FromTo()
 		sec := ""
 		if len(u.Advisories) > 0 {
@@ -90,7 +93,11 @@ func report(w io.Writer, verbose bool, res *engine.Result, errs []error) {
 			}
 			sec = "  security: " + strings.Join(ids, ",")
 		}
-		fmt.Fprintf(w, "update  %s:%d  %s  %s -> %s  (%s)%s\n", u.Dep.File, u.Dep.Line, u.Dep.Name, from, to, u.Type, sec)
+		hint := ""
+		if i < len(separate) && separate[i] {
+			hint = ", separate PR"
+		}
+		fmt.Fprintf(w, "update  %s:%d  %s  %s -> %s  (%s%s)%s\n", u.Dep.File, u.Dep.Line, u.Dep.Name, from, to, u.Type, hint, sec)
 	}
 	if verbose {
 		for _, d := range res.Skipped {

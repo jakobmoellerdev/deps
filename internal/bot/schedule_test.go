@@ -1,6 +1,8 @@
 package bot
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,12 +20,15 @@ func TestRunSchedule(t *testing.T) {
 	inWindow := time.Date(2026, 11, 3, 3, 0, 0, 0, time.UTC)
 	outWindow := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name       string
-		now        time.Time
-		security   bool
-		wantStatus map[string]string
-		wantPushed int
-		wantClosed []int
+		name               string
+		now                time.Time
+		security           bool
+		updateNotScheduled bool
+		noPR               bool // branchA exists without an open PR
+		fresh              bool // the open PR of branchA has the current fingerprint
+		wantStatus         map[string]string
+		wantPushed         int
+		wantClosed         []int
 	}{
 		{
 			name:       "in window",
@@ -36,6 +41,29 @@ func TestRunSchedule(t *testing.T) {
 			now:        outWindow,
 			wantStatus: map[string]string{branchA: StatusSkipSchedule, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantPushed: 1, wantClosed: []int{9},
+		},
+		{
+			name:               "updateNotScheduled updates the open PR out of window",
+			now:                outWindow,
+			updateNotScheduled: true,
+			wantStatus:         map[string]string{branchA: StatusUpdated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
+			wantPushed:         2, wantClosed: []int{9},
+		},
+		{
+			name:               "updateNotScheduled keeps an unchanged PR",
+			now:                outWindow,
+			updateNotScheduled: true,
+			fresh:              true,
+			wantStatus:         map[string]string{branchA: StatusUpToDate, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
+			wantPushed:         1, wantClosed: []int{9},
+		},
+		{
+			name:               "updateNotScheduled never creates out of window",
+			now:                outWindow,
+			updateNotScheduled: true,
+			noPR:               true,
+			wantStatus:         map[string]string{branchA: StatusSkipSchedule, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
+			wantPushed:         1, wantClosed: []int{9},
 		},
 		{
 			name:       "security ignores schedule",
@@ -56,11 +84,15 @@ func TestRunSchedule(t *testing.T) {
 				branches: map[string]string{"refs/heads/" + branchA: "x", "refs/heads/deps/gomod/gone": "y"},
 				authors:  map[string]string{branchA: email},
 			}
-			pc := &fakePC{open: []platform.PR{
-				{Number: 1, Head: branchA, Body: "stale"},
-				{Number: 9, Head: "deps/gomod/gone"},
-			}}
-			o := Options{AuthorEmail: email, Managers: managers, MaxNewPRs: 10, Now: tt.now}
+			body := "stale"
+			if tt.fresh {
+				body = "<!-- deps:fingerprint=" + fingerprintOf(t, root, res, "a/x") + " -->"
+			}
+			pc := &fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}}
+			if !tt.noPR {
+				pc.open = append(pc.open, platform.PR{Number: 1, Head: branchA, Body: body, Mergeable: new(true)})
+			}
+			o := Options{AuthorEmail: email, Managers: managers, MaxNewPRs: 10, Now: tt.now, UpdateNotScheduled: tt.updateNotScheduled}
 			acts, errs := Run(t.Context(), o, root, res, nil, pc, g)
 			if len(errs) != 0 {
 				t.Fatal(errs)
@@ -123,5 +155,39 @@ func TestPRBodySecurity(t *testing.T) {
 	}
 	if strings.Contains(prBody(t.Context(), nil, []dep.Update{{Dep: dep.Dep{Version: "v1"}, NewVersion: "v2"}}, "x"), "Security") {
 		t.Error("security section without advisories")
+	}
+}
+
+// The updates of one dependency in different PR buckets get their own branches and PRs; each
+// branch is built from its own update only.
+func TestRunBucketBranches(t *testing.T) {
+	root, res := fixture(t)
+	minor := res.Updates[0]
+	minor.Type, minor.NewVersion = dep.Minor, "v1.1"
+	major := res.Updates[0]
+	major.Bucket = "major"
+	v3 := res.Updates[0]
+	v3.NewVersion, v3.Bucket = "v3", "v3"
+	res.Updates = []dep.Update{minor, major, v3}
+	g := &fakeGit{}
+	pc := &fakePC{open: []platform.PR{{Number: 4, Head: branchA, Body: "stale"}}}
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, g)
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	got := map[string]string{}
+	for _, a := range acts {
+		got[a.Branch] = a.Status + " " + a.Title
+	}
+	want := map[string]string{
+		branchA:            StatusUpdated + " chore(deps): update a/x to v1.1",
+		branchA + "-major": StatusCreated + " chore(deps): update a/x to v2",
+		branchA + "-v3":    StatusCreated + " chore(deps): update a/x to v3",
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("actions = %v, want %v", got, want)
+	}
+	if !slices.Equal(pc.created, []string{branchA + "-major", branchA + "-v3"}) || !slices.Equal(pc.updated, []int{4}) || len(g.pushed) != 3 {
+		t.Errorf("created %v updated %v pushed %v", pc.created, pc.updated, g.pushed)
 	}
 }

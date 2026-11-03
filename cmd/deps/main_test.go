@@ -228,6 +228,32 @@ func TestPlan(t *testing.T) {
 	}
 }
 
+// plan applies one update per dependency: the non-major bucket; the major bucket is listed
+// with a separate-PR hint. The rule's semver versioning makes v2.0.0 a candidate of the
+// go.mod requirement (go versioning would need /v2).
+func TestPlanSeparateBuckets(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"go.mod": gomodSrc, ".deps.yaml": "rules: [{names: [example.com/a], versioning: semver}]\n"})
+	stdout, stderr, code := execute(t, "plan", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "+require example.com/a v1.1.0\n") || strings.Contains(stdout, "v2.0.0") {
+		t.Errorf("diff:\n%s", stdout)
+	}
+	for _, want := range []string{
+		"update  go.mod:5  example.com/a  v1.0.0 -> v1.1.0  (minor)\n",
+		"update  go.mod:5  example.com/a  v1.0.0 -> v2.0.0  (major, separate PR)\n",
+		"2 updates in 1 files, 1 skipped, 0 errors\n", // the go directive
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+}
+
 func TestPlanNpm(t *testing.T) {
 	cleanEnv(t)
 	newFakeNet(t)
@@ -418,7 +444,7 @@ func TestRunCreatesBranchAndPR(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
-	const branch = "deps/github-actions/actions-checkout"
+	const branch = "deps/github-actions/actions-checkout-major" // v6 -> v7 is a major: its own bucket
 	for _, want := range []string{
 		"pr      created  " + branch + "  chore(deps): update actions/checkout to v7.0.1  https://git.test/o/r/pulls/7\n",
 		"1 created, 0 updated, 0 closed, 0 up-to-date, 0 skipped, 0 errors\n",
@@ -461,7 +487,7 @@ func TestRunDryRunAndToken(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("dry run exit %d\n%s", code, stderr)
 	}
-	if !strings.Contains(stderr, "pr      would-create  deps/github-actions/actions-checkout") ||
+	if !strings.Contains(stderr, "pr      would-create  deps/github-actions/actions-checkout-major") ||
 		!strings.Contains(stderr, "(dry run: 1 would change)") {
 		t.Errorf("stderr:\n%s", stderr)
 	}

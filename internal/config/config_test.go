@@ -15,7 +15,14 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-func GoTestVer(s string) *semver.Version { return semver.MustParse(s) }
+// sv converts like a scheme's Semver: nil when v is not a version.
+func sv(v string) *semver.Version {
+	s, err := semver.NewVersion(v)
+	if err != nil {
+		return nil
+	}
+	return s
+}
 
 func load(t *testing.T, name, body string) (*Config, error) {
 	t.Helper()
@@ -124,6 +131,16 @@ func TestLoadErrors(t *testing.T) {
 		{"minimumReleaseAge: soon\n", `minimumReleaseAge: invalid age "soon"`},
 		{"minimumReleaseAge: -1h\n", `minimumReleaseAge: invalid age "-1h"`},
 		{"minimumReleaseAge: 99999999999999999 weeks\n", "minimumReleaseAge: age \"99999999999999999 weeks\" out of range"},
+		{"rules: [{versioning: calver}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose or regex:<RE2>, got "calver"`},
+		{"rules: [{versioning: 'regex:('}]\n", "rules[0].versioning: regex: invalid RE2 regexp"},
+		{"rules: [{versioning: 'regex:^(?<minor>\\d+)$'}]\n", "rules[0].versioning: regex: must have a (?<major>...) group"},
+		{"rules: [{versioning: 'regex:^(?<major>\\d+)(?P<mjor>x)$'}]\n", `rules[0].versioning: regex: unknown group "mjor" (allowed: major, minor, patch, build, revision, prerelease, compatibility)`},
+		{"rules: [{updateTypes: [major], versioning: loose}]\n", "rules[0].versioning: cannot be combined with updateTypes"},
+		{"rules: [{allow: '/(/'}]\n", `rules[0].allow: invalid regex "/(/"`},
+		{"custom: [{files: [x], versioning: 'regex:('}]\n", "custom[0].versioning: regex: invalid RE2 regexp"},
+		{"separateMinorPatch: maybe\n", "line 1"},
+		{"rules: [{separateMultipleMajor: 1}]\n", "line 1"},
+		{"updateNotScheduled: sometimes\n", "line 1"},
 		{"rules: [{minimumReleaseAge: 3 fortnights}]\n", `rules[0].minimumReleaseAge: invalid age "3 fortnights"`},
 	} {
 		_, err := load(t, ".deps.yaml", tc.body)
@@ -158,7 +175,7 @@ rules:
 	if co.Pin != "digest" || co.Allow == nil || !co.Updates[dep.Minor] || co.Updates[dep.Patch] || co.Ignore {
 		t.Errorf("checkout: %+v", co)
 	}
-	if !co.Accepts(dep.Major, GoTestVer("6.1.0")) || co.Accepts(dep.Major, GoTestVer("7.0.0")) || co.Accepts(dep.Major, nil) || co.Accepts(dep.Patch, GoTestVer("6.0.1")) {
+	if !co.Accepts(dep.Major, "6.1.0", sv) || co.Accepts(dep.Major, "7.0.0", sv) || co.Accepts(dep.Major, "main", sv) || co.Accepts(dep.Major, "6.1.0", nil) || co.Accepts(dep.Patch, "6.0.1", sv) {
 		t.Error("checkout Accepts")
 	}
 	ca := c.Policy(dep.Dep{Manager: "github-actions", Name: "actions/cache"})
@@ -166,7 +183,7 @@ rules:
 		t.Errorf("cache: %+v", ca)
 	}
 	other := c.Policy(dep.Dep{Manager: "github-actions", Name: "foo/bar"})
-	if other.Pin != "digest" || len(other.Updates) != 5 || other.Allow != nil || !other.Accepts(dep.Pin, nil) {
+	if other.Pin != "digest" || len(other.Updates) != 5 || other.Allow != nil || !other.Accepts(dep.Pin, "", nil) {
 		t.Errorf("other: %+v", other)
 	}
 	if !c.Policy(dep.Dep{Manager: "gomod", Name: "x"}).Ignore {
@@ -234,24 +251,66 @@ func TestDefaultIgnore(t *testing.T) {
 }
 
 func TestPolicyCheck(t *testing.T) {
-	c, err := load(t, ".deps.yaml", "rules: [{allow: '< 2', updates: [minor]}]\n")
+	c, err := load(t, ".deps.yaml", `rules:
+  - allow: '< 2'
+    updates: [minor]
+  - names: [gl]
+    allow: '/^\d+\.\d+$/'
+  - names: [neg]
+    allow: '!/^v1\./'
+  - names: [ci]
+    allow: '/^V\d+$/i'
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := c.Policy(dep.Dep{})
 	for _, tc := range []struct {
+		name string
 		kind dep.UpdateType
-		v    *semver.Version
+		v    string
 		ok   bool
 		why  string
 	}{
-		{dep.Minor, GoTestVer("1.1.0"), true, ""},
-		{dep.Major, GoTestVer("1.1.0"), false, "update type major not allowed"},
-		{dep.Minor, GoTestVer("2.1.0"), false, "outside allow <2"},
-		{dep.Minor, nil, false, "outside allow <2"},
+		{"", dep.Minor, "1.1.0", true, ""},
+		{"", dep.Major, "1.1.0", false, "update type major not allowed"},
+		{"", dep.Minor, "2.1.0", false, "outside allow <2"},
+		{"", dep.Minor, "main", false, "outside allow <2"},
+		{"gl", dep.Minor, "1877.28", true, ""},
+		{"gl", dep.Minor, "1877.28.1", false, `outside allow /^\d+\.\d+$/`},
+		{"gl", dep.Minor, "amd64-1877.28", false, `outside allow /^\d+\.\d+$/`},
+		{"neg", dep.Minor, "v2.0.0", true, ""},
+		{"neg", dep.Minor, "v1.9.0", false, `outside allow !/^v1\./`},
+		{"ci", dep.Minor, "v7", true, ""},
 	} {
-		if ok, why := p.Check(tc.kind, tc.v); ok != tc.ok || why != tc.why {
-			t.Errorf("Check(%s, %v) = %v %q, want %v %q", tc.kind, tc.v, ok, why, tc.ok, tc.why)
+		p := c.Policy(dep.Dep{Name: tc.name})
+		if ok, why := p.Check(tc.kind, tc.v, sv); ok != tc.ok || why != tc.why {
+			t.Errorf("%s: Check(%s, %s) = %v %q, want %v %q", tc.name, tc.kind, tc.v, ok, why, tc.ok, tc.why)
+		}
+	}
+	// The regex form never converts to semver.
+	p := c.Policy(dep.Dep{Name: "gl"})
+	if ok, _ := p.Check(dep.Minor, "1877.28", func(string) *semver.Version { t.Fatal("semverOf called"); return nil }); !ok {
+		t.Error("regex allow")
+	}
+}
+
+func TestParseAllowedErrors(t *testing.T) {
+	for in, want := range map[string]string{
+		"/(/":     `invalid regex "/(/": error parsing regexp`,
+		"/x/g":    `invalid regex "/x/g": unknown flags "g" (only i)`,
+		"!/x":     `invalid regex "!/x": missing closing /`,
+		"!< 2":    `invalid constraint "!< 2"`,
+		">>1":     `invalid constraint ">>1"`,
+		"/":       `invalid constraint "/"`,
+		"!/(?=)/": `invalid regex "!/(?=)/"`,
+	} {
+		if _, err := ParseAllowed(in); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("ParseAllowed(%q) = %v, want %q", in, err, want)
+		}
+	}
+	for in, want := range map[string]string{"< 7": "<7", "/^v/": "/^v/", "!/x/i": "!/x/i"} {
+		if a, err := ParseAllowed(in); err != nil || a.String() != want {
+			t.Errorf("ParseAllowed(%q) = %v, %v; want %s", in, a, err, want)
 		}
 	}
 }
@@ -573,7 +632,7 @@ func TestPolicyFor(t *testing.T) {
 		})
 	}
 	ca := c.PolicyFor(cache, dep.Minor)
-	if ca.CommitType != "ci" || ca.Allow == nil || ca.Schedule == nil || !ca.Accepts(dep.Minor, GoTestVer("4.1.0")) || ca.Accepts(dep.Minor, GoTestVer("5.0.0")) {
+	if ca.CommitType != "ci" || ca.Allow == nil || ca.Schedule == nil || !ca.Accepts(dep.Minor, "4.1.0", sv) || ca.Accepts(dep.Minor, "5.0.0", sv) {
 		t.Errorf("cache minor: %+v", ca)
 	}
 }
@@ -637,5 +696,51 @@ rules:
 	}
 	if got := Default().Policy(dep.Dep{}).MinAge; got != 0 {
 		t.Errorf("default MinAge = %v", got)
+	}
+}
+
+func TestVersioningAndBucketPolicy(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `separateMultipleMajor: true
+separateMinorPatch: true
+updateNotScheduled: false
+rules:
+  - manager: github-actions
+    separateMinorPatch: false
+  - names: [fips]
+    versioning: loose
+  - names: [cosign]
+    versioning: 'regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$'
+  - manager: npm
+    updateTypes: [major]
+    separateMajorMinor: false
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.UpdateNotScheduledEnabled() || !Default().UpdateNotScheduledEnabled() {
+		t.Error("UpdateNotScheduledEnabled")
+	}
+	type flags struct{ majorMinor, multipleMajor, minorPatch bool }
+	for _, tc := range []struct {
+		d          dep.Dep
+		kind       dep.UpdateType
+		versioning string
+		want       flags
+	}{
+		{dep.Dep{Manager: "gomod", Name: "x"}, "", "", flags{true, true, true}},
+		{dep.Dep{Manager: "github-actions", Name: "x"}, "", "", flags{true, true, false}},
+		{dep.Dep{Manager: "docker", Name: "fips"}, "", "loose", flags{true, true, true}},
+		{dep.Dep{Manager: "docker", Name: "cosign"}, "", `regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$`, flags{true, true, true}},
+		{dep.Dep{Manager: "npm", Name: "x"}, "", "", flags{true, true, true}},         // the updateTypes rule is not in the pre-policy
+		{dep.Dep{Manager: "npm", Name: "x"}, dep.Major, "", flags{false, true, true}}, // ... but in the major policy
+		{dep.Dep{Manager: "npm", Name: "x"}, dep.Minor, "", flags{true, true, true}},
+	} {
+		p := c.PolicyFor(tc.d, tc.kind)
+		if got := (flags{p.SeparateMajorMinor, p.SeparateMultipleMajor, p.SeparateMinorPatch}); got != tc.want || p.Versioning != tc.versioning {
+			t.Errorf("%s/%s %s: flags %+v versioning %q, want %+v %q", tc.d.Manager, tc.d.Name, tc.kind, got, p.Versioning, tc.want, tc.versioning)
+		}
+	}
+	if p := Default().Policy(dep.Dep{}); !p.SeparateMajorMinor || p.SeparateMultipleMajor || p.SeparateMinorPatch || p.Versioning != "" {
+		t.Errorf("defaults: %+v", p)
 	}
 }

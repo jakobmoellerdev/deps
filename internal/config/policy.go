@@ -25,7 +25,7 @@ type Policy struct {
 	Ignore       bool
 	IgnoreReason string // why Ignore is set: default for the dep type, or the deciding rule
 	Pin          string
-	Allow        *semver.Constraints
+	Allow        *Allowed
 	Updates      map[dep.UpdateType]bool
 	Group        string         // "" = own PR
 	Schedule     *schedule.Set  // nil = always
@@ -35,6 +35,9 @@ type Policy struct {
 	CommitScope  string         // conventional commit scope, "" = none
 	Kind         dep.UpdateType // update type of a PolicyFor result, "" for Policy
 	MinAge       time.Duration  // minimum release age of new versions, 0 = off
+	Versioning   string         // versioning scheme set by a rule, "" = the dep's own
+	// PR buckets (separateMajorMinor, separateMultipleMajor, separateMinorPatch).
+	SeparateMajorMinor, SeparateMultipleMajor, SeparateMinorPatch bool
 }
 
 // production reports whether d is a production dep, which gets the fix commit type by
@@ -50,12 +53,14 @@ var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependen
 // evaluates the built-in monorepo rule (unless monorepos is false), then the user rules
 // without updateTypes top-to-bottom; each set field of a matching rule overwrites the
 // policy (Updates is replaced, not merged). Indirect Go requirements, go directives and npm
-// peerDependencies are ignored unless a rule sets `ignore: false`.
+// peerDependencies are ignored unless a rule sets `ignore: false`. Its Versioning replaces the
+// dep's scheme before resolution (only rules without updateTypes may set it).
 func (c *Config) Policy(d dep.Dep) Policy { return c.policy(d, "") }
 
 // PolicyFor is the policy of an update of kind to d: like Policy, but rules with updateTypes
 // are evaluated too, in file order, when they list kind. Without such rules it equals Policy
-// (apart from Kind).
+// (apart from Kind). The engine buckets each candidate with the Separate* flags of the policy
+// of its kind, so an updateTypes rule can change them for its types.
 func (c *Config) PolicyFor(d dep.Dep, kind dep.UpdateType) Policy { return c.policy(d, kind) }
 
 // HasUpdateTypeRules reports whether any rule sets updateTypes, i.e. whether PolicyFor can
@@ -80,13 +85,16 @@ func (r *Rule) matches(d dep.Dep, kind dep.UpdateType) bool {
 
 func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 	p := Policy{
-		Pin:         c.Pin,
-		Updates:     make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
-		Schedule:    c.schedule,
-		MinAge:      c.minAge,
-		CommitType:  CommitChore,
-		CommitScope: DefaultScope,
-		Kind:        kind,
+		Pin:                   c.Pin,
+		Updates:               make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
+		Schedule:              c.schedule,
+		MinAge:                c.minAge,
+		CommitType:            CommitChore,
+		CommitScope:           DefaultScope,
+		Kind:                  kind,
+		SeparateMajorMinor:    c.SeparateMajorMinor == nil || *c.SeparateMajorMinor,
+		SeparateMultipleMajor: c.SeparateMultipleMajor != nil && *c.SeparateMultipleMajor,
+		SeparateMinorPatch:    c.SeparateMinorPatch != nil && *c.SeparateMinorPatch,
 	}
 	if production(d) {
 		p.CommitType = CommitFix
@@ -143,6 +151,18 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		if r.minAge != nil {
 			p.MinAge = *r.minAge
 		}
+		if r.Versioning != "" {
+			p.Versioning = r.Versioning
+		}
+		if r.SeparateMajorMinor != nil {
+			p.SeparateMajorMinor = *r.SeparateMajorMinor
+		}
+		if r.SeparateMultipleMajor != nil {
+			p.SeparateMultipleMajor = *r.SeparateMultipleMajor
+		}
+		if r.SeparateMinorPatch != nil {
+			p.SeparateMinorPatch = *r.SeparateMinorPatch
+		}
 	}
 	return p
 }
@@ -156,19 +176,20 @@ func matchAny(globs []string, name string) bool {
 	return false
 }
 
-// Accepts reports whether an update of kind to version v is allowed.
-func (p Policy) Accepts(kind dep.UpdateType, v *semver.Version) bool {
-	ok, _ := p.Check(kind, v)
+// Accepts reports whether an update of kind to version v is allowed; see Check.
+func (p Policy) Accepts(kind dep.UpdateType, v string, semverOf func(string) *semver.Version) bool {
+	ok, _ := p.Check(kind, v, semverOf)
 	return ok
 }
 
 // Check is Accepts with the reason for a rejection: "update type <kind> not allowed"
-// or "outside allow <constraint>".
-func (p Policy) Check(kind dep.UpdateType, v *semver.Version) (bool, string) {
+// or "outside allow <allow>". semverOf converts v for a constraint allow and is only called
+// then (Allowed.Check).
+func (p Policy) Check(kind dep.UpdateType, v string, semverOf func(string) *semver.Version) (bool, string) {
 	if !p.Updates[kind] {
 		return false, "update type " + string(kind) + " not allowed"
 	}
-	if p.Allow != nil && (v == nil || !p.Allow.Check(v)) {
+	if p.Allow != nil && !p.Allow.Check(v, semverOf) {
 		return false, "outside allow " + p.Allow.String()
 	}
 	return true, ""

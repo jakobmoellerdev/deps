@@ -93,17 +93,18 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	if err != nil {
 		return err
 	}
-	report(stderr, o.verbose, res, res.Errors)
+	report(stderr, o.verbose, res, res.Errors, nil)
 	bo := bot.Options{
-		Base:         r.base,
-		AuthorName:   r.authorName,
-		AuthorEmail:  r.authorEmail,
-		DryRun:       r.dryRun,
-		RebaseWhen:   s.cfg.RebaseWhen,
-		MaxNewPRs:    r.maxNewPRs,
-		Managers:     s.managers,
-		BranchPrefix: s.cfg.Prefix(),
-		Notes:        releasenotes.New(client, s.sem, s.auth, s.gh, s.sources),
+		Base:               r.base,
+		AuthorName:         r.authorName,
+		AuthorEmail:        r.authorEmail,
+		DryRun:             r.dryRun,
+		RebaseWhen:         s.cfg.RebaseWhen,
+		UpdateNotScheduled: s.cfg.UpdateNotScheduledEnabled(),
+		MaxNewPRs:          r.maxNewPRs,
+		Managers:           s.managers,
+		BranchPrefix:       s.cfg.Prefix(),
+		Notes:              releasenotes.New(client, s.sem, s.auth, s.gh, s.sources),
 	}
 	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(), platform.NewClient(info, token, client), repo)
 

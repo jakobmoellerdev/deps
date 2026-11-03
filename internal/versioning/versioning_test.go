@@ -1,8 +1,10 @@
 package versioning
 
 import (
+	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -228,5 +230,184 @@ func TestSchemeMethods(t *testing.T) {
 				t.Errorf("%s: Compatible(%s, %s) = true", tt.scheme, p[0], p[1])
 			}
 		}
+	}
+}
+
+const cosignRegex = `regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$`
+
+func TestLooseBest(t *testing.T) {
+	gl := []string{"1877.25", "1877.28", "1877.3", "1592.14", "1877.28.1", "amd64-1877.29", "1878.0-rc1", "nightly", "1877"}
+	runBest(t, "loose", []bestCase{
+		{"1877.25", "1877.28.1", gl, nil}, // 1878.0-rc1 is a prerelease, 1877 reads as 1877.0
+		{"1877.25", "1877.28", gl, func(v string) bool { return strings.Count(v, ".") == 1 }},
+		{"1878.0-rc0", "1878.0-rc1", gl, nil},
+		{"v1.2.3.4.5.6", "v1.2.3.4.5.7", []string{"v1.2.3.4.5.7", "1.2.3.4.5.8", "v1.2.3.4.5.6.7"}, nil},
+		{"2.0_beta.2", "2.0_beta.10", []string{"2.0_beta.10", "2.0_beta.9"}, nil},
+		{"x", "", gl, nil},
+	})
+}
+
+func TestRegexBest(t *testing.T) {
+	cands := []string{"v3.1.4+ocm.6", "v3.1.5+ocm.1", "v3.1.4+ocm.7", "v3.1.5-ocm.2", "v3.1.5", "v3.2.0+ocm.1-rc", "v4.0.0+ocm.1", "v3.0.9+ocm.9"}
+	runBest(t, cosignRegex, []bestCase{
+		{"v3.1.4+ocm.6", "v4.0.0+ocm.1", cands, nil},
+		{"v3.1.4+ocm.6", "v3.1.5-ocm.2", cands, func(v string) bool { return !strings.HasPrefix(v, "v4") }},
+		{"v3.1.4-ocm.6", "v3.1.4+ocm.7", []string{"v3.1.4+ocm.7", "v3.1.4-ocm.5"}, nil},
+		{"v3.1.4", "", cands, nil},
+	})
+	compat := `regex:^(?<major>\d+)\.(?<minor>\d+)(?:\.(?<patch>\d+))?(?:-(?<prerelease>rc\d+))?-(?<compatibility>alpine|bookworm)$`
+	runBest(t, compat, []bestCase{
+		{"1.2-alpine", "1.4-alpine", []string{"1.3-alpine", "1.4-alpine", "1.9-bookworm", "1.5-rc1-alpine", "1.3.1-alpine"}, nil},
+		{"1.5-rc1-alpine", "1.5-alpine", []string{"1.5-rc2-bookworm", "1.5-alpine", "1.5-rc2-alpine"}, nil},
+		{"1.5-rc1-alpine", "1.5-rc2-alpine", []string{"1.5-rc2-alpine", "1.5-rc0-alpine"}, nil},
+	})
+	rev := `regex:^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)\.(?<build>\d+)(?:\.(?<revision>\d+))?$`
+	runBest(t, rev, []bestCase{
+		{"1.0.0.5", "1.0.0.5.2", []string{"1.0.0.5.2", "1.0.0.5.1", "1.0.0.4.9"}, nil},
+		{"1.0.0.5", "1.0.0.10", []string{"1.0.0.9", "1.0.0.10", "1.0.0.99999999999999999999"}, nil},
+	})
+}
+
+func TestNewSchemesRejectReasons(t *testing.T) {
+	tests := []struct {
+		scheme, cur string
+		cands       []string
+		want        map[string][]string
+	}{
+		{"loose", "1.2", []string{"main", "v1.3", "1.3-rc1", "1.1", "1.4", "1.3"}, map[string][]string{
+			"invalid": {"main"}, "prefix": {"v1.3"}, "prerelease": {"1.3-rc1"}, "not newer": {"1.1"}, "policy: nope": {"1.4"},
+		}},
+		{`regex:^(?<major>\d+)\.(?<minor>\d+)(?:-(?<prerelease>rc\d+))?-(?<compatibility>[a-z]+)$`, "1.2-alpine",
+			[]string{"1.3", "1.3-bookworm", "1.3-rc1-alpine", "1.1-alpine", "1.4-alpine", "1.3-alpine"}, map[string][]string{
+				"invalid": {"1.3"}, "compatibility": {"1.3-bookworm"}, "prerelease": {"1.3-rc1-alpine"}, "not newer": {"1.1-alpine"}, "policy: nope": {"1.4-alpine"},
+			}},
+	}
+	for _, tt := range tests {
+		got := map[string][]string{}
+		accept := func(v string) bool { return v == "1.3" || v == "1.3-alpine" }
+		get(t, tt.scheme).Best(tt.cur, tt.cands, acceptFn(accept), func(v, reason string) { got[reason] = append(got[reason], v) })
+		if !maps.EqualFunc(got, tt.want, slices.Equal) {
+			t.Errorf("%s rejects = %v, want %v", tt.scheme, got, tt.want)
+		}
+	}
+}
+
+func TestNewSchemeMethods(t *testing.T) {
+	tests := []struct {
+		scheme        string
+		valid         []string
+		invalid       []string
+		order         []string // ascending
+		kinds         map[[2]string]dep.UpdateType
+		semverIn, out string
+	}{
+		{
+			scheme: "loose", valid: []string{"1877.25", "v1", "1.2.3.4.5.6", "2.0-rc.1", "5_beta"},
+			invalid: []string{"amd64-1877.25", "1.2.3.4.5.6.7", "1.2-", "1.2+x", "1..2", "1.2-a b", "99999999999999999999"},
+			order:   []string{"1.2-alpha", "1.2-alpha.1", "1.2-beta", "1.2", "1.2.0", "1.2.0.1", "1.10"},
+			kinds: map[[2]string]dep.UpdateType{{"1877.25", "1878.1"}: dep.Major, {"1877.25", "1877.28"}: dep.Minor,
+				{"1.2.3", "1.2.4"}: dep.Patch, {"1.2.3.4", "1.2.3.5"}: dep.Patch, {"1.2-rc1", "1.2"}: dep.Patch, {"1", "1.1"}: dep.Minor},
+			semverIn: "1877.25", out: "1877.25.0",
+		},
+		{
+			scheme: cosignRegex, valid: []string{"v3.1.4+ocm.6", "v3.1.5-ocm.1"}, invalid: []string{"v3.1.4", "3.1.4+ocm.6", "v3.1.4+ocm.99999999999999999999"},
+			order: []string{"v3.0.9-ocm.9", "v3.1.4+ocm.6", "v3.1.4+ocm.10", "v3.1.5-ocm.1", "v3.10.0+ocm.0"},
+			kinds: map[[2]string]dep.UpdateType{{"v3.1.4+ocm.6", "v4.0.0+ocm.1"}: dep.Major, {"v3.1.4+ocm.6", "v3.2.0+ocm.1"}: dep.Minor,
+				{"v3.1.4+ocm.6", "v3.1.5+ocm.1"}: dep.Patch, {"v3.1.4+ocm.6", "v3.1.4+ocm.7"}: dep.Patch},
+			semverIn: "v3.1.4+ocm.6", out: "3.1.4",
+		},
+		{
+			scheme: `regex:^(?<major>\d+)(?:-(?<prerelease>.+))?$`, valid: []string{"7", "7-rc.1"}, invalid: []string{"x7"},
+			order:    []string{"7-rc.1", "7-rc.2", "7-rc.10", "7-rc.a", "7"},
+			kinds:    map[[2]string]dep.UpdateType{{"7", "8"}: dep.Major, {"7-rc.1", "7"}: dep.Patch},
+			semverIn: "7-rc.1", out: "7.0.0-rc.1",
+		},
+	}
+	for _, tt := range tests {
+		s := get(t, tt.scheme)
+		for _, v := range tt.valid {
+			if !s.Valid(v) {
+				t.Errorf("%s: Valid(%q) = false", tt.scheme, v)
+			}
+		}
+		for _, v := range tt.invalid {
+			if s.Valid(v) || s.Semver(v) != nil {
+				t.Errorf("%s: Valid(%q) = true or Semver non-nil", tt.scheme, v)
+			}
+		}
+		for i := range len(tt.order) - 1 {
+			if a, b := tt.order[i], tt.order[i+1]; s.Compare(a, b) >= 0 || s.Compare(b, a) <= 0 || s.Compare(a, a) != 0 {
+				t.Errorf("%s: Compare(%s, %s) not ascending", tt.scheme, a, b)
+			}
+		}
+		for p, k := range tt.kinds {
+			if got := s.Kind(p[0], p[1]); got != k {
+				t.Errorf("%s: Kind(%s, %s) = %s, want %s", tt.scheme, p[0], p[1], got, k)
+			}
+		}
+		if sv := s.Semver(tt.semverIn); sv == nil || sv.String() != tt.out {
+			t.Errorf("%s: Semver(%s) = %v, want %s", tt.scheme, tt.semverIn, sv, tt.out)
+		}
+	}
+}
+
+func TestRankCandidates(t *testing.T) {
+	for _, tc := range []struct {
+		scheme, cur string
+		cands       []string
+		want        []Candidate
+	}{
+		{"tag", "v4.1.0", []string{"v4.1.1", "v6.0.0", "v4.2.0", "v5.0.0", "v4.0.0"}, []Candidate{
+			{"v6.0.0", dep.Major, "6"}, {"v5.0.0", dep.Major, "5"}, {"v4.2.0", dep.Minor, ""}, {"v4.1.1", dep.Patch, ""},
+		}},
+		{"go", "v0.5.0", []string{"v1.0.0", "v0.6.0"}, []Candidate{{"v1.0.0", dep.Major, "1"}, {"v0.6.0", dep.Minor, ""}}},
+		{"docker", "1.25-alpine", []string{"2.0-alpine", "1.26-alpine"}, []Candidate{{"2.0-alpine", dep.Major, "2"}, {"1.26-alpine", dep.Minor, ""}}},
+		{"semver", "v1.2.3", []string{"2.0.0", "v1.2.4"}, []Candidate{{"v2.0.0", dep.Major, "2"}, {"v1.2.4", dep.Patch, ""}}},
+		{"semver", "1.2.3", []string{"v1.3.0"}, []Candidate{{"1.3.0", dep.Minor, ""}}},
+		{"loose", "1877.25", []string{"1877.28", "1878.1", "1880.0"}, []Candidate{{"1880.0", dep.Major, "1880"}, {"1878.1", dep.Major, "1878"}, {"1877.28", dep.Minor, ""}}},
+		{cosignRegex, "v3.1.4+ocm.6", []string{"v3.1.5+ocm.1", "v4.0.0-ocm.1"}, []Candidate{{"v4.0.0-ocm.1", dep.Major, "4"}, {"v3.1.5+ocm.1", dep.Patch, ""}}},
+		{"tag", "main", []string{"v1"}, nil},
+	} {
+		r := get(t, tc.scheme).Rank(tc.cur, tc.cands, nil, nil)
+		var got []Candidate
+		for i := range r.Len() {
+			got = append(got, r.At(i))
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s Rank(%s) = %v, want %v", tc.scheme, tc.cur, got, tc.want)
+		}
+	}
+}
+
+func TestParseScheme(t *testing.T) {
+	for _, n := range Names {
+		if _, err := Parse(n); err != nil {
+			t.Errorf("Parse(%s): %v", n, err)
+		}
+	}
+	a, errA := Parse(cosignRegex)
+	b, errB := Parse(cosignRegex)
+	if errA != nil || errB != nil || a == nil || fmt.Sprint(a) != fmt.Sprint(b) {
+		t.Fatalf("Parse(cosign) = %v %v / %v %v", a, errA, b, errB)
+	}
+	if p, ok := Get(`regex:^(?P<major>\d+)$`); !ok || !p.Valid("12") {
+		t.Error("(?P<name>) groups")
+	}
+	for in, want := range map[string]string{
+		"calver":                      `must be one of tag, go, docker, semver, loose or regex:<RE2>, got "calver"`,
+		"regex:(":                     "regex: invalid RE2 regexp: error parsing regexp",
+		`regex:^(?<minor>\d+)$`:       "regex: must have a (?<major>...) group",
+		`regex:(?<major>\d)(?<x>\d)`:  `regex: unknown group "x" (allowed: major, minor, patch, build, revision, prerelease, compatibility)`,
+		`regex:(?<major>\d)(?<x>\d)x`: `regex: unknown group "x"`,
+		"Regex:(?<major>1)":           `got "Regex:(?<major>1)"`,
+	} {
+		if _, err := Parse(in); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) = %v, want %q", in, err, want)
+		}
+	}
+	// Compare and Kind of invalid input fall back like the other schemes.
+	s := get(t, cosignRegex)
+	if s.Compare("x", "v3.1.4+ocm.6") == 0 || s.Kind("x", "v3.1.4+ocm.6") != dep.Major || s.Compatible("v3.1.4", "v3.1.5+ocm.1") {
+		t.Error("invalid input")
 	}
 }

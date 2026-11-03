@@ -35,7 +35,7 @@ func TestRunRebasesBehindBase(t *testing.T) {
 	giteaEnv(t)
 	t.Setenv("DEPS_TOKEN", "tok")
 	origin, work := gitRepo(t, map[string]string{".github/workflows/ci.yml": workflow})
-	const branch = "deps/github-actions/actions-checkout"
+	const branch = "deps/github-actions/actions-checkout-major"
 	if _, stderr, code := execute(t, "run", "--dir", work, "--author-email", "bot@example.invalid"); code != 0 || len(f.created) != 1 {
 		t.Fatalf("first run: exit %d, created %v\n%s", code, f.created, stderr)
 	}

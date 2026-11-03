@@ -92,3 +92,5 @@ func part(t Tag, i int) int {
 func (t Tag) Semver() *semver.Version {
 	return semver.New(uint64(part(t, 0)), uint64(part(t, 1)), uint64(part(t, 2)), "", "")
 }
+
+func (t Tag) major() string { return strconv.Itoa(part(t, 0)) }

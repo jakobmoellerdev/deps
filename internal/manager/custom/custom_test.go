@@ -117,6 +117,17 @@ func TestAnnotationEntryVersioning(t *testing.T) {
 	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
 		{2, "git-tags", "https://github.com/o/r/", "https://github.com/o/r", "tag", "v1.2", "", ""},
 	})
+	// Entries accept regex schemes; marker fields accept scheme names only.
+	const re = `regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)\+ocm\.(?<build>\d+)$`
+	m = one(t, config.Custom{Files: []string{"x"}, Versioning: re})
+	src = "# renovate: datasource=github-releases depName=o/cosign\nV=v3.1.4+ocm.6\n" +
+		"# deps: github-releases o/x versioning=loose\nX=1.2.3.4\n" +
+		"# renovate: datasource=github-releases depName=o/y versioning=regex:^(?<major>[0-9]+)$\n7\n"
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "github-releases", "o/cosign", "https://github.com/o/cosign", re, "v3.1.4+ocm.6", "", ""},
+		{4, "github-releases", "o/x", "https://github.com/o/x", "loose", "1.2.3.4", "", ""},
+		{6, "github-releases", "o/y", "https://github.com/o/y", `regex:^(?<major>[0-9]+)$`, "", "", `unknown versioning "regex:^(?<major>[0-9]+)$"`},
+	})
 }
 
 func TestRegex(t *testing.T) {
@@ -194,7 +205,8 @@ func TestNewErrors(t *testing.T) {
 	}{
 		{config.Custom{}, "custom[1]: files: must not be empty"},
 		{config.Custom{Files: []string{"a/[b"}}, `files: invalid glob "a/[b"`},
-		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: unknown "nope"`},
+		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose or regex:<RE2>, got "nope"`},
+		{config.Custom{Files: []string{"x"}, Versioning: "regex:(?<minor>1)"}, `versioning: regex: must have a (?<major>...) group`},
 		{config.Custom{Files: []string{"x"}, Datasource: "nuget"}, `datasource: unknown "nuget"`},
 		{config.Custom{Files: []string{"x"}, Match: "("}, "match: error parsing regexp"},
 		{config.Custom{Files: []string{"x"}, Match: "a", Datasource: "go", Name: "n"}, "match: must have a (?P<version>...) group"},
@@ -388,7 +400,7 @@ func TestRenovateMarkers(t *testing.T) {
 		{26, "docker", "alpine", "", "docker", "3.20", "", ""},
 		{28, "", "x", "", "", "", "", "renovate marker without datasource"},
 		{30, "go", "", "", "", "", "", "renovate marker without depName"},
-		{32, "go", "a", "", "loose", "", "", `unknown versioning "loose"`},
+		{32, "go", "a", "", "loose", "1.0.0", "", ""},
 		{34, "github-releases", "o/r", "https://github.com/o/r", "semver", "", "", "no version on next line"},
 		{35, "docker", "busybox", "", "docker", "1.36", "", ""},
 	})

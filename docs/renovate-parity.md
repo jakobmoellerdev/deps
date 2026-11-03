@@ -12,15 +12,15 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | P4 | `**` globs in package names (`golang.org/x/{/,}**`) | 6 groups | — | done |
 | P5 | `matchDepTypes` | indirect majors off, `golang` directive off | `depTypes` | done |
 | P6 | `enabled: false` per package | kube-openapi, go-ini/ini, ThalesIgnite/crypto11, `open-component-model/.github` | `ignore: true` | config |
-| P7 | `allowedVersions` (regex form `/^\d+\.\d+$/`) | gardenlinux fips | `allow` is a semver constraint only; the docker scheme already drops `amd64-*` tags | open (regex form) |
-| P8 | `versioning: 'regex:…'` per rule | OCM cosign `vX.Y.Z+ocm.N` / `-ocm.N` | fixed schemes (tag, go, docker, semver) | open |
-| P9 | `versioning: 'loose'` per rule | gardenlinux fips | per-dep scheme chosen by manager | open |
+| P7 | `allowedVersions` (regex form `/^\d+\.\d+$/`) | gardenlinux fips | `allow` takes a semver constraint or the regex form `/<RE2>/` (`!/<RE2>/` negates, flag `i`), matched against the version as written; rejections read `outside allow /…/` | done |
+| P8 | `versioning: 'regex:…'` per rule | OCM cosign `vX.Y.Z+ocm.N` / `-ocm.N` | `rules[].versioning: 'regex:<RE2>'` with Renovate's groups (major required, minor, patch, build, revision, prerelease, compatibility); Renovate's `(?<name>)` syntax works as is (Go RE2); compiled at load, errors as `rules[i].versioning: …`; also for `custom[].versioning` | done |
+| P9 | `versioning: 'loose'` per rule | gardenlinux fips | `rules[].versioning` (any scheme, pre-policy only) and the `loose` scheme (1–6 numeric parts, `-`/`_` suffix = prerelease); markers accept `versioning=loose` | done |
 | P10 | `minimumReleaseAge` (global 28d, per-datasource, `0 days` override, exempt digest/pin) | global, npm, cosign | `minimumReleaseAge` top-level and per rule (`28 days`, `3d`, `12h`, Go durations; `0`/`0 days` disables), per update type via `updateTypes`; too-new candidates fall back to the next older one; unknown release times are allowed | done |
-| P11 | `separateMultipleMajor` | global | one PR per dependency with the newest allowed version | open |
-| P12 | `separateMinorPatch` | global (overridden per manager) | — | open |
+| P11 | `separateMultipleMajor` | global | `separateMajorMinor` (default true), `separateMultipleMajor` top level and per rule: one update per PR bucket, branch suffix `-major` / `-v<N>` | done |
+| P12 | `separateMinorPatch` | global (overridden per manager) | top level and per rule (`-minor` / `-patch` branches); `plan`/`apply` write one update per dep and mark the others `separate PR` | done |
 | P13 | built-in monorepo groups (`group:monorepos`, `group:kubernetesMonorepo`, `group:goOpenapi`) | presets | curated built-in list, `monorepos: false` disables | done |
 | P14 | `ignorePaths` defaults (`:ignoreModulesAndTests`) | preset | Renovate's default list when `ignorePaths` is absent | done |
-| P15 | `updateNotScheduled: true` | global | out-of-window branches are never touched | open |
+| P15 | `updateNotScheduled: true` | global | `updateNotScheduled` (default true): open PRs outside their schedule are still updated and rebased, only new PRs wait; `false` skips them | done |
 | P16 | `postUpdateOptions: [gomodTidy]` | golang category, Helm group | always `go mod tidy` | done |
 | P17 | rule `minimumReleaseAge: null` for digest/pin/lockfile types | global | built in: digest refreshes, pins and security updates are always exempt; lockfile regeneration has no version | done |
 
@@ -32,7 +32,7 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | M2 | datasource `golang-version` | toolchain, netlify `GO_VERSION` | alias of `go-toolchain` | done |
 | M3 | datasource `node-version` | netlify `NODE_VERSION` | — | open |
 | M4 | `customDatasources` (`envtest`: YAML from URL + JSONata transform) | controller `.env`, `envtest.go` | — | open |
-| M5 | datasource `github-release-attachments` (version + digest of an asset) | sigstore handler `.env` (`COSIGN_CHECKSUMS_SHA256`) | alias of `github-releases`; `checksum.asset` gives asset digests | open (needs P8 for `+ocm.N`, and an end-to-end test) |
+| M5 | datasource `github-release-attachments` (version + digest of an asset) | sigstore handler `.env` (`COSIGN_CHECKSUMS_SHA256`) | alias of `github-releases`; `checksum.asset` gives asset digests; P8's regex versioning orders `+ocm.N`; `docs/examples-ocm.deps.yaml` has the cosign entry (a manual run moved `v3.1.4+ocm.5` to `+ocm.6` with the release's real checksum) | open (end-to-end test) |
 | M6 | digest refresh for non-version tags (`latest@sha256:…`) | `.env` OPENSCAP_IMAGE, controller chart `tag: latest@sha256:…` | docker-datasource deps with a non-version tag (docker manager, custom markers with a digest) get digest-only resolution: pinned → digest refresh, unpinned + `pin: digest` → pin, else skipped as `non-version tag`; other non-version values are skipped as `non-version value "<v>"` | done |
 | M7 | `with:` version inputs of setup actions (`actions/setup-node node-version`, `setup-go go-version`) | `ci.yml` `node-version: 26` | `with:` is never read | open |
 | M8 | npm `engines` / `volta` | `engines.node ^26.0.0` | not extracted | open |

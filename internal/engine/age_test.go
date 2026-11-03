@@ -118,7 +118,8 @@ func TestMinimumReleaseAge(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ds := goTimed()
-			res, tr := resolveStub(t, tc.cfg, "gomod", goDep, ds, nil)
+			// One bucket, so a too-new major falls back to minors and patches.
+			res, tr := resolveStub(t, "separateMajorMinor: false\n"+tc.cfg, "gomod", goDep, ds, nil)
 			switch {
 			case tc.want == "" && len(res.Updates) != 0:
 				t.Fatalf("updates = %+v, want none", res.Updates)

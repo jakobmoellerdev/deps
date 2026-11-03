@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/bmatcuk/doublestar/v4"
 	"go.yaml.in/yaml/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Pin modes.
@@ -54,7 +54,9 @@ var (
 	// DatasourceNames are the accepted datasource names of custom[].datasource and
 	// rules[].datasources: Datasources followed by the DatasourceAliases keys.
 	DatasourceNames = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "golang-version", "github-tags", "github-release-attachments"}
-	Versionings     = []string{"tag", "go", "docker", "semver"}
+	// Versionings are the versioning scheme names; rules[].versioning and custom[].versioning
+	// also accept regex:<RE2> (versioning.RegexPrefix).
+	Versionings = versioning.Names
 	// CommitTypes are the accepted conventional-commit types of rules[].commitType.
 	CommitTypes = []string{"fix", "chore", "build", "ci", "docs", "feat", "perf", "refactor", "revert", "style", "test"}
 )
@@ -92,8 +94,14 @@ type Config struct {
 	// MinimumReleaseAge is a string, not a duration, so "28 days" style values are accepted.
 	MinimumReleaseAge string   `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt."`
 	IgnorePaths       []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When absent: node_modules, bower_components, vendor, examples, __tests__, test, tests and __fixtures__ directories; any list (also []) replaces that default."`
-	Rules             []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
-	Custom            []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
+	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
+	// same names); rules override them.
+	SeparateMajorMinor    *bool    `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update."`
+	SeparateMultipleMajor *bool    `yaml:"separateMultipleMajor" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: one PR per newer major version (branch suffix -v<N>, newest release of each major) instead of one for the newest major."`
+	SeparateMinorPatch    *bool    `yaml:"separateMinorPatch" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch)."`
+	UpdateNotScheduled    *bool    `yaml:"updateNotScheduled" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
+	Rules                 []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
+	Custom                []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
 
 	path     string        // source path for error messages
 	schedule *schedule.Set // parsed Schedule
@@ -105,6 +113,12 @@ func (c *Config) SecurityEnabled() bool { return c.Security == nil || *c.Securit
 
 // MonoreposEnabled reports whether the built-in monorepo groups apply (default true).
 func (c *Config) MonoreposEnabled() bool { return c.Monorepos == nil || *c.Monorepos }
+
+// UpdateNotScheduledEnabled reports whether open PRs are updated outside their schedule
+// (default true).
+func (c *Config) UpdateNotScheduledEnabled() bool {
+	return c.UpdateNotScheduled == nil || *c.UpdateNotScheduled
+}
 
 // Prefix returns BranchPrefix, or DefaultBranchPrefix when unset.
 func (c *Config) Prefix() string { return cmp.Or(c.BranchPrefix, DefaultBranchPrefix) }
@@ -124,16 +138,22 @@ type Rule struct {
 	UpdateTypes []string `yaml:"updateTypes" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`
 	Ignore      *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives and npm peerDependencies in. With updateTypes: reject updates of these types."`
 	Pin         string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
-	Allow       string   `yaml:"allow" jsonschema_description:"Semver constraint new versions must satisfy, e.g. '< 7'."`
+	Allow       string   `yaml:"allow" jsonschema_description:"New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written."`
 	Updates     []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
-	Group       string   `yaml:"group" jsonschema_description:"Group name: all deps with the same group share one PR."`
-	CommitType  string   `yaml:"commitType" jsonschema:"enum=fix,enum=chore,enum=build,enum=ci,enum=docs,enum=feat,enum=perf,enum=refactor,enum=revert,enum=style,enum=test" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm dependencies), chore otherwise. Security updates always use fix."`
-	CommitScope *string  `yaml:"commitScope" jsonschema_description:"Conventional commit scope; default deps, empty string means no scope ('chore: ...')."`
-	Schedule    []string `yaml:"schedule" jsonschema_description:"Cron windows overriding the top-level schedule; [] means always."` // non-nil overrides the top-level schedule; [] = always
+	// Versioning overrides the dep's scheme before resolution, so it is a pre-policy field.
+	Versioning string `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|regex:.+)$" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`
+	// Separate* override the top-level PR bucket options for matching deps.
+	SeparateMajorMinor    *bool    `yaml:"separateMajorMinor" jsonschema_description:"Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types)."`
+	SeparateMultipleMajor *bool    `yaml:"separateMultipleMajor" jsonschema_description:"Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types)."`
+	SeparateMinorPatch    *bool    `yaml:"separateMinorPatch" jsonschema_description:"Overrides the top-level separateMinorPatch for matching deps (with updateTypes: for candidates of those types)."`
+	Group                 string   `yaml:"group" jsonschema_description:"Group name: all deps with the same group share one PR."`
+	CommitType            string   `yaml:"commitType" jsonschema:"enum=fix,enum=chore,enum=build,enum=ci,enum=docs,enum=feat,enum=perf,enum=refactor,enum=revert,enum=style,enum=test" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm dependencies), chore otherwise. Security updates always use fix."`
+	CommitScope           *string  `yaml:"commitScope" jsonschema_description:"Conventional commit scope; default deps, empty string means no scope ('chore: ...')."`
+	Schedule              []string `yaml:"schedule" jsonschema_description:"Cron windows overriding the top-level schedule; [] means always."` // non-nil overrides the top-level schedule; [] = always
 	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
 	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
 
-	allow    *semver.Constraints
+	allow    *Allowed
 	schedule *schedule.Set
 	minAge   *time.Duration // parsed MinimumReleaseAge; nil = not set
 }
@@ -144,7 +164,7 @@ type Custom struct {
 	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
 	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=golang-version,enum=github-tags,enum=github-release-attachments" jsonschema_description:"Datasource of the matched deps; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments) are aliases."`
 	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
-	Versioning string    `yaml:"versioning" jsonschema:"enum=tag,enum=go,enum=docker,enum=semver,default=semver" jsonschema_description:"Versioning scheme of the matched versions."` // default semver
+	Versioning string    `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|regex:.+)$,default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names."` // default semver
 	Checksum   *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
 }
 
@@ -392,11 +412,19 @@ func (c *Config) validateRule(i int, tz string, add addFunc) {
 	}
 	r.allow = nil
 	if r.Allow != "" {
-		cs, err := semver.NewConstraint(r.Allow)
+		a, err := ParseAllowed(r.Allow)
 		if err != nil {
-			add(f+".allow", "invalid constraint %q: %v", r.Allow, err)
+			add(f+".allow", "%v", err)
 		} else {
-			r.allow = cs
+			r.allow = a
+		}
+	}
+	if r.Versioning != "" {
+		if _, err := versioning.Parse(r.Versioning); err != nil {
+			add(f+".versioning", "%v", err)
+		}
+		if len(r.UpdateTypes) > 0 {
+			add(f+".versioning", "cannot be combined with updateTypes: the versioning scheme is decided before the update type is known")
 		}
 	}
 	for j, u := range r.Updates {
@@ -433,8 +461,10 @@ func (cu *Custom) validate(f string, add addFunc) {
 	if cu.Datasource != "" && !slices.Contains(DatasourceNames, cu.Datasource) {
 		add(f+".datasource", "must be one of %s, got %q", list(DatasourceNames), cu.Datasource)
 	}
-	if cu.Versioning != "" && !slices.Contains(Versionings, cu.Versioning) {
-		add(f+".versioning", "must be one of %s, got %q", list(Versionings), cu.Versioning)
+	if cu.Versioning != "" {
+		if _, err := versioning.Parse(cu.Versioning); err != nil {
+			add(f+".versioning", "%v", err)
+		}
 	}
 	if cu.Match == "" {
 		if cu.Checksum != nil {

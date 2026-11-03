@@ -159,7 +159,7 @@ type Span struct{ Start, End int } // byte offsets, End exclusive
 type Dep struct {
     Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "custom"
     Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm"
-    Versioning  string // "tag" | "go" | "docker" | "semver"
+    Versioning  string // "tag" | "go" | "docker" | "semver" | "loose" | "regex:<RE2>"; a rule's versioning replaces the manager's
     DepType     string // gomod: direct|indirect|go|toolchain; actions: action; docker: dockerfile|compose|workflow|action|kubernetes|helm; npm: dependencies|devDependencies|optionalDependencies|peerDependencies|packageManager; custom: annotation|regex
     File        string // slash path relative to --dir
     Line        int    // 1-based
@@ -198,6 +198,7 @@ type Update struct {
     NewChecksum string        // "" unless Dep.ChecksumSource is set and the version changes
     CommitType  string        // policy commit type (fix, chore, ...)
     CommitScope string        // policy commit scope; "" = none
+    Bucket      string        // PR bucket among the dep's updates: "" (only or non-major), "major", "v<N>", "minor", "patch"
 }
 ```
 
@@ -249,9 +250,13 @@ type Scheme interface {
     Kind(cur, next string) dep.UpdateType
     Semver(v string) *semver.Version
     Best(cur string, cands []string, accept func(v string, kind dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool)
+    Rank(cur string, cands []string, accept func(v string, kind dep.UpdateType) (bool, string), reject func(v, reason string)) Ranking
     Compatible(cur, next string) bool
 }
-func Get(name string) (Scheme, bool) // "tag", "go", "docker", "semver"
+type Ranking interface{ Len() int; At(i int) Candidate } // best first; candidates are built on access
+type Candidate struct{ Version string; Kind dep.UpdateType; Major string } // Major: decimal major of a major candidate
+func Get(name string) (Scheme, bool)    // "tag", "go", "docker", "semver", "loose", "regex:<RE2>"
+func Parse(name string) (Scheme, error) // Get with the reason; regex schemes are compiled once per name and cached
 ```
 
 ```go
@@ -273,15 +278,15 @@ type Options struct {
     Now         time.Time             // reference time of minimumReleaseAge; zero = time.Now()
 }
 type Trace struct {
-    Dep          dep.Dep
-    Rules        []int          // matching rules of the pre-policy
-    Policy       config.Policy  // pre-policy
-    UpdatePolicy *config.Policy // policy of Update.Type (updateTypes rules included); nil = no update
-    Candidates   int
-    Rejected     map[string][]string // reason -> versions
-    Update       *dep.Update
-    Err          error
+    Dep        dep.Dep
+    Rules      []int          // matching rules of the pre-policy
+    Policy     config.Policy  // pre-policy
+    Candidates int
+    Rejected   map[string][]string // reason -> versions
+    Updates    []TraceUpdate       // one per PR bucket, lowest version first; nil = none
+    Err        error
 }
+type TraceUpdate struct{ Update dep.Update; Policy *config.Policy } // Policy: of Update.Type (updateTypes rules included)
 type Result     struct{ Updates []dep.Update; Skipped []dep.Dep; Errors []error }
 type FileChange struct{ Path string; Mode fs.FileMode; Old, New []byte }
 type Group      struct{ Manager, Name, Branch, Title string; Updates []dep.Update }
@@ -290,15 +295,20 @@ func Managers(cfg *config.Config) ([]manager.Manager, error)
 func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.Env, o Options) (*Result, error)
 func Build(ctx context.Context, root string, managers []manager.Manager, updates []dep.Update, post map[string]PostProcessor) ([]FileChange, []error) // post by manager name; nil = none
 func GroupUpdates(updates []dep.Update, branchPrefix string) []Group // "" = config.DefaultBranchPrefix
+func Local(updates []dep.Update) (local []dep.Update, separate []bool) // the one update per dep that plan/apply write
 ```
 
-**Resolve order per dep:** datasource releases → `Scheme.Best` under the per-kind policy, with the release-time guards below → digest pin/refresh (`tag`/`docker` versioning on the digest-capable managers github-actions and docker, and custom deps that carry a digest) → security. With advisories, the minimum fix F is the highest, over all vulns, of each vuln's lowest compatible fixed version. If there is no normal update or it is below F, the smallest compatible release ≥ F is chosen regardless of `allow`/`updates`, `minimumReleaseAge` and of rules with `updateTypes` (a pre-policy `ignore` still wins). The advisories the chosen version fixes are attached; such security updates get no group and no schedule. Every file goes to every manager that matches it.
-- **Per-kind policy.** `config.Policy(d)` is the pre-policy (rules without `updateTypes`); it decides `ignore` for the dep, `pin`, and whether the dep is looked up at all. `config.PolicyFor(d, kind)` evaluates all rules in file order, those with `updateTypes` only when they list `kind`. The engine caches the five per-kind policies of a dep (evaluated lazily, and only when the config has `updateTypes` rules). Each candidate is accepted under the policy of its own kind: an ignoring per-kind policy rejects it as `ignored by rule #i for <kind>` (or the default-ignore reason), otherwise `updates`/`allow` decide as before; `Best` then falls back to the next candidate, so ignoring indirect majors keeps their minor and patch updates. Digest refresh and pin need `digest`/`pin` enabled and not ignored in their per-kind policy.
+**Resolve order per dep:** pre-policy (its `versioning` replaces the dep's scheme before the current value is validated) → datasource releases → `Scheme.Rank` under the per-kind policy → one candidate per PR bucket, with the release-time guards below → digest pin/refresh when no bucket has an update (digest-capable managers github-actions and docker, whatever their versioning, and custom deps that carry a digest) → security. With advisories, the minimum fix F is the highest, over all vulns, of each vuln's lowest compatible fixed version. The lowest update at or above F carries the advisories. If there is none, the smallest compatible release ≥ F is chosen regardless of `allow`/`updates`, `minimumReleaseAge` and of rules with `updateTypes` (a pre-policy `ignore` still wins); it replaces the update of its bucket (which is below F) and any digest or pin update. The advisories the chosen version fixes are attached to that one update; such security updates get no group and no schedule. Every file goes to every manager that matches it.
+- **Per-kind policy.** `config.Policy(d)` is the pre-policy (rules without `updateTypes`); it decides `ignore` for the dep, `pin`, `versioning`, and whether the dep is looked up at all. `config.PolicyFor(d, kind)` evaluates all rules in file order, those with `updateTypes` only when they list `kind`. The engine caches the five per-kind policies of a dep (evaluated lazily, and only when the config has `updateTypes` rules). Each candidate is accepted under the policy of its own kind: an ignoring per-kind policy rejects it as `ignored by rule #i for <kind>` (or the default-ignore reason), otherwise `updates`/`allow` decide as before; the bucket's next candidate is considered instead, so ignoring indirect majors keeps their minor and patch updates. Digest refresh and pin need `digest`/`pin` enabled and not ignored in their per-kind policy.
+- **PR buckets** (Renovate's `separateMajorMinor`, `separateMultipleMajor`, `separateMinorPatch`; its `getBucket`). The ranking is split into buckets and each bucket yields at most one update, its best candidate that passes the policy and the release-time guards (the guards and their bounds run per bucket). The bucket of a candidate comes from the policy of its kind, i.e. the pre-policy unless an `updateTypes` rule listing that kind sets the flags (Renovate evaluates these options before the update type is known, so it ignores them on `matchUpdateTypes` rules; OCM therefore sets them on manager rules, which behaves the same here):
+  - `separateMajorMinor: false`: one bucket `""`, the newest update of any kind.
+  - otherwise majors go to `major` (the newest major), or with `separateMultipleMajor` to `v<N>` per newer major `N` (the newest release of each); minors and patches share `""` (the newest), or with `separateMinorPatch` get `minor` (the newest minor) and `patch` (the newest patch of the current minor).
+  - Digest refreshes and pins are the bucket `""` (they only exist when no version update does). A dep's updates are ordered by version, lowest first, and all share the dep's other spans, so each bucket is built on its own branch (`Update.Bucket` becomes a branch suffix, section 5). `plan`/`apply` write one update per dep (`engine.Local`): the newest non-major one, else the lowest major; the others are reported with a `, separate PR` hint.
 - A dep the pre-policy ignores is still resolved when some per-kind policy un-ignores it (`updateTypes: [patch], ignore: false`), only for those kinds; it gets no security lookup.
 - **Non-version values.** A current value the dep's versioning scheme cannot parse is skipped as `non-version value "<v>"` before any lookup, not reported as an error. The exception is a docker-datasource dep whose digest can be maintained (docker manager, or a custom dep with a digest), e.g. `latest@sha256:…`: it gets digest-only resolution without listing releases or asking OSV. Pinned → the digest of the same tag is refreshed (`digest`, no update when unchanged); unpinned with `pin: digest` → `pin`; unpinned with `pin: keep` → skipped as `non-version tag`.
-- **Release-time guards** (only when the datasource implements `datasource.Timer`; each candidate's time is asked at most once per dep). After `Best` picks a candidate, it is rejected and `Best` re-runs without it (bounded: 3 `older than current`, 50 rejections in total, then no update):
+- **Release-time guards** (only when the datasource implements `datasource.Timer`; each candidate's time is asked at most once per dep). A bucket's best candidate is rejected and the bucket's next one tried (bounded per bucket: 3 `older than current`, 50 rejections in total, then no update for that bucket):
   - A major candidate whose release time predates the current version's is rejected as `older than current`. This drops legacy pre-module tags such as `k8s.io/client-go v1.5.2` (2016) when the current version is `v0.37.1`.
-  - With a `minimumReleaseAge` in the policy of the candidate's kind, a candidate released less than that long before `Options.Now` is rejected as `too new (released <date>, minimum <age>)`; the next lower candidate (possibly of another kind) is tried, so a too-new major can fall back to an old enough minor.
+  - With a `minimumReleaseAge` in the policy of the candidate's kind, a candidate released less than that long before `Options.Now` is rejected as `too new (released <date>, minimum <age>)`; the bucket's next lower candidate is tried. Without `separateMajorMinor` all kinds share one bucket, so a too-new major falls back to an old enough minor.
   - Unknown times (zero, or a lookup error, logged at debug level) never reject. Digest refreshes and pins (no new version) and security updates are exempt from the age.
 - The chosen update (also digest, pin and security updates) takes `CommitType`/`CommitScope` and, unless it is a security update, `Group`/`Schedule` from the policy of its type (`config.Policy` also has `Monorepo`, the built-in group that applied, and `Kind`, the type a `PolicyFor` result is for).
 
@@ -341,6 +351,7 @@ type Options struct {
     MaxNewPRs                     int    // 0 = unlimited
     Managers                      []manager.Manager
     Now                           time.Time // schedule evaluation; zero = time.Now()
+    UpdateNotScheduled            bool      // update and rebase open PRs outside their schedule (config updateNotScheduled)
     Notes                         Notes     // nil = no ages/notes
 }
 type Notes interface { // implemented by releasenotes.Notes
@@ -361,8 +372,11 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
   - other majors, except the step from v0 to v1.
 - **Docker tags (`docker`).** `^(v?)(\d+(?:\.\d+)*)(.*)$` → prefix, numeric parts, suffix. Candidates must have the same prefix, the same number of parts and an identical suffix; `latest` and other non-numeric tags are invalid.
 - **Semver (`semver`).** Masterminds loose semver. Prereleases only if the current version is one; any precision. The result keeps the current version's `v` prefix style. Default for `custom[]`; used by npm, whose versions have no `v` and whose prerelease candidates (`2.0.0-rc.1`) are only considered from a prerelease.
+- **Loose (`loose`, Renovate's loose).** 1–6 numeric dot parts, an optional `v` (candidates must share the current one), an optional suffix after `-` or `_` (`2.0-rc1`, `5_beta`) that counts as a prerelease, so suffixed candidates are only considered from a suffixed version. Parts compare numerically with a missing part read as 0 (`1877` < `1877.25`; Renovate ranks a shorter version higher instead), then a release above its prereleases, prereleases by dot-separated identifiers (numeric ones numerically), and finally fewer parts below more (`1.2` < `1.2.0`). Kind by position: part 0 major, part 1 minor, later parts and suffix changes patch. Any precision is a candidate, so combine it with an `allow` regex to keep one (`/^\d+\.\d+$/`). `Semver` builds `MAJOR.MINOR.PATCH[-suffix]` from the first three parts.
+- **Regex (`regex:<RE2>`, Renovate's regex).** The RE2 matches the version (anchor it with `^…$`) and names its parts: `major` (required), `minor`, `patch`, `build`, `revision` (numeric; absent groups read as 0), `prerelease` and `compatibility`; other named groups are errors, so a typo cannot silently read as 0. Go's regexp (since Go 1.22) accepts Renovate's `(?<name>…)` as well as `(?P<name>…)`, so expressions from `renovate.json5` are used unchanged (no translation step). Candidates must have the current `compatibility` (else `compatibility`), prereleases only from a prerelease. Ordering: major, minor, patch, build, revision numerically, then a release above its prereleases, prereleases by identifiers. Kind: major or minor by group, otherwise patch (build, revision and prerelease changes). `Semver` is `MAJOR.MINOR.PATCH[-prerelease]` for `allow` constraints. Schemes are compiled when the config is loaded and cached by name. OCM's cosign fork: `regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$` orders `v3.1.4+ocm.6` < `v3.1.5+ocm.1` (patch) and matches both the `+ocm.N` release and the `-ocm.N` image tag.
 - **`go`/`toolchain` directives** use `tag` versioning against the `go-toolchain` releases: every stable `X.Y.Z` plus a derived `X.Y` per minor, so `go 1.26` moves to `go 1.27` and `go 1.26.1` to `go 1.27.1`. Prerelease toolchains (`go1.27rc1`) are skipped.
-- Every scheme reports each dropped candidate with a reason (`invalid`, `prerelease`, `precision`, `prefix`, `suffix`, `major`, `not newer`, `policy: <why>`) for `Trace`; policy reasons are `update type <k> not allowed` and `outside allow <constraint>`.
+- **Rule versioning.** `rules[].versioning` replaces the manager's scheme for matching deps before resolution (pre-policy only; rejected together with `updateTypes`). It applies to every place the dep's scheme is used: validation of the current value (a value the new scheme cannot parse is skipped as `non-version value`), ranking, kinds, `allow` conversion and security fixes.
+- Every scheme reports each dropped candidate with a reason (`invalid`, `prerelease`, `precision`, `prefix`, `suffix`, `major`, `compatibility`, `not newer`, `policy: <why>`) for `Trace`; policy reasons are `update type <k> not allowed` and `outside allow <constraint or /regex/>`.
 
 ## 5. Platforms
 
@@ -445,6 +459,7 @@ Both clients share these rules:
 4. **Grouping:**
    - Updates whose policy sets `group` form one group per group name: branch `<prefix>group/<slug(group)>`, title `<type>(<scope>): update <group> (<n> dependencies)`, `update <group> to <v>` when all members move to one version, or the single-dependency title below when only one dependency is in it.
    - Every other update forms one group per (manager, name): branch `<prefix><manager>/<slug(name)>`.
+   - **PR buckets** split both kinds of groups: updates of one dep in different buckets (section 4) never share a group, and a non-empty bucket is appended to the branch as `-<bucket>`: `-major`, `-v<N>` (`separateMultipleMajor`; deps uses the major number where Renovate writes `<N>.x`), `-minor`, `-patch`. The non-major bucket (and the only bucket with `separateMajorMinor: false`) has no suffix, so its branches keep their names. A policy group gets the suffix of its members' bucket: `<prefix>group/<slug>-patch`. Titles carry their version as before (`update actions/checkout to v7.0.1`).
    - **Built-in monorepo groups:** a curated list of about 60 single-repository monorepos (kubernetes staging modules, opentelemetry-go, aws-sdk-go-v2, babel, typescript-eslint, angular, ...) is applied as implicit rules before the user rules, setting only `group: <name> monorepo`. Any user rule overrides it; `monorepos: false` disables the list; `deps explain` shows them as `builtin`.
    - Security updates (with advisories) are never put into a policy group. Title: `fix(<scope>): update <name> to <ver> [security]`, or `fix(<scope>): update <name> [security]` when versions differ.
    - **Semantic prefix** (Renovate's `:semanticPrefixFixDepsChoreOthers`): production deps (gomod `direct`, npm `dependencies`) use `fix(deps):`, everything else `chore(deps):`, security updates always `fix`. Rules override with `commitType` and `commitScope` (`""` drops the scope: `chore: ...`). A group uses `fix` if any member is `fix`, else the first member's type, and always the first member's scope.
@@ -454,13 +469,13 @@ Both clients share these rules:
      - every update shares one new version: `<p> update <name> to <ver>`;
      - otherwise: `<p> update <name>`.
    - `slug` lowercases, maps bytes outside `[a-z0-9._-]` to `-`, collapses runs of `-` and trims `-`.
-   - Changes are built for at most 4 in-schedule groups concurrently, then the groups are handled one after another.
+   - Changes are built for at most 4 groups concurrently (groups that will be pushed: in schedule, or with an open PR under `updateNotScheduled`), then the groups are handled one after another. Every group is built from its own updates only, so a dep's buckets never conflict.
 5. **Fingerprint:** the first 16 hex characters of sha256 over the sorted `path\x00newcontent` pairs.
    - The PR body is a `| File | From | To | Type |` table (with an *Age* column when release notes are enabled), a `### Security` section listing the advisories (if any), the release notes section, then `<!-- deps:fingerprint=<fp> -->`.
    - The commit message is the title, a blank line, then one line per update: `- <file>:<line> <from> -> <to>`.
 6. **Per-group decision**, first match wins:
    1. No open PR exists, and a closed PR has the same branch, was not merged and has the same title → `skipped: closed PR for this version`.
-   2. A non-security update of the group is outside its schedule (evaluated at run time in `timezone`) → `skipped: outside schedule`. Nothing is built or pushed.
+   2. A non-security update of the group is outside its schedule (evaluated at run time in `timezone`): with `updateNotScheduled: true` (the default, as in Renovate) a group with an open PR continues below, so content changes, conflicts and `rebaseWhen` keep the PR current, and only creating a new PR waits for the window → `skipped: outside schedule`. With `updateNotScheduled: false` every out-of-schedule group is `skipped: outside schedule`. Nothing is built or pushed for skipped groups.
    3. The open PR's fingerprint matches (its content is unchanged):
       - `rebaseWhen: never` → `up-to-date`, even when the PR conflicts.
       - The PR is not unmergeable and `rebaseWhen` is `conflicted` (the default), or the branch does not exist → `up-to-date`. On GitHub, a nil `mergeable` triggers a `GetPR` call; nil still counts as mergeable.
@@ -581,14 +596,14 @@ When debug is disabled, the HTTP transport skips timing entirely after one `Enab
 
 | Command | Behavior |
 |---|---|
-| `deps plan` | Unified diff on stdout, report on stderr. Post-processors do not run: go.sum and package-lock.json changes are not computed (`note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run`). |
-| `deps apply` | Writes the changes, including `go mod tidy` output and regenerated package-lock.json files. |
+| `deps plan` | Unified diff on stdout, report on stderr. Post-processors do not run: go.sum and package-lock.json changes are not computed (`note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run`). A dep with updates in several PR buckets contributes one of them to the diff (`engine.Local`: the newest non-major update, else the lowest major); every update gets an `update` line, the others with `(<type>, separate PR)`. The summary line counts all of them. |
+| `deps apply` | Writes the changes, including `go mod tidy` output and regenerated package-lock.json files; the same one update per dep as `plan`. |
 | `deps run` | Branch and PR per group (section 5). Flags: `--platform`, `--api-url`, `--repo`, `--token`, `--base`, `--author-name`, `--author-email`, `--max-new-prs`, `--dry-run`. |
-| `deps explain <name-glob>...` | Resolves only deps whose name matches any `path.Match` glob. Prints per occurrence `<name>  <file>:<line>  (<manager>, <depType>, <datasource>, <versioning>)`, then `current`, `rules` (`#<i> <fields>` or `none`; for an update, the `updateTypes` rules that applied to its type follow as `#<i> <fields> (applies to <type>)`), `policy` (`pin= allow= updates= group= schedule= minAge=`; the pre-policy, then `<type>: <policy>` when `updateTypes` rules applied), `candidates`, `rejected` (versions by reason, up to 3 each, e.g. `ignored by rule #4 for major`, `too new (released 2026-11-01, minimum 28 days)`), `result` (`update <from> -> <to> (<type>)`, `up to date`, `skipped: <reason>` or `error: <err>`) and one `security` line per advisory. A glob matching nothing is an error. |
+| `deps explain <name-glob>...` | Resolves only deps whose name matches any `path.Match` glob. Prints per occurrence `<name>  <file>:<line>  (<manager>, <depType>, <datasource>, <versioning>)` (the versioning after a rule's override), then `current`, `rules` (`#<i> <fields>` or `none`; for updates, the `updateTypes` rules that applied to their types follow as `#<i> <fields> (applies to <type>)`), `policy` (`pin= allow= updates= group= schedule= minAge=`, plus `versioning=` when a rule set it; the pre-policy, then `<type>: <policy>` per type whose `updateTypes` rules applied), `candidates`, `rejected` (versions by reason, up to 3 each, e.g. `ignored by rule #4 for major`, `outside allow /^\d+\.\d+$/`, `too new (released 2026-11-01, minimum 28 days)`), one `result` line per PR bucket (`update <from> -> <to> (<type>)`, with `, bucket <b>` for a non-empty bucket), or `up to date`, `skipped: <reason>` or `error: <err>`, and one `security` line per advisory after its update. A glob matching nothing is an error. |
 | `deps schema` | Prints the JSON Schema (draft 2020-12) of `.deps.yaml`, reflected from `internal/config` with invopop/jsonschema. Unknown keys are rejected, as in `Load`. |
 | `deps version` | Prints the version set via `-ldflags "-X main.version=…"`. |
 
-`plan`/`apply` update lines carry advisories as a suffix: `update  <file>:<line>  <name>  <from> -> <to>  (<type>)  security: <id>,<id>`.
+`plan`/`apply` update lines carry advisories as a suffix: `update  <file>:<line>  <name>  <from> -> <to>  (<type>)  security: <id>,<id>`; updates left to their own PR read `(<type>, separate PR)`.
 
 Editor support: `deps schema > deps.schema.json`, then start `.deps.yaml` with `# yaml-language-server: $schema=./deps.schema.json`.
 
@@ -619,6 +634,10 @@ actions:
   defaultHost: ""           # host for `owner/repo@ref`; "" = auto (section 5)
 minimumReleaseAge: ""       # e.g. "28 days", "1 day", "3d", "12h", "90m" or a Go duration; "" or "0" = off
 ignorePaths: []             # doublestar globs on slash paths relative to --dir; absent = **/{node_modules,bower_components,vendor,examples,__tests__,test,tests,__fixtures__}/**
+separateMajorMinor: true    # PR buckets (section 4): the newest major apart from the newest minor/patch (default true)
+separateMultipleMajor: false # one PR per newer major (branch suffix -v<N>) instead of one for the newest (default false)
+separateMinorPatch: false   # newest minor (-minor) and newest patch of the current minor (-patch) apart (default false)
+updateNotScheduled: true    # keep updating/rebasing open PRs outside their schedule; only new PRs wait (default true)
 rules:
   - manager: github-actions # optional: github-actions | gomod | docker | npm | custom
     names: ["actions/*"]    # optional doublestar globs on the dependency name (* within a segment, ** across, {a,b})
@@ -628,19 +647,23 @@ rules:
     updateTypes: [minor, patch] # optional: major minor patch digest pin; the rule applies to candidate updates of these types (no pin key)
     ignore: true            # optional
     pin: digest             # optional: keep | digest
-    allow: "< 7"            # optional Masterminds semver constraint
+    allow: "< 7"            # optional Masterminds semver constraint, or Renovate's regex form '/^\d+\.\d+$/' ('!/re/' negates, flag i)
     updates: [major, minor, patch, digest, pin]   # optional allowed update types
     group: "name"           # optional: one PR for all deps with this group
     schedule: ["* 0-5 * * *"] # optional: overrides the top-level schedule ([] = always)
     commitType: chore       # optional: fix | chore | build | ci | docs | feat | perf | refactor | revert | style | test
     commitScope: deps       # optional: [A-Za-z0-9][A-Za-z0-9._/-]*; "" = no scope
     minimumReleaseAge: 3 days # optional: overrides the top-level age; "0" / "0 days" disables it
+    versioning: loose       # optional: tag | go | docker | semver | loose | regex:<RE2>; replaces the manager's scheme (not with updateTypes)
+    separateMajorMinor: true    # optional overrides of the top-level bucket options (with updateTypes: for those types)
+    separateMultipleMajor: true
+    separateMinorPatch: false
 custom:
   - files: ["**/Makefile"]  # required doublestar globs
     match: 'TOOL_VERSION = (?P<version>\S+)'  # optional RE2; absent = annotation mode; needs a version group
     datasource: go          # git-tags | github-releases | go | go-toolchain | docker | npm | golang-version | github-tags | github-release-attachments; regex mode: required unless a datasource group
     name: golang.org/x/tools # regex mode: required unless a name group
-    versioning: semver      # tag | go | docker | semver (default semver)
+    versioning: semver      # tag | go | docker | semver | loose | regex:<RE2> (default semver); marker fields take the names only
     checksum:               # optional, regex mode only; requires a (?P<checksum>) group in match
       asset: ""             # github-releases only: release asset whose API digest is used; exclusive with url
       url: ""               # checksum document URL ({{version}} expands)
@@ -650,8 +673,11 @@ custom:
 **Semantics:**
 - The file is decoded strictly: unknown keys are errors and report their line. All validation errors are reported together, each as `<path>: <field>: <msg>`.
 - **Rule evaluation:** the policy starts as `{pin: <top-level pin>, updates: all five, schedule: <top-level>}`, with `ignore` true for the `indirect`, `go` and `peerDependencies` dependency types (opt in with a rule `ignore: false`). Each rule matches when its `manager` is empty or equal, its `names` are empty or any glob matches the name, its `depTypes` are empty or contain the dependency type, its `paths` are empty or any glob matches the file, and its `datasources` are empty or contain the dep's datasource (Renovate names are normalized first: `golang-version` = `go-toolchain`, `github-tags` = `git-tags`, so it also matches actions, `github-release-attachments` = `github-releases`). Rules are applied in file order. Every field a matching rule sets overwrites the policy; `updates` is replaced, not merged.
-- **`updateTypes` (Renovate's `matchUpdateTypes`):** a rule with `updateTypes` additionally matches only candidate updates of those types, so it is evaluated once the type of a candidate is known, at its position in file order. Rules without it form the dep's pre-policy, which decides `pin` and whether the dep is ignored; rules with it decide per type, e.g. `group`, `schedule`, `commitType`, `allow`, `updates` or `ignore: true` (reject updates of that type; the next best candidate of another type is chosen) and `ignore: false` (opt a default-ignored dep in for those types only). `pin` cannot be combined with `updateTypes` (pinning is decided before an update exists), and `updateTypes: []` is rejected. Security fixes ignore `updateTypes` rules; only a pre-policy `ignore` blocks them.
-- **Acceptance:** an update is accepted when the policy of its type does not ignore it, its type is in `updates` and the new version satisfies `allow` (if set).
+- **`updateTypes` (Renovate's `matchUpdateTypes`):** a rule with `updateTypes` additionally matches only candidate updates of those types, so it is evaluated once the type of a candidate is known, at its position in file order. Rules without it form the dep's pre-policy, which decides `pin`, `versioning` and whether the dep is ignored; rules with it decide per type, e.g. `group`, `schedule`, `commitType`, `allow`, `updates`, the `separate*` bucket options, or `ignore: true` (reject updates of that type; the bucket's next best candidate is chosen) and `ignore: false` (opt a default-ignored dep in for those types only). `pin` and `versioning` cannot be combined with `updateTypes` (both are decided before an update exists), and `updateTypes: []` is rejected. Security fixes ignore `updateTypes` rules; only a pre-policy `ignore` blocks them.
+- **Acceptance:** an update is accepted when the policy of its type does not ignore it, its type is in `updates` and the new version satisfies `allow` (if set). A constraint `allow` checks the scheme's Masterminds conversion of the candidate (built from the parsed parts; unrepresentable versions are rejected). A regex `allow` (`/<RE2>/`, Renovate's `allowedVersions` regex form; `!/<RE2>/` rejects matches; flag `i` only) matches the candidate as written and never converts it. Invalid constraints and regexes are config errors (`rules[i].allow: invalid regex "/(/": ...`).
+- **`versioning`:** see section 4, *Versioning*. Invalid names and regex schemes are config errors (`rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group "x" (allowed: ...)`, `regex: invalid RE2 regexp: ...`), as is `versioning` together with `updateTypes`.
+- **`separateMajorMinor` / `separateMultipleMajor` / `separateMinorPatch`:** top level and per rule (section 4, *PR buckets*); a dep with several buckets gets one branch and PR per bucket with an update.
+- **`updateNotScheduled`:** section 5, per-group decision 2.
 - **`pin: digest`:** github-actions: pins tag refs to the tag's commit SHA and appends `# <tag>`. docker: appends `@sha256:<digest>` after the tag. Already-pinned refs stay pinned and are refreshed. The `pin` setting is ignored for gomod, npm and custom.
 - **Schedules:** a time is in schedule when any expression matches it in `timezone`. Like cron, when both day of month and day of week are restricted, either may match. A rule's `schedule` replaces the top-level one; `[]` means always. Steps (`/s`) are allowed only on `*` or a range; day of week is 0-7 (0 and 7 are Sunday).
 - **Groups:** all non-security updates whose policy has the same `group` share one branch and PR (section 5). Built-in monorepo groups apply before user rules unless `monorepos: false`.
@@ -661,7 +687,7 @@ custom:
 - **`minimumReleaseAge`:** `<n> <unit>` with unit minutes, hours, days or weeks (singular, plural or the first letter, the space optional), `0`, or a Go duration; negative or unparsable values are errors. A new version is proposed only once it is at least that old; younger candidates are skipped in favour of the next older one (section 4). A rule's value overrides earlier ones, so `0 days` re-enables immediate updates for matching deps, and with `updateTypes` it applies per update type. Releases without a known time (datasource without `Timer`, Go toolchains, failed lookups) are allowed. Digest refreshes, pins and security updates are exempt.
 - **Commit titles:** default type `fix` for gomod `direct` and npm `dependencies`, `chore` otherwise (security always `fix`); default scope `deps`.
 - **Security:** with `security: true` (the default), OSV advisories can force an update that bypasses `allow`, `updates`, `schedule` and `updateTypes` rules, but never a pre-policy `ignore` (section 5).
-- **`custom[]`:** validated in both modes: `datasource` and `versioning` must be known, `files` non-empty valid globs, `match` a valid RE2 with a `version` group. See section 2.
+- **`custom[]`:** validated in both modes: `datasource` and `versioning` must be known (`versioning` may be a `regex:` scheme; `versioning=` marker fields and the `versioning` regex group accept the scheme names, a marker inherits the entry's scheme), `files` non-empty valid globs, `match` a valid RE2 with a `version` group. See section 2.
 
 ### Example
 

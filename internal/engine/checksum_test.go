@@ -84,8 +84,10 @@ rules: [{names: [o/fail], allow: '< 2'}]
 			}
 			var traced []string
 			o.Trace = func(tr Trace) {
-				if tr.Update != nil && tr.Update.NewChecksum != "" {
-					traced = append(traced, tr.Update.NewChecksum)
+				for _, tu := range tr.Updates {
+					if tu.Update.NewChecksum != "" {
+						traced = append(traced, tu.Update.NewChecksum)
+					}
 				}
 			}
 			res, err := Resolve(t.Context(), root, cfg, env, o)

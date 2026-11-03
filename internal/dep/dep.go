@@ -28,7 +28,7 @@ type Span struct{ Start, End int }
 type Dep struct {
 	Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "custom"
 	Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm"
-	Versioning  string // "tag" | "go" | "docker" | "semver"
+	Versioning  string // "tag" | "go" | "docker" | "semver" | "loose" | "regex:<RE2>" (rules[].versioning overrides the manager's)
 	DepType     string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"; docker: "dockerfile"|"compose"|"workflow"|"action"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"; custom: "annotation"|"regex"
 	File        string // slash path relative to --dir
 	Line        int    // 1-based
@@ -75,6 +75,11 @@ type Update struct {
 	NewChecksum string        // "" unless Dep.ChecksumSource is set and the version changes
 	CommitType  string        // policy conventional-commit type; "" = unset (titles use chore(deps))
 	CommitScope string        // policy commit scope, "" = no scope; only used when CommitType is set
+	// Bucket is the PR bucket of the update among the dep's updates (separateMajorMinor and
+	// friends): "" for the only bucket or the non-major one, "major", "v<N>" (one per major
+	// with separateMultipleMajor), "minor" or "patch" (separateMinorPatch). A non-empty bucket
+	// is appended to the branch as "-<bucket>".
+	Bucket string
 }
 
 // FromTo renders the old and new version; digest-pinned sides are `<version>@<digest7>`.

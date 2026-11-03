@@ -11,7 +11,8 @@ import (
 )
 
 // Group is the updates that become one branch and one pull request: all updates of one
-// dependency, or all non-security updates sharing a policy group (Manager "group").
+// dependency in one PR bucket, or all non-security updates sharing a policy group and bucket
+// (Manager "group").
 type Group struct {
 	Manager, Name, Branch, Title string
 	Updates                      []dep.Update
@@ -21,24 +22,29 @@ type Group struct {
 const GroupManager = "group"
 
 // GroupUpdates groups updates by policy group name, or by (Manager, Name) for ungrouped and
-// security updates (security updates are never batched into a policy group). Branches are
-// <branchPrefix><manager>/<slug> and <branchPrefix>group/<slug>; "" means
-// config.DefaultBranchPrefix. Sorted by Manager then Name.
+// security updates (security updates are never batched into a policy group), and by PR
+// bucket (dep.Update.Bucket). Branches are <branchPrefix><manager>/<slug> and
+// <branchPrefix>group/<slug>, with "-<bucket>" appended for a non-empty bucket; "" means
+// config.DefaultBranchPrefix. Sorted by Manager, Name, then Branch.
 func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 	branchPrefix = cmp.Or(branchPrefix, config.DefaultBranchPrefix)
-	type key struct{ manager, name string }
+	type key struct{ manager, name, bucket string }
 	idx := map[key]int{}
 	var groups []Group
 	for _, u := range updates {
-		k := key{u.Dep.Manager, u.Dep.Name}
+		k := key{u.Dep.Manager, u.Dep.Name, u.Bucket}
 		if u.Group != "" && len(u.Advisories) == 0 {
-			k = key{GroupManager, u.Group}
+			k = key{GroupManager, u.Group, u.Bucket}
 		}
 		i, ok := idx[k]
 		if !ok {
 			i = len(groups)
 			idx[k] = i
-			groups = append(groups, Group{Manager: k.manager, Name: k.name, Branch: branchPrefix + k.manager + "/" + slug(k.name)})
+			branch := branchPrefix + k.manager + "/" + slug(k.name)
+			if k.bucket != "" {
+				branch += "-" + k.bucket
+			}
+			groups = append(groups, Group{Manager: k.manager, Name: k.name, Branch: branch})
 		}
 		groups[i].Updates = append(groups[i].Updates, u)
 	}
@@ -46,9 +52,45 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 		groups[i].Title = groupTitle(groups[i])
 	}
 	slices.SortFunc(groups, func(a, b Group) int {
-		return cmp.Or(strings.Compare(a.Manager, b.Manager), strings.Compare(a.Name, b.Name))
+		return cmp.Or(strings.Compare(a.Manager, b.Manager), strings.Compare(a.Name, b.Name), strings.Compare(a.Branch, b.Branch))
 	})
 	return groups
+}
+
+// Local splits updates into the ones plan and apply write and the ones only `run` proposes
+// (in their own PRs): a dependency occurrence gets one local update, since the updates of its
+// PR buckets edit the same bytes. The newest non-major update of a dep is kept, else its
+// lowest major one (Resolve orders a dep's updates by version). local keeps the order of
+// updates; separate[i] reports whether updates[i] was left out.
+func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
+	type occ struct {
+		file string
+		span dep.Span
+	}
+	chosen := make(map[occ]int, len(updates))
+	for i, u := range updates {
+		k := occ{u.Dep.File, u.Dep.RefSpan}
+		j, ok := chosen[k]
+		switch {
+		case !ok:
+			chosen[k] = i
+		case u.Type != dep.Major && (updates[j].Type == dep.Major || i > j):
+			chosen[k] = i // a (newer) non-major wins over a major
+		}
+	}
+	separate = make([]bool, len(updates))
+	if len(chosen) == len(updates) {
+		return updates, separate
+	}
+	local = make([]dep.Update, 0, len(chosen))
+	for i, u := range updates {
+		if chosen[occ{u.Dep.File, u.Dep.RefSpan}] == i {
+			local = append(local, u)
+		} else {
+			separate[i] = true
+		}
+	}
+	return local, separate
 }
 
 // commitPrefix renders the conventional-commit header of a title ("chore(deps): ").

@@ -148,11 +148,11 @@ func TestUpdateTypeRulesOCM(t *testing.T) {
 	if r := ind.Rejected["policy: ignored by rule #5 for major"]; !slices.Equal(r, []string{"v1.0.0"}) {
 		t.Errorf("ind rejected = %v", ind.Rejected)
 	}
-	if ind.UpdatePolicy == nil || ind.UpdatePolicy.Kind != dep.Minor || !slices.Equal(ind.Rules, []int{3}) {
-		t.Errorf("ind trace: rules %v update policy %+v", ind.Rules, ind.UpdatePolicy)
+	if len(ind.Updates) != 1 || ind.Updates[0].Policy.Kind != dep.Minor || !slices.Equal(ind.Rules, []int{3}) {
+		t.Errorf("ind trace: rules %v updates %+v", ind.Rules, ind.Updates)
 	}
-	if co := traces["actions/checkout"]; !slices.Equal(co.Rules, []int{0}) || co.UpdatePolicy == nil || !slices.Equal(co.UpdatePolicy.Rules, []int{0, 1}) {
-		t.Errorf("checkout trace: rules %v update policy %+v", co.Rules, co.UpdatePolicy)
+	if co := traces["actions/checkout"]; !slices.Equal(co.Rules, []int{0}) || len(co.Updates) != 1 || !slices.Equal(co.Updates[0].Policy.Rules, []int{0, 1}) {
+		t.Errorf("checkout trace: rules %v updates %+v", co.Rules, co.Updates)
 	}
 	if goDir := traces["go"]; goDir.Dep.Skip != "ignored by rule #4" {
 		t.Errorf("go directive: %+v", goDir.Dep)
@@ -164,7 +164,7 @@ func TestUpdateTypeRulesOCM(t *testing.T) {
 		groups = append(groups, group{g.Branch, g.Title})
 	}
 	wantGroups := []group{
-		{"deps/github-actions/actions-setup-go", "chore(deps): update actions/setup-go to v6.0.0"},
+		{"deps/github-actions/actions-setup-go-major", "chore(deps): update actions/setup-go to v6.0.0"},
 		{"deps/gomod/example.com-direct", "fix(deps): update example.com/direct to v1.1.0"},
 		{"deps/gomod/example.com-ind", "chore(deps): update example.com/ind to v0.10.0"},
 		{"deps/group/digest-pins", "chore(deps): update Digest pins (3 dependencies)"},

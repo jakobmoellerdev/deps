@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	msemver "github.com/Masterminds/semver/v3"
 
@@ -22,29 +23,82 @@ type Scheme interface {
 	// Best returns the highest candidate newer than cur that is compatible (same
 	// precision/prefix/suffix/major rules of the scheme) and accepted. reject (may be
 	// nil) receives every dropped candidate with a short reason: "invalid",
-	// "prerelease", "precision", "prefix", "suffix", "major", "not newer" or
-	// "policy: <why>". accept may be nil (accept all).
+	// "prerelease", "precision", "prefix", "suffix", "major", "compatibility",
+	// "not newer" or "policy: <why>". accept may be nil (accept all).
 	Best(cur string, cands []string, accept func(v string, kind dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool)
-	// Rank returns every candidate Best would accept, best first, so callers that need to
-	// skip candidates (release age) parse and filter the list once. Rejections are reported
-	// as in Best.
-	Rank(cur string, cands []string, accept func(v string, kind dep.UpdateType) (bool, string), reject func(v, reason string)) []string
+	// Rank returns every candidate Best would accept, best first, so callers that bucket
+	// candidates or skip some (release age) parse and filter the list once. Rejections are
+	// reported as in Best.
+	Rank(cur string, cands []string, accept func(v string, kind dep.UpdateType) (bool, string), reject func(v, reason string)) Ranking
 	// Compatible reports whether next is a valid upgrade target for cur ignoring
 	// policy: compatible under the scheme's rules and newer.
 	Compatible(cur, next string) bool
 }
 
-// Get returns the scheme registered under name: "tag", "go", "docker" or "semver".
-func Get(name string) (Scheme, bool) {
-	s, ok := schemes[name]
-	return s, ok
+// Ranking is the result of Scheme.Rank. Candidates are rendered on access: callers usually
+// look at the first few of hundreds.
+type Ranking interface {
+	Len() int
+	At(i int) Candidate // i-th best, 0 <= i < Len()
 }
 
+// Candidate is a ranked upgrade candidate.
+type Candidate struct {
+	Version string         // as written into the file
+	Kind    dep.UpdateType // major, minor or patch relative to the current version
+	Major   string         // decimal major component of a major candidate, for per-major PR buckets
+}
+
+// Names are the versioning scheme names; "regex:<RE2>" schemes come on top (RegexPrefix).
+var Names = []string{"tag", "go", "docker", "semver", "loose"}
+
+// RegexPrefix starts a regex scheme name: "regex:" followed by an RE2 regexp with named groups.
+const RegexPrefix = "regex:"
+
+// Get returns the scheme registered under name ("tag", "go", "docker", "semver", "loose"), or
+// the regex scheme of a valid "regex:<RE2>" name.
+func Get(name string) (Scheme, bool) {
+	s, err := Parse(name)
+	return s, err == nil
+}
+
+// Parse is Get with the reason for an unknown name or an invalid regex scheme. Regex schemes
+// are compiled once per name and cached for the process.
+func Parse(name string) (Scheme, error) {
+	if s, ok := schemes[name]; ok {
+		return s, nil
+	}
+	expr, ok := strings.CutPrefix(name, RegexPrefix)
+	if !ok {
+		return nil, &UnknownError{Name: name}
+	}
+	if s, ok := regexSchemes.Load(name); ok {
+		return s.(Scheme), nil
+	}
+	s, err := newRegexScheme(expr)
+	if err != nil {
+		return nil, err
+	}
+	actual, _ := regexSchemes.LoadOrStore(name, s)
+	return actual.(Scheme), nil
+}
+
+// UnknownError is returned by Parse for a name that is neither a scheme nor a regex scheme.
+type UnknownError struct{ Name string }
+
+func (e *UnknownError) Error() string {
+	return "must be one of " + strings.Join(Names, ", ") + " or regex:<RE2>, got " + strconv.Quote(e.Name)
+}
+
+// regexSchemes caches compiled regex schemes by their full name.
+var regexSchemes sync.Map
+
 var schemes = map[string]Scheme{
-	"tag":    impl[Tag]{parse: ParseTag, compat: tagCompat, cmp: CompareTag, kind: TagKind, semver: Tag.Semver},
-	"go":     impl[goVersion]{parse: parseGo, compat: goCompat, cmp: compareGo, kind: goKind, semver: goVersion.semver},
-	"docker": impl[dockerTag]{parse: parseDocker, compat: dockerCompat, cmp: compareDocker, kind: dockerKind, semver: dockerTag.semver},
-	"semver": semverScheme{impl[*msemver.Version]{parse: parseSemver, compat: semverCompat, cmp: compareSemver, kind: semverKind, semver: semverOf}},
+	"tag":    impl[Tag]{parse: ParseTag, compat: tagCompat, cmp: CompareTag, kind: TagKind, semver: Tag.Semver, major: Tag.major},
+	"go":     impl[goVersion]{parse: parseGo, compat: goCompat, cmp: compareGo, kind: goKind, semver: goVersion.semver, major: goVersion.majorNum},
+	"docker": impl[dockerTag]{parse: parseDocker, compat: dockerCompat, cmp: compareDocker, kind: dockerKind, semver: dockerTag.semver, major: dockerTag.major},
+	"semver": semverScheme{impl[*msemver.Version]{parse: parseSemver, compat: semverCompat, cmp: compareSemver, kind: semverKind, semver: semverOf, major: semverMajor}},
+	"loose":  impl[looseVersion]{parse: parseLoose, compat: looseCompat, cmp: compareLoose, kind: looseKind, semver: looseVersion.semver, major: looseVersion.major},
 }
 
 // impl implements Scheme over a parsed version type T so every candidate is parsed once.
@@ -54,6 +108,7 @@ type impl[T any] struct {
 	cmp    func(a, b T) int
 	kind   func(cur, next T) dep.UpdateType
 	semver func(T) *msemver.Version
+	major  func(T) string
 }
 
 func (s impl[T]) Valid(v string) bool {
@@ -135,29 +190,31 @@ func (s impl[T]) Best(cur string, cands []string, accept func(string, dep.Update
 	return best, found
 }
 
-func (s impl[T]) Rank(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) []string {
+func (s impl[T]) Rank(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) Ranking {
+	return s.rank(cur, cands, accept, reject)
+}
+
+// rank parses and filters cands once and sorts the kept ones by version, best first. Only
+// the parsed version and the candidate's index are kept; Candidates are built by At.
+func (s impl[T]) rank(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) *ranking[T] {
+	r := &ranking[T]{s: s, cands: cands}
 	c, ok := s.parse(cur)
 	if !ok {
-		return nil
+		return r
 	}
-	type cand struct {
-		raw string
-		v   T
-	}
-	var kept []cand
-	for _, raw := range cands {
+	r.cur = c
+	for i, raw := range cands {
 		n, ok := s.parse(raw)
-		var why string
-		switch {
-		case !ok:
-			why = "invalid"
-		case s.compat(c, n) != "":
-			why = s.compat(c, n)
-		case s.cmp(n, c) <= 0:
-			why = "not newer"
-		case accept != nil:
-			if ok, w := accept(raw, s.kind(c, n)); !ok {
-				why = "policy: " + w
+		why := "invalid"
+		if ok {
+			if why = s.compat(c, n); why == "" {
+				if s.cmp(n, c) <= 0 {
+					why = "not newer"
+				} else if accept != nil {
+					if ok, w := accept(raw, s.kind(c, n)); !ok {
+						why = "policy: " + w
+					}
+				}
 			}
 		}
 		if why != "" {
@@ -166,14 +223,38 @@ func (s impl[T]) Rank(cur string, cands []string, accept func(string, dep.Update
 			}
 			continue
 		}
-		kept = append(kept, cand{raw, n})
+		r.kept = append(r.kept, rankedVersion[T]{v: n, i: i})
 	}
-	slices.SortStableFunc(kept, func(a, b cand) int { return s.cmp(b.v, a.v) })
-	out := make([]string, len(kept))
-	for i, k := range kept {
-		out[i] = k.raw
+	slices.SortStableFunc(r.kept, func(a, b rankedVersion[T]) int { return s.cmp(b.v, a.v) })
+	return r
+}
+
+// ranking implements Ranking over the parsed kept candidates.
+type ranking[T any] struct {
+	s     impl[T]
+	cur   T
+	cands []string
+	kept  []rankedVersion[T]
+	style func(string) string // rewrites Candidate.Version; nil = as is
+}
+
+type rankedVersion[T any] struct {
+	v T
+	i int // index into cands
+}
+
+func (r *ranking[T]) Len() int { return len(r.kept) }
+
+func (r *ranking[T]) At(i int) Candidate {
+	k := r.kept[i]
+	c := Candidate{Version: r.cands[k.i], Kind: r.s.kind(r.cur, k.v)}
+	if c.Kind == dep.Major {
+		c.Major = r.s.major(k.v)
 	}
-	return out
+	if r.style != nil {
+		c.Version = r.style(c.Version)
+	}
+	return c
 }
 
 // tag
@@ -238,27 +319,30 @@ func dockerKind(cur, next dockerTag) dep.UpdateType {
 
 func (t dockerTag) semver() *msemver.Version { return Tag{Parts: t.parts}.Semver() }
 
+func (t dockerTag) major() string { return strconv.Itoa(t.parts[0]) }
+
 // semver
 
-// semverScheme is Masterminds loose semver. Best rewrites the result to cur's "v" prefix
-// style, so `1.2.3` with candidate `v1.3.0` yields `1.3.0`.
+// semverScheme is Masterminds loose semver. Best and Rank rewrite candidates to cur's "v"
+// prefix style, so `1.2.3` with candidate `v1.3.0` yields `1.3.0`.
 type semverScheme struct{ impl[*msemver.Version] }
 
-func (s semverScheme) Rank(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) []string {
-	ranked := s.impl.Rank(cur, cands, accept, reject)
-	for i, v := range ranked {
-		ranked[i] = s.style(cur, v)
-	}
-	return ranked
+func (s semverScheme) Rank(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) Ranking {
+	r := s.rank(cur, cands, accept, reject)
+	r.style = func(v string) string { return s.style(cur, v) }
+	return r
 }
 
 // style writes v with cur's "v" prefix convention.
 func (semverScheme) style(cur, v string) string {
-	v = strings.TrimPrefix(v, "v")
-	if strings.HasPrefix(cur, "v") {
+	curV, vV := strings.HasPrefix(cur, "v"), strings.HasPrefix(v, "v")
+	switch {
+	case curV == vV:
+		return v
+	case curV:
 		return "v" + v
 	}
-	return v
+	return v[1:]
 }
 
 func (s semverScheme) Best(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) (string, bool) {
@@ -266,12 +350,10 @@ func (s semverScheme) Best(cur string, cands []string, accept func(string, dep.U
 	if !ok {
 		return "", false
 	}
-	best = strings.TrimPrefix(best, "v")
-	if strings.HasPrefix(cur, "v") {
-		best = "v" + best
-	}
-	return best, true
+	return s.style(cur, best), true
 }
+
+func semverMajor(v *msemver.Version) string { return strconv.FormatUint(v.Major(), 10) }
 
 func parseSemver(s string) (*msemver.Version, bool) {
 	v, err := msemver.NewVersion(s)

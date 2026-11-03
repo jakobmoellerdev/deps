@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -37,11 +38,14 @@ type Options struct {
 	Base, AuthorName, AuthorEmail string
 	BranchPrefix                  string // managed branch prefix, ending in '/'; "" = config.DefaultBranchPrefix
 	DryRun                        bool
-	RebaseWhen                    string            // config.RebaseWhens; "" = config.RebaseConflicted
-	MaxNewPRs                     int               // PRs created per run; 0 = unlimited
-	Managers                      []manager.Manager // edit the updates' files (engine.Build)
-	Now                           time.Time         // schedule evaluation time; zero = time.Now()
-	Notes                         Notes             // release ages and notes in PR bodies; nil = none
+	RebaseWhen                    string // config.RebaseWhens; "" = config.RebaseConflicted
+	// UpdateNotScheduled keeps updating and rebasing open PRs outside their schedule; only
+	// new PRs wait for the window (Renovate's updateNotScheduled). false skips such groups.
+	UpdateNotScheduled bool
+	MaxNewPRs          int               // PRs created per run; 0 = unlimited
+	Managers           []manager.Manager // edit the updates' files (engine.Build)
+	Now                time.Time         // schedule evaluation time; zero = time.Now()
+	Notes              Notes             // release ages and notes in PR bodies; nil = none
 }
 
 // Notes renders release information for PR bodies (implemented by releasenotes.Notes).
@@ -125,7 +129,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	sem := make(chan struct{}, 4)
 	for i := range groups {
 		inSchedule[i] = scheduled(groups[i].Updates, now)
-		if !inSchedule[i] {
+		if !inSchedule[i] && !(o.UpdateNotScheduled && hasPR(open, groups[i].Branch)) {
 			continue // nothing is pushed, so don't build
 		}
 		wg.Go(func() {
@@ -201,7 +205,11 @@ func handle(ctx context.Context, o Options, base, head string, grp engine.Group,
 			}
 		}
 	}
-	if !inSchedule {
+	switch {
+	case inSchedule:
+	case pr != nil && o.UpdateNotScheduled:
+		slog.DebugContext(ctx, "outside schedule, updating the open PR", "branch", grp.Branch, "number", pr.Number)
+	default:
 		slog.DebugContext(ctx, "outside schedule", "branch", grp.Branch)
 		a.Status = StatusSkipSchedule
 		return a, nil
@@ -329,6 +337,11 @@ func scheduled(ups []dep.Update, now time.Time) bool {
 		}
 	}
 	return true
+}
+
+// hasPR reports whether an open PR has branch as its head.
+func hasPR(open []platform.PR, branch string) bool {
+	return slices.ContainsFunc(open, func(p platform.PR) bool { return p.Head == branch })
 }
 
 // listDeps lists the PRs in state whose head branch is under prefix.

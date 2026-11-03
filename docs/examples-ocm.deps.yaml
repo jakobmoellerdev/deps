@@ -1,20 +1,33 @@
-# open-component-model renovate.json5 packageRules relevant to P1-P3, P10, P17 and L8, translated.
+# open-component-model renovate.json5 packageRules relevant to P1-P3, P7-P12, P15, P17 and L8, translated.
 branchPrefix: renovate/
 rebaseWhen: behind-base-branch # :rebaseStalePrs
 pin: digest # docker:pinDigests + helpers:pinGitHubActionDigests
 minimumReleaseAge: 28 days # digest/pin updates are always exempt (the minimumReleaseAge: null rule)
+separateMinorPatch: true
+separateMultipleMajor: true
+updateNotScheduled: true # the default: open PRs are kept current outside their schedule
 custom:
-  - files: ['**/.env', '**/.env.local', '**/netlify.toml', '.github/workflows/*.yml', '**/envtest.go']
+  # Renovate markers in .env, netlify.toml, workflows and envtest.go. The sigstore handler's
+  # .env is left to the cosign entry below, which also maintains the checksum next to the version.
+  - files: ['.env', 'bindings/go/kubernetes/controller/.env', 'bindings/go/sigstore/integration/.env', 'conformance/**/.env',
+      '**/netlify.toml', '.github/workflows/*.yml', '**/envtest.go']
+  - files: ['bindings/go/sigstore/signing/handler/internal/.env'] # OCM cosign release + digest of its cosign_checksums.txt
+    match: 'COSIGN_VERSION=(?P<version>v\d+\.\d+\.\d+\+ocm\.\d+)\s+COSIGN_CHECKSUMS_SHA256=(?P<checksum>[0-9a-f]{64})'
+    datasource: github-releases
+    name: open-component-model/cosign
+    checksum: {asset: cosign_checksums.txt}
 rules:
   - paths: ['bindings/go/kubernetes/controller/chart/**']       # 0 matchFileNames
     group: Kubernetes Controller chart
     schedule: ['* * * * 0']
-  - manager: github-actions                                    # 1
+  - manager: github-actions                                    # 1 (separateMinorPatch here, not on #2)
+    separateMinorPatch: false
     schedule: ['* * * * 0']
   - manager: github-actions                                    # 2 matchUpdateTypes minor/patch
     updateTypes: [minor, patch]
     group: GitHub Actions
   - manager: npm                                               # 3
+    separateMinorPatch: false
     schedule: ['* * * * 0']
   - manager: npm                                               # 4
     updateTypes: [minor, patch]
@@ -48,11 +61,24 @@ rules:
     ignore: true
   - paths: ['website/hack/generate-cli-docs/**']               # 13 matchFileNames
     group: Website CLI-docs generator dependencies
+    separateMinorPatch: false
     schedule: ['* * * * 0']
   - manager: gomod                                             # 14 golang directive off
     depTypes: [go]
     ignore: true
   - datasources: [npm]                                         # 15
     minimumReleaseAge: 28 days
-  - names: ['open-component-model/cosign', 'ghcr.io/open-component-model/cosign']  # 16 own fork, gated by its CI
+  - datasources: [docker]                                      # 16 Garden Linux FIPS: only <major>.<patch> tags
+    names: ['ghcr.io/gardenlinux/gardenlinux/fips']
+    allow: '/^\d+\.\d+$/'
+    versioning: loose
+  - names: ['ghcr.io/gardenlinux/gardenlinux/{/,}**']          # 17
+    group: Garden Linux images
+  - names: ['open-component-model/cosign', 'ghcr.io/open-component-model/cosign']  # 18 own fork, gated by its CI
+    group: OCM cosign
+    versioning: 'regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$'
     minimumReleaseAge: 0 days
+  - names: ['helm.sh/helm/v4', 'helm/helm']                    # 19 helm CLI and library in one PR
+    group: Helm
+    separateMinorPatch: false
+    schedule: ['* * * * 0']
