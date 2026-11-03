@@ -1,0 +1,13 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
