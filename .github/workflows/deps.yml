@@ -1,8 +1,8 @@
 # Runs deps on the GitHub mirror of git.jakob-moeller.cloud/jakobmoellerdev/deps.
-# The mirror is a Gitea push mirror: every sync force-pushes Gitea's refs and prunes all others,
-# so branches deps pushed here would be deleted and their PRs closed. It therefore runs as a
-# dry run: it exercises the action, platform detection and resolution on GitHub and lists the
-# PRs it would open in the job summary, without writing. PRs are made on Gitea.
+# The mirror has pull requests and issues disabled, and it is a Gitea push mirror (every sync
+# force-pushes Gitea's refs and prunes all others), so deps cannot open PRs here. It runs `plan`
+# instead: the same action, binary download, platform setup and resolution as on Gitea, with
+# the updates listed in the job summary. PRs are made on Gitea.
 name: deps
 on:
   schedule:
@@ -12,7 +12,6 @@ on:
     branches: [main]
 permissions:
   contents: read
-  pull-requests: read
 jobs:
   deps:
     runs-on: ubuntu-latest
@@ -20,4 +19,4 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: ./
         with:
-          args: run --dry-run -v --log-level info
+          args: plan -v --log-level info
