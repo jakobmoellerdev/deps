@@ -1,0 +1,50 @@
+# Publishes each v* release on the GitHub mirror too, so GitHub runners download the action's
+# binary from github.com. The tag arrives through the Gitea push mirror; tests already ran on
+# Gitea for that commit, so this only builds, writes the notes and publishes.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish"
+        required: true
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0 # git-cliff needs the history and tags for the notes
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: arduino/setup-task@v2.0.0
+        with:
+          repo-token: ${{ github.token }}
+      - run: task release:build VERSION="$TAG"
+      - run: task release:notes
+      - name: Check binaries are static
+        run: |
+          set -euo pipefail
+          for f in dist/deps_linux_*; do
+            if readelf -l "$f" | grep -q 'Requesting program interpreter'; then echo "$f is not static" >&2; exit 1; fi
+          done
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" --clobber dist/deps_linux_amd64 dist/deps_linux_arm64 dist/checksums.txt
+            gh release edit "$TAG" --notes-file dist/RELEASE_NOTES.md
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file dist/RELEASE_NOTES.md \
+              dist/deps_linux_amd64 dist/deps_linux_arm64 dist/checksums.txt
+          fi

@@ -11,8 +11,8 @@ inputs:
     description: "Release tag to download, e.g. v0.1.0. Default: the action's ref when it is a release tag, else the latest release"
     default: ""
   repository:
-    description: "Where releases are published (Gitea/Forgejo or GitHub repository URL)"
-    default: "https://git.jakob-moeller.cloud/jakobmoellerdev/deps"
+    description: "Where releases are downloaded from (Gitea/Forgejo or GitHub repository URL). Default: the GitHub mirror on github.com, the Gitea repository elsewhere"
+    default: ""
 runs:
   using: composite
   steps:
@@ -22,6 +22,8 @@ runs:
         VERSION: ${{ inputs.version }}
         ACTION_REF: ${{ github.action_ref }}
         REPOSITORY: ${{ inputs.repository }}
+        SERVER_URL: ${{ github.server_url }}
+        TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         case "$(uname -s)/$(uname -m)" in
@@ -29,15 +31,27 @@ runs:
           Linux/aarch64|Linux/arm64) arch=arm64 ;;
           *) echo "deps: unsupported runner $(uname -s)/$(uname -m); only linux/amd64 and linux/arm64 are released" >&2; exit 1 ;;
         esac
+        # Releases are published on both forges; GitHub runners can't always reach the Gitea
+        # instance (its edge blocks datacenter traffic), so github.com jobs use the mirror.
+        if [ -z "$REPOSITORY" ]; then
+          case "$SERVER_URL" in
+            https://github.com) REPOSITORY=https://github.com/jakobmoellerdev/deps ;;
+            *) REPOSITORY=https://git.jakob-moeller.cloud/jakobmoellerdev/deps ;;
+          esac
+        fi
         repo="${REPOSITORY%/}"
         host="${repo%/*/*}"; path="${repo#"$host"/}"
         if [ -z "$VERSION" ] && [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then VERSION="$ACTION_REF"; fi
         if [ -z "$VERSION" ]; then
+          auth=()
           case "$host" in
-            https://github.com) api="https://api.github.com/repos/$path/releases/latest" ;;
+            https://github.com)
+              api="https://api.github.com/repos/$path/releases/latest"
+              # the job token raises the API rate limit (runner IPs share the anonymous one)
+              if [ "$SERVER_URL" = https://github.com ] && [ -n "$TOKEN" ]; then auth=(-H "Authorization: Bearer $TOKEN"); fi ;;
             *) api="$host/api/v1/repos/$path/releases/latest" ;;
           esac
-          VERSION=$(curl -fsSL "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+          VERSION=$(curl -fsSL "${auth[@]}" "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
           [ -n "$VERSION" ] || { echo "deps: no release found at $api" >&2; exit 1; }
         fi
         base="$repo/releases/download/$VERSION"
