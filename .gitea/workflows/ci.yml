@@ -9,6 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - run: task ci
   # Release tags reuse the test job's result instead of running task ci again.
   release:
@@ -19,6 +23,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - run: task release:build VERSION="${GITHUB_REF_NAME}"
       - name: Check binaries are static
         run: |
