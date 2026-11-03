@@ -1,6 +1,7 @@
 package gittags
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
@@ -30,14 +32,41 @@ func TestReleaseTime(t *testing.T) {
 	}
 	full.WriteString(`]`)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := strings.TrimSpace(r.Header.Get("Authorization") + " " + r.URL.RequestURI())
+		if r.URL.Path == "/graphql" {
+			var q struct {
+				Variables map[string]any `json:"variables"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&q)
+			v := map[string]string{}
+			for k, x := range q.Variables {
+				v[k], _ = x.(string)
+			}
+			rec += " " + v["owner"] + "/" + v["name"] + " " + v["tag"]
+			switch repo := v["owner"] + "/" + v["name"]; {
+			case repo == "gone/repo":
+				io.WriteString(w, `{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve"}]}`)
+			case repo == "lim/repo":
+				w.Header().Set("X-RateLimit-Reset", "1793707200")
+				io.WriteString(w, `{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}]}`)
+			case v["tag"] == "v1.0.0":
+				io.WriteString(w, `{"data":{"repository":{"release":{"isDraft":false,"publishedAt":"2026-10-30T12:00:00Z"}}}}`)
+			case v["tag"] != "":
+				io.WriteString(w, `{"data":{"repository":{"release":null}}}`)
+			case repo == "actions/checkout":
+				io.WriteString(w, `{"data":{"repository":{"releases":{"pageInfo":{"hasNextPage":false},"nodes":[
+					{"tagName":"v7.0.1","publishedAt":"2026-10-30T12:00:00Z"},
+					{"tagName":"v6.1.0","isPrerelease":true,"publishedAt":"2026-10-01T12:00:00Z"},
+					{"tagName":"v8.0.0","isDraft":true,"publishedAt":null}]}}}}`)
+			default: // a full first page: tags missing from it are looked up individually
+				io.WriteString(w, `{"data":{"repository":{"releases":{"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[{"tagName":"v2.0.0","publishedAt":"2026-10-01T12:00:00Z"}]}}}}`)
+			}
+		}
 		mu.Lock()
-		reqs = append(reqs, strings.TrimSpace(r.Header.Get("Authorization")+" "+r.URL.RequestURI()))
+		reqs = append(reqs, rec)
 		mu.Unlock()
 		switch r.URL.EscapedPath() {
-		case "/repos/actions/checkout/releases":
-			io.WriteString(w, `[{"tag_name":"v7.0.1","published_at":"2026-10-30T12:00:00Z"},
-				{"tag_name":"v6.1.0","published_at":"2026-10-01T12:00:00Z"},
-				{"tag_name":"v8.0.0","draft":true,"published_at":null}]`)
+		case "/graphql":
 		case "/api/v1/repos/o/r/releases":
 			io.WriteString(w, `[{"tag_name":"sub/v1 1","published_at":"2026-10-30T12:00:00Z"}]`)
 		case "/api/v1/repos/o/full/releases":
@@ -61,8 +90,8 @@ func TestReleaseTime(t *testing.T) {
 	auth := httpx.NewAuth(platform.Info{Host: u.Hostname()}, "gitea-tok", func(k string) string {
 		return map[string]string{"DEPS_GITHUB_COM_TOKEN": "gh-tok"}[k]
 	})
-	l := New(srv.Client(), auth, make(chan struct{}, 1))
-	l.githubAPI = srv.URL
+	gh := githubapi.New(srv.Client(), auth, nil, githubapi.WithAPI(srv.URL, srv.URL+"/graphql"))
+	l := New(srv.Client(), auth, make(chan struct{}, 1), gh)
 	var timer datasource.Timer = l
 	when := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
@@ -70,9 +99,14 @@ func TestReleaseTime(t *testing.T) {
 		want                 time.Time
 	}{
 		{source: "https://github.com/actions/checkout", tag: "v7.0.1", want: when},
-		{source: "https://github.com/actions/checkout/", tag: "v6.1.0", want: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)},
-		{source: "https://github.com/actions/checkout", tag: "v8.0.0"}, // draft, complete page
-		{source: "https://github.com/actions/checkout", tag: "v6.0.0"}, // no release, complete page
+		{source: "https://github.com/actions/checkout/", tag: "v6.1.0", want: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}, // prerelease
+		{source: "https://github.com/actions/checkout", tag: "v8.0.0"},                                                       // draft, complete list
+		{source: "https://github.com/actions/checkout", tag: "v6.0.0"},                                                       // no release, complete list
+		{source: "https://github.com/big/repo", tag: "v2.0.0", want: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)},
+		{source: "https://github.com/big/repo", tag: "v1.0.0", want: when}, // per-tag fallback
+		{source: "https://github.com/big/repo", tag: "v4"},                 // fallback: no release
+		{source: "https://github.com/gone/repo", tag: "v1"},                // NOT_FOUND: unknown
+		{source: "https://github.com/lim/repo", tag: "v1", wantErr: "rate limited by github.com until 2026-11-03T12:00:00Z"},
 		{source: srv.URL + "/o/r.git", tag: "sub/v1 1", want: when},
 		{source: srv.URL + "/o/full", tag: "old", want: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)},
 		{source: srv.URL + "/o/full", tag: "v0", want: when}, // draft in list: per-tag fallback
@@ -102,7 +136,12 @@ func TestReleaseTime(t *testing.T) {
 		}
 	}
 	want := []string{
-		"Bearer gh-tok /repos/actions/checkout/releases?per_page=100",
+		"Bearer gh-tok /graphql actions/checkout ",
+		"Bearer gh-tok /graphql big/repo ",
+		"Bearer gh-tok /graphql big/repo v1.0.0",
+		"Bearer gh-tok /graphql big/repo v4",
+		"Bearer gh-tok /graphql gone/repo ",
+		"Bearer gh-tok /graphql lim/repo ",
 		"token gitea-tok /api/v1/repos/o/r/releases?limit=50",
 		"token gitea-tok /api/v1/repos/o/full/releases?limit=50",
 		"token gitea-tok /api/v1/repos/o/full/releases/tags/v0",

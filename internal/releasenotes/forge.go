@@ -8,10 +8,19 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+)
+
+// Page sizes of the one release page listed per repository: GitHub allows 100, Gitea caps at
+// MAX_RESPONSE_ITEMS (default 50).
+const (
+	githubNotes = 100
+	giteaNotes  = 50
 )
 
 // release is what deps keeps of a published release; body is cut to maxBody.
@@ -21,20 +30,14 @@ type release struct {
 	draft, pre     bool
 }
 
-// apiBase returns the REST base of r.
-func (n *Notes) apiBase(r repoRef) string {
-	switch {
-	case r.kind == github && r.host == "github.com":
-		return n.githubAPI
-	case r.kind == github:
-		return "https://" + r.host + "/api/v3"
-	}
-	return "https://" + r.host + "/api/v1"
+func newRelease(tag, url, body string, draft, pre bool) release {
+	body, cut := truncate(strings.TrimSpace(strings.ReplaceAll(body, "\r\n", "\n")), maxBody)
+	return release{tag: tag, url: url, body: body, cut: cut, draft: draft, pre: pre}
 }
 
 // releases lists the newest releases of r (one page) once per repository per run.
 func (n *Notes) releases(ctx context.Context, r repoRef) ([]release, error) {
-	key := strings.ToLower(n.apiBase(r) + "/repos/" + r.owner + "/" + r.name)
+	key := strconv.Itoa(int(r.kind)) + " " + strings.ToLower(r.web())
 	n.mu.Lock()
 	e := n.lists[key]
 	if e == nil {
@@ -44,14 +47,30 @@ func (n *Notes) releases(ctx context.Context, r repoRef) ([]release, error) {
 	n.mu.Unlock()
 	e.once.Do(func() {
 		start := time.Now()
-		e.rels, e.err = n.fetch(ctx, r)
-		slog.DebugContext(ctx, "release notes listed", "repo", key, "releases", len(e.rels), "duration", time.Since(start), "err", e.err)
+		if r.kind == github {
+			e.rels, e.err = n.fetchGitHub(ctx, r)
+		} else {
+			e.rels, e.err = n.fetchGitea(ctx, r)
+		}
+		slog.DebugContext(ctx, "release notes listed", "repo", r.web(), "releases", len(e.rels), "duration", time.Since(start), "err", e.err)
 	})
 	return e.rels, e.err
 }
 
-func (n *Notes) fetch(ctx context.Context, r repoRef) ([]release, error) {
-	target := n.apiBase(r) + "/repos/" + r.owner + "/" + r.name + "/releases?"
+// fetchGitHub lists the releases of a GitHub repository (GraphQL when authenticated).
+func (n *Notes) fetchGitHub(ctx context.Context, r repoRef) ([]release, error) {
+	var rels []release
+	err := n.gh.Notes(ctx, githubapi.Repo{Scheme: "https", Host: r.host, Owner: r.owner, Name: r.name}, githubNotes, func(note githubapi.Note) {
+		if note.Tag != "" {
+			rels = append(rels, newRelease(note.Tag, note.URL, note.Body, note.Draft, note.Prerelease))
+		}
+	})
+	return rels, err
+}
+
+// fetchGitea lists the releases of a Gitea/Forgejo repository (`<host>/api/v1`).
+func (n *Notes) fetchGitea(ctx context.Context, r repoRef) ([]release, error) {
+	target := "https://" + r.host + "/api/v1/repos/" + r.owner + "/" + r.name + "/releases?limit=" + strconv.Itoa(giteaNotes)
 	host := r.host
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
@@ -62,19 +81,9 @@ func (n *Notes) fetch(ctx context.Context, r repoRef) ([]release, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
-	if r.kind == github {
-		req.URL.RawQuery = "per_page=100"
-		req.Header.Set("Accept", "application/vnd.github+json")
-		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		if authed {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-	} else {
-		req.URL.RawQuery = "limit=50" // Gitea's default maximum page size
-		req.Header.Set("Accept", "application/json")
-		if authed {
-			req.Header.Set("Authorization", "token "+token)
-		}
+	req.Header.Set("Accept", "application/json")
+	if authed {
+		req.Header.Set("Authorization", "token "+token)
 	}
 	if err := n.acquire(ctx); err != nil {
 		return nil, err
@@ -107,11 +116,9 @@ func (n *Notes) fetch(ctx context.Context, r repoRef) ([]release, error) {
 		if err := dec.Decode(&raw); err != nil {
 			return nil, fmt.Errorf("GET %s: %w", req.URL.Redacted(), err)
 		}
-		if raw.TagName == "" {
-			continue
+		if raw.TagName != "" {
+			rels = append(rels, newRelease(raw.TagName, raw.HTMLURL, raw.Body, raw.Draft, raw.Prerelease))
 		}
-		body, cut := truncate(strings.TrimSpace(strings.ReplaceAll(raw.Body, "\r\n", "\n")), maxBody)
-		rels = append(rels, release{tag: raw.TagName, url: raw.HTMLURL, body: body, cut: cut, draft: raw.Draft, pre: raw.Prerelease})
 	}
 	return rels, nil
 }

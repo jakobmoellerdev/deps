@@ -103,7 +103,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		MaxNewPRs:    r.maxNewPRs,
 		Managers:     s.managers,
 		BranchPrefix: s.cfg.Prefix(),
-		Notes:        releasenotes.New(client, s.sem, s.auth, s.sources),
+		Notes:        releasenotes.New(client, s.sem, s.auth, s.gh, s.sources),
 	}
 	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(), platform.NewClient(info, token, client), repo)
 

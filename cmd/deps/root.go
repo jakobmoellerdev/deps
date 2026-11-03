@@ -21,6 +21,7 @@ import (
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -98,6 +99,7 @@ type session struct {
 	env       manager.Env
 	stderr    io.Writer
 	auth      *httpx.Auth
+	gh        *githubapi.Client // shared GitHub release lists (datasources and release notes)
 	sem       chan struct{}
 }
 
@@ -128,14 +130,15 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	if cfg.SecurityEnabled() {
 		security = osv.New(client, sem)
 	}
-	releases := githubreleases.New(client, auth, sem)
+	gh := githubapi.New(client, auth, sem)
+	releases := githubreleases.New(gh)
 	return &session{
 		root:     root,
 		cfg:      cfg,
 		client:   client,
 		managers: managers,
 		sources: map[string]engine.Datasource{
-			"git-tags":          gittags.New(client, auth, sem),
+			"git-tags":          gittags.New(client, auth, sem, gh),
 			"go":                goproxy.New(client, sem),
 			gotoolchain.Name:    gotoolchain.New(client, sem),
 			"docker":            dockerds.New(client, sem),
@@ -147,6 +150,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		env:       manager.Env{DefaultHost: host},
 		stderr:    stderr,
 		auth:      auth,
+		gh:        gh,
 		sem:       sem,
 	}, nil
 }

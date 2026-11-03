@@ -39,7 +39,7 @@ func noEnv(string) string { return "" }
 
 func newLister(t *testing.T, srv *httptest.Server, auth *httpx.Auth) *Lister {
 	t.Helper()
-	return New(srv.Client(), auth, make(chan struct{}, 1))
+	return New(srv.Client(), auth, make(chan struct{}, 1), nil)
 }
 
 func TestTagsV2(t *testing.T) {
@@ -304,7 +304,7 @@ func TestTagsV2SkipsNonTagsAndParsesLargePackets(t *testing.T) {
 		"3333333333333333333333333333333333333333 refs/tags/"+longName+"\n",
 	) + upper + "0002"))
 	defer srv.Close()
-	got, err := New(srv.Client(), nil, nil).Tags(t.Context(), srv.URL+"/a/b")
+	got, err := New(srv.Client(), nil, nil, nil).Tags(t.Context(), srv.URL+"/a/b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestDatasource(t *testing.T) {
 		h(w, r)
 	}))
 	defer srv.Close()
-	var ds datasource.Datasource = New(srv.Client(), nil, nil)
+	var ds datasource.Datasource = New(srv.Client(), nil, nil, nil)
 	d := dep.Dep{Source: srv.URL + "/a/b/"}
 	rels, err := ds.Releases(t.Context(), d, "")
 	if err != nil || !reflect.DeepEqual(rels, []datasource.Release{{Version: "v2", Digest: "2222222222222222222222222222222222222222"}}) {
@@ -371,7 +371,7 @@ func TestLsRefsRetried(t *testing.T) {
 		h(w, r)
 	}))
 	defer srv.Close()
-	tags, err := New(httpx.NewClient(), nil, nil).Tags(t.Context(), srv.URL+"/a/b")
+	tags, err := New(httpx.NewClient(), nil, nil, nil).Tags(t.Context(), srv.URL+"/a/b")
 	if err != nil || len(tags) != 1 {
 		t.Fatalf("Tags = %+v, %v", tags, err)
 	}
@@ -411,7 +411,7 @@ func TestTagsTransportErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := New(&http.Client{Transport: tt.rt}, nil, nil).Tags(t.Context(), "https://h/a/b")
+			_, err := New(&http.Client{Transport: tt.rt}, nil, nil, nil).Tags(t.Context(), "https://h/a/b")
 			if err == nil || err.Error() != tt.want || !errors.Is(err, boom) {
 				t.Fatalf("err = %v, want %s", err, tt.want)
 			}
@@ -420,7 +420,7 @@ func TestTagsTransportErrors(t *testing.T) {
 }
 
 func TestTagsInvalidURL(t *testing.T) {
-	_, err := New(http.DefaultClient, nil, nil).Tags(t.Context(), "https://h/%zz")
+	_, err := New(http.DefaultClient, nil, nil, nil).Tags(t.Context(), "https://h/%zz")
 	if err == nil || !strings.HasPrefix(err.Error(), "ls-refs https://h/%zz: ") {
 		t.Fatalf("err = %v", err)
 	}
@@ -432,7 +432,7 @@ func TestTagsCanceledWaitingForSlot(t *testing.T) {
 		sem <- struct{}{}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		_, err := New(http.DefaultClient, nil, sem).Tags(ctx, "https://h/a/b")
+		_, err := New(http.DefaultClient, nil, sem, nil).Tags(ctx, "https://h/a/b")
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("err = %v, want context.Canceled", err)
 		}
@@ -458,7 +458,7 @@ func TestTagsCanceledWaitingForSlot(t *testing.T) {
 			cancel()
 		}))
 		defer srv.Close()
-		_, err := New(srv.Client(), nil, sem).Tags(ctx, srv.URL+"/a/b")
+		_, err := New(srv.Client(), nil, sem, nil).Tags(ctx, srv.URL+"/a/b")
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("err = %v, want context.Canceled", err)
 		}

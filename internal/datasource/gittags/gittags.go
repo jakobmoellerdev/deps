@@ -23,6 +23,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
@@ -31,14 +32,14 @@ type Tag struct{ Name, Commit string }
 
 // Lister fetches tags once per repository URL per run; concurrent callers share the result.
 type Lister struct {
-	client    *http.Client
-	auth      *httpx.Auth
-	sem       chan struct{}
-	githubAPI string // API base for github.com repositories
+	client *http.Client
+	auth   *httpx.Auth
+	sem    chan struct{}
+	gh     *githubapi.Client // release times of github.com repositories
 
 	mu    sync.Mutex
 	cache map[string]*entry
-	lists map[string]*listEntry // repository URL -> first page of releases
+	lists map[string]*listEntry // Gitea/Forgejo repository URL -> first page of releases
 	times map[string]*timeEntry // repository URL + "@" + tag, for tags not in the list
 }
 
@@ -48,7 +49,7 @@ type timeEntry struct {
 	err  error
 }
 
-// listEntry is one page of a repository's releases.
+// listEntry is one page of a Gitea/Forgejo repository's releases.
 type listEntry struct {
 	once     sync.Once
 	times    map[string]time.Time // tag -> published_at; drafts are omitted
@@ -64,10 +65,11 @@ type entry struct {
 }
 
 // New returns a Lister. sem bounds concurrent requests and is shared with other datasources;
-// auth may be nil for anonymous access.
-func New(client *http.Client, auth *httpx.Auth, sem chan struct{}) *Lister {
+// auth may be nil for anonymous access. Release times of github.com repositories come from gh,
+// whose release lists the github-releases datasource shares.
+func New(client *http.Client, auth *httpx.Auth, sem chan struct{}, gh *githubapi.Client) *Lister {
 	return &Lister{
-		client: client, auth: auth, sem: sem, githubAPI: "https://api.github.com",
+		client: client, auth: auth, sem: sem, gh: gh,
 		cache: make(map[string]*entry), lists: make(map[string]*listEntry), times: make(map[string]*timeEntry),
 	}
 }
@@ -100,15 +102,31 @@ func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string,
 	return "", fmt.Errorf("tag %s not found upstream", version)
 }
 
-// ReleaseTime implements datasource.Timer with the `published_at` of the release of tag version
-// in d.Source, via the GitHub API for github.com and the Gitea/Forgejo API
+// ReleaseTime implements datasource.Timer with the publication time of the release of tag
+// version in d.Source, via the GitHub API for github.com and the Gitea/Forgejo API
 // (`<server>/api/v1`) for other hosts. Tags are not dated, so a tag without a release, or a
 // host without either API, is unknown (zero).
 //
 // The first page of the repository's releases is fetched once per repository and serves every
-// tag on it; only tags missing from a full page are looked up individually, once per tag.
+// tag on it (for github.com it is the list shared with github-releases, possibly with more
+// pages); only tags missing from an incomplete list are looked up individually, once per tag.
 func (l *Lister) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
 	repoURL := strings.TrimSuffix(d.Source, "/")
+	if r, ok := githubRepo(repoURL); ok {
+		var t time.Time
+		var known bool
+		err := l.gh.Releases(ctx, r, nil, func(gl *githubapi.List) {
+			rel, listed := gl.Find(version)
+			t, known = rel.Published, listed || gl.Complete()
+		})
+		switch {
+		case errors.Is(err, githubapi.ErrNotFound):
+			return time.Time{}, nil
+		case err != nil || known:
+			return t, err
+		}
+		return l.tagTime(ctx, repoURL, version, func() (time.Time, error) { return l.gh.ReleaseTime(ctx, r, version) })
+	}
 	l.mu.Lock()
 	le := l.lists[repoURL]
 	if le == nil {
@@ -129,7 +147,22 @@ func (l *Lister) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 	if le.complete {
 		return time.Time{}, nil
 	}
-	key := repoURL + "@" + version
+	return l.tagTime(ctx, repoURL, version, func() (time.Time, error) { return l.releaseTime(ctx, repoURL, version) })
+}
+
+// githubRepo returns the github.com repository of repoURL.
+func githubRepo(repoURL string) (githubapi.Repo, bool) {
+	u, err := url.Parse(repoURL)
+	if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
+		return githubapi.Repo{}, false
+	}
+	r, err := githubapi.ParseRepo(repoURL)
+	return r, err == nil
+}
+
+// tagTime runs lookup once per repository and tag.
+func (l *Lister) tagTime(ctx context.Context, repoURL, tag string, lookup func() (time.Time, error)) (time.Time, error) {
+	key := repoURL + "@" + tag
 	l.mu.Lock()
 	e := l.times[key]
 	if e == nil {
@@ -138,18 +171,15 @@ func (l *Lister) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 	}
 	l.mu.Unlock()
 	e.once.Do(func() {
-		e.t, e.err = l.releaseTime(ctx, repoURL, version)
-		slog.DebugContext(ctx, "tag release time", "repo", repoURL, "tag", version, "time", e.t, "err", e.err)
+		e.t, e.err = lookup()
+		slog.DebugContext(ctx, "tag release time", "repo", repoURL, "tag", tag, "time", e.t, "err", e.err)
 	})
 	return e.t, e.err
 }
 
-// Page sizes of the releases list: GitHub allows 100, Gitea/Forgejo cap at MAX_RESPONSE_ITEMS
+// giteaListSize is the page size of the releases list: Gitea/Forgejo cap at MAX_RESPONSE_ITEMS
 // (default 50).
-const (
-	githubListSize = 100
-	giteaListSize  = 50
-)
+const giteaListSize = 50
 
 // releaseList fetches the first page of releases of repoURL. A host without the API (404 or a
 // non-JSON answer) yields a complete, empty list: every tag is unknown without further requests.
@@ -161,9 +191,6 @@ func (l *Lister) releaseList(ctx context.Context, repoURL string) (map[string]ti
 	}
 	repo := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
 	path, size := "/repos/"+repo+"/releases?limit="+strconv.Itoa(giteaListSize), giteaListSize
-	if strings.EqualFold(u.Hostname(), "github.com") {
-		path, size = "/repos/"+repo+"/releases?per_page="+strconv.Itoa(githubListSize), githubListSize
-	}
 	var rels []struct {
 		TagName     string     `json:"tag_name"`
 		Draft       bool       `json:"draft"`
@@ -208,14 +235,12 @@ func (l *Lister) releaseTime(ctx context.Context, repoURL, tag string) (time.Tim
 	return *rel.PublishedAt, nil
 }
 
-// getJSON GETs path from the forge API of repository u into v. found is false on 404 or when
-// the body is not JSON (a host without the API may answer with a web page): unknown, not an error.
+// getJSON GETs path from the Gitea/Forgejo API of repository u into v. found is false on 404
+// or when the body is not JSON (a host without the API may answer with a web page): unknown,
+// not an error.
 func (l *Lister) getJSON(ctx context.Context, u *url.URL, path string, v any) (found bool, err error) {
 	_, token, authed := l.auth.Static(u.Hostname())
-	target, scheme := u.Scheme+"://"+u.Host+"/api/v1"+path, "token "
-	if strings.EqualFold(u.Hostname(), "github.com") {
-		target, scheme = l.githubAPI+path, "Bearer "
-	}
+	target := u.Scheme + "://" + u.Host + "/api/v1" + path
 	if err := l.acquire(ctx); err != nil {
 		return false, err
 	}
@@ -227,7 +252,7 @@ func (l *Lister) getJSON(ctx context.Context, u *url.URL, path string, v any) (f
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	if authed {
-		req.Header.Set("Authorization", scheme+token)
+		req.Header.Set("Authorization", "token "+token)
 	}
 	resp, err := l.client.Do(req)
 	if err != nil {

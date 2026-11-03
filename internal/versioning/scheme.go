@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	msemver "github.com/Masterminds/semver/v3"
-	"golang.org/x/mod/module"
-	"golang.org/x/mod/semver"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
@@ -44,7 +42,7 @@ func Get(name string) (Scheme, bool) {
 
 var schemes = map[string]Scheme{
 	"tag":    impl[Tag]{parse: ParseTag, compat: tagCompat, cmp: CompareTag, kind: TagKind, semver: Tag.Semver},
-	"go":     impl[string]{parse: parseGo, compat: goCompat, cmp: semver.Compare, kind: GoKind, semver: GoSemver},
+	"go":     impl[goVersion]{parse: parseGo, compat: goCompat, cmp: compareGo, kind: goKind, semver: goVersion.semver},
 	"docker": impl[dockerTag]{parse: parseDocker, compat: dockerCompat, cmp: compareDocker, kind: dockerKind, semver: dockerTag.semver},
 	"semver": semverScheme{impl[*msemver.Version]{parse: parseSemver, compat: semverCompat, cmp: compareSemver, kind: semverKind, semver: semverOf}},
 }
@@ -186,25 +184,6 @@ func tagCompat(cur, next Tag) string {
 		return "prefix"
 	case len(next.Parts) != len(cur.Parts):
 		return "precision"
-	}
-	return ""
-}
-
-// go
-
-func parseGo(v string) (string, bool) {
-	return v, semver.IsValid(v) && !module.IsPseudoVersion(v)
-}
-
-func goCompat(cur, next string) string {
-	switch {
-	case semver.Prerelease(next) != "" && semver.Prerelease(cur) == "":
-		return "prerelease"
-	case strings.HasSuffix(next, "+incompatible") && !strings.HasSuffix(cur, "+incompatible"):
-		return "suffix"
-	}
-	if m, c := semver.Major(next), semver.Major(cur); m != c && (c != "v0" || m != "v1") {
-		return "major"
 	}
 	return ""
 }

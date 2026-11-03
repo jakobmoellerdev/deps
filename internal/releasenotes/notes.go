@@ -22,6 +22,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
@@ -34,15 +35,15 @@ const (
 
 // Notes looks up release times and release notes; results are cached for the run.
 type Notes struct {
-	client    *http.Client
-	sem       chan struct{}
-	auth      *httpx.Auth
-	sources   map[string]datasource.Datasource
-	githubAPI string
-	now       func() time.Time
+	client  *http.Client
+	sem     chan struct{}
+	auth    *httpx.Auth
+	gh      *githubapi.Client
+	sources map[string]datasource.Datasource
+	now     func() time.Time
 
 	mu    sync.Mutex
-	lists map[string]*listEntry // API repository URL
+	lists map[string]*listEntry // kind + repository URL
 }
 
 type listEntry struct {
@@ -51,14 +52,14 @@ type listEntry struct {
 	err  error
 }
 
-// New returns Notes using the shared client and request semaphore. auth supplies tokens for
-// github.com and the platform host (nil = anonymous); sources are the run's datasources by
-// name, used for release times (datasource.Timer), source repositories (datasource.SourceRepo)
-// and git tags.
-func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, sources map[string]datasource.Datasource) *Notes {
+// New returns Notes using the shared client and request semaphore for Gitea/Forgejo and gh for
+// GitHub. auth supplies tokens for the platform host (nil = anonymous); sources are the run's
+// datasources by name, used for release times (datasource.Timer), source repositories
+// (datasource.SourceRepo) and git tags.
+func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, gh *githubapi.Client, sources map[string]datasource.Datasource) *Notes {
 	return &Notes{
-		client: client, sem: sem, auth: auth, sources: sources,
-		githubAPI: "https://api.github.com", now: time.Now, lists: make(map[string]*listEntry),
+		client: client, sem: sem, auth: auth, gh: gh, sources: sources,
+		now: time.Now, lists: make(map[string]*listEntry),
 	}
 }
 

@@ -2,6 +2,7 @@ package githubreleases
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
@@ -32,13 +34,16 @@ func pageJSON(from, n int) string {
 	return "[" + strings.Join(parts, ",") + "]"
 }
 
+// newGH returns a githubapi client whose github.com endpoints are served by srv.
+func newGH(srv *httptest.Server, auth *httpx.Auth, sem chan struct{}) *githubapi.Client {
+	return githubapi.New(srv.Client(), auth, sem, githubapi.WithAPI(srv.URL, srv.URL+"/graphql"))
+}
+
 func newSource(t *testing.T, h http.HandlerFunc, auth *httpx.Auth) (*Source, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	s := New(srv.Client(), auth, make(chan struct{}, 2))
-	s.githubAPI = srv.URL
-	return s, srv
+	return New(newGH(srv, auth, make(chan struct{}, 2))), srv
 }
 
 func versions(rels []datasource.Release) []string {
@@ -162,12 +167,16 @@ func TestReleasesDedupe(t *testing.T) {
 }
 
 func TestReleasesAuthAndEnterprise(t *testing.T) {
-	var gotAuth, gotPath string
+	var gotAuth, gotPath, gotMethod string
 	h := func(w http.ResponseWriter, r *http.Request) {
-		gotAuth, gotPath = r.Header.Get("Authorization"), r.URL.Path
+		gotAuth, gotPath, gotMethod = r.Header.Get("Authorization"), r.URL.Path, r.Method
+		if strings.HasSuffix(r.URL.Path, "graphql") {
+			_, _ = w.Write([]byte(`{"data":{"repository":{"releases":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}`))
+			return
+		}
 		_, _ = w.Write([]byte(`[]`))
 	}
-	t.Run("github.com token", func(t *testing.T) {
+	t.Run("github.com token uses graphql", func(t *testing.T) {
 		auth := httpx.NewAuth(platform.Info{Host: "git.example"}, "", func(k string) string {
 			if k == "DEPS_GITHUB_COM_TOKEN" {
 				return "ghtok"
@@ -178,8 +187,8 @@ func TestReleasesAuthAndEnterprise(t *testing.T) {
 		if _, err := s.Releases(context.Background(), dep.Dep{Name: "o/r"}, ""); err != nil {
 			t.Fatal(err)
 		}
-		if gotAuth != "Bearer ghtok" || gotPath != "/repos/o/r/releases" {
-			t.Errorf("auth %q path %q", gotAuth, gotPath)
+		if gotAuth != "Bearer ghtok" || gotPath != "/graphql" || gotMethod != http.MethodPost {
+			t.Errorf("auth %q %s %s", gotAuth, gotMethod, gotPath)
 		}
 	})
 	t.Run("enterprise host", func(t *testing.T) {
@@ -187,13 +196,15 @@ func TestReleasesAuthAndEnterprise(t *testing.T) {
 		defer srv.Close()
 		host := strings.TrimPrefix(srv.URL, "http://")
 		hostname, _, _ := strings.Cut(host, ":")
-		auth := httpx.NewAuth(platform.Info{Host: hostname}, "ghes", func(string) string { return "" })
-		s := New(srv.Client(), auth, nil)
-		if _, err := s.Releases(context.Background(), dep.Dep{Name: srv.URL + "/o/r/"}, ""); err != nil {
-			t.Fatal(err)
-		}
-		if gotAuth != "Bearer ghes" || gotPath != "/api/v3/repos/o/r/releases" {
-			t.Errorf("auth %q path %q", gotAuth, gotPath)
+		for _, c := range []struct{ token, path string }{{"ghes", "/api/graphql"}, {"", "/api/v3/repos/o/r/releases"}} {
+			auth := httpx.NewAuth(platform.Info{Host: hostname}, c.token, func(string) string { return "" })
+			s := New(githubapi.New(srv.Client(), auth, nil))
+			if _, err := s.Releases(context.Background(), dep.Dep{Name: srv.URL + "/o/r/"}, ""); err != nil {
+				t.Fatal(err)
+			}
+			if want := strings.TrimSpace("Bearer " + c.token); gotPath != c.path || c.token != "" && gotAuth != want || c.token == "" && gotAuth != "" {
+				t.Errorf("token %q: auth %q path %q", c.token, gotAuth, gotPath)
+			}
 		}
 	})
 	t.Run("anonymous for other hosts", func(t *testing.T) {
@@ -202,8 +213,8 @@ func TestReleasesAuthAndEnterprise(t *testing.T) {
 		if _, err := s.Releases(context.Background(), dep.Dep{Name: "o/r"}, ""); err != nil {
 			t.Fatal(err)
 		}
-		if gotAuth != "" {
-			t.Errorf("auth %q, want anonymous", gotAuth)
+		if gotAuth != "" || gotPath != "/repos/o/r/releases" {
+			t.Errorf("auth %q path %q, want anonymous REST", gotAuth, gotPath)
 		}
 	})
 }
@@ -272,14 +283,13 @@ func TestReleasesTransportAndContext(t *testing.T) {
 	}
 
 	// A full semaphore and a canceled context fail fast without a request.
-	s2 := New(http.DefaultClient, nil, make(chan struct{}))
+	s2 := New(githubapi.New(http.DefaultClient, nil, make(chan struct{})))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := s2.Releases(ctx, dep.Dep{Name: "o/r"}, ""); !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled: %v", err)
 	}
-	s3 := New(http.DefaultClient, nil, nil)
-	s3.githubAPI = "http://[::1"
+	s3 := New(githubapi.New(http.DefaultClient, nil, nil, githubapi.WithAPI("http://[::1", "")))
 	if _, err := s3.Releases(context.Background(), dep.Dep{Name: "o/r"}, ""); err == nil {
 		t.Error("bad api url: no error")
 	}
@@ -358,5 +368,84 @@ func TestReleaseTime(t *testing.T) {
 	}
 	if _, err := timer.ReleaseTime(t.Context(), dep.Dep{Name: "bad"}, "1"); err == nil {
 		t.Error("invalid repo: no error")
+	}
+}
+
+// gqlReq is a decoded GraphQL request.
+type gqlReq struct {
+	Query     string         `json:"query"`
+	Variables map[string]any `json:"variables"`
+}
+
+// With a github.com token the list, release times and asset digests come from GraphQL: pages
+// follow the cursor only until the version is listed and asset digests are looked up once.
+func TestGraphQL(t *testing.T) {
+	const hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	var (
+		mu   sync.Mutex
+		reqs []string
+	)
+	s, _ := newSource(t, func(w http.ResponseWriter, r *http.Request) {
+		var q gqlReq
+		if r.Method != http.MethodPost || r.URL.Path != "/graphql" || r.Header.Get("Authorization") != "Bearer ghtok" ||
+			json.NewDecoder(r.Body).Decode(&q) != nil {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		}
+		v := q.Variables
+		mu.Lock()
+		reqs = append(reqs, fmt.Sprintf("%v/%v %v %v %v", v["owner"], v["name"], v["cursor"], v["tag"], v["asset"]))
+		mu.Unlock()
+		switch {
+		case v["name"] == "missing":
+			_, _ = w.Write([]byte(`{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository"}]}`))
+		case strings.Contains(q.Query, "releaseAssets"):
+			digest := `"sha256:` + hex + `"`
+			if v["asset"] == "nodigest" {
+				digest = "null"
+			}
+			fmt.Fprintf(w, `{"data":{"repository":{"release":{"releaseAssets":{"nodes":[{"name":%q,"digest":%s}]}}}}}`, v["asset"], digest)
+		default:
+			page := 1
+			if c, ok := v["cursor"].(string); ok {
+				page, _ = strconv.Atoi(strings.TrimPrefix(c, "c"))
+				page++
+			}
+			nodes := make([]string, 100)
+			for i := range nodes {
+				k := (page-1)*100 + i
+				nodes[i] = fmt.Sprintf(`{"tagName":"v1.%d.0","isDraft":%t,"isPrerelease":%t,"publishedAt":"2026-10-01T00:00:00Z"}`, k, k%10 == 9, k%7 == 6)
+			}
+			fmt.Fprintf(w, `{"data":{"repository":{"releases":{"pageInfo":{"hasNextPage":true,"endCursor":"c%d"},"nodes":[%s]}}}}`, page, strings.Join(nodes, ","))
+		}
+	}, httpx.NewAuth(platform.Info{Host: "git.example"}, "", func(k string) string {
+		return map[string]string{"DEPS_GITHUB_COM_TOKEN": "ghtok"}[k]
+	}))
+	ctx := t.Context()
+	rels, err := s.Releases(ctx, dep.Dep{Name: "o/r", Version: "v1.150.0"}, "")
+	// Two pages of 100 without drafts (every 10th) and prereleases (every 7th).
+	if err != nil || len(rels) != 154 || rels[0].Version != "v1.0.0" || slices.ContainsFunc(rels, func(r datasource.Release) bool { return r.Version == "v1.6.0" || r.Version == "v1.9.0" }) {
+		t.Fatalf("Releases = %d releases, %v", len(rels), err)
+	}
+	if got, err := s.ReleaseTime(ctx, dep.Dep{Name: "o/r"}, "1.150.0"); err != nil || got.Format(time.DateOnly) != "2026-10-01" {
+		t.Errorf("ReleaseTime = %v, %v", got, err)
+	}
+	for range 2 {
+		if got, err := s.AssetDigest(ctx, "o/r", "1.50.0", "a.tgz"); err != nil || got != hex {
+			t.Errorf("AssetDigest = %q, %v", got, err)
+		}
+	}
+	if _, err := s.AssetDigest(ctx, "o/r", "v1.50.0", "nodigest"); err == nil || err.Error() != "release v1.50.0 has no digest for asset nodigest" {
+		t.Errorf("no digest: %v", err)
+	}
+	if _, err := s.Releases(ctx, dep.Dep{Name: "o/missing"}, ""); !errors.Is(err, githubapi.ErrNotFound) || !strings.Contains(err.Error(), "releases o/missing: Could not resolve") {
+		t.Errorf("missing repo: %v", err)
+	}
+	want := []string{
+		"o/r <nil> <nil> <nil>", "o/r c1 <nil> <nil>",
+		"o/r <nil> v1.50.0 a.tgz", "o/r <nil> v1.50.0 nodigest",
+		"o/missing <nil> <nil> <nil>",
+	}
+	if !slices.Equal(reqs, want) {
+		t.Errorf("requests =\n%q\nwant\n%q", reqs, want)
 	}
 }

@@ -229,7 +229,4 @@ func TestSchemeMethods(t *testing.T) {
 			}
 		}
 	}
-	if GoSemver("x") != nil {
-		t.Error("GoSemver(x) non-nil")
-	}
 }

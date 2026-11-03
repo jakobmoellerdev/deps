@@ -19,6 +19,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
@@ -66,7 +67,7 @@ func TestAge(t *testing.T) {
 		"v0": now.Add(-time.Hour),
 		"vf": now.Add(time.Hour), // clock skew
 	}}
-	n := New(nil, nil, nil, map[string]datasource.Datasource{
+	n := New(nil, nil, nil, nil, map[string]datasource.Datasource{
 		"t": src, "plain": plainSource{}, "err": &fakeSource{err: errors.New("boom")},
 	})
 	n.now = func() time.Time { return now }
@@ -93,7 +94,7 @@ func TestResolve(t *testing.T) {
 		dsNpm:    &fakeSource{repo: "git+ssh://git@github.com/eslint/eslint.git"},
 		dsDocker: &fakeSource{err: errors.New("no config")},
 	}
-	n := New(nil, nil, auth, sources)
+	n := New(nil, nil, auth, nil, sources)
 	gh := func(o, r, prefix string) repoRef {
 		return repoRef{kind: github, host: "github.com", owner: o, name: r, tagPrefix: prefix}
 	}
@@ -321,8 +322,9 @@ func TestSanitize(t *testing.T) {
 	}
 }
 
-// forge serves GitHub (`/repos/...` on the API base) and Gitea (`/api/v1/repos/...`) release
-// lists over TLS and records "<Authorization> <path>?<query>" per request.
+// forge serves GitHub (REST `/repos/...` on the API base and GraphQL at `/graphql`) and Gitea
+// (`/api/v1/repos/...`) release lists over TLS and records "<Authorization> <path>?<query>"
+// per request (GraphQL: "<Authorization> /graphql <owner>/<name> first=<n>").
 type forge struct {
 	srv  *httptest.Server
 	mu   sync.Mutex
@@ -337,6 +339,10 @@ func newForge(t *testing.T) *forge {
 	f.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if r.URL.Path == "/graphql" {
+			f.graphql(w, r)
+			return
+		}
 		f.reqs = append(f.reqs, strings.TrimSpace(r.Header.Get("Authorization")+" "+r.URL.Path+"?"+r.URL.RawQuery))
 		p := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1"), "/releases")
 		if code := f.fail[p]; code != 0 {
@@ -355,6 +361,41 @@ func newForge(t *testing.T) *forge {
 	f.srv.StartTLS()
 	t.Cleanup(f.srv.Close)
 	return f
+}
+
+// graphql answers the release notes query from the same releases as REST.
+func (f *forge) graphql(w http.ResponseWriter, r *http.Request) {
+	var q struct {
+		Variables struct {
+			Owner, Name string
+			First       int
+		} `json:"variables"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&q)
+	v := q.Variables
+	f.reqs = append(f.reqs, fmt.Sprintf("%s /graphql %s/%s first=%d", r.Header.Get("Authorization"), v.Owner, v.Name, v.First))
+	p := "/repos/" + v.Owner + "/" + v.Name
+	if code := f.fail[p]; code != 0 {
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte("not json"))
+		return
+	}
+	rels, ok := f.rels[p]
+	if !ok {
+		_, _ = w.Write([]byte(`{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve"}]}`))
+		return
+	}
+	nodes := make([]map[string]any, len(rels))
+	for i, rel := range rels {
+		nodes[i] = map[string]any{"tagName": rel["tag_name"], "url": rel["html_url"], "description": rel["body"], "isDraft": rel["draft"] == true, "isPrerelease": rel["prerelease"] == true}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"releases": map[string]any{"nodes": nodes}}}})
+}
+
+// newNotes returns Notes whose github.com API is served by f.
+func (f *forge) newNotes(sem chan struct{}, auth *httpx.Auth, sources map[string]datasource.Datasource) *Notes {
+	c := f.srv.Client()
+	return New(c, sem, auth, githubapi.New(c, auth, sem, githubapi.WithAPI(f.srv.URL, f.srv.URL+"/graphql")), sources)
 }
 
 func (f *forge) host() string { u, _ := url.Parse(f.srv.URL); return u.Host }
@@ -396,8 +437,7 @@ func TestSection(t *testing.T) {
 		dsNpm:     &fakeSource{repo: "git+https://github.com/eslint/eslint.git"},
 		dsGo:      plainSource{},
 	}
-	n := New(f.srv.Client(), make(chan struct{}, 2), auth, sources)
-	n.githubAPI = f.srv.URL
+	n := f.newNotes(make(chan struct{}, 2), auth, sources)
 
 	action := dep.Update{Dep: dep.Dep{Datasource: dsGitTags, Name: "actions/checkout", Source: "https://github.com/actions/checkout", Version: "v6.0.0"}, NewVersion: "v7.0.1"}
 	cobra := dep.Update{Dep: dep.Dep{Datasource: dsGo, Name: "github.com/spf13/cobra", Version: "v1.9.1"}, NewVersion: "v1.10.2"}
@@ -436,16 +476,17 @@ func TestSection(t *testing.T) {
 		}
 	}
 
-	// Lists are fetched once per repository; tokens go to github.com and the platform host.
+	// Lists are fetched once per repository; tokens go to github.com (GraphQL) and the platform
+	// host (Gitea REST).
 	_ = n.Section(t.Context(), []dep.Update{action, giteaMod})
 	slices.Sort(f.reqs)
 	want := []string{
-		"Bearer gh-tok /repos/actions/checkout/releases?per_page=100",
-		"Bearer gh-tok /repos/bad/json/releases?per_page=100",
-		"Bearer gh-tok /repos/broken/repo/releases?per_page=100",
-		"Bearer gh-tok /repos/eslint/eslint/releases?per_page=100",
-		"Bearer gh-tok /repos/kubernetes/api/releases?per_page=100",
-		"Bearer gh-tok /repos/spf13/cobra/releases?per_page=100",
+		"Bearer gh-tok /graphql actions/checkout first=100",
+		"Bearer gh-tok /graphql bad/json first=100",
+		"Bearer gh-tok /graphql broken/repo first=100",
+		"Bearer gh-tok /graphql eslint/eslint first=100",
+		"Bearer gh-tok /graphql kubernetes/api first=100",
+		"Bearer gh-tok /graphql spf13/cobra first=100",
 		"token gitea-tok /api/v1/repos/o/gitea-mod/releases?limit=50",
 	}
 	if !slices.Equal(f.reqs, want) {
@@ -463,14 +504,13 @@ func TestSection(t *testing.T) {
 func TestSectionNoCompareWithoutTags(t *testing.T) {
 	f := newForge(t)
 	f.rels["/repos/o/r"] = []map[string]any{rel("v2.0.0", "two")}
-	n := New(f.srv.Client(), nil, nil, map[string]datasource.Datasource{dsGitTags: &fakeSource{tags: []string{"v2.0.0"}}})
-	n.githubAPI = f.srv.URL
+	n := f.newNotes(nil, nil, map[string]datasource.Datasource{dsGitTags: &fakeSource{tags: []string{"v2.0.0"}}})
 	u := dep.Update{Dep: dep.Dep{Datasource: dsGitTags, Name: "o/r", Source: "https://github.com/o/r", Version: "v1.0.0"}, NewVersion: "v2.0.0"}
 	got := n.Section(t.Context(), []dep.Update{u})
 	if !strings.Contains(got, "two") || strings.Contains(got, "compare") {
 		t.Errorf("section = %q, want notes without a compare link (v1.0.0 is not a tag)", got)
 	}
-	// Anonymous requests carry no Authorization header.
+	// Anonymous requests use REST and carry no Authorization header.
 	if len(f.reqs) != 1 || f.reqs[0] != "/repos/o/r/releases?per_page=100" {
 		t.Errorf("requests = %q", f.reqs)
 	}
@@ -492,8 +532,7 @@ func TestSectionCaps(t *testing.T) {
 		}
 		ups = append(ups, dep.Update{Dep: dep.Dep{Datasource: dsGo, Name: fmt.Sprintf("github.com/o/r%d", i), Version: "v1.0.0"}, NewVersion: "v1.5.0"})
 	}
-	n := New(f.srv.Client(), make(chan struct{}, 4), nil, nil)
-	n.githubAPI = f.srv.URL
+	n := f.newNotes(make(chan struct{}, 4), nil, nil)
 	got := n.Section(t.Context(), ups)
 	if len(got) > maxSection {
 		t.Errorf("section is %d bytes, cap %d", len(got), maxSection)
@@ -508,8 +547,6 @@ func TestSectionCaps(t *testing.T) {
 		t.Error("no body was cut")
 	}
 	// Only the heading and the first block opener fit: the second check of render stops.
-	n2 := New(f.srv.Client(), nil, nil, nil)
-	n2.githubAPI = f.srv.URL
 	huge := strings.Repeat("y", maxSection)
 	blocks := []block{{title: huge, compare: "u"}}
 	if got := render(blocks); got != "" {
@@ -522,8 +559,7 @@ func TestSectionCanceled(t *testing.T) {
 	f.rels["/repos/o/r"] = []map[string]any{rel("v2.0.0", "two")}
 	sem := make(chan struct{}, 1)
 	sem <- struct{}{} // never available
-	n := New(f.srv.Client(), sem, nil, nil)
-	n.githubAPI = f.srv.URL
+	n := f.newNotes(sem, nil, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	u := dep.Update{Dep: dep.Dep{Datasource: dsGo, Name: "github.com/o/r", Version: "v1.0.0"}, NewVersion: "v2.0.0"}
@@ -534,17 +570,17 @@ func TestSectionCanceled(t *testing.T) {
 }
 
 func TestFetchErrors(t *testing.T) {
-	n := New(&http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) { return nil, errors.New("boom") })}, nil, nil, nil)
-	n.githubAPI = "https://api.test"
+	c := &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) { return nil, errors.New("boom") })}
+	n := New(c, nil, nil, githubapi.New(c, nil, nil), nil)
 	if _, err := n.releases(t.Context(), repoRef{kind: github, host: "github.com", owner: "o", name: "r"}); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Errorf("err = %v", err)
 	}
-	n.githubAPI = "http://[::1"
-	if _, err := n.fetch(t.Context(), repoRef{kind: github, host: "github.com", owner: "o", name: "r"}); err == nil {
-		t.Error("bad API URL: no error")
+	if _, err := n.releases(t.Context(), repoRef{kind: gitea, host: "git.example", owner: "o", name: "r"}); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("gitea err = %v", err)
 	}
-	if got := n.apiBase(repoRef{kind: github, host: "ghe.example"}); got != "https://ghe.example/api/v3" {
-		t.Errorf("GHES API = %s", got)
+	n.gh = githubapi.New(c, nil, nil, githubapi.WithAPI("http://[::1", ""))
+	if _, err := n.fetchGitHub(t.Context(), repoRef{kind: github, host: "github.com", owner: "o", name: "r"}); err == nil {
+		t.Error("bad API URL: no error")
 	}
 }
 
