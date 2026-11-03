@@ -73,7 +73,7 @@ func TestEnvWithoutGo(t *testing.T) {
 
 func TestEnvError(t *testing.T) {
 	tests := []struct{ name, script, want string }{
-		{"go fails", "echo boom >&2; exit 1", "go env -json GOPROXY GONOPROXY GOPRIVATE: boom"},
+		{"go fails", "echo boom >&2; exit 1", "go env -json GOPROXY GONOPROXY GOPRIVATE GOMODCACHE: boom"},
 		{"bad json", "echo not-json", "go env: "},
 	}
 	for _, tt := range tests {
@@ -139,5 +139,32 @@ func TestCmdErrorWithoutStderr(t *testing.T) {
 	e := &cmdError{args: "mod tidy", err: fmt.Errorf("exit status 1")}
 	if got := e.Error(); got != "go mod tidy: exit status 1" {
 		t.Fatalf("Error() = %q", got)
+	}
+}
+
+func TestEnvModCache(t *testing.T) {
+	needGo(t)
+	dir := t.TempDir()
+	t.Setenv("GOMODCACHE", dir)
+	if e, err := Env(t.Context()); err != nil || e.ModCache != dir {
+		t.Fatalf("Env = %+v, %v; want ModCache %q", e, err, dir)
+	}
+}
+
+func TestEnvModCacheWithoutGo(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	sep := string(os.PathListSeparator)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, tt := range []struct{ gomodcache, gopath, want string }{
+		{"/m", "/g", "/m"},
+		{"", "/g1" + sep + "/g2", filepath.Join(string(filepath.Separator)+"g1", "pkg", "mod")},
+		{"", "", filepath.Join(home, "go", "pkg", "mod")},
+	} {
+		t.Setenv("GOMODCACHE", tt.gomodcache)
+		t.Setenv("GOPATH", tt.gopath)
+		if e, err := Env(t.Context()); err != nil || e.ModCache != tt.want {
+			t.Errorf("GOMODCACHE=%q GOPATH=%q: ModCache = %q, %v; want %q", tt.gomodcache, tt.gopath, e.ModCache, err, tt.want)
+		}
 	}
 }

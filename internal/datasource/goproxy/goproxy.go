@@ -13,6 +13,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -130,6 +132,11 @@ func (s *Source) releaseTime(ctx context.Context, modPath, version, dir string) 
 	if err != nil {
 		return time.Time{}, err
 	}
+	// A version's .info is immutable, so the local module download cache answers without a
+	// request whenever the go command already fetched this version.
+	if t, ok := s.cachedInfo(ctx, modPath, escVersion); ok {
+		return t, nil
+	}
 	var t time.Time
 	err = s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
 		if base == "" {
@@ -158,6 +165,39 @@ func (s *Source) releaseTime(ctx context.Context, modPath, version, dir string) 
 	return t, err
 }
 
+// cachedInfo reads <GOMODCACHE>/cache/download/<escaped path>/@v/<escaped version>.info.
+// Version lists are not read from the cache: they only hold versions fetched locally, so the
+// newest releases would be missing.
+func (s *Source) cachedInfo(ctx context.Context, modPath, escVersion string) (time.Time, bool) {
+	if s.loadEnv(ctx) != nil || s.goEnv.ModCache == "" {
+		return time.Time{}, false
+	}
+	escPath, err := module.EscapePath(modPath)
+	if err != nil {
+		return time.Time{}, false
+	}
+	p := filepath.Join(s.goEnv.ModCache, "cache", "download", filepath.FromSlash(escPath), "@v", escVersion+".info")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var info struct{ Time *time.Time }
+	if json.Unmarshal(b, &info) != nil || info.Time == nil {
+		return time.Time{}, false
+	}
+	slog.DebugContext(ctx, "module release time from module cache", "module", modPath, "file", p)
+	return *info.Time, true
+}
+
+// loadEnv resolves the go environment once per run.
+func (s *Source) loadEnv(ctx context.Context) error {
+	s.envOnce.Do(func() {
+		s.goEnv, s.envErr = s.env(ctx)
+		slog.DebugContext(ctx, "go env", "goproxy", s.goEnv.Proxy, "noProxy", s.goEnv.NoProxy, "modCache", s.goEnv.ModCache, "err", s.envErr)
+	})
+	return s.envErr
+}
+
 func (s *Source) resolve(ctx context.Context, modPath, dir string) ([]string, error) {
 	var vs []string
 	err := s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
@@ -176,12 +216,8 @@ func (s *Source) resolve(ctx context.Context, modPath, dir string) ([]string, er
 // the escaped module path, or base "" when the go command must be used (a `direct` entry, or a
 // GONOPROXY/GOPRIVATE module); a notFound (404/410) result falls through to the next entry.
 func (s *Source) walk(ctx context.Context, modPath string, step func(base, escaped string) (notFound bool, err error)) error {
-	s.envOnce.Do(func() {
-		s.goEnv, s.envErr = s.env(ctx)
-		slog.DebugContext(ctx, "go env", "goproxy", s.goEnv.Proxy, "noProxy", s.goEnv.NoProxy, "err", s.envErr)
-	})
-	if s.envErr != nil {
-		return s.envErr
+	if err := s.loadEnv(ctx); err != nil {
+		return err
 	}
 	if module.MatchPrefixPatterns(s.goEnv.NoProxy, modPath) {
 		_, err := step("", "")

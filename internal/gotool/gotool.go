@@ -20,18 +20,21 @@ const DefaultProxy = "https://proxy.golang.org,direct"
 
 // GoEnv is the module proxy configuration of the go command.
 type GoEnv struct {
-	Proxy   string // GOPROXY
-	NoProxy string // GONOPROXY, or GOPRIVATE if GONOPROXY is empty
+	Proxy    string // GOPROXY
+	NoProxy  string // GONOPROXY, or GOPRIVATE if GONOPROXY is empty
+	ModCache string // GOMODCACHE; "" when unknown
 }
 
-// Env reads GOPROXY, GONOPROXY and GOPRIVATE via `go env -json`.
-// If go is not in PATH it falls back to the process environment.
+// Env reads GOPROXY, GONOPROXY, GOPRIVATE and GOMODCACHE via `go env -json`.
+// If go is not in PATH it falls back to the process environment (GOMODCACHE, else
+// $GOPATH/pkg/mod, else ~/go/pkg/mod, as the go command defaults).
 func Env(ctx context.Context) (GoEnv, error) {
-	var v struct{ GOPROXY, GONOPROXY, GOPRIVATE string }
-	out, err := run(ctx, "", nil, "env", "-json", "GOPROXY", "GONOPROXY", "GOPRIVATE")
+	var v struct{ GOPROXY, GONOPROXY, GOPRIVATE, GOMODCACHE string }
+	out, err := run(ctx, "", nil, "env", "-json", "GOPROXY", "GONOPROXY", "GOPRIVATE", "GOMODCACHE")
 	switch {
 	case errors.Is(err, exec.ErrNotFound):
 		v.GOPROXY, v.GONOPROXY, v.GOPRIVATE = os.Getenv("GOPROXY"), os.Getenv("GONOPROXY"), os.Getenv("GOPRIVATE")
+		v.GOMODCACHE = defaultModCache()
 	case err != nil:
 		return GoEnv{}, err
 	default:
@@ -39,7 +42,7 @@ func Env(ctx context.Context) (GoEnv, error) {
 			return GoEnv{}, fmt.Errorf("go env: %w", err)
 		}
 	}
-	e := GoEnv{Proxy: v.GOPROXY, NoProxy: v.GONOPROXY}
+	e := GoEnv{Proxy: v.GOPROXY, NoProxy: v.GONOPROXY, ModCache: v.GOMODCACHE}
 	if e.Proxy == "" {
 		e.Proxy = DefaultProxy
 	}
@@ -47,6 +50,26 @@ func Env(ctx context.Context) (GoEnv, error) {
 		e.NoProxy = v.GOPRIVATE
 	}
 	return e, nil
+}
+
+// defaultModCache mirrors the go command's GOMODCACHE default without running it.
+func defaultModCache() string {
+	if v := os.Getenv("GOMODCACHE"); v != "" {
+		return v
+	}
+	gopath := os.Getenv("GOPATH")
+	if gopath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		gopath = filepath.Join(home, "go")
+	}
+	// GOPATH may be a list; the module cache lives in the first entry.
+	if first, _, _ := strings.Cut(gopath, string(os.PathListSeparator)); first != "" {
+		return filepath.Join(first, "pkg", "mod")
+	}
+	return ""
 }
 
 // ListVersions returns the known versions of module path via `go list -m -versions -json`, run in dir.

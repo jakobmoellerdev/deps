@@ -6,11 +6,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/mod/module"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -323,5 +327,59 @@ func TestReleaseTimeDefaultDir(t *testing.T) {
 	}
 	if _, err := s.ReleaseTime(t.Context(), dep.Dep{Name: "example.com/m"}, "v1.0.0"); err == nil || err.Error() != "boom" || gotDir != "." {
 		t.Fatalf("err = %v, dir %q", err, gotDir)
+	}
+}
+
+// A version's .info in GOMODCACHE answers without any request, also for private modules;
+// missing, unreadable or timeless cache entries fall back to the proxy.
+func TestReleaseTimeModuleCache(t *testing.T) {
+	cached := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	remote := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	cache := t.TempDir()
+	write := func(mod, file, body string) {
+		esc, _ := module.EscapePath(mod)
+		dir := filepath.Join(cache, "cache", "download", filepath.FromSlash(esc), "@v")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("github.com/Masterminds/semver/v3", "v3.5.0.info", `{"Version":"v3.5.0","Time":"2025-01-02T03:04:05Z"}`)
+	write("example.com/m", "v1.0.0-rc.1.info", `{"Version":"v1.0.0-rc.1","Time":"2025-01-02T03:04:05Z"}`)
+	write("example.com/notime", "v1.0.0.info", `{"Version":"v1.0.0"}`)
+	write("example.com/broken", "v1.0.0.info", `{`)
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		io.WriteString(w, `{"Time":"2026-10-30T12:00:00Z"}`)
+	}))
+	t.Cleanup(srv.Close)
+	for _, tt := range []struct {
+		mod, version, noProxy string
+		want                  time.Time
+		requests              int32
+	}{
+		{mod: "github.com/Masterminds/semver/v3", version: "v3.5.0", want: cached},           // escaped path
+		{mod: "example.com/m", version: "v1.0.0-rc.1", noProxy: "example.com", want: cached}, // private: no go list either
+		{mod: "example.com/m", version: "v1.1.0", want: remote, requests: 1},                 // not cached
+		{mod: "example.com/notime", version: "v1.0.0", want: remote, requests: 1},
+		{mod: "example.com/broken", version: "v1.0.0", want: remote, requests: 1},
+	} {
+		hits.Store(0)
+		s := New(srv.Client(), nil)
+		s.env = func(context.Context) (gotool.GoEnv, error) {
+			return gotool.GoEnv{Proxy: srv.URL, NoProxy: tt.noProxy, ModCache: cache}, nil
+		}
+		s.info = func(context.Context, string, string, string) (time.Time, error) {
+			t.Errorf("%s@%s: go list called", tt.mod, tt.version)
+			return time.Time{}, nil
+		}
+		got, err := s.ReleaseTime(t.Context(), dep.Dep{Name: tt.mod}, tt.version)
+		if err != nil || !got.Equal(tt.want) || hits.Load() != tt.requests {
+			t.Errorf("%s@%s = %v, %v, %d requests; want %v, %d", tt.mod, tt.version, got, err, hits.Load(), tt.want, tt.requests)
+		}
 	}
 }
