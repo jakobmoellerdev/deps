@@ -76,9 +76,11 @@ func TestSchema(t *testing.T) {
 		{"rules.pin", rule.Properties["pin"], pins},
 		{"rules.manager", rule.Properties["manager"], config.Managers},
 		{"rules.depTypes", rule.Properties["depTypes"].Items, config.DepTypes},
+		{"rules.datasources", rule.Properties["datasources"].Items, config.DatasourceNames},
 		{"rules.updates", rule.Properties["updates"].Items, updates},
+		{"rules.updateTypes", rule.Properties["updateTypes"].Items, updates},
 		{"rules.commitType", rule.Properties["commitType"], config.CommitTypes},
-		{"custom.datasource", custom.Properties["datasource"], config.CustomDatasources},
+		{"custom.datasource", custom.Properties["datasource"], config.DatasourceNames},
 		{"custom.versioning", custom.Properties["versioning"], config.Versionings},
 	}
 	for _, e := range enums {

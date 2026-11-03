@@ -1,0 +1,52 @@
+# open-component-model renovate.json5 packageRules relevant to P1-P3, translated.
+branchPrefix: renovate/
+pin: digest # docker:pinDigests + helpers:pinGitHubActionDigests
+custom:
+  - files: ['**/.env', '**/.env.local', '**/netlify.toml', '.github/workflows/*.yml', '**/envtest.go']
+rules:
+  - paths: ['bindings/go/kubernetes/controller/chart/**']       # 0 matchFileNames
+    group: Kubernetes Controller chart
+    schedule: ['* * * * 0']
+  - manager: github-actions                                    # 1
+    schedule: ['* * * * 0']
+  - manager: github-actions                                    # 2 matchUpdateTypes minor/patch
+    updateTypes: [minor, patch]
+    group: GitHub Actions
+  - manager: npm                                               # 3
+    schedule: ['* * * * 0']
+  - manager: npm                                               # 4
+    updateTypes: [minor, patch]
+    group: npm dependencies
+  - manager: github-actions                                    # 5 Digest pins (actions)
+    updateTypes: [digest, pin]
+    group: Digest pins
+    schedule: ['* * * * 0']
+  - manager: docker                                            # 6 Digest pins (dockerfile/compose)
+    updateTypes: [digest, pin]
+    group: Digest pins
+    schedule: ['* * * * 0']
+  - datasources: [golang-version]                              # 7 matchDatasources
+    group: Golang versions
+    schedule: ['* * * * 0']
+  - manager: gomod                                             # 8
+    names: ['k8s.io/kube-openapi']
+    ignore: true
+  - manager: gomod                                             # 9 matchCategories golang, enabled
+    ignore: false
+    schedule: ['* * * * 0']
+  - manager: gomod                                             # 10 indirect majors off
+    depTypes: [indirect]
+    updateTypes: [major]
+    ignore: true
+  - manager: gomod                                             # 11
+    names: ['github.com/go-ini/ini', 'github.com/ThalesIgnite/crypto11']
+    ignore: true
+  - manager: github-actions                                    # 12
+    names: ['open-component-model/.github']
+    ignore: true
+  - paths: ['website/hack/generate-cli-docs/**']               # 13 matchFileNames
+    group: Website CLI-docs generator dependencies
+    schedule: ['* * * * 0']
+  - manager: gomod                                             # 14 golang directive off
+    depTypes: [go]
+    ignore: true

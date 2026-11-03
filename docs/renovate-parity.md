@@ -6,9 +6,9 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 
 | ID | Renovate feature | Used by OCM for | deps today | Status |
 |---|---|---|---|---|
-| P1 | `matchUpdateTypes` driving `groupName`/`schedule`/`automerge` | Actions minor+patch group, npm minor+patch group, "Digest pins" group, automerge minor/patch | `updates:` only filters; group/schedule are fixed before the update type is known | open |
-| P2 | `matchFileNames` | Kubernetes Controller chart group, website CLI-docs generator group | no path matcher in rules | open |
-| P3 | `matchDatasources` | gardenlinux rule, "Golang versions", npm release age | rules match managers only | open |
+| P1 | `matchUpdateTypes` driving `groupName`/`schedule`/`automerge` | Actions minor+patch group, npm minor+patch group, "Digest pins" group, automerge minor/patch | `updateTypes`: per-kind policy, evaluated in file order once a candidate's type is known (group, schedule, commit type, ignore/updates/allow per type); automerge follows L7 | done |
+| P2 | `matchFileNames` | Kubernetes Controller chart group, website CLI-docs generator group | `paths` (doublestar globs on the file) | done |
+| P3 | `matchDatasources` | gardenlinux rule, "Golang versions", npm release age | `datasources` (Renovate names `golang-version`, `github-tags`, `github-release-attachments` normalized) | done |
 | P4 | `**` globs in package names (`golang.org/x/{/,}**`) | 6 groups | — | done |
 | P5 | `matchDepTypes` | indirect majors off, `golang` directive off | `depTypes` | done |
 | P6 | `enabled: false` per package | kube-openapi, go-ini/ini, ThalesIgnite/crypto11, `open-component-model/.github` | `ignore: true` | config |

@@ -268,13 +268,14 @@ type Options struct {
     Trace       func(Trace)           // nil = off
 }
 type Trace struct {
-    Dep        dep.Dep
-    Rules      []int
-    Policy     config.Policy
-    Candidates int
-    Rejected   map[string][]string // reason -> versions
-    Update     *dep.Update
-    Err        error
+    Dep          dep.Dep
+    Rules        []int          // matching rules of the pre-policy
+    Policy       config.Policy  // pre-policy
+    UpdatePolicy *config.Policy // policy of Update.Type (updateTypes rules included); nil = no update
+    Candidates   int
+    Rejected     map[string][]string // reason -> versions
+    Update       *dep.Update
+    Err          error
 }
 type Result     struct{ Updates []dep.Update; Skipped []dep.Dep; Errors []error }
 type FileChange struct{ Path string; Mode fs.FileMode; Old, New []byte }
@@ -286,10 +287,12 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 func GroupUpdates(updates []dep.Update, branchPrefix string) []Group // "" = config.DefaultBranchPrefix
 ```
 
-**Resolve order per dep:** datasource releases → `Scheme.Best` under the policy → digest pin/refresh (`tag`/`docker` versioning on the digest-capable managers github-actions and docker) → security. With advisories, the minimum fix F is the highest, over all vulns, of each vuln's lowest compatible fixed version. If there is no normal update or it is below F, the smallest compatible release ≥ F is chosen regardless of `allow`/`updates` (`ignore` still wins). The advisories the chosen version fixes are attached; such security updates get no group and no schedule. Every file goes to every manager that matches it.
+**Resolve order per dep:** datasource releases → `Scheme.Best` under the per-kind policy → digest pin/refresh (`tag`/`docker` versioning on the digest-capable managers github-actions and docker) → security. With advisories, the minimum fix F is the highest, over all vulns, of each vuln's lowest compatible fixed version. If there is no normal update or it is below F, the smallest compatible release ≥ F is chosen regardless of `allow`/`updates` and of rules with `updateTypes` (a pre-policy `ignore` still wins). The advisories the chosen version fixes are attached; such security updates get no group and no schedule. Every file goes to every manager that matches it.
+- **Per-kind policy.** `config.Policy(d)` is the pre-policy (rules without `updateTypes`); it decides `ignore` for the dep, `pin`, and whether the dep is looked up at all. `config.PolicyFor(d, kind)` evaluates all rules in file order, those with `updateTypes` only when they list `kind`. The engine caches the five per-kind policies of a dep (evaluated lazily, and only when the config has `updateTypes` rules). Each candidate is accepted under the policy of its own kind: an ignoring per-kind policy rejects it as `ignored by rule #i for <kind>` (or the default-ignore reason), otherwise `updates`/`allow` decide as before; `Best` then falls back to the next candidate, so ignoring indirect majors keeps their minor and patch updates. Digest refresh and pin need `digest`/`pin` enabled and not ignored in their per-kind policy.
+- A dep the pre-policy ignores is still resolved when some per-kind policy un-ignores it (`updateTypes: [patch], ignore: false`), only for those kinds; it gets no security lookup.
 - A current value the dep's versioning scheme cannot parse (e.g. a `latest` docker tag) is skipped as `non-version value "<v>"` before any lookup, not reported as an error.
 - A major candidate whose release time (via `datasource.Timer`) predates the current version's is rejected as `older than current` and the next best candidate is tried (at most 3). This drops legacy pre-module tags such as `k8s.io/client-go v1.5.2` (2016) when the current version is `v0.37.1`. Unknown times never reject.
-- The chosen update carries the policy's `CommitType`/`CommitScope` (`config.Policy` also has `Monorepo`, the built-in group that applied).
+- The chosen update (also digest, pin and security updates) takes `CommitType`/`CommitScope` and, unless it is a security update, `Group`/`Schedule` from the policy of its type (`config.Policy` also has `Monorepo`, the built-in group that applied, and `Kind`, the type a `PolicyFor` result is for).
 
 ```go
 // internal/platform
@@ -564,7 +567,7 @@ When debug is disabled, the HTTP transport skips timing entirely after one `Enab
 | `deps plan` | Unified diff on stdout, report on stderr. Post-processors do not run: go.sum and package-lock.json changes are not computed (`note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run`). |
 | `deps apply` | Writes the changes, including `go mod tidy` output and regenerated package-lock.json files. |
 | `deps run` | Branch and PR per group (section 5). Flags: `--platform`, `--api-url`, `--repo`, `--token`, `--base`, `--author-name`, `--author-email`, `--max-new-prs`, `--dry-run`. |
-| `deps explain <name-glob>...` | Resolves only deps whose name matches any `path.Match` glob. Prints per occurrence `<name>  <file>:<line>  (<manager>, <depType>, <datasource>, <versioning>)`, then `current`, `rules` (`#<i> <fields>` or `none`), `policy`, `candidates`, `rejected` (versions by reason, up to 3 each), `result` (`update <from> -> <to> (<type>)`, `up to date`, `skipped: <reason>` or `error: <err>`) and one `security` line per advisory. A glob matching nothing is an error. |
+| `deps explain <name-glob>...` | Resolves only deps whose name matches any `path.Match` glob. Prints per occurrence `<name>  <file>:<line>  (<manager>, <depType>, <datasource>, <versioning>)`, then `current`, `rules` (`#<i> <fields>` or `none`; for an update, the `updateTypes` rules that applied to its type follow as `#<i> <fields> (applies to <type>)`), `policy` (the pre-policy, then `<type>: <policy>` when `updateTypes` rules applied), `candidates`, `rejected` (versions by reason, up to 3 each, e.g. `ignored by rule #4 for major`), `result` (`update <from> -> <to> (<type>)`, `up to date`, `skipped: <reason>` or `error: <err>`) and one `security` line per advisory. A glob matching nothing is an error. |
 | `deps schema` | Prints the JSON Schema (draft 2020-12) of `.deps.yaml`, reflected from `internal/config` with invopop/jsonschema. Unknown keys are rejected, as in `Load`. |
 | `deps version` | Prints the version set via `-ldflags "-X main.version=…"`. |
 
@@ -600,6 +603,9 @@ rules:
   - manager: github-actions # optional: github-actions | gomod | docker | npm | custom
     names: ["actions/*"]    # optional doublestar globs on the dependency name (* within a segment, ** across, {a,b})
     depTypes: [direct]      # optional: direct indirect go toolchain action dockerfile compose workflow kubernetes helm dependencies devDependencies optionalDependencies peerDependencies packageManager annotation regex
+    paths: ["chart/**"]     # optional doublestar globs on the file (slash path relative to --dir)
+    datasources: [docker]   # optional: git-tags github-releases go go-toolchain docker npm (Renovate aliases golang-version github-tags github-release-attachments accepted)
+    updateTypes: [minor, patch] # optional: major minor patch digest pin; the rule applies to candidate updates of these types (no pin key)
     ignore: true            # optional
     pin: digest             # optional: keep | digest
     allow: "< 7"            # optional Masterminds semver constraint
@@ -622,15 +628,16 @@ custom:
 
 **Semantics:**
 - The file is decoded strictly: unknown keys are errors and report their line. All validation errors are reported together, each as `<path>: <field>: <msg>`.
-- **Rule evaluation:** the policy starts as `{pin: <top-level pin>, updates: all five, schedule: <top-level>}`, with `ignore` true for the `indirect`, `go` and `peerDependencies` dependency types (opt in with a rule `ignore: false`). Each rule matches when its `manager` is empty or equal, its `names` are empty or any glob matches, and its `depTypes` are empty or contain the dependency type. Rules are applied in file order. Every field a matching rule sets overwrites the policy; `updates` is replaced, not merged.
-- **Acceptance:** an update is accepted when its type is in `updates` and the new version satisfies `allow` (if set).
+- **Rule evaluation:** the policy starts as `{pin: <top-level pin>, updates: all five, schedule: <top-level>}`, with `ignore` true for the `indirect`, `go` and `peerDependencies` dependency types (opt in with a rule `ignore: false`). Each rule matches when its `manager` is empty or equal, its `names` are empty or any glob matches the name, its `depTypes` are empty or contain the dependency type, its `paths` are empty or any glob matches the file, and its `datasources` are empty or contain the dep's datasource (Renovate names are normalized first: `golang-version` = `go-toolchain`, `github-tags` = `git-tags`, so it also matches actions, `github-release-attachments` = `github-releases`). Rules are applied in file order. Every field a matching rule sets overwrites the policy; `updates` is replaced, not merged.
+- **`updateTypes` (Renovate's `matchUpdateTypes`):** a rule with `updateTypes` additionally matches only candidate updates of those types, so it is evaluated once the type of a candidate is known, at its position in file order. Rules without it form the dep's pre-policy, which decides `pin` and whether the dep is ignored; rules with it decide per type, e.g. `group`, `schedule`, `commitType`, `allow`, `updates` or `ignore: true` (reject updates of that type; the next best candidate of another type is chosen) and `ignore: false` (opt a default-ignored dep in for those types only). `pin` cannot be combined with `updateTypes` (pinning is decided before an update exists), and `updateTypes: []` is rejected. Security fixes ignore `updateTypes` rules; only a pre-policy `ignore` blocks them.
+- **Acceptance:** an update is accepted when the policy of its type does not ignore it, its type is in `updates` and the new version satisfies `allow` (if set).
 - **`pin: digest`:** github-actions: pins tag refs to the tag's commit SHA and appends `# <tag>`. docker: appends `@sha256:<digest>` after the tag. Already-pinned refs stay pinned and are refreshed. The `pin` setting is ignored for gomod, npm and custom.
 - **Schedules:** a time is in schedule when any expression matches it in `timezone`. Like cron, when both day of month and day of week are restricted, either may match. A rule's `schedule` replaces the top-level one; `[]` means always. Steps (`/s`) are allowed only on `*` or a range; day of week is 0-7 (0 and 7 are Sunday).
 - **Groups:** all non-security updates whose policy has the same `group` share one branch and PR (section 5). Built-in monorepo groups apply before user rules unless `monorepos: false`.
 - **`ignorePaths`:** when the key is absent the default list applies; any explicit list, including `[]`, replaces it.
 - **`branchPrefix`:** branches are `<prefix><manager>/<slug>` and `<prefix>group/<slug>`; only branches and PRs under the prefix are managed.
 - **Commit titles:** default type `fix` for gomod `direct` and npm `dependencies`, `chore` otherwise (security always `fix`); default scope `deps`.
-- **Security:** with `security: true` (the default), OSV advisories can force an update that bypasses `allow`, `updates` and `schedule`, but never `ignore` (section 5).
+- **Security:** with `security: true` (the default), OSV advisories can force an update that bypasses `allow`, `updates`, `schedule` and `updateTypes` rules, but never a pre-policy `ignore` (section 5).
 - **`custom[]`:** validated in both modes: `datasource` and `versioning` must be known, `files` non-empty valid globs, `match` a valid RE2 with a `version` group. See section 2.
 
 ### Example
@@ -642,7 +649,21 @@ schedule: ["* 0-5 * * 1-5"]
 rules:
   - manager: github-actions
     pin: digest
+  - manager: github-actions      # minor and patch bumps in one PR, majors alone
+    updateTypes: [minor, patch]
     group: actions
+  - datasources: [git-tags, docker]  # digest-only refreshes of actions and images
+    updateTypes: [digest, pin]
+    group: digest-pins
+  - manager: gomod
+    depTypes: [indirect]
+    ignore: false
+  - manager: gomod              # no majors for indirect requirements; minors still apply
+    depTypes: [indirect]
+    updateTypes: [major]
+    ignore: true
+  - paths: ["deploy/chart/**"]
+    group: chart
   - manager: gomod
     updates: [minor, patch]
   - names: ["golang.org/x/*"]

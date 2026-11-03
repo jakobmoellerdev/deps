@@ -18,19 +18,21 @@ const (
 	DefaultScope = "deps"
 )
 
-// Policy is the effective rule outcome for one dep.
+// Policy is the effective rule outcome for one dep (Config.Policy), or for one update type
+// of it (Config.PolicyFor).
 type Policy struct {
 	Ignore       bool
 	IgnoreReason string // why Ignore is set: default for the dep type, or the deciding rule
 	Pin          string
 	Allow        *semver.Constraints
 	Updates      map[dep.UpdateType]bool
-	Group        string        // "" = own PR
-	Schedule     *schedule.Set // nil = always
-	Rules        []int         // indices of the matching user rules, in order
-	Monorepo     string        // built-in monorepo that set the initial Group, "" = none
-	CommitType   string        // conventional commit type: fix for production deps, chore otherwise
-	CommitScope  string        // conventional commit scope, "" = none
+	Group        string         // "" = own PR
+	Schedule     *schedule.Set  // nil = always
+	Rules        []int          // indices of the matching user rules, in order
+	Monorepo     string         // built-in monorepo that set the initial Group, "" = none
+	CommitType   string         // conventional commit type: fix for production deps, chore otherwise
+	CommitScope  string         // conventional commit scope, "" = none
+	Kind         dep.UpdateType // update type of a PolicyFor result, "" for Policy
 }
 
 // production reports whether d is a production dep, which gets the fix commit type by
@@ -42,17 +44,46 @@ func production(d dep.Dep) bool {
 // defaultIgnored are the dep types ignored unless a rule sets `ignore: false`.
 var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true}
 
-// Policy evaluates the built-in monorepo rule (unless monorepos is false), then the user
-// rules top-to-bottom; each set field of a matching rule overwrites the policy (Updates is
-// replaced, not merged). Indirect Go requirements, go directives and npm peerDependencies
-// are ignored unless a rule sets `ignore: false`.
-func (c *Config) Policy(d dep.Dep) Policy {
+// Policy is the pre-policy of d: the policy before the type of an update is known. It
+// evaluates the built-in monorepo rule (unless monorepos is false), then the user rules
+// without updateTypes top-to-bottom; each set field of a matching rule overwrites the
+// policy (Updates is replaced, not merged). Indirect Go requirements, go directives and npm
+// peerDependencies are ignored unless a rule sets `ignore: false`.
+func (c *Config) Policy(d dep.Dep) Policy { return c.policy(d, "") }
+
+// PolicyFor is the policy of an update of kind to d: like Policy, but rules with updateTypes
+// are evaluated too, in file order, when they list kind. Without such rules it equals Policy
+// (apart from Kind).
+func (c *Config) PolicyFor(d dep.Dep, kind dep.UpdateType) Policy { return c.policy(d, kind) }
+
+// HasUpdateTypeRules reports whether any rule sets updateTypes, i.e. whether PolicyFor can
+// differ from Policy.
+func (c *Config) HasUpdateTypeRules() bool {
+	return slices.ContainsFunc(c.Rules, func(r Rule) bool { return len(r.UpdateTypes) > 0 })
+}
+
+// matches reports whether r applies to d; kind "" skips rules with updateTypes.
+func (r *Rule) matches(d dep.Dep, kind dep.UpdateType) bool {
+	switch {
+	case r.Manager != "" && r.Manager != d.Manager,
+		len(r.Names) > 0 && !matchAny(r.Names, d.Name),
+		len(r.DepTypes) > 0 && !slices.Contains(r.DepTypes, d.DepType),
+		len(r.Paths) > 0 && !matchAny(r.Paths, d.File),
+		len(r.Datasources) > 0 && !slices.ContainsFunc(r.Datasources, func(ds string) bool { return CanonicalDatasource(ds) == d.Datasource }),
+		len(r.UpdateTypes) > 0 && (kind == "" || !slices.Contains(r.UpdateTypes, string(kind))):
+		return false
+	}
+	return true
+}
+
+func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 	p := Policy{
 		Pin:         c.Pin,
 		Updates:     make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
 		Schedule:    c.schedule,
 		CommitType:  CommitChore,
 		CommitScope: DefaultScope,
+		Kind:        kind,
 	}
 	if production(d) {
 		p.CommitType = CommitFix
@@ -71,19 +102,16 @@ func (c *Config) Policy(d dep.Dep) Policy {
 	}
 	for i := range c.Rules {
 		r := &c.Rules[i]
-		if r.Manager != "" && r.Manager != d.Manager {
-			continue
-		}
-		if len(r.Names) > 0 && !matchAny(r.Names, d.Name) {
-			continue
-		}
-		if len(r.DepTypes) > 0 && !slices.Contains(r.DepTypes, d.DepType) {
+		if !r.matches(d, kind) {
 			continue
 		}
 		p.Rules = append(p.Rules, i)
 		if r.Ignore != nil {
 			p.Ignore = *r.Ignore
 			p.IgnoreReason = fmt.Sprintf("ignored by rule #%d", i)
+			if len(r.UpdateTypes) > 0 {
+				p.IgnoreReason += " for " + string(kind)
+			}
 		}
 		if r.Pin != "" {
 			p.Pin = r.Pin

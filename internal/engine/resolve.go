@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -44,13 +46,14 @@ type Options struct {
 
 // Trace explains the decision for one dep.
 type Trace struct {
-	Dep        dep.Dep
-	Rules      []int // indices of matching rules
-	Policy     config.Policy
-	Candidates int                 // releases returned by the datasource
-	Rejected   map[string][]string // reason -> versions
-	Update     *dep.Update         // nil = none
-	Err        error
+	Dep          dep.Dep
+	Rules        []int // indices of matching rules of the pre-policy
+	Policy       config.Policy
+	UpdatePolicy *config.Policy      // per-kind policy of Update.Type; nil = no update
+	Candidates   int                 // releases returned by the datasource
+	Rejected     map[string][]string // reason -> versions
+	Update       *dep.Update         // nil = none
+	Err          error
 }
 
 // Result is the outcome of Resolve.
@@ -101,7 +104,8 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 
 	res := &Result{}
 	var todo []dep.Dep
-	var policies []config.Policy
+	var pols []*policies
+	kindRules := cfg.HasUpdateTypeRules()
 	for i, e := range ex {
 		if e.err != nil {
 			res.Errors = append(res.Errors, fmt.Errorf("%s: %w", jobs[i].file, e.err))
@@ -122,30 +126,41 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 				}
 				continue
 			}
-			p := cfg.Policy(d)
-			if p.Ignore {
-				d.Skip = p.IgnoreReason
+			pol := newPolicies(cfg, d, kindRules)
+			if pol.pre.Ignore && !pol.anyKind() {
+				d.Skip = pol.pre.IgnoreReason
 				res.Skipped = append(res.Skipped, d)
 				if o.Trace != nil {
-					o.Trace(Trace{Dep: d, Rules: p.Rules, Policy: p})
+					o.Trace(Trace{Dep: d, Rules: pol.pre.Rules, Policy: pol.pre})
 				}
 				continue
 			}
 			todo = append(todo, d)
-			policies = append(policies, p)
+			pols = append(pols, pol)
 		}
 	}
 	slog.InfoContext(ctx, "dependencies extracted", "files", len(jobs), "updatable", len(todo), "skipped", len(res.Skipped), "duration", time.Since(start))
 	start = time.Now()
 
-	sec := lookupSecurity(ctx, o.Security, todo)
+	// Security updates bypass per-kind rules but not a pre-policy ignore: deps resolved only
+	// because an updateTypes rule opted some update types in are not looked up.
+	var secDeps []dep.Dep
+	secIdx := make([]int, len(todo))
+	for i, d := range todo {
+		secIdx[i] = -1
+		if !pols[i].pre.Ignore {
+			secIdx[i] = len(secDeps)
+			secDeps = append(secDeps, d)
+		}
+	}
+	sec := lookupSecurity(ctx, o.Security, secDeps)
 	outs := make([]Trace, len(todo))
 	var wg sync.WaitGroup
 	for i := range todo {
 		wg.Go(func() {
 			d := todo[i]
-			r := resolver{ctx: ctx, root: root, d: d, p: policies[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil}
-			t := r.run(func() []Vuln { return sec.of(i) })
+			r := resolver{ctx: ctx, root: root, d: d, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil}
+			t := r.run(func() []Vuln { return sec.of(secIdx[i]) })
 			switch {
 			case t.Err != nil:
 				t.Err = fmt.Errorf("%s:%d: %s: %w", d.File, d.Line, d.Name, t.Err)
@@ -249,12 +264,65 @@ func (s *security) wait() error {
 	return s.err
 }
 
-// of returns the vulnerabilities of dep i, or nil when the lookup failed or is off.
+// of returns the vulnerabilities of dep i, or nil when the lookup failed or is off, or i < 0
+// (the dep was not looked up).
 func (s *security) of(i int) []Vuln {
-	if s == nil || s.wait() != nil {
+	if s == nil || i < 0 || s.wait() != nil {
 		return nil
 	}
 	return s.vulns[i]
+}
+
+// policies holds the pre-policy of one dep and its per-kind policies, evaluated lazily. It is
+// used by one goroutine at a time.
+type policies struct {
+	cfg       *config.Config
+	d         dep.Dep
+	pre       config.Policy
+	kindRules bool // cfg has updateTypes rules; without them every kind policy is pre
+	kinds     map[dep.UpdateType]*config.Policy
+}
+
+func newPolicies(cfg *config.Config, d dep.Dep, kindRules bool) *policies {
+	return &policies{cfg: cfg, d: d, pre: cfg.Policy(d), kindRules: kindRules}
+}
+
+// of returns the policy of an update of kind.
+func (p *policies) of(kind dep.UpdateType) *config.Policy {
+	if !p.kindRules {
+		return &p.pre
+	}
+	if kp, ok := p.kinds[kind]; ok {
+		return kp
+	}
+	if p.kinds == nil {
+		p.kinds = make(map[dep.UpdateType]*config.Policy, len(dep.UpdateTypes))
+	}
+	kp := p.cfg.PolicyFor(p.d, kind)
+	p.kinds[kind] = &kp
+	return &kp
+}
+
+// anyKind reports whether an update of some kind is not ignored.
+func (p *policies) anyKind() bool {
+	return slices.ContainsFunc(dep.UpdateTypes, func(k dep.UpdateType) bool { return !p.of(k).Ignore })
+}
+
+// check is the acceptance of a candidate of kind to version v under the kind's policy: an
+// ignoring per-kind policy rejects with its ignore reason, otherwise Policy.Check decides.
+func (p *policies) check(kind dep.UpdateType, v *semver.Version) (bool, string) {
+	kp := p.of(kind)
+	if kp.Ignore {
+		return false, kp.IgnoreReason
+	}
+	return kp.Check(kind, v)
+}
+
+// allows reports whether updates of kind are enabled (digest refresh and pin, which have
+// no new version for allow).
+func (p *policies) allows(kind dep.UpdateType) bool {
+	kp := p.of(kind)
+	return !kp.Ignore && kp.Updates[kind]
 }
 
 // resolver decides the update of one dep.
@@ -262,7 +330,7 @@ type resolver struct {
 	ctx   context.Context
 	root  string
 	d     dep.Dep
-	p     config.Policy
+	pol   *policies
 	ds    Datasource
 	cs    ChecksumSource
 	trace bool
@@ -273,8 +341,11 @@ type resolver struct {
 // run resolves in order: datasource → Best under policy → digest pin/refresh → security.
 // vulns blocks until the advisories of this dep are known.
 func (r *resolver) run(vulns func() []Vuln) Trace {
-	t := Trace{Dep: r.d, Rules: r.p.Rules, Policy: r.p}
+	t := Trace{Dep: r.d, Rules: r.pol.pre.Rules, Policy: r.pol.pre}
 	t.Update, t.Err = r.resolve(&t, vulns)
+	if t.Update != nil {
+		t.UpdatePolicy = r.pol.of(t.Update.Type)
+	}
 	return t
 }
 
@@ -305,21 +376,21 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 		t.Rejected = map[string][]string{}
 		reject = func(v, reason string) { t.Rejected[reason] = append(t.Rejected[reason], v) }
 	}
-	accept := func(v string, kind dep.UpdateType) (bool, string) { return r.p.Check(kind, scheme.Semver(v)) }
+	accept := func(v string, kind dep.UpdateType) (bool, string) { return r.pol.check(kind, scheme.Semver(v)) }
 
 	// Custom deps can only refresh a digest they already carry (regex `digest` group); they
 	// have no place to insert a new one.
 	digests := digestManagers[d.Manager] && (d.Versioning == "tag" || d.Versioning == "docker") ||
 		d.Manager == "custom" && d.Digest != ""
 	pinned := d.Digest != ""
-	wantDigest := digests && (pinned || r.p.Pin == config.PinDigest)
+	wantDigest := digests && (pinned || r.pol.pre.Pin == config.PinDigest)
 
 	var up *dep.Update
 	if best, ok := r.best(scheme, names, accept, reject); ok {
 		up = &dep.Update{Dep: d, Type: scheme.Kind(d.Version, best), NewVersion: best}
 	} else if digests {
 		switch {
-		case pinned && r.p.Updates[dep.Digest]:
+		case pinned && r.pol.allows(dep.Digest):
 			c, err := r.digestOf(d.Version)
 			if err != nil {
 				return nil, err
@@ -327,7 +398,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 			if !strings.EqualFold(c, d.Digest) {
 				up = &dep.Update{Dep: d, Type: dep.Digest, NewVersion: d.Version, NewDigest: c}
 			}
-		case !pinned && r.p.Pin == config.PinDigest && r.p.Updates[dep.Pin]:
+		case !pinned && r.pol.pre.Pin == config.PinDigest && r.pol.allows(dep.Pin):
 			c, err := r.digestOf(d.Version)
 			if err != nil {
 				return nil, err
@@ -349,10 +420,12 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) (*dep.Update, error) {
 		}
 	}
 	if up != nil {
-		up.CommitType, up.CommitScope = r.p.CommitType, r.p.CommitScope
-	}
-	if up != nil && len(up.Advisories) == 0 {
-		up.Group, up.Schedule = r.p.Group, r.p.Schedule
+		// Commit and grouping settings come from the policy of the chosen update type.
+		kp := r.pol.of(up.Type)
+		up.CommitType, up.CommitScope = kp.CommitType, kp.CommitScope
+		if len(up.Advisories) == 0 {
+			up.Group, up.Schedule = kp.Group, kp.Schedule
+		}
 	}
 	return up, nil
 }

@@ -103,6 +103,12 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{commitType: feature}]\n", "rules[0].commitType: must be one of fix, chore"},
 		{"rules: [{commitScope: 'a b'}]\n", "rules[0].commitScope: must match"},
 		{"rules: [{names: ['{a']}]\n", "rules[0].names[0]"},
+		{"rules: [{paths: ['[']}]\n", "rules[0].paths[0]: invalid glob"},
+		{"rules: [{datasources: [pypi]}]\n", "rules[0].datasources[0]: must be one of git-tags, github-releases"},
+		{"rules: [{updateTypes: [huge]}]\n", "rules[0].updateTypes[0]: must be one of major"},
+		{"rules: [{updateTypes: []}]\n", "rules[0].updateTypes: must not be empty"},
+		{"rules: [{updateTypes: [major], pin: digest}]\n", "rules[0].pin: cannot be combined with updateTypes"},
+		{"rules: [{patterns: [x]}]\n", "line 1"},
 		{"custom: [{files: [x], checksum: {url: u}}]\n", "custom[0].checksum: requires match (regex mode)"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+)', datasource: go, name: x, checksum: {url: u}}]\n", "custom[0].checksum: requires a (?P<checksum>...) group in match"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x}]\n", "custom[0].match: (?P<checksum>...) group requires checksum"},
@@ -289,7 +295,7 @@ func TestCustomRegexGroupAliases(t *testing.T) {
 	if len(c.Custom) != 3 {
 		t.Fatalf("custom = %+v", c.Custom)
 	}
-	for _, ds := range CustomDatasources {
+	for _, ds := range DatasourceNames {
 		if _, err := load(t, ".deps.yaml", "custom: [{files: [x], datasource: "+ds+"}]\n"); err != nil {
 			t.Errorf("datasource %s: %v", ds, err)
 		}
@@ -435,5 +441,134 @@ func TestRuleNamesDoublestar(t *testing.T) {
 		if got := c.Policy(dep.Dep{Manager: "npm", Name: name}).Ignore; got != want {
 			t.Errorf("%s: ignore = %v, want %v", name, got, want)
 		}
+	}
+}
+
+func TestRulePathsAndDatasources(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `rules:
+  - paths: ["chart/**"]
+    group: chart
+  - datasources: [golang-version]
+    group: golang
+  - datasources: [docker, npm]
+    paths: ["web/**", "site/*"]
+    group: web
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		file, datasource, group string
+		rules                   []int
+	}{
+		{"chart/values.yaml", "docker", "chart", []int{0}},
+		{"chart/sub/Dockerfile", "docker", "chart", []int{0}},
+		{"charts/values.yaml", "docker", "", nil},
+		{"go.mod", "go-toolchain", "golang", []int{1}},
+		{"go.mod", "go", "", nil},
+		{"web/a/Dockerfile", "docker", "web", []int{2}},
+		{"site/package.json", "npm", "web", []int{2}},
+		{"site/a/package.json", "npm", "", nil},
+		{"web/go.mod", "go", "", nil},
+	} {
+		p := c.Policy(dep.Dep{File: tc.file, Datasource: tc.datasource})
+		if p.Group != tc.group || !slices.Equal(p.Rules, tc.rules) {
+			t.Errorf("%s (%s): group %q rules %v, want %q %v", tc.file, tc.datasource, p.Group, p.Rules, tc.group, tc.rules)
+		}
+	}
+}
+
+func TestCanonicalDatasource(t *testing.T) {
+	if got := len(Datasources) + len(DatasourceAliases); got != len(DatasourceNames) {
+		t.Fatalf("DatasourceNames has %d entries, want %d", len(DatasourceNames), got)
+	}
+	for i, n := range DatasourceNames {
+		c := CanonicalDatasource(n)
+		if !slices.Contains(Datasources, c) || (i < len(Datasources)) != (c == n) {
+			t.Errorf("%s -> %s", n, c)
+		}
+	}
+}
+
+func TestPolicyFor(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `rules:
+  - manager: github-actions
+    schedule: ["* * * * 0"]
+  - manager: github-actions
+    updateTypes: [minor, patch]
+    group: GitHub Actions
+  - manager: github-actions
+    updateTypes: [digest, pin]
+    group: Digest pins
+  - manager: gomod
+    ignore: false
+  - manager: gomod
+    depTypes: [indirect]
+    updateTypes: [major]
+    ignore: true
+  - names: ["actions/cache"]
+    updateTypes: [minor]
+    group: cache
+    commitType: ci
+    allow: "< 5"
+    updates: [minor]
+  - manager: npm
+    updateTypes: [patch]
+    ignore: false
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.HasUpdateTypeRules() || Default().HasUpdateTypeRules() {
+		t.Error("HasUpdateTypeRules")
+	}
+	checkout := dep.Dep{Manager: "github-actions", Name: "actions/checkout"}
+	cache := dep.Dep{Manager: "github-actions", Name: "actions/cache"}
+	indirect := dep.Dep{Manager: "gomod", Name: "a/b", DepType: "indirect"}
+	peer := dep.Dep{Manager: "npm", Name: "p", DepType: "peerDependencies"}
+	all := len(dep.UpdateTypes)
+	for _, tc := range []struct {
+		name    string
+		d       dep.Dep
+		kind    dep.UpdateType // "" = Policy
+		group   string
+		rules   []int
+		ignore  string // "" = not ignored, else IgnoreReason
+		updates int
+	}{
+		{"pre-policy skips updateTypes rules", checkout, "", "", []int{0}, "", all},
+		{"minor joins the group", checkout, dep.Minor, "GitHub Actions", []int{0, 1}, "", all},
+		{"patch joins the group", checkout, dep.Patch, "GitHub Actions", []int{0, 1}, "", all},
+		{"major keeps the pre-policy", checkout, dep.Major, "", []int{0}, "", all},
+		{"digest pins", checkout, dep.Digest, "Digest pins", []int{0, 2}, "", all},
+		{"pin pins", checkout, dep.Pin, "Digest pins", []int{0, 2}, "", all},
+		{"later kind rule overrides", cache, dep.Minor, "cache", []int{0, 1, 5}, "", 1},
+		{"other kind unaffected", cache, dep.Patch, "GitHub Actions", []int{0, 1}, "", all},
+		{"indirect opted in", indirect, "", "", []int{3}, "", all},
+		{"indirect majors ignored", indirect, dep.Major, "", []int{3, 4}, "ignored by rule #4 for major", all},
+		{"indirect minors kept", indirect, dep.Minor, "", []int{3}, "", all},
+		{"default-ignored dep", peer, "", "", nil, "ignored by default (peerDependencies; enable with a rule setting ignore: false)", all},
+		{"kind rule opts in", peer, dep.Patch, "", []int{6}, "", all},
+		{"other kinds stay ignored", peer, dep.Minor, "", nil, "ignored by default (peerDependencies; enable with a rule setting ignore: false)", all},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var p Policy
+			if tc.kind == "" {
+				p = c.Policy(tc.d)
+			} else {
+				p = c.PolicyFor(tc.d, tc.kind)
+			}
+			ignore := ""
+			if p.Ignore {
+				ignore = p.IgnoreReason
+			}
+			if p.Kind != tc.kind || p.Group != tc.group || !slices.Equal(p.Rules, tc.rules) || ignore != tc.ignore || len(p.Updates) != tc.updates {
+				t.Errorf("got kind %q group %q rules %v ignore %q updates %d, want %q %q %v %q %d", p.Kind, p.Group, p.Rules, ignore, len(p.Updates), tc.kind, tc.group, tc.rules, tc.ignore, tc.updates)
+			}
+		})
+	}
+	ca := c.PolicyFor(cache, dep.Minor)
+	if ca.CommitType != "ci" || ca.Allow == nil || ca.Schedule == nil || !ca.Accepts(dep.Minor, GoTestVer("4.1.0")) || ca.Accepts(dep.Minor, GoTestVer("5.0.0")) {
+		t.Errorf("cache minor: %+v", ca)
 	}
 }

@@ -87,6 +87,12 @@ func TestSecurityUpdates(t *testing.T) {
 			vulns: []Vuln{vuln("A", "v1.3.0")}},
 		{name: "ignore still wins", cfg: "rules: [{ignore: true}]\n",
 			vulns: []Vuln{vuln("A", "v1.1.0")}, wantSkip: "ignored by rule #0", wantNoAsks: true},
+		{name: "kind ignore does not block a fix", cfg: "rules: [{updateTypes: [minor], ignore: true}]\n",
+			vulns: []Vuln{vuln("A", "v1.1.0")}, want: "v1.1.0", wantType: dep.Minor, wantIDs: []string{"A"}},
+		{name: "kind group of the normal update", cfg: "rules: [{updateTypes: [minor], group: minors}]\n",
+			vulns: []Vuln{vuln("A", "v9.0.0")}, want: "v1.2.0", wantType: dep.Minor, wantGroup: "minors"},
+		{name: "pre-policy ignore wins over kind opt-in", cfg: "rules: [{ignore: true}, {updateTypes: [patch], ignore: false}]\n",
+			vulns: []Vuln{vuln("A", "v1.1.0")}, want: "v1.0.1", wantType: dep.Patch, wantNoAsks: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

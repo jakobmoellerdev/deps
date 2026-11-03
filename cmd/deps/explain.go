@@ -118,7 +118,7 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 	}
 	cur := d.Version
 	if d.Digest != "" {
-		cur += "@" + d.Digest[:min(7, len(d.Digest))]
+		cur += "@" + dep.ShortDigest(d.Digest)
 	}
 	line("current", "%s", orDash(cur))
 	if d.Skip != "" && t.Policy.Updates == nil { // skipped by the manager: no policy was evaluated
@@ -128,7 +128,12 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 	if t.Policy.Monorepo != "" {
 		line("builtin", "monorepo %s -> group %q", t.Policy.Monorepo, config.MonorepoGroup(t.Policy.Monorepo))
 	}
-	if len(t.Rules) == 0 && t.Policy.Monorepo == "" {
+	// Rules with updateTypes that applied to the chosen update, after the pre-policy rules.
+	var kindRules []int
+	if up := t.UpdatePolicy; up != nil {
+		kindRules = slices.DeleteFunc(slices.Clone(up.Rules), func(r int) bool { return len(cfg.Rules[r].UpdateTypes) == 0 })
+	}
+	if len(t.Rules) == 0 && len(kindRules) == 0 && t.Policy.Monorepo == "" {
 		line("rules", "none")
 	}
 	for i, r := range t.Rules {
@@ -138,7 +143,17 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 		}
 		line(label, "#%d %s", r, describeRule(cfg.Rules[r]))
 	}
+	for i, r := range kindRules {
+		label := ""
+		if i == 0 && len(t.Rules) == 0 {
+			label = "rules"
+		}
+		line(label, "#%d %s (applies to %s)", r, describeRule(cfg.Rules[r]), t.UpdatePolicy.Kind)
+	}
 	line("policy", "%s", describePolicy(t.Policy))
+	if len(kindRules) > 0 {
+		line("", "%s: %s", t.UpdatePolicy.Kind, describePolicy(*t.UpdatePolicy))
+	}
 	if d.Skip != "" {
 		line("result", "skipped: %s", d.Skip)
 		return
@@ -171,6 +186,15 @@ func describeRule(r config.Rule) string {
 	}
 	if r.DepTypes != nil {
 		add("depTypes", "["+strings.Join(r.DepTypes, " ")+"]")
+	}
+	if r.Paths != nil {
+		add("paths", "["+strings.Join(r.Paths, " ")+"]")
+	}
+	if r.Datasources != nil {
+		add("datasources", "["+strings.Join(r.Datasources, " ")+"]")
+	}
+	if r.UpdateTypes != nil {
+		add("updateTypes", "["+strings.Join(r.UpdateTypes, " ")+"]")
 	}
 	if r.Ignore != nil {
 		add("ignore", strconv.FormatBool(*r.Ignore))

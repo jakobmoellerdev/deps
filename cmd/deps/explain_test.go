@@ -94,6 +94,39 @@ example.com/i  go.mod:6  (gomod, indirect, go, go)
 `,
 		},
 		{
+			name: "updateTypes rules",
+			files: map[string]string{
+				".github/workflows/ci.yml": workflow,
+				".deps.yaml": `pin: digest
+rules:
+  - manager: github-actions
+    updateTypes: [major]
+    ignore: true
+  - manager: github-actions
+    updateTypes: [digest, pin]
+    group: Digest pins
+`,
+			},
+			args: []string{"actions/checkout"},
+			stdout: `actions/checkout  .github/workflows/ci.yml:6  (github-actions, action, git-tags, tag)
+  current   v6.0.0
+  rules     #1 manager=github-actions updateTypes=[digest pin] group=Digest pins (applies to pin)
+  policy    pin=digest allow=- updates=major,minor,patch,digest,pin group=- schedule=always
+            pin: pin=digest allow=- updates=major,minor,patch,digest,pin group=Digest pins schedule=always
+  candidates 2
+  rejected  not newer: 1 (v6.0.0)  ignored by rule #0 for major: 1 (v7.0.1)
+  result    update v6.0.0 -> v6.0.0@1af3b93 (pin)
+
+actions/checkout  .github/workflows/ci.yml:7  (github-actions, action, git-tags, tag)
+  current   v6.0.0@1af3b93
+  rules     none
+  policy    pin=digest allow=- updates=major,minor,patch,digest,pin group=- schedule=always
+  candidates 2
+  rejected  not newer: 1 (v6.0.0)  ignored by rule #0 for major: 1 (v7.0.1)
+  result    up to date
+`,
+		},
+		{
 			name:  "skipped by manager",
 			files: files,
 			args:  []string{"./local"},
@@ -170,6 +203,7 @@ func TestWriteTrace(t *testing.T) {
 	cfg := &config.Config{Rules: []config.Rule{
 		{},
 		{DepTypes: []string{"direct"}, Ignore: &yes, Schedule: []string{"* 0-5 * * *", "* * * * 0"}},
+		{Paths: []string{"chart/**"}, Datasources: []string{"docker"}},
 	}}
 	d := dep.Dep{Manager: "custom", DepType: "regex", Datasource: "docker", Versioning: "docker", File: "Dockerfile", Line: 1, Name: "golang", Version: "1.24-alpine"}
 	tests := []struct {
@@ -181,7 +215,7 @@ func TestWriteTrace(t *testing.T) {
 			name: "security update, rules without fields, empty updates",
 			t: engine.Trace{
 				Dep:        d,
-				Rules:      []int{0, 1},
+				Rules:      []int{0, 1, 2},
 				Policy:     config.Policy{Pin: "keep", Updates: map[dep.UpdateType]bool{}},
 				Candidates: 7,
 				Rejected: map[string][]string{
@@ -198,6 +232,7 @@ func TestWriteTrace(t *testing.T) {
   current   1.24-alpine
   rules     #0 (matches all)
             #1 depTypes=[direct] ignore=true schedule=[* 0-5 * * *; * * * * 0]
+            #2 paths=[chart/**] datasources=[docker]
   policy    pin=keep allow=- updates=- group=- schedule=always
   candidates 7
   rejected  suffix: 4 (1.27, 1.26, 1.25, ...)  invalid: 1 (latest)  precision: 1 (1.25.1-alpine)

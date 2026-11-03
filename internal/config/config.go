@@ -30,13 +30,32 @@ const (
 
 // Known values for validation.
 var (
-	Managers          = []string{"github-actions", "gomod", "docker", "npm", "custom"}
-	DepTypes          = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "annotation", "regex"}
-	CustomDatasources = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "golang-version", "github-tags", "github-release-attachments"}
-	Versionings       = []string{"tag", "go", "docker", "semver"}
+	Managers = []string{"github-actions", "gomod", "docker", "npm", "custom"}
+	DepTypes = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "annotation", "regex"}
+	// Datasources are the deps datasource names (dep.Dep.Datasource).
+	Datasources = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm"}
+	// DatasourceAliases maps Renovate datasource names to deps datasource names.
+	DatasourceAliases = map[string]string{
+		"golang-version":             "go-toolchain",
+		"github-tags":                "git-tags",
+		"github-release-attachments": "github-releases",
+	}
+	// DatasourceNames are the accepted datasource names of custom[].datasource and
+	// rules[].datasources: Datasources followed by the DatasourceAliases keys.
+	DatasourceNames = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "golang-version", "github-tags", "github-release-attachments"}
+	Versionings     = []string{"tag", "go", "docker", "semver"}
 	// CommitTypes are the accepted conventional-commit types of rules[].commitType.
 	CommitTypes = []string{"fix", "chore", "build", "ci", "docs", "feat", "perf", "refactor", "revert", "style", "test"}
 )
+
+// CanonicalDatasource maps a Renovate alias to its deps datasource name; other names are
+// returned unchanged.
+func CanonicalDatasource(name string) string {
+	if a, ok := DatasourceAliases[name]; ok {
+		return a
+	}
+	return name
+}
 
 // DefaultBranchPrefix is the branch prefix used when branchPrefix is not set.
 const DefaultBranchPrefix = "deps/"
@@ -85,7 +104,10 @@ type Rule struct {
 	Manager     string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=custom" jsonschema_description:"Only match deps of this manager."`
 	Names       []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates)."`
 	DepTypes    []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
-	Ignore      *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives and npm peerDependencies in."`
+	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'."`
+	Datasources []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=golang-version,enum=github-tags,enum=github-release-attachments" jsonschema_description:"Only match deps looked up with these datasources; Renovate names (golang-version, github-tags, github-release-attachments) match their deps datasource."`
+	UpdateTypes []string `yaml:"updateTypes" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`
+	Ignore      *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives and npm peerDependencies in. With updateTypes: reject updates of these types."`
 	Pin         string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
 	Allow       string   `yaml:"allow" jsonschema_description:"Semver constraint new versions must satisfy, e.g. '< 7'."`
 	Updates     []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
@@ -102,7 +124,7 @@ type Rule struct {
 type Custom struct {
 	Files      []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans."`
 	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
-	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=golang-version,enum=github-tags,enum=github-release-attachments" jsonschema_description:"Datasource of the matched deps; required in regex mode unless match has a (?P<datasource>) group."`
+	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=golang-version,enum=github-tags,enum=github-release-attachments" jsonschema_description:"Datasource of the matched deps; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments) are aliases."`
 	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
 	Versioning string    `yaml:"versioning" jsonschema:"enum=tag,enum=go,enum=docker,enum=semver,default=semver" jsonschema_description:"Versioning scheme of the matched versions."` // default semver
 	Checksum   *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
@@ -315,6 +337,27 @@ func (c *Config) validateRule(i int, tz string, add addFunc) {
 			add(fmt.Sprintf("%s.depTypes[%d]", f, j), "must be one of %s, got %q", list(DepTypes), t)
 		}
 	}
+	for j, g := range r.Paths {
+		if _, err := doublestar.Match(g, ""); err != nil {
+			add(fmt.Sprintf("%s.paths[%d]", f, j), "invalid glob %q: %v", g, err)
+		}
+	}
+	for j, ds := range r.Datasources {
+		if !slices.Contains(DatasourceNames, ds) {
+			add(fmt.Sprintf("%s.datasources[%d]", f, j), "must be one of %s, got %q", list(DatasourceNames), ds)
+		}
+	}
+	if r.UpdateTypes != nil && len(r.UpdateTypes) == 0 {
+		add(f+".updateTypes", "must not be empty (omit it to match every update type)")
+	}
+	for j, u := range r.UpdateTypes {
+		if !slices.Contains(dep.UpdateTypes, dep.UpdateType(u)) {
+			add(fmt.Sprintf("%s.updateTypes[%d]", f, j), "must be one of major, minor, patch, digest, pin, got %q", u)
+		}
+	}
+	if len(r.UpdateTypes) > 0 && r.Pin != "" {
+		add(f+".pin", "cannot be combined with updateTypes: the pin mode is decided before the update type is known")
+	}
 	if r.Pin != "" && r.Pin != PinKeep && r.Pin != PinDigest {
 		add(f+".pin", "must be keep or digest, got %q", r.Pin)
 	}
@@ -350,8 +393,8 @@ func (cu *Custom) validate(f string, add addFunc) {
 			add(fmt.Sprintf("%s.files[%d]", f, j), "invalid glob %q: %v", g, err)
 		}
 	}
-	if cu.Datasource != "" && !slices.Contains(CustomDatasources, cu.Datasource) {
-		add(f+".datasource", "must be one of %s, got %q", list(CustomDatasources), cu.Datasource)
+	if cu.Datasource != "" && !slices.Contains(DatasourceNames, cu.Datasource) {
+		add(f+".datasource", "must be one of %s, got %q", list(DatasourceNames), cu.Datasource)
 	}
 	if cu.Versioning != "" && !slices.Contains(Versionings, cu.Versioning) {
 		add(f+".versioning", "must be one of %s, got %q", list(Versionings), cu.Versioning)

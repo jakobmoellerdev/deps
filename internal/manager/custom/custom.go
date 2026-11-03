@@ -10,7 +10,7 @@
 // optional `name` (aliases `depName`, `packageName`), `datasource`, `versioning` and `digest`
 // (alias `currentDigest`) groups is run over the whole file; every match is a dependency.
 //
-// Renovate datasource names are mapped to deps names (see datasourceAliases).
+// Renovate datasource names are mapped to deps names (see config.DatasourceAliases).
 package custom
 
 import (
@@ -56,13 +56,6 @@ var (
 	// (1.2, v1.2.3, 1.22-alpine, 2.0.0-rc.1+build.5). Boundaries are checked by firstVersion.
 	versionRe = regexp.MustCompile(`v?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z]+(?:[.+-][0-9A-Za-z]+)*)?`)
 )
-
-// datasourceAliases maps Renovate datasource names to deps datasource names.
-var datasourceAliases = map[string]string{
-	"golang-version":             "go-toolchain",
-	"github-tags":                "git-tags",
-	"github-release-attachments": "github-releases",
-}
 
 type customManager struct {
 	files      []string
@@ -111,7 +104,7 @@ func newManager(c config.Custom) (*customManager, error) {
 	if !slices.Contains(config.Versionings, m.versioning) {
 		return nil, fmt.Errorf("versioning: unknown %q", m.versioning)
 	}
-	if m.datasource != "" && !slices.Contains(config.CustomDatasources, m.datasource) {
+	if m.datasource != "" && !slices.Contains(config.DatasourceNames, m.datasource) {
 		return nil, fmt.Errorf("datasource: unknown %q", m.datasource)
 	}
 	if c.Match == "" {
@@ -464,9 +457,7 @@ func isChecksum(s string) bool {
 //   - go, go-toolchain, docker, npm: Name is the module path, image or package; Source is empty.
 func classify(d *dep.Dep) {
 	ds := d.Datasource
-	if a, ok := datasourceAliases[ds]; ok {
-		d.Datasource = a
-	}
+	d.Datasource = config.CanonicalDatasource(ds)
 	switch d.Datasource {
 	case "git-tags":
 		name := d.Name
