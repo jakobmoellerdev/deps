@@ -23,6 +23,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -138,6 +139,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	start = time.Now()
 	ex := extractAll(root, jobs, env)
 	linkAll(o.Managers, found, ex)
+	dedupeCovered(ex)
 
 	res := &Result{}
 	var todo []dep.Dep
@@ -336,6 +338,61 @@ func extractOne(root string, j job, env manager.Env) extracted {
 	}
 	deps, err := j.m.Extract(j.file, src, env)
 	return extracted{deps: deps, err: err}
+}
+
+// dedupeCovered skips deps whose bytes are also claimed by a custom dep in the same file: an
+// explicit annotation (or regex match) wins over native extraction, so the same version is
+// never patched twice nor proposed in two PRs.
+func dedupeCovered(ex []extracted) {
+	type claim struct {
+		spans [3]dep.Span
+		line  int
+		regex bool
+	}
+	claims := map[string][]claim{}
+	for _, e := range ex {
+		for _, d := range e.deps {
+			if d.Manager != custom.Name || d.RefSpan.End <= d.RefSpan.Start {
+				continue
+			}
+			c := claim{spans: [3]dep.Span{d.RefSpan, d.DigestSpan, d.VersionSpan}, line: d.Line, regex: d.DepType == custom.DepTypeRegex}
+			if !c.regex && c.line > 1 {
+				c.line-- // the annotation comment precedes the annotated line
+			}
+			claims[d.File] = append(claims[d.File], c)
+		}
+	}
+	if len(claims) == 0 {
+		return
+	}
+	overlaps := func(a, b dep.Span) bool {
+		return a.End > a.Start && b.End > b.Start && a.Start < b.End && b.Start < a.End
+	}
+	for i := range ex {
+		for j := range ex[i].deps {
+			d := &ex[i].deps[j]
+			if d.Manager == custom.Name || d.Skip != "" {
+				continue
+			}
+			for _, c := range claims[d.File] {
+				hit := false
+				for _, s := range [3]dep.Span{d.RefSpan, d.DigestSpan, d.VersionSpan} {
+					for _, t := range c.spans {
+						hit = hit || overlaps(s, t)
+					}
+				}
+				if !hit {
+					continue
+				}
+				if c.regex {
+					d.Skip = fmt.Sprintf("covered by custom regex match on line %d", c.line)
+				} else {
+					d.Skip = fmt.Sprintf("covered by annotation on line %d", c.line)
+				}
+				break
+			}
+		}
+	}
 }
 
 // security is the in-flight result of the single SecuritySource call.

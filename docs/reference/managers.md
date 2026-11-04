@@ -356,6 +356,10 @@ The version is replaced. A captured digest (`@sha256:` for docker markers, or a 
 - Renovate markers give the repository as `registryUrl=`: `# renovate: datasource=helm depName=redis registryUrl=https://charts.bitnami.com/bitnami`.
 - Regex mode takes `<repository>/<chart>` as the name.
 
+**Precedence over native managers.**
+
+When a custom dep and a native manager's dep (docker, helm, …) cover the same version bytes of a file, the custom dep wins: the native dep is skipped as `covered by annotation on line <n>` (regex mode: `covered by custom regex match on line <n>`), so the bytes are edited once and only one PR is opened.
+
 ## Datasources
 
 - All network calls share one HTTP/2 client and one semaphore of `--concurrency` slots (default 32).
