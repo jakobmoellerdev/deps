@@ -25,7 +25,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `minimumReleaseAge` | `minimumReleaseAge` / `rules[].minimumReleaseAge` (`null` → `0 days`) |
 | `separateMajorMinor`, `separateMultipleMajor`, `separateMinorPatch` | same names, top level and per rule |
 | `pinDigests`, `docker:pinDigests`, `helpers:pinGitHubActionDigests` | `pin: digest` (top level or per rule) |
-| `rangeStrategy` | `rangeStrategy` / `rules[].rangeStrategy` for npm ranges: `auto` (default, = `update-lockfile`), `bump`, `update-lockfile`; `widen`, `pin`, `replace` and `in-range-only` are not supported. Other managers replace the exact version |
+| `rangeStrategy` | `rangeStrategy` / `rules[].rangeStrategy` for npm and cargo ranges: `auto` (default, = `update-lockfile`), `bump`, `update-lockfile`; `widen`, `pin`, `replace` and `in-range-only` are not supported. Other managers replace the exact version |
 | `postUpdateOptions: [gomodTidy]` | always on |
 | `postUpdateOptions: [gomodUpdateImportPaths]` | `gomodUpdateImportPaths`, **default true**: major module path updates (`/v92` → `/v93`) rewrite the imports in the module's `.go` files; `false` turns module path updates off |
 | `lockFileMaintenance` | not supported (lockfiles are regenerated only with an update) |

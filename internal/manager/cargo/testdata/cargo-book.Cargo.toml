@@ -1,0 +1,29 @@
+# Snippets of the Cargo book at github.com/rust-lang/cargo@46a4439, verbatim, in one manifest:
+# doc/book/src/reference/specifying-dependencies.md:199,601-604 (registry, package renames),
+# :85 (wildcards), overriding-dependencies.md:68-69,111-112,182-183,200-201 ([patch]) and
+# :310-312 ([replace]). Keys repeated across the snippets were renamed (suffix -2/-3).
+[package]
+name = "hello_world"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+some-crate = { version = "1.0", registry = "my-registry" }
+foo = "0.1"
+bar = { git = "https://github.com/example/project.git", package = "foo" }
+baz = { version = "0.1", registry = "custom", package = "foo" }
+any = "*"
+one = "1.*"
+one-two = "1.2.*"
+
+[patch.crates-io]
+uuid = { path = "../path/to/uuid" }
+uuid-2 = { git = 'https://github.com/uuid-rs/uuid.git' }
+uuid-3 = { git = "https://github.com/uuid-rs/uuid.git", branch = "2.0.0" }
+
+[patch."https://github.com/your/repository"]
+my-library = { path = "../my-library/path" }
+
+[replace]
+"foo:0.1.0" = { git = 'https://github.com/example/foo.git' }
+"bar:1.0.2" = { path = 'my/local/bar' }

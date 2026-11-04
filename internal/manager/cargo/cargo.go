@@ -1,23 +1,29 @@
-// Package cargo extracts crate dependencies from Cargo.toml manifests and regenerates
-// Cargo.lock after an update (see Locker).
+// Package cargo extracts crate dependencies from Cargo.toml manifests, reads the versions
+// Cargo.lock locks them to, and updates Cargo.lock after an update (see Locker).
 package cargo
 
 import (
-	"bytes"
+	"cmp"
+	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
 )
 
 // Name is the manager name.
 const Name = "cargo"
 
-// Datasource is the datasource of crates.io dependencies.
+// Datasource is the datasource of registry dependencies.
 const Datasource = "crate"
+
+// Versioning is the versioning scheme of registry dependencies.
+const Versioning = "cargo"
 
 // DepTypes.
 const (
@@ -25,6 +31,8 @@ const (
 	DepTypeDev          = "dev-dependencies"
 	DepTypeBuild        = "build-dependencies"
 	DepTypeWorkspace    = "workspace.dependencies"
+	DepTypePatch        = "patch"
+	DepTypeReplace      = "replace"
 )
 
 // sections maps the dependency table names (with Cargo's legacy underscore spellings) to
@@ -37,12 +45,7 @@ var sections = map[string]string{
 	"build_dependencies": DepTypeBuild,
 }
 
-var (
-	matchRe = regexp.MustCompile(`(^|/)Cargo\.toml$`)
-	// reqRe is the supported requirement grammar: one comparator with an optional ^, ~, = or
-	// >= operator and a MAJOR[.MINOR[.PATCH[-prerelease]]] version (group 2).
-	reqRe = regexp.MustCompile(`^\s*(\^|~|=|>=)?\s*(\d+(?:\.\d+(?:\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)?)?)\s*$`)
-)
+var matchRe = regexp.MustCompile(`(^|/)Cargo\.toml$`)
 
 type cargoManager struct{}
 
@@ -55,168 +58,155 @@ func (cargoManager) Name() string { return Name }
 func (cargoManager) Match(p string) bool { return matchRe.MatchString(p) }
 
 // Extract returns one Dep per entry of the [dependencies], [dev-dependencies] and
-// [build-dependencies] tables (also below [target.<spec>]) and of [workspace.dependencies],
-// in the order they first appear. Entries may be strings, inline tables, dotted keys or
-// [dependencies.<name>] tables. RefSpan covers only the version, so the operator is kept.
+// [build-dependencies] tables (also below [target.<spec>]), of [workspace.dependencies], of
+// every [patch.<source>] table and of [replace], ordered by line. Entries may be strings,
+// inline tables, dotted keys or [dependencies.<name>] tables. RefSpan covers the whole
+// requirement (Range); Version is the version a bump raises.
 func (cargoManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
-	x := extractor{src: src, line: 1, index: map[string]int{}}
-	if err := scanTOML(src, x.add); err != nil {
+	root, err := tomlspan.Parse(src)
+	if err != nil {
 		return nil, err
 	}
-	deps := make([]dep.Dep, len(x.recs))
-	for i := range x.recs {
-		deps[i] = x.recs[i].dep(file)
+	var deps []dep.Dep
+	add := func(depType string, t *tomlspan.Value) {
+		if t == nil || t.Kind != tomlspan.Table {
+			return
+		}
+		for _, k := range t.Keys {
+			deps = append(deps, entryDep(file, depType, k, t.Fields[k]))
+		}
 	}
+	for _, k := range root.Keys {
+		v := root.Fields[k]
+		switch {
+		case sections[k] != "":
+			add(sections[k], v)
+		case k == "target" && v.Kind == tomlspan.Table:
+			for _, spec := range v.Keys {
+				t := v.Fields[spec]
+				if t.Kind != tomlspan.Table {
+					continue
+				}
+				for _, s := range t.Keys {
+					if sections[s] != "" {
+						add(sections[s], t.Fields[s])
+					}
+				}
+			}
+		case k == "workspace":
+			add(DepTypeWorkspace, root.Get("workspace", "dependencies"))
+		case k == "patch" && v.Kind == tomlspan.Table:
+			for _, source := range v.Keys {
+				add(DepTypePatch, v.Fields[source])
+			}
+		case k == "replace":
+			add(DepTypeReplace, v)
+		}
+	}
+	slices.SortStableFunc(deps, func(a, b dep.Dep) int { return cmp.Compare(a.Line, b.Line) })
 	return deps, nil
 }
 
-// Edits replaces the version token.
-func (cargoManager) Edits(u dep.Update) ([]patch.Edit, error) {
-	d := u.Dep
-	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
-}
-
-// record collects the keys of one dependency entry.
-type record struct {
-	depType, key  string
-	line, tagLine int
-	version, tag  *item
-	pkg, git      string
-	path          bool
-	workspace     bool
-	registry      bool
-}
-
-type extractor struct {
-	src   []byte
-	recs  []record
-	index map[string]int // depType + target + key -> index into recs
-
-	// pos and line track the line of the items, whose offsets only grow.
-	pos, line int
-}
-
-func (x *extractor) lineAt(off int) int {
-	x.line += bytes.Count(x.src[x.pos:off], []byte{'\n'})
-	x.pos = off
-	return x.line
-}
-
-// depKey splits a key path into its DepType, target and the rest below the dependency table;
-// depType is "" outside dependency tables.
-func depKey(key []string) (depType, target string, rest []string) {
-	switch {
-	case len(key) >= 1 && sections[key[0]] != "":
-		return sections[key[0]], "", key[1:]
-	case len(key) >= 3 && key[0] == "target" && sections[key[2]] != "":
-		return sections[key[2]], key[1], key[3:]
-	case len(key) >= 2 && key[0] == "workspace" && key[1] == "dependencies":
-		return DepTypeWorkspace, "", key[2:]
-	}
-	return "", "", nil
-}
-
-func (x *extractor) add(it item) {
-	depType, target, rest := depKey(it.key)
-	if depType == "" || len(rest) == 0 || it.kind == 'H' {
-		return
-	}
-	id := depType + "\x00" + target + "\x00" + rest[0]
-	i, ok := x.index[id]
-	if !ok {
-		i = len(x.recs)
-		x.index[id] = i
-		x.recs = append(x.recs, record{depType: depType, key: rest[0], line: x.lineAt(it.off)})
-	}
-	r := &x.recs[i]
-	switch {
-	case len(rest) == 1 && it.kind == 's':
-		r.version = &it
-		r.line = x.lineAt(it.off)
-	case len(rest) == 2:
-		r.attr(rest[1], &it, x)
-	}
-}
-
-func (r *record) attr(name string, it *item, x *extractor) {
-	switch name {
-	case "version":
-		if it.kind == 's' {
-			r.version = it
-			r.line = x.lineAt(it.off)
-		}
-	case "package":
-		r.pkg = it.str
-	case "path":
-		r.path = true
-	case "git":
-		r.git = it.str
-	case "tag":
-		if it.kind == 's' {
-			r.tag, r.tagLine = it, x.lineAt(it.off)
-		}
-	case "workspace":
-		r.workspace = it.kind == 'v' && it.str == "true"
-	case "registry", "registry-index":
-		r.registry = true
-	}
-}
-
-func (r *record) dep(file string) dep.Dep {
-	name := r.key
-	if r.pkg != "" {
-		name = r.pkg
-	}
+// entryDep makes the Dep of the entry key = v in a table of depType.
+func entryDep(file, depType, key string, v *tomlspan.Value) dep.Dep {
 	d := dep.Dep{
-		Manager: Name, Datasource: Datasource, Versioning: "semver", DepType: r.depType,
-		File: file, Line: r.line, Name: name,
+		Manager: Name, Datasource: Datasource, Versioning: Versioning, DepType: depType,
+		File: file, Line: v.Line, Name: key,
+	}
+	if depType == DepTypeReplace {
+		// A [replace] key is a package ID: "name:version" or "name@version".
+		d.Name, _, _ = strings.Cut(strings.ReplaceAll(key, "@", ":"), ":")
+	}
+	var ver *tomlspan.Value
+	var gitURL string
+	var tag *tomlspan.Value
+	var workspace, path bool
+	switch v.Kind {
+	case tomlspan.String:
+		ver = v
+	case tomlspan.Table:
+		str := func(k string) *tomlspan.Value {
+			if f := v.Fields[k]; f != nil && f.Kind == tomlspan.String {
+				return f
+			}
+			return nil
+		}
+		if p := str("package"); p != nil {
+			d.Name = p.Str
+		}
+		if ver = str("version"); ver != nil {
+			d.Line = ver.Line
+		}
+		if g := str("git"); g != nil {
+			gitURL = g.Str
+		}
+		tag = str("tag")
+		path = v.Fields["path"] != nil
+		if w := v.Fields["workspace"]; w != nil && w.Kind == tomlspan.Scalar && w.Str == "true" {
+			workspace = true
+		}
+		if r := str("registry"); r != nil && r.Str != "crates-io" {
+			d.Source = r.Str
+		}
+		if r := str("registry-index"); r != nil {
+			d.Source = r.Str
+		}
 	}
 	switch {
-	case r.workspace:
+	case workspace:
 		d.Skip = "workspace dependency"
-	case r.path:
+	case path:
 		d.Skip = "path dependency"
-	case r.git != "":
-		r.gitDep(&d)
-	case r.registry:
-		d.Skip = "alternative registry"
-	case r.version == nil:
+	case gitURL != "":
+		gitDep(&d, gitURL, tag)
+	case ver == nil:
 		d.Skip = "no version"
+	case !ver.Exact:
+		d.Skip = "cannot locate value"
 	default:
-		d.Version = r.version.str
-		m := reqRe.FindStringSubmatchIndex(r.version.str)
-		switch {
-		case m == nil:
+		req, ok := parseRequirement(ver.Str)
+		if !ok {
 			d.Skip = "unsupported requirement"
-		case r.version.span == (dep.Span{}):
-			d.Skip = "cannot locate value"
-		default:
-			d.Version = r.version.str[m[4]:m[5]]
-			start := r.version.span.Start + m[4]
-			d.RefSpan = dep.Span{Start: start, End: start + len(d.Version)}
-			if strings.Count(d.Version, ".") < 2 {
-				d.Versioning = "tag" // keeps the precision: "1" -> "2", "0.4" -> "0.5"
-			}
+			break
 		}
+		d.Range, d.Version = ver.Str, req.version()
+		if c := req.constraint(); c != ver.Str {
+			d.Constraint = c
+		}
+		d.RefSpan = dep.Span{Start: ver.Start, End: ver.End}
 	}
 	return d
 }
 
 // gitDep makes a `git` dependency with a `tag` on an http(s) repository a git-tags dep; any
 // other git dependency (branch, rev, default branch, ssh URL) is skipped.
-func (r *record) gitDep(d *dep.Dep) {
-	u, err := url.Parse(r.git)
+func gitDep(d *dep.Dep, raw string, tag *tomlspan.Value) {
+	d.Source = ""
+	u, err := url.Parse(raw)
 	switch {
-	case r.tag == nil || err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "":
+	case tag == nil || err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "":
 		d.Skip = "git dependency"
 		return
-	case r.tag.span == (dep.Span{}):
+	case !tag.Exact:
 		d.Skip = "cannot locate value"
 		return
 	}
 	u.RawQuery, u.Fragment, u.User = "", "", nil
 	d.Datasource, d.Versioning = "git-tags", "tag"
 	d.Source = strings.TrimSuffix(strings.TrimSuffix(u.String(), "/"), ".git")
-	d.Version, d.RefSpan = r.tag.str, r.tag.span
-	d.Line = r.tagLine
+	d.Version, d.RefSpan, d.Line = tag.Str, dep.Span{Start: tag.Start, End: tag.End}, tag.Line
+}
+
+// Edits replaces the git tag, or rewrites the requirement with its versions moved to the new
+// version (requirement.render): the operators, wildcards and precision are kept.
+func (cargoManager) Edits(u dep.Update) ([]patch.Edit, error) {
+	d := u.Dep
+	if d.Range == "" {
+		return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+	}
+	req, ok := parseRequirement(d.Range)
+	if !ok {
+		return nil, fmt.Errorf("unsupported requirement %q", d.Range)
+	}
+	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: req.render(u.NewVersion)}}, nil
 }

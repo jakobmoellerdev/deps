@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -17,7 +18,9 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/bmatcuk/doublestar/v4"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
 )
 
 const (
@@ -68,23 +71,20 @@ func isMember(file, rel string) bool {
 	if err != nil {
 		return false
 	}
-	var members, exclude []string
-	err = scanTOML(src, func(it item) {
-		if it.kind != 'a' || len(it.key) != 2 || it.key[0] != "workspace" {
-			return
-		}
-		switch it.key[1] {
-		case "members":
-			members = it.strs
-		case "exclude":
-			exclude = it.strs
-		}
-	})
+	root, err := tomlspan.Parse(src)
 	if err != nil {
 		slog.Debug("cargo workspace manifest unreadable", "file", file, "err", err)
 		return false
 	}
-	return matchAny(members, rel) && !matchAny(exclude, rel)
+	strs := func(k string) []string {
+		items := root.Get("workspace", k).Strings()
+		out := make([]string, 0, len(items))
+		for _, s := range items {
+			out = append(out, s.Str)
+		}
+		return out
+	}
+	return matchAny(strs("members"), rel) && !matchAny(strs("exclude"), rel)
 }
 
 func matchAny(globs []string, rel string) bool {
@@ -105,6 +105,24 @@ func matchAny(globs []string, rel string) bool {
 // version is never downgraded). It returns Cargo.lock when it changed; without a lockfile it
 // does nothing.
 func (Locker) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
+	return process(ctx, dir, manifests, files, nil)
+}
+
+// ProcessLocked is Process plus the lockfile-only updates (engine.LockfileUpdater): each moves
+// its crate from the locked version to the new one with `cargo update --package
+// <name>@<locked> --precise <version>`; the manifests keep their requirements.
+func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error) {
+	if _, ok := files[lockFile]; !ok {
+		return nil, fmt.Errorf("lockfile-only updates need %s in %s", lockFile, dir)
+	}
+	var ups []dep.Update
+	for _, rel := range slices.Sorted(maps.Keys(locks)) {
+		ups = append(ups, locks[rel]...)
+	}
+	return process(ctx, dir, manifests, files, ups)
+}
+
+func process(ctx context.Context, dir string, manifests, files map[string][]byte, lockOnly []dep.Update) (map[string][]byte, error) {
 	lock, ok := files[lockFile]
 	if !ok {
 		return nil, nil
@@ -115,14 +133,18 @@ func (Locker) Process(ctx context.Context, dir string, manifests, files map[stri
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	if err := mirror(dir, tmp, manifests); err != nil {
+	base, err := mirrorAncestors(dir, tmp)
+	if err != nil {
 		return nil, err
 	}
-	lockPath := filepath.Join(tmp, lockFile)
+	if err := mirror(dir, base, manifests); err != nil {
+		return nil, err
+	}
+	lockPath := filepath.Join(base, lockFile)
 	if err := os.WriteFile(lockPath, lock, 0o644); err != nil {
 		return nil, err
 	}
-	if err := cargo(ctx, tmp, dir, "update", "--workspace"); err != nil {
+	if err := cargo(ctx, base, dir, "update", "--workspace"); err != nil {
 		return nil, err
 	}
 	out, err := os.ReadFile(lockPath)
@@ -133,8 +155,14 @@ func (Locker) Process(ctx context.Context, dir string, manifests, files map[stri
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", lockFile, err)
 	}
+	for _, u := range lockOnly {
+		p := pin{name: u.Dep.Name, locked: u.Dep.Locked, version: u.NewVersion}
+		if !slices.Contains(pins, p) {
+			pins = append(pins, p)
+		}
+	}
 	for _, p := range pins {
-		if err := cargo(ctx, tmp, dir, "update", "--package", p.name+"@"+p.locked, "--precise", p.version); err != nil {
+		if err := cargo(ctx, base, dir, "update", "--package", p.name+"@"+p.locked, "--precise", p.version); err != nil {
 			return nil, err
 		}
 	}
@@ -147,6 +175,47 @@ func (Locker) Process(ctx context.Context, dir string, manifests, files map[stri
 		return nil, nil
 	}
 	return map[string][]byte{lockFile: out}, nil
+}
+
+// mirrorAncestors recreates the directories from the repository top (the nearest ancestor of
+// dir holding .git) down to dir below tmp, with every other entry of each one symlinked, so
+// path dependencies outside the workspace root (`path = "../crates/x"`) resolve as in the
+// checkout. It returns the directory for dir's mirror: tmp itself outside a repository.
+func mirrorAncestors(dir, tmp string) (string, error) {
+	top := ""
+	for d := filepath.Dir(dir); d != filepath.Dir(d); d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			top = d
+			break
+		}
+	}
+	if top == "" {
+		return tmp, nil
+	}
+	rel, err := filepath.Rel(top, dir)
+	if err != nil {
+		return "", err
+	}
+	cur, base := top, tmp
+	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
+		entries, err := os.ReadDir(cur)
+		if err != nil {
+			return "", err
+		}
+		for _, e := range entries {
+			if e.Name() == part || e.Name() == ".git" {
+				continue
+			}
+			if err := os.Symlink(filepath.Join(cur, e.Name()), filepath.Join(base, e.Name())); err != nil {
+				return "", err
+			}
+		}
+		cur, base = filepath.Join(cur, part), filepath.Join(base, part)
+		if err := os.Mkdir(base, 0o755); err != nil {
+			return "", err
+		}
+	}
+	return base, nil
 }
 
 // crateUpdate is a crates.io dependency whose requirement deps changed.
@@ -182,32 +251,31 @@ func updatedCrates(dir string, manifests map[string][]byte) []crateUpdate {
 type pin struct{ name, locked, version string }
 
 // lockedPackage is a registry [[package]] of a Cargo.lock.
-type lockedPackage struct{ name, version string }
+type lockedPackage struct{ name, version, source string }
 
 // registryPackages returns the crates.io and other registry packages of the lockfile.
 func registryPackages(lock []byte) ([]lockedPackage, error) {
-	type pkg struct{ name, version, source string }
-	var pkgs []pkg
-	err := scanTOML(lock, func(it item) {
-		switch {
-		case it.kind == 'H' && len(it.key) == 1 && it.key[0] == "package":
-			pkgs = append(pkgs, pkg{})
-		case len(pkgs) == 0 || len(it.key) != 2 || it.key[0] != "package" || it.kind != 's':
-		case it.key[1] == "name":
-			pkgs[len(pkgs)-1].name = it.str
-		case it.key[1] == "version":
-			pkgs[len(pkgs)-1].version = it.str
-		case it.key[1] == "source":
-			pkgs[len(pkgs)-1].source = it.str
+	root, err := tomlspan.Parse(lock)
+	if err != nil {
+		return nil, err
+	}
+	pkgs := root.Get("package")
+	if pkgs == nil || pkgs.Kind != tomlspan.Array {
+		return nil, nil
+	}
+	out := make([]lockedPackage, 0, len(pkgs.Items))
+	for _, t := range pkgs.Items {
+		str := func(k string) string {
+			if v := t.Get(k); v != nil && v.Kind == tomlspan.String {
+				return v.Str
+			}
+			return ""
 		}
-	})
-	out := make([]lockedPackage, 0, len(pkgs))
-	for _, p := range pkgs {
-		if strings.HasPrefix(p.source, "registry+") || strings.HasPrefix(p.source, "sparse+") {
-			out = append(out, lockedPackage{p.name, p.version})
+		if src := str("source"); strings.HasPrefix(src, "registry+") || strings.HasPrefix(src, "sparse+") {
+			out = append(out, lockedPackage{str("name"), str("version"), src})
 		}
 	}
-	return out, err
+	return out, nil
 }
 
 // precise returns the pins that make the lock hold the exact version of each update whose

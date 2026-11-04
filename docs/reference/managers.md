@@ -23,6 +23,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`nodenv`](#nodenv)
 - [`asdf`](#asdf)
 - [`mise`](#mise)
+- [`cargo`](#cargo)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -695,6 +696,66 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 - github-releases repositories are listed when their release tags are the version with or without a leading `v`.
 - Tools that are not listed are skipped as `unsupported tool`.
 
+## cargo
+
+Updates crate requirements in `Cargo.toml`, moves `Cargo.lock` with `cargo update` (in-range updates only touch the lock, as Renovate's `update-lockfile`), and groups the crates of well-known Rust monorepos. `Cargo.toml` is read with the span-keeping TOML parser `internal/tomlspan`; only the requirement's bytes are rewritten, so comments, formatting, operators and precision are kept. `[features]` and `[package]` are not extracted.
+
+**Files:**
+
+- `Cargo.toml`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `dependencies` | `[dependencies]` and `[target.<cfg>.dependencies]`: `name = "1.2"`, `name = { version = "1.2", features = [...] }`, `name.version = "1.2"` and `[<table>.name]` tables; `package = "<crate>"` renames are looked up by the crate name (updates use commit type `fix`) | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags` | `cargo`; git tags `tag` | updated |
+| `dev-dependencies` | `[dev-dependencies]` (also `dev_dependencies`) and `[target.<cfg>.dev-dependencies]` | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags` | `cargo`; git tags `tag` | updated |
+| `build-dependencies` | `[build-dependencies]` (also `build_dependencies`) and `[target.<cfg>.build-dependencies]` | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags` | `cargo`; git tags `tag` | updated |
+| `workspace.dependencies` | `[workspace.dependencies]`, inherited by members with `name.workspace = true` | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags` | `cargo`; git tags `tag` | updated |
+| `patch` | every `[patch.<source>]` table (`[patch.crates-io]`, `[patch."https://…"]`): versioned and git-tag entries; path patches are skipped | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags` | `cargo`; git tags `tag` | updated |
+| `replace` | `[replace]`: the git tag of `"<name>:<version>" = { git = …, tag = … }` (the key's version is the package being replaced and stays) | `git-tags` | `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `workspace dependency` | `workspace = true`: the requirement is inherited from `[workspace.dependencies]`, which is updated instead |
+| `path dependency` | `path = ...`, also together with `version` |
+| `git dependency` | `git = ...` without `tag`, with `branch`/`rev` only, or with a non-`http(s)` URL |
+| `no version` | a table without `version` |
+| `unsupported requirement` | anything outside Cargo's grammar: `~>1`, `1.2 - 2.0`, `v1`, `>=1.*`, empty |
+| `cannot locate value` | an escaped string |
+| `no Cargo.lock version for a requirement without a floor` | `*`, `<2` or `<=1.5` (nothing to raise) without a Cargo.lock entry of the crate |
+
+**Requirements.**
+
+- Cargo's grammar: comparators `^`, `~`, `=`, `>`, `>=`, `<`, `<=` (optionally followed by spaces) or none on `MAJOR[.MINOR[.PATCH[-pre][+build]]]`, wildcards `*`, `1.*`, `1.2.x`, and comma-separated lists (`">= 0.10, < 0.11"`). A bare `1.2` is `^1.2`; `Dep.Constraint` carries that translation for the engine.
+- The version a bump raises is that of the first lower bound (`^`, `~`, `=`, `>`, `>=`, none, or a wildcard's prefix). When the requirement is rewritten, every lower bound takes the new version at the precision it was written with, upper bounds `<B` that the new version reaches move to the next compatibility boundary above it, `<=B` to the new version: `1.2` → `1.4` or `2.0`, `~2.7.0` → `~2.9.1`, `1.*` → `2.*`, `">= 0.6.8, < 0.7"` → `">= 0.7.1, < 0.8"`, `<2` → `<3`.
+- `rangeStrategy` (top level or per rule, default `auto` = `update-lockfile`, as in Renovate): versions the requirement admits are lockfile-only updates from the version Cargo.lock locks (`, lockfile` in the report; the manifest is unchanged); newer ones rewrite the requirement. With `bump` every newer version rewrites it. Without a Cargo.lock, `update-lockfile` proposes only versions outside the requirement.
+- A requirement without a floor (`*`, `<2`) has nothing to raise: its current version is the locked one, and under `bump` too its in-range updates only move the lock.
+- Versioning `cargo` follows Cargo's compatibility rules: leaving the range of the leftmost non-zero part is `major` (`1.x` → `2.0`, `0.4` → `0.5`, `0.0.3` → `0.0.4`); within it a minor change of a `1.x` version is `minor`, everything else `patch`. `separateMultipleMajor` buckets are named after that range (`v0.5`). Partial requirements are compared at their precision against the release lines the `crate` datasource derives. Prereleases are only proposed from a prerelease, yanked versions never.
+
+**Registries.**
+
+- `registry = "<name>"` looks the crate up in that registry: the index from `CARGO_REGISTRIES_<NAME>_INDEX`, else `[registries.<name>] index` of the `.cargo/config.toml` (or legacy `.cargo/config`) files from the manifest directory up to `--dir`, nearest first, then `$CARGO_HOME/config.toml` (`~/.cargo`). `registry = "crates-io"` is crates.io.
+- `registry-index = "<url>"` names the index directly. `sparse+https://…` indexes are read over HTTP; any other URL is a git index, read from a shallow blob-less `git clone` (removed when the run ends) with `git cat-file`.
+- The token of a registry is `CARGO_REGISTRIES_<NAME>_TOKEN`, else `[registries.<name>] token` of `$CARGO_HOME/credentials.toml`, else of the config files; it is sent as `Authorization`, as Cargo does. Git indexes use git's credential helpers.
+- `[source.crates-io] replace-with` is followed (also through chains) to a mirror with `registry = "…"`; `directory`/`local-registry` replacements vendor crates.io, which stays the lookup.
+- OSV advisories are only looked up for crates.io crates.
+
+**git dependencies.**
+
+`name = { git = "https://host/path", tag = "v1.2.0" }` (also in `[patch]` and `[replace]`) updates the tag from the repository's tags (`tag` versioning, so the prefix and number of parts are kept). The URL's query, fragment, trailing slash and `.git` suffix are dropped for the lookup.
+
+**Lockfile (`apply`, `run`).**
+
+1. **Workspace root.** The root is the nearest directory at or above the `Cargo.toml` (within `--dir`) that holds `Cargo.lock`. It is accepted if it is the manifest's own directory, or if its `[workspace]` `members` globs include the manifest directory and `exclude` does not. Otherwise the manifest has no lock: it is only patched, and `update-lockfile` proposes only versions outside the requirement.
+2. **Locked versions.** Before resolution the root's Cargo.lock is read: each requirement gets the highest registry package of its crate that it admits. An unreadable lock is reported once and its requirements are bumped.
+3. **Temporary copy.** The root is mirrored to a temp dir: every `Cargo.toml` is copied (patched where changed) together with `Cargo.lock`; all other files are symlinked, and `.git`, `target` and `node_modules` are left out. When the root sits below the repository top (the nearest ancestor with `.git`), the directories above it are recreated with their other entries symlinked, so path dependencies outside the root (`path = "../crates/x"`) resolve as in the checkout.
+4. **Update.** `cargo update --workspace` re-resolves only the requirements that no longer match the lock. Then, for every rewritten requirement whose version is full, deps runs `cargo update --package <name>@<locked> --precise <version>` when Cargo just locked a newer version of the same compatibility range, so the lock holds the version the pull request names (for example when `minimumReleaseAge` held back the newest release). A version that was already locked is never downgraded, and partial requirements keep Cargo's newest match. A lockfile-only update runs `cargo update --package <name>@<locked> --precise <new>`.
+5. **Tool.** `cargo` must be on `PATH` (with `rustup`, a `rust-toolchain.toml` in the root selects the toolchain). Without it the manifests of the root fail with `cargo not found (needed to update Cargo.lock)`.
+6. **Failure.** A failed command reports `cargo update in <dir>: <last 20 output lines>`, and the root's changes are dropped.
+
+- `plan` does not run cargo, and prints `note    Cargo.lock changes are computed by apply/run`.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -756,6 +817,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `npm` | package name (`@scope/name` sent as `@scope%2fname`) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json`, stream-decoded; deprecated versions dropped; 404 → `package <name> not found` | `.npmrc` `//host/path/:_authToken=` (longest prefix), `${VAR}` expansion | packument `time`; not fetched for `minimumReleaseAge` when the abbreviated `modified` is already older |
 | `node-version` | any (`node`) | `<DEPS_NODE_DIST_URL or https://nodejs.org/dist>/index.json`, once per run; published versions plus a derived `X.Y` and `X` per stable line | none | `date` |
 | `helm` | chart name; the repository URL (`https://…` or `oci://host/path`) is the dep's source | classic: `GET <repo>/index.yaml`, once per repository, stream-scanned so only the asked-for charts are decoded; versions without `urls` dropped. OCI: registry `tags/list` of `<host>/<path>/<chart>` via the docker datasource, tag `_` read as `+` | classic: the forge token (Basic `x-access-token`) on the forge's host, else anonymous; OCI: as `docker` | classic: index `created`; OCI: manifest annotation `org.opencontainers.image.created` |
+| `crate` | crate name (case-insensitive); the dep's source is its registry name or index URL ("" = crates.io) | `GET <index>/<prefix>/<name>` of the sparse index (crates.io: `DEPS_CRATES_INDEX_URL` or `https://index.crates.io`; prefixes `1/<n>`, `2/<n>`, `3/<first char>/<n>`, `<n[0:2]>/<n[2:4]>/<n>`), or the same path of a git index (shallow blob-less clone, `git cat-file`); newline-delimited JSON, yanked versions dropped; not found → `crate <name> not found` (`… in registry <name>`). Partial requirements also get a derived `X.Y` and `X` per stable release line. Source repository (release notes): `GET <api>/api/v1/crates/<name>/<version>` `repository` (crates.io: `DEPS_CRATES_API_URL` or `https://crates.io`; other registries: `api` of their `config.json`), only for versions in a pull request | alternative registries: `CARGO_REGISTRIES_<NAME>_TOKEN`, `$CARGO_HOME/credentials.toml` or `.cargo/config.toml` `[registries.<name>] token` as `Authorization`; git indexes: git credential helpers | index `pubtime` (crates.io writes it for every version); a release line has the time of its first release |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
@@ -774,7 +836,7 @@ deps reads the nearest `.npmrc` per `package.json` directory, walking up to `--d
 ### Security advisories (OSV)
 
 - deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.
-- Ecosystems: `Go` (gomod `direct`/`indirect`), `npm`, and `GitHub Actions` (github.com actions; ranges are evaluated locally).
+- Ecosystems: `Go` (gomod `direct`/`indirect`), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
 - Withdrawn advisories are skipped, and aliases are reported once.
 
 ### Checksums

@@ -575,6 +575,7 @@ func TestAdvisoriesCrates(t *testing.T) {
 	f := newFake(t)
 	f.results["crates.io|time|0.1.40|"] = result{ids: []string{"GHSA-wcg3-cvx6-7396", "RUSTSEC-2020-0071"}}
 	f.results["crates.io|time|0.1.0|"] = result{ids: []string{"RUSTSEC-2020-0071"}}
+	f.results["crates.io|time|0.1.43|"] = result{ids: []string{"RUSTSEC-2020-0071"}}
 	f.vulns["RUSTSEC-2020-0071"] = `{"id":"RUSTSEC-2020-0071","summary":"Potential segfault in the time crate","aliases":["GHSA-wcg3-cvx6-7396"],
 		"affected":[{"package":{"name":"time","ecosystem":"crates.io"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0.0.0-0"},{"fixed":"0.2.23"}]}]}]}`
 	f.vulns["GHSA-wcg3-cvx6-7396"] = `{"id":"GHSA-wcg3-cvx6-7396","aliases":["RUSTSEC-2020-0071"],
@@ -584,17 +585,19 @@ func TestAdvisoriesCrates(t *testing.T) {
 		{Manager: "cargo", Datasource: "crate", DepType: "dependencies", Name: "time", Version: "0.1.40"},
 		{Manager: "cargo", Datasource: "crate", DepType: "dev-dependencies", Name: "time", Version: "0.1"},
 		{Manager: "cargo", Datasource: "git-tags", DepType: "dependencies", Name: "time", Version: "v0.1.0"},
+		{Manager: "cargo", Datasource: "crate", DepType: "dependencies", Name: "time", Version: "0.1", Locked: "0.1.43"},  // Cargo.lock's version
+		{Manager: "cargo", Datasource: "crate", DepType: "dependencies", Name: "time", Version: "0.1.40", Source: "corp"}, // not crates.io
 	}
 	got, err := s.Advisories(t.Context(), deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	adv := dep.Advisory{ID: "RUSTSEC-2020-0071", Summary: "Potential segfault in the time crate", URL: "https://osv.dev/vulnerability/RUSTSEC-2020-0071"}
-	want := [][]datasource.Vuln{{{Advisory: adv, Fixed: []string{"0.2.23"}}}, {{Advisory: adv, Fixed: []string{"0.2"}}}, nil}
+	want := [][]datasource.Vuln{{{Advisory: adv, Fixed: []string{"0.2.23"}}}, {{Advisory: adv, Fixed: []string{"0.2"}}}, nil, {{Advisory: adv, Fixed: []string{"0.2.23"}}}, nil}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
-	if len(f.batches) != 1 || len(f.batches[0]) != 2 || f.batches[0][1].Version != "0.1.0" {
+	if len(f.batches) != 1 || len(f.batches[0]) != 3 || f.batches[0][1].Version != "0.1.0" || f.batches[0][2].Version != "0.1.43" {
 		t.Errorf("batches = %+v", f.batches)
 	}
 }

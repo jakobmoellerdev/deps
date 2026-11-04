@@ -57,6 +57,7 @@ func explain(cmd *cobra.Command, o *rootOpts, globs []string) error {
 	if err != nil {
 		return err
 	}
+	defer s.close()
 	matched := make([]bool, len(globs))
 	var traces []engine.Trace
 	// Filter and Trace run sequentially on the Resolve goroutine.

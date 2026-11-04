@@ -198,6 +198,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	if err != nil {
 		return err
 	}
+	defer s.close()
 	name, email, err := commitAuthor(cmd, r, os.Getenv("DEPS_GIT_AUTHOR"), s.cfg.GitAuthor)
 	if err != nil {
 		return err

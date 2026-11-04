@@ -2,13 +2,13 @@
 
 # CLI reference
 
-Update GitHub/Gitea/Forgejo Actions, Go module, container image and npm dependencies.
+Update GitHub/Gitea/Forgejo Actions, Go module, container image, npm and Cargo dependencies.
 
 ```
 deps [command] [flags]
 ```
 
-deps finds the dependencies of a repository (GitHub/Gitea/Forgejo Actions, Go modules, container images, npm packages and custom-annotated versions), looks up newer versions, and either prints the changes as a diff (`plan`), writes them (`apply`), or pushes one branch and opens one pull request per dependency or group (`run`). Files are edited byte-exactly and never reformatted.
+deps finds the dependencies of a repository (GitHub/Gitea/Forgejo Actions, Go modules, container images, npm packages, Rust crates and custom-annotated versions), looks up newer versions, and either prints the changes as a diff (`plan`), writes them (`apply`), or pushes one branch and opens one pull request per dependency or group (`run`). Files are edited byte-exactly and never reformatted.
 
 The configuration is read from `.deps.yaml` (or `.deps.yml`) in `--dir`; `deps schema` prints its JSON Schema. Results go to stderr, diffs and explanations to stdout. See `deps help output`, `deps help environment` and `deps help exit-codes`.
 
@@ -18,7 +18,7 @@ Hidden flags for profiling: `--cpuprofile <file>` writes a CPU profile, and `--m
 
 | Command | Description |
 |---|---|
-| [`deps apply`](#deps-apply) | Write the updates to the files, including go mod tidy and package-lock.json |
+| [`deps apply`](#deps-apply) | Write the updates to the files, including go mod tidy, package-lock.json and Cargo.lock |
 | [`deps completion`](#deps-completion) | Generate the autocompletion script for the specified shell |
 | [`deps completion bash`](#deps-completion-bash) | Generate the autocompletion script for bash |
 | [`deps completion fish`](#deps-completion-fish) | Generate the autocompletion script for fish |
@@ -48,13 +48,13 @@ Every command accepts these flags.
 
 ## deps apply
 
-Write the updates to the files, including go mod tidy and package-lock.json.
+Write the updates to the files, including go mod tidy, package-lock.json and Cargo.lock.
 
 ```
 deps apply
 ```
 
-Resolves every dependency, prints the same report as `deps plan` on stderr, and writes the changed files, including `go mod tidy` output (`go.mod`, `go.sum`) and regenerated `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`. Post-processors run on temporary copies; a failed one drops that module's or lockfile root's changes and is reported as an error.
+Resolves every dependency, prints the same report as `deps plan` on stderr, and writes the changed files, including `go mod tidy` output (`go.mod`, `go.sum`), regenerated `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`, and `Cargo.lock` updated with `cargo update`. Post-processors run on temporary copies; a failed one drops that module's or lockfile root's changes and is reported as an error.
 
 A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`.
 
@@ -259,7 +259,7 @@ deps plan
 
 Resolves every dependency and prints the report on stderr (see `deps help output`). Then writes a unified diff per changed file to stdout (`a/<path>` → `b/<path>`); `git apply` accepts it. Nothing is written to the repository.
 
-Post-processors do not run, so `go.sum` and lockfile changes are missing from the diff; `plan` notes this with `note    go.sum changes are computed by apply/run` and `note    package-lock.json changes are computed by apply/run`. Use `deps apply` to get them.
+Post-processors do not run, so `go.sum` and lockfile changes are missing from the diff; `plan` notes this with `note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run` and `note    Cargo.lock changes are computed by apply/run`. Use `deps apply` to get them.
 
 A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`.
 
@@ -403,6 +403,8 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
 | `NPM_CONFIG_REGISTRY`, `npm_config_registry` | `npm` datasource | registry when no `.npmrc` sets one (default `https://registry.npmjs.org/`) |
 | `DOCKER_CONFIG` | `docker` datasource | directory of the Docker `config.json` with registry credentials and credential helpers (default `~/.docker`) |
+| `DEPS_CRATES_INDEX_URL`, `DEPS_CRATES_API_URL` | `crate` datasource | base URLs of a crates.io sparse index mirror (default `https://index.crates.io`) and of the crates.io API used for source repositories (default `https://crates.io`) |
+| `CARGO_HOME`, `CARGO_REGISTRIES_<NAME>_INDEX`, `CARGO_REGISTRIES_<NAME>_TOKEN`, `CARGO_REGISTRY_TOKEN` | `crate` datasource | alternative registries: Cargo's config (`$CARGO_HOME/config.toml`, default `~/.cargo`, after the `.cargo/config.toml` files from the manifest up to `--dir`) and credentials (`$CARGO_HOME/credentials.toml`); the variables override them as in Cargo |
 | `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GOMODCACHE` | `go` datasource | read via `go env -json` (the process environment when `go` is not on `PATH`). `GOMODCACHE`'s `cache/download/**/@v/*.info` files provide release times without network. |
 | `GITHUB_ACTIONS`, `GITEA_ACTIONS`, `FORGEJO_ACTIONS`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_REPOSITORY`, `FORGEJO_SERVER_URL`, `FORGEJO_API_URL`, `FORGEJO_REPOSITORY` | all | platform detection: `FORGEJO_ACTIONS=true` → forgejo, `GITEA_ACTIONS=true` → gitea, `GITHUB_ACTIONS=true` → github; the `FORGEJO_*` variables fall back to the `GITHUB_*` ones. `run` also detects from the `origin` remote; `plan`, `apply` and `explain` only from these variables. |
 | `GITHUB_STEP_SUMMARY`, `GITEA_STEP_SUMMARY` | all | step summary file (see `deps help output`) |
@@ -433,6 +435,7 @@ skip    <file>:<line>  <name>  <reason>                       (with -v)
 error   <message>
 note    go.sum changes are computed by apply/run              (plan, when a gomod update exists)
 note    package-lock.json changes are computed by apply/run   (plan, when an npm update exists)
+note    Cargo.lock changes are computed by apply/run          (plan, when a cargo update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```
@@ -453,7 +456,7 @@ dashboard <status>  <title>  <url>                            (run, with depende
 
 **Diagnostics** are written with `log/slog` to stderr, filtered by `--log-level` and formatted by `--log-format`:
 
-- `debug`: every HTTP request (credential-free URL), every `git`/`go`/`npm` process, credential-helper outcomes (never secrets), and per-dependency and per-PR decisions.
+- `debug`: every HTTP request (credential-free URL), every `git`/`go`/`npm`/`cargo` process, credential-helper outcomes (never secrets), and per-dependency and per-PR decisions.
 - `info`: the run trigger (`run`), the detected platform and how it was detected, the actions default host and its source (`actions default host host=<h> source=<s>`), phase counts and durations, and the bot's view of the repository.
 - `warn` (the default): obsolete PRs left open because the run had errors, a schedule event whose cron cannot be read (every schedule matches), a dashboard skipped because issues are disabled, and dashboard labels that do not exist (Gitea/Forgejo).
 

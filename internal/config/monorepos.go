@@ -21,6 +21,7 @@ var (
 	goMgr      = []string{"gomod"}
 	npmMgr     = []string{"npm"}
 	actionsMgr = []string{"github-actions"}
+	cargoMgr   = []string{"cargo"}
 )
 
 // Monorepos is the curated built-in list. Every entry is one source repository; packages
@@ -90,6 +91,21 @@ var Monorepos = []Monorepo{
 	{"lexical", npmMgr, []string{"lexical", "@lexical/*"}},
 	{"tiptap", npmMgr, []string{"@tiptap/*"}},
 	{"sentry-javascript", npmMgr, []string{"@sentry/{angular,astro,aws-serverless,browser,bun,cloudflare,core,deno,ember,feedback,gatsby,google-cloud-serverless,nestjs,nextjs,node,nuxt,opentelemetry,profiling-node,react,react-router,remix,replay,solid,solidstart,svelte,sveltekit,tanstackstart-react,types,utils,vercel-edge,vue,wasm}"}},
+
+	// Crates (the repository is each crate's crates.io `repository`).
+	{"tokio", cargoMgr, []string{"tokio", "tokio-{macros,stream,test,util}"}},
+	{"serde", cargoMgr, []string{"serde", "serde_{core,derive,derive_internals}"}},
+	{"tracing", cargoMgr, []string{"tracing", "tracing-{appender,attributes,core,error,flame,futures,journald,log,mock,serde,subscriber}"}},
+	{"clap", cargoMgr, []string{"clap", "clap_{builder,complete,complete_nushell,derive,lex,mangen}"}},
+	{"wasm-bindgen", cargoMgr, []string{"wasm-bindgen", "wasm-bindgen-{backend,cli-support,futures,macro,macro-support,shared,test,test-macro}", "js-sys", "web-sys"}},
+	{"futures-rs", cargoMgr, []string{"futures", "futures-{channel,core,executor,io,macro,sink,task,test,util}"}},
+	{"grpc-rust", cargoMgr, []string{"tonic", "tonic-{build,health,prost,prost-build,reflection,types,web}"}},
+	{"prost", cargoMgr, []string{"prost", "prost-{build,derive,types}"}},
+	{"opentelemetry-rust", cargoMgr, []string{"opentelemetry", "opentelemetry_sdk", "opentelemetry-{appender-log,appender-tracing,http,jaeger-propagator,otlp,prometheus,proto,semantic-conventions,stdout,zipkin}"}},
+	{"axum", cargoMgr, []string{"axum", "axum-{core,extra,macros}"}},
+	{"aws-sdk-rust", cargoMgr, []string{"aws-sdk-*"}},
+	{"smithy-rs", cargoMgr, []string{"aws-config", "aws-types", "aws-runtime", "aws-sigv4", "aws-credential-types", "aws-smithy-*"}},
+	{"rand", cargoMgr, []string{"rand", "rand_{chacha,core}"}},
 
 	// Actions published from sub-directories of one repository.
 	{"codeql-action", actionsMgr, []string{"github/codeql-action/**"}},

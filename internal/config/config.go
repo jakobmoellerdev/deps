@@ -32,7 +32,7 @@ const (
 	PinDigest = "digest"
 )
 
-// Range strategies of rangeStrategy (Renovate's names), for npm dependency ranges.
+// Range strategies of rangeStrategy (Renovate's names), for npm and cargo dependency ranges.
 const (
 	RangeAuto           = "auto"
 	RangeBump           = "bump"
@@ -117,7 +117,7 @@ var DefaultIgnorePaths = []string{
 type Config struct {
 	Version       int      `yaml:"version" jsonschema:"enum=1,default=1" jsonschema_description:"Config format version; must be 1 if set."`
 	Pin           string   `yaml:"pin" jsonschema:"enum=keep,enum=digest,default=keep" jsonschema_description:"Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment."`
-	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=update-lockfile,default=auto" jsonschema_description:"How npm dependency ranges are updated: update-lockfile moves only package-lock.json while the range admits the new version (bumping the range otherwise), bump always raises the range (^1.2.3 -> ^1.4.0), auto is update-lockfile (Renovate's default)."`
+	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=update-lockfile,default=auto" jsonschema_description:"How npm and cargo dependency ranges are updated: update-lockfile moves only package-lock.json or Cargo.lock while the range admits the new version (bumping the range otherwise), bump always raises the range (^1.2.3 -> ^1.4.0), auto is update-lockfile (Renovate's default)."`
 	Schedule      []string `yaml:"schedule" jsonschema_description:"Cron expressions (5 fields) equal to cron triggers of the workflow running deps: new update PRs are created only in runs triggered by one of them (non-schedule triggers such as workflow_dispatch, push or a local run act immediately); empty means every run."`
 	Security      *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, updates and schedule."`
 	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
@@ -236,10 +236,10 @@ type Rule struct {
 	Ignore        *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types."`
 	Pin           string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
 	Allow         string   `yaml:"allow" jsonschema_description:"New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written."`
-	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=update-lockfile" jsonschema_description:"Range strategy for matching npm deps (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
+	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=update-lockfile" jsonschema_description:"Range strategy for matching npm and cargo deps (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
 	Updates       []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
 	// Versioning overrides the dep's scheme before resolution, so it is a pre-policy field.
-	Versioning string `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|regex:.+)$" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`
+	Versioning string `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|cargo|regex:.+)$" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`
 	// Separate* override the top-level PR bucket options for matching deps.
 	SeparateMajorMinor    *bool    `yaml:"separateMajorMinor" jsonschema_description:"Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types)."`
 	SeparateMultipleMajor *bool    `yaml:"separateMultipleMajor" jsonschema_description:"Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types)."`
@@ -265,7 +265,7 @@ type Custom struct {
 	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
 	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node) are aliases."`
 	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
-	Versioning string    `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|regex:.+)$,default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names."` // default semver
+	Versioning string    `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|cargo|regex:.+)$,default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names."` // default semver
 	Checksum   *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
 }
 

@@ -12,8 +12,8 @@ func TestNewLimits(t *testing.T) {
 		{32, 32, 64, 16, 64},
 	} {
 		l := NewLimits(c.n)
-		if got := [4]int{cap(l.Default), cap(l.NPM), cap(l.Docker), cap(l.OSV)}; got != [4]int{c.def, c.npm, c.docker, c.osvCap} {
-			t.Errorf("NewLimits(%d) capacities (default, npm, docker, osv) = %v, want %v", c.n, got, [4]int{c.def, c.npm, c.docker, c.osvCap})
+		if got := [5]int{cap(l.Default), cap(l.NPM), cap(l.Docker), cap(l.OSV), cap(l.Crates)}; got != [5]int{c.def, c.npm, c.docker, c.osvCap, c.osvCap} {
+			t.Errorf("NewLimits(%d) capacities (default, npm, docker, osv, crates) = %v, want %v", c.n, got, [5]int{c.def, c.npm, c.docker, c.osvCap, c.osvCap})
 		}
 	}
 }
@@ -21,7 +21,7 @@ func TestNewLimits(t *testing.T) {
 // TestLimitsIndependent checks that a pool with every slot taken doesn't block the others.
 func TestLimitsIndependent(t *testing.T) {
 	l := NewLimits(2)
-	pools := []chan struct{}{l.Default, l.NPM, l.Docker, l.OSV}
+	pools := []chan struct{}{l.Default, l.NPM, l.Docker, l.OSV, l.Crates}
 	for full := range pools {
 		for range cap(pools[full]) {
 			pools[full] <- struct{}{}

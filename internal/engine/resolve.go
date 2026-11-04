@@ -2,6 +2,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -575,30 +576,34 @@ type resolver struct {
 	times   map[string]time.Time // release times asked so far; zero = unknown
 	pending Pending              // newest candidate held back by minimumReleaseAge
 
-	// rangeStrategy of an npm range dep (setRange): inRange reports whether d.Range admits a
+	// rangeStrategy of a range dep (setRange): inRange reports whether d.Range admits a
 	// version; nil means every candidate replaces the range (bump). In-range candidates are
 	// lockfile-only updates when lockOnly, else they are not proposed.
 	inRange  func(string) bool
 	lockOnly bool
 }
 
-// setRange applies the rangeStrategy of an npm range dep (dep.Dep.Range); other deps always
-// replace their version. auto is update-lockfile, under which candidates are ranked against
-// the locked version. A lock root whose lockfile deps does not read (LockUnread) turns
-// update-lockfile into bump, except for peerDependencies, which never get lockfile-only
-// updates: their in-range versions are left alone.
+// setRange applies the rangeStrategy of a range dep (dep.Dep.Range, read as Constraint when
+// set); other deps always replace their version. auto is update-lockfile, under which
+// candidates are ranked against the locked version. A lock root whose lockfile deps does not
+// read (LockUnread) turns update-lockfile into bump, except for peerDependencies, which never
+// get lockfile-only updates: their in-range versions are left alone. A range without a floor
+// (it admits 0.0.0: `*`, `<2`) has nothing to bump, so bump is update-lockfile for it.
 func (r *resolver) setRange(s versioning.Scheme) {
 	d := r.d
 	if d.Range == "" {
 		return
 	}
 	peer := d.DepType == "peerDependencies"
-	if r.pol.pre.RangeStrategy == config.RangeBump || d.LockUnread && !peer {
+	if d.LockUnread && !peer {
 		return
 	}
-	c, err := semver.NewConstraint(d.Range)
+	c, err := semver.NewConstraint(cmp.Or(d.Constraint, d.Range))
 	if err != nil {
 		slog.DebugContext(r.ctx, "range not understood, bumping it", "name", d.Name, "range", d.Range, "err", err)
+		return
+	}
+	if r.pol.pre.RangeStrategy == config.RangeBump && !c.Check(semver.New(0, 0, 0, "", "")) {
 		return
 	}
 	r.inRange = func(v string) bool {

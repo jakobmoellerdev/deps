@@ -195,3 +195,15 @@ func (s *session) resolve(ctx context.Context) (*engine.Result, error) {
 }
 
 func (s *session) abs(rel string) string { return filepath.Join(s.root, filepath.FromSlash(rel)) }
+
+// close releases what the datasources keep for the run (the crate datasource's git index
+// clones); failures only matter for temp space, so they are logged.
+func (s *session) close() {
+	for name, ds := range s.sources {
+		if c, ok := ds.(io.Closer); ok {
+			if err := c.Close(); err != nil {
+				slog.Warn("datasource cleanup", "datasource", name, "err", err)
+			}
+		}
+	}
+}

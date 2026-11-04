@@ -340,19 +340,20 @@ func TestPlanCargo(t *testing.T) {
 	cleanEnv(t)
 	newFakeNet(t)
 	dir := t.TempDir()
-	writeFiles(t, dir, map[string]string{"Cargo.toml": "[dependencies]\nserde = { version = \"1.0.100\", features = [\"derive\"] }\n\n[dev-dependencies]\nrand = \"0.8\"\nlocal = { path = \"../x\" }\n"})
+	writeFiles(t, dir, map[string]string{
+		"Cargo.toml": "[dependencies]\nserde = { version = \"1.0.100\", features = [\"derive\"] }\n\n[dev-dependencies]\nrand = \"0.8\"\nlocal = { path = \"../x\" }\n",
+		"Cargo.lock": "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.100\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n",
+	})
 	stdout, stderr, code := execute(t, "plan", "-v", "--dir", dir)
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
-	for _, want := range []string{"+serde = { version = \"1.0.228\", features = [\"derive\"] }\n", "+rand = \"0.9\"\n"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("diff lacks %q:\n%s", want, stdout)
-		}
+	if strings.Contains(stdout, "+serde") || !strings.Contains(stdout, "+rand = \"0.9\"\n") {
+		t.Errorf("diff:\n%s", stdout)
 	}
 	for _, want := range []string{
-		"update  Cargo.toml:2  serde  1.0.100 -> 1.0.228  (patch)\n",
-		"update  Cargo.toml:5  rand  0.8 -> 0.9  (minor)\n",
+		"update  Cargo.toml:2  serde  1.0.100 -> 1.0.228  (patch, lockfile)\n", // in range: Cargo.lock only
+		"update  Cargo.toml:5  rand  0.8 -> 0.9  (major)\n",                    // 0.8 -> 0.9 breaks in Cargo
 		"skip    Cargo.toml:6  local  path dependency\n",
 		"note    Cargo.lock changes are computed by apply/run\n",
 		"2 updates in 1 files, 1 skipped, 0 errors\n",

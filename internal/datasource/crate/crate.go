@@ -1,6 +1,7 @@
-// Package crate lists the versions of Rust crates from the crates.io sparse index
-// (https://doc.rust-lang.org/cargo/reference/registry-index.html#sparse-protocol), not the
-// rate-limited crates.io API, which is only asked for the source repository of a version.
+// Package crate lists the versions of Rust crates from a Cargo registry index: the crates.io
+// sparse index (https://doc.rust-lang.org/cargo/reference/registry-index.html#sparse-protocol)
+// rather than the rate-limited crates.io API, which is only asked for the source repository of
+// a version, and alternative registries (sparse or git) from Cargo's configuration.
 package crate
 
 import (
@@ -13,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,15 +33,21 @@ const (
 	DefaultAPIURL   = "https://crates.io"
 )
 
-// Source fetches each crate's index file once per run; concurrent callers share the result.
+// Source fetches each crate's index file once per run and registry; concurrent callers share
+// the result.
 type Source struct {
 	client     *http.Client
 	sem        chan struct{}
-	index, api string
+	getenv     func(string) string
+	index, api string // crates.io sparse index and web API
 
-	mu     sync.Mutex
-	crates map[string]*entry // lowercase name
-	repos  map[string]*repoEntry
+	mu         sync.Mutex
+	crates     map[string]*entry       // index + "\x00" + lowercase name
+	repos      map[string]*repoEntry   // api + "\x00" + name@version
+	registries map[string]*registry    // index URL + "\x00" + token
+	configs    map[string]*configEntry // manifest directory -> Cargo configuration
+	located    map[string]*registry    // file + "\x00" + name -> registry of the Releases lookup
+	clones     []string                // git index clones, removed by Close
 }
 
 type entry struct {
@@ -59,7 +67,8 @@ type repoEntry struct {
 }
 
 // New returns the crate datasource. sem bounds concurrent requests (nil = unbounded); getenv
-// supplies DEPS_CRATES_INDEX_URL and DEPS_CRATES_API_URL.
+// supplies DEPS_CRATES_INDEX_URL, DEPS_CRATES_API_URL, CARGO_HOME and the
+// CARGO_REGISTRIES_<NAME>_INDEX/_TOKEN variables.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
 	index, api := DefaultIndexURL, DefaultAPIURL
 	if v := getenv("DEPS_CRATES_INDEX_URL"); v != "" {
@@ -69,54 +78,115 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 		api = v
 	}
 	return &Source{
-		client: client, sem: sem,
+		client: client, sem: sem, getenv: getenv,
 		index: strings.TrimSuffix(index, "/"), api: strings.TrimSuffix(api, "/"),
 		crates: make(map[string]*entry), repos: make(map[string]*repoEntry),
+		registries: make(map[string]*registry), configs: make(map[string]*configEntry), located: make(map[string]*registry),
 	}
 }
 
-// Releases returns the non-yanked versions of crate d.Name. For a partial requirement
-// (`1`, `0.4`) the derived release lines "X.Y" and "X" of the stable versions follow, so
-// the precision-keeping tag versioning has candidates (`0.4` -> `0.5`). The slice is shared
-// between callers and must not be modified.
-func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
-	e := s.load(ctx, d.Name)
+// Releases returns the non-yanked versions of crate d.Name in its registry (registryOf; dir
+// is the manifest's absolute directory). For a partial requirement (`1`, `0.4`) the derived
+// release lines "X.Y" and "X" of the stable versions follow, so the precision-keeping cargo
+// versioning has candidates (`0.4` -> `0.5`). The slice is shared between callers and must
+// not be modified.
+func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
+	r, err := s.registryOf(d, dir)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.located[d.File+"\x00"+d.Name] = r
+	s.mu.Unlock()
+	e := s.load(ctx, r, d.Name)
 	if strings.Count(d.Version, ".") < 2 {
 		return e.lines, e.err
 	}
 	return e.rels, e.err
 }
 
+// locate returns the registry of d's Releases lookup, else crates.io.
+func (s *Source) locate(d dep.Dep) *registry {
+	s.mu.Lock()
+	r := s.located[d.File+"\x00"+d.Name]
+	s.mu.Unlock()
+	if r == nil {
+		r = s.registry("crates-io", "sparse+"+s.index, "", s.api)
+	}
+	return r
+}
+
 // ReleaseTime implements datasource.Timer with the index's `pubtime`; a release line has the
-// time of its first release. Zero when unknown.
+// time of its first release. Zero when unknown (registries that do not write pubtime).
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
-	e := s.load(ctx, d.Name)
+	e := s.load(ctx, s.locate(d), d.Name)
 	return e.times[version], e.err
 }
 
 // SourceRepo implements datasource.SourceRepo with the `repository` of version from
-// `GET <api>/api/v1/crates/<name>/<version>`; a release line asks for its newest version.
+// `GET <api>/api/v1/crates/<name>/<version>` (the registry's `api` from its config.json;
+// "" without one); a release line asks for its newest version.
 func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error) {
-	e := s.load(ctx, d.Name)
+	r := s.locate(d)
+	e := s.load(ctx, r, d.Name)
 	if e.err != nil {
 		return "", e.err
 	}
 	if v, ok := e.latest[version]; ok {
 		version = v
 	}
-	if _, ok := e.times[version]; !ok {
+	if _, ok := e.times[version]; !ok && !slices.ContainsFunc(e.rels, func(rel datasource.Release) bool { return rel.Version == version }) {
 		version = e.newest
 	}
-	key := strings.ToLower(d.Name) + "@" + version
+	api, err := s.apiOf(ctx, r)
+	if err != nil || api == "" {
+		return "", err
+	}
+	key := api + "\x00" + strings.ToLower(d.Name) + "@" + version
 	s.mu.Lock()
-	r := s.repos[key]
-	if r == nil {
-		r = &repoEntry{}
-		s.repos[key] = r
+	re := s.repos[key]
+	if re == nil {
+		re = &repoEntry{}
+		s.repos[key] = re
 	}
 	s.mu.Unlock()
-	r.once.Do(func() { r.repo, r.err = s.fetchRepo(ctx, d.Name, version) })
-	return r.repo, r.err
+	re.once.Do(func() { re.repo, re.err = s.fetchRepo(ctx, api, r.token, d.Name, version) })
+	return re.repo, re.err
+}
+
+// apiOf returns the web API base of r: crates.io's, else the `api` of the index's
+// config.json, read once.
+func (s *Source) apiOf(ctx context.Context, r *registry) (string, error) {
+	if r.api != "" {
+		return r.api, nil
+	}
+	s.mu.Lock()
+	e := s.repos["config\x00"+r.index]
+	if e == nil {
+		e = &repoEntry{}
+		s.repos["config\x00"+r.index] = e
+	}
+	s.mu.Unlock()
+	e.once.Do(func() {
+		body, err := s.open(ctx, r, "config.json")
+		if errors.Is(err, errNotFound) {
+			return
+		}
+		if err != nil {
+			e.err = err
+			return
+		}
+		defer body.Close()
+		var cfg struct {
+			API string `json:"api"`
+		}
+		if err := json.UnmarshalRead(body, &cfg); err != nil {
+			e.err = fmt.Errorf("%s config.json: %w", r.index, err)
+			return
+		}
+		e.repo = strings.TrimSuffix(cfg.API, "/")
+	})
+	return e.repo, e.err
 }
 
 // Digest is unsupported.
@@ -124,8 +194,8 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 	return "", fmt.Errorf("%s: digests are not supported for %s", Name, d.Name)
 }
 
-func (s *Source) load(ctx context.Context, name string) *entry {
-	key := strings.ToLower(name)
+func (s *Source) load(ctx context.Context, r *registry, name string) *entry {
+	key := r.index + "\x00" + strings.ToLower(name)
 	s.mu.Lock()
 	e := s.crates[key]
 	if e == nil {
@@ -135,8 +205,8 @@ func (s *Source) load(ctx context.Context, name string) *entry {
 	s.mu.Unlock()
 	e.once.Do(func() {
 		start := time.Now()
-		e.err = s.fetch(ctx, key, e)
-		slog.DebugContext(ctx, "crate index", "name", name, "releases", len(e.rels), "duration", time.Since(start), "err", e.err)
+		e.err = s.fetch(ctx, r, strings.ToLower(name), e)
+		slog.DebugContext(ctx, "crate index", "registry", r.index, "name", name, "releases", len(e.rels), "duration", time.Since(start), "err", e.err)
 	})
 	return e
 }
@@ -171,15 +241,18 @@ type indexLine struct {
 	Pubtime string `json:"pubtime"`
 }
 
-func (s *Source) fetch(ctx context.Context, name string, e *entry) error {
+func (s *Source) fetch(ctx context.Context, r *registry, name string, e *entry) error {
 	p, ok := IndexPath(name)
 	if !ok {
 		return fmt.Errorf("invalid crate name %q", name)
 	}
-	u := s.index + "/" + p
-	body, err := s.get(ctx, u)
+	u := r.index + "/" + p
+	body, err := s.open(ctx, r, p)
 	if err != nil {
 		if errors.Is(err, errNotFound) {
+			if r.name != "crates-io" {
+				return fmt.Errorf("crate %s not found in registry %s", name, r.name)
+			}
 			return fmt.Errorf("crate %s not found", name)
 		}
 		return err
@@ -194,7 +267,7 @@ func (s *Source) fetch(ctx context.Context, name string, e *entry) error {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return fmt.Errorf("GET %s: %w", u, err)
+			return fmt.Errorf("%s: %w", u, err)
 		}
 		if l.Yanked || l.Vers == "" {
 			continue
@@ -243,9 +316,9 @@ func newer(a, b string) bool {
 	return false
 }
 
-func (s *Source) fetchRepo(ctx context.Context, name, version string) (string, error) {
-	u := s.api + "/api/v1/crates/" + url.PathEscape(name) + "/" + url.PathEscape(version)
-	body, err := s.get(ctx, u)
+func (s *Source) fetchRepo(ctx context.Context, api, token, name, version string) (string, error) {
+	u := api + "/api/v1/crates/" + url.PathEscape(name) + "/" + url.PathEscape(version)
+	body, err := s.get(ctx, u, token)
 	if errors.Is(err, errNotFound) {
 		return "", nil
 	}
@@ -268,7 +341,7 @@ var errNotFound = errors.New("not found")
 
 // get sends a GET holding a semaphore slot until the body is closed. 404 and 410 (the sparse
 // index's answer for unknown crates) are errNotFound.
-func (s *Source) get(ctx context.Context, u string) (io.ReadCloser, error) {
+func (s *Source) get(ctx context.Context, u, token string) (io.ReadCloser, error) {
 	if s.sem != nil {
 		select {
 		case s.sem <- struct{}{}:
@@ -287,6 +360,9 @@ func (s *Source) get(ctx context.Context, u string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
+	if token != "" {
+		req.Header.Set("Authorization", token) // Cargo sends registry tokens as is
+	}
 	resp, err := s.client.Do(req)
 	if err != nil {
 		release()

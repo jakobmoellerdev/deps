@@ -48,9 +48,12 @@ type Dep struct {
 	ChecksumSpan   Span            // custom: checksum token
 	ChecksumSource *ChecksumSource // custom: where the checksum of a new version comes from; nil = none
 
-	// npm dependency sections only; rangeStrategy applies to deps with a Range.
-	Range      string // the range as written in package.json (^1.2.3); Version is its bare version
-	Locked     string // version the lock root's package-lock.json resolves the dep to; "" = none
+	// npm and cargo dependency entries; rangeStrategy applies to deps with a Range.
+	Range string // the range as written (npm ^1.2.3, cargo ">=1.2, <2"); Version is its bare version
+	// Constraint is Range as a Masterminds semver constraint when the syntax differs (cargo's
+	// bare "1.2" means ^1.2); "" = Range is one.
+	Constraint string
+	Locked     string // version the lockfile (package-lock.json, Cargo.lock) resolves the dep to; "" = none
 	LockUnread bool   // the lock root has a lockfile deps does not read (pnpm-lock.yaml, yarn.lock, package-lock.json v1)
 }
 

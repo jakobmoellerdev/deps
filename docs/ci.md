@@ -384,9 +384,10 @@ Actions with a full URL (`uses: https://host/owner/repo@ref`) are looked up on t
 | Tool | Needed for |
 |---|---|
 | `bash`, `curl`, `sha256sum` | the action's download step (`gh` instead of `curl` on github.com runners when it is installed) |
-| `git` | always for `run`: remote URL, `ls-remote`, commits via plumbing, push |
+| `git` | always for `run`: remote URL, `ls-remote`, commits via plumbing, push; also for git-based Cargo registry indexes (an index URL without `sparse+`) |
 | `go` | only for `go mod tidy` after go.mod updates, and `go list` for `GOPRIVATE`/direct modules. `go env` falls back to the environment without it. `GOTOOLCHAIN=auto` fetches a newer toolchain when go.mod requires one. |
 | `npm`, `pnpm`, `yarn` | regenerating lockfiles; see the note below the table |
+| `cargo` | updating `Cargo.lock` (requirement changes and lockfile-only updates), e.g. from `dtolnay/rust-toolchain`; without it those manifests fail with `cargo not found (needed to update Cargo.lock)` |
 | Docker credentials | private registries; Docker Hub in repositories with many images (pull limit) |
 
 For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back to `npx --yes <tool>[@<packageManager version>]`, so `npm`/`npx` (e.g. from `actions/setup-node`) is enough. With none of them, the lockfile's manifests fail with `<tool> not found (needed to update <lock>)`.
@@ -676,7 +677,7 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 | `go mod tidy in <dir>: …` | Go is missing on the runner, or a private module can't be fetched (set `GOPRIVATE` and git credentials). The module's change is dropped; other updates proceed. |
 | `<tool> not found (needed to update <lock>)` | Install Node.js (`actions/setup-node`) so `npm`/`npx` is available. |
 | `cargo not found (needed to update Cargo.lock)` | Install Rust (`dtolnay/rust-toolchain`) so `cargo` is on `PATH`, or the root's Cargo.toml changes are dropped. |
-| `cargo update in <dir>: …` | cargo could not resolve the patched workspace: a path dependency outside the workspace root, a private registry or git dependency without credentials, or a conflicting requirement. The root's change is dropped; other updates proceed. |
+| `cargo update in <dir>: …` | cargo could not resolve the patched workspace: a private registry or git dependency without credentials, a conflicting requirement (for example a feature the new version dropped), or a path dependency outside the repository. The root's change is dropped; other updates proceed. |
 | the job fails before deps runs, cloning `https://github.com/actions/checkout` | The runner can't reach the actions host. That is runner networking, not deps: fix the network, or use full `uses:` URLs to a reachable host. |
 
 ## GitHub end-to-end test

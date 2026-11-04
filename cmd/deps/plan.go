@@ -42,6 +42,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	if err != nil {
 		return err
 	}
+	defer s.close()
 	res, err := s.resolve(ctx)
 	if err != nil {
 		return err

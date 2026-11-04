@@ -107,7 +107,7 @@ pin: digest
 
 ## Config.rangeStrategy
 
-It applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` (`^1.2.3`, `~1.2.3`, `>=1.2.3`, `=1.2.3` and exact `1.2.3`). Other deps always replace their exact version. `rules[].rangeStrategy` overrides it per dep (not together with `updateTypes`).
+It applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` (`^1.2.3`, `~1.2.3`, `>=1.2.3`, `=1.2.3` and exact `1.2.3`) and to every cargo requirement (`1.2`, `~2.7.0`, `">= 0.10, < 0.11"`, `1.*`, `*`). Other deps always replace their exact version. `rules[].rangeStrategy` overrides it per dep (not together with `updateTypes`).
 
 - `update-lockfile`: the current version is the one the lock root's `package-lock.json` resolves the dep to, and update types compare it with the new version.
   - A newer version the range admits is a **lockfile-only update**: package.json is unchanged. `apply` and `run` run `npm install --package-lock-only <name>@<version>` (with `--workspace=<dir>` for a workspace member) on a copy and restore the range npm writes into the lockfile's own package entries. `plan` lists the update but shows no diff for it.
@@ -121,6 +121,8 @@ peerDependencies never get lockfile-only updates: under `update-lockfile` and `a
 Lockfile-only updates need a `package-lock.json` with `lockfileVersion` 2 or 3. When the lock root uses `pnpm-lock.yaml`, `yarn.lock` or a v1 `package-lock.json`, deps does not read the locked versions, and `update-lockfile` and `auto` act as `bump`.
 
 Security updates check the locked version against OSV when it is known, so a fix that is already locked is not proposed. When the locked version is vulnerable, the fix is a lockfile-only update if the range admits it. Without a lock, the version in package.json is checked.
+
+For cargo the lock is `Cargo.lock` of the workspace root: a lockfile-only update runs `cargo update --package <name>@<locked> --precise <version>`, a rewritten requirement keeps its operators and precision (`1.2` → `2.0` for 2.0.1, which then goes into the lock). A requirement without a floor (`*`, `<2`) has no version to raise, so under `bump` too versions it admits are lockfile-only updates. See the [cargo manager](managers.md#cargo).
 
 ```yaml
 rangeStrategy: bump
@@ -442,6 +444,7 @@ The scheme validates the current value, ranks candidates, classifies update kind
 | `docker` | `^(v?)(\d+(\.\d+)*)(.*)$` | same prefix, part count and suffix (`1.27-alpine` → `1.28-alpine`); `latest` and commit hashes (7–40 lowercase hex digits, not all decimal: `3a22eba`) are invalid |
 | `semver` | Masterminds loose semver | any precision; prereleases only from a prerelease; keeps the `v` style; the default of `custom[]` and npm |
 | `loose` | 1–6 numeric parts, optional `v`, optional `-`/`_` suffix | the suffix counts as a prerelease. Missing parts compare as 0 (`1877` < `1877.25`); then fewer parts sort below more (`1.2` < `1.2.0`). Any precision is a candidate, so combine it with an `allow` regex. |
+| `cargo` | `MAJOR[.MINOR[.PATCH[-pre][+build]]]`, no `v` | candidates need the same number of parts (`0.4` → `0.5`); prereleases only from a prerelease. Update types follow Cargo's compatibility: leaving the range of the leftmost non-zero part is `major` (`0.4` → `0.5`, `0.0.3` → `0.0.4`), a minor change of a `1.x` version `minor`, anything else `patch`. The default of cargo deps |
 | `regex:<RE2>` | the expression's named groups | `major` (required), `minor`, `patch`, `build`, `revision` (numeric, absent = 0), `prerelease`, `compatibility`; other names are errors. `(?<name>)` and `(?P<name>)` both work. Candidates must share `compatibility`. |
 
 Errors: `rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group "x" (allowed: ...)`, `regex: invalid RE2 regexp: ...`, and `cannot be combined with updateTypes: ...`.

@@ -1,16 +1,21 @@
 package cargo
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Masterminds/semver/v3"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 )
 
 func write(t *testing.T, dir string, files map[string]string) {
@@ -142,9 +147,106 @@ func TestRegistryPackagesFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := fmt.Sprint(pkgs[:2], len(pkgs))
-	if got != "[{aho-corasick 1.1.5} {anyhow 1.0.104}] 50" {
+	if got != "[{aho-corasick 1.1.5 registry+https://github.com/rust-lang/crates.io-index} {anyhow 1.0.104 registry+https://github.com/rust-lang/crates.io-index}] 50" {
 		t.Errorf("packages = %s", got)
 	}
+	if pkgs, err := registryPackages([]byte("version = 4\n")); err != nil || pkgs != nil {
+		t.Errorf("lock without packages = %v, %v", pkgs, err)
+	}
+}
+
+// ReadLocks on the ripgrep workspace (manifest and lock fixtures of the same commit): every
+// crates.io requirement gets the version Cargo.lock resolves it to, also in a member manifest.
+func TestReadLocksFixture(t *testing.T) {
+	root := t.TempDir()
+	lock, err := os.ReadFile("testdata/ripgrep.Cargo.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, map[string]string{
+		"Cargo.toml":                  string(fixture(t, "ripgrep")),
+		"Cargo.lock":                  string(lock),
+		"crates/cli/Cargo.toml":       "[dependencies]\nbstr = \"1.6.2\"\nlog = \"*\"\nnone = \"<1\"\nnolock = \"1\"\n",
+		"standalone/Cargo.toml":       "[dependencies]\nanyhow = \"1\"\nany = \"*\"\n",
+		"broken/Cargo.toml":           "[dependencies]\nanyhow = \"1\"\n",
+		"broken/Cargo.lock":           "[[package\n",
+		"crates/globset/Cargo.toml":   "",
+		"crates/globset/ignored.toml": "",
+	})
+	files := [][]dep.Dep{
+		extract(t, fixture(t, "ripgrep")),
+		withFile(extract(t, []byte("[dependencies]\nbstr = \"1.6.2\"\nlog = \"*\"\nnone = \"<1\"\nnolock = \"1\"\n")), "crates/cli/Cargo.toml"),
+		withFile(extract(t, []byte("[dependencies]\nanyhow = \"1\"\nany = \"*\"\n")), "standalone/Cargo.toml"),
+		withFile(extract(t, []byte("[dependencies]\nanyhow = \"1\"\n")), "broken/Cargo.toml"),
+	}
+	errs := cargoManager{}.ReadLocks(root, files)
+	if len(errs) != 1 || !strings.HasPrefix(errs[0].Error(), "broken/Cargo.lock: toml: line 1: ") {
+		t.Errorf("errs = %v", errs)
+	}
+	var got []string
+	for _, f := range files {
+		for _, d := range f {
+			got = append(got, fmt.Sprintf("%s %s %s locked=%s unread=%v skip=%s", d.File, d.Name, d.Version, d.Locked, d.LockUnread, d.Skip))
+		}
+	}
+	for _, w := range []string{
+		"Cargo.toml anyhow 1.0.75 locked=1.0.104 unread=false skip=",
+		"Cargo.toml walkdir 2 locked=2.5.0 unread=false skip=",
+		"Cargo.toml grep  locked= unread=false skip=path dependency",
+		"crates/cli/Cargo.toml bstr 1.6.2 locked=1.13.0 unread=false skip=",
+		"crates/cli/Cargo.toml log 0.4.33 locked=0.4.33 unread=false skip=", // `*` takes the locked version
+		"crates/cli/Cargo.toml none  locked= unread=false skip=no Cargo.lock version for a requirement without a floor",
+		"crates/cli/Cargo.toml nolock 1 locked= unread=false skip=",
+		"standalone/Cargo.toml anyhow 1 locked= unread=false skip=", // not a workspace member: no lock
+		"standalone/Cargo.toml any  locked= unread=false skip=no Cargo.lock version for a requirement without a floor",
+		"broken/Cargo.toml anyhow 1 locked= unread=true skip=",
+	} {
+		if !slices.Contains(got, w) {
+			t.Errorf("missing %q in\n%s", w, strings.Join(got, "\n"))
+		}
+	}
+	bad := dep.Dep{Name: "x", Range: "not a range"}
+	if v := lockedVersion([]lockedPackage{{"x", "1.0.0", ""}}, &bad); v != "" {
+		t.Errorf("unparsable range locked to %q", v)
+	}
+}
+
+func withFile(deps []dep.Dep, file string) []dep.Dep {
+	for i := range deps {
+		deps[i].File = file
+	}
+	return deps
+}
+
+// Lockfile-only updates move the locked crate with --precise; the manifest stays as is.
+func TestProcessLockedStub(t *testing.T) {
+	log := stub(t)
+	dir := t.TempDir()
+	manifest := "[dependencies]\nanyhow = \"1.0.80\"\n"
+	write(t, dir, map[string]string{"Cargo.toml": manifest})
+	lock := lockOf("anyhow@1.0.80")
+	up := dep.Update{Dep: dep.Dep{Name: "anyhow", Locked: "1.0.80"}, NewVersion: "1.0.104", Lockfile: true}
+	out, err := Locker{}.ProcessLocked(t.Context(), dir, map[string][]byte{"Cargo.toml": []byte(manifest)}, map[string][]byte{"Cargo.lock": []byte(lock)}, map[string][]dep.Update{"Cargo.toml": {up, up}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := lock + "# update --package anyhow@1.0.80 --precise 1.0.104\n"; string(out["Cargo.lock"]) != want {
+		t.Errorf("Cargo.lock:\n%s", out["Cargo.lock"])
+	}
+	b, _ := os.ReadFile(log)
+	if n := strings.Count(string(b), "args: update --package"); n != 1 {
+		t.Errorf("%d precise runs:\n%s", n, b)
+	}
+	if _, err := (Locker{}).ProcessLocked(t.Context(), dir, nil, map[string][]byte{}, map[string][]dep.Update{"Cargo.toml": {up}}); err == nil || !strings.HasPrefix(err.Error(), "lockfile-only updates need Cargo.lock in ") {
+		t.Errorf("without a lockfile: %v", err)
+	}
+	var _ engineLockfileUpdater = Locker{}
+	var _ manager.LockReader = cargoManager{}
+}
+
+// engineLockfileUpdater mirrors engine.LockfileUpdater (the engine imports this package).
+type engineLockfileUpdater interface {
+	ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error)
 }
 
 // stub installs a fake cargo on PATH that logs its arguments and what it sees of the mirror,
@@ -163,6 +265,7 @@ echo "args: $*" >> "$STUB_LOG"
 test -L src/lib.rs && echo "symlinked src/lib.rs" >> "$STUB_LOG"
 test -L Cargo.toml || echo "copied Cargo.toml" >> "$STUB_LOG"
 test -e target || test -e .git || echo "no target, no .git" >> "$STUB_LOG"
+test -e ../crates/x/Cargo.toml && echo "sibling visible" >> "$STUB_LOG"
 test -n "$STUB_FAIL" && { echo "warning: noise"; echo "error: boom in $(pwd)/Cargo.toml" >&2; exit 101; }
 if [ "$*" = "update --workspace" ]; then
   test -n "$STUB_LOCK" && ` + cp + ` "$STUB_LOCK" Cargo.lock
@@ -217,6 +320,25 @@ func TestProcessStub(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "crates", "a", "Cargo.toml")); strings.Contains(string(b), "1.0.102") {
 		t.Error("the working tree was modified")
+	}
+}
+
+// A workspace root below the repository top sees its path dependencies outside the root
+// (ripgrep's fuzz/Cargo.toml has `globset = { path = "../crates/globset" }`).
+func TestProcessNestedRoot(t *testing.T) {
+	log := stub(t)
+	repo := t.TempDir()
+	manifest := "[dependencies]\nglobset = { path = \"../crates/x\" }\nanyhow = \"1.0.80\"\n\n[workspace]\nmembers = [\".\"]\n"
+	write(t, repo, map[string]string{".git/HEAD": "", "crates/x/Cargo.toml": "", "fuzz/Cargo.toml": manifest, "README.md": ""})
+	dir := filepath.Join(repo, "fuzz")
+	if _, err := (Locker{}).Process(t.Context(), dir, map[string][]byte{"Cargo.toml": []byte(manifest)}, map[string][]byte{"Cargo.lock": []byte(lockOf("anyhow@1.0.80"))}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(log); !strings.Contains(string(b), "sibling visible\n") {
+		t.Errorf("log:\n%s", b)
+	}
+	if base, err := mirrorAncestors(dir, filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Errorf("mirror into a missing dir = %s", base)
 	}
 }
 

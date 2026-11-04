@@ -142,7 +142,7 @@ func TestLoadErrors(t *testing.T) {
 		{"minimumReleaseAge: soon\n", `minimumReleaseAge: invalid age "soon"`},
 		{"minimumReleaseAge: -1h\n", `minimumReleaseAge: invalid age "-1h"`},
 		{"minimumReleaseAge: 99999999999999999 weeks\n", "minimumReleaseAge: age \"99999999999999999 weeks\" out of range"},
-		{"rules: [{versioning: calver}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose or regex:<RE2>, got "calver"`},
+		{"rules: [{versioning: calver}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose, cargo or regex:<RE2>, got "calver"`},
 		{"rules: [{versioning: 'regex:('}]\n", "rules[0].versioning: regex: invalid RE2 regexp"},
 		{"rules: [{versioning: 'regex:^(?<minor>\\d+)$'}]\n", "rules[0].versioning: regex: must have a (?<major>...) group"},
 		{"rules: [{versioning: 'regex:^(?<major>\\d+)(?P<mjor>x)$'}]\n", `rules[0].versioning: regex: unknown group "mjor" (allowed: major, minor, patch, build, revision, prerelease, compatibility)`},
@@ -514,6 +514,12 @@ func TestMonorepos(t *testing.T) {
 		{c, dep.Dep{Manager: "npm", Name: "@tanstack/react-query"}, "tanstack-query monorepo", "tanstack-query", nil},
 		{c, dep.Dep{Manager: "gomod", Name: "react"}, "", "", nil},
 		{c, dep.Dep{Manager: "github-actions", Name: "github/codeql-action/init"}, "codeql-action monorepo", "codeql-action", nil},
+		{c, dep.Dep{Manager: "cargo", Name: "tokio-util"}, "tokio monorepo", "tokio", nil},
+		{c, dep.Dep{Manager: "cargo", Name: "tokio-postgres"}, "", "", nil}, // a separate repository
+		{c, dep.Dep{Manager: "cargo", Name: "serde_derive"}, "serde monorepo", "serde", nil},
+		{c, dep.Dep{Manager: "cargo", Name: "serde_json"}, "", "", nil},
+		{c, dep.Dep{Manager: "cargo", Name: "aws-sdk-s3"}, "aws-sdk-rust monorepo", "aws-sdk-rust", nil},
+		{c, dep.Dep{Manager: "npm", Name: "tokio"}, "", "", nil},
 		{off, dep.Dep{Manager: "gomod", Name: "k8s.io/api"}, "", "", nil},
 	} {
 		p := tc.cfg.Policy(tc.d)

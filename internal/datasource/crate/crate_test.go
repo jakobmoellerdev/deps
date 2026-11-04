@@ -61,12 +61,15 @@ func serve(t *testing.T, hits *atomic.Int32) *httptest.Server {
 }
 
 func newSource(srv *httptest.Server) *Source {
+	home := os.TempDir() + "/deps-crate-test-no-cargo-home"
 	return New(srv.Client(), make(chan struct{}, 1), func(k string) string {
 		switch k {
 		case "DEPS_CRATES_INDEX_URL":
 			return srv.URL + "/index/"
 		case "DEPS_CRATES_API_URL":
 			return srv.URL + "/api"
+		case "CARGO_HOME":
+			return home
 		}
 		return ""
 	})
@@ -204,7 +207,7 @@ func TestErrors(t *testing.T) {
 		"gone":    "crate gone not found",
 		"a":       "crate a has no releases",
 		"abc":     "crate abc has no releases",
-		"broken":  "GET " + srv.URL + "/index/br/ok/broken: ",
+		"broken":  srv.URL + "/index/br/ok/broken: ",
 		"failing": "GET " + srv.URL + "/index/fa/il/failing: HTTP 500",
 		"a/b":     `invalid crate name "a/b"`,
 	} {
