@@ -292,6 +292,13 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 **Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then the config key `gitAuthor`, then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2.
 
+**Commit signing:** with `--signing-key` (or `$DEPS_SIGNING_KEY`), every commit deps creates is signed. The value is the private key itself, as a CI secret holds it, or the path of a file holding it; the format is detected from the armor header:
+
+- `-----BEGIN OPENSSH PRIVATE KEY-----`: SSH signature (`gpg.format=ssh`) with a `0600` temporary copy of the key; needs `ssh-keygen`.
+- `-----BEGIN PGP PRIVATE KEY BLOCK-----`: OpenPGP signature; the key is imported once into a temporary `GNUPGHOME`; needs `gpg`.
+
+Only keys without a passphrase are supported; a protected key fails before any work is done. The temporary key material is removed when `run` exits, also on errors and on SIGINT/SIGTERM. The key is logged at info by fingerprint only, as `commit signing format=ssh|openpgp key=<fingerprint>`. A value that is neither format nor a readable file exits 2; a missing `ssh-keygen`/`gpg` exits 1. The forge shows the signature as verified only when the committer (`gitAuthor`) is the key owner's verified email. Without a key, git's own configuration applies (`commit.gpgSign` and `user.signingKey` of the checkout).
+
 **Trigger:** schedules (config key `schedule`) are matched against what started the run, not against the clock: `--trigger-schedule`, then `$DEPS_TRIGGER_SCHEDULE`, then `$GITHUB_EVENT_NAME` with the `schedule` field of the payload at `$GITHUB_EVENT_PATH`. Runs that were not triggered by a cron (`workflow_dispatch`, `push`, a local run without CI variables) are in schedule for every group. Logged at info as `trigger event=<event> cron=<cron>`. The value of `--trigger-schedule` is validated as a 5-field cron; an invalid one exits 2.
 
 **New-PR limit:** the minimum of `--max-new-prs` and the room left below `prConcurrentLimit`/`prHourlyLimit`, counting only the non-zero ones. Existing PRs are always updated.
@@ -347,6 +354,7 @@ DEPS_TOKEN=$TOKEN deps run -v --log-level info
 | `--max-new-prs` | int | `10` | maximum number of pull requests to create per run (0 = unlimited) |
 | `--platform` | string | `"auto"` | forge type: auto\|github\|gitea\|forgejo (auto: from the CI environment, else the origin remote) |
 | `--repo` | string | `""` | repository owner/name (default: detected) |
+| `--signing-key` | string | `""` | sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (default: $DEPS_SIGNING_KEY) |
 | `--token` | string | `""` | platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, git credential helper) |
 | `--trigger-schedule` | string | `""` | act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE) |
 
@@ -389,6 +397,7 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `DEPS_DEFAULT_ACTIONS_URL` | all | default host of `owner/repo@ref` actions (hostname, or a URL whose host is used); overridden by the config key `actions.defaultHost` |
 | `DEPS_NODE_DIST_URL` | `node-version` datasource | base URL of a nodejs.org `dist` mirror (default `https://nodejs.org/dist`) |
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor` |
+| `DEPS_SIGNING_KEY` | `run` | default of `--signing-key`: a passphrase-less OpenSSH or armored OpenPGP private key, or the path of a file holding one; deps signs its commits with it |
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
@@ -407,7 +416,7 @@ Exit codes of every command. Also shown by `deps help exit-codes`.
 |---|---|
 | `0` | success, no errors |
 | `1` | any error, including per-dependency lookup errors and per-PR errors (already printed as `error` lines), or a fatal error printed as `deps: <err>` |
-| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE`, or any config error (parse error, unknown key, failed validation, unreadable `--config` file) |
+| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE`, a `--signing-key`/`DEPS_SIGNING_KEY` that is no OpenSSH or armored OpenPGP private key, or any config error (parse error, unknown key, failed validation, unreadable `--config` file) |
 
 ## Output
 

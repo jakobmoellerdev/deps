@@ -277,7 +277,7 @@ monorepos: false
 
 ## `gitAuthor`
 
-Author and committer of deps commits as `Name <email>` (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags.
+Author and committer of deps commits as `Name <email>` (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified.
 
 - **Type:** string
 - **Default:** `deps[bot] <deps-bot@noreply.invalid>`

@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -149,6 +152,49 @@ func TestRunGitAuthorFromConfig(t *testing.T) {
 	const branch = "deps/github-actions/actions-checkout-major"
 	if got := git(t, origin, "log", "-1", "--format=%an <%ae>|%cn <%ce>", branch); got != "OCM Bot <ocm-bot@example.com>|OCM Bot <ocm-bot@example.com>" {
 		t.Errorf("author|committer = %q", got)
+	}
+}
+
+// DEPS_SIGNING_KEY (key content) makes run sign the pushed commit; the key is logged by
+// fingerprint only and its temporary copy is gone afterwards.
+func TestRunSignsCommits(t *testing.T) {
+	for _, tool := range []string{"ssh-keygen", "git"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " not in PATH")
+		}
+	}
+	cleanEnv(t)
+	newFakeNet(t)
+	giteaEnv(t)
+	t.Setenv("DEPS_TOKEN", "tok")
+	keyFile := filepath.Join(t.TempDir(), "id")
+	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "bot", "-f", keyFile).CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen: %v\n%s", err, out)
+	}
+	key, _ := os.ReadFile(keyFile)
+	pub, _ := os.ReadFile(keyFile + ".pub")
+	t.Setenv("DEPS_SIGNING_KEY", string(key))
+	origin, work := gitRepo(t, map[string]string{".github/workflows/ci.yml": workflow})
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	_, stderr, code := execute(t, "run", "--dir", work, "--author-email", "bot@example.invalid", "--log-level", "info")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, `msg="commit signing" format=ssh key=SHA256:`) {
+		t.Errorf("stderr lacks the signing log line:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "PRIVATE KEY") {
+		t.Errorf("stderr reveals the key:\n%s", stderr)
+	}
+	allowed := filepath.Join(t.TempDir(), "allowed")
+	if err := os.WriteFile(allowed, []byte("bot@example.invalid namespaces=\"git\" "+string(pub)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, origin, "-c", "gpg.ssh.allowedSignersFile="+allowed, "verify-commit", "deps/github-actions/actions-checkout-major")
+	if entries, _ := os.ReadDir(tmp); len(entries) != 0 {
+		t.Errorf("temporary files left: %v", entries)
 	}
 }
 

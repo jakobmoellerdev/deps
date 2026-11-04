@@ -175,6 +175,8 @@ jobs:
 
 `deps run --dry-run` and `deps plan` need only read access. The per-forge details, private action and module repositories, and `DEPS_GITHUB_COM_TOKEN` for github.com lookups from Gitea are in [docs/ci.md](docs/ci.md#tokens-and-permissions).
 
+**Signed commits.** For branch protection that requires signed commits, pass a passphrase-less OpenSSH or OpenPGP private key in the `signing-key` input (`DEPS_SIGNING_KEY`); deps then signs its commits. The forge marks them verified only if the committer identity (`gitAuthor`/`DEPS_GIT_AUTHOR`) is a verified email of the account that owns the key, so use a bot account. Merge deps' PRs fast-forward, or let the forge sign its merge commits. Setup per forge: [docs/ci.md](docs/ci.md#signed-commits).
+
 ## Schedules, automerge and the dashboard
 
 **Schedules.** Each entry in [`schedule`](docs/reference/configuration.md#schedule), top-level or in a rule, must be one of the workflow's `on.schedule` crons, written the same way.
@@ -214,6 +216,7 @@ rules:
 | Input | Default | Meaning |
 |---|---|---|
 | `token` | `${{ github.token }}` | exported as `DEPS_TOKEN`: the platform API token |
+| `signing-key` | empty (unsigned) | exported as `DEPS_SIGNING_KEY`: private key deps signs its commits with; the committer (`gitAuthor`) must be the key owner's verified email |
 | `args` | `run` | arguments for `deps`, e.g. `run -v --log-level info`, `plan`, `run --dry-run` |
 | `version` | the action's ref if it is a release tag, else the latest release | release to download, e.g. `v0.1.0` |
 | `repository` | `https://github.com/jakobmoellerdev/deps` on github.com, the Gitea repository elsewhere | where the release binary is downloaded from |

@@ -9,6 +9,13 @@ inputs:
       .github/workflows/*, so pass an App token or PAT (with workflows permission) here and to
       actions/checkout.
     default: "${{ github.token }}"
+  signing-key:
+    description: >-
+      Secret holding a passphrase-less private key (OpenSSH, or armored OpenPGP) that deps signs its
+      commits with, exported as DEPS_SIGNING_KEY. The committer identity (config key gitAuthor, or
+      DEPS_GIT_AUTHOR in the job env) must be the key owner's verified email on the forge for the
+      signature to count as verified. Default: unsigned commits.
+    default: ""
   args:
     description: "Arguments for deps, e.g. `run -v --log-level info` or `plan`."
     default: "run"
@@ -83,4 +90,5 @@ runs:
       shell: bash
       env:
         DEPS_TOKEN: ${{ inputs.token }}
+        DEPS_SIGNING_KEY: ${{ inputs.signing-key }}
       run: '"$RUNNER_TEMP/deps" ${{ inputs.args }}'

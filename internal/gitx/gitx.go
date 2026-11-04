@@ -11,14 +11,19 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 )
 
-// Repo is a git repository; Dir may be any directory inside the work tree.
-type Repo struct{ Dir string }
+// Repo is a git repository; Dir may be any directory inside the work tree. A non-nil Signer
+// signs the commits Commit creates; without one, git's own config (commit.gpgSign) applies.
+type Repo struct {
+	Dir    string
+	Signer *Signer
+}
 
 func (r Repo) run(ctx context.Context, stdin []byte, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
@@ -33,9 +38,18 @@ func (r Repo) run(ctx context.Context, stdin []byte, env []string, args ...strin
 	err := cmd.Run()
 	slog.DebugContext(ctx, "git command", "args", args, "duration", time.Since(start), "err", err)
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("git %s: %w: %s", subcommand(args), err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// subcommand returns the git subcommand of args, skipping leading -c key=value options.
+func subcommand(args []string) string {
+	i := 0
+	for i+2 < len(args) && args[i] == "-c" {
+		i += 2
+	}
+	return args[i]
 }
 
 // RevParse resolves rev to an object id.
@@ -104,7 +118,12 @@ func (r Repo) Commit(ctx context.Context, parent string, changes []engine.FileCh
 		"GIT_AUTHOR_NAME=" + name, "GIT_AUTHOR_EMAIL=" + email,
 		"GIT_COMMITTER_NAME=" + name, "GIT_COMMITTER_EMAIL=" + email,
 	}
-	return r.run(ctx, []byte(msg), ident, "commit-tree", tree, "-p", parent, "-F", "-")
+	args := []string{"commit-tree", tree, "-p", parent, "-F", "-"}
+	if s := r.Signer; s != nil {
+		args = slices.Concat(s.config, []string{"commit-tree", "-S", tree, "-p", parent, "-F", "-"})
+		ident = append(ident, s.env...)
+	}
+	return r.run(ctx, []byte(msg), ident, args...)
 }
 
 // Push sets refs/heads/<branch> on origin to commit if it currently points at expected

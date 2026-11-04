@@ -9,8 +9,15 @@ permissions:
 jobs:
   deps:
     runs-on: ubuntu-latest
+    env:
+      # deps-bot's verified email; its OpenPGP key (DEPS_SIGNING_KEY) is verified on that account.
+      DEPS_GIT_AUTHOR: deps-bot <deps-bot@jakob-moeller.cloud>
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ secrets.DEPS_BOT_TOKEN }}
       - uses: ./
         with:
+          token: ${{ secrets.DEPS_BOT_TOKEN }}
+          signing-key: ${{ secrets.DEPS_SIGNING_KEY }}
           args: run -v --log-level info
