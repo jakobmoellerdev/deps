@@ -6,19 +6,24 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-concurrency:
-  group: deps
-  cancel-in-progress: false
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write # dependency dashboard
+  # Preview with the PR's code: the dry-run job below; docs/ci.md#preview-on-pull-requests
+  pull_request:
+    branches: [main]
+env:
+  # deps-bot's verified email; its OpenPGP key (DEPS_SIGNING_KEY) is verified on that account.
+  # The dry run needs it too: branches with another author are reported as modified by someone else.
+  DEPS_GIT_AUTHOR: deps-bot <deps-bot@jakob-moeller.cloud>
 jobs:
   deps:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    env:
-      # deps-bot's verified email; its OpenPGP key (DEPS_SIGNING_KEY) is verified on that account.
-      DEPS_GIT_AUTHOR: deps-bot <deps-bot@jakob-moeller.cloud>
+    concurrency:
+      group: deps
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write # dependency dashboard
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -29,3 +34,35 @@ jobs:
           token: ${{ secrets.DEPS_BOT_TOKEN }}
           signing-key: ${{ secrets.DEPS_SIGNING_KEY }}
           args: run -v --log-level info
+  # Builds deps from the PR and shows what it would do: `plan` on the PR (its .deps.yaml and
+  # dependencies), then `run --dry-run` on the base branch, because run requires HEAD to be the
+  # tip of origin/<base>. Read-only; its own concurrency group, so it never waits for the deps job.
+  dry-run:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deps-dry-run-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: pr
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: base
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: pr/go.mod
+          cache: true
+          cache-dependency-path: pr/go.sum
+      - run: go build -C pr -trimpath -o "$RUNNER_TEMP/deps" ./cmd/deps
+      - run: '"$RUNNER_TEMP/deps" plan -v --log-level info --dir pr'
+      - run: '"$RUNNER_TEMP/deps" run --dry-run -v --log-level info --dir base --base "$BASE"'
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          DEPS_TOKEN: ${{ github.token }}
