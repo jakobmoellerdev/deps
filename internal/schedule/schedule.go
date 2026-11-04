@@ -129,11 +129,22 @@ func num(s string, f field) (int, error) {
 	return n, nil
 }
 
-// Matches reports whether a run started by t is in schedule. Runs not triggered by a
-// cron (dispatch, push, local) act immediately; so does a schedule event whose cron is
-// unknown. Otherwise the trigger cron must equal one of the Set's crons.
+// EventPush is the event name of runs triggered by a push.
+const EventPush = "push"
+
+// Matches reports whether a run started by t is in schedule. A nil Set (no schedule)
+// always matches. A push run (e.g. after merging a PR) is follow-up maintenance, so it
+// is outside every schedule: only unscheduled groups get new PRs, open PRs are still
+// refreshed (updateNotScheduled). Other runs not triggered by a cron (dispatch, local)
+// act immediately; so does a schedule event whose cron is unknown. Otherwise the
+// trigger cron must equal one of the Set's crons.
 func (s *Set) Matches(t Trigger) bool {
-	if s == nil || t.Event != EventSchedule || t.Cron == "" {
+	switch {
+	case s == nil:
+		return true
+	case t.Event == EventPush:
+		return false
+	case t.Event != EventSchedule || t.Cron == "":
 		return true
 	}
 	return slices.Contains(s.norm, Normalize(t.Cron))

@@ -187,7 +187,7 @@ deps never evaluates the crons as time windows: a group is in schedule when the 
 
 - The trigger is read from the CI environment: `GITHUB_EVENT_NAME` (GitHub, Gitea and Forgejo set it) and, for `schedule` events, the `schedule` field of the event payload at `GITHUB_EVENT_PATH`. GitHub and Gitea (verified in 28.3) put the triggering cron there. `--trigger-schedule <cron>` or `DEPS_TRIGGER_SCHEDULE` override the detection (for local tests or runners that lack the payload).
 - Crons are compared as strings after collapsing whitespace: `0 0 * * 0` matches `0  0 * * 0` but not the equivalent `0 0 * * 7`. Copy them verbatim from `on.schedule`.
-- Runs not started by a cron (`workflow_dispatch`, `push`, a local `deps run`) act immediately: every schedule matches. A `schedule` event whose cron cannot be read also matches every schedule, with a warning.
+- `workflow_dispatch` and a local `deps run` act immediately: every schedule matches. A `push` run (e.g. after merging a deps PR) matches no schedule: only unscheduled groups and security updates get new PRs, and open PRs are refreshed per `updateNotScheduled`. A `schedule` event whose cron cannot be read matches every schedule, with a warning.
 - Cron triggers of CI systems are UTC, so there is no time zone setting.
 - Each entry must be a valid 5-field cron (`minute hour day-of-month month day-of-week`; `*`, `n`, `a-b`, comma lists, `/step` on `*` or a range; day of week `0-7`; no names). Errors look like `schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`.
 - The schedule only gates creating new PRs and, with `updateNotScheduled: false`, updating existing ones. Security updates ignore schedules.

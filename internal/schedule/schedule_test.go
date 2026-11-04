@@ -35,7 +35,7 @@ func TestNilSet(t *testing.T) {
 	if err != nil || s != nil {
 		t.Fatalf("Parse(nil) = %v, %v", s, err)
 	}
-	if !s.Matches(Trigger{Event: EventSchedule, Cron: "0 5 * * *"}) || s.String() != "always" || s.Crons() != nil {
+	if !s.Matches(Trigger{Event: EventSchedule, Cron: "0 5 * * *"}) || !s.Matches(Trigger{Event: EventPush}) || s.String() != "always" || s.Crons() != nil {
 		t.Errorf("nil set: string=%q", s.String())
 	}
 }
@@ -56,7 +56,7 @@ func TestMatches(t *testing.T) {
 		{"no time evaluation", Trigger{EventSchedule, "0 0 * * 7"}, false},
 		{"schedule without cron", Trigger{EventSchedule, ""}, true},
 		{"workflow_dispatch", Trigger{"workflow_dispatch", ""}, true},
-		{"push", Trigger{"push", ""}, true},
+		{"push is outside every schedule", Trigger{EventPush, ""}, false},
 		{"local", Trigger{}, true},
 	}
 	for _, tt := range tests {

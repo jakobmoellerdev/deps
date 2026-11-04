@@ -65,6 +65,8 @@ name: deps
 on:
   schedule:
     - cron: "0 5 * * *"
+  push:
+    branches: [main] # your default branch: re-run right after a deps PR is merged
   workflow_dispatch:
 concurrency:
   group: deps
@@ -83,7 +85,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ steps.app.outputs.token }}
-      - uses: jakobmoellerdev/deps@v0.1.0
+      - uses: jakobmoellerdev/deps@v0.2.4
         with:
           token: ${{ steps.app.outputs.token }}
 ```
@@ -108,6 +110,8 @@ name: deps
 on:
   schedule:
     - cron: "0 5 * * *"
+  push:
+    branches: [main] # your default branch: re-run right after a deps PR is merged
   workflow_dispatch:
 concurrency:
   group: deps
@@ -121,7 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
 ```
 
 - **`uses:` needs the full URL.** A short `jakobmoellerdev/deps@…` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default.
@@ -132,7 +136,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ secrets.DEPS_TOKEN }}
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
         with:
           token: ${{ secrets.DEPS_TOKEN }}
 ```
@@ -148,6 +152,8 @@ name: deps
 on:
   schedule:
     - cron: "0 5 * * *"
+  push:
+    branches: [main] # your default branch: re-run right after a deps PR is merged
   workflow_dispatch:
 concurrency:
   group: deps
@@ -157,7 +163,7 @@ jobs:
     runs-on: docker # a label of your runner
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
 ```
 
 - **Permissions.** Forgejo's automatic token can write to its repository (except in fork PRs), so the workflow has no `permissions:` block; see [docs/ci.md](docs/ci.md#forgejo).
@@ -186,7 +192,8 @@ jobs:
 
 - deps reads the cron that triggered the run from the event payload.
 - New PRs are created only for groups whose schedule lists that cron.
-- `workflow_dispatch`, `push` and local runs act on every group.
+- `workflow_dispatch` and local runs act on every group.
+- `push` runs (e.g. after merging a deps PR) only create PRs for groups without a schedule; open PRs of scheduled groups are still refreshed. See [why the examples run on push](docs/ci.md#run-on-push-to-the-default-branch).
 
 A daily workflow with weekly groups:
 
@@ -195,6 +202,8 @@ on:
   schedule:
     - cron: "0 5 * * *" # deps without a schedule
     - cron: "0 5 * * 1" # also deps whose schedule is ["0 5 * * 1"]
+  push:
+    branches: [main] # follow-up run after merges: refreshes open PRs, opens no weekly group
   workflow_dispatch:
 ```
 

@@ -73,6 +73,8 @@ name: deps
 on:
   schedule:
     - cron: "0 5 * * *"
+  push:
+    branches: [main] # your default branch; see "Run on push to the default branch"
   workflow_dispatch:
 concurrency:
   group: deps
@@ -91,7 +93,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ steps.app.outputs.token }}
-      - uses: jakobmoellerdev/deps@v0.1.0
+      - uses: jakobmoellerdev/deps@v0.2.4
         with:
           token: ${{ steps.app.outputs.token }}
           args: run -v --log-level info
@@ -169,7 +171,7 @@ If the action repository isn't reachable, install the binary with `go install` t
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: stable
-      - run: go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@v0.1.0
+      - run: go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@v0.2.4
       - run: deps run -v --log-level info
         env:
           DEPS_TOKEN: ${{ steps.app.outputs.token }}
@@ -192,6 +194,8 @@ name: deps
 on:
   schedule:
     - cron: "0 5 * * *"
+  push:
+    branches: [main] # your default branch; see "Run on push to the default branch"
   workflow_dispatch:
 concurrency:
   group: deps
@@ -205,12 +209,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
         with:
           args: run -v --log-level info
 ```
 
-**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.1.0` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. Inside this repository the dogfood workflow uses `uses: ./`.
+**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.2.4` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. Inside this repository the dogfood workflow uses `uses: ./`.
 
 **The job token (`GITEA_TOKEN`).** Its permissions come from:
 
@@ -229,7 +233,7 @@ When CI must run on deps PRs (for [automerge](#automerge)), or a private reposit
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ secrets.DEPS_TOKEN }}
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
         with:
           token: ${{ secrets.DEPS_TOKEN }}
 ```
@@ -254,6 +258,8 @@ name: deps
 on:
   schedule:
     - cron: "0 5 * * *"
+  push:
+    branches: [main] # your default branch; see "Run on push to the default branch"
   workflow_dispatch:
 concurrency:
   group: deps
@@ -263,7 +269,7 @@ jobs:
     runs-on: docker # a label of your runner
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
 ```
 
 - **Detection.** deps detects Forgejo from `FORGEJO_ACTIONS=true` and reads `FORGEJO_SERVER_URL`, `FORGEJO_API_URL` and `FORGEJO_REPOSITORY`, falling back to the `GITHUB_*` names. API calls use the Gitea-compatible `/api/v1`.
@@ -390,7 +396,7 @@ deps honors `HTTPS_PROXY`/`NO_PROXY`.
 Each [`schedule`](reference/configuration.md#schedule) entry, top-level or in a rule, must be one of the workflow's cron triggers. Crons are compared as text after collapsing whitespace, so write them the same way in both files.
 
 - **Reading the trigger.** deps reads the triggering cron from the event payload: `GITHUB_EVENT_PATH`, field `schedule`. GitHub fills it, and so does Gitea (verified in 28.3).
-- **Which groups act.** Only groups whose schedule lists that cron get new PRs. `workflow_dispatch`, `push` and other non-cron triggers act on every group.
+- **Which groups act.** Only groups whose schedule lists that cron get new PRs. `workflow_dispatch` and other non-cron triggers act on every group. A `push` run is outside every schedule: groups without a schedule get new PRs, scheduled groups only have their open PRs refreshed ([updateNotScheduled](reference/configuration.md#updatenotscheduled)), and security updates are proposed as always.
 - **Open PRs outside the schedule.** They keep being updated and rebased ([`updateNotScheduled`](reference/configuration.md#updatenotscheduled), default true).
 
 For a daily run with weekly groups:
@@ -400,6 +406,8 @@ on:
   schedule:
     - cron: "0 5 * * *" # daily: deps without a schedule
     - cron: "0 5 * * 1" # Mondays: also groups with schedule: ["0 5 * * 1"]
+  push:
+    branches: [main] # follow-up run after merges: refreshes open PRs, opens no weekly group
   workflow_dispatch:
 ```
 
@@ -418,6 +426,33 @@ Both crons fire on Monday at 05:00, so that day has two runs. The second run fin
 - **A `schedule` event without a readable cron** matches every schedule, and deps logs a warning.
 
 Updates waiting for their cron are reported as `skipped: outside schedule`. They appear on the dashboard under *Awaiting schedule*, where ticking one creates its PR on the next run.
+
+## Run on push to the default branch
+
+The example workflows also run on `push` to the default branch (`main` in the examples; set yours). Without it, deps only reacts on the next cron, up to a day later. After a push, the repository has changed in ways the open PRs depend on:
+
+- **Merging a deps PR.** Other open deps PRs may now conflict with the new base (two updates touching the same `go.mod`/`go.sum` or lockfile), or be behind it. The push run rebases them right away ([`rebaseWhen`](reference/configuration.md#rebasewhen)), so the next PR is mergeable without waiting a day.
+- **The dashboard.** The dependency dashboard issue is rewritten to match the new state (the merged PR leaves *Open*, the next pending updates show up).
+- **Config changes.** A pushed `.deps.yaml` takes effect immediately: PRs that a new `ignore` rule or `allow` constraint makes obsolete are closed, and changed groups are rebuilt.
+- **Manual dependency bumps.** If someone updates a dependency by hand, the matching deps PR is closed as obsolete instead of staying open until the next cron.
+
+**What a push run does.** A `push` run is outside every [schedule](#schedules):
+
+| Group | Push run |
+|---|---|
+| No `schedule` | acts as on the cron: creates, updates and closes PRs |
+| With a `schedule`, PR already open | refreshed and rebased ([`updateNotScheduled`](reference/configuration.md#updatenotscheduled), default true) |
+| With a `schedule`, no PR yet | `skipped: outside schedule`; waits for its cron |
+| Security update | created regardless of schedules |
+
+So merges never open weekly groups early. `workflow_dispatch` is different: a manual run acts on every group.
+
+**Notes.**
+
+- **No loops.** deps pushes only to its own branches (`deps/…`), never to the default branch, so its pushes don't match `branches: [main]`. Merging a deps PR is a push to `main` and does trigger a run; that is the point.
+- **The token decides whether merges trigger.** On GitHub, pushes made with `GITHUB_TOKEN` (including automerges performed with it) start no workflows, so the follow-up run only happens for merges by a user, an App token or a PAT. Gitea and Forgejo behave the same for their job tokens.
+- **Busy repositories.** Every push to `main` starts a run. Keep the [concurrency group](#overlapping-runs) with `cancel-in-progress: false`: bursts queue up behind one run instead of racing. To skip pushes that can't matter, add `paths-ignore` (e.g. `docs/**`), keeping `.deps.yaml` and the dependency files included.
+- **Cost.** A run without changes takes seconds (lookups are deduplicated per run; the binary comes from the [action's cache](#the-composite-action)).
 
 ## Automerge
 
@@ -482,7 +517,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: jakobmoellerdev/deps@v0.1.0 # full URL on Gitea/Forgejo
+      - uses: jakobmoellerdev/deps@v0.2.4 # full URL on Gitea/Forgejo
         with:
           args: plan -v
 ```
@@ -506,7 +541,7 @@ The GitHub mirror of this repository runs `deps plan` the same way (`.github/wor
         with:
           go-version-file: go.mod
           cache: true
-      - uses: jakobmoellerdev/deps@v0.1.0
+      - uses: jakobmoellerdev/deps@v0.2.4
 ```
 
 For several modules, or without setup-go, use `actions/cache`:

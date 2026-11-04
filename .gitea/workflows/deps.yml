@@ -2,7 +2,13 @@ name: deps
 on:
   schedule:
     - cron: "0 5 * * *"
+  # Re-run right after merges (e.g. a deps PR) to rebase the other PRs; docs/ci.md#run-on-push-to-the-default-branch
+  push:
+    branches: [main]
   workflow_dispatch:
+concurrency:
+  group: deps
+  cancel-in-progress: false
 permissions:
   contents: write
   pull-requests: write
