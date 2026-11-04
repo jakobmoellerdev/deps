@@ -10,6 +10,7 @@ release: ${PKG_RELEASE}
 maintainer: Jakob Möller <contact@jakob-moeller.com>
 description: dependency updates for GitHub, Gitea and Forgejo repositories
 homepage: https://git.jakob-moeller.cloud/jakobmoellerdev/deps
+license: Apache-2.0
 contents:
   - src: ${DIST}/deps_linux_${GOARCH}
     dst: /usr/bin/deps
@@ -28,6 +29,11 @@ contents:
       mode: 0644
   - src: ${COMPLETIONS}/fish
     dst: /usr/share/fish/vendor_completions.d/deps.fish
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${LICENSE_FILE}
+    dst: /usr/share/licenses/deps/LICENSE
     expand: true
     file_info:
       mode: 0644

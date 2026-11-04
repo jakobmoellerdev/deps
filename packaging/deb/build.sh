@@ -37,6 +37,7 @@ for arch in amd64 arm64; do
 	install -D -m 0644 "$comp/bash" "$root/usr/share/bash-completion/completions/deps"
 	install -D -m 0644 "$comp/zsh" "$root/usr/share/zsh/vendor-completions/_deps"
 	install -D -m 0644 "$comp/fish" "$root/usr/share/fish/vendor_completions.d/deps.fish"
+	install -D -m 0644 "$(dirname "$0")/../../LICENSE" "$root/usr/share/doc/deps/copyright"
 	mkdir -p "$root/DEBIAN"
 	size=$(du -sk --apparent-size "$root/usr" | cut -f1)
 	cat >"$root/DEBIAN/control" <<EOF

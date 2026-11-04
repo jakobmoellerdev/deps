@@ -15,6 +15,7 @@ tag=${2:?usage: build.sh <archlinux|apk> <tag>}
 export DIST=${DIST:-dist}
 nfpm=${NFPM:-nfpm}
 here=$(cd "$(dirname "$0")" && pwd)
+export LICENSE_FILE=${LICENSE_FILE:-$(cd "$here/../.." && pwd)/LICENSE}
 # shellcheck source=packaging/common.sh
 source "$here/../common.sh"
 

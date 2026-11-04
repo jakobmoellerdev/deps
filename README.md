@@ -344,3 +344,7 @@ task ci           # vet, golangci-lint, race tests with coverage gate, gofmt, go
 task docs         # regenerate docs/reference/* and deps.schema.json
 task changelog    # regenerate CHANGELOG.md with git-cliff (cliff.toml)
 ```
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE).
