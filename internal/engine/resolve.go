@@ -905,7 +905,7 @@ func (r *resolver) guard(timer datasource.Timer, c versioning.Candidate) string 
 }
 
 // prefetchWindow is how many release times picks fetches concurrently once a candidate of a
-// bucket was rejected; the shared semaphore still bounds the requests.
+// bucket was rejected; the datasource's request pool still bounds the requests.
 const prefetchWindow = 8
 
 // prefetchTimes fills the release-time cache for versions concurrently.

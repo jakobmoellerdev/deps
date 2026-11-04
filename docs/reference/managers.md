@@ -741,7 +741,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 
 ## Datasources
 
-- All network calls share one HTTP/2 client and one semaphore of `--concurrency` slots (default 32).
+- All network calls share one HTTP/2 client. Concurrent requests are limited per upstream with `--concurrency` n (default 32): the npm registry and OSV get 2n slots each, container registries (Docker Hub, GHCR, Helm OCI charts) n/2, and everything else (Go proxy, GitHub, git tags, Helm repositories, custom datasources) shares n. A busy upstream doesn't hold up the others.
 - Idempotent requests are retried up to 3 times on connection errors and 429/500/502/503/504, with jittered exponential backoff, honoring `Retry-After`.
 - Rate limits that reset within 60s are waited out. Longer ones fail fast with `rate limited by <host> until <time>`.
 - Lookups are deduped within a run. There is no persistent cache.
@@ -773,7 +773,7 @@ deps reads the nearest `.npmrc` per `package.json` directory, walking up to `--d
 
 ### Security advisories (OSV)
 
-- deps sends one `POST https://api.osv.dev/v1/querybatch` per 1000 packages, then one `GET /v1/vulns/{id}` per advisory.
+- deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.
 - Ecosystems: `Go` (gomod `direct`/`indirect`), `npm`, and `GitHub Actions` (github.com actions; ranges are evaluated locally).
 - Withdrawn advisories are skipped, and aliases are reported once.
 

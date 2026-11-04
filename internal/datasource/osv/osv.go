@@ -1,6 +1,7 @@
 // Package osv looks up security advisories for dependencies in the OSV database
-// (https://osv.dev): one `/v1/querybatch` round per 1000 distinct packages, then one
-// `/v1/vulns/{id}` fetch per distinct advisory.
+// (https://osv.dev): `/v1/querybatch` requests of 100 distinct packages each, sent
+// concurrently, then one `/v1/vulns/{id}` fetch per distinct advisory, started as soon as the
+// batch naming it returns.
 //
 // Ecosystems:
 //   - gomod deps with DepType "direct" or "indirect" are queried as ecosystem "Go" with the
@@ -49,8 +50,8 @@ import (
 
 const (
 	defaultBaseURL = "https://api.osv.dev"
-	maxBatch       = 1000 // OSV querybatch limit
-	maxFetchers    = 16
+	batchSize      = 100 // queries per querybatch request (OSV allows 1000); small batches return sooner
+	maxFetchers    = 16  // advisory fetchers without a semaphore; with one, its capacity
 
 	ecoGo      = "Go"
 	ecoActions = "GitHub Actions"
@@ -74,14 +75,14 @@ type vulnEntry struct {
 	err  error
 }
 
-// New returns the OSV security source. sem bounds concurrent requests and is shared with the
-// datasources.
+// New returns the OSV security source. sem bounds concurrent requests; it is OSV's own pool
+// (httpx.Limits.OSV), so advisory fetches don't queue behind the datasources' lookups.
 func New(client *http.Client, sem chan struct{}) datasource.SecuritySource {
 	return newSource(client, sem, defaultBaseURL)
 }
 
 func newSource(client *http.Client, sem chan struct{}, baseURL string) *Source {
-	return &Source{client: client, sem: sem, baseURL: baseURL, batch: maxBatch, vulns: make(map[string]*vulnEntry)}
+	return &Source{client: client, sem: sem, baseURL: baseURL, batch: batchSize, vulns: make(map[string]*vulnEntry)}
 }
 
 type pkg struct {
@@ -129,11 +130,7 @@ func (s *Source) Advisories(ctx context.Context, deps []dep.Dep) ([][]datasource
 		return out, nil
 	}
 
-	ids, err := s.queryAll(ctx, queries)
-	if err != nil {
-		return nil, err
-	}
-	docs, err := s.fetchAll(ctx, ids)
+	ids, docs, err := s.lookup(ctx, queries)
 	if err != nil {
 		return nil, err
 	}
@@ -187,44 +184,120 @@ func targetOf(d dep.Dep) *target {
 	return nil
 }
 
-// queryAll runs querybatch over queries in chunks, following per-result page tokens, and
-// returns the advisory IDs per query.
-func (s *Source) queryAll(ctx context.Context, queries []query) ([][]string, error) {
+// lookup runs querybatch over queries and fetches every distinct advisory found. A fetch starts
+// as soon as the batch naming its advisory returns, while other batches and later pages are
+// still running. Fetchers are bounded by the capacity of sem (maxFetchers without one).
+func (s *Source) lookup(ctx context.Context, queries []query) ([][]string, map[string]*vuln, error) {
+	work := make(chan string)
+	var (
+		mu   sync.Mutex
+		docs = make(map[string]*vuln)
+		errs []error
+		wg   sync.WaitGroup
+	)
+	n := maxFetchers
+	if s.sem != nil {
+		n = cap(s.sem)
+	}
+	for range n {
+		wg.Go(func() {
+			for id := range work {
+				v, err := s.vuln(ctx, id)
+				mu.Lock()
+				if err != nil {
+					errs = append(errs, err)
+				} else {
+					docs[id] = v
+				}
+				mu.Unlock()
+			}
+		})
+	}
+	ids, err := s.queryAll(ctx, queries, work)
+	close(work)
+	wg.Wait()
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(errs) > 0 {
+		slices.SortFunc(errs, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
+		return nil, nil, errors.Join(errs...)
+	}
+	return ids, docs, nil
+}
+
+// queryAll runs querybatch over queries in chunks of s.batch, the chunks of one round
+// concurrently, following per-result page tokens round by round, and returns the advisory IDs
+// per query. Each distinct ID is sent to found once, as soon as its batch returns.
+func (s *Source) queryAll(ctx context.Context, queries []query, found chan<- string) ([][]string, error) {
 	ids := make([][]string, len(queries))
 	pending := make([]int, len(queries))
 	for i := range pending {
 		pending[i] = i
 	}
+	var (
+		mu   sync.Mutex
+		seen = make(map[string]bool)
+	)
 	for len(pending) > 0 {
-		var next []int
-		for start := 0; start < len(pending); start += s.batch {
-			chunk := pending[start:min(start+s.batch, len(pending))]
-			req := make([]query, len(chunk))
-			for j, k := range chunk {
-				req[j] = queries[k]
-			}
-			results, err := s.queryBatch(ctx, req)
+		chunks := slices.Collect(slices.Chunk(pending, s.batch))
+		next := make([][]int, len(chunks))
+		errs := make([]error, len(chunks))
+		var wg sync.WaitGroup
+		for c, chunk := range chunks {
+			wg.Go(func() {
+				next[c], errs[c] = s.queryChunk(ctx, queries, chunk, ids, func(id string) bool {
+					mu.Lock()
+					defer mu.Unlock()
+					fresh := !seen[id]
+					seen[id] = true
+					return fresh
+				}, found)
+			})
+		}
+		wg.Wait()
+		for _, err := range errs {
 			if err != nil {
 				return nil, err
 			}
-			for j, r := range results {
-				k := chunk[j]
-				for _, v := range r.Vulns {
-					ids[k] = append(ids[k], v.ID)
-				}
-				if r.NextPageToken == "" {
-					continue
-				}
-				if r.NextPageToken == queries[k].PageToken {
-					return nil, fmt.Errorf("querybatch: %s: repeated page token", queries[k].Package.Name)
-				}
-				queries[k].PageToken = r.NextPageToken
-				next = append(next, k)
-			}
 		}
-		pending = next
+		pending = slices.Concat(next...)
 	}
 	return ids, nil
+}
+
+// queryChunk sends one querybatch for the queries at the indexes in chunk, appends the IDs
+// found to ids, sends the IDs fresh reports as new to found, and returns the indexes with
+// another page. A query is in one chunk per round, so ids[k] and queries[k] are written by one
+// goroutine only.
+func (s *Source) queryChunk(ctx context.Context, queries []query, chunk []int, ids [][]string, fresh func(string) bool, found chan<- string) ([]int, error) {
+	req := make([]query, len(chunk))
+	for j, k := range chunk {
+		req[j] = queries[k]
+	}
+	results, err := s.queryBatch(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	var next []int
+	for j, r := range results {
+		k := chunk[j]
+		for _, v := range r.Vulns {
+			ids[k] = append(ids[k], v.ID)
+			if fresh(v.ID) {
+				found <- v.ID
+			}
+		}
+		if r.NextPageToken == "" {
+			continue
+		}
+		if r.NextPageToken == queries[k].PageToken {
+			return nil, fmt.Errorf("querybatch: %s: repeated page token", queries[k].Package.Name)
+		}
+		queries[k].PageToken = r.NextPageToken
+		next = append(next, k)
+	}
+	return next, nil
 }
 
 type batchResult struct {
@@ -254,52 +327,6 @@ func (s *Source) queryBatch(ctx context.Context, queries []query) ([]batchResult
 		return nil, err
 	}
 	return res.Results, nil
-}
-
-// fetchAll fetches every distinct advisory in ids concurrently.
-func (s *Source) fetchAll(ctx context.Context, ids [][]string) (map[string]*vuln, error) {
-	seen := make(map[string]bool)
-	var uniq []string
-	for _, l := range ids {
-		for _, id := range l {
-			if !seen[id] {
-				seen[id] = true
-				uniq = append(uniq, id)
-			}
-		}
-	}
-	slices.Sort(uniq)
-	work := make(chan string)
-	var (
-		mu   sync.Mutex
-		docs = make(map[string]*vuln, len(uniq))
-		errs []error
-		wg   sync.WaitGroup
-	)
-	for range min(len(uniq), maxFetchers) {
-		wg.Go(func() {
-			for id := range work {
-				v, err := s.vuln(ctx, id)
-				mu.Lock()
-				if err != nil {
-					errs = append(errs, err)
-				} else {
-					docs[id] = v
-				}
-				mu.Unlock()
-			}
-		})
-	}
-	for _, id := range uniq {
-		work <- id
-	}
-	close(work)
-	wg.Wait()
-	if len(errs) > 0 {
-		slices.SortFunc(errs, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
-		return nil, errors.Join(errs...)
-	}
-	return docs, nil
 }
 
 type event struct {

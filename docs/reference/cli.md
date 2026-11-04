@@ -39,7 +39,7 @@ Every command accepts these flags.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--concurrency` | int | `32` | maximum concurrent network requests and lookups; at least 1 |
+| `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `--config` | string | `""` | config file, which must exist (default: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults) |
 | `--dir` | string | `"."` | repository directory to scan |
 | `--log-format` | string | `"text"` | log format: text, json; $DEPS_LOG_FORMAT replaces the default |

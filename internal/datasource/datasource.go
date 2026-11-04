@@ -110,7 +110,7 @@ type ChecksumSource interface {
 var Overview = refdoc.Section{
 	Title: "Shared behavior",
 	Items: []string{
-		"All network calls share one HTTP/2 client and one semaphore of `--concurrency` slots (default 32).",
+		"All network calls share one HTTP/2 client. Concurrent requests are limited per upstream with `--concurrency` n (default 32): the npm registry and OSV get 2n slots each, container registries (Docker Hub, GHCR, Helm OCI charts) n/2, and everything else (Go proxy, GitHub, git tags, Helm repositories, custom datasources) shares n. A busy upstream doesn't hold up the others.",
 		"Idempotent requests are retried up to 3 times on connection errors and 429/500/502/503/504, with jittered exponential backoff, honoring `Retry-After`.",
 		"Rate limits that reset within 60s are waited out. Longer ones fail fast with `rate limited by <host> until <time>`.",
 		"Lookups are deduped within a run. There is no persistent cache.",

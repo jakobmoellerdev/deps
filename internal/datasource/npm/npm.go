@@ -90,8 +90,8 @@ type wsEntry struct {
 	err   error
 }
 
-// New returns the npm datasource. sem bounds concurrent requests and is shared with the other
-// datasources; getenv supplies NPM_CONFIG_REGISTRY and the .npmrc ${VAR} expansions.
+// New returns the npm datasource. sem bounds concurrent requests; it is npm's own pool
+// (httpx.Limits.NPM). getenv supplies NPM_CONFIG_REGISTRY and the .npmrc ${VAR} expansions.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) datasource.Datasource {
 	return &Source{
 		client: client, sem: sem, getenv: getenv,

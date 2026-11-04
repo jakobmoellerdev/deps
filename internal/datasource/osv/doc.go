@@ -8,7 +8,7 @@ import (
 var Doc = refdoc.Section{
 	Title: "Security advisories (OSV)",
 	Items: []string{
-		"deps sends one `POST https://api.osv.dev/v1/querybatch` per 1000 packages, then one `GET /v1/vulns/{id}` per advisory.",
+		"deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.",
 		"Ecosystems: `Go` (gomod `direct`/`indirect`), `npm`, and `GitHub Actions` (github.com actions; ranges are evaluated locally).",
 		"Withdrawn advisories are skipped, and aliases are reported once.",
 	},

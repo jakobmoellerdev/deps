@@ -1,16 +1,20 @@
 package osv
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -317,6 +321,8 @@ func TestAdvisoriesBatchingAndPagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The chunks of a round run concurrently, so they reach the server in any order; rounds
+	// (page tokens) run one after the other.
 	var sizes []int
 	var tokens []string
 	for _, b := range f.batches {
@@ -327,8 +333,9 @@ func TestAdvisoriesBatchingAndPagination(t *testing.T) {
 			}
 		}
 	}
-	if want := []int{2, 2, 1, 2, 1}; !reflect.DeepEqual(sizes, want) {
-		t.Errorf("batch sizes = %v, want %v", sizes, want)
+	slices.Sort(sizes[:3])
+	if want := []int{1, 2, 2, 2, 1}; !reflect.DeepEqual(sizes, want) {
+		t.Errorf("batch sizes = %v, want %v (first round sorted)", sizes, want)
 	}
 	if want := []string{"example.com/m1@p2", "example.com/m3@x", "example.com/m1@p3"}; !reflect.DeepEqual(tokens, want) {
 		t.Errorf("page tokens = %v, want %v", tokens, want)
@@ -452,8 +459,78 @@ func TestAdvisoriesCanceled(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	s, ok := New(http.DefaultClient, nil).(*Source)
-	if !ok || s.baseURL != defaultBaseURL || s.batch != maxBatch {
+	if !ok || s.baseURL != defaultBaseURL || s.batch != batchSize {
 		t.Errorf("New = %+v", s)
+	}
+}
+
+// TestAdvisoriesFetchesDuringBatches checks that the advisories of a returned batch are fetched
+// while another batch is still running, instead of after the last one.
+func TestAdvisoriesFetchesDuringBatches(t *testing.T) {
+	f := newFake(t)
+	for _, name := range []string{"example.com/fast", "example.com/slow"} {
+		id := "GO-" + strings.TrimPrefix(name, "example.com/")
+		f.results["Go|"+name+"|v1.0.0|"] = result{ids: []string{id}}
+		f.vulns[id] = goVuln(id, nil, name, "1.0.1")
+	}
+	fetched := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/vulns/GO-fast" {
+			defer close(fetched)
+		}
+		if r.Method == http.MethodPost {
+			b, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(b))
+			if bytes.Contains(b, []byte("example.com/slow")) {
+				select {
+				case <-fetched:
+				case <-time.After(5 * time.Second):
+					t.Error("GO-fast was not fetched while the slow batch was running")
+				}
+			}
+		}
+		f.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	s := newSource(srv.Client(), make(chan struct{}, 4), srv.URL)
+	s.batch = 1
+	got, err := s.Advisories(t.Context(), []dep.Dep{goDep("example.com/fast", "v1.0.0"), goDep("example.com/slow", "v1.0.0")})
+	if err != nil || len(got[0]) != 1 || len(got[1]) != 1 {
+		t.Fatalf("Advisories = %+v, %v", got, err)
+	}
+}
+
+// TestAdvisoriesFetchersFillSem checks that advisory fetches use every slot of the semaphore
+// (OSV's own pool), not a fixed number of fetchers.
+func TestAdvisoriesFetchersFillSem(t *testing.T) {
+	const n = maxFetchers + 4
+	f := newFake(t)
+	var ids []string
+	for i := range n {
+		id := fmt.Sprintf("GO-%02d", i)
+		ids = append(ids, id)
+		f.vulns[id] = goVuln(id, nil, "example.com/m", "1.0.1")
+	}
+	f.results["Go|example.com/m|v1.0.0|"] = result{ids: ids}
+	var inflight atomic.Int32
+	all := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			if inflight.Add(1) == n {
+				close(all)
+			}
+			select {
+			case <-all:
+			case <-time.After(5 * time.Second):
+				t.Errorf("%d of %d advisory fetches in flight, want all", inflight.Load(), n)
+			}
+		}
+		f.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	got, err := newSource(srv.Client(), make(chan struct{}, n), srv.URL).Advisories(t.Context(), []dep.Dep{goDep("example.com/m", "v1.0.0")})
+	if err != nil || len(got[0]) != n {
+		t.Fatalf("Advisories = %d vulns, %v", len(got[0]), err)
 	}
 }
 

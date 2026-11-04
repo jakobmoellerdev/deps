@@ -69,7 +69,7 @@ func newRoot() *cobra.Command {
 	pf.BoolVarP(&o.verbose, "verbose", "v", false, "also print skipped dependencies (skip lines)")
 	pf.StringVar(&o.log.level, "log-level", "warn", "log level: debug, info, warn, error; $DEPS_LOG_LEVEL replaces the default")
 	pf.StringVar(&o.log.format, "log-format", "text", "log format: text, json; $DEPS_LOG_FORMAT replaces the default")
-	pf.IntVar(&o.concurrency, "concurrency", 32, "maximum concurrent network requests and lookups; at least 1")
+	pf.IntVar(&o.concurrency, "concurrency", 32, "maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1")
 	pf.StringVar(&o.prof.cpu, "cpuprofile", "", "write a CPU profile to this file")
 	pf.StringVar(&o.prof.mem, "memprofile", "", "write an allocation profile to this file on exit")
 	_ = pf.MarkHidden("cpuprofile")
@@ -116,11 +116,11 @@ type session struct {
 	stderr    io.Writer
 	auth      *httpx.Auth
 	gh        *githubapi.Client // shared GitHub release lists (datasources and release notes)
-	sem       chan struct{}
+	sem       chan struct{}     // the default request pool (httpx.Limits.Default)
 }
 
 // newSession loads the config and wires the managers and datasources onto one HTTP client
-// and one request semaphore.
+// and the request pools of --concurrency (httpx.NewLimits).
 func newSession(o *rootOpts, info platform.Info, token string, client *http.Client, stderr io.Writer) (*session, error) {
 	root, err := filepath.Abs(o.dir)
 	if err != nil {
@@ -134,7 +134,8 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	if err != nil {
 		return nil, err
 	}
-	sem := make(chan struct{}, o.concurrency)
+	limits := httpx.NewLimits(o.concurrency)
+	sem := limits.Default
 	auth := httpx.NewAuth(info, token, os.Getenv)
 	host, source := cfg.Actions.DefaultHost, "config"
 	if host == "" {
@@ -144,18 +145,18 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	slog.Debug("config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
 	var security engine.SecuritySource
 	if cfg.SecurityEnabled() {
-		security = osv.New(client, sem)
+		security = osv.New(client, limits.OSV)
 	}
 	gh := githubapi.New(client, auth, sem)
 	releases := githubreleases.New(gh)
-	docker := dockerds.New(client, sem)
+	docker := dockerds.New(client, limits.Docker)
 	sources := map[string]engine.Datasource{
 		"git-tags":          gittags.New(client, auth, sem, gh),
 		"go":                goproxy.New(client, sem),
 		gotoolchain.Name:    gotoolchain.New(client, sem),
 		"docker":            docker,
 		githubreleases.Name: releases,
-		npmds.Name:          npmds.New(client, sem, os.Getenv),
+		npmds.Name:          npmds.New(client, limits.NPM, os.Getenv),
 		nodeversion.Name:    nodeversion.New(client, sem, os.Getenv),
 		helmds.Name:         helmds.New(client, sem, auth, docker),
 	}
