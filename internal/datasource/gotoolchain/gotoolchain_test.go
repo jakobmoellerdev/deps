@@ -29,7 +29,7 @@ func TestReleases(t *testing.T) {
 		},
 		{name: "http error", status: 500, err: "HTTP 500"},
 		{name: "not json", body: "<html>", status: 200, err: "invalid character"},
-		{name: "bad element", body: `[{"version":1}]`, status: 200, err: "cannot unmarshal"},
+		{name: "bad element", body: `[{"version":1}]`, status: 200, err: "unmarshal JSON number"}, // json/v2 words the prefix randomly
 		{name: "empty", body: `[]`, status: 200, err: "no stable releases"},
 	}
 	for _, tt := range tests {
