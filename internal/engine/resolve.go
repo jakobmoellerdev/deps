@@ -689,7 +689,8 @@ const (
 // the best one of the bucket that passes two release-time guards, each falling back to the
 // bucket's next best candidate:
 //   - a major update whose release predates the current version is a legacy tag
-//     (k8s.io/client-go v1.5.2 from 2016 versus v0.37.1), not an upgrade;
+//     (k8s.io/client-go v1.5.2 from 2016 versus v0.37.1), not an upgrade; skipped for docker
+//     deps, see buildTimes;
 //   - a candidate released less than the minimumReleaseAge of its update type ago is too new.
 //
 // Release times are only asked when a guard applies and the datasource has them, at most
@@ -778,9 +779,16 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 // reasonOlder rejects a major candidate released before the current version.
 const reasonOlder = "older than current"
 
+// buildTimes reports whether datasource's release times are build times rather than release
+// times. Docker image `created` stamps are: docker-library rebuilds every floating tag within
+// minutes (postgres:14 can be seconds newer than postgres:18), so comparing them says nothing
+// about which major is the legacy one, and the older-than-current guard would reject real
+// upgrades. The minimum release age still applies to them.
+func buildTimes(ds string) bool { return ds == "docker" }
+
 // guard returns why candidate c fails a release-time guard, or "".
 func (r *resolver) guard(timer datasource.Timer, c versioning.Candidate) string {
-	if c.Kind == dep.Major && r.olderThanCurrent(timer, c.Version) {
+	if c.Kind == dep.Major && !buildTimes(r.d.Datasource) && r.olderThanCurrent(timer, c.Version) {
 		slog.DebugContext(r.ctx, "major candidate older than current", "name", r.d.Name, "current", r.d.Version, "candidate", c.Version)
 		return reasonOlder
 	}
