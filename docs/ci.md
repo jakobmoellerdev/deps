@@ -94,6 +94,19 @@ Pass the token to **both** steps:
 1. **Workflow files.** `GITHUB_TOKEN` cannot push commits that change `.github/workflows/*`; GitHub rejects the push with `refusing to allow a GitHub App to create or update workflow … without workflows permission`. Action updates are exactly such commits.
 2. **CI on the PRs.** PRs and pushes made with `GITHUB_TOKEN` do not trigger workflows (`pull_request`, `push`), so CI never runs on deps PRs, and [automerge](#automerge) would wait forever.
 
+`permissions: actions: write` does not help. It covers the Actions API (cancel or re-run runs, dispatch workflows, artifacts, caches), not git pushes. The `workflows` permission that the push error asks for exists only for GitHub Apps and PATs; the [`permissions` key](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions) has no `workflows` entry. Verified on 2026-11-04: a job with `contents: write, actions: write, pull-requests: write` was refused when pushing a change to `.github/workflows/check.yml`.
+
+**Only `GITHUB_TOKEN`:** if you can't create an App or PAT, exclude workflow-file updates so the pushes succeed, and accept that the PRs get no CI (no automerge):
+
+```yaml
+# .deps.yaml
+rules:
+  - manager: github-actions
+    ignore: true
+```
+
+Workflow permissions: `contents: write`, `pull-requests: write` (and `issues: write` for the dashboard).
+
 **Creating the App:**
 
 1. *Settings → Developer settings → GitHub Apps → New GitHub App*. No webhook is needed.

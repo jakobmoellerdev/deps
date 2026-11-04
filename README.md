@@ -87,7 +87,7 @@ jobs:
 
 Use a GitHub App token (or a PAT) instead of `GITHUB_TOKEN`, and pass it to both `actions/checkout` and the action:
 
-- **Workflow files.** `GITHUB_TOKEN` can't push changes to `.github/workflows/*`, and updating those files is most of what deps does. The App needs the *Workflows: write* permission; a classic PAT needs the `workflow` scope.
+- **Workflow files.** `GITHUB_TOKEN` can't push changes to `.github/workflows/*`, and updating those files is most of what deps does. `permissions: actions: write` doesn't change that; the `workflows` permission exists only for Apps and PATs. The App needs the *Workflows: write* permission; a classic PAT needs the `workflow` scope. Without either, see [only `GITHUB_TOKEN`](docs/ci.md#github).
 - **CI on the PRs.** PRs and pushes made with `GITHUB_TOKEN` don't trigger workflows, so CI wouldn't run on deps PRs, and `automerge` would never see green checks.
 
 The App needs *Contents*, *Pull requests* and *Workflows* set to write. Add *Issues: write* for the dashboard, and *Checks* and *Commit statuses* set to read for automerge. deps pushes with the credentials that `actions/checkout` stores, and calls the API with the action's `token` input.
