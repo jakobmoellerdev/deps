@@ -76,7 +76,7 @@ func (s *Source) fetch(ctx context.Context) ([]datasource.Release, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GET %s: HTTP %d", s.url, resp.StatusCode)
 	}
-	dec := jsontext.NewDecoder(resp.Body)
+	dec := jsontext.NewDecoder(resp.Body, jsontext.AllowDuplicateNames(true)) // no per-object name sets
 	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
 		return nil, fmt.Errorf("GET %s: %w", s.url, cmp.Or(err, errors.New("not an array")))
 	}

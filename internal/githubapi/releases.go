@@ -188,7 +188,7 @@ func (c *Client) restPage(ctx context.Context, r Repo, l *List) (bool, error) {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return false, statusError(resp)
 	}
-	dec := jsontext.NewDecoder(resp.Body)
+	dec := jsontext.NewDecoder(resp.Body, jsontext.AllowDuplicateNames(true)) // no per-object name sets
 	tok, err := dec.ReadToken()
 	if err == nil && tok.Kind() != '[' {
 		err = errors.New("not an array")
@@ -423,7 +423,7 @@ func (c *Client) restNotes(ctx context.Context, r Repo, first int, each func(Not
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return statusError(resp)
 	}
-	dec := jsontext.NewDecoder(resp.Body)
+	dec := jsontext.NewDecoder(resp.Body, jsontext.AllowDuplicateNames(true)) // no per-object name sets
 	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
 		return errors.New("malformed response: not a release list")
 	}

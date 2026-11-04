@@ -441,7 +441,7 @@ func (s *Source) fetchDoc(ctx context.Context, loc location, name string) (times
 // `readme`, is skipped token by token without being held in memory; decoding stops as soon as
 // both members were seen.
 func decodeDoc(r io.Reader) (times map[string]string, repo string, err error) {
-	dec := jsontext.NewDecoder(r)
+	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true)) // see decodeVersions
 	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '{' {
 		return nil, "", cmp.Or(err, errors.New("not an object"))
 	}
@@ -515,8 +515,10 @@ func decodeTimes(dec *jsontext.Decoder) (map[string]string, error) {
 
 // decodeVersions streams the metadata document and returns the versions that are not
 // deprecated; only one version object is buffered at a time.
+// Duplicate-name checking is off: it keeps a name set per object, which made up over 90% of
+// the allocations on large packuments (typescript).
 func decodeVersions(r io.Reader) (rels []datasource.Release, deprecated int, err error) {
-	dec := jsontext.NewDecoder(r)
+	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true))
 	if err := expectDelim(dec, '{'); err != nil {
 		return nil, 0, err
 	}

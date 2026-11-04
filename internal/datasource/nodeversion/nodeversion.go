@@ -106,7 +106,7 @@ func (s *Source) fetch(ctx context.Context) error {
 		return fmt.Errorf("GET %s: HTTP %d", s.url, resp.StatusCode)
 	}
 	// The index is an array of objects with large file lists; decode one element at a time.
-	dec := jsontext.NewDecoder(resp.Body)
+	dec := jsontext.NewDecoder(resp.Body, jsontext.AllowDuplicateNames(true)) // no per-object name sets
 	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
 		return fmt.Errorf("GET %s: malformed index", s.url)
 	}

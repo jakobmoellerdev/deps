@@ -101,7 +101,7 @@ func (n *Notes) fetchGitea(ctx context.Context, r repoRef) ([]release, error) {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("GET %s: HTTP %d", req.URL.Redacted(), resp.StatusCode)
 	}
-	dec := jsontext.NewDecoder(resp.Body)
+	dec := jsontext.NewDecoder(resp.Body, jsontext.AllowDuplicateNames(true)) // no per-object name sets
 	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
 		return nil, fmt.Errorf("GET %s: not a release list", req.URL.Redacted())
 	}
