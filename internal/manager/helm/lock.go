@@ -200,6 +200,8 @@ func resolveAliases(reqs, locked []*chartDependency) []*chartDependency {
 }
 
 // hashReq is Helm's resolver.HashReq: "sha256:" + hex sha256 of the JSON of [req, lock].
+// It stays on encoding/json v1, as Helm hashes it: v2 would keep `enabled: false` (omitempty
+// only omits empty JSON) and change the digest helm checks.
 func hashReq(req, lock []*chartDependency) (string, error) {
 	data, err := json.Marshal([2][]*chartDependency{req, lock})
 	if err != nil {
