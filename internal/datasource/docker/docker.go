@@ -108,7 +108,7 @@ func newSource(client *http.Client, sem chan struct{}, cred credentials.Credenti
 	// The client has no retry layer of its own: the shared httpx transport already retries, and
 	// nesting both would multiply attempts.
 	c := &auth.Client{
-		Client:         &http.Client{Transport: tr},
+		Client:         &http.Client{Transport: linkFixer{tr}},
 		CredentialFunc: cred,
 		Cache:          auth.NewCache(),
 	}
