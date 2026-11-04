@@ -8,7 +8,7 @@ import (
 var Doc = refdoc.Datasource{
 	Name:         Name,
 	NameForm:     "`go` / `toolchain`",
-	Endpoints:    "`https://go.dev/dl/?mode=json&include=all`, once per run; a derived `X.Y` per minor",
+	Endpoints:    "`https://go.dev/dl/?mode=json&include=all`, once per run; a derived `X.Y` per minor. Release dates: `https://raw.githubusercontent.com/golang/website/HEAD/internal/history/release.go` (as Renovate's golang-version), once per run when a release time is needed",
 	Auth:         "none",
-	ReleaseTimes: "none",
+	ReleaseTimes: "release date from Go's release history (midnight UTC); a derived `X.Y` has the date of `X.Y.0`",
 }

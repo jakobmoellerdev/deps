@@ -309,7 +309,7 @@ func (s *summary) markdown() string {
 		b.WriteString("\n")
 	}
 	if len(s.Res.Pending) > 0 {
-		fmt.Fprintf(&b, "### Held back by minimumReleaseAge\n\n<details><summary>%s too new to update yet</summary>\n\n| Dependency | File | Version | Reason |\n|---|---|---|---|\n",
+		fmt.Fprintf(&b, "### Held back by minimumReleaseAge\n\n<details><summary>%s held back (too new, or without a release time under timestamp-required)</summary>\n\n| Dependency | File | Version | Reason |\n|---|---|---|---|\n",
 			plural(len(s.Res.Pending), "release", "releases"))
 		for _, p := range s.Res.Pending {
 			fmt.Fprintf(&b, "| `%s` | `%s:%d` | `%s` | %s |\n", p.Dep.Name, p.Dep.File, p.Dep.Line, p.Version, mdCell(p.Reason))

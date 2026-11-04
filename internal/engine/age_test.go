@@ -155,24 +155,80 @@ func TestMinimumReleaseAge(t *testing.T) {
 	}
 }
 
-func TestMinimumReleaseAgeUnknownTime(t *testing.T) {
+// TestMinimumReleaseAgeBehaviour checks both minimumReleaseAgeBehaviour modes for versions
+// whose release time is unknown: a zero time, a failed lookup, or a datasource without times.
+func TestMinimumReleaseAgeBehaviour(t *testing.T) {
 	d := []dep.Dep{{Datasource: "go", Versioning: "go", Name: "example.com/a", Version: "v1.0.0", Line: 1}}
-	for name, times := range map[string]map[string]time.Time{
-		"zero time":    {"v1.1.0": {}},
-		"lookup error": {},
-	} {
-		t.Run(name, func(t *testing.T) {
-			ds := &timedReleases{versions: []string{"v1.0.0", "v1.1.0"}, times: times}
-			res, _ := resolveStub(t, "minimumReleaseAge: 28 days\n", "gomod", d, ds, nil)
-			if len(res.Updates) != 1 || res.Updates[0].NewVersion != "v1.1.0" {
-				t.Fatalf("updates = %+v, want v1.1.0 (unknown release time is allowed)", res.Updates)
+	const held = "release time unknown (minimum 28 days, timestamp-required)"
+	timed := func(times map[string]time.Time) Datasource {
+		return &timedReleases{versions: []string{"v1.0.0", "v1.0.1", "v1.1.0"}, times: times}
+	}
+	zero := map[string]time.Time{"v1.0.1": daysAgo(40), "v1.1.0": {}}
+	failed := map[string]time.Time{"v1.0.1": daysAgo(40)} // v1.1.0: lookup error
+	tests := []struct {
+		name, cfg string
+		ds        Datasource
+		want      string // "" = no update
+		pending   string // held-back version; its reason is held
+	}{
+		{"optional zero time", "", timed(zero), "v1.1.0", ""},
+		{"optional lookup error", "", timed(failed), "v1.1.0", ""},
+		{"optional explicit", "minimumReleaseAgeBehaviour: timestamp-optional\n", timed(zero), "v1.1.0", ""},
+		{"optional without timer", "", goVersions, "v1.2.0", ""},
+		{"required zero time falls back", "minimumReleaseAgeBehaviour: timestamp-required\n", timed(zero), "v1.0.1", "v1.1.0"},
+		{"required lookup error falls back", "minimumReleaseAgeBehaviour: timestamp-required\n", timed(failed), "v1.0.1", "v1.1.0"},
+		{"required without timer", "minimumReleaseAgeBehaviour: timestamp-required\n", goVersions, "", "v1.2.0"},
+		{"required by rule", "rules: [{names: [example.com/a], minimumReleaseAgeBehaviour: timestamp-required}]\n", timed(zero), "v1.0.1", "v1.1.0"},
+		{"required for minors only", "rules: [{updateTypes: [minor], minimumReleaseAgeBehaviour: timestamp-required}]\n", timed(zero), "v1.0.1", "v1.1.0"},
+		{"rule makes optional", "minimumReleaseAgeBehaviour: timestamp-required\nrules: [{names: [example.com/a], minimumReleaseAgeBehaviour: timestamp-optional}]\n", timed(zero), "v1.1.0", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res, tr := resolveStub(t, "minimumReleaseAge: 28 days\n"+tc.cfg, "gomod", d, tc.ds, nil)
+			if tc.want == "" && len(res.Updates) != 0 || tc.want != "" && (len(res.Updates) != 1 || res.Updates[0].NewVersion != tc.want) {
+				t.Fatalf("updates = %+v, want %q", res.Updates, tc.want)
+			}
+			if tc.pending == "" {
+				if len(res.Pending) != 0 || len(tr.Rejected[held]) != 0 {
+					t.Errorf("pending = %+v, rejected = %v; want none", res.Pending, tr.Rejected)
+				}
+				return
+			}
+			if len(res.Pending) != 1 || res.Pending[0].Version != tc.pending || res.Pending[0].Reason != held {
+				t.Errorf("pending = %+v, want %s %q", res.Pending, tc.pending, held)
+			}
+			if got := tr.Rejected[held]; len(got) == 0 || got[0] != tc.pending {
+				t.Errorf("rejected[%q] = %v, want %s first", held, got, tc.pending)
 			}
 		})
 	}
-	// Without a Timer the age cannot be checked: the update is proposed.
-	res, _ := resolveStub(t, "minimumReleaseAge: 28 days\n", "gomod", d, goVersions, nil)
-	if len(res.Updates) != 1 || res.Updates[0].NewVersion != "v1.2.0" {
-		t.Fatalf("no timer: updates = %+v, want v1.2.0", res.Updates)
+	// Without minimumReleaseAge, minimumReleaseAgeBehaviour has no effect.
+	res, _ := resolveStub(t, "minimumReleaseAgeBehaviour: timestamp-required\n", "gomod", d, timed(zero), nil)
+	if len(res.Updates) != 1 || res.Updates[0].NewVersion != "v1.1.0" || len(res.Pending) != 0 {
+		t.Errorf("no age: updates = %+v, pending = %+v; want v1.1.0", res.Updates, res.Pending)
+	}
+}
+
+// TestMinimumReleaseAgeUnknownBound checks that a bucket gives up after maxUnknownTimes
+// undated candidates under timestamp-required, without prefetching further times.
+func TestMinimumReleaseAgeUnknownBound(t *testing.T) {
+	ds := &timedReleases{versions: []string{"v1.0.0"}, times: map[string]time.Time{}}
+	for i := 1; i <= 10; i++ {
+		v := fmt.Sprintf("v1.0.%d", i)
+		ds.versions = append(ds.versions, v)
+		ds.times[v] = time.Time{}
+	}
+	ds.times["v1.0.1"] = daysAgo(30) // old enough, but beyond the bound
+	d := []dep.Dep{{Datasource: "go", Versioning: "go", Name: "example.com/a", Version: "v1.0.0", Line: 1}}
+	res, tr := resolveStub(t, "minimumReleaseAge: 28 days\nminimumReleaseAgeBehaviour: timestamp-required\n", "gomod", d, ds, nil)
+	if len(res.Updates) != 0 {
+		t.Fatalf("updates = %+v, want none", res.Updates)
+	}
+	if got := tr.Rejected["release time unknown (minimum 28 days, timestamp-required)"]; !slices.Equal(got, []string{"v1.0.10", "v1.0.9", "v1.0.8"}) {
+		t.Errorf("held = %v", got)
+	}
+	if len(ds.asked) != maxUnknownTimes {
+		t.Errorf("release times asked for %v, want %d versions", ds.asked, maxUnknownTimes)
 	}
 }
 
@@ -199,27 +255,42 @@ func TestMinimumReleaseAgeBound(t *testing.T) {
 }
 
 // TestMinimumReleaseAgeExempt checks that digest refreshes, pins and security updates are
-// not held back by the minimum release age.
+// not held back by the minimum release age, also under timestamp-required without times.
 func TestMinimumReleaseAgeExempt(t *testing.T) {
 	img := func(digest string) []dep.Dep {
 		return []dep.Dep{{Datasource: "docker", Versioning: "docker", Name: "img", Version: "1.25", Digest: digest, Line: 1}}
 	}
-	ds := func() *timedReleases {
-		return &timedReleases{versions: []string{"1.25", "1.26"}, times: map[string]time.Time{"1.25": daysAgo(90), "1.26": daysAgo(1)}}
-	}
-	res, _ := resolveStub(t, "minimumReleaseAge: 28 days\n", "docker", img("sha256:old"), ds(), nil)
-	if len(res.Updates) != 1 || res.Updates[0].Type != dep.Digest || res.Updates[0].NewDigest != "sha256:1.25" {
-		t.Errorf("pinned: updates = %+v, want digest refresh of 1.25", res.Updates)
-	}
-	res, _ = resolveStub(t, "minimumReleaseAge: 28 days\npin: digest\n", "docker", img(""), ds(), nil)
-	if len(res.Updates) != 1 || res.Updates[0].Type != dep.Pin || res.Updates[0].NewDigest != "sha256:1.25" {
-		t.Errorf("pin: updates = %+v, want pin of 1.25", res.Updates)
-	}
-	sec := &fakeSec{vulns: map[string][]Vuln{"example.com/a": {vuln("GO-1", "v1.2.0")}}}
 	goDep := []dep.Dep{{Datasource: "go", Versioning: "go", Name: "example.com/a", Version: "v1.0.0", Line: 1}}
-	res, _ = resolveStub(t, "minimumReleaseAge: 28 days\n", "gomod", goDep, goTimed(), sec)
-	if len(res.Updates) != 1 || res.Updates[0].NewVersion != "v1.2.0" || !slices.Equal(ids(&res.Updates[0]), []string{"GO-1"}) {
-		t.Errorf("security: updates = %+v, want v1.2.0 fixing GO-1 despite its age", res.Updates)
+	sec := &fakeSec{vulns: map[string][]Vuln{"example.com/a": {vuln("GO-1", "v1.2.0")}}}
+	for _, mode := range []struct {
+		cfg          string
+		docker, gods func() *timedReleases
+	}{
+		{
+			cfg: "minimumReleaseAge: 28 days\n",
+			docker: func() *timedReleases {
+				return &timedReleases{versions: []string{"1.25", "1.26"}, times: map[string]time.Time{"1.25": daysAgo(90), "1.26": daysAgo(1)}}
+			},
+			gods: goTimed,
+		},
+		{
+			cfg:    "minimumReleaseAge: 28 days\nminimumReleaseAgeBehaviour: timestamp-required\n",
+			docker: func() *timedReleases { return &timedReleases{versions: []string{"1.25", "1.26"}} },
+			gods:   func() *timedReleases { ds := goTimed(); ds.times = nil; return ds },
+		},
+	} {
+		res, _ := resolveStub(t, mode.cfg, "docker", img("sha256:old"), mode.docker(), nil)
+		if len(res.Updates) != 1 || res.Updates[0].Type != dep.Digest || res.Updates[0].NewDigest != "sha256:1.25" {
+			t.Errorf("%spinned: updates = %+v, want digest refresh of 1.25", mode.cfg, res.Updates)
+		}
+		res, _ = resolveStub(t, mode.cfg+"pin: digest\n", "docker", img(""), mode.docker(), nil)
+		if len(res.Updates) != 1 || res.Updates[0].Type != dep.Pin || res.Updates[0].NewDigest != "sha256:1.25" {
+			t.Errorf("%spin: updates = %+v, want pin of 1.25", mode.cfg, res.Updates)
+		}
+		res, _ = resolveStub(t, mode.cfg, "gomod", goDep, mode.gods(), sec)
+		if len(res.Updates) != 1 || res.Updates[0].NewVersion != "v1.2.0" || !slices.Equal(ids(&res.Updates[0]), []string{"GO-1"}) {
+			t.Errorf("%ssecurity: updates = %+v, want v1.2.0 fixing GO-1 despite its age", mode.cfg, res.Updates)
+		}
 	}
 }
 

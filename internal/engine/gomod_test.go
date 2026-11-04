@@ -108,6 +108,10 @@ func TestPseudoVersionUpdates(t *testing.T) {
 			want: []wantUpdate{{typ: dep.Digest, version: head, digest: hash}},
 		},
 		{name: "unknown time", cfg: "minimumReleaseAge: 30 days\n", version: cur, head: datasource.Revision{Version: head, Digest: hash}, want: []wantUpdate{{typ: dep.Digest, version: head, digest: hash}}},
+		{
+			name: "unknown time, timestamp-required", cfg: "minimumReleaseAge: 30 days\nminimumReleaseAgeBehaviour: timestamp-required\n", version: cur,
+			head: datasource.Revision{Version: head, Digest: hash}, pending: "release time unknown (minimum 30 days, timestamp-required)",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -181,6 +185,11 @@ func TestMajorPathUpdates(t *testing.T) {
 			times: map[string]time.Time{"example.com/m/v4@v4.0.0": daysAgo(2), "example.com/m/v3@v3.0.0": daysAgo(20)},
 			want:  []wantUpdate{minor, withBucket(v3, "major")}, wantProbes: 1,
 		},
+		{
+			name: "unknown time, timestamp-required", cfg: "minimumReleaseAge: 7 days\nminimumReleaseAgeBehaviour: timestamp-required\n",
+			times: map[string]time.Time{name + "@v2.2.0": daysAgo(30), "example.com/m/v3@v3.0.0": daysAgo(20)},
+			want:  []wantUpdate{minor, withBucket(v3, "major")}, wantProbes: 1,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -195,7 +204,11 @@ func TestMajorPathUpdates(t *testing.T) {
 			if got := ds.probes.Load(); got != tt.wantProbes {
 				t.Errorf("probes = %d, want %d", got, tt.wantProbes)
 			}
-			if tt.name == "too new" && (len(res.Pending) != 1 || res.Pending[0].Version != "example.com/m/v4@v4.0.0") {
+			if strings.HasPrefix(tt.name, "too new") && (len(res.Pending) != 1 || res.Pending[0].Version != "example.com/m/v4@v4.0.0") {
+				t.Errorf("pending = %+v", res.Pending)
+			}
+			if strings.HasPrefix(tt.name, "unknown time") && (len(res.Pending) != 1 || res.Pending[0].Version != "example.com/m/v4@v4.0.0" ||
+				res.Pending[0].Reason != "release time unknown (minimum 7 days, timestamp-required)") {
 				t.Errorf("pending = %+v", res.Pending)
 			}
 		})

@@ -23,6 +23,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `timezone` | not supported: workflow crons are UTC |
 | `updateNotScheduled` | `updateNotScheduled` |
 | `minimumReleaseAge` | `minimumReleaseAge` / `rules[].minimumReleaseAge` (`null` → `0 days`) |
+| `minimumReleaseAgeBehaviour` | `minimumReleaseAgeBehaviour` / `rules[].minimumReleaseAgeBehaviour` (`timestamp-required`, `timestamp-optional`); the default differs, see below |
 | `separateMajorMinor`, `separateMultipleMajor`, `separateMinorPatch` | same names, top level and per rule |
 | `pinDigests`, `docker:pinDigests`, `helpers:pinGitHubActionDigests` | `pin: digest` (top level or per rule) |
 | `rangeStrategy` | `rangeStrategy` / `rules[].rangeStrategy` for npm, cargo and Python (PEP 440, Poetry) ranges: `auto` (default, = `update-lockfile`), `bump`, `update-lockfile`; `widen`, `pin`, `replace` and `in-range-only` are not supported. Other managers replace the exact version |
@@ -89,7 +90,7 @@ With `branchPrefix: renovate/`, deps manages the branches and PRs Renovate creat
 - **`matchCategories`** is not supported. Write the managers or datasources explicitly.
 - **Presets are not supported.** The built-ins below cover the common ones.
 - **Schedules** are not time windows. A `schedule` entry is a cron trigger of the workflow that runs deps, and a run creates PRs for a group only when it was started by one of the group's crons (manual and push runs act on everything). They gate only creating PRs (and updating them with `updateNotScheduled: false`). Translate a Renovate window into a workflow cron inside it plus the same string in `schedule`: OCM's `* * * * 0` (Sunday) becomes `0 0 * * 0` in both `on.schedule` and the rules, next to a daily `0 0 * * *` cron for unscheduled deps. Natural-language schedules (`before 6am`) and `timezone` have no equivalent; crons are UTC.
-- **Release age.** An unknown release time never blocks an update. Digest refreshes, pins and security updates are always exempt, so Renovate's `minimumReleaseAge: null` rule for those update types needs no translation.
+- **Release age.** An unknown release time does not block an update by default (`minimumReleaseAgeBehaviour: timestamp-optional`); Renovate 42+ defaults to `timestamp-required`, which holds such releases back. Set `minimumReleaseAgeBehaviour: timestamp-required` to match it. In deps, custom datasources have no release times, and an image has one only when its config carries `created` (or the registry lists times). Digest refreshes, pins and security updates are always exempt, so Renovate's `minimumReleaseAge: null` rule for those update types needs no translation. When the newest candidate is too new, deps proposes the newest one that is old enough; Renovate waits.
 - **Indirect Go requirements** are ignored by default, as in Renovate. Opt in with `depTypes: [indirect], ignore: false`.
 - **PR limits.** Renovate defaults to `prConcurrentLimit: 10`, `prHourlyLimit: 2`; deps to `0`/`0` (unlimited), plus the per-run `--max-new-prs 10`. The effective limit is the minimum of the non-zero limits.
 - **Automerge.** deps always uses the platform's auto-merge (Renovate's `platformAutomerge: true`) and never merges by itself while checks are pending. On GitHub repositories that disallow auto-merge, deps merges directly, but only a mergeable PR with at least one status or check run, all green; a repository without any checks is never merged that way, and there is no `ignoreTests` to change that.
@@ -117,7 +118,7 @@ DEPS_GITHUB_COM_TOKEN=$(gh auth token) deps plan -v --config ~/Projects/deps/doc
 git apply --check /tmp/ocm.diff
 ```
 
-On 2026-11-04 (OCM `b4b5473`) this exited 0 with `870 dependencies, 43 updates in 19 PRs, 200 held back by minimumReleaseAge, 91 skipped, 0 errors`, and the diff applied.
+On 2026-11-04 (OCM `b4b5473`) this exited 0 with `870 dependencies, 36 updates in 14 PRs, 221 held back by minimumReleaseAge, 26 skipped, 0 errors`, and the diff applied. Against the same checkout, the previous deps (without the floating-tag release times and `minimumReleaseAgeBehaviour: timestamp-required`) had 41 updates in 18 PRs and 217 held back; the difference is exactly markdownlint-cli2-action v25, Garden Linux 1877.28 (two files) and envtest (rows below).
 
 How the pieces map:
 
@@ -130,6 +131,7 @@ How the pieces map:
 | `extends: :dependencyDashboard` | `dependencyDashboard: true`, plus `dependencyDashboardTitle: Dependency Dashboard (deps trial)` while Renovate's issue #331 is open |
 | `branchPrefix: renovate/` | `branchPrefix: deps/` for the trial (see [cutover](#cutover-for-ocm)) |
 | `gitAuthor`, `gitIgnoredAuthors` (ocmbot), `prConcurrentLimit: 0`, `prHourlyLimit: 0`, `separateMinorPatch`, `separateMultipleMajor`, `updateNotScheduled`, `minimumReleaseAge: 28 days`, `automerge: false`, `automergeType: pr` | same keys |
+| Renovate's default `minimumReleaseAgeBehaviour: timestamp-required` (Renovate 42+) | `minimumReleaseAgeBehaviour: timestamp-required`, set explicitly since deps defaults to `timestamp-optional` |
 | `schedule: ['* * * * 0']` (14 rules) | `schedule: ['0 0 * * 0']`, plus the crons `0 0 * * *` and `0 0 * * 0` in the [workflow](#workflow-for-ocm) |
 | 0: `matchFileNames: [chart/**]`, group "Kubernetes Controller chart" | `paths` + `group` |
 | 1: Garden Linux FIPS `allowedVersions: '/^\\d+\\.\\d+$/'`, `versioning: loose` | `allow: '/^\d+\.\d+$/'`, `versioning: loose` |
@@ -239,7 +241,7 @@ DEPS_GITHUB_COM_TOKEN=$(gh auth token) DEPS_TOKEN=$(gh auth token) \
   deps run --dry-run -v --config ~/Projects/deps/docs/examples-ocm.deps.yaml --trigger-schedule '0 0 * * 0'
 ```
 
-The result was `19 would-create, 200 held back by minimumReleaseAge, 91 skipped, 0 errors`. With `--trigger-schedule '0 0 * * *'` (the daily run), 7 PRs would be created: node minor and patch, js-yaml, undici, two golang.org/x/net security PRs, and Garden Linux. The other 12 were `skipped: outside schedule`. Since P18 (locked versions, lockfile-only updates), the js-yaml and undici security PRs are gone from both runs, and the npm group has the same 2 deps as Renovate's (rows below).
+The result was `19 would-create, 200 held back by minimumReleaseAge, 91 skipped, 0 errors`. With `--trigger-schedule '0 0 * * *'` (the daily run), 7 PRs would be created: node minor and patch, js-yaml, undici, two golang.org/x/net security PRs, and Garden Linux. The other 12 were `skipped: outside schedule`. Since P18 (locked versions, lockfile-only updates), the js-yaml and undici security PRs are gone from both runs, and the npm group has the same 2 deps as Renovate's (rows below). Since P10 (floating-tag release times, `minimumReleaseAgeBehaviour: timestamp-required` in the example), markdownlint-cli2-action, Garden Linux and envtest are held back as in Renovate (rechecked with `deps plan` on `b4b5473`; `run --dry-run` now refuses that checkout, which is no longer the tip of main).
 
 Renovate had no open PRs at that time. Its dashboard (#331, updated 2026-11-04 13:43 UTC) listed 8 updates "Awaiting Schedule" and 51 "Pending Status Checks", the latter held back by `minimumReleaseAge`.
 
@@ -252,9 +254,9 @@ Renovate had no open PRs at that time. Its dashboard (#331, updated 2026-11-04 1
 | npm dependencies | awaiting schedule: js-yaml, typescript-eslint | the same two: js-yaml 5.4.2 → 5.4.3 (`website`, exact; `.github/scripts`, lockfile-only) and typescript-eslint 8.71.0 → 8.71.1 | match (rechecked after P18). The 7 deps deps used to add (@fontsource-variable/inter, quicksand, @tabler/icons, @thulite/doks-core, @thulite/seo, mermaid, thulite) are already locked at the new version in `website/package-lock.json`; under the default `rangeStrategy: auto` (`update-lockfile`) deps compares with the locked version, as Renovate does, so they are up to date |
 | js-yaml 5.0.0 → 5.4.3, undici 8.3.0 → 8.12.2 in `.github/scripts` | — | — | match (rechecked after P18). OSV is queried with the locked versions (js-yaml 5.4.2, undici 8.12.2), which have no advisories, so the 2 security PRs deps used to propose are gone |
 | golang.org/x/net v0.62.0 (GO-2026-6860, GO-2026-6866) | pending in "golang x repositories" | 2 security PRs (`bindings/go`, website generator) | deps-only. Security updates skip schedule, group and release age; Renovate's `osvVulnerabilityAlerts` is off by default |
-| DavidAnson/markdownlint-cli2-action v24 → v25 | pending | would create | deps-only. `v25` has no GitHub release of its own (v25.0.0 does, from 2026-10-25), so deps sees no release time and does not enforce the age |
-| ghcr.io/gardenlinux/gardenlinux/fips 1877.28 | pending | would create (daily) | deps-only. The image config has no `created` time. Renovate requires a timestamp for `minimumReleaseAge`; deps allows updates whose release time is unknown |
-| envtest 1.37.0 and 1.36.2 | pending in the Kubernetes groups (minor, patch), with k8s.io/* v0.37.2 | `deps/group/kubernetes-dependencies-minor` and `-patch`, envtest only | deps-only. The envtest custom datasource has no release times, so envtest passes the age check. The k8s.io modules are held back in both |
+| DavidAnson/markdownlint-cli2-action v24 → v25 | pending | held back: `too new (released 2026-10-25, minimum 28 days)` | match (rechecked after P10). `v25` has no GitHub release of its own; deps dates it by the v25.0.0 release, which points to the same commit |
+| ghcr.io/gardenlinux/gardenlinux/fips 1877.28 | pending | held back: `release time unknown (minimum 28 days, timestamp-required)`, in both files | match (rechecked after P10). The image config has no `created` time; the example sets Renovate's default `minimumReleaseAgeBehaviour: timestamp-required` (deps' default is `timestamp-optional`, which would propose it) |
+| envtest 1.37.0 and 1.36.2 | pending in the Kubernetes groups (minor, patch), with k8s.io/* v0.37.2 | held back: `release time unknown (minimum 28 days, timestamp-required)` | match (rechecked after P10). The envtest custom datasource has no release times. The k8s.io modules are held back in both |
 | node: Renovate 26.13.0; deps 26.11.1 (minor) and 26.5.1 (patch) | pending | 2 PRs | deps-only. 26.13.0 is too new in both. deps falls back to the newest release older than 28 days; Renovate waits for the newest |
 | github.com/Microsoft/go-winio: Renovate v0.6.4, deps v0.6.3 | pending | would create | deps-only, the same fallback |
 | pin ghcr.io/open-component-model/kubernetes/controller (`chart/test-values.yaml`, `tag: latest`) | — | `deps/group/kubernetes-controller-chart` | deps-only. Renovate's helm-values manager reads only `values.yaml`; deps reads any YAML with `image:`/`repository:` |
@@ -273,8 +275,7 @@ Renovate had no open PRs at that time. Its dashboard (#331, updated 2026-11-04 1
 
 Each item comes from the comparison above or from [renovate-parity.md](renovate-parity.md):
 
-1. **Release times for floating tags.** A major tag like `v25` without its own release has no release time, so `minimumReleaseAge` is not enforced for it: markdownlint-cli2-action v25 is 10 days old, but deps would open the PR, while Renovate lists it as pending. Images without a `created` time and the envtest custom datasource are not held back either; Renovate holds back such timestamp-less releases, e.g. Garden Linux 1877.28 (parity P10).
-2. **Fallback versus waiting.** deps proposes the newest release that is old enough (node 26.11.1, go-winio v0.6.3); Renovate waits for the newest (26.13.0, v0.6.4). This is a design difference, documented under P10, not a bug. It is listed because it changes which PRs OCM sees.
+1. **Fallback versus waiting.** deps proposes the newest release that is old enough (node 26.11.1, go-winio v0.6.3); Renovate waits for the newest (26.13.0, v0.6.4). This is a design difference, documented under P10, not a bug. It is listed because it changes which PRs OCM sees.
 3. **Mend badges and the OpenSSF scorecard.** PR bodies show the release age as text, with no adoption, passing or confidence badges (L5) and no scorecard badge (`security:openssf-scorecard`, L6).
 4. **Renovate dashboard extras:** the "Abandoned Dependencies" section and the repository problems list (e.g. hidden Unicode warnings) have no deps equivalent.
 5. **Cutover steps not done:**

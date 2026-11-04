@@ -335,6 +335,60 @@ func TestReleaseTimeAndAssetsGraphQL(t *testing.T) {
 	}
 }
 
+func TestTagTime(t *testing.T) {
+	day := func(d int) time.Time { return time.Date(2026, 10, d, 0, 0, 0, 0, time.UTC) }
+	t.Run("graphql", func(t *testing.T) {
+		c, s := newServer(t, tokenAuth(), func(w http.ResponseWriter, q gql) {
+			switch q.Variables["ref"] {
+			case "refs/tags/light": // lightweight: the commit
+				_, _ = io.WriteString(w, `{"data":{"repository":{"ref":{"target":{"committedDate":"2026-10-01T00:00:00Z"}}}}}`)
+			case "refs/tags/annotated": // the tagger date, not the older commit
+				_, _ = io.WriteString(w, `{"data":{"repository":{"ref":{"target":{"tagger":{"date":"2026-10-03T02:00:00+02:00"},"target":{"committedDate":"2026-10-01T00:00:00Z"}}}}}}`)
+			case "refs/tags/untagged": // an annotated tag without tagger
+				_, _ = io.WriteString(w, `{"data":{"repository":{"ref":{"target":{"tagger":null,"target":{"committedDate":"2026-10-02T00:00:00Z"}}}}}}`)
+			case "refs/tags/err":
+				_, _ = io.WriteString(w, `{"errors":[{"message":"boom"}]}`)
+			default:
+				_, _ = io.WriteString(w, `{"data":{"repository":{"ref":null}}}`)
+			}
+		})
+		for tag, want := range map[string]time.Time{"light": day(1), "annotated": day(3), "untagged": day(2), "missing": {}} {
+			if got, err := c.TagTime(t.Context(), oR, tag, ""); err != nil || !got.Equal(want) {
+				t.Errorf("TagTime(%s) = %v, %v; want %v", tag, got, err, want)
+			}
+		}
+		if _, err := c.TagTime(t.Context(), oR, "err", ""); err == nil || err.Error() != "tag err of o/r: graphql: boom" {
+			t.Errorf("error = %v", err)
+		}
+		if q := s.reqs[0]; q.Variables["owner"] != "o" || q.Variables["name"] != "r" || !strings.Contains(q.Query, "ref(qualifiedName:$ref)") {
+			t.Errorf("query = %+v", q)
+		}
+	})
+	t.Run("rest", func(t *testing.T) {
+		c, s := newServer(t, nil, func(w http.ResponseWriter, q gql) {
+			switch q.Query {
+			case "REST /repos/o/r/git/commits/c1":
+				_, _ = io.WriteString(w, `{"sha":"c1","author":{"date":"2026-09-01T00:00:00Z"},"committer":{"date":"2026-10-01T00:00:00Z"}}`)
+			case "REST /repos/o/r/git/commits/bad":
+				w.WriteHeader(http.StatusInternalServerError)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		})
+		for commit, want := range map[string]time.Time{"c1": day(1), "gone": {}, "": {}} {
+			if got, err := c.TagTime(t.Context(), oR, "v1", commit); err != nil || !got.Equal(want) {
+				t.Errorf("TagTime(v1, %q) = %v, %v; want %v", commit, got, err, want)
+			}
+		}
+		if _, err := c.TagTime(t.Context(), oR, "v1", "bad"); err == nil || err.Error() != "tag v1 of o/r: HTTP 500" {
+			t.Errorf("error = %v", err)
+		}
+		if want := []string{"/repos/o/r/git/commits/bad", "/repos/o/r/git/commits/c1", "/repos/o/r/git/commits/gone"}; !slices.Equal(slices.Sorted(slices.Values(s.rest)), want) {
+			t.Errorf("requests = %q, want %q", s.rest, want)
+		}
+	})
+}
+
 func TestNotes(t *testing.T) {
 	handler := func(w http.ResponseWriter, q gql) {
 		switch {

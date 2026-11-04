@@ -36,6 +36,9 @@ pin: digest # docker:pinDigests + helpers:pinGitHubActionDigests
 monorepos: true # group:kubernetesMonorepo, group:goOpenapi (and the rest of group:monorepos)
 security: true # config:recommended vulnerability alerts (deps queries OSV)
 minimumReleaseAge: 28 days # minimumReleaseAge: '28 days'
+# Renovate 42+ default: releases without a release time (Garden Linux images without `created`,
+# the envtest custom datasource) are held back, not proposed. deps defaults to timestamp-optional.
+minimumReleaseAgeBehaviour: timestamp-required
 separateMajorMinor: true # config:recommended: majors get their own PR
 separateMinorPatch: true # separateMinorPatch: true
 separateMultipleMajor: true # separateMultipleMajor: true

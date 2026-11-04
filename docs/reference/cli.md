@@ -236,7 +236,7 @@ The header names the manager, dep type, datasource and versioning. The other lin
 - `builtin   monorepo <name> -> group "<name> monorepo"` appears for monorepo members.
 - `rules` lists the matching rules as `#<i> <fields>`, or `none` when no rule matched. Rules with `updateTypes` that applied to an update follow as `#<i> <fields> (applies to <type>)`.
 - `policy` is followed by one `<type>: <policy>` line per such type. `versioning=` is appended when a rule set it.
-- `rejected` groups versions by reason, most frequent first, with up to 3 newest examples each. Reasons include `ignored by rule #4 for major`, `outside allow /^\d+\.\d+$/`, `update type major not allowed`, `too new (released 2026-11-01, minimum 28 days)`, `older than current`, `prerelease`, `precision` and `not newer`.
+- `rejected` groups versions by reason, most frequent first, with up to 3 newest examples each. Reasons include `ignored by rule #4 for major`, `outside allow /^\d+\.\d+$/`, `update type major not allowed`, `too new (released 2026-11-01, minimum 28 days)`, `release time unknown (minimum 28 days, timestamp-required)`, `older than current`, `prerelease`, `precision` and `not newer`. The policy's `minAge=` reads `28 days (timestamp-required)` under `minimumReleaseAgeBehaviour: timestamp-required`.
 - `result` reads `skipped: <reason>`, `error: <err>`, `up to date`, or one `update` line per PR bucket, for example `update v6.0.0 -> v7.0.1 (major, bucket major)`.
 - Each advisory is printed as `security  <id>  <summary>  <url>`.
 
@@ -482,7 +482,7 @@ Summary: <n> dependencies, <u> updates in <g> PRs[, PRs: <count> <status>, ...][
       <name>  <file>:<line>  <from> -> <to>  (<type>[, security: <id>,...])
   <status>  <branch>  <url>                                            (run: closed obsolete PRs and the dashboard)
   Held back by minimumReleaseAge:
-      <name>  <file>:<line>  <version>  too new (released <date>, minimum <age>)
+      <name>  <file>:<line>  <version>  too new (released <date>, minimum <age>) | release time unknown (minimum <age>, timestamp-required)
   Skipped (-v lists each dependency):
     <count>  <reason>  (<how to update>)
 ```

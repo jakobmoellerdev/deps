@@ -533,7 +533,7 @@ concurrency:
 - a headline: dependencies found, updates, PRs (by status for `run`), releases held back by `minimumReleaseAge`, skipped, errors and the duration; or `No updates: <n> dependencies up to date, <k> skipped.`;
 - one section per PR, grouped like `run` groups them (`plan` and `apply` show the PRs `run` would open): the branch, the status and link (`run`), automerge and schedule (`waiting for <cron>`), and a `| Dependency | File | From | To | Type |` table, security updates marked with their advisory IDs;
 - closed obsolete PRs and the dependency dashboard;
-- the releases held back by `minimumReleaseAge`;
+- the releases held back by `minimumReleaseAge`: too new (`too new (released <date>, minimum <age>)`), or, under `minimumReleaseAgeBehaviour: timestamp-required`, without a known release time (`release time unknown (…)`);
 - the skip reasons with counts and how to update, for example `ignored by default (indirect; …)` → add a rule with `ignore: false`; the skipped dependencies are in a collapsible `<details>`;
 - the errors in full.
 

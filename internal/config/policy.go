@@ -38,8 +38,11 @@ type Policy struct {
 	CommitScope   string         // conventional commit scope, "" = none
 	Kind          dep.UpdateType // update type of a PolicyFor result, "" for Policy
 	MinAge        time.Duration  // minimum release age of new versions, 0 = off
-	Versioning    string         // versioning scheme set by a rule, "" = the dep's own
-	Automerge     bool           // request platform auto-merge for the PR
+	// TimestampRequired (minimumReleaseAgeBehaviour timestamp-required): with a MinAge, a
+	// version whose release time is unknown is held back.
+	TimestampRequired bool
+	Versioning        string // versioning scheme set by a rule, "" = the dep's own
+	Automerge         bool   // request platform auto-merge for the PR
 	// AutomergeStrategy is the merge method of an automerged PR (AutomergeStrategies).
 	AutomergeStrategy string
 	// PR buckets (separateMajorMinor, separateMultipleMajor, separateMinorPatch).
@@ -116,6 +119,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		Updates:               make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
 		Schedule:              c.schedule,
 		MinAge:                c.minAge,
+		TimestampRequired:     c.MinimumReleaseAgeBehaviour == TimestampRequired,
 		CommitType:            CommitChore,
 		CommitScope:           DefaultScope,
 		Kind:                  kind,
@@ -182,6 +186,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		}
 		if r.minAge != nil {
 			p.MinAge = *r.minAge
+		}
+		if r.MinimumReleaseAgeBehaviour != "" {
+			p.TimestampRequired = r.MinimumReleaseAgeBehaviour == TimestampRequired
 		}
 		if r.Versioning != "" {
 			p.Versioning = r.Versioning

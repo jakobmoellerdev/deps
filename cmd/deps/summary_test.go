@@ -65,7 +65,7 @@ func TestSummaryRender(t *testing.T) {
 			md: []string{
 				"Branch `deps/gomod/github.com-spf13-cobra` · automerge\n",
 				"| `example.com/vuln` | `go.mod:6` | `v1.0.0` | `v1.0.1` | patch, security: GO-2026-1 |\n",
-				"### Held back by minimumReleaseAge\n\n<details><summary>1 release too new to update yet</summary>\n\n| Dependency | File | Version | Reason |\n|---|---|---|---|\n| `github.com/spf13/cobra` | `go.mod:5` | `v1.11.0` | too new (released 2026-11-03, minimum 3 days) |\n",
+				"### Held back by minimumReleaseAge\n\n<details><summary>1 release held back (too new, or without a release time under timestamp-required)</summary>\n\n| Dependency | File | Version | Reason |\n|---|---|---|---|\n| `github.com/spf13/cobra` | `go.mod:5` | `v1.11.0` | too new (released 2026-11-03, minimum 3 days) |\n",
 				"| ignored by default (indirect; enable with a rule setting ignore: false) | 2 |  |\n| local action | 1 | actions in this repository (`./…`) have no upstream version |",
 				"<details><summary>Skipped dependencies</summary>\n\n**ignored by default (indirect; enable with a rule setting ignore: false)**\n\n- `example.com/ind1` `go.mod:7`\n- `example.com/ind2` `go.mod:8`\n",
 			},

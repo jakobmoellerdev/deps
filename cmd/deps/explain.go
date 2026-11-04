@@ -253,6 +253,9 @@ func describeRule(r config.Rule) string {
 	if r.MinimumReleaseAge != "" {
 		add("minimumReleaseAge", r.MinimumReleaseAge)
 	}
+	if r.MinimumReleaseAgeBehaviour != "" {
+		add("minimumReleaseAgeBehaviour", r.MinimumReleaseAgeBehaviour)
+	}
 	if r.Versioning != "" {
 		add("versioning", r.Versioning)
 	}
@@ -293,6 +296,9 @@ func describePolicy(p config.Policy) string {
 	minAge := "-"
 	if p.MinAge > 0 {
 		minAge = config.FormatAge(p.MinAge)
+		if p.TimestampRequired {
+			minAge += " (" + config.TimestampRequired + ")"
+		}
 	}
 	s := fmt.Sprintf("pin=%s allow=%s updates=%s group=%s schedule=%s minAge=%s",
 		p.Pin, allow, orDash(strings.Join(updates, ",")), orDash(p.Group), p.Schedule.String(), minAge)

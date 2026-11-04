@@ -10,7 +10,6 @@ import (
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
@@ -58,8 +57,8 @@ func pseudoCandidates(cur string, names []string, reject func(v, reason string))
 
 // headUpdate is the digest update of a pseudo-version: the module head's newer
 // pseudo-version (datasource.HeadSource), under the digest policy (updates, ignore) and the
-// digest minimumReleaseAge against the commit time. A head that is a release, of another
-// major, or not newer gives none.
+// digest minimumReleaseAge against the commit time (an unknown one only holds it back under
+// timestamp-required). A head that is a release, of another major, or not newer gives none.
 func (r *resolver) headUpdate(dir string, reject func(v, reason string)) ([]dep.Update, error) {
 	d := r.d
 	hs, ok := r.ds.(datasource.HeadSource)
@@ -75,8 +74,7 @@ func (r *resolver) headUpdate(dir string, reject func(v, reason string)) ([]dep.
 		slog.DebugContext(r.ctx, "no newer pseudo-version", "name", d.Name, "current", d.Version, "head", v)
 		return nil, nil
 	}
-	if age := r.pol.of(dep.Digest).MinAge; age > 0 && !rev.Time.IsZero() && r.now.Sub(rev.Time) < age {
-		reason := fmt.Sprintf("too new (released %s, minimum %s)", rev.Time.UTC().Format(time.DateOnly), config.FormatAge(age))
+	if reason := r.ageReason(r.pol.of(dep.Digest), v, rev.Time); reason != "" {
 		if reject != nil {
 			reject(v, reason)
 		}
@@ -122,7 +120,8 @@ func (r *resolver) majorPathUpdates(t *Trace, ups []dep.Update, scheme versionin
 }
 
 // bestOfPath returns the newest release of the module path mp that is a stable version,
-// accepted as a major update and, under the major minimumReleaseAge, old enough.
+// accepted as a major update and, under the major minimumReleaseAge (and
+// minimumReleaseAgeBehaviour), old enough.
 func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme, timer datasource.Timer, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool) {
 	cands := make([]string, 0, len(mp.Releases))
 	for _, rel := range mp.Releases {
@@ -145,23 +144,37 @@ func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme
 		cands = append(cands, v)
 	}
 	slices.SortFunc(cands, func(a, b string) int { return scheme.Compare(b, a) })
-	age := r.pol.of(dep.Major).MinAge
+	p := r.pol.of(dep.Major)
 	nd := r.d
 	nd.Name = mp.Name
+	unknown := 0
 	for _, v := range cands[:min(len(cands), maxRetries)] {
-		if age <= 0 || timer == nil {
+		if p.MinAge <= 0 {
 			return v, true
 		}
-		tb, err := timer.ReleaseTime(r.ctx, nd, v)
-		if err != nil || tb.IsZero() || r.now.Sub(tb) >= age {
+		var tb time.Time
+		if timer != nil {
+			var err error
+			if tb, err = timer.ReleaseTime(r.ctx, nd, v); err != nil {
+				slog.DebugContext(r.ctx, "release time lookup failed", "name", mp.Name, "version", v, "err", err)
+				tb = time.Time{}
+			}
+		}
+		reason := r.ageReason(p, mp.Name+"@"+v, tb)
+		if reason == "" {
 			return v, true
 		}
-		reason := fmt.Sprintf("too new (released %s, minimum %s)", tb.UTC().Format(time.DateOnly), config.FormatAge(age))
 		if reject != nil {
 			reject(mp.Name+"@"+v, reason)
 		}
 		if r.pending.Version == "" {
 			r.pending = Pending{Dep: r.d, Version: mp.Name + "@" + v, Reason: reason}
+		}
+		if tb.IsZero() {
+			unknown++
+			if unknown == maxUnknownTimes {
+				break
+			}
 		}
 	}
 	return "", false

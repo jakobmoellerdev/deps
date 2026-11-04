@@ -156,6 +156,8 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{separateMultipleMajor: 1}]\n", "line 1"},
 		{"updateNotScheduled: sometimes\n", "line 1"},
 		{"rules: [{minimumReleaseAge: 3 fortnights}]\n", `rules[0].minimumReleaseAge: invalid age "3 fortnights"`},
+		{"minimumReleaseAgeBehaviour: timestamp-strict\n", `minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "timestamp-strict"`},
+		{"rules: [{minimumReleaseAgeBehaviour: required}]\n", `rules[0].minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "required"`},
 		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, github-releases, go, go-toolchain, docker, npm, node-version, helm, crate, pypi, terraform-provider, terraform-module, maven, gradle-version, golang-version, github-tags, github-release-attachments, node or custom.<name> of customDatasources, got "custom.envtest"`},
 		{"custom: [{files: [x], datasource: custom.envtest}]\n", `custom[0].datasource: must be one of git-tags`},
 		{"customDatasources: {envtest: {}}\n", "customDatasources.envtest.url: required"},
@@ -872,15 +874,21 @@ func TestParseAge(t *testing.T) {
 
 func TestMinimumReleaseAgePolicy(t *testing.T) {
 	c, err := load(t, ".deps.yaml", `minimumReleaseAge: 28 days
+minimumReleaseAgeBehaviour: timestamp-required
 rebaseWhen: behind-base-branch
 rules:
   - manager: npm
     minimumReleaseAge: 3d
   - names: ["cosign"]
     minimumReleaseAge: 0 days
+  - datasources: [custom.envtest]
+    minimumReleaseAgeBehaviour: timestamp-optional
   - manager: gomod
     updateTypes: [patch]
     minimumReleaseAge: 12h
+    minimumReleaseAgeBehaviour: timestamp-optional
+customDatasources:
+  envtest: {url: 'https://example.invalid/envtest.yaml'}
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -890,22 +898,24 @@ rules:
 	}
 	day := 24 * time.Hour
 	for _, tc := range []struct {
-		d    dep.Dep
-		kind dep.UpdateType
-		want time.Duration
+		d        dep.Dep
+		kind     dep.UpdateType
+		want     time.Duration
+		required bool
 	}{
-		{dep.Dep{Manager: "docker", Name: "alpine"}, "", 28 * day},
-		{dep.Dep{Manager: "npm", Name: "react"}, "", 3 * day},
-		{dep.Dep{Manager: "npm", Name: "cosign"}, "", 0},
-		{dep.Dep{Manager: "gomod", Name: "x"}, dep.Minor, 28 * day},
-		{dep.Dep{Manager: "gomod", Name: "x"}, dep.Patch, 12 * time.Hour},
+		{dep.Dep{Manager: "docker", Name: "alpine"}, "", 28 * day, true},
+		{dep.Dep{Manager: "npm", Name: "react"}, "", 3 * day, true},
+		{dep.Dep{Manager: "npm", Name: "cosign"}, "", 0, true},
+		{dep.Dep{Manager: "custom", Name: "envtest", Datasource: "custom.envtest"}, "", 28 * day, false},
+		{dep.Dep{Manager: "gomod", Name: "x"}, dep.Minor, 28 * day, true},
+		{dep.Dep{Manager: "gomod", Name: "x"}, dep.Patch, 12 * time.Hour, false},
 	} {
-		if got := c.PolicyFor(tc.d, tc.kind).MinAge; got != tc.want {
-			t.Errorf("%s %s: MinAge = %v, want %v", tc.d.Name, tc.kind, got, tc.want)
+		if p := c.PolicyFor(tc.d, tc.kind); p.MinAge != tc.want || p.TimestampRequired != tc.required {
+			t.Errorf("%s %s: MinAge = %v, TimestampRequired = %v; want %v, %v", tc.d.Name, tc.kind, p.MinAge, p.TimestampRequired, tc.want, tc.required)
 		}
 	}
-	if got := Default().Policy(dep.Dep{}).MinAge; got != 0 {
-		t.Errorf("default MinAge = %v", got)
+	if p := Default().Policy(dep.Dep{}); p.MinAge != 0 || p.TimestampRequired {
+		t.Errorf("default MinAge = %v, TimestampRequired = %v", p.MinAge, p.TimestampRequired)
 	}
 }
 

@@ -75,6 +75,16 @@ const (
 // AutomergeStrategies are the accepted automergeStrategy values.
 var AutomergeStrategies = []string{StrategyAuto, StrategyMerge, StrategySquash, StrategyRebase}
 
+// minimumReleaseAgeBehaviour values (Renovate's names): whether a version with an unknown
+// release time passes minimumReleaseAge.
+const (
+	TimestampOptional = "timestamp-optional"
+	TimestampRequired = "timestamp-required"
+)
+
+// MinimumReleaseAgeBehaviours are the accepted minimumReleaseAgeBehaviour values.
+var MinimumReleaseAgeBehaviours = []string{TimestampOptional, TimestampRequired}
+
 // AutomergeTypePR is the only supported automergeType: the platform merges the PR.
 const AutomergeTypePR = "pr"
 
@@ -148,8 +158,11 @@ type Config struct {
 	// postUpdateOptions: [gomodUpdateImportPaths]).
 	GomodUpdateImportPaths *bool `yaml:"gomodUpdateImportPaths" jsonschema:"default=true" jsonschema_description:"Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports)."`
 	// MinimumReleaseAge is a string, not a duration, so "28 days" style values are accepted.
-	MinimumReleaseAge string   `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time."`
-	IgnorePaths       []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it."`
+	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed unless minimumReleaseAgeBehaviour is timestamp-required; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time."`
+	// MinimumReleaseAgeBehaviour decides whether an unknown release time passes
+	// minimumReleaseAge.
+	MinimumReleaseAgeBehaviour string   `yaml:"minimumReleaseAgeBehaviour" jsonschema:"enum=timestamp-optional,enum=timestamp-required,default=timestamp-optional" jsonschema_description:"How minimumReleaseAge treats a version whose release time is unknown (the datasource has none, or the lookup failed): timestamp-optional proposes it, timestamp-required holds it back like a too-new version (reported as 'release time unknown'). Renovate's default is timestamp-required."`
+	IgnorePaths                []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it."`
 	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
 	// same names); rules override them.
 	SeparateMajorMinor    *bool  `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update."`
@@ -286,9 +299,11 @@ type Rule struct {
 	Schedule              []string `yaml:"schedule" jsonschema_description:"Workflow cron triggers overriding the top-level schedule; [] means every run."` // non-nil overrides the top-level schedule; [] = always
 	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
 	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
-	Automerge         *bool  `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
-	AutomergeStrategy string `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
-	AutomergeType     string `yaml:"automergeType" jsonschema:"enum=pr" jsonschema_description:"Accepted for Renovate compatibility; only pr is supported."`
+	// MinimumReleaseAgeBehaviour overrides the top-level minimumReleaseAgeBehaviour when set.
+	MinimumReleaseAgeBehaviour string `yaml:"minimumReleaseAgeBehaviour" jsonschema:"enum=timestamp-optional,enum=timestamp-required" jsonschema_description:"Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updateTypes: for candidates of those types)."`
+	Automerge                  *bool  `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
+	AutomergeStrategy          string `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
+	AutomergeType              string `yaml:"automergeType" jsonschema:"enum=pr" jsonschema_description:"Accepted for Renovate compatibility; only pr is supported."`
 
 	allow    *Allowed
 	schedule *schedule.Set
@@ -565,6 +580,7 @@ func (c *Config) Validate() error {
 			c.minAge = d
 		}
 	}
+	validateAgeBehaviour("", c.MinimumReleaseAgeBehaviour, add)
 	c.schedule = parseSchedule("schedule", c.Schedule, add)
 	c.lfmSchedule = c.schedule
 	if c.LockFileMaintenance.Schedule != nil {
@@ -687,6 +703,15 @@ func (c *Config) validateRule(i int, add addFunc) {
 		} else {
 			r.minAge = &d
 		}
+	}
+	validateAgeBehaviour(f+".", r.MinimumReleaseAgeBehaviour, add)
+}
+
+// validateAgeBehaviour checks minimumReleaseAgeBehaviour of the top level (f "") or a rule
+// (f "rules[i].").
+func validateAgeBehaviour(f, b string, add addFunc) {
+	if b != "" && !slices.Contains(MinimumReleaseAgeBehaviours, b) {
+		add(f+"minimumReleaseAgeBehaviour", "must be one of %s, got %q", list(MinimumReleaseAgeBehaviours), b)
 	}
 }
 

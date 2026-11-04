@@ -205,7 +205,7 @@ func TestWriteTrace(t *testing.T) {
 		{},
 		{DepTypes: []string{"direct"}, Ignore: &yes, Schedule: []string{"* 0-5 * * *", "* * * * 0"}},
 		{Paths: []string{"chart/**"}, Datasources: []string{"docker"}},
-		{MinimumReleaseAge: "28 days"},
+		{MinimumReleaseAge: "28 days", MinimumReleaseAgeBehaviour: config.TimestampRequired},
 		{Allow: `/^\d+\.\d+$/`, Versioning: "loose", SeparateMultipleMajor: &yes},
 		{RangeStrategy: config.RangeUpdateLockfile},
 	}}
@@ -298,19 +298,19 @@ func TestWriteTrace(t *testing.T) {
 			t: engine.Trace{
 				Dep:        dep.Dep{Name: "x", File: "f", Line: 3, Versioning: "semver", Version: "1.0.0"},
 				Rules:      []int{3},
-				Policy:     config.Policy{Pin: "keep", Updates: map[dep.UpdateType]bool{dep.Minor: true}, MinAge: 28 * 24 * time.Hour},
+				Policy:     config.Policy{Pin: "keep", Updates: map[dep.UpdateType]bool{dep.Minor: true}, MinAge: 28 * 24 * time.Hour, TimestampRequired: true},
 				Candidates: 3,
 				Rejected: map[string][]string{
-					"too new (released 2026-11-01, minimum 28 days)": {"1.2.0"},
-					"too new (released 2026-10-30, minimum 28 days)": {"1.1.0"},
+					"too new (released 2026-11-01, minimum 28 days)":             {"1.2.0"},
+					"release time unknown (minimum 28 days, timestamp-required)": {"1.1.0"},
 				},
 			},
 			want: `x  f:3  (-, -, -, semver)
   current   1.0.0
-  rules     #3 minimumReleaseAge=28 days
-  policy    pin=keep allow=- updates=minor group=- schedule=always minAge=28 days
+  rules     #3 minimumReleaseAge=28 days minimumReleaseAgeBehaviour=timestamp-required
+  policy    pin=keep allow=- updates=minor group=- schedule=always minAge=28 days (timestamp-required)
   candidates 3
-  rejected  too new (released 2026-10-30, minimum 28 days): 1 (1.1.0)  too new (released 2026-11-01, minimum 28 days): 1 (1.2.0)
+  rejected  release time unknown (minimum 28 days, timestamp-required): 1 (1.1.0)  too new (released 2026-11-01, minimum 28 days): 1 (1.2.0)
   result    up to date
 `,
 		},

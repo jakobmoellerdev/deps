@@ -82,7 +82,7 @@ type Result struct {
 type Pending struct {
 	Dep     dep.Dep
 	Version string
-	Reason  string // "too new (released <date>, minimum <age>)"
+	Reason  string // "too new (released <date>, minimum <age>)" or "release time unknown (minimum <age>, timestamp-required)"
 }
 
 // digestManagers support digest pinning (pin: digest, digest refresh).
@@ -918,11 +918,13 @@ func (r *resolver) digestUpdate() ([]dep.Update, error) {
 	return nil, nil
 }
 
-// Bounds of the retries per PR bucket: stale major candidates skipped before giving up, and
-// candidates rejected in total (stale or too new).
+// Bounds of the retries per PR bucket: stale major candidates skipped before giving up,
+// candidates held back for an unknown release time (timestamp-required) before giving up, and
+// candidates rejected in total (stale, too new or undated).
 const (
-	maxOlderMajors = 3
-	maxRetries     = 50
+	maxOlderMajors  = 3
+	maxUnknownTimes = 3
+	maxRetries      = 50
 )
 
 // picks ranks the candidates once and chooses at most one per PR bucket (policies.bucket):
@@ -930,17 +932,19 @@ const (
 // bucket's next best candidate:
 //   - a major update whose release predates the current version is a legacy tag
 //     (k8s.io/client-go v1.5.2 from 2016 versus v0.37.1), not an upgrade; skipped for docker
-//     deps, see buildTimes;
-//   - a candidate released less than the minimumReleaseAge of its update type ago is too new.
+//     and git-tags deps, see movingTimes;
+//   - a candidate released less than the minimumReleaseAge of its update type ago is too new;
+//     under minimumReleaseAgeBehaviour timestamp-required, so is one whose release time is
+//     unknown.
 //
 // Release times are only asked when a guard applies and the datasource has them, at most
-// once per version; unknown times (zero or an error) never reject. The updates are returned
-// lowest version first.
+// once per version; unknown times (zero or an error) only reject under timestamp-required.
+// The updates are returned lowest version first.
 func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) []dep.Update {
 	cur := r.cur
 	timer, _ := r.ds.(datasource.Timer)
 	single := r.pol.singleBucket()
-	if timer == nil && single {
+	if timer == nil && single && !(r.pol.pre.MinAge > 0 && r.pol.pre.TimestampRequired) {
 		// No guard can apply and there is one bucket: one O(n) pass without ranking.
 		best, ok := scheme.Best(cur, names, accept, reject)
 		if !ok {
@@ -950,9 +954,9 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 	}
 	ranked := scheme.Rank(cur, names, accept, reject) // parsed and filtered once
 	type state struct {
-		key              bucketKey
-		tries, older     int
-		prefetched, done bool
+		key                   bucketKey
+		tries, older, unknown int
+		prefetched, done      bool
 	}
 	states := make([]state, 0, 4) // a handful of buckets: a linear scan beats a map
 	var out []dep.Update
@@ -973,10 +977,7 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 			continue
 		}
 		st.tries++
-		var reason string
-		if timer != nil {
-			reason = r.guard(timer, c)
-		}
+		reason := r.guard(timer, c)
 		if reason == "" {
 			out = append(out, dep.Update{Dep: r.d, Type: c.Kind, NewVersion: c.Version, Bucket: key.label()})
 			st.done = true
@@ -991,12 +992,21 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 		if reason != reasonOlder && r.pending.Version == "" {
 			r.pending = Pending{Dep: r.d, Version: c.Version, Reason: reason}
 		}
-		if reason == reasonOlder {
+		switch {
+		case reason == reasonOlder:
 			st.older++
 			if st.older == maxOlderMajors {
 				st.done = true
 				continue
 			}
+		case strings.HasPrefix(reason, reasonUnknown):
+			// The datasource may have no times for this dep at all: give up early, and
+			// do not prefetch, which serves frequent releases.
+			st.unknown++
+			if st.unknown == maxUnknownTimes {
+				st.done = true
+			}
+			continue
 		}
 		if !st.prefetched {
 			// One rejection suggests a frequently released dependency: fetch the bucket's next
@@ -1019,30 +1029,53 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 // reasonOlder rejects a major candidate released before the current version.
 const reasonOlder = "older than current"
 
-// buildTimes reports whether datasource's release times are build times rather than release
-// times. Docker image `created` stamps are: docker-library rebuilds every floating tag within
-// minutes (postgres:14 can be seconds newer than postgres:18), so comparing them says nothing
-// about which major is the legacy one, and the older-than-current guard would reject real
-// upgrades. The minimum release age still applies to them.
-func buildTimes(ds string) bool { return ds == "docker" }
+// reasonUnknown starts the reason of a candidate held back for its unknown release time.
+const reasonUnknown = "release time unknown"
 
-// guard returns why candidate c fails a release-time guard, or "".
+// movingTimes reports whether datasource's release times can be those of the content a
+// floating tag points to now rather than of the version's first release, so they say nothing
+// about which major is the legacy one and the older-than-current guard would reject real
+// upgrades:
+//   - docker image `created` stamps are build times: docker-library rebuilds every floating
+//     tag within minutes (postgres:14 can be seconds newer than postgres:18);
+//   - a floating git tag (actions/checkout v5) is dated by the release of the commit it points
+//     to, which moves with every backport: v5's latest release can be minutes newer than v7's.
+//
+// The minimum release age still applies to them.
+func movingTimes(ds string) bool { return ds == "docker" || ds == "git-tags" }
+
+// guard returns why candidate c fails a release-time guard, or "". timer is nil when the
+// datasource has no release times.
 func (r *resolver) guard(timer datasource.Timer, c versioning.Candidate) string {
-	if c.Kind == dep.Major && !buildTimes(r.d.Datasource) && r.olderThanCurrent(timer, c.Version) {
+	if timer != nil && c.Kind == dep.Major && !movingTimes(r.d.Datasource) && r.olderThanCurrent(timer, c.Version) {
 		slog.DebugContext(r.ctx, "major candidate older than current", "name", r.d.Name, "current", r.d.Version, "candidate", c.Version)
 		return reasonOlder
 	}
-	age := r.pol.of(c.Kind).MinAge
-	if age <= 0 || r.releasedBefore(timer, r.now.Add(-age)) {
+	p := r.pol.of(c.Kind)
+	if p.MinAge <= 0 || timer != nil && r.releasedBefore(timer, r.now.Add(-p.MinAge)) {
 		return ""
 	}
-	tb := r.releaseTime(timer, c.Version)
+	var tb time.Time
+	if timer != nil {
+		tb = r.releaseTime(timer, c.Version)
+	}
+	return r.ageReason(p, c.Version, tb)
+}
+
+// ageReason returns why version, released at t (zero = unknown), fails the minimum release
+// age of policy p, or "": released less than p.MinAge before now, or, under timestamp-required,
+// at an unknown time.
+func (r *resolver) ageReason(p *config.Policy, version string, t time.Time) string {
 	switch {
-	case tb.IsZero():
-		slog.DebugContext(r.ctx, "release time unknown, minimum release age not enforced", "name", r.d.Name, "candidate", c.Version)
-	case r.now.Sub(tb) < age:
-		slog.DebugContext(r.ctx, "candidate too new", "name", r.d.Name, "candidate", c.Version, "released", tb, "minimumReleaseAge", age)
-		return fmt.Sprintf("too new (released %s, minimum %s)", tb.UTC().Format(time.DateOnly), config.FormatAge(age))
+	case p.MinAge <= 0:
+	case t.IsZero() && p.TimestampRequired:
+		slog.DebugContext(r.ctx, "release time unknown, held back (timestamp-required)", "name", r.d.Name, "candidate", version)
+		return fmt.Sprintf("%s (minimum %s, %s)", reasonUnknown, config.FormatAge(p.MinAge), config.TimestampRequired)
+	case t.IsZero():
+		slog.DebugContext(r.ctx, "release time unknown, minimum release age not enforced", "name", r.d.Name, "candidate", version)
+	case r.now.Sub(t) < p.MinAge:
+		slog.DebugContext(r.ctx, "candidate too new", "name", r.d.Name, "candidate", version, "released", t, "minimumReleaseAge", p.MinAge)
+		return fmt.Sprintf("too new (released %s, minimum %s)", t.UTC().Format(time.DateOnly), config.FormatAge(p.MinAge))
 	}
 	return ""
 }

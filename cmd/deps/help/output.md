@@ -43,7 +43,7 @@ Summary: <n> dependencies, <u> updates in <g> PRs[, PRs: <count> <status>, ...][
       <name>  <file>:<line>  <from> -> <to>  (<type>[, security: <id>,...])
   <status>  <branch>  <url>                                            (run: closed obsolete PRs and the dashboard)
   Held back by minimumReleaseAge:
-      <name>  <file>:<line>  <version>  too new (released <date>, minimum <age>)
+      <name>  <file>:<line>  <version>  too new (released <date>, minimum <age>) | release time unknown (minimum <age>, timestamp-required)
   Skipped (-v lists each dependency):
     <count>  <reason>  (<how to update>)
 ```

@@ -460,36 +460,47 @@ func TestResolveSkipsMajorsOlderThanCurrent(t *testing.T) {
 	}
 }
 
-// rebuiltDocker lists floating postgres majors whose image configs were all rebuilt within
-// minutes, the older major last, and counts the release-time lookups.
-type rebuiltDocker struct{ lookups *int }
-
-func (rebuiltDocker) Releases(context.Context, dep.Dep, string) ([]Release, error) {
-	return []Release{{Version: "14"}, {Version: "18"}}, nil
+// movingMajors lists two floating majors whose times are those of their current content, the
+// older major last (rebuilt docker images; git tags moved by a backport release), and counts
+// the release-time lookups.
+type movingMajors struct {
+	older, newer string
+	lookups      *int
 }
 
-func (rebuiltDocker) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }
+func (m movingMajors) Releases(context.Context, dep.Dep, string) ([]Release, error) {
+	return []Release{{Version: m.older}, {Version: m.newer}}, nil
+}
 
-func (d rebuiltDocker) ReleaseTime(_ context.Context, _ dep.Dep, v string) (time.Time, error) {
-	*d.lookups++
-	if v == "14" {
+func (movingMajors) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }
+
+func (m movingMajors) ReleaseTime(_ context.Context, _ dep.Dep, v string) (time.Time, error) {
+	*m.lookups++
+	if v == m.older {
 		return time.Date(2026, 11, 1, 1, 31, 46, 0, time.UTC), nil
 	}
 	return time.Date(2026, 11, 1, 1, 30, 24, 0, time.UTC), nil
 }
 
-func TestResolveDockerRebuiltMajorsNotOlder(t *testing.T) {
-	var lookups int
-	m := stubManager{name: "docker", deps: []dep.Dep{{Datasource: "docker", Versioning: "docker", Name: "postgres", Version: "14", Line: 1}}}
-	root, cfg := setup(t, "", map[string]string{"stub.txt": "14\n"})
-	res, err := Resolve(t.Context(), root, cfg, env, Options{
-		Managers:    []manager.Manager{m},
-		Datasources: map[string]Datasource{"docker": rebuiltDocker{lookups: &lookups}},
-	})
-	if err != nil || len(res.Updates) != 1 || res.Updates[0].NewVersion != "18" {
-		t.Fatalf("updates = %v, err = %v", res.Updates, err)
-	}
-	if lookups != 0 {
-		t.Errorf("release times looked up %d times without a minimum release age", lookups)
+func TestResolveMovingMajorsNotOlder(t *testing.T) {
+	for _, tt := range []struct {
+		manager, datasource, versioning, older, newer string
+	}{
+		{"docker", "docker", "docker", "14", "18"},
+		{"github-actions", "git-tags", "tag", "v5", "v7"},
+	} {
+		var lookups int
+		m := stubManager{name: tt.manager, deps: []dep.Dep{{Datasource: tt.datasource, Versioning: tt.versioning, Name: "x", Version: tt.older, Line: 1}}}
+		root, cfg := setup(t, "", map[string]string{"stub.txt": tt.older + "\n"})
+		res, err := Resolve(t.Context(), root, cfg, env, Options{
+			Managers:    []manager.Manager{m},
+			Datasources: map[string]Datasource{tt.datasource: movingMajors{older: tt.older, newer: tt.newer, lookups: &lookups}},
+		})
+		if err != nil || len(res.Updates) != 1 || res.Updates[0].NewVersion != tt.newer {
+			t.Fatalf("%s: updates = %v, err = %v", tt.datasource, res.Updates, err)
+		}
+		if lookups != 0 {
+			t.Errorf("%s: release times looked up %d times without a minimum release age", tt.datasource, lookups)
+		}
 	}
 }

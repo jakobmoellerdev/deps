@@ -301,7 +301,7 @@ gomodUpdateImportPaths: false
 
   Negative or unparsable values are errors (`invalid age "<v>": want e.g. "3 days", "12h", "90m" or "0"`).
 - **Fallback:** a too-new candidate is rejected as `too new (released <date>, minimum <age>)`, and the next older candidate in the same PR bucket is tried.
-- **Unknown release times are allowed.** This covers datasources without release times (Go toolchains, `custom.<name>`) and failed time lookups.
+- **Unknown release times** are allowed by default (`minimumReleaseAgeBehaviour: timestamp-optional`). This covers datasources without release times (`custom.<name>`), images without a `created` time and failed time lookups.
 - **Exempt:** digest refreshes, pins and security updates. Go pseudo-version digest updates are not exempt: the new pseudo-version's commit time is checked against the age of the `digest` update type.
 - `rules[].minimumReleaseAge` overrides the value per dep. With `updateTypes` it overrides it per update type. `0` or `0 days` turns the age off for matching deps.
 
@@ -310,6 +310,22 @@ minimumReleaseAge: 28 days
 rules:
   - names: ['open-component-model/cosign']
     minimumReleaseAge: 0 days
+```
+
+## Config.minimumReleaseAgeBehaviour
+
+- `timestamp-optional` (the default): a candidate whose release time is unknown passes `minimumReleaseAge`.
+- `timestamp-required`: such a candidate is held back like a too-new one, as `release time unknown (minimum <age>, timestamp-required)` in the trace and the summary's held-back list, and the next older candidate in the same PR bucket is tried. After 3 candidates without a time the bucket gives up: the datasource likely has none for the dep.
+- Without a `minimumReleaseAge` (or with `0`) the behaviour has no effect. Digest refreshes, pins and security updates stay exempt in both modes.
+- The names are Renovate's. Renovate defaults to `timestamp-required` since version 42; deps keeps `timestamp-optional` so that adding `minimumReleaseAge` does not silently stop updates of deps whose datasource has no times. Set `timestamp-required` to match Renovate.
+- `rules[].minimumReleaseAgeBehaviour` overrides it per dep, with `updateTypes` per update type.
+
+```yaml
+minimumReleaseAge: 28 days
+minimumReleaseAgeBehaviour: timestamp-required
+rules:
+  - manager: custom # in-house datasources without release times are not held back
+    minimumReleaseAgeBehaviour: timestamp-optional
 ```
 
 ## Config.ignorePaths
@@ -584,7 +600,7 @@ custom:
 
 ## Config.customDatasources
 
-Names must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`. The document is fetched once per run (unauthenticated, at most 10 MiB) and shared by every dep. It has no release times and no digests. Errors read `custom.<name>: GET <url>: HTTP 404` or `custom.<name>: <url>: selector ".a[]": cannot iterate over null`; an empty result is `no versions`.
+Names must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`. The document is fetched once per run (unauthenticated, at most 10 MiB) and shared by every dep. It has no release times (so with a `minimumReleaseAge` its versions pass under `minimumReleaseAgeBehaviour: timestamp-optional` and are held back under `timestamp-required`) and no digests. Errors read `custom.<name>: GET <url>: HTTP 404` or `custom.<name>: <url>: selector ".a[]": cannot iterate over null`; an empty result is `no versions`.
 
 ```yaml
 customDatasources:

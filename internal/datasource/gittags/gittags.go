@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,7 +41,7 @@ type Lister struct {
 	mu    sync.Mutex
 	cache map[string]*entry
 	lists map[string]*listEntry // Gitea/Forgejo repository URL -> first page of releases
-	times map[string]*timeEntry // repository URL + "@" + tag, for tags not in the list
+	times map[string]*timeEntry // repository URL + "@" + tag, for tags not in the release lists
 }
 
 type timeEntry struct {
@@ -54,6 +55,7 @@ type listEntry struct {
 	once     sync.Once
 	times    map[string]time.Time // tag -> published_at; drafts are omitted
 	complete bool                 // the page holds every release: absent tags have none
+	api      bool                 // the host answered the releases API
 	err      error
 }
 
@@ -102,52 +104,115 @@ func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string,
 	return "", fmt.Errorf("tag %s not found upstream", version)
 }
 
-// ReleaseTime implements datasource.Timer with the publication time of the release of tag
-// version in d.Source, via the GitHub API for github.com and the Gitea/Forgejo API
-// (`<server>/api/v1`) for other hosts. Tags are not dated, so a tag without a release, or a
-// host without either API, is unknown (zero).
+// ReleaseTime implements datasource.Timer for tag version in d.Source, via the GitHub API for
+// github.com and the Gitea/Forgejo API (`<server>/api/v1`) for other hosts; on a host without
+// either API it is unknown (zero). The time is, in this order:
+//   - the publication time of the tag's release;
+//   - for a tag without a release of its own (a floating `v25` next to the `v25.0.0` release,
+//     or a repository that only tags), the earliest publication time of a listed release
+//     whose tag points to the same commit;
+//   - else the date of the tag (see githubapi.Client.TagTime and giteaTagTime).
 //
 // The first page of the repository's releases is fetched once per repository and serves every
 // tag on it (for github.com it is the list shared with github-releases, possibly with more
-// pages); only tags missing from an incomplete list are looked up individually, once per tag.
+// pages). A tag without a listed release costs at most two requests, once per tag: its own
+// release when the list is incomplete, and its date when no listed release shares its commit.
 func (l *Lister) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
 	repoURL := strings.TrimSuffix(d.Source, "/")
-	if r, ok := githubRepo(repoURL); ok {
-		var t time.Time
-		var known bool
+	r, isGH := githubRepo(repoURL)
+	var (
+		t        time.Time
+		complete bool // the list decides whether the tag has a release
+	)
+	if isGH {
 		err := l.gh.Releases(ctx, r, nil, func(gl *githubapi.List) {
 			rel, listed := gl.Find(version)
-			t, known = rel.Published, listed || gl.Complete()
+			t, complete = rel.Published, listed || gl.Complete()
 		})
 		switch {
 		case errors.Is(err, githubapi.ErrNotFound):
-			return time.Time{}, nil
-		case err != nil || known:
+			return time.Time{}, nil // the repository is not visible to the API
+		case err != nil || !t.IsZero():
 			return t, err
 		}
-		return l.tagTime(ctx, repoURL, version, func() (time.Time, error) { return l.gh.ReleaseTime(ctx, r, version) })
+	} else {
+		le := l.giteaList(ctx, repoURL)
+		switch {
+		case le.err != nil:
+			return time.Time{}, le.err
+		case !le.api:
+			return time.Time{}, nil
+		}
+		if t = le.times[version]; !t.IsZero() {
+			return t, nil
+		}
+		complete = le.complete
 	}
-	l.mu.Lock()
-	le := l.lists[repoURL]
-	if le == nil {
-		le = &listEntry{}
-		l.lists[repoURL] = le
-	}
-	l.mu.Unlock()
-	le.once.Do(func() {
-		le.times, le.complete, le.err = l.releaseList(ctx, repoURL)
-		slog.DebugContext(ctx, "releases listed", "repo", repoURL, "releases", len(le.times), "complete", le.complete, "err", le.err)
+	return l.tagTime(ctx, repoURL, version, func() (time.Time, error) {
+		if !complete {
+			var own time.Time
+			var err error
+			if isGH {
+				own, err = l.gh.ReleaseTime(ctx, r, version)
+			} else {
+				own, err = l.releaseTime(ctx, repoURL, version)
+			}
+			if err != nil || !own.IsZero() {
+				return own, err
+			}
+		}
+		return l.unreleasedTime(ctx, repoURL, r, isGH, version)
 	})
-	if le.err != nil {
-		return time.Time{}, le.err
+}
+
+// unreleasedTime dates a tag without a release of its own: the earliest publication time of
+// a release whose tag points to the same commit, among the releases already listed (no further
+// pages are fetched), else the date of the tag.
+func (l *Lister) unreleasedTime(ctx context.Context, repoURL string, r githubapi.Repo, isGH bool, tag string) (time.Time, error) {
+	tags, err := l.Tags(ctx, repoURL)
+	if err != nil {
+		return time.Time{}, err
 	}
-	if t, ok := le.times[version]; ok {
+	var commit string
+	if i := slices.IndexFunc(tags, func(t Tag) bool { return t.Name == tag }); i >= 0 {
+		commit = tags[i].Commit
+	}
+	var t time.Time
+	earliest := func(p time.Time) {
+		if !p.IsZero() && (t.IsZero() || p.Before(t)) {
+			t = p
+		}
+	}
+	if commit != "" {
+		if isGH {
+			err = l.gh.Releases(ctx, r, nil, func(gl *githubapi.List) {
+				for _, o := range tags {
+					if o.Commit == commit {
+						rel, _ := gl.Find(o.Name)
+						earliest(rel.Published)
+					}
+				}
+			})
+			if err != nil {
+				return time.Time{}, err
+			}
+		} else {
+			le := l.giteaList(ctx, repoURL)
+			for _, o := range tags {
+				if o.Commit == commit {
+					earliest(le.times[o.Name])
+				}
+			}
+		}
+	}
+	if !t.IsZero() {
+		slog.DebugContext(ctx, "tag dated by a release of its commit", "repo", repoURL, "tag", tag, "commit", commit, "time", t)
 		return t, nil
 	}
-	if le.complete {
-		return time.Time{}, nil
+	if isGH {
+		return l.gh.TagTime(ctx, r, tag, commit)
 	}
-	return l.tagTime(ctx, repoURL, version, func() (time.Time, error) { return l.releaseTime(ctx, repoURL, version) })
+	return l.giteaTagTime(ctx, repoURL, tag)
 }
 
 // githubRepo returns the github.com repository of repoURL.
@@ -181,15 +246,30 @@ func (l *Lister) tagTime(ctx context.Context, repoURL, tag string, lookup func()
 // (default 50).
 const giteaListSize = 50
 
-// releaseList fetches the first page of releases of repoURL. A host without the API (404 or a
-// non-JSON answer) yields a complete, empty list: every tag is unknown without further requests.
-// A page shorter than requested is complete.
-func (l *Lister) releaseList(ctx context.Context, repoURL string) (map[string]time.Time, bool, error) {
-	u, err := url.Parse(repoURL)
-	if err != nil || u.Host == "" {
-		return nil, false, fmt.Errorf("releases: invalid repository %q", repoURL)
+// giteaList returns the first page of releases of repoURL, fetched once per repository.
+func (l *Lister) giteaList(ctx context.Context, repoURL string) *listEntry {
+	l.mu.Lock()
+	le := l.lists[repoURL]
+	if le == nil {
+		le = &listEntry{}
+		l.lists[repoURL] = le
 	}
-	repo := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+	l.mu.Unlock()
+	le.once.Do(func() {
+		le.times, le.complete, le.api, le.err = l.releaseList(ctx, repoURL)
+		slog.DebugContext(ctx, "releases listed", "repo", repoURL, "releases", len(le.times), "complete", le.complete, "api", le.api, "err", le.err)
+	})
+	return le
+}
+
+// releaseList fetches the first page of releases of repoURL. A host without the API (404 or a
+// non-JSON answer) has api false: every tag is unknown without further requests. A page
+// shorter than requested is complete.
+func (l *Lister) releaseList(ctx context.Context, repoURL string) (times map[string]time.Time, complete, api bool, err error) {
+	u, repo, err := apiRepo(repoURL)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("releases: %w", err)
+	}
 	path, size := "/repos/"+repo+"/releases?limit="+strconv.Itoa(giteaListSize), giteaListSize
 	var rels []struct {
 		TagName     string     `json:"tag_name"`
@@ -198,34 +278,29 @@ func (l *Lister) releaseList(ctx context.Context, repoURL string) (map[string]ti
 	}
 	found, err := l.getJSON(ctx, u, path, &rels)
 	if err != nil {
-		return nil, false, fmt.Errorf("releases of %s: %w", repo, err)
+		return nil, false, false, fmt.Errorf("releases of %s: %w", repo, err)
 	}
 	if !found {
-		return nil, true, nil
+		return nil, true, false, nil
 	}
-	times := make(map[string]time.Time, len(rels))
+	times = make(map[string]time.Time, len(rels))
 	for _, r := range rels {
 		if !r.Draft && r.PublishedAt != nil && r.TagName != "" {
 			times[r.TagName] = *r.PublishedAt
 		}
 	}
-	return times, len(rels) < size, nil
+	return times, len(rels) < size, true, nil
 }
 
 func (l *Lister) releaseTime(ctx context.Context, repoURL, tag string) (time.Time, error) {
-	u, err := url.Parse(repoURL)
-	if err != nil || u.Host == "" {
-		return time.Time{}, fmt.Errorf("release %s: invalid repository %q", tag, repoURL)
-	}
-	repo := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
-	segs := strings.Split(tag, "/")
-	for i, s := range segs {
-		segs[i] = url.PathEscape(s)
+	u, repo, err := apiRepo(repoURL)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("release %s: %w", tag, err)
 	}
 	var rel struct {
 		PublishedAt *time.Time `json:"published_at"`
 	}
-	found, err := l.getJSON(ctx, u, "/repos/"+repo+"/releases/tags/"+strings.Join(segs, "/"), &rel)
+	found, err := l.getJSON(ctx, u, "/repos/"+repo+"/releases/tags/"+escapeTag(tag), &rel)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("release %s of %s: %w", tag, repo, err)
 	}
@@ -233,6 +308,47 @@ func (l *Lister) releaseTime(ctx context.Context, repoURL, tag string) (time.Tim
 		return time.Time{}, nil
 	}
 	return *rel.PublishedAt, nil
+}
+
+// giteaTagTime returns the date Gitea/Forgejo report for tag (`GET /repos/{repo}/tags/{tag}`,
+// `commit.created`): the tagger date of an annotated tag, else the committer date of its
+// commit, as Renovate's github-tags datasource dates tags. A missing tag is zero.
+func (l *Lister) giteaTagTime(ctx context.Context, repoURL, tag string) (time.Time, error) {
+	u, repo, err := apiRepo(repoURL)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("tag %s: %w", tag, err)
+	}
+	var tg struct {
+		Commit struct {
+			Created *time.Time `json:"created"`
+		} `json:"commit"`
+	}
+	found, err := l.getJSON(ctx, u, "/repos/"+repo+"/tags/"+escapeTag(tag), &tg)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("tag %s of %s: %w", tag, repo, err)
+	}
+	if !found || tg.Commit.Created == nil {
+		return time.Time{}, nil
+	}
+	return *tg.Commit.Created, nil
+}
+
+// apiRepo splits repoURL into its URL and the "owner/name" path of the forge API.
+func apiRepo(repoURL string) (*url.URL, string, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Host == "" {
+		return nil, "", fmt.Errorf("invalid repository %q", repoURL)
+	}
+	return u, strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git"), nil
+}
+
+// escapeTag escapes each path segment of tag (tags may contain '/').
+func escapeTag(tag string) string {
+	segs := strings.Split(tag, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.Join(segs, "/")
 }
 
 // getJSON GETs path from the Gitea/Forgejo API of repository u into v. found is false on 404
