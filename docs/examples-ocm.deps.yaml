@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
 # open-component-model renovate.json5 packageRules relevant to P1-P3, P7-P12, P15, P17, L7, L8 and L9, translated.
 branchPrefix: renovate/
 rebaseWhen: behind-base-branch # :rebaseStalePrs

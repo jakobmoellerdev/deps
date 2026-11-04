@@ -142,6 +142,7 @@ How the pieces map:
 The example covers the rules needed for the parity items. A complete OCM config (parity item O4) also needs the remaining groups:
 
 ```yaml
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
 rules:
   - names: ['sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools', 'k8s.io/*', 'envtest']
     group: Kubernetes dependencies

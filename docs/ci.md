@@ -1,7 +1,19 @@
 # Running deps in CI
 
-deps behaves the same locally and in CI. In CI it detects the forge from the job environment, reads the cron that triggered the run, and uses the job token unless you pass another. This guide covers GitHub Actions, Gitea Actions and Forgejo Actions. Generated references: [action inputs](reference/action.md), [CLI flags and environment](reference/cli.md), [configuration keys](reference/configuration.md).
+deps behaves the same locally and in CI. In CI it detects the forge from the job environment, reads the cron that triggered the run, and uses the job token unless you pass another. This guide covers GitHub Actions, Gitea Actions and Forgejo Actions. Every input, flag and config key is listed in the generated references: [action inputs](reference/action.md), [CLI flags and environment](reference/cli.md), [configuration keys](reference/configuration.md).
 
+## Getting started
+
+1. **Add the workflow.** Copy the example for your forge: [GitHub](#github), [Gitea](#gitea) or [Forgejo](#forgejo). Each one is a job with `actions/checkout` and the deps action. The first run opens one PR per outdated dependency or group.
+2. **Choose the token.** On Gitea and Forgejo the job token works, but CI doesn't run on PRs it opens. On GitHub use an App token or a PAT, because `GITHUB_TOKEN` can't push changes to workflow files. Details: [Tokens and permissions](#tokens-and-permissions).
+3. **Set the schedule.** The workflow's `on.schedule` cron decides when deps runs. The examples also run [on push to the default branch](#run-on-push-to-the-default-branch), so open PRs are rebased right after a merge. To open some PRs only on certain crons, see [Schedules](#schedules).
+4. **Optional: add a `.deps.yaml`.** Without one, every direct dependency is updated. Rules, groups and limits are in the [configuration reference](reference/configuration.md). To check the config on pull requests, see [Preview on pull requests](#preview-on-pull-requests).
+
+Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency-dashboard), [signed commits](#signed-commits), [self-hosted runners](#self-hosted-runners-and-actions-hosts), and [troubleshooting](#troubleshooting).
+
+## Contents
+
+- [Getting started](#getting-started)
 - [The composite action](#the-composite-action)
 - [GitHub](#github)
 - [Gitea](#gitea)
@@ -10,15 +22,19 @@ deps behaves the same locally and in CI. In CI it detects the forge from the job
 - [Signed commits](#signed-commits)
 - [Self-hosted runners and actions hosts](#self-hosted-runners-and-actions-hosts)
 - [Schedules](#schedules)
+- [Run on push to the default branch](#run-on-push-to-the-default-branch)
 - [Automerge](#automerge)
+- [Dependency dashboard](#dependency-dashboard)
 - [Overlapping runs](#overlapping-runs)
 - [Step summary](#step-summary)
 - [Dry runs and config checks](#dry-runs-and-config-checks)
+  - [Preview on pull requests](#preview-on-pull-requests)
 - [Caching Go modules](#caching-go-modules)
 - [Platform detection](#platform-detection)
 - [Troubleshooting](#troubleshooting)
 - [GitHub end-to-end test](#github-end-to-end-test)
 - [Releases (maintainers)](#releases-maintainers)
+  - [Attestations](#attestations)
 
 ## The composite action
 
@@ -31,25 +47,7 @@ The repository root has a composite [`action.yml`](../action.yml). The same file
 
 Go is not needed to run it; only go.mod updates need `go` for `go mod tidy`.
 
-| Input | Default | Meaning |
-|---|---|---|
-| `token` | `${{ github.token }}`, the job token on all three forges | exported as `DEPS_TOKEN` |
-| `args` | `run` | arguments for `deps` |
-| `version` | the action's ref if it is a release tag (`@v0.1.0`), else the latest release | release tag to download |
-| `repository` | `https://github.com/jakobmoellerdev/deps` on github.com runners, `https://git.jakob-moeller.cloud/jakobmoellerdev/deps` elsewhere | where releases are downloaded from; see below |
-| `cache` | `true` | reuse a cached binary of the same version; `false` downloads every run |
-
-Outputs: `version` (the release that ran) and `cache-hit` (`preinstalled` if a matching `deps` on PATH was used, `true` if the binary came from a cache, else `false`).
-
-The details are in the generated [action reference](reference/action.md).
-
-**Where the binary comes from.** `repository` can be a Gitea/Forgejo or a GitHub repository URL:
-
-- For a Gitea/Forgejo repository, the latest release is looked up via `<host>/api/v1/repos/<repo>/releases/latest`.
-- For a GitHub repository, it is looked up via api.github.com.
-- On github.com runners, assets are fetched with `gh release download` and the job token, so private repositories work.
-
-**Supported runners.** Only linux/amd64 and linux/arm64 are released. On any other OS or architecture the first step fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`.
+The inputs (`token`, `signing-key`, `args`, `version`, `repository`, `use-preinstalled`, `cache`), the outputs (`version`, `cache-hit`), where the binary is downloaded from, and the supported runners (linux/amd64 and linux/arm64 only) are described in the generated [action reference](reference/action.md). This section covers how the steps behave.
 
 **Binary cache.** Once the version is known, the action looks for that binary in two places before downloading:
 
@@ -114,7 +112,7 @@ Pass the token to **both** steps:
 **Only `GITHUB_TOKEN`:** if you can't create an App or PAT, exclude workflow-file updates so the pushes succeed, and accept that the PRs get no CI (no automerge):
 
 ```yaml
-# .deps.yaml
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
 rules:
   - manager: github-actions
     ignore: true
@@ -214,7 +212,7 @@ jobs:
           args: run -v --log-level info
 ```
 
-**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.2.5` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. This repository's own workflow (`.gitea/workflows/deps.yml`) is this example plus the bot token, signing key and identity, pinned to the latest release; deps opens the PR that bumps that pin after each release.
+**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.2.5` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. This repository's own workflow (`.gitea/workflows/deps.yml`) is this example plus the bot token, signing key and identity, pinned to the latest release; deps opens the PR that bumps that pin after each release. It also has a `dry-run` job for pull requests ([Preview on pull requests](#preview-on-pull-requests)).
 
 **The job token (`GITEA_TOKEN`).** Its permissions come from:
 
@@ -280,8 +278,10 @@ jobs:
 
 ## Tokens and permissions
 
-| Operation | GitHub | Gitea | Forgejo |
+| | GitHub | Gitea | Forgejo |
 |---|---|---|---|
+| default token | `GITHUB_TOKEN`: can't change workflow files, and its PRs don't run CI | `GITEA_TOKEN`: its PRs don't run CI | the automatic token: its PRs don't run CI |
+| recommended token | a GitHub App token or PAT, given to `actions/checkout` and the action | the job token, or a PAT secret when CI must run on deps PRs | as on Gitea |
 | push `<branchPrefix>*` branches, delete obsolete ones | `contents: write`; *Workflows* (App) or `workflow` (PAT) when workflow files change | `contents: write` | automatic token |
 | list, create, edit and close PRs | `pull-requests: write` | `pull-requests: write` | automatic token |
 | request auto-merge (`automerge`) | merge rights on the base branch; *Allow auto-merge* in the settings; `statuses: read` and `checks: read` for the direct-merge fallback | merge rights on the base branch | merge rights on the base branch |
@@ -356,6 +356,7 @@ To keep deps' branches fast-forwardable when other changes land first, set [`reb
 With `--log-level info`, deps logs the chosen host as `actions default host host=<h> source=<s>`. For an instance whose `DEFAULT_ACTIONS_URL` is, e.g., `https://gitea.com`, add this to the config:
 
 ```yaml
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
 actions:
   defaultHost: gitea.com
 ```
@@ -412,6 +413,7 @@ on:
 ```
 
 ```yaml
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
 schedule: ["0 5 * * *"] # default for every dep
 rules:
   - names: ["k8s.io/**"]
@@ -472,6 +474,10 @@ So merges never open weekly groups early. `workflow_dispatch` is different: a ma
 3. Since the job token doesn't start CI on deps PRs, use a PAT and configure required status checks on the base branch.
 4. A fresh push whose mergeability check is still running is reported as `automerge pending` and requested again on the next run.
 
+## Dependency dashboard
+
+With [`dependencyDashboard: true`](reference/configuration.md#dependencydashboard), `deps run` maintains one issue. It lists the updates waiting for their schedule, rate-limited and blocked updates, open PRs, errors, and the detected dependencies. Ticking a checkbox makes the next run create, recreate or rebase that PR. The token needs `issues: write`, and the repository must have issues enabled. The title, labels and the exact list are in the [configuration reference](reference/configuration.md#dependencydashboard).
+
 ## Overlapping runs
 
 Two runs of the same repository can race on the same branches: two crons firing together, a manual dispatch during a scheduled run. The push is guarded with `--force-with-lease`, so a race fails with an error instead of losing commits, but the second run's work is wasted. Serialize the runs with a concurrency group:
@@ -530,6 +536,50 @@ Exit codes:
 To see why a dependency is or isn't updated, use `args: explain '<name glob>'`.
 
 The GitHub mirror of this repository runs `deps plan` the same way (`.github/workflows/deps.yml`): it exercises the action, binary download and lookups on GitHub, and lists the updates in the job summary.
+
+### Preview on pull requests
+
+Two kinds of PR checks are useful, and both only read:
+
+- **Config changes (most repositories).** The `plan` job above, limited to `.deps.yaml` with `paths:`. It checks the PR's config and lists the updates it leads to in the job summary.
+- **The PRs deps would open.** `run --dry-run` lists each PR as `would-create`, `would-update`, `would-rebase` or `would-automerge`, in the log and the job summary. It doesn't work on the PR's own checkout: `run` requires `HEAD` to be the tip of `origin/<base>` and otherwise fails with `checkout HEAD <sha> is not the tip of origin/<base>`. Check out the base branch for it. The job token with read access is enough.
+
+deps itself previews code changes this way. The `dry-run` job in `.gitea/workflows/deps.yml` builds deps from the PR, runs `plan` on the PR checkout, and runs `run --dry-run` on a checkout of the base branch. So the PR's code runs against the real repository and its open PRs, with the base branch's config. The job has its own concurrency group per PR, so it doesn't queue behind a running deps job:
+
+```yaml
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deps-dry-run-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: pr
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: base
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: pr/go.mod
+      - run: go build -C pr -trimpath -o "$RUNNER_TEMP/deps" ./cmd/deps
+      - run: '"$RUNNER_TEMP/deps" plan -v --dir pr'
+      - run: '"$RUNNER_TEMP/deps" run --dry-run -v --dir base --base "$BASE"'
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          DEPS_TOKEN: ${{ github.token }}
+```
+
+With the released action instead of a build, use the same two checkouts and `args: run --dry-run -v --dir base`.
 
 ## Caching Go modules
 
@@ -714,7 +764,7 @@ git-cliff is installed from its GitHub release instead of through `orhun/git-cli
   - Alpine: only `alpha`, `beta`, `pre` and `rc`, optionally numbered, become the suffixes `_alpha`, `_beta`, `_pre` and `_rc`. Any other pre-release fails the build, since Alpine has no other suffixes that sort before the release.
 - **Reproducible.** Every mtime is `SOURCE_DATE_EPOCH`, by default the commit time of the tag (of `HEAD` if the tag does not exist). Owners are root:root (`dpkg-deb --root-owner-group`; nfpm always) and modes are fixed, so rebuilding a tag gives byte-identical packages.
 - **nfpm** is pinned to v2.48.0, installed and sha256-verified by `task nfpm:install` (a matching `nfpm` on `PATH` is used as is).
-- **Signing.** The packages are unsigned. Gitea signs the Arch Linux packages and database on upload (with the owner's key from `/api/packages/<owner>/arch/repository.key`) and the Alpine `APKINDEX.tar.gz` (key at `/api/packages/<owner>/alpine/key`); apk trusts an unsigned package through its checksum in the signed index. apk finds that key by its file name, `<owner>@<sha256 of the key>.rsa.pub`, so the README names it explicitly.
+- **Signing.** The packages are unsigned. Gitea signs the Arch Linux packages and database on upload (with the owner's key from `/api/packages/<owner>/arch/repository.key`) and the Alpine `APKINDEX.tar.gz` (key at `/api/packages/<owner>/alpine/key`); apk trusts an unsigned package through its checksum in the signed index. apk finds that key by its file name, `<owner>@<sha256 of the key>.rsa.pub`, so the [install guide](install.md#packages) names it explicitly.
 - **Registries.** The Alpine branch is a name only: one `stable` branch serves every Alpine release, because the binary is static (installs verified on Alpine 3.22 with apk-tools 2 and 3.24 with apk-tools 3). The Arch repository is named after the owner, because its name is also the `pacman.conf` section, which must not clash with `core` or `extra`.
 - **Token.** The uploads are `PUT <server>/api/packages/<owner>/debian/pool/stable/main/upload`, `PUT …/arch/jakobmoellerdev` and `PUT …/alpine/stable/main`, with HTTP Basic auth. The job token cannot write packages: Gitea gives the Actions user read access to a user's registry only. The job therefore uses the repository secret `PACKAGES_TOKEN`, a token of `jakobmoellerdev` named `deps-release-packages` with only the `write:package` scope.
 - **Re-runs.** If the registry already has a file (HTTP 409), `publish.sh` downloads it. An identical file is skipped with a notice; a different one is deleted and uploaded again with a warning.
@@ -724,7 +774,7 @@ git-cliff is installed from its GitHub release instead of through `orhun/git-cli
   task release:build VERSION=v0.0.0-rc.1 && task release:packages VERSION=v0.0.0-rc.1
   PACKAGES_URL=https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev PACKAGES_USER=jakobmoellerdev \
     PACKAGES_TOKEN=$(gt auth token) packaging/publish.sh dist/*.deb dist/*.pkg.tar.zst dist/*.apk
-  # install it in containers with the snippets from the README, then delete the test versions:
+  # install it in containers with the snippets from docs/install.md, then delete the test versions:
   p=https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev
   for arch in amd64 arm64; do gt api -X DELETE "$p/debian/pool/stable/main/deps/0.0.0~rc.1/$arch"; done
   for arch in x86_64 aarch64; do
@@ -752,7 +802,7 @@ Workflows that use the action at `@main`, or without a release ref, pick up a ne
 
 ### Attestations
 
-Users verify downloads with `gh attestation verify` or cosign (README, *Verify a download*). The chain:
+Users verify downloads with `gh attestation verify` or cosign ([Verify a download](install.md#verify-a-download)). The chain:
 
 1. **GitHub signs.** After `task release:packages`, `.github/workflows/release.yml` runs `task release:sbom`: [syft](https://github.com/anchore/syft) v1.56.0 (installed and sha256-verified by `task syft:install`) writes an SPDX 2.3 SBOM of each binary to `dist/attest/deps_linux_<arch>.spdx.json`. Then [`actions/attest`](https://github.com/actions/attest) v4.2.2 (pinned by commit) creates, keyless with the job's OIDC token, Fulcio and the public Rekor log:
    - one SLSA build provenance attestation (`https://slsa.dev/provenance/v1`) whose subjects are both binaries, all six packages and `checksums.txt`;

@@ -1,0 +1,4 @@
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# deps' own config. Everything else is the default; .gitea/workflows/deps.yml has issues: write for the dashboard.
+version: 1
+dependencyDashboard: true

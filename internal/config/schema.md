@@ -27,7 +27,7 @@ or point `$schema` at a local copy (`deps schema > deps.schema.json`, then `# ya
 **Example** using most keys:
 
 ```yaml
-# yaml-language-server: $schema=./deps.schema.json
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
 version: 1
 schedule: ["0 5 * * 1-5"]          # create PRs in the weekday run (a cron of the workflow)
 pin: digest                         # pin actions to SHAs and images to digests
@@ -127,7 +127,7 @@ on:
 ```
 
 ```yaml
-# .deps.yaml
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
 rules:
   - updateTypes: [digest, pin]
     group: digest-pins
