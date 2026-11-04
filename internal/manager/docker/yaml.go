@@ -32,7 +32,8 @@ func (x *extractor) yaml(walk func(root *yaml.Node)) error {
 var manifestParses atomic.Int64
 
 // manifests extracts Kubernetes container images and Helm image values from every document
-// of a multi-document YAML file. Unparsable files (Helm templates) yield no deps, no error.
+// of a multi-document YAML file; a document shaped like a Compose file (isCompose) is extracted
+// as one. Unparsable files (Helm templates) yield no deps, no error.
 func (x *extractor) manifests() {
 	manifestParses.Add(1)
 	dec := yaml.NewDecoder(bytes.NewReader(x.src))
@@ -47,7 +48,11 @@ func (x *extractor) manifests() {
 			x.deps = nil
 			return
 		}
-		x.walk(&doc)
+		if len(doc.Content) == 1 && isCompose(doc.Content[0]) {
+			x.compose(doc.Content[0])
+		} else {
+			x.walk(&doc)
+		}
 	}
 }
 
@@ -114,13 +119,6 @@ func str(n *yaml.Node) *yaml.Node {
 		return nil
 	}
 	return n
-}
-
-// compose extracts services.*.image.
-func (x *extractor) compose(root *yaml.Node) {
-	for _, svc := range mappingValues(get(root, "services")) {
-		x.scalar(TypeCompose, get(svc, "image"), "")
-	}
 }
 
 // workflow extracts jobs.*.container[.image], jobs.*.services.*.image and

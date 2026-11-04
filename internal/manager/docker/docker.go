@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/distribution/reference"
+	"go.yaml.in/yaml/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -32,7 +33,7 @@ const (
 var (
 	dockerfileRe    = regexp.MustCompile(`(^|/)(Dockerfile|Containerfile)(\.[^/]*)?$`)
 	dockerfileExtRe = regexp.MustCompile(`(^|/)[^/]*\.(Dockerfile|Containerfile)$`)
-	composeRe       = regexp.MustCompile(`(^|/)(docker-)?compose(\.[^/]*)?\.ya?ml$`)
+	composeRe       = regexp.MustCompile(`(^|/)([^/]*\.)?(docker-)?compose(\.[^/]*)?\.ya?ml$`)
 	workflowRe      = regexp.MustCompile(`(^|/)(workflow-templates|\.(github|gitea|forgejo)/(workflows|actions))/.+\.ya?ml$`)
 	actionRe        = regexp.MustCompile(`(^|/)action\.ya?ml$`)
 	yamlRe          = regexp.MustCompile(`\.ya?ml$`)
@@ -104,6 +105,7 @@ type extractor struct {
 	src   []byte
 	lines []int
 	deps  []dep.Dep
+	seen  map[*yaml.Node]bool // compose: nodes already extracted (anchors)
 }
 
 func lineStarts(src []byte) []int {

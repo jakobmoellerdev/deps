@@ -139,7 +139,7 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 **Files:**
 
 - `Dockerfile`, `Containerfile`, `Dockerfile.<x>`, `<x>.Dockerfile` (DepType `dockerfile`)
-- `(docker-)compose*.y(a)ml` (DepType `compose`)
+- Compose files (DepType `compose`): `compose.y(a)ml`, `docker-compose.y(a)ml`, overrides and variants (`compose.override.yml`, `compose.<env>.yaml`, `docker-compose.<env>.yml`, `<x>.compose.y(a)ml`), and any other YAML shaped like one (see Compose details)
 - workflow YAML, as for github-actions (DepType `workflow`)
 - `action.y(a)ml` (DepType `action`)
 - other `*.y(a)ml` containing `image:` (DepType `kubernetes`) or `repository:` (DepType `helm`)
@@ -147,7 +147,7 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
 | `dockerfile` | `FROM` (flags skipped, line continuations and `# escape=` honored), `COPY --from=<image>`, `RUN --mount=…,from=<image>` | `docker` | `docker` | updated |
-| `compose` | `services.*.image` | `docker` | `docker` | updated |
+| `compose` | `services.*.image` (also through `<<:` merges and aliases), `image` in mappings at any depth of top-level `x-*` extension fields, `services.*.build.additional_contexts` entries `docker-image://<ref>` | `docker` | `docker` | updated |
 | `workflow` | `jobs.*.container` (string or `.image`), `jobs.*.services.*.image`, `uses: docker://…` | `docker` | `docker` | updated |
 | `action` | `runs.image: docker://…` (with `runs.using: docker`), `uses: docker://…` in `runs.steps` | `docker` | `docker` | updated |
 | `kubernetes` | scalar `image` in `containers`, `initContainers` and `ephemeralContainers` items | `docker` | `docker` | updated |
@@ -157,7 +157,8 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 
 | Reason | When |
 |---|---|
-| `variable reference` | `$` in the reference, or a variable ARG default |
+| `variable reference` | `$` in the reference, or a variable ARG default (Compose: see `interpolated image`) |
+| `interpolated image` | Compose interpolation other than `${VAR:-default}` / `${VAR-default}`, or a version spanning a variable boundary |
 | `template value` | `{{` in Kubernetes or Helm values |
 | `invalid reference` | the reference does not parse |
 | `no tag` | the reference has neither tag nor digest |
@@ -168,6 +169,14 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 
 - `scratch`, earlier stage names (`AS <name>`) and numeric stage indexes are not deps.
 - A reference that is exactly `$X` or `${X}` resolves to `ARG X=<image>`, declared before the first `FROM` or in the current stage. The dep sits at the ARG default, so the update rewrites the ARG line.
+
+**Compose details.**
+
+- A YAML file with another name is a Compose file when every top-level key is a Compose key (`version`, `name`, `include`, `services`, `networks`, `volumes`, `configs`, `secrets`, `models`) or an `x-*` extension, and `services` is a mapping of mappings, at least one with `image` or `build`. Kubernetes manifests, workflows and Helm values fail this check.
+- Anchored values are extracted once, at the anchor definition: services merging `<<: *runner` share the `x-runner` dep; a service that sets its own `image` after the merge is its own dep.
+- Interpolation: `${VAR:-default}` and `${VAR-default}` resolve to the default, and the update rewrites the default bytes (`${REGISTRY:-docker.io}/nginx:${TAG:-1.27}` → `${TAG:-1.28}`). `$$` is a literal `$`.
+- `build.args` values are not images. Dockerfiles referenced by `build.dockerfile` are found by the Dockerfile rules on their own.
+- `include:` and `extends:` need no handling: the referenced files are scanned like every other file.
 
 **YAML files.**
 

@@ -171,7 +171,7 @@ func TestExtractCompose(t *testing.T) {
 				{line: 3, name: "postgres", source: "docker.io/library/postgres", version: "16.2-alpine", depT: TypeCompose},
 				{line: 5, name: "redis", source: "docker.io/library/redis", version: "7", depT: TypeCompose, insert: `"`},
 				{line: 7, name: "ghcr.io/org/app", source: "ghcr.io/org/app", version: "1.2.3", digest: sha1, depT: TypeCompose, insert: "@" + sha1 + "'"},
-				{line: 11, name: "${REGISTRY}/x:1.0", depT: TypeCompose, skip: "variable reference"},
+				{line: 11, name: "${REGISTRY}/x:1.0", depT: TypeCompose, skip: "interpolated image"},
 				{line: 13, name: "nginx", source: "docker.io/library/nginx", depT: TypeCompose, skip: "no tag"},
 				{line: 14, name: "caddy", source: "docker.io/library/caddy", version: "2.8", depT: TypeCompose, insert: "}"},
 				{line: 16, name: "alpine:3.19", depT: TypeCompose, skip: "cannot locate value"},
@@ -179,6 +179,180 @@ func TestExtractCompose(t *testing.T) {
 				{line: 21, name: "busybox", source: "docker.io/library/busybox", version: "1.36", depT: TypeCompose},
 			})
 		})
+	}
+}
+
+const composeAnchors = `x-runner: &runner
+  image: gitea/runner:5
+  restart: unless-stopped
+x-tools:
+  nested:
+    - image: ghcr.io/o/tool:1.0
+      environment:
+        image: not:1.0
+x-img: &img busybox:1.36
+services:
+  r1:
+    <<: *runner
+  r2:
+    <<: [*runner]
+    container_name: r2
+  own:
+    <<: *runner
+    image: gitea/runner:6
+  aliased:
+    image: *img
+  again:
+    image: *img
+`
+
+func TestExtractComposeAnchors(t *testing.T) {
+	for name, src := range variants(composeAnchors) {
+		t.Run(name, func(t *testing.T) {
+			check(t, []byte(src), extract(t, "ci/compose.yml", src), []want{
+				{line: 2, name: "gitea/runner", source: "docker.io/gitea/runner", version: "5", depT: TypeCompose},
+				{line: 6, name: "ghcr.io/o/tool", source: "ghcr.io/o/tool", version: "1.0", depT: TypeCompose},
+				{line: 18, name: "gitea/runner", source: "docker.io/gitea/runner", version: "6", depT: TypeCompose},
+				{line: 9, name: "busybox", source: "docker.io/library/busybox", version: "1.36", depT: TypeCompose},
+			})
+		})
+	}
+}
+
+const composeInterpolation = `services:
+  a:
+    image: ${REGISTRY:-docker.io}/nginx:${NGINX_TAG:-1.27}
+  b:
+    image: "ghcr.io/o/app:${TAG-2.0}@` + sha1 + `"
+  c:
+    image: ${REGISTRY}/x:1.0
+  d:
+    image: nginx:$TAG
+  e:
+    image: nginx:${TAG:?required}
+  f:
+    image: nginx:1.${MINOR:-27}
+  g:
+    image: $${X}:1
+  h:
+    image: ${R:-${S}}/x:1
+  i:
+    image: redis:${T:-7.2}-alpine
+  j:
+    image: ${R:-ghcr.io}/o/lit:3.1$$
+  k:
+    image: nginx:${TAG:+x}
+  l:
+    image: nginx:${TAG:-1.27
+  m:
+    image: nginx:${1X:-1}
+`
+
+func TestExtractComposeInterpolation(t *testing.T) {
+	src := composeInterpolation
+	deps := extract(t, "compose.yaml", src)
+	check(t, []byte(src), deps, []want{
+		{line: 3, name: "nginx", source: "docker.io/library/nginx", version: "1.27", depT: TypeCompose, insert: "}"},
+		{line: 5, name: "ghcr.io/o/app", source: "ghcr.io/o/app", version: "2.0", digest: sha1, depT: TypeCompose, insert: "}@" + sha1},
+		{line: 7, name: "${REGISTRY}/x:1.0", depT: TypeCompose, skip: "interpolated image"},
+		{line: 9, name: "nginx:$TAG", depT: TypeCompose, skip: "interpolated image"},
+		{line: 11, name: "nginx:${TAG:?required}", depT: TypeCompose, skip: "interpolated image"},
+		{line: 13, name: "nginx:1.${MINOR:-27}", depT: TypeCompose, skip: "interpolated image"},
+		{line: 15, name: "$${X}:1", depT: TypeCompose, skip: "invalid reference"},
+		{line: 17, name: "${R:-${S}}/x:1", depT: TypeCompose, skip: "interpolated image"},
+		{line: 19, name: "redis:${T:-7.2}-alpine", depT: TypeCompose, skip: "interpolated image"},
+		{line: 21, name: "${R:-ghcr.io}/o/lit:3.1$$", depT: TypeCompose, skip: "invalid reference"},
+		{line: 23, name: "nginx:${TAG:+x}", depT: TypeCompose, skip: "interpolated image"},
+		{line: 25, name: "nginx:${TAG:-1.27", depT: TypeCompose, skip: "interpolated image"},
+		{line: 27, name: "nginx:${1X:-1}", depT: TypeCompose, skip: "interpolated image"},
+	})
+	for _, c := range []struct {
+		u    dep.Update
+		want string
+	}{
+		{dep.Update{Dep: deps[0], Type: dep.Minor, NewVersion: "1.28"}, "image: ${REGISTRY:-docker.io}/nginx:${NGINX_TAG:-1.28}\n"},
+		{dep.Update{Dep: deps[0], Type: dep.Pin, NewVersion: "1.27", NewDigest: sha2}, "image: ${REGISTRY:-docker.io}/nginx:${NGINX_TAG:-1.27@" + sha2 + "}\n"},
+		{dep.Update{Dep: deps[1], Type: dep.Minor, NewVersion: "2.1", NewDigest: sha2}, `image: "ghcr.io/o/app:${TAG-2.1}@` + sha2 + `"` + "\n"},
+	} {
+		edits, err := New().Edits(c.u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := patch.Apply([]byte(src), edits)
+		if err != nil || !strings.Contains(string(out), c.want) {
+			t.Errorf("got %s, %v; want line %q", out, err, c.want)
+		}
+	}
+}
+
+func TestExtractComposeAdditionalContexts(t *testing.T) {
+	src := `services:
+  app:
+    build:
+      context: .
+      additional_contexts:
+        base: docker-image://alpine:3.20
+        src: ../src
+  app2:
+    build:
+      additional_contexts:
+        - base=docker-image://golang:1.23@` + sha1 + `
+        - other=../x
+        - docker-image://ignored:1.0
+        - [1]
+  app3:
+    build:
+      additional_contexts: [1]
+  app4:
+    build: .
+`
+	check(t, []byte(src), extract(t, "docker-compose.yml", src), []want{
+		{line: 6, name: "alpine", source: "docker.io/library/alpine", version: "3.20", depT: TypeCompose},
+		{line: 11, name: "golang", source: "docker.io/library/golang", version: "1.23", digest: sha1, depT: TypeCompose, insert: "@"},
+	})
+}
+
+func TestExtractComposeFileNames(t *testing.T) {
+	// "other" is no Compose top-level key, so only the file name selects compose mode.
+	const src = "services:\n  a:\n    image: redis:7.2\nother: 1\n"
+	for file, ok := range map[string]bool{
+		"compose.yaml":                  true,
+		"compose.yml":                   true,
+		"docker-compose.yaml":           true,
+		"docker-compose.yml":            true,
+		"compose.override.yml":          true,
+		"docker-compose.override.yaml":  true,
+		"deploy/compose.prod.yaml":      true,
+		"docker-compose.dev.yml":        true,
+		"app.compose.yml":               true,
+		"deploy/x.compose.yaml":         true,
+		"my-compose.yml":                false,
+		"composer.yaml":                 false,
+		"decompose.yml":                 false,
+		"compose/values.yaml":           false,
+		"docker-compose.yml.d/foo.yaml": false,
+	} {
+		if deps := extract(t, file, src); (len(deps) == 1) != ok {
+			t.Errorf("%s: got %+v, want compose %v", file, deps, ok)
+		}
+	}
+}
+
+func TestExtractComposeByContent(t *testing.T) {
+	src := "name: stack\nx-common: &c\n  restart: always\nservices:\n  a:\n    <<: *c\n    image: redis:7.2\n  b:\n    build: .\nvolumes:\n  data:\n"
+	check(t, []byte(src), extract(t, "deploy/stack.yml", src), []want{
+		{line: 7, name: "redis", source: "docker.io/library/redis", version: "7.2", depT: TypeCompose},
+	})
+	for name, src := range map[string]string{
+		"kubernetes":        "apiVersion: v1\nkind: Config\nservices:\n  a:\n    image: redis:7.2\n",
+		"helm values":       "replicaCount: 1\nservices:\n  a:\n    image: redis:7.2\n",
+		"scalar services":   "services:\n  a: x\n  image: redis:7.2\n",
+		"no image or build": "services:\n  a:\n    command: x\nx-y:\n  image: redis:7.2\n",
+		"services list":     "services:\n  - image: redis:7.2\n",
+	} {
+		if deps := extract(t, "deploy/"+strings.ReplaceAll(name, " ", "-")+".yaml", src); len(deps) != 0 {
+			t.Errorf("%s: got %+v", name, deps)
+		}
 	}
 }
 
