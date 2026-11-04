@@ -116,7 +116,7 @@ func TestDecodeDoc(t *testing.T) {
 	}{
 		{name: "full", in: packument, wantRepo: "git+https://github.com/eslint/eslint.git", wantTimes: 3},
 		{name: "no members", in: `{"versions":{}}`},
-		{name: "time not an object", in: `{"time":"x","repository":{"url":1}}`, wantErr: "cannot unmarshal"},
+		{name: "time not an object", in: `{"time":"x","repository":{"url":1}}`, wantErr: "unable to unmarshal"},
 		{name: "repository other kind", in: `{"repository":null,"time":{}}`},
 		{name: "not an object", in: `[]`, wantErr: "not an object"},
 		{name: "truncated", in: `{"versions":{"1.0.0":`, wantErr: "EOF"},
