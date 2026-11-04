@@ -1,0 +1,45 @@
+# nfpm configuration of the Arch Linux and Alpine packages. packaging/nfpm/build.sh sets GOARCH,
+# PKG_VERSION, PKG_RELEASE, DIST and COMPLETIONS; every mtime is SOURCE_DATE_EPOCH.
+name: deps
+arch: ${GOARCH}
+platform: linux
+# build.sh maps the tag to the distribution's version rules itself.
+version: ${PKG_VERSION}
+version_schema: none
+release: ${PKG_RELEASE}
+maintainer: Jakob Möller <contact@jakob-moeller.com>
+description: dependency updates for GitHub, Gitea and Forgejo repositories
+homepage: https://git.jakob-moeller.cloud/jakobmoellerdev/deps
+contents:
+  - src: ${DIST}/deps_linux_${GOARCH}
+    dst: /usr/bin/deps
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${COMPLETIONS}/bash
+    dst: /usr/share/bash-completion/completions/deps
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${COMPLETIONS}/zsh
+    dst: /usr/share/zsh/site-functions/_deps
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${COMPLETIONS}/fish
+    dst: /usr/share/fish/vendor_completions.d/deps.fish
+    expand: true
+    file_info:
+      mode: 0644
+# deps run needs git. pacman never installs optional dependencies, so Arch lists it as one;
+# Alpine has no optional dependencies, so the apk depends on it (as apt installs the deb's
+# Recommends by default).
+overrides:
+  archlinux:
+    recommends:
+      - "git: deps run pushes branches with git"
+  apk:
+    depends:
+      - git
+archlinux:
+  packager: Jakob Möller <contact@jakob-moeller.com>

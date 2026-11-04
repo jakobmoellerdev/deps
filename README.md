@@ -229,7 +229,9 @@ The action downloads the static binary for linux/amd64 or linux/arm64, verifies 
 
 ## Install
 
-**Debian and Ubuntu (amd64, arm64).** Every release is published to the Debian package registry on git.jakob-moeller.cloud, which needs no login:
+Every release is published to the Debian, Arch Linux and Alpine package registries on git.jakob-moeller.cloud, which need no login. Each package installs `/usr/bin/deps` with bash, zsh and fish completions, and the package files are also attached to each release.
+
+**Debian and Ubuntu (amd64, arm64).**
 
 ```sh
 sudo install -d -m 0755 /etc/apt/keyrings
@@ -238,7 +240,29 @@ echo "deb [signed-by=/etc/apt/keyrings/deps.asc] https://git.jakob-moeller.cloud
 sudo apt-get update && sudo apt-get install deps
 ```
 
-The package installs `/usr/bin/deps` with bash, zsh and fish completions. It recommends `git`, which `deps run` needs. The `.deb` files are also attached to each release.
+The package recommends `git`, which `deps run` needs.
+
+**Arch Linux (x86_64, aarch64).** The repository is signed with the registry's key, which pacman has to trust:
+
+```sh
+curl -fsSL https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/arch/repository.key -o /tmp/deps.key
+sudo pacman-key --add /tmp/deps.key
+sudo pacman-key --lsign-key "$(gpg --show-keys --with-colons /tmp/deps.key | awk -F: '$1 == "fpr" { print $10; exit }')"
+printf '\n[jakobmoellerdev]\nSigLevel = Required\nServer = https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/arch/$repo/$arch\n' | sudo tee -a /etc/pacman.conf
+sudo pacman -Syu deps
+```
+
+`git` is an optional dependency, needed by `deps run`.
+
+**Alpine Linux (x86_64, aarch64).** One repository serves every Alpine release, since the binary is static. As root:
+
+```sh
+wget -qO /etc/apk/keys/jakobmoellerdev@406384923acbad2a78f7a8f09acbfa3ae0bd4acf33360d688568adaa4cd205a3.rsa.pub https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/alpine/key
+echo https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/alpine/stable/main >> /etc/apk/repositories
+apk add deps
+```
+
+apk checks the index signature against the key file name, so keep the name. The package depends on `git`, which `deps run` needs.
 
 **Static binary (linux/amd64, linux/arm64).** Download it from the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) and verify it:
 

@@ -8,7 +8,10 @@
 set -euo pipefail
 
 tag=${1:?usage: build.sh <tag>}
-dist=${DIST:-dist}
+DIST=${DIST:-dist}
+# shellcheck source=packaging/common.sh
+source "$(dirname "$0")/../common.sh"
+
 # Debian versions sort "~" before anything, so a v1.2.3-rc.1 tag becomes 1.2.3~rc.1 < 1.2.3.
 version=${tag#v}
 version=${version/-/\~}
@@ -17,36 +20,18 @@ if ! [[ $version =~ ^[0-9][A-Za-z0-9.+~]*$ ]]; then
 	exit 1
 fi
 
-if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
-	SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "refs/tags/$tag^{commit}" 2>/dev/null || git log -1 --format=%ct HEAD)
-fi
-export SOURCE_DATE_EPOCH
-
-# Completions come from the binary that runs on this machine; they are the same for both
-# architectures.
-case "$(uname -m)" in
-x86_64 | amd64) host=amd64 ;;
-aarch64 | arm64) host=arm64 ;;
-*) echo "build.sh: unsupported host architecture $(uname -m)" >&2 && exit 1 ;;
-esac
-if [[ $(uname -s) != Linux ]]; then
-	echo "build.sh: needs Linux to run dist/deps_linux_$host for the completions" >&2
-	exit 1
-fi
+export_source_date_epoch "$tag"
+check_binaries
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 umask 022
 
 comp=$tmp/completions
-mkdir -p "$comp"
-for shell in bash zsh fish; do
-	"$dist/deps_linux_$host" completion "$shell" >"$comp/$shell"
-done
+write_completions "$comp"
 
 for arch in amd64 arm64; do
-	bin=$dist/deps_linux_$arch
-	[[ -f $bin ]] || { echo "build.sh: $bin is missing; run task release:build first" >&2 && exit 1; }
+	bin=$DIST/deps_linux_$arch
 	root=$tmp/$arch
 	install -D -m 0755 "$bin" "$root/usr/bin/deps"
 	install -D -m 0644 "$comp/bash" "$root/usr/share/bash-completion/completions/deps"
@@ -74,5 +59,5 @@ EOF
 	chmod 0644 "$root/DEBIAN/control"
 	find "$root" -type d -exec chmod 0755 {} +
 	find "$root" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
-	dpkg-deb --root-owner-group -Zxz --build "$root" "$dist/deps_${version}_${arch}.deb"
+	dpkg-deb --root-owner-group -Zxz --build "$root" "$DIST/deps_${version}_${arch}.deb"
 done

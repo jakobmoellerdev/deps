@@ -24,6 +24,16 @@ vars:
       else
         echo "${TMPDIR:-/tmp}/deps-tools/git-cliff-{{.GIT_CLIFF_VERSION}}/git-cliff"
       fi
+  NFPM_VERSION: 2.48.0
+  # Pinned nfpm (Arch Linux and Alpine packages), installed by nfpm:install unless the same
+  # version is on PATH.
+  NFPM:
+    sh: |
+      if command -v nfpm >/dev/null && nfpm --version 2>/dev/null | grep -Eq '^GitVersion: +v?{{.NFPM_VERSION}}$'; then
+        command -v nfpm
+      else
+        echo "${TMPDIR:-/tmp}/deps-tools/nfpm-{{.NFPM_VERSION}}/nfpm"
+      fi
 
 tasks:
   default:
@@ -140,7 +150,19 @@ tasks:
       - rm -rf dist && mkdir -p dist
       - for: [amd64, arm64]
         cmd: GOOS=linux GOARCH={{.ITEM}} go build -trimpath -ldflags "-s -w -buildid= -X main.version={{.VERSION}}" -o dist/deps_linux_{{.ITEM}} ./cmd/deps
-      - cd dist && sha256sum deps_linux_amd64 deps_linux_arm64 > checksums.txt
+      - task: release:checksums
+
+  release:checksums:
+    desc: Write dist/checksums.txt (sha256sum) for the binaries and packages in dist/
+    cmds:
+      - cd dist && find . -maxdepth 1 -type f -name 'deps*' -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > checksums.txt
+
+  release:packages:
+    desc: Build the Debian, Arch Linux and Alpine packages from the release binaries and update dist/checksums.txt
+    cmds:
+      - task: release:deb
+      - task: release:arch
+      - task: release:apk
 
   release:deb:
     desc: Build reproducible dist/deps_<version>_<arch>.deb packages (amd64, arm64) from the release binaries and add them to dist/checksums.txt
@@ -149,7 +171,49 @@ tasks:
         msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
     cmds:
       - packaging/deb/build.sh "{{.VERSION}}"
-      - cd dist && sha256sum deps_linux_amd64 deps_linux_arm64 deps_*.deb > checksums.txt
+      - task: release:checksums
+
+  release:arch:
+    desc: Build reproducible dist/deps-<pkgver>-1-<arch>.pkg.tar.zst Arch Linux packages (x86_64, aarch64) from the release binaries and add them to dist/checksums.txt
+    deps: [nfpm:install]
+    preconditions:
+      - sh: test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64
+        msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
+    cmds:
+      - NFPM="{{.NFPM}}" packaging/nfpm/build.sh archlinux "{{.VERSION}}"
+      - task: release:checksums
+
+  release:apk:
+    desc: Build reproducible dist/deps-<pkgver>-r0-<arch>.apk Alpine packages (x86_64, aarch64) from the release binaries and add them to dist/checksums.txt
+    deps: [nfpm:install]
+    preconditions:
+      - sh: test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64
+        msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
+    cmds:
+      - NFPM="{{.NFPM}}" packaging/nfpm/build.sh apk "{{.VERSION}}"
+      - task: release:checksums
+
+  nfpm:install:
+    desc: Download and checksum-verify nfpm v{{.NFPM_VERSION}} unless present
+    status:
+      - test -x "{{.NFPM}}"
+    cmds:
+      - |
+        set -eu
+        case "$(uname -m)" in
+          x86_64|amd64) arch=x86_64; sum=6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750 ;;
+          aarch64|arm64) arch=arm64; sum=a9a75213763783b7669719e505474c748c5ad7dc66591a195619deb50f85c2f4 ;;
+          *) echo "nfpm: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+        esac
+        name="nfpm_{{.NFPM_VERSION}}_Linux_$arch.tar.gz"
+        tmp=$(mktemp -d)
+        trap 'rm -rf "$tmp"' EXIT
+        curl -sSfL -o "$tmp/$name" "https://github.com/goreleaser/nfpm/releases/download/v{{.NFPM_VERSION}}/$name"
+        echo "$sum  $tmp/$name" | sha256sum -c --quiet -
+        dest="${TMPDIR:-/tmp}/deps-tools/nfpm-{{.NFPM_VERSION}}"
+        mkdir -p "$dest"
+        tar -xzf "$tmp/$name" -C "$dest" nfpm
+        echo "installed $dest/nfpm"
 
   test:
     desc: Run tests with the race detector
