@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/invopop/jsonschema"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jsonschema"
 )
 
 // MarkdownDescription is the schema keyword holding a key's full markdown description (its
@@ -60,10 +60,10 @@ func configKeys(root, n *jsonschema.Schema, prefix string, depth int, seen map[s
 		return nil, nil
 	}
 	var keys []configKey
-	for p := n.Properties.Oldest(); p != nil; p = p.Next() {
-		path := prefix + p.Key
-		keys = append(keys, configKey{path: path, depth: depth, s: p.Value})
-		child, sep, err := children(root, p.Value)
+	for key, p := range n.Properties.All() {
+		path := prefix + key
+		keys = append(keys, configKey{path: path, depth: depth, s: p})
+		child, sep, err := children(root, p)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
@@ -138,7 +138,7 @@ func facts(root, k *jsonschema.Schema) []string {
 	if k.PropertyNames != nil {
 		add("Names", "must match "+pattern(k.PropertyNames.Pattern))
 	}
-	if k.Minimum != "" {
+	if k.Minimum != nil {
 		add("Minimum", "`"+string(k.Minimum)+"`")
 	}
 	if k.MinItems != nil {

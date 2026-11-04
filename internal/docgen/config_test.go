@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/invopop/jsonschema"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jsonschema"
 )
 
 type fakeConfig struct {
@@ -32,8 +32,10 @@ type fakeS struct {
 
 func reflectFake(t *testing.T) *jsonschema.Schema {
 	t.Helper()
-	r := &jsonschema.Reflector{FieldNameTag: "yaml", RequiredFromJSONSchemaTags: true, ExpandedStruct: true, Anonymous: true}
-	s := r.Reflect(&fakeConfig{})
+	s, err := jsonschema.Reflect(&fakeConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	s.Title = "Fake config"
 	s.Extras = map[string]any{MarkdownDescription: "Intro with **markdown**."}
 	limit := s.Properties.Value("limit")
