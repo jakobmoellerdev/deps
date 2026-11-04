@@ -47,7 +47,7 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 - Dockerfile: every `FROM` (case-insensitive, `--flag`s skipped, line continuations and the `# escape=` directive honored). `scratch` and earlier stage names (`AS <name>`) are not dependencies.
 - Compose: `services.*.image` (through `<<:` merges and aliases; anchored values once, at the anchor), `image` in `x-*` extension fields, `build.additional_contexts` `docker-image://` entries; `${VAR:-default}`/`${VAR-default}` defaults are updated in place, other interpolation is skipped as `interpolated image`.
 - Workflows: `jobs.*.container` (string or `.image`), `jobs.*.services.*.image`, `uses: docker://…` steps. Actions: `runs.image: docker://…` (when `runs.using: docker`) and `uses: docker://…` in `runs.steps`.
-- References are parsed with distribution/reference; `Name` is the familiar name (`postgres`), the datasource uses the canonical one. Skips: `variable reference` (`$`), `interpolated image` (Compose), `cannot locate value`, `invalid reference`, `no tag`, `digest without tag`.
+- References are parsed by `internal/imageref` (docker.io/library defaults, oras-go `properties.NewReference` for splitting and validation); `Name` is the familiar name (`postgres`), the datasource uses the canonical one. Skips: `variable reference` (`$`), `interpolated image` (Compose), `cannot locate value`, `invalid reference`, `no tag`, `digest without tag`.
 - Digests: `image:tag@sha256:…` is refreshed in place (tag and digest). With `pin: digest`, `@sha256:<index digest>` is appended after the tag. Digests come from a HEAD of the tag's manifest, so multi-platform images get the index digest. Credentials come from the Docker config and credential helpers.
 - Non-version tags (`latest`, `bookworm`, `ubuntu-26.04`, `stable`) are extracted too; the engine only maintains their digest (section 4, Resolve order). This also covers Helm `tag: latest@sha256:…`.
 
@@ -738,7 +738,7 @@ The user-facing reference (every key, its default and validation, rule semantics
 
 - **Ecosystem.**
   - `golang.org/x/mod` gives exact Go module semantics: modfile parsing, semver, pseudo-versions and path escaping.
-  - oras-go and distribution/reference cover Docker registries and image references.
+  - oras-go covers Docker registries and image references (`internal/imageref` adds the Docker Hub defaults).
   - The Gitea SDK lineage exists, and `actions-lockfile` (roadmap) is a Go module.
   - Forges are mostly written in Go, so their behavior is easy to reference.
 - **I/O-bound work.** The job is mostly HTTP and git. Goroutines, one shared HTTP/2 client and a semaphore cover it without a runtime, an interpreter or node_modules. The result is one static binary that starts instantly and has a small memory footprint.

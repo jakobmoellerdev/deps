@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/distribution/reference"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/oras-project/oras-go/v3/content"
 	"github.com/oras-project/oras-go/v3/errdef"
@@ -32,6 +31,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/imageref"
 )
 
 // Source resolves image tags and digests. Every lookup runs once per run per key; concurrent
@@ -387,11 +387,11 @@ func repoName(d dep.Dep) (string, error) {
 	if ref == "" {
 		ref = d.Name
 	}
-	named, err := reference.ParseNormalizedNamed(ref)
+	r, err := imageref.Parse(ref)
 	if err != nil {
 		return "", fmt.Errorf("image %q: %w", ref, err)
 	}
-	return named.Name(), nil
+	return r.Name, nil
 }
 
 func (s *Source) acquire(ctx context.Context) error {

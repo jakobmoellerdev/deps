@@ -9,10 +9,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/distribution/reference"
 	"go.yaml.in/yaml/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/imageref"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
@@ -152,27 +152,26 @@ func (x *extractor) add(depType string, line, off int, ref string) {
 // ParseRef fills d from ref, which starts at byte offset off. Tags that are not versions
 // (latest, bookworm) are kept: the engine refreshes or pins their digest.
 func ParseRef(d *dep.Dep, off int, ref string) {
-	named, err := reference.ParseNormalizedNamed(ref)
+	r, err := imageref.Parse(ref)
 	if err != nil {
 		d.Skip = "invalid reference"
 		return
 	}
-	d.Name, d.Source = reference.FamiliarName(named), named.Name()
+	d.Name, d.Source = r.Familiar, r.Name
 	end := off + len(ref)
-	if dg, ok := named.(reference.Digested); ok {
-		d.Digest = dg.Digest().String()
+	if r.Digest != "" {
+		d.Digest = r.Digest
 		d.DigestSpan = dep.Span{Start: end - len(d.Digest), End: end}
 		end -= len(d.Digest) + 1
 	}
 	d.InsertAt = end
-	t, ok := named.(reference.Tagged)
 	switch {
-	case !ok && d.Digest != "":
+	case r.Tag == "" && d.Digest != "":
 		d.Skip = "digest without tag"
-	case !ok:
+	case r.Tag == "":
 		d.Skip = "no tag"
 	default:
-		d.Version = t.Tag()
+		d.Version = r.Tag
 		d.RefSpan = dep.Span{Start: end - len(d.Version), End: end}
 	}
 }

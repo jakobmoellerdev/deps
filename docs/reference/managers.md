@@ -192,7 +192,7 @@ Other YAML is parsed document by document. A parse error (typically a Helm templ
 
 **Names.**
 
-References are parsed with distribution/reference. The dep name is the familiar name (`postgres`, `ghcr.io/org/img`); lookups use the canonical name.
+References are parsed as docker does (names without a registry are on docker.io, single-component ones under library/). The dep name is the familiar name (`postgres`, `ghcr.io/org/img`); lookups use the canonical name.
 
 **Versioning.**
 
