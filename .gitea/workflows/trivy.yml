@@ -1,0 +1,24 @@
+name: trivy
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * *" # new advisories show up without a code change
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Scan the repository
+        # Uses the runner image's trivy: setup-trivy checks out github.com/aquasecurity/trivy with
+        # the job's Gitea token, which github.com rejects.
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          skip-setup-trivy: true
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
