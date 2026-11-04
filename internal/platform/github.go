@@ -98,6 +98,7 @@ func (r *rest) doURL(ctx context.Context, method, url, label string, in, out any
 // apiRepo covers the repository JSON of GitHub and Gitea/Forgejo.
 type apiRepo struct {
 	DefaultBranch string `json:"default_branch"`
+	NodeID        string `json:"node_id"` // GitHub GraphQL id
 	// GitHub; only reported to tokens with push access, so nil means unknown.
 	AllowAutoMerge   *bool `json:"allow_auto_merge"`
 	AllowMergeCommit *bool `json:"allow_merge_commit"`
@@ -255,31 +256,46 @@ func (g *githubClient) EnableAutoMerge(ctx context.Context, pr PR, strategy stri
 	if repo.AllowAutoMerge != nil && !*repo.AllowAutoMerge {
 		return fmt.Errorf("enable auto-merge #%d: %w: disabled in the repository settings", pr.Number, ErrAutoMergeUnavailable)
 	}
-	in := map[string]any{
-		"query":     enableAutoMergeMutation,
-		"variables": map[string]string{"id": pr.NodeID, "method": strings.ToUpper(method)},
-	}
-	var out struct {
-		Errors []struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	if err := g.doURL(ctx, http.MethodPost, graphqlURL(g.api), "/graphql enablePullRequestAutoMerge", in, &out, g.headers); err != nil {
+	in := map[string]string{"id": pr.NodeID, "method": strings.ToUpper(method)}
+	msg, err := g.graphql(ctx, "enablePullRequestAutoMerge", enableAutoMergeMutation, in, nil)
+	switch {
+	case err != nil:
 		return err
-	}
-	if len(out.Errors) == 0 {
+	case msg == "":
 		return nil
-	}
-	msgs := make([]string, len(out.Errors))
-	for i, e := range out.Errors {
-		msgs[i] = e.Message
-	}
-	msg := strings.Join(msgs, "; ")
-	if githubUnavailableRe.MatchString(msg) {
+	case githubUnavailableRe.MatchString(msg):
 		return fmt.Errorf("enable auto-merge #%d: %w: %s", pr.Number, ErrAutoMergeUnavailable, msg)
 	}
 	return fmt.Errorf("enable auto-merge #%d: %s", pr.Number, msg)
+}
+
+// graphql runs a GraphQL query or mutation (op names it in errors) and decodes its data into
+// data (unless nil). GraphQL errors come back as msg, their messages joined by "; ", with a
+// nil err; err reports transport and HTTP errors.
+func (g *githubClient) graphql(ctx context.Context, op, query string, vars, data any) (msg string, err error) {
+	var out struct {
+		Data   jsontext.Value `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	in := map[string]any{"query": query, "variables": vars}
+	if err := g.doURL(ctx, http.MethodPost, graphqlURL(g.api), "/graphql "+op, in, &out, g.headers); err != nil {
+		return "", err
+	}
+	if len(out.Errors) > 0 {
+		msgs := make([]string, len(out.Errors))
+		for i, e := range out.Errors {
+			msgs[i] = e.Message
+		}
+		return strings.Join(msgs, "; "), nil
+	}
+	if data != nil {
+		if err := json.Unmarshal(out.Data, data); err != nil {
+			return "", fmt.Errorf("POST /graphql %s: decode: %w", op, err)
+		}
+	}
+	return "", nil
 }
 
 // method maps strategy to a GitHub merge method (merge, squash, rebase); auto picks the first

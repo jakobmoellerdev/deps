@@ -14,7 +14,9 @@ inputs:
       Secret holding a passphrase-less private key (OpenSSH, or armored OpenPGP) that deps signs its
       commits with, exported as DEPS_SIGNING_KEY. The committer identity (config key gitAuthor, or
       DEPS_GIT_AUTHOR in the job env) must be the key owner's verified email on the forge for the
-      signature to count as verified. Default: unsigned commits.
+      signature to count as verified. Default: no key; on GitHub with an App token (including the
+      job token) deps then creates its commits through the API, and GitHub signs them (config key
+      platformCommit). A key turns that off, and conflicts with platformCommit: enabled.
     default: ""
   args:
     description: "Arguments for deps, e.g. `run -v --log-level info` or `plan`."

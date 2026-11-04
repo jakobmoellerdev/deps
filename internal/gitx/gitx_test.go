@@ -156,6 +156,15 @@ func TestCommit(t *testing.T) {
 		t.Errorf("HEAD moved to %s", got)
 	}
 
+	// A change without new content deletes the file.
+	del, err := Repo{Dir: clone}.Commit(ctx, parent, []engine.FileChange{{Path: "README", Mode: 0o644, Old: []byte("readme\n")}}, "rm", "Bot", "bot@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := git(t, clone, "ls-tree", "-r", "--name-only", del); got != "sub/a.txt" {
+		t.Errorf("tree after deleting README = %q", got)
+	}
+
 	if _, err := r.Commit(ctx, "0000000000000000000000000000000000000000", changes, "m", "n", "e@x"); err == nil {
 		t.Error("Commit with unknown parent succeeded")
 	}

@@ -27,6 +27,9 @@ branchPrefix: deps/
 rebaseWhen: behind-base-branch # :rebaseStalePrs
 gitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>' # gitAuthor
 gitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com'] # gitIgnoredAuthors
+# RENOVATE_PLATFORM_COMMIT=enabled (renovate.yml): commits through the GitHub API, which GitHub
+# signs as ocmbot[bot]; gitAuthor then only applies if this is switched off.
+platformCommit: enabled
 prConcurrentLimit: 0 # prConcurrentLimit: 0 (unlimited, also the deps default)
 prHourlyLimit: 0 # prHourlyLimit: 0 (unlimited, also the deps default)
 pin: digest # docker:pinDigests + helpers:pinGitHubActionDigests

@@ -141,6 +141,7 @@ func TestLoadErrors(t *testing.T) {
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, file: '{{name}}'}}]\n", "custom[0].checksum.file: unknown template variable {{name}}"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, pathh: f}}]\n", "line 1"},
 		{"rebaseWhen: always\n", `rebaseWhen: must be one of conflicted, behind-base-branch, never, got "always"`},
+		{"platformCommit: always\n", `platformCommit: must be one of auto, enabled, disabled, got "always"`},
 		{"minimumReleaseAge: soon\n", `minimumReleaseAge: invalid age "soon"`},
 		{"minimumReleaseAge: -1h\n", `minimumReleaseAge: invalid age "-1h"`},
 		{"minimumReleaseAge: 99999999999999999 weeks\n", "minimumReleaseAge: age \"99999999999999999 weeks\" out of range"},

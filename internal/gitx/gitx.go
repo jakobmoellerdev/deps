@@ -78,10 +78,17 @@ func (r Repo) LsRemote(ctx context.Context, pattern string) (map[string]string, 
 	return refs, nil
 }
 
+// Prefix returns the path of Dir relative to the top of the work tree, with a trailing '/'
+// ("" at the top).
+func (r Repo) Prefix(ctx context.Context) (string, error) {
+	return r.run(ctx, nil, nil, "rev-parse", "--show-prefix")
+}
+
 // Commit creates a commit on top of parent with changes applied, using a temporary index.
-// Change paths are relative to Dir. The working tree and the real index are not touched.
+// Change paths are relative to Dir; a change with nil New deletes its file. The working tree
+// and the real index are not touched.
 func (r Repo) Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, name, email string) (string, error) {
-	prefix, err := r.run(ctx, nil, nil, "rev-parse", "--show-prefix")
+	prefix, err := r.Prefix(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -97,6 +104,11 @@ func (r Repo) Commit(ctx context.Context, parent string, changes []engine.FileCh
 	}
 	var info strings.Builder
 	for _, c := range changes {
+		p := path.Join(prefix, c.Path)
+		if c.New == nil {
+			fmt.Fprintf(&info, "0 %s\t%s\n", strings.Repeat("0", 40), p) // mode 0 removes the entry
+			continue
+		}
 		oid, err := r.run(ctx, c.New, nil, "hash-object", "-w", "--stdin")
 		if err != nil {
 			return "", err
@@ -105,7 +117,7 @@ func (r Repo) Commit(ctx context.Context, parent string, changes []engine.FileCh
 		if c.Mode&0o111 != 0 {
 			mode = "100755"
 		}
-		fmt.Fprintf(&info, "%s %s\t%s\n", mode, oid, path.Join(prefix, c.Path))
+		fmt.Fprintf(&info, "%s %s\t%s\n", mode, oid, p)
 	}
 	if _, err := r.run(ctx, []byte(info.String()), idx, "update-index", "--index-info"); err != nil {
 		return "", err

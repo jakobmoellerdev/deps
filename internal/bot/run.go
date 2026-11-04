@@ -23,7 +23,8 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
 
-// Git is the git plumbing the bot needs; implemented by gitx.Repo.
+// Git is the git plumbing the bot needs; implemented by gitx.Repo, and for platformCommit by
+// gitx.Repo with Commit, Push and BranchTip going through the GitHub API (platform.GitHubCommits).
 type Git interface {
 	RevParse(ctx context.Context, rev string) (string, error)
 	RemoteURL(ctx context.Context) (string, error)

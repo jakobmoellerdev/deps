@@ -281,7 +281,7 @@ Push one branch and open or update one pull request per dependency or group.
 deps run [flags]
 ```
 
-Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else from the `origin` remote), resolves every dependency, builds one commit per group on a temporary index (no checkout; the working tree is never modified), pushes it with `--force-with-lease`, and creates or updates the PRs.
+Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else from the `origin` remote), resolves every dependency, builds one commit per group on a temporary index (no checkout; the working tree is never modified), pushes it with `--force-with-lease`, and creates or updates the PRs. With platform commits (GitHub, see below) the commits are created and the branches moved through the GitHub API instead.
 
 - PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested.
 - With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
@@ -291,7 +291,9 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 **Token:** `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`, which uses the API anonymously. Git pushes use the checkout's credentials.
 
-**Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then the config key `gitAuthor`, then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2.
+**Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then the config key `gitAuthor`, then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2. Platform commits ignore it: GitHub authors them as the token's account.
+
+**Platform commits** (config key `platformCommit`, overridden by `$DEPS_PLATFORM_COMMIT`; `auto`, `enabled` or `disabled`): on GitHub, deps uploads the changed files as blobs, creates tree and commit through the REST API on top of the base, and moves the branch with the GraphQL `updateRefs` mutation, compare-and-swap against the tip listed at the start of the run (`stale info` if it moved). GitHub signs commits created with a GitHub App installation token (`ghs_…`, including `GITHUB_TOKEN`), so they show as verified, authored by the App's bot; with other tokens they stay unsigned (warned). `auto` enables them for an App token without a signing key. `enabled` on Gitea/Forgejo, or together with a signing key, exits 2; without a token (`--dry-run`) it falls back to git. Logged at info as `platform commits author=<name> <email>`. A branch tip GitHub links to the token's account, or with the configured git author, counts as deps' own.
 
 **Commit signing:** with `--signing-key` (or `$DEPS_SIGNING_KEY`), every commit deps creates is signed. The value is the private key itself, as a CI secret holds it, or the path of a file holding it; the format is detected from the armor header:
 
@@ -400,8 +402,9 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `TF_TOKEN_<host>` | `terraform-provider`, `terraform-module` datasources | registry token sent as `Authorization: Bearer` to `<host>` (dots as `_`, hyphens as `__`, e.g. `TF_TOKEN_app_terraform_io`), as the Terraform CLI reads it; takes precedence over the CLI config |
 | `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG` | `terraform-provider`, `terraform-module` datasources | Terraform CLI config read for registry `credentials` blocks and the `credentials_helper`, replacing `~/.terraformrc` (`%APPDATA%/terraform.rc`); when set, the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` (`credentials.tfrc.json`) are not read. `TERRAFORM_CONFIG` is the legacy name |
 | `HOME`, `APPDATA` (Windows) | `terraform-provider`, `terraform-module` datasources | where the Terraform CLI config, `credentials.tfrc.json` and credentials helpers (`.terraform.d/plugins`) are found |
-| `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor` |
+| `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor`; ignored for platform commits |
 | `DEPS_SIGNING_KEY` | `run` | default of `--signing-key`: a passphrase-less OpenSSH or armored OpenPGP private key, or the path of a file holding one; deps signs its commits with it |
+| `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
@@ -428,7 +431,7 @@ Exit codes of every command. Also shown by `deps help exit-codes`.
 |---|---|
 | `0` | success, no errors |
 | `1` | any error, including per-dependency lookup errors and per-PR errors (already printed as `error` lines), or a fatal error printed as `deps: <err>` |
-| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE`, a `--signing-key`/`DEPS_SIGNING_KEY` that is no OpenSSH or armored OpenPGP private key, or any config error (parse error, unknown key, failed validation, unreadable `--config` file) |
+| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE`, a `--signing-key`/`DEPS_SIGNING_KEY` that is no OpenSSH or armored OpenPGP private key, an invalid `DEPS_PLATFORM_COMMIT`, `platformCommit: enabled` on Gitea/Forgejo or with a signing key, or any config error (parse error, unknown key, failed validation, unreadable `--config` file) |
 
 ## Output
 

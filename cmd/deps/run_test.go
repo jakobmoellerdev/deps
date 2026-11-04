@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
 
@@ -285,6 +286,42 @@ func TestDetectTrigger(t *testing.T) {
 		}
 		if err != nil || got != tt.want {
 			t.Errorf("%s: got %+v, %v; want %+v", tt.name, got, err, tt.want)
+		}
+	}
+}
+
+func TestPlatformCommits(t *testing.T) {
+	const app, pat = "ghs_app", "ghp_user"
+	tests := []struct {
+		name, env, cfg string
+		kind           platform.Kind
+		token          string
+		signed         bool
+		want           bool
+		wantErr        string
+	}{
+		{name: "auto with an App token", kind: platform.GitHub, token: app, want: true},
+		{name: "auto with a PAT", kind: platform.GitHub, token: pat},
+		{name: "auto with a signing key", cfg: "auto", kind: platform.GitHub, token: app, signed: true},
+		{name: "auto on Gitea", kind: platform.Gitea, token: app},
+		{name: "enabled with a PAT", cfg: "enabled", kind: platform.GitHub, token: pat, want: true},
+		{name: "env over config", env: "disabled", cfg: "enabled", kind: platform.GitHub, token: app},
+		{name: "enabled without token (dry run)", env: "enabled", kind: platform.GitHub},
+		{name: "enabled on Forgejo", cfg: "enabled", kind: platform.Forgejo, token: "t", wantErr: "platformCommit: enabled is only supported on GitHub, not forgejo"},
+		{name: "enabled with a signing key", env: "enabled", kind: platform.GitHub, token: app, signed: true, wantErr: "DEPS_PLATFORM_COMMIT: enabled conflicts with the signing key: GitHub signs platform commits itself"},
+		{name: "invalid env", env: "true", kind: platform.GitHub, token: app, wantErr: `DEPS_PLATFORM_COMMIT: must be one of auto, enabled, disabled, got "true"`},
+	}
+	for _, tt := range tests {
+		got, err := platformCommits(t.Context(), tt.env, tt.cfg, tt.kind, tt.token, tt.signed)
+		var ue *usageError
+		if tt.wantErr != "" {
+			if !errors.As(err, &ue) || err.Error() != tt.wantErr {
+				t.Errorf("%s: err = %v, want usage error %q", tt.name, err, tt.wantErr)
+			}
+			continue
+		}
+		if err != nil || got != tt.want {
+			t.Errorf("%s: got %v, %v; want %v", tt.name, got, err, tt.want)
 		}
 	}
 }

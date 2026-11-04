@@ -54,6 +54,16 @@ const (
 // RebaseWhens are the accepted rebaseWhen values.
 var RebaseWhens = []string{RebaseConflicted, RebaseBehindBase, RebaseNever}
 
+// Values of platformCommit.
+const (
+	PlatformCommitAuto     = "auto"
+	PlatformCommitEnabled  = "enabled"
+	PlatformCommitDisabled = "disabled"
+)
+
+// PlatformCommits are the accepted platformCommit values.
+var PlatformCommits = []string{PlatformCommitAuto, PlatformCommitEnabled, PlatformCommitDisabled}
+
 // Automerge strategies of automergeStrategy; auto uses the repository's default merge style.
 const (
 	StrategyAuto   = "auto"
@@ -125,7 +135,9 @@ type Config struct {
 	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
 	RebaseWhen    string   `yaml:"rebaseWhen" jsonschema:"enum=conflicted,enum=behind-base-branch,enum=never,default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
 	Monorepos     *bool    `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group."`
-	GitAuthor     string   `yaml:"gitAuthor" jsonschema:"default=deps[bot] <deps-bot@noreply.invalid>" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified."`
+	GitAuthor     string   `yaml:"gitAuthor" jsonschema:"default=deps[bot] <deps-bot@noreply.invalid>" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified. Ignored for platform commits (platformCommit), whose author is the token's account; branches whose tip it authored still count as deps' own."`
+	// PlatformCommit creates commits through the GitHub API (Renovate's platformCommit).
+	PlatformCommit string `yaml:"platformCommit" jsonschema:"enum=auto,enum=enabled,enum=disabled,default=auto" jsonschema_description:"Create commits and move update branches through the GitHub API instead of git, so that GitHub signs them and shows them as verified, authored by the GitHub App (e.g. ocmbot[bot]). auto enables it on GitHub when the token is a GitHub App installation token (ghs_..., also GITHUB_TOKEN in Actions) and no signing key is set; enabled requires GitHub and no signing key; disabled always uses git. GitHub signs API commits only for App tokens; with a personal access token they stay unsigned. Overridden by $DEPS_PLATFORM_COMMIT."`
 	// GitIgnoredAuthors are emails whose commits on an update branch count as the bot's own.
 	GitIgnoredAuthors []string  `yaml:"gitIgnoredAuthors" jsonschema_description:"Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased."`
 	PRConcurrentLimit int       `yaml:"prConcurrentLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited."`
@@ -532,6 +544,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RebaseWhen != "" && !slices.Contains(RebaseWhens, c.RebaseWhen) {
 		add("rebaseWhen", "must be one of %s, got %q", list(RebaseWhens), c.RebaseWhen)
+	}
+	if c.PlatformCommit != "" && !slices.Contains(PlatformCommits, c.PlatformCommit) {
+		add("platformCommit", "must be one of %s, got %q", list(PlatformCommits), c.PlatformCommit)
 	}
 	validateAutomerge("", c.AutomergeStrategy, c.AutomergeType, add)
 	if c.DependencyDashboardTitle != "" && (strings.TrimSpace(c.DependencyDashboardTitle) == "" || strings.ContainsAny(c.DependencyDashboardTitle, "\r\n")) {

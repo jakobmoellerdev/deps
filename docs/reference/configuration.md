@@ -91,6 +91,7 @@ customDatasources:
 - [`rebaseWhen`](#rebasewhen)
 - [`monorepos`](#monorepos)
 - [`gitAuthor`](#gitauthor)
+- [`platformCommit`](#platformcommit)
 - [`gitIgnoredAuthors`](#gitignoredauthors)
 - [`prConcurrentLimit`](#prconcurrentlimit)
 - [`prHourlyLimit`](#prhourlylimit)
@@ -329,7 +330,7 @@ monorepos: false
 
 ## `gitAuthor`
 
-Author and committer of deps commits as `Name <email>` (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified.
+Author and committer of deps commits as `Name <email>` (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified. Ignored for platform commits (platformCommit), whose author is the token's account; branches whose tip it authored still count as deps' own.
 
 - **Type:** string
 - **Default:** `deps[bot] <deps-bot@noreply.invalid>`
@@ -342,6 +343,14 @@ Author and committer of deps commits as `Name <email>` (git identity). Overridde
 gitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>'
 gitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com']
 ```
+
+## `platformCommit`
+
+Create commits and move update branches through the GitHub API instead of git, so that GitHub signs them and shows them as verified, authored by the GitHub App (e.g. ocmbot[bot]). auto enables it on GitHub when the token is a GitHub App installation token (ghs_..., also GITHUB_TOKEN in Actions) and no signing key is set; enabled requires GitHub and no signing key; disabled always uses git. GitHub signs API commits only for App tokens; with a personal access token they stay unsigned. Overridden by $DEPS_PLATFORM_COMMIT.
+
+- **Type:** string
+- **Default:** `auto`
+- **Values:** `auto`, `enabled`, `disabled`
 
 ## `gitIgnoredAuthors`
 

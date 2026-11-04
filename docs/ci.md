@@ -20,6 +20,8 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
 - [Forgejo](#forgejo)
 - [Tokens and permissions](#tokens-and-permissions)
 - [Signed commits](#signed-commits)
+  - [Platform commits (GitHub)](#platform-commits-github)
+  - [Signing with a key](#signing-with-a-key)
 - [Self-hosted runners and actions hosts](#self-hosted-runners-and-actions-hosts)
 - [Schedules](#schedules)
 - [Run on push to the default branch](#run-on-push-to-the-default-branch)
@@ -99,12 +101,12 @@ jobs:
 
 Pass the token to **both** steps:
 
-- **`actions/checkout`** stores it as the git credential. deps pushes branches with the checkout's credentials, so the push needs it.
-- **The action's `token` input** is the API token: deps lists, creates, edits and closes PRs with it.
+- **The action's `token` input** is the API token: deps lists, creates, edits and closes PRs with it. With an App token it also creates the commits and moves the branches through the API, so GitHub signs them ([platform commits](#platform-commits-github)).
+- **`actions/checkout`** stores it as the git credential. deps lists and deletes branches with the checkout's credentials, and pushes with them when it commits with git.
 
 **Why not `GITHUB_TOKEN`:**
 
-1. **Workflow files.** `GITHUB_TOKEN` cannot push commits that change `.github/workflows/*`; GitHub rejects the push with `refusing to allow a GitHub App to create or update workflow … without workflows permission`. Action updates are exactly such commits.
+1. **Workflow files.** `GITHUB_TOKEN` cannot change `.github/workflows/*`. A git push is rejected with `refusing to allow a GitHub App to create or update workflow … without workflows permission`; a platform commit (the default with `GITHUB_TOKEN`, which is an App installation token) fails earlier with `POST …/git/trees: 403 Forbidden: Resource not accessible by integration`. Action updates are exactly such commits.
 2. **CI on the PRs.** PRs and pushes made with `GITHUB_TOKEN` do not trigger workflows (`pull_request`, `push`), so CI never runs on deps PRs, and [automerge](#automerge) would wait forever.
 
 `permissions: actions: write` does not help. It covers the Actions API (cancel or re-run runs, dispatch workflows, artifacts, caches), not git pushes. The `workflows` permission that the push error asks for exists only for GitHub Apps and PATs; the [`permissions` key](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions) has no `workflows` entry. Verified on 2026-11-04: a job with `contents: write, actions: write, pull-requests: write` was refused when pushing a change to `.github/workflows/check.yml`.
@@ -118,7 +120,7 @@ rules:
     ignore: true
 ```
 
-Workflow permissions: `contents: write`, `pull-requests: write` (and `issues: write` for the dashboard).
+Workflow permissions: `contents: write`, `pull-requests: write` (and `issues: write` for the dashboard). The commits are [platform commits](#platform-commits-github) by `github-actions[bot]`, verified by GitHub.
 
 **Creating the App:**
 
@@ -147,7 +149,9 @@ permissions:
 
 ### Commit identity of the App
 
-By default commits are authored by `deps[bot] <deps-bot@noreply.invalid>`. To have them appear as the App, set [`gitAuthor`](reference/configuration.md#gitauthor) in `.deps.yaml`, or set `DEPS_GIT_AUTHOR` in the job, to the App's noreply identity. Add this step after the token step; job-level environment variables reach the action's steps:
+With an App token, deps creates its commits through the GitHub API ([`platformCommit: auto`](reference/configuration.md#platformcommit)): GitHub sets the author to the App's bot account, `<slug>[bot] <<id>+<slug>[bot]@users.noreply.github.com>`, and signs the commit. Nothing to configure; `gitAuthor` and `DEPS_GIT_AUTHOR` are ignored for these commits.
+
+With `platformCommit: disabled` (or a signing key), deps commits with git as `deps[bot] <deps-bot@noreply.invalid>`. To have those commits appear as the App, set [`gitAuthor`](reference/configuration.md#gitauthor) in `.deps.yaml`, or set `DEPS_GIT_AUTHOR` in the job, to the App's noreply identity. Add this step after the token step; job-level environment variables reach the action's steps:
 
 ```yaml
       - name: deps commit identity
@@ -159,7 +163,7 @@ By default commits are authored by `deps[bot] <deps-bot@noreply.invalid>`. To ha
           echo "DEPS_GIT_AUTHOR=${SLUG}[bot] <${id}+${SLUG}[bot]@users.noreply.github.com>" >> "$GITHUB_ENV"
 ```
 
-deps updates only branches whose last commit has its own author email. If the identity changes, list the old email in [`gitIgnoredAuthors`](reference/configuration.md#gitignoredauthors). Otherwise existing branches are reported as `skipped: branch modified by someone else`.
+deps updates only branches whose last commit has its own author email. If the identity changes, list the old email in [`gitIgnoredAuthors`](reference/configuration.md#gitignoredauthors). Otherwise existing branches are reported as `skipped: branch modified by someone else`. Switching to platform commits needs nothing: the configured git author still counts as deps' own. Switching back to git needs the App's noreply email in `gitIgnoredAuthors`.
 
 ### Without the action
 
@@ -296,7 +300,7 @@ jobs:
 1. **Platform API.** deps takes `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`.
    - GitHub requests send `Authorization: Bearer <t>`.
    - Gitea and Forgejo requests send `Authorization: token <t>`.
-2. **Git push.** deps uses the checkout's git credentials (`actions/checkout` stores its `token:`), not the API token.
+2. **Git push.** deps uses the checkout's git credentials (`actions/checkout` stores its `token:`), not the API token. With [platform commits](#platform-commits-github), commits and branch updates use the API token, and git only lists and deletes branches.
 3. **Lookups:**
    - The platform token is sent to the platform host as Basic `x-access-token:<t>`.
    - `DEPS_GITHUB_COM_TOKEN` is used for github.com when the platform is elsewhere.
@@ -315,7 +319,22 @@ jobs:
 
 ## Signed commits
 
-deps builds its commits with `git commit-tree`, which signs only when asked to. Pass a private key and deps signs every commit it pushes. Branch protection that requires signed commits then accepts deps' PRs.
+### Platform commits (GitHub)
+
+On GitHub, deps can create its commits through the API instead of git ([`platformCommit`](reference/configuration.md#platformcommit), as Renovate's option of that name). GitHub signs commits it creates for a **GitHub App installation token**, so they show as verified, authored by the App's bot account and committed by GitHub. No key is involved.
+
+- **When.** `auto` (the default) uses platform commits on GitHub when the token is an App installation token (it starts with `ghs_`: tokens from `actions/create-github-app-token`, and `GITHUB_TOKEN`) and no signing key is set. `enabled` uses them with any GitHub token; `disabled` never. `DEPS_PLATFORM_COMMIT` overrides the config.
+- **PATs.** The API accepts commits made with a PAT, but GitHub leaves them unsigned (verified on 2026-11-04 with a classic PAT: `verification.reason: unsigned`), so `enabled` with a PAT only changes the author to the PAT's user. deps warns about it.
+- **Signing key.** A key means local signing: `auto` then commits with git and signs; `enabled` together with a key is a usage error.
+- **Author.** GitHub sets the author to the token's account; `gitAuthor` is ignored. deps treats a branch tip as its own when GitHub links its author to that account, and also when the tip has the configured git author (branches deps pushed with git before).
+- **How.** deps uploads each changed file as a blob, creates a tree on the parent's tree and a commit, then moves the branch with the GraphQL `updateRefs` mutation, which compares the tip with the one listed at the start of the run and sets it in one step (`--force-with-lease`). If the branch moved meanwhile, the update is refused with `stale info` and the branch stays. Blob uploads are base64, so binary files and executable modes are kept. A failed step leaves the branch as it was; the objects created before it are unreferenced.
+- **Gitea and Forgejo** are not supported. Their file API (`POST /repos/{owner}/{repo}/contents`, Gitea 28.3) commits on top of the tip of `branch` and can force-push the result to `new_branch` (`force_push`), but it has no expected old tip, so a push by someone else in between would be overwritten, and its file operations carry no file mode. Whether those commits are signed depends on the instance's `[repository.signing]` settings. `enabled` there is a usage error; `auto` uses git.
+
+Example run with `GITHUB_TOKEN` (2026-11-04): the commit of the created PR had author `github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>`, committer `GitHub <noreply@github.com>` and `verification: {verified: true, reason: valid}`; the rebase after the base moved again produced a verified commit on the new base.
+
+### Signing with a key
+
+deps builds its git commits with `git commit-tree`, which signs only when asked to. Pass a private key and deps signs every commit it pushes. Branch protection that requires signed commits then accepts deps' PRs.
 
 ```yaml
     env:
@@ -345,7 +364,7 @@ deps builds its commits with `git commit-tree`, which signs only when asked to. 
 - **One bot for many repositories.** Store the bot's token and key once as Actions secrets of the owning user or organization instead of per repository: `PUT /api/v1/user/actions/secrets/{name}` (`gt secret set <name> --account`), or `PUT /api/v1/orgs/{org}/actions/secrets/{name}`. Every repository of that owner can then use `${{ secrets.DEPS_BOT_TOKEN }}` and `${{ secrets.DEPS_SIGNING_KEY }}`; each one still needs the bot as a collaborator with write access (also for `actions/checkout` of a private repository). Delete repository secrets of the same names, so that only one value is in use. Gitea cannot list or read back account secrets, so record the token name and key fingerprint in the secret descriptions.
 - Branch protection: *Require signed commits*.
 
-**GitHub.** Add the public key as a *signing key* (GPG or SSH) to the account whose verified email is the committer, usually a machine user. A GitHub App has no signing keys, so commits under its `[bot]` identity can't be signed by deps. Branch protection: *Require signed commits*.
+**GitHub.** Add the public key as a *signing key* (GPG or SSH) to the account whose verified email is the committer, usually a machine user. A GitHub App has no signing keys, so commits under its `[bot]` identity can't be signed by deps; use [platform commits](#platform-commits-github) for those. Branch protection: *Require signed commits*.
 
 **Merging the PRs.** Only a fast-forward keeps deps' signed commit as it is. Every other merge style writes new commits, and those are signed only if the forge holds its own key:
 
@@ -651,7 +670,8 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 
 | Symptom | Cause and fix |
 |---|---|
-| push fails with `refusing to allow a GitHub App to create or update workflow … without workflows permission` (or `OAuth App … without workflow scope`) | The token can't change `.github/workflows/*`: `GITHUB_TOKEN` never can. Use an App with *Workflows: write* or a PAT with `workflow` scope, for `actions/checkout` too. |
+| push fails with `refusing to allow a GitHub App to create or update workflow … without workflows permission` (or `OAuth App … without workflow scope`), or `POST …/git/trees: 403 Forbidden: Resource not accessible by integration` | The token can't change `.github/workflows/*`: `GITHUB_TOKEN` never can. Use an App with *Workflows: write* or a PAT with `workflow` scope, for `actions/checkout` too. The second form is a [platform commit](#platform-commits-github). |
+| `update refs/heads/<branch>: stale info: the branch is at <sha>, expected <sha>` | Someone pushed to the branch after the run listed it (platform commits; git reports `stale info` the same way). The next run checks the branch again. |
 | deps PRs never run CI; automerge never merges | The PRs were pushed with the job token. Pass an App token or PAT to `actions/checkout` and the action ([GitHub](#github), [Gitea](#gitea)). |
 | `deps: no token for <host>` | No `--token`, no `DEPS_TOKEN`/`GITHUB_TOKEN`/`GITEA_TOKEN`/`FORGEJO_TOKEN`, and no git credential. In a workflow, check that the `token` input isn't an empty secret. |
 | `403` on `POST …/pulls` or on push (Gitea/Forgejo) | The job token lacks permissions: add `contents: write` and `pull-requests: write`, check the maximum in *Settings → Actions → General*, or use a PAT. |

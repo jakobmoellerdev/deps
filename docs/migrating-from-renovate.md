@@ -31,8 +31,9 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `lockFileMaintenance` | `lockFileMaintenance: {enabled, schedule}` for `Cargo.lock` (`cargo update`, one PR on `<branchPrefix>lock-file-maintenance`); npm and Go lockfiles are regenerated only with an update |
 | `branchPrefix` | `branchPrefix` |
 | `semanticCommits`, `:semanticPrefixFixDepsChoreOthers` | always on; `rules[].commitType`, `rules[].commitScope` |
-| `gitAuthor` | `gitAuthor` (or `DEPS_GIT_AUTHOR`, `--author-name/--author-email`) |
+| `gitAuthor` | `gitAuthor` (or `DEPS_GIT_AUTHOR`, `--author-name/--author-email`); ignored for platform commits, as in Renovate |
 | `gitIgnoredAuthors` | `gitIgnoredAuthors` |
+| `platformCommit` (`RENOVATE_PLATFORM_COMMIT`) | `platformCommit` (`DEPS_PLATFORM_COMMIT`): same values and default (`auto`). GitHub only; `auto` also needs no signing key, and `enabled` with a signing key or on Gitea/Forgejo is a usage error |
 | `prConcurrentLimit`, `prHourlyLimit` | same names; **default 0 (unlimited)** in deps, 10/2 in Renovate; `run --max-new-prs` (default 10) caps each run |
 | `rebaseWhen`, `:rebaseStalePrs` | `rebaseWhen` (`conflicted` default, `behind-base-branch`, `never`) |
 | `ignorePaths`, `:ignoreModulesAndTests` | `ignorePaths` (Renovate's list is the default when absent) |
@@ -218,20 +219,15 @@ jobs:
         with:
           token: ${{ steps.app.outputs.token || github.token }}
           version: v0.3.0 # keep this when pin: digest rewrites the ref above to a SHA
-          # signing-key: ${{ secrets.OCMBOT_SIGNING_KEY }} # optional, see below
           args: >-
             ${{ github.event_name == 'pull_request' && 'plan' || 'run' }}
             -v --log-level info --config .github/deps.yaml
 ```
 
 - **Pull requests** that change the config run `plan` with the job token. That validates the config: an invalid key exits 2. `run --dry-run` needs `HEAD` at the tip of `main`, which a PR merge commit is not. To also list the PRs a config change would cause, use the base/PR checkout pair from [ci.md](ci.md#preview-on-pull-requests).
-- **Token.** The App token goes to both `actions/checkout` (git push) and the action (API). `permission-workflows: write` is required, because Action updates change `.github/workflows/*`.
+- **Token.** The App token goes to both `actions/checkout` and the action. The action creates the commits and moves the `deps/*` branches through the API with it; git uses the checkout's credentials only to list and delete branches. `permission-workflows: write` is required, because Action updates change `.github/workflows/*`: GitHub checks it for API commits too (without it, creating the tree fails with `403 Resource not accessible by integration`).
 - **Version.** The action downloads the release named by its ref when that ref is a tag. `pin: digest` turns `@v0.3.0` into `@<sha> # v0.3.0` in the first "Digest pins" PR, and from then on the ref no longer names the release. Without `version:`, the action would download the latest release.
-- **Signing.** Renovate runs with `RENOVATE_PLATFORM_COMMIT: enabled`: it creates commits through the GitHub API, and GitHub signs them as ocmbot. deps creates commits with git and signs them only with `signing-key`. A GitHub App cannot register a GPG or SSH key, so commits signed as `ocmbot[bot]` don't show as verified. In OCM this is fine without a key:
-  - ocmbot (App 295948) is an `always` bypass actor of both rulesets that require signatures on `deps/*` branches: "OCM Organization Ruleset" (all branches) and the repository's "All branches" (which excludes only `renovate/**` and `dependabot/**`).
-  - The PRs are squash-merged, and GitHub signs squash commits itself. Renovate PR #4148, for example, was squash-merged by GitHub as a verified commit.
-
-  With a bot user's key, set `gitAuthor` to that user and keep ocmbot's email in `gitIgnoredAuthors`.
+- **Signing.** Renovate runs with `RENOVATE_PLATFORM_COMMIT: enabled`, and so does deps: `platformCommit: enabled` in the example config (`auto` would choose it too, because the token is an App installation token). deps then creates the commits through the GitHub API, and GitHub signs them: they show as verified, authored by `ocmbot[bot]` (`<id>+ocmbot[bot]@users.noreply.github.com`), committed by GitHub. `gitAuthor` only applies to git commits. Don't pass `signing-key`: it conflicts with `platformCommit: enabled`. Verified commits satisfy the `required_signatures` rule of both rulesets that cover `deps/*` ("OCM Organization Ruleset" and the repository's "All branches"). The rulesets also restrict branch creation, deletion and non-fast-forward updates, so the branches still need ocmbot's bypass (App 295948 is an `always` bypass actor of both) or an exclusion, see the [cutover](#cutover-for-ocm).
 - **Not needed.** Renovate's repository cache steps (deps has no cache) and `RENOVATE_ALLOWED_COMMANDS` (`renovate.json5` has no `postUpgradeTasks`).
 
 ### Comparison with Renovate
@@ -279,10 +275,9 @@ Each item comes from the comparison above or from [renovate-parity.md](renovate-
 
 1. **Release times for floating tags.** A major tag like `v25` without its own release has no release time, so `minimumReleaseAge` is not enforced for it: markdownlint-cli2-action v25 is 10 days old, but deps would open the PR, while Renovate lists it as pending. Images without a `created` time and the envtest custom datasource are not held back either; Renovate holds back such timestamp-less releases, e.g. Garden Linux 1877.28 (parity P10).
 2. **Fallback versus waiting.** deps proposes the newest release that is old enough (node 26.11.1, go-winio v0.6.3); Renovate waits for the newest (26.13.0, v0.6.4). This is a design difference, documented under P10, not a bug. It is listed because it changes which PRs OCM sees.
-3. **Platform commits (deferred).** Renovate creates commits through the GitHub API, so they are verified as ocmbot (`RENOVATE_PLATFORM_COMMIT`). deps signs with a key or not at all. OCM's rulesets require signatures on `deps/*` branches, and only ocmbot's bypass makes unsigned deps commits acceptable. API-created commits are deferred (parity O5).
-4. **Mend badges and the OpenSSF scorecard.** PR bodies show the release age as text, with no adoption, passing or confidence badges (L5) and no scorecard badge (`security:openssf-scorecard`, L6).
-5. **Renovate dashboard extras:** the "Abandoned Dependencies" section and the repository problems list (e.g. hidden Unicode warnings) have no deps equivalent.
-6. **Cutover steps not done:**
+3. **Mend badges and the OpenSSF scorecard.** PR bodies show the release age as text, with no adoption, passing or confidence badges (L5) and no scorecard badge (`security:openssf-scorecard`, L6).
+4. **Renovate dashboard extras:** the "Abandoned Dependencies" section and the repository problems list (e.g. hidden Unicode warnings) have no deps equivalent.
+5. **Cutover steps not done:**
     - a real (non-dry) trial run in OCM;
     - App permissions confirmed for the installation (checks/statuses read, workflows write);
     - the ruleset entry or bypass for `deps/**`;

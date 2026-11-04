@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -140,6 +141,60 @@ func newSigner(ctx context.Context, flag, env string) (*gitx.Signer, error) {
 	return s, nil
 }
 
+// platformCommits resolves platformCommit ($DEPS_PLATFORM_COMMIT, then the config, then
+// auto) to whether commits go through the GitHub API. auto enables them on GitHub for a
+// GitHub App installation token when no signing key is set. enabled on another forge or
+// together with a signing key is a usage error; without a token (a dry run) it falls back to
+// git with a warning.
+func platformCommits(ctx context.Context, env, cfg string, kind platform.Kind, token string, signed bool) (bool, error) {
+	v, src := env, "DEPS_PLATFORM_COMMIT"
+	if v == "" {
+		v, src = cfg, "platformCommit"
+	}
+	switch v {
+	case "", config.PlatformCommitAuto:
+		return kind == platform.GitHub && platform.IsAppToken(token) && !signed, nil
+	case config.PlatformCommitDisabled:
+		return false, nil
+	case config.PlatformCommitEnabled:
+		switch {
+		case kind != platform.GitHub:
+			return false, &usageError{fmt.Errorf("%s: enabled is only supported on GitHub, not %s", src, kind)}
+		case signed:
+			return false, &usageError{fmt.Errorf("%s: enabled conflicts with the signing key: GitHub signs platform commits itself", src)}
+		case token == "":
+			slog.WarnContext(ctx, "no token: platform commits disabled for this dry run", "source", src)
+			return false, nil
+		}
+		return true, nil
+	}
+	return false, &usageError{fmt.Errorf("%s: must be one of %s, got %q", src, strings.Join(config.PlatformCommits, ", "), v)}
+}
+
+// apiGit is a gitx.Repo whose commits, branch updates and branch tips go through the GitHub
+// API (platformCommit); remote listing and branch deletion stay with git.
+type apiGit struct {
+	gitx.Repo
+	api *platform.GitHubCommits
+}
+
+// Commit ignores name and email: GitHub authors API commits as the token's account.
+func (g apiGit) Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, _, _ string) (string, error) {
+	files := make([]platform.CommitFile, len(changes))
+	for i, c := range changes {
+		files[i] = platform.CommitFile{Path: c.Path, Executable: c.Mode&0o111 != 0, Content: c.New}
+	}
+	return g.api.Commit(ctx, parent, files, msg)
+}
+
+func (g apiGit) Push(ctx context.Context, commit, branch, expected string) error {
+	return g.api.Push(ctx, commit, branch, expected)
+}
+
+func (g apiGit) BranchTip(ctx context.Context, branch string) (string, []string, error) {
+	return g.api.BranchTip(ctx, branch)
+}
+
 func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	start := time.Now()
 	ctx := cmd.Context()
@@ -203,6 +258,30 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	if err != nil {
 		return err
 	}
+	usePlatform, err := platformCommits(ctx, os.Getenv("DEPS_PLATFORM_COMMIT"), s.cfg.PlatformCommit, info.Kind, token, signer != nil)
+	if err != nil {
+		return err
+	}
+	var g bot.Git = repo
+	ignored := s.cfg.GitIgnoredAuthors
+	if usePlatform {
+		prefix, err := repo.Prefix(ctx)
+		if err != nil {
+			return err
+		}
+		commits, err := platform.NewGitHubCommits(ctx, info, token, client, prefix)
+		if err != nil {
+			return fmt.Errorf("platform commits: %w", err)
+		}
+		// Branches deps committed with git under the configured author stay its own.
+		ignored = append(slices.Clone(ignored), email)
+		name, email = commits.Author()
+		g = apiGit{Repo: repo, api: commits}
+		slog.InfoContext(ctx, "platform commits", "author", name+" <"+email+">")
+		if !platform.IsAppToken(token) {
+			slog.WarnContext(ctx, "platform commits with a token that is not a GitHub App installation token: GitHub leaves them unsigned")
+		}
+	}
 	res, err := s.resolve(ctx)
 	if err != nil {
 		return err
@@ -212,7 +291,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		Base:               r.base,
 		AuthorName:         name,
 		AuthorEmail:        email,
-		IgnoredAuthors:     s.cfg.GitIgnoredAuthors,
+		IgnoredAuthors:     ignored,
 		ConcurrentLimit:    s.cfg.PRConcurrentLimit,
 		HourlyLimit:        s.cfg.PRHourlyLimit,
 		DryRun:             r.dryRun,
@@ -227,7 +306,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	if s.cfg.DependencyDashboard {
 		bo.Dashboard = &bot.DashboardOptions{Title: s.cfg.DashboardTitle(), Labels: s.cfg.DependencyDashboardLabels}
 	}
-	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(s), platform.NewClient(info, token, client), repo)
+	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(s), platform.NewClient(info, token, client), g)
 
 	var created, updated, closed, upToDate, skipped, would, automerged, wouldAutomerge int
 	for _, a := range actions {

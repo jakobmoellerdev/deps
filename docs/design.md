@@ -260,6 +260,7 @@ The following is implemented:
 - **Security.** OSV is queried in batches of up to 1000 packages; each advisory document is fetched once.
 - **Child processes.** Spawned only where unavoidable: post-processors (`go mod tidy`, npm/pnpm/yarn lockfile installs, `cargo update`, uv/poetry/pipenv locks; at most 4 concurrently in total) and `git` for commit and push.
 - **Commits.** Built with git plumbing on a temporary index. `run` does no checkout, creates no worktree, and never mutates the working tree. With `--signing-key`, `commit-tree -S` signs them: an OpenSSH key is written once to a `0600` temporary file (`-c gpg.format=ssh -c user.signingkey=<file>`), an armored OpenPGP key is imported once into a temporary `GNUPGHOME` and selected by fingerprint. Both are validated up front (a passphrase-protected key fails before any lookup) and removed when `run` returns.
+- **Platform commits.** With `platformCommit` on GitHub (`auto`: an App installation token and no signing key), `run` creates commits through the API instead (`internal/platform.GitHubCommits`, behind the same `bot.Git` interface): one `POST /git/blobs` per changed file (base64, so binary content is exact), `POST /git/trees` on the parent's tree (`sha: null` deletes, mode `100755` for executables), `POST /git/commits` with the parent, then GraphQL `updateRefs` with `beforeOid` = the tip listed at the start of the run (all zeros for a new branch) and `force`. The compare and the update are one atomic step on GitHub, so the semantics equal `git push --force-with-lease`, and a failed step leaves the branch untouched: the objects created before are unreferenced and need no cleanup. GitHub rejects a stale `beforeOid` with a generic error; deps then reads the ref to report `stale info`. Branch tips are read with `GET /commits/refs/heads/<branch>`: a tip whose author GitHub links to the token's account reports the account's noreply email (`<id>+<login>@users.noreply.<host>`, the bot author), so the ownership check needs no guess of which email GitHub wrote. The configured `gitAuthor` is ignored for these commits and added to the ignored authors, so branches deps pushed with git before stay its own. Listing and deleting branches stay with git. Renovate takes a different route: it pushes the commit to `refs/renovate/branches/<branch>` so the blobs reach GitHub by git, recreates tree and commit by REST, and moves the branch with a forced `PATCH /git/refs`, without a compare.
 - **No persistent cache.** Runs are infrequent (scheduled), so in-run dedupe already removes the repeated lookups.
 
 ## 4. Core types
@@ -515,6 +516,15 @@ func FromEnv(getenv func(string) string) (Info, bool)
 func Detect(ctx context.Context, getenv func(string) string, remoteURL string, o Overrides, c *http.Client) (Info, error)
 func NewClient(info Info, token string, c *http.Client) Client
 func DefaultActionsHost(info Info, getenv func(string) string) (host, source string)
+
+// platformCommit (GitHub only); cmd wraps it with gitx.Repo into a bot.Git
+func IsAppToken(token string) bool // "ghs_" prefix: App installation token (also GITHUB_TOKEN)
+type CommitFile struct{ Path string; Executable bool; Content []byte } // nil Content deletes
+func NewGitHubCommits(ctx context.Context, info Info, token string, c *http.Client, prefix string) (*GitHubCommits, error) // looks up the token's account
+func (g *GitHubCommits) Author() (name, email string) // <id>+<login>@users.noreply.<host>
+func (g *GitHubCommits) Commit(ctx context.Context, parent string, files []CommitFile, msg string) (string, error)
+func (g *GitHubCommits) Push(ctx context.Context, commit, branch, expected string) error // updateRefs, beforeOid = expected
+func (g *GitHubCommits) BranchTip(ctx context.Context, branch string) (author string, parents []string, err error)
 ```
 
 ```go
@@ -696,9 +706,9 @@ Both clients share these rules:
    4. No open PR exists and the new-PR limit is exhausted → `skipped: new PR limit reached`. The limit of a run is the minimum over the non-zero limits: `--max-new-prs` (default 10) minus PRs created this run; `prConcurrentLimit` minus the open managed PRs; `prHourlyLimit` minus the managed PRs (open and closed) whose `created_at` is within the last hour. `0` means unlimited for each; `prConcurrentLimit` and `prHourlyLimit` default to 0 (Renovate defaults to 10 and 2).
    5. The branch exists and the author email of its last commit is neither the bot's (`AuthorEmail`) nor in `gitIgnoredAuthors` (case-insensitive) → `skipped: branch modified by someone else`. Such branches are never rebased.
    6. `--dry-run` → `would-create`, `would-update` or `would-rebase`, with no git or API writes.
-   7. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet). Then update the PR (`updated`) or create one (`created`). A rebase only pushes: content, title and body are unchanged, so the PR is not edited and no release notes are fetched (`rebased`, counted as updated in the run summary line).
+   7. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet); with platform commits, the API commit and `updateRefs` with that sha as `beforeOid` (section 3). Then update the PR (`updated`) or create one (`created`). A rebase only pushes: content, title and body are unchanged, so the PR is not edited and no release notes are fetched (`rebased`, counted as updated in the run summary line).
 
-   **Branch tip fetch:** `BranchTip` runs `git fetch --no-tags origin refs/heads/<b>` (with `--depth=1` in shallow clones, so full clones stay full) and parses the raw `git cat-file commit FETCH_HEAD` header for the author email and parents; the raw object still lists the parent when a shallow graft hides it. It is fetched at most once per group and only when the branch exists and the author or parent is needed.
+   **Branch tip fetch:** `BranchTip` runs `git fetch --no-tags origin refs/heads/<b>` (with `--depth=1` in shallow clones, so full clones stay full) and parses the raw `git cat-file commit FETCH_HEAD` header for the author email and parents; the raw object still lists the parent when a shallow graft hides it. With platform commits it reads `GET /commits/refs/heads/<b>` instead and reports the bot's email for a tip GitHub links to the token's account. It is fetched at most once per group and only when the branch exists and the author or parent is needed.
 
    A build, git or API error in one group is recorded, and the next group is processed.
 8. **Automerge:** for a group whose updates all automerge, after `created`, `updated`, `rebased` or `up-to-date` (see [Automerge](#automerge)). An automerge error is recorded; the PR's action is kept.
@@ -862,7 +872,6 @@ Open items from [renovate-parity.md](renovate-parity.md) and the performance pla
 - the gaps from the OCM comparison ([what is still missing for OCM](migrating-from-renovate.md#what-is-still-missing-for-ocm)):
 
   - release times for git tags without their own release (P10);
-  - API-created commits (O5, deferred);
   - updating the action's `version:` input along with a pinned ref (O6);
   - the OCM cutover (O7);
 - Python: HTML-only indexes, `PIP_EXTRA_INDEX_URL`, `requires-python` filtering (M21–M26);

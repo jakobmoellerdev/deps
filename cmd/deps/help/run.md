@@ -1,4 +1,4 @@
-Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else from the `origin` remote), resolves every dependency, builds one commit per group on a temporary index (no checkout; the working tree is never modified), pushes it with `--force-with-lease`, and creates or updates the PRs.
+Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else from the `origin` remote), resolves every dependency, builds one commit per group on a temporary index (no checkout; the working tree is never modified), pushes it with `--force-with-lease`, and creates or updates the PRs. With platform commits (GitHub, see below) the commits are created and the branches moved through the GitHub API instead.
 
 - PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested.
 - With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
@@ -8,7 +8,9 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 **Token:** `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`, which uses the API anonymously. Git pushes use the checkout's credentials.
 
-**Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then the config key `gitAuthor`, then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2.
+**Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then the config key `gitAuthor`, then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2. Platform commits ignore it: GitHub authors them as the token's account.
+
+**Platform commits** (config key `platformCommit`, overridden by `$DEPS_PLATFORM_COMMIT`; `auto`, `enabled` or `disabled`): on GitHub, deps uploads the changed files as blobs, creates tree and commit through the REST API on top of the base, and moves the branch with the GraphQL `updateRefs` mutation, compare-and-swap against the tip listed at the start of the run (`stale info` if it moved). GitHub signs commits created with a GitHub App installation token (`ghs_…`, including `GITHUB_TOKEN`), so they show as verified, authored by the App's bot; with other tokens they stay unsigned (warned). `auto` enables them for an App token without a signing key. `enabled` on Gitea/Forgejo, or together with a signing key, exits 2; without a token (`--dry-run`) it falls back to git. Logged at info as `platform commits author=<name> <email>`. A branch tip GitHub links to the token's account, or with the configured git author, counts as deps' own.
 
 **Commit signing:** with `--signing-key` (or `$DEPS_SIGNING_KEY`), every commit deps creates is signed. The value is the private key itself, as a CI secret holds it, or the path of a file holding it; the format is detected from the armor header:
 

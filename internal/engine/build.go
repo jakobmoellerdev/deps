@@ -22,7 +22,7 @@ import (
 )
 
 // FileChange is the new content of one file. Path is a slash path relative to the root;
-// Old is nil when the file does not exist yet.
+// Old is nil when the file does not exist yet, New is nil when the change deletes it.
 type FileChange struct {
 	Path     string
 	Mode     fs.FileMode

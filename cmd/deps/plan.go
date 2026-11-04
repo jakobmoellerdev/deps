@@ -62,7 +62,13 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	changes, buildErrs := engine.Build(ctx, s.root, s.managers, updates, post)
 	if write {
 		for _, c := range changes {
-			if err := os.WriteFile(s.abs(c.Path), c.New, c.Mode); err != nil {
+			var err error
+			if c.New == nil {
+				err = os.Remove(s.abs(c.Path))
+			} else {
+				err = os.WriteFile(s.abs(c.Path), c.New, c.Mode)
+			}
+			if err != nil {
 				buildErrs = append(buildErrs, err)
 			}
 		}

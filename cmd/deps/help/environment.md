@@ -7,8 +7,9 @@
 | `TF_TOKEN_<host>` | `terraform-provider`, `terraform-module` datasources | registry token sent as `Authorization: Bearer` to `<host>` (dots as `_`, hyphens as `__`, e.g. `TF_TOKEN_app_terraform_io`), as the Terraform CLI reads it; takes precedence over the CLI config |
 | `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG` | `terraform-provider`, `terraform-module` datasources | Terraform CLI config read for registry `credentials` blocks and the `credentials_helper`, replacing `~/.terraformrc` (`%APPDATA%/terraform.rc`); when set, the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` (`credentials.tfrc.json`) are not read. `TERRAFORM_CONFIG` is the legacy name |
 | `HOME`, `APPDATA` (Windows) | `terraform-provider`, `terraform-module` datasources | where the Terraform CLI config, `credentials.tfrc.json` and credentials helpers (`.terraform.d/plugins`) are found |
-| `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor` |
+| `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor`; ignored for platform commits |
 | `DEPS_SIGNING_KEY` | `run` | default of `--signing-key`: a passphrase-less OpenSSH or armored OpenPGP private key, or the path of a file holding one; deps signs its commits with it |
+| `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
