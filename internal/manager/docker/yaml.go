@@ -96,12 +96,12 @@ func (x *extractor) helm(m *yaml.Node) {
 	case strings.Contains(name, "$") || strings.Contains(tag.Value, "$"):
 		d.Skip = "variable reference"
 	case tag.Value == "":
-		parseRef(&d, 0, name)
+		ParseRef(&d, 0, name)
 	case off < 0:
 		d.Skip = "cannot locate value"
 	default:
 		ref := name + ":" + tag.Value
-		parseRef(&d, off+len(tag.Value)-len(ref), ref)
+		ParseRef(&d, off+len(tag.Value)-len(ref), ref)
 		if dg := str(get(m, "digest")); d.Skip == "" && d.Digest == "" && dg != nil && strings.HasPrefix(dg.Value, "sha256:") {
 			if o := x.locate(dg); o >= 0 {
 				d.Digest, d.DigestSpan = dg.Value, dep.Span{Start: o, End: o + len(dg.Value)}

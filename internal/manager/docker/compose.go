@@ -160,7 +160,7 @@ func (x *extractor) composeImage(v *yaml.Node, prefix string) {
 		off += len(prefix)
 		d := skipped
 		d.Line = x.lineOf(off)
-		parseRef(&d, 0, res)
+		ParseRef(&d, 0, res)
 		if d.Skip != "" || remap(&d, pos, off) {
 			x.deps = append(x.deps, d)
 			return

@@ -317,6 +317,31 @@ func TestTagsV2SkipsNonTagsAndParsesLargePackets(t *testing.T) {
 	}
 }
 
+// GitLab redirects info/refs of `/<repo>` to `/<repo>.git` but answers the ls-refs POST to
+// `/<repo>` with 422: the POST must go to the redirected URL.
+func TestTagsV2FollowsInfoRefsRedirect(t *testing.T) {
+	lsRefs := v2Handler(pkts("2222222222222222222222222222222222222222 refs/tags/v2\n") + "0000")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/a/b.git/") {
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				return
+			}
+			http.Redirect(w, r, strings.Replace(r.URL.String(), "/a/b/", "/a/b.git/", 1), http.StatusMovedPermanently)
+			return
+		}
+		lsRefs(w, r)
+	}))
+	defer srv.Close()
+	got, err := New(srv.Client(), nil, nil, nil).Tags(t.Context(), srv.URL+"/a/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Tag{{Name: "v2", Commit: "2222222222222222222222222222222222222222"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Tags = %+v, want %+v", got, want)
+	}
+}
+
 func TestDatasource(t *testing.T) {
 	var posts atomic.Int32
 	h := v2Handler(pkts("2222222222222222222222222222222222222222 refs/tags/v2\n") + "0000")

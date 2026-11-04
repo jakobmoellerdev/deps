@@ -338,6 +338,14 @@ func (s *session) advertisement(ctx context.Context) ([]Tag, *v2caps, error) {
 		return nil, nil, err
 	}
 	defer closeBody(resp)
+	// Like git, keep the redirected base URL (GitLab redirects `/<repo>` to `/<repo>.git`) for
+	// the ls-refs POST, which is not redirected; only within the host, so credentials stay put.
+	if resp.Request != nil && resp.Request.URL.Host == s.host {
+		ru := resp.Request.URL
+		if base, ok := strings.CutSuffix(ru.Scheme+"://"+ru.Host+ru.Path, "/info/refs"); ok {
+			s.url = base
+		}
+	}
 	p := newPktReader(resp.Body)
 
 	line, kind, err := p.next()

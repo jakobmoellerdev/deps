@@ -16,6 +16,13 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`docker`](#docker)
 - [`npm`](#npm)
 - [`helm`](#helm)
+- [`kustomize`](#kustomize)
+- [`pre-commit`](#pre-commit)
+- [`gitlabci`](#gitlabci)
+- [`nvm`](#nvm)
+- [`nodenv`](#nodenv)
+- [`asdf`](#asdf)
+- [`mise`](#mise)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -325,6 +332,346 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 **Edits.**
 
 The version is replaced in place.
+
+## kustomize
+
+Updates image tags and digests, Helm chart versions and the `?ref=` of remote git resources in Kustomize kustomization files.
+
+**Files:**
+
+- `kustomization.yaml`, `kustomization.yml`, `Kustomization`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | `images[]` `newTag` (`1.2` or `1.2@sha256:…`) and `digest` of `newName`, else `name` | `docker` | `docker` | updated |
+| `helmChart` | `helmCharts[]` `version` of chart `name` from `repo` (`https://`, `http://` or `oci://`) | `helm` | `semver` | updated |
+| `resource` | remote git targets in `resources[]`, `components[]` and `bases[]` with a `ref` (or `version`) query parameter: `[git::]https://host/org/repo[.git][//path]`, `ssh://[user@]host/…`, `git@host:org/repo[.git][//path]`, `host/org/repo[//path]`; the span covers the ref value | `git-tags` | `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `no tag` | image: no `newTag` and no `digest` (a rename only) |
+| `digest without tag` | image: a `digest` without `newTag` |
+| `invalid reference` | image: the name and tag are no valid image reference |
+| `invalid digest` | image: a `digest` field that is not `sha256:…` |
+| `variable reference` | image: the name or tag contains `$` |
+| `no repo` | helmChart: no `repo` (a chart from `chartHome`) |
+| `unknown chart repository <repo>` | helmChart: a `repo` that is no `https://`, `http://` or `oci://` URL |
+| `no version` | helmChart: the version is missing or empty |
+| `version range` | helmChart: anything but a full `MAJOR.MINOR.PATCH[-pre][+build]` (optionally `v`-prefixed) |
+| `no ref` | resource: an empty `ref=` |
+| `commit ref` | resource: the ref is a full commit SHA |
+| `non-version ref` | resource: the ref is a branch or a tag that is no `v?N[.N[.N]]` version |
+| `invalid repository URL` | resource: no repository path could be derived from the target |
+| `cannot locate value` | the value's bytes could not be found (escapes, block scalars) |
+
+**Remote resources.**
+
+- Without `//`, the repository ends at `.git`, after `_git/<repo>` (Azure DevOps), after `org/repo` on github.com, gitlab.com and bitbucket.org, or at the end of the path.
+- The dep name is `host/org/repo`; tags are listed from `https://host/org/repo` (also for `ssh://` and scp-like targets). Targets without a `ref` track a branch and are no deps.
+
+**Edits.**
+
+The tag, chart version or ref is replaced in place; a digest-pinned image also gets its new digest. Images without a digest are not pinned: kustomize would need a new `digest` field.
+
+## pre-commit
+
+Updates the `rev` of the hook repositories in pre-commit configurations, plain tags and SHAs frozen by `pre-commit autoupdate --freeze`.
+
+**Files:**
+
+- `.pre-commit-config.yaml` / `.pre-commit-config.yml` at any depth
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `repository` | `repos[]` entry with `repo` and `rev`; the name is the URL path (`owner/repo`), the source its `https://` URL without `.git` | `git-tags` | `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `local repository` | `repo: local` |
+| `meta repository` | `repo: meta` |
+| `unrecognized repo` | `repo` is not an https/http/ssh/git or `git@host:path` URL with an owner/repo path |
+| `no rev` | the entry has no `rev` |
+| `pinned without version comment` | `rev` is a 40-hex SHA without a `# frozen: <version>` (or `# <version>`) comment |
+| `non-version ref` | `rev` is neither a SHA nor a version tag |
+| `cannot locate value` | the rev bytes were not found (block scalars) |
+
+**Edits.**
+
+- Tag revs are replaced in place, keeping quotes and comments.
+- Frozen revs get the new SHA and the version in the `# frozen:` comment is rewritten.
+- Pinning a tag rev writes the SHA and inserts ` # frozen: <version>` after the value.
+
+## gitlabci
+
+Updates container images, project includes and CI/CD components in GitLab CI configuration. Covers both Renovate managers `gitlabci` and `gitlabci-include`.
+
+**Files:**
+
+- `.gitlab-ci.y(a)ml`, `<x>.gitlab-ci.y(a)ml`
+- `*.y(a)ml` under `.gitlab/ci/`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | `image` (string or `name:`) at top level, in `default` and in jobs | `docker` | `docker` | updated |
+| `service` | `services[]` entries (string or `name:`) at top level, in `default` and in jobs | `docker` | `docker` | updated |
+| `include` | `include` entries with `project` + `ref` (single mapping or list); Source `https://gitlab.com/<project>` | `git-tags` | `tag` | updated |
+| `component` | `include` entries `component: <host>/<project>/<name>@<version>`; Source `https://<host>/<project>` | `git-tags` | `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `variable reference` | `$` in the image, project, component (e.g. `$CI_SERVER_FQDN`) or ref |
+| `no ref` | a project include without `ref` (default branch) |
+| `no version` | a component without `@<version>` |
+| `invalid component` | a component path with fewer than three segments |
+| `non-version ref` | a branch or `~latest` instead of a version tag |
+| `invalid reference` | the image reference does not parse |
+| `no tag` | an image without tag |
+| `digest without tag` | an image pinned by digest only |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- String includes and `local`, `remote` and `template` includes are not deps.
+- Project includes always resolve against gitlab.com; self-managed instances are not detected.
+- Every YAML document is scanned, so component templates with a `spec:` header work.
+
+## nvm
+
+Updates the Node.js version in `.nvmrc`: the first token of the first line that is neither blank nor a `#` comment.
+
+**Files:**
+
+- any `.nvmrc`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `node` | the Node.js version (name `node`) | `node-version` | `semver`; partial versions `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-version value` | empty or a word or alias such as `lts/*`, `lts/iron`, `node`, `stable`, `system` |
+| `unsupported range` | anything else that is not `[v]X[.Y[.Z]]`, such as `>=20` or `20.x` |
+
+**Versions.**
+
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style.
+- A partial `20` or `v20.11` uses `tag` versioning and keeps its precision (`20` → `22`); a leading `v` stays outside the replaced token.
+- Only the version token is replaced; comments and the rest of the file are kept.
+
+## nodenv
+
+Updates the Node.js version in `.node-version`: the first token of the first line that is neither blank nor a `#` comment.
+
+**Files:**
+
+- any `.node-version`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `node` | the Node.js version (name `node`) | `node-version` | `semver`; partial versions `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-version value` | empty or a word or alias such as `lts/*`, `lts/iron`, `node`, `stable`, `system` |
+| `unsupported range` | anything else that is not `[v]X[.Y[.Z]]`, such as `>=20` or `20.x` |
+
+**Versions.**
+
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style.
+- A partial `20` or `v20.11` uses `tag` versioning and keeps its precision (`20` → `22`); a leading `v` stays outside the replaced token.
+- Only the version token is replaced; comments and the rest of the file are kept.
+
+## asdf
+
+Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Only the first version of a line is a dep; `#` starts a comment.
+
+**Files:**
+
+- any `.tool-versions`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `tool` | a tool line; the dep name comes from the tool table | per tool (see Tools) | `semver` or `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unsupported tool` | a tool that is not in the tool table (or, for mise, an unsupported backend) |
+| `unsupported tag prefix` | a known tool whose release tags carry a prefix other than `v` (see the tool table) |
+| `non-version value` | empty or a word such as `latest`, `system`, `lts` |
+| `git ref` | `ref:…` |
+| `local path` | `path:…` |
+| `unsupported range` | `prefix:…` or anything else that is not a version |
+| `partial version` | `X` or `X.Y` for a tool whose datasource lists only full versions (github-releases, npm; `X` for go) |
+
+**Versions.**
+
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`.
+- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`) and go (`1.27`); other tools skip it.
+- Only the version token is replaced; quotes, comments and the rest of the file are kept.
+
+**Tools.**
+
+| Tool | Datasource | Name | Skip |
+|---|---|---|---|
+| `actionlint` | `github-releases` | `rhysd/actionlint` |  |
+| `age` | `github-releases` | `FiloSottile/age` |  |
+| `argocd` | `github-releases` | `argoproj/argo-cd` |  |
+| `buf` | `github-releases` | `bufbuild/buf` |  |
+| `bun` | `github-releases` | `oven-sh/bun` | unsupported tag prefix |
+| `cosign` | `github-releases` | `sigstore/cosign` |  |
+| `crane` | `github-releases` | `google/go-containerregistry` |  |
+| `deno` | `github-releases` | `denoland/deno` |  |
+| `flux` | `github-releases` | `fluxcd/flux2` |  |
+| `flux2` | `github-releases` | `fluxcd/flux2` |  |
+| `gh` | `github-releases` | `cli/cli` |  |
+| `github-cli` | `github-releases` | `cli/cli` |  |
+| `gitleaks` | `github-releases` | `gitleaks/gitleaks` |  |
+| `go` | `go-toolchain` | `go` |  |
+| `golang` | `go-toolchain` | `go` |  |
+| `golangci-lint` | `github-releases` | `golangci/golangci-lint` |  |
+| `goreleaser` | `github-releases` | `goreleaser/goreleaser` |  |
+| `hadolint` | `github-releases` | `hadolint/hadolint` |  |
+| `helm` | `github-releases` | `helm/helm` |  |
+| `helm-docs` | `github-releases` | `norwoodj/helm-docs` |  |
+| `helmfile` | `github-releases` | `helmfile/helmfile` |  |
+| `jq` | `github-releases` | `jqlang/jq` | unsupported tag prefix |
+| `just` | `github-releases` | `casey/just` |  |
+| `k3d` | `github-releases` | `k3d-io/k3d` |  |
+| `k9s` | `github-releases` | `derailed/k9s` |  |
+| `kind` | `github-releases` | `kubernetes-sigs/kind` |  |
+| `ko` | `github-releases` | `ko-build/ko` |  |
+| `kubeconform` | `github-releases` | `yannh/kubeconform` |  |
+| `kubectl` | `github-releases` | `kubernetes/kubernetes` |  |
+| `kustomize` | `github-releases` | `kubernetes-sigs/kustomize` | unsupported tag prefix |
+| `node` | `node-version` | `node` |  |
+| `nodejs` | `node-version` | `node` |  |
+| `npm` | `npm` | `npm` |  |
+| `opentofu` | `github-releases` | `opentofu/opentofu` |  |
+| `packer` | `github-releases` | `hashicorp/packer` |  |
+| `pnpm` | `npm` | `pnpm` |  |
+| `ripgrep` | `github-releases` | `BurntSushi/ripgrep` |  |
+| `shellcheck` | `github-releases` | `koalaman/shellcheck` |  |
+| `skaffold` | `github-releases` | `GoogleContainerTools/skaffold` |  |
+| `sops` | `github-releases` | `getsops/sops` |  |
+| `stern` | `github-releases` | `stern/stern` |  |
+| `task` | `github-releases` | `go-task/task` |  |
+| `terraform` | `github-releases` | `hashicorp/terraform` |  |
+| `terragrunt` | `github-releases` | `gruntwork-io/terragrunt` |  |
+| `tflint` | `github-releases` | `terraform-linters/tflint` |  |
+| `trivy` | `github-releases` | `aquasecurity/trivy` |  |
+| `vault` | `github-releases` | `hashicorp/vault` |  |
+| `yq` | `github-releases` | `mikefarah/yq` |  |
+
+- github-releases repositories are listed when their release tags are the version with or without a leading `v`.
+- Tools that are not listed are skipped as `unsupported tool`.
+
+## mise
+
+Updates the `[tools]` table of mise config files. The file is scanned as TOML without decoding it, so only the version bytes change.
+
+**Files:**
+
+- `mise.toml`, `.mise.toml`
+- `mise/config.toml`, `.mise/config.toml`
+- `.config/mise.toml`, `.config/mise/config.toml`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `tool` | a `[tools]` entry; the dep name comes from the tool table or the backend | per tool (see Tools) | `semver` or `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unsupported tool` | a tool that is not in the tool table (or, for mise, an unsupported backend) |
+| `unsupported tag prefix` | a known tool whose release tags carry a prefix other than `v` (see the tool table) |
+| `non-version value` | empty or a word such as `latest`, `system`, `lts` |
+| `git ref` | `ref:…` |
+| `local path` | `path:…` |
+| `unsupported range` | `prefix:…` or anything else that is not a version |
+| `partial version` | `X` or `X.Y` for a tool whose datasource lists only full versions (github-releases, npm; `X` for go) |
+| `cannot locate value` | a string with escapes or a multi-line string |
+
+**Extracted.**
+
+- `tool = "v"`, `tool = ["v", …]` (the first version only) and `tool = { version = "v", … }` in `[tools]`.
+- Dotted keys (`tools.node = "22"`, `node.version = "22"` in `[tools]`) and `[tools.<tool>]` tables with a `version` key.
+- Keys with a backend: `core:<tool>` uses the tool table; `github:<owner>/<repo>` and `ubi:<owner>/<repo>[…]` use `github-releases`; `npm:<package>` uses `npm`. Other backends (`aqua:`, `cargo:`, `go:`, `pipx:`, …) are skipped as `unsupported tool`.
+
+**Versions.**
+
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`.
+- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`) and go (`1.27`); other tools skip it.
+- Only the version token is replaced; quotes, comments and the rest of the file are kept.
+
+**Tools.**
+
+| Tool | Datasource | Name | Skip |
+|---|---|---|---|
+| `actionlint` | `github-releases` | `rhysd/actionlint` |  |
+| `age` | `github-releases` | `FiloSottile/age` |  |
+| `argocd` | `github-releases` | `argoproj/argo-cd` |  |
+| `buf` | `github-releases` | `bufbuild/buf` |  |
+| `bun` | `github-releases` | `oven-sh/bun` | unsupported tag prefix |
+| `cosign` | `github-releases` | `sigstore/cosign` |  |
+| `crane` | `github-releases` | `google/go-containerregistry` |  |
+| `deno` | `github-releases` | `denoland/deno` |  |
+| `flux` | `github-releases` | `fluxcd/flux2` |  |
+| `flux2` | `github-releases` | `fluxcd/flux2` |  |
+| `gh` | `github-releases` | `cli/cli` |  |
+| `github-cli` | `github-releases` | `cli/cli` |  |
+| `gitleaks` | `github-releases` | `gitleaks/gitleaks` |  |
+| `go` | `go-toolchain` | `go` |  |
+| `golang` | `go-toolchain` | `go` |  |
+| `golangci-lint` | `github-releases` | `golangci/golangci-lint` |  |
+| `goreleaser` | `github-releases` | `goreleaser/goreleaser` |  |
+| `hadolint` | `github-releases` | `hadolint/hadolint` |  |
+| `helm` | `github-releases` | `helm/helm` |  |
+| `helm-docs` | `github-releases` | `norwoodj/helm-docs` |  |
+| `helmfile` | `github-releases` | `helmfile/helmfile` |  |
+| `jq` | `github-releases` | `jqlang/jq` | unsupported tag prefix |
+| `just` | `github-releases` | `casey/just` |  |
+| `k3d` | `github-releases` | `k3d-io/k3d` |  |
+| `k9s` | `github-releases` | `derailed/k9s` |  |
+| `kind` | `github-releases` | `kubernetes-sigs/kind` |  |
+| `ko` | `github-releases` | `ko-build/ko` |  |
+| `kubeconform` | `github-releases` | `yannh/kubeconform` |  |
+| `kubectl` | `github-releases` | `kubernetes/kubernetes` |  |
+| `kustomize` | `github-releases` | `kubernetes-sigs/kustomize` | unsupported tag prefix |
+| `node` | `node-version` | `node` |  |
+| `nodejs` | `node-version` | `node` |  |
+| `npm` | `npm` | `npm` |  |
+| `opentofu` | `github-releases` | `opentofu/opentofu` |  |
+| `packer` | `github-releases` | `hashicorp/packer` |  |
+| `pnpm` | `npm` | `pnpm` |  |
+| `ripgrep` | `github-releases` | `BurntSushi/ripgrep` |  |
+| `shellcheck` | `github-releases` | `koalaman/shellcheck` |  |
+| `skaffold` | `github-releases` | `GoogleContainerTools/skaffold` |  |
+| `sops` | `github-releases` | `getsops/sops` |  |
+| `stern` | `github-releases` | `stern/stern` |  |
+| `task` | `github-releases` | `go-task/task` |  |
+| `terraform` | `github-releases` | `hashicorp/terraform` |  |
+| `terragrunt` | `github-releases` | `gruntwork-io/terragrunt` |  |
+| `tflint` | `github-releases` | `terraform-linters/tflint` |  |
+| `trivy` | `github-releases` | `aquasecurity/trivy` |  |
+| `vault` | `github-releases` | `hashicorp/vault` |  |
+| `yq` | `github-releases` | `mikefarah/yq` |  |
+
+- github-releases repositories are listed when their release tags are the version with or without a leading `v`.
+- Tools that are not listed are skipped as `unsupported tool`.
 
 ## custom
 

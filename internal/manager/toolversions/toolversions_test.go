@@ -1,0 +1,432 @@
+package toolversions
+
+import (
+	"strings"
+	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
+)
+
+// want is an expected dep; ver is also the expected span text of an updatable dep.
+type want struct {
+	name, ds, versioning, ver, skip string
+	line                            int
+}
+
+// check compares deps with wants and applies an update to every updatable dep (news maps the
+// current version to the new one), returning the patched file.
+func check(t *testing.T, m manager.Manager, file, in string, wants []want, news map[string]string) string {
+	t.Helper()
+	b := []byte(in)
+	deps, err := m.Extract(file, b, manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != len(wants) {
+		t.Fatalf("got %d deps, want %d: %+v", len(deps), len(wants), deps)
+	}
+	var edits []patch.Edit
+	for i, w := range wants {
+		d := deps[i]
+		if d.Manager != m.Name() || d.File != file || d.Name != w.name || d.Datasource != w.ds || d.Versioning != w.versioning ||
+			d.Version != w.ver || d.Skip != w.skip || d.Line != w.line {
+			t.Errorf("%d: got %+v, want %+v", i, d, w)
+			continue
+		}
+		if d.Skip != "" {
+			if d.RefSpan != (dep.Span{}) {
+				t.Errorf("%d: skipped dep has span %+v", i, d.RefSpan)
+			}
+			continue
+		}
+		if s := string(b[d.RefSpan.Start:d.RefSpan.End]); s != w.ver {
+			t.Errorf("%d: span %q, want %q", i, s, w.ver)
+		}
+		nv, ok := news[d.Version]
+		if !ok {
+			continue
+		}
+		e, err := m.Edits(dep.Update{Dep: d, NewVersion: nv})
+		if err != nil {
+			t.Fatal(err)
+		}
+		edits = append(edits, e...)
+	}
+	out, err := patch.Apply(b, edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+func TestMatch(t *testing.T) {
+	for _, c := range []struct {
+		m    manager.Manager
+		path string
+		ok   bool
+	}{
+		{NewNvm(), ".nvmrc", true},
+		{NewNvm(), "web/.nvmrc", true},
+		{NewNvm(), "nvmrc", false},
+		{NewNvm(), ".nvmrc.bak", false},
+		{NewNodenv(), ".node-version", true},
+		{NewNodenv(), "a/b/.node-version", true},
+		{NewNodenv(), "node-version", false},
+		{NewAsdf(), ".tool-versions", true},
+		{NewAsdf(), "svc/.tool-versions", true},
+		{NewAsdf(), "tool-versions", false},
+		{NewMise(), "mise.toml", true},
+		{NewMise(), ".mise.toml", true},
+		{NewMise(), "mise/config.toml", true},
+		{NewMise(), ".mise/config.toml", true},
+		{NewMise(), ".config/mise.toml", true},
+		{NewMise(), ".config/mise/config.toml", true},
+		{NewMise(), "sub/mise.toml", true},
+		{NewMise(), "notmise.toml", false},
+		{NewMise(), "mise.local.toml", false},
+		{NewMise(), "config.toml", false},
+		{NewMise(), ".config/config.toml", false},
+	} {
+		if got := c.m.Match(c.path); got != c.ok {
+			t.Errorf("%s.Match(%q) = %v, want %v", c.m.Name(), c.path, got, c.ok)
+		}
+	}
+}
+
+func TestNames(t *testing.T) {
+	for m, name := range map[manager.Manager]string{NewNvm(): NameNvm, NewNodenv(): NameNodenv, NewAsdf(): NameAsdf, NewMise(): NameMise} {
+		if m.Name() != name {
+			t.Errorf("Name() = %q, want %q", m.Name(), name)
+		}
+	}
+}
+
+func TestNodeFiles(t *testing.T) {
+	for _, c := range []struct {
+		name, in string
+		w        want
+		new, out string // new version for w.ver, patched file
+	}{
+		{"full", "20.11.1\n", want{"node", dsNode, "semver", "20.11.1", "", 1}, "22.3.0", "22.3.0\n"},
+		{"full v", "v20.11.1\n", want{"node", dsNode, "semver", "v20.11.1", "", 1}, "v22.3.0", "v22.3.0\n"},
+		{"major", "20", want{"node", dsNode, "tag", "20", "", 1}, "22", "22"},
+		{"major v", "v20\n", want{"node", dsNode, "tag", "20", "", 1}, "22", "v22\n"},
+		{"minor v crlf", "v20.11\r\n", want{"node", dsNode, "tag", "20.11", "", 1}, "20.12", "v20.12\r\n"},
+		{"prerelease", "21.0.0-rc.1\n", want{"node", dsNode, "semver", "21.0.0-rc.1", "", 1}, "21.0.0", "21.0.0\n"},
+		{"comments and blanks", "# pinned for CI\n\n  v18.20.4  # maintenance\n19.0.0\n", want{"node", dsNode, "semver", "v18.20.4", "", 3},
+			"v18.20.5", "# pinned for CI\n\n  v18.20.5  # maintenance\n19.0.0\n"},
+		{"bom", "\ufeff20.1.0\n", want{"node", dsNode, "semver", "20.1.0", "", 1}, "20.2.0", "\ufeff20.2.0\n"},
+		{"lts any", "lts/*\n", want{"node", dsNode, "", "lts/*", "non-version value", 1}, "", "lts/*\n"},
+		{"lts codename", "lts/iron", want{"node", dsNode, "", "lts/iron", "non-version value", 1}, "", "lts/iron"},
+		{"node alias", "node\n", want{"node", dsNode, "", "node", "non-version value", 1}, "", "node\n"},
+		{"stable", "stable\n", want{"node", dsNode, "", "stable", "non-version value", 1}, "", "stable\n"},
+		{"system", "system\n", want{"node", dsNode, "", "system", "non-version value", 1}, "", "system\n"},
+		{"range", ">=20\n", want{"node", dsNode, "", ">=20", "unsupported range", 1}, "", ">=20\n"},
+		{"x range", "20.x\n", want{"node", dsNode, "", "20.x", "unsupported range", 1}, "", "20.x\n"},
+	} {
+		for _, m := range []manager.Manager{NewNvm(), NewNodenv()} {
+			t.Run(m.Name()+"/"+c.name, func(t *testing.T) {
+				out := check(t, m, ".nvmrc", c.in, []want{c.w}, map[string]string{c.w.ver: c.new})
+				if out != c.out {
+					t.Errorf("patched = %q, want %q", out, c.out)
+				}
+			})
+		}
+	}
+	for _, in := range []string{"", "\n\n", "# only a comment\n", "   \n"} {
+		deps, err := NewNvm().Extract(".nvmrc", []byte(in), manager.Env{})
+		if err != nil || len(deps) != 0 {
+			t.Errorf("Extract(%q) = %+v, %v; want none", in, deps, err)
+		}
+	}
+}
+
+func TestClassify(t *testing.T) {
+	gh := githubTool("helm/helm")
+	for _, c := range []struct {
+		t                         tool
+		raw, ver, versioning, why string
+		off                       int
+	}{
+		{nodeTool, "20.11.1", "20.11.1", "semver", "", 0},
+		{nodeTool, "v20", "20", "tag", "", 1},
+		{nodeTool, "20.11", "20.11", "tag", "", 0},
+		{nodeTool, "lts", "", "", "non-version value", 0},
+		{nodeTool, "v", "", "", "non-version value", 0},
+		{nodeTool, "", "", "", "non-version value", 0},
+		{goTool, "1.27.3", "1.27.3", "tag", "", 0},
+		{goTool, "1.27", "1.27", "tag", "", 0},
+		{goTool, "v1.27.3", "1.27.3", "tag", "", 1},
+		{goTool, "1", "", "", "partial version", 0},
+		{goTool, "1.27rc1", "", "", "unsupported range", 0},
+		{gh, "3.16.0", "3.16.0", "semver", "", 0},
+		{gh, "v3.16.0", "v3.16.0", "semver", "", 0},
+		{gh, "3.16", "", "", "partial version", 0},
+		{gh, "v3", "", "", "partial version", 0},
+		{gh, "latest", "", "", "non-version value", 0},
+		{gh, "system", "", "", "non-version value", 0},
+		{gh, "latest:3.16", "", "", "non-version value", 0},
+		{gh, "sub-1:latest", "", "", "non-version value", 0},
+		{gh, "ref:main", "", "", "git ref", 0},
+		{gh, "path:/opt/helm", "", "", "local path", 0},
+		{gh, "prefix:3.16", "", "", "unsupported range", 0},
+		{gh, "~3.16.0", "", "", "unsupported range", 0},
+		{npmTool("pnpm"), "9.1.0", "9.1.0", "semver", "", 0},
+		{npmTool("pnpm"), "9", "", "", "partial version", 0},
+	} {
+		ver, off, versioning, why := classify(c.t, c.raw)
+		if ver != c.ver || off != c.off || versioning != c.versioning || why != c.why {
+			t.Errorf("classify(%s, %q) = %q, %d, %q, %q; want %q, %d, %q, %q",
+				c.t.name, c.raw, ver, off, versioning, why, c.ver, c.off, c.versioning, c.why)
+		}
+	}
+}
+
+func TestAsdf(t *testing.T) {
+	in := "# runtime versions\n" +
+		"nodejs 20.11.1 18.19.0\n" +
+		"golang 1.27   # toolchain line\n" +
+		"\tterraform\tv1.13.4\n" +
+		"helm 3.16.0\r\n" +
+		"kubectl v1.34.1 system\n" +
+		"python 3.13.1\n" +
+		"kustomize 5.4.3\n" +
+		"jq 1.7.1\n" +
+		"yq system\n" +
+		"task ref:main\n" +
+		"k9s path:/opt/k9s\n" +
+		"kind latest\n" +
+		"nodejs v20\n" +
+		"flux2 2.6\n" +
+		"lonely\n" +
+		"   \n" +
+		"golangci-lint 2.5.0"
+	wants := []want{
+		{"node", dsNode, "semver", "20.11.1", "", 2},
+		{"go", dsGo, "tag", "1.27", "", 3},
+		{"hashicorp/terraform", dsGitHub, "semver", "v1.13.4", "", 4},
+		{"helm/helm", dsGitHub, "semver", "3.16.0", "", 5},
+		{"kubernetes/kubernetes", dsGitHub, "semver", "v1.34.1", "", 6},
+		{"python", "", "", "3.13.1", "unsupported tool", 7},
+		{"kubernetes-sigs/kustomize", dsGitHub, "", "5.4.3", "unsupported tag prefix", 8},
+		{"jqlang/jq", dsGitHub, "", "1.7.1", "unsupported tag prefix", 9},
+		{"mikefarah/yq", dsGitHub, "", "system", "non-version value", 10},
+		{"go-task/task", dsGitHub, "", "ref:main", "git ref", 11},
+		{"derailed/k9s", dsGitHub, "", "path:/opt/k9s", "local path", 12},
+		{"kubernetes-sigs/kind", dsGitHub, "", "latest", "non-version value", 13},
+		{"node", dsNode, "tag", "20", "", 14},
+		{"fluxcd/flux2", dsGitHub, "", "2.6", "partial version", 15},
+		{"golangci/golangci-lint", dsGitHub, "semver", "2.5.0", "", 18},
+	}
+	news := map[string]string{
+		"20.11.1": "20.12.0", "1.27": "1.28", "v1.13.4": "v1.14.0", "3.16.0": "3.17.1",
+		"v1.34.1": "v1.35.0", "20": "22", "2.5.0": "2.6.0",
+	}
+	got := check(t, NewAsdf(), ".tool-versions", in, wants, news)
+	want := "# runtime versions\n" +
+		"nodejs 20.12.0 18.19.0\n" +
+		"golang 1.28   # toolchain line\n" +
+		"\tterraform\tv1.14.0\n" +
+		"helm 3.17.1\r\n" +
+		"kubectl v1.35.0 system\n" +
+		"python 3.13.1\n" +
+		"kustomize 5.4.3\n" +
+		"jq 1.7.1\n" +
+		"yq system\n" +
+		"task ref:main\n" +
+		"k9s path:/opt/k9s\n" +
+		"kind latest\n" +
+		"nodejs v22\n" +
+		"flux2 2.6\n" +
+		"lonely\n" +
+		"   \n" +
+		"golangci-lint 2.6.0"
+	if got != want {
+		t.Errorf("patched =\n%s\nwant\n%s", got, want)
+	}
+	if d, _ := NewAsdf().Extract(".tool-versions", []byte(in), manager.Env{}); d[2].Source != "https://github.com/hashicorp/terraform" {
+		t.Errorf("terraform source = %q", d[2].Source)
+	}
+}
+
+func TestMise(t *testing.T) {
+	in := `min_version = "2024.1.0"
+
+[env]
+NODE_ENV = 'production'
+PATHS = ["a", "b"]  # not tools
+
+[tools]
+# runtimes
+node = "20.11.1"
+"go" = '1.27'
+terraform = ["v1.13.4", "1.12.0"]
+helm = { version = "3.16.0", postinstall = "helm plugin install x" }
+kubectl = [
+  # multi-line array
+  "1.34.1",
+  "1.33.0",
+]
+"core:node" = "v22"
+"github:cli/cli" = "2.60.0"
+"ubi:BurntSushi/ripgrep[exe=rg]" = "14.1.1"
+"npm:@biomejs/biome" = "1.9.4"
+"aqua:helm/helm" = "3.16.0"
+"github:gitlab.com/x" = "1.0.0"
+python = "3.13"
+yq = "latest"
+kind = "ref:v0.25.0"
+task = "prefix:3"
+golangci-lint = "2.5"
+kustomize = "5.4.3"
+escaped = "1.\u0032.3"
+jq = """1.7.1"""
+k9s = 1
+flux2 = { os = ["linux"] }
+pnpm.version = "9.12.0"
+
+[tools.just]
+version = "1.36.0"
+os = ["linux", "macos"]
+
+[[tasks.lint]]
+version = "1.0.0"
+
+[tasks.build]
+run = """
+echo "tools = [\"x\"]"
+"""
+
+[settings]
+experimental = true
+`
+	wants := []want{
+		{"node", dsNode, "semver", "20.11.1", "", 9},
+		{"go", dsGo, "tag", "1.27", "", 10},
+		{"hashicorp/terraform", dsGitHub, "semver", "v1.13.4", "", 11},
+		{"helm/helm", dsGitHub, "semver", "3.16.0", "", 12},
+		{"kubernetes/kubernetes", dsGitHub, "semver", "1.34.1", "", 15},
+		{"node", dsNode, "tag", "22", "", 18},
+		{"cli/cli", dsGitHub, "semver", "2.60.0", "", 19},
+		{"BurntSushi/ripgrep", dsGitHub, "semver", "14.1.1", "", 20},
+		{"@biomejs/biome", dsNpm, "semver", "1.9.4", "", 21},
+		{"aqua:helm/helm", "", "", "3.16.0", "unsupported tool", 22},
+		{"github:gitlab.com/x", "", "", "1.0.0", "unsupported tool", 23},
+		{"python", "", "", "3.13", "unsupported tool", 24},
+		{"mikefarah/yq", dsGitHub, "", "latest", "non-version value", 25},
+		{"kubernetes-sigs/kind", dsGitHub, "", "ref:v0.25.0", "git ref", 26},
+		{"go-task/task", dsGitHub, "", "prefix:3", "unsupported range", 27},
+		{"golangci/golangci-lint", dsGitHub, "", "2.5", "partial version", 28},
+		{"kubernetes-sigs/kustomize", dsGitHub, "", "5.4.3", "unsupported tag prefix", 29},
+		{"escaped", "", "", `1.\u0032.3`, "unsupported tool", 30},
+		{"jqlang/jq", dsGitHub, "", "1.7.1", "unsupported tag prefix", 31},
+		{"pnpm", dsNpm, "semver", "9.12.0", "", 34},
+		{"casey/just", dsGitHub, "semver", "1.36.0", "", 37},
+	}
+	news := map[string]string{
+		"20.11.1": "20.12.0", "1.27": "1.28", "v1.13.4": "v1.14.0", "3.16.0": "3.17.1", "1.34.1": "1.35.0",
+		"22": "24", "2.60.0": "2.61.0", "14.1.1": "14.2.0", "1.9.4": "2.0.0", "9.12.0": "10.0.0", "1.36.0": "1.37.0",
+	}
+	got := check(t, NewMise(), "mise.toml", in, wants, news)
+	for _, r := range [][2]string{
+		{`node = "20.11.1"`, `node = "20.12.0"`},
+		{`"go" = '1.27'`, `"go" = '1.28'`},
+		{`terraform = ["v1.13.4", "1.12.0"]`, `terraform = ["v1.14.0", "1.12.0"]`},
+		{`helm = { version = "3.16.0",`, `helm = { version = "3.17.1",`},
+		{`  "1.34.1",`, `  "1.35.0",`},
+		{`"core:node" = "v22"`, `"core:node" = "v24"`},
+		{`"github:cli/cli" = "2.60.0"`, `"github:cli/cli" = "2.61.0"`},
+		{`exe=rg]" = "14.1.1"`, `exe=rg]" = "14.2.0"`},
+		{`"npm:@biomejs/biome" = "1.9.4"`, `"npm:@biomejs/biome" = "2.0.0"`},
+		{`pnpm.version = "9.12.0"`, `pnpm.version = "10.0.0"`},
+		{`version = "1.36.0"`, `version = "1.37.0"`},
+	} {
+		in = strings.Replace(in, r[0], r[1], 1)
+	}
+	if got != in {
+		t.Errorf("patched =\n%s\nwant\n%s", got, in)
+	}
+}
+
+func TestMiseEscapedKnownTool(t *testing.T) {
+	check(t, NewMise(), "mise.toml", "[tools]\nhelm = \"3.\\u0031.0\"\nterraform = '''1.13.4'''\n", []want{
+		{"helm/helm", dsGitHub, "", `3.\u0031.0`, "cannot locate value", 2},
+		{"hashicorp/terraform", dsGitHub, "", "1.13.4", "cannot locate value", 3},
+	}, nil)
+}
+
+func TestMiseCRLF(t *testing.T) {
+	in := "[tools]\r\nnode = \"\"\r\ngo = \"1.27.1\" # pinned\r\n[tools.helm]\r\nversion = 'v3.16.0'\r\n"
+	out := check(t, NewMise(), "mise/config.toml", in, []want{
+		{"node", dsNode, "", "", "non-version value", 2},
+		{"go", dsGo, "tag", "1.27.1", "", 3},
+		{"helm/helm", dsGitHub, "semver", "v3.16.0", "", 5},
+	}, map[string]string{"1.27.1": "1.27.2", "v3.16.0": "v3.17.0"})
+	if want := "[tools]\r\nnode = \"\"\r\ngo = \"1.27.2\" # pinned\r\n[tools.helm]\r\nversion = 'v3.17.0'\r\n"; out != want {
+		t.Errorf("patched = %q", out)
+	}
+}
+
+func TestMiseTopLevelDottedAndBOM(t *testing.T) {
+	in := "\ufefftools.node = \"22.1.0\"\ntools = { }\n"
+	out := check(t, NewMise(), ".mise.toml", in, []want{{"node", dsNode, "semver", "22.1.0", "", 1}}, map[string]string{"22.1.0": "22.2.0"})
+	if out != "\ufefftools.node = \"22.2.0\"\ntools = { }\n" {
+		t.Errorf("patched = %q", out)
+	}
+}
+
+func TestMiseErrors(t *testing.T) {
+	for _, in := range []string{
+		"[tools\nnode = \"1\"\n",
+		"[tools]\nnode = \"20\n",
+		"[tools]\nnode = [\"20\"\n",
+		"[tools]\nnode = { version = \"20\"\n",
+		"[tools]\nnode \"20\"\n",
+		"[tools]\nnode = \"20\" junk\n",
+		"[tools]\nnode =\n",
+		"[tools]\n= \"20\"\n",
+		"[tools]\nnode = [\"20\" \"21\"]\n",
+		"[tools]\nnode = { version = \"20\" os = \"x\" }\n",
+		"[tools]\nnode = '''20\n",
+	} {
+		if deps, err := NewMise().Extract("mise.toml", []byte(in), manager.Env{}); err == nil {
+			t.Errorf("Extract(%q) = %+v, want error", in, deps)
+		}
+	}
+	if _, err := NewMise().Extract("mise.toml", []byte("[tools]\nnode = \"20\n"), manager.Env{}); err == nil || !strings.HasPrefix(err.Error(), "line 2:") {
+		t.Errorf("error = %v, want line 2", err)
+	}
+}
+
+func TestDocToolsTable(t *testing.T) {
+	for _, d := range []struct {
+		name string
+		body string
+	}{{"asdf", toolsBody(t, DocAsdf.Sections)}, {"mise", toolsBody(t, DocMise.Sections)}} {
+		for name, tl := range tools {
+			row := "| `" + name + "` | `" + tl.datasource + "` | `" + tl.name + "` | " + tl.skip + " |"
+			if !strings.Contains(d.body, row) {
+				t.Errorf("%s tools table lacks row %q", d.name, row)
+			}
+		}
+	}
+	for _, doc := range []struct{ name, want string }{{DocNvm.Name, NameNvm}, {DocNodenv.Name, NameNodenv}, {DocAsdf.Name, NameAsdf}, {DocMise.Name, NameMise}} {
+		if doc.name != doc.want {
+			t.Errorf("Doc name %q, want %q", doc.name, doc.want)
+		}
+	}
+}
+
+func toolsBody(t *testing.T, secs []refdoc.Section) string {
+	t.Helper()
+	for _, s := range secs {
+		if s.Title == "Tools" {
+			return s.Body
+		}
+	}
+	t.Fatal("no Tools section")
+	return ""
+}

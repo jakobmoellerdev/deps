@@ -45,6 +45,10 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | M13 | `docker-compose` manager | — (OCM has no Compose files) | DepType `compose`: Compose spec file names and overrides (`compose.<env>.yaml`, `<x>.compose.yml`) plus YAML shaped like Compose (only Compose top-level keys, `services` of mappings with `image`/`build`); `services.*.image` through `<<:` merges, `x-*` extension fields (anchors extracted once, at the definition), `build.additional_contexts` `docker-image://`; `${VAR:-default}` / `${VAR-default}` defaults rewritten in place (`$$` escapes honored), other interpolation skipped as `interpolated image`; `include:`/`extends:` files are scanned on their own | done |
 | M14 | gomod digest updates of pseudo-versions (`v0.0.0-<date>-<sha>`) | 7 pending Renovate PRs (azure/go-ansiterm, google/pprof, genproto, …), k8s.io/utils, golang.org/x/exp | skipped as `pseudo-version` (65 deps in OCM) | open |
 | M15 | gomod major updates to a new module path (`/v92` → `/v93`) | `github.com/google/go-github/v92` | only same-major updates (plus v0 → v1) | open |
+| M16 | `kustomize` manager | — | manager `kustomize`: `images[]` (`newName`/`newTag`/`digest`, existing digests refreshed), `helmCharts[]` via `helm`, remote `resources`/`components`/`bases` `?ref=` via `git-tags` | done |
+| M17 | `pre-commit` manager | — | manager `pre-commit`: `repos[].rev` via `git-tags`; `# frozen: vX` SHA pins refreshed and created; `local`/`meta` skipped | done |
+| M18 | `gitlabci` + `gitlabci-include` managers | — | manager `gitlabci`: `image`/`services` like docker refs, `include` `project`+`ref` (gitlab.com) and `component: host/path/name@v` via `git-tags` | done |
+| M19 | `nvm`, `nodenv`, `asdf`, `mise` managers | — | managers `nvm` (`.nvmrc`), `nodenv` (`.node-version`), `asdf` (`.tool-versions`), `mise` (`[tools]`); built-in tool table (node, go, npm/pnpm, ~35 github-releases tools); mise `github:`/`ubi:`/`npm:` backends | done |
 
 ## PR lifecycle
 
