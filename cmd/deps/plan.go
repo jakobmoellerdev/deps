@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aymanbagabas/go-udiff"
 	"github.com/spf13/cobra"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/diff"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
@@ -61,7 +61,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	} else {
 		out := cmd.OutOrStdout()
 		for _, c := range changes {
-			if _, err := io.WriteString(out, udiff.Unified("a/"+c.Path, "b/"+c.Path, string(c.Old), string(c.New))); err != nil {
+			if _, err := io.WriteString(out, diff.Unified("a/"+c.Path, "b/"+c.Path, string(c.Old), string(c.New))); err != nil {
 				return fmt.Errorf("write diff: %w", err)
 			}
 		}

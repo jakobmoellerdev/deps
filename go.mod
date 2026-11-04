@@ -6,7 +6,6 @@ toolchain go1.27.3
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/aymanbagabas/go-udiff v0.4.1
 	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/distribution/reference v0.6.0
 	github.com/invopop/jsonschema v0.14.0
