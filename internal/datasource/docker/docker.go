@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,11 +40,14 @@ import (
 type Source struct {
 	client *auth.Client
 	sem    chan struct{}
+	// pullLimited is the registry that counts manifest GETs, but not HEADs, against a pull
+	// limit per IP address or account: Docker Hub.
+	pullLimited string
 
 	mu      sync.Mutex
 	tags    map[string]*tagsEntry   // canonical repository
 	digests map[string]*digestEntry // canonical repository + ":" + tag
-	configs map[string]*configEntry // canonical repository + ":" + tag
+	configs map[string]*configEntry // canonical repository + ":" + tag, or + "@" + digest
 }
 
 type tagsEntry struct {
@@ -119,11 +123,12 @@ func newSource(client *http.Client, sem chan struct{}, cred credentials.Credenti
 	// costs registries without an OAuth2 endpoint a rejected request per realm.
 	c.TokenFetcher = auth.NewCompositeTokenFetcher(c.Client, c.Header, c.ClientID, true)
 	return &Source{
-		client:  c,
-		sem:     sem,
-		tags:    map[string]*tagsEntry{},
-		digests: map[string]*digestEntry{},
-		configs: map[string]*configEntry{},
+		client:      c,
+		sem:         sem,
+		pullLimited: hubRegistry,
+		tags:        map[string]*tagsEntry{},
+		digests:     map[string]*digestEntry{},
+		configs:     map[string]*configEntry{},
 	}
 }
 
@@ -184,7 +189,12 @@ func (s *Source) Digest(ctx context.Context, d dep.Dep, version string) (string,
 	if err != nil {
 		return "", err
 	}
-	key := name + ":" + version
+	return s.digest(ctx, name, version)
+}
+
+// digest resolves the digest of tag in the canonical repository name once per run.
+func (s *Source) digest(ctx context.Context, name, tag string) (string, error) {
+	key := name + ":" + tag
 	s.mu.Lock()
 	e := s.digests[key]
 	if e == nil {
@@ -192,7 +202,7 @@ func (s *Source) Digest(ctx context.Context, d dep.Dep, version string) (string,
 		s.digests[key] = e
 	}
 	s.mu.Unlock()
-	e.once.Do(func() { e.digest, e.err = s.head(ctx, name, version) })
+	e.once.Do(func() { e.digest, e.err = s.head(ctx, name, tag) })
 	return e.digest, e.err
 }
 
@@ -210,13 +220,23 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (str
 	return e.source, e.err
 }
 
-// config fetches the image config of tag version once per (repository, tag).
+// config fetches the image config of tag version once per (repository, tag). On the
+// pull-limited registry the tag is first resolved with the HEAD that Digest shares, which is
+// free, and the config is fetched once per (repository, digest): tags of one image
+// (postgres:18 and postgres:18.6) cost one counted manifest GET.
 func (s *Source) config(ctx context.Context, d dep.Dep, version string) *configEntry {
 	name, err := repoName(d)
 	if err != nil {
 		return &configEntry{err: err}
 	}
-	key := name + ":" + version
+	key, ref := name+":"+version, version
+	if s.limitsPulls(name) {
+		dg, err := s.digest(ctx, name, version)
+		if err != nil {
+			return &configEntry{err: fmt.Errorf("image config %s: %w", key, err)}
+		}
+		key, ref = name+"@"+dg, dg
+	}
 	s.mu.Lock()
 	e := s.configs[key]
 	if e == nil {
@@ -225,20 +245,35 @@ func (s *Source) config(ctx context.Context, d dep.Dep, version string) *configE
 	}
 	s.mu.Unlock()
 	e.once.Do(func() {
-		e.created, e.source, e.err = s.fetchConfig(ctx, name, version)
+		e.created, e.source, e.err = s.fetchConfig(ctx, name, ref)
 		if e.err != nil {
-			e.err = fmt.Errorf("image config %s: %w", key, e.err)
+			e.err = s.pullLimitHint(name, fmt.Errorf("image config %s: %w", key, e.err))
 		}
 		slog.DebugContext(ctx, "image config fetched", "ref", key, "created", e.created, "source", e.source, "err", e.err)
 	})
 	return e
 }
 
-// fetchConfig reads the config blob of tag: manifest, (index: first platform manifest), config.
-// Artifacts whose config is no image config (Helm charts) are not fetched further: their
-// manifest's `org.opencontainers.image.created` and `…source` annotations answer instead. An
-// image config without `created` falls back to the manifest annotation as well.
-func (s *Source) fetchConfig(ctx context.Context, name, tag string) (time.Time, string, error) {
+// limitsPulls reports whether the canonical repository name is on the pull-limited registry.
+func (s *Source) limitsPulls(name string) bool {
+	registry, _, _ := strings.Cut(name, "/")
+	return registry == s.pullLimited
+}
+
+// pullLimitHint adds how to raise the limit to a rate-limit error of the pull-limited registry.
+func (s *Source) pullLimitHint(name string, err error) error {
+	if !s.limitsPulls(name) || !errors.Is(err, httpx.ErrRateLimited) {
+		return err
+	}
+	return fmt.Errorf("%w (Docker Hub limits anonymous pulls per IP address; log in with `docker login`, "+
+		"or add credentials for docker.io to $DOCKER_CONFIG/config.json, default ~/.docker/config.json)", err)
+}
+
+// fetchConfig reads the config blob of ref (tag or digest): manifest, (index: first platform
+// manifest), config. Artifacts whose config is no image config (Helm charts) are not fetched
+// further: their manifest's `org.opencontainers.image.created` and `…source` annotations answer
+// instead. An image config without `created` falls back to the manifest annotation as well.
+func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, string, error) {
 	if err := s.acquire(ctx); err != nil {
 		return time.Time{}, "", err
 	}
@@ -247,7 +282,7 @@ func (s *Source) fetchConfig(ctx context.Context, name, tag string) (time.Time, 
 	if err != nil {
 		return time.Time{}, "", err
 	}
-	desc, b, err := fetchManifest(ctx, repo, tag)
+	desc, b, err := fetchManifest(ctx, repo, ref)
 	if err != nil {
 		return time.Time{}, "", err
 	}
@@ -281,10 +316,10 @@ func (s *Source) fetchConfig(ctx context.Context, name, tag string) (time.Time, 
 	return created, cmp.Or(img.Config.Labels[sourceLabel], source), nil
 }
 
-// fetchManifest GETs the manifest of tag; the descriptor's digest is the registry's, or computed
-// from the body when the registry sends none.
-func fetchManifest(ctx context.Context, repo *remote.Repository, tag string) (ocispec.Descriptor, []byte, error) {
-	desc, rc, err := repo.FetchReference(ctx, tag)
+// fetchManifest GETs the manifest of ref (tag or digest); the descriptor's digest is the
+// registry's, or computed from the body when the registry sends none.
+func fetchManifest(ctx context.Context, repo *remote.Repository, ref string) (ocispec.Descriptor, []byte, error) {
+	desc, rc, err := repo.FetchReference(ctx, ref)
 	if err != nil {
 		return ocispec.Descriptor{}, nil, err
 	}
@@ -368,8 +403,9 @@ func (s *Source) head(ctx context.Context, name, tag string) (digest string, err
 	if errors.Is(err, errdef.ErrNotFound) {
 		return "", fmt.Errorf("tag %s not found upstream", tag)
 	}
-	if httpErr := (*errcode.ErrorResponse)(nil); errors.As(err, &httpErr) || errors.Is(err, auth.ErrBasicCredentialNotFound) || ctx.Err() != nil {
-		return "", fmt.Errorf("digest %s:%s: %w", name, tag, err)
+	if httpErr := (*errcode.ErrorResponse)(nil); errors.As(err, &httpErr) || errors.Is(err, auth.ErrBasicCredentialNotFound) ||
+		errors.Is(err, httpx.ErrRateLimited) || ctx.Err() != nil {
+		return "", s.pullLimitHint(name, fmt.Errorf("digest %s:%s: %w", name, tag, err))
 	}
 	method = http.MethodGet
 	desc, rc, err := repo.FetchReference(ctx, tag)

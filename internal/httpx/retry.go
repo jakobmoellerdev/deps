@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -36,8 +37,8 @@ const (
 
 // retryTransport retries idempotent requests on connection errors and on 429, 500, 502, 503
 // and 504 with exponential backoff and full jitter, honoring Retry-After. Rate limits (429, or
-// 403 with X-RateLimit-Remaining: 0 or Retry-After) are waited out when they reset within
-// maxWait; later resets fail fast with ErrRateLimited.
+// 403 with an exhausted X-RateLimit-Remaining or Retry-After) are waited out when they reset
+// within maxWait; later resets fail fast with ErrRateLimited.
 type retryTransport struct {
 	next    http.RoundTripper
 	maxWait time.Duration
@@ -67,7 +68,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		} else {
 			h := resp.Header
 			limited := resp.StatusCode == http.StatusTooManyRequests ||
-				resp.StatusCode == http.StatusForbidden && (h.Get("X-RateLimit-Remaining") == "0" || h.Get("Retry-After") != "")
+				resp.StatusCode == http.StatusForbidden && (exhausted(h) || h.Get("Retry-After") != "")
 			if !limited && !retryStatus(resp.StatusCode) {
 				return resp, nil
 			}
@@ -114,7 +115,9 @@ func (t *retryTransport) backoff(attempt int) time.Duration {
 }
 
 // hint returns when the server asks to be retried: Retry-After (seconds or HTTP date), or for
-// rate-limited responses X-RateLimit-Reset (epoch seconds).
+// rate-limited responses X-RateLimit-Reset (epoch seconds), else the end of the quota window of
+// an exhausted `RateLimit-Remaining: 0;w=<seconds>` (Docker Hub sends no reset time, so the
+// window length is the latest the quota can recover).
 func (t *retryTransport) hint(h http.Header, limited bool) (time.Time, bool) {
 	if v := h.Get("Retry-After"); v != "" {
 		if sec, err := strconv.ParseInt(v, 10, 64); err == nil && sec >= 0 {
@@ -124,12 +127,36 @@ func (t *retryTransport) hint(h http.Header, limited bool) (time.Time, bool) {
 			return at, true
 		}
 	}
-	if limited {
-		if sec, err := strconv.ParseInt(h.Get("X-RateLimit-Reset"), 10, 64); err == nil && sec > 0 {
-			return time.Unix(sec, 0), true
-		}
+	if !limited {
+		return time.Time{}, false
+	}
+	if sec, err := strconv.ParseInt(h.Get("X-RateLimit-Reset"), 10, 64); err == nil && sec > 0 {
+		return time.Unix(sec, 0), true
+	}
+	if left, window := quota(h); left == "0" && window > 0 {
+		return t.now().Add(time.Duration(window) * time.Second), true
 	}
 	return time.Time{}, false
+}
+
+// quota parses the requests left from X-RateLimit-Remaining or RateLimit-Remaining: GitHub
+// sends `0`, Docker Hub `0;w=3600` with the quota window in seconds (window 0 = none sent).
+func quota(h http.Header) (left string, window int64) {
+	v := h.Get("X-RateLimit-Remaining")
+	if v == "" {
+		v = h.Get("RateLimit-Remaining")
+	}
+	left, params, _ := strings.Cut(v, ";")
+	if w, ok := strings.CutPrefix(strings.TrimSpace(params), "w="); ok {
+		window, _ = strconv.ParseInt(w, 10, 64)
+	}
+	return strings.TrimSpace(left), window
+}
+
+// exhausted reports whether the remaining-requests header says none are left.
+func exhausted(h http.Header) bool {
+	left, _ := quota(h)
+	return left == "0"
 }
 
 func idempotent(req *http.Request) bool {

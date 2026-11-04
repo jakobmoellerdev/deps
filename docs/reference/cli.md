@@ -402,11 +402,14 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
 | `NPM_CONFIG_REGISTRY`, `npm_config_registry` | `npm` datasource | registry when no `.npmrc` sets one (default `https://registry.npmjs.org/`) |
+| `DOCKER_CONFIG` | `docker` datasource | directory of the Docker `config.json` with registry credentials and credential helpers (default `~/.docker`) |
 | `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GOMODCACHE` | `go` datasource | read via `go env -json` (the process environment when `go` is not on `PATH`). `GOMODCACHE`'s `cache/download/**/@v/*.info` files provide release times without network. |
 | `GITHUB_ACTIONS`, `GITEA_ACTIONS`, `FORGEJO_ACTIONS`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_REPOSITORY`, `FORGEJO_SERVER_URL`, `FORGEJO_API_URL`, `FORGEJO_REPOSITORY` | all | platform detection: `FORGEJO_ACTIONS=true` → forgejo, `GITEA_ACTIONS=true` → gitea, `GITHUB_ACTIONS=true` → github; the `FORGEJO_*` variables fall back to the `GITHUB_*` ones. `run` also detects from the `origin` remote; `plan`, `apply` and `explain` only from these variables. |
 | `GITHUB_STEP_SUMMARY`, `GITEA_STEP_SUMMARY` | all | step summary file (see `deps help output`) |
 
 On a 401 without a static token, git tag lookups call `git credential fill` once per host, with `GIT_TERMINAL_PROMPT=0` and a 10s timeout. Every `git` process deps runs has `GIT_TERMINAL_PROMPT=0`, so deps never prompts. npm lookups use `.npmrc` `_authToken` entries, and docker lookups the Docker credential chain (`~/.docker/config.json` and credential helpers).
+
+Docker Hub limits anonymous pulls per IP address (`ratelimit-limit: 100;w=3600` at the time of writing) and counts every manifest GET; HEADs are free. deps resolves digests with HEADs and fetches a manifest only for release times. In repositories with many Docker Hub images, or on shared runner IPs, log in (`docker login`, or credentials for `docker.io` in `$DOCKER_CONFIG/config.json`). An exhausted quota fails the affected lookups at once with `rate limited by registry-1.docker.io`, instead of retrying until the window ends.
 
 ## Exit codes
 

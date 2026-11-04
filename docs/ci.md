@@ -302,6 +302,15 @@ jobs:
    - `DEPS_GITHUB_COM_TOKEN` is used for github.com when the platform is elsewhere.
    - On a 401 without a static token, deps runs `git credential fill` once per host and retries. deps never prompts (`GIT_TERMINAL_PROMPT=0`).
 4. **npm and Docker.** npm uses the `.npmrc` `_authToken` entries; docker uses the Docker credential chain (`~/.docker/config.json` or credential helpers, e.g. after `docker login`).
+   - **Docker Hub.** Anonymous pulls are limited per IP address (`ratelimit-limit: 100;w=3600` at the time of writing), and hosted runners share IPs. deps resolves digests with uncounted HEADs, but each image whose release time is needed costs counted manifest GETs (two for a multi-platform image), so a repository with many Docker Hub images can exhaust the quota in one run. Lookups then fail at once with `rate limited by registry-1.docker.io` and a `docker login` hint. Log in before deps, e.g. with `docker/login-action` and a Docker Hub access token:
+
+     ```yaml
+     - uses: docker/login-action@v4.7.0
+       with:
+         username: ${{ vars.DOCKERHUB_USERNAME }}
+         password: ${{ secrets.DOCKERHUB_TOKEN }}
+     - uses: jakobmoellerdev/deps@v0.2.5
+     ```
 5. **Go modules.** `go` itself, through `GOPRIVATE`, `GONOPROXY`, `GOPROXY` and git credentials. Private modules need `GOPRIVATE` set in the job, and git credentials for their host. The checkout's credentials cover only the platform host; for other hosts use, e.g., `git config --global url."https://x-access-token:${TOKEN}@host/".insteadOf "https://host/"`.
 
 ## Signed commits
@@ -378,7 +387,7 @@ Actions with a full URL (`uses: https://host/owner/repo@ref`) are looked up on t
 | `git` | always for `run`: remote URL, `ls-remote`, commits via plumbing, push |
 | `go` | only for `go mod tidy` after go.mod updates, and `go list` for `GOPRIVATE`/direct modules. `go env` falls back to the environment without it. `GOTOOLCHAIN=auto` fetches a newer toolchain when go.mod requires one. |
 | `npm`, `pnpm`, `yarn` | regenerating lockfiles; see the note below the table |
-| Docker credentials | private registries |
+| Docker credentials | private registries; Docker Hub in repositories with many images (pull limit) |
 
 For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back to `npx --yes <tool>[@<packageManager version>]`, so `npm`/`npx` (e.g. from `actions/setup-node`) is enough. With none of them, the lockfile's manifests fail with `<tool> not found (needed to update <lock>)`.
 

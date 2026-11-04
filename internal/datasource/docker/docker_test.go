@@ -19,6 +19,7 @@ import (
 	"github.com/oras-project/oras-go/v3/registry/remote/properties"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // fixture is an in-memory registry with repository img: tags 1.0 and latest (images) and 2.0
@@ -192,6 +193,59 @@ func TestNoRegistryRetry(t *testing.T) {
 	}
 	if n := lists.Load(); n != 1 {
 		t.Errorf("tags/list requests = %d, want 1", n)
+	}
+}
+
+// TestPullLimitExhausted checks that an exhausted Docker Hub quota (429 with
+// `ratelimit-remaining: 0;w=3600`, no Retry-After) fails each lookup after one request, with no
+// GET fallback for the digest, and that the error says how to raise the limit.
+func TestPullLimitExhausted(t *testing.T) {
+	var mu sync.Mutex
+	hits := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" {
+			return
+		}
+		mu.Lock()
+		hits[r.Method]++
+		mu.Unlock()
+		w.Header().Set("Ratelimit-Limit", "100;w=3600")
+		w.Header().Set("Ratelimit-Remaining", "0;w=3600")
+		registryError(w, http.StatusTooManyRequests, "TOOMANYREQUESTS")
+	}))
+	t.Cleanup(srv.Close)
+	host := strings.TrimPrefix(srv.URL, "http://")
+	s := newSource(httpx.NewClient(), nil, anon)
+	s.pullLimited = host
+	d := dep.Dep{Name: host + "/img"}
+	_, digestErr := s.Digest(t.Context(), d, "1.0")
+	_, configErr := s.ReleaseTime(t.Context(), d, "2.0")
+	for _, err := range []error{digestErr, configErr} {
+		if !errors.Is(err, httpx.ErrRateLimited) || !strings.Contains(err.Error(), "`docker login`") {
+			t.Errorf("err = %v; want ErrRateLimited with a docker login hint", err)
+		}
+	}
+	if hits[http.MethodHead] != 2 || hits[http.MethodGet] != 0 {
+		t.Errorf("requests = %v; want 2 HEAD, no GET", hits)
+	}
+
+	// Other registries get no Docker Hub hint.
+	s.pullLimited = hubRegistry
+	if _, err := s.Digest(t.Context(), d, "3.0"); !errors.Is(err, httpx.ErrRateLimited) || strings.Contains(err.Error(), "docker login") {
+		t.Errorf("other registry err = %v", err)
+	}
+}
+
+func TestLimitsPulls(t *testing.T) {
+	s := newSource(nil, nil, anon)
+	for ref, want := range map[string]bool{"alpine": true, "docker.io/o/i": true, "ghcr.io/o/i": false, "mirror.gcr.io/library/redis": false} {
+		name, err := repoName(dep.Dep{Name: ref})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.limitsPulls(name); got != want {
+			t.Errorf("limitsPulls(%s) = %v, want %v", name, got, want)
+		}
 	}
 }
 

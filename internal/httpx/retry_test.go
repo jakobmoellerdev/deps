@@ -179,6 +179,32 @@ func TestRetryStatuses(t *testing.T) {
 			replies:  []reply{{code: 403, hdr: limited("soon")}},
 			attempts: 1, status: 403,
 		},
+		{
+			// Docker Hub: no Retry-After or reset, only the exhausted quota and its window.
+			name:     "429 quota window fail fast",
+			replies:  []reply{{code: 429, hdr: map[string]string{"Ratelimit-Remaining": "0;w=3600", "X-Ratelimit-Remaining": "0;w=3600"}}},
+			attempts: 1, err: "rate limited by 127.0.0.1 until " + stamp(time.Hour),
+		},
+		{
+			name:     "429 short quota window waits",
+			replies:  []reply{{code: 429, hdr: map[string]string{"Ratelimit-Remaining": "0;w=30"}}, {code: 200}},
+			attempts: 2, sleeps: []time.Duration{30 * s}, status: 200,
+		},
+		{
+			name:     "403 quota window fail fast",
+			replies:  []reply{{code: 403, hdr: map[string]string{"Ratelimit-Remaining": "0;w=21600"}}},
+			attempts: 1, err: "rate limited by 127.0.0.1 until " + stamp(6*time.Hour),
+		},
+		{
+			name:     "429 with quota left uses backoff",
+			replies:  []reply{{code: 429, hdr: map[string]string{"Ratelimit-Remaining": "5;w=3600"}}},
+			attempts: 4, sleeps: backoff, status: 429,
+		},
+		{
+			name:     "429 quota without window uses backoff",
+			replies:  []reply{{code: 429, hdr: map[string]string{"Ratelimit-Remaining": "0;w=soon"}}},
+			attempts: 4, sleeps: backoff, status: 429,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

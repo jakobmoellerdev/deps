@@ -75,3 +75,56 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 		t.Error("invalid image: no error")
 	}
 }
+
+// TestConfigPullLimited checks that on the pull-limited registry (Docker Hub) configs are
+// fetched by the digest of the tag's HEAD, which Digest shares, once per digest: two tags of one
+// image cost one GET of each manifest.
+func TestConfigPullLimited(t *testing.T) {
+	f := newFixture(t)
+	imgTime := time.Date(2026, 10, 28, 1, 38, 6, 0, time.UTC)
+	amd := withPlatform(f.reg.image(t, imgTime, map[string]string{sourceLabel: "https://github.com/o/img"}), "linux", "amd64")
+	idx := f.reg.index(t, amd)
+	f.reg.tag("img", "18", idx)
+	f.reg.tag("img", "18.6", idx)
+	single := f.reg.image(t, imgTime.Add(time.Hour), nil)
+	f.reg.tag("img", "17", single)
+
+	s := newSource(f.srv.Client(), nil, anon)
+	s.pullLimited = f.host
+	d := dep.Dep{Name: f.host + "/img"}
+	for _, tt := range []struct {
+		version, source string
+		want            time.Time
+	}{
+		{"18", "https://github.com/o/img", imgTime},
+		{"18.6", "https://github.com/o/img", imgTime},
+		{"17", "", imgTime.Add(time.Hour)},
+	} {
+		got, err := s.ReleaseTime(t.Context(), d, tt.version)
+		src, srcErr := s.SourceRepo(t.Context(), d, tt.version)
+		if err != nil || !got.Equal(tt.want) || srcErr != nil || src != tt.source {
+			t.Errorf("%s: = %v, %v, %q, %v; want %v, %q", tt.version, got, err, src, srcErr, tt.want, tt.source)
+		}
+	}
+	if dg, err := s.Digest(t.Context(), d, "18"); err != nil || dg != idx.Digest.String() {
+		t.Errorf("Digest(18) = %q, %v", dg, err)
+	}
+	for key, want := range map[string]int{
+		"HEAD /v2/img/manifests/18":                       1, // shared by config and Digest
+		"HEAD /v2/img/manifests/18.6":                     1,
+		"HEAD /v2/img/manifests/17":                       1,
+		"GET /v2/img/manifests/18":                        0,
+		"GET /v2/img/manifests/18.6":                      0,
+		"GET /v2/img/manifests/17":                        0,
+		"GET /v2/img/manifests/" + idx.Digest.String():    1, // 18 and 18.6 share one pull
+		"GET /v2/img/manifests/" + amd.Digest.String():    1,
+		"GET /v2/img/manifests/" + single.Digest.String(): 1,
+	} {
+		if n := f.count(key); n != want {
+			t.Errorf("%s: %d requests, want %d", key, n, want)
+		}
+	}
+	if _, err := s.ReleaseTime(t.Context(), d, "9.9"); err == nil || err.Error() != "image config "+f.host+"/img:9.9: tag 9.9 not found upstream" {
+		t.Errorf("missing tag err = %v", err)
+	}
+}
