@@ -213,10 +213,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 26 # package-lock.json regeneration (npm via npx at packageManager's version)
-      - uses: jakobmoellerdev/deps@v0.2.5
+      - uses: jakobmoellerdev/deps@v0.3.0
         with:
           token: ${{ steps.app.outputs.token || github.token }}
-          version: v0.2.5 # keep this when pin: digest rewrites the ref above to a SHA
+          version: v0.3.0 # keep this when pin: digest rewrites the ref above to a SHA
           # signing-key: ${{ secrets.OCMBOT_SIGNING_KEY }} # optional, see below
           args: >-
             ${{ github.event_name == 'pull_request' && 'plan' || 'run' }}
@@ -225,7 +225,7 @@ jobs:
 
 - **Pull requests** that change the config run `plan` with the job token. That validates the config: an invalid key exits 2. `run --dry-run` needs `HEAD` at the tip of `main`, which a PR merge commit is not. To also list the PRs a config change would cause, use the base/PR checkout pair from [ci.md](ci.md#preview-on-pull-requests).
 - **Token.** The App token goes to both `actions/checkout` (git push) and the action (API). `permission-workflows: write` is required, because Action updates change `.github/workflows/*`.
-- **Version.** The action downloads the release named by its ref when that ref is a tag. `pin: digest` turns `@v0.2.5` into `@<sha> # v0.2.5` in the first "Digest pins" PR, and from then on the ref no longer names the release. Without `version:`, the action would download the latest release.
+- **Version.** The action downloads the release named by its ref when that ref is a tag. `pin: digest` turns `@v0.3.0` into `@<sha> # v0.3.0` in the first "Digest pins" PR, and from then on the ref no longer names the release. Without `version:`, the action would download the latest release.
 - **Signing.** Renovate runs with `RENOVATE_PLATFORM_COMMIT: enabled`: it creates commits through the GitHub API, and GitHub signs them as ocmbot. deps creates commits with git and signs them only with `signing-key`. A GitHub App cannot register a GPG or SSH key, so commits signed as `ocmbot[bot]` don't show as verified. In OCM this is fine without a key:
   - ocmbot (App 295948) is an `always` bypass actor of both rulesets that require signatures on `deps/*` branches: "OCM Organization Ruleset" (all branches) and the repository's "All branches" (which excludes only `renovate/**` and `dependabot/**`).
   - The PRs are squash-merged, and GitHub signs squash commits itself. Renovate PR #4148, for example, was squash-merged by GitHub as a verified commit.
