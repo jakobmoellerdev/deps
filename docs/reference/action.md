@@ -6,11 +6,13 @@
 
 The composite action in the repository root downloads the released static `deps` binary for the runner, verifies it against the release's `checksums.txt` with `sha256sum`, prints `deps version`, and runs `deps <args>` with `DEPS_TOKEN` set to the `token` input. Go is not needed. The same `action.yml` works unchanged on GitHub Actions and on Gitea and Forgejo Actions.
 
-Only linux/amd64 and linux/arm64 runners are supported; on any other OS or architecture the download step fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`. Pin a release tag (`@v0.1.0`) so runs are reproducible; a ref that is not a release tag (`@main`) downloads the latest release.
+The version is resolved first. With `cache: true` (the default) a binary of that version is reused instead of downloaded: from the runner's tool cache (`$RUNNER_TOOL_CACHE/deps/<version>/<arch>`, kept between jobs on self-hosted runners), else from the forge's Actions cache (`actions/cache/restore`, key `deps-<version>-linux-<arch>`; GitHub's cache service and the Gitea/Forgejo runner cache server). A cached binary runs only if its sha256 matches the checksum recorded from `checksums.txt` next to it; otherwise it is downloaded again. After a download the binary is saved to the Actions cache.
+
+Only linux/amd64 and linux/arm64 runners are supported; on any other OS or architecture the first step fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`. Pin a release tag (`@v0.1.0`) so runs are reproducible; a ref that is not a release tag (`@main`) downloads the latest release.
 
 Complete workflows, tokens and permissions are described in [Running deps in CI](../ci.md); the arguments in the [CLI reference](cli.md).
 
-Runs as `composite` with the steps "Download deps", "Run deps".
+Runs as `composite` with the steps "Resolve deps version", "Check tool cache", "Restore deps from the Actions cache", "Install deps", "Save deps to the Actions cache", "Run deps".
 
 ## Inputs
 
@@ -21,6 +23,14 @@ Runs as `composite` with the steps "Download deps", "Run deps".
 | `args` | no | `run` | Arguments for deps, e.g. `run -v --log-level info` or `plan`. |
 | `version` | no | none | Release tag to download, e.g. v0.1.0. Default: the action's ref when it is a release tag (`@v0.1.0`), else the latest release. |
 | `repository` | no | none | Repository URL the release is downloaded from. A Gitea/Forgejo URL finds the latest release via `<host>/api/v1/repos/<repo>/releases/latest`; a GitHub URL via api.github.com, and on github.com runners the assets are fetched with `gh release download` and the job token, so private repositories work. Default: https://github.com/jakobmoellerdev/deps on github.com runners, https://git.jakob-moeller.cloud/jakobmoellerdev/deps elsewhere. |
+| `cache` | no | `true` | Reuse a verified binary of the same version instead of downloading it. The runner's tool cache (`$RUNNER_TOOL_CACHE/deps/<version>/<arch>`, kept between jobs on self-hosted runners) is checked first, then the forge's Actions cache (key `deps-<version>-<os>-<arch>`), which is filled after a download. A cached binary is used only if its sha256 matches the checksum recorded from the release's checksums.txt. `false` downloads every run. |
+
+## Outputs
+
+| Output | Description |
+|---|---|
+| `version` | The deps release that ran, e.g. v0.1.0. |
+| `cache-hit` | `true` if the binary came from the tool cache or the Actions cache, `false` if it was downloaded. |
 
 ## Usage
 
@@ -41,6 +51,8 @@ Use the full URL: a short `jakobmoellerdev/deps@…` is resolved against the ins
     version: ""
     # Repository URL the release is downloaded from.
     repository: ""
+    # Reuse a verified binary of the same version instead of downloading it.
+    cache: "true"
 ```
 
 ### GitHub
@@ -60,4 +72,6 @@ From the GitHub mirror; on github.com runners the binary is downloaded from the 
     version: ""
     # Repository URL the release is downloaded from.
     repository: ""
+    # Reuse a verified binary of the same version instead of downloading it.
+    cache: "true"
 ```

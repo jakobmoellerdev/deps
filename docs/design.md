@@ -585,10 +585,12 @@ A group automerges when every update in it has `Automerge` from the policy of it
 
 The action downloads a released static binary instead of building from source, so runners need no Go to run it:
 
-1. Map `uname -s`/`uname -m` to `linux/amd64` or `linux/arm64`; anything else fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`.
-2. Version: the `version` input, else `github.action_ref` when it is a release tag (`vX.Y.Z…`), else the latest release of `repository` (Gitea/Forgejo: `<host>/api/v1/repos/<repo>/releases/latest`; `https://github.com/...`: `api.github.com/repos/<repo>/releases/latest`).
-3. Download `deps_linux_<arch>` and `checksums.txt` from `<repository>/releases/download/<version>/`, verify with `sha256sum -c`, install to `$RUNNER_TEMP/deps`, print `deps version`.
-4. Run `"$RUNNER_TEMP/deps" <args>` with `DEPS_TOKEN` from the `token` input.
+1. **Resolve** (its own step, output `version`): map `uname -s`/`uname -m` to `linux/amd64` or `linux/arm64`; anything else fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`. Version: the `version` input, else `github.action_ref` when it is a release tag (`vX.Y.Z…`), else the latest release of `repository` (Gitea/Forgejo: `<host>/api/v1/repos/<repo>/releases/latest`; `https://github.com/...`: `api.github.com/repos/<repo>/releases/latest`). The binary dir is `$RUNNER_TOOL_CACHE/deps/<version>/<arch>` (falls back to `$RUNNER_TEMP` if unset or not writable).
+2. **Tool cache:** if the dir holds `deps` and `deps.sha256` and `sha256sum -c deps.sha256` passes, use it. Self-hosted runners keep the tool cache between jobs.
+3. **Actions cache:** on a tool-cache miss, `actions/cache/restore` with key `deps-<version>-linux-<arch>` into the dir. Explicit restore/save steps instead of `actions/cache` with a post step, so nothing depends on post steps of actions nested in a composite action.
+4. **Install:** a restored binary is used only if it passes the same checksum check; otherwise (or on a miss) download `deps_linux_<arch>` and `checksums.txt` from `<repository>/releases/download/<version>/` (`gh release download` on github.com runners), verify with `sha256sum -c`, and move the binary plus its recorded checksum line (`deps.sha256`) into the dir atomically. Print `deps version`. Output `cache-hit`.
+5. **Save:** after a download, `actions/cache/save` stores the dir under the key.
+6. Run `"<dir>/deps" <args>` with `DEPS_TOKEN` from the `token` input.
 
 | Input | Default |
 |---|---|
@@ -596,6 +598,7 @@ The action downloads a released static binary instead of building from source, s
 | `args` | `run` |
 | `version` | action ref if it is a release tag, else latest release |
 | `repository` | the GitHub mirror on github.com runners, the Gitea repository elsewhere (any Gitea/Forgejo or GitHub repository URL) |
+| `cache` | `true`; `false` skips both cache layers and downloads every run |
 
 The action uses only `github.*` expressions, so it runs unchanged on GitHub Actions and Gitea/Forgejo with default settings. Its generated reference is [reference/action.md](reference/action.md).
 

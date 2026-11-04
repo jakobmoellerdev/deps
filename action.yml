@@ -32,10 +32,28 @@ inputs:
       repositories work. Default: https://github.com/jakobmoellerdev/deps on github.com runners,
       https://git.jakob-moeller.cloud/jakobmoellerdev/deps elsewhere.
     default: ""
+  cache:
+    description: >-
+      Reuse a verified binary of the same version instead of downloading it. The runner's tool cache
+      (`$RUNNER_TOOL_CACHE/deps/<version>/<arch>`, kept between jobs on self-hosted runners) is
+      checked first, then the forge's Actions cache (key `deps-<version>-<os>-<arch>`), which is
+      filled after a download. A cached binary is used only if its sha256 matches the checksum
+      recorded from the release's checksums.txt. `false` downloads every run.
+    default: "true"
+outputs:
+  version:
+    description: The deps release that ran, e.g. v0.1.0.
+    value: ${{ steps.resolve.outputs.version }}
+  cache-hit:
+    description: >-
+      `true` if the binary came from the tool cache or the Actions cache, `false` if it was
+      downloaded.
+    value: ${{ steps.install.outputs.cache-hit }}
 runs:
   using: composite
   steps:
-    - name: Download deps
+    - name: Resolve deps version
+      id: resolve
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
@@ -43,6 +61,7 @@ runs:
         REPOSITORY: ${{ inputs.repository }}
         SERVER_URL: ${{ github.server_url }}
         TOKEN: ${{ github.token }}
+        CACHE: ${{ inputs.cache }}
       run: |
         set -euo pipefail
         case "$(uname -s)/$(uname -m)" in
@@ -73,22 +92,102 @@ runs:
           VERSION=$(curl -fsSL "${auth[@]}" "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
           [ -n "$VERSION" ] || { echo "deps: no release found at $api" >&2; exit 1; }
         fi
-        base="$repo/releases/download/$VERSION"
+        # The tool cache survives between jobs on self-hosted runners; a fresh dir per run otherwise.
         dir="$RUNNER_TEMP/deps-$VERSION"
-        mkdir -p "$dir"
-        if [ "$host" = https://github.com ] && [ "$SERVER_URL" = https://github.com ] && command -v gh >/dev/null; then
-          # gh downloads through the API with the job token, which also works for private repositories.
-          GH_TOKEN="$TOKEN" gh release download "$VERSION" -R "$path" -D "$dir" -p checksums.txt -p "deps_linux_$arch"
-        else
-          curl -fsSL -o "$dir/checksums.txt" "$base/checksums.txt"
-          curl -fsSL -o "$dir/deps_linux_$arch" "$base/deps_linux_$arch"
+        if [ "$CACHE" != false ] && [ -n "${RUNNER_TOOL_CACHE:-}" ] && mkdir -p "$RUNNER_TOOL_CACHE/deps/$VERSION/$arch" 2>/dev/null \
+          && [ -w "$RUNNER_TOOL_CACHE/deps/$VERSION/$arch" ]; then
+          dir="$RUNNER_TOOL_CACHE/deps/$VERSION/$arch"
         fi
-        (cd "$dir" && grep " deps_linux_$arch\$" checksums.txt | sha256sum -c --quiet -)
-        install -m 0755 "$dir/deps_linux_$arch" "$RUNNER_TEMP/deps"
-        "$RUNNER_TEMP/deps" version
+        mkdir -p "$dir"
+        echo "deps: $VERSION linux/$arch from $repo, binary dir $dir"
+        {
+          echo "version=$VERSION"
+          echo "arch=$arch"
+          echo "repo=$repo"
+          echo "dir=$dir"
+          echo "key=deps-$VERSION-linux-$arch"
+        } >> "$GITHUB_OUTPUT"
+    - name: Check tool cache
+      id: toolcache
+      if: inputs.cache != 'false'
+      shell: bash
+      env:
+        DIR: ${{ steps.resolve.outputs.dir }}
+      run: |
+        set -euo pipefail
+        if [ -f "$DIR/deps" ] && [ -f "$DIR/deps.sha256" ] && (cd "$DIR" && sha256sum -c --quiet --status deps.sha256); then
+          echo "deps: found verified binary in the tool cache ($DIR)"
+          echo "hit=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "deps: not in the tool cache ($DIR)"
+        fi
+    - name: Restore deps from the Actions cache
+      id: restore
+      if: inputs.cache != 'false' && steps.toolcache.outputs.hit != 'true'
+      uses: actions/cache/restore@v6.1.0
+      with:
+        path: ${{ steps.resolve.outputs.dir }}
+        key: ${{ steps.resolve.outputs.key }}
+    - name: Install deps
+      id: install
+      shell: bash
+      env:
+        VERSION: ${{ steps.resolve.outputs.version }}
+        ARCH: ${{ steps.resolve.outputs.arch }}
+        REPO: ${{ steps.resolve.outputs.repo }}
+        DIR: ${{ steps.resolve.outputs.dir }}
+        TOOL_CACHE_HIT: ${{ steps.toolcache.outputs.hit }}
+        RESTORE_HIT: ${{ steps.restore.outputs.cache-hit }}
+        SERVER_URL: ${{ github.server_url }}
+        TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        verify() { [ -f "$DIR/deps" ] && [ -f "$DIR/deps.sha256" ] && (cd "$DIR" && sha256sum -c --quiet --status deps.sha256); }
+        hit=false
+        if [ "$TOOL_CACHE_HIT" = true ] || [ "$RESTORE_HIT" = true ]; then
+          if verify; then
+            hit=true
+            if [ "$TOOL_CACHE_HIT" = true ]; then echo "deps: cache hit, using $VERSION from the tool cache"; else echo "deps: cache hit, using $VERSION restored from the Actions cache"; fi
+          else
+            echo "::warning::deps: cached $VERSION binary in $DIR does not match its recorded checksum; downloading it again"
+          fi
+        fi
+        if [ "$hit" = false ]; then
+          host="${REPO%/*/*}"; path="${REPO#"$host"/}"
+          tmp="$(mktemp -d "$RUNNER_TEMP/deps-download.XXXXXX")"
+          echo "deps: downloading $VERSION (linux/$ARCH) from $REPO"
+          if [ "$host" = https://github.com ] && [ "$SERVER_URL" = https://github.com ] && command -v gh >/dev/null; then
+            # gh downloads through the API with the job token, which also works for private repositories.
+            GH_TOKEN="$TOKEN" gh release download "$VERSION" -R "$path" -D "$tmp" -p checksums.txt -p "deps_linux_$ARCH"
+          else
+            base="$REPO/releases/download/$VERSION"
+            curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt"
+            curl -fsSL -o "$tmp/deps_linux_$ARCH" "$base/deps_linux_$ARCH"
+          fi
+          sum="$(sed -n "s/^\([0-9a-f]\{64\}\)  deps_linux_$ARCH\$/\1/p" "$tmp/checksums.txt")"
+          [ -n "$sum" ] || { echo "deps: checksums.txt of $VERSION has no entry for deps_linux_$ARCH" >&2; exit 1; }
+          (cd "$tmp" && printf '%s  deps_linux_%s\n' "$sum" "$ARCH" | sha256sum -c --quiet -)
+          # Write next to the binary atomically; concurrent jobs on one runner share the tool cache.
+          install -m 0755 "$tmp/deps_linux_$ARCH" "$DIR/.deps.$$"
+          printf '%s  deps\n' "$sum" > "$DIR/.deps.sha256.$$"
+          mv -f "$DIR/.deps.$$" "$DIR/deps"
+          mv -f "$DIR/.deps.sha256.$$" "$DIR/deps.sha256"
+          rm -rf "$tmp"
+          verify
+        fi
+        echo "cache-hit=$hit" >> "$GITHUB_OUTPUT"
+        echo "downloaded=$([ "$hit" = true ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+        "$DIR/deps" version
+    - name: Save deps to the Actions cache
+      if: inputs.cache != 'false' && steps.install.outputs.downloaded == 'true'
+      uses: actions/cache/save@v6.1.0
+      with:
+        path: ${{ steps.resolve.outputs.dir }}
+        key: ${{ steps.resolve.outputs.key }}
     - name: Run deps
       shell: bash
       env:
+        BIN: ${{ steps.resolve.outputs.dir }}/deps
         DEPS_TOKEN: ${{ inputs.token }}
         DEPS_SIGNING_KEY: ${{ inputs.signing-key }}
-      run: '"$RUNNER_TEMP/deps" ${{ inputs.args }}'
+      run: '"$BIN" ${{ inputs.args }}'

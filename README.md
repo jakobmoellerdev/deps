@@ -220,8 +220,11 @@ rules:
 | `args` | `run` | arguments for `deps`, e.g. `run -v --log-level info`, `plan`, `run --dry-run` |
 | `version` | the action's ref if it is a release tag, else the latest release | release to download, e.g. `v0.1.0` |
 | `repository` | `https://github.com/jakobmoellerdev/deps` on github.com, the Gitea repository elsewhere | where the release binary is downloaded from |
+| `cache` | `true` | reuse a cached binary of the same version instead of downloading it; `false` downloads every run |
 
-The action downloads the static binary for linux/amd64 or linux/arm64, verifies it against `checksums.txt`, and runs it. The runner needs no Go, except for `go mod tidy` on go.mod updates. Full reference: [docs/reference/action.md](docs/reference/action.md).
+Outputs: `version` (the release that ran) and `cache-hit` (`true` if the binary came from a cache).
+
+The action downloads the static binary for linux/amd64 or linux/arm64, verifies it against `checksums.txt`, and runs it. The runner needs no Go, except for `go mod tidy` on go.mod updates. A binary of the same version is reused from the runner's tool cache (self-hosted runners) or the forge's Actions cache (key `deps-<version>-linux-<arch>`), and only if it still matches its recorded checksum. Full reference: [docs/reference/action.md](docs/reference/action.md).
 
 ## Local usage
 

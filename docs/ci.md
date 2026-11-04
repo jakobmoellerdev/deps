@@ -22,10 +22,11 @@ deps behaves the same locally and in CI. In CI it detects the forge from the job
 
 ## The composite action
 
-The repository root has a composite [`action.yml`](../action.yml). The same file works unchanged on GitHub, Gitea and Forgejo. It runs two steps:
+The repository root has a composite [`action.yml`](../action.yml). The same file works unchanged on GitHub, Gitea and Forgejo. It runs these steps:
 
-1. **Download.** It picks the released static binary for the runner (linux/amd64 or linux/arm64), downloads it with `checksums.txt`, verifies it with `sha256sum`, and prints `deps version`.
-2. **Run.** It runs `deps <args>` with `DEPS_TOKEN` set to the `token` input.
+1. **Resolve.** It picks the release (see `version`) and the binary for the runner (linux/amd64 or linux/arm64).
+2. **Reuse or download.** With `cache: true` it reuses a binary of that version from the tool cache or the Actions cache (see **Binary cache** below). Otherwise it downloads it with `checksums.txt`, verifies it with `sha256sum`, and saves it to the Actions cache. It prints `deps version`.
+3. **Run.** It runs `deps <args>` with `DEPS_TOKEN` set to the `token` input.
 
 Go is not needed to run it; only go.mod updates need `go` for `go mod tidy`.
 
@@ -35,6 +36,9 @@ Go is not needed to run it; only go.mod updates need `go` for `go mod tidy`.
 | `args` | `run` | arguments for `deps` |
 | `version` | the action's ref if it is a release tag (`@v0.1.0`), else the latest release | release tag to download |
 | `repository` | `https://github.com/jakobmoellerdev/deps` on github.com runners, `https://git.jakob-moeller.cloud/jakobmoellerdev/deps` elsewhere | where releases are downloaded from; see below |
+| `cache` | `true` | reuse a cached binary of the same version; `false` downloads every run |
+
+Outputs: `version` (the release that ran) and `cache-hit` (`true` if the binary came from a cache).
 
 The details are in the generated [action reference](reference/action.md).
 
@@ -44,7 +48,14 @@ The details are in the generated [action reference](reference/action.md).
 - For a GitHub repository, it is looked up via api.github.com.
 - On github.com runners, assets are fetched with `gh release download` and the job token, so private repositories work.
 
-**Supported runners.** Only linux/amd64 and linux/arm64 are released. On any other OS or architecture the download step fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`.
+**Supported runners.** Only linux/amd64 and linux/arm64 are released. On any other OS or architecture the first step fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`.
+
+**Binary cache.** Once the version is known, the action looks for that binary in two places before downloading:
+
+1. **The runner's tool cache**, `$RUNNER_TOOL_CACHE/deps/<version>/<arch>`. Self-hosted runners that keep it between jobs reuse the binary without any network request (only the latest-release lookup remains, unless `version` or a release-tag ref is set). The log shows `deps: cache hit, using <version> from the tool cache`.
+2. **The forge's Actions cache**, key `deps-<version>-linux-<arch>`, restored into that directory with `actions/cache/restore`. GitHub serves it from its cache service, Gitea and Forgejo from the runner's cache server (act_runner `cache:` settings). The log shows `Cache restored from key: deps-<version>-linux-<arch>` and `deps: cache hit, using <version> restored from the Actions cache`.
+
+On a miss the binary is downloaded and verified, then saved under that key (`Cache saved with key: …`). Each cached binary has its checksum line from the release's `checksums.txt` stored next to it (`deps.sha256`), and it runs only if `sha256sum -c` passes; a mismatch logs a warning and downloads again. A new release is a new key, so nothing has to be evicted by hand. If the runner has no cache server, the restore and save steps only log a warning and the action downloads as before.
 
 **Version pinning.** Pin a release tag (`@v0.1.0`) so runs are reproducible; `@main` downloads the latest release.
 

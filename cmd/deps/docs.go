@@ -101,7 +101,13 @@ const actionIntro = "The composite action in the repository root downloads the r
 	"verifies it against the release's `checksums.txt` with `sha256sum`, prints `deps version`, and runs `deps <args>` with " +
 	"`DEPS_TOKEN` set to the `token` input. Go is not needed. The same `action.yml` works unchanged on GitHub Actions and on " +
 	"Gitea and Forgejo Actions.\n\n" +
-	"Only linux/amd64 and linux/arm64 runners are supported; on any other OS or architecture the download step fails with " +
+	"The version is resolved first. With `cache: true` (the default) a binary of that version is reused instead of " +
+	"downloaded: from the runner's tool cache (`$RUNNER_TOOL_CACHE/deps/<version>/<arch>`, kept between jobs on " +
+	"self-hosted runners), else from the forge's Actions cache (`actions/cache/restore`, key `deps-<version>-linux-<arch>`; " +
+	"GitHub's cache service and the Gitea/Forgejo runner cache server). A cached binary runs only if its sha256 matches the " +
+	"checksum recorded from `checksums.txt` next to it; otherwise it is downloaded again. After a download the binary is " +
+	"saved to the Actions cache.\n\n" +
+	"Only linux/amd64 and linux/arm64 runners are supported; on any other OS or architecture the first step fails with " +
 	"`deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`. Pin a release tag (`@v0.1.0`) so " +
 	"runs are reproducible; a ref that is not a release tag (`@main`) downloads the latest release.\n\n" +
 	"Complete workflows, tokens and permissions are described in [Running deps in CI](../ci.md); the arguments in " +
