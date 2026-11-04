@@ -143,6 +143,12 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			return err == nil
 		}
 	}
+	if env.Exists == nil {
+		env.Exists = func(p string) bool {
+			_, err := os.Stat(filepath.Join(root, filepath.FromSlash(p)))
+			return err == nil
+		}
+	}
 
 	start = time.Now()
 	ex := extractAll(root, jobs, env)
@@ -287,6 +293,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			o.Trace(t)
 		}
 	}
+	unifyShared(ctx, res.Updates)
 	slices.SortStableFunc(res.Updates, func(a, b dep.Update) int {
 		if c := strings.Compare(a.Dep.File, b.Dep.File); c != 0 {
 			return c
@@ -640,14 +647,15 @@ type resolver struct {
 var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace}
 
 // setRange applies the rangeStrategy of a range dep (dep.Dep.Range, read as Constraint when
-// set: npm and cargo dependencies, terraform constraints); other deps always replace their
-// version. Under update-lockfile and replace candidates are ranked against the locked version
-// (dep.Dep.Locked) when there is one; update-lockfile moves only the lockfile for in-range
-// candidates, replace leaves them alone. A lock root whose lockfile deps does not read
-// (LockUnread) turns update-lockfile into bump, except for peerDependencies, which never get
+// set: npm and cargo dependencies, terraform constraints, Gradle dynamic versions); other deps
+// always replace their version. Under update-lockfile and replace candidates are ranked against
+// the locked version (dep.Dep.Locked) when there is one; update-lockfile moves only the lockfile
+// for in-range candidates, replace leaves them alone. A lock root whose lockfile deps does not
+// read (LockUnread) turns update-lockfile into bump, except for peerDependencies, which never get
 // lockfile-only updates: their in-range versions are left alone. A range without a floor (it
-// admits 0.0.0: `*`, `<2`) has nothing to bump, and a range that is never rewritten
-// (RangeFixed) only moves in the lock, so bump is update-lockfile for both. Deps of a
+// admits 0.0.0: `*`, `<2`) has nothing to bump, a range that is never rewritten (RangeFixed)
+// only moves in the lock, and a Gradle dynamic version (`1.+`, `[1.0,2.0)`) keeps its floor in
+// its edit, so an in-range bump would change nothing: bump is update-lockfile for all three. Deps of a
 // manager.RangeUpdater go to setRewritten.
 func (r *resolver) setRange(s versioning.Scheme) {
 	d := r.d
@@ -674,7 +682,7 @@ func (r *resolver) setRange(s versioning.Scheme) {
 		}
 		return
 	}
-	if strategy == config.RangeBump && !d.RangeFixed && !match("0.0.0") {
+	if strategy == config.RangeBump && !d.RangeFixed && d.Manager != gradleManager && !match("0.0.0") {
 		return
 	}
 	r.inRange = match
@@ -723,6 +731,9 @@ func rangeMatcher(s versioning.Scheme, rng string) (func(string) bool, error) {
 		return sv != nil && c.Check(sv)
 	}, nil
 }
+
+// gradleManager is the name of the gradle manager, whose dynamic versions keep their floor.
+const gradleManager = "gradle"
 
 // installed is the version an npm range dep's installs get: the locked one when known, else
 // the version in the range. It is the baseline of security updates.

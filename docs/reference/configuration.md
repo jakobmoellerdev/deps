@@ -187,7 +187,7 @@ pin: digest
 
 ## `rangeStrategy`
 
-How npm, cargo and Python dependency ranges and terraform version constraints are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, .terraform.lock.hcl) while the range admits the new version (rewriting the range otherwise), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,\<2 -> >=1.5.0,\<2, ~> 5.0 -> ~> 5.46); auto is Renovate's default per manager: update-lockfile, replace for terraform and terragrunt.
+How npm, cargo and Python dependency ranges, terraform version constraints and Gradle dynamic versions (1.+, [1.0,2.0)) are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, .terraform.lock.hcl, gradle.lockfile) while the range admits the new version (rewriting the range otherwise, 1.+ -> 2.+), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,\<2 -> >=1.5.0,\<2, ~> 5.0 -> ~> 5.46; Gradle dynamic versions and ranges without a floor keep update-lockfile); auto is Renovate's default per manager: update-lockfile, replace for terraform and terragrunt.
 
 - **Type:** string
 - **Default:** `auto`
@@ -651,7 +651,7 @@ rules:
 Only match deps of this manager.
 
 - **Type:** string
-- **Values:** `github-actions`, `gomod`, `docker`, `npm`, `helm`, `kustomize`, `pre-commit`, `gitlabci`, `nvm`, `nodenv`, `asdf`, `mise`, `cargo`, `pip_requirements`, `pep621`, `poetry`, `pipenv`, `terraform`, `terraform-version`, `tflint-plugin`, `terragrunt`, `custom`
+- **Values:** `github-actions`, `gomod`, `docker`, `npm`, `helm`, `kustomize`, `pre-commit`, `gitlabci`, `nvm`, `nodenv`, `asdf`, `mise`, `cargo`, `pip_requirements`, `pep621`, `poetry`, `pipenv`, `terraform`, `terraform-version`, `tflint-plugin`, `terragrunt`, `maven`, `gradle`, `gradle-wrapper`, `maven-wrapper`, `custom`
 
 ### `rules[].names`
 
@@ -664,7 +664,7 @@ Only match deps whose name matches any of these doublestar globs (`*` stays with
 Only match deps of these types.
 
 - **Type:** list of strings
-- **Values:** `direct`, `indirect`, `go`, `toolchain`, `action`, `dockerfile`, `compose`, `workflow`, `kubernetes`, `helm`, `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager`, `setup`, `engines`, `volta`, `chart`, `helmfile`, `k0s`, `flux`, `argocd`, `image`, `helmChart`, `resource`, `repository`, `service`, `include`, `component`, `node`, `tool`, `annotation`, `regex`, `dev-dependencies`, `build-dependencies`, `workspace.dependencies`, `patch`, `replace`, `requirements`, `project.dependencies`, `project.optional-dependencies`, `dependency-groups`, `tool.uv.dev-dependencies`, `tool.pdm.dev-dependencies`, `group`, `packages`, `dev-packages`, `category`, `required_provider`, `required_version`, `module`, `provider`, `helm_release`, `tfe_workspace`, `docker_image`, `docker_container`, `docker_service`, `docker_registry_image`, `kubernetes_pod`, `kubernetes_pod_v1`, `kubernetes_deployment`, `kubernetes_deployment_v1`, `kubernetes_daemonset`, `kubernetes_daemon_set_v1`, `kubernetes_stateful_set`, `kubernetes_stateful_set_v1`, `kubernetes_job`, `kubernetes_job_v1`, `kubernetes_cron_job`, `kubernetes_cron_job_v1`, `kubernetes_replication_controller`, `kubernetes_replication_controller_v1`, `terraform-version`, `opentofu-version`, `plugin`, `github`, `gitTags`, `terragrunt`
+- **Values:** `direct`, `indirect`, `go`, `toolchain`, `action`, `dockerfile`, `compose`, `workflow`, `kubernetes`, `helm`, `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager`, `setup`, `engines`, `volta`, `chart`, `helmfile`, `k0s`, `flux`, `argocd`, `image`, `helmChart`, `resource`, `repository`, `service`, `include`, `component`, `node`, `tool`, `annotation`, `regex`, `dev-dependencies`, `build-dependencies`, `workspace.dependencies`, `patch`, `replace`, `requirements`, `project.dependencies`, `project.optional-dependencies`, `dependency-groups`, `tool.uv.dev-dependencies`, `tool.pdm.dev-dependencies`, `group`, `packages`, `dev-packages`, `category`, `required_provider`, `required_version`, `module`, `provider`, `helm_release`, `tfe_workspace`, `docker_image`, `docker_container`, `docker_service`, `docker_registry_image`, `kubernetes_pod`, `kubernetes_pod_v1`, `kubernetes_deployment`, `kubernetes_deployment_v1`, `kubernetes_daemonset`, `kubernetes_daemon_set_v1`, `kubernetes_stateful_set`, `kubernetes_stateful_set_v1`, `kubernetes_job`, `kubernetes_job_v1`, `kubernetes_cron_job`, `kubernetes_cron_job_v1`, `kubernetes_replication_controller`, `kubernetes_replication_controller_v1`, `terraform-version`, `opentofu-version`, `plugin`, `github`, `gitTags`, `terragrunt`, `compile`, `provided`, `runtime`, `test`, `system`, `import`, `parent`, `build`, `wrapper`, `maven`
 
 [managers.md](managers.md) lists the dep types of each manager.
 
@@ -679,7 +679,7 @@ Only match deps whose file (slash path relative to --dir) matches any of these d
 Only match deps looked up with these datasources, or custom.\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource.
 
 - **Type:** list of strings
-- **Values:** `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `terraform-provider`, `terraform-module`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `terraform-provider`, `terraform-module`, `maven`, `gradle-version`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`. `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
 
@@ -723,7 +723,7 @@ New versions must satisfy this Masterminds semver constraint (e.g. `< 7`), or ma
 
 ### `rules[].rangeStrategy`
 
-Range strategy for matching npm, cargo, Python and terraform deps (see the top-level rangeStrategy). Cannot be combined with updateTypes.
+Range strategy for matching npm, cargo, Python and terraform deps and Gradle dynamic versions (see the top-level rangeStrategy). Cannot be combined with updateTypes.
 
 - **Type:** string
 - **Values:** `auto`, `bump`, `replace`, `update-lockfile`
@@ -739,10 +739,10 @@ When no rule sets it, all five update types are allowed.
 
 ### `rules[].versioning`
 
-Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, or regex:\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\<name>) and (?P\<name>) syntax both work. Cannot be combined with updateTypes.
+Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, or regex:\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\<name>) and (?P\<name>) syntax both work. Cannot be combined with updateTypes.
 
 - **Type:** string
-- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|regex:.+)$`
+- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|regex:.+)$`
 
 The scheme validates the current value, ranks candidates, classifies update kinds, converts versions for `allow`, and computes security fixes. A current value that the new scheme cannot parse is skipped as `non-version value "<v>"`.
 
@@ -756,6 +756,7 @@ The scheme validates the current value, ranks candidates, classifies update kind
 | `cargo` | `MAJOR[.MINOR[.PATCH[-pre][+build]]]`, no `v` | candidates need the same number of parts (`0.4` → `0.5`); prereleases only from a prerelease. Update types follow Cargo's compatibility: leaving the range of the leftmost non-zero part is `major` (`0.4` → `0.5`, `0.0.3` → `0.0.4`), a minor change of a `1.x` version `minor`, anything else `patch`. The default of cargo deps |
 | `pep440` | PEP 440 (epochs, pre/post/dev releases, local versions; at most 10 release parts) | ordered like Python's `packaging`; pre and dev releases only from a pre or dev release; local versions only from a local version. A candidate may have more release parts than the current version only if the extra parts are 0, and is then written at the current precision (`4.2` → `5.0` from `5.0.0`, never `5.0.1`). The default of the Python managers |
 | `hashicorp` | 1–3 numeric parts, optional `v`, `-prerelease` on full versions | Terraform constraints: candidates are written at the current precision and `v` style (`5.0` → `5.31` from `5.31.2`, `1.5.7` → `1.9.5` from the tag `v1.9.5`); prereleases only from a prerelease; the default of the terraform managers |
+| `maven` | Maven `ComparableVersion`: a leading digit, then `[0-9A-Za-z._-]` | `1.0` = `1.0.0` = `1.0-final`; `alpha` < `beta` < `milestone` < `rc` < `snapshot` < release < `sp`. SNAPSHOTs are never candidates, other prereleases only from a prerelease; the first unknown qualifier after a `-` must match (`-jre` stays `-jre`; `.v20230217` dates and hashes are not compared). The default of the maven, gradle and gradle-wrapper managers. |
 | `regex:<RE2>` | the expression's named groups | `major` (required), `minor`, `patch`, `build`, `revision` (numeric, absent = 0), `prerelease`, `compatibility`; other names are errors. `(?<name>)` and `(?P<name>)` both work. Candidates must share `compatibility`. |
 
 Errors: `rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group "x" (allowed: ...)`, `regex: invalid RE2 regexp: ...`, and `cannot be combined with updateTypes: ...`.
@@ -920,7 +921,7 @@ custom:
 Datasource of the matched deps, or custom.\<name> of customDatasources; required in regex mode unless match has a (?P\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node) are aliases.
 
 - **Type:** string
-- **Values:** `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `terraform-provider`, `terraform-module`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `terraform-provider`, `terraform-module`, `maven`, `gradle-version`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 ### `custom[].name`
 
@@ -930,11 +931,11 @@ Dependency name; required in regex mode unless match has a (?P\<name>), (?P\<dep
 
 ### `custom[].versioning`
 
-Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names.
+Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names.
 
 - **Type:** string
 - **Default:** `semver`
-- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|regex:.+)$`
+- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|regex:.+)$`
 
 Accepts the schemes of [`rules[].versioning`](#rulesversioning).
 

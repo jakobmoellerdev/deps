@@ -2,7 +2,11 @@ package checksum
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,7 +53,7 @@ func TestChecksumURL(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	s := New(srv.Client(), make(chan struct{}, 1), nil)
+	s := New(srv.Client(), make(chan struct{}, 1), nil, nil)
 	ctx := context.Background()
 	d := func(url, file string) dep.Dep {
 		return dep.Dep{Name: "o/r", ChecksumSource: &dep.ChecksumSource{URL: srv.URL + url, File: file}}
@@ -72,7 +76,7 @@ func TestChecksumURL(t *testing.T) {
 		{"too large lines", d("/biglines", ""), "", "checksums " + srv.URL + "/biglines: larger than 1048576 bytes"},
 		{"bad url", dep.Dep{ChecksumSource: &dep.ChecksumSource{URL: "http://[::1"}}, "", "checksums http://[::1: parse"},
 		{"no source", dep.Dep{}, "", "dependency has no checksum source"},
-		{"empty source", dep.Dep{ChecksumSource: &dep.ChecksumSource{}}, "", "checksum source has neither asset nor url"},
+		{"empty source", dep.Dep{ChecksumSource: &dep.ChecksumSource{}}, "", "checksum source has neither asset, url nor artifact"},
 		{"asset without releases", dep.Dep{Datasource: "github-releases", ChecksumSource: &dep.ChecksumSource{Asset: "a"}}, "", "checksum asset requires the github-releases datasource"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -94,7 +98,7 @@ func TestChecksumConcurrentDedupe(t *testing.T) {
 		_, _ = w.Write([]byte(h1 + "  f\n"))
 	}))
 	defer srv.Close()
-	s := New(srv.Client(), nil, nil)
+	s := New(srv.Client(), nil, nil, nil)
 	d := dep.Dep{ChecksumSource: &dep.ChecksumSource{URL: srv.URL, File: "f"}}
 	var wg sync.WaitGroup
 	for range 8 {
@@ -112,7 +116,7 @@ func TestChecksumConcurrentDedupe(t *testing.T) {
 
 func TestChecksumAsset(t *testing.T) {
 	a := &fakeAssets{}
-	s := New(http.DefaultClient, nil, a)
+	s := New(http.DefaultClient, nil, a, nil)
 	d := dep.Dep{Datasource: "github-releases", Name: "cli/cli", ChecksumSource: &dep.ChecksumSource{Asset: "gh_{{version}}_linux_amd64.tar.gz"}}
 	got, err := s.Checksum(context.Background(), d, "2.61.0")
 	if got != h1 || err != nil || *a != (fakeAssets{"cli/cli", "2.61.0", "gh_2.61.0_linux_amd64.tar.gz"}) {
@@ -129,15 +133,122 @@ func TestChecksumAsset(t *testing.T) {
 }
 
 func TestChecksumCanceled(t *testing.T) {
-	s := New(http.DefaultClient, make(chan struct{}), nil)
+	s := New(http.DefaultClient, make(chan struct{}), nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	d := dep.Dep{ChecksumSource: &dep.ChecksumSource{URL: "http://127.0.0.1:1/x"}}
 	if _, err := s.Checksum(ctx, d, "1"); !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled: %v", err)
 	}
-	s2 := New(http.DefaultClient, nil, nil)
+	s2 := New(http.DefaultClient, nil, nil, nil)
 	if _, err := s2.Checksum(context.Background(), d, "1"); err == nil {
 		t.Error("connection refused: no error")
 	}
+}
+
+func TestChecksumArtifact(t *testing.T) {
+	const body = "artifact 1.2.0\n"
+	s256 := sha256.Sum256([]byte(body))
+	s512 := sha512.Sum512([]byte(body))
+	var reqs atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs.Add(1)
+		switch r.URL.Path {
+		case "/a/1.2.0/a-1.2.0.zip":
+			_, _ = w.Write([]byte(body))
+		case "/big":
+			chunk := make([]byte, 1<<20)
+			for range maxArtifact>>20 + 1 {
+				if _, err := w.Write(chunk); err != nil {
+					return
+				}
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	s := New(srv.Client(), make(chan struct{}, 1), nil, map[string]ArtifactOpener{"other": &fakeOpener{}})
+	art := func(path, pinned string) dep.Dep {
+		return dep.Dep{Checksum: pinned, ChecksumSource: &dep.ChecksumSource{Artifact: srv.URL + path}}
+	}
+	for _, c := range []struct {
+		name string
+		d    dep.Dep
+		want string
+		err  string
+	}{
+		{"sha256", art("/a/{{version}}/a-{{version}}.zip", h1), hex.EncodeToString(s256[:]), ""},
+		{"sha256 cached", art("/a/{{version}}/a-{{version}}.zip", h2), hex.EncodeToString(s256[:]), ""},
+		{"sha512", art("/a/{{version}}/a-{{version}}.zip", h5), hex.EncodeToString(s512[:]), ""},
+		{"unknown length", art("/a/{{version}}/a-{{version}}.zip", "abc"), "", "artifact " + srv.URL + "/a/1.2.0/a-1.2.0.zip: pinned checksum is neither sha256 nor sha512 hex"},
+		{"404", art("/missing", h1), "", "artifact " + srv.URL + "/missing: HTTP 404"},
+		{"too large", art("/big", h1), "", "artifact " + srv.URL + "/big: larger than 268435456 bytes"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := s.Checksum(t.Context(), c.d, "1.2.0")
+			if got != c.want || (err == nil) != (c.err == "") || err != nil && err.Error() != c.err {
+				t.Errorf("got %q, %v; want %q, %q", got, err, c.want, c.err)
+			}
+		})
+	}
+	if n := reqs.Load(); n != 4 {
+		t.Errorf("requests = %d, want 4 (each artifact once per algorithm)", n)
+	}
+}
+
+// fakeOpener serves body for every URL ending in .zip and records its calls.
+type fakeOpener struct {
+	body   string
+	calls  atomic.Int32
+	closed atomic.Int32
+	last   atomic.Value // "<dep name> <url>"
+}
+
+func (f *fakeOpener) OpenArtifact(_ context.Context, d dep.Dep, url string) (io.ReadCloser, error) {
+	f.calls.Add(1)
+	f.last.Store(d.Name + " " + url)
+	if !strings.HasSuffix(url, ".zip") {
+		return nil, errors.New("HTTP 401")
+	}
+	return closer{strings.NewReader(f.body), &f.closed}, nil
+}
+
+type closer struct {
+	io.Reader
+	n *atomic.Int32
+}
+
+func (c closer) Close() error { c.n.Add(1); return nil }
+
+func TestChecksumArtifactOpener(t *testing.T) {
+	o := &fakeOpener{body: "maven 3.9.15\n"}
+	want := sha256.Sum256([]byte(o.body))
+	// The client must not be used for deps of a datasource with an opener.
+	s := New(&http.Client{Transport: failTransport{t}}, make(chan struct{}, 1), nil, map[string]ArtifactOpener{"maven": o})
+	d := dep.Dep{Datasource: "maven", Name: "org.apache.maven:apache-maven", Checksum: h1,
+		ChecksumSource: &dep.ChecksumSource{Artifact: "https://repo.example.com/m/{{version}}/m-{{version}}.zip"}}
+	for range 3 {
+		got, err := s.Checksum(t.Context(), d, "3.9.15")
+		if err != nil || got != hex.EncodeToString(want[:]) {
+			t.Fatalf("got %q, %v", got, err)
+		}
+	}
+	if o.calls.Load() != 1 || o.closed.Load() != 1 || o.last.Load() != "org.apache.maven:apache-maven https://repo.example.com/m/3.9.15/m-3.9.15.zip" {
+		t.Errorf("calls %d, closed %d, last %v", o.calls.Load(), o.closed.Load(), o.last.Load())
+	}
+	d.ChecksumSource = &dep.ChecksumSource{Artifact: "https://repo.example.com/m/{{version}}/m.jar"}
+	if _, err := s.Checksum(t.Context(), d, "1"); err == nil || err.Error() != "artifact https://repo.example.com/m/1/m.jar: HTTP 401" {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := s.Checksum(t.Context(), d, "2"); err == nil || err.Error() != "artifact https://repo.example.com/m/2/m.jar: HTTP 401" {
+		t.Errorf("semaphore not released after an opener error: %v", err)
+	}
+}
+
+type failTransport struct{ t *testing.T }
+
+func (f failTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	f.t.Errorf("client used for %s", r.URL)
+	return nil, errors.New("client used")
 }

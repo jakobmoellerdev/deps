@@ -94,6 +94,8 @@ const (
 	dsGo      = "go-toolchain"
 	dsGitHub  = "github-releases"
 	dsNpm     = "npm"
+	dsMaven   = "maven"
+	dsGradle  = "gradle-version"
 	skipTool  = "unsupported tool"
 	skipTagPx = "unsupported tag prefix"
 )
@@ -101,6 +103,9 @@ const (
 var (
 	nodeTool = tool{datasource: dsNode, name: "node"}
 	goTool   = tool{datasource: dsGo, name: "go"}
+	// The Maven distribution and Gradle use Maven's version order (3.9.9, 8.11, 8.11-rc-1).
+	mavenTool  = tool{datasource: dsMaven, name: "org.apache.maven:apache-maven"}
+	gradleTool = tool{datasource: dsGradle, name: "gradle"}
 )
 
 func githubTool(repo string) tool {
@@ -119,6 +124,8 @@ var tools = map[string]tool{
 	"golang":        goTool,
 	"npm":           npmTool("npm"),
 	"pnpm":          npmTool("pnpm"),
+	"maven":         mavenTool,
+	"gradle":        gradleTool,
 	"actionlint":    githubTool("rhysd/actionlint"),
 	"age":           githubTool("FiloSottile/age"),
 	"argocd":        githubTool("argoproj/argo-cd"),
@@ -178,6 +185,8 @@ var (
 	semverRe  = regexp.MustCompile(`^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$`)
 	partialRe = regexp.MustCompile(`^v?\d+(?:\.\d+)?$`)
 	goRe      = regexp.MustCompile(`^\d+\.\d+(?:\.\d+)?$`)
+	// mavenRe is a version of the maven versioning scheme (a digit, then [0-9A-Za-z._-]).
+	mavenRe = regexp.MustCompile(`^\d[0-9A-Za-z._-]*$`)
 	// wordRe is a letter-led value that is not a v-prefixed version (latest, system, lts/*).
 	wordRe = regexp.MustCompile(`^(?:[A-Za-uw-z]|v(?:$|\D))`)
 )
@@ -205,6 +214,12 @@ func classify(t tool, raw string) (ver string, off int, versioning, skip string)
 			return bare, off, "tag", ""
 		case partialRe.MatchString(raw):
 			return "", 0, "", "partial version"
+		}
+		return "", 0, "", "unsupported range"
+	}
+	if t.datasource == dsMaven || t.datasource == dsGradle {
+		if mavenRe.MatchString(raw) {
+			return raw, 0, "maven", ""
 		}
 		return "", 0, "", "unsupported range"
 	}

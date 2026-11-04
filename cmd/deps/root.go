@@ -20,7 +20,9 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gradleversion"
 	helmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/helm"
+	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
@@ -154,6 +156,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	releases := githubreleases.New(gh)
 	docker := dockerds.New(client, limits.Docker)
 	registry := tfregistry.New(client, sem, os.Getenv)
+	maven := mavends.New(client, limits.Maven, os.Getenv)
 	sources := map[string]engine.Datasource{
 		"git-tags":              gittags.New(client, auth, sem, gh),
 		"go":                    goproxy.New(client, sem),
@@ -167,6 +170,8 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		pypi.Name:               pypi.New(client, sem, os.Getenv),
 		tfregistry.ProviderName: registry.Providers(),
 		tfregistry.ModuleName:   registry.Modules(),
+		mavends.Name:            maven,
+		gradleversion.Name:      gradleversion.New(client, sem, os.Getenv),
 	}
 	for name, cd := range cfg.CustomDatasources {
 		ds, err := customds.New(client, sem, name, cd.Spec())
@@ -182,7 +187,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		managers:  managers,
 		sources:   sources,
 		security:  security,
-		checksums: checksum.New(client, sem, releases),
+		checksums: checksum.New(client, sem, releases, map[string]checksum.ArtifactOpener{mavends.Name: maven}),
 		env:       manager.Env{DefaultHost: host, TerraformRegistry: cfg.Terraform.DefaultRegistry},
 		stderr:    stderr,
 		auth:      auth,

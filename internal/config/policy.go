@@ -58,9 +58,15 @@ func production(d dep.Dep) bool {
 		return d.DepType == "project.dependencies"
 	case "pipenv":
 		return d.DepType == "packages"
+	case "maven":
+		return mavenProduction[d.DepType]
 	}
 	return false
 }
+
+// mavenProduction are the maven dep types that ship with the artifact (Renovate: maven deps of
+// these types use fix).
+var mavenProduction = map[string]bool{"compile": true, "provided": true, "runtime": true, "system": true, "import": true, "parent": true}
 
 // defaultIgnored are the dep types ignored unless a rule sets `ignore: false`.
 var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "engines": true}

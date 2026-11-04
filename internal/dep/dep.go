@@ -30,14 +30,14 @@ type Span struct{ Start, End int }
 
 // Dep is a single dependency occurrence extracted from a file.
 type Dep struct {
-	Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "pip_requirements" | "pep621" | "poetry" | "pipenv" | "helm" | "cargo" | "custom"
-	Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "pypi" | "helm" | "crate" | "custom.<name>"
-	Versioning  string // "tag" | "go" | "docker" | "semver" | "pep440" | "loose" | "cargo" | "regex:<RE2>" (rules[].versioning overrides the manager's)
-	DepType     string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"|"setup"; docker: "dockerfile"|"compose"|"workflow"|"action"|"kubernetes"|"helm"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"|"engines"|"volta"; pip_requirements: "requirements"; pep621: "project.dependencies"|"project.optional-dependencies"|"dependency-groups"|"tool.uv.dev-dependencies"|"tool.pdm.dev-dependencies"; poetry: "dependencies"|"dev-dependencies"|"group"; pipenv: "packages"|"dev-packages"|"category"; helm: "chart"|"helmfile"|"k0s"|"flux"|"argocd"; cargo: "dependencies"|"dev-dependencies"|"build-dependencies"|"workspace.dependencies"; terraform: "required_provider"|"provider"|"module"|"required_version"|"helm_release"|"tfe_workspace"|resource type; terraform-version: "terraform-version"|"opentofu-version"; tflint-plugin: "plugin"; terragrunt: "github"|"gitTags"|"terragrunt"; custom: "annotation"|"regex"
+	Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "pip_requirements" | "pep621" | "poetry" | "pipenv" | "helm" | "cargo" | "maven" | "gradle" | "gradle-wrapper" | "maven-wrapper" | "custom"
+	Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "pypi" | "helm" | "crate" | "maven" | "gradle-version" | "custom.<name>"
+	Versioning  string // "tag" | "go" | "docker" | "semver" | "pep440" | "loose" | "cargo" | "maven" | "regex:<RE2>" (rules[].versioning overrides the manager's)
+	DepType     string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"|"setup"; docker: "dockerfile"|"compose"|"workflow"|"action"|"kubernetes"|"helm"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"|"engines"|"volta"; pip_requirements: "requirements"; pep621: "project.dependencies"|"project.optional-dependencies"|"dependency-groups"|"tool.uv.dev-dependencies"|"tool.pdm.dev-dependencies"; poetry: "dependencies"|"dev-dependencies"|"group"; pipenv: "packages"|"dev-packages"|"category"; helm: "chart"|"helmfile"|"k0s"|"flux"|"argocd"; cargo: "dependencies"|"dev-dependencies"|"build-dependencies"|"workspace.dependencies"; terraform: "required_provider"|"provider"|"module"|"required_version"|"helm_release"|"tfe_workspace"|resource type; terraform-version: "terraform-version"|"opentofu-version"; tflint-plugin: "plugin"; terragrunt: "github"|"gitTags"|"terragrunt"; maven: scope|"parent"|"build"; gradle: "dependencies"|"plugin"; gradle-wrapper: "wrapper"; maven-wrapper: "maven"|"wrapper"; custom: "annotation"|"regex"
 	File        string // slash path relative to --dir
 	Line        int    // 1-based
-	Name        string // actions: owner/repo[/sub]; gomod: module path; helm: chart
-	Source      string // actions: https://<host>/<owner>/<repo>; gomod: ""; helm: repository URL (https:// or oci://)
+	Name        string // actions: owner/repo[/sub]; gomod: module path; helm: chart; maven datasource: group:artifact or a Gradle plugin id
+	Source      string // actions: https://<host>/<owner>/<repo>; gomod: ""; helm: repository URL (https:// or oci://); maven datasource: whitespace-separated repositories `[<id>=]<url>/` in lookup order ("" = Maven Central)
 	Version     string // current version (ref tag, comment version, or module version)
 	Digest      string // actions: full SHA when pinned, else ""
 	RefSpan     Span   // actions: ref after '@'; gomod: version token
@@ -47,19 +47,25 @@ type Dep struct {
 	InputSpan   Span   // actions: `with: version:` value equal to the current version, bumped along with the ref
 	InsertAt    int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
 	Skip        string // non-empty = not updatable, with the reason
+	// VersionRef names the definition the version is read from when several deps can share
+	// it (a Maven property, a Gradle catalog version.ref or variable), e.g. "jackson.version";
+	// RefSpan then points at the definition, which may be in another file than the dep's
+	// declaration (File is the definition's file). Updates of deps sharing one File+RefSpan
+	// are grouped into one PR with one version. "" = the version is the dep's own.
+	VersionRef string
 
 	Checksum       string          // custom: current sha256/sha512 hex pinned next to the version
 	ChecksumSpan   Span            // custom: checksum token
 	ChecksumSource *ChecksumSource // custom: where the checksum of a new version comes from; nil = none
 
-	// npm and cargo dependency entries, Python specifiers and terraform constraints; rangeStrategy
-	// applies to deps with a Range.
-	Range string // the range as written (npm ^1.2.3, cargo ">=1.2, <2"; Python >=1.2,<2, RefSpan its bytes; terraform ~> 5.0); Version is its bare (npm, cargo), anchor (Python) or first (terraform) version
+	// npm and cargo dependency entries, Python specifiers, terraform constraints and Gradle dynamic
+	// versions; rangeStrategy applies to deps with a Range.
+	Range string // the range as written (npm ^1.2.3, cargo ">=1.2, <2"; Python >=1.2,<2, RefSpan its bytes; terraform ~> 5.0); Version is its bare (npm, cargo), anchor (Python) or first (terraform) version. gradle: the Masterminds constraint of a dynamic version (1.+ → ">=1.0.0-0 <2.0.0-0"), Version is the locked version
 	// Constraint is Range as a Masterminds semver constraint when the syntax differs (cargo's
 	// bare "1.2" means ^1.2); "" = Range is one (or the versioning scheme matches it itself).
 	Constraint string
 	RangeFixed bool   // the range is never rewritten (terraform `>= 1.0, < 2.0`): only Locked may move within it
-	Locked     string // version the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, .terraform.lock.hcl) resolves the dep to; "" = none
+	Locked     string // version the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, .terraform.lock.hcl, gradle.lockfile) resolves the dep to; "" = none
 	LockUnread bool   // the lock root has a lockfile deps does not read (pnpm-lock.yaml, yarn.lock, package-lock.json v1)
 
 	// Python managers only (datasource pypi).
@@ -67,12 +73,16 @@ type Dep struct {
 	PythonConstraint string   // the project's Python version constraint (requires-python, Poetry `python`, Pipfile [requires]); releases whose requires-python does not admit all of it are dropped
 }
 
-// ChecksumSource locates the checksum of a version. Asset and URL/File are templates in which
-// `{{version}}` is the new version as written into the file; exactly one of Asset and URL is set.
+// ChecksumSource locates the checksum of a version. Asset, URL/File and Artifact are templates
+// in which `{{version}}` is the new version as written into the file; exactly one of Asset, URL
+// and Artifact is set.
 type ChecksumSource struct {
 	Asset string // github-releases: release asset whose API digest is used
 	URL   string // checksums document to download
 	File  string // entry name in a sha256sum-style URL document; "" = first hex token
+	// Artifact is the URL template of the artifact itself: the checksum is its digest
+	// (sha256/sha512 by the pinned hex length), computed while streaming the download.
+	Artifact string
 }
 
 // ExpandVersion substitutes `{{version}}` in tmpl.

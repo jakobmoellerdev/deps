@@ -59,6 +59,7 @@ var DocNodenv = refdoc.Manager{
 var toolVersionItems = []string{
 	"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`.",
 	"A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`) and go (`1.27`); other tools skip it.",
+	"`maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.",
 	"Only the version token is replaced; quotes, comments and the rest of the file are kept.",
 }
 
@@ -68,7 +69,7 @@ var DocAsdf = refdoc.Manager{
 	Summary: "Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Only the first version of a line is a dep; `#` starts a comment.",
 	Files:   []string{"any `.tool-versions`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeTool, What: "a tool line; the dep name comes from the tool table", Datasource: "per tool (see Tools)", Versioning: "`semver` or `tag`"},
+		{Name: DepTypeTool, What: "a tool line; the dep name comes from the tool table", Datasource: "per tool (see Tools)", Versioning: "`semver`, `tag` or `maven`"},
 	},
 	Skips:    toolSkips,
 	Sections: []refdoc.Section{{Title: "Versions", Items: toolVersionItems}, toolsSection()},
@@ -81,7 +82,7 @@ var DocMise = refdoc.Manager{
 		"so only the version bytes change.",
 	Files: []string{"`mise.toml`, `.mise.toml`", "`mise/config.toml`, `.mise/config.toml`", "`.config/mise.toml`, `.config/mise/config.toml`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeTool, What: "a `[tools]` entry; the dep name comes from the tool table or the backend", Datasource: "per tool (see Tools)", Versioning: "`semver` or `tag`"},
+		{Name: DepTypeTool, What: "a `[tools]` entry; the dep name comes from the tool table or the backend", Datasource: "per tool (see Tools)", Versioning: "`semver`, `tag` or `maven`"},
 	},
 	Skips: append(slices.Clip(toolSkips), refdoc.Skip{Reason: "cannot locate value", When: "a string with escapes or a multi-line string"}),
 	Sections: []refdoc.Section{

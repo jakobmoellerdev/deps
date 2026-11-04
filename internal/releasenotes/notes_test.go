@@ -102,6 +102,7 @@ func TestResolve(t *testing.T) {
 		dsNpm:    &fakeSource{repo: "git+ssh://git@github.com/eslint/eslint.git"},
 		dsDocker: &fakeSource{err: errors.New("no config")},
 		dsPypi:   &fakeSource{repo: "https://github.com/psf/requests"},
+		dsMaven:  &fakeSource{repo: "https://github.com/FasterXML/jackson-databind"},
 	}
 	n := New(nil, nil, auth, nil, sources)
 	gh := func(o, r, prefix string) repoRef {
@@ -135,6 +136,7 @@ func TestResolve(t *testing.T) {
 		{"npm", dep.Dep{Datasource: dsNpm, Name: "eslint"}, gh("eslint", "eslint", ""), true},
 		{"pypi", dep.Dep{Datasource: dsPypi, Name: "requests"}, gh("psf", "requests", ""), true},
 		{"docker error", dep.Dep{Datasource: dsDocker, Name: "alpine"}, repoRef{}, false},
+		{"maven", dep.Dep{Datasource: dsMaven, Name: "com.fasterxml.jackson.core:jackson-databind"}, gh("FasterXML", "jackson-databind", ""), true},
 		{"toolchain", dep.Dep{Datasource: "go-toolchain", Name: "go"}, repoRef{}, false},
 	}
 	for _, tt := range tests {
@@ -515,6 +517,33 @@ func TestSection(t *testing.T) {
 	}
 	if got := n.Section(t.Context(), nil); got != "" {
 		t.Errorf("empty section = %q", got)
+	}
+}
+
+// TestSectionMaven checks that a Maven artifact's notes are found under the
+// maven-release-plugin tag form `<artifactId>-<version>` as well as `v<version>`.
+func TestSectionMaven(t *testing.T) {
+	f := newForge(t)
+	f.rels["/repos/FasterXML/jackson-databind"] = []map[string]any{
+		rel("jackson-databind-2.18.3", "too new"),
+		rel("jackson-databind-2.18.2", "patch two"),
+		rel("v2.18.1", "patch one"),
+		rel("jackson-databind-2.18.0", "current"),
+	}
+	n := f.newNotes(nil, nil, map[string]datasource.Datasource{dsMaven: &fakeSource{repo: "https://github.com/FasterXML/jackson-databind"}})
+	u := dep.Update{Dep: dep.Dep{Datasource: dsMaven, Name: "com.fasterxml.jackson.core:jackson-databind", Version: "2.18.0"}, NewVersion: "2.18.2"}
+	got := n.Section(t.Context(), []dep.Update{u})
+	for _, want := range []string{
+		"#### [jackson-databind-2.18.2](https://redirect.github.com/o/r/releases/tag/jackson-databind-2.18.2)\n\npatch two\n\n" +
+			"#### [v2.18.1](https://redirect.github.com/o/r/releases/tag/v2.18.1)\n\npatch one\n\n",
+		"[Compare changes](https://github.com/FasterXML/jackson-databind/compare/jackson-databind-2.18.0...jackson-databind-2.18.2)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("section lacks\n%s\n--- got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "too new") || strings.Contains(got, "current") {
+		t.Errorf("section out of range:\n%s", got)
 	}
 }
 

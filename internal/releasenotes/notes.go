@@ -3,9 +3,9 @@
 //
 // Release notes come from the GitHub or Gitea/Forgejo releases API of the dependency's source
 // repository: the action's repository, a Go module's forge repository, an npm package's
-// `repository`, a PyPI project's source URL, or an image's `org.opencontainers.image.source`
-// label. One page of releases is listed per repository and run. Every failure only omits the
-// notes; it never fails a PR.
+// `repository`, a PyPI project's source URL, a Maven POM's `<scm>`, or an image's
+// `org.opencontainers.image.source` label. One page of releases is listed per repository and
+// run. Every failure only omits the notes; it never fails a PR.
 package releasenotes
 
 import (
@@ -173,8 +173,13 @@ func (n *Notes) block(ctx context.Context, it item) block {
 		slog.DebugContext(ctx, "release notes unavailable", "name", it.d.Name, "repo", r.web(), "err", err)
 	}
 	prefixes := []string{r.tagPrefix}
-	if it.d.Datasource == dsNpm {
+	switch it.d.Datasource {
+	case dsNpm:
 		prefixes = append(prefixes, it.d.Name+"@")
+	case dsMaven: // maven-release-plugin's default tag: <artifactId>-<version>
+		if _, artifact, ok := strings.Cut(it.d.Name, ":"); ok {
+			prefixes = append(prefixes, artifact+"-")
+		}
 	}
 	from, okFrom := parseVersion(it.from)
 	to, okTo := parseVersion(it.to)

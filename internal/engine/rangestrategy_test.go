@@ -11,6 +11,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradle"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 )
 
@@ -284,5 +285,27 @@ func TestBuildLockfileOnly(t *testing.T) {
 	if _, errs = Build(t.Context(), root, o.Managers, []dep.Update{lockOnly}, noScope); len(errs) != 1 ||
 		errs[0].Error() != "web/package.json: lockfile-only update of a without a lockfile" {
 		t.Errorf("no scope: errs = %v", errs)
+	}
+}
+
+// A Gradle dynamic version keeps its floor, so rangeStrategy bump acts like update-lockfile:
+// in-range candidates move only gradle.lockfile instead of producing an edit that changes
+// nothing.
+func TestRangeStrategyGradleBump(t *testing.T) {
+	files := map[string]string{
+		"build.gradle":    "dependencies {\n    implementation 'org.example:lib:1.+'\n}\n",
+		"gradle.lockfile": "org.example:lib:1.1.0=compileClasspath,runtimeClasspath\nempty=\n",
+	}
+	for _, cfgText := range []string{"", "rangeStrategy: bump\n"} {
+		root, cfg := setup(t, cfgText, files)
+		o := Options{Managers: []manager.Manager{gradle.New()}, Datasources: map[string]Datasource{"maven": fakeGo{"org.example:lib": {"1.0.0", "1.1.0", "1.2.0", "2.0.0"}}}}
+		res, err := Resolve(t.Context(), root, cfg, env, o)
+		if err != nil || len(res.Errors) > 0 {
+			t.Fatal(err, res.Errors)
+		}
+		want := "org.example:lib 1.1.0->1.2.0 minor lockfile\norg.example:lib 1.1.0->2.0.0 major"
+		if got := renderUpdates(res.Updates); got != want {
+			t.Errorf("%q: updates =\n%s\nwant\n%s", cfgText, got, want)
+		}
 	}
 }

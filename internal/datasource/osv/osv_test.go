@@ -629,3 +629,33 @@ func TestAdvisoriesPyPI(t *testing.T) {
 		t.Errorf("batches = %+v", f.batches)
 	}
 }
+
+func TestAdvisoriesMaven(t *testing.T) {
+	f := newFake(t)
+	const name = "com.fasterxml.jackson.core:jackson-databind"
+	f.results["Maven|"+name+"|2.9.10|"] = result{ids: []string{"GHSA-57j2-w4cx-62h2"}}
+	f.vulns["GHSA-57j2-w4cx-62h2"] = `{"id":"GHSA-57j2-w4cx-62h2","summary":"Deeply nested json in jackson-databind",
+		"affected":[{"package":{"name":"` + name + `","ecosystem":"Maven"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"2.12.7.1"}]}]},
+		            {"package":{"name":"` + name + `","ecosystem":"Maven"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"2.13.0"},{"fixed":"2.13.4.1"}]}]}]}`
+	s := f.start(nil)
+	deps := []dep.Dep{
+		{Manager: "maven", Datasource: "maven", DepType: "compile", Name: name, Version: "2.9.10"},
+		{Manager: "gradle", Datasource: "maven", DepType: "plugin", Name: "org.jetbrains.kotlin.jvm", Version: "2.0.0"},
+		{Manager: "maven", Datasource: "maven", Name: "g:unversioned"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]datasource.Vuln{
+		{{Advisory: dep.Advisory{ID: "GHSA-57j2-w4cx-62h2", Summary: "Deeply nested json in jackson-databind", URL: "https://osv.dev/vulnerability/GHSA-57j2-w4cx-62h2"}, Fixed: []string{"2.12.7.1", "2.13.4.1"}}},
+		nil,
+		nil,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if len(f.batches) != 1 || len(f.batches[0]) != 1 || f.batches[0][0].Package.Ecosystem != "Maven" {
+		t.Errorf("batches = %+v", f.batches)
+	}
+}

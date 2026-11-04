@@ -13,9 +13,11 @@ type Edit struct {
 }
 
 // Apply applies non-overlapping edits in a single pre-sized pass. edits is
-// sorted in place by Start.
+// sorted in place by Start. Identical edits (several deps sharing one version
+// definition, such as a Maven property) are applied once.
 func Apply(src []byte, edits []Edit) ([]byte, error) {
 	slices.SortStableFunc(edits, func(a, b Edit) int { return a.Start - b.Start })
+	edits = slices.Compact(edits)
 	size := len(src)
 	for i, e := range edits {
 		if e.Start < 0 || e.End < e.Start || e.End > len(src) {

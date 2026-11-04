@@ -392,6 +392,7 @@ Actions with a full URL (`uses: https://host/owner/repo@ref`) are looked up on t
 | `uv` or `pip-compile` | regenerating `requirements*.txt` written by `uv pip compile` or pip-compile with `--generate-hashes` (the tool its header names); pip-compile falls back to `uvx --from pip-tools pip-compile`. Other hashed requirements files need no tool. |
 | `terraform`, `tofu` | refreshing `.terraform.lock.hcl`; see the note below the table |
 | Terraform CLI config | private registries: `TF_TOKEN_<host>`, or the `credentials` / `credentials_helper` of `~/.terraformrc` / `$TF_CLI_CONFIG_FILE` and `~/.terraform.d/credentials.tfrc.json` (as written by `terraform login`) |
+| Java (`java` on `PATH` or `JAVA_HOME`, e.g. `actions/setup-java`) | Gradle lockfiles and dependency verification metadata, and regenerating the Gradle and Maven wrappers (`./gradlew`/`gradle`, `./mvnw`/`mvn`) |
 | Docker credentials | private registries; Docker Hub in repositories with many images (pull limit) |
 
 For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back to `npx --yes <tool>[@<packageManager version>]`, so `npm`/`npx` (e.g. from `actions/setup-node`) is enough. With none of them, the lockfile's manifests fail with `<tool> not found (needed to update <lock>)`.
@@ -686,6 +687,8 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 | `cargo update in <dir>: …` | cargo could not resolve the patched workspace: a private registry or git dependency without credentials, a conflicting requirement (for example a feature the new version dropped), or a path dependency outside the repository. The root's change is dropped; other updates proceed. |
 | `GET <index>/…: HTTP 401` for a crate | The Cargo registry needs credentials: set `CARGO_REGISTRIES_<NAME>_TOKEN` (the `[registries]` name of the index), add the token to `$CARGO_HOME/credentials.toml`, or provide git credentials for the index host. |
 | `terraform init in <dir>: …` | Terraform could not install the providers or modules of that directory (a private registry without `TF_TOKEN_<host>`, an unreachable module source, a `required_version` the runner's CLI does not satisfy). The directory's change is dropped; other updates proceed. |
+| `java not found (needed to …)` | A Gradle lockfile, verification metadata or a Gradle/Maven wrapper needs Java to regenerate. Add `actions/setup-java` with the JDK the build requires (Gradle toolchains included). |
+| `gradle in <dir>: …` / `mvn in <dir>: …` | The build could not run on the runner (missing toolchain JDK, private repository credentials). That scope's changes are dropped; other updates proceed. |
 | the job fails before deps runs, cloning `https://github.com/actions/checkout` | The runner can't reach the actions host. That is runner networking, not deps: fix the network, or use full `uses:` URLs to a reachable host. |
 
 ## GitHub end-to-end test

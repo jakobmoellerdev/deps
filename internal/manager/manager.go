@@ -15,6 +15,10 @@ type Env struct {
 	// Vendored reports whether the slash directory dir (relative to the scanned root)
 	// vendors its modules. engine.Resolve supplies a filesystem check when nil.
 	Vendored func(dir string) bool
+	// Exists reports whether the slash path (relative to the scanned root) exists, for
+	// file-based conditions such as Maven profile `<activation><file>`. engine.Resolve
+	// supplies a filesystem check when nil.
+	Exists func(path string) bool
 }
 
 // Manager extracts dependencies from the files it matches and edits them.

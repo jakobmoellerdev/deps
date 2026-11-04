@@ -30,6 +30,10 @@
 //     locked version (dep.Dep.Locked), else the range's anchor version; OSV matches
 //     server-side. Affected entries are matched by normalized name.
 //     Fixed versions are bare, as OSV lists them ("2.32.0").
+//   - maven-datasource deps (maven and gradle managers, custom entries) named
+//     `group:artifact` are queried as ecosystem "Maven" with that name and the locked version
+//     (dep.Dep.Locked), else the version; OSV matches server-side. Gradle plugin ids (no ":")
+//     are not queried. Fixed versions are returned as published.
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -69,6 +73,7 @@ const (
 	ecoNpm     = "npm"
 	ecoCrates  = "crates.io"
 	ecoPyPI    = "PyPI"
+	ecoMaven   = "Maven"
 )
 
 // Source queries OSV. Advisory documents are fetched once per ID per run.
@@ -163,6 +168,13 @@ func targetOf(d dep.Dep) *target {
 			return nil
 		}
 		return &target{q: query{Package: pkg{Name: pyreq.Normalize(d.Name), Ecosystem: ecoPyPI}, Version: v}}
+	}
+	if d.Datasource == "maven" {
+		v := cmp.Or(d.Locked, d.Version) // gradle.lockfile pins the resolved version
+		if !strings.Contains(d.Name, ":") || v == "" {
+			return nil
+		}
+		return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoMaven}, Version: v}}
 	}
 	switch d.Manager {
 	case "gomod":
@@ -507,6 +519,8 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			if len(t.tag.Parts) > 0 {
 				fixed = t.actionsFixed(entries) // partial requirement: at its precision
 			}
+		case ecoMaven:
+			fixed = mavenFixed(entries)
 		default:
 			fixed = goFixed(entries)
 		}
@@ -586,6 +600,16 @@ func npmFixed(entries []affected) []string {
 	var out []string
 	fixedEvents(entries, func(f string) {
 		if f = strings.TrimPrefix(f, "v"); !slices.Contains(out, f) {
+			out = append(out, f)
+		}
+	})
+	return out
+}
+
+func mavenFixed(entries []affected) []string {
+	var out []string
+	fixedEvents(entries, func(f string) {
+		if !slices.Contains(out, f) {
 			out = append(out, f)
 		}
 	})

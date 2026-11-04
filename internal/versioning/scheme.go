@@ -50,13 +50,13 @@ type Candidate struct {
 }
 
 // Names are the versioning scheme names; "regex:<RE2>" schemes come on top (RegexPrefix).
-var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp"}
+var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven"}
 
 // RegexPrefix starts a regex scheme name: "regex:" followed by an RE2 regexp with named groups.
 const RegexPrefix = "regex:"
 
 // Get returns the scheme registered under name ("tag", "go", "docker", "semver", "loose", "cargo",
-// "pep440", "hashicorp"), or the regex scheme of a valid "regex:<RE2>" name.
+// "pep440", "hashicorp", "maven"), or the regex scheme of a valid "regex:<RE2>" name.
 func Get(name string) (Scheme, bool) {
 	s, err := Parse(name)
 	return s, err == nil
@@ -102,6 +102,7 @@ var schemes = map[string]Scheme{
 	"cargo":     impl[cargoVersion]{parse: parseCargo, compat: cargoCompat, cmp: compareCargo, kind: cargoKind, semver: cargoVersion.semver, major: cargoMajor},
 	"pep440":    pep440Scheme{impl[pep440Version]{parse: parsePEP440, compat: pep440Compat, cmp: comparePEP440, kind: pep440Kind, semver: pep440Version.semver, major: pep440Version.major}},
 	"hashicorp": hashicorpScheme{impl[hcVersion]{parse: parseHashicorp, compat: hashicorpCompat, cmp: compareHashicorp, kind: hashicorpKind, semver: hcVersion.semver, major: hcVersion.major}},
+	"maven":     impl[mavenVersion]{parse: parseMaven, compat: mavenCompat, cmp: compareMaven, kind: mavenKindOf, semver: mavenVersion.semver, major: mavenVersion.major},
 }
 
 // impl implements Scheme over a parsed version type T so every candidate is parsed once.

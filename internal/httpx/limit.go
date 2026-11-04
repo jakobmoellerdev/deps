@@ -24,6 +24,10 @@ type Limits struct {
 	// (Cargo itself fetches it with many parallel requests); the crates.io API calls for
 	// source repositories share the pool.
 	Crates chan struct{}
+	// Maven bounds Maven repository requests (Central, Google Maven, the Gradle plugin portal,
+	// pom.xml repositories): 2n slots. Central is a CDN, and a Gradle catalog asks two
+	// repositories per artifact.
+	Maven chan struct{}
 }
 
 // NewLimits returns the pools for --concurrency n (at least 1).
@@ -34,5 +38,6 @@ func NewLimits(n int) Limits {
 		Docker:  make(chan struct{}, max(n/2, 1)),
 		OSV:     make(chan struct{}, 2*n),
 		Crates:  make(chan struct{}, 2*n),
+		Maven:   make(chan struct{}, 2*n),
 	}
 }

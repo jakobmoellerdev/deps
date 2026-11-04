@@ -32,6 +32,10 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`terraform-version`](#terraform-version)
 - [`tflint-plugin`](#tflint-plugin)
 - [`terragrunt`](#terragrunt)
+- [`maven`](#maven)
+- [`gradle`](#gradle)
+- [`gradle-wrapper`](#gradle-wrapper)
+- [`maven-wrapper`](#maven-wrapper)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -533,7 +537,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `tool` | a tool line; the dep name comes from the tool table | per tool (see Tools) | `semver` or `tag` | updated |
+| `tool` | a tool line; the dep name comes from the tool table | per tool (see Tools) | `semver`, `tag` or `maven` | updated |
 
 **Skips:**
 
@@ -551,6 +555,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 
 - A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`.
 - A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`) and go (`1.27`); other tools skip it.
+- `maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -574,6 +579,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `golang` | `go-toolchain` | `go` |  |
 | `golangci-lint` | `github-releases` | `golangci/golangci-lint` |  |
 | `goreleaser` | `github-releases` | `goreleaser/goreleaser` |  |
+| `gradle` | `gradle-version` | `gradle` |  |
 | `hadolint` | `github-releases` | `hadolint/hadolint` |  |
 | `helm` | `github-releases` | `helm/helm` |  |
 | `helm-docs` | `github-releases` | `norwoodj/helm-docs` |  |
@@ -587,6 +593,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `kubeconform` | `github-releases` | `yannh/kubeconform` |  |
 | `kubectl` | `github-releases` | `kubernetes/kubernetes` |  |
 | `kustomize` | `github-releases` | `kubernetes-sigs/kustomize` | unsupported tag prefix |
+| `maven` | `maven` | `org.apache.maven:apache-maven` |  |
 | `node` | `node-version` | `node` |  |
 | `nodejs` | `node-version` | `node` |  |
 | `npm` | `npm` | `npm` |  |
@@ -621,7 +628,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `tool` | a `[tools]` entry; the dep name comes from the tool table or the backend | per tool (see Tools) | `semver` or `tag` | updated |
+| `tool` | a `[tools]` entry; the dep name comes from the tool table or the backend | per tool (see Tools) | `semver`, `tag` or `maven` | updated |
 
 **Skips:**
 
@@ -646,6 +653,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 
 - A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`.
 - A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`) and go (`1.27`); other tools skip it.
+- `maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -669,6 +677,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `golang` | `go-toolchain` | `go` |  |
 | `golangci-lint` | `github-releases` | `golangci/golangci-lint` |  |
 | `goreleaser` | `github-releases` | `goreleaser/goreleaser` |  |
+| `gradle` | `gradle-version` | `gradle` |  |
 | `hadolint` | `github-releases` | `hadolint/hadolint` |  |
 | `helm` | `github-releases` | `helm/helm` |  |
 | `helm-docs` | `github-releases` | `norwoodj/helm-docs` |  |
@@ -682,6 +691,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `kubeconform` | `github-releases` | `yannh/kubeconform` |  |
 | `kubectl` | `github-releases` | `kubernetes/kubernetes` |  |
 | `kustomize` | `github-releases` | `kubernetes-sigs/kustomize` | unsupported tag prefix |
+| `maven` | `maven` | `org.apache.maven:apache-maven` |  |
 | `node` | `node-version` | `node` |  |
 | `nodejs` | `node-version` | `node` |  |
 | `npm` | `npm` | `npm` |  |
@@ -1232,6 +1242,190 @@ Updates the module `source` of the `terraform` block in Terragrunt configuration
 - `tfr://<host>/…` is looked up on that registry through service discovery, like Terraform module addresses.
 - Git sources are looked up with `git-tags` over HTTPS, as for Terraform modules; the `?ref=` value is the version.
 
+## maven
+
+Updates the versions of dependencies, plugins, build extensions, annotation processor paths and the parent in `pom.xml`. The pom is parsed into an element tree that keeps the byte span of each element's text; only the version bytes (or the property value) are replaced. A `${name}` version is resolved through `.mvn/maven.config` `-D` definitions, the pom's properties, its active profiles and its parent poms in the repository, so the update edits the definition, also in another file. Elements without a `<version>` (managed by a parent or BOM) are not deps.
+
+**Files:**
+
+- `pom.xml`, `*.pom.xml`
+- `.mvn/extensions.xml`
+- `.mvn/maven.config` (property definitions only, no deps of its own)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `compile` | `<dependency>` without a `<scope>` or with `compile`, in `<dependencies>` or `<dependencyManagement>` (updates use commit type `fix`) | `maven` | `maven` | updated |
+| `provided` | `<dependency>` with `<scope>provided</scope>` (commit type `fix`) | `maven` | `maven` | updated |
+| `runtime` | `<dependency>` with `<scope>runtime</scope>` (commit type `fix`) | `maven` | `maven` | updated |
+| `test` | `<dependency>` with `<scope>test</scope>` | `maven` | `maven` | updated |
+| `system` | `<dependency>` with `<scope>system</scope>` (commit type `fix`) | `maven` | `maven` | updated |
+| `import` | `<dependencyManagement>` BOM with `<scope>import</scope>` (commit type `fix`) | `maven` | `maven` | updated |
+| `parent` | `<project><parent>` (commit type `fix`) | `maven` | `maven` | updated |
+| `build` | `<plugin>` (default groupId `org.apache.maven.plugins`) and its `<dependency>` elements, `<extension>`, `<annotationProcessorPaths><path>` | `maven` | `maven` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unresolved property <ref>` | a `${name}` version defined neither in the pom nor in its parent poms in the repository, when the topmost of them has no `<parent>`, or a Maven built-in such as `${project.version}`; `<ref>` is the `${name}` as written |
+| `property <ref> not defined in this repository` | a `${name}` version defined neither in the pom nor in its parent poms in the repository, when the topmost of them has a `<parent>` outside the repository: the property comes from that remote parent pom, which the repository cannot edit (the `parent` dep's update moves it) |
+| `property <ref> only defined in profiles` | a `${name}` version whose property only profiles define, none of them active or several active ones (see Profiles); a dep inside a profile also sees its own profile's properties |
+| `unresolved property in <group:artifact>` | a groupId or artifactId with a `${…}` that neither the properties (as for versions) nor `project.groupId`/`project.artifactId` resolve |
+| `unsupported version <value>` | a version mixing a property with text (`${guava.version}-jre`, `${revision}${changelist}`) |
+| `version range` | `[1.0,2.0)`, `(,1.0]` |
+| `cannot locate value` | a version written with entities, CDATA or split by a comment |
+| `internal module` | the groupId:artifactId of a pom extracted in the same run (a module or parent of the repository); applied after property resolution |
+| `m2e lifecycle mapping (not a published plugin)` | `org.eclipse.m2e:lifecycle-mapping`, the Eclipse m2e settings pseudo-plugin (no repository publishes it: Central answers 404 for its `maven-metadata.xml`) |
+
+**Properties.**
+
+- A version `${name}` is looked up, following `${a}` → `${b}` chains: in the `-D` definitions of `.mvn/maven.config` (user properties override the pom's, as on Maven's command line), the `<properties>` of the dep's `<profile>` (for a dep declared in one), the only active profile defining it (several active ones: none), the pom's top-level `<properties>`, then likewise in each parent pom of the repository, nearest first; the nearest definition wins.
+- The maven.config of a pom is the one of its multi-module project directory: the nearest ancestor directory with a `.mvn/` file deps scans (`maven.config` or `extensions.xml`). It takes `-Dname=value`, `-D name=value` (also on two lines, Maven 3.9's one argument per line), `--define name=value`, `--define=name=value`, quoted values, `#` comment lines and `-P`/`--activate-profiles` lists (`!id`/`-id` deactivates, `?id` optional).
+- A parent pom is in the repository when it was scanned: the pom at `<parent><relativePath>` (default `../pom.xml`, a directory means its `pom.xml`) if its groupId:artifactId matches, else the scanned pom with the parent's groupId:artifactId:version (properties such as `${revision}` expanded), else groupId:artifactId. An empty `<relativePath/>` means the parent is remote.
+- The update edits the final definition of the chain, which may be in a parent pom or maven.config: the dep's file and line are then the definition's. The dep's version reference is the property name.
+- Deps sharing a definition (`${jackson.version}`, in one pom or across modules) are updated together: one version, one PR named after the property unless a rule groups them (`group:`).
+- Properties of remote parent poms are not read: they live in published, immutable poms (https://central.sonatype.org/publish/requirements/immutability/) that only the `parent` dep's update moves; Renovate likewise resolves parents only among the repository's package files (`resolveParents` in lib/modules/manager/maven/extract.ts). `-D` flags on the actual command line and environment variables are not known.
+
+**Profiles.**
+
+- A profile is active when maven.config's `-P` selects it, or when it has conditions and all of them hold, unless `-P` deactivates it; when none is, the `<activeByDefault>true` ones are (as in Maven).
+- `<property><name>x</name>` holds when maven.config defines `x` non-empty (`!x`: when it does not); with `<value>v</value>`, when its value is `v` (`!v`: differs, also when unset).
+- `<file><exists>`/`<missing>` is checked in the repository, relative to the pom's directory (`${basedir}`/`${project.basedir}` expanded); absolute paths, paths outside the repository and other properties do not hold.
+- `<jdk>`, `<os>` and other conditions depend on the machine running Maven and never hold, so their profiles' properties do not override (see https://maven.apache.org/guides/introduction/introduction-to-profiles.html).
+
+**Repositories.**
+
+- Deps are looked up in the pom's `<repositories>` (plugins and extensions: `<pluginRepositories>`), then those of its parent poms in the repository (a repeated id or URL is used once, the child's first), then Maven Central (`central=https://repo.maven.apache.org/maven2/`), unless a repository is Central or has the id `central`.
+- Each repository is passed to the datasource as `<id>=<url>/`. Without repositories, only Maven Central is used. URLs with properties are ignored.
+- `settings.xml` mirrors, credentials and active-profile repositories are applied by the maven datasource (see its docs), matched by repository id.
+
+**Versioning.**
+
+`maven` (Maven's ComparableVersion): `1.0` = `1.0.0` = `1.0-final`, `alpha` < `beta` < `milestone` < `rc` < `snapshot` < release < `sp`. SNAPSHOTs are never proposed, other prereleases only from a prerelease, and the first unknown qualifier after a `-` must match (`33.3.1-jre` stays on `-jre`). Deps sharing a property take the highest version all of them reach. See [`rules[].versioning`](configuration.md#rulesversioning).
+
+## gradle
+
+Updates Maven dependencies and Gradle plugins in Gradle version catalogs, build scripts, `gradle.properties` and `buildSrc`/convention-plugin sources. Catalogs are parsed as TOML 1.0 (multi-line inline tables of TOML 1.1 too): `[versions]`, `[libraries]` and `[plugins]` with string notation (`"group:name:version"`, `"id:version"`), inline tables (`module`, `group` + `name`, `id`; `version = "x"`, `version.ref = "k"`, `version = { ref = "k" }`), dotted keys and `[libraries.<alias>]` tables; other tables such as `[bundles]` are ignored, and a catalog that is not valid TOML fails the file, as it fails Gradle. Entries without a version (managed by a platform/BOM) are not deps. A `version.ref` dep carries the span of the referenced `[versions]` entry and its key as the shared version name. Build scripts (Groovy and Kotlin DSL) are matched by regular expression on their code, outside of comments and string contents; versions may come from variables defined in the same build (see Variables), dynamic versions are read from `gradle.lockfile` (see Lockfiles and dynamic versions), and the repositories a build declares are queried (see Repositories).
+
+**Files:**
+
+- `*.versions.toml` (default `gradle/libs.versions.toml`)
+- `*.gradle`, `*.gradle.kts` (`build.gradle(.kts)`, `settings.gradle(.kts)`, applied scripts such as `gradle/dependencies.gradle`)
+- `gradle.properties` (variable definitions only)
+- `buildSrc/**/*.kt`, `buildSrc/**/*.groovy`; `*.kt` below `src/main/kotlin` of `build-logic`, `build-conventions` and `convention-plugins` included builds
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `dependencies` | catalog `[libraries]` and settings catalogs (`versionCatalogs { create("libs") { library("a", "g", "n").version("v") / .versionRef("k"); library("a", "g:n:v") } }`, Groovy also `libs { … }`); build-script string notation `implementation("group:name:version")`, `api 'group:name:version[:classifier][@ext]'` for the common configurations (`implementation`, `api`, `compileOnly`, `runtimeOnly`, `test…`, `androidTestImplementation`, `debugImplementation`, `kapt`, `ksp`, `annotationProcessor`, `classpath`, `compile`, `testCompile`, `detektPlugins`, `lintChecks`, `checkstyle`, …) and `platform(…)`/`enforcedPlatform(…)`; map notation `implementation group: 'g', name: 'n', version: 'v'` (optional parentheses, any order, extra keys such as `classifier`/`ext` ignored) and Kotlin named arguments `implementation(group = "g", name = "n", version = "v")`; coordinates assigned to variables or map entries (`def lib = "g:n:v"`, `libs += [x: "g:n:$versions.x"]`, `mapOf("x" to "g:n:v")`); in `buildSrc`/convention-plugin sources every string literal of the form `group:name:version`; the name is `group:name` | `maven` | `maven` | updated |
+| `plugin` | catalog `[plugins]` and settings catalog `plugin("a", "id").version("v")`/`.versionRef("k")`; build-script and settings `plugins { id("x") version "y" }`, `id 'x' version 'y'`, `id("x").version("y")`, `kotlin("jvm") version "y"` (id `org.jetbrains.kotlin.jvm`), also with a variable as version (`version kotlinVersion`, `version(Versions.kotlin)`); the name is the plugin id | `maven` (Gradle plugin portal marker artifact `<id>:<id>.gradle.plugin`) | `maven` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unresolved version.ref <k>` | a catalog entry (TOML or settings) references a version key that does not exist |
+| `rich version` | a catalog version is a rich version (TOML table or settings `version("k") { strictly(…) }`/`.version { … }` with `strictly`, `require`, `prefer`, `reject`, `rejectAll`) |
+| `cannot locate value` | a TOML catalog version is not a single-line string or contains a backslash escape |
+| `unresolved variable <x>` | a version is exactly one variable reference and no literal definition of it is visible (see Variables) |
+| `version variable` | a coordinate's group or name, or a plugin id, is interpolated, or the version mixes variables with text (`${v}-jre`) or is an expression that is not a variable reference |
+| `dynamic version <v>` | a dynamic version (`1.+`, `[1.0,2.0)`, `latest.release`) has no locked version in a lockfile, or is another `latest.<status>` (`latest.milestone`), or is a prefix without a dot before the `+` (`1.2+`) |
+
+**Variables.**
+
+- Definitions (literal strings only): `gradle.properties` (`key=value`, `key: value`, `key value`); Groovy `def x = '1'` (also `final def`, `String x`), `ext.x = '1'`, `project.ext.x = '1'`, `ext { x = '1' }`, `ext.set('x', '1')`, `ext['x'] = '1'`; Groovy maps `versions = [x: '1']`, `versions += [x: '1']`, `ext.versions = [...]` (nested maps too) and `versions.x = '1'` for a declared map (`versions.x`); Kotlin `val x = "1"`, `const val x = "1"`, `val x by extra("1")`, `extra["x"] = "1"`, `extra.set("x", "1")`, Kotlin maps `val versions = mapOf("x" to "1")` (also `mutableMapOf`, nested `mapOf`; `versions.x`); members of `object`/`class` bodies are also defined qualified (`Versions.x`, `Deps.Versions.x`); settings catalog versions `version("k", v)` may take a variable.
+- References: `$x`, `${x}` (Groovy also `$versions.x`), `${project.x}`, `${rootProject.x}`, `${property("x")}`, `${project.property("x")}`, `${providers.gradleProperty("x").get()}`, `${extra["x"]}`, `${rootProject.extra["x"]}`, `${versions['x']}`, `${versions.getValue("x")}`, `${Versions.x}`, and bare expressions as a plugin, settings catalog or map-notation version (`version kotlinVersion`, `version = Versions.kotlin`, `.version(sonarPluginApi)`); `val x: String by project` reads `gradle.properties`. Only a version that is exactly one reference is resolved.
+- Resolution order: the referencing file, then the build scripts and `gradle.properties` of its directory and of each parent directory up to the build root (the nearest directory with a `settings.gradle(.kts)`; `buildSrc` is its own build), then the scripts in the root's `gradle/` directory, then the `buildSrc` and convention-plugin sources of the build. The first definition wins.
+- A resolved dep is moved to its definition: file, line, span and version are the definition's, and the variable name is its shared version name, so one update edits the definition once for every dep using it.
+
+**Repositories.**
+
+- Declarations: `mavenCentral()` (`central=https://repo.maven.apache.org/maven2/`, `DEPS_MAVEN_CENTRAL_URL` replaces it), `google()` (`google=https://dl.google.com/dl/android/maven2/`), `gradlePluginPortal()` (`gradlePluginPortal=https://plugins.gradle.org/m2/`), `jcenter()` (sunset; Maven Central is queried instead), `maven { url = uri("…"); name = "x" }`, `maven { url '…' }`, `maven { setUrl("…") }`, `maven("…")`, `maven(url = "…")`; the `name` is the repository id. `mavenLocal()`, non-http(s) and interpolated URLs, and repositories nested deeper (conditionals) are ignored.
+- Content filters: `content { }`/`mavenContent { }` of a repository (`includeGroup`, `includeGroupAndSubgroups`, `includeGroupByRegex`, `includeModule`, `includeModuleByRegex`, `includeVersion…` (as its module) and the `exclude…` counterparts except version excludes; `snapshotsOnly()` serves no release) drop the repositories that do not serve a dep; `exclusiveContent { forRepository { … }; filter { … } }` makes its repositories the only ones of the modules the filter includes and serves nothing else. Plugins are matched as their marker artifact `<id>:<id>.gradle.plugin`. When every declared repository of a level excludes a dep, the next level applies.
+- Plugins (build-script and catalog): `settings.gradle(.kts)` `pluginManagement { repositories }` of the build, else the Gradle plugin portal then Google Maven.
+- Buildscript classpath deps: the script's `buildscript { repositories }`, else Maven Central, Google Maven, then the Gradle plugin portal.
+- Other deps: the project's repositories — `allprojects { repositories }` of the build scripts from the root down, `subprojects { repositories }` of the parent ones, and the script's top-level `repositories` (catalogs and `buildSrc` sources: the root project's `allprojects`) — else `dependencyResolutionManagement { repositories }` (first when `RepositoriesMode.PREFER_SETTINGS`), else Maven Central, Google Maven, then the Gradle plugin portal (plugin artifacts and markers declared as libraries).
+
+**Lockfiles and dynamic versions.**
+
+- Dynamic versions become ranges: `1.+`/`1.2.+` (prefix, prereleases included), `[1.0,2.0)`, `(1.0,2.0]`, `[1.0,)`, `(,2.0)`, `]1.0,2.0[`, `latest.release` (every release) and `latest.integration` (prereleases too). With dependency locking their locked version is read from `gradle.lockfile` (`group:artifact:version=configurations`) or the legacy `gradle/dependency-locks/*.lockfile` of the project (the build script's directory; `buildscript-gradle.lockfile` and `buildscript-classpath.lockfile` for buildscript classpath deps and plugins, `settings-gradle.lockfile` for settings plugins; plugins are locked as their marker `<id>:<id>.gradle.plugin`); catalog and `buildSrc` deps take the first project of the build, root project first, whose lockfile has the module. Several locked versions (per configuration) yield the highest.
+- `rangeStrategy` applies as for npm: under `auto`/`update-lockfile` an update the range admits only moves the lockfile; others rewrite the range keeping its form (`1.+` → `2.+` with the same number of components, an exclusive upper bound becomes the next value of the new version at the position where the bounds differ: `[1.0,2.0)` → `[1.0,3.0)`, an inclusive one the new version). A locked `latest.*` selector admits every version, so its updates only move the lockfile; it is never rewritten (under `bump` its manifest edit fails).
+- Lockfiles and `gradle/verification-metadata.xml` are regenerated by the gradle post-processor (`apply`/`run`, not `plan`) when the build root has one: it runs `./gradlew` (else `gradle`; Java is required) with `--write-locks`, or `--update-locks group:artifact` for lockfile-only updates, and fails the build's files when the tools are missing.
+
+**Shared versions.**
+
+One `[versions]` entry or variable may serve many libraries and plugins; each becomes a dep with the same file and span. `plan` and `apply` update the definition once. `run` groups the updates of deps sharing a definition into one PR; group rules, for example `{manager: gradle, names: ["org.jetbrains.kotlin*"], group: kotlin}`, combine further deps.
+
+**Not covered.**
+
+- Values computed from expressions (`"$a.$b"`, `if`/`?:`, `versions["a"]!!["b"]`), catalogs imported in settings with `from(files(…))` (the TOML file itself is a catalog dep source) and `useModule(…)` in `resolutionStrategy`.
+- Variables defined in `~/.gradle/gradle.properties`, by `-P`/environment, or in included builds other than `buildSrc`.
+- `latest.<status>` for statuses other than release and integration (`latest.milestone`, custom statuses) depend on component metadata deps does not read; they are skipped even with a lockfile.
+- Prefixes without a dot (`1.2+`): Gradle matches the text before the `+` as a string prefix (https://docs.gradle.org/current/userguide/dependency_versions.html: "Only versions exactly matching the portion before the + are included"), so `1.2+` also admits 1.20–1.29, which no semver constraint expresses; they are skipped.
+- `exclusiveContent { forRepositories(…) }` by reference, `onlyForConfigurations`/`notForConfigurations`, version-specific excludes and Ivy/flatDir repositories.
+
+## gradle-wrapper
+
+Updates the Gradle version of the wrapper in `gradle-wrapper.properties`: the version inside `distributionUrl` (`https\://services.gradle.org/distributions/gradle-8.10.2-bin.zip`, `-all.zip`, or any mirror URL whose last path segment is `gradle-<version>-(bin|all).zip`) and, when present, `distributionSha256Sum`.
+
+**Files:**
+
+- `gradle/wrapper/gradle-wrapper.properties`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `wrapper` | `distributionUrl` version | `gradle-version` | `maven` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unsupported distributionUrl` | the last path segment is not `gradle-<version>-bin.zip` or `gradle-<version>-all.zip` |
+| `invalid distributionSha256Sum` | `distributionSha256Sum` is not 64 hex characters |
+
+**Checksum.**
+
+- With `distributionSha256Sum`, the new checksum is downloaded from `<distributionUrl with the new version>.sha256` (services.gradle.org and its mirrors serve the bare hex) and replaced together with the version.
+
+**Wrapper files.**
+
+After the properties are edited, `apply` and `run` regenerate `gradle/wrapper/gradle-wrapper.jar`, `gradlew` and `gradlew.bat` as Renovate does: `./gradlew --console=plain --no-daemon -q wrapper --gradle-version <version> --distribution-type <bin|all>` (`gradle` from `PATH` without an executable `gradlew`) runs on a temporary copy of the project with the edited properties, adding `--gradle-distribution-url <url>` for a mirror and `--gradle-distribution-sha256-sum <sum>` with a pinned checksum. The edited properties file is kept unless Gradle's rewrite differs in more than formatting (a key the new version adds). Without Java (`java` on `PATH` or `JAVA_HOME`) the update fails with `java not found (needed to regenerate the Gradle wrapper)`; `plan` shows only the properties edit.
+
+## maven-wrapper
+
+Updates the Maven version of `distributionUrl` (`…/org/apache/maven/apache-maven/<version>/apache-maven-<version>-bin.zip` on Maven Central or any mirror) and the Maven Wrapper version of `wrapperVersion` and `wrapperUrl` (`…/org/apache/maven/wrapper/maven-wrapper/<version>/maven-wrapper-<version>.jar`) in `maven-wrapper.properties`; `apply` and `run` then regenerate the wrapper scripts with `mvn wrapper:wrapper`.
+
+**Files:**
+
+- `.mvn/wrapper/maven-wrapper.properties`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `maven` | `distributionUrl` version, dep `org.apache.maven:apache-maven` | `maven` | `maven` | updated |
+| `wrapper` | `wrapperVersion` and the `wrapperUrl` version (one dep when they agree), dep `org.apache.maven.wrapper:maven-wrapper` | `maven` | `maven` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unsupported distributionUrl` | the URL does not end in `org/apache/maven/apache-maven/<version>/apache-maven-<version>-bin.zip` with the same version twice |
+| `unsupported wrapperUrl` | the URL does not end in `org/apache/maven/wrapper/maven-wrapper/<version>/maven-wrapper-<version>.jar` with the same version twice |
+| `unsupported wrapperVersion` | `wrapperVersion` is not a version |
+| `invalid distributionSha256Sum` | `distributionSha256Sum` is not 64 hex characters |
+| `invalid wrapperSha256Sum` | `wrapperSha256Sum` is not 64 hex characters |
+
+**Repository.**
+
+- The repository of a dep is the URL before `org/apache/maven/`: Maven Central (`https://repo.maven.apache.org/maven2/`) or a mirror, which is then the only repository looked up.
+- All occurrences of the version are replaced together: the directory and file name in the URL, and `wrapperVersion` with `wrapperUrl`.
+
+**Checksum.**
+
+- With `distributionSha256Sum` or `wrapperSha256Sum`, the new sum is replaced together with the version. Maven Central publishes `.sha1` and `.sha512` files for `apache-maven-<version>-bin.zip` and only `.sha1` for `maven-wrapper-<version>.jar`, but the wrapper verifies SHA-256 sums, so deps downloads the new artifact from the dep's repository and hashes it (see Checksums).
+
+**Wrapper files.**
+
+After the properties are edited, `apply` and `run` run `./mvnw -B -q org.apache.maven.plugins:maven-wrapper-plugin:<wrapperVersion>:wrapper -Dmaven=<version> -Dtype=<type>` (`mvn` from `PATH` without an executable `mvnw`) on a temporary copy of the project and take `mvnw`, `mvnw.cmd`, `.mvn/wrapper/maven-wrapper.jar` and `.mvn/wrapper/MavenWrapperDownloader.java` from it; the edited properties file is kept. `<type>` is `distributionType`, else `bin` with a `maven-wrapper.jar`, `source` with a `MavenWrapperDownloader.java`, `script` with a `wrapperUrl`, else `only-script`; without a known wrapper version the goal is `wrapper:wrapper`. Without Java (`java` on `PATH` or `JAVA_HOME`) the update fails with `java not found (needed to regenerate the Maven wrapper)`; `plan` shows only the properties edit.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -1297,6 +1491,8 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `pypi` | package name; PEP 503-normalized for lookups (`zope.interface` → `zope-interface`) | PyPI: `GET <DEPS_PYPI_URL or https://pypi.org>/pypi/<name>/json`; other indexes: `GET <index>/<name>/` with `Accept: application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.2, text/html;q=0.01` (simple API: JSON, PEP 691/700, else HTML, PEP 503; an HTTP 406 is retried with `Accept: text/html`); once per (index, name); versions without files or with every file yanked dropped; 404 → `package <name> not found` | userinfo of the index URL (`https://user:pass@host/simple`) sent as basic auth, redacted in errors and logs | earliest file upload time of the version on any of the dep's indexes (`upload_time_iso_8601`, `upload-time`, HTML `data-upload-time`) |
 | `terraform-provider` | `namespace/type`; the dep's source is the registry (`https://registry.terraform.io` when empty) | service discovery `GET https://<host>/.well-known/terraform.json` once per registry (relative and absolute service URLs), then `GET <providers.v1>/<namespace>/<type>/versions`, once per provider; 404 → `provider <name> not found in <registry>` | `Authorization: Bearer <token>`, resolved once per host as the Terraform CLI does: `$TF_TOKEN_<host>` (dots as `_`, hyphens as is or `__`, e.g. `TF_TOKEN_app_terraform_io`; punycode hosts verbatim), then `credentials "<host>" { token = ... }` of the CLI config (`$TF_CLI_CONFIG_FILE`, else `~/.terraformrc` plus the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` such as `credentials.tfrc.json`; `%APPDATA%/terraform.rc` and `%APPDATA%/terraform.d` on Windows), then the `credentials_helper` (`terraform-credentials-<name> <args...> get <host>` from `~/.terraform.d/plugins[/<os>_<arch>]`, else PATH; missing → `terraform-credentials-<name> not found (needed for <host> credentials)`); else anonymous. | `published_at` of the version document (`<service><name>/<version>`; registry.terraform.io serves it, other registries are unknown). A partial version (`5.31` of `~> 5.31`) has the time of its line's first release. |
 | `terraform-module` | `namespace/name/provider`; the dep's source is the registry (`https://registry.terraform.io` when empty) | service discovery `GET https://<host>/.well-known/terraform.json` once per registry (relative and absolute service URLs), then `GET <modules.v1>/<namespace>/<name>/<provider>/versions`, once per module; 404 → `module <name> not found in <registry>` | `Authorization: Bearer <token>`, resolved once per host as the Terraform CLI does: `$TF_TOKEN_<host>` (dots as `_`, hyphens as is or `__`, e.g. `TF_TOKEN_app_terraform_io`; punycode hosts verbatim), then `credentials "<host>" { token = ... }` of the CLI config (`$TF_CLI_CONFIG_FILE`, else `~/.terraformrc` plus the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` such as `credentials.tfrc.json`; `%APPDATA%/terraform.rc` and `%APPDATA%/terraform.d` on Windows), then the `credentials_helper` (`terraform-credentials-<name> <args...> get <host>` from `~/.terraform.d/plugins[/<os>_<arch>]`, else PATH; missing → `terraform-credentials-<name> not found (needed for <host> credentials)`); else anonymous. | `published_at` of the version document (`<service><name>/<version>`; registry.terraform.io serves it, other registries are unknown). A partial version (`5.31` of `~> 5.31`) has the time of its line's first release. |
+| `maven` | `groupId:artifactId`, or a Gradle plugin id (no `:`), looked up as its marker artifact `<id>:<id>.gradle.plugin`; the repositories are the dep's `[<id>=]<url>/` list (Maven Central when empty) | `GET <repository>/<group/path>/<artifactId>/maven-metadata.xml` per repository, versions merged in repository order; a 404 contributes nothing; none found → `artifact <name> not found` | maven and maven-wrapper deps: `settings.xml` `<servers>` (Basic auth from `<username>`/`<password>`, encrypted passwords included, and `<configuration><httpHeaders>`) of the repository's id after mirroring; gradle deps: the `<name>Username`/`<name>Password` project properties of the named repository. Checksum downloads (`Artifact`) below a dep's repository use the same mirror and credentials | `HEAD …/<version>/<artifactId>-<version>.pom` `Last-Modified`, only for versions that end up in a PR |
+| `gradle-version` | any (`gradle`) | `<DEPS_GRADLE_VERSIONS_URL or https://services.gradle.org/versions/all>`, once per run; snapshots, nightlies and broken releases are dropped, release candidates and milestones kept | none | `buildTime` |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
@@ -1330,21 +1526,45 @@ Like Renovate, deps drops the releases a project cannot install on every Python 
 - A release is kept when the `requires-python` shared by all of its files that are not yanked (JSON API `requires_python`, simple API `requires-python`, HTML `data-requires-python`) admits every final Python release the project's constraint admits; a release whose files have none or disagree is kept. Specifier sets follow PEP 440 (`>=3.8,!=3.9.*,<4`, `~=3.10`, `==3.11.*`) and Poetry (`^3.9`, `~3.9`, `>=3.9 <4`, `||`).
 - An invalid project constraint is ignored with a warning; an invalid `requires-python` keeps its release.
 
+### Maven repositories
+
+- The repositories of a dep are its manager's: for maven the `pom.xml` `<repositories>` (`<pluginRepositories>` for plugins) followed by Maven Central; for gradle Maven Central then Google Maven (plugins: the Gradle plugin portal `https://plugins.gradle.org/m2/` then Google Maven); Maven Central alone otherwise.
+- Maven Central (id `central`) is `https://repo.maven.apache.org/maven2/`; `DEPS_MAVEN_CENTRAL_URL` replaces it (a mirror).
+- A failing repository (other than 404) is ignored when another one lists the artifact. SNAPSHOT metadata is not supported.
+
+### Maven settings.xml
+
+maven and maven-wrapper deps apply the user settings (`DEPS_MAVEN_SETTINGS`, else `~/.m2/settings.xml`) and the nearest in-repository settings walking up from the pom's directory to `--dir` (`.mvn/settings.xml`, `.m2/settings.xml`, then `settings.xml` in each directory). In-repository mirrors, servers and profiles replace user ones with the same id. Gradle ignores settings.xml.
+
+- `<mirrors>`: each repository is replaced by the first mirror whose `<mirrorOf>` is its id, else by the first that matches: `*`, `external:*` (not localhost or `file:`), `external:http:*`, `id1,id2`, `!id` exclusions. Repositories without id match only `*` and `external:*`.
+- `<servers>`: requests to a repository whose id (the mirror's, when mirrored) matches use the server's `<username>`/`<password>` as Basic auth and its `<configuration><httpHeaders><property>` headers. Headers are dropped when a redirect leaves the host.
+- `${env.NAME}` and `${NAME}` are expanded from the environment (empty when unset).
+- Encrypted passwords (`{…}`, `mvn --encrypt-password`) are decrypted with the master password of `settings-security.xml` (`DEPS_MAVEN_SETTINGS_SECURITY`, else next to the user settings; `<relocation>` is followed); a password that cannot be decrypted fails the lookups using it.
+- `<repositories>` (plugins: `<pluginRepositories>`) of the profiles listed in `<activeProfiles>` or with `<activeByDefault>true` follow the dep's own repositories, before Maven Central.
+
+### Gradle credentials
+
+A gradle dep's repository with a name (`maven { name = "corp"; credentials(PasswordCredentials) }`) authenticates with `corpUsername`/`corpPassword`: `ORG_GRADLE_PROJECT_corpUsername`/`ORG_GRADLE_PROJECT_corpPassword`, else `$GRADLE_USER_HOME/gradle.properties` (default `~/.gradle/gradle.properties`).
+
+### Source repository
+
+Release notes use the POM of the new version: `<scm><url>`, else `<scm><connection>`/`<developerConnection>` without `scm:git:`, else a github.com or gitlab.com `<url>`; without one, the `<parent>` POM's (up to 3 parents). A plugin marker POM is followed to the plugin artifact. Tags `<artifactId>-<version>` are recognized.
+
 ### Security advisories (OSV)
 
 - deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.
-- Ecosystems: `Go` (gomod `direct`/`indirect`), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
+- Ecosystems: `Go` (gomod `direct`/`indirect`), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
 - Withdrawn advisories are skipped, and aliases are reported once.
 
 ### Checksums
 
-`checksum.asset` reads the asset digest from the already-fetched GitHub release list. `checksum.url` is downloaded once per URL, with a 1 MiB cap.
+`checksum.asset` reads the asset digest from the already-fetched GitHub release list. `checksum.url` is downloaded once per URL, with a 1 MiB cap. Where the repository publishes no SHA-256 file (the Maven Wrapper on Maven Central), the artifact itself is hashed: it is streamed through SHA-256 or SHA-512 (by the length of the pinned checksum), once per URL and algorithm, with a 256 MiB cap.
 
 ### Release notes
 
 Release notes appear in PR bodies only.
 
 - deps fetches one page of the source repository's GitHub or Gitea/Forgejo releases per run.
-- The source repository comes from the action, the module's forge repository (including a small vanity table), npm's `repository` field, the PyPI project URLs, or the OCI `org.opencontainers.image.source` label.
+- The source repository comes from the action, the module's forge repository (including a small vanity table), npm's `repository` field, the PyPI project URLs, the Maven POM's `<scm>` (or its parent's), or the OCI `org.opencontainers.image.source` label.
 - Bodies are capped at 2 KiB each and 40 KiB in total, and include a compare link.
 - Failures only drop the notes.

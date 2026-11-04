@@ -1,0 +1,142 @@
+pluginManagement {
+    includeBuild("build-logic/common")
+
+    repositories {
+        gradlePluginPortal()
+    }
+
+    val kotlinVersion: String by settings
+    plugins {
+        id("org.jetbrains.kotlin.jvm") version kotlinVersion
+    }
+}
+
+rootProject.name = "kotlin"
+
+include("sonar-kotlin-api")
+include("sonar-kotlin-test-api")
+include("sonar-kotlin-checks")
+include("sonar-kotlin-external-linters")
+include("sonar-kotlin-surefire")
+include("sonar-kotlin-metrics")
+include("sonar-kotlin-plugin")
+include("sonar-kotlin-gradle")
+
+include("its:plugin")
+include("its:ruling")
+include("its:sq-integration")
+include("kotlin-checks-test-sources")
+include("utils-kotlin")
+
+dependencyResolutionManagement {
+    versionCatalogs {
+
+        val kotlinVersion: String by extra
+        val analyzerCommonsVersionStr = "2.35.0.15509"
+        val sonarPluginApi = "13.4.2.4284"
+        val slf4jApi = "2.0.20"
+
+        create("libs") {
+            val analyzerCommons = version("analyzerCommons", analyzerCommonsVersionStr)
+            val gson = version("gson", "2.11.0")
+            val staxmate = version("staxmate", "2.4.1")
+
+            library("gson", "com.google.code.gson", "gson").versionRef(gson)
+            library("jsr305", "com.google.code.findbugs", "jsr305").version("3.0.2")
+            library("kotlin-compiler", "org.jetbrains.kotlin", "kotlin-compiler").version(kotlinVersion)
+            library("sonar-analyzer-commons", "org.sonarsource.analyzer-commons", "sonar-analyzer-commons").versionRef(analyzerCommons)
+            library("sonar-analyzer-commons-recognizers", "org.sonarsource.analyzer-commons", "sonar-analyzer-recognizers")
+                .versionRef(analyzerCommons)
+            library("sonar-performance-measure", "org.sonarsource.analyzer-commons", "sonar-performance-measure")
+                .versionRef(analyzerCommons)
+            library("sonar-plugin-api", "org.sonarsource.api.plugin", "sonar-plugin-api").version(sonarPluginApi)
+            library("slf4j-api", "org.slf4j", "slf4j-api").version(slf4jApi)
+            library("sonar-regex-parsing", "org.sonarsource.analyzer-commons", "sonar-regex-parsing").versionRef(analyzerCommons)
+            library("sonar-xml-parsing", "org.sonarsource.analyzer-commons", "sonar-xml-parsing").versionRef(analyzerCommons)
+            library("staxmate", "com.fasterxml.staxmate", "staxmate").versionRef(staxmate)
+            library("stax2-api", "org.codehaus.woodstox", "stax2-api").version("4.3.2")
+        }
+
+        create("utilLibs") {
+            val detekt = version("detekt", "1.23.3")
+            val jcommander = version("jcommander", "1.82")
+            val ktlint = version("ktlint", "1.0.1")
+
+            library("detekt-api", "io.gitlab.arturbosch.detekt", "detekt-api").versionRef(detekt)
+            library("detekt-cli", "io.gitlab.arturbosch.detekt", "detekt-cli").versionRef(detekt)
+            library("detekt-core", "io.gitlab.arturbosch.detekt", "detekt-core").versionRef(detekt)
+            library("jcommander", "com.beust", "jcommander").versionRef(jcommander)
+            library("ktlint-core", "com.pinterest.ktlint", "ktlint-rule-engine-core").versionRef(ktlint)
+            library("ktlint-ruleset-standard", "com.pinterest.ktlint", "ktlint-ruleset-standard").versionRef(ktlint)
+
+            bundle("detekt", listOf("detekt-cli", "detekt-core", "detekt-api"))
+            bundle("ktlint", listOf("ktlint-core", "ktlint-ruleset-standard"))
+        }
+
+        create("testLibs") {
+            val analyzerCommons = version("analyzerCommons", analyzerCommonsVersionStr)
+            val assertj = version("assertj", "3.27.7")
+            val junit = version("junit", "5.10.1")
+            val mockito = version("mockito", "5.7.0")
+            val mockk = version("mockk", "1.13.3")
+            val orchestrator = version("orchestrator", "6.1.0.3962")
+            val sonarlint = version("sonarlint", "12.1.1.87771")
+            val sonarqube = version("sonarqube", "25.1.0.102122")
+            val scannerEngine = version("scannerEngine", "13.8.0.4534")
+            val sit = version("sit", "1.2.0.1354")
+            val xerces = version("xerces", "2.12.2")
+
+            library("assertj-core", "org.assertj", "assertj-core").versionRef(assertj)
+            library("awaitility", "org.awaitility", "awaitility").version("4.3.0")
+            library("junit-jupiter", "org.junit.jupiter", "junit-jupiter").versionRef(junit)
+            library("mockito-core", "org.mockito", "mockito-core").versionRef(mockito)
+            library("mockk", "io.mockk", "mockk").versionRef(mockk)
+            library("sonar-analyzer-test-commons", "org.sonarsource.analyzer-commons", "sonar-analyzer-test-commons")
+                .versionRef(analyzerCommons)
+            library("sonar-orchestrator-junit5", "org.sonarsource.orchestrator", "sonar-orchestrator-junit5").versionRef(orchestrator)
+            library("sonar-plugin-api-scanner-impl", "org.sonarsource.scanner.engine", "plugin-api-scanner-impl").versionRef(scannerEngine)
+            library("sonar-sensor-test-fixtures", "org.sonarsource.scanner.engine", "sensor-test-fixtures").versionRef(scannerEngine)
+            library("sonar-plugin-api-test-fixtures", "org.sonarsource.api.plugin", "sonar-plugin-api-test-fixtures")
+                .version(sonarPluginApi)
+            library("sonar-ws", "org.sonarsource.sonarqube", "sonar-ws").versionRef(sonarqube)
+            library("sonarlint-core-test-utils", "org.sonarsource.sonarlint.core", "sonarlint-core-test-utils").versionRef(sonarlint)
+            library("logback-classic", "ch.qos.logback", "logback-classic").version("1.6.5")
+            library("sit", "com.sonarsource.scanner.integrationtester", "sonar-scanner-integration-tester").versionRef(sit)
+            // Without it, ScannerMain.<clinit> throws FactoryConfigurationError: Provider for class
+            // javax.xml.parsers.SAXParserFactory cannot be created.
+            library("xerces-impl", "xerces", "xercesImpl").versionRef(xerces)
+        }
+    }
+}
+
+plugins {
+    id("com.gradle.develocity") version("4.6.1")
+}
+
+val isCI: Boolean = System.getenv("CI") != null
+
+develocity {
+    server = "https://develocity-public.sonar.build"
+    buildScan {
+        if (isCI) {
+            uploadInBackground.set(false)
+            tag("CI")
+            for (key in listOf(
+                "GITHUB_RUN_ID",
+                "GITHUB_JOB_ID", // configured in .github/workflows/build.yml - see https://github.com/actions/runner/issues/324#issuecomment-3324382354
+                "GITHUB_JOB",
+                "GITHUB_REF_NAME",
+                "GITHUB_SHA",
+            )) {
+                value(key, System.getenv(key))
+            }
+        }
+    }
+}
+
+buildCache {
+    remote(develocity.buildCache) {
+        isEnabled = true
+        isPush = isCI
+    }
+}

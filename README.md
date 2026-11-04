@@ -13,10 +13,10 @@ deps is a Renovate replacement written in Go. It finds the dependencies in a rep
 
 ## Features
 
-- **Many dependency types.** GitHub/Gitea/Forgejo Actions (tags, SHA pins with `# vX` comments, setup-* versions), Go modules (with `go mod tidy`), container images (Dockerfiles, compose, Kubernetes, Helm values), npm `package.json` with its lockfile, Python (`requirements*.txt`, `pyproject.toml` for PEP 621/uv and Poetry, `Pipfile`) with `uv.lock`, `poetry.lock` and `Pipfile.lock`, Helm charts, Rust crates in `Cargo.toml` (with `Cargo.lock`), Terraform/OpenTofu providers, modules, versions and resources (with `.terraform.lock.hcl`), Terragrunt sources, tflint plugins, and your own `# deps:` or `# renovate:` markers and regex managers. See [managers and datasources](docs/reference/managers.md).
+- **Many dependency types.** GitHub/Gitea/Forgejo Actions (tags, SHA pins with `# vX` comments, setup-* versions), Go modules (with `go mod tidy`), container images (Dockerfiles, compose, Kubernetes, Helm values), npm `package.json` with its lockfile, Python (`requirements*.txt`, `pyproject.toml` for PEP 621/uv and Poetry, `Pipfile`) with `uv.lock`, `poetry.lock` and `Pipfile.lock`, Helm charts, Rust crates in `Cargo.toml` (with `Cargo.lock`), Terraform/OpenTofu providers, modules, versions and resources (with `.terraform.lock.hcl`), Terragrunt sources, tflint plugins, Maven `pom.xml`, Gradle builds and version catalogs (with `gradle.lockfile`), the Gradle and Maven wrappers, and your own `# deps:` or `# renovate:` markers and regex managers. See [managers and datasources](docs/reference/managers.md).
 - **A small, strict config.** Rules are read top to bottom, and later rules override single fields. Unknown keys are errors with a line number, and an editor schema gives completion.
 - **Pull requests that stay tidy.** One PR per dependency or group, split into major/minor/patch. Unchanged PRs are never pushed again, and obsolete PRs are closed only after an error-free run. Schedules, PR limits, automerge and a dashboard issue are built in.
-- **Security updates** from OSV advisories for Go, npm, Rust crates, PyPI and GitHub Actions. They skip `allow`, schedules and the minimum release age.
+- **Security updates** from OSV advisories for Go, npm, Rust crates, PyPI, Maven and GitHub Actions. They skip `allow`, schedules and the minimum release age.
 - **Release notes** in every PR: notes, release ages and a compare link.
 - **Fast and light:** one directory walk, shared and deduplicated lookups, and commits without a checkout or worktree.
 

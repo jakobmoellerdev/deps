@@ -6,9 +6,13 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gotool"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jvmtool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradle"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
@@ -33,8 +37,9 @@ func newApply(o *rootOpts) *cobra.Command {
 }
 
 // postProcessors regenerate go.sum (go mod tidy), package-lock.json (npm), Cargo.lock
-// (cargo update), uv.lock, poetry.lock, pdm.lock and Pipfile.lock (pytool) and
-// .terraform.lock.hcl (terraform init) on temporary copies, Chart.lock in process and the hashes of requirements files (pytool.Compiler:
+// (cargo update), uv.lock, poetry.lock, pdm.lock and Pipfile.lock (pytool), .terraform.lock.hcl
+// (terraform init), Gradle lockfiles and verification metadata and the Gradle and Maven wrapper
+// files (jvmtool) on temporary copies, Chart.lock in process and the hashes of requirements files (pytool.Compiler:
 // pip-compile/uv, else from the session's pypi datasource), for apply and run.
 func postProcessors(s *session) map[string]engine.PostProcessor {
 	hashes, _ := s.sources[pypi.Name].(pytool.Hasher)
@@ -43,6 +48,7 @@ func postProcessors(s *session) map[string]engine.PostProcessor {
 		terraform.Name: terraform.Locker{},
 		pep621.Name:    pytool.Locker{}, poetry.Name: pytool.Locker{}, pipenv.Name: pytool.Locker{},
 		piprequirements.Name: pytool.Compiler{Hashes: hashes},
+		gradle.Name:          jvmtool.GradleLocker{}, gradlewrapper.Name: jvmtool.GradleWrapper{}, mavenwrapper.Name: jvmtool.MavenWrapper{},
 	}
 }
 

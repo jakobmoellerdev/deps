@@ -18,6 +18,7 @@ const (
 	dsNpm            = "npm"
 	dsDocker         = "docker"
 	dsPypi           = "pypi"
+	dsMaven          = "maven"
 )
 
 // forgeKind selects the release API of a repository.
@@ -67,7 +68,7 @@ func (n *Notes) resolve(ctx context.Context, d dep.Dep, version string) (repoRef
 		return r, ok
 	case dsGo:
 		return n.goRepo(d.Name)
-	case dsNpm, dsDocker, dsPypi:
+	case dsNpm, dsDocker, dsPypi, dsMaven:
 		sr, ok := n.sources[d.Datasource].(datasource.SourceRepo)
 		if !ok {
 			return repoRef{}, false

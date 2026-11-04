@@ -176,6 +176,11 @@ func TestClassify(t *testing.T) {
 		{gh, "~3.16.0", "", "", "unsupported range", 0},
 		{npmTool("pnpm"), "9.1.0", "9.1.0", "semver", "", 0},
 		{npmTool("pnpm"), "9", "", "", "partial version", 0},
+		{gradleTool, "8.11", "8.11", "maven", "", 0},
+		{gradleTool, "8.11-rc-1", "8.11-rc-1", "maven", "", 0},
+		{mavenTool, "3.9.9", "3.9.9", "maven", "", 0},
+		{mavenTool, "~3.9", "", "", "unsupported range", 0},
+		{mavenTool, "latest", "", "", "non-version value", 0},
 	} {
 		ver, off, versioning, why := classify(c.t, c.raw)
 		if ver != c.ver || off != c.off || versioning != c.versioning || why != c.why {
@@ -249,6 +254,19 @@ func TestAsdf(t *testing.T) {
 	}
 	if d, _ := NewAsdf().Extract(".tool-versions", []byte(in), manager.Env{}); d[2].Source != "https://github.com/hashicorp/terraform" {
 		t.Errorf("terraform source = %q", d[2].Source)
+	}
+}
+
+func TestAsdfJVMTools(t *testing.T) {
+	in := "java temurin-21.0.5+11.0.LTS\ngradle 8.10.2\nmaven 3.9.9\n"
+	wants := []want{
+		{"java", "", "", "temurin-21.0.5+11.0.LTS", "unsupported tool", 1},
+		{"gradle", dsGradle, "maven", "8.10.2", "", 2},
+		{"org.apache.maven:apache-maven", dsMaven, "maven", "3.9.9", "", 3},
+	}
+	got := check(t, NewAsdf(), ".tool-versions", in, wants, map[string]string{"8.10.2": "8.11", "3.9.9": "3.9.11"})
+	if want := "java temurin-21.0.5+11.0.LTS\ngradle 8.11\nmaven 3.9.11\n"; got != want {
+		t.Errorf("patched = %q, want %q", got, want)
 	}
 }
 

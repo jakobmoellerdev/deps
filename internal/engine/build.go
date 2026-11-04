@@ -74,6 +74,13 @@ type LockMaintainer interface {
 	Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error)
 }
 
+// ScopeSiblingLister is implemented by post-processors whose siblings depend on the scope
+// (the gradle.lockfile of every project of a Gradle build): ScopeSiblings replaces Siblings
+// and lists the slash paths relative to dir, the absolute scope directory.
+type ScopeSiblingLister interface {
+	ScopeSiblings(dir string) []string
+}
+
 // postSem bounds concurrent post-processor runs (go mod tidy, npm install) across all Build
 // calls.
 var postSem = make(chan struct{}, 4)
@@ -413,7 +420,11 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 	case maintain && (locks != nil || slices.ContainsFunc(s.files, func(i int) bool { c := builds[i].changes[0]; return !bytes.Equal(c.Old, c.New) })):
 		return nil, errors.New("lock file maintenance cannot be combined with other updates of its lockfile")
 	}
+	abs := filepath.Join(root, filepath.FromSlash(s.dir))
 	names := p.Siblings()
+	if l, ok := p.(ScopeSiblingLister); ok {
+		names = l.ScopeSiblings(abs)
+	}
 	sibs := make([]sibling, len(names))
 	contents := make(map[string][]byte, len(names))
 	for j, n := range names {
@@ -439,7 +450,6 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 		return nil, ctx.Err()
 	}
 	start := time.Now()
-	abs := filepath.Join(root, filepath.FromSlash(s.dir))
 	var out map[string][]byte
 	var err error
 	switch {

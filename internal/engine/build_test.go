@@ -253,3 +253,40 @@ func TestBuildSharedPostProcessor(t *testing.T) {
 		t.Errorf("distinct post-processors: errs = %v", errs)
 	}
 }
+
+// scopeSiblings is a postFunc whose siblings are listed per scope directory.
+type scopeSiblings struct {
+	postFunc
+	list func(dir string) []string
+}
+
+func (p scopeSiblings) ScopeSiblings(dir string) []string { return p.list(dir) }
+
+func TestBuildScopeSiblings(t *testing.T) {
+	root := t.TempDir()
+	up := pkgUpdate(t, root, "p/package.json")
+	writeFile(t, root, "p/sub/lock", "old\n")
+	var listed string
+	post := map[string]PostProcessor{npm.Name: scopeSiblings{
+		postFunc: postFunc{siblings: []string{"static"}, f: func(_ context.Context, _ string, _, files map[string][]byte) (map[string][]byte, error) {
+			if _, ok := files["static"]; ok {
+				t.Error("static siblings read")
+			}
+			return map[string][]byte{"sub/lock": append(files["sub/lock"], "new\n"...), "static": []byte("x"), "sub/new": []byte("y")}, nil
+		}},
+		list: func(dir string) []string { listed = dir; return []string{"sub/lock", "sub/new"} },
+	}}
+	changes, errs := Build(t.Context(), root, []manager.Manager{npm.New()}, []dep.Update{up}, post)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if listed != filepath.Join(root, "p") {
+		t.Errorf("ScopeSiblings(%q)", listed)
+	}
+	if got := paths(changes); !slices.Equal(got, []string{"p/package.json", "p/sub/lock", "p/sub/new"}) {
+		t.Fatalf("changes = %v", got)
+	}
+	if c := changes[1]; string(c.Old) != "old\n" || string(c.New) != "old\nnew\n" {
+		t.Errorf("p/sub/lock = %q -> %q", c.Old, c.New)
+	}
+}

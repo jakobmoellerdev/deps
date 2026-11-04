@@ -9,8 +9,12 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitlabci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradle"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/maven"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
@@ -34,7 +38,8 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 		kustomize.New(), precommit.New(), gitlabci.New(),
 		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise(), cargo.New(),
 		piprequirements.New(), pep621.New(), poetry.New(), pipenv.New(),
-		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt())
+		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt(),
+		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New())
 	return append(ms, cs...), nil
 }
 
@@ -53,5 +58,6 @@ func ManagerDocs() []refdoc.Manager {
 		kustomize.Doc, precommit.Doc, gitlabci.Doc,
 		toolversions.DocNvm, toolversions.DocNodenv, toolversions.DocAsdf, toolversions.DocMise, cargo.Doc,
 		piprequirements.Doc, pep621.Doc, poetry.Doc, pipenv.Doc,
-		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc, custom.Doc}
+		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc,
+		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, custom.Doc}
 }

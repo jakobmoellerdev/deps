@@ -8,11 +8,13 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Group is the updates that become one branch and one pull request: all updates of one
 // dependency in one PR bucket, or all non-security updates sharing a policy group and bucket
-// (Manager "group").
+// (Manager "group"), or all updates of a shared version definition and bucket (Manager
+// "group", named after the dep.Dep.VersionRef unless a policy group applies).
 type Group struct {
 	Manager, Name, Branch, Title string
 	Updates                      []dep.Update
@@ -30,10 +32,12 @@ const MaintenanceBranch = "lock-file-maintenance"
 
 // GroupUpdates groups updates by policy group name, or by (Manager, Name) for ungrouped and
 // security updates (security updates are never batched into a policy group), and by PR
-// bucket (dep.Update.Bucket). Branches are <branchPrefix><manager>/<slug> and
-// <branchPrefix>group/<slug>, with "-<bucket>" appended for a non-empty bucket; "" means
-// config.DefaultBranchPrefix. Lock file maintenance updates share one group (Manager and Name
-// MaintenanceBranch) on <branchPrefix>lock-file-maintenance. Sorted by Manager, Name, then
+// bucket (dep.Update.Bucket). Updates of a shared version definition carry the group Resolve
+// gave them (unifyShared), security updates included: they edit the same bytes. Branches are
+// <branchPrefix><manager>/<slug> and <branchPrefix>group/<slug>, with "-<bucket>" appended
+// for a non-empty bucket; "" means config.DefaultBranchPrefix. Lock file maintenance updates
+// share one group (Manager and Name MaintenanceBranch) on <branchPrefix>lock-file-maintenance.
+// Sorted by Manager, Name, then
 // Branch.
 func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 	branchPrefix = cmp.Or(branchPrefix, config.DefaultBranchPrefix)
@@ -45,7 +49,7 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 		switch {
 		case u.Maintenance():
 			k = key{MaintenanceBranch, MaintenanceBranch, ""}
-		case u.Group != "" && len(u.Advisories) == 0:
+		case u.Group != "" && (len(u.Advisories) == 0 || u.Dep.VersionRef != ""):
 			k = key{GroupManager, u.Group, u.Bucket}
 		}
 		i, ok := idx[k]
@@ -78,11 +82,13 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 }
 
 // Local splits updates into the ones plan and apply write and the ones only `run` proposes
-// (in their own PRs): a dependency occurrence gets one local update, since the updates of its
-// PR buckets edit the same bytes. The newest non-major update of a dep is kept, else its
-// lowest major one (Resolve orders a dep's updates by version). Lock file maintenance updates
-// are always left out: they refresh a lockfile apart from any update. local keeps the order of
-// updates; separate[i] reports whether updates[i] was left out.
+// (in their own PRs): a dependency occurrence (File and RefSpan) gets one local version, since
+// the updates of its PR buckets edit the same bytes. The newest non-major update is kept, else
+// the lowest major one (Resolve orders a dep's updates by version; deps sharing a version
+// definition are compared by version). Every update of a shared definition (dep.Dep.VersionRef)
+// with the kept edit stays local too; patch.Apply merges their identical edits. Lock file
+// maintenance updates are always left out: they refresh a lockfile apart from any update.
+// local keeps the order of updates; separate[i] reports whether updates[i] was left out.
 func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 	type occ struct {
 		file string
@@ -95,11 +101,25 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 		}
 		k := occ{u.Dep.File, u.Dep.RefSpan}
 		j, ok := chosen[k]
-		switch {
-		case !ok:
+		if !ok {
 			chosen[k] = i
-		case u.Type != dep.Major && (updates[j].Type == dep.Major || i > j):
+			continue
+		}
+		c := updates[j]
+		if u.Type == dep.Major && c.Type != dep.Major {
+			continue
+		}
+		newer := i > j
+		if u.Dep.VersionRef != "" {
+			if s, ok := versioning.Get(u.Dep.Versioning); ok {
+				newer = s.Compare(u.NewVersion, c.NewVersion) > 0
+			}
+		}
+		switch {
+		case u.Type != dep.Major && (c.Type == dep.Major || newer):
 			chosen[k] = i // a (newer) non-major wins over a major
+		case u.Type == dep.Major && u.Dep.VersionRef != "" && !newer && u.NewVersion != c.NewVersion:
+			chosen[k] = i // the lowest major of a shared definition
 		}
 	}
 	separate = make([]bool, len(updates))
@@ -108,13 +128,20 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 	}
 	local = make([]dep.Update, 0, len(chosen))
 	for i, u := range updates {
-		if !u.Maintenance() && chosen[occ{u.Dep.File, u.Dep.RefSpan}] == i {
+		if j, ok := chosen[occ{u.Dep.File, u.Dep.RefSpan}]; !u.Maintenance() && ok && (j == i || sameSharedEdit(u, updates[j])) {
 			local = append(local, u)
 		} else {
 			separate[i] = true
 		}
 	}
 	return local, separate
+}
+
+// sameSharedEdit reports whether u and c are updates of distinct deps sharing a version
+// definition that write the same bytes.
+func sameSharedEdit(u, c dep.Update) bool {
+	return u.Dep.VersionRef != "" && !sameDep(u.Dep, c.Dep) && u.NewVersion == c.NewVersion && u.NewDigest == c.NewDigest &&
+		u.NewName == c.NewName && u.NewChecksum == c.NewChecksum && u.Lockfile == c.Lockfile
 }
 
 // commitPrefix renders the conventional-commit header of a title ("chore(deps): ").
@@ -135,32 +162,38 @@ func commitPrefix(ups []dep.Update, security bool) string {
 	return typ + "(" + scope + "): "
 }
 
+// groupTitle renders the PR title of g. A group with security updates (only shared version
+// definitions put them into a group) gets the security prefix and " [security]".
 func groupTitle(g Group) string {
 	if g.Manager == MaintenanceBranch {
 		return commitPrefix(g.Updates, false) + "lock file maintenance"
 	}
+	name := g.Name
+	security := slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return len(u.Advisories) > 0 })
 	if g.Manager == GroupManager {
 		names := map[string]bool{}
 		for _, u := range g.Updates {
 			names[u.Dep.Name] = true
 		}
-		if len(names) > 1 {
+		switch {
+		case len(names) == 1:
+			name = g.Updates[0].Dep.Name
+		case !security:
 			pre := commitPrefix(g.Updates, false)
 			if v, ok := sameVersion(g.Updates); ok {
 				return pre + "update " + g.Name + " to " + v
 			}
 			return fmt.Sprintf("%supdate %s (%d dependencies)", pre, g.Name, len(names))
 		}
-		return title(g.Updates[0].Dep.Name, g.Updates)
 	}
-	if slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return len(u.Advisories) > 0 }) {
+	if security {
 		pre := commitPrefix(g.Updates, true)
 		if v, ok := sameVersion(g.Updates); ok {
-			return pre + "update " + g.Name + " to " + v + " [security]"
+			return pre + "update " + name + " to " + v + " [security]"
 		}
-		return pre + "update " + g.Name + " [security]"
+		return pre + "update " + name + " [security]"
 	}
-	return title(g.Name, g.Updates)
+	return title(name, g.Updates)
 }
 
 // sameVersion returns the NewVersion shared by all updates.
