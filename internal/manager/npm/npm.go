@@ -4,9 +4,8 @@ package npm
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
-	"fmt"
 	"io"
 	"regexp"
 	"strings"
@@ -64,11 +63,13 @@ func (npmManager) Name() string { return Name }
 // Match reports whether the slash path is a package.json file.
 func (npmManager) Match(p string) bool { return matchRe.MatchString(p) }
 
-// Extract streams src with encoding/json and returns one Dep per entry of the dependency
-// sections plus the packageManager field. RefSpan covers only the version, so an operator
-// (^1.2.3) is preserved. Values the range grammar does not cover are skipped with a reason.
+// Extract streams src with encoding/json/jsontext and returns one Dep per entry of the
+// dependency sections plus the packageManager field. RefSpan covers only the version, so an
+// operator (^1.2.3) is preserved. Values the range grammar does not cover are skipped with a
+// reason. Duplicate names are accepted, as npm's JSON.parse does.
 func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
-	x := extractor{file: file, src: src, dec: json.NewDecoder(bytes.NewReader(src)), line: 1}
+	dec := jsontext.NewDecoder(bytes.NewReader(src), jsontext.AllowDuplicateNames(true))
+	x := extractor{file: file, src: src, dec: dec, line: 1}
 	if err := x.run(); err != nil {
 		if errors.Is(err, io.EOF) {
 			err = io.ErrUnexpectedEOF // a truncated document, not a clean end
@@ -87,7 +88,7 @@ func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 type extractor struct {
 	file string
 	src  []byte
-	dec  *json.Decoder
+	dec  *jsontext.Decoder
 	deps []dep.Dep
 
 	// line is the 1-based line of offset pos; offsets only grow, so lines are counted
@@ -96,14 +97,14 @@ type extractor struct {
 }
 
 func (x *extractor) run() error {
-	tok, err := x.dec.Token()
+	tok, err := x.dec.ReadToken()
 	if err != nil {
 		return err
 	}
-	if tok != json.Delim('{') {
+	if tok.Kind() != '{' {
 		return errors.New("top level is not an object")
 	}
-	for x.dec.More() {
+	for x.dec.PeekKind() != '}' {
 		key, err := x.key()
 		if err != nil {
 			return err
@@ -116,40 +117,37 @@ func (x *extractor) run() error {
 		case key == DepTypeEngines || key == DepTypeVolta:
 			err = x.tools(key)
 		default:
-			err = skipValue(x.dec)
+			err = x.dec.SkipValue()
 		}
 		if err != nil {
 			return err
 		}
 	}
-	_, err = x.dec.Token()
+	_, err = x.dec.ReadToken()
 	return err
 }
 
+// key reads an object member name.
 func (x *extractor) key() (string, error) {
-	tok, err := x.dec.Token()
+	tok, err := x.dec.ReadToken()
 	if err != nil {
 		return "", err
 	}
-	k, ok := tok.(string)
-	if !ok {
-		return "", fmt.Errorf("unexpected token %v", tok)
-	}
-	return k, nil
+	return tok.String(), nil
 }
 
 // value reads the next value; ok is false (and the value consumed) when it is not a string.
 // span is the content of the quoted string, or the zero span when the raw bytes differ from
 // the decoded string (escapes).
 func (x *extractor) value() (s string, span dep.Span, ok bool, err error) {
-	tok, err := x.dec.Token()
+	if x.dec.PeekKind() != '"' {
+		return "", dep.Span{}, false, x.dec.SkipValue()
+	}
+	tok, err := x.dec.ReadToken()
 	if err != nil {
 		return "", dep.Span{}, false, err
 	}
-	s, ok = tok.(string)
-	if !ok {
-		return "", dep.Span{}, false, skipRest(x.dec, tok)
-	}
+	s = tok.String()
 	end := int(x.dec.InputOffset())
 	start := end - len(s) - 2
 	if start >= 0 && x.src[start] == '"' && x.src[end-1] == '"' && string(x.src[start+1:end-1]) == s {
@@ -177,14 +175,10 @@ func (x *extractor) newDep(depType, name, raw string, span dep.Span) dep.Dep {
 }
 
 func (x *extractor) section(depType string) error {
-	tok, err := x.dec.Token()
-	if err != nil {
+	if ok, err := x.object(); !ok || err != nil {
 		return err
 	}
-	if tok != json.Delim('{') {
-		return skipRest(x.dec, tok)
-	}
-	for x.dec.More() {
+	for x.dec.PeekKind() != '}' {
 		name, err := x.key()
 		if err != nil {
 			return err
@@ -201,28 +195,24 @@ func (x *extractor) section(depType string) error {
 		x.finish(&d, span, ver, off, skip)
 		x.deps = append(x.deps, d)
 	}
-	_, err = x.dec.Token()
+	_, err := x.dec.ReadToken()
 	return err
 }
 
 // tools extracts the node/npm/pnpm/yarn entries of the engines or volta object; other keys
 // are ignored.
 func (x *extractor) tools(depType string) error {
-	tok, err := x.dec.Token()
-	if err != nil {
+	if ok, err := x.object(); !ok || err != nil {
 		return err
 	}
-	if tok != json.Delim('{') {
-		return skipRest(x.dec, tok)
-	}
-	for x.dec.More() {
+	for x.dec.PeekKind() != '}' {
 		name, err := x.key()
 		if err != nil {
 			return err
 		}
 		ds, known := tools[name]
 		if !known {
-			if err := skipValue(x.dec); err != nil {
+			if err := x.dec.SkipValue(); err != nil {
 				return err
 			}
 			continue
@@ -244,7 +234,7 @@ func (x *extractor) tools(depType string) error {
 		x.finish(&d, span, ver, off, skip)
 		x.deps = append(x.deps, d)
 	}
-	_, err = x.dec.Token()
+	_, err := x.dec.ReadToken()
 	return err
 }
 
@@ -329,31 +319,11 @@ func hasAnyPrefix(s string, prefixes ...string) bool {
 	return false
 }
 
-// skipValue consumes the next value.
-func skipValue(dec *json.Decoder) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return err
+// object reads the '{' of the next value and reports true; any other value is skipped.
+func (x *extractor) object() (bool, error) {
+	if x.dec.PeekKind() != '{' {
+		return false, x.dec.SkipValue()
 	}
-	return skipRest(dec, tok)
-}
-
-// skipRest consumes the rest of the value that started with tok.
-func skipRest(dec *json.Decoder, tok json.Token) error {
-	if tok != json.Delim('{') && tok != json.Delim('[') {
-		return nil
-	}
-	for depth := 1; depth > 0; {
-		t, err := dec.Token()
-		if err != nil {
-			return err
-		}
-		switch t {
-		case json.Delim('{'), json.Delim('['):
-			depth++
-		case json.Delim('}'), json.Delim(']'):
-			depth--
-		}
-	}
-	return nil
+	_, err := x.dec.ReadToken()
+	return err == nil, err
 }

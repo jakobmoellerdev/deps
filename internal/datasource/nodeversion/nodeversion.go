@@ -3,7 +3,8 @@ package nodeversion
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -105,18 +106,18 @@ func (s *Source) fetch(ctx context.Context) error {
 		return fmt.Errorf("GET %s: HTTP %d", s.url, resp.StatusCode)
 	}
 	// The index is an array of objects with large file lists; decode one element at a time.
-	dec := json.NewDecoder(resp.Body)
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
+	dec := jsontext.NewDecoder(resp.Body)
+	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
 		return fmt.Errorf("GET %s: malformed index", s.url)
 	}
 	s.times = map[string]time.Time{}
 	var derived []datasource.Release
-	for dec.More() {
+	for dec.PeekKind() != ']' {
 		var r struct {
 			Version string `json:"version"`
 			Date    string `json:"date"`
 		}
-		if err := dec.Decode(&r); err != nil {
+		if err := json.UnmarshalDecode(dec, &r); err != nil {
 			return fmt.Errorf("GET %s: %w", s.url, err)
 		}
 		if r.Version == "" {

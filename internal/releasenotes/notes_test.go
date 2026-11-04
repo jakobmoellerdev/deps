@@ -2,7 +2,7 @@ package releasenotes
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -355,7 +355,7 @@ func newForge(t *testing.T) *forge {
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(rels)
+		_ = json.MarshalWrite(w, rels)
 	}))
 	f.srv.Config.ErrorLog = log.New(io.Discard, "", 0) // handshakes aborted by canceled requests
 	f.srv.StartTLS()
@@ -367,11 +367,12 @@ func newForge(t *testing.T) *forge {
 func (f *forge) graphql(w http.ResponseWriter, r *http.Request) {
 	var q struct {
 		Variables struct {
-			Owner, Name string
-			First       int
+			Owner string `json:"owner"`
+			Name  string `json:"name"`
+			First int    `json:"first"`
 		} `json:"variables"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&q)
+	_ = json.UnmarshalRead(r.Body, &q)
 	v := q.Variables
 	f.reqs = append(f.reqs, fmt.Sprintf("%s /graphql %s/%s first=%d", r.Header.Get("Authorization"), v.Owner, v.Name, v.First))
 	p := "/repos/" + v.Owner + "/" + v.Name
@@ -389,7 +390,7 @@ func (f *forge) graphql(w http.ResponseWriter, r *http.Request) {
 	for i, rel := range rels {
 		nodes[i] = map[string]any{"tagName": rel["tag_name"], "url": rel["html_url"], "description": rel["body"], "isDraft": rel["draft"] == true, "isPrerelease": rel["prerelease"] == true}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"releases": map[string]any{"nodes": nodes}}}})
+	_ = json.MarshalWrite(w, map[string]any{"data": map[string]any{"repository": map[string]any{"releases": map[string]any{"nodes": nodes}}}})
 }
 
 // newNotes returns Notes whose github.com API is served by f.

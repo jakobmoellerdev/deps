@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"maps"
 	"regexp"
@@ -46,11 +47,12 @@ func configSchema() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := json.MarshalIndent(s, "", "  ")
+	// v2 escapes no HTML characters, so descriptions like "(?P<version>)" stay readable.
+	b, err := json.Marshal(s, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("marshal schema: %w", err)
 	}
-	return append(unescapeHTML(b), '\n'), nil
+	return append(b, '\n'), nil
 }
 
 // reflectConfig reflects config.Config into a JSON Schema. Keys come from the yaml tags, enums,
@@ -127,32 +129,4 @@ func allowCustomDatasources(s *jsonschema.Schema) {
 	anyOf(s.Definitions["Custom"].Properties.Value("datasource"))
 	anyOf(s.Definitions["Rule"].Properties.Value("datasources").Items)
 	s.Properties.Value("customDatasources").PropertyNames = &jsonschema.Schema{Pattern: config.CustomDatasourceNamePattern}
-}
-
-// unescapeHTML undoes encoding/json's HTML escaping of <, > and & so descriptions like
-// "(?P<version>)" stay readable. Escaped backslashes are skipped as pairs, so a literal
-// `\u003c` text is left alone.
-func unescapeHTML(b []byte) []byte {
-	out := b[:0]
-	for i := 0; i < len(b); i++ {
-		if b[i] != '\\' || i+1 >= len(b) {
-			out = append(out, b[i])
-			continue
-		}
-		if i+5 < len(b) && b[i+1] == 'u' && b[i+2] == '0' && b[i+3] == '0' {
-			switch string(b[i+4 : i+6]) {
-			case "3c":
-				out, i = append(out, '<'), i+5
-				continue
-			case "3e":
-				out, i = append(out, '>'), i+5
-				continue
-			case "26":
-				out, i = append(out, '&'), i+5
-				continue
-			}
-		}
-		out, i = append(out, b[i], b[i+1]), i+1
-	}
-	return out
 }

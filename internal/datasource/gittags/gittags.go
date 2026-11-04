@@ -9,7 +9,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -265,7 +265,7 @@ func (l *Lister) getJSON(ctx context.Context, u *url.URL, path string, v any) (f
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		return false, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	if json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(v) != nil {
+	if json.UnmarshalRead(io.LimitReader(resp.Body, 16<<20), v) != nil {
 		return false, nil
 	}
 	return true, nil

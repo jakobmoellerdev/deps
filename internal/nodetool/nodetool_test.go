@@ -9,7 +9,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"maps"
 	"net/http"
@@ -61,7 +61,7 @@ func registry(t *testing.T) *httptest.Server {
 				}}
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"name": "tiny", "dist-tags": map[string]string{"latest": "1.1.0"}, "versions": versions})
+			_ = json.MarshalWrite(w, map[string]any{"name": "tiny", "dist-tags": map[string]string{"latest": "1.1.0"}, "versions": versions})
 			return
 		}
 		for v, b := range tgz {

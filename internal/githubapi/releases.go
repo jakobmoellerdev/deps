@@ -2,7 +2,8 @@ package githubapi
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -187,16 +188,16 @@ func (c *Client) restPage(ctx context.Context, r Repo, l *List) (bool, error) {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return false, statusError(resp)
 	}
-	dec := json.NewDecoder(resp.Body)
-	tok, err := dec.Token()
-	if err == nil && tok != json.Delim('[') {
+	dec := jsontext.NewDecoder(resp.Body)
+	tok, err := dec.ReadToken()
+	if err == nil && tok.Kind() != '[' {
 		err = errors.New("not an array")
 	}
 	if err != nil {
 		return false, fmt.Errorf("malformed response: %w", err)
 	}
 	n := 0
-	for dec.More() {
+	for dec.PeekKind() != ']' {
 		var rel struct {
 			TagName     string     `json:"tag_name"`
 			Draft       bool       `json:"draft"`
@@ -204,7 +205,7 @@ func (c *Client) restPage(ctx context.Context, r Repo, l *List) (bool, error) {
 			Assets      []Asset    `json:"assets"`
 			PublishedAt *time.Time `json:"published_at"`
 		}
-		if err := dec.Decode(&rel); err != nil {
+		if err := json.UnmarshalDecode(dec, &rel); err != nil {
 			return false, fmt.Errorf("malformed response: %w", err)
 		}
 		n++
@@ -217,7 +218,7 @@ func (c *Client) restPage(ctx context.Context, r Repo, l *List) (bool, error) {
 		}
 		l.add(out)
 	}
-	if _, err := dec.Token(); err != nil {
+	if _, err := dec.ReadToken(); err != nil {
 		return false, fmt.Errorf("malformed response: %w", err)
 	}
 	return n >= PageSize, nil
@@ -280,7 +281,7 @@ func (c *Client) releaseTime(ctx context.Context, r Repo, tag string) (time.Time
 			Draft       bool       `json:"draft"`
 			PublishedAt *time.Time `json:"published_at"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		if err := json.UnmarshalRead(resp.Body, &raw); err != nil {
 			return time.Time{}, fmt.Errorf("malformed response: %w", err)
 		}
 		rel.IsDraft, rel.PublishedAt = raw.Draft, raw.PublishedAt
@@ -422,11 +423,11 @@ func (c *Client) restNotes(ctx context.Context, r Repo, first int, each func(Not
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return statusError(resp)
 	}
-	dec := json.NewDecoder(resp.Body)
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
+	dec := jsontext.NewDecoder(resp.Body)
+	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
 		return errors.New("malformed response: not a release list")
 	}
-	for dec.More() {
+	for dec.PeekKind() != ']' {
 		var raw struct {
 			TagName    string `json:"tag_name"`
 			HTMLURL    string `json:"html_url"`
@@ -434,7 +435,7 @@ func (c *Client) restNotes(ctx context.Context, r Repo, first int, each func(Not
 			Draft      bool   `json:"draft"`
 			Prerelease bool   `json:"prerelease"`
 		}
-		if err := dec.Decode(&raw); err != nil {
+		if err := json.UnmarshalDecode(dec, &raw); err != nil {
 			return fmt.Errorf("malformed response: %w", err)
 		}
 		each(Note{Tag: raw.TagName, URL: raw.HTMLURL, Body: raw.Body, Draft: raw.Draft, Prerelease: raw.Prerelease})

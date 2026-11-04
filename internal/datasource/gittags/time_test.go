@@ -1,7 +1,7 @@
 package gittags
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,7 +37,7 @@ func TestReleaseTime(t *testing.T) {
 			var q struct {
 				Variables map[string]any `json:"variables"`
 			}
-			_ = json.NewDecoder(r.Body).Decode(&q)
+			_ = json.UnmarshalRead(r.Body, &q)
 			v := map[string]string{}
 			for k, x := range q.Variables {
 				v[k], _ = x.(string)

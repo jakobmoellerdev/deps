@@ -1,10 +1,11 @@
 package customds
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -87,8 +88,8 @@ func isIdent(c byte, first bool) bool {
 func (s Selector) String() string { return s.src }
 
 // Select evaluates the selector on a decoded document (map[string]any, []any, string,
-// json.Number, bool, float64 or nil) and returns the selected scalars as text; nulls are
-// dropped.
+// jsontext.Value holding a number's source text, bool or nil) and returns the selected scalars
+// as text; nulls are dropped.
 func (s Selector) Select(doc any) ([]string, error) {
 	vals := []any{doc}
 	for _, st := range s.stages {
@@ -108,10 +109,10 @@ func (s Selector) Select(doc any) ([]string, error) {
 		case nil:
 		case string:
 			out = append(out, v)
-		case json.Number:
-			out = append(out, v.String())
-		case bool, float64:
-			out = append(out, fmt.Sprint(v))
+		case jsontext.Value:
+			out = append(out, string(v))
+		case bool:
+			out = append(out, strconv.FormatBool(v))
 		default:
 			return nil, fmt.Errorf("selector %q: yields %s, want strings", s.src, typeName(v))
 		}

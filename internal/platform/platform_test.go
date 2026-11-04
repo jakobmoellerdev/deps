@@ -2,7 +2,7 @@ package platform
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -215,7 +215,7 @@ func fakeAPI(t *testing.T, kind Kind, totalPRs int) (*httptest.Server, *[]record
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := recorded{method: r.Method, uri: r.URL.RequestURI(), auth: r.Header.Get("Authorization"), accept: r.Header.Get("Accept"), apiVer: r.Header.Get("X-GitHub-Api-Version")}
 		if r.Body != nil {
-			_ = json.NewDecoder(r.Body).Decode(&rec.body)
+			_ = json.UnmarshalRead(r.Body, &rec.body)
 		}
 		mu.Lock()
 		reqs = append(reqs, rec)

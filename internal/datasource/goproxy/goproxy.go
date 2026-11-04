@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -154,7 +154,7 @@ func (s *Source) releaseTime(ctx context.Context, modPath, version, dir string) 
 		}
 		defer resp.Body.Close()
 		var info struct{ Time *time.Time }
-		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&info); err != nil {
+		if err := json.UnmarshalRead(io.LimitReader(resp.Body, 1<<20), &info); err != nil {
 			return false, fmt.Errorf("GET %s: %w", target, err)
 		}
 		if info.Time != nil {

@@ -2,7 +2,8 @@ package releasenotes
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -100,12 +101,12 @@ func (n *Notes) fetchGitea(ctx context.Context, r repoRef) ([]release, error) {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("GET %s: HTTP %d", req.URL.Redacted(), resp.StatusCode)
 	}
-	dec := json.NewDecoder(resp.Body)
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
+	dec := jsontext.NewDecoder(resp.Body)
+	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
 		return nil, fmt.Errorf("GET %s: not a release list", req.URL.Redacted())
 	}
 	var rels []release
-	for dec.More() {
+	for dec.PeekKind() != ']' {
 		var raw struct {
 			TagName    string `json:"tag_name"`
 			HTMLURL    string `json:"html_url"`
@@ -113,7 +114,7 @@ func (n *Notes) fetchGitea(ctx context.Context, r repoRef) ([]release, error) {
 			Draft      bool   `json:"draft"`
 			Prerelease bool   `json:"prerelease"`
 		}
-		if err := dec.Decode(&raw); err != nil {
+		if err := json.UnmarshalDecode(dec, &raw); err != nil {
 			return nil, fmt.Errorf("GET %s: %w", req.URL.Redacted(), err)
 		}
 		if raw.TagName != "" {

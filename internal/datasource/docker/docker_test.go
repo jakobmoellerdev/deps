@@ -2,7 +2,7 @@ package dockerds
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -204,7 +204,7 @@ func TestLargeTagList(t *testing.T) {
 		for i := range tags {
 			tags[i] = fmt.Sprintf("1.0.%d-%s", i, strings.Repeat("x", 20))
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"name": "img", "tags": tags})
+		_ = json.MarshalWrite(w, map[string]any{"name": "img", "tags": tags})
 	}))
 	t.Cleanup(srv.Close)
 	host := strings.TrimPrefix(srv.URL, "http://")

@@ -1,7 +1,7 @@
 package dockerds
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"maps"
 	"net/http"
 	"slices"
@@ -102,7 +102,7 @@ func (r *memRegistry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		list := slices.Sorted(maps.Keys(tags))
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"name": repo, "tags": list})
+		_ = json.MarshalWrite(w, map[string]any{"name": repo, "tags": list})
 		return
 	}
 	var dg digest.Digest
@@ -131,5 +131,5 @@ func (r *memRegistry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func registryError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]string{{"code": code, "message": strings.ToLower(code)}}})
+	_ = json.MarshalWrite(w, map[string]any{"errors": []map[string]string{{"code": code, "message": strings.ToLower(code)}}})
 }

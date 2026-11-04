@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,7 +29,7 @@ func (o *openPRNet) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	rec := httptest.NewRecorder()
 	if req.URL.Query().Get("state") == "open" && req.URL.Query().Get("page") == "1" {
-		_ = json.NewEncoder(rec).Encode([]any{o.pr})
+		_ = json.MarshalWrite(rec, []any{o.pr})
 	} else {
 		_, _ = rec.WriteString("[]")
 	}

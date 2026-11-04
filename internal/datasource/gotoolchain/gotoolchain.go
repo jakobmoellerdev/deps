@@ -2,8 +2,10 @@
 package gotoolchain
 
 import (
+	"cmp"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -74,18 +76,18 @@ func (s *Source) fetch(ctx context.Context) ([]datasource.Release, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GET %s: HTTP %d", s.url, resp.StatusCode)
 	}
-	dec := json.NewDecoder(resp.Body)
-	if _, err := dec.Token(); err != nil { // '['
-		return nil, fmt.Errorf("GET %s: %w", s.url, err)
+	dec := jsontext.NewDecoder(resp.Body)
+	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
+		return nil, fmt.Errorf("GET %s: %w", s.url, cmp.Or(err, errors.New("not an array")))
 	}
 	var out []datasource.Release
 	minors := map[string]bool{}
-	for dec.More() {
+	for dec.PeekKind() != ']' {
 		var r struct {
 			Version string `json:"version"`
 			Stable  bool   `json:"stable"`
 		}
-		if err := dec.Decode(&r); err != nil {
+		if err := json.UnmarshalDecode(dec, &r); err != nil {
 			return nil, fmt.Errorf("GET %s: %w", s.url, err)
 		}
 		v, ok := strings.CutPrefix(r.Version, "go")

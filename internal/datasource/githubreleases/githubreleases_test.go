@@ -2,7 +2,7 @@ package githubreleases
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -388,7 +388,7 @@ func TestGraphQL(t *testing.T) {
 	s, _ := newSource(t, func(w http.ResponseWriter, r *http.Request) {
 		var q gqlReq
 		if r.Method != http.MethodPost || r.URL.Path != "/graphql" || r.Header.Get("Authorization") != "Bearer ghtok" ||
-			json.NewDecoder(r.Body).Decode(&q) != nil {
+			json.UnmarshalRead(r.Body, &q) != nil {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL)
 		}
 		v := q.Variables

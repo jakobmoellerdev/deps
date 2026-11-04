@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -51,7 +51,7 @@ type fakeNet struct {
 // record decodes a JSON request body into *dst under f.mu.
 func (f *fakeNet) record(w http.ResponseWriter, r *http.Request, dst *[]map[string]any) bool {
 	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.UnmarshalRead(r.Body, &body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return false
 	}
@@ -84,10 +84,12 @@ func newFakeNet(t *testing.T) *fakeNet {
 	f.mux.HandleFunc("POST api.osv.dev/v1/querybatch", func(w http.ResponseWriter, r *http.Request) {
 		var q struct {
 			Queries []struct {
-				Package struct{ Name string }
-			}
+				Package struct {
+					Name string `json:"name"`
+				} `json:"package"`
+			} `json:"queries"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+		if err := json.UnmarshalRead(r.Body, &q); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -125,7 +127,7 @@ func newFakeNet(t *testing.T) *fakeNet {
 	})
 	f.mux.HandleFunc("POST git.test/api/v1/repos/o/r/pulls", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.UnmarshalRead(r.Body, &body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

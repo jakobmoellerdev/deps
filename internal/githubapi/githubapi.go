@@ -10,7 +10,7 @@ package githubapi
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -205,7 +205,7 @@ func graphql[T any](ctx context.Context, c *Client, r Repo, query string, vars m
 		Errors []gqlError `json:"errors"`
 	}
 	res.Data = out
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &res); err != nil {
 		return fmt.Errorf("malformed response: %w", err)
 	}
 	if len(res.Errors) > 0 {

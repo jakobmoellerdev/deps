@@ -3,7 +3,8 @@ package platform
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -88,7 +89,7 @@ func (r *rest) doURL(ctx context.Context, method, url, label string, in, out any
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.UnmarshalRead(resp.Body, out); err != nil {
 		return fmt.Errorf("%s %s: decode: %w", method, label, err)
 	}
 	return nil
@@ -106,8 +107,8 @@ type apiRepo struct {
 	DefaultMergeStyle string `json:"default_merge_style"`
 	// Both: has_issues false disables the tracker; Gitea/Forgejo also report an external
 	// tracker (external_tracker non-null), which leaves the issue API at 404.
-	HasIssues       *bool           `json:"has_issues"`
-	ExternalTracker json.RawMessage `json:"external_tracker"`
+	HasIssues       *bool          `json:"has_issues"`
+	ExternalTracker jsontext.Value `json:"external_tracker"`
 }
 
 // repository returns the repository JSON, fetched once per client.
@@ -127,17 +128,17 @@ func (r *rest) repository(ctx context.Context, h func(http.Header)) (*apiRepo, e
 
 // apiPR covers the PR JSON of GitHub and Gitea/Forgejo.
 type apiPR struct {
-	Number    int             `json:"number"`
-	NodeID    string          `json:"node_id"`
-	Title     string          `json:"title"`
-	Body      string          `json:"body"`
-	State     string          `json:"state"`
-	HTMLURL   string          `json:"html_url"`
-	Merged    bool            `json:"merged"`
-	MergedAt  *string         `json:"merged_at"`
-	Mergeable *bool           `json:"mergeable"`
-	AutoMerge json.RawMessage `json:"auto_merge"`
-	CreatedAt time.Time       `json:"created_at"`
+	Number    int            `json:"number"`
+	NodeID    string         `json:"node_id"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body"`
+	State     string         `json:"state"`
+	HTMLURL   string         `json:"html_url"`
+	Merged    bool           `json:"merged"`
+	MergedAt  *string        `json:"merged_at"`
+	Mergeable *bool          `json:"mergeable"`
+	AutoMerge jsontext.Value `json:"auto_merge"`
+	CreatedAt time.Time      `json:"created_at"`
 	Head      struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
@@ -163,11 +164,11 @@ type prCreate struct {
 
 // apiIssue covers the issue JSON of GitHub and Gitea/Forgejo.
 type apiIssue struct {
-	Number      int             `json:"number"`
-	Title       string          `json:"title"`
-	Body        string          `json:"body"`
-	HTMLURL     string          `json:"html_url"`
-	PullRequest json.RawMessage `json:"pull_request"` // non-null for PRs in issue lists
+	Number      int            `json:"number"`
+	Title       string         `json:"title"`
+	Body        string         `json:"body"`
+	HTMLURL     string         `json:"html_url"`
+	PullRequest jsontext.Value `json:"pull_request"` // non-null for PRs in issue lists
 }
 
 func (i *apiIssue) issue() Issue {

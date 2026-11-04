@@ -2,7 +2,8 @@ package nodetool
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -17,8 +18,8 @@ import (
 
 // rootManifest holds the package.json fields of a lock root that nodetool needs.
 type rootManifest struct {
-	PackageManager string          `json:"packageManager"`
-	Workspaces     json.RawMessage `json:"workspaces"`
+	PackageManager string         `json:"packageManager"`
+	Workspaces     jsontext.Value `json:"workspaces"`
 }
 
 // parseRoot decodes the root package.json; a document without the fields (checked with a
@@ -28,9 +29,13 @@ func parseRoot(pkg []byte) (rootManifest, error) {
 	if !bytes.Contains(pkg, []byte(`"workspaces"`)) && !bytes.Contains(pkg, []byte(`"packageManager"`)) {
 		return m, nil
 	}
-	err := json.Unmarshal(pkg, &m)
+	err := json.Unmarshal(pkg, &m, lenient)
 	return m, err
 }
+
+// lenient accepts package.json files with duplicate names (the last wins), as npm's
+// JSON.parse does.
+var lenient = jsontext.AllowDuplicateNames(true)
 
 // tool returns the tool and version of the packageManager field (`pnpm@9.1.0+sha512.…`).
 func (m rootManifest) tool() (name, version string) {
@@ -59,7 +64,7 @@ func parseWorkspaces(m rootManifest, pnpmWS []byte) (workspaces, error) {
 		var obj struct {
 			Packages []string `json:"packages"`
 		}
-		if err := json.Unmarshal(raw, &obj); err != nil {
+		if err := json.Unmarshal(raw, &obj, lenient); err != nil {
 			return workspaces{}, err
 		}
 		globs = obj.Packages
@@ -268,7 +273,7 @@ func WorkspacePackages(dir string) (map[string]bool, error) {
 		var pkg struct {
 			Name string `json:"name"`
 		}
-		if err := json.Unmarshal(b, &pkg); err != nil {
+		if err := json.Unmarshal(b, &pkg, lenient); err != nil {
 			slog.Debug("workspace package unparsable", "file", p, "err", err)
 			continue
 		}

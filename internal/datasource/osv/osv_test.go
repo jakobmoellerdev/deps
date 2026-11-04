@@ -2,7 +2,7 @@ package osv
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -53,8 +53,10 @@ func (f *fakeOSV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
 			f.t.Errorf("Content-Type = %q", ct)
 		}
-		var req struct{ Queries []query }
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var req struct {
+			Queries []query `json:"queries"`
+		}
+		if err := json.UnmarshalRead(r.Body, &req); err != nil {
 			f.t.Errorf("decode: %v", err)
 		}
 		f.mu.Lock()
@@ -369,7 +371,7 @@ func TestAdvisoriesErrors(t *testing.T) {
 		{"vuln malformed", func(f *fakeOSV) {
 			f.results["Go|example.com/m|v1.0.0|"] = result{ids: []string{"GO-A"}}
 			f.vulns["GO-A"] = `{"id":`
-		}, "/v1/vulns/GO-A: unexpected EOF"},
+		}, "/v1/vulns/GO-A: jsontext: unexpected EOF"},
 		{"repeated token", func(f *fakeOSV) {
 			f.results["Go|example.com/m|v1.0.0|"] = result{token: "t"}
 			f.results["Go|example.com/m|v1.0.0|t"] = result{token: "t"}

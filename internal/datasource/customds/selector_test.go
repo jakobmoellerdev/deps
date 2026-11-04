@@ -1,7 +1,7 @@
 package customds
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"slices"
 	"strings"
 	"testing"
@@ -10,7 +10,7 @@ import (
 func TestSelect(t *testing.T) {
 	doc := map[string]any{
 		"releases": map[string]any{"v2": map[string]any{}, "v1": nil},
-		"list":     []any{map[string]any{"tag": "a"}, map[string]any{"tag": json.Number("2")}, map[string]any{"tag": true}},
+		"list":     []any{map[string]any{"tag": "a"}, map[string]any{"tag": jsontext.Value("2")}, map[string]any{"tag": true}},
 		"s":        "x",
 	}
 	for _, c := range []struct{ sel, want, err string }{
@@ -47,18 +47,6 @@ func TestSelect(t *testing.T) {
 			t.Errorf("%s = %v, %v; want %q", c.sel, got, err, c.want)
 		}
 	}
-	if got, err := mustSelector(t, ".").Select(3.5); err != nil || !slices.Equal(got, []string{"3.5"}) {
-		t.Errorf("float = %v, %v", got, err)
-	}
-}
-
-func mustSelector(t *testing.T, s string) Selector {
-	t.Helper()
-	sel, err := ParseSelector(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return sel
 }
 
 func TestParseSelectorErrors(t *testing.T) {

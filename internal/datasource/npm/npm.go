@@ -11,8 +11,8 @@ import (
 	"bufio"
 	"cmp"
 	"context"
-	"encoding/json"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -516,18 +516,17 @@ func decodeTimes(dec *jsontext.Decoder) (map[string]string, error) {
 // decodeVersions streams the metadata document and returns the versions that are not
 // deprecated; only one version object is buffered at a time.
 func decodeVersions(r io.Reader) (rels []datasource.Release, deprecated int, err error) {
-	dec := json.NewDecoder(r)
+	dec := jsontext.NewDecoder(r)
 	if err := expectDelim(dec, '{'); err != nil {
 		return nil, 0, err
 	}
-	for dec.More() {
-		tok, err := dec.Token()
+	for dec.PeekKind() != '}' {
+		tok, err := dec.ReadToken()
 		if err != nil {
 			return nil, 0, err
 		}
-		if tok != "versions" {
-			var skip json.RawMessage
-			if err := dec.Decode(&skip); err != nil {
+		if tok.String() != "versions" {
+			if err := dec.SkipValue(); err != nil {
 				return nil, 0, err
 			}
 			continue
@@ -535,16 +534,16 @@ func decodeVersions(r io.Reader) (rels []datasource.Release, deprecated int, err
 		if err := expectDelim(dec, '{'); err != nil {
 			return nil, 0, err
 		}
-		for dec.More() {
-			tok, err := dec.Token()
+		for dec.PeekKind() != '}' {
+			tok, err := dec.ReadToken()
 			if err != nil {
 				return nil, 0, err
 			}
-			v, _ := tok.(string)
+			v := tok.String() // tokens are only valid until the next read
 			var meta struct {
 				Deprecated any `json:"deprecated"`
 			}
-			if err := dec.Decode(&meta); err != nil {
+			if err := json.UnmarshalDecode(dec, &meta); err != nil {
 				return nil, 0, err
 			}
 			if isDeprecated(meta.Deprecated) {
@@ -553,11 +552,11 @@ func decodeVersions(r io.Reader) (rels []datasource.Release, deprecated int, err
 			}
 			rels = append(rels, datasource.Release{Version: v})
 		}
-		if _, err := dec.Token(); err != nil {
+		if _, err := dec.ReadToken(); err != nil {
 			return nil, 0, err
 		}
 	}
-	if _, err := dec.Token(); err != nil {
+	if _, err := dec.ReadToken(); err != nil {
 		return nil, 0, err
 	}
 	return rels, deprecated, nil
@@ -575,13 +574,13 @@ func isDeprecated(v any) bool {
 	return false
 }
 
-func expectDelim(dec *json.Decoder, d json.Delim) error {
-	tok, err := dec.Token()
+func expectDelim(dec *jsontext.Decoder, d jsontext.Kind) error {
+	tok, err := dec.ReadToken()
 	if err != nil {
 		return err
 	}
-	if tok != d {
-		return fmt.Errorf("expected %v, got %v", d, tok)
+	if tok.Kind() != d {
+		return fmt.Errorf("expected %v, got %v", d, tok.Kind())
 	}
 	return nil
 }

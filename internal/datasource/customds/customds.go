@@ -5,10 +5,10 @@
 package customds
 
 import (
-	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -203,14 +203,21 @@ func (s *Source) values(body []byte) ([]string, error) {
 		}
 		return s.sel.Select(doc)
 	}
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.UseNumber()
 	var doc any
-	if err := dec.Decode(&doc); err != nil {
+	if err := json.Unmarshal(body, &doc, keepNumbers); err != nil {
 		return nil, err
 	}
 	return s.sel.Select(doc)
 }
+
+// keepNumbers decodes JSON numbers into `any` as their source text (jsontext.Value), so `1.20`
+// stays `1.20` as in YAML documents, instead of the float64 1.2.
+var keepNumbers = json.WithUnmarshalers(json.UnmarshalFromFunc(func(dec *jsontext.Decoder, v *any) error {
+	if dec.PeekKind() == '0' {
+		*v = jsontext.Value(nil)
+	}
+	return errors.ErrUnsupported // decode into the preset type, or as usual
+}))
 
 // fromYAML converts a yaml node to the selector's document model. Scalars stay text as written
 // (`1.20` is not the number 1.2), nulls are nil.

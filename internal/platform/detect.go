@@ -2,7 +2,7 @@ package platform
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -189,9 +189,9 @@ func probeOK(ctx context.Context, c *http.Client, u string, needVersion, signInJ
 		if !needVersion {
 			return true
 		}
-		return json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&v) == nil && v.Version != nil
+		return json.UnmarshalRead(io.LimitReader(resp.Body, 1<<16), &v) == nil && v.Version != nil
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return signInJSON && json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&v) == nil && v.Message != nil
+		return signInJSON && json.UnmarshalRead(io.LimitReader(resp.Body, 1<<16), &v) == nil && v.Message != nil
 	}
 	return false
 }

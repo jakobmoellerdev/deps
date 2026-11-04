@@ -2,7 +2,7 @@ package githubapi
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -54,7 +54,7 @@ func newServer(t *testing.T, auth *httpx.Auth, h func(w http.ResponseWriter, q g
 		}
 		var q gql
 		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer tok" || r.Header.Get("Content-Type") != "application/json" ||
-			json.NewDecoder(r.Body).Decode(&q) != nil {
+			json.UnmarshalRead(r.Body, &q) != nil {
 			t.Errorf("bad GraphQL request %s %v", r.Method, r.Header)
 		}
 		s.mu.Lock()
@@ -179,7 +179,7 @@ func TestGraphQLErrors(t *testing.T) {
 		"other":        "releases o/other: graphql: Field 'x' doesn't exist; boom",
 		"unauthorized": "releases o/unauthorized: HTTP 401",
 		"exhausted":    "releases o/exhausted: HTTP 403: rate limit exceeded (resets 2026-11-03T12:00:00Z)",
-		"html":         "releases o/html: malformed response: invalid character '<'",
+		"html":         "releases o/html: malformed response: jsontext: invalid character '<' at start of value",
 	} {
 		r := Repo{Scheme: "https", Host: "github.com", Owner: "o", Name: name}
 		for range 2 { // a failed list stays failed for the run

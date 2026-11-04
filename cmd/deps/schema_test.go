@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"regexp"
 	"slices"
 	"strings"
@@ -179,20 +179,6 @@ func datasourceEnum(t *testing.T, name string, n *schemaNode) *schemaNode {
 		}
 	}
 	return n.AnyOf[0]
-}
-
-func TestUnescapeHTML(t *testing.T) {
-	for in, want := range map[string]string{
-		`"\u003ca\u003e \u0026"`: `"<a> &"`,
-		`"\\u003c"`:              `"\\u003c"`,
-		`"\u00e9\n\\"`:           `"\u00e9\n\\"`,
-		`\`:                      `\`,
-		`"\u003`:                 `"\u003`,
-	} {
-		if got := string(unescapeHTML([]byte(in))); got != want {
-			t.Errorf("unescapeHTML(%s) = %s, want %s", in, got, want)
-		}
-	}
 }
 
 func TestAddKeyDocsRejectsUnknownKeys(t *testing.T) {

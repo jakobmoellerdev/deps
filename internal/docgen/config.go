@@ -1,7 +1,7 @@
 package docgen
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"strconv"
@@ -228,7 +228,7 @@ func value(v any) string {
 		}
 		return strings.Join(parts, ", ")
 	}
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		return codeSpan(fmt.Sprint(v))
 	}

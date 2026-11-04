@@ -26,7 +26,7 @@ package osv
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -373,7 +373,7 @@ func (s *Source) do(ctx context.Context, method, u string, body []byte, out any)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s %s: HTTP %d", method, u, resp.StatusCode)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.UnmarshalRead(resp.Body, out); err != nil {
 		return fmt.Errorf("%s %s: %w", method, u, err)
 	}
 	return nil
