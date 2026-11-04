@@ -110,8 +110,10 @@ func (Locker) Process(ctx context.Context, dir string, manifests, files map[stri
 }
 
 // ProcessLocked is Process plus the lockfile-only updates (engine.LockfileUpdater): each moves
-// its crate from the locked version to the new one with `cargo update --package
-// <name>@<locked> --precise <version>`; the manifests keep their requirements.
+// its crate to the new version with `cargo update --package <name>@<from> --precise <version>`,
+// from the entry the earlier commands left in the locked version's compatibility range
+// (pinning a crate can move the crates it depends on); it is skipped when that entry already
+// has the version or a newer one. The manifests keep their requirements.
 func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error) {
 	if _, ok := files[lockFile]; !ok {
 		return nil, fmt.Errorf("lockfile-only updates need %s in %s", lockFile, dir)
@@ -180,30 +182,64 @@ func process(ctx context.Context, dir string, manifests, files map[string][]byte
 		if err := pinStale(ctx, base, dir, manifests, st); err != nil {
 			return nil, err
 		}
-		if out, err = os.ReadFile(lockPath); err != nil {
-			return nil, err
-		}
-	}
-	for _, u := range lockOnly {
-		p := pin{name: u.Dep.Name, locked: u.Dep.Locked, version: u.NewVersion}
-		if !slices.Contains(pins, p) {
-			pins = append(pins, p)
-		}
 	}
 	for _, p := range pins {
 		if err := cargo(ctx, base, dir, "update", "--package", p.name+"@"+p.locked, "--precise", p.version); err != nil {
 			return nil, err
 		}
 	}
-	if len(pins) > 0 {
+	var done []pin
+	for _, u := range lockOnly {
+		p := pin{name: u.Dep.Name, locked: u.Dep.Locked, version: u.NewVersion}
+		if slices.Contains(done, p) {
+			continue
+		}
+		done = append(done, p)
 		if out, err = os.ReadFile(lockPath); err != nil {
 			return nil, err
 		}
+		pkgs, err := registryPackages(out)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", lockFile, err)
+		}
+		from, ok := lockedNow(pkgs, p)
+		if !ok {
+			slog.DebugContext(ctx, "lockfile-only update already locked", "crate", p.name, "version", p.version)
+			continue
+		}
+		if err := cargo(ctx, base, dir, "update", "--package", p.name+"@"+from, "--precise", p.version); err != nil {
+			return nil, err
+		}
+	}
+	if out, err = os.ReadFile(lockPath); err != nil {
+		return nil, err
 	}
 	if bytes.Equal(out, lock) {
 		return nil, nil
 	}
 	return map[string][]byte{lockFile: out}, nil
+}
+
+// lockedNow returns the version lockfile-only pin p starts from in pkgs: the entry of the
+// locked version's compatibility range (Cargo locks at most one per range), which an earlier
+// command may have moved. ok is false when that entry already has p.version or a newer one,
+// or the crate is gone.
+func lockedNow(pkgs []lockedPackage, p pin) (string, bool) {
+	want, err1 := semver.StrictNewVersion(p.version)
+	old, err2 := semver.StrictNewVersion(p.locked)
+	if err1 != nil || err2 != nil {
+		return p.locked, true
+	}
+	var cur *semver.Version
+	for _, q := range pkgs {
+		if v, err := semver.StrictNewVersion(q.version); q.name == p.name && err == nil && compatible(v, old) {
+			cur = v
+		}
+	}
+	if cur == nil || !cur.LessThan(want) {
+		return "", false
+	}
+	return cur.Original(), true
 }
 
 // mirrorAncestors recreates the directories from the repository top (the nearest ancestor of

@@ -329,6 +329,34 @@ type engineUpdatePinner interface {
 	ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error)
 }
 
+// TestLockedNow: a lockfile-only pin starts from the entry the earlier commands left in the
+// locked version's compatibility range (helix@ba40e54: pinning futures-executor moves
+// futures-util, so `futures-util@0.3.32` no longer exists), and is skipped when that entry
+// already has the version.
+func TestLockedNow(t *testing.T) {
+	pkgs, err := registryPackages([]byte(lockOf("futures-util@0.3.34", "serde@1.0.229", "rand@0.8.5", "rand@0.9.2", "x@1.0.0")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		p    pin
+		want string // "" = skipped
+	}{
+		{pin{"futures-util", "0.3.32", "0.3.40"}, "0.3.34"}, // moved along by an earlier pin
+		{pin{"futures-util", "0.3.32", "0.3.33"}, ""},       // moved past the version
+		{pin{"serde", "1.0.100", "1.0.229"}, ""},            // already there
+		{pin{"rand", "0.8.1", "0.8.6"}, "0.8.5"},            // the entry of its compatibility range
+		{pin{"x", "1.0.0", "1.0.1"}, "1.0.0"},
+		{pin{"gone", "1.0.0", "1.0.1"}, ""},
+		{pin{"odd", "1.0.0", "1.0"}, "1.0.0"}, // not a full version: left to cargo
+	} {
+		got, ok := lockedNow(pkgs, tt.p)
+		if got != tt.want || ok != (tt.want != "") {
+			t.Errorf("%v: %q, %v; want %q", tt.p, got, ok, tt.want)
+		}
+	}
+}
+
 // engineLockfileUpdater mirrors engine.LockfileUpdater (the engine imports this package).
 type engineLockfileUpdater interface {
 	ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error)
