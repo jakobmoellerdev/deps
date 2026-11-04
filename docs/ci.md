@@ -25,8 +25,9 @@ deps behaves the same locally and in CI. In CI it detects the forge from the job
 The repository root has a composite [`action.yml`](../action.yml). The same file works unchanged on GitHub, Gitea and Forgejo. It runs these steps:
 
 1. **Resolve.** It picks the release (see `version`) and the binary for the runner (linux/amd64 or linux/arm64).
-2. **Reuse or download.** With `cache: true` it reuses a binary of that version from the tool cache or the Actions cache (see **Binary cache** below). Otherwise it downloads it with `checksums.txt`, verifies it with `sha256sum`, and saves it to the Actions cache. It prints `deps version`.
-3. **Run.** It runs `deps <args>` with `DEPS_TOKEN` set to the `token` input.
+2. **Preinstalled.** If `deps` is on PATH and `deps version` prints the resolved version, the action uses it and skips the cache and download steps (log: `deps: using preinstalled deps <version> (<path>)`). That binary is trusted as is, not checked against `checksums.txt`; set `use-preinstalled: false` to always take the cache/download path. It is not a cache, so `cache: false` does not disable it.
+3. **Reuse or download.** Otherwise, with `cache: true` it reuses a binary of that version from the tool cache or the Actions cache (see **Binary cache** below). Otherwise it downloads it with `checksums.txt`, verifies it with `sha256sum`, and saves it to the Actions cache. It prints `deps version`.
+4. **Run.** It runs `deps <args>` with `DEPS_TOKEN` set to the `token` input.
 
 Go is not needed to run it; only go.mod updates need `go` for `go mod tidy`.
 
@@ -38,7 +39,7 @@ Go is not needed to run it; only go.mod updates need `go` for `go mod tidy`.
 | `repository` | `https://github.com/jakobmoellerdev/deps` on github.com runners, `https://git.jakob-moeller.cloud/jakobmoellerdev/deps` elsewhere | where releases are downloaded from; see below |
 | `cache` | `true` | reuse a cached binary of the same version; `false` downloads every run |
 
-Outputs: `version` (the release that ran) and `cache-hit` (`true` if the binary came from a cache).
+Outputs: `version` (the release that ran) and `cache-hit` (`preinstalled` if a matching `deps` on PATH was used, `true` if the binary came from a cache, else `false`).
 
 The details are in the generated [action reference](reference/action.md).
 

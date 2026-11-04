@@ -223,9 +223,9 @@ rules:
 | `repository` | `https://github.com/jakobmoellerdev/deps` on github.com, the Gitea repository elsewhere | where the release binary is downloaded from |
 | `cache` | `true` | reuse a cached binary of the same version instead of downloading it; `false` downloads every run |
 
-Outputs: `version` (the release that ran) and `cache-hit` (`true` if the binary came from a cache).
+Outputs: `version` (the release that ran) and `cache-hit` (`preinstalled` if a matching `deps` on PATH was used, `true` if the binary came from a cache, else `false`).
 
-The action downloads the static binary for linux/amd64 or linux/arm64, verifies it against `checksums.txt`, and runs it. The runner needs no Go, except for `go mod tidy` on go.mod updates. A binary of the same version is reused from the runner's tool cache (self-hosted runners) or the forge's Actions cache (key `deps-<version>-linux-<arch>`), and only if it still matches its recorded checksum. Full reference: [docs/reference/action.md](docs/reference/action.md).
+The action downloads the static binary for linux/amd64 or linux/arm64, verifies it against `checksums.txt`, and runs it. If `deps` on PATH already prints that version (e.g. baked into the runner image), it is used as is and nothing is downloaded or cached; `use-preinstalled: false` turns that off. The runner needs no Go, except for `go mod tidy` on go.mod updates. A binary of the same version is reused from the runner's tool cache (self-hosted runners) or the forge's Actions cache (key `deps-<version>-linux-<arch>`), and only if it still matches its recorded checksum. Full reference: [docs/reference/action.md](docs/reference/action.md).
 
 ## Install
 

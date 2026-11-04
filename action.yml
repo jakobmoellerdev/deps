@@ -32,6 +32,13 @@ inputs:
       repositories work. Default: https://github.com/jakobmoellerdev/deps on github.com runners,
       https://git.jakob-moeller.cloud/jakobmoellerdev/deps elsewhere.
     default: ""
+  use-preinstalled:
+    description: >-
+      Use a `deps` already on PATH (e.g. baked into the runner image) when `deps version` prints the
+      resolved version; the cache and download steps are skipped then. The binary is trusted as is:
+      it is not checked against the release's checksums.txt. `false` always uses the cache/download
+      path.
+    default: "true"
   cache:
     description: >-
       Reuse a verified binary of the same version instead of downloading it. The runner's tool cache
@@ -46,9 +53,9 @@ outputs:
     value: ${{ steps.resolve.outputs.version }}
   cache-hit:
     description: >-
-      `true` if the binary came from the tool cache or the Actions cache, `false` if it was
-      downloaded.
-    value: ${{ steps.install.outputs.cache-hit }}
+      `preinstalled` if a matching `deps` on PATH was used, `true` if the binary came from the tool
+      cache or the Actions cache, `false` if it was downloaded.
+    value: ${{ steps.preinstalled.outputs.bin && 'preinstalled' || steps.install.outputs.cache-hit }}
 runs:
   using: composite
   steps:
@@ -107,9 +114,23 @@ runs:
           echo "dir=$dir"
           echo "key=deps-$VERSION-linux-$arch"
         } >> "$GITHUB_OUTPUT"
+    - name: Check for a preinstalled deps
+      id: preinstalled
+      if: inputs.use-preinstalled != 'false'
+      shell: bash
+      env:
+        VERSION: ${{ steps.resolve.outputs.version }}
+      run: |
+        set -euo pipefail
+        if bin="$(command -v deps)" && [ "$("$bin" version 2>/dev/null)" = "$VERSION" ]; then
+          echo "deps: using preinstalled deps $VERSION ($bin)"
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+        else
+          echo "deps: no preinstalled deps $VERSION on PATH"
+        fi
     - name: Check tool cache
       id: toolcache
-      if: inputs.cache != 'false'
+      if: inputs.cache != 'false' && !steps.preinstalled.outputs.bin
       shell: bash
       env:
         DIR: ${{ steps.resolve.outputs.dir }}
@@ -123,13 +144,14 @@ runs:
         fi
     - name: Restore deps from the Actions cache
       id: restore
-      if: inputs.cache != 'false' && steps.toolcache.outputs.hit != 'true'
+      if: inputs.cache != 'false' && !steps.preinstalled.outputs.bin && steps.toolcache.outputs.hit != 'true'
       uses: actions/cache/restore@v6.1.0
       with:
         path: ${{ steps.resolve.outputs.dir }}
         key: ${{ steps.resolve.outputs.key }}
     - name: Install deps
       id: install
+      if: ${{ !steps.preinstalled.outputs.bin }}
       shell: bash
       env:
         VERSION: ${{ steps.resolve.outputs.version }}
@@ -187,7 +209,7 @@ runs:
     - name: Run deps
       shell: bash
       env:
-        BIN: ${{ steps.resolve.outputs.dir }}/deps
+        BIN: ${{ steps.preinstalled.outputs.bin || format('{0}/deps', steps.resolve.outputs.dir) }}
         DEPS_TOKEN: ${{ inputs.token }}
         DEPS_SIGNING_KEY: ${{ inputs.signing-key }}
       run: '"$BIN" ${{ inputs.args }}'

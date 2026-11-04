@@ -12,7 +12,7 @@ Only linux/amd64 and linux/arm64 runners are supported; on any other OS or archi
 
 Complete workflows, tokens and permissions are described in [Running deps in CI](../ci.md); the arguments in the [CLI reference](cli.md).
 
-Runs as `composite` with the steps "Resolve deps version", "Check tool cache", "Restore deps from the Actions cache", "Install deps", "Save deps to the Actions cache", "Run deps".
+Runs as `composite` with the steps "Resolve deps version", "Check for a preinstalled deps", "Check tool cache", "Restore deps from the Actions cache", "Install deps", "Save deps to the Actions cache", "Run deps".
 
 ## Inputs
 
@@ -23,6 +23,7 @@ Runs as `composite` with the steps "Resolve deps version", "Check tool cache", "
 | `args` | no | `run` | Arguments for deps, e.g. `run -v --log-level info` or `plan`. |
 | `version` | no | none | Release tag to download, e.g. v0.1.0. Default: the action's ref when it is a release tag (`@v0.1.0`), else the latest release. |
 | `repository` | no | none | Repository URL the release is downloaded from. A Gitea/Forgejo URL finds the latest release via `<host>/api/v1/repos/<repo>/releases/latest`; a GitHub URL via api.github.com, and on github.com runners the assets are fetched with `gh release download` and the job token, so private repositories work. Default: https://github.com/jakobmoellerdev/deps on github.com runners, https://git.jakob-moeller.cloud/jakobmoellerdev/deps elsewhere. |
+| `use-preinstalled` | no | `true` | Use a `deps` already on PATH (e.g. baked into the runner image) when `deps version` prints the resolved version; the cache and download steps are skipped then. The binary is trusted as is: it is not checked against the release's checksums.txt. `false` always uses the cache/download path. |
 | `cache` | no | `true` | Reuse a verified binary of the same version instead of downloading it. The runner's tool cache (`$RUNNER_TOOL_CACHE/deps/<version>/<arch>`, kept between jobs on self-hosted runners) is checked first, then the forge's Actions cache (key `deps-<version>-<os>-<arch>`), which is filled after a download. A cached binary is used only if its sha256 matches the checksum recorded from the release's checksums.txt. `false` downloads every run. |
 
 ## Outputs
@@ -30,7 +31,7 @@ Runs as `composite` with the steps "Resolve deps version", "Check tool cache", "
 | Output | Description |
 |---|---|
 | `version` | The deps release that ran, e.g. v0.1.0. |
-| `cache-hit` | `true` if the binary came from the tool cache or the Actions cache, `false` if it was downloaded. |
+| `cache-hit` | `preinstalled` if a matching `deps` on PATH was used, `true` if the binary came from the tool cache or the Actions cache, `false` if it was downloaded. |
 
 ## Usage
 
@@ -51,6 +52,8 @@ Use the full URL: a short `jakobmoellerdev/deps@…` is resolved against the ins
     version: ""
     # Repository URL the release is downloaded from.
     repository: ""
+    # Use a `deps` already on PATH (e.g. baked into the runner image) when `deps version` prints the resolved version; the cache and download steps are skipped then.
+    use-preinstalled: "true"
     # Reuse a verified binary of the same version instead of downloading it.
     cache: "true"
 ```
@@ -72,6 +75,8 @@ From the GitHub mirror; on github.com runners the binary is downloaded from the 
     version: ""
     # Repository URL the release is downloaded from.
     repository: ""
+    # Use a `deps` already on PATH (e.g. baked into the runner image) when `deps version` prints the resolved version; the cache and download steps are skipped then.
+    use-preinstalled: "true"
     # Reuse a verified binary of the same version instead of downloading it.
     cache: "true"
 ```

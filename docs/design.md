@@ -586,11 +586,12 @@ A group automerges when every update in it has `Automerge` from the policy of it
 The action downloads a released static binary instead of building from source, so runners need no Go to run it:
 
 1. **Resolve** (its own step, output `version`): map `uname -s`/`uname -m` to `linux/amd64` or `linux/arm64`; anything else fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`. Version: the `version` input, else `github.action_ref` when it is a release tag (`vX.Y.Z…`), else the latest release of `repository` (Gitea/Forgejo: `<host>/api/v1/repos/<repo>/releases/latest`; `https://github.com/...`: `api.github.com/repos/<repo>/releases/latest`). The binary dir is `$RUNNER_TOOL_CACHE/deps/<version>/<arch>` (falls back to `$RUNNER_TEMP` if unset or not writable).
-2. **Tool cache:** if the dir holds `deps` and `deps.sha256` and `sha256sum -c deps.sha256` passes, use it. Self-hosted runners keep the tool cache between jobs.
-3. **Actions cache:** on a tool-cache miss, `actions/cache/restore` with key `deps-<version>-linux-<arch>` into the dir. Explicit restore/save steps instead of `actions/cache` with a post step, so nothing depends on post steps of actions nested in a composite action.
-4. **Install:** a restored binary is used only if it passes the same checksum check; otherwise (or on a miss) download `deps_linux_<arch>` and `checksums.txt` from `<repository>/releases/download/<version>/` (`gh release download` on github.com runners), verify with `sha256sum -c`, and move the binary plus its recorded checksum line (`deps.sha256`) into the dir atomically. Print `deps version`. Output `cache-hit`.
-5. **Save:** after a download, `actions/cache/save` stores the dir under the key.
-6. Run `"<dir>/deps" <args>` with `DEPS_TOKEN` from the `token` input.
+2. **Preinstalled** (unless `use-preinstalled: false`): if `deps` on PATH prints the resolved version for `deps version`, run it and skip steps 3–5; output `cache-hit=preinstalled`. It is trusted without a checksum check (verifying it would need the checksums.txt download this step exists to avoid); the image that ships it is the trust anchor.
+3. **Tool cache:** if the dir holds `deps` and `deps.sha256` and `sha256sum -c deps.sha256` passes, use it. Self-hosted runners keep the tool cache between jobs.
+4. **Actions cache:** on a tool-cache miss, `actions/cache/restore` with key `deps-<version>-linux-<arch>` into the dir. Explicit restore/save steps instead of `actions/cache` with a post step, so nothing depends on post steps of actions nested in a composite action.
+5. **Install:** a restored binary is used only if it passes the same checksum check; otherwise (or on a miss) download `deps_linux_<arch>` and `checksums.txt` from `<repository>/releases/download/<version>/` (`gh release download` on github.com runners), verify with `sha256sum -c`, and move the binary plus its recorded checksum line (`deps.sha256`) into the dir atomically. Print `deps version`. Output `cache-hit`.
+6. **Save:** after a download, `actions/cache/save` stores the dir under the key.
+7. Run `"<dir>/deps" <args>` (or the preinstalled binary) with `DEPS_TOKEN` from the `token` input.
 
 | Input | Default |
 |---|---|
