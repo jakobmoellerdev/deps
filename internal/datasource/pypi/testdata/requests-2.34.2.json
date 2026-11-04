@@ -1,0 +1,24 @@
+{
+  "info": {
+    "name": "requests",
+    "version": "2.34.2"
+  },
+  "urls": [
+    {
+      "filename": "requests-2.34.2-py3-none-any.whl",
+      "digests": {
+        "md5": "cc4287951c320ff794e5e183c7a91f85",
+        "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+      },
+      "yanked": false
+    },
+    {
+      "filename": "requests-2.34.2.tar.gz",
+      "digests": {
+        "md5": "611e438d0803e962500225f9807a475e",
+        "sha256": "f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed"
+      },
+      "yanked": false
+    }
+  ]
+}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -258,11 +259,14 @@ func buildFile(ctx context.Context, root, file string, managers map[string]manag
 	var b fileBuild
 	setPost := func(name string) error {
 		if post[name] != nil && name != b.post {
-			if b.post != "" {
-				// Only gomod and npm post-process, and their manifests are disjoint.
+			switch {
+			case b.post == "":
+				b.post = name
+			case !samePost(post[b.post], post[name]):
+				// Managers sharing a file share its post-processor (pep621 and poetry in
+				// pyproject.toml); gomod and npm manifests are disjoint.
 				return fmt.Errorf("updates of post-processed managers %s and %s", b.post, name)
 			}
-			b.post = name
 		}
 		return nil
 	}
@@ -470,4 +474,11 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 	}
 	slog.DebugContext(ctx, "post-processed", "scope", s.dir, "manager", s.manager, "manifests", rels, "changed", changed, "duration", time.Since(start))
 	return changes, nil
+}
+
+// samePost reports whether a and b are the same post-processor value (both of one
+// comparable type and equal).
+func samePost(a, b PostProcessor) bool {
+	t := reflect.TypeOf(a)
+	return t == reflect.TypeOf(b) && t.Comparable() && a == b
 }

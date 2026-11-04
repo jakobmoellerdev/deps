@@ -243,7 +243,7 @@ func TestNewErrors(t *testing.T) {
 	}{
 		{config.Custom{}, "custom[1]: files: must not be empty"},
 		{config.Custom{Files: []string{"a/[b"}}, `files: invalid glob "a/[b"`},
-		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo or regex:<RE2>, got "nope"`},
+		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440 or regex:<RE2>, got "nope"`},
 		{config.Custom{Files: []string{"x"}, Versioning: "regex:(?<minor>1)"}, `versioning: regex: must have a (?<major>...) group`},
 		{config.Custom{Files: []string{"x"}, Datasource: "nuget"}, `datasource: unknown "nuget"`},
 		{config.Custom{Files: []string{"x"}, Datasource: "custom.envtest"}, `datasource: unknown "custom.envtest"`},
@@ -438,6 +438,8 @@ func TestRenovateMarkers(t *testing.T) {
 		"1.0.0", // 37
 		"# renovate: datasource=node depName=node", // 38 Renovate's old name
 		"NODE=v26.5.0", // 39
+		"# renovate: datasource=pypi depName=Django", // 40
+		"DJANGO_VERSION=4.2.11",                      // 41
 	}, "\n")
 	m := oneWith(t, &config.Config{Custom: []config.Custom{{Files: []string{"**/.env"}}},
 		CustomDatasources: map[string]config.CustomDatasource{"envtest": {URL: "https://x/envtest.yaml"}}})
@@ -462,6 +464,7 @@ func TestRenovateMarkers(t *testing.T) {
 		{35, "docker", "busybox", "", "docker", "1.36", "", ""},
 		{37, "custom.missing", "x", "", "semver", "", "", `unknown datasource "custom.missing"`},
 		{39, "node-version", "node", "", "semver", "v26.5.0", "", ""},
+		{41, "pypi", "Django", "", "semver", "4.2.11", "", ""},
 	})
 }
 

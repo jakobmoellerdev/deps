@@ -1,0 +1,76 @@
+# Source: https://github.com/greyli/greybook/blob/main/pyproject.toml (fetched 2026-11-04)
+[project]
+name = "greybook"
+version = "1.0.0"
+description = "A grey blog engine."
+authors = [
+    {name = "Grey Li", email = "withlihui@gmail.com"},
+]
+dependencies = [
+    "flask>=2.2.5",
+    "flask-login>=0.6.2",
+    "flask-wtf>=1.1.1",
+    "flask-sqlalchemy>=3.0.3",
+    "flask-migrate>=4.0.4",
+    "bootstrap-flask>=2.2.0",
+    "flask-ckeditor>=0.4.6",
+    "email-validator>=2.0.0.post2",
+    "flask-debugtoolbar>=0.13.1",
+    "python-dotenv>=0.21.1",
+    "flask-mailman>=0.3.0",
+    "gunicorn>=22.0.0",
+]
+requires-python = ">=3.9"
+license = {text = "MIT"}
+
+[tool.pdm]
+distribution = false
+
+[tool.pdm.dev-dependencies]
+dev = [
+    "watchdog>=3.0.0",
+    "faker>=18.9.0",
+    "ruff>=0.4.9",
+    "pre-commit>=3.5.0",
+    "pytest-cov>=5.0.0",
+    "pytest>=8.2.2",
+]
+
+[[tool.pdm.source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[[tool.pdm.autoexport]]
+filename = "requirements.txt"
+groups = ["default", "dev"]
+
+[tool.ruff]
+extend-exclude = ["migrations"]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 5
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--cov=greybook", "--cov-branch", "--cov-report=term-missing"]

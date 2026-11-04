@@ -3,8 +3,9 @@
 //
 // Release notes come from the GitHub or Gitea/Forgejo releases API of the dependency's source
 // repository: the action's repository, a Go module's forge repository, an npm package's
-// `repository`, or an image's `org.opencontainers.image.source` label. One page of releases is
-// listed per repository and run. Every failure only omits the notes; it never fails a PR.
+// `repository`, a PyPI project's source URL, or an image's `org.opencontainers.image.source`
+// label. One page of releases is listed per repository and run. Every failure only omits the
+// notes; it never fails a PR.
 package releasenotes
 
 import (

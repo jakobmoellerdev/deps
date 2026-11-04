@@ -25,6 +25,11 @@
 //     the requirement's version; OSV matches server-side. Without a lock a partial requirement
 //     ("1", "0.4") is queried as its lowest version ("1.0.0", "0.4.0") and its fixed versions
 //     are cut to its precision ("0.5.2" → "0.5"), so only fixes outside its range count.
+//   - pypi deps (the pip_requirements, pep621, poetry and pipenv managers, and custom deps of
+//     the datasource) are queried as ecosystem "PyPI" with the PEP 503-normalized name and the
+//     locked version (dep.Dep.Locked), else the range's anchor version; OSV matches
+//     server-side. Affected entries are matched by normalized name.
+//     Fixed versions are bare, as OSV lists them ("2.32.0").
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -50,6 +55,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -62,6 +68,7 @@ const (
 	ecoActions = "GitHub Actions"
 	ecoNpm     = "npm"
 	ecoCrates  = "crates.io"
+	ecoPyPI    = "PyPI"
 )
 
 // Source queries OSV. Advisory documents are fetched once per ID per run.
@@ -150,6 +157,13 @@ func (s *Source) Advisories(ctx context.Context, deps []dep.Dep) ([][]datasource
 
 // targetOf returns the OSV query for d, or nil when d has no supported ecosystem.
 func targetOf(d dep.Dep) *target {
+	if d.Datasource == "pypi" { // every Python manager, and custom deps of the datasource
+		v := cmp.Or(d.Locked, d.Version)
+		if d.Name == "" || v == "" {
+			return nil
+		}
+		return &target{q: query{Package: pkg{Name: pyreq.Normalize(d.Name), Ecosystem: ecoPyPI}, Version: v}}
+	}
 	switch d.Manager {
 	case "gomod":
 		if (d.DepType != "direct" && d.DepType != "indirect") || d.Name == "" || d.Version == "" {
@@ -486,7 +500,7 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 				continue
 			}
 			fixed = t.actionsFixed(entries)
-		case ecoNpm:
+		case ecoNpm, ecoPyPI:
 			fixed = npmFixed(entries)
 		case ecoCrates:
 			fixed = npmFixed(entries)
@@ -512,7 +526,7 @@ func (v *vuln) entries(p pkg) []affected {
 	for _, a := range v.Affected {
 		switch {
 		case a.Package.Ecosystem != p.Ecosystem:
-		case a.Package.Name == p.Name:
+		case a.Package.Name == p.Name, p.Ecosystem == ecoPyPI && pyreq.Normalize(a.Package.Name) == p.Name:
 			exact = append(exact, a)
 		case p.Ecosystem == ecoGo && strings.HasPrefix(a.Package.Name, p.Name+"/"):
 			sub = append(sub, a)

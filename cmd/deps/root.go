@@ -24,6 +24,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
@@ -161,6 +162,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		nodeversion.Name:    nodeversion.New(client, sem, os.Getenv),
 		helmds.Name:         helmds.New(client, sem, auth, docker),
 		crate.Name:          crate.New(client, limits.Crates, auth, os.Getenv),
+		pypi.Name:           pypi.New(client, sem, os.Getenv),
 	}
 	for name, cd := range cfg.CustomDatasources {
 		ds, err := customds.New(client, sem, name, cd.Spec())

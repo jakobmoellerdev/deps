@@ -1,0 +1,92 @@
+# Source: https://github.com/chaostoolkit/chaostoolkit/blob/master/pyproject.toml (fetched 2026-11-04)
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "chaostoolkit"
+dynamic = ["version"]
+description = "Chaos Engineering Toolkit for everyone"
+authors = [
+    {name = "Chaos Toolkit", email = "contact@chaostoolkit.org"},
+    {name = "Sylvain Hellegouarch", email = "sh@defuze.org"},
+]
+dependencies = [
+    "click>=8.0",
+    "click-plugins>=1.1",
+    "chaostoolkit-lib>=1.45.1",
+    "importlib-metadata>=6.0",
+    "pyyaml>=6.0.1",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: Freely Distributable",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation",
+    "Programming Language :: Python :: Implementation :: CPython"
+]
+requires-python = ">=3.12"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+
+[project.scripts]
+chaos = "chaostoolkit.__main__:cli"
+
+[project.urls]
+Homepage = "https://chaostoolkit.org/"
+Repository = "https://github.com/chaostoolkit/chaostoolkit"
+Documentation = "https://chaostoolkit.org/reference/concepts/"
+Changelog = "https://github.com/chaostoolkit/chaostoolkit/blob/main/CHANGELOG.md"
+
+[tool]
+
+[tool.pdm]
+version = { source = "scm" }
+
+[tool.pdm.dev-dependencies]
+dev = [
+    "ruff>=0.1.11",
+    "pytest>=7.4.4",
+    "pytest-cov>=4.1.0",
+    "pytest-sugar>=0.9.7",
+    "semver>=3.0.2",
+]
+
+[tool.pdm.scripts]
+lint = {composite = ["ruff check ."]}
+format = {composite = ["ruff check --fix .", "ruff format ."]}
+test = {cmd = "pytest"}
+
+[tool.ruff]
+line-length = 80
+exclude = [
+    ".eggs",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = false
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+testpaths = "tests"
+addopts = "-v -rxs --cov chaostoolkit --cov-report term-missing:skip-covered -p no:warnings"

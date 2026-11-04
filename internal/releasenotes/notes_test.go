@@ -101,6 +101,7 @@ func TestResolve(t *testing.T) {
 	sources := map[string]datasource.Datasource{
 		dsNpm:    &fakeSource{repo: "git+ssh://git@github.com/eslint/eslint.git"},
 		dsDocker: &fakeSource{err: errors.New("no config")},
+		dsPypi:   &fakeSource{repo: "https://github.com/psf/requests"},
 	}
 	n := New(nil, nil, auth, nil, sources)
 	gh := func(o, r, prefix string) repoRef {
@@ -132,6 +133,7 @@ func TestResolve(t *testing.T) {
 		{"unknown vanity", dep.Dep{Datasource: dsGo, Name: "go.opentelemetry.io/otel"}, repoRef{}, false},
 		{"gitea module with token", dep.Dep{Datasource: dsGo, Name: "git.example/o/r/v2"}, repoRef{kind: gitea, host: "git.example", owner: "o", name: "r"}, true},
 		{"npm", dep.Dep{Datasource: dsNpm, Name: "eslint"}, gh("eslint", "eslint", ""), true},
+		{"pypi", dep.Dep{Datasource: dsPypi, Name: "requests"}, gh("psf", "requests", ""), true},
 		{"docker error", dep.Dep{Datasource: dsDocker, Name: "alpine"}, repoRef{}, false},
 		{"toolchain", dep.Dep{Datasource: "go-toolchain", Name: "go"}, repoRef{}, false},
 	}

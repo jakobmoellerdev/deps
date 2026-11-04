@@ -18,6 +18,9 @@ jobs:
           skip-setup-trivy: true
           scan-type: fs
           scan-ref: .
+          # Test fixtures are copies of third-party lockfiles pinned at old versions; they are
+          # never installed, and new advisories against them would fail the daily scan.
+          skip-dirs: "**/testdata"
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true

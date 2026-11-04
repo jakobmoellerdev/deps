@@ -8,12 +8,15 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
 )
 
 // pkgUpdate writes a package.json depending on a@1.0.0 at file under root and returns the
@@ -213,5 +216,40 @@ func TestBuildRejectsTwoPostProcessorsPerFile(t *testing.T) {
 	changes, errs := Build(t.Context(), root, []manager.Manager{npm.New(), gomod.New()}, []dep.Update{up, other}, post)
 	if len(errs) != 1 || errs[0].Error() != "package.json: updates of post-processed managers npm and gomod" || changes != nil {
 		t.Fatalf("changes = %v, errs = %v", paths(changes), errs)
+	}
+}
+
+// sharedPost is a comparable post-processor that counts its runs; managers registered with the
+// same value share it.
+type sharedPost struct{ runs *atomic.Int32 }
+
+func (sharedPost) Scope(_, _ string) (string, bool) { return ".", true }
+func (sharedPost) Siblings() []string               { return []string{"uv.lock"} }
+func (p sharedPost) Process(_ context.Context, _ string, manifests, _ map[string][]byte) (map[string][]byte, error) {
+	p.runs.Add(1)
+	return map[string][]byte{"uv.lock": manifests["pyproject.toml"]}, nil
+}
+
+// A pyproject.toml updated by pep621 and poetry is post-processed once by their shared locker.
+func TestBuildSharedPostProcessor(t *testing.T) {
+	root := t.TempDir()
+	const src = "[project]\ndependencies = [\"a>=1.0\"]\n[tool.poetry.dependencies]\nb = \"^2.0\"\n"
+	writeFile(t, root, "pyproject.toml", src)
+	writeFile(t, root, "uv.lock", "")
+	at := func(s string) dep.Span { i := strings.Index(src, s); return dep.Span{Start: i, End: i + len(s)} }
+	ups := []dep.Update{
+		{Dep: dep.Dep{Manager: pep621.Name, File: "pyproject.toml", Name: "a", Version: "1.0", Range: ">=1.0", RefSpan: at(">=1.0")}, NewVersion: "1.1"},
+		{Dep: dep.Dep{Manager: poetry.Name, File: "pyproject.toml", Name: "b", Version: "2.0", Range: "^2.0", RefSpan: at("^2.0")}, NewVersion: "2.1"},
+	}
+	p := sharedPost{runs: new(atomic.Int32)}
+	changes, errs := Build(t.Context(), root, []manager.Manager{pep621.New(), poetry.New()}, ups, map[string]PostProcessor{pep621.Name: p, poetry.Name: p})
+	want := "[project]\ndependencies = [\"a>=1.1\"]\n[tool.poetry.dependencies]\nb = \"^2.1\"\n"
+	if errs != nil || len(changes) != 2 || string(changes[0].New) != want || string(changes[1].New) != want || p.runs.Load() != 1 {
+		t.Fatalf("changes = %v, errs = %v, runs = %d", paths(changes), errs, p.runs.Load())
+	}
+	other := sharedPost{runs: new(atomic.Int32)}
+	_, errs = Build(t.Context(), root, []manager.Manager{pep621.New(), poetry.New()}, ups, map[string]PostProcessor{pep621.Name: p, poetry.Name: other})
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "updates of post-processed managers pep621 and poetry") {
+		t.Errorf("distinct post-processors: errs = %v", errs)
 	}
 }

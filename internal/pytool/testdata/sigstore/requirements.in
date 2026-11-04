@@ -1,0 +1,2 @@
+# Source: https://github.com/sigstore/sigstore-python/blob/a593c043d94f8fa30f4988c8db13d72652038fda/install/requirements.in (fetched 2026-11-04)
+sigstore==4.5.1

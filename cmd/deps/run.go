@@ -227,7 +227,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	if s.cfg.DependencyDashboard {
 		bo.Dashboard = &bot.DashboardOptions{Title: s.cfg.DashboardTitle(), Labels: s.cfg.DependencyDashboardLabels}
 	}
-	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(), platform.NewClient(info, token, client), repo)
+	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(s), platform.NewClient(info, token, client), repo)
 
 	var created, updated, closed, upToDate, skipped, would, automerged, wouldAutomerge int
 	for _, a := range actions {

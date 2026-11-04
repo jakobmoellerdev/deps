@@ -8,7 +8,7 @@ Update GitHub/Gitea/Forgejo Actions, Go module, container image, npm and Cargo d
 deps [command] [flags]
 ```
 
-deps finds the dependencies of a repository (GitHub/Gitea/Forgejo Actions, Go modules, container images, npm packages, Rust crates and custom-annotated versions), looks up newer versions, and either prints the changes as a diff (`plan`), writes them (`apply`), or pushes one branch and opens one pull request per dependency or group (`run`). Files are edited byte-exactly and never reformatted.
+deps finds the dependencies of a repository (GitHub/Gitea/Forgejo Actions, Go modules, container images, npm packages, Rust crates, Python packages and custom-annotated versions), looks up newer versions, and either prints the changes as a diff (`plan`), writes them (`apply`), or pushes one branch and opens one pull request per dependency or group (`run`). Files are edited byte-exactly and never reformatted.
 
 The configuration is read from `.deps.yaml` (or `.deps.yml`) in `--dir`; `deps schema` prints its JSON Schema. Results go to stderr, diffs and explanations to stdout. See `deps help output`, `deps help environment` and `deps help exit-codes`.
 
@@ -54,7 +54,7 @@ Write the updates to the files, including go mod tidy, package-lock.json and Car
 deps apply
 ```
 
-Resolves every dependency, prints the same report as `deps plan` on stderr, and writes the changed files, including `go mod tidy` output (`go.mod`, `go.sum`), regenerated `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`, and `Cargo.lock` updated with `cargo update`. Post-processors run on temporary copies; a failed one drops that module's or lockfile root's changes and is reported as an error.
+Resolves every dependency, prints the same report as `deps plan` on stderr, and writes the changed files, including `go mod tidy` output (`go.mod`, `go.sum`), regenerated `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`, `poetry.lock` or `Pipfile.lock`, `Cargo.lock` updated with `cargo update`, and the `--hash` lines of requirements files (pip-compile/`uv pip compile` output is regenerated from its header command, other files get the new release's hashes from the index). Post-processors run on temporary copies; a failed one drops that module's or lockfile root's changes and is reported as an error.
 
 A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`, as is the lock file maintenance update (`lockFileMaintenance`), which only `deps run` makes.
 
@@ -406,11 +406,14 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `DOCKER_CONFIG` | `docker` datasource | directory of the Docker `config.json` with registry credentials and credential helpers (default `~/.docker`) |
 | `DEPS_CRATES_INDEX_URL`, `DEPS_CRATES_API_URL` | `crate` datasource | base URLs of a crates.io sparse index mirror (default `https://index.crates.io`) and of the crates.io API used for source repositories (default `https://crates.io`) |
 | `CARGO_HOME`, `CARGO_REGISTRIES_<NAME>_INDEX`, `CARGO_REGISTRIES_<NAME>_TOKEN`, `CARGO_REGISTRY_TOKEN` | `crate` datasource | alternative registries: Cargo's config (`$CARGO_HOME/config.toml`, default `~/.cargo`, after the `.cargo/config.toml` files from the manifest up to `--dir`) and credentials (`$CARGO_HOME/credentials.toml`); the variables override them as in Cargo. A registry token is sent as `Authorization` only to its index host; without one, the platform token (for its host) and, after a 401, `git credential fill` are used |
+| `PIP_INDEX_URL` | `pypi` datasource | index when the manifest names none (simple API, JSON or HTML) |
+| `PIP_EXTRA_INDEX_URL` | `pypi` datasource | space-separated extra indexes searched for every Python dep after the manifest's own; their releases are merged in |
+| `DEPS_PYPI_URL` | `pypi` datasource | base of the PyPI JSON API (default `https://pypi.org`) |
 | `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GOMODCACHE` | `go` datasource | read via `go env -json` (the process environment when `go` is not on `PATH`). `GOMODCACHE`'s `cache/download/**/@v/*.info` files provide release times without network. |
 | `GITHUB_ACTIONS`, `GITEA_ACTIONS`, `FORGEJO_ACTIONS`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_REPOSITORY`, `FORGEJO_SERVER_URL`, `FORGEJO_API_URL`, `FORGEJO_REPOSITORY` | all | platform detection: `FORGEJO_ACTIONS=true` → forgejo, `GITEA_ACTIONS=true` → gitea, `GITHUB_ACTIONS=true` → github; the `FORGEJO_*` variables fall back to the `GITHUB_*` ones. `run` also detects from the `origin` remote; `plan`, `apply` and `explain` only from these variables. |
 | `GITHUB_STEP_SUMMARY`, `GITEA_STEP_SUMMARY` | all | step summary file (see `deps help output`) |
 
-On a 401 without a static token, git tag lookups call `git credential fill` once per host, with `GIT_TERMINAL_PROMPT=0` and a 10s timeout. Every `git` process deps runs has `GIT_TERMINAL_PROMPT=0`, so deps never prompts. npm lookups use `.npmrc` `_authToken` entries, and docker lookups the Docker credential chain (`~/.docker/config.json` and credential helpers).
+On a 401 without a static token, git tag lookups call `git credential fill` once per host, with `GIT_TERMINAL_PROMPT=0` and a 10s timeout. Every `git` process deps runs has `GIT_TERMINAL_PROMPT=0`, so deps never prompts. npm lookups use `.npmrc` `_authToken` entries, PyPI index lookups the index URL's userinfo (`https://user:token@host/simple`), and docker lookups the Docker credential chain (`~/.docker/config.json` and credential helpers).
 
 Docker Hub limits anonymous pulls per IP address (`ratelimit-limit: 100;w=3600` at the time of writing) and counts every manifest GET; HEADs are free. deps resolves digests with HEADs and fetches a manifest only for release times. In repositories with many Docker Hub images, or on shared runner IPs, log in (`docker login`, or credentials for `docker.io` in `$DOCKER_CONFIG/config.json`). An exhausted quota fails the affected lookups at once with `rate limited by registry-1.docker.io`, instead of retrying until the window ends.
 
@@ -438,6 +441,8 @@ error   <message>
 note    go.sum changes are computed by apply/run              (plan, when a gomod update exists)
 note    package-lock.json changes are computed by apply/run   (plan, when an npm update exists)
 note    Cargo.lock changes are computed by apply/run          (plan, when a cargo update exists)
+note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run   (plan, when a Python update exists)
+note    --hash lines of requirements files are computed by apply/run   (plan, when a requirements file with --hash has an update)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```

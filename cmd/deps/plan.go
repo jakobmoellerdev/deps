@@ -14,7 +14,12 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pytool"
 )
 
 func newPlan(o *rootOpts) *cobra.Command {
@@ -49,7 +54,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	}
 	post := planPostProcessors()
 	if write {
-		post = postProcessors()
+		post = postProcessors(s)
 	}
 	// A dep with several PR buckets gets one local update; report marks the others.
 	updates, separate := engine.Local(res.Updates)
@@ -78,6 +83,12 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	}
 	if !write && hasManager(res, cargo.Name) {
 		fmt.Fprintln(stderr, "note    Cargo.lock changes are computed by apply/run")
+	}
+	if !write && (hasManager(res, pep621.Name) || hasManager(res, poetry.Name) || hasManager(res, pipenv.Name)) {
+		fmt.Fprintln(stderr, "note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run")
+	}
+	if !write && hashedUpdate(s.root, res) {
+		fmt.Fprintln(stderr, "note    --hash lines of requirements files are computed by apply/run")
 	}
 	cmdName := "plan"
 	if write {
@@ -135,6 +146,16 @@ func report(w io.Writer, verbose bool, res *engine.Result, errs []error, separat
 func hasManager(res *engine.Result, name string) bool {
 	for _, u := range res.Updates {
 		if u.Dep.Manager == name {
+			return true
+		}
+	}
+	return false
+}
+
+// hashedUpdate reports whether an update is in a requirements file with --hash options.
+func hashedUpdate(root string, res *engine.Result) bool {
+	for _, u := range res.Updates {
+		if _, ok := (pytool.Compiler{}).Scope(root, u.Dep.File); ok && u.Dep.Manager == piprequirements.Name {
 			return true
 		}
 	}

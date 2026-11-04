@@ -57,6 +57,16 @@ type LockMaintainer interface {
 	LockRoots(root string, files []string) []LockRoot
 }
 
+// RangeUpdater is implemented by managers whose deps carry a range (dep.Dep.Range) that Edits
+// rewrites as a whole rather than by its version token (PEP 440 specifier sets). InRange
+// reports whether d's range admits v; NewRange returns the range Edits writes for v, or false
+// when that leaves the range unchanged or does not admit v. The engine proposes such a v only
+// as a lockfile-only update, and only when the range admits it.
+type RangeUpdater interface {
+	InRange(d dep.Dep, v string) bool
+	NewRange(d dep.Dep, v string) (string, bool)
+}
+
 // FileEditor is implemented by managers whose updates also edit files other than the dep's
 // own (a gomod major module path update rewrites the import paths in the module's .go
 // files). The engine applies the edits together with the update; if the dep's file or one

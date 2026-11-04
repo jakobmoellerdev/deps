@@ -394,13 +394,15 @@ func TestManagersRegistry(t *testing.T) {
 		return out
 	}
 	ms, err := Managers(config.Default())
-	if err != nil || !slices.Equal(names(ms), []string{"github-actions", "gomod", "docker", "npm", "helm", "kustomize", "pre-commit", "gitlabci", "nvm", "nodenv", "asdf", "mise", "cargo"}) {
+	builtin := []string{"github-actions", "gomod", "docker", "npm", "helm", "kustomize", "pre-commit", "gitlabci", "nvm", "nodenv", "asdf", "mise", "cargo",
+		"pip_requirements", "pep621", "poetry", "pipenv"}
+	if err != nil || !slices.Equal(names(ms), builtin) {
 		t.Fatalf("default managers = %v, %v", names(ms), err)
 	}
 	cfg := config.Default()
 	cfg.Custom = []config.Custom{{Files: []string{"Taskfile.yml"}}, {Files: []string{"Makefile"}, Match: `V=(?P<version>\S+)`, Datasource: "go", Name: "example.com/x"}}
 	ms, err = Managers(cfg)
-	if err != nil || !slices.Equal(names(ms), []string{"github-actions", "gomod", "docker", "npm", "helm", "kustomize", "pre-commit", "gitlabci", "nvm", "nodenv", "asdf", "mise", "cargo", "custom", "custom"}) {
+	if err != nil || !slices.Equal(names(ms), append(slices.Clone(builtin), "custom", "custom")) {
 		t.Fatalf("custom managers = %v, %v", names(ms), err)
 	}
 	cfg.Custom = []config.Custom{{}}

@@ -477,7 +477,7 @@ func isChecksum(s string) bool {
 //     Renovate alias github-tags takes `owner/repo` on github.com.
 //   - github-releases: Name is `owner/repo` (github.com) or `https://host/owner/repo` (GHES);
 //     Source is the repository URL.
-//   - go, go-toolchain, docker, npm, node-version: Name is the module path, image or package;
+//   - go, go-toolchain, docker, npm, node-version, pypi: Name is the module path, image or package;
 //     Source is empty.
 //   - helm: Name is `<repository>/<chart>`, or the chart when Source already holds the
 //     repository (annotation `deps: helm <repository> <chart>`, Renovate `registryUrl=`); the
@@ -520,7 +520,7 @@ func (m *customManager) classify(d *dep.Dep) {
 			return
 		}
 		d.Source, d.Name = repo, chart
-	case "go", "go-toolchain", "docker", "npm", "node-version":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi":
 	default:
 		if !strings.HasPrefix(d.Datasource, config.CustomDatasourcePrefix) || !m.known(d.Datasource) {
 			d.Skip = fmt.Sprintf("unknown datasource %q", ds)

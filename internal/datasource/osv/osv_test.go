@@ -601,3 +601,31 @@ func TestAdvisoriesCrates(t *testing.T) {
 		t.Errorf("batches = %+v", f.batches)
 	}
 }
+
+func TestAdvisoriesPyPI(t *testing.T) {
+	f := newFake(t)
+	f.results["PyPI|django|4.2.0|"] = result{ids: []string{"GHSA-qrw5-5h28-6cmg", "PYSEC-2023-100"}}
+	f.vulns["GHSA-qrw5-5h28-6cmg"] = `{"id":"GHSA-qrw5-5h28-6cmg","summary":"Denial of service","aliases":["PYSEC-2023-100"],
+		"affected":[{"package":{"name":"Django","ecosystem":"PyPI"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"4.2"},{"fixed":"4.2.2"}]}]},
+		            {"package":{"name":"django-other","ecosystem":"PyPI"},"ranges":[{"type":"ECOSYSTEM","events":[{"fixed":"9.9.9"}]}]}]}`
+	f.vulns["PYSEC-2023-100"] = `{"id":"PYSEC-2023-100","affected":[{"package":{"name":"django","ecosystem":"PyPI"},"ranges":[{"type":"ECOSYSTEM","events":[{"fixed":"4.2.2"}]}]}]}`
+	s := f.start(nil)
+	deps := []dep.Dep{
+		{Manager: "pip_requirements", Datasource: "pypi", Name: "Django", Version: "4.2.0"},
+		{Manager: "poetry", Datasource: "pypi", Name: "unversioned"},
+		// The locked version is queried, not the range's anchor: the same query as above.
+		{Manager: "pep621", Datasource: "pypi", Name: "django", Version: "4.1", Range: ">=4.1,<5", Locked: "4.2.0"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	django := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-qrw5-5h28-6cmg", Summary: "Denial of service", URL: "https://osv.dev/vulnerability/GHSA-qrw5-5h28-6cmg"}, Fixed: []string{"4.2.2"}}}
+	want := [][]datasource.Vuln{django, nil, django}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if len(f.batches) != 1 || len(f.batches[0]) != 1 || f.batches[0][0].Package != (pkg{Name: "django", Ecosystem: "PyPI"}) {
+		t.Errorf("batches = %+v", f.batches)
+	}
+}

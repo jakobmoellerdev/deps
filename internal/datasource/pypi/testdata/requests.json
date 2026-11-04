@@ -1,0 +1,264 @@
+{
+  "info": {
+    "author": null,
+    "home_page": null,
+    "name": "requests",
+    "project_url": "https://pypi.org/project/requests/",
+    "project_urls": {
+      "Documentation": "https://requests.readthedocs.io",
+      "Source": "https://github.com/psf/requests"
+    },
+    "release_url": "https://pypi.org/project/requests/2.34.2/",
+    "requires_python": ">=3.10",
+    "summary": "Python HTTP for Humans.",
+    "version": "2.34.2",
+    "yanked": false,
+    "yanked_reason": null
+  },
+  "last_serial": 37059094,
+  "releases": {
+    "0.0.1": [],
+    "2.31.0": [
+      {
+        "comment_text": "",
+        "core-metadata": {
+          "sha256": "7823e890e9db6f415138badf9744791290ef76e7ec6fd09a3789e8247fffe782"
+        },
+        "digests": {
+          "blake2b_256": "708e0e2d847013cb52cd35b38c009bb167a1a26b2ce6cd6965bf26b47bc0bf44",
+          "md5": "0cb4b772a1a652cf3d170a6c42a69098",
+          "sha256": "58cd2187c01e70e6e26505bca751777aa9f2ee0b7f4300988b709f44e013003f"
+        },
+        "downloads": -1,
+        "filename": "requests-2.31.0-py3-none-any.whl",
+        "has_sig": false,
+        "md5_digest": "0cb4b772a1a652cf3d170a6c42a69098",
+        "packagetype": "bdist_wheel",
+        "python_version": "py3",
+        "requires_python": ">=3.7",
+        "size": 62574,
+        "upload_time": "2023-05-22T15:12:42",
+        "upload_time_iso_8601": "2023-05-22T15:12:42.313790Z",
+        "url": "https://files.pythonhosted.org/packages/70/8e/0e2d847013cb52cd35b38c009bb167a1a26b2ce6cd6965bf26b47bc0bf44/requests-2.31.0-py3-none-any.whl",
+        "yanked": false,
+        "yanked_reason": null
+      },
+      {
+        "comment_text": "",
+        "core-metadata": false,
+        "digests": {
+          "blake2b_256": "9dbe10918a2eac4ae9f02f6cfe6414b7a155ccd8f7f9d4380d62fd5b955065c3",
+          "md5": "941e175c276cd7d39d098092c56679a4",
+          "sha256": "942c5a758f98d790eaed1a29cb6eefc7ffb0d1cf7af05c3d2791656dbd6ad1e1"
+        },
+        "downloads": -1,
+        "filename": "requests-2.31.0.tar.gz",
+        "has_sig": false,
+        "md5_digest": "941e175c276cd7d39d098092c56679a4",
+        "packagetype": "sdist",
+        "python_version": "source",
+        "requires_python": ">=3.7",
+        "size": 110794,
+        "upload_time": "2023-05-22T15:12:44",
+        "upload_time_iso_8601": "2023-05-22T15:12:44.175995Z",
+        "url": "https://files.pythonhosted.org/packages/9d/be/10918a2eac4ae9f02f6cfe6414b7a155ccd8f7f9d4380d62fd5b955065c3/requests-2.31.0.tar.gz",
+        "yanked": false,
+        "yanked_reason": null
+      }
+    ],
+    "2.32.0": [
+      {
+        "comment_text": "",
+        "core-metadata": {
+          "sha256": "366815cd98a835663f39fcb94a5be5a0fee15268b758ea80e64b650a5ecb7781"
+        },
+        "digests": {
+          "blake2b_256": "24e809e8d662a9675a4e4f5dd7a8e6127b463a091d2703ed931a64aa66d00065",
+          "md5": "53f4922c1891e32e32ce579c1825171f",
+          "sha256": "f2c3881dddb70d056c5bd7600a4fae312b2a300e39be6a118d30b90bd27262b5"
+        },
+        "downloads": -1,
+        "filename": "requests-2.32.0-py3-none-any.whl",
+        "has_sig": false,
+        "md5_digest": "53f4922c1891e32e32ce579c1825171f",
+        "packagetype": "bdist_wheel",
+        "python_version": "py3",
+        "requires_python": ">=3.8",
+        "size": 63695,
+        "upload_time": "2024-05-20T16:08:19",
+        "upload_time_iso_8601": "2024-05-20T16:08:19.530618Z",
+        "url": "https://files.pythonhosted.org/packages/24/e8/09e8d662a9675a4e4f5dd7a8e6127b463a091d2703ed931a64aa66d00065/requests-2.32.0-py3-none-any.whl",
+        "yanked": true,
+        "yanked_reason": "Yanked due to conflicts with CVE-2024-35195 mitigation"
+      },
+      {
+        "comment_text": "",
+        "core-metadata": false,
+        "digests": {
+          "blake2b_256": "28a2423f4d16d6934ef502f10ad56673719dd4345e656aedbd6687ccc359ffc5",
+          "md5": "00693243143146aad73add14b3737662",
+          "sha256": "fa5490319474c82ef1d2c9bc459d3652e3ae4ef4c4ebdd18a21145a47ca4b6b8"
+        },
+        "downloads": -1,
+        "filename": "requests-2.32.0.tar.gz",
+        "has_sig": false,
+        "md5_digest": "00693243143146aad73add14b3737662",
+        "packagetype": "sdist",
+        "python_version": "source",
+        "requires_python": ">=3.8",
+        "size": 114373,
+        "upload_time": "2024-05-20T16:11:48",
+        "upload_time_iso_8601": "2024-05-20T16:11:48.306524Z",
+        "url": "https://files.pythonhosted.org/packages/28/a2/423f4d16d6934ef502f10ad56673719dd4345e656aedbd6687ccc359ffc5/requests-2.32.0.tar.gz",
+        "yanked": true,
+        "yanked_reason": "Yanked due to conflicts with CVE-2024-35195 mitigation"
+      }
+    ],
+    "2.32.1": [
+      {
+        "comment_text": "",
+        "core-metadata": {
+          "sha256": "fb63dbf07b1df083380afbf2982e4b7d252835fb815f8e3cb072eda7dfc70598"
+        },
+        "digests": {
+          "blake2b_256": "9ca6b9bf71eeb6dc835311b5c47a7c90df57b08061091161639611252257768d",
+          "md5": "2aa71699f8ad45c3b91f09b6e72919e8",
+          "sha256": "21ac9465cdf8c1650fe1ecde8a71669a93d4e6f147550483a2967d08396a56a5"
+        },
+        "downloads": -1,
+        "filename": "requests-2.32.1-py3-none-any.whl",
+        "has_sig": false,
+        "md5_digest": "2aa71699f8ad45c3b91f09b6e72919e8",
+        "packagetype": "bdist_wheel",
+        "python_version": "py3",
+        "requires_python": ">=3.8",
+        "size": 63711,
+        "upload_time": "2024-05-20T22:08:45",
+        "upload_time_iso_8601": "2024-05-20T22:08:45.850542Z",
+        "url": "https://files.pythonhosted.org/packages/9c/a6/b9bf71eeb6dc835311b5c47a7c90df57b08061091161639611252257768d/requests-2.32.1-py3-none-any.whl",
+        "yanked": true,
+        "yanked_reason": "Yanked due to conflicts with CVE-2024-35195 mitigation "
+      },
+      {
+        "comment_text": "",
+        "core-metadata": false,
+        "digests": {
+          "blake2b_256": "d8c1f32fb7c02e7620928ef14756ff4840cae3b8ef1d62f7e596bc5413300a16",
+          "md5": "fc1a60231a0f2aa61dd84d74ac36eb35",
+          "sha256": "eb97e87e64c79e64e5b8ac75cee9dd1f97f49e289b083ee6be96268930725685"
+        },
+        "downloads": -1,
+        "filename": "requests-2.32.1.tar.gz",
+        "has_sig": false,
+        "md5_digest": "fc1a60231a0f2aa61dd84d74ac36eb35",
+        "packagetype": "sdist",
+        "python_version": "source",
+        "requires_python": ">=3.8",
+        "size": 129920,
+        "upload_time": "2024-05-20T22:08:48",
+        "upload_time_iso_8601": "2024-05-20T22:08:48.995460Z",
+        "url": "https://files.pythonhosted.org/packages/d8/c1/f32fb7c02e7620928ef14756ff4840cae3b8ef1d62f7e596bc5413300a16/requests-2.32.1.tar.gz",
+        "yanked": true,
+        "yanked_reason": "Yanked due to conflicts with CVE-2024-35195 mitigation "
+      }
+    ],
+    "2.32.2": [
+      {
+        "comment_text": "",
+        "core-metadata": {
+          "sha256": "307858c3f1de080f5577e6468d76b97dcc05cd370ded8277e172fcf1b1c49a2d"
+        },
+        "digests": {
+          "blake2b_256": "c320748e38b466e0819491f0ce6e90ebe4184966ee304fe483e2c414b0f4ef07",
+          "md5": "f57de66f1b0f2badf018eeb9920ac639",
+          "sha256": "fc06670dd0ed212426dfeb94fc1b983d917c4f9847c863f313c9dfaaffb7c23c"
+        },
+        "downloads": -1,
+        "filename": "requests-2.32.2-py3-none-any.whl",
+        "has_sig": false,
+        "md5_digest": "f57de66f1b0f2badf018eeb9920ac639",
+        "packagetype": "bdist_wheel",
+        "python_version": "py3",
+        "requires_python": ">=3.8",
+        "size": 63902,
+        "upload_time": "2024-05-21T18:51:29",
+        "upload_time_iso_8601": "2024-05-21T18:51:29.562156Z",
+        "url": "https://files.pythonhosted.org/packages/c3/20/748e38b466e0819491f0ce6e90ebe4184966ee304fe483e2c414b0f4ef07/requests-2.32.2-py3-none-any.whl",
+        "yanked": false,
+        "yanked_reason": null
+      },
+      {
+        "comment_text": "",
+        "core-metadata": false,
+        "digests": {
+          "blake2b_256": "86ec535bf6f9bd280de6a4637526602a146a68fde757100ecf8c9333173392db",
+          "md5": "b84969b48f0d4ba34d1e4ed141106376",
+          "sha256": "dd951ff5ecf3e3b3aa26b40703ba77495dab41da839ae72ef3c8e5d8e2433289"
+        },
+        "downloads": -1,
+        "filename": "requests-2.32.2.tar.gz",
+        "has_sig": false,
+        "md5_digest": "b84969b48f0d4ba34d1e4ed141106376",
+        "packagetype": "sdist",
+        "python_version": "source",
+        "requires_python": ">=3.8",
+        "size": 130327,
+        "upload_time": "2024-05-21T18:51:32",
+        "upload_time_iso_8601": "2024-05-21T18:51:32.819665Z",
+        "url": "https://files.pythonhosted.org/packages/86/ec/535bf6f9bd280de6a4637526602a146a68fde757100ecf8c9333173392db/requests-2.32.2.tar.gz",
+        "yanked": false,
+        "yanked_reason": null
+      }
+    ],
+    "2.34.2": [
+      {
+        "comment_text": null,
+        "core-metadata": {
+          "sha256": "8c384ba3e979480faae2859d3c5e6c1276dd2c3616e322e124d52c8cfc556f27"
+        },
+        "digests": {
+          "blake2b_256": "a0f4c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a",
+          "md5": "cc4287951c320ff794e5e183c7a91f85",
+          "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+        },
+        "downloads": -1,
+        "filename": "requests-2.34.2-py3-none-any.whl",
+        "has_sig": false,
+        "md5_digest": "cc4287951c320ff794e5e183c7a91f85",
+        "packagetype": "bdist_wheel",
+        "python_version": "py3",
+        "requires_python": ">=3.10",
+        "size": 73075,
+        "upload_time": "2026-05-14T19:25:26",
+        "upload_time_iso_8601": "2026-05-14T19:25:26.443000Z",
+        "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+        "yanked": false,
+        "yanked_reason": null
+      },
+      {
+        "comment_text": null,
+        "core-metadata": false,
+        "digests": {
+          "blake2b_256": "acc3e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf",
+          "md5": "611e438d0803e962500225f9807a475e",
+          "sha256": "f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed"
+        },
+        "downloads": -1,
+        "filename": "requests-2.34.2.tar.gz",
+        "has_sig": false,
+        "md5_digest": "611e438d0803e962500225f9807a475e",
+        "packagetype": "sdist",
+        "python_version": "source",
+        "requires_python": ">=3.10",
+        "size": 142856,
+        "upload_time": "2026-05-14T19:25:27",
+        "upload_time_iso_8601": "2026-05-14T19:25:27.735762Z",
+        "url": "https://files.pythonhosted.org/packages/ac/c3/e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf/requests-2.34.2.tar.gz",
+        "yanked": false,
+        "yanked_reason": null
+      }
+    ]
+  },
+  "urls": [],
+  "vulnerabilities": []
+}

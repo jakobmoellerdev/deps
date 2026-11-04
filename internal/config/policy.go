@@ -26,7 +26,7 @@ type Policy struct {
 	Ignore       bool
 	IgnoreReason string // why Ignore is set: default for the dep type, or the deciding rule
 	Pin          string
-	// RangeStrategy is the npm range strategy (RangeStrategies); never "" in a Policy.
+	// RangeStrategy is the npm and Python range strategy (RangeStrategies); never "" in a Policy.
 	RangeStrategy string
 	Allow         *Allowed
 	Updates       map[dep.UpdateType]bool
@@ -49,7 +49,17 @@ type Policy struct {
 // production reports whether d is a production dep, which gets the fix commit type by
 // default (Renovate's :semanticPrefixFixDepsChoreOthers).
 func production(d dep.Dep) bool {
-	return d.Manager == "gomod" && d.DepType == "direct" || (d.Manager == "npm" || d.Manager == "cargo") && d.DepType == "dependencies"
+	switch d.Manager {
+	case "gomod":
+		return d.DepType == "direct"
+	case "npm", "cargo", "poetry":
+		return d.DepType == "dependencies"
+	case "pep621":
+		return d.DepType == "project.dependencies"
+	case "pipenv":
+		return d.DepType == "packages"
+	}
+	return false
 }
 
 // defaultIgnored are the dep types ignored unless a rule sets `ignore: false`.

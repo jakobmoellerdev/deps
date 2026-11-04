@@ -24,6 +24,10 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`asdf`](#asdf)
 - [`mise`](#mise)
 - [`cargo`](#cargo)
+- [`pip_requirements`](#pip_requirements)
+- [`pep621`](#pep621)
+- [`poetry`](#poetry)
+- [`pipenv`](#pipenv)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -761,6 +765,286 @@ Updates crate requirements in `Cargo.toml`, moves `Cargo.lock` with `cargo updat
 
 With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `Cargo.lock` of a scanned `Cargo.toml` (its workspace root, as above) is refreshed with `cargo update` in the temporary copy, which moves every locked crate to the newest version its requirement admits. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `Cargo.lock` files; `minimumReleaseAge` does not apply to it.
 
+## pip_requirements
+
+Updates the PEP 508 requirements of pip requirements files. Lines ending in `\` are joined and comments are dropped. Option lines (`-r`, `-c`, `-e`, `--extra-index-url`, `--find-links`, …) yield no deps; included files are scanned when their own name matches. An `--index-url`/`-i` line anywhere in the file becomes the index of every requirement in it, and every `--extra-index-url` line an extra index whose releases are merged in (see the `pypi` datasource). There is no lockfile: under `auto` and `update-lockfile` only versions outside a requirement's range are proposed (Renovate's `replace`). Requirements with `--hash` options are updated too: `apply`/`run` regenerate a pip-compile or `uv pip compile` output file (recognized by its header) by re-running the command of its header in a temporary copy with `--upgrade-package <name>==<version>` per updated requirement, when the header's input files exist (pip-compile runs from PATH, else through `uvx --from pip-tools`); in any other file the `--hash` options of each updated requirement are replaced by the sha256 digests of the new version's files on its index, one option per digest in pip-compile's order and line style. `plan` shows the version change only.
+
+**Files:**
+
+- `requirements.txt`, `requirements-dev.txt`, `requirements.dev.txt`, `dev-requirements.txt`, `requirements.pip` (Renovate's `(^|/)[\w-]*requirements([-.]\w+)?\.(txt|pip)$`)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `requirements` | every requirement line (`name[extras] specifier ; marker`) | `pypi` | `pep440` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unconstrained` | no specifier, `*`, or only `!=` exclusions |
+| `unsupported range` | a specifier that does not parse: a version that is not PEP 440 (`>=1.0-SNAPSHOT`, `===foobar`), a wildcard other than a trailing `.*` of `==` or `!=` (`~=1.*`, `>=1.*`), Poetry syntax (`^1.2`, `>=1 <2`, `\|\|`), or a bare version outside Pipfiles |
+| `cannot locate value` | a TOML string with escapes |
+| `git dependency` | `git+…`, `hg+…`, `svn+…`, `bzr+…` lines or `name @ git+…` |
+| `url dependency` | a URL line or `name @ https://…` |
+| `local dependency` | a local path, archive or wheel (`./pkg`, `/abs`, `x.whl`, `x.tar.gz`, `file:`) |
+
+**Specifiers.**
+
+- Every PEP 440 specifier set is accepted: `==`, `===`, `~=`, `!=`, `<`, `<=`, `>` and `>=` clauses separated by commas, with a trailing `.*` after `==` or `!=` (in a Pipfile also a bare version, meaning `==`). How a range is updated is described under Ranges.
+- The dep's version is the range's anchor: in its last `||` alternative the first clause that is not `<`, `<=` or `!=` (`>=1.2,<2` → `1.2`, `<1.0.0,>=0.114.2` → `0.114.2`), else its first upper bound (`<2` → `2`). The anchor's precision is kept: candidates with non-zero parts beyond it are skipped (`precision`), others are cut to it (`>=1.2,<2` sees 3.1.0 as `3.1`). With a lockfile, the locked version takes the anchor's place.
+- Versioning is `pep440`: pre and dev releases are only considered from a pre or dev release.
+- Names are kept as written; the datasource looks them up PEP 503-normalized.
+
+**Ranges (`rangeStrategy`).**
+
+- `auto` (the default) is `update-lockfile`: a new version the range admits only moves the lockfile from the locked version (see Locked versions), and is not proposed without a lockfile deps reads; a version outside the range rewrites the range. Renovate's `auto` is `update-lockfile` for poetry and `replace` for pep621, pipenv and pip_requirements, which only differs where deps reads a lockfile.
+- `bump` rewrites the range for every newer version, raising its lower bound (`>=1.2,<2` with 1.5.0 → `>=1.5.0,<2`, `^2.31` with 2.32.3 → `^2.32`, `>=2.31.0` → `>=2.32.3`). An admitted version a range has no bound to raise for (`<2`, `<=2`, `>1`, `==1.*`) is handled as under `update-lockfile`.
+- Rewrites follow Renovate's pep440 `getNewValue` (`lib/modules/versioning/pep440/range.ts`): an admitted version gets its `bump` rules, any other its `replace` rules, under every strategy (Renovate's `bump` would write the full new version as lower bound there too). Clause by clause: `!=` exclusions are kept verbatim; `<V` moves past the new version at the range's precision (`>=1.2,<2` with 3.1.0 → `>=3.1,<4`; with two clauses the precision is the first part in which the bounds differ, one finer for a major followed by `0`: `>=1.2.0,<2.0.0` with 3.1.4 → `>=3.1.4,<3.2.0`); `>=` and `>` take the new version at their own precision (`>=1.2` → `>=3.1`, a new version at or below them `>=<new>`); trailing zeros are trimmed when a clause has fewer than three parts; `~=`, `^` and `~` take the new version cut or zero-padded to their precision (`~=7.2` with 8.0.1 → `~=8.0`); `==`, `===`, `=`, a bare version and `<=` become the new version; wildcards keep `.*` at their precision (`==1.0.*` → `==1.2.*`).
+- A Poetry constraint with `||` alternatives gets a new alternative for a version outside all of them (`^1 || ^2` with 3.0.0 → `^1 || ^2 || ^3`, as Renovate widens npm `||` ranges); `bump` raises the alternative that admits the version.
+- Only the changed versions (and operators, `>` → `>=`) are rewritten; the bytes between clauses are kept. A rewrite that would not admit the new version (it is excluded by `!=`) is not proposed. Renovate's removal of a `>=` that a `==X.*` makes redundant is not done.
+
+## pep621
+
+Updates the PEP 508 requirement strings of `pyproject.toml` (PEP 621 project metadata, PEP 735 dependency groups, uv's and pdm's dev dependencies), then refreshes `uv.lock`, `poetry.lock` or `pdm.lock`. The file is parsed with byte spans; only the specifier's versions inside the TOML string are rewritten. `include-group` entries, `[build-system] requires` and uv's `constraint-dependencies`/`override-dependencies` are not extracted; `[project] requires-python` is no dep but drops the releases that do not support all of it (see the `pypi` datasource).
+
+**Files:**
+
+- `pyproject.toml`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `project.dependencies` | `[project] dependencies` (updates use commit type `fix`) | `pypi` | `pep440` | updated |
+| `project.optional-dependencies` | every array of `[project.optional-dependencies]` | `pypi` | `pep440` | updated |
+| `dependency-groups` | every array of `[dependency-groups]` (PEP 735) | `pypi` | `pep440` | updated |
+| `tool.uv.dev-dependencies` | `[tool.uv] dev-dependencies` | `pypi` | `pep440` | updated |
+| `tool.pdm.dev-dependencies` | every array of `[tool.pdm.dev-dependencies]` (editable `-e …` entries are ignored) | `pypi` | `pep440` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unconstrained` | no specifier, `*`, or only `!=` exclusions |
+| `unsupported range` | a specifier that does not parse: a version that is not PEP 440 (`>=1.0-SNAPSHOT`, `===foobar`), a wildcard other than a trailing `.*` of `==` or `!=` (`~=1.*`, `>=1.*`), Poetry syntax (`^1.2`, `>=1 <2`, `\|\|`), or a bare version outside Pipfiles |
+| `cannot locate value` | a TOML string with escapes |
+| `url dependency` | `name @ https://…`, or a `[tool.uv.sources]` entry with `url` |
+| `git dependency` | `name @ git+…`, or a `[tool.uv.sources]` entry with `git` |
+| `local dependency` | `name @ file://…`, or a `[tool.uv.sources]` entry with `path` |
+| `workspace member` | a `[tool.uv.sources]` entry with `workspace = true` |
+| `multiple sources` | a `[tool.uv.sources]` entry that is an array (per-marker sources) |
+| `unknown index <name>` | a `[tool.uv.sources]` `index` that no `[[tool.uv.index]]` names |
+
+**Specifiers.**
+
+- Every PEP 440 specifier set is accepted: `==`, `===`, `~=`, `!=`, `<`, `<=`, `>` and `>=` clauses separated by commas, with a trailing `.*` after `==` or `!=` (in a Pipfile also a bare version, meaning `==`). How a range is updated is described under Ranges.
+- The dep's version is the range's anchor: in its last `||` alternative the first clause that is not `<`, `<=` or `!=` (`>=1.2,<2` → `1.2`, `<1.0.0,>=0.114.2` → `0.114.2`), else its first upper bound (`<2` → `2`). The anchor's precision is kept: candidates with non-zero parts beyond it are skipped (`precision`), others are cut to it (`>=1.2,<2` sees 3.1.0 as `3.1`). With a lockfile, the locked version takes the anchor's place.
+- Versioning is `pep440`: pre and dev releases are only considered from a pre or dev release.
+- Names are kept as written; the datasource looks them up PEP 503-normalized.
+
+**Ranges (`rangeStrategy`).**
+
+- `auto` (the default) is `update-lockfile`: a new version the range admits only moves the lockfile from the locked version (see Locked versions), and is not proposed without a lockfile deps reads; a version outside the range rewrites the range. Renovate's `auto` is `update-lockfile` for poetry and `replace` for pep621, pipenv and pip_requirements, which only differs where deps reads a lockfile.
+- `bump` rewrites the range for every newer version, raising its lower bound (`>=1.2,<2` with 1.5.0 → `>=1.5.0,<2`, `^2.31` with 2.32.3 → `^2.32`, `>=2.31.0` → `>=2.32.3`). An admitted version a range has no bound to raise for (`<2`, `<=2`, `>1`, `==1.*`) is handled as under `update-lockfile`.
+- Rewrites follow Renovate's pep440 `getNewValue` (`lib/modules/versioning/pep440/range.ts`): an admitted version gets its `bump` rules, any other its `replace` rules, under every strategy (Renovate's `bump` would write the full new version as lower bound there too). Clause by clause: `!=` exclusions are kept verbatim; `<V` moves past the new version at the range's precision (`>=1.2,<2` with 3.1.0 → `>=3.1,<4`; with two clauses the precision is the first part in which the bounds differ, one finer for a major followed by `0`: `>=1.2.0,<2.0.0` with 3.1.4 → `>=3.1.4,<3.2.0`); `>=` and `>` take the new version at their own precision (`>=1.2` → `>=3.1`, a new version at or below them `>=<new>`); trailing zeros are trimmed when a clause has fewer than three parts; `~=`, `^` and `~` take the new version cut or zero-padded to their precision (`~=7.2` with 8.0.1 → `~=8.0`); `==`, `===`, `=`, a bare version and `<=` become the new version; wildcards keep `.*` at their precision (`==1.0.*` → `==1.2.*`).
+- A Poetry constraint with `||` alternatives gets a new alternative for a version outside all of them (`^1 || ^2` with 3.0.0 → `^1 || ^2 || ^3`, as Renovate widens npm `||` ranges); `bump` raises the alternative that admits the version.
+- Only the changed versions (and operators, `>` → `>=`) are rewritten; the bytes between clauses are kept. A rewrite that would not admit the new version (it is excluded by `!=`) is not proposed. Renovate's removal of a `>=` that a `==X.*` makes redundant is not done.
+
+**Indexes.**
+
+- A `[tool.uv.sources]` entry `{ index = "<name>" }` looks the dep up on that `[[tool.uv.index]]` URL only; otherwise the first index with `default = true` is used, else `PIP_INDEX_URL` or PyPI (see the `pypi` datasource), and the releases of every `[[tool.uv.index]]` that is neither `default` nor `explicit = true` are merged in.
+- `[[tool.pdm.source]]` indexes are searched like pdm does: the source named `pypi` replaces PyPI, the other sources are extra indexes whose releases are merged in; a source whose `include_packages` match the (normalized) name is the only one searched for that dep, and one whose `exclude_packages` match is not searched for it. `type = "find_links"` sources are ignored, and so are URLs with `${VAR}` (a `pypi` one falls back to `PIP_INDEX_URL` or PyPI). A `[tool.uv.sources]` index takes precedence.
+- Poetry 2 projects declare `[project] dependencies` too: they are extracted here, while `[tool.poetry.*]` tables belong to the `poetry` manager; both lock through `poetry.lock`.
+
+**Locked versions.**
+
+Before resolving, deps reads the lockfile the post-processor would update (see below) once per run: `[[package]]` `name` and `version` of `uv.lock`, `poetry.lock` and `pdm.lock`, and the `"==<version>"` pins of `Pipfile.lock` in the section of the dep's Pipfile table (`default` for `[packages]`, `develop` for `[dev-packages]`, else the category's name). Names compare PEP 503-normalized; a name locked at several versions (uv and pdm forks by marker) counts as not locked.
+
+- The locked version is the current version (update types compare it with the new version), decides which versions the range admits are lockfile-only updates, and is what OSV is queried with, so an already locked fix is not proposed again. Without a lock, the range's anchor is used.
+- A lockfile that does not parse is a run error (`<path>: <err>`); its deps count as not locked.
+
+**Lockfile post-processing (`apply`, `run`).**
+
+The lock directory of a `pyproject.toml` is its own directory when it holds `uv.lock` (uv), `poetry.lock` (Poetry) or `pdm.lock` (pdm). Its lockfile is regenerated in a temporary copy of that directory's top-level files (up to 4 MiB each; subdirectories are not copied) with the patched manifests and the current lockfile:
+
+| Lockfile | Command | Without the tool in `PATH` |
+|---|---|---|
+| `uv.lock` | `uv lock --no-progress` | error `uv not found (needed to update uv.lock)` |
+| `poetry.lock` | `poetry lock` (Poetry 2), `poetry lock --no-update` (Poetry 1), with `POETRY_NO_INTERACTION=1` | `uvx --from poetry poetry lock` |
+| `pdm.lock` | `pdm lock --update-reuse` (keeps the pins the manifest still admits), with `PDM_CHECK_UPDATE=false PDM_NON_INTERACTIVE=1` | `uvx --from pdm pdm lock --update-reuse` |
+| `Pipfile.lock` | `pipenv lock`, with `PIPENV_VENV_IN_PROJECT=1 PIPENV_IGNORE_VIRTUALENVS=1 PIPENV_NOSPIN=1 PIPENV_YES=1 PIPENV_VERBOSITY=-1` | `uvx --from pipenv pipenv lock` |
+
+A `pyproject.toml` without a lockfile next to it belongs to the nearest `uv.lock` above whose `[tool.uv.workspace]` `members` (minus `exclude`) match its directory; every member's `pyproject.toml` is copied as well. Projects whose metadata is built (dynamic versions from VCS, local build backends) can fail to lock in the copy. A failure reports `<command> in <dir>: <last 20 output lines>`, and the directory's changes are dropped.
+
+Lockfile-only updates (`rangeStrategy` `update-lockfile`, see Ranges) run after that regeneration, which is skipped when no manifest of the directory changed, with the same tool, environment and fallback:
+
+| Lockfile | Lockfile-only command |
+|---|---|
+| `uv.lock` | `uv lock --no-progress --upgrade-package <name>==<version>…` |
+| `poetry.lock` | `poetry update --lock <name>…` (Poetry 1 and 2) |
+| `pdm.lock` | `pdm update --update-reuse --no-sync -G <group> <name>…`, once per lock group of the names (pdm takes one group with package names) |
+| `Pipfile.lock` | `pipenv upgrade --lock-only --categories <category> <name>==<version>…`, once per Pipfile category |
+
+Poetry and pdm cannot pin a version there: they move the dep to the newest version its range admits, which can be newer than proposed.
+
+- `plan` does not run lock commands, and prints `note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run`.
+
+## poetry
+
+Updates the Poetry dependency tables of `pyproject.toml`, then refreshes `poetry.lock`. The file is parsed with byte spans; only the constraint's versions inside the TOML string are rewritten. The `python` entry (else `[project] requires-python`) is no dep but drops the releases that do not support all of it (see the `pypi` datasource); `[project]` dependencies of Poetry 2 projects belong to the `pep621` manager.
+
+**Files:**
+
+- `pyproject.toml`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `dependencies` | `[tool.poetry.dependencies]` (updates use commit type `fix`) | `pypi` | `pep440` | updated |
+| `dev-dependencies` | `[tool.poetry.dev-dependencies]` (Poetry 1.0/1.1) | `pypi` | `pep440` | updated |
+| `group` | `[tool.poetry.group.<name>.dependencies]` | `pypi` | `pep440` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unconstrained` | `*`, empty, only `!=` exclusions, or a table without `version` |
+| `unsupported range` | a constraint that does not parse: a version that is not PEP 440, a wildcard other than a trailing `.*` of `==`, `!=` or a bare version (`^1.*`), non-string values |
+| `cannot locate value` | a TOML string with escapes |
+| `git dependency` | `{ git = … }` |
+| `local dependency` | `{ path = … }` |
+| `url dependency` | `{ url = … }` |
+| `multiple constraints` | an array of constraint tables (per-marker constraints) |
+| `unknown source <name>` | a `source` that no `[[tool.poetry.source]]` names |
+
+**Constraints.**
+
+- Every Poetry constraint is accepted: the PEP 440 clauses plus `^`, `~`, `=` and a bare version (an exact pin; `2.*` a wildcard), separated by commas or spaces (`>=1.2 <2`), with `||` (or `|`) alternatives (`^1 || ^2`). How a constraint is updated is described under Ranges.
+- The dep's version is the range's anchor: in its last `||` alternative the first clause that is not `<`, `<=` or `!=` (`>=1.2,<2` → `1.2`, `<1.0.0,>=0.114.2` → `0.114.2`), else its first upper bound (`<2` → `2`). The anchor's precision is kept: candidates with non-zero parts beyond it are skipped (`precision`), others are cut to it (`>=1.2,<2` sees 3.1.0 as `3.1`). With a lockfile, the locked version takes the anchor's place.
+- Versioning is `pep440`: pre and dev releases are only considered from a pre or dev release.
+
+**Ranges (`rangeStrategy`).**
+
+- `auto` (the default) is `update-lockfile`: a new version the range admits only moves the lockfile from the locked version (see Locked versions), and is not proposed without a lockfile deps reads; a version outside the range rewrites the range. Renovate's `auto` is `update-lockfile` for poetry and `replace` for pep621, pipenv and pip_requirements, which only differs where deps reads a lockfile.
+- `bump` rewrites the range for every newer version, raising its lower bound (`>=1.2,<2` with 1.5.0 → `>=1.5.0,<2`, `^2.31` with 2.32.3 → `^2.32`, `>=2.31.0` → `>=2.32.3`). An admitted version a range has no bound to raise for (`<2`, `<=2`, `>1`, `==1.*`) is handled as under `update-lockfile`.
+- Rewrites follow Renovate's pep440 `getNewValue` (`lib/modules/versioning/pep440/range.ts`): an admitted version gets its `bump` rules, any other its `replace` rules, under every strategy (Renovate's `bump` would write the full new version as lower bound there too). Clause by clause: `!=` exclusions are kept verbatim; `<V` moves past the new version at the range's precision (`>=1.2,<2` with 3.1.0 → `>=3.1,<4`; with two clauses the precision is the first part in which the bounds differ, one finer for a major followed by `0`: `>=1.2.0,<2.0.0` with 3.1.4 → `>=3.1.4,<3.2.0`); `>=` and `>` take the new version at their own precision (`>=1.2` → `>=3.1`, a new version at or below them `>=<new>`); trailing zeros are trimmed when a clause has fewer than three parts; `~=`, `^` and `~` take the new version cut or zero-padded to their precision (`~=7.2` with 8.0.1 → `~=8.0`); `==`, `===`, `=`, a bare version and `<=` become the new version; wildcards keep `.*` at their precision (`==1.0.*` → `==1.2.*`).
+- A Poetry constraint with `||` alternatives gets a new alternative for a version outside all of them (`^1 || ^2` with 3.0.0 → `^1 || ^2 || ^3`, as Renovate widens npm `||` ranges); `bump` raises the alternative that admits the version.
+- Only the changed versions (and operators, `>` → `>=`) are rewritten; the bytes between clauses are kept. A rewrite that would not admit the new version (it is excluded by `!=`) is not proposed. Renovate's removal of a `>=` that a `==X.*` makes redundant is not done.
+
+**Sources.**
+
+- Values are a constraint string or a table with `version` (`{ version = "^2.0", extras = ["socks"] }`).
+- A table's `source = "<name>"` looks the dep up on that `[[tool.poetry.source]]` URL only; otherwise the first source with `priority = "primary"` or `"default"` (or the legacy `default = true`) is used, else `PIP_INDEX_URL` or PyPI (see the `pypi` datasource), and the releases of every `priority = "supplemental"` source are merged in. `explicit` sources serve only deps that name them.
+
+**Locked versions.**
+
+Before resolving, deps reads the lockfile the post-processor would update (see below) once per run: `[[package]]` `name` and `version` of `uv.lock`, `poetry.lock` and `pdm.lock`, and the `"==<version>"` pins of `Pipfile.lock` in the section of the dep's Pipfile table (`default` for `[packages]`, `develop` for `[dev-packages]`, else the category's name). Names compare PEP 503-normalized; a name locked at several versions (uv and pdm forks by marker) counts as not locked.
+
+- The locked version is the current version (update types compare it with the new version), decides which versions the range admits are lockfile-only updates, and is what OSV is queried with, so an already locked fix is not proposed again. Without a lock, the range's anchor is used.
+- A lockfile that does not parse is a run error (`<path>: <err>`); its deps count as not locked.
+
+**Lockfile post-processing (`apply`, `run`).**
+
+The lock directory of a `pyproject.toml` is its own directory when it holds `poetry.lock`. Its lockfile is regenerated in a temporary copy of that directory's top-level files (up to 4 MiB each; subdirectories are not copied) with the patched manifests and the current lockfile:
+
+| Lockfile | Command | Without the tool in `PATH` |
+|---|---|---|
+| `uv.lock` | `uv lock --no-progress` | error `uv not found (needed to update uv.lock)` |
+| `poetry.lock` | `poetry lock` (Poetry 2), `poetry lock --no-update` (Poetry 1), with `POETRY_NO_INTERACTION=1` | `uvx --from poetry poetry lock` |
+| `pdm.lock` | `pdm lock --update-reuse` (keeps the pins the manifest still admits), with `PDM_CHECK_UPDATE=false PDM_NON_INTERACTIVE=1` | `uvx --from pdm pdm lock --update-reuse` |
+| `Pipfile.lock` | `pipenv lock`, with `PIPENV_VENV_IN_PROJECT=1 PIPENV_IGNORE_VIRTUALENVS=1 PIPENV_NOSPIN=1 PIPENV_YES=1 PIPENV_VERBOSITY=-1` | `uvx --from pipenv pipenv lock` |
+
+A `pyproject.toml` without a lockfile next to it belongs to the nearest `uv.lock` above whose `[tool.uv.workspace]` `members` (minus `exclude`) match its directory; every member's `pyproject.toml` is copied as well. Projects whose metadata is built (dynamic versions from VCS, local build backends) can fail to lock in the copy. A failure reports `<command> in <dir>: <last 20 output lines>`, and the directory's changes are dropped.
+
+Lockfile-only updates (`rangeStrategy` `update-lockfile`, see Ranges) run after that regeneration, which is skipped when no manifest of the directory changed, with the same tool, environment and fallback:
+
+| Lockfile | Lockfile-only command |
+|---|---|
+| `uv.lock` | `uv lock --no-progress --upgrade-package <name>==<version>…` |
+| `poetry.lock` | `poetry update --lock <name>…` (Poetry 1 and 2) |
+| `pdm.lock` | `pdm update --update-reuse --no-sync -G <group> <name>…`, once per lock group of the names (pdm takes one group with package names) |
+| `Pipfile.lock` | `pipenv upgrade --lock-only --categories <category> <name>==<version>…`, once per Pipfile category |
+
+Poetry and pdm cannot pin a version there: they move the dep to the newest version its range admits, which can be newer than proposed.
+
+- `plan` does not run lock commands, and prints `note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run`.
+
+## pipenv
+
+Updates the packages of a `Pipfile`, then refreshes `Pipfile.lock`. The file is parsed with byte spans; only the specifier's versions inside the TOML string are rewritten. `[requires]` is no dep: `python_full_version` (exactly) else `python_version` (`3.11` → `==3.11.*`) drops the releases that do not support it (see the `pypi` datasource).
+
+**Files:**
+
+- `Pipfile`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `packages` | `[packages]` (updates use commit type `fix`) | `pypi` | `pep440` | updated |
+| `dev-packages` | `[dev-packages]` | `pypi` | `pep440` | updated |
+| `category` | every custom package category (pipenv ≥ 2022.10): any other top-level table except `[source]`, `[requires]`, `[pipenv]` and `[scripts]`, e.g. `[docs]`. Match them in rules with `depTypes: [category]` (plus `paths`/`names`); Renovate uses the category name as dep type | `pypi` | `pep440` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unconstrained` | no specifier, `*`, or only `!=` exclusions |
+| `unsupported range` | a specifier that does not parse: a version that is not PEP 440 (`>=1.0-SNAPSHOT`, `===foobar`), a wildcard other than a trailing `.*` of `==` or `!=` (`~=1.*`, `>=1.*`), Poetry syntax (`^1.2`, `>=1 <2`, `\|\|`), or a bare version outside Pipfiles |
+| `cannot locate value` | a TOML string with escapes |
+| `git dependency` | `{ git = … }` |
+| `local dependency` | `{ path = … }` |
+| `url dependency` | `{ file = … }` |
+| `unknown index <name>` | an `index` that no `[[source]]` names |
+
+**Specifiers.**
+
+- Every PEP 440 specifier set is accepted: `==`, `===`, `~=`, `!=`, `<`, `<=`, `>` and `>=` clauses separated by commas, with a trailing `.*` after `==` or `!=` (in a Pipfile also a bare version, meaning `==`). How a range is updated is described under Ranges.
+- The dep's version is the range's anchor: in its last `||` alternative the first clause that is not `<`, `<=` or `!=` (`>=1.2,<2` → `1.2`, `<1.0.0,>=0.114.2` → `0.114.2`), else its first upper bound (`<2` → `2`). The anchor's precision is kept: candidates with non-zero parts beyond it are skipped (`precision`), others are cut to it (`>=1.2,<2` sees 3.1.0 as `3.1`). With a lockfile, the locked version takes the anchor's place.
+- Versioning is `pep440`: pre and dev releases are only considered from a pre or dev release.
+- Names are kept as written; the datasource looks them up PEP 503-normalized.
+
+**Ranges (`rangeStrategy`).**
+
+- `auto` (the default) is `update-lockfile`: a new version the range admits only moves the lockfile from the locked version (see Locked versions), and is not proposed without a lockfile deps reads; a version outside the range rewrites the range. Renovate's `auto` is `update-lockfile` for poetry and `replace` for pep621, pipenv and pip_requirements, which only differs where deps reads a lockfile.
+- `bump` rewrites the range for every newer version, raising its lower bound (`>=1.2,<2` with 1.5.0 → `>=1.5.0,<2`, `^2.31` with 2.32.3 → `^2.32`, `>=2.31.0` → `>=2.32.3`). An admitted version a range has no bound to raise for (`<2`, `<=2`, `>1`, `==1.*`) is handled as under `update-lockfile`.
+- Rewrites follow Renovate's pep440 `getNewValue` (`lib/modules/versioning/pep440/range.ts`): an admitted version gets its `bump` rules, any other its `replace` rules, under every strategy (Renovate's `bump` would write the full new version as lower bound there too). Clause by clause: `!=` exclusions are kept verbatim; `<V` moves past the new version at the range's precision (`>=1.2,<2` with 3.1.0 → `>=3.1,<4`; with two clauses the precision is the first part in which the bounds differ, one finer for a major followed by `0`: `>=1.2.0,<2.0.0` with 3.1.4 → `>=3.1.4,<3.2.0`); `>=` and `>` take the new version at their own precision (`>=1.2` → `>=3.1`, a new version at or below them `>=<new>`); trailing zeros are trimmed when a clause has fewer than three parts; `~=`, `^` and `~` take the new version cut or zero-padded to their precision (`~=7.2` with 8.0.1 → `~=8.0`); `==`, `===`, `=`, a bare version and `<=` become the new version; wildcards keep `.*` at their precision (`==1.0.*` → `==1.2.*`).
+- A Poetry constraint with `||` alternatives gets a new alternative for a version outside all of them (`^1 || ^2` with 3.0.0 → `^1 || ^2 || ^3`, as Renovate widens npm `||` ranges); `bump` raises the alternative that admits the version.
+- Only the changed versions (and operators, `>` → `>=`) are rewritten; the bytes between clauses are kept. A rewrite that would not admit the new version (it is excluded by `!=`) is not proposed. Renovate's removal of a `>=` that a `==X.*` makes redundant is not done.
+
+**Indexes.**
+
+- Values are a specifier string or a table with `version` (`{ version = "==2.0", extras = ["socks"] }`).
+- A table's `index = "<name>"` looks the dep up on that `[[source]]` URL; any other dep uses the first `[[source]]`, and with `[pipenv] install_search_all_sources = true` also merges in the releases of the other sources (pipenv ≥ 2022.3 otherwise resolves it on the first only). A source URL with `${VAR}` is not expanded and falls back to `PIP_INDEX_URL` or PyPI (see the `pypi` datasource).
+
+**Locked versions.**
+
+Before resolving, deps reads the lockfile the post-processor would update (see below) once per run: `[[package]]` `name` and `version` of `uv.lock`, `poetry.lock` and `pdm.lock`, and the `"==<version>"` pins of `Pipfile.lock` in the section of the dep's Pipfile table (`default` for `[packages]`, `develop` for `[dev-packages]`, else the category's name). Names compare PEP 503-normalized; a name locked at several versions (uv and pdm forks by marker) counts as not locked.
+
+- The locked version is the current version (update types compare it with the new version), decides which versions the range admits are lockfile-only updates, and is what OSV is queried with, so an already locked fix is not proposed again. Without a lock, the range's anchor is used.
+- A lockfile that does not parse is a run error (`<path>: <err>`); its deps count as not locked.
+
+**Lockfile post-processing (`apply`, `run`).**
+
+The lock directory of a `Pipfile` is its own directory when it holds `Pipfile.lock`. Its lockfile is regenerated in a temporary copy of that directory's top-level files (up to 4 MiB each; subdirectories are not copied) with the patched manifests and the current lockfile:
+
+| Lockfile | Command | Without the tool in `PATH` |
+|---|---|---|
+| `uv.lock` | `uv lock --no-progress` | error `uv not found (needed to update uv.lock)` |
+| `poetry.lock` | `poetry lock` (Poetry 2), `poetry lock --no-update` (Poetry 1), with `POETRY_NO_INTERACTION=1` | `uvx --from poetry poetry lock` |
+| `pdm.lock` | `pdm lock --update-reuse` (keeps the pins the manifest still admits), with `PDM_CHECK_UPDATE=false PDM_NON_INTERACTIVE=1` | `uvx --from pdm pdm lock --update-reuse` |
+| `Pipfile.lock` | `pipenv lock`, with `PIPENV_VENV_IN_PROJECT=1 PIPENV_IGNORE_VIRTUALENVS=1 PIPENV_NOSPIN=1 PIPENV_YES=1 PIPENV_VERBOSITY=-1` | `uvx --from pipenv pipenv lock` |
+
+A `pyproject.toml` without a lockfile next to it belongs to the nearest `uv.lock` above whose `[tool.uv.workspace]` `members` (minus `exclude`) match its directory; every member's `pyproject.toml` is copied as well. Projects whose metadata is built (dynamic versions from VCS, local build backends) can fail to lock in the copy. A failure reports `<command> in <dir>: <last 20 output lines>`, and the directory's changes are dropped.
+
+Lockfile-only updates (`rangeStrategy` `update-lockfile`, see Ranges) run after that regeneration, which is skipped when no manifest of the directory changed, with the same tool, environment and fallback:
+
+| Lockfile | Lockfile-only command |
+|---|---|
+| `uv.lock` | `uv lock --no-progress --upgrade-package <name>==<version>…` |
+| `poetry.lock` | `poetry update --lock <name>…` (Poetry 1 and 2) |
+| `pdm.lock` | `pdm update --update-reuse --no-sync -G <group> <name>…`, once per lock group of the names (pdm takes one group with package names) |
+| `Pipfile.lock` | `pipenv upgrade --lock-only --categories <category> <name>==<version>…`, once per Pipfile category |
+
+Poetry and pdm cannot pin a version there: they move the dep to the newest version its range admits, which can be newer than proposed.
+
+- `plan` does not run lock commands, and prints `note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run`.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -823,6 +1107,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `node-version` | any (`node`) | `<DEPS_NODE_DIST_URL or https://nodejs.org/dist>/index.json`, once per run; published versions plus a derived `X.Y` and `X` per stable line | none | `date` |
 | `helm` | chart name; the repository URL (`https://…` or `oci://host/path`) is the dep's source | classic: `GET <repo>/index.yaml`, once per repository, stream-scanned so only the asked-for charts are decoded; versions without `urls` dropped. OCI: registry `tags/list` of `<host>/<path>/<chart>` via the docker datasource, tag `_` read as `+` | classic: the forge token (Basic `x-access-token`) on the forge's host, else anonymous; OCI: as `docker` | classic: index `created`; OCI: manifest annotation `org.opencontainers.image.created` |
 | `crate` | crate name (case-insensitive); the dep's source is its registry name or index URL ("" = crates.io) | `GET <index>/<prefix>/<name>` of the sparse index (crates.io: `DEPS_CRATES_INDEX_URL` or `https://index.crates.io`; prefixes `1/<n>`, `2/<n>`, `3/<first char>/<n>`, `<n[0:2]>/<n[2:4]>/<n>`), or the same path of a git index (shallow blob-less clone, `git cat-file`); newline-delimited JSON, yanked versions dropped; not found → `crate <name> not found` (`… in registry <name>`). Partial requirements also get a derived `X.Y` and `X` per stable release line. Source repository (release notes): `GET <api>/api/v1/crates/<name>/<version>` `repository` (crates.io: `DEPS_CRATES_API_URL` or `https://crates.io`; other registries: `api` of their `config.json`), only for versions in a pull request | alternative registries: `CARGO_REGISTRIES_<NAME>_TOKEN`, `$CARGO_HOME/credentials.toml` or `.cargo/config.toml` `[registries.<name>] token` as `Authorization`, only to the index host; without a token, the platform token (Basic) for its host, and the git credential helper after a 401; git indexes: git credential helpers | index `pubtime` (crates.io writes it for every version); a release line has the time of its first release |
+| `pypi` | package name; PEP 503-normalized for lookups (`zope.interface` → `zope-interface`) | PyPI: `GET <DEPS_PYPI_URL or https://pypi.org>/pypi/<name>/json`; other indexes: `GET <index>/<name>/` with `Accept: application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.2, text/html;q=0.01` (simple API: JSON, PEP 691/700, else HTML, PEP 503; an HTTP 406 is retried with `Accept: text/html`); once per (index, name); versions without files or with every file yanked dropped; 404 → `package <name> not found` | userinfo of the index URL (`https://user:pass@host/simple`) sent as basic auth, redacted in errors and logs | earliest file upload time of the version on any of the dep's indexes (`upload_time_iso_8601`, `upload-time`, HTML `data-upload-time`) |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
@@ -838,10 +1123,28 @@ deps reads the nearest `.npmrc` per `package.json` directory, walking up to `--d
 - A scoped name uses `@scope:registry=` from that file; any other name uses `registry=`.
 - Without one, deps uses `NPM_CONFIG_REGISTRY` (or `npm_config_registry`), else `https://registry.npmjs.org/`.
 
+### Python index selection
+
+deps looks up a Python package on its primary index and on its extra indexes, and merges the releases.
+
+- Primary index: the one declared by the manifest (requirements `--index-url`, a uv `default = true` index, a Poetry primary source, the first Pipfile `[[source]]`, or the index a dep is pinned to) wins, then `PIP_INDEX_URL`, then PyPI.
+- Extra indexes: those declared by the manifest (requirements `--extra-index-url`; uv `[[tool.uv.index]]` entries that are neither `default` nor `explicit`; Poetry `priority = "supplemental"` sources; the other Pipfile `[[source]]`s with `[pipenv] install_search_all_sources = true`; pdm's other `[[tool.pdm.source]]`s), then every URL of the space-separated `PIP_EXTRA_INDEX_URL`. A dep pinned to an index (uv `index = …`, Poetry `source = …`, Pipfile `index = …`) has none.
+- The releases of all indexes are merged: each version once, with the earliest upload time; an index without the package is fine as long as one has it, any other error fails the dep. This is pip's behavior; uv's default `first-index` strategy, which stops at the first index with the package, may see fewer versions.
+- PyPI, also when named as `https://pypi.org/simple`, is asked through its JSON API. Its `info.project_urls` (`Source`, `Source Code`, `Repository`, else `Code`, `GitHub` or `Homepage` on github.com, gitlab.com or codeberg.org), else a forge `info.home_page`, names the source repository for release notes; it describes the latest release.
+- Any other index is asked for the JSON simple API (PEP 691) and may answer HTML (PEP 503, as download.pytorch.org does): anchors give the filename (text, else the last `href` path segment), the `#sha256=` digest, PEP 592 `data-yanked` and PEP 503 `data-requires-python`. Other content types fail with `unsupported content type`. Files are mapped to versions by filename (wheels, sdists, eggs).
+
+### Python version compatibility
+
+Like Renovate, deps drops the releases a project cannot install on every Python version it supports.
+
+- The project's Python constraint comes from `[project] requires-python` (pep621), `python` in `[tool.poetry.dependencies]` else `[project] requires-python` (poetry), or Pipfile `[requires]` (`python_full_version` exactly, else `python_version` as `==<version>.*`); requirements files have none.
+- A release is kept when the `requires-python` shared by all of its files that are not yanked (JSON API `requires_python`, simple API `requires-python`, HTML `data-requires-python`) admits every final Python release the project's constraint admits; a release whose files have none or disagree is kept. Specifier sets follow PEP 440 (`>=3.8,!=3.9.*,<4`, `~=3.10`, `==3.11.*`) and Poetry (`^3.9`, `~3.9`, `>=3.9 <4`, `||`).
+- An invalid project constraint is ignored with a warning; an invalid `requires-python` keeps its release.
+
 ### Security advisories (OSV)
 
 - deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.
-- Ecosystems: `Go` (gomod `direct`/`indirect`), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
+- Ecosystems: `Go` (gomod `direct`/`indirect`), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
 - Withdrawn advisories are skipped, and aliases are reported once.
 
 ### Checksums
@@ -853,6 +1156,6 @@ deps reads the nearest `.npmrc` per `package.json` directory, walking up to `--d
 Release notes appear in PR bodies only.
 
 - deps fetches one page of the source repository's GitHub or Gitea/Forgejo releases per run.
-- The source repository comes from the action, the module's forge repository (including a small vanity table), npm's `repository` field, or the OCI `org.opencontainers.image.source` label.
+- The source repository comes from the action, the module's forge repository (including a small vanity table), npm's `repository` field, the PyPI project URLs, or the OCI `org.opencontainers.image.source` label.
 - Bodies are capped at 2 KiB each and 40 KiB in total, and include a compare link.
 - Failures only drop the notes.

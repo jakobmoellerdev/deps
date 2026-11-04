@@ -301,7 +301,7 @@ jobs:
    - The platform token is sent to the platform host as Basic `x-access-token:<t>`.
    - `DEPS_GITHUB_COM_TOKEN` is used for github.com when the platform is elsewhere.
    - On a 401 without a static token, deps runs `git credential fill` once per host and retries. deps never prompts (`GIT_TERMINAL_PROMPT=0`).
-4. **npm and Docker.** npm uses the `.npmrc` `_authToken` entries; docker uses the Docker credential chain (`~/.docker/config.json` or credential helpers, e.g. after `docker login`).
+4. **npm, PyPI and Docker.** npm uses the `.npmrc` `_authToken` entries; PyPI indexes use the index URL's userinfo (`https://user:token@host/simple` in the manifest or `PIP_INDEX_URL`); docker uses the Docker credential chain (`~/.docker/config.json` or credential helpers, e.g. after `docker login`).
    - **Docker Hub.** Anonymous pulls are limited per IP address (`ratelimit-limit: 100;w=3600` at the time of writing), and hosted runners share IPs. deps resolves digests with uncounted HEADs, but each image whose release time is needed costs counted manifest GETs (two for a multi-platform image), so a repository with many Docker Hub images can exhaust the quota in one run. Lookups then fail at once with `rate limited by registry-1.docker.io` and a `docker login` hint. Log in before deps, e.g. with `docker/login-action` and a Docker Hub access token:
 
      ```yaml
@@ -388,6 +388,8 @@ Actions with a full URL (`uses: https://host/owner/repo@ref`) are looked up on t
 | `go` | only for `go mod tidy` after go.mod updates, and `go list` for `GOPRIVATE`/direct modules. `go env` falls back to the environment without it. `GOTOOLCHAIN=auto` fetches a newer toolchain when go.mod requires one. |
 | `npm`, `pnpm`, `yarn` | regenerating lockfiles; see the note below the table |
 | `cargo` | updating `Cargo.lock` (requirement changes and lockfile-only updates), e.g. from `dtolnay/rust-toolchain`; without it those manifests fail with `cargo not found (needed to update Cargo.lock)` |
+| `uv`, `poetry`, `pipenv` | regenerating `uv.lock`, `poetry.lock`, `Pipfile.lock`; poetry and pipenv fall back to `uvx --from <tool>`, so `uv` (e.g. `astral-sh/setup-uv`) is enough |
+| `uv` or `pip-compile` | regenerating `requirements*.txt` written by `uv pip compile` or pip-compile with `--generate-hashes` (the tool its header names); pip-compile falls back to `uvx --from pip-tools pip-compile`. Other hashed requirements files need no tool. |
 | Docker credentials | private registries; Docker Hub in repositories with many images (pull limit) |
 
 For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back to `npx --yes <tool>[@<packageManager version>]`, so `npm`/`npx` (e.g. from `actions/setup-node`) is enough. With none of them, the lockfile's manifests fail with `<tool> not found (needed to update <lock>)`.
@@ -397,7 +399,7 @@ For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back
 **Network.** The runner needs HTTPS access to:
 
 - the forge;
-- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), api.osv.dev for security updates;
+- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), pypi.org, api.osv.dev for security updates;
 - the release download host.
 
 deps honors `HTTPS_PROXY`/`NO_PROXY`.
@@ -675,7 +677,7 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 | `deps: unsupported runner <os>/<arch>` | Use a linux/amd64 or linux/arm64 runner. |
 | `deps: no release found at <api>` | The `repository` input points at a repository without releases, or the API is unreachable. Set `version:` and `repository:` explicitly. |
 | `go mod tidy in <dir>: …` | Go is missing on the runner, or a private module can't be fetched (set `GOPRIVATE` and git credentials). The module's change is dropped; other updates proceed. |
-| `<tool> not found (needed to update <lock>)` | Install Node.js (`actions/setup-node`) so `npm`/`npx` is available. |
+| `<tool> not found (needed to update <lock>)` | Install Node.js (`actions/setup-node`) so `npm`/`npx` is available. For Python locks install uv (e.g. `astral-sh/setup-uv`). |
 | `cargo not found (needed to update Cargo.lock)` | Install Rust (`dtolnay/rust-toolchain`) so `cargo` is on `PATH`, or the root's Cargo.toml changes are dropped. |
 | `cargo update in <dir>: …` | cargo could not resolve the patched workspace: a private registry or git dependency without credentials, a conflicting requirement (for example a feature the new version dropped), or a path dependency outside the repository. The root's change is dropped; other updates proceed. |
 | `GET <index>/…: HTTP 401` for a crate | The Cargo registry needs credentials: set `CARGO_REGISTRIES_<NAME>_TOKEN` (the `[registries]` name of the index), add the token to `$CARGO_HOME/credentials.toml`, or provide git credentials for the index host. |

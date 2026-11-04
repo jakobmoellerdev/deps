@@ -121,7 +121,7 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{commitScope: 'a b'}]\n", "rules[0].commitScope: must match"},
 		{"rules: [{names: ['{a']}]\n", "rules[0].names[0]"},
 		{"rules: [{paths: ['[']}]\n", "rules[0].paths[0]: invalid glob"},
-		{"rules: [{datasources: [pypi]}]\n", "rules[0].datasources[0]: must be one of git-tags, github-releases"},
+		{"rules: [{datasources: [nuget]}]\n", "rules[0].datasources[0]: must be one of git-tags, github-releases"},
 		{"rules: [{updateTypes: [huge]}]\n", "rules[0].updateTypes[0]: must be one of major"},
 		{"rules: [{updateTypes: []}]\n", "rules[0].updateTypes: must not be empty"},
 		{"rules: [{updateTypes: [major], pin: digest}]\n", "rules[0].pin: cannot be combined with updateTypes"},
@@ -144,7 +144,7 @@ func TestLoadErrors(t *testing.T) {
 		{"minimumReleaseAge: soon\n", `minimumReleaseAge: invalid age "soon"`},
 		{"minimumReleaseAge: -1h\n", `minimumReleaseAge: invalid age "-1h"`},
 		{"minimumReleaseAge: 99999999999999999 weeks\n", "minimumReleaseAge: age \"99999999999999999 weeks\" out of range"},
-		{"rules: [{versioning: calver}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose, cargo or regex:<RE2>, got "calver"`},
+		{"rules: [{versioning: calver}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose, cargo, pep440 or regex:<RE2>, got "calver"`},
 		{"rules: [{versioning: 'regex:('}]\n", "rules[0].versioning: regex: invalid RE2 regexp"},
 		{"rules: [{versioning: 'regex:^(?<minor>\\d+)$'}]\n", "rules[0].versioning: regex: must have a (?<major>...) group"},
 		{"rules: [{versioning: 'regex:^(?<major>\\d+)(?P<mjor>x)$'}]\n", `rules[0].versioning: regex: unknown group "mjor" (allowed: major, minor, patch, build, revision, prerelease, compatibility)`},
@@ -155,7 +155,7 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{separateMultipleMajor: 1}]\n", "line 1"},
 		{"updateNotScheduled: sometimes\n", "line 1"},
 		{"rules: [{minimumReleaseAge: 3 fortnights}]\n", `rules[0].minimumReleaseAge: invalid age "3 fortnights"`},
-		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, github-releases, go, go-toolchain, docker, npm, node-version, helm, crate, golang-version, github-tags, github-release-attachments, node or custom.<name> of customDatasources, got "custom.envtest"`},
+		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, github-releases, go, go-toolchain, docker, npm, node-version, helm, crate, pypi, golang-version, github-tags, github-release-attachments, node or custom.<name> of customDatasources, got "custom.envtest"`},
 		{"custom: [{files: [x], datasource: custom.envtest}]\n", `custom[0].datasource: must be one of git-tags`},
 		{"customDatasources: {envtest: {}}\n", "customDatasources.envtest.url: required"},
 		{"customDatasources: {envtest: {url: 'ftp://x/y'}}\n", `customDatasources.envtest.url: must be an http(s) URL, got "ftp://x/y"`},
@@ -464,6 +464,11 @@ func TestCommitTypeAndScope(t *testing.T) {
     commitScope: ""
   - names: ["example.com/keep"]
     commitScope: tools
+  - manager: pipenv
+    depTypes: [category]
+    commitType: docs
+  - depTypes: [tool.pdm.dev-dependencies]
+    commitScope: dev
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -478,6 +483,15 @@ func TestCommitTypeAndScope(t *testing.T) {
 		{dep.Dep{Manager: "npm", DepType: "devDependencies", Name: "x"}, "chore", "deps"},
 		{dep.Dep{Manager: "cargo", DepType: "dependencies", Name: "x"}, "fix", "deps"},
 		{dep.Dep{Manager: "cargo", DepType: "dev-dependencies", Name: "x"}, "chore", "deps"},
+		{dep.Dep{Manager: "poetry", DepType: "dependencies", Name: "x"}, "fix", "deps"},
+		{dep.Dep{Manager: "poetry", DepType: "group", Name: "x"}, "chore", "deps"},
+		{dep.Dep{Manager: "pep621", DepType: "project.dependencies", Name: "x"}, "fix", "deps"},
+		{dep.Dep{Manager: "pep621", DepType: "dependency-groups", Name: "x"}, "chore", "deps"},
+		{dep.Dep{Manager: "pipenv", DepType: "packages", Name: "x"}, "fix", "deps"},
+		{dep.Dep{Manager: "pipenv", DepType: "dev-packages", Name: "x"}, "chore", "deps"},
+		{dep.Dep{Manager: "pipenv", DepType: "category", Name: "x"}, "docs", "deps"},
+		{dep.Dep{Manager: "pep621", DepType: "tool.pdm.dev-dependencies", Name: "x"}, "chore", "dev"},
+		{dep.Dep{Manager: "pip_requirements", DepType: "requirements", Name: "x"}, "chore", "deps"},
 		{dep.Dep{Manager: "docker", DepType: "dockerfile", Name: "x"}, "chore", "deps"},
 		{dep.Dep{Manager: "github-actions", DepType: "action", Name: "actions/checkout"}, "ci", "deps"},
 		{dep.Dep{Manager: "gomod", DepType: "direct", Name: "example.com/x/y"}, "build", ""},

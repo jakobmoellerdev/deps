@@ -1,0 +1,14 @@
+# Source: https://github.com/fastapi/full-stack-fastapi-template/blob/aabb90126964a164e02aff39e7c385bb0598236d/pyproject.toml (fetched 2026-11-04), trimmed
+[dependency-groups]
+dev = [
+    "prek>=0.5.3,<1.0.0",
+    "typer>=0.27.2,<1.0.0",
+    "zizmor>=1.30.1",
+]
+
+github-actions = [
+    "smokeshow >=0.5.0",
+]
+
+[tool.uv.workspace]
+members = ["backend"]
