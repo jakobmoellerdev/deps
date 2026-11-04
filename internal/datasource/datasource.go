@@ -32,6 +32,16 @@ type Timer interface {
 	ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error)
 }
 
+// ReleaseBound is implemented by Timers that know, without per-version lookups, a time no
+// version of a dependency was published after (npm's abbreviated `modified`). It is optional;
+// the engine skips a minimumReleaseAge lookup when the bound is already old enough, which
+// cannot change the outcome since every release time is at or before it.
+type ReleaseBound interface {
+	// ReleasedBy returns the bound for d from data already fetched by Releases, or the zero
+	// time when unknown.
+	ReleasedBy(d dep.Dep) time.Time
+}
+
 // Planner is implemented by datasources that use the full set of deps they will be asked
 // about before the first lookup, e.g. to keep only the wanted charts of a repository index.
 // It is optional; the engine calls Plan once per run, before any Releases call, with the

@@ -778,7 +778,7 @@ func (r *resolver) guard(timer datasource.Timer, c versioning.Candidate) string 
 		return reasonOlder
 	}
 	age := r.pol.of(c.Kind).MinAge
-	if age <= 0 {
+	if age <= 0 || r.releasedBefore(timer, r.now.Add(-age)) {
 		return ""
 	}
 	tb := r.releaseTime(timer, c.Version)
@@ -833,6 +833,17 @@ func (r *resolver) olderThanCurrent(timer datasource.Timer, candidate string) bo
 	}
 	tc := r.releaseTime(timer, r.d.Version)
 	return !tc.IsZero() && tb.Before(tc)
+}
+
+// releasedBefore reports whether the datasource bounds every release of the dep at or before
+// t (see datasource.ReleaseBound), so no candidate can be too new and no time need be asked.
+func (r *resolver) releasedBefore(timer datasource.Timer, t time.Time) bool {
+	b, ok := timer.(datasource.ReleaseBound)
+	if !ok {
+		return false
+	}
+	bound := b.ReleasedBy(r.d)
+	return !bound.IsZero() && !bound.After(t)
 }
 
 // releaseTime returns when version was released, asking the datasource once per version;

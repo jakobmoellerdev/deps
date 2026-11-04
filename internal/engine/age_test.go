@@ -262,3 +262,44 @@ func TestMinimumReleaseAgePrefetch(t *testing.T) {
 		t.Errorf("release-time lookups never overlapped (max in flight %d)", ds.maxInFlight)
 	}
 }
+
+// boundedReleases is a timedReleases that also bounds every release time (ReleaseBound).
+type boundedReleases struct {
+	*timedReleases
+	bound time.Time
+}
+
+func (b boundedReleases) ReleasedBy(dep.Dep) time.Time { return b.bound }
+
+// TestMinimumReleaseAgeReleaseBound checks that a release bound at least minimumReleaseAge old
+// spares the per-version lookups and that the chosen update never depends on it.
+func TestMinimumReleaseAgeReleaseBound(t *testing.T) {
+	d := []dep.Dep{{Datasource: "go", Versioning: "go", Name: "example.com/a", Version: "v1.0.0", Line: 1}}
+	tests := []struct {
+		name   string
+		newest int // days since v1.2.0 was released
+		bound  time.Time
+		want   string
+		asked  bool
+	}{
+		{"bound old enough", 30, daysAgo(30), "v1.2.0", false},
+		{"bound exactly the minimum age", 28, daysAgo(28), "v1.2.0", false},
+		{"bound within the window", 1, daysAgo(1), "v1.1.0", true},
+		{"bound unknown", 30, time.Time{}, "v1.2.0", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ds := boundedReleases{&timedReleases{
+				versions: []string{"v1.0.0", "v1.1.0", "v1.2.0"},
+				times:    map[string]time.Time{"v1.0.0": daysAgo(100), "v1.1.0": daysAgo(40), "v1.2.0": daysAgo(tt.newest)},
+			}, tt.bound}
+			res, _ := resolveStub(t, "minimumReleaseAge: 28 days\n", "gomod", d, ds, nil)
+			if len(res.Updates) != 1 || res.Updates[0].NewVersion != tt.want {
+				t.Fatalf("updates = %+v, want %s", res.Updates, tt.want)
+			}
+			if asked := len(ds.asked) > 0; asked != tt.asked {
+				t.Errorf("release times asked = %v, want %v", ds.asked, tt.asked)
+			}
+		})
+	}
+}

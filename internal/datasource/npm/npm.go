@@ -72,9 +72,10 @@ type docEntry struct {
 }
 
 type entry struct {
-	once sync.Once
-	rels []datasource.Release
-	err  error
+	once     sync.Once
+	rels     []datasource.Release
+	modified time.Time // abbreviated document's `modified`; zero when absent
+	err      error
 }
 
 type rcEntry struct {
@@ -129,7 +130,7 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 		s.packages[key] = e
 	}
 	s.mu.Unlock()
-	e.once.Do(func() { e.rels, e.err = s.fetch(ctx, loc.reg, d.Name, loc.token) })
+	e.once.Do(func() { e.rels, e.modified, e.err = s.fetch(ctx, loc.reg, d.Name, loc.token) })
 	return e.rels, e.err
 }
 
@@ -165,6 +166,23 @@ func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 		return time.Time{}, fmt.Errorf("package %s: time of %s: %w", d.Name, version, err)
 	}
 	return t, nil
+}
+
+// ReleasedBy implements datasource.ReleaseBound with the `modified` time of the abbreviated
+// document of d's earlier Releases lookup: every publish changes the document, so no version
+// is newer. When it is old enough the full packument, several times larger, is not fetched.
+func (s *Source) ReleasedBy(d dep.Dep) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	loc, ok := s.located[d.File+"\x00"+d.Name]
+	if !ok {
+		return time.Time{}
+	}
+	// Releases of d completed e.once before the engine asks, so e.modified is set.
+	if e := s.packages[loc.reg+"\x00"+d.Name]; e != nil && e.err == nil {
+		return e.modified
+	}
+	return time.Time{}
 }
 
 // SourceRepo implements datasource.SourceRepo with the packument's top-level `repository`
@@ -362,27 +380,27 @@ func escapeName(name string) string {
 	return url.PathEscape(name)
 }
 
-func (s *Source) fetch(ctx context.Context, reg, name, token string) (rels []datasource.Release, err error) {
+func (s *Source) fetch(ctx context.Context, reg, name, token string) (rels []datasource.Release, modified time.Time, err error) {
 	start, deprecated := time.Now(), 0
 	defer func() {
 		slog.DebugContext(ctx, "npm metadata fetched", "name", name, "registry", reg, "authenticated", token != "",
-			"versions", len(rels), "deprecated", deprecated, "duration", time.Since(start), "err", err)
+			"versions", len(rels), "deprecated", deprecated, "modified", modified, "duration", time.Since(start), "err", err)
 	}()
 	if err := s.acquire(ctx); err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	defer s.release()
 	target := reg + escapeName(name)
 	resp, err := s.get(ctx, target, name, abbreviated, token)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	defer closeBody(resp)
-	rels, deprecated, err = decodeVersions(resp.Body)
+	rels, deprecated, modified, err = decodeVersions(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("npm registry %s: malformed response: %w", target, err)
+		return nil, time.Time{}, fmt.Errorf("npm registry %s: malformed response: %w", target, err)
 	}
-	return rels, nil
+	return rels, modified, nil
 }
 
 // get sends a GET for package name's document target and fails on a non-2xx status.
@@ -514,39 +532,55 @@ func decodeTimes(dec *jsontext.Decoder) (map[string]string, error) {
 }
 
 // decodeVersions streams the metadata document and returns the versions that are not
-// deprecated; only one version object is buffered at a time.
+// deprecated and the top-level `modified` (zero when absent or not RFC 3339); only one version
+// object is buffered at a time.
 // Duplicate-name checking is off: it keeps a name set per object, which made up over 90% of
 // the allocations on large packuments (typescript).
-func decodeVersions(r io.Reader) (rels []datasource.Release, deprecated int, err error) {
+func decodeVersions(r io.Reader) (rels []datasource.Release, deprecated int, modified time.Time, err error) {
 	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true))
 	if err := expectDelim(dec, '{'); err != nil {
-		return nil, 0, err
+		return nil, 0, time.Time{}, err
 	}
 	for dec.PeekKind() != '}' {
 		tok, err := dec.ReadToken()
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, time.Time{}, err
 		}
-		if tok.String() != "versions" {
+		switch tok.String() {
+		case "versions": // decoded below
+		case "modified":
+			if dec.PeekKind() != '"' {
+				if err := dec.SkipValue(); err != nil {
+					return nil, 0, time.Time{}, err
+				}
+				continue
+			}
+			v, err := dec.ReadToken()
+			if err != nil {
+				return nil, 0, time.Time{}, err
+			}
+			modified, _ = time.Parse(time.RFC3339, v.String()) // unparsable = unknown bound
+			continue
+		default:
 			if err := dec.SkipValue(); err != nil {
-				return nil, 0, err
+				return nil, 0, time.Time{}, err
 			}
 			continue
 		}
 		if err := expectDelim(dec, '{'); err != nil {
-			return nil, 0, err
+			return nil, 0, time.Time{}, err
 		}
 		for dec.PeekKind() != '}' {
 			tok, err := dec.ReadToken()
 			if err != nil {
-				return nil, 0, err
+				return nil, 0, time.Time{}, err
 			}
 			v := tok.String() // tokens are only valid until the next read
 			var meta struct {
 				Deprecated any `json:"deprecated"`
 			}
 			if err := json.UnmarshalDecode(dec, &meta); err != nil {
-				return nil, 0, err
+				return nil, 0, time.Time{}, err
 			}
 			if isDeprecated(meta.Deprecated) {
 				deprecated++
@@ -555,13 +589,13 @@ func decodeVersions(r io.Reader) (rels []datasource.Release, deprecated int, err
 			rels = append(rels, datasource.Release{Version: v})
 		}
 		if _, err := dec.ReadToken(); err != nil {
-			return nil, 0, err
+			return nil, 0, time.Time{}, err
 		}
 	}
 	if _, err := dec.ReadToken(); err != nil {
-		return nil, 0, err
+		return nil, 0, time.Time{}, err
 	}
-	return rels, deprecated, nil
+	return rels, deprecated, modified, nil
 }
 
 // isDeprecated reports whether a version's `deprecated` value marks it deprecated: a

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -105,6 +106,40 @@ func TestReleasesAbbreviatedDeprecated(t *testing.T) {
 	}
 	if _, err := s.Digest(t.Context(), d, "1.0.0"); err == nil {
 		t.Error("Digest succeeded")
+	}
+	bound := s.(datasource.ReleaseBound)
+	if got := bound.ReleasedBy(d); !got.Equal(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("ReleasedBy = %v, want the abbreviated `modified`", got)
+	}
+	if got := bound.ReleasedBy(dep.Dep{Name: "@scope/pkg", File: "other/package.json"}); !got.IsZero() {
+		t.Errorf("ReleasedBy without a Releases lookup = %v, want zero", got)
+	}
+}
+
+// TestReleasedByModified checks which `modified` values bound the release times: only an
+// RFC 3339 string; anything else, or a failed lookup, leaves the bound unknown.
+func TestReleasedByModified(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       time.Time
+	}{
+		{"rfc3339", `{"modified":"2026-10-30T14:12:27.179Z","versions":{}}`, time.Date(2026, 10, 30, 14, 12, 27, 179e6, time.UTC)},
+		{"after versions", `{"versions":{"1.0.0":{}},"modified":"2026-10-30T00:00:00Z"}`, time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)},
+		{"absent", `{"versions":{}}`, time.Time{}},
+		{"not a time", `{"modified":"yesterday","versions":{}}`, time.Time{}},
+		{"not a string", `{"modified":{"t":1},"versions":{}}`, time.Time{}},
+		{"malformed document", `{"modified":"2026-10-30T00:00:00Z","versions":`, time.Time{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := newRegistry(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tt.body)) })
+			s := New(reg.srv.Client(), nil, env(map[string]string{"NPM_CONFIG_REGISTRY": reg.srv.URL}))
+			d := dep.Dep{Name: "pkg", File: "package.json"}
+			_, _ = s.Releases(t.Context(), d, t.TempDir())
+			if got := s.(datasource.ReleaseBound).ReleasedBy(d); !got.Equal(tt.want) {
+				t.Errorf("ReleasedBy = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
