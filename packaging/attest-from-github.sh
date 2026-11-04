@@ -83,7 +83,10 @@ done
 verify() { # <bundle> <type> <file>
 	"$cosign" verify-blob-attestation --bundle "$1" --type "$2" \
 		--certificate-identity-regexp "$identity" --certificate-oidc-issuer "$issuer" \
-		--certificate-github-workflow-repository "$repo" "$3"
+		--certificate-github-workflow-repository "$repo" "$3" || {
+		echo "attest-from-github.sh: $3 does not match ${1##*/} from $base; the Gitea and GitHub builds differ, or the bundle is not from $repo's release workflow" >&2
+		exit 1
+	}
 }
 for f in "${files[@]}"; do
 	verify "$out/$f.sigstore.json" slsaprovenance1 "$dir/$f"
