@@ -1,6 +1,7 @@
 package dockerds
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -371,16 +373,18 @@ func TestNew(t *testing.T) {
 func TestRepository(t *testing.T) {
 	s := newSource(nil, nil, anon)
 	for ref, want := range map[string]struct {
-		pageSize int
-		plain    bool
+		pageSize, maxPages int
+		plain              bool
 	}{
-		"alpine":                   {hubPageSize, false},
-		"docker.io/library/alpine": {hubPageSize, false},
-		"ghcr.io/o/i":              {0, false},
-		"127.0.0.1:5000/x":         {0, true},
-		"localhost:5000/x":         {0, true},
-		"10.1.2.3/x":               {0, true},
-		"[::1]:5000/x":             {0, true},
+		"alpine":                   {hubPageSize, maxTagPages, false},
+		"docker.io/library/alpine": {hubPageSize, maxTagPages, false},
+		"ghcr.io/o/i":              {pageSize, maxTagPagesOldestFirst, false},
+		"quay.io/o/i":              {pageSize, maxTagPagesOldestFirst, false},
+		"gcr.io/o/i":               {pageSize, maxTagPages, false},
+		"127.0.0.1:5000/x":         {pageSize, maxTagPages, true},
+		"localhost:5000/x":         {pageSize, maxTagPages, true},
+		"10.1.2.3/x":               {pageSize, maxTagPages, true},
+		"[::1]:5000/x":             {pageSize, maxTagPages, true},
 	} {
 		name, err := repoName(dep.Dep{Name: ref})
 		if err != nil {
@@ -390,8 +394,48 @@ func TestRepository(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if repo.TagListPageSize != want.pageSize || repo.Registry.PlainHTTP != want.plain {
-			t.Errorf("%s: page size %d, plain HTTP %v; want %d, %v", ref, repo.TagListPageSize, repo.Registry.PlainHTTP, want.pageSize, want.plain)
+		if repo.TagListPageSize != want.pageSize || repo.TagListMaxPages != want.maxPages || repo.Registry.PlainHTTP != want.plain {
+			t.Errorf("%s: page size %d, max pages %d, plain HTTP %v; want %d, %d, %v", ref, repo.TagListPageSize, repo.TagListMaxPages, repo.Registry.PlainHTTP, want.pageSize, want.maxPages, want.plain)
 		}
+	}
+}
+
+// TestTagPageCap checks a listing stops after maxTagPages pages and resolves with the tags seen,
+// while one of exactly maxTagPages pages is read whole.
+func TestTagPageCap(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		pages int // 0 = endless
+	}{
+		{"endless", 0},
+		{"exactly the cap", maxTagPages},
+		{"below the cap", 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var lists atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v2/" {
+					return
+				}
+				page := int(lists.Add(1))
+				if n := r.URL.Query().Get("n"); n != strconv.Itoa(pageSize) {
+					t.Errorf("page %d: n = %q, want %d", page, n, pageSize)
+				}
+				if tc.pages == 0 || page < tc.pages {
+					w.Header().Set("Link", fmt.Sprintf(`</v2/img/tags/list?last=1.0.%d&n=%d>; rel="next"`, page, pageSize))
+				}
+				_ = json.MarshalWrite(w, map[string]any{"name": "img", "tags": []string{fmt.Sprintf("1.0.%d", page)}})
+			}))
+			t.Cleanup(srv.Close)
+			host := strings.TrimPrefix(srv.URL, "http://")
+			want := cmp.Or(tc.pages, maxTagPages)
+			rels, err := newSource(srv.Client(), nil, anon).Releases(t.Context(), dep.Dep{Name: host + "/img"}, "")
+			if err != nil || len(rels) != want || rels[want-1].Version != fmt.Sprintf("1.0.%d", want) {
+				t.Errorf("Releases = %v, %v; want %d tags", rels, err, want)
+			}
+			if n := int(lists.Load()); n != want {
+				t.Errorf("tags/list requests = %d, want %d", n, want)
+			}
+		})
 	}
 }

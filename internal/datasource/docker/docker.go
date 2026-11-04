@@ -1,10 +1,10 @@
 // Package dockerds lists container image tags and resolves tag digests from OCI registries.
 //
-// Tags come from the registry's tags/list endpoint (all pages), digests from a HEAD of the tag's
-// manifest; for multi-platform images that is the index digest, which is what a pinned
-// `image:tag@sha256:…` reference needs. Credentials come from the Docker config and credential
-// helpers. One auth client with a shared token cache serves every repository, so each token
-// exchange happens once per run and scope.
+// Tags come from the registry's tags/list endpoint (all pages up to a bound, tagPageCap),
+// digests from a HEAD of the tag's manifest; for multi-platform images that is the index digest,
+// which is what a pinned `image:tag@sha256:…` reference needs. Credentials come from the Docker
+// config and credential helpers. One auth client with a shared token cache serves every
+// repository, so each token exchange happens once per run and scope.
 package dockerds
 
 import (
@@ -94,8 +94,45 @@ func dockerCredentials() credentials.CredentialFunc {
 
 // hubPageSize is the tags/list page size for Docker Hub, which pages at 1000 by default but
 // accepts larger pages: library/node (9270 tags) takes one 2s request instead of ten (7.7s).
-// Other registries keep the default, since registries are free to cap or refuse a large n.
+// Hub's own API (hub.docker.com/v2/repositories/<repo>/tags?ordering=last_updated), which
+// Renovate uses so that its page cap keeps the newest tags, pages at no more than 100 tags:
+// library/node would take 93 requests.
 const hubPageSize = 10000
+
+// pageSize is the tags/list page size for other registries. ghcr.io pages at 100 by default
+// and caps n at 1000 (spiffe/spire-agent, 1713 tags: 2 requests instead of 18); AWS ECR
+// refuses n above 1000, so larger pages are left to Docker Hub. Registries that page smaller
+// (quay.io) or ignore n (gcr.io) are unaffected.
+const pageSize = 1000
+
+// maxTagPages bounds a tags/list listing, as Renovate's dockerMaxPages (default 20) does: up to
+// 200,000 tags on Docker Hub and 20,000 elsewhere. A repository with more tags (a per-commit CI
+// image) would otherwise dominate a run; its tags beyond the cap are not considered.
+const maxTagPages = 20
+
+// maxTagPagesOldestFirst is maxTagPages for registries that do not list tags in lexical order
+// but oldest first, so that a truncated listing would miss exactly the new releases. As in
+// Renovate, they are listed whole up to a far higher bound.
+const maxTagPagesOldestFirst = 1000
+
+// oldestFirst are the registries of maxTagPagesOldestFirst (Renovate's hostsNeedingAllPages):
+// ghcr.io and quay.io list oldest first, cgr.dev and the Red Hat registries sort lexically but
+// publish a tag per build, so current versions sort past the cap.
+var oldestFirst = map[string]bool{
+	"ghcr.io":                    true,
+	"quay.io":                    true,
+	"cgr.dev":                    true,
+	"registry.access.redhat.com": true,
+	"registry.redhat.io":         true,
+}
+
+// tagPageCap returns the tags/list page bound for registry (host[:port]).
+func tagPageCap(registry string) int {
+	if oldestFirst[registry] {
+		return maxTagPagesOldestFirst
+	}
+	return maxTagPages
+}
 
 // hubRegistry is the registry of normalized Docker Hub references.
 const hubRegistry = "docker.io"
@@ -133,8 +170,9 @@ func newSource(client *http.Client, sem chan struct{}, cred credentials.Credenti
 }
 
 // repository returns the registry client for the canonical repository name (as returned by
-// repoName). Docker Hub lists tags with hubPageSize; registries on loopback, private addresses
-// and localhost are reached over plain HTTP.
+// repoName). Tags are listed with hubPageSize on Docker Hub and pageSize elsewhere, up to
+// tagPageCap pages; registries on loopback, private addresses and localhost are reached over
+// plain HTTP.
 func (s *Source) repository(name string) (*remote.Repository, error) {
 	r, err := remote.NewRepository(name)
 	if err != nil {
@@ -143,9 +181,11 @@ func (s *Source) repository(name string) (*remote.Repository, error) {
 	r.Registry.Client = s.client
 	r.Registry.PlainHTTP = plainHTTP(r.Registry.Reference.Registry)
 	r.Registry.MaxMetadataBytes = maxMetadataBytes
+	r.TagListPageSize = pageSize
 	if r.Registry.Reference.Registry == hubRegistry {
 		r.TagListPageSize = hubPageSize
 	}
+	r.TagListMaxPages = tagPageCap(r.Registry.Reference.Registry)
 	return r, nil
 }
 
@@ -374,6 +414,10 @@ func (s *Source) list(ctx context.Context, name string) (rels []datasource.Relea
 		}
 		return nil
 	})
+	if errors.Is(err, errdef.ErrTooManyPages) {
+		slog.WarnContext(ctx, "image tag listing truncated", "repo", name, "pages", repo.TagListMaxPages, "tags", len(rels))
+		err = nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list tags %s: %w", name, err)
 	}
