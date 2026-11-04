@@ -47,7 +47,7 @@ var Doc = refdoc.Manager{
 		{Title: "YAML files", Body: "Other YAML is parsed document by document. A parse error (typically a Helm template) yields no deps and no error."},
 		{Title: "Names", Body: "References are parsed as docker does (names without a registry are on docker.io, single-component ones under library/). The dep name is the familiar name (`postgres`, `ghcr.io/org/img`); lookups use the canonical name."},
 		{Title: "Versioning", Body: "`docker`. Candidates need the same prefix, the same number of numeric parts and the same suffix."},
-		{Title: "Non-version tags", Body: "Non-version tags (`latest`, `bookworm`) only get digest maintenance: a pinned ref → `digest` refresh; unpinned with `pin: digest` → `pin`; otherwise skipped as `non-version tag`."},
+		{Title: "Non-version tags", Body: "Non-version tags (`latest`, `bookworm`, commit hashes such as `3a22eba`) only get digest maintenance: a pinned ref → `digest` refresh; unpinned with `pin: digest` → `pin`; otherwise skipped as `non-version tag`."},
 		{Title: "Edits", Items: []string{
 			"The tag is replaced in place.",
 			"`tag@sha256:…` is refreshed together with the tag.",

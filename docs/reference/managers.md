@@ -33,7 +33,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 | `ignored by rule #<i>` | a pre-policy rule set `ignore: true` |
 | `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `go`, `peerDependencies`, `engines` |
 | `non-version value "<v>"` | the current value is not valid in the dep's versioning scheme |
-| `non-version tag` | a docker-datasource dep with a non-version tag (`latest`, `bookworm`), not pinned, and `pin: keep` |
+| `non-version tag` | a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep` |
 
 ## github-actions
 
@@ -214,7 +214,7 @@ References are parsed as docker does (names without a registry are on docker.io,
 
 **Non-version tags.**
 
-Non-version tags (`latest`, `bookworm`) only get digest maintenance: a pinned ref → `digest` refresh; unpinned with `pin: digest` → `pin`; otherwise skipped as `non-version tag`.
+Non-version tags (`latest`, `bookworm`, commit hashes such as `3a22eba`) only get digest maintenance: a pinned ref → `digest` refresh; unpinned with `pin: digest` → `pin`; otherwise skipped as `non-version tag`.
 
 **Edits.**
 

@@ -273,12 +273,35 @@ func tagCompat(cur, next Tag) string {
 
 var dockerRe = regexp.MustCompile(`^(v?)(\d+(?:\.\d+)*)(.*)$`)
 
+// commitHash reports whether s looks like a git commit hash (`3a22eba`, a full 40-character
+// SHA-1): 7 to 40 lowercase hex digits, not all decimal. As in Renovate's docker versioning,
+// such a tag is not a version; it would otherwise parse as its leading digits with the rest of
+// the hash as suffix, which no other tag shares.
+func commitHash(s string) bool {
+	if len(s) < 7 || len(s) > 40 {
+		return false
+	}
+	letter := false
+	for i := range len(s) {
+		switch c := s[i]; {
+		case c >= 'a' && c <= 'f':
+			letter = true
+		case c < '0' || c > '9':
+			return false
+		}
+	}
+	return letter
+}
+
 type dockerTag struct {
 	prefix, suffix string
 	parts          []int
 }
 
 func parseDocker(s string) (dockerTag, bool) {
+	if commitHash(s) {
+		return dockerTag{}, false
+	}
 	m := dockerRe.FindStringSubmatch(s)
 	if m == nil {
 		return dockerTag{}, false

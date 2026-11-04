@@ -177,7 +177,10 @@ func TestSchemeMethods(t *testing.T) {
 			incompat: [][2]string{{"v1.0.0", "v2.0.0"}, {"v1.0.0", "v1.1.0-rc.1"}},
 		},
 		{
-			scheme: "docker", valid: []string{"1.25-alpine", "v2", "20.04"}, invalid: []string{"latest", "alpine3.19", "99999999999999999999"},
+			// commit hashes (7-40 lowercase hex with a letter) are not versions; all-digit ones,
+			// uppercase hex and longer or shorter runs are.
+			scheme: "docker", valid: []string{"1.25-alpine", "v2", "20.04", "20240101", "1234567890", "3a22eb", "3A22EBA", "3a22eba17f23b18faa27436ab2f9c3ea977b550b0", "3a22eba-alpine"},
+			invalid:  []string{"latest", "alpine3.19", "99999999999999999999", "3a22eba", "3a22eba17f23b18faa27436ab2f9c3ea977b550b", "0000000f"},
 			cmp:      [3]string{"1.9-alpine", "1.10-alpine", "1.9-alpine"},
 			kinds:    map[[2]string]dep.UpdateType{{"1", "2"}: dep.Major, {"1.1-a", "1.2-a"}: dep.Minor, {"1.1.1.1", "1.1.1.2"}: dep.Patch},
 			semverIn: "1.25-alpine", out: "1.25.0",
