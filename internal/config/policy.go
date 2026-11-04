@@ -53,6 +53,10 @@ func production(d dep.Dep) bool {
 // defaultIgnored are the dep types ignored unless a rule sets `ignore: false`.
 var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "engines": true}
 
+// IgnoredByDefault reports whether deps of depType are ignored unless a rule sets
+// `ignore: false`.
+func IgnoredByDefault(depType string) bool { return defaultIgnored[depType] }
+
 // Policy is the pre-policy of d: the policy before the type of an update is known. It
 // evaluates the built-in monorepo rule (unless monorepos is false), then the user rules
 // without updateTypes top-to-bottom; each set field of a matching rule overwrites the

@@ -1,55 +1,118 @@
-# deps
+<p align="center">
+  <img src="docs/assets/logo.svg" width="96" height="96" alt="deps logo">
+</p>
+<h1 align="center">deps</h1>
+<p align="center">
+  Dependency updates for GitHub, Gitea and Forgejo: one static Go binary, one strict config file, one pull request per update.
+</p>
+<p align="center">
+  <a href="https://git.jakob-moeller.cloud/jakobmoellerdev/deps/actions?workflow=ci.yml"><img src="https://git.jakob-moeller.cloud/jakobmoellerdev/deps/actions/workflows/ci.yml/badge.svg?branch=main" alt="ci"></a>
+</p>
 
-Dependency update automation in one Go binary: a Renovate replacement with a small, strictly validated config file (`.deps.yaml`). It works the same on a laptop and in CI, and opens pull requests on GitHub, Gitea and Forgejo, which it detects automatically.
+deps is a Renovate replacement written in Go. It finds the dependencies in a repository, looks up newer versions, and pushes one branch and pull request per dependency or group. It edits only the version bytes, so files are never reformatted. It runs the same on a laptop and in GitHub Actions, Gitea Actions or Forgejo Actions, and it detects the forge on its own.
+
+- [Features](#features)
+- [Quick start: GitHub Actions](#quick-start-github-actions)
+- [Quick start: Gitea Actions](#quick-start-gitea-actions)
+- [Quick start: Forgejo Actions](#quick-start-forgejo-actions)
+- [Tokens and permissions](#tokens-and-permissions)
+- [Schedules, automerge and the dashboard](#schedules-automerge-and-the-dashboard)
+- [Action inputs](#action-inputs)
+- [Local usage](#local-usage)
+- [Configuration](#configuration)
+- [Documentation](#documentation)
 
 ## Features
 
-- **Managers.** deps edits only the version bytes; files are never reformatted.
-  - **GitHub/Gitea/Forgejo Actions:** `uses:` tags and SHA pins with `# vX` comments, plus the version inputs of setup actions (setup-node, setup-go, setup-helm, setup-kubectl, setup-terraform, golangci-lint-action).
+- **Managers.** Each manager edits only the version bytes ([reference](docs/reference/managers.md)).
+  - **GitHub/Gitea/Forgejo Actions:** `uses:` tags, and SHA pins with `# vX` comments. It also updates the version inputs of setup-node, setup-go, setup-helm, setup-kubectl, setup-terraform and golangci-lint-action.
   - **Go modules:** requirements and the `go`/`toolchain` directives, followed by `go mod tidy`.
-  - **Container images:** Dockerfile `FROM`, `COPY --from`, `RUN --mount=from` and `ARG` defaults; compose; workflow `container:`/`services:`/`docker://`; `runs.image`; Kubernetes manifests; Helm values. Images can be pinned to `@sha256:` digests.
-  - **npm `package.json`:** dependencies, dev/optional/peer dependencies, `packageManager`, `engines`, `volta`. Ranges are bumped in place (`^1.2.3` → `^1.4.0`), workspaces are supported, and `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock` is regenerated.
+  - **Container images:** Dockerfile `FROM`, `COPY --from`, `RUN --mount=from` and `ARG` defaults; compose files; workflow `container:`, `services:` and `docker://`; `runs.image`; Kubernetes manifests; Helm values. Images can be pinned to `@sha256:` digests.
+  - **npm `package.json`:**
+    - dependencies, dev/optional/peer dependencies, `packageManager`, `engines` and `volta`;
+    - ranges are bumped in place (`^1.2.3` → `^1.4.0`), and workspaces are supported;
+    - `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock` is regenerated.
   - **Custom:** `# deps:` annotations, Renovate `# renovate:` markers, and RE2 regex managers, optionally with a release checksum next to the version.
-- **Datasources:** git tags (native smart-HTTP `ls-refs`), GitHub releases, the Go proxy, Go toolchains, OCI registries, npm registries (`.npmrc`), Node.js releases, and user-defined JSON/YAML/text documents.
-- **Policy:** ordered rules with field-wise override. They match on manager, name, dep type, path, datasource and update type, and they can set ignore, allow (semver or `/regex/`), versioning (`semver`, `loose`, `regex:`), groups, cron schedules, minimum release age and commit type/scope. Monorepo groups are built in.
-- **PR bot:** one branch and PR per dependency or group, with separate major/minor/patch buckets, `rebaseWhen`, PR limits, and a fingerprint so unchanged PRs are never re-pushed. Obsolete PRs are closed only after an error-free run.
-- **Security:** OSV advisories for Go, npm and GitHub Actions. Security updates bypass `allow`, schedules and release age.
-- **Release notes:** release bodies, release ages and a compare link in every PR body.
+- **Datasources:**
+  - git tags (native smart-HTTP `ls-refs`, no `git` process per lookup);
+  - GitHub releases;
+  - the Go proxy and Go toolchains;
+  - OCI registries;
+  - npm registries (`.npmrc`) and Node.js releases;
+  - user-defined JSON, YAML or text documents.
+- **Policy:** ordered rules with field-wise override.
+  - Rules match on manager, name, dep type, path, datasource and update type.
+  - They can set ignore, allow (semver or `/regex/`), versioning (`semver`, `loose`, `regex:`), groups, schedules, minimum release age, automerge and the commit type/scope.
+  - Monorepo groups are built in.
+- **PR bot:**
+  - one branch and PR per dependency or group, with separate major/minor/patch buckets;
+  - `rebaseWhen`, PR limits, platform automerge, and a dependency dashboard issue;
+  - a fingerprint, so unchanged PRs are never pushed again;
+  - obsolete PRs are closed only after an error-free run.
+- **Security:** OSV advisories for Go, npm and GitHub Actions. Security updates bypass `allow`, schedules and the release age.
+- **Release notes:** every PR body has the release notes, release ages and a compare link.
 - **Fast and memory-bounded:** one pruned directory walk, deduplicated concurrent lookups over one HTTP/2 client, and no checkout or worktree for commits.
 
-## Install
+## Quick start: GitHub Actions
 
-Download a static binary (linux/amd64, linux/arm64) from the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) and verify it against `checksums.txt`:
-
-```sh
-base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.1.0
-curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
-grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 ~/.local/bin/deps
-```
-
-`go install` still works:
-
-```sh
-go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest
-```
-
-or from a clone, `task build` builds a static `bin/deps` (`CGO_ENABLED=0`, `-trimpath`).
-
-## Usage in CI
-
-The composite action downloads the released static binary for the runner (linux/amd64 or linux/arm64) and verifies its checksum; the runner needs no Go (only for `go mod tidy` on go.mod updates). Defaults work on both forges: the token is `github.token`, the platform is detected from the job environment.
-
-**Gitea / Forgejo** (`.gitea/workflows/deps.yml` or `.forgejo/workflows/deps.yml`):
+Add `.github/workflows/deps.yml`:
 
 ```yaml
 name: deps
 on:
-  schedule: [{cron: "0 5 * * *"}]
+  schedule:
+    - cron: "0 5 * * *"
   workflow_dispatch:
+concurrency:
+  group: deps
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.DEPS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPS_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ steps.app.outputs.token }}
+      - uses: jakobmoellerdev/deps@v0.1.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+```
+
+Use a GitHub App token (or a PAT) instead of `GITHUB_TOKEN`, and pass it to both `actions/checkout` and the action:
+
+- **Workflow files.** `GITHUB_TOKEN` can't push changes to `.github/workflows/*`, and updating those files is most of what deps does. The App needs the *Workflows: write* permission; a classic PAT needs the `workflow` scope.
+- **CI on the PRs.** PRs and pushes made with `GITHUB_TOKEN` don't trigger workflows, so CI wouldn't run on deps PRs, and `automerge` would never see green checks.
+
+The App needs *Contents*, *Pull requests* and *Workflows* set to write. Add *Issues: write* for the dashboard, and *Checks* and *Commit statuses* set to read for automerge. deps pushes with the credentials that `actions/checkout` stores, and calls the API with the action's `token` input.
+
+If the repository has no workflow files to update and doesn't need CI on deps PRs, the job token is enough. Drop the App step and both `token:` inputs, and set `permissions: {contents: write, pull-requests: write}`.
+
+On github.com the action downloads the release binary from [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps), the GitHub mirror of this repository. More options are in [docs/ci.md](docs/ci.md#github): `go install` instead of the action, the App's commit identity, and GHES.
+
+## Quick start: Gitea Actions
+
+Add `.gitea/workflows/deps.yml`:
+
+```yaml
+name: deps
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+concurrency:
+  group: deps
+  cancel-in-progress: false
 permissions:
   contents: write
   pull-requests: write
-  issues: write          # only for dependencyDashboard
+  issues: write # only for dependencyDashboard
 jobs:
   deps:
     runs-on: ubuntu-latest
@@ -58,42 +121,126 @@ jobs:
       - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
 ```
 
-Use the full URL: a short `jakobmoellerdev/deps@…` is resolved against the instance's `DEFAULT_ACTIONS_URL` (github.com by default).
+- **`uses:` needs the full URL.** A short `jakobmoellerdev/deps@…` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default.
+- **What the job token (`GITEA_TOKEN`) can do.** It can push branches and open PRs in its own repository. It can't read other private repositories unless they allow it under *Settings → Actions → General → Cross-Repository Access*.
+- **CI on deps PRs.** As on GitHub, PRs opened with the job token don't start `pull_request` workflows. If CI must run on deps PRs (for automerge, for example), store a personal access token as the secret `DEPS_TOKEN` and pass it to both steps:
 
-**GitHub** (`.github/workflows/deps.yml`), using the mirror [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps); on github.com the action downloads the binary from the mirror's releases:
+```yaml
+      - uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ secrets.DEPS_TOKEN }}
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
+        with:
+          token: ${{ secrets.DEPS_TOKEN }}
+```
+
+deps looks up short `owner/repo@ref` actions on github.com, the Gitea default. If your instance sets another `DEFAULT_ACTIONS_URL`, set [`actions.defaultHost`](docs/reference/configuration.md#actionsdefaulthost) or `DEPS_DEFAULT_ACTIONS_URL`.
+
+## Quick start: Forgejo Actions
+
+Forgejo reads `.forgejo/workflows/deps.yml`:
 
 ```yaml
 name: deps
 on:
-  schedule: [{cron: "0 5 * * *"}]
+  schedule:
+    - cron: "0 5 * * *"
   workflow_dispatch:
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write          # only for dependencyDashboard
+concurrency:
+  group: deps
+  cancel-in-progress: false
 jobs:
   deps:
-    runs-on: ubuntu-latest
+    runs-on: docker # a label of your runner
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: jakobmoellerdev/deps@v0.1.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
 ```
 
-PRs opened with `GITHUB_TOKEN` do not trigger other workflows, so CI does not run on them. To get CI on deps PRs (needed for `automerge`), pass a GitHub App token or PAT to both `actions/checkout` (`token:`) and the action (`token:`); see [docs/ci.md](docs/ci.md#github).
+- **Permissions.** Forgejo's automatic token can write to its repository (except in fork PRs), so the workflow has no `permissions:` block; see [docs/ci.md](docs/ci.md#forgejo).
+- **Default actions host.** deps resolves short `owner/repo@ref` actions against `data.forgejo.org`, the Forgejo default.
+- **Token and CI.** The same token caveat as on Gitea applies.
+- **Runner image.** It needs `bash`, `curl`, `git` and `sha256sum`.
 
-## Quickstart
+## Tokens and permissions
+
+| | GitHub | Gitea | Forgejo |
+|---|---|---|---|
+| default token | `GITHUB_TOKEN` (can't change workflow files; its PRs don't run CI) | `GITEA_TOKEN` (its PRs don't run CI) | automatic token |
+| recommended token | GitHub App token or PAT, given to `actions/checkout` and the action | the job token, or a PAT in a secret when CI must run on PRs | as on Gitea |
+| push branches | `contents: write` (App: Contents, Workflows) | `contents: write` | automatic |
+| open/edit/close PRs | `pull-requests: write` | `pull-requests: write` | automatic |
+| dashboard issue | `issues: write` | `issues: write` | automatic |
+| automerge | App/PAT, *Allow auto-merge*, required checks; `checks`/`statuses: read` | merge rights, required status checks in branch protection | as on Gitea |
+
+`deps run --dry-run` and `deps plan` need only read access. The per-forge details, private action and module repositories, and `DEPS_GITHUB_COM_TOKEN` for github.com lookups from Gitea are in [docs/ci.md](docs/ci.md#tokens-and-permissions).
+
+## Schedules, automerge and the dashboard
+
+**Schedules.** Each entry in [`schedule`](docs/reference/configuration.md#schedule), top-level or in a rule, must be one of the workflow's `on.schedule` crons, written the same way.
+
+- deps reads the cron that triggered the run from the event payload.
+- New PRs are created only for groups whose schedule lists that cron.
+- `workflow_dispatch`, `push` and local runs act on every group.
+
+A daily workflow with weekly groups:
+
+```yaml
+on:
+  schedule:
+    - cron: "0 5 * * *" # deps without a schedule
+    - cron: "0 5 * * 1" # also deps whose schedule is ["0 5 * * 1"]
+  workflow_dispatch:
+```
+
+```yaml
+rules:
+  - manager: gomod
+    schedule: ["0 5 * * 1"]
+```
+
+**Automerge.** With [`automerge`](docs/reference/configuration.md#automerge), deps asks the forge to merge the PR once its required checks pass.
+
+- **GitHub:**
+  - turn on *Allow auto-merge* and require status checks on the base branch;
+  - use an App/PAT token, so CI runs on the PR;
+  - if GitHub refuses auto-merge (disabled in the settings, or nothing left to wait for), deps merges the PR directly once it is mergeable and all its checks are green, in that run or a later one.
+- **Gitea/Forgejo:** the PR is scheduled with *merge when checks succeed*. The forge waits only for the status checks that branch protection requires; without required checks it merges right away. Use a PAT so CI runs on the PR.
+
+**Dependency dashboard.** [`dependencyDashboard: true`](docs/reference/configuration.md#dependencydashboard) maintains one issue. It lists the updates awaiting their schedule, rate-limited and blocked updates, open PRs, errors, and the detected dependencies. Ticking a checkbox makes the next run create, recreate or rebase that PR. It needs `issues: write` and issues enabled in the repository.
+
+## Action inputs
+
+| Input | Default | Meaning |
+|---|---|---|
+| `token` | `${{ github.token }}` | exported as `DEPS_TOKEN`: the platform API token |
+| `args` | `run` | arguments for `deps`, e.g. `run -v --log-level info`, `plan`, `run --dry-run` |
+| `version` | the action's ref if it is a release tag, else the latest release | release to download, e.g. `v0.1.0` |
+| `repository` | `https://github.com/jakobmoellerdev/deps` on github.com, the Gitea repository elsewhere | where the release binary is downloaded from |
+
+The action downloads the static binary for linux/amd64 or linux/arm64, verifies it against `checksums.txt`, and runs it. The runner needs no Go, except for `go mod tidy` on go.mod updates. Full reference: [docs/reference/action.md](docs/reference/action.md).
+
+## Local usage
+
+Download a static binary (linux/amd64, linux/arm64) from the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) and verify it:
 
 ```sh
-deps plan                  # unified diff on stdout, one line per update/error on stderr
+base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.1.0
+curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
+grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 ~/.local/bin/deps
+```
+
+You can also use `go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest`, or run `task build` in a clone, which builds a static `bin/deps`.
+
+```sh
+deps plan                  # unified diff on stdout, one line per update or error on stderr
 deps plan -v               # also list skipped deps and why
 deps apply                 # write the updates (plus go mod tidy and lockfiles)
 deps run --dry-run         # which PRs would be created, updated or closed
-deps run                   # push <branchPrefix><manager>/<name> branches and open/update PRs
-deps explain 'actions/*'   # rules, candidates and decision for matching deps
-deps schema > deps.schema.json
+deps run                   # push branches and open or update PRs
+deps explain 'actions/*'   # rules, candidates and the decision for matching deps
+deps schema                # JSON Schema of .deps.yaml
 ```
-
-`plan` output:
 
 ```
 update  .github/workflows/ci.yml:12  actions/checkout  v6.0.0 -> v7.0.1  (major)
@@ -102,43 +249,54 @@ update  .github/workflows/ci.yml:12  actions/checkout  v6.0.0 -> v7.0.1  (major)
 
 Exit codes: 0 success, 1 errors, 2 invalid flags or config.
 
+- **Where `run` gets its settings:** the platform comes from the `origin` remote; the token comes from `--token`, `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN` or the git credential helper.
+- **More:** every flag and environment variable is in the [CLI reference](docs/reference/cli.md).
+
 ## Configuration
 
-Without a `.deps.yaml` the defaults apply: every direct dependency is updated, while indirect Go requirements, the `go` directive, npm peerDependencies and engines are ignored. A typical config:
+Without a `.deps.yaml`, the defaults apply: every direct dependency is updated. Indirect Go requirements, the `go` directive, npm peerDependencies and engines are ignored. A typical config:
 
 ```yaml
-# yaml-language-server: $schema=./deps.schema.json
-schedule: ["0 5 * * 1-5"]        # new PRs only in runs triggered by this workflow cron
-pin: digest                       # pin actions to SHAs and images to digests
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+schedule: ["0 5 * * 1-5"]       # new PRs only in runs triggered by this workflow cron
+pin: digest                      # pin actions to SHAs and images to digests
 minimumReleaseAge: 3 days
+dependencyDashboard: true
 rules:
-  - manager: github-actions       # minor and patch bumps in one PR
+  - manager: github-actions      # minor and patch bumps in one PR
     updateTypes: [minor, patch]
     group: actions
+    automerge: true
   - manager: gomod
     updates: [minor, patch]
-  - names: ['postgres']
-    allow: '< 18'
+  - names: ["postgres"]
+    allow: "< 18"
 custom:
-  - files: ['Makefile', '.env']   # '# deps:' / '# renovate:' markers
+  - files: ["Makefile", ".env"]  # '# deps:' / '# renovate:' markers
 ```
 
-Unknown keys are errors. All validation problems are reported together with their location.
+- **Strict validation.** Unknown keys are errors, and all validation problems are reported together with their location.
+- **Editor support.** The schema comment on the first line enables completion and validation in editors that use yaml-language-server. [`deps.schema.json`](deps.schema.json) is generated from the code (`deps schema` prints the same).
+- **Full reference:** [docs/reference/configuration.md](docs/reference/configuration.md).
 
 ## Documentation
 
-- [Configuration reference](docs/configuration.md): every key, rule semantics, versioning, schedules, groups, custom managers
-- [Managers and datasources](docs/managers.md): what is extracted, skip reasons, edits, post-processing, endpoints
-- [CLI reference](docs/cli.md): commands, flags, environment, output formats, exit codes
-- [Running in CI](docs/ci.md): Gitea/Forgejo action, GitHub workflow, tokens, permissions
-- [Migrating from Renovate](docs/migrating-from-renovate.md): option mapping and differences
-- [Design](docs/design.md): architecture, performance and the PR lifecycle
-- [Renovate parity](docs/renovate-parity.md): feature status against open-component-model's Renovate setup
-- [Changelog](CHANGELOG.md): generated by git-cliff; release notes come from the same config ([docs/ci.md](docs/ci.md#releases-maintainers))
+| Document | Content |
+|---|---|
+| [Running in CI](docs/ci.md) | GitHub, Gitea and Forgejo Actions in depth: tokens, Apps, private repositories, self-hosted runners, schedules, caching, troubleshooting |
+| [Configuration reference](docs/reference/configuration.md) | every `.deps.yaml` key (generated from the schema) |
+| [CLI reference](docs/reference/cli.md) | commands, flags, environment, output, exit codes (generated) |
+| [Action reference](docs/reference/action.md) | inputs and behavior of the composite action (generated) |
+| [Managers and datasources](docs/reference/managers.md) | what is extracted, skip reasons, lookups (generated) |
+| [Migrating from Renovate](docs/migrating-from-renovate.md) | option mapping and differences |
+| [Design](docs/design.md) | architecture, performance and the PR lifecycle |
+| [Renovate parity](docs/renovate-parity.md) | feature status against a real Renovate setup |
+| [Changelog](CHANGELOG.md) | generated by git-cliff ([releases](docs/ci.md#releases-maintainers)) |
 
 ## Development
 
 ```sh
-task ci           # vet, golangci-lint, race tests with coverage gate, gofmt, go mod tidy check
+task ci           # vet, golangci-lint, race tests with coverage gate, gofmt, go mod tidy, generated docs check
+task docs         # regenerate docs/reference/* and deps.schema.json
 task changelog    # regenerate CHANGELOG.md with git-cliff (cliff.toml)
 ```

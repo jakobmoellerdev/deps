@@ -12,9 +12,11 @@ import (
 
 func newApply(o *rootOpts) *cobra.Command {
 	return &cobra.Command{
-		Use:   "apply",
-		Short: "Write the updates to the files, including go mod tidy and package-lock.json",
-		Args:  noArgs,
+		Use:     "apply",
+		Short:   "Write the updates to the files, including go mod tidy and package-lock.json",
+		Long:    helpText("apply"),
+		Example: "  deps apply && git diff --stat",
+		Args:    noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return local(cmd, o, true)
 		},

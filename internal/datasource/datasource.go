@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
 // Release is one published version. Digest is "" when the datasource only knows it on
@@ -56,4 +57,15 @@ type SecuritySource interface {
 type ChecksumSource interface {
 	// Checksum returns the lowercase hex checksum for version.
 	Checksum(ctx context.Context, d dep.Dep, version string) (string, error)
+}
+
+// Overview documents what all datasources share (HTTP client, retries, rate limits, dedupe).
+var Overview = refdoc.Section{
+	Title: "Shared behavior",
+	Items: []string{
+		"All network calls share one HTTP/2 client and one semaphore of `--concurrency` slots (default 32).",
+		"Idempotent requests are retried up to 3 times on connection errors and 429/500/502/503/504, with jittered exponential backoff, honoring `Retry-After`.",
+		"Rate limits that reset within 60s are waited out. Longer ones fail fast with `rate limited by <host> until <time>`.",
+		"Lookups are deduped within a run. There is no persistent cache.",
+	},
 }

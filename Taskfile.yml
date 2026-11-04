@@ -32,13 +32,32 @@ tasks:
       - task: ci
 
   ci:
-    desc: Everything CI runs (vet, lint, race tests, coverage gate, formatting, tidy check)
+    desc: Everything CI runs (vet, lint, race tests, coverage gate, formatting, tidy check, generated docs check)
     cmds:
       - task: vet
       - task: lint
       - task: cover
       - task: fmt:check
       - task: tidy:check
+      - task: docs:check
+
+  docs:
+    desc: Regenerate docs/reference/*.md and deps.schema.json from the schema, the command tree, action.yml and the managers
+    cmds:
+      - go run ./cmd/deps docs --out docs/reference --schema deps.schema.json --action action.yml
+
+  docs:check:
+    desc: Fail if docs/reference or deps.schema.json differ from what `task docs` generates
+    cmds:
+      - |
+        set -eu
+        tmp=$(mktemp -d)
+        trap 'rm -rf "$tmp"' EXIT
+        go run ./cmd/deps docs --out "$tmp/reference" --schema "$tmp/deps.schema.json" --action action.yml
+        if ! diff -ru docs/reference "$tmp/reference" || ! diff -u deps.schema.json "$tmp/deps.schema.json"; then
+          echo "generated documentation is stale; run 'task docs' and commit the result" >&2
+          exit 1
+        fi
 
   lint:
     desc: Run golangci-lint (installs v{{.GOLANGCI_LINT_VERSION}} into $TMPDIR/deps-tools if missing)

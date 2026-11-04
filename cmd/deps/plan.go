@@ -19,7 +19,11 @@ func newPlan(o *rootOpts) *cobra.Command {
 	return &cobra.Command{
 		Use:   "plan",
 		Short: "Print the updates as a unified diff without writing files",
-		Args:  noArgs,
+		Long:  helpText("plan"),
+		Example: "  deps plan > deps.diff && git apply --check deps.diff\n" +
+			"  deps plan -v --dir ../other-repo\n" +
+			"  deps plan --config ci/deps.yaml --log-level info",
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return local(cmd, o, false)
 		},

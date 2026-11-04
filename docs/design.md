@@ -597,7 +597,7 @@ The action downloads a released static binary instead of building from source, s
 | `version` | action ref if it is a release tag, else latest release |
 | `repository` | the GitHub mirror on github.com runners, the Gitea repository elsewhere (any Gitea/Forgejo or GitHub repository URL) |
 
-The action uses only `github.*` expressions, so it runs unchanged on GitHub Actions and Gitea/Forgejo with default settings.
+The action uses only `github.*` expressions, so it runs unchanged on GitHub Actions and Gitea/Forgejo with default settings. Its generated reference is [reference/action.md](reference/action.md).
 
 Releases: a `v*` tag runs the `release` job of `.gitea/workflows/ci.yml` after `test` (`task ci` runs once). `task release:build` builds `deps_linux_amd64` and `deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w -buildid= -X main.version=<tag>"`, plus `checksums.txt`; the job checks the binaries are static and publishes them with `gt release create`. Details: [ci.md](ci.md#releases-maintainers).
 
@@ -662,6 +662,8 @@ When debug is disabled, the HTTP transport skips timing entirely after one `Enab
 
 ## 7. CLI reference
 
+The complete, generated reference (every command, flag, default, environment variable, status and exit code) is [reference/cli.md](reference/cli.md); the help texts it is generated from are what `deps <command> --help` prints. In short:
+
 | Command | Behavior |
 |---|---|
 | `deps plan` | Unified diff on stdout, report on stderr. Post-processors do not run: go.sum and package-lock.json changes are not computed (`note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run`). A dep with updates in several PR buckets contributes one of them to the diff (`engine.Local`: the newest non-major update, else the lowest major); every update gets an `update` line, the others with `(<type>, separate PR)`. The summary line counts all of them. |
@@ -673,7 +675,7 @@ When debug is disabled, the HTTP transport skips timing entirely after one `Enab
 
 `plan`/`apply` update lines carry advisories as a suffix: `update  <file>:<line>  <name>  <from> -> <to>  (<type>)  security: <id>,<id>`; updates left to their own PR read `(<type>, separate PR)`.
 
-Editor support: `deps schema > deps.schema.json`, then start `.deps.yaml` with `# yaml-language-server: $schema=./deps.schema.json`.
+Editor support: the repository root has the generated `deps.schema.json` (`task docs` regenerates it from `deps schema`); start `.deps.yaml` with `# yaml-language-server: $schema=./deps.schema.json` pointing at a copy.
 
 ## 8. Roadmap
 
@@ -688,7 +690,7 @@ Open items from [renovate-parity.md](renovate-parity.md) and the performance pla
 
 ## 9. Configuration
 
-The user-facing reference (every key, its default and validation, rule semantics, versioning schemes, custom managers and datasources) is [configuration.md](configuration.md); `deps schema` is the authoritative key list. The design decisions behind it:
+The user-facing reference (every key, its default and validation, rule semantics, versioning schemes, custom managers and datasources) is [reference/configuration.md](reference/configuration.md), generated from the JSON Schema that `deps schema` prints; managers and datasources are in [reference/managers.md](reference/managers.md). The design decisions behind it:
 
 - **Strict decoding.** `yaml.Decoder.KnownFields(true)`: a typo is an error with its line, never a silently ignored key. All validation errors are joined (`<path>: <field>: <msg>`), so one run reports every problem. Config errors exit 2.
 - **Ordered rules with field-wise override.** Rules are evaluated top to bottom; each matching rule overwrites only the fields it sets (`updates` is replaced, not merged). This is Renovate's packageRules model without presets, so the effective policy of a dep is always the file read top to bottom (`deps explain` prints it).

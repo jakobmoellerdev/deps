@@ -2,16 +2,28 @@ name: deps
 description: Update dependencies and open one pull request per dependency or group
 inputs:
   token:
-    description: "Token with contents:write and pull-requests:write (issues:write for the dashboard)"
+    description: >-
+      Platform token, exported to deps as DEPS_TOKEN. It needs contents:write and pull-requests:write
+      (issues:write for the dependency dashboard). The default is the job token on GitHub, Gitea and
+      Forgejo; on GitHub, PRs created with it do not trigger workflows and it cannot push changes to
+      .github/workflows/*, so pass an App token or PAT (with workflows permission) here and to
+      actions/checkout.
     default: "${{ github.token }}"
   args:
-    description: "Arguments for deps"
+    description: "Arguments for deps, e.g. `run -v --log-level info` or `plan`."
     default: "run"
   version:
-    description: "Release tag to download, e.g. v0.1.0. Default: the action's ref when it is a release tag, else the latest release"
+    description: >-
+      Release tag to download, e.g. v0.1.0. Default: the action's ref when it is a release tag
+      (`@v0.1.0`), else the latest release.
     default: ""
   repository:
-    description: "Where releases are downloaded from (Gitea/Forgejo or GitHub repository URL). Default: the GitHub mirror on github.com, the Gitea repository elsewhere"
+    description: >-
+      Repository URL the release is downloaded from. A Gitea/Forgejo URL finds the latest release via
+      `<host>/api/v1/repos/<repo>/releases/latest`; a GitHub URL via api.github.com, and on github.com
+      runners the assets are fetched with `gh release download` and the job token, so private
+      repositories work. Default: https://github.com/jakobmoellerdev/deps on github.com runners,
+      https://git.jakob-moeller.cloud/jakobmoellerdev/deps elsewhere.
     default: ""
 runs:
   using: composite

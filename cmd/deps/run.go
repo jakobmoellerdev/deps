@@ -31,22 +31,29 @@ func newRun(o *rootOpts) *cobra.Command {
 	r := &runOpts{}
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Push one branch and open or update one pull request per dependency",
-		Args:  noArgs,
+		Short: "Push one branch and open or update one pull request per dependency or group",
+		Long:  helpText("run"),
+		Example: "  # what would happen, without a token and without writes\n" +
+			"  deps run --dry-run -v\n" +
+			"  # what the run triggered by the Sunday cron would do\n" +
+			"  deps run --dry-run --trigger-schedule '0 0 * * 0'\n" +
+			"  # in CI (the action runs this with DEPS_TOKEN set)\n" +
+			"  DEPS_TOKEN=$TOKEN deps run -v --log-level info",
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runBot(cmd, o, r)
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&r.platform, "platform", "auto", "forge type: auto|github|gitea|forgejo")
+	f.StringVar(&r.platform, "platform", "auto", "forge type: auto|github|gitea|forgejo (auto: from the CI environment, else the origin remote)")
 	f.StringVar(&r.apiURL, "api-url", "", "API base URL (default: detected)")
 	f.StringVar(&r.repo, "repo", "", "repository owner/name (default: detected)")
 	f.StringVar(&r.token, "token", "", "platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, git credential helper)")
 	f.StringVar(&r.base, "base", "", "base branch (default: the repository's default branch)")
-	f.StringVar(&r.authorName, "author-name", defaultAuthorName, "commit author name (default: $DEPS_GIT_AUTHOR, then gitAuthor of the config)")
-	f.StringVar(&r.authorEmail, "author-email", defaultAuthorEmail, "commit author email (default: $DEPS_GIT_AUTHOR, then gitAuthor of the config)")
+	f.StringVar(&r.authorName, "author-name", defaultAuthorName, "commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)")
+	f.StringVar(&r.authorEmail, "author-email", defaultAuthorEmail, "commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)")
 	f.IntVar(&r.maxNewPRs, "max-new-prs", 10, "maximum number of pull requests to create per run (0 = unlimited)")
-	f.BoolVar(&r.dryRun, "dry-run", false, "report what would change without pushing or calling write APIs")
+	f.BoolVar(&r.dryRun, "dry-run", false, "report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token")
 	f.StringVar(&r.triggerSchedule, "trigger-schedule", "", "act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE)")
 	return cmd
 }

@@ -43,9 +43,14 @@ func newRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "deps",
 		Short:         "Update GitHub/Gitea/Forgejo Actions, Go module, container image and npm dependencies",
+		Long:          helpText("root"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			// Environment defaults apply here, not as flag defaults, so help and the generated
+			// reference show the same defaults everywhere.
+			envDefault(cmd, "log-level", "DEPS_LOG_LEVEL", &o.log.level)
+			envDefault(cmd, "log-format", "DEPS_LOG_FORMAT", &o.log.format)
 			if err := setupLogger(o.log, cmd.ErrOrStderr()); err != nil {
 				return err
 			}
@@ -59,17 +64,25 @@ func newRoot() *cobra.Command {
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err} })
 	pf := root.PersistentFlags()
 	pf.StringVar(&o.dir, "dir", ".", "repository directory to scan")
-	pf.StringVar(&o.config, "config", "", "config file (default <dir>/.deps.yaml or .deps.yml)")
-	pf.BoolVarP(&o.verbose, "verbose", "v", false, "also print skipped dependencies")
-	pf.StringVar(&o.log.level, "log-level", envOr("DEPS_LOG_LEVEL", "warn"), "log level: debug, info, warn, error (env DEPS_LOG_LEVEL)")
-	pf.StringVar(&o.log.format, "log-format", envOr("DEPS_LOG_FORMAT", "text"), "log format: text, json (env DEPS_LOG_FORMAT)")
-	pf.IntVar(&o.concurrency, "concurrency", 32, "maximum concurrent network requests and lookups")
+	pf.StringVar(&o.config, "config", "", "config file, which must exist (default: <dir>/.deps.yaml, then .deps.yml, else built-in defaults)")
+	pf.BoolVarP(&o.verbose, "verbose", "v", false, "also print skipped dependencies (skip lines)")
+	pf.StringVar(&o.log.level, "log-level", "warn", "log level: debug, info, warn, error; $DEPS_LOG_LEVEL replaces the default")
+	pf.StringVar(&o.log.format, "log-format", "text", "log format: text, json; $DEPS_LOG_FORMAT replaces the default")
+	pf.IntVar(&o.concurrency, "concurrency", 32, "maximum concurrent network requests and lookups; at least 1")
 	pf.StringVar(&o.prof.cpu, "cpuprofile", "", "write a CPU profile to this file")
 	pf.StringVar(&o.prof.mem, "memprofile", "", "write an allocation profile to this file on exit")
 	_ = pf.MarkHidden("cpuprofile")
 	_ = pf.MarkHidden("memprofile")
-	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newSchema())
+	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newSchema(), newDocs())
+	root.AddCommand(newHelpTopics()...)
 	return root
+}
+
+// envDefault sets *dst from the environment variable env unless the flag was given.
+func envDefault(cmd *cobra.Command, flag, env string, dst *string) {
+	if v := os.Getenv(env); v != "" && !cmd.Flags().Changed(flag) {
+		*dst = v
+	}
 }
 
 func noArgs(_ *cobra.Command, args []string) error {

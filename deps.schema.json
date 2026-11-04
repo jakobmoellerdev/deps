@@ -1,0 +1,583 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Actions": {
+      "properties": {
+        "defaultHost": {
+          "type": "string",
+          "description": "Host for owner/repo@ref actions; empty means auto-detected from the platform.",
+          "markdownDescription": "Host for owner/repo@ref actions; empty means auto-detected from the platform.\n\nFirst match wins:\n\n1. `actions.defaultHost` (source `config`);\n2. `$DEPS_DEFAULT_ACTIONS_URL`, its hostname (source `env`);\n3. the platform default (source `platform default`): `data.forgejo.org` on Forgejo, otherwise `github.com`.\n\nWith `--log-level info`, deps logs the result as `actions default host host=<h> source=<s>`. Gitea instances with a non-default `DEFAULT_ACTIONS_URL` should set this key.\n\n```yaml\nactions:\n  defaultHost: gitea.com\n```"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Checksum": {
+      "properties": {
+        "asset": {
+          "type": "string",
+          "description": "github-releases only: release asset whose API digest is the checksum, e.g. 'gh_{{version}}_linux_amd64.tar.gz'. Exclusive with url.",
+          "markdownDescription": "github-releases only: release asset whose API digest is the checksum, e.g. `gh_{{version}}_linux_amd64.tar.gz`. Exclusive with url."
+        },
+        "url": {
+          "type": "string",
+          "description": "URL of a checksum document (sha256sum style or a bare hex digest). Exclusive with asset.",
+          "markdownDescription": "URL of a checksum document (sha256sum style or a bare hex digest). Exclusive with asset."
+        },
+        "file": {
+          "type": "string",
+          "description": "Entry name inside the url document ('<hex>  <name>' or '<hex> *<name>'); empty means the first hex token of the body.",
+          "markdownDescription": "Entry name inside the url document (`<hex>  <name>` or `<hex> *<name>`); empty means the first hex token of the body."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Custom": {
+      "properties": {
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 1,
+          "description": "Doublestar globs of the files this manager scans.",
+          "markdownDescription": "Doublestar globs of the files this manager scans.\n\nMust not be empty."
+        },
+        "match": {
+          "type": "string",
+          "description": "RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode.",
+          "markdownDescription": "RE2 regexp with a (?P\\<version>) or (?P\\<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode.\n\n`match` runs over the whole file, and each match is one dep.\n\n| Group | Aliases | Meaning |\n|---|---|---|\n| `version` | `currentValue` | required; the replaced version |\n| `name` | `depName`, `packageName` (wins over `depName`) | overrides `name` |\n| `datasource` | | overrides `datasource` |\n| `versioning` | | scheme name |\n| `digest` | `currentDigest` | replaced together with the version |\n| `checksum` | | requires `checksum:` (and vice versa) |\n\nEmpty groups skip the match as `empty version`, `empty name` or `empty datasource`. A checksum that is not 64 or 128 hex digits is skipped as `checksum is not 64 or 128 hex digits`.\n\n```yaml\ncustom:\n  - files: ['Makefile']\n    match: 'GOLANGCI_VERSION \\?= (?P<version>v\\S+)'\n    datasource: github-releases\n    name: golangci/golangci-lint\n```"
+        },
+        "datasource": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "git-tags",
+                "github-releases",
+                "go",
+                "go-toolchain",
+                "docker",
+                "npm",
+                "node-version",
+                "golang-version",
+                "github-tags",
+                "github-release-attachments",
+                "node"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^custom\\.[A-Za-z0-9][A-Za-z0-9._-]*$"
+            }
+          ],
+          "description": "Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node) are aliases.",
+          "markdownDescription": "Datasource of the matched deps, or custom.\\<name> of customDatasources; required in regex mode unless match has a (?P\\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node) are aliases."
+        },
+        "name": {
+          "type": "string",
+          "description": "Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group.",
+          "markdownDescription": "Dependency name; required in regex mode unless match has a (?P\\<name>), (?P\\<depName>) or (?P\\<packageName>) group."
+        },
+        "versioning": {
+          "type": "string",
+          "pattern": "^(tag|go|docker|semver|loose|regex:.+)$",
+          "description": "Versioning scheme of the matched versions: tag, go, docker, semver, loose or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names.",
+          "default": "semver",
+          "markdownDescription": "Versioning scheme of the matched versions: tag, go, docker, semver, loose or regex:\\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names.\n\nAccepts the schemes of [`rules[].versioning`](#rulesversioning)."
+        },
+        "checksum": {
+          "$ref": "#/$defs/Checksum",
+          "description": "Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match.",
+          "markdownDescription": "Where the checksum of a new version comes from; regex mode only, requires a (?P\\<checksum>) group in match.\n\nThe regex entry keeps a sha256/sha512 checksum next to the version. This needs a `(?P<checksum>…)` group plus a `checksum:` block with exactly one source:\n\n- `asset` (github-releases only): the release asset's API `digest`. This costs no extra request.\n- `url`: a document downloaded once per URL (1 MiB cap). With `file`, the matching `<hex>  <name>` / `<hex> *<name>` line is used, else the first hex token in the document.\n\nThe only template variable is `{{version}}`, the new version as written into the file. Others are errors (`unknown template variable {{x}} (only {{version}})`). The new checksum must have the same length as the current one and keeps its letter case. If fetching it fails, the dep is not updated, so version and checksum always change together.\n\n```yaml\ncustom:\n  - files: [Dockerfile]\n    match: 'ARG GH_VERSION=(?P<version>\\S+)\\nARG GH_SHA256=(?P<checksum>[0-9a-f]{64})'\n    datasource: github-releases\n    name: cli/cli\n    checksum:\n      url: 'https://github.com/cli/cli/releases/download/v{{version}}/gh_{{version}}_checksums.txt'\n      file: 'gh_{{version}}_linux_amd64.tar.gz'\n```"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "files"
+      ]
+    },
+    "CustomDatasource": {
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "http(s) URL of the version document, fetched once per run (unauthenticated, at most 10 MiB).",
+          "markdownDescription": "http(s) URL of the version document, fetched once per run (unauthenticated, at most 10 MiB).\n\nRenovate's `defaultRegistryUrlTemplate`."
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "json",
+            "yaml",
+            "plain"
+          ],
+          "description": "Document format: json, yaml, or plain (one version per line; empty lines and # comments are skipped).",
+          "default": "json",
+          "markdownDescription": "Document format: json, yaml, or plain (one version per line; empty lines and # comments are skipped)."
+        },
+        "versions": {
+          "type": "string",
+          "description": "json/yaml only: selector of the version strings, a jq subset of stages joined by '|': paths of .field and [] steps ('.releases[].version', '[].tag_name') and keys (sorted object keys, '.releases | keys').",
+          "default": ".releases[].version",
+          "markdownDescription": "json/yaml only: selector of the version strings, a jq subset of stages joined by `|`: paths of .field and [] steps (`.releases[].version`, `[].tag_name`) and keys (sorted object keys, `.releases | keys`).\n\nNot allowed with `format: plain` (`not allowed with format plain`). **Selector grammar** (a jq subset):\n\n- A selector is a sequence of stages joined by `|`.\n- A stage is either `keys` (the sorted keys of an object) or a path of steps.\n- Steps:\n  - `.` (identity);\n  - `.field`, where field is `[A-Za-z_][A-Za-z0-9_-]*`;\n  - `[]` or `.[]` (array elements or object values). A path may also start with `[]`.\n- As in jq:\n  - a missing field, or a field of null, is null; nulls are dropped;\n  - iterating null, or indexing or iterating the wrong type, is an error.\n\nExamples: `.releases[].version`, `.releases | keys`, `[].tag_name`."
+        },
+        "versionRegex": {
+          "type": "string",
+          "description": "RE2 regexp the selected values must match; its (?P<version>) group, else the whole match, is the version (e.g. '^v?(?P<version>\\d+\\.\\d+\\.\\d+)$' strips a leading v).",
+          "markdownDescription": "RE2 regexp the selected values must match; its (?P\\<version>) group, else the whole match, is the version (e.g. `^v?(?P<version>\\d+\\.\\d+\\.\\d+)$` strips a leading v)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "url"
+      ]
+    },
+    "Rule": {
+      "properties": {
+        "manager": {
+          "type": "string",
+          "enum": [
+            "github-actions",
+            "gomod",
+            "docker",
+            "npm",
+            "custom"
+          ],
+          "description": "Only match deps of this manager.",
+          "markdownDescription": "Only match deps of this manager."
+        },
+        "names": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates).",
+          "markdownDescription": "Only match deps whose name matches any of these doublestar globs (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates)."
+        },
+        "depTypes": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "indirect",
+              "go",
+              "toolchain",
+              "action",
+              "dockerfile",
+              "compose",
+              "workflow",
+              "kubernetes",
+              "helm",
+              "dependencies",
+              "devDependencies",
+              "optionalDependencies",
+              "peerDependencies",
+              "packageManager",
+              "setup",
+              "engines",
+              "volta",
+              "annotation",
+              "regex"
+            ]
+          },
+          "type": "array",
+          "description": "Only match deps of these types.",
+          "markdownDescription": "Only match deps of these types.\n\n[managers.md](managers.md) lists the dep types of each manager."
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'.",
+          "markdownDescription": "Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. `charts/**`."
+        },
+        "datasources": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "git-tags",
+                  "github-releases",
+                  "go",
+                  "go-toolchain",
+                  "docker",
+                  "npm",
+                  "node-version",
+                  "golang-version",
+                  "github-tags",
+                  "github-release-attachments",
+                  "node"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "^custom\\.[A-Za-z0-9][A-Za-z0-9._-]*$"
+              }
+            ]
+          },
+          "type": "array",
+          "description": "Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource.",
+          "markdownDescription": "Only match deps looked up with these datasources, or custom.\\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource.\n\nRenovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`. `custom.<name>` must be defined in [`customDatasources`](#customdatasources)."
+        },
+        "updateTypes": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "major",
+              "minor",
+              "patch",
+              "digest",
+              "pin"
+            ]
+          },
+          "type": "array",
+          "description": "Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin.",
+          "markdownDescription": "Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin.\n\nMust not be empty. A rule with `updateTypes` is skipped in the pre-policy pass and applies per candidate (see [evaluation](#rules)); it cannot set `pin` or `versioning`."
+        },
+        "ignore": {
+          "type": "boolean",
+          "description": "Do not update matching deps; false opts indirect Go requirements, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types.",
+          "markdownDescription": "Do not update matching deps; false opts indirect Go requirements, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types.\n\n- `true`: do not update; skipped as `ignored by rule #<i>`.\n- `false`: opt in a default-ignored dep type.\n- With `updateTypes`: reject (or allow) updates of those types only."
+        },
+        "pin": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "digest"
+          ],
+          "description": "Pin mode for matching deps.",
+          "markdownDescription": "Pin mode for matching deps.\n\nSee the top-level [`pin`](#pin). Applies to github-actions and docker deps; not allowed with `updateTypes`."
+        },
+        "allow": {
+          "type": "string",
+          "description": "New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written.",
+          "markdownDescription": "New versions must satisfy this Masterminds semver constraint (e.g. `< 7`), or match Renovate's regex form `/<RE2>/` (e.g. `/^\\d+\\.\\d+$/`; `!/<RE2>/` rejects matches; flag i allowed) against the version as written.\n\n- A **constraint** (`< 7`, `~1.2`, `>= 1.20, < 2`) is checked against the scheme's Masterminds conversion of the candidate. Versions that cannot be represented are rejected.\n- A **regex** (`/^\\d+\\.\\d+$/`, `!/-rc/`, `/^v1\\./i`) matches the candidate *as written* (tag, image tag, module version) and never converts it. Only flag `i` exists.\n- Invalid values are config errors: `rules[i].allow: invalid constraint \"<v>\": …`, `invalid regex \"/(/\": …`, `unknown flags \"g\" (only i)`."
+        },
+        "updates": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "major",
+              "minor",
+              "patch",
+              "digest",
+              "pin"
+            ]
+          },
+          "type": "array",
+          "description": "Allowed update types; replaces the earlier list.",
+          "markdownDescription": "Allowed update types; replaces the earlier list.\n\nWhen no rule sets it, all five update types are allowed."
+        },
+        "versioning": {
+          "type": "string",
+          "pattern": "^(tag|go|docker|semver|loose|regex:.+)$",
+          "description": "Versioning scheme overriding the manager's: tag, go, docker, semver, loose, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes.",
+          "markdownDescription": "Versioning scheme overriding the manager's: tag, go, docker, semver, loose, or regex:\\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\\<name>) and (?P\\<name>) syntax both work. Cannot be combined with updateTypes.\n\nThe scheme validates the current value, ranks candidates, classifies update kinds, converts versions for `allow`, and computes security fixes. A current value that the new scheme cannot parse is skipped as `non-version value \"<v>\"`.\n\n| Scheme | Accepts | Notes |\n|---|---|---|\n| `tag` | `^(v?)\\d+(\\.\\d+)?(\\.\\d+)?$` | candidates need the same prefix and the same number of parts (`v4` → `v5`, `v4.1.0` → `v4.2.0`); no suffixes or prereleases |\n| `go` | Go module semver | no pseudo-versions; prereleases only from a prerelease; `+incompatible` only from `+incompatible`; same major except v0 → v1 |\n| `docker` | `^(v?)(\\d+(\\.\\d+)*)(.*)$` | same prefix, part count and suffix (`1.27-alpine` → `1.28-alpine`); `latest` is invalid |\n| `semver` | Masterminds loose semver | any precision; prereleases only from a prerelease; keeps the `v` style; the default of `custom[]` and npm |\n| `loose` | 1–6 numeric parts, optional `v`, optional `-`/`_` suffix | the suffix counts as a prerelease. Missing parts compare as 0 (`1877` < `1877.25`); then fewer parts sort below more (`1.2` < `1.2.0`). Any precision is a candidate, so combine it with an `allow` regex. |\n| `regex:<RE2>` | the expression's named groups | `major` (required), `minor`, `patch`, `build`, `revision` (numeric, absent = 0), `prerelease`, `compatibility`; other names are errors. `(?<name>)` and `(?P<name>)` both work. Candidates must share `compatibility`. |\n\nErrors: `rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group \"x\" (allowed: ...)`, `regex: invalid RE2 regexp: ...`, and `cannot be combined with updateTypes: ...`.\n\n```yaml\nrules:\n  - names: ['ghcr.io/gardenlinux/gardenlinux/fips']\n    versioning: loose\n    allow: '/^\\d+\\.\\d+$/'\n  - names: ['open-component-model/cosign']\n    versioning: 'regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)[-+]ocm\\.(?<build>\\d+)$'\n```"
+        },
+        "separateMajorMinor": {
+          "type": "boolean",
+          "description": "Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types).",
+          "markdownDescription": "Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types).\n\nSee the bucket table under [`separateMajorMinor`](#separatemajorminor)."
+        },
+        "separateMultipleMajor": {
+          "type": "boolean",
+          "description": "Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types).",
+          "markdownDescription": "Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types)."
+        },
+        "separateMinorPatch": {
+          "type": "boolean",
+          "description": "Overrides the top-level separateMinorPatch for matching deps (with updateTypes: for candidates of those types).",
+          "markdownDescription": "Overrides the top-level separateMinorPatch for matching deps (with updateTypes: for candidates of those types)."
+        },
+        "group": {
+          "type": "string",
+          "description": "Group name: all deps with the same group share one PR.",
+          "markdownDescription": "Group name: all deps with the same group share one PR.\n\n- **Groups.** All non-security updates whose policy has the same `group` share a branch `<prefix>group/<slug(group)>` and one PR. The title is `<type>(<scope>): update <group> (<n> dependencies)`, or `update <group> to <v>` when every member moves to one version.\n- **Single deps.** Every other update gets the branch `<prefix><manager>/<slug(name)>`, with titles `<p> update <name> to <ver>`, `<p> pin <name> to <sha7>` and `<p> update <name> digest to <sha7>`.\n- `slug` lowercases the name, maps bytes outside `[a-z0-9._-]` to `-`, and collapses and trims `-`.\n- **Commit type in groups.** A group uses `fix` if any member's type is `fix`, else the first member's type. It always uses the first member's scope.\n- Built-in [monorepo groups](#monorepos) are overridden by any rule that sets `group`."
+        },
+        "commitType": {
+          "type": "string",
+          "enum": [
+            "fix",
+            "chore",
+            "build",
+            "ci",
+            "docs",
+            "feat",
+            "perf",
+            "refactor",
+            "revert",
+            "style",
+            "test"
+          ],
+          "description": "Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm dependencies), chore otherwise. Security updates always use fix.",
+          "markdownDescription": "Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm dependencies), chore otherwise. Security updates always use fix."
+        },
+        "commitScope": {
+          "type": "string",
+          "description": "Conventional commit scope; default deps, empty string means no scope ('chore: ...').",
+          "markdownDescription": "Conventional commit scope; default deps, empty string means no scope (`chore: ...`).\n\nMust match `^[A-Za-z0-9][A-Za-z0-9._/-]*$`. In groups the first member's scope is used."
+        },
+        "schedule": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Workflow cron triggers overriding the top-level schedule; [] means every run.",
+          "markdownDescription": "Workflow cron triggers overriding the top-level schedule; [] means every run."
+        },
+        "minimumReleaseAge": {
+          "type": "string",
+          "description": "Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps.",
+          "markdownDescription": "Minimum release age overriding the top-level minimumReleaseAge, e.g. `7 days`; `0` or `0 days` disables it for matching deps."
+        },
+        "automerge": {
+          "type": "boolean",
+          "description": "Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are.",
+          "markdownDescription": "Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."
+        },
+        "automergeStrategy": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "merge",
+            "squash",
+            "rebase"
+          ],
+          "description": "Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update.",
+          "markdownDescription": "Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."
+        },
+        "automergeType": {
+          "type": "string",
+          "enum": [
+            "pr"
+          ],
+          "description": "Accepted for Renovate compatibility; only pr is supported.",
+          "markdownDescription": "Accepted for Renovate compatibility; only pr is supported."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [
+        1
+      ],
+      "description": "Config format version; must be 1 if set.",
+      "default": 1,
+      "markdownDescription": "Config format version; must be 1 if set.\n\nOnly `1` exists; `version: 2` fails with `version: must be 1, got 2`."
+    },
+    "pin": {
+      "type": "string",
+      "enum": [
+        "keep",
+        "digest"
+      ],
+      "description": "Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment.",
+      "default": "keep",
+      "markdownDescription": "Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment.\n\n`rules[].pin` overrides it per dep.\n\n- `keep`: keep each reference's current style. Refs that are already pinned (`@<sha> # v4.2.0`, `image:tag@sha256:…`) stay pinned, and both the digest and the version are refreshed.\n- `digest`:\n  - github-actions: tag refs are pinned to the tag's commit SHA, with ` # <tag>` appended.\n  - docker: `@sha256:<digest>` is appended after the tag (the index digest for multi-platform images).\n\ngomod, npm and custom deps ignore `pin`.\n\n```yaml\npin: digest\n```"
+    },
+    "schedule": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "Cron expressions (5 fields) equal to cron triggers of the workflow running deps: new update PRs are created only in runs triggered by one of them (non-schedule triggers such as workflow_dispatch, push or a local run act immediately); empty means every run.",
+      "markdownDescription": "Cron expressions (5 fields) equal to cron triggers of the workflow running deps: new update PRs are created only in runs triggered by one of them (non-schedule triggers such as workflow_dispatch, push or a local run act immediately); empty means every run.\n\ndeps never evaluates the crons as time windows: a group is in schedule when the run was started by one of its crons.\n\n- The trigger is read from the CI environment: `GITHUB_EVENT_NAME` (GitHub, Gitea and Forgejo set it) and, for `schedule` events, the `schedule` field of the event payload at `GITHUB_EVENT_PATH`. GitHub and Gitea (verified in 28.3) put the triggering cron there. `--trigger-schedule <cron>` or `DEPS_TRIGGER_SCHEDULE` override the detection (for local tests or runners that lack the payload).\n- Crons are compared as strings after collapsing whitespace: `0 0 * * 0` matches `0  0 * * 0` but not the equivalent `0 0 * * 7`. Copy them verbatim from `on.schedule`.\n- Runs not started by a cron (`workflow_dispatch`, `push`, a local `deps run`) act immediately: every schedule matches. A `schedule` event whose cron cannot be read also matches every schedule, with a warning.\n- Cron triggers of CI systems are UTC, so there is no time zone setting.\n- Each entry must be a valid 5-field cron (`minute hour day-of-month month day-of-week`; `*`, `n`, `a-b`, comma lists, `/step` on `*` or a range; day of week `0-7`; no names). Errors look like `schedule[0]: \"60 5 * * *\": minute: value 60 out of range 0-59`.\n- The schedule only gates creating new PRs and, with `updateNotScheduled: false`, updating existing ones. Security updates ignore schedules.\n\nA daily workflow cron plus a weekly one, with the weekly cron reserved for some groups:\n\n```yaml\n# .github/workflows/deps.yml\non:\n  schedule:\n    - cron: \"0 0 * * *\"   # daily\n    - cron: \"0 0 * * 0\"   # weekly, Sunday\n```\n\n```yaml\n# .deps.yaml\nrules:\n  - updateTypes: [digest, pin]\n    group: digest-pins\n    schedule: [\"0 0 * * 0\"]   # PRs are created only by the Sunday run\n```\n\nOther deps have no schedule, so both crons create their PRs."
+    },
+    "security": {
+      "type": "boolean",
+      "description": "Look up OSV advisories and propose security updates that bypass allow, updates and schedule.",
+      "default": true,
+      "markdownDescription": "Look up OSV advisories and propose security updates that bypass allow, updates and schedule.\n\ndeps queries [OSV](https://osv.dev) for Go, npm and GitHub Actions deps. A vulnerable dep is moved to the smallest compatible release at or above the minimum fixed version.\n\n- Security updates bypass `allow`, `updates`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`.\n- They always use commit type `fix`, get a `[security]` title suffix, and are never put into a group.\n- A failed OSV lookup is reported as an error (`security advisories: <err>`).\n\n```yaml\nsecurity: false\n```"
+    },
+    "branchPrefix": {
+      "type": "string",
+      "description": "Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed.",
+      "default": "deps/",
+      "markdownDescription": "Prefix of update branches (\\<prefix>\\<manager>/\\<name>, \\<prefix>group/\\<group>); must end with `/`. Only branches and PRs under it are managed.\n\nBranches are `<prefix><manager>/<slug(name)>[-<bucket>]` and `<prefix>group/<slug(group)>[-<bucket>]`. deps never touches branches and PRs outside the prefix.\n\n- It must end with `/`.\n- It must not contain spaces, control characters, any of `~^:?*[\\`, `..` or `@{`.\n- No component may be empty, start with `.` or end with `.lock`.\n\nTo take over Renovate's open PRs, set `branchPrefix: renovate/` (see [branch prefix takeover](../migrating-from-renovate.md#branch-prefix-takeover))."
+    },
+    "rebaseWhen": {
+      "type": "string",
+      "enum": [
+        "conflicted",
+        "behind-base-branch",
+        "never"
+      ],
+      "description": "When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes).",
+      "default": "conflicted",
+      "markdownDescription": "When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes).\n\n| Value | An unchanged open PR is rebuilt on the current base branch when |\n|---|---|\n| `conflicted` (default) | the platform reports the PR as not mergeable |\n| `behind-base-branch` | also when the branch is not a single commit on the current base head (status `rebased`) |\n| `never` | never; only content changes update the PR |\n\nA PR whose content changed is always updated. Branches with commits by other authors are never rebuilt (see [`gitIgnoredAuthors`](#gitignoredauthors))."
+    },
+    "monorepos": {
+      "type": "boolean",
+      "description": "Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group.",
+      "default": true,
+      "markdownDescription": "Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group.\n\nWhen `true`, deps released from one source repository share a PR, with group `<name> monorepo`. The 62 built-in entries include kubernetes (`k8s.io/` staging modules), go-openapi, opentelemetry-go, opentelemetry-go-contrib, aws-sdk-go-v2, azure-sdk-for-go, google-cloud-go, moby, etcd, sigstore, typescript-eslint, eslint, babel, jest, vitest, angular, react, vue, storybook, tailwindcss, playwright, codeql-action and actions-cache. The full list is in `internal/config/monorepos.go`.\n\nThey are applied as implicit rules *before* the user rules, so any rule that sets `group` overrides them. `deps explain` shows them as `builtin  monorepo <name> -> group \"<name> monorepo\"`.\n\n```yaml\nmonorepos: false\n```"
+    },
+    "gitAuthor": {
+      "type": "string",
+      "description": "Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags.",
+      "default": "deps[bot] <deps-bot@noreply.invalid>",
+      "markdownDescription": "Author and committer of deps commits as `Name <email>` (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags.\n\n- Precedence, per field: `--author-name`/`--author-email` > `$DEPS_GIT_AUTHOR` > `gitAuthor` > `deps[bot] <deps-bot@noreply.invalid>`.\n- GitHub bot noreply addresses such as `ocmbot[bot] <1+ocmbot[bot]@users.noreply.github.com>` are accepted.\n- An invalid value fails with `gitAuthor: must be 'Name <email>', got \"<v>\"`.\n\n```yaml\ngitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>'\ngitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com']\n```"
+    },
+    "gitIgnoredAuthors": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased.",
+      "markdownDescription": "Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased.\n\nEach entry must be an email address. A branch whose tip was committed by one of them still counts as the bot's own, so it is updated and rebased instead of `skipped: branch modified by someone else`. Useful when the bot identity ([`gitAuthor`](#gitauthor)) changes."
+    },
+    "prConcurrentLimit": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited.",
+      "default": 0,
+      "markdownDescription": "Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited.\n\nManaged PRs are those under [`branchPrefix`](#branchprefix). New PRs are only created while the open count plus PRs created this run stay below the limit.\n\n- **Renovate defaults to 10** (and `prHourlyLimit` to 2), so set both explicitly to keep Renovate's throttling.\n- The `run` flag `--max-new-prs` (default `10`, `0` = unlimited) is a separate per-run cap. A run creates at most the minimum of every non-zero limit. Groups over the limit get `skipped: new PR limit reached`. Existing PRs are always updated.\n\n```yaml\nprConcurrentLimit: 10\nprHourlyLimit: 2\n```"
+    },
+    "prHourlyLimit": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Maximum number of managed PRs created per hour, counting existing PRs by creation time. 0 means unlimited.",
+      "default": 0,
+      "markdownDescription": "Maximum number of managed PRs created per hour, counting existing PRs by creation time. 0 means unlimited.\n\nOpen and closed PRs are counted by their creation time. **Renovate defaults to 2.** Combined with `prConcurrentLimit` and `--max-new-prs` as described under [`prConcurrentLimit`](#prconcurrentlimit)."
+    },
+    "actions": {
+      "$ref": "#/$defs/Actions",
+      "description": "github-actions manager settings.",
+      "markdownDescription": "github-actions manager settings.\n\nSee [`actions.defaultHost`](#actionsdefaulthost)."
+    },
+    "minimumReleaseAge": {
+      "type": "string",
+      "description": "Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt.",
+      "markdownDescription": "Minimum age of a new version before it is proposed, e.g. `3 days`, `12h`, `90m` or a Go duration; `0` disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt.\n\n- **Syntax:**\n  - `<n> <unit>`, where the unit is minutes, hours, days or weeks, written singular, plural or as the first letter, with the space optional: `28 days`, `1 day`, `3d`, `12h`, `90m`, `2w`;\n  - `0`;\n  - a Go duration: `1h30m`.\n\n  Negative or unparsable values are errors (`invalid age \"<v>\": want e.g. \"3 days\", \"12h\", \"90m\" or \"0\"`).\n- **Fallback:** a too-new candidate is rejected as `too new (released <date>, minimum <age>)`, and the next older candidate in the same PR bucket is tried.\n- **Unknown release times are allowed.** This covers datasources without release times (Go toolchains, `custom.<name>`) and failed time lookups.\n- **Exempt:** digest refreshes, pins and security updates.\n- `rules[].minimumReleaseAge` overrides the value per dep. With `updateTypes` it overrides it per update type. `0` or `0 days` turns the age off for matching deps.\n\n```yaml\nminimumReleaseAge: 28 days\nrules:\n  - names: ['open-component-model/cosign']\n    minimumReleaseAge: 0 days\n```"
+    },
+    "ignorePaths": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it.",
+      "default": [
+        "**/node_modules/**",
+        "**/bower_components/**",
+        "**/vendor/**",
+        "**/examples/**",
+        "**/__tests__/**",
+        "**/test/**",
+        "**/tests/**",
+        "**/__fixtures__/**"
+      ],
+      "markdownDescription": "Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it.\n\n- When the key is **absent**, Renovate's `:ignoreModulesAndTests` list (the default above) applies.\n- Any explicit list, including `[]` or a null value, replaces that default.\n- Independently of `ignorePaths`, discovery always prunes `.git`, `node_modules`, `vendor` and `testdata` directories.\n- Each entry must be a valid doublestar glob.\n\n```yaml\nignorePaths: ['**/node_modules/**', 'docs/**']\n```"
+    },
+    "separateMajorMinor": {
+      "type": "boolean",
+      "description": "Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update.",
+      "default": true,
+      "markdownDescription": "Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update.\n\n`separateMajorMinor`, `separateMultipleMajor` and `separateMinorPatch` split one dep's candidate updates into **PR buckets**. Each bucket yields at most one update, and each update gets its own branch (suffix) and PR:\n\n| Setting | Buckets (branch suffix) |\n|---|---|\n| `separateMajorMinor: false` | one bucket, the newest update of any kind (no suffix) |\n| default (`separateMajorMinor: true`) | newest major (`-major`); newest minor/patch (no suffix) |\n| `+ separateMultipleMajor: true` | one per newer major *N*, the newest release of each (`-v<N>`); minor/patch (no suffix) |\n| `+ separateMinorPatch: true` | newest minor (`-minor`); newest patch of the current minor (`-patch`) |\n\n- The bucket of a candidate comes from the policy of its update type. A rule with `updateTypes` can therefore set these flags for its types, unlike in Renovate (see [behavior differences](../migrating-from-renovate.md#behavior-differences)).\n- `plan`/`apply` write one update per dep: the newest non-major one, else the lowest major. The others are reported with `, separate PR`.\n- A policy group inherits its members' bucket suffix: `deps/group/actions-patch`."
+    },
+    "separateMultipleMajor": {
+      "type": "boolean",
+      "description": "With separateMajorMinor: one PR per newer major version (branch suffix -v<N>, newest release of each major) instead of one for the newest major.",
+      "default": false,
+      "markdownDescription": "With separateMajorMinor: one PR per newer major version (branch suffix -v\\<N>, newest release of each major) instead of one for the newest major.\n\nSee the bucket table under [`separateMajorMinor`](#separatemajorminor)."
+    },
+    "separateMinorPatch": {
+      "type": "boolean",
+      "description": "With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch).",
+      "default": false,
+      "markdownDescription": "With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch).\n\nSee the bucket table under [`separateMajorMinor`](#separatemajorminor)."
+    },
+    "updateNotScheduled": {
+      "type": "boolean",
+      "description": "Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched.",
+      "default": true,
+      "markdownDescription": "Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched.\n\n- `true` (the default): open PRs outside their schedule are still updated (content changes, conflicts, `rebaseWhen`). Only *creating* a PR waits for a run triggered by one of their crons.\n- `false`: out-of-schedule groups are left untouched (`skipped: outside schedule`).\n\nOut-of-schedule PRs are never closed as obsolete."
+    },
+    "automerge": {
+      "type": "boolean",
+      "description": "Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only.",
+      "default": false,
+      "markdownDescription": "Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only.\n\ndeps itself never merges red or pending PRs. Rules override `automerge` and `automergeStrategy` per dep or per update type, so Renovate's `matchUpdateTypes: [minor, patch], automerge: true` is:\n\n```yaml\nrules:\n  - updateTypes: [minor, patch]\n    automerge: true\n```\n\n- A PR automerges only when **every** update in it does; a group that mixes an automerged minor with a major does not. The strategy comes from the PR's first update.\n- The request is sent after the PR is created, updated or rebased, and on every run for an up-to-date automerge PR, until the platform reports it scheduled. Security updates follow the same policy.\n- Outcomes are listed under [automerge outcomes](cli.md#deps-run); platform behavior and the GitHub fallback are described in [design.md](../design.md#automerge)."
+    },
+    "automergeStrategy": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "merge",
+        "squash",
+        "rebase"
+      ],
+      "description": "Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase.",
+      "default": "auto",
+      "markdownDescription": "Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase.\n\n`auto` uses the repository's default: Gitea/Forgejo `default_merge_style`, and on GitHub the first method the repository allows (merge commit, then squash, then rebase)."
+    },
+    "automergeType": {
+      "type": "string",
+      "enum": [
+        "pr"
+      ],
+      "description": "How updates are automerged; only pr (platform auto-merge of the PR) is supported.",
+      "default": "pr",
+      "markdownDescription": "How updates are automerged; only pr (platform auto-merge of the PR) is supported.\n\nIt exists for Renovate compatibility. `automergeType: branch` (merging the branch without a PR) fails with `automergeType: branch is not supported: deps automerges through the platform's pull request auto-merge; use automergeType: pr`."
+    },
+    "dependencyDashboard": {
+      "type": "boolean",
+      "description": "Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched.",
+      "default": false,
+      "markdownDescription": "Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched.\n\n`deps run` maintains one open issue titled [`dependencyDashboardTitle`](#dependencydashboardtitle). It lists, in this order:\n\n1. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Awaiting-schedule items name the crons they wait for, e.g. ``(waits for `0 0 * * 0`)``. Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.\n2. **Ignored or blocked**: updates whose PR was closed without merging (checkbox: recreate the PR), and branches someone else pushed to (checkbox: discard those commits and rebuild the branch).\n3. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.\n4. **Errors** of the run (at most 20, each cut to 300 characters).\n5. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.\n\n- The body is capped at 60 000 bytes (GitHub allows 65 536 characters). Lists that do not fit end with a `… not listed` note.\n- The body is deterministic: the issue is only edited when its content changes. Every run regenerates it, so ticked checkboxes are unticked again once handled.\n- The issue is found by its exact title and the `<!-- deps:dashboard -->` marker in its body, among the first 1 000 (GitHub) or 500 (Gitea/Forgejo) open issues.\n- deps never closes the dashboard. `dependencyDashboard: false` leaves an existing dashboard untouched.\n- A repository without issues (disabled, or an external tracker on Gitea/Forgejo) reports `dashboard skipped: issues disabled` and is not an error.\n- The token needs issues:write."
+    },
+    "dependencyDashboardTitle": {
+      "type": "string",
+      "description": "Title of the dependency dashboard issue; the issue is found by this exact title.",
+      "default": "Dependency Dashboard",
+      "markdownDescription": "Title of the dependency dashboard issue; the issue is found by this exact title.\n\nIt must be non-blank and one line."
+    },
+    "dependencyDashboardLabels": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "Labels set when the dashboard issue is created (by name; on Gitea and Forgejo they must exist in the repository or its organization).",
+      "markdownDescription": "Labels set when the dashboard issue is created (by name; on Gitea and Forgejo they must exist in the repository or its organization).\n\nEach label must be non-blank and must not contain `,`. GitHub creates missing labels; Gitea and Forgejo look the names up in the repository's and its organization's labels and leave out unknown ones (with a warning)."
+    },
+    "rules": {
+      "items": {
+        "$ref": "#/$defs/Rule"
+      },
+      "type": "array",
+      "description": "Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones.",
+      "markdownDescription": "Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones.\n\nA rule **matches** a dep when every selector it sets matches. The selectors are `manager`, `names`, `depTypes`, `paths`, `datasources` and `updateTypes`; every other field is an action. Every field a matching rule sets **overrides** the value from earlier rules (field-wise); `updates` replaces the earlier list, it is not merged.\n\n**Evaluation.**\n\n1. The policy of a dep starts as `{pin: <top-level>, updates: all five types, schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm `dependencies`) and `chore` otherwise, and the scope as `deps`.\n2. **Default ignores.** Dep types `indirect` (Go), `go` (the go.mod `go` directive), `peerDependencies` and `engines` (npm) are ignored unless a rule sets `ignore: false`. The skip reason is `ignored by default (<type>; enable with a rule setting ignore: false)`.\n3. **Built-in monorepo groups** set `group: <name> monorepo` (unless [`monorepos: false`](#monorepos)).\n4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`.\n5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.\n6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `automerge` and `automergeStrategy` from the policy of its type. Security updates take only the commit scope and the automerge settings.\n\n`updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules and the resulting policy of a dep.\n\n```yaml\nrules:\n  - manager: gomod                 # opt indirect requirements in\n    depTypes: [indirect]\n    ignore: false\n  - manager: gomod                 # but never their majors\n    depTypes: [indirect]\n    updateTypes: [major]\n    ignore: true\n  - manager: github-actions        # minor+patch in one PR, majors apart\n    updateTypes: [minor, patch]\n    group: GitHub Actions\n```"
+    },
+    "custom": {
+      "items": {
+        "$ref": "#/$defs/Custom"
+      },
+      "type": "array",
+      "description": "Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set.",
+      "markdownDescription": "Custom managers: `# deps: <datasource> <name>` annotations, or RE2 regex managers when match is set.\n\nEach entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments` and `node`, and `custom.<name>`.\n\n**Annotation mode (no `match`).** A comment marker annotates the **next line**, and that line's first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Comment starters are `#`, `//`, `--`, `;` and `<!--`.\n\n- `deps: <datasource> <name> [versioning=<scheme>]`\n- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`, and `registryUrl` and unknown keys are ignored.\n- With the docker datasource, the next line's first tagged image reference is used: the tag is the version, and an adjacent `@sha256:` digest is rewritten with it.\n- A marker's `versioning=` takes a scheme name (not `regex:`). Without it, the entry's `versioning` applies.\n- Skips: `no version on next line`, `renovate marker without datasource`, `renovate marker without depName`.\n\n```yaml\ncustom:\n  - files: ['Dockerfile', '**/*.mk', '.env']\n```\n\n```dockerfile\n# deps: github-releases golangci/golangci-lint\nARG GOLANGCI_VERSION=v2.5.0\n# renovate: datasource=go depName=golang.org/x/tools\nRUN go install golang.org/x/tools/cmd/goimports@v0.38.0\n```\n\n**Regex mode (`match` set)**: see [`custom[].match`](#custommatch)."
+    },
+    "customDatasources": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CustomDatasource"
+      },
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      },
+      "type": "object",
+      "description": "User-defined datasources by name; deps (custom[] entries, annotations, Renovate markers) refer to them as datasource custom.<name>. The version list is fetched once per run.",
+      "markdownDescription": "User-defined datasources by name; deps (custom[] entries, annotations, Renovate markers) refer to them as datasource custom.\\<name>. The version list is fetched once per run.\n\nNames must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`. The document is fetched once per run (unauthenticated, at most 10 MiB) and shared by every dep. It has no release times and no digests. Errors read `custom.<name>: GET <url>: HTTP 404` or `custom.<name>: <url>: selector \".a[]\": cannot iterate over null`; an empty result is `no versions`.\n\n```yaml\ncustomDatasources:\n  envtest:\n    url: https://raw.githubusercontent.com/kubernetes-sigs/controller-tools/master/envtest-releases.yaml\n    format: yaml\n    versions: .releases | keys\n    versionRegex: '^v?(?P<version>\\d+\\.\\d+\\.\\d+)$'\ncustom:\n  - files: ['.env']\n    match: 'ENVTEST_K8S_VERSION=(?P<version>\\d+\\.\\d+\\.\\d+)'\n    datasource: custom.envtest\n    name: envtest\n```"
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "title": "deps configuration (.deps.yaml)",
+  "markdownDescription": "`deps` reads `.deps.yaml` (then `.deps.yml`) from `--dir`, or the file given with `--config`, which must exist. Without a file the defaults apply; an empty file also yields the defaults.\n\nThe JSON Schema printed by `deps schema` is the authoritative key list; this page is generated from it, and the repository root has a copy as `deps.schema.json`. For editor completion and hover documentation (yaml-language-server, e.g. the VS Code YAML extension), start the file with:\n\n```yaml\n# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main\n```\n\nor point `$schema` at a local copy (`deps schema > deps.schema.json`, then `# yaml-language-server: $schema=./deps.schema.json`).\n\n**Loading and validation.**\n\n- Decoding is strict. An unknown key is an error that names its line: `.deps.yaml: yaml: unmarshal errors:\\n  line 1: field pinn not found in type config.Config`.\n- All validation errors are reported together, one per line, as `<path>: <field>: <message>`, for example `.deps.yaml: rules[2].allow: invalid constraint \"<<7\": ...`.\n- A config error exits with code 2 (see [exit codes](cli.md#exit-codes)).\n\n**Example** using most keys:\n\n```yaml\n# yaml-language-server: $schema=./deps.schema.json\nversion: 1\nschedule: [\"0 5 * * 1-5\"]          # create PRs in the weekday run (a cron of the workflow)\npin: digest                         # pin actions to SHAs and images to digests\nminimumReleaseAge: 3 days\nsecurity: true\nbranchPrefix: deps/\nrebaseWhen: behind-base-branch\ngitAuthor: 'deps[bot] <deps-bot@noreply.invalid>'\nprConcurrentLimit: 10\nprHourlyLimit: 2\nseparateMinorPatch: false\ndependencyDashboard: true\ndependencyDashboardLabels: [dependencies]\nseparateMultipleMajor: true\nignorePaths: ['**/node_modules/**', '**/testdata/**', 'third_party/**']\nrules:\n  - manager: github-actions         # minor+patch of all actions in one PR\n    updateTypes: [minor, patch]\n    group: actions\n  - updateTypes: [minor, patch]     # automerge minor and patch updates once checks pass\n    automerge: true\n    automergeStrategy: squash\n  - datasources: [git-tags, docker] # digest refreshes in one weekly PR\n    updateTypes: [digest, pin]\n    group: digest-pins\n    schedule: ['0 5 * * 0']         # the workflow's Sunday cron\n  - manager: gomod                  # include indirect requirements...\n    depTypes: [indirect]\n    ignore: false\n  - manager: gomod                  # ...without their majors\n    depTypes: [indirect]\n    updateTypes: [major]\n    ignore: true\n  - names: ['golang.org/x/**']\n    group: golang-x\n  - manager: docker\n    names: ['postgres']\n    allow: '< 18'\n  - manager: npm\n    depTypes: [devDependencies]\n    group: npm-dev\n    commitScope: dev-deps\n  - datasources: [npm]\n    minimumReleaseAge: 7 days\ncustom:\n  - files: ['Makefile', '.env']     # '# deps:' / '# renovate:' markers\n  - files: ['Dockerfile']\n    match: 'ARG GH_VERSION=(?P<version>\\S+)\\nARG GH_SHA256=(?P<checksum>[0-9a-f]{64})'\n    datasource: github-releases\n    name: cli/cli\n    checksum: {asset: 'gh_{{version}}_linux_amd64.tar.gz'}\ncustomDatasources:\n  envtest:\n    url: https://raw.githubusercontent.com/kubernetes-sigs/controller-tools/master/envtest-releases.yaml\n    format: yaml\n    versions: .releases | keys\n```"
+}

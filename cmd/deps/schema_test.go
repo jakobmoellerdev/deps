@@ -18,6 +18,7 @@ type schemaNode struct {
 	Ref                  string                 `json:"$ref"`
 	Type                 string                 `json:"type"`
 	Description          string                 `json:"description"`
+	MarkdownDescription  string                 `json:"markdownDescription"`
 	Pattern              string                 `json:"pattern"`
 	Enum                 []any                  `json:"enum"`
 	Default              any                    `json:"default"`
@@ -65,7 +66,23 @@ func TestSchema(t *testing.T) {
 			if p.Description == "" {
 				t.Errorf("%s.%s has no description", name, k)
 			}
+			if p.MarkdownDescription == "" || strings.Contains(p.MarkdownDescription, "\n## ") {
+				t.Errorf("%s.%s: markdownDescription %q", name, k, p.MarkdownDescription)
+			}
 		}
+	}
+	if !strings.HasPrefix(s.MarkdownDescription, "`deps` reads `.deps.yaml`") {
+		t.Errorf("root markdownDescription = %q", s.MarkdownDescription)
+	}
+	if md := rule.Properties["allow"].MarkdownDescription; !strings.HasPrefix(md, "New versions must satisfy this Masterminds semver constraint (e.g. `< 7`)") ||
+		!strings.Contains(md, "\n\n- A **constraint**") {
+		t.Errorf("rules.allow markdownDescription = %q", md)
+	}
+	if got, ok := s.Properties["ignorePaths"].Default.([]any); !ok || !slices.Equal(strs(got), config.DefaultIgnorePaths) {
+		t.Errorf("ignorePaths default = %v", s.Properties["ignorePaths"].Default)
+	}
+	if got := s.Properties["gitAuthor"].Default; got != defaultAuthorName+" <"+defaultAuthorEmail+">" {
+		t.Errorf("gitAuthor default = %v", got)
 	}
 	var updates []string
 	for _, u := range dep.UpdateTypes {
@@ -174,6 +191,25 @@ func TestUnescapeHTML(t *testing.T) {
 	} {
 		if got := string(unescapeHTML([]byte(in))); got != want {
 			t.Errorf("unescapeHTML(%s) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+func TestAddKeyDocsRejectsUnknownKeys(t *testing.T) {
+	for _, c := range []struct {
+		docs map[string]map[string]string
+		want string
+	}{
+		{map[string]map[string]string{"Nope": {"x": "y"}}, `unknown definition "Nope"`},
+		{map[string]map[string]string{"Rule": {"nope": "y"}}, `Rule has no key "nope"`},
+		{map[string]map[string]string{"Config": {"pinn": "y"}}, `Config has no key "pinn"`},
+	} {
+		s, err := reflectConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := addKeyDocs(s, c.docs); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("err = %v, want %q", err, c.want)
 		}
 	}
 }

@@ -112,7 +112,7 @@ type Config struct {
 	BranchPrefix string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
 	RebaseWhen   string   `yaml:"rebaseWhen" jsonschema:"enum=conflicted,enum=behind-base-branch,enum=never,default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
 	Monorepos    *bool    `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group."`
-	GitAuthor    string   `yaml:"gitAuthor" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags; default 'deps[bot] <deps-bot@noreply.invalid>'."`
+	GitAuthor    string   `yaml:"gitAuthor" jsonschema:"default=deps[bot] <deps-bot@noreply.invalid>" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags."`
 	// GitIgnoredAuthors are emails whose commits on an update branch count as the bot's own.
 	GitIgnoredAuthors []string `yaml:"gitIgnoredAuthors" jsonschema_description:"Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased."`
 	PRConcurrentLimit int      `yaml:"prConcurrentLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited."`
@@ -120,7 +120,7 @@ type Config struct {
 	Actions           Actions  `yaml:"actions" jsonschema_description:"github-actions manager settings."`
 	// MinimumReleaseAge is a string, not a duration, so "28 days" style values are accepted.
 	MinimumReleaseAge string   `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt."`
-	IgnorePaths       []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When absent: node_modules, bower_components, vendor, examples, __tests__, test, tests and __fixtures__ directories; any list (also []) replaces that default."`
+	IgnorePaths       []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it."`
 	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
 	// same names); rules override them.
 	SeparateMajorMinor    *bool  `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update."`

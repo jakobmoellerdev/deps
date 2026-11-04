@@ -28,9 +28,9 @@ func newExplain(o *rootOpts) *cobra.Command {
 	return &cobra.Command{
 		Use:   "explain <name-glob>...",
 		Short: "Explain the rules, candidates and decision for each matching dependency",
-		Long: "Explain resolves only the dependencies whose name matches any of the doublestar globs (as rule names)\n" +
-			"and prints, per occurrence, the matching rules, the effective policy, the rejected\n" +
-			"candidates by reason and the resulting update.",
+		Long:  helpText("explain"),
+		Example: "  deps explain 'actions/*'\n" +
+			"  deps explain 'k8s.io/**' github.com/spf13/cobra",
 		Args: globArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return explain(cmd, o, args)

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"strings"
 )
 
@@ -13,13 +12,6 @@ import (
 type logOpts struct {
 	level  string
 	format string
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 // setupLogger installs the default slog logger writing to w.

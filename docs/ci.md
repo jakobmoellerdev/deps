@@ -1,33 +1,179 @@
 # Running deps in CI
 
-deps behaves the same locally and in CI. In CI it detects the platform from the runner environment and uses the job token, unless you pass another.
+deps behaves the same locally and in CI. In CI it detects the forge from the job environment, reads the cron that triggered the run, and uses the job token unless you pass another. This guide covers GitHub Actions, Gitea Actions and Forgejo Actions. Generated references: [action inputs](reference/action.md), [CLI flags and environment](reference/cli.md), [configuration keys](reference/configuration.md).
 
-## Composite action
+- [The composite action](#the-composite-action)
+- [GitHub](#github)
+- [Gitea](#gitea)
+- [Forgejo](#forgejo)
+- [Tokens and permissions](#tokens-and-permissions)
+- [Self-hosted runners and actions hosts](#self-hosted-runners-and-actions-hosts)
+- [Schedules](#schedules)
+- [Automerge](#automerge)
+- [Overlapping runs](#overlapping-runs)
+- [Step summary](#step-summary)
+- [Dry runs and config checks](#dry-runs-and-config-checks)
+- [Caching Go modules](#caching-go-modules)
+- [Platform detection](#platform-detection)
+- [Troubleshooting](#troubleshooting)
+- [GitHub end-to-end test](#github-end-to-end-test)
+- [Releases (maintainers)](#releases-maintainers)
 
-The repository root has a composite `action.yml`. It downloads a released static binary for the runner, verifies it against the release's `checksums.txt` with `sha256sum`, prints `deps version`, and runs it. Go is not needed to run the action. The same `action.yml` works unchanged on GitHub Actions and on Gitea/Forgejo Actions with default settings.
+## The composite action
+
+The repository root has a composite [`action.yml`](../action.yml). The same file works unchanged on GitHub, Gitea and Forgejo. It runs two steps:
+
+1. **Download.** It picks the released static binary for the runner (linux/amd64 or linux/arm64), downloads it with `checksums.txt`, verifies it with `sha256sum`, and prints `deps version`.
+2. **Run.** It runs `deps <args>` with `DEPS_TOKEN` set to the `token` input.
+
+Go is not needed to run it; only go.mod updates need `go` for `go mod tidy`.
 
 | Input | Default | Meaning |
 |---|---|---|
-| `token` | `${{ github.token }}` (the job token on GitHub, Gitea and Forgejo) | exported as `DEPS_TOKEN`; needs contents:write and pull-requests:write (issues:write for the dashboard) |
+| `token` | `${{ github.token }}`, the job token on all three forges | exported as `DEPS_TOKEN` |
 | `args` | `run` | arguments for `deps` |
-| `version` | the action's ref if it is a release tag (`@v0.1.0`), else the latest release | release tag to download, e.g. `v0.1.0` |
-| `repository` | `https://github.com/jakobmoellerdev/deps` on github.com runners, `https://git.jakob-moeller.cloud/jakobmoellerdev/deps` elsewhere | where releases are downloaded from: a Gitea/Forgejo repository URL (latest via `<host>/api/v1/repos/<repo>/releases/latest`) or a GitHub repository URL (latest via api.github.com; on github.com runners assets are fetched with `gh release download` and the job token, so private repositories work) |
+| `version` | the action's ref if it is a release tag (`@v0.1.0`), else the latest release | release tag to download |
+| `repository` | `https://github.com/jakobmoellerdev/deps` on github.com runners, `https://git.jakob-moeller.cloud/jakobmoellerdev/deps` elsewhere | where releases are downloaded from; see below |
 
-Only linux/amd64 and linux/arm64 runners are supported; on any other OS or architecture the download step fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`. Pin a release tag (`@v0.1.0`) so runs are reproducible; `@main` downloads the latest release.
+The details are in the generated [action reference](reference/action.md).
 
-The default host for short `owner/repo@ref` actions is the platform default (`github.com`, or `data.forgejo.org` on Forgejo). Instances with a non-default `DEFAULT_ACTIONS_URL` should set [`actions.defaultHost`](configuration.md#actionsdefaulthost) or `DEPS_DEFAULT_ACTIONS_URL`.
+**Where the binary comes from.** `repository` can be a Gitea/Forgejo or a GitHub repository URL:
 
-## Gitea / Forgejo
+- For a Gitea/Forgejo repository, the latest release is looked up via `<host>/api/v1/repos/<repo>/releases/latest`.
+- For a GitHub repository, it is looked up via api.github.com.
+- On github.com runners, assets are fetched with `gh release download` and the job token, so private repositories work.
+
+**Supported runners.** Only linux/amd64 and linux/arm64 are released. On any other OS or architecture the download step fails with `deps: unsupported runner <os>/<arch>; only linux/amd64 and linux/arm64 are released`.
+
+**Version pinning.** Pin a release tag (`@v0.1.0`) so runs are reproducible; `@main` downloads the latest release.
+
+- deps updates its own `uses:` line like any other action.
+- With [`pin: digest`](reference/configuration.md#pin), deps rewrites that line to `@<sha> # v0.1.0`. `github.action_ref` is then a SHA, and the action downloads the *latest* release. Set `version:` if the binary must match the pin exactly.
+
+## GitHub
+
+### Workflow with a GitHub App token
 
 ```yaml
-# .gitea/workflows/deps.yml (or .forgejo/workflows/deps.yml)
+# .github/workflows/deps.yml
 name: deps
 on:
-  schedule: [{cron: "0 5 * * *"}]
+  schedule:
+    - cron: "0 5 * * *"
   workflow_dispatch:
+concurrency:
+  group: deps
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.DEPS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPS_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ steps.app.outputs.token }}
+      - uses: jakobmoellerdev/deps@v0.1.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          args: run -v --log-level info
+```
+
+Pass the token to **both** steps:
+
+- **`actions/checkout`** stores it as the git credential. deps pushes branches with the checkout's credentials, so the push needs it.
+- **The action's `token` input** is the API token: deps lists, creates, edits and closes PRs with it.
+
+**Why not `GITHUB_TOKEN`:**
+
+1. **Workflow files.** `GITHUB_TOKEN` cannot push commits that change `.github/workflows/*`; GitHub rejects the push with `refusing to allow a GitHub App to create or update workflow … without workflows permission`. Action updates are exactly such commits.
+2. **CI on the PRs.** PRs and pushes made with `GITHUB_TOKEN` do not trigger workflows (`pull_request`, `push`), so CI never runs on deps PRs, and [automerge](#automerge) would wait forever.
+
+**Creating the App:**
+
+1. *Settings → Developer settings → GitHub Apps → New GitHub App*. No webhook is needed.
+2. Repository permissions:
+   - *Contents*: read and write;
+   - *Pull requests*: read and write;
+   - *Workflows*: read and write;
+   - *Issues*: read and write, for the [dashboard](reference/configuration.md#dependencydashboard);
+   - *Checks* and *Commit statuses*: read, for the automerge fallback.
+3. Install the App on the repositories deps should manage.
+4. Store the App's client ID as the variable `DEPS_APP_CLIENT_ID` and a private key as the secret `DEPS_APP_PRIVATE_KEY`.
+
+**A PAT instead.** A classic PAT needs the `repo` and `workflow` scopes. A fine-grained PAT needs *Contents*, *Pull requests* and *Workflows* set to write, plus *Issues* for the dashboard. Store it as a secret and pass it where the example uses `steps.app.outputs.token`. PRs then appear as opened by the PAT's user.
+
+**The job token only.** It works when no workflow files change and CI on deps PRs isn't needed, e.g. when you only update go.mod with a separate CI trigger. Drop the App step and both `token:` inputs, and grant:
+
+```yaml
 permissions:
   contents: write
   pull-requests: write
+  issues: write # only for dependencyDashboard
+```
+
+**Where the action comes from.** `uses: jakobmoellerdev/deps@…` resolves to [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps), the push mirror of the Gitea repository. The defaults download the binary from the mirror's releases. A workflow can use the action only if that repository is public, or private with Actions access granted to your repository.
+
+### Commit identity of the App
+
+By default commits are authored by `deps[bot] <deps-bot@noreply.invalid>`. To have them appear as the App, set [`gitAuthor`](reference/configuration.md#gitauthor) in `.deps.yaml`, or set `DEPS_GIT_AUTHOR` in the job, to the App's noreply identity. Add this step after the token step; job-level environment variables reach the action's steps:
+
+```yaml
+      - name: deps commit identity
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          id=$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)
+          echo "DEPS_GIT_AUTHOR=${SLUG}[bot] <${id}+${SLUG}[bot]@users.noreply.github.com>" >> "$GITHUB_ENV"
+```
+
+deps updates only branches whose last commit has its own author email. If the identity changes, list the old email in [`gitIgnoredAuthors`](reference/configuration.md#gitignoredauthors). Otherwise existing branches are reported as `skipped: branch modified by someone else`.
+
+### Without the action
+
+If the action repository isn't reachable, install the binary with `go install` through the Go module proxy, then run it:
+
+```yaml
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: stable
+      - run: go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@v0.1.0
+      - run: deps run -v --log-level info
+        env:
+          DEPS_TOKEN: ${{ steps.app.outputs.token }}
+```
+
+Don't download from `git.jakob-moeller.cloud` on GitHub-hosted runners: its edge blocks GitHub's datacenter IPs (HTTP 403). The module proxy serves the module, and the mirror's releases serve the binaries.
+
+### GitHub Enterprise Server
+
+deps detects GHES from `GITHUB_ACTIONS=true` with the runner's `GITHUB_SERVER_URL` and `GITHUB_API_URL`.
+
+- **Getting the action.** Mirror `jakobmoellerdev/deps` into the instance, or use [Without the action](#without-the-action). If the instance can't reach github.com, point `repository:` at a mirror that publishes the release assets.
+- **Default actions host.** Short `owner/repo@ref` actions are looked up on github.com. If your workflows reference actions on the GHES instance instead, set [`actions.defaultHost`](reference/configuration.md#actionsdefaulthost).
+
+## Gitea
+
+```yaml
+# .gitea/workflows/deps.yml
+name: deps
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+concurrency:
+  group: deps
+  cancel-in-progress: false
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write # only for dependencyDashboard
 jobs:
   deps:
     runs-on: ubuntu-latest
@@ -38,102 +184,271 @@ jobs:
           args: run -v --log-level info
 ```
 
-Use the full URL in `uses:`. A short `jakobmoellerdev/deps@v0.1.0` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. Inside this repository, the dogfood workflow uses `uses: ./`.
+**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.1.0` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. Inside this repository the dogfood workflow uses `uses: ./`.
 
-If the job token cannot push, open PRs, or read private action/module repositories (`GITEA_TOKEN` cannot read other private repos by default), store a personal access token as a secret and pass it to both steps:
+**The job token (`GITEA_TOKEN`).** Its permissions come from:
+
+1. the job's `permissions:`;
+2. the workflow's `permissions:`;
+3. the owner's or repository's default (*Settings → Actions → General*).
+
+The result is clamped to the configured maximum. With `contents: write` and `pull-requests: write` it can push deps branches and open PRs. Two limits apply:
+
+- **No CI on deps PRs.** PRs and pushes made with the job token don't start new workflow runs. Here, deps PR #1, opened by `gitea-actions`, got no `pull_request` run.
+- **Other private repositories.** It can read only its own repository and public ones. Private action or module repositories must allow it under *Settings → Actions → General → Cross-Repository Access* (read-only).
+
+When CI must run on deps PRs (for [automerge](#automerge)), or a private repository can't grant cross-repository access, create a personal access token. It needs the scopes `write:repository`, and `write:issue` for the dashboard. Store it as the secret `DEPS_TOKEN` and pass it to both steps:
 
 ```yaml
       - uses: actions/checkout@v7.0.1
-        with: {token: "${{ secrets.DEPS_TOKEN }}"}
+        with:
+          token: ${{ secrets.DEPS_TOKEN }}
       - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
-        with: {token: "${{ secrets.DEPS_TOKEN }}"}
+        with:
+          token: ${{ secrets.DEPS_TOKEN }}
 ```
 
-## GitHub
+For a separate bot account, create the token on that account and give it write access to the repository. Set [`gitAuthor`](reference/configuration.md#gitauthor) to its name and email.
 
-A GitHub workflow cannot `uses:` an action hosted on Gitea. There are two options.
-
-**(a) Mirror the repository to GitHub** and use the action from the mirror. The defaults still download the binary from the Gitea releases; the `@v0.1.0` ref selects that release. Set `repository: https://github.com/<owner>/deps` only if the mirror also publishes the release assets.
+**Lookups on github.com.** Actions, GitHub releases and release notes on github.com are fetched anonymously from a Gitea job. Anonymous GitHub API requests share a low rate limit per IP. Set `DEPS_GITHUB_COM_TOKEN` to a github.com token, read-only and without scopes, to raise it and to read private github.com repositories:
 
 ```yaml
-name: deps
-on:
-  schedule: [{cron: "0 5 * * *"}]
-  workflow_dispatch:
-permissions:
-  contents: write
-  pull-requests: write
 jobs:
   deps:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/create-github-app-token@v2
-        id: app
-        with:
-          app-id: ${{ vars.DEPS_APP_ID }}
-          private-key: ${{ secrets.DEPS_APP_KEY }}
-      - uses: actions/checkout@v7.0.1
-        with:
-          token: ${{ steps.app.outputs.token }}
-      - uses: <owner>/deps@v0.1.0
-        with:
-          token: ${{ steps.app.outputs.token }}
+    env:
+      DEPS_GITHUB_COM_TOKEN: ${{ secrets.DEPS_GITHUB_COM_TOKEN }}
 ```
 
-**(b) Without a mirror**, download and verify the binary in a `run` step instead of the action step:
+## Forgejo
 
 ```yaml
-      - run: |
-          base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.1.0
-          cd "$RUNNER_TEMP" && curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
-          grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 deps
-      - run: '"$RUNNER_TEMP/deps" run'
-        env:
-          DEPS_TOKEN: ${{ steps.app.outputs.token }}
+# .forgejo/workflows/deps.yml
+name: deps
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+concurrency:
+  group: deps
+  cancel-in-progress: false
+jobs:
+  deps:
+    runs-on: docker # a label of your runner
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.1.0
 ```
 
-Use `deps_linux_arm64` on arm64 runners.
+- **Detection.** deps detects Forgejo from `FORGEJO_ACTIONS=true` and reads `FORGEJO_SERVER_URL`, `FORGEJO_API_URL` and `FORGEJO_REPOSITORY`, falling back to the `GITHUB_*` names. API calls use the Gitea-compatible `/api/v1`.
+- **The automatic token.** It is `FORGEJO_TOKEN`, also available as `GITHUB_TOKEN` and `github.token`, so the action's default `token` uses it. It can write to its repository, except in workflows on fork PRs, and read the repositories associated with the workflow. The Forgejo workflow reference has no `permissions:` key, so the example has no `permissions:` block.
+- **CI and automerge.** As on Gitea, use a PAT secret for both steps when CI must run on deps PRs.
+- **Default actions host.** Short `owner/repo@ref` actions resolve against `data.forgejo.org`, the default `DEFAULT_ACTIONS_URL` of Forgejo, and deps looks them up there too. `actions/checkout@v7.0.1` exists there. If your instance uses another `DEFAULT_ACTIONS_URL`, see [Self-hosted runners and actions hosts](#self-hosted-runners-and-actions-hosts).
+- **Runner image.** The download step needs `bash`, `curl`, `git` and `sha256sum`. Debian-based images such as `node:<version>-bookworm`, a common image for Forgejo's `docker` label, have them; Alpine images need `apk add bash curl git`.
 
-**Token caveat.** PRs and pushes made with `GITHUB_TOKEN` do not trigger workflows (`pull_request`, `push`), so CI never runs on bot PRs. Use a GitHub App installation token (as above) or a PAT. Pass it as `DEPS_TOKEN` (or `--token`) **and** as `actions/checkout`'s `token:`. deps pushes with the checkout's git credentials, so the branches it pushes then trigger CI.
+## Tokens and permissions
 
-**App identity.** If the commits should appear as the App, set `gitAuthor` (or `DEPS_GIT_AUTHOR`) to its noreply identity, e.g. `my-app[bot] <123+my-app[bot]@users.noreply.github.com>`. If the identity ever changes, list the old email in `gitIgnoredAuthors`; otherwise existing branches are reported as `skipped: branch modified by someone else`.
+| Operation | GitHub | Gitea | Forgejo |
+|---|---|---|---|
+| push `<branchPrefix>*` branches, delete obsolete ones | `contents: write`; *Workflows* (App) or `workflow` (PAT) when workflow files change | `contents: write` | automatic token |
+| list, create, edit and close PRs | `pull-requests: write` | `pull-requests: write` | automatic token |
+| request auto-merge (`automerge`) | merge rights on the base branch; *Allow auto-merge* in the settings; `statuses: read` and `checks: read` for the direct-merge fallback | merge rights on the base branch | merge rights on the base branch |
+| find, create and edit the dashboard issue (`dependencyDashboard`) | `issues: write` | `issues: write` | automatic token |
+| read private actions, modules and release notes | read access to those repositories | Cross-Repository Access or a PAT | a PAT |
+| CI runs on deps PRs | App token or PAT | PAT | PAT |
+
+`deps run --dry-run` and `deps plan` only read. `--dry-run` works anonymously.
+
+**Token sources:**
+
+1. **Platform API.** deps takes `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`.
+   - GitHub requests send `Authorization: Bearer <t>`.
+   - Gitea and Forgejo requests send `Authorization: token <t>`.
+2. **Git push.** deps uses the checkout's git credentials (`actions/checkout` stores its `token:`), not the API token.
+3. **Lookups:**
+   - The platform token is sent to the platform host as Basic `x-access-token:<t>`.
+   - `DEPS_GITHUB_COM_TOKEN` is used for github.com when the platform is elsewhere.
+   - On a 401 without a static token, deps runs `git credential fill` once per host and retries. deps never prompts (`GIT_TERMINAL_PROMPT=0`).
+4. **npm and Docker.** npm uses the `.npmrc` `_authToken` entries; docker uses the Docker credential chain (`~/.docker/config.json` or credential helpers, e.g. after `docker login`).
+5. **Go modules.** `go` itself, through `GOPRIVATE`, `GONOPROXY`, `GOPROXY` and git credentials. Private modules need `GOPRIVATE` set in the job, and git credentials for their host. The checkout's credentials cover only the platform host; for other hosts use, e.g., `git config --global url."https://x-access-token:${TOKEN}@host/".insteadOf "https://host/"`.
+
+## Self-hosted runners and actions hosts
+
+**Short `owner/repo@ref` actions.** Forges resolve them against `DEFAULT_ACTIONS_URL`: github.com on GitHub and Gitea, data.forgejo.org on Forgejo. deps has to look the action up on the same host. It picks the host in this order:
+
+1. [`actions.defaultHost`](reference/configuration.md#actionsdefaulthost) in `.deps.yaml`;
+2. `DEPS_DEFAULT_ACTIONS_URL`, a URL or a bare host;
+3. the platform default: `data.forgejo.org` on Forgejo, `github.com` otherwise.
+
+With `--log-level info`, deps logs the chosen host as `actions default host host=<h> source=<s>`. For an instance whose `DEFAULT_ACTIONS_URL` is, e.g., `https://gitea.com`, add this to the config:
+
+```yaml
+actions:
+  defaultHost: gitea.com
+```
+
+or set it in the job:
+
+```yaml
+    env:
+      DEPS_DEFAULT_ACTIONS_URL: https://gitea.com
+```
+
+Actions with a full URL (`uses: https://host/owner/repo@ref`) are looked up on that host.
+
+**Tools on the runner:**
+
+| Tool | Needed for |
+|---|---|
+| `bash`, `curl`, `sha256sum` | the action's download step (`gh` instead of `curl` on github.com runners when it is installed) |
+| `git` | always for `run`: remote URL, `ls-remote`, commits via plumbing, push |
+| `go` | only for `go mod tidy` after go.mod updates, and `go list` for `GOPRIVATE`/direct modules. `go env` falls back to the environment without it. `GOTOOLCHAIN=auto` fetches a newer toolchain when go.mod requires one. |
+| `npm`, `pnpm`, `yarn` | regenerating lockfiles; see the note below the table |
+| Docker credentials | private registries |
+
+For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back to `npx --yes <tool>[@<packageManager version>]`, so `npm`/`npx` (e.g. from `actions/setup-node`) is enough. With none of them, the lockfile's manifests fail with `<tool> not found (needed to update <lock>)`.
+
+**Checkout.** `deps run` requires the checked-out `HEAD` to be the tip of `origin/<base>`. A fresh `actions/checkout` of the default branch satisfies that; shallow clones are fine. To manage a branch other than the default, check it out and pass `--base <branch>`.
+
+**Network.** The runner needs HTTPS access to:
+
+- the forge;
+- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, api.osv.dev for security updates;
+- the release download host.
+
+deps honors `HTTPS_PROXY`/`NO_PROXY`.
 
 ## Schedules
 
-[`schedule`](configuration.md#schedule) entries must be cron triggers of the workflow. deps reads the triggering cron from the event payload (`GITHUB_EVENT_PATH`, field `schedule`; GitHub and Gitea 28.3 fill it) and creates PRs only for groups whose schedule lists it. `workflow_dispatch` and other non-cron triggers act on every group. For a daily run with weekly groups:
+Each [`schedule`](reference/configuration.md#schedule) entry, top-level or in a rule, must be one of the workflow's cron triggers. Crons are compared as text after collapsing whitespace, so write them the same way in both files.
+
+- **Reading the trigger.** deps reads the triggering cron from the event payload: `GITHUB_EVENT_PATH`, field `schedule`. GitHub fills it, and so does Gitea (verified in 28.3).
+- **Which groups act.** Only groups whose schedule lists that cron get new PRs. `workflow_dispatch`, `push` and other non-cron triggers act on every group.
+- **Open PRs outside the schedule.** They keep being updated and rebased ([`updateNotScheduled`](reference/configuration.md#updatenotscheduled), default true).
+
+For a daily run with weekly groups:
 
 ```yaml
 on:
   schedule:
-    - cron: "0 0 * * *"   # daily: deps without a schedule
-    - cron: "0 0 * * 0"   # weekly: also groups with schedule: ["0 0 * * 0"]
+    - cron: "0 5 * * *" # daily: deps without a schedule
+    - cron: "0 5 * * 1" # Mondays: also groups with schedule: ["0 5 * * 1"]
   workflow_dispatch:
 ```
 
-Both crons fire on Sunday at 00:00, so that day has two runs; the second finds the PRs of the first up to date. On runners that do not provide the payload, pass the cron explicitly, e.g. `args: run --trigger-schedule "0 0 * * 0"` in a workflow with only that cron (a `schedule` event without a readable cron matches every schedule, with a warning).
+```yaml
+schedule: ["0 5 * * *"] # default for every dep
+rules:
+  - names: ["k8s.io/**"]
+    schedule: ["0 5 * * 1"] # Kubernetes only on Mondays
+  - updateTypes: [major]
+    schedule: ["0 5 * * 1"] # majors only on Mondays
+```
 
-## Permissions
+Both crons fire on Monday at 05:00, so that day has two runs. The second run finds the PRs of the first up to date; a [concurrency group](#overlapping-runs) keeps the two from overlapping.
 
-| Operation | Needs |
-|---|---|
-| push `<branchPrefix>*` branches, delete obsolete ones | contents: write |
-| list, create, edit and close PRs | pull-requests: write |
-| request auto-merge (`automerge`) | contents: write and pull-requests: write, and merge rights on the base branch. GitHub also needs "Allow auto-merge" in the repository settings; without it deps merges directly once checks are green, which reads commit statuses and check runs (statuses: read, checks: read) |
-| find, create and edit the dashboard issue (`dependencyDashboard`) | issues: write |
-| read private actions, modules, release notes | read access to those repositories (the same host's token, `DEPS_GITHUB_COM_TOKEN` for github.com, or the git credential helper) |
+- **Runners without the payload.** Pass the cron explicitly with `args: run --trigger-schedule "0 5 * * 1"` (or `DEPS_TRIGGER_SCHEDULE`) in a workflow that has only that cron.
+- **A `schedule` event without a readable cron** matches every schedule, and deps logs a warning.
 
-`deps run --dry-run` needs none of these and works anonymously.
+Updates waiting for their cron are reported as `skipped: outside schedule`. They appear on the dashboard under *Awaiting schedule*, where ticking one creates its PR on the next run.
 
-## Tools on the runner
+## Automerge
 
-| Tool | Needed for |
-|---|---|
-| `git` | always for `run`: remote URL, `ls-remote`, commits via plumbing, push; the checkout's credentials are used |
-| `go` | not needed to run deps; only for `go mod tidy` on go.mod updates, `go env` (falls back to the environment without it); `go list` for GOPRIVATE/direct modules |
-| `npm`, `pnpm`, `yarn` | regenerating lockfiles. If the tool is not on `PATH`, deps runs it via `npx --yes <tool>[@<packageManager version>]`, so having `npm`/`npx` (e.g. from `actions/setup-node`) is enough. With none of them, the lockfile's manifests fail with `<tool> not found (needed to update <lock>)`. |
-| Docker credentials | private registries: `~/.docker/config.json` or credential helpers (e.g. after `docker login`) |
+[`automerge`](reference/configuration.md#automerge), top-level or per rule, asks the forge to merge a PR once its required checks pass. Merging uses [`automergeStrategy`](reference/configuration.md#automergestrategy): `auto` is the repository's default style, or `merge`, `squash` or `rebase`.
 
-`deps run` requires the checked-out `HEAD` to be the tip of `origin/<base>`, which a fresh `actions/checkout` of the default branch is. Shallow clones are fine.
+**GitHub:**
+
+1. deps enables auto-merge with the GraphQL `enablePullRequestAutoMerge` mutation. GitHub then merges the PR when branch protection or a ruleset is satisfied.
+2. The repository needs *Settings → General → Allow auto-merge*, and the base branch needs required status checks.
+3. If auto-merge is disabled, or GitHub reports the PR already mergeable (`clean status`), deps merges the PR itself. It does that only when the PR is mergeable and all commit statuses and check runs succeeded, in that run or a later one. Until then the PR is reported with `automerge waiting for checks`.
+4. The checks only run when the PR was pushed with an App token or PAT.
+
+**Gitea and Forgejo:**
+
+1. deps calls `POST /pulls/{n}/merge` with `merge_when_checks_succeed`.
+2. The forge waits only for the status checks that branch protection marks as required. Without branch protection with required checks, it merges **immediately**.
+3. Since the job token doesn't start CI on deps PRs, use a PAT and configure required status checks on the base branch.
+4. A fresh push whose mergeability check is still running is reported as `automerge pending` and requested again on the next run.
+
+## Overlapping runs
+
+Two runs of the same repository can race on the same branches: two crons firing together, a manual dispatch during a scheduled run. The push is guarded with `--force-with-lease`, so a race fails with an error instead of losing commits, but the second run's work is wasted. Serialize the runs with a concurrency group:
+
+```yaml
+concurrency:
+  group: deps
+  cancel-in-progress: false
+```
+
+`cancel-in-progress: false` lets a running job finish and queues the next one. GitHub, Gitea (since 1.26) and Forgejo support `concurrency`.
+
+## Step summary
+
+`plan`, `apply` and `run` append a `## deps` markdown table to the job summary file, `GITHUB_STEP_SUMMARY` or else `GITEA_STEP_SUMMARY`:
+
+- `plan` and `apply` write `| Dependency | File | From | To | Type |`;
+- `run` writes `| Dependency | Status | PR |`, including the dashboard.
+
+GitHub shows it on the run page. On Gitea and Forgejo it shows where the instance supports job summaries; elsewhere the file is ignored.
+
+## Dry runs and config checks
+
+These modes only read, so they work with `contents: read`:
+
+- **`deps plan`:** a unified diff of every update, without git or API writes.
+- **`deps run --dry-run`:** the PR actions that would happen (`would-create`, `would-update`, `would-rebase`, `would-automerge`).
+
+To validate `.deps.yaml` on every PR, add a job to your CI workflow:
+
+```yaml
+on:
+  pull_request:
+    paths: [".deps.yaml", ".deps.yml"]
+permissions:
+  contents: read
+jobs:
+  deps-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: jakobmoellerdev/deps@v0.1.0 # full URL on Gitea/Forgejo
+        with:
+          args: plan -v
+```
+
+Exit codes:
+
+- **2:** an invalid config; every problem is printed with its location.
+- **1:** an upstream lookup failed.
+
+To see why a dependency is or isn't updated, use `args: explain '<name glob>'`.
+
+The GitHub mirror of this repository runs `deps plan` the same way (`.github/workflows/deps.yml`): it exercises the action, binary download and lookups on GitHub, and lists the updates in the job summary.
+
+## Caching Go modules
+
+`go mod tidy` downloads every module of an updated go.mod. deps also reads release times for [`minimumReleaseAge`](reference/configuration.md#minimumreleaseage) from `GOMODCACHE` (`cache/download/**/@v/*.info`) before asking the proxy. A warm module cache makes both faster. With a go.mod at the repository root, `actions/setup-go` caches it:
+
+```yaml
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: jakobmoellerdev/deps@v0.1.0
+```
+
+For several modules, or without setup-go, use `actions/cache`:
+
+```yaml
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ hashFiles('**/go.sum') }}
+          restore-keys: gomod-
+```
+
+Gitea and Forgejo serve the same cache actions through their runner's cache server.
 
 ## Platform detection
 
@@ -153,52 +468,130 @@ Both crons fire on Sunday at 00:00, so that day has two runs; the second finds t
      If none matches, deps fails with `cannot detect platform for <host>; pass --platform and --api-url`.
 3. **Overrides:** `--platform`, `--api-url` and `--repo` replace the detected values. If only the kind is given, the API URL is derived per kind.
 
-`plan`, `apply` and `explain` only use step 1.
+`plan`, `apply` and `explain` only use step 1. With `--log-level info`, `run` logs the result as `platform detected kind=<kind> via=<source> api=<url> repo=<owner/name>`.
 
-## Token sources
+## Troubleshooting
 
-1. **Platform API and push:** `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`.
-   - GitHub API requests send `Authorization: Bearer <t>`; Gitea and Forgejo requests send `Authorization: token <t>`.
-2. **Lookups:**
-   - The platform token is sent to the platform host as Basic `x-access-token:<t>`.
-   - `DEPS_GITHUB_COM_TOKEN` is used for github.com when the platform is elsewhere, e.g. for actions and GitHub releases looked up from a Gitea job.
-   - On a 401 without a static token, deps runs `git credential fill` once per host and retries.
-3. **npm:** `.npmrc` `_authToken` entries. **docker:** the Docker credential chain.
+Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit header, decision and git command. To run deps locally against the same repository without writing anything, use `deps run --dry-run -v`.
+
+**Tokens and pushes:**
+
+| Symptom | Cause and fix |
+|---|---|
+| push fails with `refusing to allow a GitHub App to create or update workflow … without workflows permission` (or `OAuth App … without workflow scope`) | The token can't change `.github/workflows/*`: `GITHUB_TOKEN` never can. Use an App with *Workflows: write* or a PAT with `workflow` scope, for `actions/checkout` too. |
+| deps PRs never run CI; automerge never merges | The PRs were pushed with the job token. Pass an App token or PAT to `actions/checkout` and the action ([GitHub](#github), [Gitea](#gitea)). |
+| `deps: no token for <host>` | No `--token`, no `DEPS_TOKEN`/`GITHUB_TOKEN`/`GITEA_TOKEN`/`FORGEJO_TOKEN`, and no git credential. In a workflow, check that the `token` input isn't an empty secret. |
+| `403` on `POST …/pulls` or on push (Gitea/Forgejo) | The job token lacks permissions: add `contents: write` and `pull-requests: write`, check the maximum in *Settings → Actions → General*, or use a PAT. |
+| `ls-refs https://host/owner/repo: HTTP 401` or `HTTP 404` | A private action repository. Grant cross-repository access (Gitea) or use a token that can read it; for github.com from Gitea/Forgejo set `DEPS_GITHUB_COM_TOKEN`. |
+| `rate limited by api.github.com until <time>` | Anonymous github.com lookups from a non-GitHub runner. Set `DEPS_GITHUB_COM_TOKEN`. |
+
+**Checkout and platform:**
+
+| Symptom | Cause and fix |
+|---|---|
+| `checkout HEAD <sha> is not the tip of origin/<base> (<sha>); check out the latest <base>` | The job checked out a PR ref, a tag or an old commit. Check out the default branch (no `ref:`), or pass `--base`. |
+| `cannot detect platform for <host>; pass --platform and --api-url` | Running outside Actions against a host whose API probes failed. Pass `--platform gitea --api-url https://host/api/v1` (and `--repo` if the remote is unusual). |
+
+**PR statuses:**
+
+| Symptom | Cause and fix |
+|---|---|
+| `skipped: branch modified by someone else` | The branch's last commit has another author email. Rebase it via the dashboard checkbox, or close the PR. If the bot identity changed, add the old email to `gitIgnoredAuthors`. |
+| `skipped: closed PR for this version` | A PR with the same title was closed without merging, so deps won't reopen it. Tick *recreate* on the dashboard, or wait for the next version. |
+| `skipped: outside schedule` on every run | The `schedule` entries don't match the workflow's crons: they are compared as text. Check the `trigger` line in the `--log-level info` output for the cron deps saw. |
+| `skipped: new PR limit reached` | `--max-new-prs` (default 10), `prConcurrentLimit` or `prHourlyLimit`. The next runs continue; the dashboard lists the waiting ones. |
+| obsolete PRs are never closed | deps closes obsolete PRs only after a run without errors. Fix the errors listed at the end of the run. |
+
+**Action download and post-processing:**
+
+| Symptom | Cause and fix |
+|---|---|
+| `deps: unsupported runner <os>/<arch>` | Use a linux/amd64 or linux/arm64 runner. |
+| `deps: no release found at <api>` | The `repository` input points at a repository without releases, or the API is unreachable. Set `version:` and `repository:` explicitly. |
+| `go mod tidy in <dir>: …` | Go is missing on the runner, or a private module can't be fetched (set `GOPRIVATE` and git credentials). The module's change is dropped; other updates proceed. |
+| `<tool> not found (needed to update <lock>)` | Install Node.js (`actions/setup-node`) so `npm`/`npx` is available. |
+| the job fails before deps runs, cloning `https://github.com/actions/checkout` | The runner can't reach the actions host. That is runner networking, not deps: fix the network, or use full `uses:` URLs to a reachable host. |
 
 ## GitHub end-to-end test
 
-`task e2e:github` builds `bin/deps` and runs `hack/e2e-github/e2e.sh`, which drives `deps run` against the real repository `<gh user>/deps-e2e` (override with `DEPS_E2E_REPO=owner/name`). It is not part of `task ci`: it needs network, a `gh` login for github.com with the `repo` and `workflow` scopes, and `git`, `go` and `jq`. A full run takes about 3 minutes, mostly waiting for the `check` workflow.
+`task e2e:github` builds `bin/deps` and runs `hack/e2e-github/e2e.sh`. The script drives `deps run` against the real repository `<gh user>/deps-e2e` (override with `DEPS_E2E_REPO=owner/name`).
 
-**Setup (idempotent, every run).** The repository is created if missing (public, so branch protection works on the free plan). Settings: issues on, `allow_auto_merge: true`, `delete_branch_on_merge: true`; branch protection on `main` requires the status check `check` (from `.github/workflows/check.yml`, `on: pull_request`), with `enforce_admins: false` and force pushes allowed so the test can reset and push to `main`.
+- **Requirements:** network, a `gh` login for github.com with the `repo` and `workflow` scopes, and `git`, `go` and `jq`. That is why it is not part of `task ci`.
+- **Duration:** about 3 minutes, mostly waiting for the `check` workflow.
 
-**Reset (before and after the scenario).** `main` is force-pushed to a fixed commit of `hack/e2e-github/testdata/repo` (same SHA every time): a never-running workflow with `actions/setup-node@v7.0.0` and `actions/setup-python@v7.0.0`, a `go.mod` requiring `github.com/spf13/cobra v1.10.1`, and a `.deps.yaml` with `dependencyDashboard: true`, `pin: digest` for setup-python, `automerge: true` for patch updates, and `allow` bounds so new upstream releases do not change the update types. Open PRs are closed, and closed unmerged PRs are retitled `[e2e reset] …` so the next run does not skip them as "closed PR for this version". Branches other than `main` are deleted and open issues are closed. `hack/e2e-github/e2e.sh reset` runs only the reset.
+**Setup (idempotent, every run).** The repository is created if missing, as public so branch protection works on the free plan. Settings:
+
+- issues on, `allow_auto_merge: true`, `delete_branch_on_merge: true`;
+- branch protection on `main` requires the status check `check` (from `.github/workflows/check.yml`, `on: pull_request`);
+- `enforce_admins: false` and force pushes allowed, so the test can reset and push to `main`.
+
+**Reset (before and after the scenario).** `main` is force-pushed to a fixed commit of `hack/e2e-github/testdata/repo`, the same SHA every time. That commit contains:
+
+- a never-running workflow with `actions/setup-node@v7.0.0` and `actions/setup-python@v7.0.0`;
+- a `go.mod` requiring `github.com/spf13/cobra v1.10.1`;
+- a `.deps.yaml` with `dependencyDashboard: true`, `pin: digest` for setup-python, `automerge: true` for patch updates, and `allow` bounds so new upstream releases don't change the update types.
+
+The reset also cleans up:
+
+- open PRs are closed;
+- closed unmerged PRs are retitled `[e2e reset] …`, so the next run doesn't skip them as "closed PR for this version";
+- branches other than `main` are deleted, and open issues are closed.
+
+`hack/e2e-github/e2e.sh reset` runs only the reset.
 
 **Scenario.** Each step runs `deps run -v` with `DEPS_TOKEN=$(gh auth token)` on a fresh clone of `main` and checks the result through the GitHub API. The script stops at the first mismatch.
 
-1. **First run.** Three PRs are created on `deps/github-actions/actions-setup-node`, `deps/github-actions/actions-setup-python` and `deps/gomod/github.com-spf13-cobra`. The script checks the titles, the body (update table with ages, `### Release notes`, fingerprint), the digest pin with its `# v7.x.y` comment, and the tidied `go.sum`. It also checks that the dashboard issue exists with a rebase checkbox per PR, and that GitHub auto-merge is enabled on the cobra patch PR. GitHub must then merge that PR within 5 minutes (`DEPS_E2E_MERGE_TIMEOUT`).
+1. **First run.** Three PRs are created, on `deps/github-actions/actions-setup-node`, `deps/github-actions/actions-setup-python` and `deps/gomod/github.com-spf13-cobra`. The script checks:
+   - the titles;
+   - the body: the update table with ages, `### Release notes`, the fingerprint;
+   - the digest pin with its `# v7.x.y` comment, and the tidied `go.sum`;
+   - that the dashboard issue exists with a rebase checkbox per PR;
+   - that GitHub auto-merge is enabled on the cobra patch PR. GitHub must then merge that PR within 5 minutes (`DEPS_E2E_MERGE_TIMEOUT`).
 2. **Second run.** The run after the merge reports the other PRs `up-to-date`. One more run must leave the dashboard unedited (same `updated_at`), and the dashboard must be the only open issue.
 3. **Rebase checkbox.** Ticking the setup-node rebase box through the API makes the next run report `rebased`. The branch moves to a new commit on top of `main`, the PR number stays the same, and the box is unticked again.
 4. **Obsolete PR.** A push to `main` adds a rule ignoring `actions/setup-python`. The next run reports `closed`: the PR is closed and its branch deleted.
-5. **Direct merge.** With `allow_auto_merge` disabled, `main` is pushed back to cobra v1.10.1. The run creates the PR with `automerge waiting for checks`. Once the `check` run is green, later runs report `up-to-date, merged`. The PR must be merged by the token's user (deps), and the dashboard must no longer list it.
+5. **Direct merge.** With `allow_auto_merge` disabled, `main` is pushed back to cobra v1.10.1.
+   - The run creates the PR with `automerge waiting for checks`.
+   - Once the `check` run is green, later runs report `up-to-date, merged`.
+   - The PR must be merged by the token's user (deps), and the dashboard must no longer list it.
 
-The summary prints the duration of each step and of each `deps run`. Set `DEPS_E2E_LOGS=<dir>` to keep each run's debug log (`--log-level debug`). GitHub's issue list lags a few seconds behind a new issue, so the script reads the dashboard by the number from the run's `dashboard` line. deps itself only lists issues at the start of a run, and scheduled runs are far enough apart.
+**Output.** The summary prints the duration of each step and of each `deps run`. Set `DEPS_E2E_LOGS=<dir>` to keep each run's debug log (`--log-level debug`).
+
+**Reading the dashboard.** GitHub's issue list lags a few seconds behind a new issue, so the script reads the dashboard by the number from the run's `dashboard` line. deps itself only lists issues at the start of a run, and scheduled runs are far enough apart for that lag not to matter.
 
 ## Releases (maintainers)
 
-Every release is published on both forges: on Gitea by the `release` job below, and on the GitHub mirror by `.github/workflows/release.yml`, which runs when the push mirror delivers the tag (or via `workflow_dispatch` with a `tag` input to republish an existing tag). GitHub runners download from the mirror because the Gitea instance's edge blocks GitHub's datacenter IPs (HTTP 403). The mirror's workflow `.github/workflows/deps.yml` runs `deps plan` daily: pull requests and issues are disabled on the mirror and the push mirror prunes foreign branches, so PRs are only made on Gitea.
+Every release is published on both forges:
 
-The Gitea push mirror needs a GitHub token with the `workflow` scope, otherwise GitHub rejects pushes that change `.github/workflows/*`.
+- **Gitea:** the `release` job below.
+- **GitHub mirror:** `.github/workflows/release.yml`. It runs when the push mirror delivers the tag, or via `workflow_dispatch` with a `tag` input to republish an existing tag.
 
-Pushing a `v*` tag runs `.gitea/workflows/ci.yml`: the `test` job runs `task ci` once (Go from `actions/setup-go@v7.0.0` with `go-version-file: go.mod`, i.e. `toolchain go1.27.3`, and `cache: true`), then the `release` job (`needs: test`, `contents: write`):
+GitHub runners download from the mirror because the Gitea instance's edge blocks GitHub's datacenter IPs (HTTP 403). The Gitea push mirror needs a GitHub token with the `workflow` scope, otherwise GitHub rejects pushes that change `.github/workflows/*`.
 
-1. `task release:build VERSION=<tag>` builds `dist/deps_linux_amd64` and `dist/deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath` and `-ldflags "-s -w -buildid= -X main.version=<tag>"`, and writes `dist/checksums.txt` (`sha256sum`).
-2. Each binary is checked to be static (no `Requesting program interpreter` in `readelf -l`), because the action runs it on arbitrary runner images.
-3. `task release:notes` runs [git-cliff](https://git-cliff.org) (pinned v2.14.2, installed and sha512-verified by `task changelog:install`; the checkout uses `fetch-depth: 0` so it sees all commits and tags) with `cliff.toml` and writes the notes of the tag, `git-cliff --latest --strip header`, to `dist/RELEASE_NOTES.md`.
-4. `gt release create <tag> --verify-tag --notes-file dist/RELEASE_NOTES.md` (the Gitea CLI on the runner, authenticated with `GITEA_TOKEN` = the job token) publishes the release with the notes and the three assets.
+**The mirror's deps workflow.** `.github/workflows/deps.yml` on the mirror runs `deps plan` daily and on pushes to `main`. PRs are only made on Gitea, for two reasons:
 
-git-cliff is installed from its GitHub release instead of through `orhun/git-cliff-action`: that action always sends `github.token` to api.github.com to find the release, and on Gitea that token is a Gitea token, so the request fails with 401.
+- pull requests and issues are disabled on the mirror;
+- the push mirror prunes foreign branches.
 
-**Release notes and CHANGELOG.md.** `cliff.toml` groups conventional commits (`feat`, `fix`, `perf`, `docs`, `ci`/`build`, `chore`/`refactor`/`style`/`test`, and `chore(deps)`/`fix(deps)` as Dependencies); other commit subjects are kept under "Changes"; merge commits are skipped. Use conventional commit subjects to get grouped notes. To update the changelog in the repository before a release:
+Pushing a `v*` tag runs `.gitea/workflows/ci.yml`. The `test` job runs `task ci` once, with Go from `actions/setup-go@v7.0.0` (`go-version-file: go.mod`, i.e. `toolchain go1.27.3`, and `cache: true`). Then the `release` job runs (`needs: test`, `contents: write`):
+
+1. `task release:build VERSION=<tag>` builds `dist/deps_linux_amd64` and `dist/deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath` and `-ldflags "-s -w -buildid= -X main.version=<tag>"`. It writes `dist/checksums.txt` (`sha256sum`).
+2. Each binary is checked to be static: `readelf -l` must not show `Requesting program interpreter`, because the action runs it on arbitrary runner images.
+3. `task release:notes` runs [git-cliff](https://git-cliff.org) with `cliff.toml` and writes the notes of the tag, `git-cliff --latest --strip header`, to `dist/RELEASE_NOTES.md`.
+   - git-cliff is pinned to v2.14.2, installed and sha512-verified by `task changelog:install`.
+   - The checkout uses `fetch-depth: 0`, so git-cliff sees all commits and tags.
+4. `gt release create <tag> --verify-tag --notes-file dist/RELEASE_NOTES.md` publishes the release with the notes and the three assets. `gt` is the Gitea CLI on the runner, authenticated with `GITEA_TOKEN`, the job token.
+
+git-cliff is installed from its GitHub release instead of through `orhun/git-cliff-action`. That action always sends `github.token` to api.github.com to find the release, and on Gitea that token is a Gitea token, so the request fails with 401.
+
+**Release notes and CHANGELOG.md.** `cliff.toml` groups conventional commits:
+
+- `feat`, `fix`, `perf` and `docs`;
+- `ci`/`build`;
+- `chore`/`refactor`/`style`/`test`;
+- `chore(deps)`/`fix(deps)` as Dependencies.
+
+Other commit subjects are kept under "Changes", and merge commits are skipped. Use conventional commit subjects to get grouped notes. To update the changelog in the repository before a release:
 
 ```sh
 task changelog -- --tag v0.2.0     # names the unreleased section v0.2.0
@@ -206,4 +599,4 @@ git add CHANGELOG.md && git commit -m "docs: changelog for v0.2.0"
 git tag -a v0.2.0 -m "deps v0.2.0" && git push origin main v0.2.0
 ```
 
-There is no release yet; the action's latest-release lookup fails until the first tag is pushed. Workflows that use the action at `@main` or without a release ref pick up a new release automatically; workflows pinned to `@vX.Y.Z` get it when deps (or Renovate) bumps their `uses:` ref.
+Workflows that use the action at `@main`, or without a release ref, pick up a new release automatically. Workflows pinned to `@vX.Y.Z` get it when deps (or Renovate) bumps their `uses:` ref.
