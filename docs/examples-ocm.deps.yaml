@@ -1,111 +1,184 @@
 # yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
-# open-component-model renovate.json5 packageRules relevant to P1-P3, P7-P12, P15, P17, L7, L8 and L9, translated.
-branchPrefix: renovate/
+#
+# open-component-model's .github/renovate.json5, translated in full. Every block names the Renovate
+# setting it replaces; packageRules are kept in Renovate's order (rules[] are evaluated top to
+# bottom with field-wise override, like packageRules) and numbered by their packageRules index.
+# Meant to live at .github/deps.yaml next to renovate.json5 and run by the workflow in
+# docs/migrating-from-renovate.md (`deps run --config .github/deps.yaml`).
+#
+# extends:
+#   config:recommended, config:best-practices -> the defaults: security (OSV) updates on,
+#                                                separateMajorMinor, :ignoreModulesAndTests (the
+#                                                default ignorePaths), semantic commit prefixes
+#   docker:pinDigests, helpers:pinGitHubActionDigests -> pin: digest
+#   group:kubernetesMonorepo, group:goOpenapi    -> monorepos: true (built-in groups, the default)
+#   security:openssf-scorecard                   -> not supported (no scorecard badge in PR bodies)
+#   :dependencyDashboard                         -> dependencyDashboard: true
+#   :rebaseStalePrs                              -> rebaseWhen: behind-base-branch
+# git-submodules: {enabled: true}                -> not supported; OCM has no .gitmodules
+# lockFileMaintenance: {enabled: false}          -> the deps behavior (no lockfile maintenance)
+# hostRules registry.npmjs.org timeout/abortOnError -> built-in retries; one failed lookup is an
+#                                                error of that dep only, the run continues
+
+# branchPrefix: 'renovate/'. The trial uses deps/ so deps neither closes Renovate's open PRs (deps
+# closes obsolete PRs under its own prefix) nor collides with its branches. Switch to renovate/
+# when Renovate is turned off; deps then closes Renovate's leftover PRs after an error-free run.
+branchPrefix: deps/
 rebaseWhen: behind-base-branch # :rebaseStalePrs
-gitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>'
-gitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com']
-prConcurrentLimit: 0 # unlimited (also the deps default)
-prHourlyLimit: 0 # unlimited (also the deps default)
+gitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>' # gitAuthor
+gitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com'] # gitIgnoredAuthors
+prConcurrentLimit: 0 # prConcurrentLimit: 0 (unlimited, also the deps default)
+prHourlyLimit: 0 # prHourlyLimit: 0 (unlimited, also the deps default)
 pin: digest # docker:pinDigests + helpers:pinGitHubActionDigests
-minimumReleaseAge: 28 days # digest/pin updates are always exempt (the minimumReleaseAge: null rule)
-separateMinorPatch: true
-separateMultipleMajor: true
-updateNotScheduled: true # the default: open PRs are kept current outside their schedule
-# Renovate's `* * * * 0` (all of Sunday) becomes the weekly workflow cron '0 0 * * 0'. The
-# workflow needs both crons; groups with schedule ['0 0 * * 0'] get new PRs only in the Sunday run:
+monorepos: true # group:kubernetesMonorepo, group:goOpenapi (and the rest of group:monorepos)
+security: true # config:recommended vulnerability alerts (deps queries OSV)
+minimumReleaseAge: 28 days # minimumReleaseAge: '28 days'
+separateMajorMinor: true # config:recommended: majors get their own PR
+separateMinorPatch: true # separateMinorPatch: true
+separateMultipleMajor: true # separateMultipleMajor: true
+updateNotScheduled: true # updateNotScheduled: true: open PRs are kept current outside their schedule
+automerge: false # automerge: false (rule 2 automerges minor and patch updates)
+automergeType: pr # automergeType: 'pr' (the only supported type)
+dependencyDashboard: true # :dependencyDashboard
+# Renovate's issue #331 is titled "Dependency Dashboard". deps finds its own issue by title plus a
+# marker, so it would not edit #331, but a second issue with the same title is confusing while both
+# bots run. Drop this line at cutover (and close #331).
+dependencyDashboardTitle: Dependency Dashboard (deps trial)
+
+# Schedules: Renovate's '* * * * 0' (any minute on Sunday) is a time window; in deps a schedule is
+# the cron of the workflow trigger that may create the PRs. The workflow therefore has two crons:
 #   on:
 #     schedule:
-#       - cron: "0 0 * * *" # daily: everything without a schedule
-#       - cron: "0 0 * * 0" # weekly
-automerge: false # the default; rule 20 automerges minor and patch updates
-automergeType: pr # the only supported type
-dependencyDashboard: true # :dependencyDashboard
+#       - cron: "0 0 * * *" # daily: everything without a schedule (renovate.yml's only cron)
+#       - cron: "0 0 * * 0" # weekly: the rules below with schedule ['0 0 * * 0']
+# Push and workflow_dispatch runs refresh open PRs; a push run opens only unscheduled PRs.
+
 customDatasources:
-  # renovate.json5 customDatasources.envtest: the JSONata transform (keys of .releases without
-  # the leading v) becomes a selector plus versionRegex. Used by the custom.envtest markers in
-  # the controller .env and internal/test/envtest.go; the latter sits below the default
-  # ignorePaths' **/test/** (Renovate's :ignoreModulesAndTests), so, as with Renovate, it is
-  # only scanned with an ignorePaths list that leaves test/ out.
+  # customDatasources.envtest: the JSONata transform (distinct keys of .releases without the
+  # leading v) becomes a selector plus versionRegex.
   envtest:
     url: https://raw.githubusercontent.com/kubernetes-sigs/controller-tools/master/envtest-releases.yaml
     format: yaml
     versions: .releases | keys
     versionRegex: '^v?(?P<version>\d+\.\d+\.\d+)$'
+
 custom:
-  # Renovate markers in .env, netlify.toml (node-version NODE_VERSION), workflows and envtest.go. The sigstore handler's
-  # .env is left to the cosign entry below, which also maintains the checksum next to the version.
-  - files: ['.env', 'bindings/go/kubernetes/controller/.env', 'bindings/go/sigstore/integration/.env', 'conformance/**/.env',
-      '**/netlify.toml', '.github/workflows/*.yml', '**/envtest.go']
-  - files: ['bindings/go/sigstore/signing/handler/internal/.env'] # OCM cosign release + digest of its cosign_checksums.txt
+  # customManagers 1-4, 6, 7 (`# renovate: datasource=… depName=…` markers on the line above the
+  # value): setup-helm `version:` in workflows, ENVTEST_K8S_VERSION and *_VERSION in .env files,
+  # DefaultEnvTestVersion in envtest.go, *_IMAGE tag@digest in .env, *_VERSION in netlify.toml and
+  # `semver:` in any YAML. Annotation mode reads the markers unchanged, so one entry covers them;
+  # the .env image markers keep their digest (customManagers[5]). Paths under **/test/** (e.g.
+  # internal/test/envtest.go) are left out by the default ignorePaths, as by Renovate's
+  # :ignoreModulesAndTests.
+  - files: ['**/.env', '**/.env.local', '**/netlify.toml', '**/envtest.go', '**/*.yaml', '**/*.yml']
+  # customManagers[4]: the OCM cosign release (vX.Y.Z+ocm.N) plus the SHA-256 of its
+  # cosign_checksums.txt (github-release-attachments). Regex mode, so the annotation entry above
+  # leaves this .env alone.
+  - files: ['bindings/go/sigstore/signing/handler/internal/.env']
     match: 'COSIGN_VERSION=(?P<version>v\d+\.\d+\.\d+\+ocm\.\d+)\s+COSIGN_CHECKSUMS_SHA256=(?P<checksum>[0-9a-f]{64})'
     datasource: github-releases
     name: open-component-model/cosign
     checksum: {asset: cosign_checksums.txt}
+
+# Helm: OCM's charts (bindings/go/kubernetes/controller/chart, the conformance charts) have no
+# Chart.yaml dependencies, so the native helm manager finds nothing to update; the image in the
+# controller chart's values.yaml (tag: latest@sha256:…) is a docker dep (DepType helm) and gets
+# digest refreshes.
+# gomod: `go mod tidy` runs after every go.mod update (Renovate's postUpdateOptions: [gomodTidy]).
 rules:
-  - paths: ['bindings/go/kubernetes/controller/chart/**']       # 0 matchFileNames
-    group: Kubernetes Controller chart
+  - paths: ['bindings/go/kubernetes/controller/chart/**']       # 0 matchFileNames chart/**, groupName
+    group: Kubernetes Controller chart                          #   'Kubernetes Controller chart'
     schedule: ['0 0 * * 0']
-  - manager: github-actions                                    # 1 (separateMinorPatch here, not on #2)
+  - datasources: [docker]                                       # 1 Garden Linux FIPS: only
+    names: ['ghcr.io/gardenlinux/gardenlinux/fips']             #   <major>.<patch> tags
+    allow: '/^\d+\.\d+$/'
+    versioning: loose
+  - updateTypes: [minor, patch]                                 # 2 automerge minor/patch once
+    automerge: true                                             #   required checks pass
+  - manager: github-actions                                     # 3 separateMinorPatch off, weekly
     separateMinorPatch: false
     schedule: ['0 0 * * 0']
-  - manager: github-actions                                    # 2 matchUpdateTypes minor/patch
+  - manager: github-actions                                     # 4 groupName 'GitHub Actions'
     updateTypes: [minor, patch]
     group: GitHub Actions
-  - manager: npm                                               # 3
+  - manager: npm                                                # 5 separateMinorPatch off, weekly
     separateMinorPatch: false
     schedule: ['0 0 * * 0']
-  - manager: npm                                               # 4
+  - manager: npm                                                # 6 groupName 'npm dependencies'
     updateTypes: [minor, patch]
     group: npm dependencies
-  - manager: github-actions                                    # 5 Digest pins (actions)
+  - manager: github-actions                                     # 7 'Digest pins' (github-actions)
     updateTypes: [digest, pin]
     group: Digest pins
     schedule: ['0 0 * * 0']
-  - manager: docker                                            # 6 Digest pins (dockerfile/compose)
-    updateTypes: [digest, pin]
-    group: Digest pins
+  - manager: docker                                             # 7 'Digest pins' (dockerfile,
+    depTypes: [dockerfile, compose, workflow, action]           #   docker-compose, and the
+    updateTypes: [digest, pin]                                  #   container/services images of
+    group: Digest pins                                          #   Renovate's github-actions)
     schedule: ['0 0 * * 0']
-  - datasources: [golang-version]                              # 7 matchDatasources
-    group: Golang versions
-    schedule: ['0 0 * * 0']
-  - manager: gomod                                             # 8
-    names: ['k8s.io/kube-openapi']
+  - datasources: [golang-version]                               # 8 'Golang versions'; rangeStrategy
+    group: Golang versions                                      #   bump is how deps replaces
+    schedule: ['0 0 * * 0']                                     #   toolchain/go versions anyway
+  - manager: gomod                                              # 9 k8s.io/kube-openapi off: tidy
+    names: ['k8s.io/kube-openapi']                              #   floats it with the k8s group
     ignore: true
-  - manager: gomod                                             # 9 matchCategories golang, enabled
-    ignore: false
+  - manager: gomod                                              # 10 'Kubernetes dependencies'
+    names: ['sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools', 'k8s.io/*', 'envtest']
+    group: Kubernetes dependencies                              #   (matchManagers gomod …
     schedule: ['0 0 * * 0']
-  - manager: gomod                                             # 10 indirect majors off
+  - manager: custom                                             #   … and custom.regex: envtest,
+    names: ['sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools', 'k8s.io/*', 'envtest']
+    group: Kubernetes dependencies                              #   controller-tools and
+    schedule: ['0 0 * * 0']                                     #   code-generator markers)
+  - names: ['github.com/docker/{/,}**']                         # 11 'Docker dependencies'
+    group: Docker dependencies
+    schedule: ['0 0 * * 0']
+  - names: ['ghcr.io/gardenlinux/gardenlinux/{/,}**']           # 12 'Garden Linux images'
+    group: Garden Linux images
+  - names: ['open-component-model/cosign', 'ghcr.io/open-component-model/cosign'] # 13 'OCM cosign':
+    group: OCM cosign                                           #   own fork, gated by its CI
+    versioning: 'regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$'
+    minimumReleaseAge: 0 days
+  - names: ['helm.sh/helm/v4', 'helm/helm']                     # 14 'Helm': CLI pin and library in
+    group: Helm                                                 #   one PR (gomodTidy is always on)
+    separateMinorPatch: false
+    schedule: ['0 0 * * 0']
+  - names: ['golang.org/x/{/,}**']                              # 15 'Golang X Repositories'
+    group: Golang X Repositories
+    schedule: ['0 0 * * 0']
+  - names: ['google.golang.org/{/,}**']                         # 16 'Google Golang Repositories'
+    group: Google Golang Repositories
+    schedule: ['0 0 * * 0']
+  - names: ['github.com/spf13/{/,}**']                          # 17 'spf13 repositories'
+    group: spf13 repositories
+    schedule: ['0 0 * * 0']
+  - manager: gomod                                              # 18 matchCategories golang,
+    ignore: false                                               #   enabled: true, weekly. Like in
+    schedule: ['0 0 * * 0']                                     #   Renovate this turns indirect
+                                                                #   requirements on, and it undoes
+                                                                #   rule 9 (kube-openapi is a
+                                                                #   pseudo-version, which deps skips)
+  - manager: gomod                                              # 19 indirect majors off
     depTypes: [indirect]
     updateTypes: [major]
     ignore: true
-  - manager: gomod                                             # 11
-    names: ['github.com/go-ini/ini', 'github.com/ThalesIgnite/crypto11']
+  - manager: gomod                                              # 20 github.com/go-ini/ini off
+    names: ['github.com/go-ini/ini']                            #   (renamed to gopkg.in/ini.v1)
     ignore: true
-  - manager: github-actions                                    # 12
-    names: ['open-component-model/.github']
+  - manager: gomod                                              # 21 ThalesIgnite/crypto11 off
+    names: ['github.com/ThalesIgnite/crypto11']                 #   (renamed to ThalesGroup)
     ignore: true
-  - paths: ['website/hack/generate-cli-docs/**']               # 13 matchFileNames
-    group: Website CLI-docs generator dependencies
+  - manager: github-actions                                     # 22 open-component-model/.github
+    names: ['open-component-model/.github']                     #   stays on @main
+    ignore: true
+  - paths: ['website/hack/generate-cli-docs/**']                # 23 'Website CLI-docs generator
+    group: Website CLI-docs generator dependencies              #   dependencies', all bumps
     separateMinorPatch: false
     schedule: ['0 0 * * 0']
-  - manager: gomod                                             # 14 golang directive off
-    depTypes: [go]
+  - manager: gomod                                              # 24 matchDepTypes golang off: the
+    depTypes: [go]                                              #   go directive (toolchain stays)
     ignore: true
-  - datasources: [npm]                                         # 15
+  - datasources: [npm]                                          # 25 npm minimumReleaseAge 28 days
     minimumReleaseAge: 28 days
-  - datasources: [docker]                                      # 16 Garden Linux FIPS: only <major>.<patch> tags
-    names: ['ghcr.io/gardenlinux/gardenlinux/fips']
-    allow: '/^\d+\.\d+$/'
-    versioning: loose
-  - names: ['ghcr.io/gardenlinux/gardenlinux/{/,}**']          # 17
-    group: Garden Linux images
-  - names: ['open-component-model/cosign', 'ghcr.io/open-component-model/cosign']  # 18 own fork, gated by its CI
-    group: OCM cosign
-    versioning: 'regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$'
-    minimumReleaseAge: 0 days
-  - names: ['helm.sh/helm/v4', 'helm/helm']                    # 19 helm CLI and library in one PR
-    group: Helm
-    separateMinorPatch: false
-    schedule: ['0 0 * * 0']
-  - updateTypes: [minor, patch]                                # 20 automerge minor/patch once checks pass
-    automerge: true
+  # 26 minimumReleaseAge: null for pin/digest/pinDigest/…: built in (digest refreshes, pins and
+  # security updates are never held back by minimumReleaseAge).

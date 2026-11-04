@@ -106,59 +106,186 @@ With `branchPrefix: renovate/`, deps manages the branches and PRs Renovate creat
 
 ## Worked example: open-component-model
 
-[`examples-ocm.deps.yaml`](examples-ocm.deps.yaml) translates OCM's `.github/renovate.json5`. It validates as-is:
+[`examples-ocm.deps.yaml`](examples-ocm.deps.yaml) is a complete translation of OCM's `.github/renovate.json5`, meant to live at `.github/deps.yaml` next to it. Its `rules` keep the order of `packageRules` and are numbered by their index, and every block names the Renovate setting it replaces. Validate it against a checkout:
 
 ```sh
-deps plan -v --config docs/examples-ocm.deps.yaml --dir ~/Projects/open-component-model > /dev/null
+cd ~/Projects/open-component-model
+DEPS_GITHUB_COM_TOKEN=$(gh auth token) deps plan -v --config ~/Projects/deps/docs/examples-ocm.deps.yaml > /tmp/ocm.diff
+git apply --check /tmp/ocm.diff
 ```
+
+On 2026-11-04 (OCM `b4b5473`) this exited 0 with `870 dependencies, 43 updates in 19 PRs, 200 held back by minimumReleaseAge, 91 skipped, 0 errors`, and the diff applied.
 
 How the pieces map:
 
 | renovate.json5 | examples-ocm.deps.yaml |
 |---|---|
+| `extends: config:recommended, config:best-practices` | the defaults: `security: true`, `separateMajorMinor: true`, the default `ignorePaths`, semantic commit types |
 | `extends: docker:pinDigests, helpers:pinGitHubActionDigests` | `pin: digest` |
 | `extends: :rebaseStalePrs` | `rebaseWhen: behind-base-branch` |
-| `extends: group:kubernetesMonorepo, group:goOpenapi` | built-in monorepos (default) |
-| `branchPrefix`, `gitAuthor`, `gitIgnoredAuthors`, `prConcurrentLimit: 0`, `prHourlyLimit: 0`, `separateMinorPatch`, `separateMultipleMajor`, `updateNotScheduled`, `minimumReleaseAge: 28 days`, `automerge: false`, `automergeType: pr` | same keys |
-| `extends: :dependencyDashboard` | `dependencyDashboard: true` |
-| rule `matchUpdateTypes: [minor, patch]`, `automerge: true` | rule `updateTypes: [minor, patch]`, `automerge: true` (rule 20) |
-| rule `matchFileNames: [chart/**]` + `groupName` | `paths` + `group` |
-| `matchManagers: [github-actions]` + `separateMinorPatch: false` + schedule | `manager: github-actions` rule |
-| `matchManagers` + `matchUpdateTypes: [minor, patch]` + `groupName` | `updateTypes: [minor, patch]` + `group` |
-| "Digest pins" over `github-actions`, `dockerfile`, `docker-compose` with `[digest, pinDigest]` | two rules (`github-actions`, `docker`) with `updateTypes: [digest, pin]` |
-| `matchDatasources: [golang-version]`, `rangeStrategy: bump` | `datasources: [golang-version]` (no `rangeStrategy` needed) |
-| `enabled: false` for kube-openapi, go-ini/ini, crypto11, `open-component-model/.github` | `ignore: true` rules |
-| `matchCategories: [golang]`, `enabled: true`, `postUpdateOptions: [gomodTidy]` | `manager: gomod`, `ignore: false` (tidy is always on) |
-| indirect majors off | `depTypes: [indirect]`, `updateTypes: [major]`, `ignore: true` |
-| `matchDepTypes: [golang]` off | `depTypes: [go]`, `ignore: true` (also the default) |
-| gardenlinux fips `allowedVersions: '/^\\d+\\.\\d+$/'`, `versioning: loose` | `allow: '/^\d+\.\d+$/'`, `versioning: loose` |
-| OCM cosign `versioning: 'regex:…'`, `minimumReleaseAge: '0 days'` | same values |
-| `matchUpdateTypes: [pin, digest, …]`, `minimumReleaseAge: null` | built in |
+| `extends: group:kubernetesMonorepo, group:goOpenapi` | `monorepos: true` (the default) |
+| `extends: :dependencyDashboard` | `dependencyDashboard: true`, plus `dependencyDashboardTitle: Dependency Dashboard (deps trial)` while Renovate's issue #331 is open |
+| `branchPrefix: renovate/` | `branchPrefix: deps/` for the trial (see [cutover](#cutover-for-ocm)) |
+| `gitAuthor`, `gitIgnoredAuthors` (ocmbot), `prConcurrentLimit: 0`, `prHourlyLimit: 0`, `separateMinorPatch`, `separateMultipleMajor`, `updateNotScheduled`, `minimumReleaseAge: 28 days`, `automerge: false`, `automergeType: pr` | same keys |
+| `schedule: ['* * * * 0']` (14 rules) | `schedule: ['0 0 * * 0']`, plus the crons `0 0 * * *` and `0 0 * * 0` in the [workflow](#workflow-for-ocm) |
+| 0: `matchFileNames: [chart/**]`, group "Kubernetes Controller chart" | `paths` + `group` |
+| 1: Garden Linux FIPS `allowedVersions: '/^\\d+\\.\\d+$/'`, `versioning: loose` | `allow: '/^\d+\.\d+$/'`, `versioning: loose` |
+| 2: `matchUpdateTypes: [minor, patch]`, `automerge: true` | `updateTypes: [minor, patch]`, `automerge: true` |
+| 3, 5: `matchManagers` + `separateMinorPatch: false` + schedule | `manager` rules |
+| 4, 6: `matchManagers` + `matchUpdateTypes: [minor, patch]` + `groupName` | `updateTypes: [minor, patch]` + `group` |
+| 7: "Digest pins" over `github-actions`, `dockerfile`, `docker-compose` with `[digest, pinDigest]` | two rules: `github-actions`, and `docker` with `depTypes: [dockerfile, compose, workflow, action]` (Renovate's github-actions manager also covers workflow `container:`/`services:` images), both `updateTypes: [digest, pin]` |
+| 8: `matchDatasources: [golang-version]`, `rangeStrategy: bump` | `datasources: [golang-version]` (no `rangeStrategy` needed) |
+| 9, 20, 21, 22: `enabled: false` for kube-openapi, go-ini/ini, crypto11, `open-component-model/.github` | `ignore: true` rules |
+| 10: "Kubernetes dependencies" over `gomod` and `custom.regex` | two rules (`manager: gomod`, `manager: custom`) with the same `names` and `group` |
+| 11, 15, 16, 17: "Docker dependencies", "Golang X Repositories", "Google Golang Repositories", "spf13 repositories" | `names` + `group` + `schedule` |
+| 12: "Garden Linux images", 13: "OCM cosign" (`versioning: 'regex:…'`, `minimumReleaseAge: '0 days'`), 14: "Helm" | same values |
+| 18: `matchCategories: [golang]`, `enabled: true`, `postUpdateOptions: [gomodTidy]`, schedule | `manager: gomod`, `ignore: false`, `schedule` (tidy is always on) |
+| 19: indirect majors off | `depTypes: [indirect]`, `updateTypes: [major]`, `ignore: true` |
+| 23: "Website CLI-docs generator dependencies" | `paths` + `group` + `separateMinorPatch: false` |
+| 24: `matchDepTypes: [golang]` off | `depTypes: [go]`, `ignore: true` |
+| 25: npm `minimumReleaseAge: 28 days` | `datasources: [npm]` rule |
+| 26: `matchUpdateTypes: [pin, digest, …]`, `minimumReleaseAge: null` | built in |
 | `customDatasources.envtest` with JSONata | `versions: .releases \| keys`, `versionRegex` |
-| `customManagers` for `.env`, `netlify.toml`, workflows, `envtest.go` markers | one annotation-mode `custom[]` entry over those files |
+| `customManagers` for `.env`, `netlify.toml`, workflow `version:`, `envtest.go` and `.ya?ml` markers, `.env` `*_IMAGE` tag@digest | one annotation-mode `custom[]` entry over those files |
 | cosign `.env` regex with `currentDigest` of `cosign_checksums.txt` | regex `custom[]` with `checksum: {asset: cosign_checksums.txt}` |
 | `hostRules` for registry.npmjs.org | built-in retries |
+| `lockFileMaintenance: {enabled: false}` | the deps behavior |
+| `git-submodules: {enabled: true}` | not supported; OCM has no `.gitmodules` |
+| `extends: security:openssf-scorecard` | not supported |
 
-The example covers the rules needed for the parity items. A complete OCM config (parity item O4) also needs the remaining groups:
+Two details carry over unchanged:
+
+- **Rule 18 undoes rule 9.** `enabled: true` on the whole golang category comes after the `k8s.io/kube-openapi` rule, so Renovate updates kube-openapi anyway: its dashboard lists it in "kubernetes dependencies (minor)". The translation keeps the order. deps skips the module regardless, because it is a pseudo-version.
+- **Rule 18 enables indirect requirements.** Renovate disables them by default, and `enabled: true` turns them on again; rule 19 then keeps only their majors off. `ignore: false` does the same in deps.
+
+**Helm.** OCM has charts (`bindings/go/kubernetes/controller/chart` and two conformance charts), but none of them has Chart.yaml `dependencies`. The helm manager has nothing to update there and needs no config. The controller image in `chart/values.yaml` (`tag: latest@sha256:…`) is a docker dep (DepType `helm`) and gets digest refreshes.
+
+### Workflow for OCM
+
+This workflow replaces `.github/workflows/renovate.yml`. It uses the same App (ocmbot, secrets `OCMBOT_APP_ID`/`OCMBOT_PRIV_KEY`) and the same `automation` environment:
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
-rules:
-  - names: ['sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools', 'k8s.io/*', 'envtest']
-    group: Kubernetes dependencies
-    schedule: ['0 0 * * 0']
-  - names: ['github.com/docker/{/,}**']
-    group: Docker dependencies
-    schedule: ['0 0 * * 0']
-  - names: ['golang.org/x/{/,}**']
-    group: Golang X Repositories
-    schedule: ['0 0 * * 0']
-  - names: ['google.golang.org/{/,}**']
-    group: Google Golang Repositories
-    schedule: ['0 0 * * 0']
-  - names: ['github.com/spf13/{/,}**']
-    group: spf13 repositories
-    schedule: ['0 0 * * 0']
+# .github/workflows/deps.yml
+name: deps
+on:
+  schedule:
+    - cron: "0 0 * * *" # daily (renovate.yml's cron): updates without a schedule
+    - cron: "0 0 * * 0" # weekly: rules with schedule ['0 0 * * 0'] (Renovate's '* * * * 0')
+  push:
+    branches: [main] # rebase and refresh open PRs; opens only unscheduled ones
+  workflow_dispatch: # in schedule for every group (renovate.yml's ignoreSchedule)
+  pull_request:
+    branches: [main]
+    paths: [.github/deps.yaml, .github/workflows/deps.yml]
+concurrency:
+  group: deps-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  deps:
+    runs-on: ubuntu-26.04-arm
+    environment:
+      name: automation
+      deployment: false
+    steps:
+      - if: github.event_name != 'pull_request' && github.repository_owner == 'open-component-model'
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.OCMBOT_APP_ID }}
+          private-key: ${{ secrets.OCMBOT_PRIV_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write # push deps/* branches, delete obsolete ones
+          permission-pull-requests: write # open, update and close PRs
+          permission-issues: write # the dependency dashboard
+          permission-workflows: write # Action updates change .github/workflows/*
+          permission-checks: read # the automerge fallback reads check runs
+          permission-statuses: read # and commit statuses
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.app.outputs.token || github.token }} # deps pushes with these credentials
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: bindings/go/go.mod # go mod tidy; GOTOOLCHAIN=auto covers other modules
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 26 # package-lock.json regeneration (npm via npx at packageManager's version)
+      - uses: jakobmoellerdev/deps@v0.2.5
+        with:
+          token: ${{ steps.app.outputs.token || github.token }}
+          version: v0.2.5 # keep this when pin: digest rewrites the ref above to a SHA
+          # signing-key: ${{ secrets.OCMBOT_SIGNING_KEY }} # optional, see below
+          args: >-
+            ${{ github.event_name == 'pull_request' && 'plan' || 'run' }}
+            -v --log-level info --config .github/deps.yaml
 ```
 
-These are not translated: `security:openssf-scorecard`, `git-submodules` (OCM has no `.gitmodules`) and `lockFileMaintenance` (disabled in OCM anyway).
+- **Pull requests** that change the config run `plan` with the job token. That validates the config: an invalid key exits 2. `run --dry-run` needs `HEAD` at the tip of `main`, which a PR merge commit is not. To also list the PRs a config change would cause, use the base/PR checkout pair from [ci.md](ci.md#preview-on-pull-requests).
+- **Token.** The App token goes to both `actions/checkout` (git push) and the action (API). `permission-workflows: write` is required, because Action updates change `.github/workflows/*`.
+- **Version.** The action downloads the release named by its ref when that ref is a tag. `pin: digest` turns `@v0.2.5` into `@<sha> # v0.2.5` in the first "Digest pins" PR, and from then on the ref no longer names the release. Without `version:`, the action would download the latest release.
+- **Signing.** Renovate runs with `RENOVATE_PLATFORM_COMMIT: enabled`: it creates commits through the GitHub API, and GitHub signs them as ocmbot. deps creates commits with git and signs them only with `signing-key`. A GitHub App cannot register a GPG or SSH key, so commits signed as `ocmbot[bot]` don't show as verified. In OCM this is fine without a key:
+  - ocmbot (App 295948) is an `always` bypass actor of both rulesets that require signatures on `deps/*` branches: "OCM Organization Ruleset" (all branches) and the repository's "All branches" (which excludes only `renovate/**` and `dependabot/**`).
+  - The PRs are squash-merged, and GitHub signs squash commits itself. Renovate PR #4148, for example, was squash-merged by GitHub as a verified commit.
+
+  With a bot user's key, set `gitAuthor` to that user and keep ocmbot's email in `gitIgnoredAuthors`.
+- **Not needed.** Renovate's repository cache steps (deps has no cache) and `RENOVATE_ALLOWED_COMMANDS` (`renovate.json5` has no `postUpgradeTasks`).
+
+### Comparison with Renovate
+
+The run below went against a fresh clone of OCM `b4b5473`, with a GitHub token. A dry run makes no writes.
+
+```sh
+DEPS_GITHUB_COM_TOKEN=$(gh auth token) DEPS_TOKEN=$(gh auth token) \
+  deps run --dry-run -v --config ~/Projects/deps/docs/examples-ocm.deps.yaml --trigger-schedule '0 0 * * 0'
+```
+
+The result was `19 would-create, 200 held back by minimumReleaseAge, 91 skipped, 0 errors`. With `--trigger-schedule '0 0 * * *'` (the daily run), 7 PRs would be created: node minor and patch, js-yaml, undici, two golang.org/x/net security PRs, and Garden Linux. The other 12 were `skipped: outside schedule`.
+
+Renovate had no open PRs at that time. Its dashboard (#331, updated 2026-11-04 13:43 UTC) listed 8 updates "Awaiting Schedule" and 51 "Pending Status Checks", the latter held back by `minimumReleaseAge`.
+
+| Update | Renovate (dashboard #331) | deps (weekly dry run) | Why they differ |
+|---|---|---|---|
+| GitHub Actions: mikepenz/action-junit-report v6.6.0, sourcemeta/jsonschema v17.2.0 | awaiting schedule, `renovate/github-actions` | `deps/group/github-actions` | match |
+| Website CLI-docs generator (the same 9 modules) | awaiting schedule | `deps/group/website-cli-docs-generator-dependencies` | match |
+| aws-sdk-go-v2 monorepo patch (the same 7 modules) | awaiting schedule | `deps/group/aws-sdk-go-v2-monorepo-patch` | match |
+| github.com/aws/smithy-go v1.28.4, go-git/v6 v6.0.0-beta.1, fxamacker/cbor/v2 v2.9.6 | awaiting schedule | one PR each | match |
+| npm dependencies | awaiting schedule: js-yaml, typescript-eslint | 9 deps: the same two plus 7 more | partial. The 7 extra (@fontsource-variable/inter, quicksand, @tabler/icons, @thulite/doks-core, @thulite/seo, mermaid, thulite) are already locked at the new version in `website/package-lock.json`. Renovate's default `rangeStrategy` for them updates only the lockfile, so it has nothing to do. deps always bumps the range floor (`^5.2.8` → `^5.3.0`) |
+| js-yaml 5.0.0 → 5.4.3, undici 8.3.0 → 8.12.2 in `.github/scripts` | — | security PRs (OSV) | deps-only. deps checks the range floor in package.json, but the lockfile already has js-yaml 5.4.2 and undici 8.12.2. Renovate lists no vulnerability for either |
+| golang.org/x/net v0.62.0 (GO-2026-6860, GO-2026-6866) | pending in "golang x repositories" | 2 security PRs (`bindings/go`, website generator) | deps-only. Security updates skip schedule, group and release age; Renovate's `osvVulnerabilityAlerts` is off by default |
+| DavidAnson/markdownlint-cli2-action v24 → v25 | pending | would create | deps-only. `v25` has no GitHub release of its own (v25.0.0 does, from 2026-10-25), so deps sees no release time and does not enforce the age |
+| ghcr.io/gardenlinux/gardenlinux/fips 1877.28 | pending | would create (daily) | deps-only. The image config has no `created` time. Renovate requires a timestamp for `minimumReleaseAge`; deps allows updates whose release time is unknown |
+| envtest 1.37.0 and 1.36.2 | pending in the Kubernetes groups (minor, patch), with k8s.io/* v0.37.2 | `deps/group/kubernetes-dependencies-minor` and `-patch`, envtest only | deps-only. The envtest custom datasource has no release times, so envtest passes the age check. The k8s.io modules are held back in both |
+| node: Renovate 26.13.0; deps 26.11.1 (minor) and 26.5.1 (patch) | pending | 2 PRs | deps-only. 26.13.0 is too new in both. deps falls back to the newest release older than 28 days; Renovate waits for the newest |
+| github.com/Microsoft/go-winio: Renovate v0.6.4, deps v0.6.3 | pending | would create | deps-only, the same fallback |
+| pin ghcr.io/open-component-model/kubernetes/controller (`chart/test-values.yaml`, `tag: latest`) | — | `deps/group/kubernetes-controller-chart` | deps-only. Renovate's helm-values manager reads only `values.yaml`; deps reads any YAML with `image:`/`repository:` |
+| `pin registry docker tag to 325b4b2` | awaiting schedule ("Digest pins") | — | Renovate-only. The dashboard doesn't show the file. The only `registry` docker dep is the controller `.env` `REGISTRY_IMAGE_VERSION=3.1.1`, a marker without a digest, which deps doesn't pin [inference] |
+| Go pseudo-version digests: azure/go-ansiterm, google/pprof, ianlancetaylor/demangle, lufia/plan9stats, cyberphone/json-canonicalization, digitorus/pkcs7, google.golang.org/genproto (and k8s.io/utils, golang.org/x/exp inside groups) | pending | skipped as `pseudo-version` (65 deps) | Renovate-only. deps has no digest updates for pseudo-versions |
+| github.com/google/go-github/v92 → v93 | pending | up to date | Renovate-only. deps does not move a module to a new major import path |
+| 36 others (helm v4.3.1, k8s.io/* v0.37.2, controller-tools v0.23.0, docker/cli, ginkgo, prometheus, oras, registry 3.1.2, npm 12.2.1, sigstore/scaffolding, markdownlint-cli2, open-component-model/ocm, dawidd6/action-download-artifact v28, …) | pending | held back by `minimumReleaseAge` | match |
+
+### Cutover for OCM
+
+1. Add `.github/deps.yaml` (this example) and `.github/workflows/deps.yml` (above) next to Renovate. Their PRs don't collide: deps' branches are `deps/*`, its dashboard has its own title, and deps closes obsolete PRs only under its own prefix.
+2. Grant the ocmbot installation *Checks* and *Commit statuses* read, if it doesn't have them yet. renovate.yml requests `checks: write` and `statuses: write`, so the App likely has them. Pushes to `deps/*` rely on ocmbot's ruleset bypass. The repository ruleset "All branches" excludes only `refs/heads/renovate/**` and `refs/heads/dependabot/**`, so either add `refs/heads/deps/**` there or keep the bypass.
+3. Compare a weekly run with Renovate's, as above. Then disable `renovate.yml`, set `branchPrefix: renovate/`, drop `dependencyDashboardTitle`, and close #331. deps closes Renovate's leftover `renovate/*` PRs after its first error-free run.
+
+### What is still missing for OCM
+
+Each item comes from the comparison above or from [renovate-parity.md](renovate-parity.md):
+
+1. **Go pseudo-version digest updates.** Renovate's gomod `digest` updates cover untagged modules (7 pending PRs). deps skips them as `pseudo-version` (parity M14).
+2. **Go major module paths.** Renovate proposes moving `github.com/google/go-github/v92` to `/v93` in go.mod. OCM doesn't enable `gomodUpdateImportPaths`, so the imports are not rewritten. deps offers no update across a major import path at all (parity M15).
+3. **npm in-range updates.** OCM's npm deps use Renovate's default `rangeStrategy`, which updates only the lockfile while the locked version satisfies the range. deps always bumps the range, which gives 7 extra npm group members. OSV also checks the range floor instead of the locked version, which gives 2 security PRs for already-locked fixes (parity P18).
+4. **Release times for floating tags.** A major tag like `v25` without its own release has no release time, so `minimumReleaseAge` is not enforced for it: markdownlint-cli2-action v25 is 10 days old, but deps would open the PR, while Renovate lists it as pending. Images without a `created` time and the envtest custom datasource are not held back either; Renovate holds back such timestamp-less releases, e.g. Garden Linux 1877.28 (parity P10).
+5. **Fallback versus waiting.** deps proposes the newest release that is old enough (node 26.11.1, go-winio v0.6.3); Renovate waits for the newest (26.13.0, v0.6.4). This is a design difference, documented under P10, not a bug. It is listed because it changes which PRs OCM sees.
+6. **Platform commits.** Renovate creates commits through the GitHub API, so they are verified as ocmbot (`RENOVATE_PLATFORM_COMMIT`). deps signs with a key or not at all. OCM's rulesets require signatures on `deps/*` branches, and only ocmbot's bypass makes unsigned deps commits acceptable (parity O5).
+7. **The action pinned by digest.** With `pin: digest`, the action's ref becomes a SHA and the action falls back to the latest release unless `version:` is set. The workflow above sets it, but deps does not update that input (parity O6).
+8. **Mend badges and the OpenSSF scorecard.** PR bodies show the release age as text, with no adoption, passing or confidence badges (L5) and no scorecard badge (`security:openssf-scorecard`, L6).
+9. **Renovate dashboard extras:** the "Abandoned Dependencies" section and the repository problems list (e.g. hidden Unicode warnings) have no deps equivalent.
+10. **Cutover steps not done:**
+    - a real (non-dry) trial run in OCM;
+    - App permissions confirmed for the installation (checks/statuses read, workflows write);
+    - the ruleset entry or bypass for `deps/**`;
+    - the branch takeover (`branchPrefix: renovate/`) after Renovate is disabled.

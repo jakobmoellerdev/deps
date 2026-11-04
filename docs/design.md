@@ -710,7 +710,14 @@ Editor support: the repository root has the generated `deps.schema.json` (`task 
 Open items from [renovate-parity.md](renovate-parity.md) and the performance plan:
 
 - PR body badges: Mend adoption/passing/confidence (L5; external badge URLs or drop) and the OpenSSF scorecard (L6);
-- the final OCM translation (O4): `examples-ocm.deps.yaml` plus the remaining groups listed in [migrating-from-renovate.md](migrating-from-renovate.md#worked-example-open-component-model);
+- the gaps from the OCM comparison ([what is still missing for OCM](migrating-from-renovate.md#what-is-still-missing-for-ocm)):
+  - Go pseudo-version digest updates (M14);
+  - major module-path updates (M15);
+  - lockfile-only npm updates and OSV against locked versions (P18);
+  - release times for git tags without their own release (P10);
+  - API-created commits (O5);
+  - updating the action's `version:` input along with a pinned ref (O6);
+  - the OCM cutover (O7);
 - `actions.lock` via `github.com/github/actions-lockfile/go`;
 - a benchmark gate: `BenchmarkResolve` in CI with a regression threshold (the benchmark exists; CI does not run it yet);
 - Go proxy request volume (next performance phase): on open-component-model about 370 `@v/list` and 250 `@v/<v>.info` requests are the critical path (release times are already served from GOMODCACHE where cached). There is no batch endpoint for lists, so the remaining option is an opt-in cross-run Go proxy cache.

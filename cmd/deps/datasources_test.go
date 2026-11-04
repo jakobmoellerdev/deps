@@ -30,7 +30,7 @@ func serveBody(body string) http.HandlerFunc {
 
 // M5: OCM's sigstore handler .env keeps the cosign fork version and the sha256 of the
 // release's cosign_checksums.txt side by side; one custom regex entry with the fork's regex
-// versioning moves both together (docs/examples-ocm.deps.yaml, cosign entry and rule 18).
+// versioning moves both together (docs/examples-ocm.deps.yaml, cosign entry and rule 13).
 func TestApplyCosignVersionAndChecksum(t *testing.T) {
 	cleanEnv(t)
 	f := newFakeNet(t)
