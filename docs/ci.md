@@ -772,6 +772,8 @@ Users verify downloads with `gh attestation verify` or cosign (README, *Verify a
 
 **Identity.** The certificates are issued by `https://token.actions.githubusercontent.com` to the workflow `https://github.com/jakobmoellerdev/deps/.github/workflows/release.yml@<ref>`, where `<ref>` is `refs/tags/<tag>` for a tag push. A `workflow_dispatch` republish signs as the ref it was dispatched on, normally `refs/heads/main`, even though it builds the tag; the script accepts exactly these two identities, and its provenance names `main` as the workflow ref. Dispatch with `--ref <tag>` to sign as the tag, but only tags whose `release.yml` already attests (after v0.2.5) have the attest steps.
 
+**Republishing old tags.** The build uses the tag's Taskfile, while `release:sbom` comes from the Taskfile of the workflow's own revision (a sparse checkout into `.release-tooling`), so tags older than the SBOM task can be republished and attested.
+
 **Backfill.** `.gitea/workflows/attest.yml` (`workflow_dispatch`, input `tag`) runs the script against the files of an existing Gitea release: for releases made before attestations existed, after a GitHub republish, or when the release job's attest step failed. To attest an older release, republish it on GitHub first, then backfill:
 
 ```sh
