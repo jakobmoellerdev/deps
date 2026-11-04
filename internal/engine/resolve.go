@@ -146,9 +146,10 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	start = time.Now()
 	ex := extractAll(root, jobs, env)
 	linkAll(o.Managers, found, ex)
+	lockErrs := readLocks(root, o.Managers, found, ex)
 	dedupeCovered(ex)
 
-	res := &Result{}
+	res := &Result{Errors: lockErrs}
 	var todo []dep.Dep
 	var pols []*policies
 	kindRules := cfg.HasUpdateTypeRules()
@@ -336,6 +337,29 @@ func linkAll(managers []manager.Manager, found [][]string, ex []extracted) {
 			part[j].deps = files[k]
 		}
 	}
+}
+
+// readLocks lets each manager.LockReader record the locked versions of its deps in place
+// (found and ex as for linkAll) and returns the lockfiles it could not read.
+func readLocks(root string, managers []manager.Manager, found [][]string, ex []extracted) []error {
+	var errs []error
+	off := 0
+	for i, m := range managers {
+		part := ex[off : off+len(found[i])]
+		off += len(found[i])
+		lr, ok := m.(manager.LockReader)
+		if !ok {
+			continue
+		}
+		files := make([][]dep.Dep, 0, len(part))
+		for _, e := range part {
+			if e.err == nil {
+				files = append(files, e.deps)
+			}
+		}
+		errs = append(errs, lr.ReadLocks(root, files)...)
+	}
+	return errs
 }
 
 func extractOne(root string, j job, env manager.Env) extracted {
@@ -550,6 +574,50 @@ type resolver struct {
 	rels    []Release
 	times   map[string]time.Time // release times asked so far; zero = unknown
 	pending Pending              // newest candidate held back by minimumReleaseAge
+
+	// rangeStrategy of an npm range dep (setRange): inRange reports whether d.Range admits a
+	// version; nil means every candidate replaces the range (bump). In-range candidates are
+	// lockfile-only updates when lockOnly, else they are not proposed.
+	inRange  func(string) bool
+	lockOnly bool
+}
+
+// setRange applies the rangeStrategy of an npm range dep (dep.Dep.Range); other deps always
+// replace their version. auto is update-lockfile, under which candidates are ranked against
+// the locked version. A lock root whose lockfile deps does not read (LockUnread) turns
+// update-lockfile into bump, except for peerDependencies, which never get lockfile-only
+// updates: their in-range versions are left alone.
+func (r *resolver) setRange(s versioning.Scheme) {
+	d := r.d
+	if d.Range == "" {
+		return
+	}
+	peer := d.DepType == "peerDependencies"
+	if r.pol.pre.RangeStrategy == config.RangeBump || d.LockUnread && !peer {
+		return
+	}
+	c, err := semver.NewConstraint(d.Range)
+	if err != nil {
+		slog.DebugContext(r.ctx, "range not understood, bumping it", "name", d.Name, "range", d.Range, "err", err)
+		return
+	}
+	r.inRange = func(v string) bool {
+		sv := s.Semver(v)
+		return sv != nil && c.Check(sv)
+	}
+	if d.Locked != "" && s.Valid(d.Locked) {
+		r.cur = d.Locked
+		r.lockOnly = !peer
+	}
+}
+
+// installed is the version an npm range dep's installs get: the locked one when known, else
+// the version in the range. It is the baseline of security updates.
+func (r *resolver) installed(s versioning.Scheme) string {
+	if l := r.d.Locked; l != "" && s.Valid(l) {
+		return l
+	}
+	return r.cur
 }
 
 // run resolves in order: datasource → candidates ranked under policy, one per PR bucket, with
@@ -633,8 +701,14 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	if pseudo {
 		r.cur, names = pseudoCandidates(d.Version, names, reject)
 	}
+	r.setRange(scheme)
 	semverOf := scheme.Semver
-	accept := func(v string, kind dep.UpdateType) (bool, string) { return r.pol.check(kind, v, semverOf) }
+	accept := func(v string, kind dep.UpdateType) (bool, string) {
+		if r.inRange != nil && !r.lockOnly && r.inRange(v) {
+			return false, "admitted by range " + d.Range + " (no lockfile update)"
+		}
+		return r.pol.check(kind, v, semverOf)
+	}
 
 	digests := digestCapable(d)
 	wantDigest := digests && (d.Digest != "" || r.pol.pre.Pin == config.PinDigest)
@@ -652,6 +726,11 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	}
 
 	ups = r.applySecurity(ups, scheme, names, vulns())
+	if r.lockOnly {
+		for i := range ups {
+			ups[i].Lockfile = r.inRange(ups[i].NewVersion)
+		}
+	}
 	if ups, err = r.majorPathUpdates(t, ups, scheme, dir, accept, reject); err != nil {
 		return nil, err
 	}
@@ -935,7 +1014,7 @@ func (r *resolver) checksumOf(version string) (string, error) {
 // or a missing fixing release, leave ups unchanged. ups and the result are ordered by version.
 func (r *resolver) applySecurity(ups []dep.Update, s versioning.Scheme, names []string, vulns []Vuln) []dep.Update {
 	d := r.d
-	cur := r.cur
+	cur := r.installed(s)
 	var fix string
 	for _, v := range vulns {
 		if m := minFix(s, cur, v); m != "" && (fix == "" || s.Compare(m, fix) > 0) {

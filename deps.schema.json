@@ -282,6 +282,16 @@
           "description": "New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written.",
           "markdownDescription": "New versions must satisfy this Masterminds semver constraint (e.g. `< 7`), or match Renovate's regex form `/<RE2>/` (e.g. `/^\\d+\\.\\d+$/`; `!/<RE2>/` rejects matches; flag i allowed) against the version as written.\n\n- A **constraint** (`< 7`, `~1.2`, `>= 1.20, < 2`) is checked against the scheme's Masterminds conversion of the candidate. Versions that cannot be represented are rejected.\n- A **regex** (`/^\\d+\\.\\d+$/`, `!/-rc/`, `/^v1\\./i`) matches the candidate *as written* (tag, image tag, module version) and never converts it. Only flag `i` exists.\n- Invalid values are config errors: `rules[i].allow: invalid constraint \"<v>\": …`, `invalid regex \"/(/\": …`, `unknown flags \"g\" (only i)`."
         },
+        "rangeStrategy": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "bump",
+            "update-lockfile"
+          ],
+          "description": "Range strategy for matching npm deps (see the top-level rangeStrategy). Cannot be combined with updateTypes.",
+          "markdownDescription": "Range strategy for matching npm deps (see the top-level rangeStrategy). Cannot be combined with updateTypes."
+        },
         "updates": {
           "items": {
             "type": "string",
@@ -407,6 +417,17 @@
       "description": "Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment.",
       "default": "keep",
       "markdownDescription": "Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment.\n\n`rules[].pin` overrides it per dep.\n\n- `keep`: keep each reference's current style. Refs that are already pinned (`@<sha> # v4.2.0`, `image:tag@sha256:…`) stay pinned, and both the digest and the version are refreshed.\n- `digest`:\n  - github-actions: tag refs are pinned to the tag's commit SHA, with ` # <tag>` appended.\n  - docker: `@sha256:<digest>` is appended after the tag (the index digest for multi-platform images).\n\ngomod, npm and custom deps ignore `pin`.\n\n```yaml\npin: digest\n```"
+    },
+    "rangeStrategy": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "bump",
+        "update-lockfile"
+      ],
+      "description": "How npm dependency ranges are updated: update-lockfile moves only package-lock.json while the range admits the new version (bumping the range otherwise), bump always raises the range (^1.2.3 -> ^1.4.0), auto is update-lockfile (Renovate's default).",
+      "default": "auto",
+      "markdownDescription": "How npm dependency ranges are updated: update-lockfile moves only package-lock.json while the range admits the new version (bumping the range otherwise), bump always raises the range (^1.2.3 -> ^1.4.0), auto is update-lockfile (Renovate's default).\n\nIt applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` (`^1.2.3`, `~1.2.3`, `>=1.2.3`, `=1.2.3` and exact `1.2.3`). Other deps always replace their exact version. `rules[].rangeStrategy` overrides it per dep (not together with `updateTypes`).\n\n- `update-lockfile`: the current version is the one the lock root's `package-lock.json` resolves the dep to, and update types compare it with the new version.\n  - A newer version the range admits is a **lockfile-only update**: package.json is unchanged. `apply` and `run` run `npm install --package-lock-only <name>@<version>` (with `--workspace=<dir>` for a workspace member) on a copy and restore the range npm writes into the lockfile's own package entries. `plan` lists the update but shows no diff for it.\n  - A version outside the range replaces the range's version and keeps its operator (`^5.2.8` → `^6.0.0`).\n  - Without a lockfile, versions the range admits are not proposed: an install already gets them.\n- `bump`: every newer version raises the range (`^1.2.3` → `^1.4.0`), and the lockfile is regenerated.\n- `auto` (default): Renovate's npm default, which is `update-lockfile`.\n\npeerDependencies never get lockfile-only updates: under `update-lockfile` and `auto`, versions their range admits are left alone. Renovate widens peer ranges (`^1.0.0 || ^2.0.0`); deps replaces the range when a version falls outside it.\n\nLockfile-only updates need a `package-lock.json` with `lockfileVersion` 2 or 3. When the lock root uses `pnpm-lock.yaml`, `yarn.lock` or a v1 `package-lock.json`, deps does not read the locked versions, and `update-lockfile` and `auto` act as `bump`.\n\nSecurity updates check the locked version against OSV when it is known, so a fix that is already locked is not proposed. When the locked version is vulnerable, the fix is a lockfile-only update if the range admits it. Without a lock, the version in package.json is checked.\n\n```yaml\nrangeStrategy: bump\n```"
     },
     "schedule": {
       "items": {

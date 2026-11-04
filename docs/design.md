@@ -61,11 +61,15 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 - Values containing `{{` are skipped as `template value`.
 
 **npm.** `package.json` is streamed with `encoding/json/jsontext` tokens (duplicate names are accepted, as npm's `JSON.parse` does); `InputOffset` after each string value gives its byte span, which must equal the quoted value in the file (otherwise, e.g. with `\u` escapes, `cannot locate value`). Sections: `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies` (the section name is the `DepType`) and `packageManager` (`npm@x`, `pnpm@x`, `yarn@x`; `Name` is the tool). `overrides`, `resolutions` and `bundleDependencies` are not extracted; `node_modules` is pruned by discovery.
-- **Range grammar:** an optional operator `^`, `~`, `>=` or `=`, then a full `MAJOR.MINOR.PATCH[-prerelease]`. `Version` is the bare version and `RefSpan` covers only the version bytes, so the operator is kept: the range is *bumped* (`^1.2.3` → `^1.4.0`), not widened or replaced.
+- **Range grammar:** an optional operator `^`, `~`, `>=` or `=`, then a full `MAJOR.MINOR.PATCH[-prerelease]`. `Version` is the bare version, `Range` the value as written (dependency sections only), and `RefSpan` covers only the version bytes, so the operator is kept when a range changes.
+- **rangeStrategy** (Renovate's `auto`, `bump`, `update-lockfile`; top level and per rule, a pre-policy field): `auto` = `update-lockfile`, as Renovate's npm manager resolves it for non-peer simple ranges.
+  - `update-lockfile`: candidates are ranked against `Locked`; one the range admits (Masterminds constraint of `Range`) is a lockfile-only update (`Update.Lockfile`, no manifest edit, `FromTo` starts at the locked version), one outside it replaces the range's version (`^5.2.8` → `^6.0.0`, Renovate's `replace`). Without a lock, in-range candidates are rejected (`admitted by range <r> (no lockfile update)`), as Renovate's current version is then the highest in-range release. peerDependencies never get lockfile-only updates (Renovate widens them; deps leaves in-range versions alone and replaces otherwise). `LockUnread` (pnpm, yarn, v1 package-lock) falls back to `bump`, except for peers.
+  - `bump`: candidates are ranked against the range's version, which every update raises (`^1.2.3` → `^1.4.0`).
+- **Locked versions** (`manager.LockReader`, after `Link`): for each lock root (the post-processor's scope, below) whose lockfile is a `package-lock.json` v2/v3, the file is stream-decoded once, keeping only the `packages` entries of the extracted names (`<member>/node_modules/<name>`, then the hoisted `node_modules/<name>`; links skipped) as `Dep.Locked`. Other lockfiles set `Dep.LockUnread`; a parse error is a run error and also sets `LockUnread`. OSV is queried with `Locked` when set, and security fixes are computed from it (section 5).
 - **Skips:** `npm alias` (`npm:`), `local dependency` (`file:`, `link:`, `workspace:`, `./`, `../`, `/`, `~/`), `git dependency` (`github:`, `gitlab:`, `bitbucket:`, `gist:`, `git+`, `git://`, `git@`, `owner/repo[#ref]`), `url dependency` (`http(s)://` tarballs), `tag` (dist-tags such as `latest`, `next`), `unsupported range` (`||`, spaces, `x`/`*` wildcards, partial versions, `<`, hyphen ranges, `v1.2.3`, empty), `cannot locate value`; for `packageManager` also `packageManager with hash` (`+sha512…` suffix) and `unsupported packageManager`.
 - **engines and volta:** `engines.{node,npm,pnpm,yarn}` (DepType `engines`, ignored by default; enable with a rule `depTypes: [engines], ignore: false`) and `volta.{node,npm,pnpm,yarn}` (DepType `volta`, updated). node uses the node-version datasource, the others npm. The range grammar is that of dependencies; additionally an optional ^/~/>=/= plus a MAJOR[.MINOR] partial (`^26`, `10.2`) uses tag versioning on the numeric part (^26 → ^27). Other keys and non-string values are ignored.
 - **peerDependencies** are ignored by default, like indirect Go requirements; a rule with `depTypes: [peerDependencies]` and `ignore: false` opts in.
-- **Lockfile:** after a package.json change, `apply`/`run` regenerate the workspace's `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock` (see *Post-processors* below). Dependencies naming a member of the manifest's own workspace are never updated (any range form).
+- **Lockfile:** after a package.json change, `apply`/`run` regenerate the workspace's `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`; lockfile-only updates install the new versions into package-lock.json alone (see *Post-processors* below). Dependencies naming a member of the manifest's own workspace are never updated (any range form).
 
 **helm.** Deps have `Name` = chart, `Source` = repository URL (`https://…` index repository or `oci://host/path`), `RefSpan` = the version scalar.
 - `Chart.yaml` (DepType `chart`): `dependencies[]` `name`/`version`/`repository`. Skips: `local chart` (empty or `file://` repository), `repository alias` (`@name`, `alias:name`: resolved from the user's Helm repository config, which deps does not read), `unknown chart repository <repo>`.
@@ -148,6 +152,7 @@ Selector grammar: stages joined by `|`; a stage is `keys` (sorted keys of an obj
   - Commands: npm `install --package-lock-only --ignore-scripts --no-audit --no-fund`; pnpm `install --lockfile-only --ignore-scripts --no-frozen-lockfile`; yarn berry (`.yarnrc.yml` or `__metadata` in the lock) `install --mode=update-lockfile` with `YARN_ENABLE_SCRIPTS=0 YARN_ENABLE_IMMUTABLE_INSTALLS=0`; yarn classic `install --ignore-scripts --ignore-engines --non-interactive --no-progress`. Env `npm_config_update_notifier=false`, `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`.
   - Tool resolution: binary on PATH; else `npx --yes <tool>@<version>` when root `packageManager` names it (berry: `npx --yes --package=@yarnpkg/cli-dist@<version> -- yarn`); else `npx --yes <tool>`; else `<tool> not found (needed to update <lock>)`.
   - Several lockfiles in one root: the `packageManager` tool's lockfile wins, else package-lock, pnpm, yarn. Only the lockfile is read back and returned when changed; failure `<tool> install in <dir>: <last 20 output lines>`. npm-shrinkwrap.json is not handled.
+  - Lockfile-only updates (`engine.LockfileUpdater.ProcessLocked`, which the engine calls instead of `Process` when a scope has any; package-lock.json only): the plain install runs first only if a manifest of the root changed; then `npm install … <name>@<version>…` for the root manifest and `npm install … --workspace=<dir> <name>@<version>…` per member (Renovate's commands). npm saves `^<version>` into `packages[""]`/`packages["<dir>"]`; deps restores the unchanged range there by byte span, so `npm ci` accepts the lock. A manifest whose only updates are lockfile-only yields no manifest change, and `plan` (no post-processor) shows no diff for it.
 - **helm** (`helm.Locker`, scope = the dir of a `Chart.yaml`, sibling `Chart.lock`; helmfiles and resources have no scope). In process, no network, so `plan` shows the lock diff too. Without a `Chart.lock` nothing happens.
   - Every dependency whose patched Chart.yaml version is exact and differs from the locked one (matched by position and name) gets the new version in the lock, in the lock's `v` style.
   - `digest` is Helm's `HashReq`: `sha256:` + hex sha256 of `json.Marshal([2][]*chart.Dependency{chartYamlDeps, lockDeps})`, with `chart.Dependency` mirrored field for field. `@name`/`alias:name` repositories are replaced by the URL locked at the same position, as `helm dependency build` resolves them before hashing. Verified against Helm-written locks and accepted by `helm dependency build`.
@@ -207,6 +212,10 @@ type Dep struct {
     Checksum       string          // custom: current sha256/sha512 hex pinned next to the version
     ChecksumSpan   Span            // custom: checksum token
     ChecksumSource *ChecksumSource // custom: where the checksum of a new version comes from; nil = none
+
+    Range      string // npm dependency sections: the range as written (^1.2.3); rangeStrategy applies when set
+    Locked     string // npm: version the lock root's package-lock.json resolves the dep to; "" = none
+    LockUnread bool   // npm: the lock root's lockfile is not read (pnpm-lock.yaml, yarn.lock, package-lock.json v1)
 }
 
 // Asset and URL/File are templates over {{version}}; exactly one of Asset and URL is set.
@@ -233,6 +242,7 @@ type Update struct {
     Bucket      string        // PR bucket among the dep's updates: "" (only or non-major), "major", "v<N>", "minor", "patch"
     Automerge   bool          // policy automerge of the update's type
     AutomergeStrategy string  // policy automergeStrategy: auto, merge, squash, rebase
+    Lockfile    bool          // lockfile-only update: the manifest keeps its range, the lockfile moves from Dep.Locked
 }
 ```
 
@@ -259,6 +269,9 @@ type Linker interface{ Link(files [][]dep.Dep) }
 type FileEditor interface {
     FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error) // by slash path relative to root
 }
+// LockReader is optional: after Link, the engine calls ReadLocks once with the absolute root and
+// the deps of each file; it sets Dep.Locked/LockUnread in place (npm) and returns lockfile errors.
+type LockReader interface{ ReadLocks(root string, files [][]dep.Dep) []error }
 // actions.New(), gomod.New(), docker.New(), npm.New(), helm.New() return the built-in managers; custom.New(cfg) one per cfg.Custom entry (accepting custom.<name> of cfg.CustomDatasources).
 ```
 
@@ -325,6 +338,11 @@ type PostProcessor interface {
     // manifests: patched content by path relative to dir; files: existing siblings by name.
     // A result under a manifest's path replaces it, one under a sibling's name the sibling.
     Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error)
+}
+// LockfileUpdater is optional on a PostProcessor: a scope with lockfile-only updates calls
+// ProcessLocked instead of Process (locks by manifest path relative to dir; their manifests unchanged).
+type LockfileUpdater interface {
+    ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error)
 }
 type Options struct {
     Managers    []manager.Manager
@@ -619,10 +637,10 @@ A group automerges when every update in it has `Automerge` from the policy of it
 - **Source.** `api.osv.dev`: one `/v1/querybatch` round per 1000 distinct packages, then one `/v1/vulns/{id}` fetch per distinct advisory (deduped per run). Runs once per run, concurrently with the release lookups. Disabled with `security: false`.
 - **Ecosystems.**
   - `Go`: gomod deps of type `direct` or `indirect`, queried with module path and version; OSV matches server-side. Fixed versions get the module `v` prefix.
-  - `npm`: npm deps, queried with package name and bare version; OSV matches server-side. Fixed versions are bare semver. GHSA IDs are preferred over aliases.
+  - `npm`: npm deps, queried with package name and the locked version (`Dep.Locked`, else the bare version from package.json); OSV matches server-side. Fixed versions are bare semver. GHSA IDs are preferred over aliases.
   - `GitHub Actions`: github-actions deps hosted on github.com, package `owner/repo` (subpath dropped). OSV does not evaluate ranges for this ecosystem, so the package is queried without a version and the ranges are evaluated locally. A floating tag with fewer than three parts (`v4`, `v4.1`) is affected only when every release of its line is. Fixed versions are rendered in the dep's style (prefix, part count).
 - **Dedupe.** Withdrawn advisories are skipped. Aliases (`GO-2024-2687` / `GHSA-4v7x-pqxf-cx7m`) are reported once, preferring the ecosystem's native ID.
-- **Decision.** The minimum fix F is the max over vulns of each vuln's lowest fix compatible with the current version (vulns without one are ignored). If there is no normal update, or it is below F, the smallest compatible release ≥ F is chosen, bypassing `allow`, `updates` and `schedule`; `ignore` still wins. No such release: the normal update (or none) stays, without error.
+- **Decision.** The minimum fix F is the max over vulns of each vuln's lowest fix compatible with the current version (the locked version of an npm dep when known; vulns without one are ignored). If there is no normal update, or it is below F, the smallest compatible release ≥ F is chosen, bypassing `allow`, `updates` and `schedule`; `ignore` still wins. Under `update-lockfile` a fix the range admits is a lockfile-only update. No such release: the normal update (or none) stays, without error.
 - **Failure.** A failed lookup adds `security advisories: <err>` to the errors and resolution continues without advisories (so obsolete PRs are not closed that run).
 
 ## 6. Running in CI
@@ -733,7 +751,7 @@ Open items from [renovate-parity.md](renovate-parity.md) and the performance pla
 
 - PR body badges: Mend adoption/passing/confidence (L5; external badge URLs or drop) and the OpenSSF scorecard (L6);
 - the gaps from the OCM comparison ([what is still missing for OCM](migrating-from-renovate.md#what-is-still-missing-for-ocm)):
-  - lockfile-only npm updates and OSV against locked versions (P18);
+
   - release times for git tags without their own release (P10);
   - API-created commits (O5, deferred);
   - updating the action's `version:` input along with a pinned ref (O6);
@@ -748,7 +766,7 @@ The user-facing reference (every key, its default and validation, rule semantics
 
 - **Strict decoding.** `yaml.Decoder.KnownFields(true)`: a typo is an error with its line, never a silently ignored key. All validation errors are joined (`<path>: <field>: <msg>`), so one run reports every problem. Config errors exit 2.
 - **Ordered rules with field-wise override.** Rules are evaluated top to bottom; each matching rule overwrites only the fields it sets (`updates` is replaced, not merged). This is Renovate's packageRules model without presets, so the effective policy of a dep is always the file read top to bottom (`deps explain` prints it).
-- **Pre-policy vs per-type policy.** Decisions needed before an update exists (`ignore` of the dep, `pin`, `versioning`, whether to look it up) come from rules without `updateTypes`; everything else is evaluated per candidate type (section 4), which is why `pin` and `versioning` are rejected on `updateTypes` rules.
+- **Pre-policy vs per-type policy.** Decisions needed before an update exists (`ignore` of the dep, `pin`, `rangeStrategy`, `versioning`, whether to look it up) come from rules without `updateTypes`; everything else is evaluated per candidate type (section 4), which is why `pin`, `rangeStrategy` and `versioning` are rejected on `updateTypes` rules.
 - **Renovate-compatible defaults where they matter.** Default `ignorePaths`, default-ignored dep types (indirect, `go`, peerDependencies, engines), semantic commit prefixes and built-in monorepo groups replace the presets OCM relies on; the PR limits default to unlimited (`prConcurrentLimit`/`prHourlyLimit` 0), capped per run by `--max-new-prs`.
 - **Validated at load.** Constraints, `allow` regexes, schedules, ages and regex versioning schemes are compiled in `Validate`; custom `match` expressions and datasource selectors are checked there too, so a bad config never starts a lookup.
 - **Automerge through the platform only.** `automergeType` accepts only `pr`; `branch` (Renovate's merge without a PR) is rejected, because deps never pushes to the base branch.

@@ -7,7 +7,7 @@ import (
 // Doc is the reference documentation of the npm manager (docs/reference/managers.md).
 var Doc = refdoc.Manager{
 	Name: Name,
-	Summary: "Updates dependencies, tool versions and engines in `package.json`, then refreshes the lockfile. " +
+	Summary: "Updates dependencies, tool versions and engines in `package.json`, and the lockfile along with them or on its own (lockfile-only updates). " +
 		"`package.json` is stream-parsed; each value's byte span must equal the quoted value in the file, otherwise (for example with `\\u` escapes) the dep is skipped as `cannot locate value`. " +
 		"`overrides`, `resolutions` and `bundleDependencies` are not extracted.",
 	Files: []string{"`package.json`"},
@@ -34,13 +34,18 @@ var Doc = refdoc.Manager{
 	Sections: []refdoc.Section{
 		{Title: "Ranges", Items: []string{
 			"Accepted: an optional `^`, `~`, `>=` or `=`, followed by a full `MAJOR.MINOR.PATCH[-prerelease]`.",
-			"Only the version bytes are replaced, so the operator is kept and the range is **bumped**: `^1.2.3` → `^1.4.0` (Renovate's `rangeStrategy: bump`).",
+			"Only the version bytes are replaced, so the operator is kept. How a range moves is [`rangeStrategy`](configuration.md#rangestrategy): by default (`auto` = `update-lockfile`) a version the range admits only moves the locked version, and a version outside it replaces the range's version (`^5.2.8` → `^6.0.0`); `bump` raises the range for every update (`^1.2.3` → `^1.4.0`). engines, volta and packageManager always replace their version.",
 			"For `engines` and `volta`, a partial `^26` or `10.2` is also accepted. It uses `tag` versioning on the numeric part (`^26` → `^27`).",
 			"Versioning is `semver`. Prerelease candidates are only considered from a prerelease, and deprecated versions are dropped.",
 		}},
 		{Title: "Workspaces", Body: "A dep naming a member of the manifest's own workspace is never updated."},
+		{Title: "Locked versions", Body: "Before resolving, deps reads the lock root's `package-lock.json` (`lockfileVersion` 2 or 3; the lockfile the post-processor would update, see below) once per run, streamed, and keeps the `packages` entries of the extracted names: a member's own `<member>/node_modules/<name>` wins over the hoisted `node_modules/<name>`, links are not versions.",
+			Items: []string{
+				"The locked version is the current version under `update-lockfile` (update types compare it with the new version) and is what OSV is queried with, so an already locked fix is not proposed again. Without a lock, the version in package.json is used.",
+				"`pnpm-lock.yaml`, `yarn.lock` and v1 `package-lock.json` are not read: `update-lockfile` and `auto` act as `bump` there, and OSV checks the version in package.json. A `package-lock.json` that does not parse is a run error (`<path>: <err>`), with the same fallback.",
+			}},
 		{Title: "Lockfile post-processing (`apply`, `run`)", Body: lockfileBody,
-			Items: []string{"`plan` does not run installs, and prints `note    package-lock.json changes are computed by apply/run`."}},
+			Items: []string{"`plan` does not run installs, and prints `note    package-lock.json changes are computed by apply/run`; lockfile-only updates are listed as `(<type>, lockfile)` without a diff."}},
 	},
 }
 
@@ -63,4 +68,6 @@ const lockfileBody = "1. **Lock root.** The lock root is the nearest directory a
 	"   - else `npx --yes <tool>`;\n" +
 	"   - else error `<tool> not found (needed to update <lock>)`.\n" +
 	"5. **Several lockfiles.** If a root has more than one lockfile, the `packageManager` tool's lockfile wins, else `package-lock.json`, then pnpm, then yarn. `npm-shrinkwrap.json` is not handled.\n" +
-	"6. **Failure.** A failed install reports `<tool> install in <dir>: <last 20 output lines>`, and the root's changes are dropped."
+	"6. **Lockfile-only updates** (package-lock.json only). The manifests stay unchanged. After the plain install (run only when a manifest of the root changed), npm runs `npm install … <name>@<version>` for the root manifest's updates and `npm install … --workspace=<dir> <name>@<version>` per workspace member. " +
+	"npm saves `^<version>` into the lockfile's own package entries (`packages[\"\"]`, `packages[\"<member dir>\"]`); deps restores the range package.json holds, so `npm ci` accepts the lockfile. A missing entry is an error.\n" +
+	"7. **Failure.** A failed install reports `<tool> install in <dir>: <last 20 output lines>`, and the root's changes are dropped."

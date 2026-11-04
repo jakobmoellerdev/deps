@@ -262,6 +262,12 @@ func TestCollect(t *testing.T) {
 	if collect([]dep.Update{pin}) != nil {
 		t.Error("pin-only updates collected")
 	}
+	// A lockfile-only update starts at the locked version, not at the range's.
+	lock := up("1.0.0", "1.4.0")
+	lock.Dep.Locked, lock.Lockfile = "1.3.0", true
+	if got := collect([]dep.Update{lock}); len(got) != 1 || got[0].from != "1.3.0" || got[0].to != "1.4.0" {
+		t.Errorf("lockfile-only: collect = %+v", got)
+	}
 }
 
 func TestTruncate(t *testing.T) {

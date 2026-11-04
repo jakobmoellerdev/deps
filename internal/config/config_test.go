@@ -123,6 +123,9 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{updateTypes: [huge]}]\n", "rules[0].updateTypes[0]: must be one of major"},
 		{"rules: [{updateTypes: []}]\n", "rules[0].updateTypes: must not be empty"},
 		{"rules: [{updateTypes: [major], pin: digest}]\n", "rules[0].pin: cannot be combined with updateTypes"},
+		{"rangeStrategy: pin\n", `rangeStrategy: must be one of auto, bump, update-lockfile, got "pin"`},
+		{"rules: [{rangeStrategy: widen}]\n", `rules[0].rangeStrategy: must be one of auto, bump, update-lockfile, got "widen"`},
+		{"rules: [{updateTypes: [major], rangeStrategy: bump}]\n", "rules[0].rangeStrategy: cannot be combined with updateTypes"},
 		{"rules: [{patterns: [x]}]\n", "line 1"},
 		{"custom: [{files: [x], checksum: {url: u}}]\n", "custom[0].checksum: requires match (regex mode)"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+)', datasource: go, name: x, checksum: {url: u}}]\n", "custom[0].checksum: requires a (?P<checksum>...) group in match"},
@@ -219,6 +222,24 @@ rules:
 	}
 	if !c.Policy(dep.Dep{Manager: "gomod", Name: "x"}).Ignore {
 		t.Error("gomod ignore")
+	}
+}
+
+func TestRangeStrategyPolicy(t *testing.T) {
+	d := dep.Dep{Manager: "npm", Name: "a", DepType: "dependencies"}
+	c, err := load(t, "", "")
+	if err != nil || c.Policy(d).RangeStrategy != RangeAuto {
+		t.Fatalf("default: %v %v", c.Policy(d).RangeStrategy, err)
+	}
+	c, err = load(t, ".deps.yaml", "rangeStrategy: bump\nrules:\n  - names: [a]\n    rangeStrategy: update-lockfile\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Policy(d).RangeStrategy; got != RangeUpdateLockfile {
+		t.Errorf("rule: %s", got)
+	}
+	if got := c.Policy(dep.Dep{Manager: "npm", Name: "b"}).RangeStrategy; got != RangeBump {
+		t.Errorf("top level: %s", got)
 	}
 }
 

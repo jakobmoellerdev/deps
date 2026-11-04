@@ -162,16 +162,21 @@ func (s *summary) headline() string {
 	return strings.Join(parts, ", ") + " (" + s.Elapsed.Round(time.Millisecond).String() + ")"
 }
 
-// updateType renders the type with the security advisories ("minor, security: GO-1").
+// updateType renders the type with a lockfile-only marker and the security advisories
+// ("patch, lockfile, security: GHSA-1").
 func updateType(u dep.Update) string {
+	t := string(u.Type)
+	if u.Lockfile {
+		t += ", lockfile"
+	}
 	if len(u.Advisories) == 0 {
-		return string(u.Type)
+		return t
 	}
 	ids := make([]string, len(u.Advisories))
 	for i, a := range u.Advisories {
 		ids[i] = a.ID
 	}
-	return string(u.Type) + ", security: " + strings.Join(ids, ",")
+	return t + ", security: " + strings.Join(ids, ",")
 }
 
 // groupNotes are the PR facts of a group besides its updates: status, automerge, schedule.

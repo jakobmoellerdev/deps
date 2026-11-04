@@ -587,7 +587,11 @@ func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp string) strin
 	}
 	for _, u := range ups {
 		from, to := u.FromTo()
-		fmt.Fprintf(&b, "| `%s:%d` | `%s` | `%s` | %s |", u.Dep.File, u.Dep.Line, from, to, u.Type)
+		typ := string(u.Type)
+		if u.Lockfile {
+			typ += " (lockfile)"
+		}
+		fmt.Fprintf(&b, "| `%s:%d` | `%s` | `%s` | %s |", u.Dep.File, u.Dep.Line, from, to, typ)
 		if notes != nil {
 			fmt.Fprintf(&b, " %s |", notes.Age(ctx, u))
 		}

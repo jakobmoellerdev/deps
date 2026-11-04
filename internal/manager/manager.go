@@ -35,6 +35,15 @@ type Linker interface {
 	Link(files [][]dep.Dep)
 }
 
+// LockReader is implemented by managers whose deps a lockfile resolves to an exact version
+// (npm's package-lock.json). After Link, the engine calls ReadLocks once with the absolute
+// scanned root and the deps of each file the manager extracted without error; it records the
+// locked versions in place (dep.Dep.Locked, LockUnread) and returns the lockfiles it could not
+// read.
+type LockReader interface {
+	ReadLocks(root string, files [][]dep.Dep) []error
+}
+
 // FileEditor is implemented by managers whose updates also edit files other than the dep's
 // own (a gomod major module path update rewrites the import paths in the module's .go
 // files). The engine applies the edits together with the update; if the dep's file or one

@@ -26,18 +26,20 @@ type Policy struct {
 	Ignore       bool
 	IgnoreReason string // why Ignore is set: default for the dep type, or the deciding rule
 	Pin          string
-	Allow        *Allowed
-	Updates      map[dep.UpdateType]bool
-	Group        string         // "" = own PR
-	Schedule     *schedule.Set  // nil = always
-	Rules        []int          // indices of the matching user rules, in order
-	Monorepo     string         // built-in monorepo that set the initial Group, "" = none
-	CommitType   string         // conventional commit type: fix for production deps, chore otherwise
-	CommitScope  string         // conventional commit scope, "" = none
-	Kind         dep.UpdateType // update type of a PolicyFor result, "" for Policy
-	MinAge       time.Duration  // minimum release age of new versions, 0 = off
-	Versioning   string         // versioning scheme set by a rule, "" = the dep's own
-	Automerge    bool           // request platform auto-merge for the PR
+	// RangeStrategy is the npm range strategy (RangeStrategies); never "" in a Policy.
+	RangeStrategy string
+	Allow         *Allowed
+	Updates       map[dep.UpdateType]bool
+	Group         string         // "" = own PR
+	Schedule      *schedule.Set  // nil = always
+	Rules         []int          // indices of the matching user rules, in order
+	Monorepo      string         // built-in monorepo that set the initial Group, "" = none
+	CommitType    string         // conventional commit type: fix for production deps, chore otherwise
+	CommitScope   string         // conventional commit scope, "" = none
+	Kind          dep.UpdateType // update type of a PolicyFor result, "" for Policy
+	MinAge        time.Duration  // minimum release age of new versions, 0 = off
+	Versioning    string         // versioning scheme set by a rule, "" = the dep's own
+	Automerge     bool           // request platform auto-merge for the PR
 	// AutomergeStrategy is the merge method of an automerged PR (AutomergeStrategies).
 	AutomergeStrategy string
 	// PR buckets (separateMajorMinor, separateMultipleMajor, separateMinorPatch).
@@ -94,6 +96,7 @@ func (r *Rule) matches(d dep.Dep, kind dep.UpdateType) bool {
 func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 	p := Policy{
 		Pin:                   c.Pin,
+		RangeStrategy:         cmp.Or(c.RangeStrategy, RangeAuto),
 		Updates:               make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
 		Schedule:              c.schedule,
 		MinAge:                c.minAge,
@@ -136,6 +139,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		}
 		if r.Pin != "" {
 			p.Pin = r.Pin
+		}
+		if r.RangeStrategy != "" {
+			p.RangeStrategy = r.RangeStrategy
 		}
 		if r.allow != nil {
 			p.Allow = r.allow

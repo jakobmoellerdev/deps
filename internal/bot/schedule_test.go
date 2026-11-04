@@ -203,6 +203,12 @@ func TestPRBodySecurity(t *testing.T) {
 	}
 }
 
+func TestPRBodyLockfileOnly(t *testing.T) {
+	u := dep.Update{Dep: dep.Dep{File: "package.json", Line: 4, Version: "5.2.8", Range: "^5.2.8", Locked: "5.3.0"}, Type: dep.Patch, NewVersion: "5.3.1", Lockfile: true}
+	if body := prBody(t.Context(), nil, []dep.Update{u}, "abc"); !strings.Contains(body, "| `package.json:4` | `5.3.0` | `5.3.1` | patch (lockfile) |") {
+		t.Errorf("body:\n%s", body)
+	}
+}
 func TestPRBodyModulePath(t *testing.T) {
 	u := dep.Update{
 		Dep:  dep.Dep{Manager: "gomod", File: "go.mod", Line: 3, Name: "github.com/google/go-github/v92", Version: "v92.0.0"},

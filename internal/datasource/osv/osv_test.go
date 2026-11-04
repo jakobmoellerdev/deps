@@ -476,15 +476,15 @@ func TestAdvisoriesNpm(t *testing.T) {
 	deps := []dep.Dep{
 		{Manager: "npm", DepType: "dependencies", Name: "lodash", Version: "4.17.20"},
 		{Manager: "npm", DepType: "dependencies", Name: "unversioned"},
+		// The locked version is queried, not the range floor: the same query as above.
+		{Manager: "npm", DepType: "dependencies", Name: "lodash", Version: "4.0.0", Locked: "4.17.20"},
 	}
 	got, err := s.Advisories(t.Context(), deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := [][]datasource.Vuln{
-		{{Advisory: dep.Advisory{ID: "GHSA-35jh-r3h4-6jhm", Summary: "Command injection", URL: "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm"}, Fixed: []string{"4.17.21"}}},
-		nil,
-	}
+	lodash := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-35jh-r3h4-6jhm", Summary: "Command injection", URL: "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm"}, Fixed: []string{"4.17.21"}}}
+	want := [][]datasource.Vuln{lodash, nil, lodash}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}

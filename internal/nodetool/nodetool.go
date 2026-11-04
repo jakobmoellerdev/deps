@@ -1,6 +1,7 @@
 // Package nodetool runs the JavaScript package managers where deps cannot avoid it:
 // regenerating package-lock.json, pnpm-lock.yaml and yarn.lock for npm, pnpm and yarn
-// (classic and berry) projects and workspaces.
+// (classic and berry) projects and workspaces, and applying lockfile-only updates to
+// package-lock.json. It also reads the versions a package-lock.json locks (ReadLocked).
 package nodetool
 
 import (
@@ -13,9 +14,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 // Lockfiles Locker regenerates. npm-shrinkwrap.json is not handled: npm 12 no longer reads or
@@ -54,7 +58,16 @@ func (Locker) Siblings() []string {
 // patched content for manifests), the lockfile and the package manager configuration into a
 // temporary directory, updates the lockfile there without running scripts and returns it when
 // it changed. Without a lockfile it does nothing.
-func (Locker) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
+func (l Locker) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
+	return l.ProcessLocked(ctx, dir, manifests, files, nil)
+}
+
+// ProcessLocked is Process plus the lockfile-only updates of the lock root (dep.Update.Lockfile,
+// by manifest path relative to dir). They need package-lock.json: after the plain install
+// (only when a manifest changed or there are no lockfile-only updates), npm installs
+// `<name>@<version>` (per workspace member with --workspace) and the ranges it saves into the
+// lockfile's own package entries are restored to the manifests' unchanged ones.
+func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error) {
 	rootPkg, ok := manifests["package.json"]
 	if !ok {
 		b, err := os.ReadFile(filepath.Join(dir, "package.json"))
@@ -71,6 +84,9 @@ func (Locker) Process(ctx context.Context, dir string, manifests, files map[stri
 		return nil, nil
 	}
 	lock := files[lockName]
+	if len(locks) > 0 && lockName != PackageLock {
+		return nil, fmt.Errorf("lockfile-only updates need %s, the lock root uses %s", PackageLock, lockName)
+	}
 
 	write := map[string][]byte{"package.json": rootPkg, lockName: lock}
 	for _, n := range []string{npmrc, pnpmWorkspace, yarnrc} {
@@ -105,11 +121,14 @@ func (Locker) Process(ctx context.Context, dir string, manifests, files map[stri
 		}
 	}
 
-	tmp, err := os.MkdirTemp("", "deps-node-*")
+	// npm names an unnamed root package after its directory (package-lock.json "name"), so the
+	// copy lives in a directory named like the lock root.
+	parent, err := os.MkdirTemp("", "deps-node-*")
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	defer os.RemoveAll(parent)
+	tmp := filepath.Join(parent, filepath.Base(dir))
 	for p, b := range write {
 		abs := filepath.Join(tmp, filepath.FromSlash(p))
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
@@ -125,20 +144,43 @@ func (Locker) Process(ctx context.Context, dir string, manifests, files map[stri
 	if pmTool == c.tool {
 		version = pmVersion
 	}
-	if err := c.run(ctx, tmp, version); err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			return nil, fmt.Errorf("%s not found (needed to update %s)", c.tool, lockName)
+	runs := lockCommands(locks)
+	if len(locks) == 0 || manifestsChanged(dir, manifests) {
+		runs = slices.Insert(runs, 0, nil) // the plain install first
+	}
+	for _, extra := range runs {
+		cc := c
+		cc.args = append(slices.Clone(c.args), extra...)
+		if err := cc.run(ctx, tmp, version); err != nil {
+			if errors.Is(err, exec.ErrNotFound) {
+				return nil, fmt.Errorf("%s not found (needed to update %s)", c.tool, lockName)
+			}
+			return nil, fmt.Errorf("%s install in %s: %w", c.tool, dir, err)
 		}
-		return nil, fmt.Errorf("%s install in %s: %w", c.tool, dir, err)
 	}
 	out, err := os.ReadFile(filepath.Join(tmp, lockName))
 	if err != nil {
 		return nil, err
 	}
+	if len(locks) > 0 {
+		if out, err = restoreRanges(out, locks); err != nil {
+			return nil, err
+		}
+	}
 	if bytes.Equal(out, lock) {
 		return nil, nil
 	}
 	return map[string][]byte{lockName: out}, nil
+}
+
+// manifestsChanged reports whether any patched manifest differs from its file in dir.
+func manifestsChanged(dir string, manifests map[string][]byte) bool {
+	for p, b := range manifests {
+		if old, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))); err != nil || !bytes.Equal(old, b) {
+			return true
+		}
+	}
+	return false
 }
 
 // pickLock returns the lockfile of tool when present, else the first present lockfile.

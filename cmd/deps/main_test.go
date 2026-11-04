@@ -291,27 +291,42 @@ func TestPlanSeparateBuckets(t *testing.T) {
 func TestPlanNpm(t *testing.T) {
 	cleanEnv(t)
 	newFakeNet(t)
-	dir := t.TempDir()
-	writeFiles(t, dir, map[string]string{"package.json": `{"dependencies": {"@s/pad": "^1.0.0", "x": "latest"}}` + "\n"})
-	stdout, stderr, code := execute(t, "plan", "-v", "--dir", dir)
-	if code != 0 {
-		t.Fatalf("exit %d\n%s", code, stderr)
-	}
-	if want := `+{"dependencies": {"@s/pad": "^1.3.0", "x": "latest"}}` + "\n"; !strings.Contains(stdout, want) {
-		t.Errorf("diff lacks %q:\n%s", want, stdout)
-	}
-	for _, want := range []string{
-		"update  package.json:1  @s/pad  1.0.0 -> 1.3.0  (minor)\n",
-		"skip    package.json:1  x  tag\n",
-		"note    package-lock.json changes are computed by apply/run\n",
-		"1 updates in 1 files, 1 skipped, 0 errors\n",
+	const pkg = `{"dependencies": {"@s/pad": "^1.0.0", "x": "latest"}}` + "\n"
+	const lock = `{"lockfileVersion": 3, "packages": {"node_modules/@s/pad": {"version": "1.0.0"}}}` + "\n"
+	for _, tt := range []struct {
+		name  string
+		files map[string]string
+		diff  string // "" = no diff
+		line  string
+	}{
+		{"bump", map[string]string{".deps.yaml": "rangeStrategy: bump\n"}, `+{"dependencies": {"@s/pad": "^1.3.0", "x": "latest"}}` + "\n", "update  package.json:1  @s/pad  1.0.0 -> 1.3.0  (minor)\n"},
+		{"lockfile-only", map[string]string{"package-lock.json": lock}, "", "update  package.json:1  @s/pad  1.0.0 -> 1.3.0  (minor, lockfile)\n"},
 	} {
-		if !strings.Contains(stderr, want) {
-			t.Errorf("stderr lacks %q:\n%s", want, stderr)
-		}
-	}
-	if strings.Contains(stderr, "go.sum") {
-		t.Errorf("go.sum note without gomod updates:\n%s", stderr)
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.files["package.json"] = pkg
+			writeFiles(t, dir, tt.files)
+			stdout, stderr, code := execute(t, "plan", "-v", "--dir", dir)
+			if code != 0 {
+				t.Fatalf("exit %d\n%s", code, stderr)
+			}
+			if tt.diff == "" && stdout != "" || !strings.Contains(stdout, tt.diff) {
+				t.Errorf("diff, want %q:\n%s", tt.diff, stdout)
+			}
+			for _, want := range []string{
+				tt.line,
+				"skip    package.json:1  x  tag\n",
+				"note    package-lock.json changes are computed by apply/run\n",
+				"1 updates in 1 files, 1 skipped, 0 errors\n",
+			} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr lacks %q:\n%s", want, stderr)
+				}
+			}
+			if strings.Contains(stderr, "go.sum") {
+				t.Errorf("go.sum note without gomod updates:\n%s", stderr)
+			}
+		})
 	}
 }
 

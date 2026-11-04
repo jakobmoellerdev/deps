@@ -207,6 +207,7 @@ func TestWriteTrace(t *testing.T) {
 		{Paths: []string{"chart/**"}, Datasources: []string{"docker"}},
 		{MinimumReleaseAge: "28 days"},
 		{Allow: `/^\d+\.\d+$/`, Versioning: "loose", SeparateMultipleMajor: &yes},
+		{RangeStrategy: config.RangeUpdateLockfile},
 	}}
 	d := dep.Dep{Manager: "custom", DepType: "regex", Datasource: "docker", Versioning: "docker", File: "Dockerfile", Line: 1, Name: "golang", Version: "1.24-alpine"}
 	tests := []struct {
@@ -257,6 +258,38 @@ func TestWriteTrace(t *testing.T) {
   policy    pin=keep allow=- updates=major group=- schedule=always minAge=-
   candidates 0
   rejected  invalid: 4 (b, a, c, ...)
+  result    up to date
+`,
+		},
+		{
+			name: "lockfile-only npm update",
+			t: engine.Trace{
+				Dep:     dep.Dep{Manager: "npm", DepType: "dependencies", Name: "a", File: "package.json", Line: 3, Version: "1.0.0", Range: "^1.0.0", Locked: "1.1.0"},
+				Rules:   []int{5},
+				Policy:  config.Policy{Pin: "keep", RangeStrategy: config.RangeUpdateLockfile, Updates: map[dep.UpdateType]bool{dep.Minor: true}},
+				Updates: []engine.TraceUpdate{{Policy: &config.Policy{Kind: dep.Minor}, Update: dep.Update{Dep: dep.Dep{Version: "1.0.0", Locked: "1.1.0"}, Type: dep.Minor, NewVersion: "1.2.0", Lockfile: true}}},
+			},
+			want: `a  package.json:3  (npm, dependencies, -, -)
+  current   ^1.0.0 (locked 1.1.0)
+  rules     #5 rangeStrategy=update-lockfile
+  policy    pin=keep allow=- updates=minor group=- schedule=always minAge=- rangeStrategy=update-lockfile
+  candidates 0
+  rejected  none
+  result    update 1.1.0 -> 1.2.0 (minor, lockfile)
+`,
+		},
+		{
+			name: "unread lockfile",
+			t: engine.Trace{
+				Dep:    dep.Dep{Name: "b", File: "package.json", Line: 4, Version: "2.0.0", Range: "2.0.0", LockUnread: true},
+				Policy: config.Policy{Pin: "keep", Updates: map[dep.UpdateType]bool{}},
+			},
+			want: `b  package.json:4  (-, -, -, -)
+  current   2.0.0 (lockfile not read)
+  rules     none
+  policy    pin=keep allow=- updates=- group=- schedule=always minAge=-
+  candidates 0
+  rejected  none
   result    up to date
 `,
 		},

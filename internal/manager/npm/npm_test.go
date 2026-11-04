@@ -1,7 +1,10 @@
 package npm
 
 import (
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -136,6 +139,68 @@ func TestExtract(t *testing.T) {
 		} else if d.RefSpan != (dep.Span{}) {
 			t.Errorf("%s: skipped dep has span %+v", w.name, d.RefSpan)
 		}
+		wantRange := "" // the whole quoted value: its opening quote precedes the version
+		if w.skip == "" && sections[w.depType] {
+			wantRange = src[strings.LastIndexByte(src[:d.RefSpan.Start], '"')+1 : d.RefSpan.End]
+		}
+		if d.Range != wantRange {
+			t.Errorf("%s: Range %q, want %q", w.name, d.Range, wantRange)
+		}
+	}
+}
+
+func TestReadLocks(t *testing.T) {
+	root := t.TempDir()
+	for p, c := range map[string]string{
+		"web/package.json":      `{"dependencies": {"a": "^1.0.0", "file": "file:x"}, "packageManager": "npm@12.0.0"}`,
+		"web/package-lock.json": `{"lockfileVersion": 3, "packages": {"node_modules/a": {"version": "1.4.0"}}}`,
+		"pn/package.json":       `{"dependencies": {"a": "^1.0.0"}}`,
+		"pn/pnpm-lock.yaml":     "",
+		"bad/package.json":      `{"dependencies": {"a": "^1.0.0"}}`,
+		"bad/package-lock.json": "[",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, p), []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := New().(manager.LockReader)
+	var files [][]dep.Dep
+	for _, f := range []string{"web/package.json", "pn/package.json", "bad/package.json"} {
+		b, err := os.ReadFile(filepath.Join(root, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		deps, err := New().Extract(f, b, manager.Env{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, deps)
+	}
+	errs := m.ReadLocks(root, files)
+	if len(errs) != 1 || !strings.HasPrefix(errs[0].Error(), "bad/package-lock.json: ") {
+		t.Errorf("errs = %v", errs)
+	}
+	var got []string
+	for _, f := range files {
+		for _, d := range f {
+			got = append(got, fmt.Sprintf("%s %s locked=%q unread=%v", d.File, d.Name, d.Locked, d.LockUnread))
+		}
+	}
+	want := []string{
+		`web/package.json a locked="1.4.0" unread=false`,
+		`web/package.json file locked="" unread=false`, // skipped deps are not looked up
+		`web/package.json npm locked="" unread=false`,  // nor is packageManager
+		`pn/package.json a locked="" unread=true`,
+		`bad/package.json a locked="" unread=true`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("deps =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if errs := m.ReadLocks(root, [][]dep.Dep{{{Name: "npm", DepType: DepTypePackageManager}}}); errs != nil {
+		t.Errorf("no wants: %v", errs)
 	}
 }
 

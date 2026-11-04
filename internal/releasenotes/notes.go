@@ -124,23 +124,28 @@ func (n *Notes) Section(ctx context.Context, ups []dep.Update) string {
 	return render(blocks)
 }
 
-// collect merges ups per dependency, skipping updates that keep the version (digest, pin).
+// collect merges ups per dependency, skipping updates that keep the version (digest, pin). A
+// lockfile-only update starts at the locked version.
 func collect(ups []dep.Update) []item {
 	var items []item
 	idx := map[string]int{}
 	for _, u := range ups {
-		if u.Dep.Version == u.NewVersion {
+		from := u.Dep.Version
+		if u.Lockfile {
+			from = u.Dep.Locked
+		}
+		if from == u.NewVersion {
 			continue
 		}
 		key := u.Dep.Datasource + "\x00" + u.Dep.Name + "\x00" + u.Dep.Source
 		i, ok := idx[key]
 		if !ok {
 			idx[key] = len(items)
-			items = append(items, item{d: u.Dep, from: u.Dep.Version, to: u.NewVersion})
+			items = append(items, item{d: u.Dep, from: from, to: u.NewVersion})
 			continue
 		}
-		if less(u.Dep.Version, items[i].from) {
-			items[i].from = u.Dep.Version
+		if less(from, items[i].from) {
+			items[i].from = from
 		}
 		if less(items[i].to, u.NewVersion) {
 			items[i].to = u.NewVersion

@@ -525,9 +525,10 @@ func TestResolveAndBuildNpm(t *testing.T) {
   "packageManager": "npm@12.1.0"
 }
 `
-	root, cfg := setup(t, "", map[string]string{
+	const oldLock = `{"lockfileVersion": 3, "packages": {"node_modules/a": {"version": "1.0.0"}}}` + "\n"
+	root, cfg := setup(t, "rangeStrategy: bump\n", map[string]string{
 		"web/package.json":                pkg,
-		"web/package-lock.json":           "old lock\n",
+		"web/package-lock.json":           oldLock,
 		"web/.npmrc":                      "registry=x\n",
 		"web/node_modules/z/package.json": `{"dependencies": {"a": "1.0.0"}}`,
 	})
@@ -574,12 +575,12 @@ func TestResolveAndBuildNpm(t *testing.T) {
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
-	if string(seen["package-lock.json"]) != "old lock\n" || string(seen[".npmrc"]) != "registry=x\n" {
+	if string(seen["package-lock.json"]) != oldLock || string(seen[".npmrc"]) != "registry=x\n" {
 		t.Errorf("post-processor files = %q", seen)
 	}
 	wantPkg := strings.NewReplacer(`"^1.0.0"`, `"^1.1.0"`, `"~2.0.0"`, `"~2.0.1"`, "npm@12.1.0", "npm@12.2.0").Replace(pkg)
 	if len(changes) != 2 || changes[0].Path != "web/package-lock.json" || changes[1].Path != "web/package.json" ||
-		string(changes[1].New) != wantPkg || string(changes[0].Old) != "old lock\n" || !strings.HasPrefix(string(changes[0].New), "lock for {") {
+		string(changes[1].New) != wantPkg || string(changes[0].Old) != oldLock || !strings.HasPrefix(string(changes[0].New), "lock for {") {
 		t.Fatalf("changes = %+v", changes)
 	}
 

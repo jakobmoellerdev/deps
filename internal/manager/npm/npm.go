@@ -1,5 +1,5 @@
 // Package npm extracts dependencies, the packageManager field and the engines/volta tool
-// versions from package.json files.
+// versions from package.json files, and reads the versions package-lock.json locks them to.
 package npm
 
 import (
@@ -12,6 +12,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/nodetool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -83,6 +84,29 @@ func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+}
+
+// ReadLocks records the version package-lock.json locks each dependency-section dep to
+// (nodetool.ReadLocked), or LockUnread when its lock root uses another lockfile.
+func (npmManager) ReadLocks(root string, files [][]dep.Dep) []error {
+	var wants []nodetool.Want
+	var refs []*dep.Dep
+	for _, f := range files {
+		for j := range f {
+			if d := &f[j]; d.Range != "" && d.Skip == "" {
+				wants = append(wants, nodetool.Want{Manifest: d.File, Name: d.Name})
+				refs = append(refs, d)
+			}
+		}
+	}
+	if len(wants) == 0 {
+		return nil
+	}
+	states, errs := nodetool.ReadLocked(root, wants)
+	for i, s := range states {
+		refs[i].Locked, refs[i].LockUnread = s.Version, s.Unread
+	}
+	return errs
 }
 
 type extractor struct {
@@ -193,6 +217,9 @@ func (x *extractor) section(depType string) error {
 		d := x.newDep(depType, name, raw, span)
 		ver, off, skip := classify(raw)
 		x.finish(&d, span, ver, off, skip)
+		if d.Skip == "" {
+			d.Range = raw
+		}
 		x.deps = append(x.deps, d)
 	}
 	_, err := x.dec.ReadToken()

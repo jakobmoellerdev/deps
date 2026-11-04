@@ -105,8 +105,11 @@ func report(w io.Writer, verbose bool, res *engine.Result, errs []error, separat
 			sec = "  security: " + strings.Join(ids, ",")
 		}
 		hint := ""
+		if u.Lockfile {
+			hint = ", lockfile"
+		}
 		if i < len(separate) && separate[i] {
-			hint = ", separate PR"
+			hint += ", separate PR"
 		}
 		fmt.Fprintf(w, "update  %s:%d  %s  %s -> %s  (%s%s)%s\n", u.Dep.File, u.Dep.Line, u.Dep.Name, from, to, u.Type, hint, sec)
 	}

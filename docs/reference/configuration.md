@@ -84,6 +84,7 @@ customDatasources:
 
 - [`version`](#version)
 - [`pin`](#pin)
+- [`rangeStrategy`](#rangestrategy)
 - [`schedule`](#schedule)
 - [`security`](#security)
 - [`branchPrefix`](#branchprefix)
@@ -118,6 +119,7 @@ customDatasources:
   - [`rules[].ignore`](#rulesignore)
   - [`rules[].pin`](#rulespin)
   - [`rules[].allow`](#rulesallow)
+  - [`rules[].rangeStrategy`](#rulesrangestrategy)
   - [`rules[].updates`](#rulesupdates)
   - [`rules[].versioning`](#rulesversioning)
   - [`rules[].separateMajorMinor`](#rulesseparatemajorminor)
@@ -176,6 +178,33 @@ gomod, npm and custom deps ignore `pin`.
 
 ```yaml
 pin: digest
+```
+
+## `rangeStrategy`
+
+How npm dependency ranges are updated: update-lockfile moves only package-lock.json while the range admits the new version (bumping the range otherwise), bump always raises the range (^1.2.3 -> ^1.4.0), auto is update-lockfile (Renovate's default).
+
+- **Type:** string
+- **Default:** `auto`
+- **Values:** `auto`, `bump`, `update-lockfile`
+
+It applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` (`^1.2.3`, `~1.2.3`, `>=1.2.3`, `=1.2.3` and exact `1.2.3`). Other deps always replace their exact version. `rules[].rangeStrategy` overrides it per dep (not together with `updateTypes`).
+
+- `update-lockfile`: the current version is the one the lock root's `package-lock.json` resolves the dep to, and update types compare it with the new version.
+  - A newer version the range admits is a **lockfile-only update**: package.json is unchanged. `apply` and `run` run `npm install --package-lock-only <name>@<version>` (with `--workspace=<dir>` for a workspace member) on a copy and restore the range npm writes into the lockfile's own package entries. `plan` lists the update but shows no diff for it.
+  - A version outside the range replaces the range's version and keeps its operator (`^5.2.8` → `^6.0.0`).
+  - Without a lockfile, versions the range admits are not proposed: an install already gets them.
+- `bump`: every newer version raises the range (`^1.2.3` → `^1.4.0`), and the lockfile is regenerated.
+- `auto` (default): Renovate's npm default, which is `update-lockfile`.
+
+peerDependencies never get lockfile-only updates: under `update-lockfile` and `auto`, versions their range admits are left alone. Renovate widens peer ranges (`^1.0.0 || ^2.0.0`); deps replaces the range when a version falls outside it.
+
+Lockfile-only updates need a `package-lock.json` with `lockfileVersion` 2 or 3. When the lock root uses `pnpm-lock.yaml`, `yarn.lock` or a v1 `package-lock.json`, deps does not read the locked versions, and `update-lockfile` and `auto` act as `bump`.
+
+Security updates check the locked version against OSV when it is known, so a fix that is already locked is not proposed. When the locked version is vulnerable, the fix is a lockfile-only update if the range admits it. Without a lock, the version in package.json is checked.
+
+```yaml
+rangeStrategy: bump
 ```
 
 ## `schedule`
@@ -648,6 +677,13 @@ New versions must satisfy this Masterminds semver constraint (e.g. `< 7`), or ma
 - A **constraint** (`< 7`, `~1.2`, `>= 1.20, < 2`) is checked against the scheme's Masterminds conversion of the candidate. Versions that cannot be represented are rejected.
 - A **regex** (`/^\d+\.\d+$/`, `!/-rc/`, `/^v1\./i`) matches the candidate *as written* (tag, image tag, module version) and never converts it. Only flag `i` exists.
 - Invalid values are config errors: `rules[i].allow: invalid constraint "<v>": …`, `invalid regex "/(/": …`, `unknown flags "g" (only i)`.
+
+### `rules[].rangeStrategy`
+
+Range strategy for matching npm deps (see the top-level rangeStrategy). Cannot be combined with updateTypes.
+
+- **Type:** string
+- **Values:** `auto`, `bump`, `update-lockfile`
 
 ### `rules[].updates`
 

@@ -16,8 +16,9 @@
 //     when every possible release of the line is. Fixed versions are rendered in the dep's
 //     style: its "v" prefix and its part count (padded with 0 or truncated, e.g. "41" →
 //     "v41.0.0" for "v35.0.0", "46.0.1" → "v46" for "v35").
-//   - npm deps are queried as ecosystem "npm" with the package name and the bare version;
-//     OSV matches server-side. Fixed versions are bare semver ("4.17.21").
+//   - npm deps are queried as ecosystem "npm" with the package name and the locked version
+//     (dep.Dep.Locked), else the bare version; OSV matches server-side. Fixed versions are
+//     bare semver ("4.17.21").
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -25,6 +26,7 @@ package osv
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -152,10 +154,12 @@ func targetOf(d dep.Dep) *target {
 		}
 		return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoGo}, Version: d.Version}}
 	case "npm":
-		if d.Name == "" || d.Version == "" {
+		// The version installs get is the locked one; the range floor only without a lockfile.
+		v := cmp.Or(d.Locked, d.Version)
+		if d.Name == "" || v == "" {
 			return nil
 		}
-		return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoNpm}, Version: d.Version}}
+		return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoNpm}, Version: v}}
 	case "github-actions":
 		u, err := url.Parse(d.Source)
 		if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {

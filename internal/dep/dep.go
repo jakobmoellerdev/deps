@@ -47,6 +47,11 @@ type Dep struct {
 	Checksum       string          // custom: current sha256/sha512 hex pinned next to the version
 	ChecksumSpan   Span            // custom: checksum token
 	ChecksumSource *ChecksumSource // custom: where the checksum of a new version comes from; nil = none
+
+	// npm dependency sections only; rangeStrategy applies to deps with a Range.
+	Range      string // the range as written in package.json (^1.2.3); Version is its bare version
+	Locked     string // version the lock root's package-lock.json resolves the dep to; "" = none
+	LockUnread bool   // the lock root has a lockfile deps does not read (pnpm-lock.yaml, yarn.lock, package-lock.json v1)
 }
 
 // ChecksumSource locates the checksum of a version. Asset and URL/File are templates in which
@@ -87,13 +92,20 @@ type Update struct {
 	// (config.AutomergeStrategies); a PR automerges only when all of its updates do.
 	Automerge         bool
 	AutomergeStrategy string
+	// Lockfile marks a lockfile-only update (rangeStrategy update-lockfile): the range admits
+	// NewVersion, so the manifest stays unchanged and only the lockfile moves from Dep.Locked.
+	Lockfile bool
 }
 
 // FromTo renders the old and new version; digest-pinned sides are `<version>@<digest7>`
 // (except gomod: its only digests are those of pseudo-versions, which end in their commit),
-// and a new module path is rendered `<path>@<version>`.
+// and a new module path is rendered `<path>@<version>`. A lockfile-only update starts at the
+// locked version.
 func (u Update) FromTo() (from, to string) {
 	from, to = u.Dep.Version, u.NewVersion
+	if u.Lockfile {
+		from = u.Dep.Locked
+	}
 	if u.Dep.Digest != "" {
 		from += "@" + ShortDigest(u.Dep.Digest)
 	}

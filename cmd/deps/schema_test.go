@@ -105,6 +105,8 @@ func TestSchema(t *testing.T) {
 		{"custom.datasource", datasourceEnum(t, "custom.datasource", custom.Properties["datasource"]), config.DatasourceNames},
 		{"customDatasources.format", customDS.Properties["format"], customds.Formats},
 		{"rebaseWhen", s.Properties["rebaseWhen"], config.RebaseWhens},
+		{"rangeStrategy", s.Properties["rangeStrategy"], config.RangeStrategies},
+		{"rules.rangeStrategy", rule.Properties["rangeStrategy"], config.RangeStrategies},
 	}
 	for _, e := range enums {
 		if got := strs(e.got.Enum); !slices.Equal(got, e.want) {
@@ -126,7 +128,7 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%s pattern %q is too loose", name, n.Pattern)
 		}
 	}
-	if want := []string{"version", "pin", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "actions", "gomodUpdateImportPaths", "minimumReleaseAge", "ignorePaths",
+	if want := []string{"version", "pin", "rangeStrategy", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "actions", "gomodUpdateImportPaths", "minimumReleaseAge", "ignorePaths",
 		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType",
 		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "rules", "custom", "customDatasources"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
@@ -150,7 +152,7 @@ func TestSchema(t *testing.T) {
 	if !slices.Equal(custom.Required, []string{"files"}) || rule.Required != nil || s.Required != nil {
 		t.Errorf("required: root %v rule %v custom %v", s.Required, rule.Required, custom.Required)
 	}
-	if s.Properties["pin"].Default != "keep" || s.Properties["security"].Default != true || custom.Properties["versioning"].Default != "semver" ||
+	if s.Properties["pin"].Default != "keep" || s.Properties["rangeStrategy"].Default != config.RangeAuto || s.Properties["security"].Default != true || custom.Properties["versioning"].Default != "semver" ||
 		s.Properties["separateMajorMinor"].Default != true || s.Properties["separateMultipleMajor"].Default != false ||
 		s.Properties["separateMinorPatch"].Default != false || s.Properties["updateNotScheduled"].Default != true ||
 		s.Properties["automerge"].Default != false || s.Properties["automergeStrategy"].Default != "auto" ||

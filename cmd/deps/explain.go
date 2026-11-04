@@ -119,6 +119,15 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 	if d.Digest != "" {
 		cur += "@" + dep.ShortDigest(d.Digest)
 	}
+	if d.Range != "" && d.Range != d.Version {
+		cur = d.Range
+	}
+	switch {
+	case d.Locked != "":
+		cur += " (locked " + d.Locked + ")"
+	case d.LockUnread:
+		cur += " (lockfile not read)"
+	}
 	line("current", "%s", orDash(cur))
 	if d.Skip != "" && t.Policy.Updates == nil { // skipped by the manager: no policy was evaluated
 		line("result", "skipped: %s", d.Skip)
@@ -186,6 +195,9 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 		if u.Bucket != "" {
 			bucket = ", bucket " + u.Bucket
 		}
+		if u.Lockfile {
+			bucket += ", lockfile"
+		}
 		line("result", "update %s -> %s (%s%s)", from, to, u.Type, bucket)
 		for _, a := range u.Advisories {
 			line("security", "%s", strings.Join(nonEmpty(a.ID, a.Summary, a.URL), "  "))
@@ -243,6 +255,9 @@ func describeRule(r config.Rule) string {
 	if r.Versioning != "" {
 		add("versioning", r.Versioning)
 	}
+	if r.RangeStrategy != "" {
+		add("rangeStrategy", r.RangeStrategy)
+	}
 	for _, b := range []struct {
 		k string
 		v *bool
@@ -282,6 +297,9 @@ func describePolicy(p config.Policy) string {
 		p.Pin, allow, orDash(strings.Join(updates, ",")), orDash(p.Group), p.Schedule.String(), minAge)
 	if p.Versioning != "" {
 		s += " versioning=" + p.Versioning
+	}
+	if p.RangeStrategy != "" && p.RangeStrategy != config.RangeAuto {
+		s += " rangeStrategy=" + p.RangeStrategy
 	}
 	if p.Automerge {
 		s += " automerge=" + p.AutomergeStrategy

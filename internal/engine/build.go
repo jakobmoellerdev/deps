@@ -47,6 +47,14 @@ type PostProcessor interface {
 	Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error)
 }
 
+// LockfileUpdater is implemented by post-processors that also apply lockfile-only updates
+// (dep.Update.Lockfile): the manifest keeps its range and only the lockfile moves to the new
+// version. ProcessLocked is Process plus those updates, by manifest path relative to dir;
+// their manifests are in manifests unchanged.
+type LockfileUpdater interface {
+	ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error)
+}
+
 // postSem bounds concurrent post-processor runs (go mod tidy, npm install) across all Build
 // calls.
 var postSem = make(chan struct{}, 4)
@@ -55,6 +63,7 @@ var postSem = make(chan struct{}, 4)
 type fileBuild struct {
 	changes []FileChange // changes[0] is the file itself
 	post    string       // manager whose post-processor derives files from it; "" = none
+	locks   []dep.Update // lockfile-only updates, left to the post-processor
 	err     error        // patch failure
 	dropped bool         // its post-processing scope failed
 }
@@ -128,7 +137,11 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 		if b.err != nil {
 			errKeyed = append(errKeyed, keyed{i, fmt.Errorf("%s: %w", files[i], b.err)})
 		} else if !b.dropped {
-			out = append(out, b.changes...)
+			for _, c := range b.changes {
+				if !bytes.Equal(c.Old, c.New) { // a manifest with only lockfile-only updates
+					out = append(out, c)
+				}
+			}
 		}
 	}
 	for _, s := range scopes {
@@ -233,6 +246,13 @@ func buildFile(ctx context.Context, root, file string, managers map[string]manag
 		return nil
 	}
 	for _, u := range ups {
+		if u.Lockfile {
+			if err := setPost(u.Dep.Manager); err != nil {
+				return fileBuild{err: err}
+			}
+			b.locks = append(b.locks, u)
+			continue
+		}
 		m := managers[u.Dep.Manager]
 		if m == nil {
 			return fileBuild{err: fmt.Errorf("unknown manager %q", u.Dep.Manager)}
@@ -281,6 +301,10 @@ func groupScopes(ctx context.Context, root string, files []string, builds []file
 		}
 		dir, ok := post[b.post].Scope(root, files[i])
 		if !ok {
+			if len(b.locks) > 0 {
+				builds[i].err = fmt.Errorf("lockfile-only update of %s without a lockfile", b.locks[0].Dep.Name)
+				continue
+			}
 			slog.DebugContext(ctx, "no post-processing scope", "file", files[i], "manager", b.post)
 			continue
 		}
@@ -317,6 +341,7 @@ func (s *postScope) run(ctx context.Context, root string, files []string, builds
 func (s *postScope) process(ctx context.Context, root string, files []string, builds []fileBuild, p PostProcessor) ([]FileChange, error) {
 	manifests := make(map[string][]byte, len(s.files))
 	rels := make([]string, len(s.files))
+	var locks map[string][]dep.Update
 	for j, i := range s.files {
 		rel := files[i]
 		if s.dir != "." {
@@ -327,6 +352,16 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 		}
 		rels[j] = rel
 		manifests[rel] = builds[i].changes[0].New
+		if len(builds[i].locks) > 0 {
+			if locks == nil {
+				locks = map[string][]dep.Update{}
+			}
+			locks[rel] = builds[i].locks
+		}
+	}
+	lu, _ := p.(LockfileUpdater)
+	if locks != nil && lu == nil {
+		return nil, fmt.Errorf("the %s post-processor cannot apply lockfile-only updates", s.manager)
 	}
 	names := p.Siblings()
 	sibs := make([]sibling, len(names))
@@ -354,7 +389,14 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 		return nil, ctx.Err()
 	}
 	start := time.Now()
-	out, err := p.Process(ctx, filepath.Join(root, filepath.FromSlash(s.dir)), manifests, contents)
+	abs := filepath.Join(root, filepath.FromSlash(s.dir))
+	var out map[string][]byte
+	var err error
+	if locks != nil {
+		out, err = lu.ProcessLocked(ctx, abs, manifests, contents, locks)
+	} else {
+		out, err = p.Process(ctx, abs, manifests, contents)
+	}
 	<-postSem
 	if err != nil {
 		return nil, err
