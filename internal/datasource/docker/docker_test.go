@@ -2,21 +2,21 @@ package dockerds
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"io"
-	"log"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/registry"
-	"github.com/google/go-containerregistry/pkg/v1/random"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/oras-project/oras-go/v3/registry/remote/credentials"
+	"github.com/oras-project/oras-go/v3/registry/remote/properties"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
@@ -25,6 +25,7 @@ import (
 // (a multi-platform index). Requests are counted per "METHOD path".
 type fixture struct {
 	srv           *httptest.Server
+	reg           *memRegistry
 	host          string
 	imageDigest   string // of 1.0
 	indexDigest   string // of 2.0
@@ -38,8 +39,7 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	f := &fixture{hits: map[string]int{}}
-	reg := registry.New(registry.Logger(log.New(io.Discard, "", 0)))
+	f := &fixture{hits: map[string]int{}, reg: newMemRegistry()}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.hits[r.Method+" "+r.URL.Path]++
@@ -62,36 +62,21 @@ func newFixture(t *testing.T) *fixture {
 		case manifest && r.Method == http.MethodHead && strip:
 			w = stripWriter{w}
 		}
-		reg.ServeHTTP(w, r)
+		f.reg.ServeHTTP(w, r)
 	}))
 	t.Cleanup(f.srv.Close)
 	f.host = strings.TrimPrefix(f.srv.URL, "http://")
 
-	repo, err := name.NewRepository(f.host + "/img")
-	if err != nil {
-		t.Fatal(err)
-	}
-	img, err := random.Image(64, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tag := range []string{"1.0", "latest"} {
-		if err := remote.Write(repo.Tag(tag), img); err != nil {
-			t.Fatal(err)
-		}
-	}
-	idx, err := random.Index(64, 1, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := remote.WriteIndex(repo.Tag("2.0"), idx); err != nil {
-		t.Fatal(err)
-	}
-	d, _ := img.Digest()
-	f.imageDigest = d.String()
-	d, _ = idx.Digest()
-	f.indexDigest = d.String()
-	f.hits = map[string]int{}
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	img := f.reg.image(t, created, nil)
+	f.reg.tag("img", "1.0", img)
+	f.reg.tag("img", "latest", img)
+	idx := f.reg.index(t,
+		withPlatform(f.reg.image(t, created.Add(time.Hour), nil), "linux", "amd64"),
+		withPlatform(f.reg.image(t, created.Add(2*time.Hour), nil), "linux", "arm64"))
+	f.reg.tag("img", "2.0", idx)
+	f.imageDigest = img.Digest.String()
+	f.indexDigest = idx.Digest.String()
 	return f
 }
 
@@ -115,7 +100,9 @@ func (s stripWriter) WriteHeader(code int) {
 }
 
 // anon resolves every registry to anonymous access.
-var anon = authn.NewMultiKeychain()
+func anon(context.Context, properties.Resource) (credentials.Credential, error) {
+	return credentials.EmptyCredential, nil
+}
 
 func TestReleasesAndDigest(t *testing.T) {
 	f := newFixture(t)
@@ -157,9 +144,6 @@ func TestReleasesAndDigest(t *testing.T) {
 	if n := f.count("HEAD /v2/img/manifests/2.0"); n != 1 {
 		t.Errorf("HEAD 2.0 requests = %d, want 1 (deduped)", n)
 	}
-	if n := f.count("GET /v2/"); n != 1 {
-		t.Errorf("ping requests = %d, want 1 (shared puller)", n)
-	}
 	if _, err := s.Digest(t.Context(), d, "9.9"); err == nil || err.Error() != "tag 9.9 not found upstream" {
 		t.Errorf("Digest(9.9) err = %v", err)
 	}
@@ -189,8 +173,8 @@ func TestErrors(t *testing.T) {
 	}
 }
 
-// TestNoRegistryRetry checks go-containerregistry sends each request once (the shared httpx
-// transport owns retries); its default would retry the 503 with seconds of backoff.
+// TestNoRegistryRetry checks the registry client sends each request once: the shared httpx
+// transport owns retries.
 func TestNoRegistryRetry(t *testing.T) {
 	var lists atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -211,10 +195,30 @@ func TestNoRegistryRetry(t *testing.T) {
 	}
 }
 
-func TestKeychain(t *testing.T) {
+// TestLargeTagList checks a single tags/list page above oras-go's 4 MiB default is read whole,
+// as gcr.io returns one ~10 MB page for large repositories.
+func TestLargeTagList(t *testing.T) {
+	const n = 200000
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tags := make([]string, n)
+		for i := range tags {
+			tags[i] = fmt.Sprintf("1.0.%d-%s", i, strings.Repeat("x", 20))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "img", "tags": tags})
+	}))
+	t.Cleanup(srv.Close)
+	host := strings.TrimPrefix(srv.URL, "http://")
+	rels, err := newSource(srv.Client(), nil, anon).Releases(t.Context(), dep.Dep{Name: host + "/img"}, "")
+	if err != nil || len(rels) != n {
+		t.Fatalf("Releases = %d tags, %v; want %d", len(rels), err, n)
+	}
+}
+
+func TestCredentials(t *testing.T) {
 	f := newFixture(t)
 	f.set(func() { f.user, f.pass = "u", "p" })
-	s := newSource(f.srv.Client(), nil, staticKeychain{f.host, authn.FromConfig(authn.AuthConfig{Username: "u", Password: "p"})})
+	cred := credentials.StaticCredentialFunc(f.host, credentials.Credential{Username: "u", Password: "p"})
+	s := newSource(f.srv.Client(), nil, cred)
 	rels, err := s.Releases(t.Context(), dep.Dep{Name: f.host + "/img"}, "")
 	if err != nil || len(rels) != 3 {
 		t.Fatalf("Releases = %v, %v", rels, err)
@@ -222,18 +226,6 @@ func TestKeychain(t *testing.T) {
 	if got, err := s.Digest(t.Context(), dep.Dep{Name: f.host + "/img"}, "1.0"); err != nil || got != f.imageDigest {
 		t.Errorf("Digest = %q, %v", got, err)
 	}
-}
-
-type staticKeychain struct {
-	host string
-	auth authn.Authenticator
-}
-
-func (k staticKeychain) Resolve(r authn.Resource) (authn.Authenticator, error) {
-	if r.RegistryStr() == k.host {
-		return k.auth, nil
-	}
-	return authn.Anonymous, nil
 }
 
 func TestDigestGetFallback(t *testing.T) {
@@ -300,17 +292,52 @@ func TestNew(t *testing.T) {
 			t.Errorf("Releases = %v, %v", rels, err)
 		}
 	}
+
+	// credentials from the Docker config
+	dir := t.TempDir()
+	t.Setenv("DOCKER_CONFIG", dir)
+	cfg := `{"auths":{"` + f.host + `":{"auth":"dTpw"}}}` // base64("u:p")
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.set(func() { f.user, f.pass = "u", "p" })
+	if rels, err := New(f.srv.Client(), nil).Releases(t.Context(), dep.Dep{Name: f.host + "/img"}, ""); err != nil || len(rels) != 3 {
+		t.Errorf("with docker config: Releases = %v, %v", rels, err)
+	}
+
+	// an unreadable config fails authenticated lookups with its error
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(f.srv.Client(), nil).Releases(t.Context(), dep.Dep{Name: f.host + "/img"}, ""); err == nil || !strings.Contains(err.Error(), "docker config: ") {
+		t.Errorf("broken docker config: err = %v", err)
+	}
 }
 
-func TestPullerFor(t *testing.T) {
+func TestRepository(t *testing.T) {
 	s := newSource(nil, nil, anon)
-	for ref, hub := range map[string]bool{"alpine": true, "docker.io/library/alpine": true, "ghcr.io/o/i": false, "127.0.0.1:5000/x": false} {
-		repo, err := repository(dep.Dep{Name: ref})
+	for ref, want := range map[string]struct {
+		pageSize int
+		plain    bool
+	}{
+		"alpine":                   {hubPageSize, false},
+		"docker.io/library/alpine": {hubPageSize, false},
+		"ghcr.io/o/i":              {0, false},
+		"127.0.0.1:5000/x":         {0, true},
+		"localhost:5000/x":         {0, true},
+		"10.1.2.3/x":               {0, true},
+		"[::1]:5000/x":             {0, true},
+	} {
+		name, err := repoName(dep.Dep{Name: ref})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := s.pullerFor(repo) == s.hub; got != hub {
-			t.Errorf("%s: hub puller = %v, want %v", ref, got, hub)
+		repo, err := s.repository(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repo.TagListPageSize != want.pageSize || repo.Registry.PlainHTTP != want.plain {
+			t.Errorf("%s: page size %d, plain HTTP %v; want %d, %v", ref, repo.TagListPageSize, repo.Registry.PlainHTTP, want.pageSize, want.plain)
 		}
 	}
 }

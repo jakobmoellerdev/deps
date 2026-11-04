@@ -5,66 +5,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/empty"
-	"github.com/google/go-containerregistry/pkg/v1/mutate"
-	"github.com/google/go-containerregistry/pkg/v1/random"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/google/go-containerregistry/pkg/v1/types"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-// configImage returns a random image whose config has created and the source label.
-func configImage(t *testing.T, created time.Time, source string) v1.Image {
-	t.Helper()
-	img, err := random.Image(64, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cf, err := img.ConfigFile()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cf = cf.DeepCopy()
-	cf.Created = v1.Time{Time: created}
-	if source != "" {
-		cf.Config.Labels = map[string]string{sourceLabel: source}
-	}
-	if img, err = mutate.ConfigFile(img, cf); err != nil {
-		t.Fatal(err)
-	}
-	return img
-}
-
 func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	f := newFixture(t)
-	repo, err := name.NewRepository(f.host + "/img")
-	if err != nil {
-		t.Fatal(err)
-	}
 	imgTime := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
-	if err := remote.Write(repo.Tag("3.0"), configImage(t, imgTime, "https://github.com/o/img")); err != nil {
-		t.Fatal(err)
-	}
+	f.reg.tag("img", "3.0", f.reg.image(t, imgTime, map[string]string{sourceLabel: "https://github.com/o/img"}))
 	// An index whose first entry is an attestation manifest (platform unknown/unknown).
-	att := configImage(t, time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC), "attestation")
-	amd := configImage(t, imgTime.Add(time.Hour), "")
-	idx := mutate.AppendManifests(mutate.IndexMediaType(empty.Index, types.OCIImageIndex),
-		mutate.IndexAddendum{Add: att, MediaType: types.OCIManifestSchema1, Platform: &v1.Platform{OS: "unknown", Architecture: "unknown"}},
-		mutate.IndexAddendum{Add: amd, MediaType: types.OCIManifestSchema1, Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}},
-	)
-	if err := remote.WriteIndex(repo.Tag("4.0"), idx); err != nil {
-		t.Fatal(err)
-	}
-	onlyAtt := mutate.AppendManifests(empty.Index,
-		mutate.IndexAddendum{Add: att, MediaType: types.OCIManifestSchema1, Platform: &v1.Platform{OS: "unknown", Architecture: "unknown"}})
-	if err := remote.WriteIndex(repo.Tag("5.0"), onlyAtt); err != nil {
-		t.Fatal(err)
-	}
-	f.set(func() { f.hits = map[string]int{} })
+	att := withPlatform(f.reg.image(t, time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC), map[string]string{sourceLabel: "attestation"}), "unknown", "unknown")
+	amd := withPlatform(f.reg.image(t, imgTime.Add(time.Hour), nil), "linux", "amd64")
+	f.reg.tag("img", "4.0", f.reg.index(t, att, amd))
+	f.reg.tag("img", "5.0", f.reg.index(t, att))
 
 	s := newSource(f.srv.Client(), make(chan struct{}, 1), anon)
 	var (
