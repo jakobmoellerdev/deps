@@ -2,9 +2,11 @@
 //
 // Tags come from the registry's tags/list endpoint (all pages up to a bound, tagPageCap),
 // digests from a HEAD of the tag's manifest; for multi-platform images that is the index digest,
-// which is what a pinned `image:tag@sha256:…` reference needs. Credentials come from the Docker
-// config and credential helpers. One auth client with a shared token cache serves every
-// repository, so each token exchange happens once per run and scope.
+// which is what a pinned `image:tag@sha256:…` reference needs. gcr.io and Artifact Registry list
+// each tag's digest and times along with it, which then answer Digest and ReleaseTime without
+// further requests. Credentials come from the Docker config and credential helpers. One auth
+// client with a shared token cache serves every repository, so each token exchange happens once
+// per run and scope.
 package dockerds
 
 import (
@@ -18,6 +20,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -52,7 +55,9 @@ type Source struct {
 
 type tagsEntry struct {
 	once sync.Once
+	done atomic.Bool // set once rels, meta and err are final
 	rels []datasource.Release
+	meta map[string]tagMeta // tag → listed digest and time; nil unless the registry lists them
 	err  error
 }
 
@@ -139,7 +144,8 @@ const hubRegistry = "docker.io"
 
 // maxMetadataBytes bounds a tags/list page or manifest. oras-go's 4 MiB default is too small for
 // gcr.io, which ignores n and returns every tag with a digest map in one page
-// (gcr.io/distroless/static: 29769 tags, 9.9 MB).
+// (gcr.io/distroless/static: 29769 tags, 9.9 MB). Pages are stream-decoded, so the bound is on
+// the bytes read, not on memory held.
 const maxMetadataBytes = 64 << 20
 
 func newSource(client *http.Client, sem chan struct{}, cred credentials.CredentialFunc) *Source {
@@ -203,9 +209,9 @@ func plainHTTP(registry string) bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
 }
 
-// Releases lists every tag of the image (d.Source, or d.Name when Source is empty) without
-// digests; the engine asks Digest for the versions it pins. The slice is shared between callers
-// and must not be modified.
+// Releases lists every tag of the image (d.Source, or d.Name when Source is empty). Only tags
+// from a registry that lists digests (gcr.io, Artifact Registry) carry one; the engine asks
+// Digest for the others it pins. The slice is shared between callers and must not be modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
 	name, err := repoName(d)
 	if err != nil {
@@ -218,13 +224,36 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 		s.tags[name] = e
 	}
 	s.mu.Unlock()
-	e.once.Do(func() { e.rels, e.err = s.list(ctx, name) })
+	e.once.Do(func() {
+		e.rels, e.meta, e.err = s.list(ctx, name)
+		e.done.Store(true)
+	})
 	return e.rels, e.err
 }
 
+// listed returns what the finished tag listing of d's repository says about tag version; zero
+// when the registry lists no digests and times, the listing has not finished, or it lacks the
+// tag. It never lists itself: the engine resolves non-version tags (latest) without a listing.
+func (s *Source) listed(d dep.Dep, version string) tagMeta {
+	name, err := repoName(d)
+	if err != nil {
+		return tagMeta{}
+	}
+	s.mu.Lock()
+	e := s.tags[name]
+	s.mu.Unlock()
+	if e == nil || !e.done.Load() {
+		return tagMeta{}
+	}
+	return e.meta[version]
+}
+
 // Digest returns the manifest digest ("sha256:…") of tag version: the index digest for
-// multi-platform images.
+// multi-platform images. A digest from the tag listing answers without a request.
 func (s *Source) Digest(ctx context.Context, d dep.Dep, version string) (string, error) {
+	if m := s.listed(d, version); m.digest != "" {
+		return m.digest, nil
+	}
 	name, err := repoName(d)
 	if err != nil {
 		return "", err
@@ -246,15 +275,20 @@ func (s *Source) digest(ctx context.Context, name, tag string) (string, error) {
 	return e.digest, e.err
 }
 
-// ReleaseTime implements datasource.Timer with the `created` time of the image config of tag
-// version (for an index: of its first platform image); zero when the config has none.
+// ReleaseTime implements datasource.Timer with the time the tag listing gives (gcr.io,
+// Artifact Registry; see tagTime), else the `created` time of the image config of tag version
+// (for an index: of its first platform image); zero when neither has one.
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
+	if m := s.listed(d, version); !m.time.IsZero() {
+		return m.time, nil
+	}
 	e := s.config(ctx, d, version)
 	return e.created, e.err
 }
 
 // SourceRepo implements datasource.SourceRepo with the image's
-// `org.opencontainers.image.source` label, from the same config fetch as ReleaseTime.
+// `org.opencontainers.image.source` label, from the same config fetch as ReleaseTime (which the
+// tag listing does not replace here: it has no labels).
 func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error) {
 	e := s.config(ctx, d, version)
 	return e.source, e.err
@@ -395,33 +429,33 @@ func firstImage(b []byte) (ocispec.Descriptor, error) {
 	return ocispec.Descriptor{}, errors.New("index has no platform image")
 }
 
-func (s *Source) list(ctx context.Context, name string) (rels []datasource.Release, err error) {
+func (s *Source) list(ctx context.Context, name string) (rels []datasource.Release, meta map[string]tagMeta, err error) {
 	start := time.Now()
 	defer func() {
-		slog.DebugContext(ctx, "image tags listed", "repo", name, "tags", len(rels), "duration", time.Since(start), "err", err)
+		slog.DebugContext(ctx, "image tags listed", "repo", name, "tags", len(rels), "listed", len(meta), "duration", time.Since(start), "err", err)
 	}()
 	if err := s.acquire(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer s.release()
 	repo, err := s.repository(name)
 	if err != nil {
-		return nil, fmt.Errorf("list tags %s: %w", name, err)
+		return nil, nil, fmt.Errorf("list tags %s: %w", name, err)
 	}
-	err = repo.Tags(ctx, "", func(tags []string) error {
-		for _, t := range tags {
-			rels = append(rels, datasource.Release{Version: t})
-		}
-		return nil
+	meta, err = s.listTags(ctx, repo, func(t string) {
+		rels = append(rels, datasource.Release{Version: t})
 	})
 	if errors.Is(err, errdef.ErrTooManyPages) {
 		slog.WarnContext(ctx, "image tag listing truncated", "repo", name, "pages", repo.TagListMaxPages, "tags", len(rels))
 		err = nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("list tags %s: %w", name, err)
+		return nil, nil, fmt.Errorf("list tags %s: %w", name, err)
 	}
-	return rels, nil
+	for i := range rels {
+		rels[i].Digest = meta[rels[i].Version].digest
+	}
+	return rels, meta, nil
 }
 
 // head resolves the digest with a HEAD request. A registry that omits the digest header gets a
