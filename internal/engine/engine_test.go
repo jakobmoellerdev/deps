@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
@@ -588,5 +589,48 @@ func TestResolveAndBuildNpm(t *testing.T) {
 	changes, errs = Build(t.Context(), root, o.Managers, updates, nil)
 	if len(errs) > 0 || len(changes) != 1 || string(changes[0].New) != wantPkg {
 		t.Errorf("plan changes = %+v, %v", changes, errs)
+	}
+}
+
+// skipping skips "b" with a *datasource.SkipError and lists v1.1.0 for any other dep.
+type skipping struct{}
+
+func (skipping) Releases(_ context.Context, d dep.Dep, _ string) ([]Release, error) {
+	if d.Name == "b" {
+		return nil, fmt.Errorf("wrapped: %w", &datasource.SkipError{Reason: "unknown registry corp"})
+	}
+	return []Release{{Version: "v1.1.0"}}, nil
+}
+
+func (skipping) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }
+
+// A datasource's SkipError skips the dep instead of failing it.
+func TestDatasourceSkip(t *testing.T) {
+	deps := []dep.Dep{
+		{Datasource: "s", Versioning: "semver", Name: "a", Version: "v1.0.0", Line: 1},
+		{Datasource: "s", Versioning: "semver", Name: "b", Version: "v1.0.0", Line: 1},
+	}
+	var traces []Trace
+	root, cfg := setup(t, "", map[string]string{"stub.txt": "x\n"})
+	res, err := Resolve(t.Context(), root, cfg, env, Options{
+		Managers:    []manager.Manager{stubManager{name: "stub", deps: deps}},
+		Datasources: map[string]Datasource{"s": skipping{}},
+		Trace:       func(x Trace) { traces = append(traces, x) },
+	})
+	if err != nil || len(res.Errors) > 0 {
+		t.Fatalf("err = %v, errors = %v", err, res.Errors)
+	}
+	if len(res.Updates) != 1 || res.Updates[0].Dep.Name != "a" {
+		t.Errorf("updates = %+v", res.Updates)
+	}
+	const reason = "unknown registry corp"
+	if len(res.Skipped) != 1 || res.Skipped[0].Name != "b" || res.Skipped[0].Skip != reason {
+		t.Errorf("skipped = %+v", res.Skipped)
+	}
+	if len(res.Deps) != 2 || res.Deps[0].Skip != "" || res.Deps[1].Skip != reason {
+		t.Errorf("deps = %+v", res.Deps)
+	}
+	if len(traces) != 2 || traces[1].Err != nil || traces[1].Dep.Skip != reason {
+		t.Errorf("traces = %+v", traces)
 	}
 }

@@ -179,6 +179,7 @@ func cleanEnv(t *testing.T) {
 	}
 	t.Setenv("GOPROXY", "https://proxy.test")
 	t.Setenv("GOFLAGS", "")
+	t.Setenv("CARGO_HOME", t.TempDir())
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_AUTHOR_NAME", "t")
@@ -341,7 +342,7 @@ func TestPlanCargo(t *testing.T) {
 	newFakeNet(t)
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"Cargo.toml": "[dependencies]\nserde = { version = \"1.0.100\", features = [\"derive\"] }\n\n[dev-dependencies]\nrand = \"0.8\"\nlocal = { path = \"../x\" }\n",
+		"Cargo.toml": "[dependencies]\nserde = { version = \"1.0.100\", features = [\"derive\"] }\n\n[dev-dependencies]\nrand = \"0.8\"\nlocal = { path = \"../x\" }\ncorp = { version = \"1.0.0\", registry = \"corp\" }\n",
 		"Cargo.lock": "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.100\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n",
 	})
 	stdout, stderr, code := execute(t, "plan", "-v", "--dir", dir)
@@ -355,8 +356,9 @@ func TestPlanCargo(t *testing.T) {
 		"update  Cargo.toml:2  serde  1.0.100 -> 1.0.228  (patch, lockfile)\n", // in range: Cargo.lock only
 		"update  Cargo.toml:5  rand  0.8 -> 0.9  (major)\n",                    // 0.8 -> 0.9 breaks in Cargo
 		"skip    Cargo.toml:6  local  path dependency\n",
+		"skip    Cargo.toml:7  corp  unknown registry corp\n", // no [registries.corp] index anywhere
 		"note    Cargo.lock changes are computed by apply/run\n",
-		"2 updates in 1 files, 1 skipped, 0 errors\n",
+		"2 updates in 1 files, 2 skipped, 0 errors\n",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)

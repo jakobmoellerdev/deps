@@ -38,6 +38,7 @@ const (
 type Source struct {
 	client     *http.Client
 	sem        chan struct{}
+	auth       *httpx.Auth // credentials for registry hosts without a Cargo token; nil = none
 	getenv     func(string) string
 	index, api string // crates.io sparse index and web API
 
@@ -66,10 +67,11 @@ type repoEntry struct {
 	err  error
 }
 
-// New returns the crate datasource. sem bounds concurrent requests (nil = unbounded); getenv
-// supplies DEPS_CRATES_INDEX_URL, DEPS_CRATES_API_URL, CARGO_HOME and the
+// New returns the crate datasource. sem bounds concurrent requests (nil = unbounded); auth
+// supplies the static token and git credential helper for registries without a Cargo token
+// (nil = none); getenv supplies DEPS_CRATES_INDEX_URL, DEPS_CRATES_API_URL, CARGO_HOME and the
 // CARGO_REGISTRIES_<NAME>_INDEX/_TOKEN variables.
-func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
+func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, getenv func(string) string) *Source {
 	index, api := DefaultIndexURL, DefaultAPIURL
 	if v := getenv("DEPS_CRATES_INDEX_URL"); v != "" {
 		index = v
@@ -78,7 +80,7 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 		api = v
 	}
 	return &Source{
-		client: client, sem: sem, getenv: getenv,
+		client: client, sem: sem, auth: auth, getenv: getenv,
 		index: strings.TrimSuffix(index, "/"), api: strings.TrimSuffix(api, "/"),
 		crates: make(map[string]*entry), repos: make(map[string]*repoEntry),
 		registries: make(map[string]*registry), configs: make(map[string]*configEntry), located: make(map[string]*registry),
@@ -150,7 +152,7 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (str
 		s.repos[key] = re
 	}
 	s.mu.Unlock()
-	re.once.Do(func() { re.repo, re.err = s.fetchRepo(ctx, api, r.token, d.Name, version) })
+	re.once.Do(func() { re.repo, re.err = s.fetchRepo(ctx, r, api, d.Name, version) })
 	return re.repo, re.err
 }
 
@@ -316,9 +318,9 @@ func newer(a, b string) bool {
 	return false
 }
 
-func (s *Source) fetchRepo(ctx context.Context, api, token, name, version string) (string, error) {
+func (s *Source) fetchRepo(ctx context.Context, r *registry, api, name, version string) (string, error) {
 	u := api + "/api/v1/crates/" + url.PathEscape(name) + "/" + url.PathEscape(version)
-	body, err := s.get(ctx, u, token)
+	body, err := s.get(ctx, r, u)
 	if errors.Is(err, errNotFound) {
 		return "", nil
 	}
@@ -339,9 +341,12 @@ func (s *Source) fetchRepo(ctx context.Context, api, token, name, version string
 
 var errNotFound = errors.New("not found")
 
-// get sends a GET holding a semaphore slot until the body is closed. 404 and 410 (the sparse
-// index's answer for unknown crates) are errNotFound.
-func (s *Source) get(ctx context.Context, u, token string) (io.ReadCloser, error) {
+// get sends a GET holding a semaphore slot until the body is closed. A request to r's index
+// host carries r's Cargo token as `Authorization` (as Cargo sends it); without a token, the
+// static token for the host as Basic auth, and after a 401 the git credential helper's. Other
+// hosts (a config.json `api` elsewhere) get no credentials. 404 and 410 (the sparse index's
+// answer for unknown crates) are errNotFound.
+func (s *Source) get(ctx context.Context, r *registry, u string) (io.ReadCloser, error) {
 	if s.sem != nil {
 		select {
 		case s.sem <- struct{}{}:
@@ -354,31 +359,51 @@ func (s *Source) get(ctx context.Context, u, token string) (io.ReadCloser, error
 			<-s.sem
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
-	if err != nil {
+	var user, pass string // the git credential helper's, after a 401
+	for helped := false; ; {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		req.Header.Set("User-Agent", httpx.UserAgent())
+		own := r.owns(req.URL)
+		switch {
+		case !own:
+		case r.token != "":
+			req.Header.Set("Authorization", r.token) // Cargo sends registry tokens as is
+		case helped:
+			req.SetBasicAuth(user, pass)
+		default:
+			if su, sp, ok := s.auth.Static(req.URL.Hostname()); ok {
+				req.SetBasicAuth(su, sp)
+			}
+		}
+		resp, err := s.client.Do(req)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			return releaseOnClose{resp.Body, release}, nil
+		case http.StatusUnauthorized:
+			if own && r.token == "" && !helped {
+				if user, pass, helped = s.auth.Helper(ctx, req.URL.Host); helped {
+					resp.Body.Close()
+					continue
+				}
+			}
+			err = fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
+		case http.StatusNotFound, http.StatusGone:
+			err = errNotFound
+		default:
+			err = fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
+		}
+		resp.Body.Close()
 		release()
 		return nil, err
 	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	if token != "" {
-		req.Header.Set("Authorization", token) // Cargo sends registry tokens as is
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		release()
-		return nil, err
-	}
-	switch resp.StatusCode {
-	case http.StatusOK:
-		return releaseOnClose{resp.Body, release}, nil
-	case http.StatusNotFound, http.StatusGone:
-		err = errNotFound
-	default:
-		err = fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
-	}
-	resp.Body.Close()
-	release()
-	return nil, err
 }
 
 type releaseOnClose struct {

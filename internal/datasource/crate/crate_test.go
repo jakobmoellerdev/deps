@@ -62,7 +62,7 @@ func serve(t *testing.T, hits *atomic.Int32) *httptest.Server {
 
 func newSource(srv *httptest.Server) *Source {
 	home := os.TempDir() + "/deps-crate-test-no-cargo-home"
-	return New(srv.Client(), make(chan struct{}, 1), func(k string) string {
+	return New(srv.Client(), make(chan struct{}, 1), nil, func(k string) string {
 		switch k {
 		case "DEPS_CRATES_INDEX_URL":
 			return srv.URL + "/index/"
@@ -222,19 +222,19 @@ func TestErrors(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	blocked := New(srv.Client(), make(chan struct{}), func(string) string { return srv.URL + "/index" })
+	blocked := New(srv.Client(), make(chan struct{}), nil, func(string) string { return srv.URL + "/index" })
 	if _, err := blocked.Releases(ctx, dep.Dep{Name: "serde"}, ""); !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled: %v", err)
 	}
-	unbounded := New(srv.Client(), nil, func(string) string { return "http://127.0.0.1:1" })
+	unbounded := New(srv.Client(), nil, nil, func(string) string { return "http://127.0.0.1:1" })
 	if _, err := unbounded.Releases(t.Context(), dep.Dep{Name: "serde"}, ""); err == nil {
 		t.Error("unreachable index accepted")
 	}
-	bad := New(srv.Client(), nil, func(string) string { return "http://[::1" })
+	bad := New(srv.Client(), nil, nil, func(string) string { return "http://[::1" })
 	if _, err := bad.Releases(t.Context(), dep.Dep{Name: "serde"}, ""); err == nil {
 		t.Error("invalid index URL accepted")
 	}
-	if d := New(srv.Client(), nil, func(string) string { return "" }); d.index != DefaultIndexURL || d.api != DefaultAPIURL {
+	if d := New(srv.Client(), nil, nil, func(string) string { return "" }); d.index != DefaultIndexURL || d.api != DefaultAPIURL {
 		t.Errorf("defaults = %s, %s", d.index, d.api)
 	}
 }

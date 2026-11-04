@@ -153,6 +153,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	res := &Result{Errors: lockErrs}
 	var todo []dep.Dep
 	var pols []*policies
+	var depAt []int // index of todo[i] in res.Deps
 	kindRules := cfg.HasUpdateTypeRules()
 	for i, e := range ex {
 		if e.err != nil {
@@ -205,6 +206,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			todo = append(todo, d)
 			res.Deps = append(res.Deps, d)
 			pols = append(pols, pol)
+			depAt = append(depAt, len(res.Deps)-1)
 		}
 	}
 	slog.InfoContext(ctx, "dependencies extracted", "files", len(jobs), "updatable", len(todo), "skipped", len(res.Skipped), "duration", time.Since(start))
@@ -237,7 +239,10 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			d := todo[i]
 			r := resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now}
 			t, u := r.run(func() []Vuln { return sec.of(secIdx[i]) })
+			var skip *datasource.SkipError
 			switch {
+			case errors.As(t.Err, &skip):
+				t.Err, t.Dep.Skip = nil, skip.Reason
 			case t.Err != nil:
 				t.Err = fmt.Errorf("%s:%d: %s: %w", d.File, d.Line, d.Name, t.Err)
 			case u == nil:
@@ -258,8 +263,12 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		res.Errors = append(res.Errors, fmt.Errorf("security advisories: %w", err))
 	}
 	for i, t := range outs {
-		if t.Err != nil {
+		switch {
+		case t.Err != nil:
 			res.Errors = append(res.Errors, t.Err)
+		case t.Dep.Skip != "":
+			res.Skipped = append(res.Skipped, t.Dep)
+			res.Deps[depAt[i]].Skip = t.Dep.Skip
 		}
 		res.Updates = append(res.Updates, ups[i]...)
 		if pend[i].Version != "" {

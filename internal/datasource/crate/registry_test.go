@@ -1,6 +1,8 @@
 package crate
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -8,9 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
 // The registry configuration follows the Cargo book (github.com/rust-lang/cargo@46a4439
@@ -75,7 +81,7 @@ func TestNamedRegistry(t *testing.T) {
 		"broken/.cargo/config.toml": "[registries\n",
 	})
 	writeFiles(t, home, map[string]string{"credentials.toml": "[registries.my-registry]\ntoken = \"" + bookToken + "\"\n"})
-	s := New(srv.Client(), nil, envOf(map[string]string{"CARGO_HOME": home}))
+	s := New(srv.Client(), nil, nil, envOf(map[string]string{"CARGO_HOME": home}))
 	d := dep.Dep{Name: "some-crate", Source: "my-registry", File: "app/Cargo.toml", Version: "1.0.0"}
 	dir := filepath.Join(root, "app")
 	rels, err := s.Releases(t.Context(), d, dir)
@@ -95,8 +101,9 @@ func TestNamedRegistry(t *testing.T) {
 	if repo, err := s.SourceRepo(t.Context(), other, "1.4"); err != nil || repo != "" {
 		t.Errorf("registry without api: %q, %v", repo, err)
 	}
-	if _, err := s.Releases(t.Context(), dep.Dep{Name: "x", Source: "nowhere", File: "app/Cargo.toml"}, dir); err == nil ||
-		err.Error() != "registry nowhere has no index (set [registries.nowhere] index in .cargo/config.toml or CARGO_REGISTRIES_NOWHERE_INDEX)" {
+	// An unknown name is skipped, not an error (Cargo cannot resolve it either).
+	var skip *datasource.SkipError
+	if _, err := s.Releases(t.Context(), dep.Dep{Name: "x", Source: "nowhere", File: "app/Cargo.toml"}, dir); !errors.As(err, &skip) || skip.Reason != "unknown registry nowhere" || err.Error() != skip.Reason {
 		t.Errorf("unknown registry: %v", err)
 	}
 	if _, err := s.Releases(t.Context(), dep.Dep{Name: "x", Source: "my-registry", File: "broken/Cargo.toml"}, filepath.Join(root, "broken")); err == nil || !strings.Contains(err.Error(), "config.toml: toml: line 1") {
@@ -107,7 +114,7 @@ func TestNamedRegistry(t *testing.T) {
 	}
 
 	// The environment wins over the files, as in Cargo.
-	env := New(srv.Client(), nil, envOf(map[string]string{
+	env := New(srv.Client(), nil, nil, envOf(map[string]string{
 		"CARGO_HOME":                         t.TempDir(),
 		"CARGO_REGISTRIES_MY_REGISTRY_INDEX": "sparse+" + srv.URL + "/reg",
 		"CARGO_REGISTRIES_MY_REGISTRY_TOKEN": bookToken,
@@ -115,21 +122,21 @@ func TestNamedRegistry(t *testing.T) {
 	if rels, err := env.Releases(t.Context(), dep.Dep{Name: "some-crate", Source: "my-registry", File: "Cargo.toml", Version: "1.0.0"}, t.TempDir()); err != nil || len(rels) != 2 {
 		t.Errorf("env registry = %s, %v", versions(rels), err)
 	}
-	noToken := New(srv.Client(), nil, envOf(map[string]string{"CARGO_HOME": t.TempDir(), "CARGO_REGISTRIES_MY_REGISTRY_INDEX": "sparse+" + srv.URL + "/reg"}))
+	noToken := New(srv.Client(), nil, nil, envOf(map[string]string{"CARGO_HOME": t.TempDir(), "CARGO_REGISTRIES_MY_REGISTRY_INDEX": "sparse+" + srv.URL + "/reg"}))
 	if _, err := noToken.Releases(t.Context(), dep.Dep{Name: "some-crate", Source: "my-registry", File: "Cargo.toml"}, t.TempDir()); err == nil || !strings.HasSuffix(err.Error(), "HTTP 401") {
 		t.Errorf("without token: %v", err)
 	}
 	// A token in the config files (registries.md:105-106) works too.
 	cfgToken := t.TempDir()
 	writeFiles(t, cfgToken, map[string]string{".cargo/config.toml": "[registries.my-registry]\nindex = \"sparse+" + srv.URL + "/reg\"\ntoken = \"" + bookToken + "\"\n"})
-	if rels, err := New(srv.Client(), nil, envOf(map[string]string{"CARGO_HOME": t.TempDir()})).Releases(t.Context(), dep.Dep{Name: "some-crate", Source: "my-registry", File: "Cargo.toml", Version: "1.0.0"}, cfgToken); err != nil || len(rels) != 2 {
+	if rels, err := New(srv.Client(), nil, nil, envOf(map[string]string{"CARGO_HOME": t.TempDir()})).Releases(t.Context(), dep.Dep{Name: "some-crate", Source: "my-registry", File: "Cargo.toml", Version: "1.0.0"}, cfgToken); err != nil || len(rels) != 2 {
 		t.Errorf("config token = %s, %v", versions(rels), err)
 	}
 }
 
 func TestRegistryIndexAndReplacement(t *testing.T) {
 	srv := registryServer(t)
-	s := New(srv.Client(), nil, envOf(map[string]string{"CARGO_HOME": t.TempDir()}))
+	s := New(srv.Client(), nil, nil, envOf(map[string]string{"CARGO_HOME": t.TempDir()}))
 	d := dep.Dep{Name: "some-crate", Source: "sparse+" + srv.URL + "/open/", File: "Cargo.toml", Version: "1.0.0"}
 	if rels, err := s.Releases(t.Context(), d, t.TempDir()); err != nil || versions(rels) != "1.0.0 1.4.2" {
 		t.Errorf("registry-index = %s, %v", versions(rels), err)
@@ -186,7 +193,7 @@ func TestGitIndex(t *testing.T) {
 	index := gitIndex(t)
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{".cargo/config.toml": "[registries.corp]\nindex = \"" + index + "\"\n"})
-	s := New(http.DefaultClient, nil, envOf(map[string]string{"CARGO_HOME": t.TempDir()}))
+	s := New(http.DefaultClient, nil, nil, envOf(map[string]string{"CARGO_HOME": t.TempDir()}))
 	d := dep.Dep{Name: "serde", Source: "corp", File: "Cargo.toml", Version: "1.0.171"}
 	rels, err := s.Releases(t.Context(), d, root)
 	if err != nil || len(rels) != 8 {
@@ -209,11 +216,90 @@ func TestGitIndex(t *testing.T) {
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("clone left behind: %v", err)
 	}
-	bad := New(http.DefaultClient, nil, envOf(map[string]string{"CARGO_HOME": t.TempDir()}))
+	bad := New(http.DefaultClient, nil, nil, envOf(map[string]string{"CARGO_HOME": t.TempDir()}))
 	if _, err := bad.Releases(t.Context(), dep.Dep{Name: "serde", Source: "file:///nonexistent/index", File: "Cargo.toml"}, t.TempDir()); err == nil || !strings.HasPrefix(err.Error(), "git index file:///nonexistent/index: ") {
 		t.Errorf("unreachable git index: %v", err)
 	}
 	if err := bad.Close(); err != nil {
 		t.Error(err)
 	}
+}
+
+// Credentials go to the index host only: the Cargo token is not sent to a config.json `api`
+// on another host. Without a token, the platform token (Basic) goes to its host, and after a
+// 401 the git credential helper's credentials.
+func TestRegistryCredentialHosts(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]string{} // host + path -> Authorization
+	handler := func(want string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seen[r.Host+r.URL.Path] = r.Header.Get("Authorization")
+			mu.Unlock()
+			if want != "" && r.Header.Get("Authorization") != want {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			switch r.URL.Path {
+			case "/idx/so/me/some-crate":
+				fmt.Fprintln(w, `{"name":"some-crate","vers":"1.4.2"}`)
+			case "/api/v1/crates/some-crate/1.4.2":
+				fmt.Fprint(w, `{"version":{"repository":"https://git.example/some-crate"}}`)
+			default:
+				http.NotFound(w, r)
+			}
+		}
+	}
+	api := httptest.NewServer(handler(""))
+	t.Cleanup(api.Close)
+	authed := func(t *testing.T, want string) *httptest.Server {
+		t.Helper()
+		var srv *httptest.Server
+		srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/idx/config.json" {
+				fmt.Fprintf(w, `{"dl": "%s/dl", "api": "%s"}`, srv.URL, api.URL)
+				return
+			}
+			handler(want)(w, r)
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	d := dep.Dep{Name: "some-crate", Source: "corp", File: "Cargo.toml", Version: "1.0.0"}
+	lookup := func(t *testing.T, srv *httptest.Server, auth *httpx.Auth, env map[string]string) {
+		t.Helper()
+		env["CARGO_HOME"], env["CARGO_REGISTRIES_CORP_INDEX"] = t.TempDir(), "sparse+"+srv.URL+"/idx/"
+		s := New(http.DefaultClient, nil, auth, envOf(env))
+		if rels, err := s.Releases(t.Context(), d, t.TempDir()); err != nil || versions(rels) != "1.4.2" {
+			t.Fatalf("Releases = %s, %v", versions(rels), err)
+		}
+		if repo, err := s.SourceRepo(t.Context(), d, "1.4.2"); err != nil || repo != "https://git.example/some-crate" {
+			t.Errorf("SourceRepo = %q, %v", repo, err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if got := seen[strings.TrimPrefix(api.URL, "http://")+"/api/v1/crates/some-crate/1.4.2"]; got != "" {
+			t.Errorf("API on another host got Authorization %q", got)
+		}
+	}
+	t.Run("cargo token", func(t *testing.T) {
+		srv := authed(t, bookToken)
+		lookup(t, srv, nil, map[string]string{"CARGO_REGISTRIES_CORP_TOKEN": bookToken})
+	})
+	t.Run("static token", func(t *testing.T) {
+		srv := authed(t, "Basic eC1hY2Nlc3MtdG9rZW46cGxhdGZvcm0=") // x-access-token:platform
+		lookup(t, srv, httpx.NewAuth(platform.Info{Host: "127.0.0.1"}, "platform", envOf(nil)), map[string]string{})
+	})
+	t.Run("credential helper after 401", func(t *testing.T) {
+		srv := authed(t, "Basic dTpw") // u:p
+		var asked []string
+		auth := httpx.NewAuth(platform.Info{Host: "forge.example"}, "platform", envOf(nil), httpx.WithHelper(func(_ context.Context, host string) (string, string, bool) {
+			asked = append(asked, host)
+			return "u", "p", true
+		}))
+		lookup(t, srv, auth, map[string]string{})
+		if want := strings.TrimPrefix(srv.URL, "http://"); len(asked) != 1 || asked[0] != want {
+			t.Errorf("helper asked for %q, want [%s]", asked, want)
+		}
+	})
 }

@@ -29,6 +29,7 @@ var Doc = refdoc.Manager{
 		{Reason: "workspace dependency", When: "`workspace = true`: the requirement is inherited from `[workspace.dependencies]`, which is updated instead"},
 		{Reason: "path dependency", When: "`path = ...`, also together with `version`"},
 		{Reason: "git dependency", When: "`git = ...` without `tag`, with `branch`/`rev` only, or with a non-`http(s)` URL"},
+		{Reason: "unknown registry <name>", When: "`registry = \"<name>\"` without `CARGO_REGISTRIES_<NAME>_INDEX` or a `[registries.<name>] index` in the config files (Cargo cannot resolve it either)"},
 		{Reason: "no version", When: "a table without `version`"},
 		{Reason: "unsupported requirement", When: "anything outside Cargo's grammar: `~>1`, `1.2 - 2.0`, `v1`, `>=1.*`, empty"},
 		{Reason: "cannot locate value", When: "an escaped string"},
@@ -45,7 +46,8 @@ var Doc = refdoc.Manager{
 		{Title: "Registries", Items: []string{
 			"`registry = \"<name>\"` looks the crate up in that registry: the index from `CARGO_REGISTRIES_<NAME>_INDEX`, else `[registries.<name>] index` of the `.cargo/config.toml` (or legacy `.cargo/config`) files from the manifest directory up to `--dir`, nearest first, then `$CARGO_HOME/config.toml` (`~/.cargo`). `registry = \"crates-io\"` is crates.io.",
 			"`registry-index = \"<url>\"` names the index directly. `sparse+https://…` indexes are read over HTTP; any other URL is a git index, read from a shallow blob-less `git clone` (removed when the run ends) with `git cat-file`.",
-			"The token of a registry is `CARGO_REGISTRIES_<NAME>_TOKEN`, else `[registries.<name>] token` of `$CARGO_HOME/credentials.toml`, else of the config files; it is sent as `Authorization`, as Cargo does. Git indexes use git's credential helpers.",
+			"The token of a registry is `CARGO_REGISTRIES_<NAME>_TOKEN`, else `[registries.<name>] token` of `$CARGO_HOME/credentials.toml`, else of the config files; it is sent as `Authorization`, as Cargo does, and only to the index host (a `config.json` `api` on another host gets no credentials). " +
+				"Without a token, the platform token is sent to its own host as Basic auth, and after a 401 the git credential helper's credentials for the index host. Git indexes use git's credential helpers.",
 			"`[source.crates-io] replace-with` is followed (also through chains) to a mirror with `registry = \"…\"`; `directory`/`local-registry` replacements vendor crates.io, which stays the lookup.",
 			"OSV advisories are only looked up for crates.io crates.",
 		}},

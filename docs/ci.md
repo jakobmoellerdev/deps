@@ -678,6 +678,7 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 | `<tool> not found (needed to update <lock>)` | Install Node.js (`actions/setup-node`) so `npm`/`npx` is available. |
 | `cargo not found (needed to update Cargo.lock)` | Install Rust (`dtolnay/rust-toolchain`) so `cargo` is on `PATH`, or the root's Cargo.toml changes are dropped. |
 | `cargo update in <dir>: …` | cargo could not resolve the patched workspace: a private registry or git dependency without credentials, a conflicting requirement (for example a feature the new version dropped), or a path dependency outside the repository. The root's change is dropped; other updates proceed. |
+| `GET <index>/…: HTTP 401` for a crate | The Cargo registry needs credentials: set `CARGO_REGISTRIES_<NAME>_TOKEN` (the `[registries]` name of the index), add the token to `$CARGO_HOME/credentials.toml`, or provide git credentials for the index host. |
 | the job fails before deps runs, cloning `https://github.com/actions/checkout` | The runner can't reach the actions host. That is runner networking, not deps: fix the network, or use full `uses:` URLs to a reachable host. |
 
 ## GitHub end-to-end test

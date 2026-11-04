@@ -19,10 +19,18 @@ type Release struct{ Version, Digest string }
 type Datasource interface {
 	// Releases lists every release of d. dir is the absolute directory of d.File
 	// (go list needs it). The result may be shared between callers and must not be modified.
+	// A *SkipError skips d instead of failing it.
 	Releases(ctx context.Context, d dep.Dep, dir string) ([]Release, error)
 	// Digest returns the digest of version; used when Release.Digest is "".
 	Digest(ctx context.Context, d dep.Dep, version string) (string, error)
 }
+
+// SkipError is returned by Releases when d cannot be looked up for a reason that is not a
+// failure, only known once the datasource reads d's configuration (a Cargo registry name no
+// configuration defines). The engine reports d as skipped with Reason instead of as an error.
+type SkipError struct{ Reason string }
+
+func (e *SkipError) Error() string { return e.Reason }
 
 // Timer is implemented by datasources that know when a version was published. It is optional
 // and called lazily, only for versions that end up in a pull request.

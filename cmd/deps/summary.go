@@ -46,6 +46,7 @@ var skipHints = []struct{ prefix, hint string }{
 	{"variable reference", "the value is computed at runtime"},
 	{"template value", "the value is computed at runtime"},
 	{"expression", "the value is computed at runtime"},
+	{"unknown registry", "set `[registries.<name>] index` in `.cargo/config.toml` or `CARGO_REGISTRIES_<NAME>_INDEX`"},
 }
 
 func skipHint(reason string) string {

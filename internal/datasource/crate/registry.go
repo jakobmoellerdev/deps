@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
 )
@@ -25,12 +27,19 @@ type registry struct {
 	name   string // registry name ("crates-io" for the default), for errors
 	index  string
 	sparse bool
-	token  string // Authorization header of sparse requests; "" = none
+	token  string // Authorization header, only sent to the index host (owns); "" = none
 	api    string // web API base for source repositories; "" = read from config.json
 
 	once sync.Once // git: the clone; sparse: config.json
 	dir  string    // git clone
 	err  error
+}
+
+// owns reports whether u is on r's index host: Cargo credentials belong to the index, so only
+// those requests carry them (a config.json `api` on another host gets none).
+func (r *registry) owns(u *url.URL) bool {
+	idx, err := url.Parse(r.index)
+	return err == nil && strings.EqualFold(u.Host, idx.Host)
 }
 
 // cargoConfig is the merged Cargo configuration of a manifest directory: the
@@ -118,7 +127,8 @@ func (s *Source) loadConfig(dir, root string) (*cargoConfig, error) {
 
 // registryOf resolves the index of d: d.Source is "" (crates.io, or its [source.crates-io]
 // replacement), an index URL (registry-index), or a registry name (registry = "<name>", from
-// CARGO_REGISTRIES_<NAME>_INDEX or [registries.<name>] index).
+// CARGO_REGISTRIES_<NAME>_INDEX or [registries.<name>] index). A name without an index is a
+// *datasource.SkipError, as Cargo cannot resolve it either.
 func (s *Source) registryOf(d dep.Dep, dir string) (*registry, error) {
 	cfg, err := s.config(dir, rootOf(d.File, dir))
 	if err != nil {
@@ -149,7 +159,7 @@ func (s *Source) registryOf(d dep.Dep, dir string) (*registry, error) {
 		idx = cfg.str("registries", name, "index")
 	}
 	if idx == "" {
-		return nil, fmt.Errorf("registry %s has no index (set [registries.%s] index in .cargo/config.toml or CARGO_REGISTRIES_%s_INDEX)", name, name, envName(name))
+		return nil, &datasource.SkipError{Reason: "unknown registry " + name}
 	}
 	return s.registry(name, idx, s.tokenOf(cfg, name), ""), nil
 }
@@ -221,7 +231,7 @@ func rootOf(file, dir string) string {
 // open returns the index file at p (IndexPath, or "config.json").
 func (s *Source) open(ctx context.Context, r *registry, p string) (io.ReadCloser, error) {
 	if r.sparse {
-		return s.get(ctx, r.index+"/"+p, r.token)
+		return s.get(ctx, r, r.index+"/"+p)
 	}
 	r.once.Do(func() { r.dir, r.err = s.clone(ctx, r.index) })
 	if r.err != nil {
@@ -239,7 +249,7 @@ func (s *Source) open(ctx context.Context, r *registry, p string) (io.ReadCloser
 
 // clone makes a shallow, blob-less clone of a git index; blobs are fetched on demand by
 // cat-file. The clone is removed by Close.
-func (s *Source) clone(ctx context.Context, url string) (string, error) {
+func (s *Source) clone(ctx context.Context, index string) (string, error) {
 	dir, err := os.MkdirTemp("", "deps-crate-index-*")
 	if err != nil {
 		return "", err
@@ -248,10 +258,10 @@ func (s *Source) clone(ctx context.Context, url string) (string, error) {
 	s.clones = append(s.clones, dir)
 	s.mu.Unlock()
 	start := time.Now()
-	_, err = git(ctx, "", "clone", "--quiet", "--depth=1", "--filter=blob:none", "--no-checkout", url, dir)
-	slog.DebugContext(ctx, "crate git index cloned", "url", url, "duration", time.Since(start), "err", err)
+	_, err = git(ctx, "", "clone", "--quiet", "--depth=1", "--filter=blob:none", "--no-checkout", index, dir)
+	slog.DebugContext(ctx, "crate git index cloned", "url", index, "duration", time.Since(start), "err", err)
 	if err != nil {
-		return "", fmt.Errorf("git index %s: %w", url, err)
+		return "", fmt.Errorf("git index %s: %w", index, err)
 	}
 	return dir, nil
 }

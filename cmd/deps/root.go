@@ -160,7 +160,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		npmds.Name:          npmds.New(client, limits.NPM, os.Getenv),
 		nodeversion.Name:    nodeversion.New(client, sem, os.Getenv),
 		helmds.Name:         helmds.New(client, sem, auth, docker),
-		crate.Name:          crate.New(client, limits.Crates, os.Getenv),
+		crate.Name:          crate.New(client, limits.Crates, auth, os.Getenv),
 	}
 	for name, cd := range cfg.CustomDatasources {
 		ds, err := customds.New(client, sem, name, cd.Spec())
