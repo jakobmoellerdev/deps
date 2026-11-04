@@ -20,6 +20,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
 )
 
@@ -105,7 +106,7 @@ func matchAny(globs []string, rel string) bool {
 // version is never downgraded). It returns Cargo.lock when it changed; without a lockfile it
 // does nothing.
 func (Locker) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
-	return process(ctx, dir, manifests, files, nil)
+	return process(ctx, dir, manifests, files, nil, nil)
 }
 
 // ProcessLocked is Process plus the lockfile-only updates (engine.LockfileUpdater): each moves
@@ -115,14 +116,30 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 	if _, ok := files[lockFile]; !ok {
 		return nil, fmt.Errorf("lockfile-only updates need %s in %s", lockFile, dir)
 	}
-	var ups []dep.Update
-	for _, rel := range slices.Sorted(maps.Keys(locks)) {
-		ups = append(ups, locks[rel]...)
-	}
-	return process(ctx, dir, manifests, files, ups)
+	return process(ctx, dir, manifests, files, flatten(locks), nil)
 }
 
-func process(ctx context.Context, dir string, manifests, files map[string][]byte, lockOnly []dep.Update) (map[string][]byte, error) {
+// ProcessUpdates is ProcessLocked plus the manifest updates (engine.UpdatePinner). A rewritten
+// requirement can still admit the version locked before (`<0.10` → `<2.0` with 0.9.0
+// locked), which leaves `cargo update --workspace` nothing to do; such a crate is resolved to
+// the update's NewVersion (pinStale), security updates included.
+func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error) {
+	if _, ok := files[lockFile]; !ok && len(locks) > 0 {
+		return nil, fmt.Errorf("lockfile-only updates need %s in %s", lockFile, dir)
+	}
+	return process(ctx, dir, manifests, files, flatten(locks), ups)
+}
+
+// flatten returns the updates of every manifest, in manifest path order.
+func flatten(byManifest map[string][]dep.Update) []dep.Update {
+	var ups []dep.Update
+	for _, rel := range slices.Sorted(maps.Keys(byManifest)) {
+		ups = append(ups, byManifest[rel]...)
+	}
+	return ups
+}
+
+func process(ctx context.Context, dir string, manifests, files map[string][]byte, lockOnly []dep.Update, ups map[string][]dep.Update) (map[string][]byte, error) {
 	lock, ok := files[lockFile]
 	if !ok {
 		return nil, nil
@@ -154,6 +171,18 @@ func process(ctx context.Context, dir string, manifests, files map[string][]byte
 	pins, err := precise(lock, out, updated)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", lockFile, err)
+	}
+	st, err := stale(lock, out, ups)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", lockFile, err)
+	}
+	if len(st) > 0 {
+		if err := pinStale(ctx, base, dir, manifests, st); err != nil {
+			return nil, err
+		}
+		if out, err = os.ReadFile(lockPath); err != nil {
+			return nil, err
+		}
 	}
 	for _, u := range lockOnly {
 		p := pin{name: u.Dep.Name, locked: u.Dep.Locked, version: u.NewVersion}
@@ -319,6 +348,90 @@ func precise(before, after []byte, updates []crateUpdate) ([]pin, error) {
 		}
 	}
 	return pins, nil
+}
+
+// stale returns the manifest updates cargo left alone, by manifest: the crate's registry
+// entries are the same before and after `cargo update --workspace`, its locked version is
+// still among them and older than NewVersion, and NewVersion is not locked. That happens when
+// the rewritten requirement still admits the locked version (`<0.10` → `<2.0`).
+func stale(before, after []byte, ups map[string][]dep.Update) (map[string][]dep.Update, error) {
+	if len(ups) == 0 {
+		return nil, nil
+	}
+	old, err := registryPackages(before)
+	if err != nil {
+		return nil, err
+	}
+	pkgs, err := registryPackages(after)
+	if err != nil {
+		return nil, err
+	}
+	of := func(pkgs []lockedPackage, name string) []lockedPackage {
+		return slices.DeleteFunc(slices.Clone(pkgs), func(p lockedPackage) bool { return p.name != name })
+	}
+	has := func(pkgs []lockedPackage, version string) bool {
+		return slices.ContainsFunc(pkgs, func(p lockedPackage) bool { return p.version == version })
+	}
+	var out map[string][]dep.Update
+	for _, rel := range slices.Sorted(maps.Keys(ups)) {
+		for _, u := range ups[rel] {
+			d := u.Dep
+			from, err1 := semver.StrictNewVersion(d.Locked)
+			to, err2 := semver.StrictNewVersion(u.NewVersion)
+			if d.Range == "" || err1 != nil || err2 != nil || !to.GreaterThan(from) {
+				continue
+			}
+			now := of(pkgs, d.Name)
+			if slices.Equal(now, of(old, d.Name)) && has(now, d.Locked) && !has(now, u.NewVersion) {
+				if out == nil {
+					out = map[string][]dep.Update{}
+				}
+				out[rel] = append(out[rel], u)
+			}
+		}
+	}
+	return out, nil
+}
+
+// pinStale resolves the stale updates to their NewVersion: their requirements are written as
+// `=<version>` into the mirrored manifests for one `cargo update --workspace`, then the
+// patched manifests are restored and resolved again, which keeps that version. Unlike
+// `cargo update --precise` on the locked entry, this leaves the old version locked for other
+// dependents that still require it (rustc_version 0.2 needs semver ^0.9).
+func pinStale(ctx context.Context, base, dir string, manifests map[string][]byte, st map[string][]dep.Update) error {
+	for rel, ups := range st {
+		src := manifests[rel]
+		deps, err := cargoManager{}.Extract(rel, src, manager.Env{})
+		if err != nil {
+			return err
+		}
+		var edits []patch.Edit
+		for _, u := range ups {
+			i := slices.IndexFunc(deps, func(d dep.Dep) bool {
+				return d.Range != "" && d.Name == u.Dep.Name && d.DepType == u.Dep.DepType && d.Line == u.Dep.Line
+			})
+			if i < 0 || slices.ContainsFunc(edits, func(e patch.Edit) bool { return e.Start == deps[i].RefSpan.Start }) {
+				continue
+			}
+			edits = append(edits, patch.Edit{Start: deps[i].RefSpan.Start, End: deps[i].RefSpan.End, Old: deps[i].Range, New: "=" + u.NewVersion})
+		}
+		exact, err := patch.Apply(src, edits)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(base, filepath.FromSlash(rel)), exact, 0o644); err != nil {
+			return err
+		}
+	}
+	if err := cargo(ctx, base, dir, "update", "--workspace"); err != nil {
+		return err
+	}
+	for rel := range st {
+		if err := os.WriteFile(filepath.Join(base, filepath.FromSlash(rel)), manifests[rel], 0o644); err != nil {
+			return err
+		}
+	}
+	return cargo(ctx, base, dir, "update", "--workspace")
 }
 
 // compatible reports whether a and b are in the same Cargo compatibility range: the same

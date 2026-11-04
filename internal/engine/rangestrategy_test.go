@@ -197,6 +197,16 @@ func (p lockPost) ProcessLocked(_ context.Context, dir string, manifests, files 
 	return p.locked(dir, manifests, files, locks)
 }
 
+// pinPost is a post-processor that implements UpdatePinner.
+type pinPost struct {
+	postFunc
+	pinned func(ups, locks map[string][]dep.Update) (map[string][]byte, error)
+}
+
+func (p pinPost) ProcessUpdates(_ context.Context, _ string, _, _ map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error) {
+	return p.pinned(ups, locks)
+}
+
 func TestBuildLockfileOnly(t *testing.T) {
 	root, cfg := setup(t, "", map[string]string{"web/package.json": rangePkg, "web/package-lock.json": rangeLock})
 	o := Options{Managers: []manager.Manager{npm.New()}, Datasources: map[string]Datasource{"npm": rangeReleases}}
@@ -246,6 +256,20 @@ func TestBuildLockfileOnly(t *testing.T) {
 	// plan (no post-processors): nothing to show for the lockfile-only update.
 	if changes, errs = Build(t.Context(), root, o.Managers, []dep.Update{lockOnly}, nil); len(changes) != 0 || len(errs) != 0 {
 		t.Errorf("plan: changes = %+v, %v", changes, errs)
+	}
+
+	// An UpdatePinner also gets the manifest updates, and is called instead of ProcessLocked.
+	var gotUps map[string][]dep.Update
+	pinner := map[string]PostProcessor{npm.Name: pinPost{
+		postFunc: postFunc{siblings: []string{"package-lock.json"}},
+		pinned: func(ups, locks map[string][]dep.Update) (map[string][]byte, error) {
+			gotUps, gotLocks = ups, locks
+			return nil, nil
+		},
+	}}
+	if _, errs = Build(t.Context(), root, o.Managers, []dep.Update{lockOnly, bumped}, pinner); len(errs) != 0 ||
+		len(gotUps["package.json"]) != 1 || gotUps["package.json"][0].Dep.Name != "b" || len(gotLocks["package.json"]) != 1 || gotLocks["package.json"][0].Dep.Name != "a" {
+		t.Errorf("pinner: ups = %+v, locks = %+v, %v", gotUps, gotLocks, errs)
 	}
 
 	// A post-processor without lockfile-only support, and a manifest without a lock root.

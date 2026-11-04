@@ -55,6 +55,15 @@ type LockfileUpdater interface {
 	ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error)
 }
 
+// UpdatePinner is implemented by post-processors that also need the manifest updates of a
+// scope: cargo pins Cargo.lock to an update's NewVersion when the rewritten requirement still
+// admits the locked version, which `cargo update` alone would keep. The engine calls
+// ProcessUpdates instead of Process and ProcessLocked; ups are the manifest updates and locks
+// the lockfile-only ones, both by manifest path relative to dir.
+type UpdatePinner interface {
+	ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error)
+}
+
 // postSem bounds concurrent post-processor runs (go mod tidy, npm install) across all Build
 // calls.
 var postSem = make(chan struct{}, 4)
@@ -64,6 +73,7 @@ type fileBuild struct {
 	changes []FileChange // changes[0] is the file itself
 	post    string       // manager whose post-processor derives files from it; "" = none
 	locks   []dep.Update // lockfile-only updates, left to the post-processor
+	ups     []dep.Update // the updates patched into the file, for an UpdatePinner
 	err     error        // patch failure
 	dropped bool         // its post-processing scope failed
 }
@@ -261,6 +271,7 @@ func buildFile(ctx context.Context, root, file string, managers map[string]manag
 		if err != nil {
 			return fileBuild{err: fmt.Errorf("%s: %w", u.Dep.Name, err)}
 		}
+		b.ups = append(b.ups, u)
 		edits = append(edits, e...)
 		if err := setPost(u.Dep.Manager); err != nil {
 			return fileBuild{err: err}
@@ -341,7 +352,7 @@ func (s *postScope) run(ctx context.Context, root string, files []string, builds
 func (s *postScope) process(ctx context.Context, root string, files []string, builds []fileBuild, p PostProcessor) ([]FileChange, error) {
 	manifests := make(map[string][]byte, len(s.files))
 	rels := make([]string, len(s.files))
-	var locks map[string][]dep.Update
+	var locks, ups map[string][]dep.Update
 	for j, i := range s.files {
 		rel := files[i]
 		if s.dir != "." {
@@ -358,9 +369,16 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 			}
 			locks[rel] = builds[i].locks
 		}
+		if len(builds[i].ups) > 0 {
+			if ups == nil {
+				ups = map[string][]dep.Update{}
+			}
+			ups[rel] = builds[i].ups
+		}
 	}
 	lu, _ := p.(LockfileUpdater)
-	if locks != nil && lu == nil {
+	up, _ := p.(UpdatePinner)
+	if locks != nil && lu == nil && up == nil {
 		return nil, fmt.Errorf("the %s post-processor cannot apply lockfile-only updates", s.manager)
 	}
 	names := p.Siblings()
@@ -392,9 +410,12 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 	abs := filepath.Join(root, filepath.FromSlash(s.dir))
 	var out map[string][]byte
 	var err error
-	if locks != nil {
+	switch {
+	case up != nil:
+		out, err = up.ProcessUpdates(ctx, abs, manifests, contents, ups, locks)
+	case locks != nil:
 		out, err = lu.ProcessLocked(ctx, abs, manifests, contents, locks)
-	} else {
+	default:
 		out, err = p.Process(ctx, abs, manifests, contents)
 	}
 	<-postSem

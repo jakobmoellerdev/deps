@@ -244,6 +244,91 @@ func TestProcessLockedStub(t *testing.T) {
 	var _ manager.LockReader = cargoManager{}
 }
 
+// A rewritten requirement that still admits the locked version (`<0.10` → `<2.0`, 0.9.0
+// locked) leaves `cargo update --workspace` nothing to do: the requirement is resolved once as
+// `=<version>` and then restored, also for a security update. Updates cargo already resolved,
+// older ones and lockless ones are left alone.
+func TestProcessUpdatesStale(t *testing.T) {
+	cp, err := exec.LookPath("cp")
+	if err != nil {
+		t.Skip("cp not in PATH")
+	}
+	bin, log := t.TempDir(), filepath.Join(t.TempDir(), "log")
+	// The fake cargo logs each run with the exact requirements it sees, resolves log 0.3 → 0.4
+	// on its first run, and locks the exact versions when the manifest has them (PATH holds
+	// only itself, so it uses shell builtins and an absolute cp).
+	script := `#!/bin/sh
+exact=""
+while IFS= read -r l; do case "$l" in *'"='*) v=${l#*\"=}; exact="$exact=${v%%\"*} ";; esac; done < Cargo.toml
+echo "args: $* exact: $exact" >> "$STUB_LOG"
+if [ -n "$exact" ]; then ` + cp + ` "$STUB_EXACT" Cargo.lock
+elif ! [ -e .resolved ]; then ` + cp + ` "$STUB_LOCK" Cargo.lock; : > .resolved
+fi
+`
+	write(t, bin, map[string]string{"cargo": script})
+	if err := os.Chmod(filepath.Join(bin, "cargo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	locks := t.TempDir()
+	write(t, locks, map[string]string{
+		"resolved": lockOf("anyhow@1.0.50", "itoa@0.4.8", "log@0.4.29", "semver@0.9.0"),
+		"exact":    lockOf("anyhow@1.0.104", "itoa@0.4.8", "log@0.4.29", "semver@1.0.28"),
+	})
+	t.Setenv("PATH", bin)
+	t.Setenv("STUB_LOG", log)
+	t.Setenv("STUB_LOCK", filepath.Join(locks, "resolved"))
+	t.Setenv("STUB_EXACT", filepath.Join(locks, "exact"))
+
+	dir := t.TempDir()
+	manifest := "[dependencies]\nsemver = \"<0.10\"\nanyhow = { version = \">= 1.0.0, <= 1.0.50\" }\nlog = \"0.3\"\nitoa = \"<1\"\nryu = \"<1.0.5\"\n"
+	write(t, dir, map[string]string{"Cargo.toml": manifest})
+	patched := "[dependencies]\nsemver = \"<2.0\"\nanyhow = { version = \">= 1.0.104, <= 1.0.104\" }\nlog = \"0.4\"\nitoa = \"<1\"\nryu = \"<2.0.0\"\n"
+	lock := lockOf("anyhow@1.0.50", "itoa@0.4.8", "log@0.3.9", "semver@0.9.0")
+	deps := extract(t, []byte(manifest))
+	up := func(i int, locked, version string) dep.Update {
+		d := deps[i]
+		d.Locked = locked
+		return dep.Update{Dep: d, NewVersion: version}
+	}
+	sec := up(1, "1.0.50", "1.0.104")
+	sec.Advisories = []dep.Advisory{{ID: "RUSTSEC-2026-0190"}}
+	ups := map[string][]dep.Update{"Cargo.toml": {
+		up(0, "0.9.0", "1.0.28"), up(0, "0.9.0", "1.0.28"), sec,
+		up(2, "0.3.9", "0.4.29"), // re-resolved by cargo
+		up(3, "0.4.8", "0.4.7"),  // not newer
+		up(4, "", "1.0.20"),      // not locked
+	}}
+	out, err := Locker{}.ProcessUpdates(t.Context(), dir, map[string][]byte{"Cargo.toml": []byte(patched)}, map[string][]byte{"Cargo.lock": []byte(lock)}, ups, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(out["Cargo.lock"]), lockOf("anyhow@1.0.104", "itoa@0.4.8", "log@0.4.29", "semver@1.0.28"); got != want {
+		t.Errorf("Cargo.lock:\n%s\nwant:\n%s", got, want)
+	}
+	b, _ := os.ReadFile(log)
+	if want := "args: update --workspace exact: \nargs: update --workspace exact: =1.0.28 =1.0.104 \nargs: update --workspace exact: \n"; string(b) != want {
+		t.Errorf("log:\n%s", b)
+	}
+	if _, err := (Locker{}).ProcessUpdates(t.Context(), dir, nil, map[string][]byte{}, ups, map[string][]dep.Update{"Cargo.toml": {up(0, "0.9.0", "0.9.1")}}); err == nil || !strings.HasPrefix(err.Error(), "lockfile-only updates need Cargo.lock in ") {
+		t.Errorf("lockfile-only updates without a lockfile: %v", err)
+	}
+	if out, err := (Locker{}).ProcessUpdates(t.Context(), dir, nil, map[string][]byte{}, ups, nil); out != nil || err != nil {
+		t.Errorf("without a lockfile: %v, %v", out, err)
+	}
+	if _, err := stale([]byte("[[package]\n"), nil, ups); err == nil {
+		t.Error("broken lock accepted")
+	}
+	if err := pinStale(t.Context(), dir, dir, map[string][]byte{"Cargo.toml": []byte("[dependencies\n")}, ups); err == nil {
+		t.Error("unparsable manifest accepted")
+	}
+	var _ engineUpdatePinner = Locker{}
+}
+
+// engineUpdatePinner mirrors engine.UpdatePinner.
+type engineUpdatePinner interface {
+	ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error)
+}
+
 // engineLockfileUpdater mirrors engine.LockfileUpdater (the engine imports this package).
 type engineLockfileUpdater interface {
 	ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error)
@@ -423,6 +508,64 @@ func TestProcessRealCargo(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := strings.Replace(lock, "version = \"1.0.0\"", "version = \"1.0.1\"", 1); string(out["Cargo.lock"]) != want {
+		t.Errorf("Cargo.lock:\n%s", out["Cargo.lock"])
+	}
+}
+
+// TestProcessUpdatesRealCargo: `anyhow = "<1.0.1"` locked at 1.0.0 is rewritten to `<2.0.0` for
+// 1.0.2. The new requirement still admits 1.0.0, so `cargo update --workspace` keeps it;
+// ProcessUpdates pins the lock to 1.0.2.
+func TestProcessUpdatesRealCargo(t *testing.T) {
+	cargoBin, err := exec.LookPath("cargo")
+	if err != nil {
+		t.Skip("cargo not in PATH")
+	}
+	const sum = "0000000000000000000000000000000000000000000000000000000000000000"
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config.json":
+			fmt.Fprintf(w, `{"dl": "%s/dl"}`, srv.URL)
+		case "/an/yh/anyhow":
+			for _, v := range []string{"1.0.0", "1.0.1", "1.0.2"} {
+				fmt.Fprintf(w, `{"name":"anyhow","vers":%q,"deps":[],"cksum":%q,"features":{},"yanked":false}`+"\n", v, sum)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	home := t.TempDir()
+	write(t, home, map[string]string{"config.toml": fmt.Sprintf("[source.crates-io]\nreplace-with = \"mock\"\n\n[source.mock]\nregistry = \"sparse+%s/\"\n", srv.URL)})
+	t.Setenv("CARGO_HOME", home)
+	t.Setenv("PATH", filepath.Dir(cargoBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	dir := t.TempDir()
+	manifest := "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nanyhow = \"<1.0.1\"\n"
+	write(t, dir, map[string]string{"Cargo.toml": manifest, "src/main.rs": "fn main() {}\n"})
+	lock := "# This file is automatically @generated by Cargo.\n# It is not intended for manual editing.\nversion = 4\n\n" +
+		"[[package]]\nname = \"anyhow\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"" + sum + "\"\n\n" +
+		"[[package]]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\n \"anyhow\",\n]\n"
+	d := extract(t, []byte(manifest))[0]
+	d.Locked = "1.0.0"
+	u := dep.Update{Dep: d, NewVersion: "1.0.2"}
+	e, err := New().Edits(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := manifest[:e[0].Start] + e[0].New + manifest[e[0].End:]
+	if !strings.Contains(patched, "anyhow = \"<2.0.0\"\n") {
+		t.Fatalf("patched:\n%s", patched)
+	}
+	manifests, files := map[string][]byte{"Cargo.toml": []byte(patched)}, map[string][]byte{"Cargo.lock": []byte(lock)}
+	if out, err := (Locker{}).Process(t.Context(), dir, manifests, files); err != nil || out != nil {
+		t.Fatalf("cargo update --workspace alone: %q, %v; want the lock unchanged", out["Cargo.lock"], err)
+	}
+	out, err := Locker{}.ProcessUpdates(t.Context(), dir, manifests, files, map[string][]dep.Update{"Cargo.toml": {u}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.Replace(lock, "version = \"1.0.0\"", "version = \"1.0.2\"", 1); string(out["Cargo.lock"]) != want {
 		t.Errorf("Cargo.lock:\n%s", out["Cargo.lock"])
 	}
 }
