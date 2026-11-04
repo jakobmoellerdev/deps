@@ -102,3 +102,32 @@ func (x *extractor) locate(k, v *yaml.Node) (dep.Span, bool) {
 	s := ls + off + i
 	return dep.Span{Start: s, End: s + len(v.Value)}, true
 }
+
+// versionInput records the `with: version:` value of the action dep at idx when it equals the
+// dep's current version, so the edit bumps it along with the ref. Setup actions own their
+// version input, and a marker comment hands the value to the custom manager.
+func (x *extractor) versionInput(idx int, with *yaml.Node) {
+	if idx < 0 || with.Kind != yaml.MappingNode {
+		return
+	}
+	d := &x.deps[idx]
+	if d.Skip != "" || d.Version == "" {
+		return
+	}
+	if _, ok := setupActions[strings.ToLower(d.Name)]; ok {
+		return
+	}
+	for i := 0; i+1 < len(with.Content); i += 2 {
+		k, v := with.Content[i], with.Content[i+1]
+		if k.Value != "version" || v.Kind != yaml.ScalarNode || v.Value != d.Version {
+			continue
+		}
+		if ls, le := x.line(k.Line - 1); ls >= 0 && markerRe.Match(x.src[ls:le]) {
+			return
+		}
+		if sp, ok := x.locate(k, v); ok {
+			d.InputSpan = sp
+		}
+		return
+	}
+}

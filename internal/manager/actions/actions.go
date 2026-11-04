@@ -52,23 +52,28 @@ func (actionsManager) Extract(file string, src []byte, env manager.Env) ([]dep.D
 // tag → digest with " # <version>" inserted after the value.
 func (actionsManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
+	var edits []patch.Edit
 	switch {
 	case u.NewDigest == "":
 		if d.Digest != "" {
 			return nil, errors.New("cannot unpin a digest-pinned action")
 		}
-		return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}
 	case d.Digest != "":
-		edits := []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Digest, New: u.NewDigest}}
+		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Digest, New: u.NewDigest}}
 		if u.NewVersion != d.Version {
 			edits = append(edits, patch.Edit{Start: d.VersionSpan.Start, End: d.VersionSpan.End, Old: d.Version, New: u.NewVersion})
 		}
-		return edits, nil
+	default:
+		edits = []patch.Edit{
+			{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewDigest},
+			{Start: d.InsertAt, End: d.InsertAt, New: " # " + u.NewVersion},
+		}
 	}
-	return []patch.Edit{
-		{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewDigest},
-		{Start: d.InsertAt, End: d.InsertAt, New: " # " + u.NewVersion},
-	}, nil
+	if d.InputSpan.End > d.InputSpan.Start && u.NewVersion != d.Version {
+		edits = append(edits, patch.Edit{Start: d.InputSpan.Start, End: d.InputSpan.End, Old: d.Version, New: u.NewVersion})
+	}
+	return edits, nil
 }
 
 type extractor struct {
@@ -113,6 +118,7 @@ func (x *extractor) walk(n *yaml.Node) {
 		}
 	case yaml.MappingNode:
 		var uses, with *yaml.Node
+		idx := -1
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k, v := n.Content[i], n.Content[i+1]
 			switch k.Value {
@@ -125,6 +131,7 @@ func (x *extractor) walk(n *yaml.Node) {
 				if v.Kind == yaml.ScalarNode && v.Style&(yaml.LiteralStyle|yaml.FoldedStyle) == 0 {
 					uses = v
 					x.add(v)
+					idx = len(x.deps) - 1
 					continue
 				}
 			}
@@ -132,6 +139,7 @@ func (x *extractor) walk(n *yaml.Node) {
 		}
 		if uses != nil && with != nil {
 			x.setup(uses.Value, with)
+			x.versionInput(idx, with)
 		}
 	}
 }

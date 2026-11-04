@@ -281,10 +281,9 @@ Each item comes from the comparison above or from [renovate-parity.md](renovate-
 4. **Release times for floating tags.** A major tag like `v25` without its own release has no release time, so `minimumReleaseAge` is not enforced for it: markdownlint-cli2-action v25 is 10 days old, but deps would open the PR, while Renovate lists it as pending. Images without a `created` time and the envtest custom datasource are not held back either; Renovate holds back such timestamp-less releases, e.g. Garden Linux 1877.28 (parity P10).
 5. **Fallback versus waiting.** deps proposes the newest release that is old enough (node 26.11.1, go-winio v0.6.3); Renovate waits for the newest (26.13.0, v0.6.4). This is a design difference, documented under P10, not a bug. It is listed because it changes which PRs OCM sees.
 6. **Platform commits.** Renovate creates commits through the GitHub API, so they are verified as ocmbot (`RENOVATE_PLATFORM_COMMIT`). deps signs with a key or not at all. OCM's rulesets require signatures on `deps/*` branches, and only ocmbot's bypass makes unsigned deps commits acceptable (parity O5).
-7. **The action pinned by digest.** With `pin: digest`, the action's ref becomes a SHA and the action falls back to the latest release unless `version:` is set. The workflow above sets it, but deps does not update that input (parity O6).
-8. **Mend badges and the OpenSSF scorecard.** PR bodies show the release age as text, with no adoption, passing or confidence badges (L5) and no scorecard badge (`security:openssf-scorecard`, L6).
-9. **Renovate dashboard extras:** the "Abandoned Dependencies" section and the repository problems list (e.g. hidden Unicode warnings) have no deps equivalent.
-10. **Cutover steps not done:**
+7. **Mend badges and the OpenSSF scorecard.** PR bodies show the release age as text, with no adoption, passing or confidence badges (L5) and no scorecard badge (`security:openssf-scorecard`, L6).
+8. **Renovate dashboard extras:** the "Abandoned Dependencies" section and the repository problems list (e.g. hidden Unicode warnings) have no deps equivalent.
+9. **Cutover steps not done:**
     - a real (non-dry) trial run in OCM;
     - App permissions confirmed for the installation (checks/statuses read, workflows write);
     - the ruleset entry or bypass for `deps/**`;

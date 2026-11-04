@@ -22,7 +22,8 @@ inputs:
   version:
     description: >-
       Release tag to download, e.g. v0.1.0. Default: the action's ref when it is a release tag
-      (`@v0.1.0`), else the latest release.
+      (`@v0.1.0`), else the latest release. When it equals the ref's version (`@<sha> # v0.1.0` with
+      `version: v0.1.0`), deps updates it together with the ref.
     default: ""
   repository:
     description: >-

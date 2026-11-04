@@ -74,6 +74,7 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 - A pinned ref gets the new SHA, and the comment version is replaced.
 - With `pin: digest`, a tag becomes `@<sha> # <tag>`.
 - A floating pin (`@<sha> # v4`) whose tag moved gets a digest refresh.
+- A `with: version:` input equal to the current version (the tag or the pinned comment version) is bumped in the same edit, e.g. `@<sha> # v0.2.5` with `version: v0.2.5`. A different value is left alone, and setup actions keep their own version input (DepType `setup`).
 
 **Setup action inputs.**
 

@@ -39,6 +39,7 @@ type Dep struct {
 	RefSpan     Span   // actions: ref after '@'; gomod: version token
 	VersionSpan Span   // actions: version token in trailing comment (pinned only)
 	DigestSpan  Span   // docker/custom: digest token, when the digest is stored apart from RefSpan
+	InputSpan   Span   // actions: `with: version:` value equal to the current version, bumped along with the ref
 	InsertAt    int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
 	Skip        string // non-empty = not updatable, with the reason
 

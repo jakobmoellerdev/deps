@@ -59,7 +59,7 @@ On a miss the binary is downloaded and verified, then saved under that key (`Cac
 **Version pinning.** Pin a release tag (`@v0.1.0`) so runs are reproducible; `@main` downloads the latest release.
 
 - deps updates its own `uses:` line like any other action.
-- With [`pin: digest`](reference/configuration.md#pin), deps rewrites that line to `@<sha> # v0.1.0`. `github.action_ref` is then a SHA, and the action downloads the *latest* release. Set `version:` if the binary must match the pin exactly.
+- With [`pin: digest`](reference/configuration.md#pin), deps rewrites that line to `@<sha> # v0.1.0`. `github.action_ref` is then a SHA, and the action downloads the *latest* release. Set `version:` if the binary must match the pin exactly; deps keeps a `version:` equal to the current version in sync with the ref (`@<sha> # v0.2.5` plus `version: v0.2.5` both move to the new release).
 
 ## GitHub
 
