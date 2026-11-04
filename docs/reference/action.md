@@ -17,6 +17,7 @@ Runs as `composite` with the steps "Download deps", "Run deps".
 | Input | Required | Default | Description |
 |---|---|---|---|
 | `token` | no | `${{ github.token }}` | Platform token, exported to deps as DEPS_TOKEN. It needs contents:write and pull-requests:write (issues:write for the dependency dashboard). The default is the job token on GitHub, Gitea and Forgejo; on GitHub, PRs created with it do not trigger workflows and it cannot push changes to .github/workflows/*, so pass an App token or PAT (with workflows permission) here and to actions/checkout. |
+| `signing-key` | no | none | Secret holding a passphrase-less private key (OpenSSH, or armored OpenPGP) that deps signs its commits with, exported as DEPS_SIGNING_KEY. The committer identity (config key gitAuthor, or DEPS_GIT_AUTHOR in the job env) must be the key owner's verified email on the forge for the signature to count as verified. Default: unsigned commits. |
 | `args` | no | `run` | Arguments for deps, e.g. `run -v --log-level info` or `plan`. |
 | `version` | no | none | Release tag to download, e.g. v0.1.0. Default: the action's ref when it is a release tag (`@v0.1.0`), else the latest release. |
 | `repository` | no | none | Repository URL the release is downloaded from. A Gitea/Forgejo URL finds the latest release via `<host>/api/v1/repos/<repo>/releases/latest`; a GitHub URL via api.github.com, and on github.com runners the assets are fetched with `gh release download` and the job token, so private repositories work. Default: https://github.com/jakobmoellerdev/deps on github.com runners, https://git.jakob-moeller.cloud/jakobmoellerdev/deps elsewhere. |
@@ -32,6 +33,8 @@ Use the full URL: a short `jakobmoellerdev/deps@…` is resolved against the ins
   with:
     # Platform token, exported to deps as DEPS_TOKEN.
     token: "${{ github.token }}"
+    # Secret holding a passphrase-less private key (OpenSSH, or armored OpenPGP) that deps signs its commits with, exported as DEPS_SIGNING_KEY.
+    signing-key: ""
     # Arguments for deps, e.g. `run -v --log-level info` or `plan`.
     args: run
     # Release tag to download, e.g. v0.1.0.
@@ -49,6 +52,8 @@ From the GitHub mirror; on github.com runners the binary is downloaded from the 
   with:
     # Platform token, exported to deps as DEPS_TOKEN.
     token: "${{ github.token }}"
+    # Secret holding a passphrase-less private key (OpenSSH, or armored OpenPGP) that deps signs its commits with, exported as DEPS_SIGNING_KEY.
+    signing-key: ""
     # Arguments for deps, e.g. `run -v --log-level info` or `plan`.
     args: run
     # Release tag to download, e.g. v0.1.0.

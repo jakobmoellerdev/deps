@@ -155,7 +155,7 @@ The following is implemented:
 - **npm metadata.** Abbreviated documents are stream-decoded; only one version object is buffered at a time.
 - **Security.** OSV is queried in batches of up to 1000 packages; each advisory document is fetched once.
 - **Child processes.** Spawned only where unavoidable: post-processors (`go mod tidy`, npm/pnpm/yarn lockfile installs; at most 4 concurrently in total) and `git` for commit and push.
-- **Commits.** Built with git plumbing on a temporary index. `run` does no checkout, creates no worktree, and never mutates the working tree.
+- **Commits.** Built with git plumbing on a temporary index. `run` does no checkout, creates no worktree, and never mutates the working tree. With `--signing-key`, `commit-tree -S` signs them: an OpenSSH key is written once to a `0600` temporary file (`-c gpg.format=ssh -c user.signingkey=<file>`), an armored OpenPGP key is imported once into a temporary `GNUPGHOME` and selected by fingerprint. Both are validated up front (a passphrase-protected key fails before any lookup) and removed when `run` returns.
 - **No persistent cache.** Runs are infrequent (scheduled), so in-run dedupe already removes the repeated lookups.
 
 ## 4. Core types

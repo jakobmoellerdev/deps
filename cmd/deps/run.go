@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -23,6 +24,7 @@ type runOpts struct {
 	platform, apiURL, repo, token, base string
 	triggerSchedule                     string
 	authorName, authorEmail             string
+	signingKey                          string
 	maxNewPRs                           int
 	dryRun                              bool
 }
@@ -55,6 +57,7 @@ func newRun(o *rootOpts) *cobra.Command {
 	f.IntVar(&r.maxNewPRs, "max-new-prs", 10, "maximum number of pull requests to create per run (0 = unlimited)")
 	f.BoolVar(&r.dryRun, "dry-run", false, "report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token")
 	f.StringVar(&r.triggerSchedule, "trigger-schedule", "", "act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE)")
+	f.StringVar(&r.signingKey, "signing-key", "", "sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (default: $DEPS_SIGNING_KEY)")
 	return cmd
 }
 
@@ -114,6 +117,27 @@ func detectTrigger(ctx context.Context, flag string, getenv func(string) string)
 	return t, nil
 }
 
+// newSigner prepares commit signing from --signing-key, then $DEPS_SIGNING_KEY; nil (unsigned)
+// when both are empty. An unrecognized key is a usage error.
+func newSigner(ctx context.Context, flag, env string) (*gitx.Signer, error) {
+	key, src := flag, "--signing-key"
+	if key == "" {
+		key, src = env, "DEPS_SIGNING_KEY"
+	}
+	if key == "" {
+		return nil, nil
+	}
+	s, err := gitx.NewSigner(ctx, key)
+	if errors.Is(err, gitx.ErrKeyFormat) {
+		return nil, &usageError{fmt.Errorf("%s: %w", src, err)}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", src, err)
+	}
+	slog.InfoContext(ctx, "commit signing", "format", s.Format, "key", s.Fingerprint)
+	return s, nil
+}
+
 func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	ctx := cmd.Context()
 	stderr := cmd.ErrOrStderr()
@@ -126,6 +150,15 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	if err != nil {
 		return err
 	}
+	signer, err := newSigner(ctx, r.signingKey, os.Getenv("DEPS_SIGNING_KEY"))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := signer.Close(); err != nil {
+			slog.WarnContext(ctx, "removing commit signing key material", "err", err)
+		}
+	}()
 	ov := platform.Overrides{APIURL: r.apiURL, Repo: r.repo}
 	if r.platform != "auto" {
 		ov.Kind = r.platform
@@ -134,7 +167,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	if err != nil {
 		return err
 	}
-	repo := gitx.Repo{Dir: dir}
+	repo := gitx.Repo{Dir: dir, Signer: signer}
 	remote, err := repo.RemoteURL(ctx)
 	if err != nil {
 		return err

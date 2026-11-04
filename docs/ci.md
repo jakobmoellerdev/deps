@@ -7,6 +7,7 @@ deps behaves the same locally and in CI. In CI it detects the forge from the job
 - [Gitea](#gitea)
 - [Forgejo](#forgejo)
 - [Tokens and permissions](#tokens-and-permissions)
+- [Signed commits](#signed-commits)
 - [Self-hosted runners and actions hosts](#self-hosted-runners-and-actions-hosts)
 - [Schedules](#schedules)
 - [Automerge](#automerge)
@@ -284,6 +285,46 @@ jobs:
    - On a 401 without a static token, deps runs `git credential fill` once per host and retries. deps never prompts (`GIT_TERMINAL_PROMPT=0`).
 4. **npm and Docker.** npm uses the `.npmrc` `_authToken` entries; docker uses the Docker credential chain (`~/.docker/config.json` or credential helpers, e.g. after `docker login`).
 5. **Go modules.** `go` itself, through `GOPRIVATE`, `GONOPROXY`, `GOPROXY` and git credentials. Private modules need `GOPRIVATE` set in the job, and git credentials for their host. The checkout's credentials cover only the platform host; for other hosts use, e.g., `git config --global url."https://x-access-token:${TOKEN}@host/".insteadOf "https://host/"`.
+
+## Signed commits
+
+deps builds its commits with `git commit-tree`, which signs only when asked to. Pass a private key and deps signs every commit it pushes. Branch protection that requires signed commits then accepts deps' PRs.
+
+```yaml
+    env:
+      DEPS_GIT_AUTHOR: deps-bot <deps-bot@example.com> # the key owner's verified email
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ secrets.DEPS_BOT_TOKEN }}
+      - uses: jakobmoellerdev/deps@vX.Y.Z # signing needs a release newer than v0.1.0
+        with:
+          token: ${{ secrets.DEPS_BOT_TOKEN }}
+          signing-key: ${{ secrets.DEPS_SIGNING_KEY }}
+```
+
+- **The key.** The `signing-key` input (`DEPS_SIGNING_KEY`, `--signing-key`) is the private key itself or the path of a file holding it. deps detects the format from the armor header:
+  - `-----BEGIN OPENSSH PRIVATE KEY-----` signs with SSH (`ssh-keygen` on the runner);
+  - `-----BEGIN PGP PRIVATE KEY BLOCK-----` signs with OpenPGP (`gpg` on the runner). deps imports the key into a temporary `GNUPGHOME`.
+
+  The key must have no passphrase. Generate a dedicated one, e.g. `gpg --batch --passphrase '' --quick-gen-key 'deps-bot <deps-bot@example.com>' ed25519 sign never` or `ssh-keygen -t ed25519 -N '' -f deps-bot`. deps removes its temporary copies when it exits and logs only the fingerprint: `commit signing format=openpgp key=<fingerprint>`.
+- **The identity.** A forge marks a signature as verified only if the commit's committer belongs to the key's owner. deps uses the same identity for author and committer: set [`gitAuthor`](reference/configuration.md#gitauthor) or `DEPS_GIT_AUTHOR` to the bot account's name and verified email. If you change the identity, list the old email in [`gitIgnoredAuthors`](reference/configuration.md#gitignoredauthors) so that deps keeps updating its existing branches.
+- **Without a key**, deps behaves as before: commits are unsigned unless the checkout's git configuration sets `commit.gpgSign` (and `user.signingKey`), which `git commit-tree` honors.
+
+**Gitea and Forgejo.**
+
+- The key must be registered and verified on the committer's account, and the committer email must be a verified email of that user. For a GPG key, open *Settings → SSH / GPG Keys*, or `POST /user/gpg_keys` with `armored_public_key` plus `armored_signature`, a detached signature of the token from `GET /user/gpg_key_token`. An SSH key is verified on the same settings page with `ssh-keygen -Y sign -n gitea` over the shown token.
+- A dedicated user (e.g. `deps-bot`) with write access to the repository and a token with `write:repository` (and `write:issue` for the dashboard) keeps the bot's identity, key and token apart from people. That token goes to both `actions/checkout` and the action, so that CI also runs on the PRs.
+- Branch protection: *Require signed commits*.
+
+**GitHub.** Add the public key as a *signing key* (GPG or SSH) to the account whose verified email is the committer, usually a machine user. A GitHub App has no signing keys, so commits under its `[bot]` identity can't be signed by deps. Branch protection: *Require signed commits*.
+
+**Merging the PRs.** Only a fast-forward keeps deps' signed commit as it is. Every other merge style writes new commits, and those are signed only if the forge holds its own key:
+
+- **Gitea/Forgejo:** merge, rebase and squash commits are signed only with `[repository.signing]` configured in `app.ini` (`SIGNING_KEY`, `MERGES`). Otherwise *Require signed commits* blocks those styles. Allow *Fast-forward only* (repository settings → *Pull Requests*).
+- **GitHub:** merge and squash commits made on the website are signed by GitHub's own key and show as verified.
+
+To keep deps' branches fast-forwardable when other changes land first, set [`rebaseWhen: behind-base-branch`](reference/configuration.md#rebasewhen).
 
 ## Self-hosted runners and actions hosts
 

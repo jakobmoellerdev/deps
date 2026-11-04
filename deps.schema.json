@@ -423,9 +423,9 @@
     },
     "gitAuthor": {
       "type": "string",
-      "description": "Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags.",
+      "description": "Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified.",
       "default": "deps[bot] <deps-bot@noreply.invalid>",
-      "markdownDescription": "Author and committer of deps commits as `Name <email>` (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags.\n\n- Precedence, per field: `--author-name`/`--author-email` > `$DEPS_GIT_AUTHOR` > `gitAuthor` > `deps[bot] <deps-bot@noreply.invalid>`.\n- GitHub bot noreply addresses such as `ocmbot[bot] <1+ocmbot[bot]@users.noreply.github.com>` are accepted.\n- An invalid value fails with `gitAuthor: must be 'Name <email>', got \"<v>\"`.\n\n```yaml\ngitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>'\ngitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com']\n```"
+      "markdownDescription": "Author and committer of deps commits as `Name <email>` (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified.\n\n- Precedence, per field: `--author-name`/`--author-email` > `$DEPS_GIT_AUTHOR` > `gitAuthor` > `deps[bot] <deps-bot@noreply.invalid>`.\n- GitHub bot noreply addresses such as `ocmbot[bot] <1+ocmbot[bot]@users.noreply.github.com>` are accepted.\n- An invalid value fails with `gitAuthor: must be 'Name <email>', got \"<v>\"`.\n\n```yaml\ngitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>'\ngitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com']\n```"
     },
     "gitIgnoredAuthors": {
       "items": {

@@ -164,7 +164,7 @@ func cleanEnv(t *testing.T) {
 	for _, k := range []string{
 		"GITHUB_ACTIONS", "GITEA_ACTIONS", "FORGEJO_ACTIONS", "GITHUB_STEP_SUMMARY", "GITEA_STEP_SUMMARY",
 		"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", "DEPS_GITHUB_COM_TOKEN",
-		"DEPS_DEFAULT_ACTIONS_URL", "DEPS_GIT_AUTHOR", "DEPS_LOG_LEVEL", "DEPS_LOG_FORMAT", "GONOPROXY", "GOPRIVATE",
+		"DEPS_DEFAULT_ACTIONS_URL", "DEPS_GIT_AUTHOR", "DEPS_SIGNING_KEY", "DEPS_LOG_LEVEL", "DEPS_LOG_FORMAT", "GONOPROXY", "GOPRIVATE",
 		"NPM_CONFIG_REGISTRY", "npm_config_registry",
 	} {
 		t.Setenv(k, "")
@@ -390,6 +390,7 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 		{"config", []string{"plan", "--dir", bad}, "line 1: field pinn not found"},
 		{"missing explicit config", []string{"plan", "--dir", dir, "--config", filepath.Join(dir, "nope.yaml")}, "nope.yaml"},
 		{"platform", []string{"run", "--dir", dir, "--platform", "gitlab"}, `--platform: invalid value "gitlab"`},
+		{"signing key", []string{"run", "--dir", dir, "--signing-key", "not-a-key"}, "--signing-key: signing key: want an OpenSSH private key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

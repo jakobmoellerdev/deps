@@ -5,6 +5,7 @@
 | `DEPS_DEFAULT_ACTIONS_URL` | all | default host of `owner/repo@ref` actions (hostname, or a URL whose host is used); overridden by the config key `actions.defaultHost` |
 | `DEPS_NODE_DIST_URL` | `node-version` datasource | base URL of a nodejs.org `dist` mirror (default `https://nodejs.org/dist`) |
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor` |
+| `DEPS_SIGNING_KEY` | `run` | default of `--signing-key`: a passphrase-less OpenSSH or armored OpenPGP private key, or the path of a file holding one; deps signs its commits with it |
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |

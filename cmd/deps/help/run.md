@@ -9,6 +9,13 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 **Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then the config key `gitAuthor`, then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2.
 
+**Commit signing:** with `--signing-key` (or `$DEPS_SIGNING_KEY`), every commit deps creates is signed. The value is the private key itself, as a CI secret holds it, or the path of a file holding it; the format is detected from the armor header:
+
+- `-----BEGIN OPENSSH PRIVATE KEY-----`: SSH signature (`gpg.format=ssh`) with a `0600` temporary copy of the key; needs `ssh-keygen`.
+- `-----BEGIN PGP PRIVATE KEY BLOCK-----`: OpenPGP signature; the key is imported once into a temporary `GNUPGHOME`; needs `gpg`.
+
+Only keys without a passphrase are supported; a protected key fails before any work is done. The temporary key material is removed when `run` exits, also on errors and on SIGINT/SIGTERM. The key is logged at info by fingerprint only, as `commit signing format=ssh|openpgp key=<fingerprint>`. A value that is neither format nor a readable file exits 2; a missing `ssh-keygen`/`gpg` exits 1. The forge shows the signature as verified only when the committer (`gitAuthor`) is the key owner's verified email. Without a key, git's own configuration applies (`commit.gpgSign` and `user.signingKey` of the checkout).
+
 **Trigger:** schedules (config key `schedule`) are matched against what started the run, not against the clock: `--trigger-schedule`, then `$DEPS_TRIGGER_SCHEDULE`, then `$GITHUB_EVENT_NAME` with the `schedule` field of the payload at `$GITHUB_EVENT_PATH`. Runs that were not triggered by a cron (`workflow_dispatch`, `push`, a local run without CI variables) are in schedule for every group. Logged at info as `trigger event=<event> cron=<cron>`. The value of `--trigger-schedule` is validated as a 5-field cron; an invalid one exits 2.
 
 **New-PR limit:** the minimum of `--max-new-prs` and the room left below `prConcurrentLimit`/`prHourlyLimit`, counting only the non-zero ones. Existing PRs are always updated.
