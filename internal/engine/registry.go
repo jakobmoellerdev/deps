@@ -6,9 +6,13 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitlabci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/precommit"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
@@ -19,8 +23,10 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	ms := make([]manager.Manager, 0, 5+len(cs))
-	ms = append(ms, actions.New(), gomod.New(), docker.New(), npm.New(), helm.New())
+	ms := make([]manager.Manager, 0, 12+len(cs))
+	ms = append(ms, actions.New(), gomod.New(), docker.New(), npm.New(), helm.New(),
+		kustomize.New(), precommit.New(), gitlabci.New(),
+		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise())
 	return append(ms, cs...), nil
 }
 
@@ -35,5 +41,7 @@ var SkipDocs = []refdoc.Skip{
 // ManagerDocs returns the reference documentation of the built-in managers and the custom
 // manager, in discovery order.
 func ManagerDocs() []refdoc.Manager {
-	return []refdoc.Manager{actions.Doc, gomod.Doc, docker.Doc, npm.Doc, helm.Doc, custom.Doc}
+	return []refdoc.Manager{actions.Doc, gomod.Doc, docker.Doc, npm.Doc, helm.Doc,
+		kustomize.Doc, precommit.Doc, gitlabci.Doc,
+		toolversions.DocNvm, toolversions.DocNodenv, toolversions.DocAsdf, toolversions.DocMise, custom.Doc}
 }

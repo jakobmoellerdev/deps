@@ -85,15 +85,22 @@ type Pending struct {
 }
 
 // digestManagers support digest pinning (pin: digest, digest refresh).
-var digestManagers = map[string]bool{"github-actions": true, "docker": true}
+var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pre-commit": true}
 
 // digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
-// github-actions and docker deps whatever their versioning (a rule may override it), except
-// setup-action version inputs, which are plain values. Custom deps can only refresh a digest
-// they already carry (regex `digest` group or an annotated `@sha256:`); they have no place to
-// insert a new one.
+// github-actions, docker and pre-commit deps whatever their versioning (a rule may override
+// it), except setup-action version inputs, which are plain values; gitlabci images and
+// services, which are edited like docker refs. Custom and kustomize deps can only refresh a
+// digest they already carry (regex `digest` group, an annotated `@sha256:`, a kustomize
+// `digest` field); they have no place to insert a new one.
 func digestCapable(d dep.Dep) bool {
-	return digestManagers[d.Manager] && d.DepType != actions.DepTypeSetup || d.Manager == "custom" && d.Digest != ""
+	switch d.Manager {
+	case "custom", "kustomize":
+		return d.Digest != ""
+	case "gitlabci":
+		return d.Datasource == "docker"
+	}
+	return digestManagers[d.Manager] && d.DepType != actions.DepTypeSetup
 }
 
 // tagOnly reports whether d is a docker image whose tag is not a version (latest, bookworm)

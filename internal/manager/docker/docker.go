@@ -144,14 +144,14 @@ func (x *extractor) add(depType string, line, off int, ref string) {
 		d.Skip = "cannot locate value"
 	default:
 		d.Line = x.lineOf(off)
-		parseRef(&d, off, ref)
+		ParseRef(&d, off, ref)
 	}
 	x.deps = append(x.deps, d)
 }
 
-// parseRef fills d from ref, which starts at byte offset off. Tags that are not versions
+// ParseRef fills d from ref, which starts at byte offset off. Tags that are not versions
 // (latest, bookworm) are kept: the engine refreshes or pins their digest.
-func parseRef(d *dep.Dep, off int, ref string) {
+func ParseRef(d *dep.Dep, off int, ref string) {
 	named, err := reference.ParseNormalizedNamed(ref)
 	if err != nil {
 		d.Skip = "invalid reference"

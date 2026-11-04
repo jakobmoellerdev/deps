@@ -94,13 +94,22 @@ func assertSkipsInCode(t *testing.T, owner string, skips []refdoc.Skip, code str
 
 func TestSkipDocsAreProducedByCode(t *testing.T) {
 	assertSkipsInCode(t, "engine", SkipDocs, codeOf(t, ".", "../config"))
-	pkgDir := map[string]string{actions.Name: "actions"}
+	// pkgDirs maps managers to their package directories when the name differs; kustomize
+	// and gitlabci report docker.ParseRef's skips.
+	pkgDirs := map[string][]string{
+		actions.Name: {"actions"}, "pre-commit": {"precommit"},
+		"nvm": {"toolversions"}, "nodenv": {"toolversions"}, "asdf": {"toolversions"}, "mise": {"toolversions"},
+		"kustomize": {"kustomize", "docker"}, "gitlabci": {"gitlabci", "docker"},
+	}
 	for _, m := range ManagerDocs() {
-		dir := m.Name
-		if d, ok := pkgDir[m.Name]; ok {
-			dir = d
+		dirs, ok := pkgDirs[m.Name]
+		if !ok {
+			dirs = []string{m.Name}
 		}
-		assertSkipsInCode(t, m.Name, m.Skips, codeOf(t, filepath.Join("..", "manager", dir)))
+		for i, d := range dirs {
+			dirs[i] = filepath.Join("..", "manager", d)
+		}
+		assertSkipsInCode(t, m.Name, m.Skips, codeOf(t, dirs...))
 	}
 }
 

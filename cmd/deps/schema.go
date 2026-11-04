@@ -9,11 +9,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/invopop/jsonschema"
 	"github.com/spf13/cobra"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jsonschema"
 )
 
 func newSchema() *cobra.Command {
@@ -59,13 +59,10 @@ func configSchema() ([]byte, error) {
 // defaults and descriptions from the jsonschema tags, and the long descriptions from
 // config.KeyDocs; unknown keys are rejected, as config.Load does.
 func reflectConfig() (*jsonschema.Schema, error) {
-	r := &jsonschema.Reflector{
-		FieldNameTag:               "yaml",
-		RequiredFromJSONSchemaTags: true,
-		ExpandedStruct:             true,
-		Anonymous:                  true, // the package-path $id is not a resolvable URL
+	s, err := jsonschema.Reflect(&config.Config{})
+	if err != nil {
+		return nil, err
 	}
-	s := r.Reflect(&config.Config{})
 	s.Title = "deps configuration (.deps.yaml)"
 	allowCustomDatasources(s)
 	s.Properties.Value("ignorePaths").Default = config.DefaultIgnorePaths
@@ -104,8 +101,8 @@ func addKeyDocs(s *jsonschema.Schema, docs map[string]map[string]string) error {
 		if d.Properties == nil {
 			continue
 		}
-		for p := d.Properties.Oldest(); p != nil; p = p.Next() {
-			setMarkdown(p.Value, strings.TrimSpace(docgen.PlainToMarkdown(p.Value.Description)+"\n\n"+docs[def][p.Key]))
+		for key, p := range d.Properties.All() {
+			setMarkdown(p, strings.TrimSpace(docgen.PlainToMarkdown(p.Description)+"\n\n"+docs[def][key]))
 		}
 	}
 	return nil
