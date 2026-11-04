@@ -602,7 +602,7 @@ The action downloads a released static binary instead of building from source, s
 
 The action uses only `github.*` expressions, so it runs unchanged on GitHub Actions and Gitea/Forgejo with default settings. Its generated reference is [reference/action.md](reference/action.md).
 
-Releases: a `v*` tag runs the `release` job of `.gitea/workflows/ci.yml` after `test` (`task ci` runs once). `task release:build` builds `deps_linux_amd64` and `deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w -buildid= -X main.version=<tag>"`, plus `checksums.txt`; the job checks the binaries are static and publishes them with `gt release create`. Details: [ci.md](ci.md#releases-maintainers).
+Releases: a `v*` tag runs the `release` job of `.gitea/workflows/ci.yml` after `test` (`task ci` runs once). `task release:build` builds `deps_linux_amd64` and `deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w -buildid= -X main.version=<tag>"`, plus `checksums.txt`; the job checks the binaries are static. `task release:deb` packages them as reproducible `.deb` files (amd64, arm64), which the job uploads to the owner's Gitea Debian registry (`stable`/`main`). `gt release create` publishes the binaries, packages and checksums. Details: [ci.md](ci.md#releases-maintainers).
 
 ### Gitea / Forgejo workflow
 

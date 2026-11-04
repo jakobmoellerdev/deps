@@ -37,14 +37,15 @@ jobs:
           for f in dist/deps_linux_*; do
             if readelf -l "$f" | grep -q 'Requesting program interpreter'; then echo "$f is not static" >&2; exit 1; fi
           done
+      - run: task release:deb VERSION="$TAG"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" --clobber dist/deps_linux_amd64 dist/deps_linux_arm64 dist/checksums.txt
+            gh release upload "$TAG" --clobber dist/deps_linux_amd64 dist/deps_linux_arm64 dist/*.deb dist/checksums.txt
             gh release edit "$TAG" --notes-file dist/RELEASE_NOTES.md
           else
             gh release create "$TAG" --verify-tag --title "$TAG" --notes-file dist/RELEASE_NOTES.md \
-              dist/deps_linux_amd64 dist/deps_linux_arm64 dist/checksums.txt
+              dist/deps_linux_amd64 dist/deps_linux_arm64 dist/*.deb dist/checksums.txt
           fi

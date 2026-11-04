@@ -18,6 +18,7 @@ deps is a Renovate replacement written in Go. It finds the dependencies in a rep
 - [Tokens and permissions](#tokens-and-permissions)
 - [Schedules, automerge and the dashboard](#schedules-automerge-and-the-dashboard)
 - [Action inputs](#action-inputs)
+- [Install](#install)
 - [Local usage](#local-usage)
 - [Configuration](#configuration)
 - [Documentation](#documentation)
@@ -226,9 +227,20 @@ Outputs: `version` (the release that ran) and `cache-hit` (`true` if the binary 
 
 The action downloads the static binary for linux/amd64 or linux/arm64, verifies it against `checksums.txt`, and runs it. The runner needs no Go, except for `go mod tidy` on go.mod updates. A binary of the same version is reused from the runner's tool cache (self-hosted runners) or the forge's Actions cache (key `deps-<version>-linux-<arch>`), and only if it still matches its recorded checksum. Full reference: [docs/reference/action.md](docs/reference/action.md).
 
-## Local usage
+## Install
 
-Download a static binary (linux/amd64, linux/arm64) from the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) and verify it:
+**Debian and Ubuntu (amd64, arm64).** Every release is published to the Debian package registry on git.jakob-moeller.cloud, which needs no login:
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSL https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/debian/repository.key -o /etc/apt/keyrings/deps.asc
+echo "deb [signed-by=/etc/apt/keyrings/deps.asc] https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/debian stable main" | sudo tee /etc/apt/sources.list.d/deps.list
+sudo apt-get update && sudo apt-get install deps
+```
+
+The package installs `/usr/bin/deps` with bash, zsh and fish completions. It recommends `git`, which `deps run` needs. The `.deb` files are also attached to each release.
+
+**Static binary (linux/amd64, linux/arm64).** Download it from the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) and verify it:
 
 ```sh
 base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.1.0
@@ -236,7 +248,9 @@ curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
 grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 ~/.local/bin/deps
 ```
 
-You can also use `go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest`, or run `task build` in a clone, which builds a static `bin/deps`.
+**From source.** `go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest`, or `task build` in a clone, which builds a static `bin/deps`.
+
+## Local usage
 
 ```sh
 deps plan                  # unified diff on stdout, one line per update or error on stderr

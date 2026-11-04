@@ -142,6 +142,15 @@ tasks:
         cmd: GOOS=linux GOARCH={{.ITEM}} go build -trimpath -ldflags "-s -w -buildid= -X main.version={{.VERSION}}" -o dist/deps_linux_{{.ITEM}} ./cmd/deps
       - cd dist && sha256sum deps_linux_amd64 deps_linux_arm64 > checksums.txt
 
+  release:deb:
+    desc: Build reproducible dist/deps_<version>_<arch>.deb packages (amd64, arm64) from the release binaries and add them to dist/checksums.txt
+    preconditions:
+      - sh: test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64
+        msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
+    cmds:
+      - packaging/deb/build.sh "{{.VERSION}}"
+      - cd dist && sha256sum deps_linux_amd64 deps_linux_arm64 deps_*.deb > checksums.txt
+
   test:
     desc: Run tests with the race detector
     cmds:

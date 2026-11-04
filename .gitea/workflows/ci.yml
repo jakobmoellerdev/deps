@@ -38,6 +38,15 @@ jobs:
           for f in dist/deps_linux_*; do
             if readelf -l "$f" | grep -q 'Requesting program interpreter'; then echo "$f is not static" >&2; exit 1; fi
           done
+      - run: task release:deb VERSION="${GITHUB_REF_NAME}"
+      - name: Publish Debian packages
+        # The job token can only read packages, so a write:package token of the owner uploads.
+        # Re-runs skip files that are already published with the same content.
+        env:
+          DEB_REGISTRY: ${{ github.server_url }}/api/packages/${{ github.repository_owner }}/debian
+          DEB_USER: ${{ github.repository_owner }}
+          DEB_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: packaging/deb/publish.sh dist/*.deb
       - name: Publish release
         # gt (the Gitea CLI, preinstalled on the runner) uses GITEA_TOKEN and the Actions server URL.
         env:
@@ -45,4 +54,4 @@ jobs:
           GITEA_CLI_NO_UPDATE_NOTIFIER: "1"
         run: |
           gt release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md --no-input \
-            dist/deps_linux_amd64 dist/deps_linux_arm64 dist/checksums.txt
+            dist/deps_linux_amd64 dist/deps_linux_arm64 dist/*.deb dist/checksums.txt
