@@ -17,7 +17,7 @@ flowchart LR
     D[discover<br/>one WalkDir, pruned] --> E[extract<br/>managers emit Dep + byte spans]
     E --> R[resolve<br/>datasources, deduped, concurrent]
     R --> P[policy<br/>rules top-to-bottom]
-    P --> B[build changes<br/>byte patch, then post-processors<br/>go mod tidy, npm lockfile]
+    P --> B[build changes<br/>byte patch, then post-processors<br/>go mod tidy, npm lockfile, Chart.lock]
     B --> O{output}
     O -->|plan| O1[unified diff]
     O -->|apply| O2[write files]
@@ -34,6 +34,7 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 | `gomod` | `go.mod` | `direct`, `indirect`, `go`, `toolchain` | `go` / `go`; directives `go-toolchain` / `tag` |
 | `docker` | `Dockerfile`, `Containerfile` (also `Dockerfile.x`, `x.Dockerfile`), `(docker-)compose*.y(a)ml`, workflows, `action.y(a)ml`, other `*.y(a)ml` (Kubernetes, Helm values) | `dockerfile`, `compose`, `workflow`, `action`, `kubernetes`, `helm` | `docker` / `docker` |
 | `npm` | `package.json` | `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager`, `engines`, `volta` | `npm` / `semver`; node in `engines`/`volta` `node-version` |
+| `helm` | `Chart.yaml`, `helmfile.y(a)ml`, `helmfile.d/*.y(a)ml` (each optionally `.gotmpl`), other `*.y(a)ml` (chart resources) | `chart`, `helmfile`, `k0s`, `flux`, `argocd` | `helm` / `semver` |
 | `custom` | `custom[].files` globs | `annotation`, `regex` | per entry or per match |
 
 **github-actions.** `uses:` values outside `with:`/`env:`. Skips: `local action` (`./`, `$/`), `docker reference (docker manager)`, `unrecognized uses`, `non-version ref`, `pinned without version comment`, `cannot locate value`.
@@ -64,9 +65,15 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 - **peerDependencies** are ignored by default, like indirect Go requirements; a rule with `depTypes: [peerDependencies]` and `ignore: false` opts in.
 - **Lockfile:** after a package.json change, `apply`/`run` regenerate the workspace's `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock` (see *Post-processors* below). Dependencies naming a member of the manifest's own workspace are never updated (any range form).
 
-**custom, annotation mode** (no `match`). A comment `deps: <datasource> <name> [versioning=<scheme>]` after `#`, `//`, `--`, `;` or `<!--` annotates the next line; its first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Otherwise `no version on next line`.
+**helm.** Deps have `Name` = chart, `Source` = repository URL (`https://…` index repository or `oci://host/path`), `RefSpan` = the version scalar.
+- `Chart.yaml` (DepType `chart`): `dependencies[]` `name`/`version`/`repository`. Skips: `local chart` (empty or `file://` repository), `repository alias` (`@name`, `alias:name`: resolved from the user's Helm repository config, which deps does not read), `unknown chart repository <repo>`.
+- helmfile (DepType `helmfile`): `releases[].chart` is `<repo>/<name>`, resolved through `repositories[]` of any document of the file (`oci: true` prefixes `oci://`), or `oci://host/path/name`. Skips: `local chart` (`./x`, `../x`, `/x`, no `/`), `unknown chart repository <repo>`, `invalid chart reference`. In `.gotmpl` files every line containing `{{` is blanked (bytes replaced by spaces, offsets unchanged) before parsing, so templated values are not deps.
+- Only exact versions (`[v]MAJOR.MINOR.PATCH[-pre][+build]`) are updated; Helm treats anything else as a constraint (`1.2` means `1.2.x`), skipped as `version range`. Also `no version`, `template value`, `cannot locate value`.
+- `Chart.lock` is kept in sync by the helm post-processor (below).
 
-**Renovate markers.** Annotation mode also accepts `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]` (fields in any order; `packageName` wins over `depName`; `registryUrl` and unknown keys are ignored); it annotates the next line like `deps:`. Skips: `renovate marker without datasource`, `renovate marker without depName`. For the docker datasource the next line's first tagged image reference is used instead: the tag after the last `:` is the version and an adjacent `@sha256:` digest is captured, so tag and digest are rewritten together. Renovate datasource names are aliased: `golang-version` → `go-toolchain`, `github-tags` → `git-tags` (`owner/repo` on github.com), `github-release-attachments` → `github-releases`, `node` → `node-version`. `custom.<name>` names a datasource of `customDatasources`; undefined ones, like other unknown names, are skipped as `unknown datasource "<ds>"`.
+**custom, annotation mode** (no `match`). A comment `deps: <datasource> <name> [versioning=<scheme>]` after `#`, `//`, `--`, `;` or `<!--` annotates the next line; its first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Otherwise `no version on next line`. Helm charts are named `<repository>/<chart>` (`deps: helm https://charts.jetstack.io/cert-manager`) or given as two tokens, `deps: helm <repository> <chart>`; anything but an `https://`, `http://` or `oci://` repository with a chart is `invalid helm name "<name>"`.
+
+**Renovate markers.** Annotation mode also accepts `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]` (fields in any order; `packageName` wins over `depName`; `registryUrl` is the chart repository of `helm` deps and ignored otherwise, as are unknown keys); it annotates the next line like `deps:`. Skips: `renovate marker without datasource`, `renovate marker without depName`. For the docker datasource the next line's first tagged image reference is used instead: the tag after the last `:` is the version and an adjacent `@sha256:` digest is captured, so tag and digest are rewritten together. Renovate datasource names are aliased: `golang-version` → `go-toolchain`, `github-tags` → `git-tags` (`owner/repo` on github.com), `github-release-attachments` → `github-releases`, `node` → `node-version`. `custom.<name>` names a datasource of `customDatasources`; undefined ones, like other unknown names, are skipped as `unknown datasource "<ds>"`.
 
 ```dockerfile
 # deps: github-releases golangci/golangci-lint
@@ -113,9 +120,12 @@ custom:
 
 | `npm` | package name (`@scope/name` requested as `@scope%2fname`) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata), streamed: only the `versions` keys and each version's `deprecated`; deprecated versions are dropped |
 | `node-version` | `node` (any name) | `GET https://nodejs.org/dist/index.json` once per run (base URL overridable with `DEPS_NODE_DIST_URL` for mirrors), streamed element by element: `version` and `date` (release time) |
+| `helm` | chart name; `Source` is the repository (`https://…` or `oci://host/path`) | classic: `GET <repo>/index.yaml` once per repository, stream-scanned (section 3); OCI: `tags/list` of `<host>/<path>/<chart>` through the docker datasource, tag `_` read as `+` |
 | `custom.<name>` | free-form (all deps share the list) | `customDatasources.<name>`: one `GET <url>` per run (unauthenticated, at most 10 MiB), decoded as json, yaml or plain text, selected and optionally regex-filtered (below) |
 
-Custom entries may use `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm` and `node-version`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments` and `node`, and `custom.<name>` of a defined custom datasource.
+Custom entries may use `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version` and `helm`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments` and `node`, and `custom.<name>` of a defined custom datasource.
+
+**helm.** Classic index versions without `urls` are dropped (Helm ignores them); release times are the index's `created`. A classic request carries the forge token as Basic `x-access-token` only on the forge's own host (a Gitea/Forgejo package registry), else it is anonymous. OCI charts share the docker datasource's credentials, token cache and Docker Hub handling (`registry-1.docker.io`/`index.docker.io` are looked up as `docker.io`); their release time is the manifest annotation `org.opencontainers.image.created`, which `helm push` sets (the docker datasource reads manifest annotations instead of fetching a config blob for any non-image artifact). A chart missing from its index is `chart <name> not found in <repo>`. No digests.
 
 **node-version.** Releases are returned as published (`v26.13.0`, prereleases included; the schemes drop them unless the current version is one), followed by a derived `X.Y` and `X` without `v` per stable release line, so partial values (`node-version: 26`, engines `^26`) have candidates of their precision under `tag` versioning. The derived entries come last so that semver, which reads `27` as 27.0.0, prefers the published `v27.0.0` on a tie. Semver keeps the file's `v` style (`NODE_VERSION = "26.5.0"` → `26.13.0`). A derived entry's release time is that of the line's first release. No digests. Renovate's `node` versioning (LTS-aware stability) is not reproduced; use `allow` to restrict majors.
 
@@ -127,7 +137,7 @@ Selector grammar: stages joined by `|`; a stage is `keys` (sorted keys of an obj
 
 ### Post-processors
 
-`engine.Build` patches every file, then asks the post-processor registered for the file's manager for the file's **scope**: the directory owning its derived files (`plan` passes none). Manifests of one manager sharing a scope are post-processed together, once per scope, under a global bound of 4 concurrent runs. The engine reads the scope dir's existing siblings; a result under a manifest's path (relative to the scope) replaces that manifest; every sibling whose content differs becomes a change (mode kept, `0644` for new files). A manifest without a scope is only patched. A failing scope drops all its manifests and siblings (`<file>[, <file>…]: <err>`).
+`engine.Build` patches every file, then asks the post-processor registered for the file's manager for the file's **scope**: the directory owning its derived files (`plan` passes only the in-process helm post-processor). Manifests of one manager sharing a scope are post-processed together, once per scope, under a global bound of 4 concurrent runs. The engine reads the scope dir's existing siblings; a result under a manifest's path (relative to the scope) replaces that manifest; every sibling whose content differs becomes a change (mode kept, `0644` for new files). A manifest without a scope is only patched. A failing scope drops all its manifests and siblings (`<file>[, <file>…]: <err>`).
 
 - **gomod** (`gotool.Tidier`, scope = module dir, siblings `go.sum`): `go mod tidy -modfile=<tmp>/go.mod` on copies.
 - **npm** (`nodetool.Locker`, siblings `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` + read-only `.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`).
@@ -136,6 +146,11 @@ Selector grammar: stages joined by `|`; a stage is `keys` (sorted keys of an obj
   - Commands: npm `install --package-lock-only --ignore-scripts --no-audit --no-fund`; pnpm `install --lockfile-only --ignore-scripts --no-frozen-lockfile`; yarn berry (`.yarnrc.yml` or `__metadata` in the lock) `install --mode=update-lockfile` with `YARN_ENABLE_SCRIPTS=0 YARN_ENABLE_IMMUTABLE_INSTALLS=0`; yarn classic `install --ignore-scripts --ignore-engines --non-interactive --no-progress`. Env `npm_config_update_notifier=false`, `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`.
   - Tool resolution: binary on PATH; else `npx --yes <tool>@<version>` when root `packageManager` names it (berry: `npx --yes --package=@yarnpkg/cli-dist@<version> -- yarn`); else `npx --yes <tool>`; else `<tool> not found (needed to update <lock>)`.
   - Several lockfiles in one root: the `packageManager` tool's lockfile wins, else package-lock, pnpm, yarn. Only the lockfile is read back and returned when changed; failure `<tool> install in <dir>: <last 20 output lines>`. npm-shrinkwrap.json is not handled.
+- **helm** (`helm.Locker`, scope = the dir of a `Chart.yaml`, sibling `Chart.lock`; helmfiles and resources have no scope). In process, no network, so `plan` shows the lock diff too. Without a `Chart.lock` nothing happens.
+  - Every dependency whose patched Chart.yaml version is exact and differs from the locked one (matched by position and name) gets the new version in the lock, in the lock's `v` style.
+  - `digest` is Helm's `HashReq`: `sha256:` + hex sha256 of `json.Marshal([2][]*chart.Dependency{chartYamlDeps, lockDeps})`, with `chart.Dependency` mirrored field for field. `@name`/`alias:name` repositories are replaced by the URL locked at the same position, as `helm dependency build` resolves them before hashing. Verified against Helm-written locks and accepted by `helm dependency build`.
+  - The old digest is recomputed from the unpatched Chart.yaml first; a mismatch fails the chart (`Chart.lock is out of sync with Chart.yaml …; run helm dependency update`) rather than writing a lock Helm would reject.
+  - Only the version and digest bytes change; `generated` is kept, so the same update always yields the same commit.
 
 ## 3. Performance and memory design
 
@@ -153,6 +168,7 @@ The following is implemented:
 - **Go versions.** Fetched from the GOPROXY `@v/list` endpoint over HTTP. `go list` is used only for GOPRIVATE/direct modules. Release times (`@v/<v>.info`, immutable) are read from the local module download cache (`$(go env GOMODCACHE)/cache/download/<module>/@v/<v>.info`) when the go command already fetched that version, also for private modules; only misses go to the proxy. On open-component-model with a warm cache this serves 84 of 258 lookups. Version lists are never taken from the cache, since it only knows locally fetched versions. Go toolchain releases come from one `go.dev/dl/?mode=json&include=all` fetch per run.
 - **Registries.** Docker tags come from `tags/list` (all pages; Docker Hub with page size 10000; pages up to 64 MiB, since gcr.io returns every tag in one ~10 MB page), digests from a manifest HEAD. Credentials come from the Docker config and its credential helpers. One oras-go auth client with a shared token cache per run, so each token exchange happens once per registry and scope. Registries on localhost, loopback and private addresses are reached over plain HTTP.
 - **npm metadata.** Abbreviated documents are stream-decoded; only one version object is buffered at a time.
+- **Chart indexes.** A classic repository's `index.yaml` (27.5 MB for charts.bitnami.com) is fetched once per run and scanned line by line from the response stream: chart keys sit at one indentation under `entries:`, so the lines of every chart nobody asked for are skipped without parsing or buffering, and only a wanted chart's block is decoded (into version, appVersion, created, digest, urls). The wanted set comes from `datasource.Planner`: before the first lookup the engine hands each planning datasource all of its deps, so one scan serves every chart of a repository; a chart asked for later costs one more scan. A JSON index is decoded whole. Measured: plan of 5 charts over the bitnami, prometheus-community and grafana indexes (38 MB) peaks at 62 MB RSS (an empty run: 12 MB); decoding only the bitnami index whole with yaml.v3 takes 292 MB.
 - **Security.** OSV is queried in batches of up to 1000 packages; each advisory document is fetched once.
 - **Child processes.** Spawned only where unavoidable: post-processors (`go mod tidy`, npm/pnpm/yarn lockfile installs; at most 4 concurrently in total) and `git` for commit and push.
 - **Commits.** Built with git plumbing on a temporary index. `run` does no checkout, creates no worktree, and never mutates the working tree. With `--signing-key`, `commit-tree -S` signs them: an OpenSSH key is written once to a `0600` temporary file (`-c gpg.format=ssh -c user.signingkey=<file>`), an armored OpenPGP key is imported once into a temporary `GNUPGHOME` and selected by fingerprint. Both are validated up front (a passphrase-protected key fails before any lookup) and removed when `run` returns.
@@ -168,14 +184,14 @@ const (Major UpdateType = "major"; Minor = "minor"; Patch = "patch"; Digest = "d
 type Span struct{ Start, End int } // byte offsets, End exclusive
 
 type Dep struct {
-    Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "custom"
-    Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "custom.<name>"
+    Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "helm" | "custom"
+    Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "helm" | "custom.<name>"
     Versioning  string // "tag" | "go" | "docker" | "semver" | "loose" | "regex:<RE2>"; a rule's versioning replaces the manager's
-    DepType     string // gomod: direct|indirect|go|toolchain; actions: action|setup; docker: dockerfile|compose|workflow|action|kubernetes|helm; npm: dependencies|devDependencies|optionalDependencies|peerDependencies|packageManager|engines|volta; custom: annotation|regex
+    DepType     string // gomod: direct|indirect|go|toolchain; actions: action|setup; docker: dockerfile|compose|workflow|action|kubernetes|helm; npm: dependencies|devDependencies|optionalDependencies|peerDependencies|packageManager|engines|volta; helm: chart|helmfile|k0s|flux|argocd; custom: annotation|regex
     File        string // slash path relative to --dir
     Line        int    // 1-based
-    Name        string // actions: owner/repo[/sub]; gomod: module path
-    Source      string // actions: https://<host>/<owner>/<repo>; gomod: ""
+    Name        string // actions: owner/repo[/sub]; gomod: module path; helm: chart
+    Source      string // actions: https://<host>/<owner>/<repo>; gomod: ""; helm: repository URL (https:// or oci://)
     Version     string // current version (ref tag, comment version, or module version)
     Digest      string // actions: full SHA when pinned, else ""
     RefSpan     Span   // actions: ref after '@'; gomod: version token
@@ -231,7 +247,7 @@ type Manager interface {
 // them during Extract; the engine calls Link once after every file was extracted, with the
 // deps of each file, to resolve references in place, drop non-deps and reset.
 type Linker interface{ Link(files [][]dep.Dep) }
-// actions.New(), gomod.New(), docker.New(), npm.New() return the built-in managers; custom.New(cfg) one per cfg.Custom entry (accepting custom.<name> of cfg.CustomDatasources).
+// actions.New(), gomod.New(), docker.New(), npm.New(), helm.New() return the built-in managers; custom.New(cfg) one per cfg.Custom entry (accepting custom.<name> of cfg.CustomDatasources).
 ```
 
 ```go
@@ -254,8 +270,12 @@ type Timer interface { // optional: release times for ages and the older-than-cu
 type SourceRepo interface { // optional: source repository for release notes
     SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error)
 }
+type Planner interface { // optional: all updatable deps of the datasource, once, before the first lookup
+    Plan(deps []dep.Dep)
+}
 // gittags.Lister ("git-tags"), goproxy.Source ("go"), gotoolchain ("go-toolchain"),
-// dockerds ("docker"), githubreleases ("github-releases"), npmds ("npm"), nodeversion ("node-version")
+// dockerds ("docker"), githubreleases ("github-releases"), npmds ("npm"), nodeversion ("node-version"),
+// helmds ("helm", a Planner)
 // and customds ("custom.<name>", one per customDatasources entry) implement Datasource; osv implements SecuritySource;
 // checksum.Source implements ChecksumSource.
 ```
@@ -567,7 +587,7 @@ A group automerges when every update in it has `Automerge` from the policy of it
 ### Release age and notes
 
 - **When.** Only for PRs that are created or updated; never for up-to-date, skipped or dry-run groups. Independently, `minimumReleaseAge` asks the same `Timer` during resolve, once per chosen candidate (section 4); the datasources dedupe these lookups, so a PR body reuses them.
-- **Age.** From the optional `datasource.Timer`: `@v/<v>.info` (or `go list -m -json` for private modules), the npm packument's `time` (stream-decoded keeping only `time` and `repository`), GitHub release publication times (the shared release list, section 3), git tags on github.com or Gitea/Forgejo via their releases API, and the image config's `created`. Go toolchains have no date.
+- **Age.** From the optional `datasource.Timer`: `@v/<v>.info` (or `go list -m -json` for private modules), the npm packument's `time` (stream-decoded keeping only `time` and `repository`), GitHub release publication times (the shared release list, section 3), git tags on github.com or Gitea/Forgejo via their releases API, the image config's `created` (else, and for non-image artifacts such as OCI charts, the manifest's `org.opencontainers.image.created`), and a chart index's `created`. Go toolchains have no date.
 - **Notes.** One page of the source repository's GitHub or Gitea/Forgejo releases per run; on GitHub one GraphQL query (`releases(first:100)` with `tagName url description isDraft isPrerelease`) when a token for the host is known, else the REST page. The repository is the action's, the module's forge repository (plus a small vanity table: golang.org/x, k8s.io, sigs.k8s.io, google.golang.org/{grpc,protobuf}, go.yaml.in/yaml), npm's `repository`, or the OCI `org.opencontainers.image.source` label. Versions in (current, new] are listed newest first, each body capped at 2 KiB and the section at 40 KiB, plus a compare link when both tags exist.
 - **Sanitising.** Quoted bodies are neutralised: no `@mention` pings, upstream `#123` links, `redirect.github.com`.
 - **Cost.** Lookups are lazy, deduped and bounded by the shared semaphore; failures only drop the notes. The fingerprint covers file contents only, so changing notes never churns PRs.

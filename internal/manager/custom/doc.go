@@ -24,9 +24,15 @@ var Doc = refdoc.Manager{
 		{Reason: "unknown versioning \"<v>\"", When: "the versioning is not a known scheme"},
 		{Reason: "invalid git-tags name \"<name>\"", When: "a `git-tags` dep whose name is not a repository URL"},
 		{Reason: "invalid github-releases name \"<name>\"", When: "a `github-releases` dep whose name is not `owner/repo` or a repository URL"},
+		{Reason: "invalid helm name \"<name>\"", When: "a `helm` dep without an `https://`, `http://` or `oci://` repository and a chart name"},
 		{Reason: "unknown datasource \"<ds>\"", When: "the datasource is neither built in nor `custom.<name>` of `customDatasources`"},
 	},
 	Sections: []refdoc.Section{
 		{Title: "Edits", Body: "The version is replaced. A captured digest (`@sha256:` for docker markers, or a `digest` group) and a `checksum` group are replaced together with it."},
+		{Title: "Helm charts", Items: []string{
+			"`# deps: helm <repository>/<chart>` or `# deps: helm <repository> <chart>`, with an `https://` (index.yaml) or `oci://` repository: `# deps: helm https://charts.jetstack.io cert-manager`.",
+			"Renovate markers give the repository as `registryUrl=`: `# renovate: datasource=helm depName=redis registryUrl=https://charts.bitnami.com/bitnami`.",
+			"Regex mode takes `<repository>/<chart>` as the name.",
+		}},
 	},
 }

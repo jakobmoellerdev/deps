@@ -6,6 +6,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gotool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/nodetool"
 )
@@ -23,8 +24,14 @@ func newApply(o *rootOpts) *cobra.Command {
 	}
 }
 
-// postProcessors regenerate go.sum (go mod tidy) and package-lock.json (npm) for apply and
-// run, on temporary copies.
+// postProcessors regenerate go.sum (go mod tidy) and package-lock.json (npm) on temporary
+// copies, and Chart.lock in process, for apply and run.
 func postProcessors() map[string]engine.PostProcessor {
-	return map[string]engine.PostProcessor{gomod.Name: gotool.Tidier{}, npm.Name: nodetool.Locker{}}
+	return map[string]engine.PostProcessor{gomod.Name: gotool.Tidier{}, npm.Name: nodetool.Locker{}, helm.Name: helm.Locker{}}
+}
+
+// planPostProcessors are the post-processors plan runs: those that work in process, without
+// tools or network (Chart.lock).
+func planPostProcessors() map[string]engine.PostProcessor {
+	return map[string]engine.PostProcessor{helm.Name: helm.Locker{}}
 }

@@ -6,7 +6,8 @@
 // token is the dependency version. For the docker datasource the next line's first image
 // reference with a tag wins instead: its tag is the version and a following `@sha256:` digest
 // is captured, so tag and digest update together; a non-version tag (`latest`) with a digest
-// keeps its tag and only gets its digest refreshed.
+// keeps its tag and only gets its digest refreshed. Helm charts are named
+// `<repository>/<chart>`, `deps: helm <repository> <chart>` or (markers) by `registryUrl`.
 // Regex mode: an RE2 `match` with a required `version` (alias `currentValue`) group and
 // optional `name` (aliases `depName`, `packageName`), `datasource`, `versioning` and `digest`
 // (alias `currentDigest`) groups is run over the whole file; every match is a dependency.
@@ -254,6 +255,9 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 			if ann[6] >= 0 {
 				d.Versioning = string(line[ann[6]:ann[7]])
 			}
+			if d.Datasource == "helm" {
+				helmChartToken(&d, line[ann[5]:])
+			}
 			m.classify(&d)
 			if d.Skip == "" && !m.knownVersioning(d.Versioning) {
 				d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
@@ -275,11 +279,12 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 }
 
 // renovateMarker builds the pending dep of a Renovate marker's key=value fields. Name is
-// packageName, else depName; registryUrl and unknown keys are accepted and ignored. Without
-// a versioning field docker deps use docker versioning, others the entry's versioning.
+// packageName, else depName; registryUrl is the chart repository of helm deps and ignored
+// otherwise, as are unknown keys. Without a versioning field docker deps use docker
+// versioning, others the entry's versioning.
 func (m *customManager) renovateMarker(file string, lineNo int, fields string) dep.Dep {
 	d := dep.Dep{Manager: Name, DepType: DepTypeAnnotation, File: file, Line: lineNo}
-	var depName, pkgName, scheme string
+	var depName, pkgName, scheme, registry string
 	for f := range strings.FieldsSeq(strings.TrimSuffix(strings.TrimSpace(fields), "-->")) {
 		k, v, _ := strings.Cut(f, "=")
 		switch k {
@@ -291,9 +296,14 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 			pkgName = v
 		case "versioning":
 			scheme = v
+		case "registryUrl":
+			registry = v
 		}
 	}
 	d.Name = cmp.Or(pkgName, depName)
+	if d.Datasource == "helm" {
+		d.Source = registry
+	}
 	switch {
 	case d.Datasource == "":
 		d.Skip = "renovate marker without datasource"
@@ -469,6 +479,9 @@ func isChecksum(s string) bool {
 //     Source is the repository URL.
 //   - go, go-toolchain, docker, npm, node-version: Name is the module path, image or package;
 //     Source is empty.
+//   - helm: Name is `<repository>/<chart>`, or the chart when Source already holds the
+//     repository (annotation `deps: helm <repository> <chart>`, Renovate `registryUrl=`); the
+//     repository is an `https://`, `http://` or `oci://` URL and becomes Source, Name the chart.
 //   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
 func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
@@ -496,10 +509,47 @@ func (m *customManager) classify(d *dep.Dep) {
 			return
 		}
 		d.Source = src
+	case "helm":
+		repo, chart := d.Source, d.Name
+		if repo == "" {
+			repo, chart, _ = strings.CutLast(d.Name, "/")
+		}
+		repo = strings.TrimRight(repo, "/")
+		if !helmRepository(repo) || chart == "" || strings.Contains(chart, "/") {
+			d.Skip = fmt.Sprintf("invalid helm name %q", strings.TrimPrefix(d.Source+" "+d.Name, " "))
+			return
+		}
+		d.Source, d.Name = repo, chart
 	case "go", "go-toolchain", "docker", "npm", "node-version":
 	default:
 		if !strings.HasPrefix(d.Datasource, config.CustomDatasourcePrefix) || !m.known(d.Datasource) {
 			d.Skip = fmt.Sprintf("unknown datasource %q", ds)
+		}
+	}
+}
+
+// helmRepository reports whether repo is a chart repository URL with a host.
+func helmRepository(repo string) bool {
+	for _, scheme := range []string{"https://", "http://", "oci://"} {
+		if rest, ok := strings.CutPrefix(repo, scheme); ok {
+			return rest != "" && !strings.HasPrefix(rest, "/")
+		}
+	}
+	return false
+}
+
+// helmChartToken reads the optional chart token of `deps: helm <repository> <chart>
+// [versioning=<scheme>]` from rest, the text after the name token: with a chart, the name
+// token is the repository.
+func helmChartToken(d *dep.Dep, rest []byte) {
+	for f := range strings.FieldsSeq(string(rest)) {
+		switch {
+		case strings.HasPrefix(f, "-->"):
+			return
+		case strings.HasPrefix(f, "versioning="):
+			d.Versioning = strings.TrimPrefix(f, "versioning=")
+		case !strings.Contains(f, "=") && d.Source == "":
+			d.Source, d.Name = d.Name, strings.TrimSuffix(f, "-->")
 		}
 	}
 }

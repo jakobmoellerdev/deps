@@ -1,0 +1,12 @@
+dependencies:
+- name: cert-manager
+  repository: https://charts.jetstack.io
+  version: v1.14.0
+- name: redis
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 17.11.3
+- name: common
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 2.41.0
+digest: sha256:fb043b317cc540aded9e8cc0528c80ebea7077268aa8ca4405a0d15fc6611c82
+generated: "2026-11-04T13:49:58.851361613+01:00"

@@ -19,6 +19,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
+	helmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/helm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
@@ -147,14 +148,16 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	}
 	gh := githubapi.New(client, auth, sem)
 	releases := githubreleases.New(gh)
+	docker := dockerds.New(client, sem)
 	sources := map[string]engine.Datasource{
 		"git-tags":          gittags.New(client, auth, sem, gh),
 		"go":                goproxy.New(client, sem),
 		gotoolchain.Name:    gotoolchain.New(client, sem),
-		"docker":            dockerds.New(client, sem),
+		"docker":            docker,
 		githubreleases.Name: releases,
 		npmds.Name:          npmds.New(client, sem, os.Getenv),
 		nodeversion.Name:    nodeversion.New(client, sem, os.Getenv),
+		helmds.Name:         helmds.New(client, sem, auth, docker),
 	}
 	for name, cd := range cfg.CustomDatasources {
 		ds, err := customds.New(client, sem, name, cd.Spec())

@@ -40,6 +40,8 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 | M8 | npm `engines` / `volta` | `engines.node ^26.0.0` | DepTypes `engines` (ignored by default, like Renovate) and `volta`; node via `node-version`, npm/pnpm/yarn via `npm`; `^26` partials bumped with tag versioning | done |
 | M9 | `git-submodules` | enabled, but OCM has no `.gitmodules` | — | n/a |
 | M10 | `packageManager` field | website `npm@12.2.0` | DepType `packageManager` (`npm@x`, `pnpm@x`, `yarn@x`; hash suffixes skipped); its version also selects the `npx` fallback for lockfile regeneration | done |
+| M11 | `helmv3` manager + `helm` datasource (Chart.yaml `dependencies`, Chart.lock) | — (OCM's charts have no dependencies) | manager `helm`, DepType `chart`: exact versions updated, ranges skipped (`version range`), `@alias`/`alias:` repositories skipped; `Chart.lock` versions and digest rewritten in process (Helm's `HashReq`, verified with `helm dependency build`), `generated` kept; datasource `helm`: classic `index.yaml` stream-scanned once per repository (only asked-for charts kept), OCI tags via the docker datasource | done |
+| M12 | `helmfile` manager | — | DepType `helmfile`: `releases[].chart` `<repo>/<name>` via `repositories[]` (`oci: true`) or `oci://…`, `.gotmpl` files with template lines blanked | done |
 
 ## PR lifecycle
 

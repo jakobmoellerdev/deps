@@ -588,7 +588,7 @@ Only match deps whose file (slash path relative to --dir) matches any of these d
 Only match deps looked up with these datasources, or custom.\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource.
 
 - **Type:** list of strings
-- **Values:** `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`. `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
 
@@ -819,7 +819,7 @@ custom:
 Datasource of the matched deps, or custom.\<name> of customDatasources; required in regex mode unless match has a (?P\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node) are aliases.
 
 - **Type:** string
-- **Values:** `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 ### `custom[].name`
 

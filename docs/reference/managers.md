@@ -343,11 +343,18 @@ User-defined managers: each `custom[]` entry is one manager instance; see [`cust
 | `unknown versioning "<v>"` | the versioning is not a known scheme |
 | `invalid git-tags name "<name>"` | a `git-tags` dep whose name is not a repository URL |
 | `invalid github-releases name "<name>"` | a `github-releases` dep whose name is not `owner/repo` or a repository URL |
+| `invalid helm name "<name>"` | a `helm` dep without an `https://`, `http://` or `oci://` repository and a chart name |
 | `unknown datasource "<ds>"` | the datasource is neither built in nor `custom.<name>` of `customDatasources` |
 
 **Edits.**
 
 The version is replaced. A captured digest (`@sha256:` for docker markers, or a `digest` group) and a `checksum` group are replaced together with it.
+
+**Helm charts.**
+
+- `# deps: helm <repository>/<chart>` or `# deps: helm <repository> <chart>`, with an `https://` (index.yaml) or `oci://` repository: `# deps: helm https://charts.jetstack.io cert-manager`.
+- Renovate markers give the repository as `registryUrl=`: `# renovate: datasource=helm depName=redis registryUrl=https://charts.bitnami.com/bitnami`.
+- Regex mode takes `<repository>/<chart>` as the name.
 
 ## Datasources
 
@@ -362,9 +369,10 @@ The version is replaced. A captured digest (`@sha256:` for docker markers, or a 
 | `github-releases` | `owner/repo` (github.com) or `https://host/owner/repo` (GHES) | with a token: GraphQL `releases` (`https://api.github.com/graphql`, GHES `<host>/api/graphql`); without: `GET /repos/{repo}/releases?per_page=100`. At most 5 pages, and only until the current release is listed. Drafts and prereleases are dropped. | token for the host | `publishedAt` |
 | `go` | module path | GOPROXY `<proxy>/<escaped path>/@v/list`, following `,` / `\|` fallback semantics (`direct` → `go list -m -versions -json`); GONOPROXY/GOPRIVATE modules via `go list` | none for proxy requests; `go list` uses the go command's own auth (git credentials, `.netrc`) | `@v/<v>.info`, read from `$GOMODCACHE/cache/download` first, then the proxy (`go list -m -json` for private modules) |
 | `go-toolchain` | `go` / `toolchain` | `https://go.dev/dl/?mode=json&include=all`, once per run; a derived `X.Y` per minor | none | none |
-| `docker` | image reference | registry `tags/list` (all pages; Docker Hub with page size 10000), manifest HEAD for digests (index digest for multi-platform images) | Docker config and credential helpers (`authn.DefaultKeychain`) | image config `created` |
+| `docker` | image reference | registry `tags/list` (all pages; Docker Hub with page size 10000), manifest HEAD for digests (index digest for multi-platform images) | Docker config and credential helpers (`authn.DefaultKeychain`) | image config `created`; else, and for non-image artifacts (Helm charts), the manifest annotation `org.opencontainers.image.created` |
 | `npm` | package name (`@scope/name` sent as `@scope%2fname`) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json`, stream-decoded; deprecated versions dropped; 404 → `package <name> not found` | `.npmrc` `//host/path/:_authToken=` (longest prefix), `${VAR}` expansion | packument `time` |
 | `node-version` | any (`node`) | `<DEPS_NODE_DIST_URL or https://nodejs.org/dist>/index.json`, once per run; published versions plus a derived `X.Y` and `X` per stable line | none | `date` |
+| `helm` | chart name; the repository URL (`https://…` or `oci://host/path`) is the dep's source | classic: `GET <repo>/index.yaml`, once per repository, stream-scanned so only the asked-for charts are decoded; versions without `urls` dropped. OCI: registry `tags/list` of `<host>/<path>/<chart>` via the docker datasource, tag `_` read as `+` | classic: the forge token (Basic `x-access-token`) on the forge's host, else anonymous; OCI: as `docker` | classic: index `created`; OCI: manifest annotation `org.opencontainers.image.created` |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.

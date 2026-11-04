@@ -26,14 +26,14 @@ type Span struct{ Start, End int }
 
 // Dep is a single dependency occurrence extracted from a file.
 type Dep struct {
-	Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "custom"
-	Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "custom.<name>"
+	Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "helm" | "custom"
+	Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "helm" | "custom.<name>"
 	Versioning  string // "tag" | "go" | "docker" | "semver" | "loose" | "regex:<RE2>" (rules[].versioning overrides the manager's)
-	DepType     string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"|"setup"; docker: "dockerfile"|"compose"|"workflow"|"action"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"|"engines"|"volta"; custom: "annotation"|"regex"
+	DepType     string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"|"setup"; docker: "dockerfile"|"compose"|"workflow"|"action"|"kubernetes"|"helm"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"|"engines"|"volta"; helm: "chart"|"helmfile"|"k0s"|"flux"|"argocd"; custom: "annotation"|"regex"
 	File        string // slash path relative to --dir
 	Line        int    // 1-based
-	Name        string // actions: owner/repo[/sub]; gomod: module path
-	Source      string // actions: https://<host>/<owner>/<repo>; gomod: ""
+	Name        string // actions: owner/repo[/sub]; gomod: module path; helm: chart
+	Source      string // actions: https://<host>/<owner>/<repo>; gomod: ""; helm: repository URL (https:// or oci://)
 	Version     string // current version (ref tag, comment version, or module version)
 	Digest      string // actions: full SHA when pinned, else ""
 	RefSpan     Span   // actions: ref after '@'; gomod: version token

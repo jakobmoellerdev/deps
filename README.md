@@ -33,12 +33,14 @@ deps is a Renovate replacement written in Go. It finds the dependencies in a rep
     - dependencies, dev/optional/peer dependencies, `packageManager`, `engines` and `volta`;
     - ranges are bumped in place (`^1.2.3` → `^1.4.0`), and workspaces are supported;
     - `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock` is regenerated.
+  - **Helm charts:** `Chart.yaml` dependencies (with the `Chart.lock` versions and digest rewritten so `helm dependency build` accepts them), helmfile releases, and k0s `Chart`, Flux `HelmRelease` and Argo CD `Application` resources.
   - **Custom:** `# deps:` annotations, Renovate `# renovate:` markers, and RE2 regex managers, optionally with a release checksum next to the version.
 - **Datasources:**
   - git tags (native smart-HTTP `ls-refs`, no `git` process per lookup);
   - GitHub releases;
   - the Go proxy and Go toolchains;
   - OCI registries;
+  - Helm chart repositories (`index.yaml`, stream-scanned) and OCI charts;
   - npm registries (`.npmrc`) and Node.js releases;
   - user-defined JSON, YAML or text documents.
 - **Policy:** ordered rules with field-wise override.

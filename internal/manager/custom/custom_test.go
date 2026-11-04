@@ -117,6 +117,38 @@ func TestAnnotations(t *testing.T) {
 	}
 }
 
+func TestHelmAnnotations(t *testing.T) {
+	src := strings.Join([]string{
+		"# deps: helm https://charts.jetstack.io/cert-manager",                         // 1
+		"CERT_MANAGER=v1.14.0",                                                         // 2
+		"# deps: helm oci://registry-1.docker.io/bitnamicharts redis versioning=loose", // 3
+		"redis: 18.0.0", // 4
+		"<!-- deps: helm https://example.com/charts/ app -->", // 5
+		"app 1.2.3", // 6
+		"# renovate: datasource=helm depName=nginx registryUrl=https://charts.bitnami.com/bitnami", // 7
+		"nginx 15.0.0",              // 8
+		"# deps: helm cert-manager", // 9
+		"1.0.0",                     // 10
+		"# deps: helm ftp://x/y",    // 11
+		"1.0.0",                     // 12
+		"# deps: helm oci:///x",     // 13
+		"1.0.0",                     // 14
+		"# renovate: datasource=helm depName=a/b registryUrl=https://x", // 15
+		"1.0.0", // 16
+	}, "\n")
+	m := one(t, config.Custom{Files: []string{"f"}})
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "helm", "cert-manager", "https://charts.jetstack.io", "semver", "v1.14.0", "", ""},
+		{4, "helm", "redis", "oci://registry-1.docker.io/bitnamicharts", "loose", "18.0.0", "", ""},
+		{6, "helm", "app", "https://example.com/charts", "semver", "1.2.3", "", ""},
+		{8, "helm", "nginx", "https://charts.bitnami.com/bitnami", "semver", "15.0.0", "", ""},
+		{10, "helm", "cert-manager", "", "semver", "", "", `invalid helm name "cert-manager"`},
+		{12, "helm", "ftp://x/y", "", "semver", "", "", `invalid helm name "ftp://x/y"`},
+		{14, "helm", "oci:///x", "", "semver", "", "", `invalid helm name "oci:///x"`},
+		{16, "helm", "a/b", "https://x", "semver", "", "", `invalid helm name "https://x a/b"`},
+	})
+}
+
 func TestAnnotationEntryVersioning(t *testing.T) {
 	m := one(t, config.Custom{Files: []string{"x"}, Versioning: "tag"})
 	src := "# deps: git-tags https://github.com/o/r/\nv1.2\n"

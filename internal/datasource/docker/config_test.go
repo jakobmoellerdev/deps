@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
@@ -18,6 +20,18 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	amd := withPlatform(f.reg.image(t, imgTime.Add(time.Hour), nil), "linux", "amd64")
 	f.reg.tag("img", "4.0", f.reg.index(t, att, amd))
 	f.reg.tag("img", "5.0", f.reg.index(t, att))
+	// A Helm chart: no image config, so the manifest annotations answer without a config GET.
+	chartCfg := f.reg.put(t, "application/vnd.cncf.helm.config.v1+json", map[string]string{"name": "img", "version": "6.0"})
+	f.reg.tag("img", "6.0", f.reg.put(t, ocispec.MediaTypeImageManifest, ocispec.Manifest{
+		SchemaVersion: 2, MediaType: ocispec.MediaTypeImageManifest, Config: chartCfg, Layers: []ocispec.Descriptor{},
+		Annotations: map[string]string{ocispec.AnnotationCreated: imgTime.Add(2 * time.Hour).Format(time.RFC3339), sourceLabel: "https://github.com/o/chart"},
+	}))
+	// An image config without created falls back to the manifest annotation.
+	noCreated := f.reg.put(t, ocispec.MediaTypeImageConfig, ocispec.Image{OS: "linux", Architecture: "amd64", RootFS: ocispec.RootFS{Type: "layers"}})
+	f.reg.tag("img", "7.0", f.reg.put(t, ocispec.MediaTypeImageManifest, ocispec.Manifest{
+		SchemaVersion: 2, MediaType: ocispec.MediaTypeImageManifest, Config: noCreated, Layers: []ocispec.Descriptor{},
+		Annotations: map[string]string{ocispec.AnnotationCreated: imgTime.Add(3 * time.Hour).Format(time.RFC3339)},
+	}))
 
 	s := newSource(f.srv.Client(), make(chan struct{}, 1), anon)
 	var (
@@ -32,6 +46,8 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 		{version: "3.0", want: imgTime, wantSource: "https://github.com/o/img"},
 		{version: "4.0", want: imgTime.Add(time.Hour)},
 		{version: "5.0", wantErr: "index has no platform image"},
+		{version: "6.0", want: imgTime.Add(2 * time.Hour), wantSource: "https://github.com/o/chart"},
+		{version: "7.0", want: imgTime.Add(3 * time.Hour)},
 		{version: "9.9", wantErr: "image config " + f.host + "/img:9.9"},
 	}
 	for _, tt := range tests {
@@ -51,6 +67,9 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	}
 	if n := f.count("GET /v2/img/manifests/3.0"); n != 1 {
 		t.Errorf("manifest GETs for 3.0 = %d, want 1", n)
+	}
+	if n := f.count("GET /v2/img/blobs/" + chartCfg.Digest.String()); n != 0 {
+		t.Errorf("chart config GETs = %d, want 0", n)
 	}
 	if _, err := timer.ReleaseTime(t.Context(), dep.Dep{Name: "Bad Name"}, "1"); err == nil {
 		t.Error("invalid image: no error")

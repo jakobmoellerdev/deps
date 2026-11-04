@@ -45,7 +45,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	if err != nil {
 		return err
 	}
-	var post map[string]engine.PostProcessor
+	post := planPostProcessors()
 	if write {
 		post = postProcessors()
 	}

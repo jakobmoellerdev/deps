@@ -150,7 +150,7 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{separateMultipleMajor: 1}]\n", "line 1"},
 		{"updateNotScheduled: sometimes\n", "line 1"},
 		{"rules: [{minimumReleaseAge: 3 fortnights}]\n", `rules[0].minimumReleaseAge: invalid age "3 fortnights"`},
-		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, github-releases, go, go-toolchain, docker, npm, node-version, golang-version, github-tags, github-release-attachments, node or custom.<name> of customDatasources, got "custom.envtest"`},
+		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, github-releases, go, go-toolchain, docker, npm, node-version, helm, golang-version, github-tags, github-release-attachments, node or custom.<name> of customDatasources, got "custom.envtest"`},
 		{"custom: [{files: [x], datasource: custom.envtest}]\n", `custom[0].datasource: must be one of git-tags`},
 		{"customDatasources: {envtest: {}}\n", "customDatasources.envtest.url: required"},
 		{"customDatasources: {envtest: {url: 'ftp://x/y'}}\n", `customDatasources.envtest.url: must be an http(s) URL, got "ftp://x/y"`},

@@ -1,0 +1,20 @@
+apiVersion: v2
+name: aliased
+version: 0.1.0
+dependencies:
+  - name: cert-manager
+    version: v1.14.0
+    repository: "@jetstack"
+    condition: certManager.enabled
+    tags: [tls]
+    import-values:
+      - child: crds
+        parent: crds
+      - defaults
+  - name: redis
+    version: 17.11.3
+    repository: oci://registry-1.docker.io/bitnamicharts
+    alias: cache
+  - name: common
+    version: ">=2.0.0 <3"
+    repository: oci://registry-1.docker.io/bitnamicharts

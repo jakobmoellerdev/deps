@@ -8,6 +8,7 @@
 package dockerds
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -234,6 +235,9 @@ func (s *Source) config(ctx context.Context, d dep.Dep, version string) *configE
 }
 
 // fetchConfig reads the config blob of tag: manifest, (index: first platform manifest), config.
+// Artifacts whose config is no image config (Helm charts) are not fetched further: their
+// manifest's `org.opencontainers.image.created` and `…source` annotations answer instead. An
+// image config without `created` falls back to the manifest annotation as well.
 func (s *Source) fetchConfig(ctx context.Context, name, tag string) (time.Time, string, error) {
 	if err := s.acquire(ctx); err != nil {
 		return time.Time{}, "", err
@@ -259,6 +263,11 @@ func (s *Source) fetchConfig(ctx context.Context, name, tag string) (time.Time, 
 	if err := json.Unmarshal(b, &m); err != nil {
 		return time.Time{}, "", fmt.Errorf("manifest %s: %w", desc.Digest, err)
 	}
+	created, _ := time.Parse(time.RFC3339, m.Annotations[ocispec.AnnotationCreated])
+	source := m.Annotations[sourceLabel]
+	if m.Config.MediaType != ocispec.MediaTypeImageConfig && m.Config.MediaType != mediaTypeDockerConfig {
+		return created, source, nil
+	}
 	if b, err = content.FetchAll(ctx, repo, m.Config); err != nil {
 		return time.Time{}, "", err
 	}
@@ -266,11 +275,10 @@ func (s *Source) fetchConfig(ctx context.Context, name, tag string) (time.Time, 
 	if err := json.Unmarshal(b, &img); err != nil {
 		return time.Time{}, "", fmt.Errorf("config %s: %w", m.Config.Digest, err)
 	}
-	var created time.Time
 	if img.Created != nil {
 		created = *img.Created
 	}
-	return created, img.Config.Labels[sourceLabel], nil
+	return created, cmp.Or(img.Config.Labels[sourceLabel], source), nil
 }
 
 // fetchManifest GETs the manifest of tag; the descriptor's digest is the registry's, or computed
@@ -293,6 +301,7 @@ func isIndex(mediaType string) bool {
 const (
 	mediaTypeDockerManifestList = "application/vnd.docker.distribution.manifest.list.v2+json"
 	mediaTypeDockerManifest     = "application/vnd.docker.distribution.manifest.v2+json"
+	mediaTypeDockerConfig       = "application/vnd.docker.container.image.v1+json"
 )
 
 // firstImage returns the first platform image manifest of index b, skipping attestation

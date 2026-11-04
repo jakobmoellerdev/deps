@@ -32,6 +32,14 @@ type Timer interface {
 	ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error)
 }
 
+// Planner is implemented by datasources that use the full set of deps they will be asked
+// about before the first lookup, e.g. to keep only the wanted charts of a repository index.
+// It is optional; the engine calls Plan once per run, before any Releases call, with the
+// updatable deps of the datasource.
+type Planner interface {
+	Plan(deps []dep.Dep)
+}
+
 // SourceRepo is implemented by datasources that know the source repository of a package
 // (npm `repository`, OCI `org.opencontainers.image.source`). It is optional.
 type SourceRepo interface {

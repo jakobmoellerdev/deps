@@ -27,20 +27,6 @@ func lineStarts(src []byte) []int {
 	return ls
 }
 
-// lineOf returns the 1-based line of byte offset off.
-func lineOf(lines []int, off int) int {
-	lo, hi := 0, len(lines)
-	for lo < hi {
-		m := int(uint(lo+hi) >> 1)
-		if lines[m] <= off {
-			lo = m + 1
-		} else {
-			hi = m
-		}
-	}
-	return lo
-}
-
 // locate returns the byte offset of scalar v's value in src, or -1 when the source bytes differ
 // from the value (escapes, multi-line or block scalars). yaml columns count runes, not bytes,
 // and point at the anchor of an anchored value.

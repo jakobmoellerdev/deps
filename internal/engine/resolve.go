@@ -198,6 +198,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	}
 	slog.InfoContext(ctx, "dependencies extracted", "files", len(jobs), "updatable", len(todo), "skipped", len(res.Skipped), "duration", time.Since(start))
 	start = time.Now()
+	planAll(o.Datasources, todo)
 
 	// Security updates bypass per-kind rules but not a pre-policy ignore: deps resolved only
 	// because an updateTypes rule opted some update types in are not looked up. Non-version
@@ -265,6 +266,20 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	})
 	slog.InfoContext(ctx, "dependencies resolved", "updates", len(res.Updates), "errors", len(res.Errors), "duration", time.Since(start))
 	return res, nil
+}
+
+// planAll hands every datasource implementing datasource.Planner its share of the updatable
+// deps, before any lookup.
+func planAll(sources map[string]Datasource, todo []dep.Dep) {
+	byDS := map[string][]dep.Dep{}
+	for _, d := range todo {
+		if _, ok := sources[d.Datasource].(datasource.Planner); ok {
+			byDS[d.Datasource] = append(byDS[d.Datasource], d)
+		}
+	}
+	for name, deps := range byDS {
+		sources[name].(datasource.Planner).Plan(deps)
+	}
 }
 
 // extractAll reads and parses files on GOMAXPROCS workers. Only the extracted deps are kept;
