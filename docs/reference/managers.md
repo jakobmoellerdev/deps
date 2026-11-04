@@ -15,6 +15,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`gomod`](#gomod)
 - [`docker`](#docker)
 - [`npm`](#npm)
+- [`helm`](#helm)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -255,6 +256,51 @@ A dep naming a member of the manifest's own workspace is never updated.
 6. **Failure.** A failed install reports `<tool> install in <dir>: <last 20 output lines>`, and the root's changes are dropped.
 
 - `plan` does not run installs, and prints `note    package-lock.json changes are computed by apply/run`.
+
+## helm
+
+Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfiles and chart custom resources, from classic chart repositories and OCI registries.
+
+**Files:**
+
+- `Chart.yaml` (DepType `chart`)
+- `helmfile.y(a)ml`, `helmfile.d/*.y(a)ml`, each optionally `.gotmpl` (DepType `helmfile`)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `chart` | `dependencies[].version` with `name` and `repository` | `helm` | `semver` | updated |
+| `helmfile` | `releases[].version` with `chart: <repo>/<name>` (resolved through `repositories[]`, `oci: true` → `oci://`) or `chart: oci://host/path/name` | `helm` | `semver` | updated |
+| `k0s` | k0s `Chart` resources | `helm` | `semver` | updated |
+| `flux` | Flux `HelmRelease` resources | `helm` | `semver` | updated |
+| `argocd` | Argo CD `Application` Helm sources | `helm` | `semver` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `version range` | anything but a full `MAJOR.MINOR.PATCH[-pre][+build]` (optionally `v`-prefixed): `~1.2.0`, `^1`, `>=1.0.0`, `1.2.x`, `1.2` |
+| `no version` | the version is missing or empty |
+| `template value` | the version contains `{{` |
+| `local chart` | Chart.yaml: empty or `file://` repository; helmfile: a chart path (`./x`, `../x`, `/x`, no `/`) |
+| `repository alias` | Chart.yaml: `@name` or `alias:name` repositories (resolved by the user's Helm repository config) |
+| `unknown chart repository <repo>` | Chart.yaml: a repository that is no URL; helmfile: a `<repo>/` prefix not in `repositories[]` |
+| `invalid chart reference` | helmfile: `oci://` without a path, or `<repo>/a/b` |
+| `cannot locate value` | the version's bytes could not be found (escapes, block scalars) |
+
+**Versioning.**
+
+`semver`: the `v` prefix style of the current value is kept, prereleases are only proposed from a prerelease. Only exact versions are updated; Helm treats everything else as a constraint.
+
+**Chart.lock.**
+
+- After Chart.yaml is patched (`plan`, `apply`, `run`), the sibling `Chart.lock` gets the new version of every exact dependency whose locked version differs, matched by position and name.
+- `digest` is recomputed as Helm does (`sha256` over the JSON of the Chart.yaml and Chart.lock dependencies), so `helm dependency build` accepts the lock. Repository aliases take the URL locked for them.
+- The old digest is verified first; when deps cannot reproduce it (a lock out of sync), the chart's update fails with an error instead of writing a lock Helm would reject.
+- `generated` is kept, so unchanged updates produce identical commits.
+
+**Edits.**
+
+The version is replaced in place.
 
 ## custom
 

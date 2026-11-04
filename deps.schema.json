@@ -144,6 +144,7 @@
             "gomod",
             "docker",
             "npm",
+            "helm",
             "custom"
           ],
           "description": "Only match deps of this manager.",
@@ -179,6 +180,11 @@
               "setup",
               "engines",
               "volta",
+              "chart",
+              "helmfile",
+              "k0s",
+              "flux",
+              "argocd",
               "annotation",
               "regex"
             ]

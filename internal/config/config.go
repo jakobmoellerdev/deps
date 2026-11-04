@@ -61,8 +61,8 @@ const DefaultDashboardTitle = "Dependency Dashboard"
 
 // Known values for validation.
 var (
-	Managers = []string{"github-actions", "gomod", "docker", "npm", "custom"}
-	DepTypes = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "setup", "engines", "volta", "annotation", "regex"}
+	Managers = []string{"github-actions", "gomod", "docker", "npm", "helm", "custom"}
+	DepTypes = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "setup", "engines", "volta", "chart", "helmfile", "k0s", "flux", "argocd", "annotation", "regex"}
 	// Datasources are the deps datasource names (dep.Dep.Datasource); custom datasources add
 	// custom.<name> (CustomDatasourcePrefix).
 	Datasources = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version"}
@@ -207,9 +207,9 @@ type Actions struct {
 
 // Rule overrides the policy for matching deps.
 type Rule struct {
-	Manager     string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=custom" jsonschema_description:"Only match deps of this manager."`
+	Manager     string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=helm,enum=custom" jsonschema_description:"Only match deps of this manager."`
 	Names       []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates)."`
-	DepTypes    []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
+	DepTypes    []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=chart,enum=helmfile,enum=k0s,enum=flux,enum=argocd,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
 	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'."`
 	Datasources []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource."`
 	UpdateTypes []string `yaml:"updateTypes" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`

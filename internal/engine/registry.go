@@ -7,6 +7,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
@@ -18,8 +19,8 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	ms := make([]manager.Manager, 0, 4+len(cs))
-	ms = append(ms, actions.New(), gomod.New(), docker.New(), npm.New())
+	ms := make([]manager.Manager, 0, 5+len(cs))
+	ms = append(ms, actions.New(), gomod.New(), docker.New(), npm.New(), helm.New())
 	return append(ms, cs...), nil
 }
 
@@ -34,5 +35,5 @@ var SkipDocs = []refdoc.Skip{
 // ManagerDocs returns the reference documentation of the built-in managers and the custom
 // manager, in discovery order.
 func ManagerDocs() []refdoc.Manager {
-	return []refdoc.Manager{actions.Doc, gomod.Doc, docker.Doc, npm.Doc, custom.Doc}
+	return []refdoc.Manager{actions.Doc, gomod.Doc, docker.Doc, npm.Doc, helm.Doc, custom.Doc}
 }
