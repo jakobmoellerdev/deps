@@ -54,11 +54,11 @@ func TestSchema(t *testing.T) {
 	if s.Schema != "https://json-schema.org/draft/2020-12/schema" || s.Type != "object" || s.ID != "" {
 		t.Errorf("$schema %q $id %q type %q", s.Schema, s.ID, s.Type)
 	}
-	rule, custom, actions, customDS := s.Defs["Rule"], s.Defs["Custom"], s.Defs["Actions"], s.Defs["CustomDatasource"]
-	if rule == nil || custom == nil || actions == nil || customDS == nil {
+	rule, custom, actions, customDS, lfm := s.Defs["Rule"], s.Defs["Custom"], s.Defs["Actions"], s.Defs["CustomDatasource"], s.Defs["LockFileMaintenance"]
+	if rule == nil || custom == nil || actions == nil || customDS == nil || lfm == nil {
 		t.Fatalf("$defs = %v", s.Defs)
 	}
-	for name, n := range map[string]*schemaNode{"root": &s, "Rule": rule, "Custom": custom, "Actions": actions, "CustomDatasource": customDS} {
+	for name, n := range map[string]*schemaNode{"root": &s, "Rule": rule, "Custom": custom, "Actions": actions, "CustomDatasource": customDS, "LockFileMaintenance": lfm} {
 		if n.AdditionalProperties != false {
 			t.Errorf("%s: additionalProperties must be false", name)
 		}
@@ -130,7 +130,7 @@ func TestSchema(t *testing.T) {
 	}
 	if want := []string{"version", "pin", "rangeStrategy", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "actions", "gomodUpdateImportPaths", "minimumReleaseAge", "ignorePaths",
 		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType",
-		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "rules", "custom", "customDatasources"}; len(s.Properties) != len(want) {
+		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "rules", "custom", "customDatasources", "lockFileMaintenance"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
 		for _, k := range want {
@@ -146,8 +146,9 @@ func TestSchema(t *testing.T) {
 	if !slices.Equal(customDS.Required, []string{"url"}) || customDS.Properties["format"].Default != "json" || customDS.Properties["versions"].Default != customds.DefaultVersions {
 		t.Errorf("CustomDatasource required %v, defaults %v %v", customDS.Required, customDS.Properties["format"].Default, customDS.Properties["versions"].Default)
 	}
-	if s.Properties["rules"].Items.Ref != "#/$defs/Rule" || s.Properties["custom"].Items.Ref != "#/$defs/Custom" || s.Properties["actions"].Ref != "#/$defs/Actions" {
-		t.Error("rules/custom/actions do not reference their $defs")
+	if s.Properties["rules"].Items.Ref != "#/$defs/Rule" || s.Properties["custom"].Items.Ref != "#/$defs/Custom" || s.Properties["actions"].Ref != "#/$defs/Actions" ||
+		s.Properties["lockFileMaintenance"].Ref != "#/$defs/LockFileMaintenance" {
+		t.Error("rules/custom/actions/lockFileMaintenance do not reference their $defs")
 	}
 	if !slices.Equal(custom.Required, []string{"files"}) || rule.Required != nil || s.Required != nil {
 		t.Errorf("required: root %v rule %v custom %v", s.Required, rule.Required, custom.Required)
@@ -157,7 +158,7 @@ func TestSchema(t *testing.T) {
 		s.Properties["separateMinorPatch"].Default != false || s.Properties["updateNotScheduled"].Default != true ||
 		s.Properties["automerge"].Default != false || s.Properties["automergeStrategy"].Default != "auto" ||
 		s.Properties["dependencyDashboard"].Default != false || s.Properties["dependencyDashboardTitle"].Default != config.DefaultDashboardTitle ||
-		s.Properties["gomodUpdateImportPaths"].Default != true {
+		s.Properties["gomodUpdateImportPaths"].Default != true || lfm.Properties["enabled"].Default != false {
 		t.Error("defaults missing")
 	}
 	if _, stderr, code := execute(t, "schema", "x"); code != 2 || !strings.Contains(stderr, "unexpected arguments") {

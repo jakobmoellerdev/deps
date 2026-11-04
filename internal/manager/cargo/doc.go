@@ -54,6 +54,8 @@ var Doc = refdoc.Manager{
 		{Title: "git dependencies", Body: "`name = { git = \"https://host/path\", tag = \"v1.2.0\" }` (also in `[patch]` and `[replace]`) updates the tag from the repository's tags (`tag` versioning, so the prefix and number of parts are kept). The URL's query, fragment, trailing slash and `.git` suffix are dropped for the lookup."},
 		{Title: "Lockfile (`apply`, `run`)", Body: lockBody,
 			Items: []string{"`plan` does not run cargo, and prints `note    Cargo.lock changes are computed by apply/run`."}},
+		{Title: "Lock file maintenance (`run`)", Body: "With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `Cargo.lock` of a scanned `Cargo.toml` (its workspace root, as above) is refreshed with `cargo update` in the temporary copy, which moves every locked crate to the newest version its requirement admits. " +
+			"All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `Cargo.lock` files; `minimumReleaseAge` does not apply to it."},
 	},
 }
 
@@ -64,6 +66,6 @@ const lockBody = "1. **Workspace root.** The root is the nearest directory at or
 	"4. **Update.** `cargo update --workspace` re-resolves only the requirements that no longer match the lock. " +
 	"Then, for every rewritten requirement whose version is full, deps runs `cargo update --package <name>@<locked> --precise <version>` when Cargo just locked a newer version of the same compatibility range, so the lock holds the version the pull request names (for example when `minimumReleaseAge` held back the newest release). A version that was already locked is never downgraded, and partial requirements keep Cargo's newest match. " +
 	"A rewritten requirement that still admits the locked version (`<0.10` → `<2.0` with 0.9.0 locked) leaves the lock alone under `cargo update --workspace`; such a crate (also for a security update) is resolved once with its requirement written as `=<new>` in the temporary copy, then the rewritten requirement is restored and resolved again, so the lock holds the pull request's version while other dependents that still need the old version keep it locked beside it. " +
-	"A lockfile-only update runs `cargo update --package <name>@<locked> --precise <new>`.\n" +
+	"A lockfile-only update runs `cargo update --package <name>@<from> --precise <new>`, from the entry earlier pins left in the locked version's compatibility range (pinning a crate can move its dependencies), and is skipped when that entry already has the version.\n" +
 	"5. **Tool.** `cargo` must be on `PATH` (with `rustup`, a `rust-toolchain.toml` in the root selects the toolchain). Without it the manifests of the root fail with `cargo not found (needed to update Cargo.lock)`.\n" +
 	"6. **Failure.** A failed command reports `cargo update in <dir>: <last 20 output lines>`, and the root's changes are dropped."

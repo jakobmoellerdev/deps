@@ -16,9 +16,13 @@ const (
 	Patch  UpdateType = "patch"
 	Digest UpdateType = "digest"
 	Pin    UpdateType = "pin"
+	// LockFileMaintenance refreshes a whole lockfile (config lockFileMaintenance): Dep.File is
+	// the manifest of the lock root, Dep.Name the lockfile's slash path; there are no versions.
+	// It is not in UpdateTypes, so rules cannot select it.
+	LockFileMaintenance UpdateType = "lockFileMaintenance"
 )
 
-// UpdateTypes lists every update type in a stable order.
+// UpdateTypes lists every update type rules can select, in a stable order.
 var UpdateTypes = []UpdateType{Major, Minor, Patch, Digest, Pin}
 
 // Span is a byte range in a file; End is exclusive.
@@ -99,6 +103,9 @@ type Update struct {
 	// NewVersion, so the manifest stays unchanged and only the lockfile moves from Dep.Locked.
 	Lockfile bool
 }
+
+// Maintenance reports whether u is a lock file maintenance update.
+func (u Update) Maintenance() bool { return u.Type == LockFileMaintenance }
 
 // FromTo renders the old and new version; digest-pinned sides are `<version>@<digest7>`
 // (except gomod: its only digests are those of pseudo-versions, which end in their commit),

@@ -364,6 +364,26 @@ func TestPlanCargo(t *testing.T) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
 	}
+
+	// lockFileMaintenance: one more update in its own PR, which plan does not write.
+	writeFiles(t, dir, map[string]string{".deps.yaml": "lockFileMaintenance: {enabled: true}\n"})
+	stdout2, stderr, code := execute(t, "plan", "-v", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		"update  Cargo.lock  lock file maintenance  (lockFileMaintenance, separate PR)\n",
+		"  PR deps/lock-file-maintenance  chore(deps): lock file maintenance\n",
+		"      Cargo.lock  lock file maintenance\n",
+		"3 updates in 1 files, 2 skipped, 0 errors\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("maintenance: stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	if stdout2 != stdout {
+		t.Errorf("maintenance changed the diff:\n%s", stdout2)
+	}
 }
 
 func TestPlanSecurityUpdate(t *testing.T) {

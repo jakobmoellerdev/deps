@@ -44,6 +44,19 @@ type LockReader interface {
 	ReadLocks(root string, files [][]dep.Dep) []error
 }
 
+// LockRoot is a lockfile lockFileMaintenance refreshes: its slash path and the manifest in the
+// same directory, both relative to the scanned root. The manifest is the file the maintenance
+// update belongs to; the manager's post-processor (engine.LockMaintainer) refreshes the lock.
+type LockRoot struct{ Manifest, Lockfile string }
+
+// LockMaintainer is implemented by managers whose lockfiles lockFileMaintenance refreshes
+// (cargo's Cargo.lock). LockRoots returns the lock roots of files, the manager's files that
+// extracted without error (slash paths relative to the absolute root), each once and sorted
+// by Lockfile.
+type LockMaintainer interface {
+	LockRoots(root string, files []string) []LockRoot
+}
+
 // FileEditor is implemented by managers whose updates also edit files other than the dep's
 // own (a gomod major module path update rewrites the import paths in the module's .go
 // files). The engine applies the edits together with the update; if the dep's file or one

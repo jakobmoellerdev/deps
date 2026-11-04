@@ -151,6 +151,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	dedupeCovered(ex)
 
 	res := &Result{Errors: lockErrs}
+	if cfg.LockFileMaintenance.Enabled && o.Filter == nil {
+		res.Updates = maintenanceUpdates(cfg, root, o.Managers, found, ex)
+	}
 	var todo []dep.Dep
 	var pols []*policies
 	var depAt []int // index of todo[i] in res.Deps
@@ -370,6 +373,38 @@ func readLocks(root string, managers []manager.Manager, found [][]string, ex []e
 		errs = append(errs, lr.ReadLocks(root, files)...)
 	}
 	return errs
+}
+
+// maintenanceUpdates returns one lock file maintenance update (lockFileMaintenance) per lock
+// root of each manager.LockMaintainer, over the files it extracted without error. It carries
+// the lockFileMaintenance schedule and the top-level automerge settings; rules do not apply.
+func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Manager, found [][]string, ex []extracted) []dep.Update {
+	var out []dep.Update
+	off := 0
+	for i, m := range managers {
+		part := ex[off : off+len(found[i])]
+		off += len(found[i])
+		lm, ok := m.(manager.LockMaintainer)
+		if !ok {
+			continue
+		}
+		files := make([]string, 0, len(part))
+		for k, e := range part {
+			if e.err == nil {
+				files = append(files, found[i][k])
+			}
+		}
+		for _, lr := range lm.LockRoots(root, files) {
+			out = append(out, dep.Update{
+				Dep:               dep.Dep{Manager: m.Name(), File: lr.Manifest, Name: lr.Lockfile},
+				Type:              dep.LockFileMaintenance,
+				Schedule:          cfg.LockFileMaintenanceSchedule(),
+				Automerge:         cfg.Automerge,
+				AutomergeStrategy: cmp.Or(cfg.AutomergeStrategy, config.StrategyAuto),
+			})
+		}
+	}
+	return out
 }
 
 func extractOne(root string, j job, env manager.Env) extracted {

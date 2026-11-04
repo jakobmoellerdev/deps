@@ -6,10 +6,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/Masterminds/semver/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 )
 
 // ReadLocks records the version the workspace's Cargo.lock (Locker.Scope) locks each registry
@@ -84,4 +87,19 @@ func lockedVersion(pkgs []lockedPackage, d *dep.Dep) string {
 		return ""
 	}
 	return best.Original()
+}
+
+// LockRoots implements manager.LockMaintainer: the Cargo.lock of each file's workspace
+// (Locker.Scope) with the Cargo.toml next to it.
+func (cargoManager) LockRoots(root string, files []string) []manager.LockRoot {
+	var out []manager.LockRoot
+	for _, f := range files {
+		dir, ok := Locker{}.Scope(root, f)
+		lr := manager.LockRoot{Manifest: path.Join(dir, manifestFile), Lockfile: path.Join(dir, lockFile)}
+		if ok && !slices.Contains(out, lr) {
+			out = append(out, lr)
+		}
+	}
+	slices.SortFunc(out, func(a, b manager.LockRoot) int { return strings.Compare(a.Lockfile, b.Lockfile) })
+	return out
 }

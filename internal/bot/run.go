@@ -176,6 +176,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	groups := engine.GroupUpdates(res.Updates, prefix)
 	built := make([][]engine.FileChange, len(groups))
 	buildErrs := make([]error, len(groups))
+	ran := make([]bool, len(groups))
 	inSchedule := make([]bool, len(groups))
 	forced := make([]force, len(groups))
 	var wg sync.WaitGroup
@@ -186,6 +187,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		if !inSchedule[i] && !(o.UpdateNotScheduled && hasPR(open, groups[i].Branch)) {
 			continue // nothing is pushed, so don't build
 		}
+		ran[i] = true
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -204,6 +206,13 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		wanted[grp.Branch] = true // out-of-schedule branches are still wanted: keep their PRs open
 		if buildErrs[i] != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, buildErrs[i]))
+			continue
+		}
+		if ran[i] && len(built[i]) == 0 {
+			// Nothing to change (a lockfile that lock file maintenance finds current): no
+			// branch, and an open PR of it is obsolete.
+			slog.InfoContext(ctx, "no changes", "branch", grp.Branch)
+			delete(wanted, grp.Branch)
 			continue
 		}
 		a, target, err := handle(ctx, o, base, head, grp, built[i], inSchedule[i], forced[i], branches, open, closed, limit, &created, pc, g)
@@ -586,16 +595,23 @@ func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp string) strin
 		b.WriteString("| File | From | To | Type | Age |\n|---|---|---|---|---|\n")
 	}
 	for _, u := range ups {
-		from, to := u.FromTo()
-		typ := string(u.Type)
-		if u.Lockfile {
-			typ += " (lockfile)"
+		if u.Maintenance() {
+			fmt.Fprintf(&b, "| `%s` | | | lock file maintenance |", u.Dep.Name)
+		} else {
+			from, to := u.FromTo()
+			typ := string(u.Type)
+			if u.Lockfile {
+				typ += " (lockfile)"
+			}
+			fmt.Fprintf(&b, "| `%s:%d` | `%s` | `%s` | %s |", u.Dep.File, u.Dep.Line, from, to, typ)
 		}
-		fmt.Fprintf(&b, "| `%s:%d` | `%s` | `%s` | %s |", u.Dep.File, u.Dep.Line, from, to, typ)
 		if notes != nil {
 			fmt.Fprintf(&b, " %s |", notes.Age(ctx, u))
 		}
 		b.WriteByte('\n')
+	}
+	if slices.ContainsFunc(ups, dep.Update.Maintenance) {
+		b.WriteString("\nLock file maintenance moves every locked dependency to the newest version its manifest admits; the manifests are unchanged.\n")
 	}
 	moved := map[string]bool{}
 	for _, u := range ups {
@@ -638,6 +654,10 @@ func commitMessage(grp engine.Group) string {
 	b.WriteString(grp.Title)
 	b.WriteString("\n\n")
 	for _, u := range grp.Updates {
+		if u.Maintenance() {
+			fmt.Fprintf(&b, "- %s: lock file maintenance\n", u.Dep.Name)
+			continue
+		}
 		from, to := u.FromTo()
 		fmt.Fprintf(&b, "- %s:%d %s -> %s\n", u.Dep.File, u.Dep.Line, from, to)
 	}

@@ -1,7 +1,8 @@
 Results go to stderr (the diff of `plan` and the report of `explain` go to stdout), in fixed-width lines:
 
 ```
-update  <file>:<line>  <name>  <from> -> <to>  (<type>[, separate PR])[  security: <id>,<id>]
+update  <file>:<line>  <name>  <from> -> <to>  (<type>[, lockfile][, separate PR])[  security: <id>,<id>]
+update  <lockfile>  lock file maintenance  (lockFileMaintenance, separate PR)   (with lockFileMaintenance)
 skip    <file>:<line>  <name>  <reason>                       (with -v)
 error   <message>
 note    go.sum changes are computed by apply/run              (plan, when a gomod update exists)
@@ -11,7 +12,7 @@ pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```
 
-- For digest and pin updates, `<from>`/`<to>` read `<version>@<sha7>`.
+- For digest and pin updates, `<from>`/`<to>` read `<version>@<sha7>`. A lockfile-only update (`, lockfile`) starts at the locked version and changes only the lockfile.
 - Per-dependency errors read `<file>:<line>: <name>: <err>`; a fatal error is printed as `deps: <err>`.
 - The PR, automerge and dashboard statuses are listed in `deps run --help`; the skip reasons in the managers reference.
 

@@ -647,6 +647,14 @@ A group automerges when every update in it has `Automerge` from the policy of it
 - `auto` maps to the repository default: Gitea/Forgejo `default_merge_style` (else `merge`); GitHub the first allowed of merge commit, squash, rebase (else `MERGE`).
 - Security updates follow the same policy.
 
+### Lock file maintenance
+
+`lockFileMaintenance: {enabled, schedule}` (Renovate's option) adds one update per lock root in `Resolve`: `Type` `lockFileMaintenance` (not rule-selectable), `Dep.File` the manifest next to the lockfile, `Dep.Name` the lockfile path, `Schedule` from `lockFileMaintenance.schedule` (else the top-level one), the top-level automerge settings; rules do not apply, and none are added with `Options.Filter` (`explain`). Managers opt in with `manager.LockMaintainer` (`LockRoots`), post-processors with `engine.LockMaintainer` (`Maintain`, called instead of `Process`; other updates of the same scope are an error). Only cargo implements both (`cargo update` in the temp mirror); npm or gomod only need the two methods.
+
+- All maintenance updates form one group on `<prefix>lock-file-maintenance`, titled `chore(deps): lock file maintenance`; `engine.Local` leaves them out, so `plan`/`apply` list them as `separate PR` and never write them.
+- The PR is rebuilt from the base each run in schedule (fingerprint decides `up-to-date`/`updated`). A group whose build yields no change (current locks) gets no action: nothing is pushed and its open PR is closed as obsolete. `minimumReleaseAge` does not apply.
+- PR body: one `| `<lockfile>` | | | lock file maintenance |` row per lockfile plus a sentence that the manifests are unchanged; commit message lines `- <lockfile>: lock file maintenance`.
+
 ### Dependency dashboard
 
 - **Finding it.** The first open issue (lowest number) among up to 10 pages of open issues whose title equals `dependencyDashboardTitle` and whose body contains `<!-- deps:dashboard -->`. GitHub lists PRs as issues; they are dropped. deps never closes it; with `dependencyDashboard: false` it is neither read nor written.

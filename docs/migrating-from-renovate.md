@@ -28,7 +28,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `rangeStrategy` | `rangeStrategy` / `rules[].rangeStrategy` for npm and cargo ranges: `auto` (default, = `update-lockfile`), `bump`, `update-lockfile`; `widen`, `pin`, `replace` and `in-range-only` are not supported. Other managers replace the exact version |
 | `postUpdateOptions: [gomodTidy]` | always on |
 | `postUpdateOptions: [gomodUpdateImportPaths]` | `gomodUpdateImportPaths`, **default true**: major module path updates (`/v92` → `/v93`) rewrite the imports in the module's `.go` files; `false` turns module path updates off |
-| `lockFileMaintenance` | not supported (lockfiles are regenerated only with an update) |
+| `lockFileMaintenance` | `lockFileMaintenance: {enabled, schedule}` for `Cargo.lock` (`cargo update`, one PR on `<branchPrefix>lock-file-maintenance`); npm and Go lockfiles are regenerated only with an update |
 | `branchPrefix` | `branchPrefix` |
 | `semanticCommits`, `:semanticPrefixFixDepsChoreOthers` | always on; `rules[].commitType`, `rules[].commitScope` |
 | `gitAuthor` | `gitAuthor` (or `DEPS_GIT_AUTHOR`, `--author-name/--author-email`) |
@@ -150,7 +150,7 @@ How the pieces map:
 | `customManagers` for `.env`, `netlify.toml`, workflow `version:`, `envtest.go` and `.ya?ml` markers, `.env` `*_IMAGE` tag@digest | one annotation-mode `custom[]` entry over those files |
 | cosign `.env` regex with `currentDigest` of `cosign_checksums.txt` | regex `custom[]` with `checksum: {asset: cosign_checksums.txt}` |
 | `hostRules` for registry.npmjs.org | built-in retries |
-| `lockFileMaintenance: {enabled: false}` | the deps behavior |
+| `lockFileMaintenance: {enabled: false}` | the deps default (`lockFileMaintenance.enabled: false`) |
 | `git-submodules: {enabled: true}` | not supported; OCM has no `.gitmodules` |
 | `extends: security:openssf-scorecard` | not supported |
 

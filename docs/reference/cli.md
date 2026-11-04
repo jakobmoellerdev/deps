@@ -56,7 +56,7 @@ deps apply
 
 Resolves every dependency, prints the same report as `deps plan` on stderr, and writes the changed files, including `go mod tidy` output (`go.mod`, `go.sum`), regenerated `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`, and `Cargo.lock` updated with `cargo update`. Post-processors run on temporary copies; a failed one drops that module's or lockfile root's changes and is reported as an error.
 
-A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`.
+A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`, as is the lock file maintenance update (`lockFileMaintenance`), which only `deps run` makes.
 
 The platform is only detected from CI environment variables. Locally, lookups run without a platform token unless one of the token variables is set (see `deps help environment`).
 
@@ -261,7 +261,7 @@ Resolves every dependency and prints the report on stderr (see `deps help output
 
 Post-processors do not run, so `go.sum` and lockfile changes are missing from the diff; `plan` notes this with `note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run` and `note    Cargo.lock changes are computed by apply/run`. Use `deps apply` to get them.
 
-A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`.
+A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`, as is the lock file maintenance update (`lockFileMaintenance`), which only `deps run` makes.
 
 The platform is only detected from CI environment variables. Locally, lookups run without a platform token unless one of the token variables is set (see `deps help environment`).
 
@@ -285,6 +285,7 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 - PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested.
 - With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
+- With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every `Cargo.lock` (`cargo update`); it is closed when the lockfiles are current.
 - Obsolete PRs under `branchPrefix` are closed and their branches deleted, but only when the run had no errors.
 - The local `HEAD` must be the tip of `origin/<base>`.
 
@@ -430,7 +431,8 @@ Report lines, summary lines, diagnostics and the CI step summary. Also shown by 
 Results go to stderr (the diff of `plan` and the report of `explain` go to stdout), in fixed-width lines:
 
 ```
-update  <file>:<line>  <name>  <from> -> <to>  (<type>[, separate PR])[  security: <id>,<id>]
+update  <file>:<line>  <name>  <from> -> <to>  (<type>[, lockfile][, separate PR])[  security: <id>,<id>]
+update  <lockfile>  lock file maintenance  (lockFileMaintenance, separate PR)   (with lockFileMaintenance)
 skip    <file>:<line>  <name>  <reason>                       (with -v)
 error   <message>
 note    go.sum changes are computed by apply/run              (plan, when a gomod update exists)
@@ -440,7 +442,7 @@ pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```
 
-- For digest and pin updates, `<from>`/`<to>` read `<version>@<sha7>`.
+- For digest and pin updates, `<from>`/`<to>` read `<version>@<sha7>`. A lockfile-only update (`, lockfile`) starts at the locked version and changes only the lockfile.
 - Per-dependency errors read `<file>:<line>: <name>: <err>`; a fatal error is printed as `deps: <err>`.
 - The PR, automerge and dashboard statuses are listed in `deps run --help`; the skip reasons in the managers reference.
 

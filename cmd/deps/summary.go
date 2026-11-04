@@ -223,6 +223,10 @@ func (s *summary) writeText(w io.Writer) {
 		}
 		fmt.Fprintln(w)
 		for _, u := range g.Updates {
+			if u.Maintenance() {
+				fmt.Fprintf(w, "      %s  lock file maintenance\n", u.Dep.Name)
+				continue
+			}
 			from, to := u.FromTo()
 			fmt.Fprintf(w, "      %s  %s:%d  %s -> %s  (%s)\n", u.Dep.Name, u.Dep.File, u.Dep.Line, from, to, updateType(u))
 		}
@@ -280,6 +284,10 @@ func (s *summary) markdown() string {
 		}
 		b.WriteString("\n\n| Dependency | File | From | To | Type |\n|---|---|---|---|---|\n")
 		for _, u := range g.Updates {
+			if u.Maintenance() {
+				fmt.Fprintf(&b, "| `%s` | `%s` | | | lock file maintenance |\n", u.Dep.Name, u.Dep.File)
+				continue
+			}
 			from, to := u.FromTo()
 			fmt.Fprintf(&b, "| `%s` | `%s:%d` | `%s` | `%s` | %s |\n", u.Dep.Name, u.Dep.File, u.Dep.Line, from, to, updateType(u))
 		}

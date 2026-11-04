@@ -147,22 +147,12 @@ func process(ctx context.Context, dir string, manifests, files map[string][]byte
 		return nil, nil
 	}
 	updated := updatedCrates(dir, manifests)
-	tmp, err := os.MkdirTemp("", "deps-cargo-*")
+	tmp, base, err := mirrorRoot(dir, manifests, lock)
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	base, err := mirrorAncestors(dir, tmp)
-	if err != nil {
-		return nil, err
-	}
-	if err := mirror(dir, base, manifests); err != nil {
-		return nil, err
-	}
 	lockPath := filepath.Join(base, lockFile)
-	if err := os.WriteFile(lockPath, lock, 0o644); err != nil {
-		return nil, err
-	}
 	if err := cargo(ctx, base, dir, "update", "--workspace"); err != nil {
 		return nil, err
 	}
@@ -240,6 +230,49 @@ func lockedNow(pkgs []lockedPackage, p pin) (string, bool) {
 		return "", false
 	}
 	return cur.Original(), true
+}
+
+// Maintain implements engine.LockMaintainer (lockFileMaintenance): `cargo update` in the
+// mirror of the workspace root dir moves every locked crate to the newest version its
+// requirement admits; the manifests are unchanged. It returns Cargo.lock when it changed;
+// without a lockfile it does nothing.
+func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error) {
+	lock, ok := files[lockFile]
+	if !ok {
+		return nil, nil
+	}
+	tmp, base, err := mirrorRoot(dir, nil, lock)
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
+	if err := cargo(ctx, base, dir, "update"); err != nil {
+		return nil, err
+	}
+	out, err := os.ReadFile(filepath.Join(base, lockFile))
+	if err != nil || bytes.Equal(out, lock) {
+		return nil, err
+	}
+	return map[string][]byte{lockFile: out}, nil
+}
+
+// mirrorRoot mirrors the workspace root dir (mirrorAncestors, mirror) with the patched
+// manifests and lock into a new temporary directory tmp, which the caller removes; base is
+// the mirror of dir.
+func mirrorRoot(dir string, manifests map[string][]byte, lock []byte) (tmp, base string, err error) {
+	if tmp, err = os.MkdirTemp("", "deps-cargo-*"); err != nil {
+		return "", "", err
+	}
+	if base, err = mirrorAncestors(dir, tmp); err == nil {
+		if err = mirror(dir, base, manifests); err == nil {
+			err = os.WriteFile(filepath.Join(base, lockFile), lock, 0o644)
+		}
+	}
+	if err != nil {
+		os.RemoveAll(tmp)
+		return "", "", err
+	}
+	return tmp, base, nil
 }
 
 // mirrorAncestors recreates the directories from the repository top (the nearest ancestor of

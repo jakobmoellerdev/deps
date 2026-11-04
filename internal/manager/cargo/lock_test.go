@@ -538,6 +538,56 @@ func TestProcessRealCargo(t *testing.T) {
 	if want := strings.Replace(lock, "version = \"1.0.0\"", "version = \"1.0.1\"", 1); string(out["Cargo.lock"]) != want {
 		t.Errorf("Cargo.lock:\n%s", out["Cargo.lock"])
 	}
+
+	// Lock file maintenance: cargo update moves the lock to the newest 1.0.2, Cargo.toml stays.
+	out, err = Locker{}.Maintain(t.Context(), dir, map[string][]byte{"Cargo.lock": []byte(lock)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.Replace(lock, "version = \"1.0.0\"", "version = \"1.0.2\"", 1); string(out["Cargo.lock"]) != want || len(out) != 1 {
+		t.Errorf("Maintain: %q", out)
+	}
+}
+
+func TestMaintainStub(t *testing.T) {
+	log := stub(t)
+	dir := t.TempDir()
+	write(t, dir, map[string]string{"Cargo.toml": "[dependencies]\nx = \"1\"\n", "src/lib.rs": ""})
+	lock := lockOf("x@1.0.0")
+	out, err := Locker{}.Maintain(t.Context(), dir, map[string][]byte{"Cargo.lock": []byte(lock)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out["Cargo.lock"]); got != lock+"# update\n" {
+		t.Errorf("Cargo.lock:\n%s", got)
+	}
+	if b, _ := os.ReadFile(log); string(b) != "args: update\nsymlinked src/lib.rs\ncopied Cargo.toml\nno target, no .git\n" {
+		t.Errorf("log:\n%s", b)
+	}
+	if out, err := (Locker{}).Maintain(t.Context(), dir, map[string][]byte{}); out != nil || err != nil {
+		t.Errorf("without a lockfile: %v, %v", out, err)
+	}
+	t.Setenv("STUB_FAIL", "1")
+	if _, err := (Locker{}).Maintain(t.Context(), dir, map[string][]byte{"Cargo.lock": []byte(lock)}); err == nil || !strings.HasPrefix(err.Error(), "cargo update in "+dir+": ") {
+		t.Errorf("failure: %v", err)
+	}
+}
+
+func TestLockRoots(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, map[string]string{
+		"Cargo.toml":            "[workspace]\nmembers = [\"crates/*\"]\n",
+		"Cargo.lock":            lockOf("x@1.0.0"),
+		"crates/a/Cargo.toml":   "[dependencies]\nx = \"1\"\n",
+		"standalone/Cargo.toml": "[dependencies]\nx = \"1\"\n", // not a member, no lock of its own
+		"other/Cargo.toml":      "[dependencies]\nx = \"1\"\n",
+		"other/Cargo.lock":      lockOf("x@1.0.0"),
+	})
+	got := cargoManager{}.LockRoots(dir, []string{"crates/a/Cargo.toml", "standalone/Cargo.toml", "other/Cargo.toml", "Cargo.toml"})
+	if fmt.Sprint(got) != "[{Cargo.toml Cargo.lock} {other/Cargo.toml other/Cargo.lock}]" {
+		t.Errorf("lock roots = %v", got)
+	}
+	var _ manager.LockMaintainer = cargoManager{}
 }
 
 // TestProcessUpdatesRealCargo: `anyhow = "<1.0.1"` locked at 1.0.0 is rewritten to `<2.0.0` for

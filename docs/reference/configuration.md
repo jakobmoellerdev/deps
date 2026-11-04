@@ -148,6 +148,9 @@ customDatasources:
   - [`customDatasources.<name>.format`](#customdatasourcesnameformat)
   - [`customDatasources.<name>.versions`](#customdatasourcesnameversions)
   - [`customDatasources.<name>.versionRegex`](#customdatasourcesnameversionregex)
+- [`lockFileMaintenance`](#lockfilemaintenance)
+  - [`lockFileMaintenance.enabled`](#lockfilemaintenanceenabled)
+  - [`lockFileMaintenance.schedule`](#lockfilemaintenanceschedule)
 
 ## `version`
 
@@ -1003,3 +1006,39 @@ Examples: `.releases[].version`, `.releases | keys`, `[].tag_name`.
 RE2 regexp the selected values must match; its (?P\<version>) group, else the whole match, is the version (e.g. `^v?(?P<version>\d+\.\d+\.\d+)$` strips a leading v).
 
 - **Type:** string
+
+## `lockFileMaintenance`
+
+Lock file maintenance: one PR (branch \<branchPrefix>lock-file-maintenance) that refreshes every Cargo.lock to the newest versions the requirements admit (cargo update), without changing manifests.
+
+- **Type:** object
+
+Renovate's `lockFileMaintenance`. With `enabled: true`, `run` keeps one PR on the branch `<branchPrefix>lock-file-maintenance`, titled `chore(deps): lock file maintenance`, that refreshes every lockfile deps maintains:
+
+- Supported lockfiles: every `Cargo.lock` of a scanned `Cargo.toml` (the workspace's, see the cargo manager). `run` executes `cargo update` on a copy of the workspace, which moves every locked crate to the newest version its requirement admits. The manifests are unchanged, so the PR changes only lockfiles.
+- The PR is rebuilt from the base branch on every run in schedule, like other PRs: it is updated when the result changes (new releases), and closed when the lockfiles are already current. The dashboard lists it with the other PRs, and its checkboxes create, recreate or rebase it.
+- `minimumReleaseAge` does not apply: cargo picks the newest releases regardless of age. Lockfile-only and other updates of the same lockfiles stay in their own PRs.
+- `schedule` (workflow crons, as the top-level `schedule`) overrides the top-level schedule; `[]` means every run. Renovate's default is a weekly window (`before 4am on monday`); deps has no time windows, so pair it with a weekly workflow cron.
+- It follows the top-level `automerge` and `automergeStrategy`; rules do not apply to it.
+- `plan` and `apply` only list it (`update  Cargo.lock  lock file maintenance  (lockFileMaintenance, separate PR)`); they never write it.
+
+```yaml
+lockFileMaintenance:
+  enabled: true
+  schedule: ["0 3 * * 1"]   # the Monday run
+```
+
+### `lockFileMaintenance.enabled`
+
+Propose the lock file maintenance PR.
+
+- **Type:** boolean
+- **Default:** `false`
+
+### `lockFileMaintenance.schedule`
+
+Workflow cron triggers of the lock file maintenance PR, overriding the top-level schedule; [] means every run.
+
+- **Type:** list of strings
+
+Validated like the top-level `schedule` (`lockFileMaintenance.schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`).

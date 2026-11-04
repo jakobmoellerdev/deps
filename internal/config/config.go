@@ -152,10 +152,15 @@ type Config struct {
 	Custom                    []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
 	// CustomDatasources are referenced as datasource custom.<name>.
 	CustomDatasources map[string]CustomDatasource `yaml:"customDatasources" jsonschema_description:"User-defined datasources by name; deps (custom[] entries, annotations, Renovate markers) refer to them as datasource custom.<name>. The version list is fetched once per run."`
+	// LockFileMaintenance configures Renovate's lockFileMaintenance: one PR refreshing every
+	// lockfile.
+	LockFileMaintenance LockFileMaintenance `yaml:"lockFileMaintenance" jsonschema_description:"Lock file maintenance: one PR (branch <branchPrefix>lock-file-maintenance) that refreshes every Cargo.lock to the newest versions the requirements admit (cargo update), without changing manifests."`
 
 	path     string        // source path for error messages
 	schedule *schedule.Set // parsed Schedule
-	minAge   time.Duration // parsed MinimumReleaseAge
+	// lfmSchedule is the parsed LockFileMaintenance.Schedule, or schedule when it is nil.
+	lfmSchedule *schedule.Set
+	minAge      time.Duration // parsed MinimumReleaseAge
 }
 
 // SecurityEnabled reports whether OSV lookups are on (default true).
@@ -219,6 +224,17 @@ func ParseAuthor(s string) (Author, error) {
 
 // Prefix returns BranchPrefix, or DefaultBranchPrefix when unset.
 func (c *Config) Prefix() string { return cmp.Or(c.BranchPrefix, DefaultBranchPrefix) }
+
+// LockFileMaintenance holds the lockFileMaintenance settings.
+type LockFileMaintenance struct {
+	Enabled bool `yaml:"enabled" jsonschema:"default=false" jsonschema_description:"Propose the lock file maintenance PR."`
+	// Schedule overrides the top-level schedule when non-nil; [] = every run.
+	Schedule []string `yaml:"schedule" jsonschema_description:"Workflow cron triggers of the lock file maintenance PR, overriding the top-level schedule; [] means every run."`
+}
+
+// LockFileMaintenanceSchedule is the schedule of the lock file maintenance PR:
+// lockFileMaintenance.schedule, else the top-level schedule; nil = every run.
+func (c *Config) LockFileMaintenanceSchedule() *schedule.Set { return c.lfmSchedule }
 
 // Actions holds github-actions manager settings.
 type Actions struct {
@@ -527,6 +543,10 @@ func (c *Config) Validate() error {
 		}
 	}
 	c.schedule = parseSchedule("schedule", c.Schedule, add)
+	c.lfmSchedule = c.schedule
+	if c.LockFileMaintenance.Schedule != nil {
+		c.lfmSchedule = parseSchedule("lockFileMaintenance.schedule", c.LockFileMaintenance.Schedule, add)
+	}
 	for i, g := range c.IgnorePaths {
 		if _, err := doublestar.Match(g, ""); err != nil {
 			add(fmt.Sprintf("ignorePaths[%d]", i), "invalid glob %q: %v", g, err)

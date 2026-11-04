@@ -64,6 +64,15 @@ type UpdatePinner interface {
 	ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error)
 }
 
+// LockMaintainer is implemented by post-processors that refresh a whole lockfile for a lock
+// file maintenance update (dep.LockFileMaintenance): every locked dependency moves to the
+// newest version its manifest admits, the manifests stay unchanged. files is the current
+// content of every existing sibling by name, as for Process; the result holds the changed
+// siblings.
+type LockMaintainer interface {
+	Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error)
+}
+
 // postSem bounds concurrent post-processor runs (go mod tidy, npm install) across all Build
 // calls.
 var postSem = make(chan struct{}, 4)
@@ -74,8 +83,10 @@ type fileBuild struct {
 	post    string       // manager whose post-processor derives files from it; "" = none
 	locks   []dep.Update // lockfile-only updates, left to the post-processor
 	ups     []dep.Update // the updates patched into the file, for an UpdatePinner
-	err     error        // patch failure
-	dropped bool         // its post-processing scope failed
+	// maintain marks a lock file maintenance update, left to the post-processor.
+	maintain bool
+	err      error // patch failure
+	dropped  bool  // its post-processing scope failed
 }
 
 // postScope is one post-processor run: every patched manifest of one manager sharing a scope.
@@ -256,11 +267,15 @@ func buildFile(ctx context.Context, root, file string, managers map[string]manag
 		return nil
 	}
 	for _, u := range ups {
-		if u.Lockfile {
+		if u.Lockfile || u.Maintenance() {
 			if err := setPost(u.Dep.Manager); err != nil {
 				return fileBuild{err: err}
 			}
-			b.locks = append(b.locks, u)
+			if u.Maintenance() {
+				b.maintain = true
+			} else {
+				b.locks = append(b.locks, u)
+			}
 			continue
 		}
 		m := managers[u.Dep.Manager]
@@ -312,7 +327,11 @@ func groupScopes(ctx context.Context, root string, files []string, builds []file
 		}
 		dir, ok := post[b.post].Scope(root, files[i])
 		if !ok {
-			if len(b.locks) > 0 {
+			switch {
+			case b.maintain:
+				builds[i].err = errors.New("lock file maintenance without a lockfile")
+				continue
+			case len(b.locks) > 0:
 				builds[i].err = fmt.Errorf("lockfile-only update of %s without a lockfile", b.locks[0].Dep.Name)
 				continue
 			}
@@ -353,6 +372,7 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 	manifests := make(map[string][]byte, len(s.files))
 	rels := make([]string, len(s.files))
 	var locks, ups map[string][]dep.Update
+	maintain := false
 	for j, i := range s.files {
 		rel := files[i]
 		if s.dir != "." {
@@ -363,6 +383,7 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 		}
 		rels[j] = rel
 		manifests[rel] = builds[i].changes[0].New
+		maintain = maintain || builds[i].maintain
 		if len(builds[i].locks) > 0 {
 			if locks == nil {
 				locks = map[string][]dep.Update{}
@@ -380,6 +401,13 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 	up, _ := p.(UpdatePinner)
 	if locks != nil && lu == nil && up == nil {
 		return nil, fmt.Errorf("the %s post-processor cannot apply lockfile-only updates", s.manager)
+	}
+	lm, _ := p.(LockMaintainer)
+	switch {
+	case maintain && lm == nil:
+		return nil, fmt.Errorf("the %s post-processor cannot maintain lockfiles", s.manager)
+	case maintain && (locks != nil || slices.ContainsFunc(s.files, func(i int) bool { c := builds[i].changes[0]; return !bytes.Equal(c.Old, c.New) })):
+		return nil, errors.New("lock file maintenance cannot be combined with other updates of its lockfile")
 	}
 	names := p.Siblings()
 	sibs := make([]sibling, len(names))
@@ -411,6 +439,8 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 	var out map[string][]byte
 	var err error
 	switch {
+	case maintain:
+		out, err = lm.Maintain(ctx, abs, contents)
 	case up != nil:
 		out, err = up.ProcessUpdates(ctx, abs, manifests, contents, ups, locks)
 	case locks != nil:

@@ -24,11 +24,17 @@ type Group struct {
 // GroupManager is the Group.Manager of policy groups.
 const GroupManager = "group"
 
+// MaintenanceBranch is the branch name (after the branch prefix) of the lock file maintenance
+// PR, which holds every dep.LockFileMaintenance update; it is Renovate's.
+const MaintenanceBranch = "lock-file-maintenance"
+
 // GroupUpdates groups updates by policy group name, or by (Manager, Name) for ungrouped and
 // security updates (security updates are never batched into a policy group), and by PR
 // bucket (dep.Update.Bucket). Branches are <branchPrefix><manager>/<slug> and
 // <branchPrefix>group/<slug>, with "-<bucket>" appended for a non-empty bucket; "" means
-// config.DefaultBranchPrefix. Sorted by Manager, Name, then Branch.
+// config.DefaultBranchPrefix. Lock file maintenance updates share one group (Manager and Name
+// MaintenanceBranch) on <branchPrefix>lock-file-maintenance. Sorted by Manager, Name, then
+// Branch.
 func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 	branchPrefix = cmp.Or(branchPrefix, config.DefaultBranchPrefix)
 	type key struct{ manager, name, bucket string }
@@ -36,7 +42,10 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 	var groups []Group
 	for _, u := range updates {
 		k := key{u.Dep.Manager, u.Dep.Name, u.Bucket}
-		if u.Group != "" && len(u.Advisories) == 0 {
+		switch {
+		case u.Maintenance():
+			k = key{MaintenanceBranch, MaintenanceBranch, ""}
+		case u.Group != "" && len(u.Advisories) == 0:
 			k = key{GroupManager, u.Group, u.Bucket}
 		}
 		i, ok := idx[k]
@@ -44,6 +53,9 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 			i = len(groups)
 			idx[k] = i
 			branch := branchPrefix + k.manager + "/" + slug(k.name)
+			if k.manager == MaintenanceBranch {
+				branch = branchPrefix + MaintenanceBranch
+			}
 			if k.bucket != "" {
 				branch += "-" + k.bucket
 			}
@@ -68,7 +80,8 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 // Local splits updates into the ones plan and apply write and the ones only `run` proposes
 // (in their own PRs): a dependency occurrence gets one local update, since the updates of its
 // PR buckets edit the same bytes. The newest non-major update of a dep is kept, else its
-// lowest major one (Resolve orders a dep's updates by version). local keeps the order of
+// lowest major one (Resolve orders a dep's updates by version). Lock file maintenance updates
+// are always left out: they refresh a lockfile apart from any update. local keeps the order of
 // updates; separate[i] reports whether updates[i] was left out.
 func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 	type occ struct {
@@ -77,6 +90,9 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 	}
 	chosen := make(map[occ]int, len(updates))
 	for i, u := range updates {
+		if u.Maintenance() {
+			continue // run only: its own PR
+		}
 		k := occ{u.Dep.File, u.Dep.RefSpan}
 		j, ok := chosen[k]
 		switch {
@@ -92,7 +108,7 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 	}
 	local = make([]dep.Update, 0, len(chosen))
 	for i, u := range updates {
-		if chosen[occ{u.Dep.File, u.Dep.RefSpan}] == i {
+		if !u.Maintenance() && chosen[occ{u.Dep.File, u.Dep.RefSpan}] == i {
 			local = append(local, u)
 		} else {
 			separate[i] = true
@@ -120,6 +136,9 @@ func commitPrefix(ups []dep.Update, security bool) string {
 }
 
 func groupTitle(g Group) string {
+	if g.Manager == MaintenanceBranch {
+		return commitPrefix(g.Updates, false) + "lock file maintenance"
+	}
 	if g.Manager == GroupManager {
 		names := map[string]bool{}
 		for _, u := range g.Updates {

@@ -116,6 +116,10 @@ func report(w io.Writer, verbose bool, res *engine.Result, errs []error, separat
 		if i < len(separate) && separate[i] {
 			hint += ", separate PR"
 		}
+		if u.Maintenance() {
+			fmt.Fprintf(w, "update  %s  lock file maintenance  (%s%s)\n", u.Dep.Name, u.Type, hint)
+			continue
+		}
 		fmt.Fprintf(w, "update  %s:%d  %s  %s -> %s  (%s%s)%s\n", u.Dep.File, u.Dep.Line, u.Dep.Name, from, to, u.Type, hint, sec)
 	}
 	if verbose {

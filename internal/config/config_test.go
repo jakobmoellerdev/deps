@@ -94,6 +94,8 @@ func TestLoadErrors(t *testing.T) {
 		{"schedule: ['60 5 * * *']\n", `schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`},
 		{"schedule: ['* 25 * * *']\n", "schedule[0]"},
 		{"rules: [{schedule: ['* * * *']}]\n", "rules[0].schedule[0]"},
+		{"lockFileMaintenance: {enabled: true, schedule: ['60 5 * * *']}\n", `lockFileMaintenance.schedule[0]: "60 5 * * *": minute`},
+		{"lockFileMaintenance: {enable: true}\n", "field enable not found"},
 		{"rules: [{depTypes: [weird]}]\n", "rules[0].depTypes[0]: must be one of direct, indirect"},
 		{"security: maybe\n", "line 1"},
 		{"custom: [{}]\n", "custom[0].files: must not be empty"},
