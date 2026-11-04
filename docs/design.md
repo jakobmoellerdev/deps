@@ -627,7 +627,7 @@ The action downloads a released static binary instead of building from source, s
 
 The action uses only `github.*` expressions, so it runs unchanged on GitHub Actions and Gitea/Forgejo with default settings. Its generated reference is [reference/action.md](reference/action.md).
 
-Releases: a `v*` tag runs the `release` job of `.gitea/workflows/ci.yml` after `test` (`task ci` runs once). `task release:build` builds `deps_linux_amd64` and `deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w -buildid= -X main.version=<tag>"`, plus `checksums.txt`; the job checks the binaries are static. `task release:packages` packages them as reproducible `.deb`, Arch Linux `.pkg.tar.zst` and Alpine `.apk` files (both architectures each), which the job uploads to the owner's Gitea Debian (`stable`/`main`), Arch (`jakobmoellerdev`) and Alpine (`stable`/`main`) registries. `gt release create` publishes the binaries, packages and checksums. Details: [ci.md](ci.md#releases-maintainers).
+Releases: a `v*` tag runs the `release` job of `.gitea/workflows/ci.yml` after `test` (`task ci` runs once). `task release:build` builds `deps_linux_amd64` and `deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w -buildid= -X main.version=<tag>"`, plus `checksums.txt`; the job checks the binaries are static. `task release:packages` packages them as reproducible `.deb`, Arch Linux `.pkg.tar.zst` and Alpine `.apk` files (both architectures each), which the job uploads to the owner's Gitea Debian (`stable`/`main`), Arch (`jakobmoellerdev`) and Alpine (`stable`/`main`) registries. `gt release create` publishes the binaries, packages and checksums. Attestations: the GitHub mirror's release workflow signs SLSA provenance for every file and an SPDX SBOM per binary keyless (`actions/attest`); the Gitea job verifies those bundles with cosign against its byte-identical files and attaches them, since Gitea 28 has no Actions OIDC. Details: [ci.md](ci.md#releases-maintainers).
 
 ### Gitea / Forgejo workflow
 
@@ -651,7 +651,7 @@ Lockfile regeneration needs the package manager: the binary on `PATH`, else `npx
 
 ### GitHub workflow
 
-GitHub workflows cannot `uses:` an action hosted on Gitea. Either mirror the repository to GitHub and use `uses: <owner>/deps@v0.1.0` (the defaults keep downloading from the Gitea releases), or download the binary directly (no Go needed):
+GitHub workflows cannot `uses:` an action hosted on Gitea. Either use the public GitHub mirror, `uses: jakobmoellerdev/deps@v0.2.5` (on github.com runners the defaults download from the mirror's releases), or download the binary directly (no Go needed):
 
 ```yaml
 on:
@@ -710,7 +710,6 @@ Editor support: the repository root has the generated `deps.schema.json` (`task 
 Open items from [renovate-parity.md](renovate-parity.md) and the performance plan:
 
 - PR body badges: Mend adoption/passing/confidence (L5; external badge URLs or drop) and the OpenSSF scorecard (L6);
-- GitHub hosting (O1), partially done: static linux/amd64 and linux/arm64 binaries are released on `v*` tags (notes by git-cliff) and the action downloads them; remaining: a GitHub mirror so GitHub workflows can `uses:` the action;
 - the final OCM translation (O4): `examples-ocm.deps.yaml` plus the remaining groups listed in [migrating-from-renovate.md](migrating-from-renovate.md#worked-example-open-component-model);
 - `actions.lock` via `github.com/github/actions-lockfile/go`;
 - a benchmark gate: `BenchmarkResolve` in CI with a regression threshold (the benchmark exists; CI does not run it yet);

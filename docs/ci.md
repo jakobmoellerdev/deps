@@ -145,7 +145,7 @@ permissions:
   issues: write # only for dependencyDashboard
 ```
 
-**Where the action comes from.** `uses: jakobmoellerdev/deps@…` resolves to [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps), the push mirror of the Gitea repository. The defaults download the binary from the mirror's releases. A workflow can use the action only if that repository is public, or private with Actions access granted to your repository.
+**Where the action comes from.** `uses: jakobmoellerdev/deps@…` resolves to [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps), the public push mirror of the Gitea repository, so any workflow can use it. The defaults download the binary from the mirror's releases.
 
 ### Commit identity of the App
 
@@ -670,7 +670,7 @@ The reset also cleans up:
 Every release is published on both forges:
 
 - **Gitea:** the `release` job below.
-- **GitHub mirror:** `.github/workflows/release.yml`. It runs when the push mirror delivers the tag, or via `workflow_dispatch` with a `tag` input to republish an existing tag.
+- **GitHub mirror:** `.github/workflows/release.yml`. It runs when the push mirror delivers the tag, or via `workflow_dispatch` with a `tag` input to republish an existing tag. It also attests every release file (see [Attestations](#attestations)).
 
 GitHub runners download from the mirror because the Gitea instance's edge blocks GitHub's datacenter IPs (HTTP 403). The Gitea push mirror needs a GitHub token with the `workflow` scope, otherwise GitHub rejects pushes that change `.github/workflows/*`.
 
@@ -692,6 +692,7 @@ Pushing a `v*` tag runs `.gitea/workflows/ci.yml`. The `test` job runs `task ci`
    - `dist/deps-<pkgver>-r0-x86_64.apk` and `dist/deps-<pkgver>-r0-aarch64.apk`, by `packaging/nfpm/build.sh apk`.
 5. `packaging/publish.sh dist/*.deb dist/*.pkg.tar.zst dist/*.apk` uploads the packages to the owner's Debian, Arch Linux and Alpine package registries (see below).
 6. `gt release create <tag> --verify-tag --notes-file dist/RELEASE_NOTES.md` publishes the release with the notes, the binaries, the packages and `checksums.txt`. `gt` is the Gitea CLI on the runner, authenticated with `GITEA_TOKEN`, the job token. The GitHub release gets the same assets.
+7. `task release:attest-from-github TAG=<tag> DIR=dist` waits for the GitHub release's attestations, verifies them against `dist/` and attaches them (see [Attestations](#attestations)). The release is already public at this point, so a failure here only leaves it without attestations until the backfill runs.
 
 git-cliff is installed from its GitHub release instead of through `orhun/git-cliff-action`. That action always sends `github.token` to api.github.com to find the release, and on Gitea that token is a Gitea token, so the request fails with 401.
 
@@ -748,3 +749,32 @@ git tag -a v0.2.0 -m "deps v0.2.0" && git push origin main v0.2.0
 ```
 
 Workflows that use the action at `@main`, or without a release ref, pick up a new release automatically. Workflows pinned to `@vX.Y.Z` get it when deps (or Renovate) bumps their `uses:` ref.
+
+### Attestations
+
+Users verify downloads with `gh attestation verify` or cosign (README, *Verify a download*). The chain:
+
+1. **GitHub signs.** After `task release:packages`, `.github/workflows/release.yml` runs `task release:sbom`: [syft](https://github.com/anchore/syft) v1.56.0 (installed and sha256-verified by `task syft:install`) writes an SPDX 2.3 SBOM of each binary to `dist/attest/deps_linux_<arch>.spdx.json`. Then [`actions/attest`](https://github.com/actions/attest) v4.2.2 (pinned by commit) creates, keyless with the job's OIDC token, Fulcio and the public Rekor log:
+   - one SLSA build provenance attestation (`https://slsa.dev/provenance/v1`) whose subjects are both binaries, all six packages and `checksums.txt`;
+   - one SBOM attestation (`https://spdx.dev/Document/v2.3`) per binary.
+
+   The job needs `id-token: write` and `attestations: write` besides `contents: write`; `artifact-metadata: write` is only needed for registry storage records, which deps does not create. The attestations land in the repository's attestations API, and the Sigstore bundles become release assets: `<file>.sigstore.json` for every file (copies of the one provenance bundle; a bundle with several subjects verifies each of them), `deps_linux_<arch>.sbom.sigstore.json` and `deps_linux_<arch>.spdx.json`. The packages are not SBOM-attested on their own: they contain the same binary, whose SBOM describes them.
+2. **Gitea reuses them.** Gitea can't sign itself:
+   - Gitea 28 Actions has no OIDC tokens ([go-gitea/gitea#39052](https://github.com/go-gitea/gitea/issues/39052), planned for 29.0);
+   - the public Fulcio trusts only known OIDC issuers, and no Gitea instance is one of them;
+   - Gitea has no attestations API, so `gh attestation verify` without `--bundle` works only against GitHub.
+
+   Both forges build the same commit reproducibly, so the files are byte-identical and GitHub's attestations hold for the Gitea files as well. `packaging/attest-from-github.sh <tag> [dir]` (via `task release:attest-from-github`, which installs cosign v3.1.4 and verifies its sha256):
+   1. checks the Gitea files (`dir`, or downloaded from the Gitea release with `gt release download`) against their `checksums.txt`;
+   2. polls `https://github.com/jakobmoellerdev/deps/releases/download/<tag>/<asset>` anonymously every 30 s (`ATTEST_INTERVAL`) for up to 30 min (`ATTEST_TIMEOUT`) until every bundle and SBOM exists. The tag first has to reach GitHub through the push mirror, and the GitHub build takes a few minutes;
+   3. verifies every bundle against the Gitea file with `cosign verify-blob-attestation` (`--type slsaprovenance1` for provenance, `--type https://spdx.dev/Document/v2.3` for SBOMs), checks that each SBOM asset equals the attested predicate, and fails before uploading anything if one doesn't match. A pass also proves that both builders produced the same bytes;
+   4. uploads the bundles and SBOMs to the Gitea release with `gt release upload --clobber`, so re-runs are idempotent.
+
+**Identity.** The certificates are issued by `https://token.actions.githubusercontent.com` to the workflow `https://github.com/jakobmoellerdev/deps/.github/workflows/release.yml@<ref>`, where `<ref>` is `refs/tags/<tag>` for a tag push. A `workflow_dispatch` republish signs as the ref it was dispatched on, normally `refs/heads/main`, even though it builds the tag; the script accepts exactly these two identities, and its provenance names `main` as the workflow ref. Dispatch with `--ref <tag>` to sign as the tag, but only tags whose `release.yml` already attests (after v0.2.5) have the attest steps.
+
+**Backfill.** `.gitea/workflows/attest.yml` (`workflow_dispatch`, input `tag`) runs the script against the files of an existing Gitea release: for releases made before attestations existed, after a GitHub republish, or when the release job's attest step failed. To attest an older release, republish it on GitHub first, then backfill:
+
+```sh
+gh workflow run release.yml -R jakobmoellerdev/deps -f tag=v0.2.5   # wait for it: gh run watch -R jakobmoellerdev/deps
+gt workflow run attest.yml --ref main -f tag=v0.2.5 --follow
+```

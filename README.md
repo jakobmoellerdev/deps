@@ -278,12 +278,48 @@ apk checks the index signature against the key file name, so keep the name. The 
 **Static binary (linux/amd64, linux/arm64).** Download it from the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) and verify it:
 
 ```sh
-base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.1.0
+base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.2.5
 curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
 grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 ~/.local/bin/deps
 ```
 
 **From source.** `go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest`, or `task build` in a clone, which builds a static `bin/deps`.
+
+### Verify a download
+
+Every release file is attested with [Sigstore](https://www.sigstore.dev) by the release workflow on the GitHub mirror (`.github/workflows/release.yml`): SLSA build provenance for each binary, package and `checksums.txt`, and an SPDX 2.3 SBOM (syft) for each binary. The packages contain the same binary, so the binary's SBOM describes them too. Both forges serve byte-identical files, so the same attestation verifies a download from either one. The bundles are release assets on both forges: `<file>.sigstore.json` (provenance), `deps_linux_<arch>.sbom.sigstore.json` and the SBOM itself, `deps_linux_<arch>.spdx.json`.
+
+With [gh](https://cli.github.com), against GitHub's attestations API:
+
+```sh
+gh attestation verify deps_linux_amd64 -R jakobmoellerdev/deps
+gh attestation verify deps_linux_amd64 -R jakobmoellerdev/deps --predicate-type https://spdx.dev/Document/v2.3   # the SBOM
+```
+
+With the bundle from the release instead of the API (works with the Gitea release alone):
+
+```sh
+base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.2.5
+curl -fsSLO "$base/deps_linux_amd64" -O "$base/deps_linux_amd64.sigstore.json"
+gh attestation verify deps_linux_amd64 -R jakobmoellerdev/deps --bundle deps_linux_amd64.sigstore.json
+```
+
+Fully offline, add `--custom-trusted-root trusted_root.jsonl` from an earlier `gh attestation trusted-root > trusted_root.jsonl`. Or with [cosign](https://github.com/sigstore/cosign) v3:
+
+```sh
+cosign verify-blob-attestation --bundle deps_linux_amd64.sigstore.json --type slsaprovenance1 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/jakobmoellerdev/deps/\.github/workflows/release\.yml@refs/(tags/v0\.2\.5|heads/main)$' \
+  deps_linux_amd64
+```
+
+The signing identity is the release workflow at the tag (`…/release.yml@refs/tags/<tag>`), or at `refs/heads/main` when a release was republished by hand (`workflow_dispatch`). For the SBOM use `deps_linux_amd64.sbom.sigstore.json` with `--type https://spdx.dev/Document/v2.3`.
+
+**Checksum chain.** `checksums.txt` is attested too, so verifying it covers every file it lists:
+
+```sh
+gh attestation verify checksums.txt -R jakobmoellerdev/deps && sha256sum -c --ignore-missing checksums.txt
+```
 
 ## Local usage
 

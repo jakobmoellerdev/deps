@@ -1,6 +1,10 @@
 # Publishes each v* release on the GitHub mirror too, so GitHub runners download the action's
 # binary from github.com. The tag arrives through the Gitea push mirror; tests already ran on
-# Gitea for that commit, so this only builds, writes the notes and publishes.
+# Gitea for that commit, so this only builds, writes the notes, attests and publishes.
+#
+# The release files are attested keyless with Sigstore (SLSA build provenance for every file, an
+# SPDX SBOM for each binary). The bundles are release assets too; the Gitea release job verifies
+# them against its own byte-identical build and attaches them there (packaging/attest-from-github.sh).
 name: release
 on:
   push:
@@ -12,6 +16,8 @@ on:
         required: true
 permissions:
   contents: write
+  id-token: write # Sigstore signing certificate from Fulcio
+  attestations: write # store the attestations in the repository's attestations API
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -38,14 +44,52 @@ jobs:
             if readelf -l "$f" | grep -q 'Requesting program interpreter'; then echo "$f is not static" >&2; exit 1; fi
           done
       - run: task release:packages VERSION="$TAG"
+      - run: task release:sbom
+      - name: Attest build provenance
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/deps_linux_*
+            dist/*.deb
+            dist/*.pkg.tar.zst
+            dist/*.apk
+            dist/checksums.txt
+      - name: Attest SBOM (amd64)
+        id: sbom-amd64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/deps_linux_amd64
+          sbom-path: dist/attest/deps_linux_amd64.spdx.json
+      - name: Attest SBOM (arm64)
+        id: sbom-arm64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/deps_linux_arm64
+          sbom-path: dist/attest/deps_linux_arm64.spdx.json
+      - name: Name the bundles after their assets
+        # One provenance attestation covers every file; each file gets a copy named after it, so
+        # `<asset>.sigstore.json` is the bundle to pass to `gh attestation verify --bundle`.
+        env:
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_AMD64: ${{ steps.sbom-amd64.outputs.bundle-path }}
+          SBOM_ARM64: ${{ steps.sbom-arm64.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          for f in $(awk '{print $2}' dist/checksums.txt) checksums.txt; do
+            cp "$PROVENANCE" "dist/attest/$f.sigstore.json"
+          done
+          cp "$SBOM_AMD64" dist/attest/deps_linux_amd64.sbom.sigstore.json
+          cp "$SBOM_ARM64" dist/attest/deps_linux_arm64.sbom.sigstore.json
+          ls -l dist/attest
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          files=(dist/deps_linux_amd64 dist/deps_linux_arm64 dist/*.deb dist/*.pkg.tar.zst dist/*.apk dist/checksums.txt dist/attest/*)
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" --clobber dist/deps_linux_amd64 dist/deps_linux_arm64 dist/*.deb dist/*.pkg.tar.zst dist/*.apk dist/checksums.txt
+            gh release upload "$TAG" --clobber "${files[@]}"
             gh release edit "$TAG" --notes-file dist/RELEASE_NOTES.md
           else
-            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file dist/RELEASE_NOTES.md \
-              dist/deps_linux_amd64 dist/deps_linux_arm64 dist/*.deb dist/*.pkg.tar.zst dist/*.apk dist/checksums.txt
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file dist/RELEASE_NOTES.md "${files[@]}"
           fi

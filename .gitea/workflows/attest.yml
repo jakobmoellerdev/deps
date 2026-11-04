@@ -1,0 +1,23 @@
+# Attaches the GitHub mirror's attestations to an existing Gitea release: for releases made before
+# attestations existed, after a republish on GitHub, or when the release job's attest step failed.
+# Verifies them against the files of the Gitea release first (packaging/attest-from-github.sh).
+name: attest
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the GitHub attestations to"
+        required: true
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Attach the GitHub attestations
+        env:
+          GITEA_TOKEN: ${{ github.token }}
+          GITEA_CLI_NO_UPDATE_NOTIFIER: "1"
+          TAG: ${{ inputs.tag }}
+        run: task release:attest-from-github TAG="$TAG"
