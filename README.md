@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ steps.app.outputs.token }}
-      - uses: jakobmoellerdev/deps@v0.2.4
+      - uses: jakobmoellerdev/deps@v0.2.5
         with:
           token: ${{ steps.app.outputs.token }}
 ```
@@ -125,7 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.5
 ```
 
 - **`uses:` needs the full URL.** A short `jakobmoellerdev/deps@…` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default.
@@ -136,7 +136,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ secrets.DEPS_TOKEN }}
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.5
         with:
           token: ${{ secrets.DEPS_TOKEN }}
 ```
@@ -163,7 +163,7 @@ jobs:
     runs-on: docker # a label of your runner
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.5
 ```
 
 - **Permissions.** Forgejo's automatic token can write to its repository (except in fork PRs), so the workflow has no `permissions:` block; see [docs/ci.md](docs/ci.md#forgejo).

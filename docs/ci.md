@@ -93,7 +93,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ steps.app.outputs.token }}
-      - uses: jakobmoellerdev/deps@v0.2.4
+      - uses: jakobmoellerdev/deps@v0.2.5
         with:
           token: ${{ steps.app.outputs.token }}
           args: run -v --log-level info
@@ -171,7 +171,7 @@ If the action repository isn't reachable, install the binary with `go install` t
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: stable
-      - run: go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@v0.2.4
+      - run: go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@v0.2.5
       - run: deps run -v --log-level info
         env:
           DEPS_TOKEN: ${{ steps.app.outputs.token }}
@@ -209,12 +209,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.5
         with:
           args: run -v --log-level info
 ```
 
-**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.2.4` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. Inside this repository the dogfood workflow uses `uses: ./`.
+**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.2.5` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. This repository's own workflow (`.gitea/workflows/deps.yml`) is this example plus the bot token, signing key and identity, pinned to the latest release; deps opens the PR that bumps that pin after each release.
 
 **The job token (`GITEA_TOKEN`).** Its permissions come from:
 
@@ -233,7 +233,7 @@ When CI must run on deps PRs (for [automerge](#automerge)), or a private reposit
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ secrets.DEPS_TOKEN }}
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.5
         with:
           token: ${{ secrets.DEPS_TOKEN }}
 ```
@@ -269,7 +269,7 @@ jobs:
     runs-on: docker # a label of your runner
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.4
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.2.5
 ```
 
 - **Detection.** deps detects Forgejo from `FORGEJO_ACTIONS=true` and reads `FORGEJO_SERVER_URL`, `FORGEJO_API_URL` and `FORGEJO_REPOSITORY`, falling back to the `GITHUB_*` names. API calls use the Gitea-compatible `/api/v1`.
@@ -517,7 +517,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: jakobmoellerdev/deps@v0.2.4 # full URL on Gitea/Forgejo
+      - uses: jakobmoellerdev/deps@v0.2.5 # full URL on Gitea/Forgejo
         with:
           args: plan -v
 ```
@@ -541,7 +541,7 @@ The GitHub mirror of this repository runs `deps plan` the same way (`.github/wor
         with:
           go-version-file: go.mod
           cache: true
-      - uses: jakobmoellerdev/deps@v0.2.4
+      - uses: jakobmoellerdev/deps@v0.2.5
 ```
 
 For several modules, or without setup-go, use `actions/cache`:
