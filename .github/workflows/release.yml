@@ -26,7 +26,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: arduino/setup-task@v2.0.0
+      - uses: arduino/setup-task@v3.0.0
         with:
           repo-token: ${{ github.token }}
       - run: task release:build VERSION="$TAG"
