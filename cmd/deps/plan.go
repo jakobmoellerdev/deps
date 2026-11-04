@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/aymanbagabas/go-udiff"
 	"github.com/spf13/cobra"
@@ -32,6 +33,7 @@ func newPlan(o *rootOpts) *cobra.Command {
 
 // local implements plan (write=false) and apply (write=true).
 func local(cmd *cobra.Command, o *rootOpts, write bool) error {
+	start := time.Now()
 	ctx := cmd.Context()
 	stderr := cmd.ErrOrStderr()
 	info, _ := platform.FromEnv(os.Getenv)
@@ -72,12 +74,17 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	if !write && hasManager(res, npm.Name) {
 		fmt.Fprintln(stderr, "note    package-lock.json changes are computed by apply/run")
 	}
+	cmdName := "plan"
+	if write {
+		cmdName = "apply"
+	}
+	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, Elapsed: time.Since(start), Verbose: o.verbose}
+	sum.write(stderr)
 	files := map[string]bool{}
 	for _, u := range res.Updates {
 		files[u.Dep.File] = true
 	}
 	fmt.Fprintf(stderr, "%d updates in %d files, %d skipped, %d errors\n", len(res.Updates), len(files), len(res.Skipped), len(errs))
-	writeUpdateSummary(res)
 	if len(errs) > 0 {
 		return errReported
 	}

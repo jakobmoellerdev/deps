@@ -71,6 +71,16 @@ type Result struct {
 	// Deps are all extracted deps (Skipped included, with Skip set) in discovery order: by
 	// manager, then file and position; the dependency dashboard lists them.
 	Deps []dep.Dep
+	// Pending lists the deps with a candidate held back by minimumReleaseAge (the newest
+	// one), in discovery order; the update chosen instead, if any, is in Updates.
+	Pending []Pending
+}
+
+// Pending is the newest candidate of a dep that minimumReleaseAge held back.
+type Pending struct {
+	Dep     dep.Dep
+	Version string
+	Reason  string // "too new (released <date>, minimum <age>)"
 }
 
 // digestManagers support digest pinning (pin: digest, digest refresh).
@@ -207,6 +217,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	sec := lookupSecurity(ctx, o.Security, secDeps)
 	outs := make([]Trace, len(todo))
 	ups := make([][]dep.Update, len(todo))
+	pend := make([]Pending, len(todo))
 	var wg sync.WaitGroup
 	for i := range todo {
 		wg.Go(func() {
@@ -223,7 +234,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 					slog.DebugContext(ctx, "update found", "file", d.File, "line", d.Line, "name", d.Name, "from", d.Version, "to", up.NewVersion, "type", up.Type, "bucket", up.Bucket)
 				}
 			}
-			outs[i], ups[i] = t, u
+			outs[i], ups[i], pend[i] = t, u, r.pending
 		})
 	}
 	wg.Wait()
@@ -238,6 +249,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			res.Errors = append(res.Errors, t.Err)
 		}
 		res.Updates = append(res.Updates, ups[i]...)
+		if pend[i].Version != "" {
+			res.Pending = append(res.Pending, pend[i])
+		}
 		if o.Trace != nil {
 			o.Trace(t)
 		}
@@ -426,8 +440,9 @@ type resolver struct {
 	trace bool
 	now   time.Time
 
-	rels  []Release
-	times map[string]time.Time // release times asked so far; zero = unknown
+	rels    []Release
+	times   map[string]time.Time // release times asked so far; zero = unknown
+	pending Pending              // newest candidate held back by minimumReleaseAge
 }
 
 // run resolves in order: datasource → candidates ranked under policy, one per PR bucket, with
@@ -625,6 +640,9 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 		}
 		if reject != nil {
 			reject(c.Version, reason)
+		}
+		if reason != reasonOlder && r.pending.Version == "" {
+			r.pending = Pending{Dep: r.d, Version: c.Version, Reason: reason}
 		}
 		if reason == reasonOlder {
 			st.older++

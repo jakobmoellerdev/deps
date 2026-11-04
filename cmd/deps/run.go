@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/bot"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -139,6 +141,7 @@ func newSigner(ctx context.Context, flag, env string) (*gitx.Signer, error) {
 }
 
 func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
+	start := time.Now()
 	ctx := cmd.Context()
 	stderr := cmd.ErrOrStderr()
 	switch r.platform {
@@ -257,12 +260,17 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		fmt.Fprintf(stderr, "error   %v\n", e)
 	}
 	nErr := len(res.Errors) + len(botErrs)
+	sum := summary{Command: "run", Run: true, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Actions: actions,
+		Errors: append(append([]error(nil), res.Errors...), botErrs...), Elapsed: time.Since(start), Verbose: o.verbose}
+	if r.dryRun {
+		sum.Command = "run --dry-run"
+	}
+	sum.write(stderr)
 	fmt.Fprintf(stderr, "%d created, %d updated, %d closed, %d up-to-date, %d skipped, %d automerge, %d errors", created, updated, closed, upToDate, skipped, automerged, nErr)
 	if r.dryRun {
 		fmt.Fprintf(stderr, " (dry run: %d would change, %d would automerge)", would, wouldAutomerge)
 	}
 	fmt.Fprintln(stderr)
-	writeRunSummary(actions)
 	if nErr > 0 {
 		return errReported
 	}

@@ -500,7 +500,7 @@ func TestRunCreatesBranchAndPR(t *testing.T) {
 		t.Error("run modified the working tree")
 	}
 	sum, _ := os.ReadFile(summary)
-	if !strings.Contains(string(sum), "| chore(deps): update actions/checkout to v7.0.1 | created | [#7](https://git.test/o/r/pulls/7) |") {
+	if !strings.Contains(string(sum), "Branch `"+branch+"` · created [#7](https://git.test/o/r/pulls/7)") {
 		t.Errorf("summary:\n%s", sum)
 	}
 }

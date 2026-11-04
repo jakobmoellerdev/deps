@@ -140,6 +140,12 @@ func TestMinimumReleaseAge(t *testing.T) {
 					t.Errorf("rejected[%q] = %v, want %v", r, got[r], vs)
 				}
 			}
+			switch {
+			case len(tc.rejected) == 0 && len(res.Pending) != 0:
+				t.Errorf("pending = %+v, want none", res.Pending)
+			case len(tc.rejected) != 0 && (len(res.Pending) != 1 || res.Pending[0].Version != "v2.0.0" || !strings.HasPrefix(res.Pending[0].Reason, "too new")):
+				t.Errorf("pending = %+v, want v2.0.0 too new", res.Pending)
+			}
 			for v, n := range ds.asked {
 				if n != 1 {
 					t.Errorf("ReleaseTime(%s) called %d times", v, n)

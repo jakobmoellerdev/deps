@@ -438,10 +438,14 @@ concurrency:
 
 ## Step summary
 
-`plan`, `apply` and `run` append a `## deps` markdown table to the job summary file, `GITHUB_STEP_SUMMARY` or else `GITEA_STEP_SUMMARY`:
+`plan`, `apply` and `run` (also `run --dry-run`) append a markdown summary to the job summary file, `GITHUB_STEP_SUMMARY` or else `GITEA_STEP_SUMMARY`. It has the same content as the `Summary:` block on stderr (`deps help output`):
 
-- `plan` and `apply` write `| Dependency | File | From | To | Type |`;
-- `run` writes `| Dependency | Status | PR |`, including the dashboard.
+- a headline: dependencies found, updates, PRs (by status for `run`), releases held back by `minimumReleaseAge`, skipped, errors and the duration; or `No updates: <n> dependencies up to date, <k> skipped.`;
+- one section per PR, grouped like `run` groups them (`plan` and `apply` show the PRs `run` would open): the branch, the status and link (`run`), automerge and schedule (`waiting for <cron>`), and a `| Dependency | File | From | To | Type |` table, security updates marked with their advisory IDs;
+- closed obsolete PRs and the dependency dashboard;
+- the releases held back by `minimumReleaseAge`;
+- the skip reasons with counts and how to update, for example `ignored by default (indirect; …)` → add a rule with `ignore: false`; the skipped dependencies are in a collapsible `<details>`;
+- the errors in full.
 
 GitHub shows it on the run page. On Gitea and Forgejo it shows where the instance supports job summaries; elsewhere the file is ignored.
 
