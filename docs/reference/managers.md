@@ -122,7 +122,6 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules. `go.
 | Reason | When |
 |---|---|
 | `replaced` | a `replace` directive targets the module |
-| `pseudo-version` | the current version is a pseudo-version |
 | `vendored module (not supported)` | `vendor/modules.txt` exists next to `go.mod` |
 | `prerelease toolchain` | `go1.27rc1` style directive |
 | `cannot locate value` | the version bytes were not found |
@@ -132,9 +131,24 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules. `go.
 - `go` versioning excludes pseudo-versions, prereleases (unless the current version is one), `+incompatible` (unless the current version has it), and other majors (except v0 → v1).
 - Directives move at their precision: `go 1.26` → `go 1.27`, `go 1.26.1` → `go 1.27.1`.
 
+**Pseudo-versions (digest updates).**
+
+- A requirement on a pseudo-version (`v0.0.0-<timestamp>-<commit>`) tracks a commit. A newer release (above the pseudo-version's base, e.g. `v1.2.4` for `v1.2.4-0.<ts>-<commit>`) is proposed as a version update; prereleases only when the base is one.
+- Otherwise the module's `@latest` is asked: when it is a newer pseudo-version of the same major (the tip of the default branch of an untagged module), it is proposed as a `digest` update, titled `update <module> digest to <commit7>`.
+- Rules apply as for other digest updates (`updates: [digest]`, `ignore`, `updateTypes: [digest]`); `minimumReleaseAge` of the digest type is checked against the commit time.
+- Modules with releases whose pseudo-version is ahead of the latest release get no digest update (`@latest` is that release, not the branch tip).
+
+**Major module paths (`gomodUpdateImportPaths`).**
+
+- Major versions ≥ 2 live under their own module path. For a requirement on `<path>/v<N>` (or an unsuffixed v0/v1 module, `/v<M+1>` for `vM.x.y+incompatible`, `gopkg.in/x.v<N>`), deps lists `/v<N+1>`, `/v<N+2>`, … from the GOPROXY URLs until one has no releases (at most 5).
+- The newest stable release of each path that the major policy accepts (`updates`, `allow`, `minimumReleaseAge`, `ignore` per update type) is a `major` update in the major PR bucket (`v<N>` buckets with `separateMultipleMajor`); a newer path replaces an older one in the same bucket.
+- The update rewrites the require (path and version) and every import of the old path and its packages in the module's `.go` files (below the go.mod, skipping `vendor`, `testdata`, `.`/`_` directories and nested modules; only the import path literals change). `go mod tidy` then sees the rewritten files through `-overlay`.
+- The new major's API may have changed: the PR body says so, and the build is not guaranteed to pass.
+- `gomodUpdateImportPaths: false` turns module path updates off. Only GOPROXY URLs are probed: GONOPROXY/GOPRIVATE modules, and paths no proxy before `direct` has, get no module path updates.
+
 **Post-processing (`apply`, `run`).**
 
-- After any gomod change, deps runs `go mod tidy -modfile=<tmp>/go.mod` in the module directory, on temporary copies of `go.mod` and `go.sum`, with `GOWORK=off` and `GOFLAGS` cleared.
+- After any gomod change, deps runs `go mod tidy -modfile=<tmp>/go.mod` in the module directory, on temporary copies of `go.mod` and `go.sum`, with `GOWORK=off` and `GOFLAGS` cleared; source files rewritten by a major module path update are passed with `-overlay`.
 - The tidied `go.mod` and `go.sum` replace the patched files. The real files are only written by `apply`.
 - At most 4 post-processors (tidy and npm installs together) run concurrently.
 - A failure drops that module's change: `go mod tidy in <dir>: <last 20 lines of stderr>`.
@@ -728,7 +742,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 |---|---|---|---|---|
 | `git-tags` | repository URL (`https://host/path` or `host/path`) | `GET <url>/info/refs?service=git-upload-pack`, then `POST <url>/git-upload-pack` (protocol v2 `ls-refs`, `ref-prefix refs/tags/`, `peel`); v0 servers via the advertisement | Basic `x-access-token:<token>` for the platform host; `DEPS_GITHUB_COM_TOKEN` for github.com; on 401, `git credential fill` once per host | github.com via the release list; Gitea/Forgejo via their releases API |
 | `github-releases` | `owner/repo` (github.com) or `https://host/owner/repo` (GHES) | with a token: GraphQL `releases` (`https://api.github.com/graphql`, GHES `<host>/api/graphql`); without: `GET /repos/{repo}/releases?per_page=100`. At most 5 pages, and only until the current release is listed. Drafts and prereleases are dropped. | token for the host | `publishedAt` |
-| `go` | module path | GOPROXY `<proxy>/<escaped path>/@v/list`, following `,` / `\|` fallback semantics (`direct` → `go list -m -versions -json`); GONOPROXY/GOPRIVATE modules via `go list` | none for proxy requests; `go list` uses the go command's own auth (git credentials, `.netrc`) | `@v/<v>.info`, read from `$GOMODCACHE/cache/download` first, then the proxy (`go list -m -json` for private modules) |
+| `go` | module path | GOPROXY `<proxy>/<escaped path>/@v/list`, following `,` / `\|` fallback semantics (`direct` → `go list -m -versions -json`); GONOPROXY/GOPRIVATE modules via `go list`. Pseudo-version deps also ask `<proxy>/<escaped path>/@latest` (`go list -m -json <path>@latest`); major module path probes list `<path>/v<N+1>/@v/list`, … from the GOPROXY URLs only | none for proxy requests; `go list` uses the go command's own auth (git credentials, `.netrc`) | `@v/<v>.info`, read from `$GOMODCACHE/cache/download` first, then the proxy (`go list -m -json` for private modules) |
 | `go-toolchain` | `go` / `toolchain` | `https://go.dev/dl/?mode=json&include=all`, once per run; a derived `X.Y` per minor | none | none |
 | `docker` | image reference | registry `tags/list` (all pages; Docker Hub with page size 10000), manifest HEAD for digests (index digest for multi-platform images); for release times a manifest GET by tag (Docker Hub: by the HEAD's digest, once per digest) | Docker config and credential helpers (`authn.DefaultKeychain`) | image config `created`; else, and for non-image artifacts (Helm charts), the manifest annotation `org.opencontainers.image.created` |
 | `npm` | package name (`@scope/name` sent as `@scope%2fname`) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json`, stream-decoded; deprecated versions dropped; 404 → `package <name> not found` | `.npmrc` `//host/path/:_authToken=` (longest prefix), `${VAR}` expansion | packument `time`; not fetched for `minimumReleaseAge` when the abbreviated `modified` is already older |

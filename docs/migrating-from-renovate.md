@@ -27,6 +27,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `pinDigests`, `docker:pinDigests`, `helpers:pinGitHubActionDigests` | `pin: digest` (top level or per rule) |
 | `rangeStrategy` | not configurable; npm ranges are always bumped in place (Renovate's `bump`); other managers replace the exact version |
 | `postUpdateOptions: [gomodTidy]` | always on |
+| `postUpdateOptions: [gomodUpdateImportPaths]` | `gomodUpdateImportPaths`, **default true**: major module path updates (`/v92` → `/v93`) rewrite the imports in the module's `.go` files; `false` turns module path updates off |
 | `lockFileMaintenance` | not supported (lockfiles are regenerated only with an update) |
 | `branchPrefix` | `branchPrefix` |
 | `semanticCommits`, `:semanticPrefixFixDepsChoreOthers` | always on; `rules[].commitType`, `rules[].commitScope` |
@@ -155,7 +156,7 @@ How the pieces map:
 
 Two details carry over unchanged:
 
-- **Rule 18 undoes rule 9.** `enabled: true` on the whole golang category comes after the `k8s.io/kube-openapi` rule, so Renovate updates kube-openapi anyway: its dashboard lists it in "kubernetes dependencies (minor)". The translation keeps the order. deps skips the module regardless, because it is a pseudo-version.
+- **Rule 18 undoes rule 9.** `enabled: true` on the whole golang category comes after the `k8s.io/kube-openapi` rule, so Renovate updates kube-openapi anyway: its dashboard lists it in "kubernetes dependencies (minor)". The translation keeps the order, so deps updates it too: its pseudo-version gets digest updates, in the Kubernetes group.
 - **Rule 18 enables indirect requirements.** Renovate disables them by default, and `enabled: true` turns them on again; rule 19 then keeps only their majors off. `ignore: false` does the same in deps.
 
 **Helm.** OCM has charts (`bindings/go/kubernetes/controller/chart` and two conformance charts), but none of them has Chart.yaml `dependencies`. The helm manager has nothing to update there and needs no config. The controller image in `chart/values.yaml` (`tag: latest@sha256:…`) is a docker dep (DepType `helm`) and gets digest refreshes.
@@ -261,8 +262,8 @@ Renovate had no open PRs at that time. Its dashboard (#331, updated 2026-11-04 1
 | github.com/Microsoft/go-winio: Renovate v0.6.4, deps v0.6.3 | pending | would create | deps-only, the same fallback |
 | pin ghcr.io/open-component-model/kubernetes/controller (`chart/test-values.yaml`, `tag: latest`) | — | `deps/group/kubernetes-controller-chart` | deps-only. Renovate's helm-values manager reads only `values.yaml`; deps reads any YAML with `image:`/`repository:` |
 | `pin registry docker tag to 325b4b2` | awaiting schedule ("Digest pins") | — | Renovate-only. The dashboard doesn't show the file. The only `registry` docker dep is the controller `.env` `REGISTRY_IMAGE_VERSION=3.1.1`, a marker without a digest, which deps doesn't pin [inference] |
-| Go pseudo-version digests: azure/go-ansiterm, google/pprof, ianlancetaylor/demangle, lufia/plan9stats, cyberphone/json-canonicalization, digitorus/pkcs7, google.golang.org/genproto (and k8s.io/utils, golang.org/x/exp inside groups) | pending | skipped as `pseudo-version` (65 deps) | Renovate-only. deps has no digest updates for pseudo-versions |
-| github.com/google/go-github/v92 → v93 | pending | up to date | Renovate-only. deps does not move a module to a new major import path |
+| Go pseudo-version digests: azure/go-ansiterm, google/pprof, ianlancetaylor/demangle, lufia/plan9stats, cyberphone/json-canonicalization, digitorus/pkcs7, google.golang.org/genproto (and k8s.io/utils, golang.org/x/exp, k8s.io/kube-openapi inside groups) | pending | held back by `minimumReleaseAge` (the `@latest` commits are 0–24 days old) | match (rechecked after M14; with `minimumReleaseAge: 0 days` deps proposes all of them as `digest` updates) |
+| github.com/google/go-github/v92 → v93 | pending | held back by `minimumReleaseAge` (v93.0.0 is from 2026-10-15) | match (rechecked after M15). deps' PR also rewrites the import in `bindings/go/github/internal/download/client.go` (`gomodUpdateImportPaths`, which OCM doesn't enable in Renovate); the package builds with v93 |
 | 36 others (helm v4.3.1, k8s.io/* v0.37.2, controller-tools v0.23.0, docker/cli, ginkgo, prometheus, oras, registry 3.1.2, npm 12.2.1, sigstore/scaffolding, markdownlint-cli2, open-component-model/ocm, dawidd6/action-download-artifact v28, …) | pending | held back by `minimumReleaseAge` | match |
 
 ### Cutover for OCM
@@ -275,15 +276,13 @@ Renovate had no open PRs at that time. Its dashboard (#331, updated 2026-11-04 1
 
 Each item comes from the comparison above or from [renovate-parity.md](renovate-parity.md):
 
-1. **Go pseudo-version digest updates.** Renovate's gomod `digest` updates cover untagged modules (7 pending PRs). deps skips them as `pseudo-version` (parity M14).
-2. **Go major module paths.** Renovate proposes moving `github.com/google/go-github/v92` to `/v93` in go.mod. OCM doesn't enable `gomodUpdateImportPaths`, so the imports are not rewritten. deps offers no update across a major import path at all (parity M15).
-3. **npm in-range updates.** OCM's npm deps use Renovate's default `rangeStrategy`, which updates only the lockfile while the locked version satisfies the range. deps always bumps the range, which gives 7 extra npm group members. OSV also checks the range floor instead of the locked version, which gives 2 security PRs for already-locked fixes (parity P18).
-4. **Release times for floating tags.** A major tag like `v25` without its own release has no release time, so `minimumReleaseAge` is not enforced for it: markdownlint-cli2-action v25 is 10 days old, but deps would open the PR, while Renovate lists it as pending. Images without a `created` time and the envtest custom datasource are not held back either; Renovate holds back such timestamp-less releases, e.g. Garden Linux 1877.28 (parity P10).
-5. **Fallback versus waiting.** deps proposes the newest release that is old enough (node 26.11.1, go-winio v0.6.3); Renovate waits for the newest (26.13.0, v0.6.4). This is a design difference, documented under P10, not a bug. It is listed because it changes which PRs OCM sees.
-6. **Platform commits.** Renovate creates commits through the GitHub API, so they are verified as ocmbot (`RENOVATE_PLATFORM_COMMIT`). deps signs with a key or not at all. OCM's rulesets require signatures on `deps/*` branches, and only ocmbot's bypass makes unsigned deps commits acceptable (parity O5).
-7. **Mend badges and the OpenSSF scorecard.** PR bodies show the release age as text, with no adoption, passing or confidence badges (L5) and no scorecard badge (`security:openssf-scorecard`, L6).
-8. **Renovate dashboard extras:** the "Abandoned Dependencies" section and the repository problems list (e.g. hidden Unicode warnings) have no deps equivalent.
-9. **Cutover steps not done:**
+1. **npm in-range updates.** OCM's npm deps use Renovate's default `rangeStrategy`, which updates only the lockfile while the locked version satisfies the range. deps always bumps the range, which gives 7 extra npm group members. OSV also checks the range floor instead of the locked version, which gives 2 security PRs for already-locked fixes (parity P18).
+2. **Release times for floating tags.** A major tag like `v25` without its own release has no release time, so `minimumReleaseAge` is not enforced for it: markdownlint-cli2-action v25 is 10 days old, but deps would open the PR, while Renovate lists it as pending. Images without a `created` time and the envtest custom datasource are not held back either; Renovate holds back such timestamp-less releases, e.g. Garden Linux 1877.28 (parity P10).
+3. **Fallback versus waiting.** deps proposes the newest release that is old enough (node 26.11.1, go-winio v0.6.3); Renovate waits for the newest (26.13.0, v0.6.4). This is a design difference, documented under P10, not a bug. It is listed because it changes which PRs OCM sees.
+4. **Platform commits (deferred).** Renovate creates commits through the GitHub API, so they are verified as ocmbot (`RENOVATE_PLATFORM_COMMIT`). deps signs with a key or not at all. OCM's rulesets require signatures on `deps/*` branches, and only ocmbot's bypass makes unsigned deps commits acceptable. API-created commits are deferred (parity O5).
+5. **Mend badges and the OpenSSF scorecard.** PR bodies show the release age as text, with no adoption, passing or confidence badges (L5) and no scorecard badge (`security:openssf-scorecard`, L6).
+6. **Renovate dashboard extras:** the "Abandoned Dependencies" section and the repository problems list (e.g. hidden Unicode warnings) have no deps equivalent.
+7. **Cutover steps not done:**
     - a real (non-dry) trial run in OCM;
     - App permissions confirmed for the installation (checks/statuses read, workflows write);
     - the ruleset entry or bypass for `deps/**`;

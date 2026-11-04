@@ -71,9 +71,11 @@ type postScope struct {
 // update's manager (looked up by dep.Dep.Manager in managers) and runs the post-processors
 // registered by manager name in post (nil = none, as for plan). Patched manifests sharing a
 // post-processor scope (a Go module, a workspace lockfile) are post-processed together in one
-// run. A failing file, or every file of a failing scope together with its regenerated
-// siblings, is dropped and its error returned; the remaining changes are returned sorted by
-// Path.
+// run. Edits of other files (manager.FileEditor: import paths of a Go module) are applied
+// with the update and join the post-processing scope of their own path; the update's files
+// stand or fall together. A failing file, or every file of a failing scope together with its
+// regenerated siblings, is dropped and its error returned; the remaining changes are returned
+// sorted by Path.
 func Build(ctx context.Context, root string, managers []manager.Manager, updates []dep.Update, post map[string]PostProcessor) ([]FileChange, []error) {
 	byName := make(map[string]manager.Manager, len(managers))
 	for _, m := range managers {
@@ -81,20 +83,33 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 	}
 	byFile := map[string][]dep.Update{}
 	var files []string
-	for _, u := range updates {
-		if _, ok := byFile[u.Dep.File]; !ok {
-			files = append(files, u.Dep.File)
+	addFile := func(f string) {
+		if _, ok := byFile[f]; !ok {
+			files = append(files, f)
+			byFile[f] = nil
 		}
+	}
+	for _, u := range updates {
+		addFile(u.Dep.File)
 		byFile[u.Dep.File] = append(byFile[u.Dep.File], u)
+	}
+	others, linked, preErr := fileEdits(root, byName, updates)
+	for f := range others {
+		addFile(f)
 	}
 	slices.Sort(files)
 
 	builds := make([]fileBuild, len(files))
 	var wg sync.WaitGroup
 	for i, f := range files {
-		wg.Go(func() { builds[i] = buildFile(ctx, root, f, byName, byFile[f], post) })
+		if err := preErr[f]; err != nil {
+			builds[i] = fileBuild{err: err}
+			continue
+		}
+		wg.Go(func() { builds[i] = buildFile(ctx, root, f, byName, byFile[f], others[f], post) })
 	}
 	wg.Wait()
+	dropLinked(files, builds, linked)
 
 	scopes := groupScopes(ctx, root, files, builds, post)
 	for _, s := range scopes {
@@ -139,9 +154,84 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 	return out, errList
 }
 
-func buildFile(ctx context.Context, root, file string, managers map[string]manager.Manager, ups []dep.Update, post map[string]PostProcessor) fileBuild {
-	edits := make([]patch.Edit, 0, len(ups)+1)
+// otherEdits are the edits of one file that come from updates of other files' deps
+// (manager.FileEditor), with the manager that produced them.
+type otherEdits struct {
+	manager string
+	edits   []patch.Edit
+}
+
+// fileEdits collects the manager.FileEditor edits of updates by file. linked lists, per
+// update with such edits, its dep's file followed by the other files; preErr holds the
+// failures by dep file.
+func fileEdits(root string, managers map[string]manager.Manager, updates []dep.Update) (map[string]otherEdits, [][]string, map[string]error) {
+	var others map[string]otherEdits
+	var linked [][]string
+	var preErr map[string]error
+	for _, u := range updates {
+		fe, ok := managers[u.Dep.Manager].(manager.FileEditor)
+		if !ok {
+			continue
+		}
+		m, err := fe.FileEdits(root, u)
+		if err != nil {
+			if preErr == nil {
+				preErr = map[string]error{}
+			}
+			preErr[u.Dep.File] = fmt.Errorf("%s: %w", u.Dep.Name, err)
+			continue
+		}
+		if len(m) == 0 {
+			continue
+		}
+		if others == nil {
+			others = map[string]otherEdits{}
+		}
+		set := []string{u.Dep.File}
+		for f, e := range m {
+			o := others[f]
+			o.manager = u.Dep.Manager
+			o.edits = append(o.edits, e...)
+			others[f] = o
+			set = append(set, f)
+		}
+		linked = append(linked, set)
+	}
+	return others, linked, preErr
+}
+
+// dropLinked drops every file of a linked set (fileEdits) in which some file failed; the
+// failing file reports the error.
+func dropLinked(files []string, builds []fileBuild, linked [][]string) {
+	for _, set := range linked {
+		idx := make([]int, len(set))
+		failed := false
+		for j, f := range set {
+			idx[j], _ = slices.BinarySearch(files, f)
+			failed = failed || builds[idx[j]].err != nil
+		}
+		if !failed {
+			continue
+		}
+		for _, i := range idx {
+			builds[i].dropped = builds[i].err == nil
+		}
+	}
+}
+
+func buildFile(ctx context.Context, root, file string, managers map[string]manager.Manager, ups []dep.Update, other otherEdits, post map[string]PostProcessor) fileBuild {
+	edits := make([]patch.Edit, 0, len(ups)+1+len(other.edits))
 	var b fileBuild
+	setPost := func(name string) error {
+		if post[name] != nil && name != b.post {
+			if b.post != "" {
+				// Only gomod and npm post-process, and their manifests are disjoint.
+				return fmt.Errorf("updates of post-processed managers %s and %s", b.post, name)
+			}
+			b.post = name
+		}
+		return nil
+	}
 	for _, u := range ups {
 		m := managers[u.Dep.Manager]
 		if m == nil {
@@ -152,12 +242,14 @@ func buildFile(ctx context.Context, root, file string, managers map[string]manag
 			return fileBuild{err: fmt.Errorf("%s: %w", u.Dep.Name, err)}
 		}
 		edits = append(edits, e...)
-		if post[u.Dep.Manager] != nil && u.Dep.Manager != b.post {
-			if b.post != "" {
-				// Only gomod and npm post-process, and their manifests are disjoint.
-				return fileBuild{err: fmt.Errorf("updates of post-processed managers %s and %s", b.post, u.Dep.Manager)}
-			}
-			b.post = u.Dep.Manager
+		if err := setPost(u.Dep.Manager); err != nil {
+			return fileBuild{err: err}
+		}
+	}
+	if len(other.edits) > 0 {
+		edits = append(edits, other.edits...)
+		if err := setPost(other.manager); err != nil {
+			return fileBuild{err: err}
 		}
 	}
 	abs := filepath.Join(root, filepath.FromSlash(file))
@@ -184,7 +276,7 @@ func groupScopes(ctx context.Context, root string, files []string, builds []file
 	var scopes []*postScope
 	index := map[[2]string]*postScope{}
 	for i, b := range builds {
-		if b.err != nil || b.post == "" {
+		if b.err != nil || b.dropped || b.post == "" {
 			continue
 		}
 		dir, ok := post[b.post].Scope(root, files[i])

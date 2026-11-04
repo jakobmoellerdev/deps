@@ -95,6 +95,7 @@ customDatasources:
 - [`prHourlyLimit`](#prhourlylimit)
 - [`actions`](#actions)
   - [`actions.defaultHost`](#actionsdefaulthost)
+- [`gomodUpdateImportPaths`](#gomodupdateimportpaths)
 - [`minimumReleaseAge`](#minimumreleaseage)
 - [`ignorePaths`](#ignorepaths)
 - [`separateMajorMinor`](#separatemajorminor)
@@ -354,9 +355,27 @@ actions:
   defaultHost: gitea.com
 ```
 
+## `gomodUpdateImportPaths`
+
+Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports).
+
+- **Type:** boolean
+- **Default:** `true`
+
+Go majors from v2 on live under their own module path (`github.com/google/go-github/v92` → `/v93`). For every go.mod requirement whose major updates the rules allow, deps lists the next module paths (`/v<N+1>`, … up to 5; `/v2` for v0/v1 modules, `gopkg.in/x.v<N+1>`) from the GOPROXY and proposes the newest release of each as a `major` update (PR buckets as for other majors, see [`separateMajorMinor`](#separatemajorminor)).
+
+- The update rewrites the require (path and version) and the import paths of the old module and its packages in the `.go` files of that module (vendor, testdata and nested modules excluded); `go mod tidy` sees the rewritten files.
+- The new major's API may differ, so the PR may need code changes before it builds; its body says so.
+- `false` proposes no module path changes at all: without rewritten imports `go mod tidy` would put the old path back.
+- Renovate's equivalent is `postUpdateOptions: [gomodUpdateImportPaths]`, which is off there by default.
+
+```yaml
+gomodUpdateImportPaths: false
+```
+
 ## `minimumReleaseAge`
 
-Minimum age of a new version before it is proposed, e.g. `3 days`, `12h`, `90m` or a Go duration; `0` disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt.
+Minimum age of a new version before it is proposed, e.g. `3 days`, `12h`, `90m` or a Go duration; `0` disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time.
 
 - **Type:** string
 
@@ -368,7 +387,7 @@ Minimum age of a new version before it is proposed, e.g. `3 days`, `12h`, `90m` 
   Negative or unparsable values are errors (`invalid age "<v>": want e.g. "3 days", "12h", "90m" or "0"`).
 - **Fallback:** a too-new candidate is rejected as `too new (released <date>, minimum <age>)`, and the next older candidate in the same PR bucket is tried.
 - **Unknown release times are allowed.** This covers datasources without release times (Go toolchains, `custom.<name>`) and failed time lookups.
-- **Exempt:** digest refreshes, pins and security updates.
+- **Exempt:** digest refreshes, pins and security updates. Go pseudo-version digest updates are not exempt: the new pseudo-version's commit time is checked against the age of the `digest` update type.
 - `rules[].minimumReleaseAge` overrides the value per dep. With `updateTypes` it overrides it per update type. `0` or `0 days` turns the age off for matching deps.
 
 ```yaml

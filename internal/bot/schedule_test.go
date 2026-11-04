@@ -203,6 +203,28 @@ func TestPRBodySecurity(t *testing.T) {
 	}
 }
 
+func TestPRBodyModulePath(t *testing.T) {
+	u := dep.Update{
+		Dep:  dep.Dep{Manager: "gomod", File: "go.mod", Line: 3, Name: "github.com/google/go-github/v92", Version: "v92.0.0"},
+		Type: dep.Major, NewVersion: "v93.0.0", NewName: "github.com/google/go-github/v93",
+	}
+	other := u
+	other.Dep.File = "sub/go.mod"
+	body := prBody(t.Context(), nil, []dep.Update{u, other}, "abc")
+	for _, want := range []string{
+		"| `go.mod:3` | `v92.0.0` | `github.com/google/go-github/v93@v93.0.0` | major |",
+		"`github.com/google/go-github/v92` moves to the module path `github.com/google/go-github/v93`",
+		"API may have changed",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Count(body, "moves to the module path") != 1 {
+		t.Errorf("note repeated:\n%s", body)
+	}
+}
+
 // The updates of one dependency in different PR buckets get their own branches and PRs; each
 // branch is built from its own update only.
 func TestRunBucketBranches(t *testing.T) {

@@ -126,7 +126,7 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%s pattern %q is too loose", name, n.Pattern)
 		}
 	}
-	if want := []string{"version", "pin", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "actions", "minimumReleaseAge", "ignorePaths",
+	if want := []string{"version", "pin", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "actions", "gomodUpdateImportPaths", "minimumReleaseAge", "ignorePaths",
 		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType",
 		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "rules", "custom", "customDatasources"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
@@ -154,7 +154,8 @@ func TestSchema(t *testing.T) {
 		s.Properties["separateMajorMinor"].Default != true || s.Properties["separateMultipleMajor"].Default != false ||
 		s.Properties["separateMinorPatch"].Default != false || s.Properties["updateNotScheduled"].Default != true ||
 		s.Properties["automerge"].Default != false || s.Properties["automergeStrategy"].Default != "auto" ||
-		s.Properties["dependencyDashboard"].Default != false || s.Properties["dependencyDashboardTitle"].Default != config.DefaultDashboardTitle {
+		s.Properties["dependencyDashboard"].Default != false || s.Properties["dependencyDashboardTitle"].Default != config.DefaultDashboardTitle ||
+		s.Properties["gomodUpdateImportPaths"].Default != true {
 		t.Error("defaults missing")
 	}
 	if _, stderr, code := execute(t, "schema", "x"); code != 2 || !strings.Contains(stderr, "unexpected arguments") {

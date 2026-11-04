@@ -37,6 +37,7 @@ type Dep struct {
 	Version     string // current version (ref tag, comment version, or module version)
 	Digest      string // actions: full SHA when pinned, else ""
 	RefSpan     Span   // actions: ref after '@'; gomod: version token
+	NameSpan    Span   // gomod: module path token of a require (rewritten by major module path updates)
 	VersionSpan Span   // actions: version token in trailing comment (pinned only)
 	DigestSpan  Span   // docker/custom: digest token, when the digest is stored apart from RefSpan
 	InputSpan   Span   // actions: `with: version:` value equal to the current version, bumped along with the ref
@@ -69,7 +70,8 @@ type Update struct {
 	Dep         Dep
 	Type        UpdateType
 	NewVersion  string
-	NewDigest   string        // "" unless the result is digest-pinned
+	NewDigest   string        // "" unless the result is digest-pinned; gomod pseudo-versions: the new commit
+	NewName     string        // gomod major module path update: the new module path (`<path>/v<N>`); "" = unchanged
 	Group       string        // policy group name, "" = own PR
 	Schedule    *schedule.Set // nil = always in schedule
 	Advisories  []Advisory    // non-empty = security update
@@ -87,14 +89,19 @@ type Update struct {
 	AutomergeStrategy string
 }
 
-// FromTo renders the old and new version; digest-pinned sides are `<version>@<digest7>`.
+// FromTo renders the old and new version; digest-pinned sides are `<version>@<digest7>`
+// (except gomod: its only digests are those of pseudo-versions, which end in their commit),
+// and a new module path is rendered `<path>@<version>`.
 func (u Update) FromTo() (from, to string) {
 	from, to = u.Dep.Version, u.NewVersion
 	if u.Dep.Digest != "" {
 		from += "@" + ShortDigest(u.Dep.Digest)
 	}
-	if u.NewDigest != "" {
+	if u.NewDigest != "" && u.Dep.Manager != "gomod" {
 		to += "@" + ShortDigest(u.NewDigest)
+	}
+	if u.NewName != "" {
+		to = u.NewName + "@" + to
 	}
 	return from, to
 }

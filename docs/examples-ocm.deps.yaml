@@ -85,6 +85,8 @@ custom:
 # controller chart's values.yaml (tag: latest@sha256:…) is a docker dep (DepType helm) and gets
 # digest refreshes.
 # gomod: `go mod tidy` runs after every go.mod update (Renovate's postUpdateOptions: [gomodTidy]).
+# gomodUpdateImportPaths stays on (the default), although renovate.json5 doesn't list it: Renovate
+# then moves github.com/google/go-github/v92 to /v93 in go.mod only, deps also rewrites the imports.
 rules:
   - paths: ['bindings/go/kubernetes/controller/chart/**']       # 0 matchFileNames chart/**, groupName
     group: Kubernetes Controller chart                          #   'Kubernetes Controller chart'
@@ -156,8 +158,8 @@ rules:
     ignore: false                                               #   enabled: true, weekly. Like in
     schedule: ['0 0 * * 0']                                     #   Renovate this turns indirect
                                                                 #   requirements on, and it undoes
-                                                                #   rule 9 (kube-openapi is a
-                                                                #   pseudo-version, which deps skips)
+                                                                #   rule 9 (kube-openapi's
+                                                                #   pseudo-version gets digest updates)
   - manager: gomod                                              # 19 indirect majors off
     depTypes: [indirect]
     updateTypes: [major]
@@ -181,4 +183,5 @@ rules:
   - datasources: [npm]                                          # 25 npm minimumReleaseAge 28 days
     minimumReleaseAge: 28 days
   # 26 minimumReleaseAge: null for pin/digest/pinDigest/…: built in (digest refreshes, pins and
-  # security updates are never held back by minimumReleaseAge).
+  # security updates are never held back by minimumReleaseAge). Go pseudo-version digest updates
+  # have a commit time and wait 28 days, as Renovate's do in OCM.

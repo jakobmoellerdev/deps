@@ -34,3 +34,13 @@ type Manager interface {
 type Linker interface {
 	Link(files [][]dep.Dep)
 }
+
+// FileEditor is implemented by managers whose updates also edit files other than the dep's
+// own (a gomod major module path update rewrites the import paths in the module's .go
+// files). The engine applies the edits together with the update; if the dep's file or one
+// of the other files fails, all of them are dropped.
+type FileEditor interface {
+	// FileEdits returns the byte edits by slash path relative to root (absolute), excluding
+	// u.Dep.File; nil when the update touches no other file.
+	FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error)
+}

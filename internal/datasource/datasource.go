@@ -58,6 +58,35 @@ type SourceRepo interface {
 	SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error)
 }
 
+// Revision is the newest commit of a dependency that tracks one (a Go pseudo-version).
+type Revision struct {
+	Version string    // as written into the file (the Go pseudo-version, or a release)
+	Digest  string    // commit hash
+	Time    time.Time // commit time; zero = unknown
+}
+
+// HeadSource is implemented by datasources whose deps can track a commit instead of a release
+// (Go pseudo-versions). It is optional.
+type HeadSource interface {
+	// Head returns the newest revision of d (Go: the module's `@latest`, a pseudo-version of
+	// the default branch's tip when the module has no newer release). dir is as for Releases.
+	Head(ctx context.Context, d dep.Dep, dir string) (Revision, error)
+}
+
+// ModulePath is a successor module path of a dependency and its releases.
+type ModulePath struct {
+	Name     string // e.g. github.com/google/go-github/v93
+	Releases []Release
+}
+
+// MajorPathSource is implemented by datasources whose major versions live under their own
+// package name (Go module paths `<path>/v<N>`). It is optional.
+type MajorPathSource interface {
+	// MajorPaths returns the successive major module paths of d that exist (`/v<N+1>`,
+	// `/v<N+2>`, …, stopping at the first missing one), lowest first, each with its releases.
+	MajorPaths(ctx context.Context, d dep.Dep, dir string) ([]ModulePath, error)
+}
+
 // Vuln is an advisory affecting a dependency and the versions that fix it.
 type Vuln struct {
 	Advisory dep.Advisory

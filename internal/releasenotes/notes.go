@@ -64,15 +64,19 @@ func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, gh *githubapi
 }
 
 // Age renders when u.NewVersion was released, e.g. "released 2026-10-30 (4 days ago)"; "" when
-// the datasource does not know.
+// the datasource does not know. A major module path update asks about the new path.
 func (n *Notes) Age(ctx context.Context, u dep.Update) string {
 	timer, ok := n.sources[u.Dep.Datasource].(datasource.Timer)
 	if !ok {
 		return ""
 	}
-	t, err := timer.ReleaseTime(ctx, u.Dep, u.NewVersion)
+	d := u.Dep
+	if u.NewName != "" {
+		d.Name = u.NewName
+	}
+	t, err := timer.ReleaseTime(ctx, d, u.NewVersion)
 	if err != nil || t.IsZero() {
-		slog.DebugContext(ctx, "release time unknown", "name", u.Dep.Name, "version", u.NewVersion, "err", err)
+		slog.DebugContext(ctx, "release time unknown", "name", d.Name, "version", u.NewVersion, "err", err)
 		return ""
 	}
 	var ago string

@@ -593,6 +593,13 @@ func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp string) strin
 		}
 		b.WriteByte('\n')
 	}
+	moved := map[string]bool{}
+	for _, u := range ups {
+		if u.NewName != "" && !moved[u.Dep.Name+" "+u.NewName] {
+			moved[u.Dep.Name+" "+u.NewName] = true
+			fmt.Fprintf(&b, "\n`%s` moves to the module path `%s`: the require and the import paths in the module's `.go` files are rewritten. The new major version's API may have changed, so the build may need fixes.\n", u.Dep.Name, u.NewName)
+		}
+	}
 	var adv []dep.Advisory
 	for _, u := range ups {
 		adv = append(adv, u.Advisories...)

@@ -102,9 +102,39 @@ func ModuleTime(ctx context.Context, dir, path, version string) (time.Time, erro
 	return *m.Time, nil
 }
 
+// Module is the `go list -m -json` (and proxy `@latest`) view of a module version.
+type Module struct {
+	Version string
+	Time    *time.Time
+	Origin  *struct{ Hash string }
+}
+
+// Hash returns the commit hash of the module's origin, or "".
+func (m Module) Hash() string {
+	if m.Origin == nil {
+		return ""
+	}
+	return m.Origin.Hash
+}
+
+// ModuleLatest resolves module path@latest via `go list -m -json path@latest`, run in dir.
+func ModuleLatest(ctx context.Context, dir, path string) (Module, error) {
+	out, err := run(ctx, dir, []string{"GOFLAGS=-mod=mod", "GOWORK=off"}, "list", "-m", "-json", path+"@latest")
+	if err != nil {
+		return Module{}, err
+	}
+	var m Module
+	if err := json.Unmarshal(out, &m); err != nil {
+		return Module{}, fmt.Errorf("go list -m %s@latest: %w", path, err)
+	}
+	return m, nil
+}
+
 // Tidy runs `go mod tidy` in dir against copies of mod and sum (sum may be nil) and returns
-// the tidied contents. The real go.mod and go.sum in dir are never touched.
-func Tidy(ctx context.Context, dir string, mod, sum []byte) (newMod, newSum []byte, err error) {
+// the tidied contents. overlay holds patched source files by slash path relative to dir
+// (import paths rewritten by a major module path update); tidy reads them through
+// `-overlay`. The real files in dir are never touched.
+func Tidy(ctx context.Context, dir string, mod, sum []byte, overlay map[string][]byte) (newMod, newSum []byte, err error) {
 	tmp, err := os.MkdirTemp("", "deps-tidy-*")
 	if err != nil {
 		return nil, nil, err
@@ -119,7 +149,15 @@ func Tidy(ctx context.Context, dir string, mod, sum []byte) (newMod, newSum []by
 			return nil, nil, err
 		}
 	}
-	if _, err := run(ctx, dir, []string{"GOWORK=off", "GOFLAGS="}, "mod", "tidy", "-modfile="+modPath); err != nil {
+	args := []string{"mod", "tidy", "-modfile=" + modPath}
+	if len(overlay) > 0 {
+		arg, err := writeOverlay(tmp, dir, overlay)
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, arg)
+	}
+	if _, err := run(ctx, dir, []string{"GOWORK=off", "GOFLAGS="}, args...); err != nil {
 		var ce *cmdError
 		if errors.As(err, &ce) && ce.stderr != "" {
 			return nil, nil, fmt.Errorf("go mod tidy in %s: %s", dir, ce.stderr)
@@ -135,25 +173,81 @@ func Tidy(ctx context.Context, dir string, mod, sum []byte) (newMod, newSum []by
 	return newMod, newSum, nil
 }
 
+// writeOverlay writes the overlay files and their `-overlay` JSON (absolute paths of dir's
+// files to the copies) into tmp and returns the flag.
+func writeOverlay(tmp, dir string, files map[string][]byte) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	replace := make(map[string]string, len(files))
+	n := 0
+	for rel, b := range files {
+		n++
+		p := filepath.Join(tmp, fmt.Sprintf("overlay-%d.go", n))
+		if err := os.WriteFile(p, b, 0o644); err != nil {
+			return "", err
+		}
+		replace[filepath.Join(abs, filepath.FromSlash(rel))] = p
+	}
+	b, err := json.Marshal(struct{ Replace map[string]string }{replace})
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Join(tmp, "overlay.json")
+	if err := os.WriteFile(p, b, 0o644); err != nil {
+		return "", err
+	}
+	return "-overlay=" + p, nil
+}
+
 // Tidier is the gomod post-processor (engine.PostProcessor): Tidy on copies of go.mod and
-// go.sum.
+// go.sum, with patched .go files (import path rewrites) as an overlay.
 type Tidier struct{}
 
-// Scope is the module directory: every go.mod is post-processed on its own.
-func (Tidier) Scope(_, manifest string) (string, bool) {
-	if dir, _, ok := strings.CutLast(manifest, "/"); ok {
+// Scope is the module directory: every go.mod is post-processed on its own, together with
+// the patched .go files of its module (the nearest go.mod at or above their directory).
+func (Tidier) Scope(root, manifest string) (string, bool) {
+	dir, name, ok := strings.CutLast(manifest, "/")
+	if !ok {
+		dir, name = ".", manifest
+	}
+	if name == "go.mod" {
 		return dir, true
 	}
-	return ".", true
+	for {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(dir), "go.mod")); err == nil {
+			return dir, true
+		}
+		if dir == "." {
+			return "", false
+		}
+		if dir, _, ok = strings.CutLast(dir, "/"); !ok {
+			dir = "."
+		}
+	}
 }
 
 // Siblings lists go.sum.
 func (Tidier) Siblings() []string { return []string{"go.sum"} }
 
 // Process tidies the patched go.mod and returns the tidied go.mod and go.sum (nil when tidy
-// wrote none).
+// wrote none). Other manifests are patched .go files of the module, passed as the overlay.
 func (Tidier) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
-	newMod, newSum, err := Tidy(ctx, dir, manifests["go.mod"], files["go.sum"])
+	mod, ok := manifests["go.mod"]
+	if !ok {
+		return nil, errors.New("go.mod of the module was not patched")
+	}
+	var overlay map[string][]byte
+	if len(manifests) > 1 {
+		overlay = make(map[string][]byte, len(manifests)-1)
+		for rel, b := range manifests {
+			if rel != "go.mod" {
+				overlay[rel] = b
+			}
+		}
+	}
+	newMod, newSum, err := Tidy(ctx, dir, mod, files["go.sum"], overlay)
 	if err != nil {
 		return nil, err
 	}

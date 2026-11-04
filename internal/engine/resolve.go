@@ -171,7 +171,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 					d.Versioning, pol.d.Versioning = v, v
 				}
 			}
-			if s, ok := versioning.Get(d.Versioning); d.Skip == "" && ok && !s.Valid(d.Version) && !tagOnly(d) {
+			if s, ok := versioning.Get(d.Versioning); d.Skip == "" && ok && !s.Valid(d.Version) && !tagOnly(d) && !goPseudo(d) {
 				d.Skip = "non-version value " + strconv.Quote(d.Version)
 			}
 			skip := func() {
@@ -233,7 +233,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	for i := range todo {
 		wg.Go(func() {
 			d := todo[i]
-			r := resolver{ctx: ctx, root: root, d: d, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now}
+			r := resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now}
 			t, u := r.run(func() []Vuln { return sec.of(secIdx[i]) })
 			switch {
 			case t.Err != nil:
@@ -540,6 +540,7 @@ type resolver struct {
 	ctx   context.Context
 	root  string
 	d     dep.Dep
+	cur   string // version candidates are ranked against: d.Version, or a Go pseudo-version's base (pseudoCur)
 	pol   *policies
 	ds    Datasource
 	cs    ChecksumSource
@@ -578,11 +579,14 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 	}
 	var ups []dep.Update
 	var err error
-	if !scheme.Valid(d.Version) {
+	switch {
+	case goPseudo(d):
+		ups, err = r.versionUpdates(t, scheme, vulns)
+	case !scheme.Valid(d.Version):
 		// Resolve only lets non-version docker tags through (tagOnly): their digest is kept
 		// current; there are no releases to compare and no advisories to look up.
 		ups, err = r.digestUpdate()
-	} else {
+	default:
 		ups, err = r.versionUpdates(t, scheme, vulns)
 	}
 	if err != nil {
@@ -603,12 +607,14 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 }
 
 // versionUpdates resolves a dep with a valid version: the best candidate under policy per PR
-// bucket, else the digest refresh or pin of the current version, then security, and the
-// digest and checksum of every resulting version. Updates are ordered by version, lowest
+// bucket, else the digest refresh or pin of the current version (for a Go pseudo-version the
+// newer pseudo-version of the module's head), then security, the digest and checksum of every
+// resulting version, and Go major module path updates. Updates are ordered by version, lowest
 // first.
 func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func() []Vuln) ([]dep.Update, error) {
 	d := r.d
-	rels, err := r.ds.Releases(r.ctx, d, filepath.Join(r.root, filepath.FromSlash(path.Dir(d.File))))
+	dir := filepath.Join(r.root, filepath.FromSlash(path.Dir(d.File)))
+	rels, err := r.ds.Releases(r.ctx, d, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -623,6 +629,10 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		t.Rejected = map[string][]string{}
 		reject = func(v, reason string) { t.Rejected[reason] = append(t.Rejected[reason], v) }
 	}
+	pseudo := goPseudo(d)
+	if pseudo {
+		r.cur, names = pseudoCandidates(d.Version, names, reject)
+	}
 	semverOf := scheme.Semver
 	accept := func(v string, kind dep.UpdateType) (bool, string) { return r.pol.check(kind, v, semverOf) }
 
@@ -630,13 +640,21 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	wantDigest := digests && (d.Digest != "" || r.pol.pre.Pin == config.PinDigest)
 
 	ups := r.picks(scheme, names, accept, reject)
-	if len(ups) == 0 && digests {
+	switch {
+	case len(ups) == 0 && pseudo:
+		if ups, err = r.headUpdate(dir, reject); err != nil {
+			return nil, err
+		}
+	case len(ups) == 0 && digests:
 		if ups, err = r.digestUpdate(); err != nil {
 			return nil, err
 		}
 	}
 
 	ups = r.applySecurity(ups, scheme, names, vulns())
+	if ups, err = r.majorPathUpdates(t, ups, scheme, dir, accept, reject); err != nil {
+		return nil, err
+	}
 
 	for i := range ups {
 		up := &ups[i]
@@ -697,7 +715,7 @@ const (
 // once per version; unknown times (zero or an error) never reject. The updates are returned
 // lowest version first.
 func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) []dep.Update {
-	cur := r.d.Version
+	cur := r.cur
 	timer, _ := r.ds.(datasource.Timer)
 	single := r.pol.singleBucket()
 	if timer == nil && single {
@@ -917,7 +935,7 @@ func (r *resolver) checksumOf(version string) (string, error) {
 // or a missing fixing release, leave ups unchanged. ups and the result are ordered by version.
 func (r *resolver) applySecurity(ups []dep.Update, s versioning.Scheme, names []string, vulns []Vuln) []dep.Update {
 	d := r.d
-	cur := d.Version
+	cur := r.cur
 	var fix string
 	for _, v := range vulns {
 		if m := minFix(s, cur, v); m != "" && (fix == "" || s.Compare(m, fix) > 0) {

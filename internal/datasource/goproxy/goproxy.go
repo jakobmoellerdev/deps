@@ -15,11 +15,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -34,14 +36,23 @@ type Source struct {
 	env    func(ctx context.Context) (gotool.GoEnv, error)
 	list   func(ctx context.Context, dir, path string) ([]string, error)
 	info   func(ctx context.Context, dir, path, version string) (time.Time, error)
+	latest func(ctx context.Context, dir, path string) (gotool.Module, error)
 
 	envOnce sync.Once
 	goEnv   gotool.GoEnv
 	envErr  error
 
-	mu    sync.Mutex
-	cache map[string]*entry     // module path
-	times map[string]*timeEntry // module@version
+	mu     sync.Mutex
+	cache  map[string]*entry     // module path
+	times  map[string]*timeEntry // module@version
+	heads  map[string]*headEntry // module path
+	probes map[string]*entry     // probed major module path: versions, nil = missing
+}
+
+type headEntry struct {
+	once sync.Once
+	rev  datasource.Revision
+	err  error
 }
 
 type entry struct {
@@ -58,12 +69,14 @@ type timeEntry struct {
 	err  error
 }
 
-// New returns a Source using gotool.Env, gotool.ListVersions and gotool.ModuleTime. sem bounds
-// concurrent requests (including `go list` runs) and is shared with other datasources.
+// New returns a Source using gotool.Env, gotool.ListVersions, gotool.ModuleTime and
+// gotool.ModuleLatest. sem bounds concurrent requests (including `go list` runs) and is
+// shared with other datasources.
 func New(client *http.Client, sem chan struct{}) *Source {
 	return &Source{
-		client: client, sem: sem, env: gotool.Env, list: gotool.ListVersions, info: gotool.ModuleTime,
+		client: client, sem: sem, env: gotool.Env, list: gotool.ListVersions, info: gotool.ModuleTime, latest: gotool.ModuleLatest,
 		cache: make(map[string]*entry), times: make(map[string]*timeEntry),
+		heads: make(map[string]*headEntry), probes: make(map[string]*entry),
 	}
 }
 
@@ -84,6 +97,158 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 // Digest always fails: Go module versions are not digest-pinned.
 func (*Source) Digest(_ context.Context, d dep.Dep, version string) (string, error) {
 	return "", fmt.Errorf("%s@%s: go modules have no digests", d.Name, version)
+}
+
+// Head implements datasource.HeadSource: the module's `@latest` query (`go list -m -json
+// <path>@latest` for direct and GONOPROXY/GOPRIVATE modules). For a module without a release
+// newer than its pseudo-versions this is the pseudo-version of the default branch's tip.
+// Digest is the commit hash (the proxy's Origin.Hash, else the pseudo-version's 12-digit
+// revision). Deduped per module path; the time also answers ReleaseTime of that version.
+func (s *Source) Head(ctx context.Context, d dep.Dep, dir string) (datasource.Revision, error) {
+	s.mu.Lock()
+	h := s.heads[d.Name]
+	if h == nil {
+		h = &headEntry{}
+		s.heads[d.Name] = h
+	}
+	s.mu.Unlock()
+	h.once.Do(func() {
+		h.rev, h.err = s.head(ctx, d.Name, dir)
+		slog.DebugContext(ctx, "module head", "module", d.Name, "version", h.rev.Version, "time", h.rev.Time, "err", h.err)
+		if h.err == nil && h.rev.Version != "" {
+			s.mu.Lock()
+			te := s.times[d.Name+"@"+h.rev.Version]
+			if te == nil {
+				te = &timeEntry{}
+				s.times[d.Name+"@"+h.rev.Version] = te
+			}
+			s.mu.Unlock()
+			te.once.Do(func() { te.t = h.rev.Time })
+		}
+	})
+	return h.rev, h.err
+}
+
+func (s *Source) head(ctx context.Context, modPath, dir string) (datasource.Revision, error) {
+	var m gotool.Module
+	err := s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
+		if base == "" {
+			if err := s.acquire(ctx); err != nil {
+				return false, err
+			}
+			defer s.release()
+			m, err = s.latest(ctx, dir, modPath)
+			return false, err
+		}
+		target := base + "/" + escaped + "/@latest"
+		resp, notFound, err := s.get2xx(ctx, target)
+		if err != nil {
+			return notFound, err
+		}
+		defer resp.Body.Close()
+		m = gotool.Module{}
+		if err := json.UnmarshalRead(io.LimitReader(resp.Body, 1<<20), &m); err != nil {
+			return false, fmt.Errorf("GET %s: %w", target, err)
+		}
+		return false, nil
+	})
+	if err != nil {
+		return datasource.Revision{}, err
+	}
+	rev := datasource.Revision{Version: m.Version, Digest: m.Hash()}
+	if m.Time != nil {
+		rev.Time = *m.Time
+	}
+	if rev.Digest == "" && module.IsPseudoVersion(m.Version) {
+		rev.Digest, _ = module.PseudoVersionRev(m.Version)
+	}
+	return rev, nil
+}
+
+// maxMajorProbes bounds the successive major module paths MajorPaths looks up per module.
+const maxMajorProbes = 5
+
+// MajorPaths implements datasource.MajorPathSource: the module paths of the next majors of
+// d (`<prefix>/v<N+1>`, … for a `/v<N>` path; `/v2`, … for an unsuffixed v0/v1 module, or
+// `/v<M+1>` for one at vM.x.y+incompatible; `gopkg.in/x.v<N+1>` for gopkg.in), each listed
+// from the proxies until one has no releases, at most maxMajorProbes. Only GOPROXY URLs are
+// probed: `direct` and GONOPROXY/GOPRIVATE modules have no major path lookups, since each
+// probe would clone the repository. Probes are deduped per path.
+func (s *Source) MajorPaths(ctx context.Context, d dep.Dep, _ string) ([]datasource.ModulePath, error) {
+	next, ok := nextMajorPath(d.Name, d.Version)
+	var out []datasource.ModulePath
+	for range maxMajorProbes {
+		if !ok {
+			break
+		}
+		vs, err := s.probe(ctx, next)
+		if err != nil {
+			return nil, err
+		}
+		if len(vs) == 0 {
+			break
+		}
+		rels := make([]datasource.Release, len(vs))
+		for i, v := range vs {
+			rels[i] = datasource.Release{Version: v}
+		}
+		out = append(out, datasource.ModulePath{Name: next, Releases: rels})
+		next, ok = nextMajorPath(next, "")
+	}
+	return out, nil
+}
+
+// nextMajorPath returns the module path of the major after modPath at version: `/v<N+1>`
+// for a `/v<N>` (or gopkg.in `.v<N>`) path, else `/v2`, or `/v<M+1>` when version is
+// vM.x.y+incompatible with M ≥ 2.
+func nextMajorPath(modPath, version string) (string, bool) {
+	prefix, pathMajor, ok := module.SplitPathVersion(modPath)
+	if !ok {
+		return "", false
+	}
+	sep, n := "/v", 1
+	if pathMajor != "" {
+		sep = pathMajor[:2]
+		m, err := strconv.Atoi(pathMajor[2:])
+		if err != nil {
+			return "", false
+		}
+		n = m
+	} else if strings.HasSuffix(version, "+incompatible") {
+		if m, err := strconv.Atoi(strings.TrimPrefix(semver.Major(version), "v")); err == nil && m > n {
+			n = m
+		}
+	}
+	return prefix + sep + strconv.Itoa(n+1), true
+}
+
+// errNotProbed marks a `direct` GOPROXY entry, or a GONOPROXY module, during a probe.
+var errNotProbed = errors.New("not probed")
+
+// probe returns the versions of modPath from the GOPROXY URLs; nil when no proxy has it.
+func (s *Source) probe(ctx context.Context, modPath string) ([]string, error) {
+	s.mu.Lock()
+	e := s.probes[modPath]
+	if e == nil {
+		e = &entry{}
+		s.probes[modPath] = e
+	}
+	s.mu.Unlock()
+	e.once.Do(func() {
+		err := s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
+			if base == "" {
+				return true, errNotProbed
+			}
+			e.versions, notFound, err = s.fetch(ctx, base+"/"+escaped+"/@v/list")
+			return notFound, err
+		})
+		if errors.Is(err, errNotProbed) || errors.Is(err, errNoProxy) {
+			err = nil
+		}
+		e.err = err
+		slog.DebugContext(ctx, "major module path probed", "module", modPath, "versions", len(e.versions), "err", e.err)
+	})
+	return e.versions, e.err
 }
 
 func (s *Source) get(ctx context.Context, modPath, dir string) *entry {
@@ -256,8 +421,11 @@ func (s *Source) walk(ctx context.Context, modPath string, step func(base, escap
 			return err
 		}
 	}
-	return fmt.Errorf("no proxy has %s", modPath)
+	return fmt.Errorf("%w %s", errNoProxy, modPath)
 }
+
+// errNoProxy ends a GOPROXY walk in which every entry reported not found.
+var errNoProxy = errors.New("no proxy has")
 
 func (s *Source) direct(ctx context.Context, dir, modPath string) ([]string, error) {
 	if err := s.acquire(ctx); err != nil {

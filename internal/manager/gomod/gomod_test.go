@@ -1,6 +1,9 @@
 package gomod
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
@@ -41,7 +44,7 @@ func TestExtract(t *testing.T) {
 		{"golang.org/x/mod", "v0.42.0", "", "direct", 8},
 		{"github.com/a/ind", "v1.0.0", "", "indirect", 9},
 		{"github.com/a/rep", "v1.1.1", "replaced", "direct", 10},
-		{"github.com/a/pseudo", "v0.0.0-20240101000000-abcdefabcdef", "pseudo-version", "direct", 11},
+		{"github.com/a/pseudo", "v0.0.0-20240101000000-abcdefabcdef", "", "direct", 11},
 	}
 	if len(deps) != len(want) {
 		t.Fatalf("got %d deps", len(deps))
@@ -58,6 +61,9 @@ func TestExtract(t *testing.T) {
 		}
 		if got := string(b[d.RefSpan.Start:d.RefSpan.End]); got != w.ver {
 			t.Errorf("%d: span %q", i, got)
+		}
+		if got := string(b[d.NameSpan.Start:d.NameSpan.End]); i > 0 && got != w.name {
+			t.Errorf("%d: name span %q", i, got)
 		}
 	}
 
@@ -168,5 +174,97 @@ func TestEdits(t *testing.T) {
 		if want := string(b[:deps[i].RefSpan.Start]) + "v9.9.9" + string(b[deps[i].RefSpan.End:]); string(out) != want {
 			t.Errorf("%d: got %q", i, out)
 		}
+	}
+}
+
+func TestMajorPathEdits(t *testing.T) {
+	const mod = "module example.com/x\n\nrequire (\n\tgithub.com/google/go-github/v92 v92.0.0\n\tgithub.com/b/c v1.0.0\n)\n"
+	b := []byte(mod)
+	deps, err := New().Extract("go.mod", b, manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := dep.Update{Dep: deps[0], Type: dep.Major, NewVersion: "v93.0.0", NewName: "github.com/google/go-github/v93"}
+	edits, err := New().Edits(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := patch.Apply(b, edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.Replace(mod, "go-github/v92 v92.0.0", "go-github/v93 v93.0.0", 1); string(out) != want {
+		t.Errorf("got %q", out)
+	}
+	d := deps[0]
+	d.NameSpan = dep.Span{}
+	if _, err := New().Edits(dep.Update{Dep: d, NewVersion: "v93.0.0", NewName: "x/v93"}); err == nil {
+		t.Error("want error without a name span")
+	}
+}
+
+func TestFileEdits(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"mod/go.mod": "module example.com/x\n\nrequire github.com/google/go-github/v92 v92.0.0\n",
+		"mod/a.go": "package a\n\nimport (\n\t\"fmt\"\n\tgh \"github.com/google/go-github/v92/github\"\n\t`github.com/google/go-github/v92`\n\t\"github.com/google/go-github/v921\"\n)\n\n" +
+			"// github.com/google/go-github/v92 in a comment stays\nvar _ = fmt.Sprint(gh.Client{})\n",
+		"mod/sub/b_test.go":        "package sub\n\nimport \"github.com/google/go-github/v92/github\"\n",
+		"mod/sub/c.go":             "package sub\n",
+		"mod/notes.txt":            "github.com/google/go-github/v92\n",
+		"mod/testdata/x.go":        "package x\n\nimport \"github.com/google/go-github/v92/github\"\n",
+		"mod/vendor/y/y.go":        "package y\n\nimport \"github.com/google/go-github/v92/github\"\n",
+		"mod/_tools/z.go":          "package z\n\nimport \"github.com/google/go-github/v92/github\"\n",
+		"mod/nested/go.mod":        "module example.com/x/nested\n",
+		"mod/nested/n.go":          "package n\n\nimport \"github.com/google/go-github/v92/github\"\n",
+		"other/o.go":               "package o\n\nimport \"github.com/google/go-github/v92/github\"\n",
+		"mod/broken/syntax_err.go": "package\n",
+	}
+	for p, c := range files {
+		abs := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fe := New().(manager.FileEditor)
+	d := dep.Dep{Manager: Name, File: "mod/go.mod", Name: "github.com/google/go-github/v92", Version: "v92.0.0"}
+	if got, err := fe.FileEdits(root, dep.Update{Dep: d, NewVersion: "v92.1.0"}); got != nil || err != nil {
+		t.Errorf("same path: %v %v", got, err)
+	}
+	u := dep.Update{Dep: d, Type: dep.Major, NewVersion: "v93.0.0", NewName: "github.com/google/go-github/v93"}
+	got, err := fe.FileEdits(root, u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"mod/a.go": "package a\n\nimport (\n\t\"fmt\"\n\tgh \"github.com/google/go-github/v93/github\"\n\t`github.com/google/go-github/v93`\n\t\"github.com/google/go-github/v921\"\n)\n\n" +
+			"// github.com/google/go-github/v92 in a comment stays\nvar _ = fmt.Sprint(gh.Client{})\n",
+		"mod/sub/b_test.go": "package sub\n\nimport \"github.com/google/go-github/v93/github\"\n",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("files %v", got)
+	}
+	for p, w := range want {
+		out, err := patch.Apply([]byte(files[p]), got[p])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != w {
+			t.Errorf("%s: got %q", p, out)
+		}
+	}
+
+	// A file that mentions the path but does not parse is an error.
+	if err := os.WriteFile(filepath.Join(root, "mod", "broken", "syntax_err.go"), []byte("package\nimport \"github.com/google/go-github/v92\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fe.FileEdits(root, u); err == nil || !strings.Contains(err.Error(), "syntax_err.go") {
+		t.Errorf("want parse error, got %v", err)
+	}
+	if _, err := fe.FileEdits(filepath.Join(root, "missing"), u); err == nil {
+		t.Error("want walk error")
 	}
 }

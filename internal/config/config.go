@@ -118,8 +118,11 @@ type Config struct {
 	PRConcurrentLimit int      `yaml:"prConcurrentLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited."`
 	PRHourlyLimit     int      `yaml:"prHourlyLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of managed PRs created per hour, counting existing PRs by creation time. 0 means unlimited."`
 	Actions           Actions  `yaml:"actions" jsonschema_description:"github-actions manager settings."`
+	// GomodUpdateImportPaths enables major module path updates (Renovate's
+	// postUpdateOptions: [gomodUpdateImportPaths]).
+	GomodUpdateImportPaths *bool `yaml:"gomodUpdateImportPaths" jsonschema:"default=true" jsonschema_description:"Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports)."`
 	// MinimumReleaseAge is a string, not a duration, so "28 days" style values are accepted.
-	MinimumReleaseAge string   `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt."`
+	MinimumReleaseAge string   `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time."`
 	IgnorePaths       []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it."`
 	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
 	// same names); rules override them.
@@ -149,6 +152,12 @@ func (c *Config) SecurityEnabled() bool { return c.Security == nil || *c.Securit
 
 // MonoreposEnabled reports whether the built-in monorepo groups apply (default true).
 func (c *Config) MonoreposEnabled() bool { return c.Monorepos == nil || *c.Monorepos }
+
+// GomodUpdateImportPathsEnabled reports whether major module path updates are proposed
+// (default true).
+func (c *Config) GomodUpdateImportPathsEnabled() bool {
+	return c.GomodUpdateImportPaths == nil || *c.GomodUpdateImportPaths
+}
 
 // UpdateNotScheduledEnabled reports whether open PRs are updated outside their schedule
 // (default true).

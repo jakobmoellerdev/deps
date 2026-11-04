@@ -41,7 +41,9 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 
 **Actions setup inputs.** For `uses:` of a well-known setup action the version input in `with:` is a dep (DepType `setup`, manager github-actions): actions/setup-node `node-version` (node-version datasource, name node), actions/setup-go `go-version` (go-toolchain, go), azure/setup-helm `version` (github-releases helm/helm), azure/setup-kubectl `version` (kubernetes/kubernetes), hashicorp/setup-terraform `terraform_version` (hashicorp/terraform), golangci/golangci-lint-action `version` (golangci/golangci-lint). setup-python/setup-java are not extracted (no datasource). Only literal values: full `[v]X.Y.Z` uses semver versioning (the `v` style is kept: `version: 3.16.0` becomes `3.17.0`), partial `26`/`1.27`/`v2.1` uses tag versioning (precision kept: 26 → 27). Skips: `expression` (`${{ }}`), `non-version value` (lts/*, stable, latest), `unsupported range` (1.27.x, >=24, block scalars), `cannot locate value`. The span is the value bytes (quoted or plain, flow mappings too). If the line above the input is a `# deps:`/`# renovate:` marker, the input is left to the custom manager (no double extraction).
 
-**gomod.** Every `require` plus the `go` and `toolchain` directives (the `toolchain` span covers only the version after `go`). Skips: `replaced`, `pseudo-version`, `vendored module (not supported)`, `prerelease toolchain`. By default `indirect` requirements and the `go` directive are ignored; a rule with `ignore: false` opts in. `toolchain` is updated by default. `go mod tidy` runs after any gomod change.
+**gomod.** Every `require` plus the `go` and `toolchain` directives (the `toolchain` span covers only the version after `go`; a require also records the module path span). Skips: `replaced`, `vendored module (not supported)`, `prerelease toolchain`. By default `indirect` requirements and the `go` directive are ignored; a rule with `ignore: false` opts in. `toolchain` is updated by default. `go mod tidy` runs after any gomod change.
+- **Pseudo-versions** (`v0.0.0-<timestamp>-<commit>`) track a commit (Renovate's gomod digest updates). A release newer than the pseudo-version (above its base: `v1.2.4` for `v1.2.4-0.<ts>-<rev>`) is a version update; otherwise the module's `@latest`, when it is a newer pseudo-version of the same major, is a `digest` update (`NewDigest` = the commit). `updates: [digest]`, `ignore` and the digest type's `minimumReleaseAge` (against the commit time) apply. A module with releases whose pseudo-version is ahead of them gets none, since `@latest` is the release.
+- **Major module paths** (`gomodUpdateImportPaths`, default on; Renovate's postUpdateOption of that name). For `<path>/v<N>` (also unsuffixed v0/v1 modules, `+incompatible` majors and `gopkg.in/x.vN`) the successive paths `/v<N+1>`, … are listed from the GOPROXY URLs until one has no releases (at most 5, deduped per path, only when major updates are allowed for the dep). The newest accepted, old-enough stable release per path is a `major` update in the major PR bucket (`Update.NewName` = the new path). Its edits rewrite the require's path and version and, through `manager.FileEditor`, the import path literals of the old module and its packages in the module's `.go` files (vendor, testdata, `.`/`_` dirs and nested modules skipped). The PR body warns that the new API may break the build.
 
 **docker.**
 - Dockerfile: every `FROM` (case-insensitive, `--flag`s skipped, line continuations and the `# escape=` directive honored). `scratch` and earlier stage names (`AS <name>`) are not dependencies.
@@ -139,7 +141,7 @@ Selector grammar: stages joined by `|`; a stage is `keys` (sorted keys of an obj
 
 `engine.Build` patches every file, then asks the post-processor registered for the file's manager for the file's **scope**: the directory owning its derived files (`plan` passes only the in-process helm post-processor). Manifests of one manager sharing a scope are post-processed together, once per scope, under a global bound of 4 concurrent runs. The engine reads the scope dir's existing siblings; a result under a manifest's path (relative to the scope) replaces that manifest; every sibling whose content differs becomes a change (mode kept, `0644` for new files). A manifest without a scope is only patched. A failing scope drops all its manifests and siblings (`<file>[, <file>…]: <err>`).
 
-- **gomod** (`gotool.Tidier`, scope = module dir, siblings `go.sum`): `go mod tidy -modfile=<tmp>/go.mod` on copies.
+- **gomod** (`gotool.Tidier`, scope = module dir (for a `.go` file: the nearest go.mod at or above it), siblings `go.sum`): `go mod tidy -modfile=<tmp>/go.mod` on copies; `.go` files rewritten by a major module path update are passed with `-overlay`, so tidy sees the new imports without touching the working tree.
 - **npm** (`nodetool.Locker`, siblings `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` + read-only `.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`).
   - Scope (lock root): nearest dir at/above the package.json (within `--dir`) holding one of the lockfiles, accepted if it is the manifest's own dir or its package.json `workspaces` (array or `{packages}`) / `pnpm-workspace.yaml` `packages` doublestar globs match the manifest dir (`!glob` excludes); otherwise no lockfile (none is created).
   - Temp copy: root + all member package.json (patched where changed) at relative paths, the lockfile, config files, and local files referenced by `.yarnrc.yml` `yarnPath`/`plugins` (member discovery walks each glob's literal base, skipping node_modules/.git).
@@ -165,7 +167,7 @@ The following is implemented:
 - **GitHub releases.** One release list per repository and run (`internal/githubapi`) serves the `github-releases` datasource (versions, release times, checksum assets) and the release times of `git-tags` on github.com. With a token for the host it is listed over GraphQL (`POST https://api.github.com/graphql`, GHES `<host>/api/graphql`; `releases(first:100, orderBy: CREATED_AT DESC)` with only `tagName isDraft isPrerelease publishedAt`, cursor-paged); without one over REST (GraphQL requires auth), whose pages always carry every body and asset. Pages are fetched only until the dependency's current release is listed, since everything newer precedes it (at most 5 pages); `git-tags` release times use the first page and look up tags missing from an incomplete list individually (`release(tagName:)`, REST `/releases/tags/<tag>`). Over GraphQL, checksum asset digests are fetched on demand (`release(tagName:){releaseAssets(first:1,name:)}`), once per (repository, tag, asset). GraphQL queries are marked idempotent so they are retried like GETs; `NOT_FOUND` errors behave like a REST 404 and `RATE_LIMITED` like an exhausted rate limit. On open-component-model (`docs/examples-ocm.deps.yaml`, identical plan output) the 17 GitHub API requests went from 31.2 MB to 0.13 MB of response bodies, their summed time to first byte from 16.4 s to 8.1 s and the slowest release page from 2.8 s to 0.95 s; max RSS dropped from about 62 MB to 52 MB.
 - **Profiling.** Hidden flags `--cpuprofile` and `--memprofile` write pprof profiles; `BenchmarkResolve` (`internal/engine`) resolves a synthetic OCM-sized repository against in-memory datasources (900 deps, 600/80 versions, 28-day age) to track engine CPU and allocations.
 - **Actions tags.** Fetched with a native git smart-HTTP protocol v2 `ls-refs` call using `ref-prefix refs/tags/` and `peel`. No `git` process is spawned per action, only tag refs travel over the wire, and the pkt-line response is parsed as a stream.
-- **Go versions.** Fetched from the GOPROXY `@v/list` endpoint over HTTP. `go list` is used only for GOPRIVATE/direct modules. Release times (`@v/<v>.info`, immutable) are read from the local module download cache (`$(go env GOMODCACHE)/cache/download/<module>/@v/<v>.info`) when the go command already fetched that version, also for private modules; only misses go to the proxy. On open-component-model with a warm cache this serves 84 of 258 lookups. Version lists are never taken from the cache, since it only knows locally fetched versions. Go toolchain releases come from one `go.dev/dl/?mode=json&include=all` fetch per run.
+- **Go versions.** Fetched from the GOPROXY `@v/list` endpoint over HTTP. `go list` is used only for GOPRIVATE/direct modules. Release times (`@v/<v>.info`, immutable) are read from the local module download cache (`$(go env GOMODCACHE)/cache/download/<module>/@v/<v>.info`) when the go command already fetched that version, also for private modules; only misses go to the proxy. On open-component-model with a warm cache this serves 84 of 258 lookups. Version lists are never taken from the cache, since it only knows locally fetched versions. A pseudo-version dep without a newer release costs one `@latest` per module (its time is kept as that version's release time); major module path probes cost one `@v/list` per successor path (usually a 404 for `/v<N+1>`), deduped per path and only made when major updates are allowed for the dep. Go toolchain releases come from one `go.dev/dl/?mode=json&include=all` fetch per run.
 - **Registries.** Docker tags come from `tags/list` (all pages; Docker Hub with page size 10000; pages up to 64 MiB, since gcr.io returns every tag in one ~10 MB page), digests from a manifest HEAD. Credentials come from the Docker config and its credential helpers. One oras-go auth client with a shared token cache per run, so each token exchange happens once per registry and scope. Registries on localhost, loopback and private addresses are reached over plain HTTP.
 - **Docker Hub pulls.** Docker Hub limits manifest GETs, by tag and by digest, per IP address for anonymous clients (`ratelimit-limit: 100;w=3600`); HEADs are not counted. Digests come from HEADs. Release times need the manifest (for an index also its first platform manifest) and config; on Docker Hub the tag is first resolved with the HEAD that `Digest` shares, and the manifests are fetched by digest once per digest. Tags of one image (`postgres:18`, `postgres:18.6`) then cost one pull, and a pinned tag whose release time is also asked costs no second request for its digest. On backstage `plan` (shallow clone, 2026-11-04, measured through a proxy serving Hub manifests from mirror.gcr.io), manifest GETs to `registry-1.docker.io` went from 42 (21 by tag, 21 by digest; 4 HEADs) to 38 (all by digest; 21 HEADs), with an identical plan. With an exhausted quota (429, `ratelimit-remaining: 0;w=3600`, no `Retry-After`) the run sent 6 manifest requests and no retries instead of 36 requests and 27 retries; the errors from Docker Hub point to `docker login`.
 - **npm metadata.** Abbreviated documents are stream-decoded; only one version object is buffered at a time.
@@ -196,6 +198,7 @@ type Dep struct {
     Version     string // current version (ref tag, comment version, or module version)
     Digest      string // actions: full SHA when pinned, else ""
     RefSpan     Span   // actions: ref after '@'; gomod: version token
+    NameSpan    Span   // gomod: module path token of a require
     VersionSpan Span   // actions: version token in trailing comment (pinned only)
     DigestSpan  Span   // docker/custom: digest token stored apart from RefSpan
     InsertAt    int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
@@ -219,7 +222,8 @@ type Update struct {
     Dep         Dep
     Type        UpdateType
     NewVersion  string
-    NewDigest   string        // "" unless the result is digest-pinned
+    NewDigest   string        // "" unless the result is digest-pinned; gomod pseudo-versions: the new commit
+    NewName     string        // gomod major module path update: the new module path; "" = unchanged
     Group       string        // policy group, "" = own PR
     Schedule    *schedule.Set // workflow crons that put it in schedule; nil = every run
     Advisories  []Advisory    // non-empty = security update
@@ -248,6 +252,13 @@ type Manager interface {
 // them during Extract; the engine calls Link once after every file was extracted, with the
 // deps of each file, to resolve references in place, drop non-deps and reset.
 type Linker interface{ Link(files [][]dep.Dep) }
+// FileEditor is optional: updates that also edit other files (gomod major module path updates
+// rewrite import paths in the module's .go files). Build applies them with the update, puts
+// them in the post-processing scope of their own path, and drops all of an update's files
+// when one fails.
+type FileEditor interface {
+    FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error) // by slash path relative to root
+}
 // actions.New(), gomod.New(), docker.New(), npm.New(), helm.New() return the built-in managers; custom.New(cfg) one per cfg.Custom entry (accepting custom.<name> of cfg.CustomDatasources).
 ```
 
@@ -274,9 +285,17 @@ type SourceRepo interface { // optional: source repository for release notes
 type Planner interface { // optional: all updatable deps of the datasource, once, before the first lookup
     Plan(deps []dep.Dep)
 }
+type Revision struct{ Version, Digest string; Time time.Time }
+type HeadSource interface { // optional: newest revision of a commit-tracking dep (Go pseudo-versions: @latest)
+    Head(ctx context.Context, d dep.Dep, dir string) (Revision, error)
+}
+type ModulePath struct{ Name string; Releases []Release }
+type MajorPathSource interface { // optional: successive major module paths (/v<N+1>, …) that exist, lowest first
+    MajorPaths(ctx context.Context, d dep.Dep, dir string) ([]ModulePath, error)
+}
 // gittags.Lister ("git-tags"), goproxy.Source ("go"), gotoolchain ("go-toolchain"),
 // dockerds ("docker"), githubreleases ("github-releases"), npmds ("npm"), nodeversion ("node-version"),
-// helmds ("helm", a Planner)
+// helmds ("helm", a Planner); goproxy.Source is also a HeadSource and a MajorPathSource
 // and customds ("custom.<name>", one per customDatasources entry) implement Datasource; osv implements SecuritySource;
 // checksum.Source implements ChecksumSource.
 ```
@@ -344,12 +363,13 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) // the on
   - otherwise majors go to `major` (the newest major), or with `separateMultipleMajor` to `v<N>` per newer major `N` (the newest release of each); minors and patches share `""` (the newest), or with `separateMinorPatch` get `minor` (the newest minor) and `patch` (the newest patch of the current minor).
   - Digest refreshes and pins are the bucket `""` (they only exist when no version update does). A dep's updates are ordered by version, lowest first, and all share the dep's other spans, so each bucket is built on its own branch (`Update.Bucket` becomes a branch suffix, section 5). `plan`/`apply` write one update per dep (`engine.Local`): the newest non-major one, else the lowest major; the others are reported with a `, separate PR` hint.
 - A dep the pre-policy ignores is still resolved when some per-kind policy un-ignores it (`updateTypes: [patch], ignore: false`), only for those kinds; it gets no security lookup.
-- **Non-version values.** A current value the dep's versioning scheme cannot parse is skipped as `non-version value "<v>"` before any lookup, not reported as an error. The exception is a docker-datasource dep whose digest can be maintained (docker manager, or a custom dep with a digest), e.g. `latest@sha256:…`: it gets digest-only resolution without listing releases or asking OSV. Pinned → the digest of the same tag is refreshed (`digest`, no update when unchanged); unpinned with `pin: digest` → `pin`; unpinned with `pin: keep` → skipped as `non-version tag`.
+- **Non-version values.** A current value the dep's versioning scheme cannot parse is skipped as `non-version value "<v>"` before any lookup, not reported as an error. The exception is a docker-datasource dep whose digest can be maintained (docker manager, or a custom dep with a digest), e.g. `latest@sha256:…`: it gets digest-only resolution without listing releases or asking OSV. Pinned → the digest of the same tag is refreshed (`digest`, no update when unchanged); unpinned with `pin: digest` → `pin`; unpinned with `pin: keep` → skipped as `non-version tag`. Go pseudo-versions are the other exception (section 2, gomod): releases are ranked against the pseudo-version's base (`vX.0.0-0` without one), only releases newer than the pseudo-version count, and the head's newer pseudo-version takes the place of the digest refresh.
+- **Major module paths** (gomod) come after security: each successor path's best release takes the bucket a major falls into (`major`, `v<N>` with `separateMultipleMajor`, `""` without `separateMajorMinor`), replacing a lower update there unless that one carries advisories.
 - **Release-time guards** (only when the datasource implements `datasource.Timer`; each candidate's time is asked at most once per dep). A bucket's best candidate is rejected and the bucket's next one tried (bounded per bucket: 3 `older than current`, 50 rejections in total, then no update for that bucket):
   - A major candidate whose release time predates the current version's is rejected as `older than current`. This drops legacy pre-module tags such as `k8s.io/client-go v1.5.2` (2016) when the current version is `v0.37.1`.
   - With a `minimumReleaseAge` in the policy of the candidate's kind, a candidate released less than that long before `Options.Now` is rejected as `too new (released <date>, minimum <age>)`; the bucket's next lower candidate is tried. Without `separateMajorMinor` all kinds share one bucket, so a too-new major falls back to an old enough minor.
   - A datasource implementing `datasource.ReleaseBound` names a time no version was published after, from data its `Releases` already fetched; when that bound is at least the age before `Options.Now` the candidate passes without a release-time lookup, which cannot change the outcome. npm uses the abbreviated document's `modified` (every publish updates it), so the full packument is only fetched for majors (`older than current`) and packages changed within the age. On backstage with a 3-day age this cut full packument fetches 459 → 218 (87 → 57 MB gzip).
-  - Unknown times (zero, or a lookup error, logged at debug level) never reject. Digest refreshes and pins (no new version) and security updates are exempt from the age.
+  - Unknown times (zero, or a lookup error, logged at debug level) never reject. Digest refreshes and pins (no new version) and security updates are exempt from the age; Go pseudo-version digest updates are not (the new pseudo-version has a commit time).
 - The chosen update (also digest, pin and security updates) takes `CommitType`/`CommitScope` and `Automerge`/`AutomergeStrategy` and, unless it is a security update, `Group`/`Schedule` from the policy of its type (`config.Policy` also has `Monorepo`, the built-in group that applied, and `Kind`, the type a `PolicyFor` result is for).
 
 ```go
@@ -428,7 +448,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 
 - **Actions tags.** A tag must match `^(v?)(\d+)(?:\.(\d+))?(?:\.(\d+))?$`; suffixed and prerelease tags are never considered. Candidates must have the same prefix and the same number of parts as the current tag. This precision is what makes `@v4` move to `@v5` and `# v7.0.1` move to `# v7.0.2`.
 - **Go modules.** `golang.org/x/mod/semver` syntax and ordering, each version parsed once (section 3). Excluded candidates:
-  - pseudo-versions;
+  - pseudo-versions (a pseudo-version as the *current* version gets digest updates instead, section 2);
   - prereleases, unless the current version is a prerelease;
   - `+incompatible` versions, unless the current version has it;
   - other majors, except the step from v0 to v1.
@@ -713,11 +733,9 @@ Open items from [renovate-parity.md](renovate-parity.md) and the performance pla
 
 - PR body badges: Mend adoption/passing/confidence (L5; external badge URLs or drop) and the OpenSSF scorecard (L6);
 - the gaps from the OCM comparison ([what is still missing for OCM](migrating-from-renovate.md#what-is-still-missing-for-ocm)):
-  - Go pseudo-version digest updates (M14);
-  - major module-path updates (M15);
   - lockfile-only npm updates and OSV against locked versions (P18);
   - release times for git tags without their own release (P10);
-  - API-created commits (O5);
+  - API-created commits (O5, deferred);
   - updating the action's `version:` input along with a pinned ref (O6);
   - the OCM cutover (O7);
 - `actions.lock` via `github.com/github/actions-lockfile/go`;

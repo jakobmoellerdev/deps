@@ -42,7 +42,10 @@ func (f *fakeSource) Releases(context.Context, dep.Dep, string) ([]datasource.Re
 
 func (*fakeSource) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }
 
-func (f *fakeSource) ReleaseTime(_ context.Context, _ dep.Dep, v string) (time.Time, error) {
+func (f *fakeSource) ReleaseTime(_ context.Context, d dep.Dep, v string) (time.Time, error) {
+	if t, ok := f.times[d.Name+"@"+v]; ok {
+		return t, f.err
+	}
 	return f.times[v], f.err
 }
 
@@ -85,6 +88,11 @@ func TestAge(t *testing.T) {
 		if got := n.Age(t.Context(), dep.Update{Dep: dep.Dep{Datasource: tt.ds}, NewVersion: tt.version}); got != tt.want {
 			t.Errorf("Age(%s, %s) = %q, want %q", tt.ds, tt.version, got, tt.want)
 		}
+	}
+	u := dep.Update{Dep: dep.Dep{Datasource: "t", Name: "example.com/m/v2"}, NewVersion: "v3.0.0", NewName: "example.com/m/v3"}
+	src.times["example.com/m/v3@v3.0.0"] = now.Add(-25 * time.Hour)
+	if got := n.Age(t.Context(), u); got != "released 2026-11-02 (1 day ago)" {
+		t.Errorf("Age(new module path) = %q", got)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -381,5 +382,155 @@ func TestReleaseTimeModuleCache(t *testing.T) {
 		if err != nil || !got.Equal(tt.want) || hits.Load() != tt.requests {
 			t.Errorf("%s@%s = %v, %v, %d requests; want %v, %d", tt.mod, tt.version, got, err, hits.Load(), tt.want, tt.requests)
 		}
+	}
+}
+
+func TestHead(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		switch r.URL.Path {
+		case "/p/k8s.io/kube-openapi/@latest":
+			io.WriteString(w, `{"Version":"v0.0.0-20261014044854-ca3452a79603","Time":"2026-10-14T04:48:54Z","Origin":{"VCS":"git","Hash":"ca3452a7960344c2deae56f967aded124a7ca72c"}}`)
+		case "/p/example.com/noorigin/@latest":
+			io.WriteString(w, `{"Version":"v1.2.4-0.20240101000000-abcdefabcdef"}`)
+		case "/p/example.com/bad/@latest":
+			io.WriteString(w, `{`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	s := New(srv.Client(), make(chan struct{}, 2))
+	s.env = func(context.Context) (gotool.GoEnv, error) {
+		return gotool.GoEnv{Proxy: srv.URL + "/p,direct", NoProxy: "private.example"}, nil
+	}
+	var latestCalls atomic.Int32
+	s.latest = func(_ context.Context, dir, path string) (gotool.Module, error) {
+		latestCalls.Add(1)
+		if dir != "/mod" {
+			t.Errorf("latest dir %q", dir)
+		}
+		if path == "example.com/missing" {
+			return gotool.Module{}, errors.New("no such module")
+		}
+		tm := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+		return gotool.Module{Version: "v0.0.0-20250102030405-0123456789ab", Time: &tm}, nil
+	}
+	var hs datasource.HeadSource = s
+
+	d := dep.Dep{Name: "k8s.io/kube-openapi"}
+	for range 2 {
+		rev, err := hs.Head(t.Context(), d, "/mod")
+		want := datasource.Revision{Version: "v0.0.0-20261014044854-ca3452a79603", Digest: "ca3452a7960344c2deae56f967aded124a7ca72c", Time: time.Date(2026, 10, 14, 4, 48, 54, 0, time.UTC)}
+		if err != nil || rev != want {
+			t.Fatalf("Head = %+v, %v", rev, err)
+		}
+	}
+	// The head's time answers ReleaseTime without another request.
+	if tm, err := s.ReleaseTime(t.Context(), d, "v0.0.0-20261014044854-ca3452a79603"); err != nil || !tm.Equal(time.Date(2026, 10, 14, 4, 48, 54, 0, time.UTC)) {
+		t.Errorf("ReleaseTime = %v, %v", tm, err)
+	}
+	if hits.Load() != 1 {
+		t.Errorf("hits = %d, want 1", hits.Load())
+	}
+
+	rev, err := hs.Head(t.Context(), dep.Dep{Name: "example.com/noorigin"}, "/mod")
+	if err != nil || rev.Digest != "abcdefabcdef" || !rev.Time.IsZero() {
+		t.Errorf("no origin: %+v, %v", rev, err)
+	}
+	if _, err := hs.Head(t.Context(), dep.Dep{Name: "example.com/bad"}, "/mod"); err == nil || !strings.Contains(err.Error(), "/@latest") {
+		t.Errorf("bad JSON: %v", err)
+	}
+	// 404 on the proxy falls through to direct (go list), as do GONOPROXY modules.
+	rev, err = hs.Head(t.Context(), dep.Dep{Name: "private.example/m"}, "/mod")
+	if err != nil || rev.Version != "v0.0.0-20250102030405-0123456789ab" || rev.Digest != "0123456789ab" || rev.Time.IsZero() {
+		t.Errorf("direct: %+v, %v", rev, err)
+	}
+	if _, err := hs.Head(t.Context(), dep.Dep{Name: "example.com/missing"}, "/mod"); err == nil || err.Error() != "no such module" {
+		t.Errorf("missing: %v", err)
+	}
+	if latestCalls.Load() != 2 {
+		t.Errorf("latest calls = %d, want 2", latestCalls.Load())
+	}
+}
+
+func TestMajorPaths(t *testing.T) {
+	lists := map[string]string{
+		"github.com/google/go-github/v93": "v93.0.0\nv93.1.0\n",
+		"github.com/google/go-github/v94": "v94.0.0\n",
+		"github.com/a/b/v2":               "v2.0.0\n",
+		"github.com/a/b/v3":               "", // exists, no releases: stops
+		"github.com/a/b/v4":               "v4.0.0\n",
+		"gopkg.in/yaml.v4":                "v4.0.0\n",
+		"github.com/docker/docker/v29":    "v29.0.0\n",
+		"example.com/err/v2":              "!500",
+	}
+	for i := 2; i <= 10; i++ {
+		lists["example.com/many/v"+strconv.Itoa(i)] = "v" + strconv.Itoa(i) + ".0.0\n"
+	}
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		mod, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/p/"), "/@v/list")
+		body, found := lists[mod]
+		switch {
+		case !ok || !found:
+			http.NotFound(w, r)
+		case body == "!500":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			io.WriteString(w, body)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	s := New(srv.Client(), make(chan struct{}, 2))
+	s.env = func(context.Context) (gotool.GoEnv, error) {
+		return gotool.GoEnv{Proxy: srv.URL + "/p,direct", NoProxy: "private.example"}, nil
+	}
+	s.list = func(context.Context, string, string) ([]string, error) {
+		t.Error("major paths must not run go list")
+		return nil, nil
+	}
+	var mp datasource.MajorPathSource = s
+	names := func(ps []datasource.ModulePath) []string {
+		var out []string
+		for _, p := range ps {
+			for _, r := range p.Releases {
+				out = append(out, p.Name+"@"+r.Version)
+			}
+		}
+		return out
+	}
+	tests := []struct {
+		name, version string
+		want          []string
+		wantErr       string
+	}{
+		{"github.com/google/go-github/v92", "v92.0.0", []string{"github.com/google/go-github/v93@v93.0.0", "github.com/google/go-github/v93@v93.1.0", "github.com/google/go-github/v94@v94.0.0"}, ""},
+		{"github.com/a/b", "v1.5.0", []string{"github.com/a/b/v2@v2.0.0"}, ""},
+		{"gopkg.in/yaml.v3", "v3.0.1", []string{"gopkg.in/yaml.v4@v4.0.0"}, ""},
+		{"github.com/docker/docker", "v28.5.2+incompatible", []string{"github.com/docker/docker/v29@v29.0.0"}, ""},
+		{"example.com/none", "v1.0.0", nil, ""},
+		{"private.example/m", "v1.0.0", nil, ""},
+		{"example.com/many", "v1.0.0", []string{"example.com/many/v2@v2.0.0", "example.com/many/v3@v3.0.0", "example.com/many/v4@v4.0.0", "example.com/many/v5@v5.0.0", "example.com/many/v6@v6.0.0"}, ""},
+		{"example.com/err", "v1.0.0", nil, "HTTP 500"},
+		{"example.com/bad path", "v1.0.0", nil, "malformed module path"},
+	}
+	for _, tt := range tests {
+		got, err := mp.MajorPaths(t.Context(), dep.Dep{Name: tt.name, Version: tt.version}, "/mod")
+		if tt.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("%s: err = %v, want %q", tt.name, err, tt.wantErr)
+			}
+			continue
+		}
+		if err != nil || !reflect.DeepEqual(names(got), tt.want) {
+			t.Errorf("%s: MajorPaths = %q, %v; want %q", tt.name, names(got), err, tt.want)
+		}
+	}
+	before := hits.Load()
+	if _, err := mp.MajorPaths(t.Context(), dep.Dep{Name: "github.com/google/go-github/v92", Version: "v92.0.0"}, "/mod"); err != nil || hits.Load() != before {
+		t.Errorf("probes must be deduped: %d new requests, %v", hits.Load()-before, err)
 	}
 }
