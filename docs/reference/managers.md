@@ -265,14 +265,15 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 
 - `Chart.yaml` (DepType `chart`)
 - `helmfile.y(a)ml`, `helmfile.d/*.y(a)ml`, each optionally `.gotmpl` (DepType `helmfile`)
+- other `*.y(a)ml` containing a `k0sproject.io/`, `fluxcd.io/` or `argoproj.io/` API group, parsed document by document (DepTypes `k0s`, `flux`, `argocd`)
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
 | `chart` | `dependencies[].version` with `name` and `repository` | `helm` | `semver` | updated |
 | `helmfile` | `releases[].version` with `chart: <repo>/<name>` (resolved through `repositories[]`, `oci: true` → `oci://`) or `chart: oci://host/path/name` | `helm` | `semver` | updated |
-| `k0s` | k0s `Chart` resources | `helm` | `semver` | updated |
-| `flux` | Flux `HelmRelease` resources | `helm` | `semver` | updated |
-| `argocd` | Argo CD `Application` Helm sources | `helm` | `semver` | updated |
+| `k0s` | k0s `Chart` (`helm.k0sproject.io`) `spec.chartName` + `spec.version`, and ClusterConfig (`k0s.k0sproject.io`, also embedded in a k0sctl `Cluster` as `spec.k0s.config`) `spec.extensions.helm.charts[].chartname` + `version`; the repository is `spec.repository.url`, the `<alias>` of `<alias>/<chart>` from a ClusterConfig's `spec.extensions.helm.repositories[]` in any file, or `oci://host/path/<chart>` | `helm` | `semver` | updated |
+| `flux` | `HelmRelease` (`helm.toolkit.fluxcd.io/v2*`) `spec.chart.spec.chart` + `version` from its `sourceRef` `HelmRepository` (`source.toolkit.fluxcd.io`, any file; `spec.type: oci` → `oci://`), and the `OCIRepository` chart (`spec.url` + `spec.ref.tag`) a `spec.chartRef` names or whose `spec.layerSelector.mediaType` is the Helm chart type | `helm` | `semver` | updated |
+| `argocd` | `Application` `spec.source` / `spec.sources[]` and `ApplicationSet` `spec.template.spec.source(s)` with a `chart`: `repoURL` + `chart` + `targetRevision`; a `repoURL` without scheme is an OCI registry | `helm` | `semver` | updated |
 
 **Skips:**
 
@@ -280,11 +281,18 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 |---|---|
 | `version range` | anything but a full `MAJOR.MINOR.PATCH[-pre][+build]` (optionally `v`-prefixed): `~1.2.0`, `^1`, `>=1.0.0`, `1.2.x`, `1.2` |
 | `no version` | the version is missing or empty |
-| `template value` | the version contains `{{` |
-| `local chart` | Chart.yaml: empty or `file://` repository; helmfile: a chart path (`./x`, `../x`, `/x`, no `/`) |
+| `template value` | the version (or a resource's chart name or `repoURL`) contains `{{` |
+| `local chart` | Chart.yaml: empty or `file://` repository; helmfile: a chart path (`./x`, `../x`, `/x`, no `/`); k0s: a chart path (`/x`, `./x`, `*.tgz`) |
 | `repository alias` | Chart.yaml: `@name` or `alias:name` repositories (resolved by the user's Helm repository config) |
-| `unknown chart repository <repo>` | Chart.yaml: a repository that is no URL; helmfile: a `<repo>/` prefix not in `repositories[]` |
-| `invalid chart reference` | helmfile: `oci://` without a path, or `<repo>/a/b` |
+| `unknown chart repository <repo>` | Chart.yaml: a repository that is no URL; helmfile: a `<repo>/` prefix not in `repositories[]`; k0s: an alias no scanned ClusterConfig declares |
+| `ambiguous chart repository <alias>` | k0s: ClusterConfigs in other files declare the alias with different URLs (the chart's own file declares none) |
+| `invalid chart reference` | helmfile and k0s: `oci://` without a path, or `<repo>/a/b`; k0s: a chart name without `/` |
+| `unknown HelmRepository <namespace>/<name>` | flux: no scanned HelmRepository matches the `sourceRef` |
+| `ambiguous HelmRepository <name>` | flux: the `sourceRef` matches HelmRepositories with different URLs |
+| `chart from <kind> source` | flux: the `sourceRef` is a `GitRepository` or `Bucket` |
+| `no sourceRef` | flux: the HelmRelease chart has no `sourceRef` kind |
+| `pinned by digest` | flux: the OCIRepository selects `spec.ref.digest` |
+| `no repoURL` | argocd: a Helm source without `repoURL` |
 | `cannot locate value` | the version's bytes could not be found (escapes, block scalars) |
 
 **Versioning.**
@@ -297,6 +305,12 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 - `digest` is recomputed as Helm does (`sha256` over the JSON of the Chart.yaml and Chart.lock dependencies), so `helm dependency build` accepts the lock. Repository aliases take the URL locked for them.
 - The old digest is verified first; when deps cannot reproduce it (a lock out of sync), the chart's update fails with an error instead of writing a lock Helm would reject.
 - `generated` is kept, so unchanged updates produce identical commits.
+
+**Kubernetes resources.**
+
+- Repository references are resolved across files once every file was extracted: a k0s alias from any ClusterConfig (its own file first), a HelmRelease `sourceRef` by namespace and name (the namespace defaults to the HelmRelease's). When one side has no namespace (a Kustomization sets it), the name alone must match a single URL.
+- A Flux `OCIRepository` (`spec.ref.semver` skips as `version range`) that neither a HelmRelease `chartRef` names nor declares the Helm chart media type is a Kustomization artifact, not a dep.
+- HelmReleases with a `chartRef` carry no version; the OCIRepository does. Container images in the same files (values) are found by the docker manager.
 
 **Edits.**
 

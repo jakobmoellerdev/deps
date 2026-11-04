@@ -142,7 +142,7 @@ Selector grammar: stages joined by `|`; a stage is `keys` (sorted keys of an obj
 The following is implemented:
 
 - **Discovery.** A single `filepath.WalkDir`. It prunes `.git`, `node_modules`, `vendor`, `testdata` and directories matching `ignorePaths` via `fs.SkipDir`. When `ignorePaths` is absent the default is `**/{node_modules,bower_components,vendor,examples,__tests__,test,tests,__fixtures__}/**` (Renovate's `:ignoreModulesAndTests`). Paths are matched before any file is opened, and only matched files are read.
-- **Extraction.** Runs on `runtime.GOMAXPROCS(0)` workers. Each worker keeps only `[]Dep` (spans and strings); parse trees and file bytes are dropped immediately. Files are re-read when changes are built, so memory is O(deps), not O(repo).
+- **Extraction.** Runs on `runtime.GOMAXPROCS(0)` workers. Each worker keeps only `[]Dep` (spans and strings); parse trees and file bytes are dropped immediately. Files are re-read when changes are built, so memory is O(deps), not O(repo). References across files (a k0s chart's repository alias, a Flux HelmRelease's HelmRepository) are resolved in one sequential `Link` pass per manager after extraction; until then the manager keeps only the repository names and URLs it saw.
 - **HTTP.** One shared `http.Client` (HTTP/2, keep-alive) handles every network call.
 - **Retries and rate limits.** The shared transport retries idempotent requests: GET/HEAD/OPTIONS, and read-only POSTs marked with `httpx.Idempotent` (git ls-refs, OSV querybatch, GitHub GraphQL queries). It retries connection errors and 429/500/502/503/504, at most 3 times, with full-jitter exponential backoff (500ms base, 10s cap), honouring `Retry-After`. Platform writes are never retried. A 429, or a 403 with `X-RateLimit-Remaining: 0` or `Retry-After`, is a rate limit: if it resets within 60s deps waits (info log); otherwise the request fails fast with `rate limited by <host> until <time>` (`httpx.ErrRateLimited`) instead of stalling the run. The registry client gets the plain transport, not oras-go's retrying client, so attempts are not multiplied. Each attempt is logged at debug, with `X-RateLimit-Remaining` when present.
 - **Lookup dedupe.** Lookups are deduped within a run per key (one `sync.Once` per cache entry). A global semaphore caps concurrent requests at 32 (`--concurrency`); every host deps talks to speaks HTTP/2, so requests multiplex over a few connections. On open-component-model, 32 instead of 16 cut wall time by about a third; 64 gained nothing further.
@@ -227,6 +227,10 @@ type Manager interface {
     Extract(file string, src []byte, env Env) ([]dep.Dep, error)
     Edits(u dep.Update) ([]patch.Edit, error) // byte edits for one update; the engine merges them per file
 }
+// Linker is optional: managers whose deps refer to definitions in other files (helm) record
+// them during Extract; the engine calls Link once after every file was extracted, with the
+// deps of each file, to resolve references in place, drop non-deps and reset.
+type Linker interface{ Link(files [][]dep.Dep) }
 // actions.New(), gomod.New(), docker.New(), npm.New() return the built-in managers; custom.New(cfg) one per cfg.Custom entry (accepting custom.<name> of cfg.CustomDatasources).
 ```
 

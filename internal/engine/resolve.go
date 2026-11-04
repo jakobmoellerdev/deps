@@ -137,6 +137,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 
 	start = time.Now()
 	ex := extractAll(root, jobs, env)
+	linkAll(o.Managers, found, ex)
 
 	res := &Result{}
 	var todo []dep.Dep
@@ -285,6 +286,32 @@ func extractAll(root string, jobs []job, env manager.Env) []extracted {
 	close(next)
 	wg.Wait()
 	return ex
+}
+
+// linkAll lets each manager.Linker resolve the cross-file references of its deps. found holds
+// the files per manager; their jobs (and ex entries) are contiguous in manager order.
+func linkAll(managers []manager.Manager, found [][]string, ex []extracted) {
+	off := 0
+	for i, m := range managers {
+		part := ex[off : off+len(found[i])]
+		off += len(found[i])
+		l, ok := m.(manager.Linker)
+		if !ok {
+			continue
+		}
+		files := make([][]dep.Dep, 0, len(part))
+		idx := make([]int, 0, len(part))
+		for k, e := range part {
+			if e.err == nil {
+				files = append(files, e.deps)
+				idx = append(idx, k)
+			}
+		}
+		l.Link(files)
+		for k, j := range idx {
+			part[j].deps = files[k]
+		}
+	}
 }
 
 func extractOne(root string, j job, env manager.Env) extracted {

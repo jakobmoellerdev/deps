@@ -24,3 +24,13 @@ type Manager interface {
 	// Edits returns the byte edits for one update; the engine merges them per file.
 	Edits(u dep.Update) ([]patch.Edit, error)
 }
+
+// Linker is implemented by managers whose deps refer to definitions in other files (a Helm
+// chart repository alias declared in a k0s ClusterConfig, a Flux HelmRepository). Extract
+// records the definitions it sees; once every file of a run was extracted, the engine calls
+// Link once with the deps of each file the manager extracted without error, in discovery
+// order. Link resolves the references in place (Source, Skip), may drop deps that turned out
+// not to be deps, and forgets the definitions, so the next run starts empty.
+type Linker interface {
+	Link(files [][]dep.Dep)
+}
