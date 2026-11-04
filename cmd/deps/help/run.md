@@ -2,7 +2,7 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 - PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested.
 - With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
-- With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every `Cargo.lock` (`cargo update`); it is closed when the lockfiles are current.
+- With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every `Cargo.lock` (`cargo update`) and `.terraform.lock.hcl` (`terraform init -upgrade`); it is closed when the lockfiles are current.
 - Obsolete PRs under `branchPrefix` are closed and their branches deleted, but only when the run had no errors.
 - The local `HEAD` must be the tip of `origin/<base>`.
 

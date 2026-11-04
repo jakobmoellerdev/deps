@@ -1140,6 +1140,7 @@ Updates provider, module and Terraform version constraints in Terraform and Open
 - Directories with `*.tofu` files or `registry.opentofu.org` entries are refreshed with `tofu` instead.
 - Hashes need the CLI: without `terraform` (or `tofu`) on `PATH` the directory's changes fail with `terraform not found (needed to update .terraform.lock.hcl)` and are dropped. Install it on the runner (for example `hashicorp/setup-terraform`). Remote modules are downloaded by `init`.
 - A failed init reports `terraform init in <dir>: <last 20 output lines>`.
+- [`lockFileMaintenance`](configuration.md#lockfilemaintenance) refreshes every lock file next to a scanned configuration with `terraform init -upgrade -backend=false` (`tofu` for OpenTofu) on a copy of the directory: each locked provider moves to the newest version its constraints admit, with fresh hashes; the configuration is unchanged.
 - `plan` does not run init, and prints `note    .terraform.lock.hcl changes are computed by apply/run`.
 
 **JSON files.**

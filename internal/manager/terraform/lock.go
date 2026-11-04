@@ -118,13 +118,9 @@ func refresh(ctx context.Context, dir string, manifests, files map[string][]byte
 	if err != nil {
 		return nil, err
 	}
-	tool := "terraform"
-	if tofu {
-		tool = "tofu"
-	}
-	bin, err := exec.LookPath(tool)
+	tool, bin, err := lockTool(tofu)
 	if err != nil {
-		return nil, fmt.Errorf("%s not found (needed to update %s)", tool, LockFile)
+		return nil, err
 	}
 	content := make(map[string][]byte, len(manifests)+2)
 	for rel, b := range manifests {
@@ -136,15 +132,7 @@ func refresh(ctx context.Context, dir string, manifests, files map[string][]byte
 			return nil, err
 		}
 	}
-	work, cleanup, err := mirror(dir, localDepth(dir), content)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
-	if err := runInit(ctx, bin, work); err != nil {
-		return nil, fmt.Errorf("%s init in %s: %w", tool, dir, err)
-	}
-	out, err := os.ReadFile(filepath.Join(work, LockFile))
+	out, err := initLock(ctx, dir, tool, bin, content)
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +142,75 @@ func refresh(ctx context.Context, dir string, manifests, files map[string][]byte
 		}
 	}
 	return map[string][]byte{LockFile: out}, nil
+}
+
+// Maintain implements engine.LockMaintainer (lockFileMaintenance): `terraform init -upgrade
+// -backend=false` on a mirror of dir moves every locked provider to the newest version its
+// constraints admit, with fresh hashes; the configuration is unchanged. It returns the lock
+// when it changed; without a lock file it does nothing.
+func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error) {
+	lock, ok := files[LockFile]
+	if !ok {
+		return nil, nil
+	}
+	tofu := bytes.Contains(lock, []byte(`"`+OpenTofuRegistry+"/"))
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			tofu = tofu || isTofu(e.Name())
+		}
+	}
+	tool, bin, err := lockTool(tofu)
+	if err != nil {
+		return nil, err
+	}
+	out, err := initLock(ctx, dir, tool, bin, map[string][]byte{LockFile: lock}, "-upgrade")
+	if err != nil || bytes.Equal(out, lock) {
+		return nil, err
+	}
+	return map[string][]byte{LockFile: out}, nil
+}
+
+// LockRoots implements manager.LockMaintainer: the .terraform.lock.hcl next to each
+// configuration file, with the first configuration file of its directory as the manifest.
+func (tfManager) LockRoots(root string, files []string) []manager.LockRoot {
+	var out []manager.LockRoot
+	seen := map[string]bool{}
+	for _, f := range files {
+		dir, ok := Locker{}.Scope(root, f)
+		if !ok || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		out = append(out, manager.LockRoot{Manifest: f, Lockfile: path.Join(dir, LockFile)})
+	}
+	slices.SortFunc(out, func(a, b manager.LockRoot) int { return strings.Compare(a.Lockfile, b.Lockfile) })
+	return out
+}
+
+// lockTool finds the CLI that refreshes a lock: tofu for OpenTofu, else terraform.
+func lockTool(tofu bool) (tool, bin string, err error) {
+	tool = "terraform"
+	if tofu {
+		tool = "tofu"
+	}
+	if bin, err = exec.LookPath(tool); err != nil {
+		return "", "", fmt.Errorf("%s not found (needed to update %s)", tool, LockFile)
+	}
+	return tool, bin, nil
+}
+
+// initLock runs init (with args) on a mirror of dir holding content and returns the lock file
+// it wrote.
+func initLock(ctx context.Context, dir, tool, bin string, content map[string][]byte, args ...string) ([]byte, error) {
+	work, cleanup, err := mirror(dir, localDepth(dir), content)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	if err := runInit(ctx, bin, work, args...); err != nil {
+		return nil, fmt.Errorf("%s init in %s: %w", tool, dir, err)
+	}
+	return os.ReadFile(filepath.Join(work, LockFile))
 }
 
 // lockName is the `namespace/type` of a provider address or lock entry (lowercase, without
@@ -518,9 +575,9 @@ func linkEntries(dir, mirrored, skip string) error {
 	return nil
 }
 
-// runInit runs `<bin> init -backend=false` in work, non-interactively.
-func runInit(ctx context.Context, bin, work string) error {
-	cmd := exec.CommandContext(ctx, bin, "init", "-backend=false", "-input=false", "-no-color")
+// runInit runs `<bin> init -backend=false [args]` in work, non-interactively.
+func runInit(ctx context.Context, bin, work string, args ...string) error {
+	cmd := exec.CommandContext(ctx, bin, append([]string{"init", "-backend=false", "-input=false", "-no-color"}, args...)...)
 	cmd.Dir = work
 	cmd.Env = append(os.Environ(), "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1", "TF_DATA_DIR="+filepath.Join(work, ".terraform"))
 	var out bytes.Buffer
