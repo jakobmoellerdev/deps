@@ -5,6 +5,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gotool"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
@@ -14,7 +15,7 @@ import (
 func newApply(o *rootOpts) *cobra.Command {
 	return &cobra.Command{
 		Use:     "apply",
-		Short:   "Write the updates to the files, including go mod tidy and package-lock.json",
+		Short:   "Write the updates to the files, including go mod tidy, package-lock.json and Cargo.lock",
 		Long:    helpText("apply"),
 		Example: "  deps apply && git diff --stat",
 		Args:    noArgs,
@@ -24,10 +25,10 @@ func newApply(o *rootOpts) *cobra.Command {
 	}
 }
 
-// postProcessors regenerate go.sum (go mod tidy) and package-lock.json (npm) on temporary
-// copies, and Chart.lock in process, for apply and run.
+// postProcessors regenerate go.sum (go mod tidy), package-lock.json (npm) and Cargo.lock
+// (cargo update) on temporary copies, and Chart.lock in process, for apply and run.
 func postProcessors() map[string]engine.PostProcessor {
-	return map[string]engine.PostProcessor{gomod.Name: gotool.Tidier{}, npm.Name: nodetool.Locker{}, helm.Name: helm.Locker{}}
+	return map[string]engine.PostProcessor{gomod.Name: gotool.Tidier{}, npm.Name: nodetool.Locker{}, helm.Name: helm.Locker{}, cargo.Name: cargo.Locker{}}
 }
 
 // planPostProcessors are the post-processors plan runs: those that work in process, without

@@ -1,5 +1,5 @@
-// Command deps updates GitHub/Gitea/Forgejo Actions, Go module, container image, npm and
-// custom-pinned dependencies and opens one pull request per dependency or group.
+// Command deps updates GitHub/Gitea/Forgejo Actions, Go module, container image, npm, Cargo
+// and custom-pinned dependencies and opens one pull request per dependency or group.
 package main
 
 import (

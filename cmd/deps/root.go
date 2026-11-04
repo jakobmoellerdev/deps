@@ -13,6 +13,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
@@ -43,7 +44,7 @@ func newRoot() *cobra.Command {
 	o := &rootOpts{}
 	root := &cobra.Command{
 		Use:           "deps",
-		Short:         "Update GitHub/Gitea/Forgejo Actions, Go module, container image and npm dependencies",
+		Short:         "Update GitHub/Gitea/Forgejo Actions, Go module, container image, npm and Cargo dependencies",
 		Long:          helpText("root"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -159,6 +160,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		npmds.Name:          npmds.New(client, limits.NPM, os.Getenv),
 		nodeversion.Name:    nodeversion.New(client, sem, os.Getenv),
 		helmds.Name:         helmds.New(client, sem, auth, docker),
+		crate.Name:          crate.New(client, limits.Crates, os.Getenv),
 	}
 	for name, cd := range cfg.CustomDatasources {
 		ds, err := customds.New(client, sem, name, cd.Spec())

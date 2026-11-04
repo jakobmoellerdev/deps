@@ -569,3 +569,32 @@ func TestAdvisoriesNpm(t *testing.T) {
 		t.Errorf("batches = %+v", f.batches)
 	}
 }
+
+// RUSTSEC-2020-0071 (time, GHSA-wcg3-cvx6-7396), trimmed to its crates.io range.
+func TestAdvisoriesCrates(t *testing.T) {
+	f := newFake(t)
+	f.results["crates.io|time|0.1.40|"] = result{ids: []string{"GHSA-wcg3-cvx6-7396", "RUSTSEC-2020-0071"}}
+	f.results["crates.io|time|0.1.0|"] = result{ids: []string{"RUSTSEC-2020-0071"}}
+	f.vulns["RUSTSEC-2020-0071"] = `{"id":"RUSTSEC-2020-0071","summary":"Potential segfault in the time crate","aliases":["GHSA-wcg3-cvx6-7396"],
+		"affected":[{"package":{"name":"time","ecosystem":"crates.io"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0.0.0-0"},{"fixed":"0.2.23"}]}]}]}`
+	f.vulns["GHSA-wcg3-cvx6-7396"] = `{"id":"GHSA-wcg3-cvx6-7396","aliases":["RUSTSEC-2020-0071"],
+		"affected":[{"package":{"name":"time","ecosystem":"crates.io"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"0.2.23"}]}]}]}`
+	s := f.start(nil)
+	deps := []dep.Dep{
+		{Manager: "cargo", Datasource: "crate", DepType: "dependencies", Name: "time", Version: "0.1.40"},
+		{Manager: "cargo", Datasource: "crate", DepType: "dev-dependencies", Name: "time", Version: "0.1"},
+		{Manager: "cargo", Datasource: "git-tags", DepType: "dependencies", Name: "time", Version: "v0.1.0"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adv := dep.Advisory{ID: "RUSTSEC-2020-0071", Summary: "Potential segfault in the time crate", URL: "https://osv.dev/vulnerability/RUSTSEC-2020-0071"}
+	want := [][]datasource.Vuln{{{Advisory: adv, Fixed: []string{"0.2.23"}}}, {{Advisory: adv, Fixed: []string{"0.2"}}}, nil}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if len(f.batches) != 1 || len(f.batches[0]) != 2 || f.batches[0][1].Version != "0.1.0" {
+		t.Errorf("batches = %+v", f.batches)
+	}
+}

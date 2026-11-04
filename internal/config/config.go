@@ -71,11 +71,11 @@ const DefaultDashboardTitle = "Dependency Dashboard"
 
 // Known values for validation.
 var (
-	Managers = []string{"github-actions", "gomod", "docker", "npm", "helm", "kustomize", "pre-commit", "gitlabci", "nvm", "nodenv", "asdf", "mise", "custom"}
-	DepTypes = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "setup", "engines", "volta", "chart", "helmfile", "k0s", "flux", "argocd", "image", "helmChart", "resource", "repository", "service", "include", "component", "node", "tool", "annotation", "regex"}
+	Managers = []string{"github-actions", "gomod", "docker", "npm", "helm", "kustomize", "pre-commit", "gitlabci", "nvm", "nodenv", "asdf", "mise", "cargo", "custom"}
+	DepTypes = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "setup", "engines", "volta", "chart", "helmfile", "k0s", "flux", "argocd", "image", "helmChart", "resource", "repository", "service", "include", "component", "node", "tool", "annotation", "regex", "dev-dependencies", "build-dependencies", "workspace.dependencies", "patch", "replace"}
 	// Datasources are the deps datasource names (dep.Dep.Datasource); custom datasources add
 	// custom.<name> (CustomDatasourcePrefix).
-	Datasources = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version", "helm"}
+	Datasources = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version", "helm", "crate"}
 	// DatasourceAliases maps Renovate datasource names to deps datasource names.
 	DatasourceAliases = map[string]string{
 		"golang-version":             "go-toolchain",
@@ -86,7 +86,7 @@ var (
 	// DatasourceNames are the accepted datasource names of custom[].datasource and
 	// rules[].datasources: Datasources followed by the DatasourceAliases keys (plus
 	// custom.<name> of customDatasources, see Config.KnownDatasource).
-	DatasourceNames = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version", "helm", "golang-version", "github-tags", "github-release-attachments", "node"}
+	DatasourceNames = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version", "helm", "crate", "golang-version", "github-tags", "github-release-attachments", "node"}
 	// Versionings are the versioning scheme names; rules[].versioning and custom[].versioning
 	// also accept regex:<RE2> (versioning.RegexPrefix).
 	Versionings = versioning.Names
@@ -227,11 +227,11 @@ type Actions struct {
 
 // Rule overrides the policy for matching deps.
 type Rule struct {
-	Manager       string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=helm,enum=kustomize,enum=pre-commit,enum=gitlabci,enum=nvm,enum=nodenv,enum=asdf,enum=mise,enum=custom" jsonschema_description:"Only match deps of this manager."`
+	Manager       string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=helm,enum=kustomize,enum=pre-commit,enum=gitlabci,enum=nvm,enum=nodenv,enum=asdf,enum=mise,enum=cargo,enum=custom" jsonschema_description:"Only match deps of this manager."`
 	Names         []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates)."`
-	DepTypes      []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=chart,enum=helmfile,enum=k0s,enum=flux,enum=argocd,enum=image,enum=helmChart,enum=resource,enum=repository,enum=service,enum=include,enum=component,enum=node,enum=tool,enum=annotation,enum=regex" jsonschema_description:"Only match deps of these types."`
+	DepTypes      []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=chart,enum=helmfile,enum=k0s,enum=flux,enum=argocd,enum=image,enum=helmChart,enum=resource,enum=repository,enum=service,enum=include,enum=component,enum=node,enum=tool,enum=annotation,enum=regex,enum=dev-dependencies,enum=build-dependencies,enum=workspace.dependencies,enum=patch,enum=replace" jsonschema_description:"Only match deps of these types."`
 	Paths         []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'."`
-	Datasources   []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource."`
+	Datasources   []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource."`
 	UpdateTypes   []string `yaml:"updateTypes" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`
 	Ignore        *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types."`
 	Pin           string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
@@ -245,7 +245,7 @@ type Rule struct {
 	SeparateMultipleMajor *bool    `yaml:"separateMultipleMajor" jsonschema_description:"Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types)."`
 	SeparateMinorPatch    *bool    `yaml:"separateMinorPatch" jsonschema_description:"Overrides the top-level separateMinorPatch for matching deps (with updateTypes: for candidates of those types)."`
 	Group                 string   `yaml:"group" jsonschema_description:"Group name: all deps with the same group share one PR."`
-	CommitType            string   `yaml:"commitType" jsonschema:"enum=fix,enum=chore,enum=build,enum=ci,enum=docs,enum=feat,enum=perf,enum=refactor,enum=revert,enum=style,enum=test" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm dependencies), chore otherwise. Security updates always use fix."`
+	CommitType            string   `yaml:"commitType" jsonschema:"enum=fix,enum=chore,enum=build,enum=ci,enum=docs,enum=feat,enum=perf,enum=refactor,enum=revert,enum=style,enum=test" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm and cargo dependencies), chore otherwise. Security updates always use fix."`
 	CommitScope           *string  `yaml:"commitScope" jsonschema_description:"Conventional commit scope; default deps, empty string means no scope ('chore: ...')."`
 	Schedule              []string `yaml:"schedule" jsonschema_description:"Workflow cron triggers overriding the top-level schedule; [] means every run."` // non-nil overrides the top-level schedule; [] = always
 	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
@@ -263,7 +263,7 @@ type Rule struct {
 type Custom struct {
 	Files      []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans."`
 	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
-	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node) are aliases."`
+	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node) are aliases."`
 	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
 	Versioning string    `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|regex:.+)$,default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names."` // default semver
 	Checksum   *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`

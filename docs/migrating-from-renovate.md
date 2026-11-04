@@ -9,7 +9,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `extends` (presets) | not supported; see [built-ins](#presets) |
 | `enabled: false` (package rule) | `rules[].ignore: true` |
 | `enabled: true` for disabled-by-default deps | `rules[].ignore: false` (indirect, `go` directive, peerDependencies, engines) |
-| `matchManagers` | `rules[].manager` (one per rule): `github-actions`, `gomod`, `docker` (covers `dockerfile`, `docker-compose`, `kubernetes`, `helm-values`), `npm`, `custom` (covers `custom.regex`) |
+| `matchManagers` | `rules[].manager` (one per rule): `github-actions`, `gomod`, `docker` (covers `dockerfile`, `docker-compose`, `kubernetes`, `helm-values`), `npm`, `helm`, `cargo`, `custom` (covers `custom.regex`) |
 | `matchPackageNames`, `matchDepNames` | `rules[].names` (doublestar globs; `{/,}**` works as in Renovate) |
 | `matchDepTypes` | `rules[].depTypes` (deps names, see [managers](reference/managers.md); Renovate's `golang` = `go`) |
 | `matchFileNames` | `rules[].paths` |

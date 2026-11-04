@@ -11,6 +11,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/diff"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -73,6 +74,9 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	}
 	if !write && hasManager(res, npm.Name) {
 		fmt.Fprintln(stderr, "note    package-lock.json changes are computed by apply/run")
+	}
+	if !write && hasManager(res, cargo.Name) {
+		fmt.Fprintln(stderr, "note    Cargo.lock changes are computed by apply/run")
 	}
 	cmdName := "plan"
 	if write {

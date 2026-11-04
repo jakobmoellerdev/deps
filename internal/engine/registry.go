@@ -4,6 +4,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitlabci"
@@ -23,10 +24,10 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	ms := make([]manager.Manager, 0, 12+len(cs))
+	ms := make([]manager.Manager, 0, 13+len(cs))
 	ms = append(ms, actions.New(), gomod.New(), docker.New(), npm.New(), helm.New(),
 		kustomize.New(), precommit.New(), gitlabci.New(),
-		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise())
+		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise(), cargo.New())
 	return append(ms, cs...), nil
 }
 
@@ -43,5 +44,5 @@ var SkipDocs = []refdoc.Skip{
 func ManagerDocs() []refdoc.Manager {
 	return []refdoc.Manager{actions.Doc, gomod.Doc, docker.Doc, npm.Doc, helm.Doc,
 		kustomize.Doc, precommit.Doc, gitlabci.Doc,
-		toolversions.DocNvm, toolversions.DocNodenv, toolversions.DocAsdf, toolversions.DocMise, custom.Doc}
+		toolversions.DocNvm, toolversions.DocNodenv, toolversions.DocAsdf, toolversions.DocMise, cargo.Doc, custom.Doc}
 }

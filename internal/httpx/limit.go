@@ -20,6 +20,10 @@ type Limits struct {
 	// OSV bounds OSV querybatch and advisory requests: 2n slots, so a few hundred advisory
 	// fetches finish alongside the release lookups rather than after them.
 	OSV chan struct{}
+	// Crates bounds crates.io sparse index requests: 2n slots. index.crates.io is a CDN
+	// (Cargo itself fetches it with many parallel requests); the crates.io API calls for
+	// source repositories share the pool.
+	Crates chan struct{}
 }
 
 // NewLimits returns the pools for --concurrency n (at least 1).
@@ -29,5 +33,6 @@ func NewLimits(n int) Limits {
 		NPM:     make(chan struct{}, 2*n),
 		Docker:  make(chan struct{}, max(n/2, 1)),
 		OSV:     make(chan struct{}, 2*n),
+		Crates:  make(chan struct{}, 2*n),
 	}
 }

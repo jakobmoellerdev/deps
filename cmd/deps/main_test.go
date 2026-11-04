@@ -119,6 +119,12 @@ func newFakeNet(t *testing.T) *fakeNet {
 		}
 		io.WriteString(w, `{"versions":{"1.0.0":{},"1.3.0":{},"1.4.0":{"deprecated":"broken"}}}`)
 	})
+	f.mux.HandleFunc("GET index.crates.io/se/rd/serde", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"name":"serde","vers":"1.0.100","yanked":false}`+"\n"+`{"name":"serde","vers":"1.0.228","yanked":false}`+"\n"+`{"name":"serde","vers":"1.0.229","yanked":true}`+"\n")
+	})
+	f.mux.HandleFunc("GET index.crates.io/ra/nd/rand", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"name":"rand","vers":"0.8.5","yanked":false}`+"\n"+`{"name":"rand","vers":"0.9.2","yanked":false}`+"\n")
+	})
 	f.mux.HandleFunc("GET git.test/api/v1/repos/o/r", func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"default_branch":"main"}`)
 	})
@@ -167,7 +173,7 @@ func cleanEnv(t *testing.T) {
 		"GITHUB_ACTIONS", "GITEA_ACTIONS", "FORGEJO_ACTIONS", "GITHUB_STEP_SUMMARY", "GITEA_STEP_SUMMARY",
 		"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", "DEPS_GITHUB_COM_TOKEN",
 		"DEPS_DEFAULT_ACTIONS_URL", "DEPS_GIT_AUTHOR", "DEPS_SIGNING_KEY", "DEPS_LOG_LEVEL", "DEPS_LOG_FORMAT", "GONOPROXY", "GOPRIVATE",
-		"NPM_CONFIG_REGISTRY", "npm_config_registry",
+		"NPM_CONFIG_REGISTRY", "npm_config_registry", "DEPS_CRATES_INDEX_URL", "DEPS_CRATES_API_URL",
 	} {
 		t.Setenv(k, "")
 	}
@@ -327,6 +333,33 @@ func TestPlanNpm(t *testing.T) {
 				t.Errorf("go.sum note without gomod updates:\n%s", stderr)
 			}
 		})
+	}
+}
+
+func TestPlanCargo(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"Cargo.toml": "[dependencies]\nserde = { version = \"1.0.100\", features = [\"derive\"] }\n\n[dev-dependencies]\nrand = \"0.8\"\nlocal = { path = \"../x\" }\n"})
+	stdout, stderr, code := execute(t, "plan", "-v", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	for _, want := range []string{"+serde = { version = \"1.0.228\", features = [\"derive\"] }\n", "+rand = \"0.9\"\n"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("diff lacks %q:\n%s", want, stdout)
+		}
+	}
+	for _, want := range []string{
+		"update  Cargo.toml:2  serde  1.0.100 -> 1.0.228  (patch)\n",
+		"update  Cargo.toml:5  rand  0.8 -> 0.9  (minor)\n",
+		"skip    Cargo.toml:6  local  path dependency\n",
+		"note    Cargo.lock changes are computed by apply/run\n",
+		"2 updates in 1 files, 1 skipped, 0 errors\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
 	}
 }
 

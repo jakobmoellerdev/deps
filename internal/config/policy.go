@@ -49,7 +49,7 @@ type Policy struct {
 // production reports whether d is a production dep, which gets the fix commit type by
 // default (Renovate's :semanticPrefixFixDepsChoreOthers).
 func production(d dep.Dep) bool {
-	return d.Manager == "gomod" && d.DepType == "direct" || d.Manager == "npm" && d.DepType == "dependencies"
+	return d.Manager == "gomod" && d.DepType == "direct" || (d.Manager == "npm" || d.Manager == "cargo") && d.DepType == "dependencies"
 }
 
 // defaultIgnored are the dep types ignored unless a rule sets `ignore: false`.

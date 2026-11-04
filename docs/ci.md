@@ -396,7 +396,7 @@ For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back
 **Network.** The runner needs HTTPS access to:
 
 - the forge;
-- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, api.osv.dev for security updates;
+- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), api.osv.dev for security updates;
 - the release download host.
 
 deps honors `HTTPS_PROXY`/`NO_PROXY`.
@@ -675,6 +675,8 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 | `deps: no release found at <api>` | The `repository` input points at a repository without releases, or the API is unreachable. Set `version:` and `repository:` explicitly. |
 | `go mod tidy in <dir>: …` | Go is missing on the runner, or a private module can't be fetched (set `GOPRIVATE` and git credentials). The module's change is dropped; other updates proceed. |
 | `<tool> not found (needed to update <lock>)` | Install Node.js (`actions/setup-node`) so `npm`/`npx` is available. |
+| `cargo not found (needed to update Cargo.lock)` | Install Rust (`dtolnay/rust-toolchain`) so `cargo` is on `PATH`, or the root's Cargo.toml changes are dropped. |
+| `cargo update in <dir>: …` | cargo could not resolve the patched workspace: a path dependency outside the workspace root, a private registry or git dependency without credentials, or a conflicting requirement. The root's change is dropped; other updates proceed. |
 | the job fails before deps runs, cloning `https://github.com/actions/checkout` | The runner can't reach the actions host. That is runner networking, not deps: fix the network, or use full `uses:` URLs to a reachable host. |
 
 ## GitHub end-to-end test

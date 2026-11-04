@@ -20,6 +20,11 @@
 //   - npm deps are queried as ecosystem "npm" with the package name and the locked version
 //     (dep.Dep.Locked), else the bare version; OSV matches server-side. Fixed versions are
 //     bare semver ("4.17.21").
+//   - cargo deps of crates.io (datasource crate, no Source) are queried as ecosystem
+//     "crates.io" with the crate name and the version Cargo.lock locks (dep.Dep.Locked), else
+//     the requirement's version; OSV matches server-side. Without a lock a partial requirement
+//     ("1", "0.4") is queried as its lowest version ("1.0.0", "0.4.0") and its fixed versions
+//     are cut to its precision ("0.5.2" → "0.5"), so only fixes outside its range count.
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -56,6 +61,7 @@ const (
 	ecoGo      = "Go"
 	ecoActions = "GitHub Actions"
 	ecoNpm     = "npm"
+	ecoCrates  = "crates.io"
 )
 
 // Source queries OSV. Advisory documents are fetched once per ID per run.
@@ -157,6 +163,19 @@ func targetOf(d dep.Dep) *target {
 			return nil
 		}
 		return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoNpm}, Version: v}}
+	case "cargo":
+		if d.Datasource != "crate" || d.Source != "" || d.Name == "" || d.Version == "" {
+			return nil
+		}
+		if d.Locked != "" {
+			return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoCrates}, Version: d.Locked}}
+		}
+		t := &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoCrates}, Version: d.Version}}
+		if tag, ok := versioning.ParseTag(d.Version); ok && len(tag.Parts) < 3 {
+			t.tag = tag
+			t.q.Version = d.Version + strings.Repeat(".0", 3-len(tag.Parts))
+		}
+		return t
 	case "github-actions":
 		u, err := url.Parse(d.Source)
 		if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
@@ -437,9 +456,12 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			cands = append(cands, v)
 		}
 	}
-	native := "GO-"
-	if t.q.Package.Ecosystem != ecoGo {
-		native = "GHSA-"
+	native := "GHSA-"
+	switch t.q.Package.Ecosystem {
+	case ecoGo:
+		native = "GO-"
+	case ecoCrates:
+		native = "RUSTSEC-"
 	}
 	slices.SortFunc(cands, func(a, b *vuln) int {
 		if an, bn := strings.HasPrefix(a.ID, native), strings.HasPrefix(b.ID, native); an != bn {
@@ -466,6 +488,11 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			fixed = t.actionsFixed(entries)
 		case ecoNpm:
 			fixed = npmFixed(entries)
+		case ecoCrates:
+			fixed = npmFixed(entries)
+			if len(t.tag.Parts) > 0 {
+				fixed = t.actionsFixed(entries) // partial requirement: at its precision
+			}
 		default:
 			fixed = goFixed(entries)
 		}
