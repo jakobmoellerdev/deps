@@ -355,7 +355,16 @@ func (s semverScheme) Best(cur string, cands []string, accept func(string, dep.U
 
 func semverMajor(v *msemver.Version) string { return strconv.FormatUint(v.Major(), 10) }
 
+// parseSemver parses s leniently. It tries StrictNewVersion first because
+// NewVersion runs a coercion regex that dominates CPU and allocations when
+// a package has thousands of releases. Whenever strict parsing succeeds the
+// result is identical to NewVersion's (same Original, Prerelease, Metadata
+// and ordering); anything strict rejects, such as a leading "v" or a
+// partial version like "1.2", falls back to NewVersion.
 func parseSemver(s string) (*msemver.Version, bool) {
+	if v, err := msemver.StrictNewVersion(s); err == nil {
+		return v, true
+	}
 	v, err := msemver.NewVersion(s)
 	return v, err == nil
 }

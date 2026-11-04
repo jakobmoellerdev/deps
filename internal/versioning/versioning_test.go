@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	msemver "github.com/Masterminds/semver/v3"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
@@ -410,4 +412,69 @@ func TestParseScheme(t *testing.T) {
 	if s.Compare("x", "v3.1.4+ocm.6") == 0 || s.Kind("x", "v3.1.4+ocm.6") != dep.Major || s.Compatible("v3.1.4", "v3.1.5+ocm.1") {
 		t.Error("invalid input")
 	}
+}
+
+// TestParseSemverStrictFirstEquivalent guards the strict-first fast path in
+// parseSemver: for every input it must return exactly what NewVersion alone
+// would, including Original, so tag styling and ordering are unchanged.
+func TestParseSemverStrictFirstEquivalent(t *testing.T) {
+	corpus := []string{
+		"1.2.3", "v1.2.3", "V1.2.3", "1.2", "v1", "1", "0.0.0",
+		"1.2.3-beta.1", "1.2.3-rc.1+build.5", "1.2.3+meta", "v2.0.0-alpha",
+		"01.2.3", "1.02.3", "1.2.03", "1.2.3-01", "1.2.3-0a", "1.2.3.4",
+		"1.2.3-", "1.2.3+", "latest", "", "v", "1.2.3-beta..1", "=1.2.3",
+		"5.0.0-dev.20240101", "1.2.3-x.7.z.92", "99999999999999999999.0.0",
+	}
+	for _, s := range corpus {
+		want, wantErr := msemver.NewVersion(s)
+		got, ok := parseSemver(s)
+		if ok != (wantErr == nil) {
+			t.Errorf("parseSemver(%q) ok = %v, NewVersion err = %v", s, ok, wantErr)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if !got.Equal(want) || got.Original() != want.Original() || got.Prerelease() != want.Prerelease() ||
+			got.Metadata() != want.Metadata() || got.String() != want.String() {
+			t.Errorf("parseSemver(%q) = %#v, NewVersion = %#v", s, got, want)
+		}
+	}
+}
+
+// benchSemverCorpus mimics a large npm packument: mostly strict versions
+// with prereleases, plus a few v-prefixed tags that take the fallback.
+func benchSemverCorpus() []string {
+	var out []string
+	for i := range 4000 {
+		switch i % 10 {
+		case 0:
+			out = append(out, fmt.Sprintf("5.%d.0-dev.2024%04d", i/100, i))
+		case 1:
+			out = append(out, fmt.Sprintf("v%d.%d.%d", i/1000, i/100%10, i%100))
+		default:
+			out = append(out, fmt.Sprintf("%d.%d.%d", i/1000, i/100%10, i%100))
+		}
+	}
+	return out
+}
+
+func BenchmarkParseSemver(b *testing.B) {
+	corpus := benchSemverCorpus()
+	b.Run("strict-first", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			for _, s := range corpus {
+				parseSemver(s)
+			}
+		}
+	})
+	b.Run("NewVersion", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			for _, s := range corpus {
+				_, _ = msemver.NewVersion(s)
+			}
+		}
+	})
 }
