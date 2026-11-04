@@ -4,6 +4,9 @@
 | `DEPS_GITHUB_COM_TOKEN` | all | token for github.com lookups when the platform is not github.com (avoids anonymous rate limits for actions and releases hosted on GitHub) |
 | `DEPS_DEFAULT_ACTIONS_URL` | all | default host of `owner/repo@ref` actions (hostname, or a URL whose host is used); overridden by the config key `actions.defaultHost` |
 | `DEPS_NODE_DIST_URL` | `node-version` datasource | base URL of a nodejs.org `dist` mirror (default `https://nodejs.org/dist`) |
+| `TF_TOKEN_<host>` | `terraform-provider`, `terraform-module` datasources | registry token sent as `Authorization: Bearer` to `<host>` (dots as `_`, hyphens as `__`, e.g. `TF_TOKEN_app_terraform_io`), as the Terraform CLI reads it; takes precedence over the CLI config |
+| `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG` | `terraform-provider`, `terraform-module` datasources | Terraform CLI config read for registry `credentials` blocks and the `credentials_helper`, replacing `~/.terraformrc` (`%APPDATA%/terraform.rc`); when set, the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` (`credentials.tfrc.json`) are not read. `TERRAFORM_CONFIG` is the legacy name |
+| `HOME`, `APPDATA` (Windows) | `terraform-provider`, `terraform-module` datasources | where the Terraform CLI config, `credentials.tfrc.json` and credentials helpers (`.terraform.d/plugins`) are found |
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor` |
 | `DEPS_SIGNING_KEY` | `run` | default of `--signing-key`: a passphrase-less OpenSSH or armored OpenPGP private key, or the path of a file holding one; deps signs its commits with it |
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |

@@ -390,9 +390,13 @@ Actions with a full URL (`uses: https://host/owner/repo@ref`) are looked up on t
 | `cargo` | updating `Cargo.lock` (requirement changes and lockfile-only updates), e.g. from `dtolnay/rust-toolchain`; without it those manifests fail with `cargo not found (needed to update Cargo.lock)` |
 | `uv`, `poetry`, `pipenv` | regenerating `uv.lock`, `poetry.lock`, `Pipfile.lock`; poetry and pipenv fall back to `uvx --from <tool>`, so `uv` (e.g. `astral-sh/setup-uv`) is enough |
 | `uv` or `pip-compile` | regenerating `requirements*.txt` written by `uv pip compile` or pip-compile with `--generate-hashes` (the tool its header names); pip-compile falls back to `uvx --from pip-tools pip-compile`. Other hashed requirements files need no tool. |
+| `terraform`, `tofu` | refreshing `.terraform.lock.hcl`; see the note below the table |
+| Terraform CLI config | private registries: `TF_TOKEN_<host>`, or the `credentials` / `credentials_helper` of `~/.terraformrc` / `$TF_CLI_CONFIG_FILE` and `~/.terraform.d/credentials.tfrc.json` (as written by `terraform login`) |
 | Docker credentials | private registries; Docker Hub in repositories with many images (pull limit) |
 
 For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back to `npx --yes <tool>[@<packageManager version>]`, so `npm`/`npx` (e.g. from `actions/setup-node`) is enough. With none of them, the lockfile's manifests fail with `<tool> not found (needed to update <lock>)`.
+
+`.terraform.lock.hcl` is refreshed with `terraform init -backend=false` (`tofu` for OpenTofu) when a provider constraint changes or a provider gets a lockfile-only update (`rangeStrategy: update-lockfile`), so put the CLI on the runner (`hashicorp/setup-terraform` or `opentofu/setup-opentofu`). There is no fallback; without it those directories fail with `terraform not found (needed to update .terraform.lock.hcl)`. The runner also needs to reach the provider registries and the sources of remote modules, which init downloads.
 
 **Checkout.** `deps run` requires the checked-out `HEAD` to be the tip of `origin/<base>`. A fresh `actions/checkout` of the default branch satisfies that; shallow clones are fine. To manage a branch other than the default, check it out and pass `--base <branch>`.
 
@@ -677,10 +681,11 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 | `deps: unsupported runner <os>/<arch>` | Use a linux/amd64 or linux/arm64 runner. |
 | `deps: no release found at <api>` | The `repository` input points at a repository without releases, or the API is unreachable. Set `version:` and `repository:` explicitly. |
 | `go mod tidy in <dir>: …` | Go is missing on the runner, or a private module can't be fetched (set `GOPRIVATE` and git credentials). The module's change is dropped; other updates proceed. |
-| `<tool> not found (needed to update <lock>)` | Install Node.js (`actions/setup-node`) so `npm`/`npx` is available. For Python locks install uv (e.g. `astral-sh/setup-uv`). |
+| `<tool> not found (needed to update <lock>)` | Install Node.js (`actions/setup-node`) so `npm`/`npx` is available. For Python locks install uv (e.g. `astral-sh/setup-uv`); for `.terraform.lock.hcl` install Terraform (`hashicorp/setup-terraform`) or OpenTofu. |
 | `cargo not found (needed to update Cargo.lock)` | Install Rust (`dtolnay/rust-toolchain`) so `cargo` is on `PATH`, or the root's Cargo.toml changes are dropped. |
 | `cargo update in <dir>: …` | cargo could not resolve the patched workspace: a private registry or git dependency without credentials, a conflicting requirement (for example a feature the new version dropped), or a path dependency outside the repository. The root's change is dropped; other updates proceed. |
 | `GET <index>/…: HTTP 401` for a crate | The Cargo registry needs credentials: set `CARGO_REGISTRIES_<NAME>_TOKEN` (the `[registries]` name of the index), add the token to `$CARGO_HOME/credentials.toml`, or provide git credentials for the index host. |
+| `terraform init in <dir>: …` | Terraform could not install the providers or modules of that directory (a private registry without `TF_TOKEN_<host>`, an unreachable module source, a `required_version` the runner's CLI does not satisfy). The directory's change is dropped; other updates proceed. |
 | the job fails before deps runs, cloning `https://github.com/actions/checkout` | The runner can't reach the actions host. That is runner networking, not deps: fix the network, or use full `uses:` URLs to a reachable host. |
 
 ## GitHub end-to-end test

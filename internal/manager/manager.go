@@ -9,6 +9,9 @@ import (
 // Env carries run-wide settings to Extract.
 type Env struct {
 	DefaultHost string // actions default host
+	// TerraformRegistry is the registry host of hostless provider and module addresses
+	// (config terraform.defaultRegistry); "" = the default of the file type.
+	TerraformRegistry string
 	// Vendored reports whether the slash directory dir (relative to the scanned root)
 	// vendors its modules. engine.Resolve supplies a filesystem check when nil.
 	Vendored func(dir string) bool

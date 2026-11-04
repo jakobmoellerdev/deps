@@ -18,6 +18,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pytool"
 )
@@ -89,6 +90,9 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	}
 	if !write && hashedUpdate(s.root, res) {
 		fmt.Fprintln(stderr, "note    --hash lines of requirements files are computed by apply/run")
+	}
+	if !write && hasManager(res, terraform.Name) {
+		fmt.Fprintln(stderr, "note    .terraform.lock.hcl changes are computed by apply/run")
 	}
 	cmdName := "plan"
 	if write {

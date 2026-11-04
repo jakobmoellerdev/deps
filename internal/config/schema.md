@@ -107,14 +107,15 @@ pin: digest
 
 ## Config.rangeStrategy
 
-It applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` (`^1.2.3`, `~1.2.3`, `>=1.2.3`, `=1.2.3` and exact `1.2.3`), to every cargo requirement (`1.2`, `~2.7.0`, `">= 0.10, < 0.11"`, `1.*`, `*`) and to every Python specifier of the pip_requirements, pep621, poetry and pipenv managers (see Python ranges below). Other deps always replace their exact version. `rules[].rangeStrategy` overrides it per dep (not together with `updateTypes`).
+It applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` (`^1.2.3`, `~1.2.3`, `>=1.2.3`, `=1.2.3` and exact `1.2.3`), to every cargo requirement (`1.2`, `~2.7.0`, `">= 0.10, < 0.11"`, `1.*`, `*`) and to every Python specifier of the pip_requirements, pep621, poetry and pipenv managers (see Python ranges below), and to terraform version constraints (below). Other deps always replace their exact version. `rules[].rangeStrategy` overrides it per dep (not together with `updateTypes`).
 
 - `update-lockfile`: the current version is the one the lock root's `package-lock.json` resolves the dep to, and update types compare it with the new version.
   - A newer version the range admits is a **lockfile-only update**: package.json is unchanged. `apply` and `run` run `npm install --package-lock-only <name>@<version>` (with `--workspace=<dir>` for a workspace member) on a copy and restore the range npm writes into the lockfile's own package entries. `plan` lists the update but shows no diff for it.
   - A version outside the range replaces the range's version and keeps its operator (`^5.2.8` → `^6.0.0`).
   - Without a lockfile, versions the range admits are not proposed: an install already gets them.
 - `bump`: every newer version raises the range (`^1.2.3` → `^1.4.0`), and the lockfile is regenerated.
-- `auto` (default): Renovate's npm default, which is `update-lockfile`.
+- `replace`: versions the range admits are not proposed; a version outside it replaces the range's version (`^5.2.8` → `^6.0.0`). The lockfile is not touched for admitted versions.
+- `auto` (default): Renovate's default for the manager: `update-lockfile` for npm, cargo and Python, `replace` for terraform and terragrunt.
 
 peerDependencies never get lockfile-only updates: under `update-lockfile` and `auto`, versions their range admits are left alone. Renovate widens peer ranges (`^1.0.0 || ^2.0.0`); deps replaces the range when a version falls outside it.
 
@@ -130,6 +131,13 @@ Python ranges (`>=1.2,<2`, `<1.0.0,>=0.114.2`, `~=1.4`, `^1.2`, `>=1.2 <2`, `^1 
 - `bump`: every newer version raises the lower bound (`>=1.2,<2` → `>=1.5.0,<2` for 1.5.0); a range without one to raise (`<2`, `>1`) is handled as under `update-lockfile`.
 
 See the Ranges section of the Python managers for the exact rewrite rules.
+
+**terraform** constraints (`required_providers`, `required_version`, registry `module` versions, `tfe_workspace`, Terragrunt `version`) follow the same strategies with Terraform's grammar (`~> 5.0`, `>= 1.2, < 2.0`); see the [terraform manager](managers.md#terraform):
+
+- `auto` is `replace`, Renovate's terraform default: a version the constraint admits is left alone, otherwise the constraint's version is replaced (`~> 5.0` → `~> 6.2`).
+- `update-lockfile`: an admitted version is a lockfile-only update of the provider's `.terraform.lock.hcl` entry (`terraform init` on a copy pins it); deps without a lock act as under `replace`.
+- `bump`: every newer version raises the constraint (`~> 5.0` → `~> 5.46`, `>= 1.5.7` → `>= 1.9.5`).
+- Constraints with an upper bound, an exclusion or several clauses (`>= 4.0, < 6.0`) are never rewritten; only their locked version moves (under `update-lockfile` and `bump`).
 
 ```yaml
 rangeStrategy: bump
@@ -256,6 +264,19 @@ With `--log-level info`, deps logs the result as `actions default host host=<h> 
 ```yaml
 actions:
   defaultHost: gitea.com
+```
+
+## Config.terraform
+
+See [`terraform.defaultRegistry`](#terraformdefaultregistry).
+
+## Terraform.defaultRegistry
+
+The registry of provider and module addresses without a host (`hashicorp/aws`, `terraform-aws-modules/vpc/aws`, `tfr:///…` in Terragrunt). Without it, `*.tf` files use `registry.terraform.io` and `*.tofu` files OpenTofu's `registry.opentofu.org`, as the two CLIs do. Set it when an OpenTofu project keeps `*.tf` files, or for a private mirror implementing the registry protocol. A scheme and trailing slash are ignored.
+
+```yaml
+terraform:
+  defaultRegistry: registry.opentofu.org
 ```
 
 ## Config.gomodUpdateImportPaths
@@ -453,6 +474,7 @@ The scheme validates the current value, ranks candidates, classifies update kind
 | `loose` | 1–6 numeric parts, optional `v`, optional `-`/`_` suffix | the suffix counts as a prerelease. Missing parts compare as 0 (`1877` < `1877.25`); then fewer parts sort below more (`1.2` < `1.2.0`). Any precision is a candidate, so combine it with an `allow` regex. |
 | `cargo` | `MAJOR[.MINOR[.PATCH[-pre][+build]]]`, no `v` | candidates need the same number of parts (`0.4` → `0.5`); prereleases only from a prerelease. Update types follow Cargo's compatibility: leaving the range of the leftmost non-zero part is `major` (`0.4` → `0.5`, `0.0.3` → `0.0.4`), a minor change of a `1.x` version `minor`, anything else `patch`. The default of cargo deps |
 | `pep440` | PEP 440 (epochs, pre/post/dev releases, local versions; at most 10 release parts) | ordered like Python's `packaging`; pre and dev releases only from a pre or dev release; local versions only from a local version. A candidate may have more release parts than the current version only if the extra parts are 0, and is then written at the current precision (`4.2` → `5.0` from `5.0.0`, never `5.0.1`). The default of the Python managers |
+| `hashicorp` | 1–3 numeric parts, optional `v`, `-prerelease` on full versions | Terraform constraints: candidates are written at the current precision and `v` style (`5.0` → `5.31` from `5.31.2`, `1.5.7` → `1.9.5` from the tag `v1.9.5`); prereleases only from a prerelease; the default of the terraform managers |
 | `regex:<RE2>` | the expression's named groups | `major` (required), `minor`, `patch`, `build`, `revision` (numeric, absent = 0), `prerelease`, `compatibility`; other names are errors. `(?<name>)` and `(?P<name>)` both work. Candidates must share `compatibility`. |
 
 Errors: `rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group "x" (allowed: ...)`, `regex: invalid RE2 regexp: ...`, and `cannot be combined with updateTypes: ...`.

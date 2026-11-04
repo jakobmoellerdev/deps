@@ -17,6 +17,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/precommit"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
@@ -32,7 +33,8 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 	ms = append(ms, actions.New(), gomod.New(), docker.New(), npm.New(), helm.New(),
 		kustomize.New(), precommit.New(), gitlabci.New(),
 		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise(), cargo.New(),
-		piprequirements.New(), pep621.New(), poetry.New(), pipenv.New())
+		piprequirements.New(), pep621.New(), poetry.New(), pipenv.New(),
+		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt())
 	return append(ms, cs...), nil
 }
 
@@ -50,5 +52,6 @@ func ManagerDocs() []refdoc.Manager {
 	return []refdoc.Manager{actions.Doc, gomod.Doc, docker.Doc, npm.Doc, helm.Doc,
 		kustomize.Doc, precommit.Doc, gitlabci.Doc,
 		toolversions.DocNvm, toolversions.DocNodenv, toolversions.DocAsdf, toolversions.DocMise, cargo.Doc,
-		piprequirements.Doc, pep621.Doc, poetry.Doc, pipenv.Doc, custom.Doc}
+		piprequirements.Doc, pep621.Doc, poetry.Doc, pipenv.Doc,
+		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc, custom.Doc}
 }

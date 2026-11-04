@@ -25,6 +25,7 @@ import (
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/tfregistry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
@@ -152,17 +153,20 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	gh := githubapi.New(client, auth, sem)
 	releases := githubreleases.New(gh)
 	docker := dockerds.New(client, limits.Docker)
+	registry := tfregistry.New(client, sem, os.Getenv)
 	sources := map[string]engine.Datasource{
-		"git-tags":          gittags.New(client, auth, sem, gh),
-		"go":                goproxy.New(client, sem),
-		gotoolchain.Name:    gotoolchain.New(client, sem),
-		"docker":            docker,
-		githubreleases.Name: releases,
-		npmds.Name:          npmds.New(client, limits.NPM, os.Getenv),
-		nodeversion.Name:    nodeversion.New(client, sem, os.Getenv),
-		helmds.Name:         helmds.New(client, sem, auth, docker),
-		crate.Name:          crate.New(client, limits.Crates, auth, os.Getenv),
-		pypi.Name:           pypi.New(client, sem, os.Getenv),
+		"git-tags":              gittags.New(client, auth, sem, gh),
+		"go":                    goproxy.New(client, sem),
+		gotoolchain.Name:        gotoolchain.New(client, sem),
+		"docker":                docker,
+		githubreleases.Name:     releases,
+		npmds.Name:              npmds.New(client, limits.NPM, os.Getenv),
+		nodeversion.Name:        nodeversion.New(client, sem, os.Getenv),
+		helmds.Name:             helmds.New(client, sem, auth, docker),
+		crate.Name:              crate.New(client, limits.Crates, auth, os.Getenv),
+		pypi.Name:               pypi.New(client, sem, os.Getenv),
+		tfregistry.ProviderName: registry.Providers(),
+		tfregistry.ModuleName:   registry.Modules(),
 	}
 	for name, cd := range cfg.CustomDatasources {
 		ds, err := customds.New(client, sem, name, cd.Spec())
@@ -179,7 +183,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		sources:   sources,
 		security:  security,
 		checksums: checksum.New(client, sem, releases),
-		env:       manager.Env{DefaultHost: host},
+		env:       manager.Env{DefaultHost: host, TerraformRegistry: cfg.Terraform.DefaultRegistry},
 		stderr:    stderr,
 		auth:      auth,
 		gh:        gh,

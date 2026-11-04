@@ -32,15 +32,17 @@ const (
 	PinDigest = "digest"
 )
 
-// Range strategies of rangeStrategy (Renovate's names), for npm, cargo and Python dependency ranges.
+// Range strategies of rangeStrategy (Renovate's names), for npm, cargo and Python dependency ranges
+// and terraform constraints.
 const (
 	RangeAuto           = "auto"
 	RangeBump           = "bump"
+	RangeReplace        = "replace"
 	RangeUpdateLockfile = "update-lockfile"
 )
 
 // RangeStrategies are the accepted rangeStrategy values.
-var RangeStrategies = []string{RangeAuto, RangeBump, RangeUpdateLockfile}
+var RangeStrategies = []string{RangeAuto, RangeBump, RangeReplace, RangeUpdateLockfile}
 
 // Rebase modes of rebaseWhen.
 const (
@@ -71,11 +73,11 @@ const DefaultDashboardTitle = "Dependency Dashboard"
 
 // Known values for validation.
 var (
-	Managers = []string{"github-actions", "gomod", "docker", "npm", "helm", "kustomize", "pre-commit", "gitlabci", "nvm", "nodenv", "asdf", "mise", "cargo", "pip_requirements", "pep621", "poetry", "pipenv", "custom"}
-	DepTypes = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "setup", "engines", "volta", "chart", "helmfile", "k0s", "flux", "argocd", "image", "helmChart", "resource", "repository", "service", "include", "component", "node", "tool", "annotation", "regex", "dev-dependencies", "build-dependencies", "workspace.dependencies", "patch", "replace", "requirements", "project.dependencies", "project.optional-dependencies", "dependency-groups", "tool.uv.dev-dependencies", "tool.pdm.dev-dependencies", "group", "packages", "dev-packages", "category"}
+	Managers = []string{"github-actions", "gomod", "docker", "npm", "helm", "kustomize", "pre-commit", "gitlabci", "nvm", "nodenv", "asdf", "mise", "cargo", "pip_requirements", "pep621", "poetry", "pipenv", "terraform", "terraform-version", "tflint-plugin", "terragrunt", "custom"}
+	DepTypes = []string{"direct", "indirect", "go", "toolchain", "action", "dockerfile", "compose", "workflow", "kubernetes", "helm", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "packageManager", "setup", "engines", "volta", "chart", "helmfile", "k0s", "flux", "argocd", "image", "helmChart", "resource", "repository", "service", "include", "component", "node", "tool", "annotation", "regex", "dev-dependencies", "build-dependencies", "workspace.dependencies", "patch", "replace", "requirements", "project.dependencies", "project.optional-dependencies", "dependency-groups", "tool.uv.dev-dependencies", "tool.pdm.dev-dependencies", "group", "packages", "dev-packages", "category", "required_provider", "required_version", "module", "provider", "helm_release", "tfe_workspace", "docker_image", "docker_container", "docker_service", "docker_registry_image", "kubernetes_pod", "kubernetes_pod_v1", "kubernetes_deployment", "kubernetes_deployment_v1", "kubernetes_daemonset", "kubernetes_daemon_set_v1", "kubernetes_stateful_set", "kubernetes_stateful_set_v1", "kubernetes_job", "kubernetes_job_v1", "kubernetes_cron_job", "kubernetes_cron_job_v1", "kubernetes_replication_controller", "kubernetes_replication_controller_v1", "terraform-version", "opentofu-version", "plugin", "github", "gitTags", "terragrunt"}
 	// Datasources are the deps datasource names (dep.Dep.Datasource); custom datasources add
 	// custom.<name> (CustomDatasourcePrefix).
-	Datasources = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version", "helm", "crate", "pypi"}
+	Datasources = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version", "helm", "crate", "pypi", "terraform-provider", "terraform-module"}
 	// DatasourceAliases maps Renovate datasource names to deps datasource names.
 	DatasourceAliases = map[string]string{
 		"golang-version":             "go-toolchain",
@@ -86,7 +88,7 @@ var (
 	// DatasourceNames are the accepted datasource names of custom[].datasource and
 	// rules[].datasources: Datasources followed by the DatasourceAliases keys (plus
 	// custom.<name> of customDatasources, see Config.KnownDatasource).
-	DatasourceNames = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version", "helm", "crate", "pypi", "golang-version", "github-tags", "github-release-attachments", "node"}
+	DatasourceNames = []string{"git-tags", "github-releases", "go", "go-toolchain", "docker", "npm", "node-version", "helm", "crate", "pypi", "terraform-provider", "terraform-module", "golang-version", "github-tags", "github-release-attachments", "node"}
 	// Versionings are the versioning scheme names; rules[].versioning and custom[].versioning
 	// also accept regex:<RE2> (versioning.RegexPrefix).
 	Versionings = versioning.Names
@@ -117,7 +119,7 @@ var DefaultIgnorePaths = []string{
 type Config struct {
 	Version       int      `yaml:"version" jsonschema:"enum=1,default=1" jsonschema_description:"Config format version; must be 1 if set."`
 	Pin           string   `yaml:"pin" jsonschema:"enum=keep,enum=digest,default=keep" jsonschema_description:"Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment."`
-	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=update-lockfile,default=auto" jsonschema_description:"How npm, cargo and Python dependency ranges are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock) while the range admits the new version (rewriting the range otherwise), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,<2 -> >=1.5.0,<2), auto is update-lockfile (Renovate's default)."`
+	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=replace,enum=update-lockfile,default=auto" jsonschema_description:"How npm, cargo and Python dependency ranges and terraform version constraints are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, .terraform.lock.hcl) while the range admits the new version (rewriting the range otherwise), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,<2 -> >=1.5.0,<2, ~> 5.0 -> ~> 5.46); auto is Renovate's default per manager: update-lockfile, replace for terraform and terragrunt."`
 	Schedule      []string `yaml:"schedule" jsonschema_description:"Cron expressions (5 fields) equal to cron triggers of the workflow running deps: new update PRs are created only in runs triggered by one of them (non-schedule triggers such as workflow_dispatch, push or a local run act immediately); empty means every run."`
 	Security      *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, updates and schedule."`
 	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
@@ -125,10 +127,11 @@ type Config struct {
 	Monorepos     *bool    `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group."`
 	GitAuthor     string   `yaml:"gitAuthor" jsonschema:"default=deps[bot] <deps-bot@noreply.invalid>" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified."`
 	// GitIgnoredAuthors are emails whose commits on an update branch count as the bot's own.
-	GitIgnoredAuthors []string `yaml:"gitIgnoredAuthors" jsonschema_description:"Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased."`
-	PRConcurrentLimit int      `yaml:"prConcurrentLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited."`
-	PRHourlyLimit     int      `yaml:"prHourlyLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of managed PRs created per hour, counting existing PRs by creation time. 0 means unlimited."`
-	Actions           Actions  `yaml:"actions" jsonschema_description:"github-actions manager settings."`
+	GitIgnoredAuthors []string  `yaml:"gitIgnoredAuthors" jsonschema_description:"Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased."`
+	PRConcurrentLimit int       `yaml:"prConcurrentLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited."`
+	PRHourlyLimit     int       `yaml:"prHourlyLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of managed PRs created per hour, counting existing PRs by creation time. 0 means unlimited."`
+	Actions           Actions   `yaml:"actions" jsonschema_description:"github-actions manager settings."`
+	Terraform         Terraform `yaml:"terraform" jsonschema_description:"terraform manager settings."`
 	// GomodUpdateImportPaths enables major module path updates (Renovate's
 	// postUpdateOptions: [gomodUpdateImportPaths]).
 	GomodUpdateImportPaths *bool `yaml:"gomodUpdateImportPaths" jsonschema:"default=true" jsonschema_description:"Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports)."`
@@ -241,21 +244,26 @@ type Actions struct {
 	DefaultHost string `yaml:"defaultHost" jsonschema_description:"Host for owner/repo@ref actions; empty means auto-detected from the platform."`
 }
 
+// Terraform holds terraform manager settings.
+type Terraform struct {
+	DefaultRegistry string `yaml:"defaultRegistry" jsonschema_description:"Registry host of provider and module addresses without one in *.tf files, e.g. registry.opentofu.org; empty means registry.terraform.io. *.tofu files default to registry.opentofu.org unless this is set."`
+}
+
 // Rule overrides the policy for matching deps.
 type Rule struct {
-	Manager       string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=helm,enum=kustomize,enum=pre-commit,enum=gitlabci,enum=nvm,enum=nodenv,enum=asdf,enum=mise,enum=cargo,enum=pip_requirements,enum=pep621,enum=poetry,enum=pipenv,enum=custom" jsonschema_description:"Only match deps of this manager."`
+	Manager       string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=helm,enum=kustomize,enum=pre-commit,enum=gitlabci,enum=nvm,enum=nodenv,enum=asdf,enum=mise,enum=cargo,enum=pip_requirements,enum=pep621,enum=poetry,enum=pipenv,enum=terraform,enum=terraform-version,enum=tflint-plugin,enum=terragrunt,enum=custom" jsonschema_description:"Only match deps of this manager."`
 	Names         []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates)."`
-	DepTypes      []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=chart,enum=helmfile,enum=k0s,enum=flux,enum=argocd,enum=image,enum=helmChart,enum=resource,enum=repository,enum=service,enum=include,enum=component,enum=node,enum=tool,enum=annotation,enum=regex,enum=dev-dependencies,enum=build-dependencies,enum=workspace.dependencies,enum=patch,enum=replace,enum=requirements,enum=project.dependencies,enum=project.optional-dependencies,enum=dependency-groups,enum=tool.uv.dev-dependencies,enum=tool.pdm.dev-dependencies,enum=group,enum=packages,enum=dev-packages,enum=category" jsonschema_description:"Only match deps of these types."`
+	DepTypes      []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=chart,enum=helmfile,enum=k0s,enum=flux,enum=argocd,enum=image,enum=helmChart,enum=resource,enum=repository,enum=service,enum=include,enum=component,enum=node,enum=tool,enum=annotation,enum=regex,enum=dev-dependencies,enum=build-dependencies,enum=workspace.dependencies,enum=patch,enum=replace,enum=requirements,enum=project.dependencies,enum=project.optional-dependencies,enum=dependency-groups,enum=tool.uv.dev-dependencies,enum=tool.pdm.dev-dependencies,enum=group,enum=packages,enum=dev-packages,enum=category,enum=required_provider,enum=required_version,enum=module,enum=provider,enum=helm_release,enum=tfe_workspace,enum=docker_image,enum=docker_container,enum=docker_service,enum=docker_registry_image,enum=kubernetes_pod,enum=kubernetes_pod_v1,enum=kubernetes_deployment,enum=kubernetes_deployment_v1,enum=kubernetes_daemonset,enum=kubernetes_daemon_set_v1,enum=kubernetes_stateful_set,enum=kubernetes_stateful_set_v1,enum=kubernetes_job,enum=kubernetes_job_v1,enum=kubernetes_cron_job,enum=kubernetes_cron_job_v1,enum=kubernetes_replication_controller,enum=kubernetes_replication_controller_v1,enum=terraform-version,enum=opentofu-version,enum=plugin,enum=github,enum=gitTags,enum=terragrunt" jsonschema_description:"Only match deps of these types."`
 	Paths         []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'."`
-	Datasources   []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=pypi,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource."`
+	Datasources   []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=pypi,enum=terraform-provider,enum=terraform-module,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource."`
 	UpdateTypes   []string `yaml:"updateTypes" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`
 	Ignore        *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types."`
 	Pin           string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
 	Allow         string   `yaml:"allow" jsonschema_description:"New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written."`
-	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=update-lockfile" jsonschema_description:"Range strategy for matching npm, cargo and Python deps (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
+	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=replace,enum=update-lockfile" jsonschema_description:"Range strategy for matching npm, cargo, Python and terraform deps (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
 	Updates       []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
 	// Versioning overrides the dep's scheme before resolution, so it is a pre-policy field.
-	Versioning string `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|cargo|pep440|regex:.+)$" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`
+	Versioning string `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|regex:.+)$" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`
 	// Separate* override the top-level PR bucket options for matching deps.
 	SeparateMajorMinor    *bool    `yaml:"separateMajorMinor" jsonschema_description:"Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types)."`
 	SeparateMultipleMajor *bool    `yaml:"separateMultipleMajor" jsonschema_description:"Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types)."`
@@ -279,9 +287,9 @@ type Rule struct {
 type Custom struct {
 	Files      []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans."`
 	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
-	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=pypi,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node) are aliases."`
+	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=pypi,enum=terraform-provider,enum=terraform-module,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node) are aliases."`
 	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
-	Versioning string    `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|cargo|pep440|regex:.+)$,default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440 or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names."` // default semver
+	Versioning string    `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|regex:.+)$,default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names."` // default semver
 	Checksum   *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
 }
 

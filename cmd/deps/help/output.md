@@ -10,6 +10,7 @@ note    package-lock.json changes are computed by apply/run   (plan, when an npm
 note    Cargo.lock changes are computed by apply/run          (plan, when a cargo update exists)
 note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run   (plan, when a Python update exists)
 note    --hash lines of requirements files are computed by apply/run   (plan, when a requirements file with --hash has an update)
+note    .terraform.lock.hcl changes are computed by apply/run (plan, when a terraform update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```

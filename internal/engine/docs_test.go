@@ -19,11 +19,13 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/tfregistry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
@@ -100,9 +102,9 @@ func assertSkipsInCode(t *testing.T, owner string, skips []refdoc.Skip, code str
 
 func TestSkipDocsAreProducedByCode(t *testing.T) {
 	assertSkipsInCode(t, "engine", SkipDocs, codeOf(t, ".", "../config"))
-	// pkgDirs maps managers to their package directories when the name differs; kustomize
-	// and gitlabci report docker.ParseRef's skips, cargo the crate datasource's registry skip, the
-	// Python managers internal/pyreq's.
+	// pkgDirs maps managers to their package directories when the name differs; kustomize,
+	// gitlabci and terraform report docker.ParseRef's skips, cargo the crate datasource's
+	// registry skip, the Python managers internal/pyreq's.
 	pkgDirs := map[string][]string{
 		actions.Name: {"actions"}, "pre-commit": {"precommit"},
 		"nvm": {"toolversions"}, "nodenv": {"toolversions"}, "asdf": {"toolversions"}, "mise": {"toolversions"},
@@ -110,6 +112,8 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"cargo":              {"cargo", filepath.Join("..", "datasource", "crate")},
 		piprequirements.Name: {"piprequirements", "../pyreq"}, pep621.Name: {"pep621", "../pyreq"},
 		poetry.Name: {"poetry", "../pyreq"}, pipenv.Name: {"pipenv", "../pyreq"},
+		terraform.Name: {"terraform", "docker"}, terraform.VersionName: {"terraform"}, terraform.TFLintName: {"terraform"},
+		terraform.TerragruntName: {"terraform"},
 	}
 	for _, m := range ManagerDocs() {
 		dirs, ok := pkgDirs[m.Name]
@@ -142,7 +146,7 @@ func TestManagerDocsComplete(t *testing.T) {
 }
 
 func TestDatasourceDocsComplete(t *testing.T) {
-	docs := []refdoc.Datasource{gittags.Doc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, customds.Doc}
+	docs := []refdoc.Datasource{gittags.Doc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, customds.Doc}
 	var names []string
 	for _, d := range docs {
 		if d.Name == "" || d.NameForm == "" || d.Endpoints == "" || d.Auth == "" || d.ReleaseTimes == "" {

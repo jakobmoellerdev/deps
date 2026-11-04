@@ -28,6 +28,10 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`pep621`](#pep621)
 - [`poetry`](#poetry)
 - [`pipenv`](#pipenv)
+- [`terraform`](#terraform)
+- [`terraform-version`](#terraform-version)
+- [`tflint-plugin`](#tflint-plugin)
+- [`terragrunt`](#terragrunt)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -1045,6 +1049,188 @@ Poetry and pdm cannot pin a version there: they move the dep to the newest versi
 
 - `plan` does not run lock commands, and prints `note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run`.
 
+## terraform
+
+Updates provider, module and Terraform version constraints in Terraform and OpenTofu configurations, then refreshes `.terraform.lock.hcl`. HCL files are read with a small scanner that understands the whole syntax (strings, templates, heredocs, comments, nested expressions) but only interprets literal strings and object constructors; JSON configuration ([JSON syntax](https://developer.hashicorp.com/terraform/language/syntax/json), e.g. CDK for Terraform's `cdk.tf.json`) is read into the same structure, so it gives the same deps.
+
+**Files:**
+
+- `*.tf`, `*.tofu`, `*.tf.json`, `*.tofu.json` (not below a `.terraform` data directory)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `required_provider` | `terraform { required_providers { <name> = { source, version } } }`; a bare `<name> = "<constraint>"` means `hashicorp/<name>` | `terraform-provider` | `hashicorp` | updated |
+| `provider` | the legacy `version` of a `provider "<name>"` block; the source is the file's `required_providers` entry of that name, else `hashicorp/<name>`. Blocks without `version` are not deps. | `terraform-provider` | `hashicorp` | updated |
+| `module` | `module` blocks: a registry `source` (`[host/]namespace/name/provider[//subdir]`) with its `version`, or a git `source` with `?ref=` | registry: `terraform-module`; git: `git-tags` | registry: `hashicorp`; git: `semver`, partial refs `tag` | updated |
+| `required_version` | `terraform { required_version }` | `github-releases` (`hashicorp/terraform`; `opentofu/opentofu` in `*.tofu` files) | `hashicorp` | updated |
+| `helm_release` | `chart`, `repository` and `version` of a `helm_release` resource (also `chart = "oci://host/path/name"`); only exact versions are rewritten, as with the helm manager | `helm` | `semver` | updated |
+| `tfe_workspace` | `terraform_version` of a `tfe_workspace` resource | `github-releases` (`hashicorp/terraform`) | `hashicorp` | updated |
+| `docker_image` | `name` of a `docker_image` resource | `docker` | `docker` | updated |
+| `docker_container` | `image` of a `docker_container` resource | `docker` | `docker` | updated |
+| `docker_service` | `task_spec { container_spec { image } }` of a `docker_service` resource | `docker` | `docker` | updated |
+| `docker_registry_image` | `name` of a `docker_registry_image` data source | `docker` | `docker` | updated |
+| `kubernetes_pod` | `image` of every `container` / `init_container` block of a `kubernetes_pod` resource | `docker` | `docker` | updated |
+| `kubernetes_pod_v1` | `image` of every `container` / `init_container` block of a `kubernetes_pod_v1` resource | `docker` | `docker` | updated |
+| `kubernetes_deployment` | `image` of every `container` / `init_container` block of a `kubernetes_deployment` resource | `docker` | `docker` | updated |
+| `kubernetes_deployment_v1` | `image` of every `container` / `init_container` block of a `kubernetes_deployment_v1` resource | `docker` | `docker` | updated |
+| `kubernetes_daemonset` | `image` of every `container` / `init_container` block of a `kubernetes_daemonset` resource | `docker` | `docker` | updated |
+| `kubernetes_daemon_set_v1` | `image` of every `container` / `init_container` block of a `kubernetes_daemon_set_v1` resource | `docker` | `docker` | updated |
+| `kubernetes_stateful_set` | `image` of every `container` / `init_container` block of a `kubernetes_stateful_set` resource | `docker` | `docker` | updated |
+| `kubernetes_stateful_set_v1` | `image` of every `container` / `init_container` block of a `kubernetes_stateful_set_v1` resource | `docker` | `docker` | updated |
+| `kubernetes_job` | `image` of every `container` / `init_container` block of a `kubernetes_job` resource | `docker` | `docker` | updated |
+| `kubernetes_job_v1` | `image` of every `container` / `init_container` block of a `kubernetes_job_v1` resource | `docker` | `docker` | updated |
+| `kubernetes_cron_job` | `image` of every `container` / `init_container` block of a `kubernetes_cron_job` resource | `docker` | `docker` | updated |
+| `kubernetes_cron_job_v1` | `image` of every `container` / `init_container` block of a `kubernetes_cron_job_v1` resource | `docker` | `docker` | updated |
+| `kubernetes_replication_controller` | `image` of every `container` / `init_container` block of a `kubernetes_replication_controller` resource | `docker` | `docker` | updated |
+| `kubernetes_replication_controller_v1` | `image` of every `container` / `init_container` block of a `kubernetes_replication_controller_v1` resource | `docker` | `docker` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unsupported constraint` | a value that is not `[op] <version>`, e.g. empty |
+| `no version constraint` | a provider or registry module without `version` |
+| `non-literal value` | a version or provider entry that is an expression (`var.v`, `"${…}"`) |
+| `non-literal source` | a `source` that is an expression |
+| `cannot locate value` | a value with escapes, or a URL-encoded `ref` |
+| `invalid provider source` | a `source` that is not `[host/]namespace/type` |
+| `builtin provider` | `terraform.io/builtin/…` |
+| `local module` | `./…`, `../…` |
+| `unsupported module source` | archives (`https://…`), `s3::`, `gcs::`, `hg::` and other go-getter sources |
+| `no ref` | a git module source without `?ref=` |
+| `commit ref` | a git module pinned to a 40-hex commit |
+| `local chart` | helm_release: a chart path (`./x`, `/x`), a chart URL (`https://…/x.tgz`), or a chart name without `repository` |
+| `repository alias` | helm_release: a `repo/chart` chart without `repository` (a `helm repo add` name) |
+| `invalid chart reference` | helm_release: an `oci://` chart without path and name |
+| `unknown chart repository <repository>` | helm_release: a `repository` that is not `http(s)://` or `oci://` |
+| `version range` | helm_release: a version that is not a full `[v]MAJOR.MINOR.PATCH[-pre][+build]` |
+| `no version` | helm_release without `version` |
+| `no tag` | an image without tag or digest |
+| `digest without tag` | an image pinned by digest only |
+| `invalid reference` | an image literal that is not a valid reference |
+
+**Constraints and rangeStrategy.**
+
+- Every constraint of the Terraform grammar (`=`, `!=`, `>`, `>=`, `<`, `<=`, `~>`, comma-separated) is the dep's range; its first version is the current version. Only the version bytes are replaced, so operator and spacing are kept, and a new version is written at the precision and `v` style of the old one.
+- [`rangeStrategy`](configuration.md#rangestrategy) decides what happens (top level or per rule). `auto`, the default, is `replace`, Renovate's default for terraform: a version the constraint admits is left alone; otherwise the constraint is replaced (`~> 5.0` → `~> 6.2`, `3.2.1` → `3.3.0`).
+- `update-lockfile`: an admitted version moves only the provider's `.terraform.lock.hcl` entry (a lockfile-only update, `(<type>, lockfile)` in reports), starting from the locked version; versions outside the constraint replace it as under `replace`. Modules and `required_version` have no lock, so for them it is `replace`.
+- `bump` always raises the version: `~> 5.0` → `~> 5.46`, `>= 1.5.7` → `>= 1.9.5`, `= 1.2.3` → `= 1.3.0`.
+- Constraints with an upper bound, an exclusion or several clauses (`< 2.0`, `!= 1.3`, `>= 4.0, < 6.0`) are never rewritten: under `update-lockfile` and `bump` their locked version moves within them, otherwise they are left alone (`outside range <r> (not rewritten)` in `deps explain`).
+- Under `replace` and `update-lockfile`, candidates are ranked against the version the lock file locks, when there is one.
+
+**Registries.**
+
+- Provider and module addresses without a host use `registry.terraform.io`, in `*.tofu`/`*.tofu.json` files OpenTofu's `registry.opentofu.org`; [`terraform.defaultRegistry`](configuration.md#terraformdefaultregistry) sets the host for both. An explicit host (`registry.opentofu.org/…`, `app.terraform.io/…`) is looked up on that registry through service discovery.
+- `required_version` in `*.tofu` files is an OpenTofu version (`github-releases` `opentofu/opentofu`).
+- Git module sources (`git::https://…`, `git::ssh://…`, `git@host:…`, `github.com/…`, `bitbucket.org/…`) are looked up with `git-tags` over HTTPS; the `?ref=` value is the version.
+
+**Resources.**
+
+- `helm_release` charts are looked up in their `repository` (`http(s)://` or `oci://`), or in the registry path of an `oci://host/path/name` chart.
+- Images of the docker provider and of the kubernetes workload resources are parsed and edited like the docker manager's references (tags, `@sha256:` digests, digest refresh and `pin: digest`). Images given as expressions (`docker_image.x.image_id`, `var.image`) are not deps.
+- `tfe_workspace` `terraform_version` follows Terraform CLI releases like `required_version`.
+
+**Lock file.**
+
+- `.terraform.lock.hcl` next to a configuration file gives its provider deps their locked version (lock entries are matched by `namespace/type`, so OpenTofu's `registry.opentofu.org/…` entries and a custom default registry match too). A lock file that does not parse is an error of the run.
+- Post-processing (`apply`, `run`), scope: the directory of a patched configuration file that has a `.terraform.lock.hcl` next to it. Without a lock file nothing happens.
+- Providers whose constraint changed, and providers with a lockfile-only update, are refreshed; module and `required_version` updates leave the lock alone.
+- Their lock entries are removed, and `terraform init -backend=false -input=false -no-color` runs on a temporary copy of the directory (sibling directories reachable through local `../` module sources are symlinked), with `TF_IN_AUTOMATION=1`, `TF_INPUT=0` and `CHECKPOINT_DISABLE=1`. Terraform locks the newest version matching the constraint and records its `zh:` hashes for every platform and `h1:` for the runner's. Other entries keep their version.
+- A lockfile-only update locks exactly its version: the copy gets an override file (`deps_lock_override.tf`) constraining the provider to `= <version>` under its local name, and the entry's old `constraints` are written back afterwards. If Terraform locks another version, the update fails with `.terraform.lock.hcl locked <name> <v>, want <version>`.
+- Directories with `*.tofu` files or `registry.opentofu.org` entries are refreshed with `tofu` instead.
+- Hashes need the CLI: without `terraform` (or `tofu`) on `PATH` the directory's changes fail with `terraform not found (needed to update .terraform.lock.hcl)` and are dropped. Install it on the runner (for example `hashicorp/setup-terraform`). Remote modules are downloaded by `init`.
+- A failed init reports `terraform init in <dir>: <last 20 output lines>`.
+- `plan` does not run init, and prints `note    .terraform.lock.hcl changes are computed by apply/run`.
+
+**JSON files.**
+
+- Strings with `${`/`%{` templates are non-literal; escaped strings (`\u003e`) are `cannot locate value`. `"//"` comment keys are ignored, and a top-level array of objects is merged.
+
+## terraform-version
+
+Updates the Terraform version pinned in tfenv's `.terraform-version` file, or the OpenTofu version in tofuenv's `.opentofu-version` file (the first non-empty line).
+
+**Files:**
+
+- `.terraform-version`
+- `.opentofu-version`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `terraform-version` | the version on the first non-empty line of `.terraform-version` | `github-releases` (`hashicorp/terraform`) | `hashicorp` | updated |
+| `opentofu-version` | the version on the first non-empty line of `.opentofu-version` | `github-releases` (`opentofu/opentofu`) | `hashicorp` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-version value` | tfenv/tofuenv keywords: `latest`, `latest:<regex>`, `min-required`, `latest-allowed` |
+
+**Versions.**
+
+A full version (`1.9.5`) moves to the newest release; a partial one (`1.9`) keeps its precision. The `v` style of the file is kept.
+
+## tflint-plugin
+
+Updates the versions of tflint ruleset plugins in `.tflint.hcl`. Plugins without a `source` are bundled with tflint and not extracted.
+
+**Files:**
+
+- `.tflint.hcl`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `plugin` | `plugin "<name>" { source = "github.com/<owner>/<repo>", version = "…" }`; the name is `<owner>/<repo>` (`https://<host>/<owner>/<repo>` on other hosts) | `github-releases` | `semver` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `no version` | a plugin with a `source` but without `version` |
+| `invalid plugin source` | a `source` that is not `<host>/<owner>/<repo>` |
+| `non-literal source` | a `source` that is an expression |
+| `non-literal value` | a `version` that is an expression |
+| `cannot locate value` | a `version` with escapes |
+
+## terragrunt
+
+Updates the module `source` of the `terraform` block in Terragrunt configurations: git sources by their `?ref=`, `tfr://` registry modules by their `?version=` or the block's `version` constraint. Other blocks (`include`, `dependency`, `generate`, `engine`) are not extracted; `.terraform.lock.hcl` is not refreshed.
+
+**Files:**
+
+- `terragrunt.hcl` (not below a `.terragrunt-cache` directory)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `github` | `terraform { source }` from `github.com` (`github.com/…`, `git::https://github.com/…`, `git::git@github.com:…`, `git::ssh://git@github.com/…`) with `?ref=` | `git-tags` | `semver`, partial refs `tag` | updated |
+| `gitTags` | `terraform { source }` from another git host (`git::https://…`, `git::ssh://…`, `git@host:…`, `bitbucket.org/…`) with `?ref=` | `git-tags` | `semver`, partial refs `tag` | updated |
+| `terragrunt` | `terraform { source = "tfr://[host]/<namespace>/<name>/<provider>[//subdir]?version=<version>" }`, or without `?version=` the block's `version` constraint; the name is `<namespace>/<name>/<provider>` | `terraform-module` | `hashicorp` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-literal source` | a `source` that is an expression (`"${include.envcommon.locals.base_source_url}?ref=v0.8.0"`, `get_repo_root()`) |
+| `local module` | `.`, `./…`, `../…`, `/…` |
+| `unsupported module source` | archives (`https://…`), `s3::`, `gcs::`, `hg::`, `oci://` and other go-getter sources, and malformed `tfr://` addresses |
+| `no ref` | a git source without `?ref=` |
+| `commit ref` | a git source pinned to a 40-hex commit |
+| `cannot locate value` | a source with escapes, or a URL-encoded `ref` or `version` |
+| `no version constraint` | a `tfr://` source without `?version=` and without a `version` attribute |
+| `unsupported constraint` | a `?version=` that is not an exact version (Terragrunt rejects constraints there), or a `version` attribute that is not a constraint |
+| `non-literal value` | a `version` attribute that is an expression |
+
+**Versions.**
+
+- Only the version bytes are replaced: the `?ref=` value of git sources, the `?version=` value of `tfr://` sources (an exact version), or the version of the `version` attribute.
+- The `version` attribute follows the terraform manager's constraint rules: `~> 0.0.1` is bumped at its precision, multi-clause ranges (`>= 1.0, < 2.0`) are not rewritten.
+
+**Registries.**
+
+- `tfr:///…` (no host) uses `registry.terraform.io` (config `terraform.defaultRegistry` overrides it); Terragrunt's own default depends on the wrapped CLI and `TG_TF_DEFAULT_REGISTRY_HOST`, which deps does not read.
+- `tfr://<host>/…` is looked up on that registry through service discovery, like Terraform module addresses.
+- Git sources are looked up with `git-tags` over HTTPS, as for Terraform modules; the `?ref=` value is the version.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -1108,6 +1294,8 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `helm` | chart name; the repository URL (`https://…` or `oci://host/path`) is the dep's source | classic: `GET <repo>/index.yaml`, once per repository, stream-scanned so only the asked-for charts are decoded; versions without `urls` dropped. OCI: registry `tags/list` of `<host>/<path>/<chart>` via the docker datasource, tag `_` read as `+` | classic: the forge token (Basic `x-access-token`) on the forge's host, else anonymous; OCI: as `docker` | classic: index `created`; OCI: manifest annotation `org.opencontainers.image.created` |
 | `crate` | crate name (case-insensitive); the dep's source is its registry name or index URL ("" = crates.io) | `GET <index>/<prefix>/<name>` of the sparse index (crates.io: `DEPS_CRATES_INDEX_URL` or `https://index.crates.io`; prefixes `1/<n>`, `2/<n>`, `3/<first char>/<n>`, `<n[0:2]>/<n[2:4]>/<n>`), or the same path of a git index (shallow blob-less clone, `git cat-file`); newline-delimited JSON, yanked versions dropped; not found → `crate <name> not found` (`… in registry <name>`). Partial requirements also get a derived `X.Y` and `X` per stable release line. Source repository (release notes): `GET <api>/api/v1/crates/<name>/<version>` `repository` (crates.io: `DEPS_CRATES_API_URL` or `https://crates.io`; other registries: `api` of their `config.json`), only for versions in a pull request | alternative registries: `CARGO_REGISTRIES_<NAME>_TOKEN`, `$CARGO_HOME/credentials.toml` or `.cargo/config.toml` `[registries.<name>] token` as `Authorization`, only to the index host; without a token, the platform token (Basic) for its host, and the git credential helper after a 401; git indexes: git credential helpers | index `pubtime` (crates.io writes it for every version); a release line has the time of its first release |
 | `pypi` | package name; PEP 503-normalized for lookups (`zope.interface` → `zope-interface`) | PyPI: `GET <DEPS_PYPI_URL or https://pypi.org>/pypi/<name>/json`; other indexes: `GET <index>/<name>/` with `Accept: application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.2, text/html;q=0.01` (simple API: JSON, PEP 691/700, else HTML, PEP 503; an HTTP 406 is retried with `Accept: text/html`); once per (index, name); versions without files or with every file yanked dropped; 404 → `package <name> not found` | userinfo of the index URL (`https://user:pass@host/simple`) sent as basic auth, redacted in errors and logs | earliest file upload time of the version on any of the dep's indexes (`upload_time_iso_8601`, `upload-time`, HTML `data-upload-time`) |
+| `terraform-provider` | `namespace/type`; the dep's source is the registry (`https://registry.terraform.io` when empty) | service discovery `GET https://<host>/.well-known/terraform.json` once per registry (relative and absolute service URLs), then `GET <providers.v1>/<namespace>/<type>/versions`, once per provider; 404 → `provider <name> not found in <registry>` | `Authorization: Bearer <token>`, resolved once per host as the Terraform CLI does: `$TF_TOKEN_<host>` (dots as `_`, hyphens as is or `__`, e.g. `TF_TOKEN_app_terraform_io`; punycode hosts verbatim), then `credentials "<host>" { token = ... }` of the CLI config (`$TF_CLI_CONFIG_FILE`, else `~/.terraformrc` plus the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` such as `credentials.tfrc.json`; `%APPDATA%/terraform.rc` and `%APPDATA%/terraform.d` on Windows), then the `credentials_helper` (`terraform-credentials-<name> <args...> get <host>` from `~/.terraform.d/plugins[/<os>_<arch>]`, else PATH; missing → `terraform-credentials-<name> not found (needed for <host> credentials)`); else anonymous. | `published_at` of the version document (`<service><name>/<version>`; registry.terraform.io serves it, other registries are unknown). A partial version (`5.31` of `~> 5.31`) has the time of its line's first release. |
+| `terraform-module` | `namespace/name/provider`; the dep's source is the registry (`https://registry.terraform.io` when empty) | service discovery `GET https://<host>/.well-known/terraform.json` once per registry (relative and absolute service URLs), then `GET <modules.v1>/<namespace>/<name>/<provider>/versions`, once per module; 404 → `module <name> not found in <registry>` | `Authorization: Bearer <token>`, resolved once per host as the Terraform CLI does: `$TF_TOKEN_<host>` (dots as `_`, hyphens as is or `__`, e.g. `TF_TOKEN_app_terraform_io`; punycode hosts verbatim), then `credentials "<host>" { token = ... }` of the CLI config (`$TF_CLI_CONFIG_FILE`, else `~/.terraformrc` plus the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` such as `credentials.tfrc.json`; `%APPDATA%/terraform.rc` and `%APPDATA%/terraform.d` on Windows), then the `credentials_helper` (`terraform-credentials-<name> <args...> get <host>` from `~/.terraform.d/plugins[/<os>_<arch>]`, else PATH; missing → `terraform-credentials-<name> not found (needed for <host> credentials)`); else anonymous. | `published_at` of the version document (`<service><name>/<version>`; registry.terraform.io serves it, other registries are unknown). A partial version (`5.31` of `~> 5.31`) has the time of its line's first release. |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.

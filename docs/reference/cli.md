@@ -259,7 +259,7 @@ deps plan
 
 Resolves every dependency and prints the report on stderr (see `deps help output`). Then writes a unified diff per changed file to stdout (`a/<path>` → `b/<path>`); `git apply` accepts it. Nothing is written to the repository.
 
-Post-processors do not run, so `go.sum` and lockfile changes are missing from the diff; `plan` notes this with `note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run` and `note    Cargo.lock changes are computed by apply/run`. Use `deps apply` to get them.
+Post-processors do not run, so `go.sum` and lockfile changes are missing from the diff; `plan` notes this with `note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run`, `note    Cargo.lock changes are computed by apply/run` and `note    .terraform.lock.hcl changes are computed by apply/run`. Use `deps apply` to get them.
 
 A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`, as is the lock file maintenance update (`lockFileMaintenance`), which only `deps run` makes.
 
@@ -397,6 +397,9 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `DEPS_GITHUB_COM_TOKEN` | all | token for github.com lookups when the platform is not github.com (avoids anonymous rate limits for actions and releases hosted on GitHub) |
 | `DEPS_DEFAULT_ACTIONS_URL` | all | default host of `owner/repo@ref` actions (hostname, or a URL whose host is used); overridden by the config key `actions.defaultHost` |
 | `DEPS_NODE_DIST_URL` | `node-version` datasource | base URL of a nodejs.org `dist` mirror (default `https://nodejs.org/dist`) |
+| `TF_TOKEN_<host>` | `terraform-provider`, `terraform-module` datasources | registry token sent as `Authorization: Bearer` to `<host>` (dots as `_`, hyphens as `__`, e.g. `TF_TOKEN_app_terraform_io`), as the Terraform CLI reads it; takes precedence over the CLI config |
+| `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG` | `terraform-provider`, `terraform-module` datasources | Terraform CLI config read for registry `credentials` blocks and the `credentials_helper`, replacing `~/.terraformrc` (`%APPDATA%/terraform.rc`); when set, the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` (`credentials.tfrc.json`) are not read. `TERRAFORM_CONFIG` is the legacy name |
+| `HOME`, `APPDATA` (Windows) | `terraform-provider`, `terraform-module` datasources | where the Terraform CLI config, `credentials.tfrc.json` and credentials helpers (`.terraform.d/plugins`) are found |
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor` |
 | `DEPS_SIGNING_KEY` | `run` | default of `--signing-key`: a passphrase-less OpenSSH or armored OpenPGP private key, or the path of a file holding one; deps signs its commits with it |
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
@@ -443,6 +446,7 @@ note    package-lock.json changes are computed by apply/run   (plan, when an npm
 note    Cargo.lock changes are computed by apply/run          (plan, when a cargo update exists)
 note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run   (plan, when a Python update exists)
 note    --hash lines of requirements files are computed by apply/run   (plan, when a requirements file with --hash has an update)
+note    .terraform.lock.hcl changes are computed by apply/run (plan, when a terraform update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```

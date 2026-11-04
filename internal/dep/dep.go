@@ -33,7 +33,7 @@ type Dep struct {
 	Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "pip_requirements" | "pep621" | "poetry" | "pipenv" | "helm" | "cargo" | "custom"
 	Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "pypi" | "helm" | "crate" | "custom.<name>"
 	Versioning  string // "tag" | "go" | "docker" | "semver" | "pep440" | "loose" | "cargo" | "regex:<RE2>" (rules[].versioning overrides the manager's)
-	DepType     string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"|"setup"; docker: "dockerfile"|"compose"|"workflow"|"action"|"kubernetes"|"helm"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"|"engines"|"volta"; pip_requirements: "requirements"; pep621: "project.dependencies"|"project.optional-dependencies"|"dependency-groups"|"tool.uv.dev-dependencies"|"tool.pdm.dev-dependencies"; poetry: "dependencies"|"dev-dependencies"|"group"; pipenv: "packages"|"dev-packages"|"category"; helm: "chart"|"helmfile"|"k0s"|"flux"|"argocd"; cargo: "dependencies"|"dev-dependencies"|"build-dependencies"|"workspace.dependencies"; custom: "annotation"|"regex"
+	DepType     string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"|"setup"; docker: "dockerfile"|"compose"|"workflow"|"action"|"kubernetes"|"helm"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"|"engines"|"volta"; pip_requirements: "requirements"; pep621: "project.dependencies"|"project.optional-dependencies"|"dependency-groups"|"tool.uv.dev-dependencies"|"tool.pdm.dev-dependencies"; poetry: "dependencies"|"dev-dependencies"|"group"; pipenv: "packages"|"dev-packages"|"category"; helm: "chart"|"helmfile"|"k0s"|"flux"|"argocd"; cargo: "dependencies"|"dev-dependencies"|"build-dependencies"|"workspace.dependencies"; terraform: "required_provider"|"provider"|"module"|"required_version"|"helm_release"|"tfe_workspace"|resource type; terraform-version: "terraform-version"|"opentofu-version"; tflint-plugin: "plugin"; terragrunt: "github"|"gitTags"|"terragrunt"; custom: "annotation"|"regex"
 	File        string // slash path relative to --dir
 	Line        int    // 1-based
 	Name        string // actions: owner/repo[/sub]; gomod: module path; helm: chart
@@ -52,12 +52,14 @@ type Dep struct {
 	ChecksumSpan   Span            // custom: checksum token
 	ChecksumSource *ChecksumSource // custom: where the checksum of a new version comes from; nil = none
 
-	// npm and cargo dependency entries and Python specifiers; rangeStrategy applies to deps with a Range.
-	Range string // the range as written (npm ^1.2.3, cargo ">=1.2, <2"; Python >=1.2,<2, RefSpan its bytes); Version is its bare (npm, cargo) or anchor (Python) version
+	// npm and cargo dependency entries, Python specifiers and terraform constraints; rangeStrategy
+	// applies to deps with a Range.
+	Range string // the range as written (npm ^1.2.3, cargo ">=1.2, <2"; Python >=1.2,<2, RefSpan its bytes; terraform ~> 5.0); Version is its bare (npm, cargo), anchor (Python) or first (terraform) version
 	// Constraint is Range as a Masterminds semver constraint when the syntax differs (cargo's
-	// bare "1.2" means ^1.2); "" = Range is one.
+	// bare "1.2" means ^1.2); "" = Range is one (or the versioning scheme matches it itself).
 	Constraint string
-	Locked     string // version the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock) resolves the dep to; "" = none
+	RangeFixed bool   // the range is never rewritten (terraform `>= 1.0, < 2.0`): only Locked may move within it
+	Locked     string // version the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, .terraform.lock.hcl) resolves the dep to; "" = none
 	LockUnread bool   // the lock root has a lockfile deps does not read (pnpm-lock.yaml, yarn.lock, package-lock.json v1)
 
 	// Python managers only (datasource pypi).

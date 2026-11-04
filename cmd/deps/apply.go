@@ -14,6 +14,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/nodetool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pytool"
 )
@@ -32,14 +33,15 @@ func newApply(o *rootOpts) *cobra.Command {
 }
 
 // postProcessors regenerate go.sum (go mod tidy), package-lock.json (npm), Cargo.lock
-// (cargo update) and uv.lock, poetry.lock, pdm.lock and Pipfile.lock (pytool) on temporary
-// copies, Chart.lock in process and the hashes of requirements files (pytool.Compiler:
+// (cargo update), uv.lock, poetry.lock, pdm.lock and Pipfile.lock (pytool) and
+// .terraform.lock.hcl (terraform init) on temporary copies, Chart.lock in process and the hashes of requirements files (pytool.Compiler:
 // pip-compile/uv, else from the session's pypi datasource), for apply and run.
 func postProcessors(s *session) map[string]engine.PostProcessor {
 	hashes, _ := s.sources[pypi.Name].(pytool.Hasher)
 	return map[string]engine.PostProcessor{
 		gomod.Name: gotool.Tidier{}, npm.Name: nodetool.Locker{}, helm.Name: helm.Locker{}, cargo.Name: cargo.Locker{},
-		pep621.Name: pytool.Locker{}, poetry.Name: pytool.Locker{}, pipenv.Name: pytool.Locker{},
+		terraform.Name: terraform.Locker{},
+		pep621.Name:    pytool.Locker{}, poetry.Name: pytool.Locker{}, pipenv.Name: pytool.Locker{},
 		piprequirements.Name: pytool.Compiler{Hashes: hashes},
 	}
 }

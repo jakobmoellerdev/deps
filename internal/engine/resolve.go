@@ -90,15 +90,15 @@ var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pr
 
 // digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
 // github-actions, docker and pre-commit deps whatever their versioning (a rule may override
-// it), except setup-action version inputs, which are plain values; gitlabci images and
-// services, which are edited like docker refs. Custom and kustomize deps can only refresh a
-// digest they already carry (regex `digest` group, an annotated `@sha256:`, a kustomize
-// `digest` field); they have no place to insert a new one.
+// it), except setup-action version inputs, which are plain values; gitlabci and terraform
+// images (docker and kubernetes resources), which are edited like docker refs. Custom and
+// kustomize deps can only refresh a digest they already carry (regex `digest` group, an
+// annotated `@sha256:`, a kustomize `digest` field); they have no place to insert a new one.
 func digestCapable(d dep.Dep) bool {
 	switch d.Manager {
 	case "custom", "kustomize":
 		return d.Digest != ""
-	case "gitlabci":
+	case "gitlabci", "terraform":
 		return d.Datasource == "docker"
 	}
 	return digestManagers[d.Manager] && d.DepType != actions.DepTypeSetup
@@ -635,13 +635,20 @@ type resolver struct {
 	ranger   manager.RangeUpdater // the dep's manager rewrites its range; nil = by version token
 }
 
+// autoRange is what rangeStrategy auto means per manager (Renovate's defaults): replace for
+// terraform and terragrunt, update-lockfile for npm, cargo and any other manager.
+var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace}
+
 // setRange applies the rangeStrategy of a range dep (dep.Dep.Range, read as Constraint when
-// set); other deps always replace their version. auto is update-lockfile, under which
-// candidates are ranked against the locked version. A lock root whose lockfile deps does not
-// read (LockUnread) turns update-lockfile into bump, except for peerDependencies, which never
-// get lockfile-only updates: their in-range versions are left alone. A range without a floor
-// (it admits 0.0.0: `*`, `<2`) has nothing to bump, so bump is update-lockfile for it. Deps of
-// a manager.RangeUpdater go to setRewritten.
+// set: npm and cargo dependencies, terraform constraints); other deps always replace their
+// version. Under update-lockfile and replace candidates are ranked against the locked version
+// (dep.Dep.Locked) when there is one; update-lockfile moves only the lockfile for in-range
+// candidates, replace leaves them alone. A lock root whose lockfile deps does not read
+// (LockUnread) turns update-lockfile into bump, except for peerDependencies, which never get
+// lockfile-only updates: their in-range versions are left alone. A range without a floor (it
+// admits 0.0.0: `*`, `<2`) has nothing to bump, and a range that is never rewritten
+// (RangeFixed) only moves in the lock, so bump is update-lockfile for both. Deps of a
+// manager.RangeUpdater go to setRewritten.
 func (r *resolver) setRange(s versioning.Scheme) {
 	d := r.d
 	if d.Range == "" {
@@ -652,30 +659,35 @@ func (r *resolver) setRange(s versioning.Scheme) {
 		return
 	}
 	peer := d.DepType == "peerDependencies"
-	if d.LockUnread && !peer {
+	strategy := r.pol.pre.RangeStrategy
+	if strategy == config.RangeAuto {
+		strategy = cmp.Or(autoRange[d.Manager], config.RangeUpdateLockfile)
+	}
+	if !d.RangeFixed && d.LockUnread && !peer && strategy != config.RangeReplace {
 		return
 	}
-	c, err := semver.NewConstraint(cmp.Or(d.Constraint, d.Range))
+	match, err := rangeMatcher(s, cmp.Or(d.Constraint, d.Range))
 	if err != nil {
-		slog.DebugContext(r.ctx, "range not understood, bumping it", "name", d.Name, "range", d.Range, "err", err)
+		slog.DebugContext(r.ctx, "range not understood", "name", d.Name, "range", d.Range, "err", err)
+		if d.RangeFixed {
+			r.inRange = func(string) bool { return false }
+		}
 		return
 	}
-	if r.pol.pre.RangeStrategy == config.RangeBump && !c.Check(semver.New(0, 0, 0, "", "")) {
+	if strategy == config.RangeBump && !d.RangeFixed && !match("0.0.0") {
 		return
 	}
-	r.inRange = func(v string) bool {
-		sv := s.Semver(v)
-		return sv != nil && c.Check(sv)
-	}
+	r.inRange = match
 	if d.Locked != "" && s.Valid(d.Locked) {
 		r.cur = d.Locked
-		r.lockOnly = !peer
+		r.lockOnly = !peer && strategy != config.RangeReplace
 	}
 }
 
 // setRewritten is setRange for the deps of a manager.RangeUpdater (Python specifiers): under
-// update-lockfile (auto) every admitted version keeps the range, under bump only those the
-// range cannot be raised for (`<2`, `>1`, `==1.*`). Candidates are ranked against the locked
+// update-lockfile (auto) and replace every admitted version keeps the range, under bump only
+// those the range cannot be raised for (`<2`, `>1`, `==1.*`). Admitted versions are
+// lockfile-only updates except under replace. Candidates are ranked against the locked
 // version under every strategy.
 func (r *resolver) setRewritten(s versioning.Scheme) {
 	d := r.d
@@ -692,8 +704,24 @@ func (r *resolver) setRewritten(s versioning.Scheme) {
 	}
 	if d.Locked != "" && s.Valid(d.Locked) {
 		r.cur = d.Locked
-		r.lockOnly = true
+		r.lockOnly = r.pol.pre.RangeStrategy != config.RangeReplace
 	}
+}
+
+// rangeMatcher returns whether a version satisfies rng: the scheme's own range grammar
+// (versioning.RangeMatcher, e.g. Terraform constraints), else a Masterminds constraint.
+func rangeMatcher(s versioning.Scheme, rng string) (func(string) bool, error) {
+	if m, ok := s.(versioning.RangeMatcher); ok {
+		return m.MatchRange(rng)
+	}
+	c, err := semver.NewConstraint(rng)
+	if err != nil {
+		return nil, err
+	}
+	return func(v string) bool {
+		sv := s.Semver(v)
+		return sv != nil && c.Check(sv)
+	}, nil
 }
 
 // installed is the version an npm range dep's installs get: the locked one when known, else
@@ -789,15 +817,15 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	r.setRange(scheme)
 	semverOf := scheme.Semver
 	accept := func(v string, kind dep.UpdateType) (bool, string) {
-		if r.inRange != nil {
-			in := r.inRange(v)
-			if in && !r.lockOnly {
-				return false, "admitted by range " + d.Range + " (no lockfile update)"
-			}
-			if !in && r.ranger != nil {
-				if _, ok := r.ranger.NewRange(d, v); !ok {
-					return false, "range " + d.Range + " cannot be rewritten to admit it"
-				}
+		in := r.inRange != nil && r.inRange(v)
+		switch {
+		case in && !r.lockOnly:
+			return false, "admitted by range " + d.Range + " (no lockfile update)"
+		case !in && d.RangeFixed:
+			return false, "outside range " + d.Range + " (not rewritten)"
+		case !in && r.inRange != nil && r.ranger != nil:
+			if _, ok := r.ranger.NewRange(d, v); !ok {
+				return false, "range " + d.Range + " cannot be rewritten to admit it"
 			}
 		}
 		return r.pol.check(kind, v, semverOf)
@@ -824,12 +852,16 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 			ups[i].Lockfile = r.inRange(ups[i].NewVersion)
 		}
 	}
-	if r.ranger != nil {
+	switch {
+	case r.ranger != nil:
 		// Security updates skip accept: drop those neither the lockfile nor the range can take.
 		ups = slices.DeleteFunc(ups, func(u dep.Update) bool {
 			_, ok := r.ranger.NewRange(d, u.NewVersion)
 			return !u.Lockfile && !ok
 		})
+	case d.RangeFixed:
+		// Security fixes outside the range cannot be written either.
+		ups = slices.DeleteFunc(ups, func(u dep.Update) bool { return !u.Lockfile })
 	}
 	if ups, err = r.majorPathUpdates(t, ups, scheme, dir, accept, reject); err != nil {
 		return nil, err
