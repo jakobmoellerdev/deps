@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jsonc"
 )
 
 // bunVersions reads the locked versions of ws from a bun.lock (bun's text lockfile, JSON with
@@ -20,7 +22,7 @@ func bunVersions(r *bufio.Reader, ws []lockWant) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	dec := jsontext.NewDecoder(bytes.NewReader(jsonc(src)), lenient)
+	dec := jsontext.NewDecoder(bytes.NewReader(jsonc.Strip(src)), lenient)
 	if err := enterObject(dec); err != nil {
 		return nil, err
 	}
@@ -105,40 +107,4 @@ func bunEntries(dec *jsontext.Decoder, keys map[string]bool, versions map[string
 	}
 	_, err := dec.ReadToken()
 	return err
-}
-
-// jsonc returns src with the trailing commas (before `}` or `]`, outside strings) blanked, so
-// that a JSON decoder reads bun.lock; byte offsets are kept.
-func jsonc(src []byte) []byte {
-	out := bytes.Clone(src)
-	inString, escaped := false, false
-	comma := -1
-	for i, c := range out {
-		if inString {
-			switch {
-			case escaped:
-				escaped = false
-			case c == '\\':
-				escaped = true
-			case c == '"':
-				inString = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inString, comma = true, -1
-		case ',':
-			comma = i
-		case '}', ']':
-			if comma >= 0 {
-				out[comma] = ' '
-			}
-			comma = -1
-		case ' ', '\t', '\n', '\r':
-		default:
-			comma = -1
-		}
-	}
-	return out
 }

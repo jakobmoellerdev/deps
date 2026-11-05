@@ -244,6 +244,7 @@
             "ruby-version",
             "git-submodules",
             "rust-toolchain",
+            "devcontainer",
             "custom"
           ],
           "description": "Only match deps of this manager.",
@@ -353,7 +354,9 @@
               "maven",
               "ruby",
               "development",
-              "submodule"
+              "submodule",
+              "feature",
+              "feature-version"
             ]
           },
           "type": "array",

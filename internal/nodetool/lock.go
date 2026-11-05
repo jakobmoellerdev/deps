@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jsonc"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -419,7 +420,7 @@ func lockCommands(c cmdSpec, lockName string, berry bool, locks map[string][]dep
 func restoreRanges(lock []byte, locks map[string][]dep.Update, lockName string) ([]byte, error) {
 	top, doc := "packages", lock
 	if lockName == BunLock {
-		top, doc = "workspaces", jsonc(lock)
+		top, doc = "workspaces", jsonc.Strip(lock)
 	}
 	want := map[string]string{}
 	for m, ups := range locks {

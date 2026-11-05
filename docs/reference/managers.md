@@ -41,6 +41,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`ruby-version`](#ruby-version)
 - [`git-submodules`](#git-submodules)
 - [`rust-toolchain`](#rust-toolchain)
+- [`devcontainer`](#devcontainer)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -1788,6 +1789,46 @@ Updates the Rust toolchain rustup selects for a directory: `channel` of the `[to
 - Only the version is replaced; a host triple after it and the rest of the file are kept.
 - A file without a `[toolchain]` table has no dep.
 - `rust-version` in `Cargo.toml` (`package.rust-version`, `workspace.package.rust-version`), the minimum supported Rust version, is not extracted: neither Renovate nor Dependabot updates it.
+
+## devcontainer
+
+Updates the image, the Dev Container Features and the node, go and ruby feature versions of devcontainer.json files.
+
+**Files:**
+
+- `.devcontainer.json`, `.devcontainer/devcontainer.json`, `.devcontainer/<folder>/devcontainer.json`, at any depth
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | the top-level `image` | `docker` | `docker` | updated |
+| `feature` | the keys of `features` that are OCI references (`ghcr.io/devcontainers/features/node:1`) | `docker` | `docker` | updated |
+| `feature-version` | the `version` option (or a string option value) of the features `ghcr.io/devcontainers/features/node` (name `node`), `…/go` (`go`), `…/ruby` (`ruby`) and `…/python` (`python`, skipped) | `node-version`, `go-toolchain`, `ruby-version` | as [asdf](#asdf): `semver`/`tag` (node), `tag` (go), `ruby`/`tag` (ruby) | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `local feature` | a feature in a folder of the repository (`./my-feature`) |
+| `tarball feature` | a feature downloaded from an `https://` tarball URL |
+| `not an OCI reference` | a feature without a registry host: a legacy short id (`docker-in-docker`) or a GitHub release reference (`owner/repo/feature@v1`) |
+| `variable reference` | `$` in the image or feature (`${localEnv:…}`) |
+| `invalid reference` | the image or feature reference does not parse |
+| `no tag` | an image or feature without tag |
+| `digest without tag` | an image or feature pinned by digest only |
+| `no version` | a node, go, python or ruby feature without a `version` option (the feature's default, typically `lts` or `latest`) |
+| `non-version value` | a version option that is a word: `lts`, `latest`, `none`, `os-provided` |
+| `partial version` | a go version with one part (`1`) |
+| `unsupported range` | a version option that is no version (`>=18`) |
+| `unsupported tool` | the python feature's version: deps has no python-version datasource |
+| `cannot locate value` | the string is written with JSON escapes |
+
+**Details.**
+
+- The file is JSON with comments (`//`, `/* */`) and trailing commas; edits replace the version bytes only, so comments and formatting stay.
+- The image and the features are parsed and edited like the [docker](#docker) manager's references: the tag is updated, an image digest is refreshed or, with `pin: digest`, pinned. Features are never pinned (as Renovate's `pinDigests: false`); a digest already written after a feature tag is refreshed.
+- Feature tags are usually a major (`:1`): docker versioning keeps the precision, so `:1` moves to `:2`.
+- Feature version options are read like the [asdf](#asdf) tools of the same name: `20` and `20.11` keep their precision (node, ruby), `1.22` and `1.22.3` are go-toolchain versions.
+- `build.dockerfile` and `dockerComposeFile` are not read: the [docker](#docker) manager finds the Dockerfile (`Dockerfile`, `Dockerfile.<x>`, `<x>.Dockerfile`) and the Compose file on its own.
 
 ## custom
 

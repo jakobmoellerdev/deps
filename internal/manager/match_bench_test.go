@@ -9,6 +9,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
@@ -41,6 +42,7 @@ var matchCases = []struct {
 	old  func(string) bool
 }{
 	{"cargo", cargo.New(), regexpOnly(`(^|/)Cargo\.toml$`)},
+	{"devcontainer", devcontainer.New(), regexpOnly(`(^|/)(\.devcontainer\.json|\.devcontainer/([^/]+/)?devcontainer\.json)$`)},
 	{"gomod", gomod.New(), regexpOnly(`(^|/)go\.mod$`)},
 	{"npm", npm.New(), regexpOnly(`(^|/)package\.json$`)},
 	{"pep621", pep621.New(), regexpOnly(`(^|/)pyproject\.toml$`)},
@@ -66,7 +68,8 @@ var matchSeeds = []string{
 	"a/.terragrunt-cache/terragrunt.hcl", ".terraform-version", "a/.opentofu-version",
 	".tflint.hcl", ".nvmrc", "a/.node-version", ".tool-versions", "mise.toml", ".mise.toml",
 	".mise/config.toml", ".config/mise.toml", ".config/mise/config.toml", "a/config.toml", "Package.swift",
-	"a/Package.swift", "aPackage.swift", "Package@swift-5.9.swift", "",
+	"a/Package.swift", "aPackage.swift", "Package@swift-5.9.swift", ".devcontainer.json",
+	".devcontainer/devcontainer.json", "a/.devcontainer/go/devcontainer.json", ".devcontainer/a/b/devcontainer.json", "xdevcontainer.json", "",
 }
 
 // repoPaths returns the slash path of every file of this repository, the mix discovery sees.

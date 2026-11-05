@@ -40,7 +40,7 @@ func TestTranslate(t *testing.T) {
 		{rule{MatchDatasources: []string{"docker"}, MatchPackageNames: []string{"x"}, ReplacementName: "y", ExtractVersion: "^(?<version>.+)-slim$"}, "", "remaps versions"},
 		{rule{MatchDatasources: []string{"docker"}, MatchPackageNames: []string{"x"}, ReplacementNameTemplate: "{{{lowercase packageName}}}"}, "", "replacementNameTemplate {{{lowercase packageName}}}"},
 		{rule{MatchDatasources: []string{"docker"}, MatchPackageNames: []string{`/^k8s\.gcr\.io/.+$/`}, ReplacementNameTemplate: `{{{replace 'k8s\.gcr\.io/' 'registry.k8s.io/' packageName}}}`},
-			`Managers: []string{"docker", "gitlabci", "kustomize", "terraform"}, Patterns: []string{"^k8s\\.gcr\\.io/.+$"}, Prefix: "k8s.gcr.io/", To: "registry.k8s.io/"`, ""},
+			`Managers: []string{"docker", "gitlabci", "kustomize", "terraform", "devcontainer"}, Patterns: []string{"^k8s\\.gcr\\.io/.+$"}, Prefix: "k8s.gcr.io/", To: "registry.k8s.io/"`, ""},
 		{rule{MatchDatasources: []string{"github-releases", "github-tags"}, MatchPackageNames: []string{"a/b"}, MatchCurrentValue: "/^v1/", ReplacementName: "c/b", ReplacementVersion: "v2"},
 			`Managers: []string{"github-actions"}, Names: []string{"a/b"}, CurrentVersion: "/^v1/", To: "c/b", Version: "v2"`, ""},
 	} {

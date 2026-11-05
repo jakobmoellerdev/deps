@@ -7,6 +7,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitlabci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
@@ -44,7 +45,7 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 		piprequirements.New(), pep621.New(), poetry.New(), pipenv.New(),
 		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt(),
 		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New(), bundler.New(), toolversions.NewRubyVersion(), gitsubmodules.New(),
-		rusttoolchain.New())
+		rusttoolchain.New(), devcontainer.New())
 	return append(ms, cs...), nil
 }
 
@@ -66,5 +67,5 @@ func ManagerDocs() []refdoc.Manager {
 		piprequirements.Doc, pep621.Doc, poetry.Doc, pipenv.Doc,
 		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc,
 		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, bundler.Doc, toolversions.DocRubyVersion, gitsubmodules.Doc,
-		rusttoolchain.Doc, custom.Doc}
+		rusttoolchain.Doc, devcontainer.Doc, custom.Doc}
 }

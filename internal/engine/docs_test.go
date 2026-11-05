@@ -125,6 +125,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		terraform.TerragruntName: {"terraform"},
 		gradlewrapper.Name:       {"gradlewrapper"}, mavenwrapper.Name: {"mavenwrapper"}, "git-submodules": {"gitsubmodules"},
 		"rust-toolchain": {"rusttoolchain"},
+		"devcontainer":   {"devcontainer", "docker", "toolversions"},
 	}
 	for _, m := range ManagerDocs() {
 		dirs, ok := pkgDirs[m.Name]

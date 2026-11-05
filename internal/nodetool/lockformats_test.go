@@ -88,15 +88,6 @@ func TestBunVersionsErrors(t *testing.T) {
 	}
 }
 
-func TestJSONC(t *testing.T) {
-	src := `{"a": "x,}\"", "b": [1, 2,  ], "c": {"d": 1,
-},}`
-	if got, want := string(jsonc([]byte(src))), `{"a": "x,}\"", "b": [1, 2   ], "c": {"d": 1 
-} }`; got != want {
-		t.Errorf("jsonc = %s, want %s", got, want)
-	}
-}
-
 func TestPnpmVersions(t *testing.T) {
 	lock := "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      a:\n        specifier: ^1.0.0\n        version: link:../a\n" +
 		"      b:\n        specifier: npm:c@^1.0.0\n        version: c@1.2.0\n    optionalDependencies:\n      d: {specifier: ^1.0.0, version: 1.0.1}\n" +

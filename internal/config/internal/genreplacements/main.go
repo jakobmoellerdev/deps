@@ -54,7 +54,7 @@ func fatal(err error) {
 
 // managers are the deps managers that rename deps of a Renovate datasource.
 var managers = map[string][]string{
-	"docker":             {"docker", "gitlabci", "kustomize", "terraform"},
+	"docker":             {"docker", "gitlabci", "kustomize", "terraform", "devcontainer"},
 	"npm":                {"npm"},
 	"github-tags":        {"github-actions"},
 	"github-releases":    {"github-actions"},

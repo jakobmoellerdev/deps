@@ -217,6 +217,14 @@ func lookup(name string) tool {
 	return tool{name: name, skip: skipTool}
 }
 
+// ToolDep returns the dep of version raw of the asdf/mise tool name (node, go, ruby, …: the
+// tool table) found at byte offset at of file, classified as asdf and mise versions are; an
+// unknown tool is skipped as unsupported. Other managers naming such tools use it (the
+// devcontainer manager's feature versions).
+func ToolDep(mgr, depType, file string, line int, name, raw string, at int) dep.Dep {
+	return newDep(mgr, depType, file, line, lookup(name), raw, at)
+}
+
 var (
 	// semverRe is a full MAJOR.MINOR.PATCH with an optional prerelease; partialRe has one or
 	// two parts; goRe is a go-toolchain X.Y or X.Y.Z (after a stripped "v").
