@@ -890,15 +890,16 @@ func parse(src []byte) (*node, error) {
 		case xml.EndElement:
 			cur = cur.parent
 		case xml.CharData:
-			s := strings.TrimSpace(string(t))
-			if s == "" {
+			b := bytes.TrimSpace(t)
+			if len(b) == 0 {
 				continue
 			}
+			s := string(b)
 			cur.pieces++
 			cur.value += s
 			raw := src[start:dec.InputOffset()]
-			i := bytes.Index(raw, []byte(s))
-			if cur.pieces == 1 && i >= 0 && string(bytes.TrimSpace(raw)) == s {
+			i := bytes.Index(raw, b)
+			if cur.pieces == 1 && i >= 0 && bytes.Equal(bytes.TrimSpace(raw), b) {
 				cur.span = dep.Span{Start: start + i, End: start + i + len(s)}
 			} else {
 				cur.span = dep.Span{}

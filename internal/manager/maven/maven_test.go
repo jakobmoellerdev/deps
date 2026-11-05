@@ -772,3 +772,17 @@ func TestProfileActivation(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkExtract(b *testing.B) {
+	src, err := os.ReadFile("testdata/tez.pom.xml")
+	if err != nil {
+		b.Fatal(err)
+	}
+	m := New()
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := m.Extract("pom.xml", src, manager.Env{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
