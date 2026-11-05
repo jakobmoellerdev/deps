@@ -2,6 +2,9 @@ package bot
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -10,6 +13,13 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gotool"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/nodetool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
@@ -212,13 +222,13 @@ func TestRunRecordsInputInNewPRs(t *testing.T) {
 func TestInputFingerprint(t *testing.T) {
 	a := dep.Update{Dep: dep.Dep{Manager: "npm", File: "package.json", Name: "a", Version: "1.0.0"}, NewVersion: "1.1.0"}
 	b := dep.Update{Dep: dep.Dep{Manager: "npm", File: "package.json", Name: "b", Version: "2.0.0"}, NewVersion: "2.1.0"}
-	paths := []string{".", "package.json"}
+	in := engine.BuildInputs{Paths: []string{".", "package.json"}, Digests: []string{"go imports . 0"}}
 	oids := func(p string) string { return "oid " + p }
-	base := inputFingerprint("v1", []dep.Update{a, b}, paths, oids)
+	base := inputFingerprint("v1", []dep.Update{a, b}, in, oids)
 	if len(base) != 16 {
 		t.Fatalf("fingerprint %q", base)
 	}
-	if got := inputFingerprint("v1", []dep.Update{b, a}, paths, oids); got != base {
+	if got := inputFingerprint("v1", []dep.Update{b, a}, in, oids); got != base {
 		t.Error("update order changes the fingerprint")
 	}
 	lock := a
@@ -226,18 +236,19 @@ func TestInputFingerprint(t *testing.T) {
 	digest := a
 	digest.NewDigest = "sha256:abc"
 	for name, got := range map[string]string{
-		"build":    inputFingerprint("v2", []dep.Update{a, b}, paths, oids),
-		"version":  inputFingerprint("v1", []dep.Update{a}, paths, oids),
-		"lockfile": inputFingerprint("v1", []dep.Update{lock, b}, paths, oids),
-		"digest":   inputFingerprint("v1", []dep.Update{digest, b}, paths, oids),
-		"tree":     inputFingerprint("v1", []dep.Update{a, b}, paths, func(p string) string { return "x" + oids(p) }),
-		"paths":    inputFingerprint("v1", []dep.Update{a, b}, paths[1:], oids),
+		"build":    inputFingerprint("v2", []dep.Update{a, b}, in, oids),
+		"version":  inputFingerprint("v1", []dep.Update{a}, in, oids),
+		"lockfile": inputFingerprint("v1", []dep.Update{lock, b}, in, oids),
+		"digest":   inputFingerprint("v1", []dep.Update{digest, b}, in, oids),
+		"tree":     inputFingerprint("v1", []dep.Update{a, b}, in, func(p string) string { return "x" + oids(p) }),
+		"paths":    inputFingerprint("v1", []dep.Update{a, b}, engine.BuildInputs{Paths: in.Paths[1:], Digests: in.Digests}, oids),
+		"digests":  inputFingerprint("v1", []dep.Update{a, b}, engine.BuildInputs{Paths: in.Paths, Digests: []string{"go imports . 1"}}, oids),
 	} {
 		if got == base {
 			t.Errorf("%s does not change the fingerprint", name)
 		}
 	}
-	if got := inputFingerprint("v1", []dep.Update{a}, paths, func(string) string { return "" }); got != "" {
+	if got := inputFingerprint("v1", []dep.Update{a}, in, func(string) string { return "" }); got != "" {
 		t.Errorf("missing object: %q, want none", got)
 	}
 }
@@ -276,5 +287,121 @@ func TestWithInput(t *testing.T) {
 		if bodyInput(got) != in {
 			t.Errorf("bodyInput(%q) = %q", got, bodyInput(got))
 		}
+	}
+}
+
+// TestInputFingerprintFollowsReadFiles commits a Go module, a pnpm workspace and a Cargo
+// workspace, then changes one file per commit: the input fingerprint of a group changes
+// exactly when a file its post-processor reads changes, not with every change below its
+// scope directory.
+func TestInputFingerprintFollowsReadFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not in PATH")
+	}
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	write := func(files map[string]string) {
+		t.Helper()
+		for rel, content := range files {
+			p := filepath.Join(root, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write(map[string]string{
+		"go/go.mod":                  "module example.com/m\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n",
+		"go/go.sum":                  "example.com/dep v1.0.0 h1:x=\n",
+		"go/main.go":                 "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println() }\n",
+		"go/README.md":               "# m\n",
+		"js/package.json":            `{"packageManager": "pnpm@10.0.0", "workspaces": ["packages/*"], "dependencies": {"a": "^1.0.0"}, "pnpm": {"patchedDependencies": {"a@1.0.0": "patches/a.patch"}}}` + "\n",
+		"js/pnpm-lock.yaml":          "lockfileVersion: '9.0'\n",
+		"js/patches/a.patch":         "--- a\n+++ b\n",
+		"js/packages/b/package.json": `{"name": "b"}` + "\n",
+		"js/src/index.js":            "console.log(1)\n",
+		"rs/Cargo.toml":              "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.dependencies]\nserde = \"1.0.0\"\n",
+		"rs/Cargo.lock":              "version = 4\n",
+		"rs/crates/c/Cargo.toml":     "[package]\nname = \"c\"\n",
+		"rs/crates/c/src/lib.rs":     "pub fn f() {}\n",
+	})
+	git("init", "-q")
+	git("add", "-A")
+	git("commit", "-qm", "base")
+
+	ms := []manager.Manager{gomod.New(), npm.New(), cargo.New()}
+	post := map[string]engine.PostProcessor{npm.Name: nodetool.Locker{}, cargo.Name: cargo.Locker{}}
+	groups := []engine.Group{
+		{Branch: "go", Updates: []dep.Update{{Dep: dep.Dep{Manager: gomod.Name, File: "go/go.mod", Name: "example.com/dep", Version: "v1.0.0"}, Type: dep.Minor, NewVersion: "v1.1.0"}}},
+		{Branch: "js", Updates: []dep.Update{{Dep: dep.Dep{Manager: npm.Name, File: "js/package.json", Name: "a", Version: "1.0.0"}, Type: dep.Minor, NewVersion: "1.1.0"}}},
+		{Branch: "rs", Updates: []dep.Update{{Dep: dep.Dep{Manager: cargo.Name, File: "rs/Cargo.toml", Name: "serde", Version: "1.0.0"}, Type: dep.Minor, NewVersion: "1.1.0"}}},
+	}
+	fingerprints := func() []string {
+		t.Helper()
+		// A fresh Tidier per run, as each run builds its post-processors anew.
+		post[gomod.Name] = gotool.Tidier{Imports: gotool.NewImportCache()}
+		fps := inputFingerprints(t.Context(), Options{Managers: ms}, root, git("rev-parse", "HEAD"), groups, []bool{true, true, true}, post, gitx.Repo{Dir: root})
+		for i, fp := range fps {
+			if fp == "" {
+				t.Fatalf("%s: no input fingerprint", groups[i].Branch)
+			}
+		}
+		return fps
+	}
+	prev := fingerprints()
+	for _, step := range []struct {
+		name    string
+		files   map[string]string
+		changed []string // branches whose fingerprint changes
+	}{
+		{"non-import edit of a .go file", map[string]string{"go/main.go": "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hi\") }\n"}, nil},
+		{"README of the module", map[string]string{"go/README.md": "# m, changed\n"}, nil},
+		{"new .go file with known imports", map[string]string{"go/util.go": "package main\n\nimport \"fmt\"\n\nvar _ = fmt.Sprint\n"}, nil},
+		{"standard library import", map[string]string{"go/util.go": "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\nvar _, _ = fmt.Sprint, os.Args\n"}, nil},
+		{"JavaScript source", map[string]string{"js/src/index.js": "console.log(2)\n"}, nil},
+		{"Rust source", map[string]string{"rs/crates/c/src/lib.rs": "pub fn g() {}\n"}, nil},
+		{"added import", map[string]string{"go/util.go": "package main\n\nimport (\n\t\"fmt\"\n\t\"example.com/dep\"\n)\n\nvar _ = fmt.Sprint\n"}, []string{"go"}},
+		{"go.sum", map[string]string{"go/go.sum": "example.com/dep v1.0.0 h1:y=\n"}, []string{"go"}},
+		{"pnpm patch file", map[string]string{"js/patches/a.patch": "--- a\n+++ b\n@@\n"}, []string{"js"}},
+		{"member package.json", map[string]string{"js/packages/b/package.json": `{"name": "b", "version": "1.0.0"}` + "\n"}, []string{"js"}},
+		{"new workspace member", map[string]string{"js/packages/c/package.json": `{"name": "c"}` + "\n"}, []string{"js"}},
+		{"member Cargo.toml", map[string]string{"rs/crates/c/Cargo.toml": "[package]\nname = \"c\"\nversion = \"0.1.0\"\n"}, []string{"rs"}},
+		{"new Rust file", map[string]string{"rs/crates/c/src/bin/main.rs": "fn main() {}\n"}, []string{"rs"}},
+	} {
+		write(step.files)
+		git("add", "-A")
+		git("commit", "-qm", step.name)
+		got := fingerprints()
+		var changed []string
+		for i := range got {
+			if got[i] != prev[i] {
+				changed = append(changed, groups[i].Branch)
+			}
+		}
+		if !slices.Equal(changed, step.changed) {
+			t.Errorf("%s: changed %q, want %q", step.name, changed, step.changed)
+		}
+		prev = got
+	}
+
+	// Untracked files: a .go file counts by its imports, as tidy reads it from the checkout;
+	// an untracked file a post-processor reads by path always builds.
+	write(map[string]string{"go/extra.go": "package main\n\nimport \"example.com/other\"\n", "js/packages/d/package.json": "{}\n"})
+	post[gomod.Name] = gotool.Tidier{}
+	fps := inputFingerprints(t.Context(), Options{Managers: ms}, root, git("rev-parse", "HEAD"), groups, []bool{true, true, true}, post, gitx.Repo{Dir: root})
+	if fps[0] == "" || fps[0] == prev[0] || fps[1] != "" || fps[2] != prev[2] {
+		t.Errorf("untracked files: fingerprints %q, before %q", fps, prev)
 	}
 }

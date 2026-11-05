@@ -10,10 +10,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"time"
@@ -85,8 +87,50 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 	return install(ctx, dir, nil, files, nil, true)
 }
 
-// install runs ProcessLocked, or Maintain when maintain is set.
-func install(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update, maintain bool) (map[string][]byte, error) {
+// ScopeInputs implements engine.ScopeInputLister: the files Process copies besides the
+// manifests and siblings (stage): the lock root's and its workspace members' package.json and
+// the local files the configuration references (patches, the pnpmfile, `file:` and `link:`
+// targets, the yarnPath and plugins), also above the lock root. They are derived from the
+// unpatched manifests, since updates move versions, not local references.
+func (l Locker) ScopeInputs(root, dir string, _ []string) (paths, digests []string, err error) {
+	abs := filepath.Join(root, filepath.FromSlash(dir))
+	files := map[string][]byte{}
+	for _, n := range l.Siblings() {
+		switch b, err := os.ReadFile(filepath.Join(abs, n)); {
+		case err == nil:
+			files[n] = b
+		case !errors.Is(err, fs.ErrNotExist):
+			return nil, nil, err
+		}
+	}
+	s, err := stage(abs, nil, files, false)
+	if err != nil || s == nil {
+		return nil, nil, err
+	}
+	s.t.root.Close()
+	for p := range s.write {
+		paths = append(paths, path.Join(dir, p))
+	}
+	return paths, nil, nil
+}
+
+// staged is the temporary copy of a lock root (stage): write holds the files by slash path
+// relative to the lock root, read through t, which the caller closes.
+type staged struct {
+	write             map[string][]byte
+	lockName          string
+	lock              []byte
+	berry             bool
+	pmTool, pmVersion string
+	t                 *tree
+}
+
+// stage collects the files install copies for the lock root dir: its package.json (patched
+// when in manifests), the lockfile (none for maintain, empty for a maintained yarn.lock),
+// the package manager configuration, every workspace member's package.json, the yarn berry
+// yarnPath and plugins, and the local files they reference (addLocalFiles); manifests
+// replace their files. It is nil without a lockfile.
+func stage(dir string, manifests, files map[string][]byte, maintain bool) (*staged, error) {
 	rootPkg, ok := manifests["package.json"]
 	if !ok {
 		b, err := os.ReadFile(filepath.Join(dir, "package.json"))
@@ -97,26 +141,24 @@ func install(ctx context.Context, dir string, manifests, files map[string][]byte
 	}
 	// A broken package.json is left to the package manager to report.
 	m, _ := parseRoot(rootPkg)
-	pmTool, pmVersion := m.tool()
-	lockName := pickLock(files, pmTool)
-	if lockName == "" {
+	s := &staged{}
+	s.pmTool, s.pmVersion = m.tool()
+	s.lockName = pickLock(files, s.pmTool)
+	if s.lockName == "" {
 		return nil, nil
 	}
-	lock := files[lockName]
-	if len(locks) > 0 && lockName != PackageLock {
-		return nil, fmt.Errorf("lockfile-only updates need %s, the lock root uses %s", PackageLock, lockName)
-	}
+	s.lock = files[s.lockName]
 
-	write := map[string][]byte{"package.json": rootPkg, lockName: lock}
+	s.write = map[string][]byte{"package.json": rootPkg, s.lockName: s.lock}
 	switch {
-	case maintain && lockName == YarnLock:
-		write[lockName] = nil
+	case maintain && s.lockName == YarnLock:
+		s.write[s.lockName] = nil
 	case maintain:
-		delete(write, lockName)
+		delete(s.write, s.lockName)
 	}
 	for _, n := range []string{npmrc, pnpmWorkspace, yarnrc} {
 		if b := files[n]; b != nil {
-			write[n] = b
+			s.write[n] = b
 		}
 	}
 	ws, err := parseWorkspaces(m, files[pnpmWorkspace])
@@ -128,32 +170,46 @@ func install(ctx context.Context, dir string, manifests, files map[string][]byte
 		return nil, err
 	}
 	for _, p := range members {
-		if write[p], err = os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+		if s.write[p], err = os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
 			return nil, err
 		}
 	}
-	maps.Copy(write, manifests)
-	t, err := openTree(dir)
-	if err != nil {
+	maps.Copy(s.write, manifests)
+	if s.t, err = openTree(dir); err != nil {
 		return nil, err
 	}
-	defer t.root.Close()
-	berry := lockName == YarnLock && (files[yarnrc] != nil || bytes.Contains(lock, []byte("__metadata:")))
-	if berry {
+	s.berry = s.lockName == YarnLock && (files[yarnrc] != nil || bytes.Contains(s.lock, []byte("__metadata:")))
+	if s.berry {
 		paths, err := yarnFiles(files[yarnrc])
 		if err != nil {
+			s.t.root.Close()
 			return nil, fmt.Errorf("%s: %w", yarnrc, err)
 		}
 		for _, p := range paths {
-			if p = t.local(p); p == "" {
+			if p = s.t.local(p); p == "" {
 				continue
 			}
-			if write[p], err = t.read(p); err != nil {
+			if s.write[p], err = s.t.read(p); err != nil {
+				s.t.root.Close()
 				return nil, err
 			}
 		}
 	}
-	addLocalFiles(t, write, files, lockName)
+	addLocalFiles(s.t, s.write, files, s.lockName)
+	return s, nil
+}
+
+// install runs ProcessLocked, or Maintain when maintain is set.
+func install(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update, maintain bool) (map[string][]byte, error) {
+	s, err := stage(dir, manifests, files, maintain)
+	if err != nil || s == nil {
+		return nil, err
+	}
+	defer s.t.root.Close()
+	lockName, lock, t := s.lockName, s.lock, s.t
+	if len(locks) > 0 && lockName != PackageLock {
+		return nil, fmt.Errorf("lockfile-only updates need %s, the lock root uses %s", PackageLock, lockName)
+	}
 
 	// npm names an unnamed root package after its directory (package-lock.json "name"), so the
 	// copy lives in a directory named like the lock root, at its path below the repository top
@@ -164,14 +220,14 @@ func install(ctx context.Context, dir string, manifests, files map[string][]byte
 	}
 	defer os.RemoveAll(parent)
 	tmp := filepath.Join(parent, filepath.Base(t.top), filepath.FromSlash(t.prefix))
-	if err := toolrun.WriteFiles(tmp, write); err != nil {
+	if err := toolrun.WriteFiles(tmp, s.write); err != nil {
 		return nil, err
 	}
 
-	c := command(lockName, berry)
+	c := command(lockName, s.berry)
 	version := ""
-	if pmTool == c.tool {
-		version = pmVersion
+	if s.pmTool == c.tool {
+		version = s.pmVersion
 	}
 	runs := lockCommands(locks)
 	switch {

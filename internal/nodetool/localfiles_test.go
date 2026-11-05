@@ -175,3 +175,32 @@ func TestProcessRealYarnBerryPatch(t *testing.T) {
 		t.Errorf("lock = %s", got)
 	}
 }
+
+// TestLockerScopeInputs lists the files Process copies: the member package.json files and
+// the local files the configuration references, also above the lock root, but not sources.
+func TestLockerScopeInputs(t *testing.T) {
+	top := t.TempDir()
+	write(t, top, map[string]string{
+		".git/HEAD":                     "",
+		".yarn/releases/y.cjs":          "release",
+		"ws/ui/.yarnrc.yml":             "yarnPath: ../../.yarn/releases/y.cjs\n",
+		"ws/ui/yarn.lock":               "__metadata:\n",
+		"ws/ui/package.json":            `{"workspaces": ["packages/*"], "dependencies": {"a": "patch:a@npm%3A1.0.0#~/patches/a.patch", "t": "file:./vendor/t.tgz"}}`,
+		"ws/ui/patches/a.patch":         "patch",
+		"ws/ui/vendor/t.tgz":            "tgz",
+		"ws/ui/packages/b/package.json": `{"dependencies": {"l": "link:../../local"}}`,
+		"ws/ui/local/package.json":      "{}",
+		"ws/ui/local/index.js":          "",
+		"ws/ui/src/index.js":            "",
+	})
+	paths, digests, err := Locker{}.ScopeInputs(top, "ws/ui", []string{"package.json"})
+	slices.Sort(paths)
+	want := []string{".yarn/releases/y.cjs", "ws/ui/.yarnrc.yml", "ws/ui/local/package.json", "ws/ui/package.json", "ws/ui/packages/b/package.json", "ws/ui/patches/a.patch", "ws/ui/vendor/t.tgz", "ws/ui/yarn.lock"}
+	if err != nil || digests != nil || !slices.Equal(paths, want) {
+		t.Errorf("ScopeInputs = %q, %q, %v; want %q", paths, digests, err, want)
+	}
+	write(t, top, map[string]string{"plain/package.json": "{}"})
+	if paths, _, err := (Locker{}).ScopeInputs(top, "plain", nil); err != nil || paths != nil {
+		t.Errorf("without lockfile: %q, %v", paths, err)
+	}
+}

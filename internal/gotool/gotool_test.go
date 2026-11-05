@@ -16,10 +16,10 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-func TestTidierScopeInputs(t *testing.T) {
-	root := t.TempDir()
-	write := func(rel, content string) {
-		t.Helper()
+// writeTree writes files (slash paths relative to root -> content) below root.
+func writeTree(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for rel, content := range files {
 		p := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
@@ -28,17 +28,141 @@ func TestTidierScopeInputs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("staging/apiserver/go.mod", "module k8s.io/apiserver\n\nreplace (\n\tk8s.io/api => ../api\n\tk8s.io/x => ./third_party/x\n\tk8s.io/y => k8s.io/y v1.0.0\n)\n")
-	got, err := Tidier{}.ScopeInputs(root, "staging/apiserver")
-	if want := []string{"staging/api", "staging/apiserver/third_party/x"}; err != nil || !slices.Equal(got, want) {
-		t.Errorf("ScopeInputs = %q, %v; want %q", got, err, want)
+}
+
+func TestTidierScopeInputs(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"staging/apiserver/go.mod":             "module k8s.io/apiserver\n\nreplace (\n\tk8s.io/api => ../api\n\tk8s.io/x => ./third_party/x\n\tk8s.io/y => k8s.io/y v1.0.0\n)\n",
+		"staging/apiserver/a.go":               "package a\n\nimport \"k8s.io/api\"\n",
+		"staging/api/api.go":                   "package api\n",
+		"staging/apiserver/third_party/x/x.go": "package x\n",
+	})
+	tidier := Tidier{Imports: NewImportCache()}
+	paths, digests, err := tidier.ScopeInputs(root, "staging/apiserver", []string{"go.mod"})
+	if want := []string{"staging/apiserver/go.mod", "staging/api/go.mod", "staging/apiserver/third_party/x/go.mod"}; err != nil || !slices.Equal(paths, want) {
+		t.Errorf("ScopeInputs paths = %q, %v; want %q", paths, err, want)
 	}
-	write("go.mod", "module m\n\nreplace k8s.io/api => /abs/api\n")
-	if _, err := (Tidier{}).ScopeInputs(root, "."); err == nil {
+	var dirs []string
+	for _, d := range digests {
+		f := strings.Fields(d)
+		if len(f) != 4 || f[0] != "go" || f[1] != "imports" || len(f[3]) != 64 {
+			t.Errorf("digest %q", d)
+			continue
+		}
+		dirs = append(dirs, f[2])
+	}
+	if want := []string{"staging/apiserver", "staging/api", "staging/apiserver/third_party/x"}; !slices.Equal(dirs, want) {
+		t.Errorf("digest modules = %q, want %q", dirs, want)
+	}
+	if len(tidier.Imports.m) != 3 {
+		t.Errorf("cached %d scans, want 3", len(tidier.Imports.m))
+	}
+
+	writeTree(t, root, map[string]string{"go.mod": "module m\n\nreplace k8s.io/api => /abs/api\n"})
+	if _, _, err := (Tidier{}).ScopeInputs(root, ".", nil); err == nil {
 		t.Error("ScopeInputs accepted an absolute replacement")
 	}
-	if _, err := (Tidier{}).ScopeInputs(root, "missing"); err == nil {
+	writeTree(t, root, map[string]string{"go.mod": "module m\n\nreplace k8s.io/api => ../api\n"})
+	if _, _, err := (Tidier{}).ScopeInputs(root, ".", nil); err == nil {
+		t.Error("ScopeInputs accepted a replacement outside the root")
+	}
+	if _, _, err := (Tidier{}).ScopeInputs(root, "missing", nil); err == nil {
 		t.Error("ScopeInputs without go.mod succeeded")
+	}
+}
+
+func TestImportDigest(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"go.mod":                  "module example.com/m\n",
+		"main.go":                 "// Copyright\n\n/* block */\npackage main\n\nimport (\n\t\"fmt\"\n\t_ \"example.com/dep\"\n)\n\nfunc main() { fmt.Println() }\n",
+		"main_test.go":            "package main\n\nimport \"testing\"\n",
+		"README.md":               "readme\n",
+		"testdata/x.go":           "package x\n\nimport \"example.com/testdata\"\n",
+		"_tools/t.go":             "package t\n\nimport \"example.com/underscore\"\n",
+		".hidden/h.go":            "package h\n\nimport \"example.com/hidden\"\n",
+		"nested/go.mod":           "module example.com/m/nested\n",
+		"nested/n.go":             "package n\n\nimport \"example.com/nested\"\n",
+		"vendor/v.go":             "package v\n",
+		"vendor/example.com/d.go": "package d\n\nimport \"example.com/vendored\"\n",
+		"tools.go":                "//go:build ignore\n\npackage main\n\nimport \"example.com/ignored\"\n",
+		"linux.go":                "//go:build linux && !cgo\n\npackage main\n\nimport \"example.com/linux\"\n",
+		"lib/l.go":                "package lib\n",
+		"testonly/t_test.go":      "package testonly\n",
+	})
+	digest := func() string {
+		t.Helper()
+		lines, err := scanModule(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return importDigest(lines, map[string]bool{"example.com": true, "local": true})
+	}
+	base := digest()
+	// Neither code outside the imports nor other files nor excluded directories count.
+	for rel, content := range map[string]string{
+		"main.go":                 "// Copyright 2026\n\npackage main\n\nimport (\n\t_ \"example.com/dep\"\n\t\"fmt\"\n)\n\nfunc main() { fmt.Println(\"changed\") }\n",
+		"README.md":               "changed\n",
+		"testdata/x.go":           "package x\n\nimport \"example.com/other\"\n",
+		"_tools/t.go":             "package t\n\nimport \"example.com/other\"\n",
+		"nested/n.go":             "package n\n\nimport \"example.com/other\"\n",
+		"vendor/example.com/d.go": "package d\n\nimport \"example.com/other\"\n",
+		"tools.go":                "//go:build ignore\n\npackage main\n\nimport \"example.com/other\"\n",
+		"helper.go":               "package main\n\nimport \"fmt\"\n\nvar _ = fmt.Sprint\n",
+		"std.go":                  "package main\n\nimport (\n\t\"os\"\n\t\"C\"\n\t\"net/http\"\n\t\"notstd/x\"\n)\n",
+		"own.go":                  "package main\n\nimport (\n\t\"example.com/m/lib\"\n)\n",
+	} {
+		writeTree(t, root, map[string]string{rel: content})
+		if got := digest(); got != base {
+			t.Errorf("editing %s changed the digest", rel)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{"an added import", map[string]string{"helper.go": "package main\n\nimport (\n\t\"fmt\"\n\t\"example.com/new\"\n)\n"}},
+		{"an import of a dotless module path of go.mod", map[string]string{"helper.go": "package main\n\nimport \"local/x\"\n"}},
+		{"an import of the nested module", map[string]string{"own.go": "package main\n\nimport \"example.com/m/nested\"\n"}},
+		{"an import of a test-only package", map[string]string{"own.go": "package main\n\nimport \"example.com/m/testonly\"\n"}},
+		{"an import moved to a test", map[string]string{"main.go": "package main\n\nimport \"fmt\"\n", "main_test.go": "package main\n\nimport (\n\t\"testing\"\n\t_ \"example.com/dep\"\n)\n"}},
+		{"a file no longer ignored", map[string]string{"tools.go": "package main\n\nimport \"example.com/ignored\"\n"}},
+		{"a new package", map[string]string{"pkg/p.go": "package p\n\nimport \"fmt\"\n"}},
+		{"a new nested module", map[string]string{"other/go.mod": "module example.com/m/other\n"}},
+		{"a vendored package of the vendor directory itself", map[string]string{"vendor/v.go": "package v\n\nimport \"example.com/v\"\n"}},
+	} {
+		writeTree(t, root, tc.files)
+		got := digest()
+		if got == base {
+			t.Errorf("%s kept the digest", tc.name)
+		}
+		base = got
+	}
+	if _, err := scanModule(filepath.Join(root, "missing")); err == nil {
+		t.Error("scanModule of a missing directory succeeded")
+	}
+}
+
+func TestShouldBuild(t *testing.T) {
+	for src, want := range map[string]bool{
+		"package p\n":                                        true,
+		"//go:build linux\n\npackage p\n":                    true,
+		"//go:build !linux && !windows\n\npackage p\n":       true,
+		"//go:build ignore\n\npackage p\n":                   false,
+		"//go:build !ignore\n\npackage p\n":                  true,
+		"// +build ignore\n\npackage p\n":                    false,
+		"// +build linux\n// +build ignore\n\npackage p\n":   false,
+		"// +build ignore\npackage p\n":                      true, // not followed by a blank line
+		"//go:build linux\n//go:build darwin\n\npackage p\n": false,
+		"//go:build (\n\npackage p\n":                        false,
+		"/* x */\n//go:build ignore\n\npackage p\n":          false,
+		"//go:build ignore\n\n/* x\n*/\npackage p\n":         false,
+		"package p\n//go:build ignore\n":                     true,
+	} {
+		if got := shouldBuild([]byte(src)); got != want {
+			t.Errorf("shouldBuild(%q) = %v, want %v", src, got, want)
+		}
 	}
 }
 

@@ -68,32 +68,35 @@ var buildID = sync.OnceValue(func() string {
 
 // inputFingerprints returns the input fingerprint of each group with want set: the first 16
 // hex characters of sha256 over the deps build (buildID), the group's updates as Build reads
-// them (buildInput, in a canonical order) and the object ids in commit head of the paths
-// Build reads (engine.Inputs: the updated files, the post-processing scope directories and
-// what their post-processors read outside them). Equal fingerprints mean Build would get the
-// same input, so an open PR built from it is current without building. The freshness check
-// guarantees head is the base tip and the checkout, which Build reads, is head. One git call
-// resolves the paths of every group.
+// them (buildInput, in a canonical order), the object ids in commit head of the paths Build
+// reads and the digests of what no path names whole (engine.Inputs: the updated files and,
+// per post-processing scope, the files its post-processor reads, such as go.mod, go.sum and
+// the import paths of a Go module). Equal fingerprints mean Build would get the same input,
+// so an open PR built from it is current without building. The freshness check guarantees
+// head is the base tip and the checkout, which Build reads, is head. One git call resolves
+// the paths of every group.
 //
 // A group gets "" (always built) when it has a lock file maintenance update, whose result
-// follows the registries rather than the repository, or when an input path is outside the
-// root or not in head (an untracked file); every group gets "" when git fails.
+// follows the registries rather than the repository, or when an input cannot be listed, is
+// outside the root or not in head (an untracked file); every group gets "" when git fails.
 func inputFingerprints(ctx context.Context, o Options, root, head string, groups []engine.Group, want []bool, post map[string]engine.PostProcessor, g Git) []string {
 	fps := make([]string, len(groups))
-	paths := make([][]string, len(groups))
+	ups := make([][]dep.Update, len(groups))
+	for i, grp := range groups {
+		if want[i] && !slices.ContainsFunc(grp.Updates, dep.Update.Maintenance) {
+			ups[i] = grp.Updates
+		}
+	}
+	inputs, errs := engine.Inputs(root, o.Managers, post, ups)
 	index := map[string]int{}
 	var all []string
-	for i, grp := range groups {
-		if !want[i] || slices.ContainsFunc(grp.Updates, dep.Update.Maintenance) {
+	for i, in := range inputs {
+		if errs[i] != nil {
+			slog.DebugContext(ctx, "no input fingerprint", "branch", groups[i].Branch, "err", errs[i])
+			ups[i] = nil
 			continue
 		}
-		p, err := engine.Inputs(root, o.Managers, grp.Updates, post)
-		if err != nil {
-			slog.DebugContext(ctx, "no input fingerprint", "branch", grp.Branch, "err", err)
-			continue
-		}
-		paths[i] = p
-		for _, q := range p {
+		for _, q := range in.Paths {
 			if _, ok := index[q]; !ok {
 				index[q] = len(all)
 				all = append(all, q)
@@ -110,10 +113,10 @@ func inputFingerprints(ctx context.Context, o Options, root, head string, groups
 	}
 	id := buildID()
 	for i, grp := range groups {
-		if paths[i] == nil {
+		if ups[i] == nil {
 			continue
 		}
-		fps[i] = inputFingerprint(id, grp.Updates, paths[i], func(p string) string { return ids[index[p]] })
+		fps[i] = inputFingerprint(id, grp.Updates, inputs[i], func(p string) string { return ids[index[p]] })
 		if fps[i] == "" {
 			slog.DebugContext(ctx, "no input fingerprint: an input is not in the base commit", "branch", grp.Branch)
 		}
@@ -121,9 +124,9 @@ func inputFingerprints(ctx context.Context, o Options, root, head string, groups
 	return fps
 }
 
-// inputFingerprint hashes the inputs of one group's build: build is the deps build, paths
-// the sorted input paths and oid their object ids. It is "" when a path has no object.
-func inputFingerprint(build string, ups []dep.Update, paths []string, oid func(string) string) string {
+// inputFingerprint hashes the inputs of one group's build: build is the deps build, in the
+// listed inputs and oid the object ids of their paths. It is "" when a path has no object.
+func inputFingerprint(build string, ups []dep.Update, in engine.BuildInputs, oid func(string) string) string {
 	encoded := make([]string, len(ups))
 	for i, u := range ups {
 		b, err := json.Marshal(buildInput{u.Dep, u.Type, u.NewVersion, u.NewDigest, u.NewName, u.NewChecksum, u.Lockfile})
@@ -139,12 +142,15 @@ func inputFingerprint(build string, ups []dep.Update, paths []string, oid func(s
 		h.Write([]byte(e))
 		h.Write([]byte{0})
 	}
-	for _, p := range paths {
+	for _, p := range in.Paths {
 		id := oid(p)
 		if id == "" {
 			return ""
 		}
 		h.Write([]byte(p + "\x00" + id + "\x00"))
+	}
+	for _, d := range in.Digests {
+		h.Write([]byte("digest\x00" + d + "\x00"))
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }

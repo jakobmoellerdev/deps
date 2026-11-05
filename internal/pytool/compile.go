@@ -47,6 +47,41 @@ func (Compiler) Scope(root, manifest string) (string, bool) {
 // Siblings is empty: inputs are named by each file's header.
 func (Compiler) Siblings() []string { return nil }
 
+// ScopeInputs implements engine.ScopeInputLister: for each manifest with a pip-compile or uv
+// header whose command can be re-run, the files regenerate copies (collect: its inputs, the
+// files they reference, constraint files, local projects' top-level files, uv.toml and
+// pyproject.toml). The others are rehashed from the index alone and read nothing else.
+func (Compiler) ScopeInputs(root, dir string, manifests []string) (paths, digests []string, err error) {
+	abs := filepath.Join(root, filepath.FromSlash(dir))
+	for _, name := range manifests {
+		src, err := os.ReadFile(filepath.Join(abs, filepath.FromSlash(name)))
+		if err != nil {
+			return nil, nil, err
+		}
+		cc, ok := parseHeader(src)
+		if !ok {
+			continue
+		}
+		base, out, files, err := cc.collect(abs, name, src)
+		if errors.Is(err, errNotRegenerable) {
+			continue // a missing input that appears is listed then
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		rel, err := filepath.Rel(root, base)
+		if err != nil {
+			return nil, nil, err
+		}
+		for p := range files {
+			if p != out {
+				paths = append(paths, path.Join(filepath.ToSlash(rel), p))
+			}
+		}
+	}
+	return paths, nil, nil
+}
+
 // Process returns every patched requirements file in which a hashed requirement changed
 // version, with its hashes updated.
 func (c Compiler) Process(ctx context.Context, dir string, manifests, _ map[string][]byte) (map[string][]byte, error) {

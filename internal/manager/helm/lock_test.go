@@ -162,6 +162,9 @@ func TestLockerScope(t *testing.T) {
 	if s := l.Siblings(); len(s) != 1 || s[0] != lockFile {
 		t.Errorf("Siblings = %v", s)
 	}
+	if p, d, err := l.ScopeInputs("/root", "charts/app", []string{"Chart.yaml"}); err != nil || len(p) != 1 || p[0] != "charts/app/Chart.yaml" || d != nil {
+		t.Errorf("ScopeInputs = %q, %q, %v", p, d, err)
+	}
 	if got := lockStyle("v1.0.0", "1.1.0"); got != "v1.1.0" {
 		t.Errorf("lockStyle = %q", got)
 	}

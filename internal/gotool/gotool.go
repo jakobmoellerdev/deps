@@ -232,8 +232,9 @@ func writeOverlay(tmp, dir string, files map[string][]byte) (string, error) {
 }
 
 // Tidier is the gomod post-processor (engine.PostProcessor): Tidy on copies of go.mod and
-// go.sum, with patched .go files (import path rewrites) as an overlay.
-type Tidier struct{}
+// go.sum, with patched .go files (import path rewrites) as an overlay. Imports, when set,
+// memoizes the import digests ScopeInputs computes for one run (nil computes them anew).
+type Tidier struct{ Imports *ImportCache }
 
 // Scope is the module directory: every go.mod is post-processed on its own, together with
 // the patched .go files of its module (the nearest go.mod at or above their directory).
@@ -261,30 +262,56 @@ func (Tidier) Scope(root, manifest string) (string, bool) {
 // Siblings lists go.sum.
 func (Tidier) Siblings() []string { return []string{"go.sum"} }
 
-// ScopeInputs implements engine.ScopeInputLister: tidy also reads the module directories that
-// dir's go.mod replaces modules with (`replace m => ../m`), as slash paths relative to root.
-// An absolute replacement path cannot be named relative to root and is an error.
-func (Tidier) ScopeInputs(root, dir string) ([]string, error) {
+// ScopeInputs implements engine.ScopeInputLister. Tidy runs with GOWORK=off and reads, besides
+// the patched manifests and go.sum: go.mod and the non-standard imports of the module's .go
+// files (scanModule, importDigest), and for every local module replacement (`replace m =>
+// ../m`) its go.mod and the imports of its .go files. go.mod is listed although it is the
+// manifest: every scope patches it. A replacement that leaves root, or is absolute, is an
+// error, since it cannot be named relative to root, and so is a missing one; one without
+// go.mod is listed, so the group is always built until the base commit has it.
+func (t Tidier) ScopeInputs(root, dir string, _ []string) (paths, digests []string, err error) {
 	file := filepath.Join(root, filepath.FromSlash(dir), "go.mod")
 	b, err := os.ReadFile(file)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	f, err := modfile.Parse(file, b, nil) // ParseLax drops replace directives
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var out []string
+	local := map[string]bool{}
+	addLocal := func(modPath string) {
+		elem, _, _ := strings.Cut(modPath, "/")
+		local[elem] = true
+	}
+	if f.Module != nil {
+		addLocal(f.Module.Mod.Path)
+	}
+	for _, r := range f.Require {
+		addLocal(r.Mod.Path)
+	}
+	mods := []string{dir}
 	for _, r := range f.Replace {
+		addLocal(r.Old.Path)
 		if r.New.Version != "" || !modfile.IsDirectoryPath(r.New.Path) {
+			addLocal(r.New.Path)
 			continue
 		}
-		if filepath.IsAbs(r.New.Path) {
-			return nil, fmt.Errorf("replace %s => %s: absolute path", r.Old.Path, r.New.Path)
+		target := filepath.ToSlash(filepath.Join(filepath.FromSlash(dir), filepath.FromSlash(r.New.Path)))
+		if filepath.IsAbs(r.New.Path) || !filepath.IsLocal(filepath.FromSlash(target)) {
+			return nil, nil, fmt.Errorf("replace %s => %s: outside the root", r.Old.Path, r.New.Path)
 		}
-		out = append(out, filepath.ToSlash(filepath.Join(filepath.FromSlash(dir), r.New.Path)))
+		mods = append(mods, target)
 	}
-	return out, nil
+	for _, m := range mods {
+		paths = append(paths, filepath.ToSlash(filepath.Join(filepath.FromSlash(m), "go.mod")))
+		lines, err := t.Imports.scan(filepath.Join(root, filepath.FromSlash(m)))
+		if err != nil {
+			return nil, nil, err
+		}
+		digests = append(digests, "go imports "+m+" "+importDigest(lines, local))
+	}
+	return paths, digests, nil
 }
 
 // Process tidies the patched go.mod and returns the tidied go.mod and go.sum (nil when tidy

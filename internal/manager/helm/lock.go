@@ -38,6 +38,12 @@ func (Locker) Scope(_, manifest string) (string, bool) {
 // Siblings lists the lock file.
 func (Locker) Siblings() []string { return []string{lockFile} }
 
+// ScopeInputs implements engine.ScopeInputLister: Process reads nothing of the chart
+// directory but Chart.yaml, which it patches, and the Chart.lock sibling.
+func (Locker) ScopeInputs(_, dir string, _ []string) (paths, digests []string, err error) {
+	return []string{path.Join(dir, chartFile)}, nil, nil
+}
+
 // Process updates Chart.lock from the patched Chart.yaml in manifests; without a lock it does
 // nothing. The old digest must be reproducible from the unpatched Chart.yaml in dir, otherwise
 // the lock is out of sync (or deps' digest computation would be wrong) and the update fails.

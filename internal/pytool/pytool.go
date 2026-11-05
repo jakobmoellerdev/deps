@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -319,21 +320,64 @@ func pdmGroups(lock []byte) map[string]string {
 // topLevel reads the regular files directly in dir (README, LICENSE, … that project metadata
 // may reference), skipping larger ones.
 func topLevel(dir string) (map[string][]byte, error) {
-	ents, err := os.ReadDir(dir)
+	names, err := topLevelNames(dir)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string][]byte{}
-	for _, e := range ents {
-		info, err := e.Info()
-		if err != nil || !info.Mode().IsRegular() || info.Size() > maxCopy {
-			continue
-		}
-		if out[e.Name()], err = os.ReadFile(filepath.Join(dir, e.Name())); err != nil {
+	out := make(map[string][]byte, len(names))
+	for _, n := range names {
+		if out[n], err = os.ReadFile(filepath.Join(dir, n)); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
+}
+
+// topLevelNames lists the files topLevel reads.
+func topLevelNames(dir string) ([]string, error) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range ents {
+		if info, err := e.Info(); err == nil && info.Mode().IsRegular() && info.Size() <= maxCopy {
+			out = append(out, e.Name())
+		}
+	}
+	return out, nil
+}
+
+// ScopeInputs implements engine.ScopeInputLister: the files lockIn copies besides the
+// manifests and lockfiles, the top-level files of dir (up to 4 MiB each) and, with uv.lock,
+// every workspace member's pyproject.toml.
+func (Locker) ScopeInputs(root, dir string, _ []string) (paths, digests []string, err error) {
+	abs := filepath.Join(root, filepath.FromSlash(dir))
+	names, err := topLevelNames(abs)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, n := range names {
+		paths = append(paths, path.Join(dir, n))
+	}
+	if !isFile(filepath.Join(abs, UVLock)) {
+		return paths, nil, nil
+	}
+	pyproject, err := os.ReadFile(filepath.Join(abs, Pyproject))
+	if errors.Is(err, fs.ErrNotExist) {
+		return paths, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	write := map[string][]byte{Pyproject: pyproject}
+	if err := members(abs, write); err != nil {
+		return nil, nil, err
+	}
+	for p := range write {
+		paths = append(paths, path.Join(dir, p))
+	}
+	return paths, nil, nil
 }
 
 // members adds the pyproject.toml of every `[tool.uv.workspace]` member of dir to write.
