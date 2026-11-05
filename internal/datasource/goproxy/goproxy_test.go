@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -452,6 +453,90 @@ func TestHead(t *testing.T) {
 	}
 	if latestCalls.Load() != 2 {
 		t.Errorf("latest calls = %d, want 2", latestCalls.Load())
+	}
+}
+
+// A major path probe of a path that is a dependency itself reuses the dependency's `@v/list`,
+// also while that lookup is still in flight. A lookup the go command answered, or one that
+// failed, is not reused: the probe lists the path from the proxy itself.
+func TestMajorPathsReuseLookup(t *testing.T) {
+	var mu sync.Mutex
+	hits := map[string]int{}
+	first, unblock := make(chan struct{}), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mod, _ := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/p/"), "/@v/list")
+		mu.Lock()
+		hits[mod]++
+		n := hits[mod]
+		mu.Unlock()
+		switch {
+		case mod == "example.com/m/v2" && n == 1:
+			close(first)
+			<-unblock
+			io.WriteString(w, "v2.0.0\nv2.1.0\n")
+		case mod == "example.com/m/v2", mod == "example.com/e/v2" && n > 1:
+			io.WriteString(w, "v2.0.0\nv2.1.0\n")
+		case mod == "example.com/e/v2":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	s := New(srv.Client(), nil)
+	s.env = func(context.Context) (gotool.GoEnv, error) {
+		return gotool.GoEnv{Proxy: srv.URL + "/p,direct"}, nil
+	}
+	s.list = func(context.Context, string, string) ([]string, error) { return []string{"v2.0.0"}, nil }
+	names := func(ps []datasource.ModulePath) []string {
+		var out []string
+		for _, p := range ps {
+			for _, r := range p.Releases {
+				out = append(out, p.Name+"@"+r.Version)
+			}
+		}
+		return out
+	}
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		if _, err := s.Releases(t.Context(), dep.Dep{Name: "example.com/m/v2"}, "/mod"); err != nil {
+			t.Errorf("Releases(m/v2): %v", err)
+		}
+	})
+	<-first
+	wg.Go(func() {
+		got, err := s.MajorPaths(t.Context(), dep.Dep{Name: "example.com/m", Version: "v1.0.0"}, "/mod")
+		if want := []string{"example.com/m/v2@v2.0.0", "example.com/m/v2@v2.1.0"}; err != nil || !reflect.DeepEqual(names(got), want) {
+			t.Errorf("MajorPaths(m) = %q, %v; want %q", names(got), err, want)
+		}
+	})
+	close(unblock)
+	wg.Wait()
+
+	// d/v2 is listed by the go command (`direct` after a 404), e/v2's lookup fails.
+	if vs, err := s.Versions(t.Context(), "example.com/d/v2", "/mod"); err != nil || len(vs) != 1 {
+		t.Fatalf("Versions(d/v2) = %q, %v", vs, err)
+	}
+	if got, err := s.MajorPaths(t.Context(), dep.Dep{Name: "example.com/d", Version: "v1.0.0"}, "/mod"); err != nil || got != nil {
+		t.Errorf("MajorPaths(d) = %q, %v; want none (only proxies are probed)", names(got), err)
+	}
+	if _, err := s.Versions(t.Context(), "example.com/e/v2", "/mod"); err == nil {
+		t.Fatal("Versions(e/v2): want the HTTP 500")
+	}
+	got, err := s.MajorPaths(t.Context(), dep.Dep{Name: "example.com/e", Version: "v1.0.0"}, "/mod")
+	if want := []string{"example.com/e/v2@v2.0.0", "example.com/e/v2@v2.1.0"}; err != nil || !reflect.DeepEqual(names(got), want) {
+		t.Errorf("MajorPaths(e) = %q, %v; want %q", names(got), err, want)
+	}
+
+	want := map[string]int{
+		"example.com/m/v2": 1, "example.com/m/v3": 1,
+		"example.com/d/v2": 2, "example.com/e/v2": 2, "example.com/e/v3": 1,
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(hits, want) {
+		t.Errorf("@v/list requests = %v, want %v", hits, want)
 	}
 }
 

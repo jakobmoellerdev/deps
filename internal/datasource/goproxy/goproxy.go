@@ -54,6 +54,7 @@ type entry struct {
 	dir      string // directory of the first lookup, for `go list`
 	once     sync.Once
 	versions []string
+	proxied  bool // versions came from a GOPROXY URL, not the go command
 	rels     []datasource.Release
 	err      error
 }
@@ -210,6 +211,12 @@ func (s *Source) probe(ctx context.Context, modPath string) ([]string, error) {
 	}
 	s.mu.Unlock()
 	e.once.Do(func() {
+		// A path that is a dependency itself has its own lookup of the same `@v/list`.
+		if vs, ok := s.listed(ctx, modPath); ok {
+			e.versions = vs
+			slog.DebugContext(ctx, "major module path probed", "module", modPath, "versions", len(vs), "listed", true)
+			return
+		}
 		err := s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
 			if base == "" {
 				return true, errNotProbed
@@ -235,13 +242,27 @@ func (s *Source) get(ctx context.Context, modPath, dir string) *entry {
 	}
 	s.mu.Unlock()
 	e.once.Do(func() {
-		e.versions, e.err = s.resolve(ctx, modPath, dir)
+		e.versions, e.proxied, e.err = s.resolve(ctx, modPath, dir)
 		e.rels = make([]datasource.Release, len(e.versions))
 		for i, v := range e.versions {
 			e.rels[i] = datasource.Release{Version: v}
 		}
 	})
 	return e
+}
+
+// listed returns the versions of modPath's own lookup (Versions, Releases), waiting for it when
+// it is still running, if one was started and a GOPROXY URL answered it. A major path probe
+// would GET the same `@v/list`; one that failed or came from the go command is not reused.
+func (s *Source) listed(ctx context.Context, modPath string) ([]string, bool) {
+	s.mu.Lock()
+	e := s.cache[modPath]
+	s.mu.Unlock()
+	if e == nil {
+		return nil, false
+	}
+	e = s.get(ctx, modPath, e.dir)
+	return e.versions, e.err == nil && e.proxied
 }
 
 // ReleaseTime implements datasource.Timer: the Time of the version's `@v/<version>.info`, or
@@ -333,18 +354,18 @@ func (s *Source) loadEnv(ctx context.Context) error {
 	return s.envErr
 }
 
-func (s *Source) resolve(ctx context.Context, modPath, dir string) ([]string, error) {
-	var vs []string
-	err := s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
+func (s *Source) resolve(ctx context.Context, modPath, dir string) (vs []string, proxied bool, err error) {
+	err = s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
 		if base == "" {
 			vs, err = s.direct(ctx, dir, modPath)
 		} else {
 			vs, notFound, err = s.fetch(ctx, base+"/"+escaped+"/@v/list")
 		}
+		proxied = base != ""
 		slog.DebugContext(ctx, "module versions", "module", modPath, "source", cmp.Or(base, "direct"), "versions", len(vs), "err", err)
 		return notFound, err
 	})
-	return vs, err
+	return vs, proxied, err
 }
 
 // walk runs step for modPath along GOPROXY until one succeeds. step gets a proxy base URL and
