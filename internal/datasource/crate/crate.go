@@ -304,18 +304,27 @@ func (s *Source) fetch(ctx context.Context, r *registry, name string, e *entry) 
 	return nil
 }
 
-// newer compares two stable MAJOR.MINOR.PATCH versions numerically.
+// newer compares two stable MAJOR.MINOR.PATCH versions numerically: field by field, a longer
+// field is larger, equal lengths compare bytewise. Only a's fields are compared, so a with fewer
+// fields than b is never newer; b with fewer fields than a is a caller bug and panics.
 func newer(a, b string) bool {
-	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
-	for i := range pa {
-		if len(pa[i]) != len(pb[i]) {
-			return len(pa[i]) > len(pb[i])
+	for {
+		fa, ra, moreA := strings.Cut(a, ".")
+		fb, rb, moreB := strings.Cut(b, ".")
+		if len(fa) != len(fb) {
+			return len(fa) > len(fb)
 		}
-		if pa[i] != pb[i] {
-			return pa[i] > pb[i]
+		if fa != fb {
+			return fa > fb
 		}
+		if !moreA {
+			return false
+		}
+		if !moreB {
+			panic("crate: newer: " + b + " has fewer fields than " + a)
+		}
+		a, b = ra, rb
 	}
-	return false
 }
 
 func (s *Source) fetchRepo(ctx context.Context, r *registry, api, name, version string) (string, error) {

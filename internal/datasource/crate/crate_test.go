@@ -238,3 +238,35 @@ func TestErrors(t *testing.T) {
 		t.Errorf("defaults = %s, %s", d.index, d.api)
 	}
 }
+
+// TestNewerParity pins newer to the strings.Split formulation it replaced.
+func TestNewerParity(t *testing.T) {
+	split := func(a, b string) (r bool, panicked bool) {
+		defer func() { panicked = recover() != nil }()
+		pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+		for i := range pa {
+			if len(pa[i]) != len(pb[i]) {
+				return len(pa[i]) > len(pb[i]), false
+			}
+			if pa[i] != pb[i] {
+				return pa[i] > pb[i], false
+			}
+		}
+		return false, false
+	}
+	cut := func(a, b string) (r bool, panicked bool) {
+		defer func() { panicked = recover() != nil }()
+		return newer(a, b), false
+	}
+	corpus := []string{"", ".", "..", "1", "1.", "1.0", "1.0.0", "1.0.1", "1.0.10", "1.1.0", "1.10.0", "2.0.0",
+		"0.9.15", "10.0.0", "9.99.99", "01.0.0", "1.0.229", "1.0.228", "1.2.3.4", "a.b.c", "1..0"}
+	for _, a := range corpus {
+		for _, b := range corpus {
+			wr, wp := split(a, b)
+			gr, gp := cut(a, b)
+			if wr != gr || wp != gp {
+				t.Errorf("newer(%q, %q) = %v (panic %v), want %v (panic %v)", a, b, gr, gp, wr, wp)
+			}
+		}
+	}
+}
