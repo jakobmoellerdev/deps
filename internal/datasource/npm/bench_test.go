@@ -34,8 +34,8 @@ func syntheticVersion(b *strings.Builder, i int, full bool) {
 	b.WriteByte('}')
 }
 
-// syntheticPackument returns a packument with n versions: the abbreviated metadata document,
-// or the full one with `time`, `repository` and a readme after the versions.
+// syntheticPackument returns a packument with n versions: shaped like the abbreviated metadata
+// document, or the full one with `time`, `repository` and a readme after the versions.
 func syntheticPackument(n int, full bool) []byte {
 	var b strings.Builder
 	b.WriteString(`{"_id":"typescript","name":"typescript","dist-tags":{"latest":"5.9.3","next":"6.0.0-dev"},"versions":{`)
@@ -59,23 +59,12 @@ func syntheticPackument(n int, full bool) []byte {
 	return []byte(b.String())
 }
 
-func BenchmarkDecodeVersions(b *testing.B) {
-	data := syntheticPackument(3000, false)
-	b.SetBytes(int64(len(data)))
-	b.ReportAllocs()
-	for b.Loop() {
-		if _, _, _, err := decodeVersions(bytes.NewReader(data)); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkDecodeDoc(b *testing.B) {
+func BenchmarkDecodePackument(b *testing.B) {
 	data := syntheticPackument(3000, true)
 	b.SetBytes(int64(len(data)))
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, _, err := decodeDoc(bytes.NewReader(data)); err != nil {
+		if _, _, err := decodePackument(bytes.NewReader(data)); err != nil {
 			b.Fatal(err)
 		}
 	}

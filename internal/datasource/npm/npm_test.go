@@ -19,7 +19,7 @@ import (
 
 const metadata = `{
   "name": "@scope/pkg",
-  "modified": "2026-11-01T00:00:00.000Z",
+  "time": {"modified": "2026-11-01T00:00:00.000Z"},
   "dist-tags": {"latest": "1.2.0"},
   "versions": {
     "1.0.0": {"name": "@scope/pkg", "version": "1.0.0", "dependencies": {"a": "^1.0.0"}, "dist": {"tarball": "x"}},
@@ -66,7 +66,7 @@ func newRegistry(t *testing.T, h http.HandlerFunc) *registry {
 	t.Helper()
 	r := &registry{}
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Header.Get("Accept") != abbreviated || !strings.HasPrefix(req.Header.Get("User-Agent"), "deps/") {
+		if req.Header.Get("Accept") != "application/json" || !strings.HasPrefix(req.Header.Get("User-Agent"), "deps/") {
 			t.Errorf("unexpected headers %v", req.Header)
 		}
 		r.mu.Lock()
@@ -82,7 +82,7 @@ func newRegistry(t *testing.T, h http.HandlerFunc) *registry {
 	return r
 }
 
-func TestReleasesAbbreviatedDeprecated(t *testing.T) {
+func TestReleasesDeprecated(t *testing.T) {
 	reg := newRegistry(t, nil)
 	s := New(reg.srv.Client(), make(chan struct{}, 1), env(map[string]string{"NPM_CONFIG_REGISTRY": reg.srv.URL + "/base"}))
 	root := t.TempDir()
@@ -109,26 +109,27 @@ func TestReleasesAbbreviatedDeprecated(t *testing.T) {
 	}
 	bound := s.(datasource.ReleaseBound)
 	if got := bound.ReleasedBy(d); !got.Equal(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("ReleasedBy = %v, want the abbreviated `modified`", got)
+		t.Errorf("ReleasedBy = %v, want `time.modified`", got)
 	}
 	if got := bound.ReleasedBy(dep.Dep{Name: "@scope/pkg", File: "other/package.json"}); !got.IsZero() {
 		t.Errorf("ReleasedBy without a Releases lookup = %v, want zero", got)
 	}
 }
 
-// TestReleasedByModified checks which `modified` values bound the release times: only an
+// TestReleasedByModified checks which `time.modified` values bound the release times: only an
 // RFC 3339 string; anything else, or a failed lookup, leaves the bound unknown.
 func TestReleasedByModified(t *testing.T) {
 	tests := []struct {
 		name, body string
 		want       time.Time
 	}{
-		{"rfc3339", `{"modified":"2026-10-30T14:12:27.179Z","versions":{}}`, time.Date(2026, 10, 30, 14, 12, 27, 179e6, time.UTC)},
-		{"after versions", `{"versions":{"1.0.0":{}},"modified":"2026-10-30T00:00:00Z"}`, time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)},
-		{"absent", `{"versions":{}}`, time.Time{}},
-		{"not a time", `{"modified":"yesterday","versions":{}}`, time.Time{}},
-		{"not a string", `{"modified":{"t":1},"versions":{}}`, time.Time{}},
-		{"malformed document", `{"modified":"2026-10-30T00:00:00Z","versions":`, time.Time{}},
+		{"rfc3339", `{"time":{"modified":"2026-10-30T14:12:27.179Z"},"versions":{}}`, time.Date(2026, 10, 30, 14, 12, 27, 179e6, time.UTC)},
+		{"after versions", `{"versions":{"1.0.0":{}},"time":{"modified":"2026-10-30T00:00:00Z"}}`, time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)},
+		{"absent", `{"versions":{},"time":{}}`, time.Time{}},
+		{"top-level", `{"modified":"2026-10-30T00:00:00Z","versions":{}}`, time.Time{}},
+		{"not a time", `{"time":{"modified":"yesterday"},"versions":{}}`, time.Time{}},
+		{"not a string", `{"time":{"modified":{"t":1}},"versions":{}}`, time.Time{}},
+		{"malformed document", `{"time":{"modified":"2026-10-30T00:00:00Z"},"versions":`, time.Time{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

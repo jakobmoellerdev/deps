@@ -16,7 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-const packument = `{
+const eslintDoc = `{
   "_id": "eslint",
   "versions": {"10.12.0": {"readme": "big", "dist": {"tarball": "x"}}, "10.14.0": {"deprecated": false}},
   "time": {"created": "2013-06-29T00:00:00.000Z", "10.12.0": "2026-09-01T10:00:00.000Z", "10.14.0": "2026-10-30T14:12:27.179Z", "unpublished": {"time": "x"}},
@@ -35,11 +35,7 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 		mu.Unlock()
 		switch r.URL.EscapedPath() {
 		case "/corp/@corp%2flib", "/pub/eslint":
-			if r.Header.Get("Accept") == abbreviated {
-				io.WriteString(w, `{"versions":{"10.14.0":{}}}`)
-				return
-			}
-			io.WriteString(w, packument)
+			io.WriteString(w, eslintDoc)
 		case "/pub/strrepo":
 			io.WriteString(w, `{"repository":"github:o/r","time":{"1.0.0":"not a time"}}`)
 		case "/pub/bad":
@@ -60,7 +56,8 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	}
 	timer, repoer := s.(datasource.Timer), s.(datasource.SourceRepo)
 
-	// The registry and token of the earlier Releases lookup are reused; one packument per package.
+	// The registry and token of the earlier Releases lookup are reused, and Releases,
+	// ReleaseTime and SourceRepo share one packument request per package.
 	var wg sync.WaitGroup
 	for range 3 {
 		wg.Go(func() {
@@ -97,7 +94,6 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	}
 
 	want := []string{
-		abbreviated + " Bearer tok /corp/@corp%2flib",
 		"application/json Bearer tok /corp/@corp%2flib",
 		"application/json /pub/eslint",
 		"application/json /pub/strrepo",
@@ -109,34 +105,35 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	}
 }
 
-func TestDecodeDoc(t *testing.T) {
+func TestDecodePackument(t *testing.T) {
 	tests := []struct {
 		name, in, wantRepo, wantErr string
-		wantTimes                   int
+		wantVersions, wantTimes     int
 	}{
-		{name: "full", in: packument, wantRepo: "git+https://github.com/eslint/eslint.git", wantTimes: 3},
+		{name: "full", in: eslintDoc, wantRepo: "git+https://github.com/eslint/eslint.git", wantVersions: 2, wantTimes: 3},
 		{name: "no members", in: `{"versions":{}}`},
 		// encoding/json/v2 randomly says "cannot" or "unable to"; match the stable remainder.
 		{name: "time not an object", in: `{"time":"x","repository":{"url":1}}`, wantErr: "unmarshal JSON number into Go string"},
 		{name: "repository other kind", in: `{"repository":null,"time":{}}`},
-		{name: "not an object", in: `[]`, wantErr: "not an object"},
+		{name: "not an object", in: `[]`, wantErr: "expected {"},
 		{name: "truncated", in: `{"versions":{"1.0.0":`, wantErr: "EOF"},
 		{name: "truncated time", in: `{"time":{"a":`, wantErr: "EOF"},
 		{name: "truncated repository", in: `{"repository":{`, wantErr: "EOF"},
+		{name: "truncated after members", in: `{"versions":{},"time":{},"repository":"r",`, wantRepo: "r"},
 		{name: "bad key", in: `{"time":{1:2}}`, wantErr: "must be a string"},
 		{name: "empty", in: ``, wantErr: "EOF"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			times, repo, err := decodeDoc(strings.NewReader(tt.in))
+			p, _, err := decodePackument(strings.NewReader(tt.in))
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want %q", err, tt.wantErr)
 				}
 				return
 			}
-			if err != nil || repo != tt.wantRepo || len(times) != tt.wantTimes {
-				t.Fatalf("decodeDoc = %v, %q, %v", times, repo, err)
+			if err != nil || p.repo != tt.wantRepo || len(p.rels) != tt.wantVersions || len(p.times) != tt.wantTimes {
+				t.Fatalf("decodePackument = %+v, %v", p, err)
 			}
 		})
 	}
@@ -179,23 +176,23 @@ func (h *hugeVersions) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// TestDecodeDocHugeVersions decodes a 64 MiB `versions` object and checks that it is skipped
-// rather than materialized, and that decoding stops before the (endless) readme.
-func TestDecodeDocHugeVersions(t *testing.T) {
+// TestDecodePackumentHugeVersions decodes a 64 MiB `versions` object and checks that it is
+// streamed rather than materialized, and that decoding stops before the (endless) readme.
+func TestDecodePackumentHugeVersions(t *testing.T) {
 	h := &hugeVersions{n: 64 << 10}
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	times, repo, err := decodeDoc(h)
+	p, _, err := decodePackument(h)
 	runtime.ReadMemStats(&after)
-	if err != nil || repo != "r" || times["1.0.0"] != "2026-10-30T00:00:00Z" {
-		t.Fatalf("decodeDoc = %v, %q, %v", times, repo, err)
+	if err != nil || len(p.rels) != h.n || p.repo != "r" || p.times["1.0.0"] != "2026-10-30T00:00:00Z" {
+		t.Fatalf("decodePackument = %d versions, %q, %v, %v", len(p.rels), p.repo, p.times, err)
 	}
 	if h.stage != 2 || h.read < 64<<20 {
 		t.Fatalf("read %d bytes (stage %d), want the whole versions object", h.read, h.stage)
 	}
 	if extra := h.read - h.tail; extra > 1<<20 {
-		t.Errorf("read %d readme bytes: decoding did not stop after time and repository", extra)
+		t.Errorf("read %d readme bytes: decoding did not stop after versions, time and repository", extra)
 	}
 	// The generator itself allocates ~1 KiB per version (~64 MiB in total), so measure the
 	// decoder's own peak: live heap must stay far below the document size.

@@ -41,7 +41,7 @@ type Timer interface {
 }
 
 // ReleaseBound is implemented by Timers that know, without per-version lookups, a time no
-// version of a dependency was published after (npm's abbreviated `modified`). It is optional;
+// version of a dependency was published after (npm's `time.modified`). It is optional;
 // the engine skips a minimumReleaseAge lookup when the bound is already old enough, which
 // cannot change the outcome since every release time is at or before it.
 type ReleaseBound interface {

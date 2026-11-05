@@ -2,7 +2,6 @@ package npmds
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"io"
 	"reflect"
 	"testing"
-	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 )
@@ -18,120 +16,67 @@ import (
 // The decoders before they consumed members with ReadValue, kept to check that the results
 // and errors did not change.
 
-func decodeDocBefore(r io.Reader) (times map[string]string, repo string, err error) {
-	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true)) // see decodeVersions
-	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '{' {
-		return nil, "", cmp.Or(err, errors.New("not an object"))
+func decodePackumentBefore(r io.Reader) (p packument, deprecated int, err error) {
+	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true))
+	if err := expectObject(dec); err != nil {
+		return packument{}, 0, err
 	}
-	seenTime, seenRepo := false, false
-	for dec.PeekKind() != '}' && !(seenTime && seenRepo) {
+	seenVersions, seenTime, seenRepo := false, false, false
+	for dec.PeekKind() != '}' {
+		if seenVersions && seenTime && seenRepo {
+			return p, deprecated, nil
+		}
 		key, err := dec.ReadToken()
 		if err != nil {
-			return nil, "", err
+			return packument{}, 0, err
 		}
 		switch name := key.String(); {
+		case name == "versions":
+			seenVersions = true
+			p.rels, deprecated, err = decodeVersionsBefore(dec)
 		case name == "time" && dec.PeekKind() == '{':
 			seenTime = true
-			if times, err = decodeTimes(dec); err != nil {
-				return nil, "", err
-			}
+			p.times, err = decodeTimes(dec)
 		case name == "repository":
 			seenRepo = true
-			v, err := dec.ReadValue()
-			if err != nil {
-				return nil, "", err
-			}
-			var ref struct {
-				URL string `json:"url"`
-			}
-			if v.Kind() == '"' {
-				err = json.Unmarshal(v, &repo)
-			} else if v.Kind() == '{' {
-				err = json.Unmarshal(v, &ref)
-				repo = ref.URL
-			}
-			if err != nil {
-				return nil, "", err
-			}
+			p.repo, err = decodeRepository(dec)
 		default:
-			if err := dec.SkipValue(); err != nil {
-				return nil, "", err
-			}
+			err = dec.SkipValue()
+		}
+		if err != nil {
+			return packument{}, 0, err
 		}
 	}
-	return times, repo, nil
+	if _, err := dec.ReadToken(); err != nil {
+		return packument{}, 0, err
+	}
+	return p, deprecated, nil
 }
-func decodeVersionsBefore(r io.Reader) (rels []datasource.Release, deprecated int, modified time.Time, err error) {
-	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true))
-	if err := expectDelimBefore(dec, '{'); err != nil {
-		return nil, 0, time.Time{}, err
+
+func decodeVersionsBefore(dec *jsontext.Decoder) (rels []datasource.Release, deprecated int, err error) {
+	if err := expectObject(dec); err != nil {
+		return nil, 0, err
 	}
 	for dec.PeekKind() != '}' {
 		tok, err := dec.ReadToken()
 		if err != nil {
-			return nil, 0, time.Time{}, err
+			return nil, 0, err
 		}
-		switch tok.String() {
-		case "versions": // decoded below
-		case "modified":
-			if dec.PeekKind() != '"' {
-				if err := dec.SkipValue(); err != nil {
-					return nil, 0, time.Time{}, err
-				}
-				continue
-			}
-			v, err := dec.ReadToken()
-			if err != nil {
-				return nil, 0, time.Time{}, err
-			}
-			modified, _ = time.Parse(time.RFC3339, v.String()) // unparsable = unknown bound
-			continue
-		default:
-			if err := dec.SkipValue(); err != nil {
-				return nil, 0, time.Time{}, err
-			}
+		v := tok.String()
+		var meta struct {
+			Deprecated any `json:"deprecated"`
+		}
+		if err := json.UnmarshalDecode(dec, &meta); err != nil {
+			return nil, 0, err
+		}
+		if isDeprecated(meta.Deprecated) {
+			deprecated++
 			continue
 		}
-		if err := expectDelimBefore(dec, '{'); err != nil {
-			return nil, 0, time.Time{}, err
-		}
-		for dec.PeekKind() != '}' {
-			tok, err := dec.ReadToken()
-			if err != nil {
-				return nil, 0, time.Time{}, err
-			}
-			v := tok.String() // tokens are only valid until the next read
-			var meta struct {
-				Deprecated any `json:"deprecated"`
-			}
-			if err := json.UnmarshalDecode(dec, &meta); err != nil {
-				return nil, 0, time.Time{}, err
-			}
-			if isDeprecated(meta.Deprecated) {
-				deprecated++
-				continue
-			}
-			rels = append(rels, datasource.Release{Version: v})
-		}
-		if _, err := dec.ReadToken(); err != nil {
-			return nil, 0, time.Time{}, err
-		}
+		rels = append(rels, datasource.Release{Version: v})
 	}
-	if _, err := dec.ReadToken(); err != nil {
-		return nil, 0, time.Time{}, err
-	}
-	return rels, deprecated, modified, nil
-}
-
-func expectDelimBefore(dec *jsontext.Decoder, d jsontext.Kind) error {
-	tok, err := dec.ReadToken()
-	if err != nil {
-		return err
-	}
-	if tok.Kind() != d {
-		return fmt.Errorf("expected %v, got %v", d, tok.Kind())
-	}
-	return nil
+	_, err = dec.ReadToken()
+	return rels, deprecated, err
 }
 
 // sameErr reports whether err and want agree. Syntax errors in malformed JSON only need to agree
@@ -147,20 +92,15 @@ func sameErr(err, want error) bool {
 
 func checkDecodeParity(t *testing.T, in []byte) {
 	t.Helper()
-	rels, dep, mod, err := decodeVersions(bytes.NewReader(in))
-	wantRels, wantDep, wantMod, wantErr := decodeVersionsBefore(bytes.NewReader(in))
-	if !sameErr(err, wantErr) || !reflect.DeepEqual(rels, wantRels) || dep != wantDep || !mod.Equal(wantMod) {
-		t.Fatalf("decodeVersions(%q) = %v, %d, %v, %v; before %v, %d, %v, %v", in, rels, dep, mod, err, wantRels, wantDep, wantMod, wantErr)
-	}
-	times, repo, err := decodeDoc(bytes.NewReader(in))
-	wantTimes, wantRepo, wantErr := decodeDocBefore(bytes.NewReader(in))
-	if !sameErr(err, wantErr) || !reflect.DeepEqual(times, wantTimes) || repo != wantRepo {
-		t.Fatalf("decodeDoc(%q) = %v, %q, %v; before %v, %q, %v", in, times, repo, err, wantTimes, wantRepo, wantErr)
+	p, dep, err := decodePackument(bytes.NewReader(in))
+	want, wantDep, wantErr := decodePackumentBefore(bytes.NewReader(in))
+	if !sameErr(err, wantErr) || !reflect.DeepEqual(p, want) || dep != wantDep {
+		t.Fatalf("decodePackument(%q) = %+v, %d, %v; before %+v, %d, %v", in, p, dep, err, want, wantDep, wantErr)
 	}
 }
 
 var parityInputs = []string{
-	packument,
+	eslintDoc,
 	`{"versions":{"1.0.0":{},"1.1.0":{"deprecated":"use 2"},"1.2.0":{"deprecated":""},"1.3.0":{"deprecated":true},"1.4.0":{"deprecated":false}}}`,
 	`{"versions":{"1.0.0":{"deprecated":null},"1.1.0":{"deprecated":{"a":1}},"1.2.0":{"deprecated":1},"1.3.0":{"deprecated":[true]}}}`,
 	`{"versions":{"1.0.0":{"deprecated":"x","deprecated":true},"1.1.0":{"deprecated":true,"deprecated":null},"1.2.0":{"deprecated":"x","deprecated":""}}}`,
