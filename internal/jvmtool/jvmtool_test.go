@@ -2,6 +2,7 @@ package jvmtool
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,17 +41,21 @@ func toolEnv(t *testing.T, noJava bool) (bin, log string) {
 	return bin, log
 }
 
+// stubTools are find and sort, resolved at package init: toolEnv replaces PATH before the
+// stubs are written.
+var stubTools = func() (tools [2]string) {
+	tools[0], _ = exec.LookPath("find")
+	tools[1], _ = exec.LookPath("sort")
+	return tools
+}()
+
 // script writes an executable shell stub at p: it appends "argv: <name> <args>" and one
 // "file: <path>" line per file of its working directory to log, then runs body.
 func script(t *testing.T, p, log, body string) {
 	t.Helper()
-	find, err := exec.LookPath("find")
-	if err != nil {
-		t.Skip("find not in PATH")
-	}
-	sort, err := exec.LookPath("sort")
-	if err != nil {
-		t.Skip("sort not in PATH")
+	find, sort := stubTools[0], stubTools[1]
+	if find == "" || sort == "" {
+		t.Skip("find or sort not in PATH")
 	}
 	s := `#!/bin/sh
 {
@@ -68,10 +73,13 @@ func script(t *testing.T, p, log, body string) {
 	}
 }
 
-// logged returns the argv lines and the file lines of log.
+// logged returns the argv lines and the file lines of log; none when no stub ran.
 func logged(t *testing.T, log string) (argv, files []string) {
 	t.Helper()
 	b, err := os.ReadFile(log)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
