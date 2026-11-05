@@ -6,6 +6,7 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // File names of a chart directory.
@@ -23,22 +24,22 @@ func chartDeps(file string, src []byte) ([]dep.Dep, error) {
 	if len(doc.Content) == 0 {
 		return nil, nil
 	}
-	reqs := get(doc.Content[0], "dependencies")
+	reqs := yamlspan.Get(doc.Content[0], "dependencies")
 	if reqs == nil || reqs.Kind != yaml.SequenceNode {
 		return nil, nil
 	}
-	lines := lineStarts(src)
+	lines := yamlspan.LineStarts(src)
 	deps := make([]dep.Dep, 0, len(reqs.Content))
 	for _, r := range reqs.Content {
-		name := str(get(r, "name"))
+		name := yamlspan.Str(yamlspan.Get(r, "name"))
 		if name == nil || name.Value == "" {
 			continue
 		}
 		d := newDep(file, TypeChart)
 		d.Name, d.Line = name.Value, name.Line
-		repo := value(get(r, "repository"))
+		repo := yamlspan.Value(yamlspan.Get(r, "repository"))
 		if d.Source, d.Skip = chartRepository(repo); d.Skip == "" {
-			setVersion(&d, src, lines, get(r, "version"))
+			setVersion(&d, src, lines, yamlspan.Get(r, "version"))
 		}
 		deps = append(deps, d)
 	}

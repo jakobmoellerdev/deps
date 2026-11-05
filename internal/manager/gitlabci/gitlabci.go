@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"go.yaml.in/yaml/v4"
 
@@ -22,6 +21,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // Name is the manager name.
@@ -69,7 +69,7 @@ func (gitlabManager) Match(path string) bool {
 // `spec:` header document). Project includes and components on the instance resolve against
 // env.GitLabURL.
 func (gitlabManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
-	x := extractor{file: file, src: src, lines: lineStarts(src), base: env.GitLabURL}
+	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src), base: env.GitLabURL}
 	if x.base == "" {
 		x.base = platform.DefaultGitLabURL
 	}
@@ -116,16 +116,6 @@ type extractor struct {
 	host  string // host[:port] of base
 }
 
-func lineStarts(src []byte) []int {
-	ls := make([]int, 1, bytes.Count(src, []byte{'\n'})+1)
-	for i, b := range src {
-		if b == '\n' {
-			ls = append(ls, i+1)
-		}
-	}
-	return ls
-}
-
 func (x *extractor) root(m *yaml.Node) {
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		k, v := m.Content[i].Value, m.Content[i+1]
@@ -144,14 +134,14 @@ func (x *extractor) root(m *yaml.Node) {
 
 // job extracts image and services of a job (or of `default`, or a hidden `.template`).
 func (x *extractor) job(m *yaml.Node) {
-	x.image(get(m, "image"))
-	x.services(get(m, "services"))
+	x.image(yamlspan.Get(m, "image"))
+	x.services(yamlspan.Get(m, "services"))
 }
 
 // image handles `image: ref` and `image: {name: ref}`.
 func (x *extractor) image(v *yaml.Node) {
 	if v != nil && v.Kind == yaml.MappingNode {
-		v = get(v, "name")
+		v = yamlspan.Get(v, "name")
 	}
 	x.ref(TypeImage, v)
 }
@@ -162,7 +152,7 @@ func (x *extractor) services(v *yaml.Node) {
 	}
 	for _, s := range v.Content {
 		if s.Kind == yaml.MappingNode {
-			s = get(s, "name")
+			s = yamlspan.Get(s, "name")
 		}
 		x.ref(TypeService, s)
 	}
@@ -173,7 +163,7 @@ func (x *extractor) ref(depType string, v *yaml.Node) {
 		return
 	}
 	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: depType, File: x.file, Line: v.Line, Name: v.Value}
-	switch off := x.locate(v); {
+	switch off := yamlspan.Locate(x.src, x.lines, v); {
 	case strings.Contains(v.Value, "$"):
 		d.Skip = "variable reference"
 	case off < 0:
@@ -200,17 +190,17 @@ func (x *extractor) include(v *yaml.Node) {
 }
 
 func (x *extractor) includeEntry(m *yaml.Node) {
-	if c := get(m, "component"); c != nil && c.Kind == yaml.ScalarNode {
+	if c := yamlspan.Get(m, "component"); c != nil && c.Kind == yaml.ScalarNode {
 		x.component(c)
 		return
 	}
-	p := get(m, "project")
+	p := yamlspan.Get(m, "project")
 	if p == nil || p.Kind != yaml.ScalarNode || p.Value == "" {
 		return
 	}
 	project := strings.Trim(p.Value, "/")
 	d := dep.Dep{Manager: Name, Datasource: "git-tags", Versioning: "tag", DepType: TypeInclude, File: x.file, Line: p.Line, Name: project}
-	r := get(m, "ref")
+	r := yamlspan.Get(m, "ref")
 	switch {
 	case strings.Contains(project, "$"):
 		d.Skip = "variable reference"
@@ -264,7 +254,7 @@ func (x *extractor) componentSource(project string) string {
 
 // version sets d's version to ver, found at byte rel of scalar v's value.
 func (x *extractor) version(d *dep.Dep, v *yaml.Node, ver string, rel int) {
-	off := x.locate(v)
+	off := yamlspan.Locate(x.src, x.lines, v)
 	_, isVersion := versioning.ParseTag(ver)
 	switch {
 	case strings.Contains(ver, "$"):
@@ -277,46 +267,4 @@ func (x *extractor) version(d *dep.Dep, v *yaml.Node, ver string, rel int) {
 		d.Version = ver
 		d.RefSpan = dep.Span{Start: off + rel, End: off + rel + len(ver)}
 	}
-}
-
-// locate returns the byte offset of v's value in src, or -1 when the source bytes differ from
-// the value (escapes, block scalars). yaml columns count runes and point at anchors.
-func (x *extractor) locate(v *yaml.Node) int {
-	if v.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || v.Line < 1 || v.Line > len(x.lines) {
-		return -1
-	}
-	off := x.lines[v.Line-1]
-	for range v.Column - 1 {
-		if off >= len(x.src) || x.src[off] == '\n' {
-			return -1
-		}
-		_, n := utf8.DecodeRune(x.src[off:])
-		off += n
-	}
-	if a := "&" + v.Anchor; v.Anchor != "" && bytes.HasPrefix(x.src[off:], []byte(a)) {
-		off += len(a)
-		for off < len(x.src) && (x.src[off] == ' ' || x.src[off] == '\t') {
-			off++
-		}
-	}
-	if v.Style&(yaml.SingleQuotedStyle|yaml.DoubleQuotedStyle) != 0 {
-		off++
-	}
-	if off > len(x.src) || !bytes.HasPrefix(x.src[off:], []byte(v.Value)) {
-		return -1
-	}
-	return off
-}
-
-// get returns the value of key in mapping m, or nil.
-func get(m *yaml.Node, key string) *yaml.Node {
-	if m == nil || m.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			return m.Content[i+1]
-		}
-	}
-	return nil
 }

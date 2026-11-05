@@ -14,6 +14,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // Name is the manager name.
@@ -49,7 +50,7 @@ func (actionsManager) Extract(file string, src []byte, env manager.Env) ([]dep.D
 	if err := yaml.Unmarshal(src, &root); err != nil {
 		return nil, err
 	}
-	x := extractor{file: file, src: src, host: env.DefaultHost, lines: lineStarts(src)}
+	x := extractor{file: file, src: src, host: env.DefaultHost, lines: yamlspan.LineStarts(src)}
 	x.walk(&root)
 	return x.deps, nil
 }
@@ -88,16 +89,6 @@ type extractor struct {
 	host  string
 	lines []int
 	deps  []dep.Dep
-}
-
-func lineStarts(src []byte) []int {
-	ls := make([]int, 1, bytes.Count(src, []byte{'\n'})+1)
-	for i, b := range src {
-		if b == '\n' {
-			ls = append(ls, i+1)
-		}
-	}
-	return ls
 }
 
 // line returns [start,end) of 1-based line n, excluding "\r\n".

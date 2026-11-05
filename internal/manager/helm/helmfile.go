@@ -9,6 +9,7 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // helmfileDeps extracts `releases[]` of every document of a helmfile, resolving `chart:
@@ -37,28 +38,28 @@ func helmfileDeps(file string, src []byte) ([]dep.Dep, error) {
 	}
 	repos := map[string]string{}
 	for _, doc := range docs {
-		if rs := get(doc, "repositories"); rs != nil && rs.Kind == yaml.SequenceNode {
+		if rs := yamlspan.Get(doc, "repositories"); rs != nil && rs.Kind == yaml.SequenceNode {
 			for _, r := range rs.Content {
-				name, url := value(get(r, "name")), strings.TrimRight(value(get(r, "url")), "/")
+				name, url := yamlspan.Value(yamlspan.Get(r, "name")), strings.TrimRight(yamlspan.Value(yamlspan.Get(r, "url")), "/")
 				if name == "" || url == "" {
 					continue
 				}
-				if value(get(r, "oci")) == "true" && !strings.HasPrefix(url, "oci://") {
+				if yamlspan.Value(yamlspan.Get(r, "oci")) == "true" && !strings.HasPrefix(url, "oci://") {
 					url = "oci://" + url
 				}
 				repos[name] = url
 			}
 		}
 	}
-	lines := lineStarts(src)
+	lines := yamlspan.LineStarts(src)
 	var deps []dep.Dep
 	for _, doc := range docs {
-		rels := get(doc, "releases")
+		rels := yamlspan.Get(doc, "releases")
 		if rels == nil || rels.Kind != yaml.SequenceNode {
 			continue
 		}
 		for _, r := range rels.Content {
-			chart := str(get(r, "chart"))
+			chart := yamlspan.Str(yamlspan.Get(r, "chart"))
 			if chart == nil || chart.Value == "" {
 				continue
 			}
@@ -66,7 +67,7 @@ func helmfileDeps(file string, src []byte) ([]dep.Dep, error) {
 			d.Line = chart.Line
 			d.Source, d.Name, d.Skip = helmfileChart(chart.Value, repos)
 			if d.Skip == "" {
-				setVersion(&d, src, lines, get(r, "version"))
+				setVersion(&d, src, lines, yamlspan.Get(r, "version"))
 			}
 			deps = append(deps, d)
 		}

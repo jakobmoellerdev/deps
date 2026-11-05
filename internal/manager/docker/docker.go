@@ -16,6 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // Name is the manager name.
@@ -64,20 +65,20 @@ func isDockerfile(path string) bool {
 func (dockerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	switch {
 	case isDockerfile(file):
-		x := extractor{file: file, src: src, lines: lineStarts(src)}
+		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
 		x.dockerfile()
 		return x.deps, nil
 	case composeRe.MatchString(file):
-		x := extractor{file: file, src: src, lines: lineStarts(src)}
+		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
 		return x.deps, x.yaml(x.compose)
 	case actions.IsWorkflowFile(file):
-		x := extractor{file: file, src: src, lines: lineStarts(src)}
+		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
 		return x.deps, x.yaml(x.workflow)
 	}
 	if !bytes.Contains(src, []byte("image:")) && !bytes.Contains(src, []byte("repository:")) {
 		return nil, nil
 	}
-	x := extractor{file: file, src: src, lines: lineStarts(src)}
+	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
 	x.manifests()
 	return x.deps, nil
 }
@@ -109,16 +110,6 @@ type extractor struct {
 	lines []int
 	deps  []dep.Dep
 	seen  map[*yaml.Node]bool // compose: nodes already extracted (anchors)
-}
-
-func lineStarts(src []byte) []int {
-	ls := make([]int, 1, bytes.Count(src, []byte{'\n'})+1)
-	for i, b := range src {
-		if b == '\n' {
-			ls = append(ls, i+1)
-		}
-	}
-	return ls
 }
 
 // lineOf returns the 1-based line of byte offset off.

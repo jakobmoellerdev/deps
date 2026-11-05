@@ -4,20 +4,22 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v4"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // k0sChart extracts a k0s Chart resource (helm.k0sproject.io): spec.chartName and spec.version,
 // with the repository from spec.repository.url or the chart name's alias.
 func (x *crdExtractor) k0sChart(spec *yaml.Node) {
-	x.k0sChartRef(get(spec, "chartName"), get(spec, "version"), value(get(get(spec, "repository"), "url")))
+	x.k0sChartRef(yamlspan.Get(spec, "chartName"), yamlspan.Get(spec, "version"), yamlspan.Value(yamlspan.Get(yamlspan.Get(spec, "repository"), "url")))
 }
 
 // k0sConfig extracts the charts of a k0s ClusterConfig spec (spec.extensions.helm.charts) and
 // records its repository aliases (spec.extensions.helm.repositories) for every file of the run.
 func (x *crdExtractor) k0sConfig(spec *yaml.Node) {
-	h := get(get(spec, "extensions"), "helm")
-	for _, r := range seq(get(h, "repositories")) {
-		name, url := value(get(r, "name")), value(get(r, "url"))
+	h := yamlspan.Get(yamlspan.Get(spec, "extensions"), "helm")
+	for _, r := range seq(yamlspan.Get(h, "repositories")) {
+		name, url := yamlspan.Value(yamlspan.Get(r, "name")), yamlspan.Value(yamlspan.Get(r, "url"))
 		if name == "" || url == "" {
 			continue
 		}
@@ -26,15 +28,15 @@ func (x *crdExtractor) k0sConfig(spec *yaml.Node) {
 		}
 		x.k0sRepos[name] = strings.TrimSuffix(url, "/")
 	}
-	for _, c := range seq(get(h, "charts")) {
-		x.k0sChartRef(get(c, "chartname"), get(c, "version"), "")
+	for _, c := range seq(yamlspan.Get(h, "charts")) {
+		x.k0sChartRef(yamlspan.Get(c, "chartname"), yamlspan.Get(c, "version"), "")
 	}
 }
 
 // k0sChartRef adds the k0s chart named by chartName: <alias>/<chart>, oci://<repo>/<chart>,
 // or a local archive. inline is the repository URL given with the chart, if any.
 func (x *crdExtractor) k0sChartRef(chartName, version *yaml.Node, inline string) {
-	name := value(chartName)
+	name := yamlspan.Value(chartName)
 	switch {
 	case name == "":
 		return

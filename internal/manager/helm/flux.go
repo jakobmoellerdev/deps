@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v4"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // helmChartMediaType is the layer media type of Helm charts in OCI registries.
@@ -12,11 +14,11 @@ const helmChartMediaType = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
 // helmRepository records a Flux HelmRepository (source.toolkit.fluxcd.io): spec.url, an OCI
 // registry when spec.type is oci.
 func (x *crdExtractor) helmRepository(n, spec *yaml.Node) {
-	url := value(get(spec, "url"))
+	url := yamlspan.Value(yamlspan.Get(spec, "url"))
 	if url == "" {
 		return
 	}
-	if value(get(spec, "type")) == "oci" && !strings.HasPrefix(url, "oci://") {
+	if yamlspan.Value(yamlspan.Get(spec, "type")) == "oci" && !strings.HasPrefix(url, "oci://") {
 		url = "oci://" + url
 	}
 	if x.helmRepos == nil {
@@ -29,29 +31,29 @@ func (x *crdExtractor) helmRepository(n, spec *yaml.Node) {
 // spec.chart.spec.{chart,version} from the sourceRef HelmRepository, whose namespace defaults
 // to the HelmRelease's. A spec.chartRef to an OCIRepository marks that OCIRepository as a chart.
 func (x *crdExtractor) helmRelease(n, spec *yaml.Node) {
-	ns := value(get(get(n, "metadata"), "namespace"))
-	if cr := get(spec, "chartRef"); cr != nil {
-		if value(get(cr, "kind")) == "OCIRepository" {
+	ns := yamlspan.Value(yamlspan.Get(yamlspan.Get(n, "metadata"), "namespace"))
+	if cr := yamlspan.Get(spec, "chartRef"); cr != nil {
+		if yamlspan.Value(yamlspan.Get(cr, "kind")) == "OCIRepository" {
 			x.chartRefs = append(x.chartRefs, refKey(cr, ns))
 		}
 		return
 	}
-	cs := get(get(spec, "chart"), "spec")
-	chartNode := str(get(cs, "chart"))
+	cs := yamlspan.Get(yamlspan.Get(spec, "chart"), "spec")
+	chartNode := yamlspan.Str(yamlspan.Get(cs, "chart"))
 	if chartNode == nil || chartNode.Value == "" {
 		return
 	}
-	src := get(cs, "sourceRef")
-	switch kind := value(get(src, "kind")); kind {
+	src := yamlspan.Get(cs, "sourceRef")
+	switch kind := yamlspan.Value(yamlspan.Get(src, "kind")); kind {
 	case "HelmRepository":
-		i := x.add(TypeFlux, "", chartNode.Value, chartNode, get(cs, "version"), "")
+		i := x.add(TypeFlux, "", chartNode.Value, chartNode, yamlspan.Get(cs, "version"), "")
 		if x.deps[i].Skip == "" {
 			x.refs = append(x.refs, ref{i: i, kind: refFlux, key: refKey(src, ns)})
 		}
 	case "":
-		x.add(TypeFlux, "", chartNode.Value, chartNode, get(cs, "version"), "no sourceRef")
+		x.add(TypeFlux, "", chartNode.Value, chartNode, yamlspan.Get(cs, "version"), "no sourceRef")
 	default:
-		x.add(TypeFlux, "", chartNode.Value, chartNode, get(cs, "version"), "chart from "+kind+" source")
+		x.add(TypeFlux, "", chartNode.Value, chartNode, yamlspan.Get(cs, "version"), "chart from "+kind+" source")
 	}
 }
 
@@ -60,7 +62,7 @@ func (x *crdExtractor) helmRelease(n, spec *yaml.Node) {
 // spec.layerSelector.mediaType is the Helm chart media type or a HelmRelease's chartRef names
 // it; Link drops the others (Kustomization artifacts).
 func (x *crdExtractor) ociRepository(n, spec *yaml.Node) {
-	urlNode := str(get(spec, "url"))
+	urlNode := yamlspan.Str(yamlspan.Get(spec, "url"))
 	if urlNode == nil || !strings.HasPrefix(urlNode.Value, "oci://") {
 		return
 	}
@@ -68,29 +70,29 @@ func (x *crdExtractor) ociRepository(n, spec *yaml.Node) {
 	if chart == "" {
 		return
 	}
-	r := get(spec, "ref")
+	r := yamlspan.Get(spec, "ref")
 	var skip string
 	switch {
-	case get(r, "digest") != nil:
+	case yamlspan.Get(r, "digest") != nil:
 		skip = "pinned by digest"
-	case get(r, "semver") != nil:
+	case yamlspan.Get(r, "semver") != nil:
 		skip = "version range"
 	}
-	i := x.add(TypeFlux, repo, chart, urlNode, get(r, "tag"), skip)
-	if value(get(get(spec, "layerSelector"), "mediaType")) != helmChartMediaType {
+	i := x.add(TypeFlux, repo, chart, urlNode, yamlspan.Get(r, "tag"), skip)
+	if yamlspan.Value(yamlspan.Get(yamlspan.Get(spec, "layerSelector"), "mediaType")) != helmChartMediaType {
 		x.refs = append(x.refs, ref{i: i, kind: refOCI, key: objectKey(n)})
 	}
 }
 
 // objectKey returns the namespace and name of the object n.
 func objectKey(n *yaml.Node) key {
-	md := get(n, "metadata")
-	return key{namespace: value(get(md, "namespace")), name: value(get(md, "name"))}
+	md := yamlspan.Get(n, "metadata")
+	return key{namespace: yamlspan.Value(yamlspan.Get(md, "namespace")), name: yamlspan.Value(yamlspan.Get(md, "name"))}
 }
 
 // refKey returns the object a sourceRef/chartRef r names; its namespace defaults to ns.
 func refKey(r *yaml.Node, ns string) key {
-	k := key{namespace: value(get(r, "namespace")), name: value(get(r, "name"))}
+	k := key{namespace: yamlspan.Value(yamlspan.Get(r, "namespace")), name: yamlspan.Value(yamlspan.Get(r, "name"))}
 	if k.namespace == "" {
 		k.namespace = ns
 	}

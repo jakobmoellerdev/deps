@@ -6,6 +6,7 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 const dockerImagePrefix = "docker-image://"
@@ -30,7 +31,7 @@ func isCompose(root *yaml.Node) bool {
 		}
 	}
 	found := false
-	for _, s := range mappingValues(get(root, "services")) {
+	for _, s := range mappingValues(yamlspan.Get(root, "services")) {
 		if s.Kind == yaml.AliasNode {
 			s = s.Alias
 		}
@@ -76,7 +77,7 @@ func (x *extractor) service(m *yaml.Node) {
 	case ac.Kind == yaml.SequenceNode:
 		// `- name=docker-image://<ref>`
 		for _, v := range ac.Content {
-			if s := str(v); s != nil {
+			if s := yamlspan.Str(v); s != nil {
 				if i := strings.Index(s.Value, "="+dockerImagePrefix); i > 0 {
 					x.composeImage(s, s.Value[:i+1+len(dockerImagePrefix)])
 				}
@@ -110,10 +111,10 @@ func lookup(m *yaml.Node, key string, depth int) *yaml.Node {
 	if m != nil && m.Kind == yaml.AliasNode {
 		m = m.Alias
 	}
-	if v := get(m, key); v != nil || m == nil || depth > 8 {
+	if v := yamlspan.Get(m, key); v != nil || m == nil || depth > 8 {
 		return v
 	}
-	merge := get(m, "<<")
+	merge := yamlspan.Get(m, "<<")
 	if merge == nil {
 		return nil
 	}
@@ -150,7 +151,7 @@ func (x *extractor) composeImage(v *yaml.Node, prefix string) {
 	ref := v.Value[len(prefix):]
 	skipped := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeCompose, File: x.file, Line: v.Line, Name: ref}
 	res, pos, ok := interpolate(ref)
-	off := x.locate(v)
+	off := yamlspan.Locate(x.src, x.lines, v)
 	switch {
 	case !ok:
 		skipped.Skip = "interpolated image"

@@ -10,6 +10,7 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // crdGroups prefilter Kubernetes YAML: a file containing none of these API groups followed by
@@ -50,7 +51,7 @@ func (m *helmManager) manifests(file string, src []byte) []dep.Dep {
 	if !hasCRDGroup(src) {
 		return nil
 	}
-	x := crdExtractor{file: file, src: src, lines: lineStarts(src)}
+	x := crdExtractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
 	dec := yaml.NewDecoder(bytes.NewReader(src))
 	for {
 		var doc yaml.Node
@@ -72,16 +73,16 @@ func (m *helmManager) manifests(file string, src []byte) []dep.Dep {
 
 // document dispatches one YAML document on its apiVersion group and kind.
 func (x *crdExtractor) document(n *yaml.Node) {
-	group, _, _ := strings.Cut(value(get(n, "apiVersion")), "/")
-	kind := value(get(n, "kind"))
-	spec := get(n, "spec")
+	group, _, _ := strings.Cut(yamlspan.Value(yamlspan.Get(n, "apiVersion")), "/")
+	kind := yamlspan.Value(yamlspan.Get(n, "kind"))
+	spec := yamlspan.Get(n, "spec")
 	switch group + " " + kind {
 	case "helm.k0sproject.io Chart":
 		x.k0sChart(spec)
 	case "k0s.k0sproject.io ClusterConfig":
 		x.k0sConfig(spec)
 	case "k0sctl.k0sproject.io Cluster":
-		x.k0sConfig(get(get(get(spec, "k0s"), "config"), "spec"))
+		x.k0sConfig(yamlspan.Get(yamlspan.Get(yamlspan.Get(spec, "k0s"), "config"), "spec"))
 	case "helm.toolkit.fluxcd.io HelmRelease":
 		x.helmRelease(n, spec)
 	case "source.toolkit.fluxcd.io HelmRepository":
@@ -91,7 +92,7 @@ func (x *crdExtractor) document(n *yaml.Node) {
 	case "argoproj.io Application":
 		x.argoSpec(spec)
 	case "argoproj.io ApplicationSet":
-		x.argoSpec(get(get(spec, "template"), "spec"))
+		x.argoSpec(yamlspan.Get(yamlspan.Get(spec, "template"), "spec"))
 	}
 }
 
@@ -101,7 +102,7 @@ func (x *crdExtractor) document(n *yaml.Node) {
 func (x *crdExtractor) add(depType, repo, chart string, at, v *yaml.Node, skip string) int {
 	d := newDep(x.file, depType)
 	d.Name, d.Source, d.Line = chart, strings.TrimSuffix(repo, "/"), at.Line
-	switch v = str(v); {
+	switch v = yamlspan.Str(v); {
 	case skip == "":
 		setVersion(&d, x.src, x.lines, v)
 	case v != nil:

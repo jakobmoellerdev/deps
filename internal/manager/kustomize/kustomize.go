@@ -3,11 +3,9 @@
 package kustomize
 
 import (
-	"bytes"
 	"errors"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"go.yaml.in/yaml/v4"
 
@@ -17,6 +15,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // Name is the manager name.
@@ -59,15 +58,15 @@ func (kustomizeManager) Extract(file string, src []byte, _ manager.Env) ([]dep.D
 		return nil, nil
 	}
 	root := doc.Content[0]
-	x := extractor{file: file, src: src, lines: lineStarts(src)}
-	for _, m := range items(get(root, "images")) {
+	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
+	for _, m := range items(yamlspan.Get(root, "images")) {
 		x.image(m)
 	}
-	for _, m := range items(get(root, "helmCharts")) {
+	for _, m := range items(yamlspan.Get(root, "helmCharts")) {
 		x.helmChart(m)
 	}
 	for _, key := range []string{"resources", "components", "bases"} {
-		for _, v := range items(get(root, key)) {
+		for _, v := range items(yamlspan.Get(root, key)) {
 			x.resource(v)
 		}
 	}
@@ -105,16 +104,16 @@ type extractor struct {
 // image extracts an `images[]` entry: the image is newName (else name), the version newTag
 // (`1.2` or `1.2@sha256:…`), the digest newTag's or the `digest` field.
 func (x *extractor) image(m *yaml.Node) {
-	nameNode := str(get(m, "name"))
+	nameNode := yamlspan.Str(yamlspan.Get(m, "name"))
 	if nameNode == nil || nameNode.Value == "" {
 		return
 	}
 	name := nameNode.Value
-	if n := str(get(m, "newName")); n != nil && n.Value != "" {
+	if n := yamlspan.Str(yamlspan.Get(m, "newName")); n != nil && n.Value != "" {
 		name = n.Value
 	}
 	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeImage, File: x.file, Line: nameNode.Line, Name: name}
-	tag, dg := str(get(m, "newTag")), str(get(m, "digest"))
+	tag, dg := yamlspan.Str(yamlspan.Get(m, "newTag")), yamlspan.Str(yamlspan.Get(m, "digest"))
 	switch {
 	case strings.Contains(name, "$") || tag != nil && strings.Contains(tag.Value, "$"):
 		d.Skip = "variable reference"
@@ -124,7 +123,7 @@ func (x *extractor) image(m *yaml.Node) {
 		d.Skip = "no tag"
 	default:
 		d.Line = tag.Line
-		off := locate(x.src, x.lines, tag)
+		off := yamlspan.Locate(x.src, x.lines, tag)
 		if off < 0 {
 			d.Skip = "cannot locate value"
 			break
@@ -134,7 +133,7 @@ func (x *extractor) image(m *yaml.Node) {
 		if d.Skip != "" || d.Digest != "" || dg == nil || dg.Value == "" {
 			break
 		}
-		o := locate(x.src, x.lines, dg)
+		o := yamlspan.Locate(x.src, x.lines, dg)
 		switch {
 		case !strings.HasPrefix(dg.Value, "sha256:"):
 			d.Skip = "invalid digest"
@@ -149,13 +148,13 @@ func (x *extractor) image(m *yaml.Node) {
 
 // helmChart extracts a `helmCharts[]` entry: chart name from repo at version.
 func (x *extractor) helmChart(m *yaml.Node) {
-	nameNode := str(get(m, "name"))
+	nameNode := yamlspan.Str(yamlspan.Get(m, "name"))
 	if nameNode == nil || nameNode.Value == "" {
 		return
 	}
 	d := dep.Dep{Manager: Name, Datasource: "helm", Versioning: "semver", DepType: TypeHelmChart, File: x.file, Line: nameNode.Line, Name: nameNode.Value}
-	repo := strings.TrimRight(value(get(m, "repo")), "/")
-	v := str(get(m, "version"))
+	repo := strings.TrimRight(yamlspan.Value(yamlspan.Get(m, "repo")), "/")
+	v := yamlspan.Str(yamlspan.Get(m, "version"))
 	if v != nil {
 		d.Line, d.Version = v.Line, v.Value
 	}
@@ -171,7 +170,7 @@ func (x *extractor) helmChart(m *yaml.Node) {
 	}
 	d.Source = repo
 	if d.Skip == "" {
-		if off := locate(x.src, x.lines, v); off < 0 {
+		if off := yamlspan.Locate(x.src, x.lines, v); off < 0 {
 			d.Skip = "cannot locate value"
 		} else {
 			d.RefSpan = dep.Span{Start: off, End: off + len(v.Value)}
@@ -213,7 +212,7 @@ func (x *extractor) resource(v *yaml.Node) {
 			d.Skip = "non-version ref"
 			break
 		}
-		off := locate(x.src, x.lines, v)
+		off := yamlspan.Locate(x.src, x.lines, v)
 		if off < 0 {
 			d.Skip = "cannot locate value"
 			break
@@ -229,74 +228,4 @@ func items(n *yaml.Node) []*yaml.Node {
 		return nil
 	}
 	return n.Content
-}
-
-// get returns the value of key in mapping m, or nil.
-func get(m *yaml.Node, key string) *yaml.Node {
-	if m == nil || m.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			return m.Content[i+1]
-		}
-	}
-	return nil
-}
-
-// str returns n if it is a scalar, else nil.
-func str(n *yaml.Node) *yaml.Node {
-	if n == nil || n.Kind != yaml.ScalarNode {
-		return nil
-	}
-	return n
-}
-
-// value returns the value of scalar n, or "" when n is not a scalar.
-func value(n *yaml.Node) string {
-	if n = str(n); n == nil {
-		return ""
-	}
-	return n.Value
-}
-
-// lineStarts returns the byte offset of every line start of src.
-func lineStarts(src []byte) []int {
-	ls := make([]int, 1, bytes.Count(src, []byte{'\n'})+1)
-	for i, b := range src {
-		if b == '\n' {
-			ls = append(ls, i+1)
-		}
-	}
-	return ls
-}
-
-// locate returns the byte offset of scalar v's value in src, or -1 when the source bytes differ
-// from the value (escapes, multi-line or block scalars). yaml columns count runes, not bytes,
-// and point at the anchor of an anchored value.
-func locate(src []byte, lines []int, v *yaml.Node) int {
-	if v.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || v.Line < 1 || v.Line > len(lines) {
-		return -1
-	}
-	off := lines[v.Line-1]
-	for range v.Column - 1 {
-		if off >= len(src) || src[off] == '\n' {
-			return -1
-		}
-		_, n := utf8.DecodeRune(src[off:])
-		off += n
-	}
-	if a := "&" + v.Anchor; v.Anchor != "" && bytes.HasPrefix(src[off:], []byte(a)) {
-		off += len(a)
-		for off < len(src) && (src[off] == ' ' || src[off] == '\t') {
-			off++
-		}
-	}
-	if v.Style&(yaml.SingleQuotedStyle|yaml.DoubleQuotedStyle) != 0 {
-		off++
-	}
-	if off > len(src) || !bytes.HasPrefix(src[off:], []byte(v.Value)) {
-		return -1
-	}
-	return off
 }

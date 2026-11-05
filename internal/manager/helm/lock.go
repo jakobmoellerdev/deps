@@ -15,6 +15,7 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // Locker is the helm post-processor (engine.PostProcessor): after deps patched a Chart.yaml it
@@ -70,7 +71,7 @@ func (Locker) Process(_ context.Context, dir string, manifests, files map[string
 
 	newDeps := make([]*chartDependency, len(lock.deps))
 	var edits []patch.Edit
-	lines := lineStarts(lockSrc)
+	lines := yamlspan.LineStarts(lockSrc)
 	for i, ld := range lock.deps {
 		nd := *ld
 		newDeps[i] = &nd
@@ -84,7 +85,7 @@ func (Locker) Process(_ context.Context, dir string, manifests, files map[string
 		node := lock.versions[i]
 		off := -1
 		if node != nil {
-			off = locate(lockSrc, lines, node)
+			off = yamlspan.Locate(lockSrc, lines, node)
 		}
 		if off < 0 {
 			return nil, fmt.Errorf("%s: cannot locate the version of %s", lockFile, ld.Name)
@@ -97,7 +98,7 @@ func (Locker) Process(_ context.Context, dir string, manifests, files map[string
 		return nil, err
 	}
 	if sum != lock.digest.Value {
-		off := locate(lockSrc, lines, lock.digest)
+		off := yamlspan.Locate(lockSrc, lines, lock.digest)
 		if off < 0 {
 			return nil, fmt.Errorf("%s: cannot locate the digest", lockFile)
 		}
@@ -153,16 +154,16 @@ func parseLock(src []byte) (*chartLock, error) {
 		return nil, errors.New("empty lock")
 	}
 	root := doc.Content[0]
-	l := &chartLock{digest: str(get(root, "digest"))}
+	l := &chartLock{digest: yamlspan.Str(yamlspan.Get(root, "digest"))}
 	if l.digest == nil {
 		return nil, errors.New("no digest")
 	}
-	if deps := get(root, "dependencies"); deps != nil {
+	if deps := yamlspan.Get(root, "dependencies"); deps != nil {
 		if err := deps.Decode(&l.deps); err != nil {
 			return nil, err
 		}
 		for _, n := range deps.Content {
-			l.versions = append(l.versions, str(get(n, "version")))
+			l.versions = append(l.versions, yamlspan.Str(yamlspan.Get(n, "version")))
 		}
 	}
 	if len(l.versions) != len(l.deps) || hasNil(l.deps) {
