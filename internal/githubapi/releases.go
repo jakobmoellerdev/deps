@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
 const (
@@ -260,11 +260,7 @@ func (c *Client) releaseTime(ctx context.Context, r Repo, tag string) (time.Time
 		}
 		rel = *data.Repository.Release
 	} else {
-		segs := strings.Split(tag, "/")
-		for i, s := range segs {
-			segs[i] = url.PathEscape(s)
-		}
-		err := c.restDo(ctx, r, "/repos/"+r.Path()+"/releases/tags/"+strings.Join(segs, "/"), false, func(body io.Reader) error {
+		err := c.restDo(ctx, r, "/repos/"+r.Path()+"/releases/tags/"+platform.EscapePath(tag), false, func(body io.Reader) error {
 			var raw struct {
 				Draft       bool       `json:"draft"`
 				PublishedAt *time.Time `json:"published_at"`
