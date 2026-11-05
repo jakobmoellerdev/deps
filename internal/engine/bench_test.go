@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
@@ -83,6 +86,35 @@ func BenchmarkResolve(b *testing.B) {
 		res, err := Resolve(b.Context(), root, cfg, env, o)
 		if err != nil || len(res.Errors) > 0 || len(res.Updates) == 0 {
 			b.Fatalf("err = %v, errors = %v, updates = %d", err, res.Errors, len(res.Updates))
+		}
+	}
+}
+
+// BenchmarkDiscover walks a synthetic tree of 20,000 files (200 directories, four levels deep)
+// with the default ignore globs, so the per-entry path handling dominates the profile.
+func BenchmarkDiscover(b *testing.B) {
+	root := b.TempDir()
+	for d := range 200 {
+		dir := filepath.Join(root, fmt.Sprintf("pkg%d", d%10), fmt.Sprintf("sub%d", d/10%5), fmt.Sprintf("leaf%d", d))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			b.Fatal(err)
+		}
+		for f := range 100 {
+			name := fmt.Sprintf("file%d.go", f)
+			if f == 0 {
+				name = "go.mod"
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	managers := []manager.Manager{suffixManager{}}
+	b.ReportAllocs()
+	for b.Loop() {
+		got, err := discover(root, config.DefaultIgnorePaths, managers)
+		if err != nil || len(got[0]) != 200 {
+			b.Fatalf("discovered %d files, err %v", len(got[0]), err)
 		}
 	}
 }

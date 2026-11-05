@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 
@@ -28,6 +29,7 @@ func discover(root string, ignore []string, managers []manager.Manager) ([][]str
 		}
 		return false
 	}
+	base := filepath.Clean(root)
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -35,7 +37,7 @@ func discover(root string, ignore []string, managers []manager.Manager) ([][]str
 		if p == root {
 			return nil
 		}
-		rel, err := filepath.Rel(root, p)
+		rel, err := relPath(base, root, p)
 		if err != nil {
 			return err
 		}
@@ -61,4 +63,19 @@ func discover(root string, ignore []string, managers []manager.Manager) ([][]str
 		slices.Sort(files)
 	}
 	return out, err
+}
+
+// relPath returns p relative to root without filepath.Rel: WalkDir builds every entry below
+// root as filepath.Join(root, ...), so p is base (the cleaned root) plus a separator and the
+// relative path. Anything else falls back to filepath.Rel.
+func relPath(base, root, p string) (string, error) {
+	switch {
+	case base == ".":
+		return p, nil
+	case strings.HasSuffix(base, string(filepath.Separator)) && strings.HasPrefix(p, base) && len(p) > len(base):
+		return p[len(base):], nil
+	case len(p) > len(base) && p[len(base)] == filepath.Separator && strings.HasPrefix(p, base):
+		return p[len(base)+1:], nil
+	}
+	return filepath.Rel(root, p)
 }
