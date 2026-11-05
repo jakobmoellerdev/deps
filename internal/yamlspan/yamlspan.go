@@ -13,12 +13,14 @@ import (
 // LineStarts returns the byte offset of every line start of src.
 func LineStarts(src []byte) []int {
 	ls := make([]int, 1, bytes.Count(src, []byte{'\n'})+1)
-	for i, b := range src {
-		if b == '\n' {
-			ls = append(ls, i+1)
+	for off := 0; ; {
+		i := bytes.IndexByte(src[off:], '\n')
+		if i < 0 {
+			return ls
 		}
+		off += i + 1
+		ls = append(ls, off)
 	}
-	return ls
 }
 
 // Locate returns the byte offset of scalar v's value in src, or -1 when the source bytes differ
