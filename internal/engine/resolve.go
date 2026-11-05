@@ -174,24 +174,10 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			if o.Filter != nil && !o.Filter(d) {
 				continue
 			}
-			// The pre-policy comes first: a rule's versioning replaces the dep's scheme before
-			// the current value is validated.
-			var pol *policies
-			if d.Skip == "" {
-				pol = newPolicies(cfg, d, kindRules)
-				if v := pol.pre.Versioning; v != "" {
-					d.Versioning, pol.d.Versioning = v, v
-				}
-				if x := pol.pre.ExtractVersion; x != "" {
-					d.ExtractVersion, pol.d.ExtractVersion = x, x
-				}
-			}
-			if s, ok := versioning.Get(d.Versioning); d.Skip == "" && ok && !s.Valid(d.Version) && !tagOnly(d) && !goPseudo(d) {
-				d.Skip = "non-version value " + strconv.Quote(d.Version)
-			}
-			skip := func() {
+			d, pol := classify(cfg, d, kindRules)
+			res.Deps = append(res.Deps, d)
+			if d.Skip != "" {
 				res.Skipped = append(res.Skipped, d)
-				res.Deps = append(res.Deps, d)
 				if o.Trace != nil {
 					t := Trace{Dep: d}
 					if pol != nil {
@@ -199,24 +185,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 					}
 					o.Trace(t)
 				}
-			}
-			if d.Skip != "" {
-				skip()
-				continue
-			}
-			if pol.pre.Ignore && !pol.anyKind() {
-				d.Skip = pol.pre.IgnoreReason
-				skip()
-				continue
-			}
-			// A non-version tag without a digest can only be pinned.
-			if d.Digest == "" && pol.pre.Pin != config.PinDigest && tagOnly(d) {
-				d.Skip = "non-version tag"
-				skip()
 				continue
 			}
 			todo = append(todo, d)
-			res.Deps = append(res.Deps, d)
 			pols = append(pols, pol)
 			depAt = append(depAt, len(res.Deps)-1)
 		}
@@ -305,6 +276,34 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	})
 	slog.InfoContext(ctx, "dependencies resolved", "updates", len(res.Updates), "errors", len(res.Errors), "duration", time.Since(start))
 	return res, nil
+}
+
+// classify applies the pre-policy to an extracted dep and decides whether it is looked up:
+// the returned dep has Skip set when it is not. pol is nil only for deps the manager
+// already skipped.
+func classify(cfg *config.Config, d dep.Dep, kindRules bool) (dep.Dep, *policies) {
+	if d.Skip != "" {
+		return d, nil
+	}
+	// The pre-policy comes first: a rule's versioning replaces the dep's scheme before
+	// the current value is validated.
+	pol := newPolicies(cfg, d, kindRules)
+	if v := pol.pre.Versioning; v != "" {
+		d.Versioning, pol.d.Versioning = v, v
+	}
+	if x := pol.pre.ExtractVersion; x != "" {
+		d.ExtractVersion, pol.d.ExtractVersion = x, x
+	}
+	switch s, ok := versioning.Get(d.Versioning); {
+	case ok && !s.Valid(d.Version) && !tagOnly(d) && !goPseudo(d):
+		d.Skip = "non-version value " + strconv.Quote(d.Version)
+	case pol.pre.Ignore && !pol.anyKind():
+		d.Skip = pol.pre.IgnoreReason
+	case d.Digest == "" && pol.pre.Pin != config.PinDigest && tagOnly(d):
+		// A non-version tag without a digest can only be pinned.
+		d.Skip = "non-version tag"
+	}
+	return d, pol
 }
 
 // planAll hands every datasource implementing datasource.Planner its share of the updatable
