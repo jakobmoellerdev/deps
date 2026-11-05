@@ -165,7 +165,7 @@ func TestRunSchedule(t *testing.T) {
 				pc.open = append(pc.open, platform.PR{Number: 1, Head: branchA, Body: body, Mergeable: new(true)})
 			}
 			o := Options{AuthorEmail: email, Managers: managers, MaxNewPRs: 10, Trigger: tt.trigger, UpdateNotScheduled: tt.updateNotScheduled}
-			acts, errs := Run(t.Context(), o, root, res, nil, pc, g)
+			acts, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
 			if len(errs) != 0 {
 				t.Fatal(errs)
 			}
@@ -280,7 +280,7 @@ func TestRunBucketBranches(t *testing.T) {
 	res.Updates = []dep.Update{minor, major, v3}
 	g := &fakeGit{}
 	pc := &fakePC{open: []platform.PR{{Number: 4, Head: branchA, Body: "stale"}}}
-	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, g)
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
 	if len(errs) != 0 {
 		t.Fatal(errs)
 	}

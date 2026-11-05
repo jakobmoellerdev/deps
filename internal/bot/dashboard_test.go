@@ -40,7 +40,7 @@ func dashRun(t *testing.T, o Options, res *engine.Result, root string, pc *fakeP
 	if o.Dashboard == nil {
 		o.Dashboard = &DashboardOptions{Title: dashTitle, Labels: []string{"dependencies"}}
 	}
-	acts, errs := Run(t.Context(), o, root, res, nil, pc, g)
+	acts, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
 	var dash Action
 	for _, a := range acts {
 		if a.Dashboard {
@@ -303,7 +303,7 @@ func TestDashboardErrorsAndSizeCap(t *testing.T) {
 func TestDashboardDisabledAndLoadError(t *testing.T) {
 	root, res := dashFixture(t)
 	pc := &fakePC{issues: []platform.Issue{{Number: 7, Title: dashTitle, Body: dashboardMarker}}}
-	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, &fakeGit{})
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: &fakeGit{}}}, nil, pc)
 	if len(errs) > 0 || pc.issuePages != 0 || len(pc.createdIssues)+len(pc.updatedIssues) != 0 || slices.ContainsFunc(acts, func(a Action) bool { return a.Dashboard }) {
 		t.Fatalf("disabled dashboard touched: %v pages %d %+v", errs, pc.issuePages, acts)
 	}
@@ -367,7 +367,7 @@ func TestDetectedKeepsStableOrder(t *testing.T) {
 	})
 	render := func(deps []dep.Dep) string {
 		w := &budget{left: 1 << 20}
-		w.detected(deps)
+		w.detected(deps, "## Detected dependencies")
 		return w.b.String()
 	}
 	if got, want := render(deps), render(stable); got != want {

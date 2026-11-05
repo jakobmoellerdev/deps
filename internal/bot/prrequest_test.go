@@ -213,7 +213,7 @@ func TestRunPRRequests(t *testing.T) {
 				branches["refs/heads/"+p.Head] = "x"
 			}
 			g := &fakeGit{branches: branches, authors: map[string]string{branchA: author}}
-			acts, errs := Run(t.Context(), o, root, res, nil, pc, g)
+			acts, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
 			switch {
 			case tt.wantErr == "" && len(errs) > 0:
 				t.Fatalf("errs = %v", errs)

@@ -139,7 +139,7 @@ func TestRunAutomerge(t *testing.T) {
 				}
 			}
 			g := &fakeGit{}
-			acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers, DryRun: tt.dryRun}, root, res, nil, &tt.pc, g)
+			acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers, DryRun: tt.dryRun}, []Base{{Root: root, Res: res, Git: g}}, nil, &tt.pc)
 			if tt.wantErr == "" && len(errs) > 0 || tt.wantErr != "" && (len(errs) != 1 || errs[0].Error() != tt.wantErr) {
 				t.Fatalf("errs = %v, want %q", errs, tt.wantErr)
 			}

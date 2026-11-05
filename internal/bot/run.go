@@ -48,10 +48,14 @@ type Git interface {
 
 // Options configure Run.
 type Options struct {
-	Base, AuthorName, AuthorEmail string
-	BranchPrefix                  string // managed branch prefix, ending in '/'; "" = config.DefaultBranchPrefix
-	DryRun                        bool
-	RebaseWhen                    string // config.RebaseWhens; "" = config.RebaseConflicted
+	AuthorName, AuthorEmail string
+	BranchPrefix            string // managed branch prefix, ending in '/'; "" = config.DefaultBranchPrefix
+	// MultiBase makes update branches carry their base: <BranchPrefix><base>/<manager>/<name>
+	// (BasePrefix). It is implied by more than one Base; config.MultiBase sets it also for a
+	// single base found by a regex.
+	MultiBase  bool
+	DryRun     bool
+	RebaseWhen string // config.RebaseWhens; "" = config.RebaseConflicted
 	// RebaseLabel on an open PR requests a rebase like the PR's rebase checkbox and is removed
 	// once the branch is pushed; StopUpdatingLabel makes Run leave the PR alone. "" = the
 	// config defaults (config.DefaultRebaseLabel, config.DefaultStopUpdatingLabel).
@@ -173,32 +177,45 @@ func rebaseTicked(body string) bool { return rebaseTickedRe.MatchString(body) }
 // untickRebase returns body with its rebase checkbox unticked.
 func untickRebase(body string) string { return rebaseTickedRe.ReplaceAllString(body, "${1}[ ]${2}") }
 
-// Run creates, updates and closes dependency PRs for res; post regenerates lockfiles per
-// manager (engine.Build). Obsolete PRs are only closed when neither the engine nor the bot
-// reported an error, so a transient failure never closes PRs. A group whose every build error
-// is a *dep.SkipError is skipped instead (StatusSkipApply, its deps added to res.Skipped and
-// marked in res.Deps): retrying cannot help, so it holds back neither the cleanup nor other
-// groups; an open PR of it stays open.
-func Run(ctx context.Context, o Options, root string, res *engine.Result, post map[string]engine.PostProcessor, pc platform.Client, g Git) ([]Action, []error) {
+// Base is one base branch of a run: the checkout of its tip and the updates resolved there.
+type Base struct {
+	Name string         // base branch; "" = the repository's default branch
+	Root string         // directory the updates were resolved in, inside Git's work tree
+	Res  *engine.Result // the updates, dependencies and resolution errors of Root
+	Git  Git            // the checkout of Name's tip
+}
+
+// BasePrefix is the prefix of the update branches of base when they carry it
+// (Options.MultiBase).
+func BasePrefix(prefix, base string) string { return prefix + base + "/" }
+
+// Run creates, updates and closes dependency PRs for the updates of each base branch; post
+// regenerates lockfiles per manager (engine.Build). The PR limits and the dependency dashboard
+// span all bases; PR state and cleanup are per base: a base's PRs are those targeting it (with
+// MultiBase also under its BasePrefix when the forge does not report the target). Obsolete
+// PRs of a base are only closed when its resolution reported no error, and obsolete branches
+// without a PR only when no base's did, so a transient failure never closes PRs. A group
+// whose every build error is a *dep.SkipError is skipped instead (StatusSkipApply, its deps
+// added to Res.Skipped and marked in Res.Deps): retrying cannot help, so it holds back neither
+// the cleanup nor other groups; an open PR of it stays open.
+func Run(ctx context.Context, o Options, bases []Base, post map[string]engine.PostProcessor, pc platform.Client) ([]Action, []error) {
 	ctx, prog := engine.WithProgress(ctx, o.Progress)
-	base := o.Base
-	if base == "" {
-		b, err := pc.DefaultBranch(ctx)
-		if err != nil {
-			return nil, []error{fmt.Errorf("default branch: %w", err)}
+	bases = slices.Clone(bases)
+	heads := make([]string, len(bases))
+	for i := range bases {
+		b := &bases[i]
+		if b.Name == "" {
+			name, err := pc.DefaultBranch(ctx)
+			if err != nil {
+				return nil, []error{fmt.Errorf("default branch: %w", err)}
+			}
+			b.Name = name
 		}
-		base = b
-	}
-	head, err := g.RevParse(ctx, "HEAD")
-	if err != nil {
-		return nil, []error{err}
-	}
-	remote, err := g.LsRemote(ctx, "refs/heads/"+base)
-	if err != nil {
-		return nil, []error{err}
-	}
-	if tip := remote["refs/heads/"+base]; tip != head {
-		return nil, []error{fmt.Errorf("checkout HEAD %s is not the tip of origin/%s (%s); check out the latest %s", short(head), base, short(tip), base)}
+		head, err := checkoutHead(ctx, b.Git, b.Name)
+		if err != nil {
+			return nil, []error{err}
+		}
+		heads[i] = head
 	}
 
 	o.RebaseLabel = cmp.Or(o.RebaseLabel, config.DefaultRebaseLabel)
@@ -213,6 +230,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		lsErr, oErr, cErr, dErr error
 		reads                   sync.WaitGroup
 	)
+	g := bases[0].Git // every checkout shares origin
 	reads.Go(func() { branches, lsErr = g.LsRemote(ctx, "refs/heads/"+prefix+"*") })
 	reads.Go(func() { open, oErr = listDeps(ctx, pc, "open", 20, prefix) })
 	reads.Go(func() { closed, cErr = listDeps(ctx, pc, "closed", 4, prefix) })
@@ -223,7 +241,6 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	if err := cmp.Or(lsErr, oErr, cErr); err != nil {
 		return nil, []error{err}
 	}
-	slog.InfoContext(ctx, "bot state", "base", base, "head", short(head), "depsBranches", len(branches), "openPRs", len(open), "closedPRs", len(closed))
 
 	now := o.Now
 	if now.IsZero() {
@@ -243,8 +260,119 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			dash = loaded
 		}
 	}
-	groups := engine.GroupUpdates(declineReplacements(res.Updates, open, closed, prefix, dash), prefix)
-	prog.Start(engine.PhasePRs, len(groups))
+	multi := o.MultiBase || len(bases) > 1
+	budget := &prBudget{limit: newPRLimit(o, open, closed, now)}
+	slog.DebugContext(ctx, "new PR limit", "limit", budget.limit, "maxNewPRs", o.MaxNewPRs, "prConcurrentLimit", o.ConcurrentLimit, "prHourlyLimit", o.HourlyLimit)
+	runs := make([]*baseRun, len(bases))
+	total := 0
+	for i, b := range bases {
+		bp := prefix
+		if multi {
+			bp = BasePrefix(prefix, b.Name)
+		}
+		s := &runState{base: b.Name, head: heads[i], branches: branches, open: ofBase(open, b.Name, bp, multi), closed: ofBase(closed, b.Name, bp, multi), budget: budget}
+		slog.InfoContext(ctx, "bot state", "base", b.Name, "head", short(s.head), "depsBranches", len(branches), "openPRs", len(s.open), "closedPRs", len(s.closed))
+		runs[i] = &baseRun{Base: b, s: s, groups: engine.GroupUpdates(declineReplacements(b.Res.Updates, s.open, s.closed, bp, dash), bp)}
+		total += len(runs[i].groups)
+	}
+	prog.Start(engine.PhasePRs, total)
+	wanted := map[string]bool{}
+	for _, r := range runs {
+		errs = append(errs, r.handleGroups(ctx, o, dash, post, pc, prog, wanted)...)
+	}
+	prog.End(engine.PhasePRs)
+
+	// A branch that failed to build or push is still in wanted, so only resolution errors
+	// (a dep that may own an open PR yielded no group) make the wanted set incomplete.
+	resolved := true
+	for _, r := range runs {
+		switch {
+		case o.DryRun:
+		case len(r.Res.Errors) > 0:
+			slog.WarnContext(ctx, "not closing obsolete PRs because of resolution errors", "base", r.Name, "errors", len(r.Res.Errors))
+			resolved = false
+		default:
+			errs = append(errs, r.closeObsolete(ctx, o, wanted, pc)...)
+		}
+	}
+	var actions []Action
+	for _, r := range runs {
+		actions = append(actions, r.actions...)
+	}
+	if !o.DryRun && resolved {
+		actions, errs = deleteObsoleteBranches(ctx, o, branches, open, closed, wanted, g, actions, errs)
+	}
+	switch {
+	case dashDisabled:
+		actions = append(actions, Action{Dashboard: true, Title: o.Dashboard.Title, Status: StatusSkipIssues})
+	case dash != nil:
+		sections := make([]dashboardSection, len(runs))
+		var resErrs []error
+		for i, r := range runs {
+			sections[i] = dashboardSection{actions: r.actions, deps: r.Res.Deps}
+			if multi {
+				sections[i].base = r.Name
+			}
+			for _, e := range r.Res.Errors {
+				if multi {
+					e = fmt.Errorf("%s: %w", r.Name, e)
+				}
+				resErrs = append(resErrs, e)
+			}
+		}
+		a, err := dash.write(ctx, o, pc, renderDashboard(sections, slices.Concat(resErrs, errs)))
+		if err != nil {
+			errs = append(errs, fmt.Errorf("dependency dashboard: %w", err))
+		} else {
+			actions = append(actions, a)
+		}
+	}
+	return actions, errs
+}
+
+// checkoutHead returns the HEAD of g, which must be the tip of base on origin.
+func checkoutHead(ctx context.Context, g Git, base string) (string, error) {
+	head, err := g.RevParse(ctx, "HEAD")
+	if err != nil {
+		return "", err
+	}
+	remote, err := g.LsRemote(ctx, "refs/heads/"+base)
+	if err != nil {
+		return "", err
+	}
+	if tip := remote["refs/heads/"+base]; tip != head {
+		return "", fmt.Errorf("checkout HEAD %s is not the tip of origin/%s (%s); check out the latest %s", short(head), base, short(tip), base)
+	}
+	return head, nil
+}
+
+// ofBase returns the PRs of prs that target base. A PR whose target the forge did not report
+// belongs to the only base, or with several to the base whose update branches (prefix) hold
+// its head.
+func ofBase(prs []platform.PR, base, prefix string, multi bool) []platform.PR {
+	var out []platform.PR
+	for _, p := range prs {
+		if p.Base == base || p.Base == "" && (!multi || strings.HasPrefix(p.Head, prefix)) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// baseRun is the work of Run on one base branch: its groups and the actions taken on them.
+type baseRun struct {
+	Base
+	s       *runState
+	groups  []engine.Group
+	actions []Action
+}
+
+// handleGroups builds and handles the groups of r, adding their branches to wanted
+// (out-of-schedule branches are still wanted: their PRs stay open).
+func (r *baseRun) handleGroups(ctx context.Context, o Options, dash *dashboard, post map[string]engine.PostProcessor, pc platform.Client,
+	prog engine.Progress, wanted map[string]bool,
+) []error {
+	groups, s, root, res := r.groups, r.s, r.Root, r.Res
 	built := make([][]engine.FileChange, len(groups))
 	buildErrs := make([][]error, len(groups))
 	ran := make([]bool, len(groups))
@@ -252,7 +380,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	forced := make([]force, len(groups))
 	for i := range groups {
 		forced[i] = dash.force(groups[i].Branch)
-		pr := prOf(open, groups[i].Branch)
+		pr := prOf(s.open, groups[i].Branch)
 		if pr != nil && pr.HasLabel(o.StopUpdatingLabel) {
 			continue // left alone: not built, and handled as StatusSkipStopped
 		}
@@ -260,7 +388,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			slog.DebugContext(ctx, "rebase requested on the PR", "branch", groups[i].Branch, "number", pr.Number, "label", pr.HasLabel(o.RebaseLabel))
 			forced[i].rebase = true
 		}
-		_, branchExists := branches["refs/heads/"+groups[i].Branch]
+		_, branchExists := s.branches["refs/heads/"+groups[i].Branch]
 		if awaitsApproval(groups[i], pr, branchExists, forced[i]) {
 			continue // not built: handled as StatusSkipApproval
 		}
@@ -269,7 +397,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		// Nothing is pushed for the others, so they are not built.
 		ran[i] = inSchedule[i] || o.UpdateNotScheduled && existing
 	}
-	inputs := inputFingerprints(ctx, o, root, head, groups, ran, post, g)
+	inputs := inputFingerprints(ctx, o, root, s.head, groups, ran, post, r.Git)
 	skipped := make([]bool, len(groups))
 	logs := newPRLogs(ctx, o.PRLog, groups)
 	var wg sync.WaitGroup
@@ -278,7 +406,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		if !ran[i] {
 			continue
 		}
-		if pr := prOf(open, groups[i].Branch); pr != nil && reusable(o, *pr, inputs[i], forced[i]) {
+		if pr := prOf(s.open, groups[i].Branch); pr != nil && reusable(o, *pr, inputs[i], forced[i]) {
 			slog.DebugContext(logs.ctx(i), "input fingerprint matches the open PR, not building", "branch", groups[i].Branch, "number", pr.Number, "input", inputs[i])
 			skipped[i] = true
 			continue
@@ -287,32 +415,29 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			start := time.Now()
-			changes, errs := build(logs.ctx(i), o, root, head, groups[i].Updates, post)
+			changes, errs := build(logs.ctx(i), o, root, s.head, groups[i].Updates, post)
 			built[i], buildErrs[i] = changes, errs
 			logs.spent[i] += time.Since(start)
 		})
 	}
 	wg.Wait()
 
-	var actions []Action
-	s := &runState{base: base, head: head, branches: branches, open: open, closed: closed, limit: newPRLimit(o, open, closed, now)}
-	slog.DebugContext(ctx, "new PR limit", "limit", s.limit, "maxNewPRs", o.MaxNewPRs, "prConcurrentLimit", o.ConcurrentLimit, "prHourlyLimit", o.HourlyLimit)
-	wanted := map[string]bool{}
+	var errs []error
 	for i, grp := range groups {
-		nErrs, nActions, start := len(errs), len(actions), time.Now()
+		nErrs, nActions, start := len(errs), len(r.actions), time.Now()
 		func() {
 			ctx := logs.ctx(i)
 			wanted[grp.Branch] = true // out-of-schedule branches are still wanted: keep their PRs open
-			if pr := prOf(open, grp.Branch); pr != nil && pr.HasLabel(o.StopUpdatingLabel) {
+			if pr := prOf(s.open, grp.Branch); pr != nil && pr.HasLabel(o.StopUpdatingLabel) {
 				slog.InfoContext(ctx, "PR has the stop-updating label, leaving it alone", "branch", grp.Branch, "number", pr.Number, "label", o.StopUpdatingLabel)
-				actions = append(actions, Action{Branch: grp.Branch, Title: grp.Title, Status: StatusSkipStopped, URL: pr.URL, Number: pr.Number, Reason: o.StopUpdatingLabel})
+				r.actions = append(r.actions, Action{Branch: grp.Branch, Title: grp.Title, Status: StatusSkipStopped, URL: pr.URL, Number: pr.Number, Reason: o.StopUpdatingLabel})
 				return
 			}
 			if buildErrs[i] != nil {
 				if reason, ok := skipReason(buildErrs[i]); ok {
 					slog.InfoContext(ctx, "update cannot be applied", "branch", grp.Branch, "reason", reason)
 					skipGroup(res, grp, reason)
-					actions = append(actions, Action{Branch: grp.Branch, Title: grp.Title, Status: StatusSkipApply, Reason: reason})
+					r.actions = append(r.actions, Action{Branch: grp.Branch, Title: grp.Title, Status: StatusSkipApply, Reason: reason})
 					return
 				}
 				errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, errors.Join(buildErrs[i]...)))
@@ -328,11 +453,11 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			b := groupBuild{changes: built[i], input: inputs[i]}
 			if skipped[i] {
 				b.build = func() ([]engine.FileChange, error) {
-					changes, errs := build(ctx, o, root, head, grp.Updates, post)
+					changes, errs := build(ctx, o, root, s.head, grp.Updates, post)
 					return changes, errors.Join(errs...)
 				}
 			}
-			a, target, err := handle(ctx, o, s, grp, b, inSchedule[i], forced[i], pc, g)
+			a, target, err := handle(ctx, o, s, grp, b, inSchedule[i], forced[i], pc, r.Git)
 			if errors.Is(err, errNoChanges) {
 				slog.InfoContext(ctx, "no changes", "branch", grp.Branch)
 				delete(wanted, grp.Branch)
@@ -349,7 +474,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 					}
 				}
 			}
-			if pr := prOf(open, grp.Branch); pr != nil && (a.Status == StatusRebased || a.Status == StatusUpdated) && pr.HasLabel(o.RebaseLabel) {
+			if pr := prOf(s.open, grp.Branch); pr != nil && (a.Status == StatusRebased || a.Status == StatusUpdated) && pr.HasLabel(o.RebaseLabel) {
 				// The rebase the label requested is done.
 				if err := pc.RemovePRLabel(ctx, pr.Number, o.RebaseLabel); err != nil {
 					errs = append(errs, fmt.Errorf("%s: remove label %q from #%d: %w", grp.Branch, o.RebaseLabel, pr.Number, err))
@@ -360,62 +485,47 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 					errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
 				}
 			}
-			actions = append(actions, a)
+			r.actions = append(r.actions, a)
 		}()
 		var err error
 		status := "no changes"
 		switch {
 		case len(errs) > nErrs:
 			err, status = errors.Join(errs[nErrs:]...), "error"
-		case len(actions) > nActions:
-			status = actions[len(actions)-1].Display()
+		case len(r.actions) > nActions:
+			status = r.actions[len(r.actions)-1].Display()
 		}
 		logs.done(i, status, time.Since(start))
 		prog.Done(engine.PhasePRs, err)
 	}
-	prog.End(engine.PhasePRs)
+	return errs
+}
 
-	// A branch that failed to build or push is still in wanted, so only resolution errors
-	// (a dep that may own an open PR yielded no group) make the wanted set incomplete.
-	switch {
-	case o.DryRun:
-	case len(res.Errors) > 0:
-		slog.WarnContext(ctx, "not closing obsolete PRs because of resolution errors", "errors", len(res.Errors))
-	default:
-		for _, pr := range open {
-			if wanted[pr.Head] {
-				continue
-			}
-			if pr.HasLabel(o.StopUpdatingLabel) {
-				slog.InfoContext(ctx, "obsolete PR has the stop-updating label, leaving it open", "branch", pr.Head, "number", pr.Number, "label", o.StopUpdatingLabel)
-				actions = append(actions, Action{Branch: pr.Head, Title: pr.Title, Status: StatusSkipStopped, URL: pr.URL, Number: pr.Number, Reason: o.StopUpdatingLabel})
-				continue
-			}
-			if err := pc.ClosePR(ctx, pr.Number); err != nil {
-				errs = append(errs, fmt.Errorf("close #%d: %w", pr.Number, err))
-				continue
-			}
-			if _, ok := branches["refs/heads/"+pr.Head]; ok {
-				if err := g.DeleteBranch(ctx, pr.Head); err != nil {
-					errs = append(errs, fmt.Errorf("delete %s: %w", pr.Head, err))
-				}
-			}
-			actions = append(actions, Action{Branch: pr.Head, Title: pr.Title, Status: StatusClosed, URL: pr.URL, Number: pr.Number})
+// closeObsolete closes the open PRs of r no group wants, deleting their branches, apart from
+// those with the stop-updating label.
+func (r *baseRun) closeObsolete(ctx context.Context, o Options, wanted map[string]bool, pc platform.Client) []error {
+	var errs []error
+	for _, pr := range r.s.open {
+		if wanted[pr.Head] {
+			continue
 		}
-		actions, errs = deleteObsoleteBranches(ctx, o, s, wanted, g, actions, errs)
-	}
-	switch {
-	case dashDisabled:
-		actions = append(actions, Action{Dashboard: true, Title: o.Dashboard.Title, Status: StatusSkipIssues})
-	case dash != nil:
-		a, err := dash.write(ctx, o, pc, renderDashboard(actions, slices.Concat(res.Errors, errs), res.Deps))
-		if err != nil {
-			errs = append(errs, fmt.Errorf("dependency dashboard: %w", err))
-		} else {
-			actions = append(actions, a)
+		if pr.HasLabel(o.StopUpdatingLabel) {
+			slog.InfoContext(ctx, "obsolete PR has the stop-updating label, leaving it open", "branch", pr.Head, "number", pr.Number, "label", o.StopUpdatingLabel)
+			r.actions = append(r.actions, Action{Branch: pr.Head, Title: pr.Title, Status: StatusSkipStopped, URL: pr.URL, Number: pr.Number, Reason: o.StopUpdatingLabel})
+			continue
 		}
+		if err := pc.ClosePR(ctx, pr.Number); err != nil {
+			errs = append(errs, fmt.Errorf("close #%d: %w", pr.Number, err))
+			continue
+		}
+		if _, ok := r.s.branches["refs/heads/"+pr.Head]; ok {
+			if err := r.Git.DeleteBranch(ctx, pr.Head); err != nil {
+				errs = append(errs, fmt.Errorf("delete %s: %w", pr.Head, err))
+			}
+		}
+		r.actions = append(r.actions, Action{Branch: pr.Head, Title: pr.Title, Status: StatusClosed, URL: pr.URL, Number: pr.Number})
 	}
-	return actions, errs
+	return errs
 }
 
 // prLogs are the per-PR log contexts of a run (Options.PRLog), begun on first use.
@@ -475,13 +585,14 @@ func skipGroup(res *engine.Result, grp engine.Group, reason string) {
 	}
 }
 
-// deleteObsoleteBranches deletes the managed branches no group wants that have no PR, open
-// or closed: the branches of branch automerge groups whose update is gone, or whose merged
-// branch could not be deleted. Branches someone else committed to are kept.
-func deleteObsoleteBranches(ctx context.Context, o Options, s *runState, wanted map[string]bool, g Git, actions []Action, errs []error) ([]Action, []error) {
-	for _, ref := range slices.Sorted(maps.Keys(s.branches)) {
+// deleteObsoleteBranches deletes the managed branches no group of any base wants that have no
+// PR, open or closed, to any base: the branches of branch automerge groups
+// whose update is gone, or whose merged branch could not be deleted. Branches someone else
+// committed to are kept.
+func deleteObsoleteBranches(ctx context.Context, o Options, branches map[string]string, open, closed []platform.PR, wanted map[string]bool, g Git, actions []Action, errs []error) ([]Action, []error) {
+	for _, ref := range slices.Sorted(maps.Keys(branches)) {
 		b := strings.TrimPrefix(ref, "refs/heads/")
-		if wanted[b] || prOf(s.open, b) != nil || prOf(s.closed, b) != nil {
+		if wanted[b] || prOf(open, b) != nil || prOf(closed, b) != nil {
 			continue
 		}
 		t, err := g.BranchTip(ctx, b)
@@ -566,15 +677,23 @@ func automerge(ctx context.Context, o Options, grp engine.Group, a *Action, targ
 	return nil
 }
 
-// runState is what Run shares between the groups it handles.
+// runState is what Run shares between the groups of one base branch it handles.
 type runState struct {
 	base, head   string            // base branch and its tip, the checkout's HEAD
-	branches     map[string]string // managed branches on origin: ref -> sha
-	open, closed []platform.PR
-	limit        int  // new PRs and automerge branches this run may create; -1 = unlimited
-	created      int  // new PRs and automerge branches created so far
-	merged       bool // a branch was merged into base, which moved: no further branch merges
+	branches     map[string]string // managed branches on origin (of every base): ref -> sha
+	open, closed []platform.PR     // the PRs of base (ofBase)
+	budget       *prBudget         // shared by every base
+	merged       bool              // a branch was merged into base, which moved: no further branch merges
 }
+
+// prBudget counts the new PRs and automerge branches a run creates against its limit.
+type prBudget struct {
+	limit   int // new PRs and automerge branches this run may create; -1 = unlimited
+	created int // new PRs and automerge branches created so far
+}
+
+// full reports whether the limit is reached.
+func (b *prBudget) full() bool { return b.limit >= 0 && b.created >= b.limit }
 
 // groupBuild is a group's build for handle: the changes, or none yet when build is set (the
 // open PR's input fingerprint matched, so Build was skipped). handle then builds only when it
@@ -698,7 +817,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 		}
 	}
 	// Dashboard requests bypass the PR limits; an existing automerge branch is not new.
-	if pr == nil && !(branchMode && exists) && !f.any() && s.limit >= 0 && s.created >= s.limit {
+	if pr == nil && !(branchMode && exists) && !f.any() && s.budget.full() {
 		a.Status = StatusSkipLimit
 		return a, nil, nil
 	}
@@ -775,7 +894,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	if err != nil {
 		return a, nil, err
 	}
-	s.created++
+	s.budget.created++
 	a.Status, a.Number, a.URL = StatusCreated, np.Number, np.URL
 	np.HeadSHA = cmp.Or(np.HeadSHA, commit)
 	return a, &np, nil
@@ -822,7 +941,7 @@ func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group,
 		return a, nil, err
 	}
 	if !exists {
-		s.created++
+		s.budget.created++
 	}
 	a.Automerge = AutomergeBranchWaiting
 	return a, nil, nil
@@ -879,7 +998,7 @@ func mergeBranch(ctx context.Context, o Options, s *runState, grp engine.Group, 
 func raisePR(ctx context.Context, o Options, s *runState, grp engine.Group, fp, input string, f force, sha, why string, pc platform.Client) (Action, *platform.PR, error) {
 	a := Action{Branch: grp.Branch, Title: grp.Title}
 	switch {
-	case !f.any() && s.limit >= 0 && s.created >= s.limit:
+	case !f.any() && s.budget.full():
 		a.Status = StatusSkipLimit
 		return a, nil, nil
 	case o.DryRun:
@@ -893,7 +1012,7 @@ func raisePR(ctx context.Context, o Options, s *runState, grp engine.Group, fp, 
 	if err != nil {
 		return a, nil, err
 	}
-	s.created++
+	s.budget.created++
 	a.Status, a.Number, a.URL = StatusCreated, np.Number, np.URL
 	np.HeadSHA = cmp.Or(np.HeadSHA, sha)
 	return a, &np, nil

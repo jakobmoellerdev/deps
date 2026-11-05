@@ -147,6 +147,9 @@ type apiPR struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
 	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
@@ -156,7 +159,7 @@ type apiPR struct {
 func present(v jsontext.Value) bool { return len(v) > 0 && string(v) != "null" }
 
 func (p *apiPR) pr() PR {
-	pr := PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, HeadSHA: p.Head.SHA, State: p.State, URL: p.HTMLURL, CreatedAt: p.CreatedAt}
+	pr := PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, HeadSHA: p.Head.SHA, Base: p.Base.Ref, State: p.State, URL: p.HTMLURL, CreatedAt: p.CreatedAt}
 	for _, l := range p.Labels {
 		pr.Labels = append(pr.Labels, l.Name)
 	}

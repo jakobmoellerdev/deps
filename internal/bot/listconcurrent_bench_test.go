@@ -41,7 +41,7 @@ func BenchmarkRunListLatency(b *testing.B) {
 	for b.Loop() {
 		g := &slowListGit{}
 		pc := &slowListPC{}
-		if _, errs := Run(b.Context(), o, root, res, nil, pc, g); len(errs) != 0 {
+		if _, errs := Run(b.Context(), o, []Base{{Root: root, Res: res, Git: g}}, nil, pc); len(errs) != 0 {
 			b.Fatal(errs)
 		}
 	}

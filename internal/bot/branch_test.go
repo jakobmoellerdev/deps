@@ -279,7 +279,7 @@ func TestRunBranchAutomerge(t *testing.T) {
 			}
 			o := tt.opts
 			o.AuthorEmail, o.Managers = email, managers
-			acts, errs := Run(t.Context(), o, root, res, nil, &tt.pc, &tt.git)
+			acts, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: &tt.git}}, nil, &tt.pc)
 			if tt.wantErr == "" && len(errs) > 0 || tt.wantErr != "" && (len(errs) != 1 || errs[0].Error() != tt.wantErr) {
 				t.Fatalf("errs = %v, want %q", errs, tt.wantErr)
 			}
@@ -322,7 +322,7 @@ func TestRunDeletesObsoleteBranches(t *testing.T) {
 	}
 	pc := &fakePC{checks: platform.ChecksPending, closed: []platform.PR{{Number: 3, Head: closedBr, Title: "chore(deps): update c"}}}
 	g := newGit()
-	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, g)
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
@@ -333,7 +333,7 @@ func TestRunDeletesObsoleteBranches(t *testing.T) {
 	// With errors nothing is deleted, as no PR is closed.
 	g = newGit()
 	res.Errors = []error{errBoom}
-	if _, _ = Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, g); len(g.deleted) != 0 {
+	if _, _ = Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, pc); len(g.deleted) != 0 {
 		t.Errorf("deleted %v despite errors", g.deleted)
 	}
 }

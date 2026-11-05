@@ -56,7 +56,7 @@ func newRun(o *rootOpts) *cli.Command {
 			&cli.StringFlag{Name: "api-url", Destination: &r.apiURL, Usage: "API base URL (default: detected)"},
 			&cli.StringFlag{Name: "repo", Destination: &r.repo, Usage: "repository owner/name (default: detected)"},
 			&cli.StringFlag{Name: "token", Destination: &r.token, Usage: "platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, git credential helper)"},
-			&cli.StringFlag{Name: "base", Destination: &r.base, Usage: "base branch (default: the repository's default branch)"},
+			&cli.StringFlag{Name: "base", Destination: &r.base, Usage: "base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch)"},
 			&cli.StringFlag{Name: "author-name", Value: defaultAuthorName, Destination: &r.authorName, Usage: "commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)"},
 			&cli.StringFlag{Name: "author-email", Value: defaultAuthorEmail, Destination: &r.authorEmail, Usage: "commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)"},
 			&cli.IntFlag{Name: "max-new-prs", Value: 10, Destination: &r.maxNewPRs, Usage: "maximum number of pull requests to create per run (0 = unlimited)"},
@@ -289,7 +289,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	if err != nil {
 		return err
 	}
-	var g bot.Git = repo
+	gitOf := func(repo gitx.Repo) bot.Git { return repo }
 	ignored := s.cfg.GitIgnoredAuthors
 	if usePlatform {
 		prefix, err := repo.Prefix(ctx)
@@ -303,19 +303,40 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 		// Branches deps committed with git under the configured author stay its own.
 		ignored = append(slices.Clone(ignored), email)
 		name, email = commits.Author()
-		g = apiGit{Repo: repo, api: commits}
+		gitOf = func(repo gitx.Repo) bot.Git { return apiGit{Repo: repo, api: commits} }
 		slog.InfoContext(ctx, "platform commits", "author", name+" <"+email+">")
 		if !platform.IsAppToken(token) {
 			slog.WarnContext(ctx, "platform commits with a token that is not a GitHub App installation token: GitHub leaves them unsigned")
 		}
 	}
-	res, err := s.resolve(ctx)
+	pc := platform.NewClient(info, token, client)
+	bases, multi, err := runBases(ctx, r.base, s.cfg, repo, pc)
 	if err != nil {
 		return err
 	}
-	report(stderr, o.term, o.verbose, res, res.Errors, nil)
+	defer closeBases(ctx, repo, bases)
+	// Every base is resolved with the checkout's config, its rules matching that base.
+	botBases := make([]bot.Base, len(bases))
+	var resErrs []error
+	for i, b := range bases {
+		bs := s.forBase(b.repo.Dir, b.name)
+		res, err := bs.resolve(ctx)
+		if err != nil {
+			return err
+		}
+		errs := res.Errors
+		if multi {
+			fmt.Fprintf(stderr, "base    %s\n", b.name)
+			errs = make([]error, len(res.Errors))
+			for j, e := range res.Errors {
+				errs[j] = fmt.Errorf("%s: %w", b.name, e)
+			}
+		}
+		report(stderr, o.term, o.verbose, res, errs, nil)
+		resErrs = append(resErrs, errs...)
+		botBases[i] = bot.Base{Name: b.name, Root: bs.root, Res: res, Git: gitOf(b.repo)}
+	}
 	bo := bot.Options{
-		Base:               r.base,
 		AuthorName:         name,
 		AuthorEmail:        email,
 		IgnoredAuthors:     ignored,
@@ -330,6 +351,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 		MaxNewPRs:          r.maxNewPRs,
 		Managers:           s.managers,
 		BranchPrefix:       s.cfg.Prefix(),
+		MultiBase:          multi,
 		AllowTasks:         allowTasks,
 		Notes:              releasenotes.New(client, s.sem, s.auth, s.gh, s.sources),
 		Progress:           s.progress,
@@ -338,7 +360,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	if s.cfg.DependencyDashboard {
 		bo.Dashboard = &bot.DashboardOptions{Title: s.cfg.DashboardTitle(), Labels: s.cfg.DependencyDashboardLabels}
 	}
-	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(s), platform.NewClient(info, token, client), g)
+	actions, botErrs := bot.Run(ctx, bo, botBases, postProcessors(s), pc)
 
 	for _, a := range actions {
 		if a.Dashboard {
@@ -351,8 +373,9 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	for _, e := range botErrs {
 		reportError(stderr, o.term, e)
 	}
+	res, groups := runResult(botBases, s.cfg.Prefix(), multi, resErrs)
 	nErr := len(res.Errors) + len(botErrs)
-	sum := summary{Command: "run", Run: true, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Actions: actions,
+	sum := summary{Command: "run", Run: true, Res: res, Groups: groups, Actions: actions,
 		Errors: append(append([]error(nil), res.Errors...), botErrs...), Elapsed: time.Since(start), Verbose: o.verbose, Report: o.report, Style: o.term.style}
 	if r.dryRun {
 		sum.Command = "run --dry-run"

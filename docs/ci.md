@@ -24,6 +24,7 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
   - [Signing with a key](#signing-with-a-key)
 - [Self-hosted runners and actions hosts](#self-hosted-runners-and-actions-hosts)
 - [Self-managed GitLab](#self-managed-gitlab)
+- [Several base branches](#several-base-branches)
 - [Schedules](#schedules)
   - [Time windows](#time-windows)
 - [Run on push to the default branch](#run-on-push-to-the-default-branch)
@@ -429,7 +430,7 @@ For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back
 
 `.terraform.lock.hcl` is refreshed with `terraform init -backend=false` (`tofu` for OpenTofu) when a provider constraint changes or a provider gets a lockfile-only update (`rangeStrategy: update-lockfile`), so put the CLI on the runner (`hashicorp/setup-terraform` or `opentofu/setup-opentofu`). There is no fallback; without it those directories fail with `terraform not found (needed to update .terraform.lock.hcl)`. The runner also needs to reach the provider registries and the sources of remote modules, which init downloads.
 
-**Checkout.** `deps run` requires the checked-out `HEAD` to be the tip of `origin/<base>`. A fresh `actions/checkout` of the default branch satisfies that; shallow clones are fine. To manage a branch other than the default, check it out and pass `--base <branch>`.
+**Checkout.** `deps run` requires the checked-out `HEAD` to be the tip of `origin/<base>`. A fresh `actions/checkout` of the default branch satisfies that; shallow clones are fine. To manage a branch other than the default, check it out and pass `--base <branch>`, or list it in [`baseBranches`](#several-base-branches).
 
 **Network.** The runner needs HTTPS access to:
 
@@ -463,6 +464,23 @@ A component path starting with `$CI_SERVER_FQDN` or `$CI_SERVER_HOST` (also `${.
 2. otherwise, in a GitLab CI job on the same instance (`CI_SERVER_HOST`, or the host of `CI_SERVER_URL`), `CI_JOB_TOKEN` as user `gitlab-ci-token`. The job token reads only projects that allow it in their job token allowlist.
 
 A platform token (`DEPS_TOKEN` and friends) for the same host takes precedence over both. Without any of them, deps falls back to `git credential fill` on a 401.
+
+## Several base branches
+
+To keep release branches updated next to the default branch, list them in [`baseBranches`](reference/configuration.md#basebranches) (Renovate's `baseBranchPatterns`, Dependabot's `target-branch` per update entry). One job handles them all; check out the default branch as usual:
+
+```yaml
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+baseBranches: [$default, '/^release\/v\d+$/']
+rules:
+  - baseBranches: ['/^release\//']   # only patches on release branches
+    updates: [patch]
+```
+
+- deps fetches every other base (shallow in a shallow clone, so the default `fetch-depth: 1` is fine) into a temporary linked work tree and resolves it with the default branch's config. The token needs write access to those branches like to the default one.
+- Branches carry the base: `deps/main/gomod/golang.org-x-net`, `deps/release/v2/gomod/golang.org-x-net`. Run CI on `deps/**` pushes as before.
+- Each base has its own PRs and cleanup; the PR limits count all bases together, so raise `--max-new-prs`, `prConcurrentLimit` and `prHourlyLimit` with the number of bases. The dashboard lists each base in its own section.
+- Branch protection of the release branches applies as on the default branch (automerge, [branch automerge](#branch-automerge)).
 
 ## Schedules
 

@@ -175,6 +175,7 @@ type Config struct {
 	Timezone      string   `yaml:"timezone" jsonschema_description:"IANA time zone (e.g. Europe/Berlin) of the schedule time windows; default UTC. Cron triggers are unaffected."`
 	Security      *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, updates and schedule."`
 	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
+	BaseBranches  []string `yaml:"baseBranches" jsonschema_description:"Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes '/<RE2>/' (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (<prefix><base>/<manager>/<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it."`
 	RebaseWhen    string   `yaml:"rebaseWhen" jsonschema:"enum=conflicted,enum=behind-base-branch,enum=never,default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
 	Monorepos     *bool    `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR, and the Ruby version (the Gemfile ruby directive, .ruby-version, asdf and mise ruby) into the group ruby; rules can override the group."`
 	Replacements  *bool    `yaml:"replacements" jsonschema:"default=true" jsonschema_description:"Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/* images to registry.k8s.io/*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep."`
@@ -238,6 +239,10 @@ type Config struct {
 	// lfmSchedule is the parsed LockFileMaintenance.Schedule, or schedule when it is nil.
 	lfmSchedule *schedule.Set
 	minAge      time.Duration // parsed MinimumReleaseAge
+	// baseBranches are the parsed BaseBranches; baseBranch is the base branch rules with
+	// baseBranches match against (ForBaseBranch), "" = none.
+	baseBranches []branchPattern
+	baseBranch   string
 }
 
 // SecurityEnabled reports whether OSV lookups are on (default true).
@@ -386,6 +391,8 @@ type Rule struct {
 	DepTypes    []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=chart,enum=helmfile,enum=k0s,enum=flux,enum=argocd,enum=sveltos,enum=image,enum=helmChart,enum=resource,enum=repository,enum=service,enum=include,enum=component,enum=node,enum=tool,enum=annotation,enum=regex,enum=dev-dependencies,enum=build-dependencies,enum=workspace.dependencies,enum=patch,enum=replace,enum=requirements,enum=project.dependencies,enum=project.optional-dependencies,enum=dependency-groups,enum=tool.uv.dev-dependencies,enum=tool.pdm.dev-dependencies,enum=group,enum=packages,enum=dev-packages,enum=category,enum=required_provider,enum=required_version,enum=module,enum=provider,enum=helm_release,enum=tfe_workspace,enum=docker_image,enum=docker_container,enum=docker_service,enum=docker_registry_image,enum=kubernetes_pod,enum=kubernetes_pod_v1,enum=kubernetes_deployment,enum=kubernetes_deployment_v1,enum=kubernetes_daemonset,enum=kubernetes_daemon_set_v1,enum=kubernetes_stateful_set,enum=kubernetes_stateful_set_v1,enum=kubernetes_job,enum=kubernetes_job_v1,enum=kubernetes_cron_job,enum=kubernetes_cron_job_v1,enum=kubernetes_replication_controller,enum=kubernetes_replication_controller_v1,enum=terraform-version,enum=opentofu-version,enum=plugin,enum=github,enum=gitTags,enum=terragrunt,enum=compile,enum=provided,enum=runtime,enum=test,enum=system,enum=import,enum=parent,enum=build,enum=wrapper,enum=maven,enum=ruby,enum=development,enum=submodule" jsonschema_description:"Only match deps of these types."`
 	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'. An entry starting with '!' excludes the files its glob matches; a list of only exclusions matches every other file."`
 	Datasources []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=git-refs,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=pypi,enum=terraform-provider,enum=terraform-module,enum=maven,enum=gradle-version,enum=rubygems,enum=ruby-version,enum=rust-version,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource."`
+	// BaseBranches matches the base branch of the run (Renovate's matchBaseBranches).
+	BaseBranches []string `yaml:"baseBranches" jsonschema_description:"Only match deps on these base branches of run (baseBranches, --base, else the default branch): names or RE2 regexes '/<RE2>/' (flag i allowed); an entry starting with '!' excludes the branches it matches, and a list of only exclusions matches every other branch. plan, apply, explain and preview have no base branch, so no rule with baseBranches matches there."`
 	// CurrentVersion and CurrentAge match the dep's current version (Renovate's
 	// matchCurrentVersion and matchCurrentAge).
 	CurrentVersion string   `yaml:"currentVersion" jsonschema_description:"Only match deps whose current version (the locked one when a lockfile has it) satisfies this Masterminds semver constraint (e.g. '< 2', converted with the dep's versioning scheme), or matches the regex form '/<RE2>/' as written ('!/<RE2>/' excludes matches; flag i allowed). Cannot be combined with versioning."`
@@ -433,6 +440,7 @@ type Rule struct {
 	// PostUpgradeTasks of the last matching rule setting it run after the update is built.
 	PostUpgradeTasks *PostUpgradeTasks `yaml:"postUpgradeTasks" jsonschema_description:"Shell commands run in the repository after the update is built (apply, run with --allow-tasks), e.g. go generate ./...: a list (once per branch) or {commands, executionMode}. The files they change, apart from .gitignored ones, join the commit. The last matching rule setting it wins; [] clears."`
 
+	baseBranches   []branchPattern // parsed BaseBranches
 	allow          *Allowed
 	updates        map[dep.UpdateType]bool // set of Updates; nil = not set
 	currentVersion *Allowed                // parsed CurrentVersion; nil = not set
@@ -729,6 +737,7 @@ func (c *Config) Validate() error {
 			add("branchPrefix", "%s, got %q", msg, c.BranchPrefix)
 		}
 	}
+	c.baseBranches = parseBranchPatterns("baseBranches", c.BaseBranches, false, true, add)
 	if c.GitAuthor != "" {
 		if _, err := ParseAuthor(c.GitAuthor); err != nil {
 			add("gitAuthor", "%v", err)
@@ -868,6 +877,7 @@ func (c *Config) validateRule(i int, add addFunc) {
 			add(fmt.Sprintf("%s.datasources[%d]", f, j), "%s", unknownDatasource(ds))
 		}
 	}
+	r.baseBranches = parseBranchPatterns(f+".baseBranches", r.BaseBranches, true, false, add)
 	r.currentVersion = nil
 	if r.CurrentVersion != "" {
 		if a, err := ParseAllowed(r.CurrentVersion); err != nil {

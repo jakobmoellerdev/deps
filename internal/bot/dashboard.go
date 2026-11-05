@@ -121,12 +121,27 @@ func sameBody(a, b string) bool {
 	return norm(a) == norm(b)
 }
 
-// renderDashboard renders the dashboard body: updates awaiting approval, pending PRs (schedule,
-// limits), ignored or blocked updates, branches waiting for branch automerge, open PRs, errors
-// and the detected dependencies. It is deterministic, so an unchanged run does not edit the
-// issue, and bounded to dashboardMaxBytes; every checkbox is unticked again.
-func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
-	var approval, schedule, limited, blocked, branches, open []string
+// dashboardSection is what the dashboard lists for one base branch: the actions of its groups
+// and its detected dependencies. base is "" for the only base of a run whose branches do not
+// carry it; its lists then go without a base heading.
+type dashboardSection struct {
+	base    string
+	actions []Action
+	deps    []dep.Dep
+}
+
+// dashboardLists are the checkbox lists of one base.
+type dashboardLists struct {
+	approval, schedule, limited, blocked, branches, open []string
+}
+
+func (l dashboardLists) empty() bool {
+	return len(l.approval)+len(l.schedule)+len(l.limited)+len(l.blocked)+len(l.branches)+len(l.open) == 0
+}
+
+// dashboardItems sorts actions into the dashboard lists.
+func dashboardItems(actions []Action) dashboardLists {
+	var l dashboardLists
 	for _, a := range actions {
 		// A PR or branch deps merged in this run is no longer open.
 		if a.Dashboard || a.Status == StatusClosed || a.Status == StatusDeleted || a.Automerge == AutomergeMerged {
@@ -134,36 +149,54 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 		}
 		switch {
 		case a.Status == StatusSkipClosed:
-			blocked = append(blocked, fmt.Sprintf("- [ ] <!-- deps:recreate=%s --> %s (%s closed without merging; tick to recreate it)", a.Branch, a.Title, prLink(a)))
+			l.blocked = append(l.blocked, fmt.Sprintf("- [ ] <!-- deps:recreate=%s --> %s (%s closed without merging; tick to recreate it)", a.Branch, a.Title, prLink(a)))
 		case a.Status == StatusSkipClosedMajor:
-			blocked = append(blocked, fmt.Sprintf("- [ ] <!-- deps:recreate=%s --> %s (%s closed without merging, so this major is ignored; tick to recreate it)", a.Branch, a.Title, prLink(a)))
+			l.blocked = append(l.blocked, fmt.Sprintf("- [ ] <!-- deps:recreate=%s --> %s (%s closed without merging, so this major is ignored; tick to recreate it)", a.Branch, a.Title, prLink(a)))
 		case a.Status == StatusSkipModified:
-			blocked = append(blocked, fmt.Sprintf("- [ ] <!-- deps:rebase=%s --> %s (branch modified by someone else; tick to discard those commits and rebuild it)", a.Branch, a.Title))
+			l.blocked = append(l.blocked, fmt.Sprintf("- [ ] <!-- deps:rebase=%s --> %s (branch modified by someone else; tick to discard those commits and rebuild it)", a.Branch, a.Title))
 		case a.Status == StatusSkipLimit:
-			limited = append(limited, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
+			l.limited = append(l.limited, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
 		case a.Status == StatusSkipApply:
-			blocked = append(blocked, fmt.Sprintf("- %s (cannot be applied: %s)", a.Title, a.Reason))
+			l.blocked = append(l.blocked, fmt.Sprintf("- %s (cannot be applied: %s)", a.Title, a.Reason))
 		case a.Status == StatusSkipStopped:
-			blocked = append(blocked, fmt.Sprintf("- %s (%s has the %#q label; deps leaves it alone until the label is removed)", a.Title, prLink(a), a.Reason))
+			l.blocked = append(l.blocked, fmt.Sprintf("- %s (%s has the %#q label; deps leaves it alone until the label is removed)", a.Title, prLink(a), a.Reason))
 		case a.Status == StatusSkipApproval:
-			approval = append(approval, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
+			l.approval = append(l.approval, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
 		case a.Status == StatusSkipSchedule && a.Number == 0:
-			schedule = append(schedule, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s (%s)", a.Branch, a.Title, waits(a.Waits)))
+			l.schedule = append(l.schedule, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s (%s)", a.Branch, a.Title, waits(a.Waits)))
 		case a.Number == 0 && (a.Automerge == AutomergeBranchWaiting || a.Automerge == AutomergeBranchNextRun):
-			branches = append(branches, fmt.Sprintf("- [ ] <!-- deps:pr=%s --> %s (%#q)", a.Branch, a.Title, a.Branch))
+			l.branches = append(l.branches, fmt.Sprintf("- [ ] <!-- deps:pr=%s --> %s (%#q)", a.Branch, a.Title, a.Branch))
 		case a.Number > 0:
-			open = append(open, fmt.Sprintf("- [ ] <!-- deps:rebase=%s --> %s (%s)", a.Branch, a.Title, prLink(a)))
+			l.open = append(l.open, fmt.Sprintf("- [ ] <!-- deps:rebase=%s --> %s (%s)", a.Branch, a.Title, prLink(a)))
 		}
 	}
+	return l
+}
 
+// renderDashboard renders the dashboard body: per base branch (headed by it when sections name
+// it) updates awaiting approval, pending PRs (schedule, limits), ignored or blocked updates,
+// branches waiting for branch automerge and open PRs, then the errors and the detected
+// dependencies of each base. It is deterministic, so an unchanged run does not edit the issue,
+// and bounded to dashboardMaxBytes; every checkbox is unticked again.
+func renderDashboard(sections []dashboardSection, errs []error) string {
 	w := &budget{left: dashboardMaxBytes - len(dashboardMarker) - 2}
 	w.text("This issue lists the dependency updates [deps](https://git.jakob-moeller.cloud/jakobmoellerdev/deps) manages. Tick a checkbox to make the next run act on it.\n")
-	w.section("Pending approval", "These updates need approval (`dashboardApproval`). Tick one to create its PR.", approval)
-	w.section("Awaiting schedule", "These updates wait for a run triggered by one of their crons or inside one of their time windows. Tick one to create its PR now.", schedule)
-	w.section("Rate-limited", "These updates wait for the PR limits. Tick one to create its PR now.", limited)
-	w.section("Ignored or blocked", "", blocked)
-	w.section("Pending branch automerge", "These branches are merged without a PR once their checks pass. Tick one to create its PR instead.", branches)
-	w.section("Open", "These PRs are open. Tick one to rebuild its branch.", open)
+	for _, sec := range sections {
+		l := dashboardItems(sec.actions)
+		level := "##"
+		if sec.base != "" {
+			if l.empty() || !w.heading("## Base branch `"+sec.base+"`") {
+				continue
+			}
+			level = "###"
+		}
+		w.section(level, "Pending approval", "These updates need approval (`dashboardApproval`). Tick one to create its PR.", l.approval)
+		w.section(level, "Awaiting schedule", "These updates wait for a run triggered by one of their crons or inside one of their time windows. Tick one to create its PR now.", l.schedule)
+		w.section(level, "Rate-limited", "These updates wait for the PR limits. Tick one to create its PR now.", l.limited)
+		w.section(level, "Ignored or blocked", "", l.blocked)
+		w.section(level, "Pending branch automerge", "These branches are merged without a PR once their checks pass. Tick one to create its PR instead.", l.branches)
+		w.section(level, "Open", "These PRs are open. Tick one to rebuild its branch.", l.open)
+	}
 
 	if len(errs) > 0 {
 		lines := make([]string, 0, min(len(errs), dashboardMaxErrors)+1)
@@ -173,9 +206,23 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 		if n := len(errs) - dashboardMaxErrors; n > 0 {
 			lines = append(lines, fmt.Sprintf("- … and %d more (see the run log)", n))
 		}
-		w.section("Errors", "The last run reported these errors.", lines)
+		w.section("##", "Errors", "The last run reported these errors.", lines)
 	}
-	w.detected(deps)
+	const detected = "## Detected dependencies"
+	headed := false
+	for _, sec := range sections {
+		title := detected
+		if sec.base != "" {
+			if len(sec.deps) == 0 {
+				continue
+			}
+			if !headed && !w.heading(detected) {
+				break
+			}
+			headed, title = true, "### `"+sec.base+"`"
+		}
+		w.detected(sec.deps, title)
+	}
 	w.b.WriteString("\n" + dashboardMarker + "\n")
 	return w.b.String()
 }
@@ -215,33 +262,46 @@ func (w *budget) text(s string) {
 	w.left -= len(s)
 }
 
-// section writes a heading, an optional intro and the lines that fit; an empty section is left
-// out.
-func (w *budget) section(heading, intro string, lines []string) {
+// dashboardMore ends a list cut by the size limit.
+const dashboardMore = "- … %d more not listed (dashboard size limit)\n"
+
+// heading writes the markdown heading h ("## Title") when it fits with room for a cut list;
+// it reports whether it did.
+func (w *budget) heading(h string) bool {
+	s := "\n" + h + "\n"
+	if !w.fits(len(s), len(dashboardMore)+8) {
+		return false
+	}
+	w.text(s)
+	return true
+}
+
+// section writes a heading of level ("##", "###"), an optional intro and the lines that fit;
+// an empty section is left out.
+func (w *budget) section(level, heading, intro string, lines []string) {
 	if len(lines) == 0 {
 		return
 	}
-	head := "\n## " + heading + "\n\n"
+	head := "\n" + level + " " + heading + "\n\n"
 	if intro != "" {
 		head += intro + "\n\n"
 	}
-	const more = "- … %d more not listed (dashboard size limit)\n"
-	if !w.fits(len(head), len(more)+8) {
+	if !w.fits(len(head), len(dashboardMore)+8) {
 		return
 	}
 	w.text(head)
 	for i, l := range lines {
-		if !w.fits(len(l)+1, len(more)+8) {
-			w.text(fmt.Sprintf(more, len(lines)-i))
+		if !w.fits(len(l)+1, len(dashboardMore)+8) {
+			w.text(fmt.Sprintf(dashboardMore, len(lines)-i))
 			return
 		}
 		w.text(l + "\n")
 	}
 }
 
-// detected writes the detected dependencies as <details> per manager and file, sorted, with
-// one "name version" line per dependency, until the budget is used up.
-func (w *budget) detected(deps []dep.Dep) {
+// detected writes the detected dependencies under the heading title as <details> per manager
+// and file, sorted, with one "name version" line per dependency, until the budget is used up.
+func (w *budget) detected(deps []dep.Dep, title string) {
 	if len(deps) == 0 {
 		return
 	}
@@ -261,7 +321,7 @@ func (w *budget) detected(deps []dep.Dep) {
 		truncated    = "\n_%d more dependencies not listed (dashboard size limit)._\n"
 	)
 	reserve := len(closeFile) + len(closeManager) + len(truncated) + 8
-	head := "\n## Detected dependencies\n\n"
+	head := "\n" + title + "\n\n"
 	if !w.fits(len(head), reserve) {
 		return
 	}

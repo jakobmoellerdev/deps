@@ -47,7 +47,7 @@ func TestRunLockFileMaintenance(t *testing.T) {
 
 	// A changed lock is pushed and gets the PR.
 	g, pc := &fakeGit{}, &fakePC{}
-	acts, errs := Run(t.Context(), o, root, res, map[string]engine.PostProcessor{cargo.Name: maintainer{lock: []byte("new\n")}}, pc, g)
+	acts, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, map[string]engine.PostProcessor{cargo.Name: maintainer{lock: []byte("new\n")}}, pc)
 	if len(errs) > 0 || len(acts) != 1 || acts[0].Branch != maintBranch || acts[0].Status != StatusCreated || acts[0].Title != "chore(deps): lock file maintenance" {
 		t.Fatalf("actions = %+v, errs = %v", acts, errs)
 	}
@@ -58,7 +58,7 @@ func TestRunLockFileMaintenance(t *testing.T) {
 	// An unchanged lock needs no PR: nothing is pushed and the open one is closed.
 	g = &fakeGit{branches: map[string]string{"refs/heads/" + maintBranch: "x"}}
 	pc = &fakePC{open: []platform.PR{{Number: 7, Head: maintBranch, Title: "chore(deps): lock file maintenance"}}}
-	acts, errs = Run(t.Context(), o, root, res, map[string]engine.PostProcessor{cargo.Name: maintainer{}}, pc, g)
+	acts, errs = Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, map[string]engine.PostProcessor{cargo.Name: maintainer{}}, pc)
 	if len(errs) > 0 || len(g.pushed) != 0 || !slices.Equal(pc.closedNow, []int{7}) || !slices.Equal(g.deleted, []string{maintBranch}) {
 		t.Errorf("unchanged: actions = %+v, errs = %v, pushed = %v, closed = %v, deleted = %v", acts, errs, g.pushed, pc.closedNow, g.deleted)
 	}

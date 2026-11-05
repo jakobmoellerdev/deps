@@ -330,6 +330,14 @@ func (s *session) sibling(dir string) (*session, error) {
 	return &sib, nil
 }
 
+// forBase is the session resolving the checkout root of base branch base: the same config,
+// its rules with baseBranches matching base, and the same datasources.
+func (s *session) forBase(root, base string) *session {
+	b := *s
+	b.root, b.cfg = root, s.cfg.ForBaseBranch(base)
+	return &b
+}
+
 // gitLabAuth returns the credentials for the host of the GitLab instance at gitlabURL, in
 // precedence order: DEPS_GITLAB_TOKEN (user oauth2), then CI_JOB_TOKEN (user gitlab-ci-token)
 // when the GitLab CI job runs on that instance (CI_SERVER_HOST, else CI_SERVER_URL's host).

@@ -17,7 +17,7 @@ func TestPRMetadataOnCreate(t *testing.T) {
 	// a/x is new, b/y already has an open PR (it is only updated).
 	pc := &fakePC{open: []platform.PR{openPR(branchB)}, fail: map[string]error{}}
 	o := Options{AuthorEmail: email, Managers: managers}
-	acts, errs := Run(t.Context(), o, root, res, nil, pc, &fakeGit{branches: map[string]string{"refs/heads/" + branchB: "x"}, authors: map[string]string{branchB: email}})
+	acts, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: &fakeGit{branches: map[string]string{"refs/heads/" + branchB: "x"}, authors: map[string]string{branchB: email}}}}, nil, pc)
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
@@ -40,7 +40,7 @@ func TestPRMetadataFailureKeepsPR(t *testing.T) {
 		res.Updates[i].Labels = []string{"dependencies"}
 	}
 	pc := &fakePC{fail: map[string]error{"SetPRMetadata:101": errors.New("422 no such label")}}
-	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, &fakeGit{})
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: &fakeGit{}}}, nil, pc)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "422 no such label") {
 		t.Errorf("errs = %v", errs)
 	}

@@ -136,6 +136,7 @@ type fakePC struct {
 	fail         map[string]error            // EnableAutoMerge errors are keyed by the PR number
 	got          []int                       // GetPR numbers
 	created      []string                    // heads
+	createdBases []string                    // CreatePR bases
 	metadata     map[int]platform.PRMetadata // SetPRMetadata calls by PR number
 	bodies       []string                    // CreatePR bodies
 	titles       []string                    // CreatePR titles
@@ -176,11 +177,12 @@ func (c *fakePC) GetPR(_ context.Context, n int) (platform.PR, error) {
 	c.got = append(c.got, n)
 	return platform.PR{Number: n, Mergeable: c.mergeable, HeadSHA: c.headSHA}, nil
 }
-func (c *fakePC) CreatePR(_ context.Context, head, _, title, body string) (platform.PR, error) {
+func (c *fakePC) CreatePR(_ context.Context, head, base, title, body string) (platform.PR, error) {
 	if err := fail(c.fail, "CreatePR", head); err != nil {
 		return platform.PR{}, err
 	}
 	c.created = append(c.created, head)
+	c.createdBases = append(c.createdBases, base)
 	c.bodies = append(c.bodies, body)
 	c.titles = append(c.titles, title)
 	return platform.PR{Number: 100 + len(c.created), Head: head}, nil
@@ -305,6 +307,7 @@ func TestRun(t *testing.T) {
 	tests := []struct {
 		name        string
 		opts        Options
+		base        string // Base.Name; "" = the default branch
 		git         fakeGit
 		pc          fakePC
 		engineErr   bool
@@ -448,7 +451,7 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:       "unknown mergeability is looked up and treated as mergeable",
-			opts:       Options{Base: "main"},
+			base:       "main",
 			git:        fakeGit{branches: map[string]string{"refs/heads/" + branchA: "x"}, authors: map[string]string{branchA: email}},
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A"}}, fail: map[string]error{"DefaultBranch": errBoom}},
 			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
@@ -635,7 +638,7 @@ func TestRun(t *testing.T) {
 			if o.MaxNewPRs == 0 {
 				o.MaxNewPRs = 10
 			}
-			acts, errs := Run(t.Context(), o, root, res, nil, &tt.pc, &tt.git)
+			acts, errs := Run(t.Context(), o, []Base{{Name: tt.base, Root: root, Res: res, Git: &tt.git}}, nil, &tt.pc)
 			if len(errs) != len(tt.wantErrs) {
 				t.Fatalf("errs = %v, want %q", errs, tt.wantErrs)
 			}
@@ -676,7 +679,7 @@ func TestRun(t *testing.T) {
 func TestRunRejectsStaleCheckout(t *testing.T) {
 	root, res := fixture(t)
 	g := &staleGit{}
-	_, errs := Run(t.Context(), Options{MaxNewPRs: 10, Managers: managers}, root, res, nil, &fakePC{}, g)
+	_, errs := Run(t.Context(), Options{MaxNewPRs: 10, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, &fakePC{})
 	if len(errs) != 1 || g.pushed != nil {
 		t.Fatalf("errs = %v, pushed = %v", errs, g.pushed)
 	}
@@ -687,7 +690,7 @@ func TestRunBranchPrefixAndUnlimitedPRs(t *testing.T) {
 	g := &fakeGit{branches: map[string]string{"refs/heads/bot/gomod/gone": "x"}}
 	pc := &fakePC{open: []platform.PR{{Number: 9, Head: "bot/gomod/gone"}, {Number: 10, Head: "deps/gomod/foreign"}}}
 	o := Options{BranchPrefix: "bot/", AuthorEmail: email, Managers: managers} // MaxNewPRs 0 = unlimited
-	acts, errs := Run(t.Context(), o, root, res, nil, pc, g)
+	acts, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
 	if len(errs) != 0 {
 		t.Fatal(errs)
 	}
@@ -731,7 +734,7 @@ func TestRunSecurityGroup(t *testing.T) {
 		mk("c/z", 4, 55),
 	}}
 	pc := &fakePC{}
-	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, &fakeGit{})
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: &fakeGit{}}}, nil, pc)
 	if len(errs) != 0 {
 		t.Fatal(errs)
 	}
@@ -788,7 +791,7 @@ func TestRunSkipsInapplicableUpdate(t *testing.T) {
 	pc := &fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}, {Number: 10, Head: branchA}}}
 	post := map[string]engine.PostProcessor{"github-actions": inapplicable{}}
 	o := Options{AuthorEmail: email, Managers: managers, Dashboard: &DashboardOptions{Title: "Dependency Dashboard"}}
-	acts, errs := Run(t.Context(), o, root, res, post, pc, g)
+	acts, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, post, pc)
 	if len(errs) != 0 {
 		t.Fatal(errs)
 	}
@@ -811,7 +814,7 @@ func TestRunSkipsInapplicableUpdate(t *testing.T) {
 	g = &fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}}
 	pc = &fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}}
 	post = map[string]engine.PostProcessor{"github-actions": inapplicable{fail: true}}
-	if _, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, post, pc, g); len(errs) != 1 || !strings.Contains(errs[0].Error(), branchB+": wf.yml: boom") || !slices.Equal(pc.closedNow, []int{9}) {
+	if _, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, post, pc); len(errs) != 1 || !strings.Contains(errs[0].Error(), branchB+": wf.yml: boom") || !slices.Equal(pc.closedNow, []int{9}) {
 		t.Errorf("errs = %v, closed = %v", errs, pc.closedNow)
 	}
 }
@@ -899,7 +902,7 @@ func TestRunPostUpgradeTasks(t *testing.T) {
 	res.Updates[1].Tasks.Commands = []string{"echo broken >&2; exit 3"}
 	g := &taskGit{head: base}
 	pc := &fakePC{}
-	_, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers, AllowTasks: engine.TaskAllowlist{"*"}}, root, res, nil, pc, g)
+	_, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers, AllowTasks: engine.TaskAllowlist{"*"}}, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
 	if len(errs) != 1 || errs[0].Error() != branchB+": postUpgradeTasks: echo broken >&2; exit 3: exit status 3: broken" {
 		t.Errorf("errs = %v", errs)
 	}
@@ -917,7 +920,7 @@ func TestRunPostUpgradeTasks(t *testing.T) {
 	}
 
 	g = &taskGit{head: g.head}
-	_, errs = Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, &fakePC{}, g)
+	_, errs = Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, &fakePC{})
 	if len(errs) != 2 || !errors.Is(errs[0], engine.ErrTasksNotAllowed) || len(g.commits) != 0 {
 		t.Errorf("without AllowTasks: errs = %v, commits = %d", errs, len(g.commits))
 	}
@@ -951,7 +954,7 @@ func TestRunStateErrors(t *testing.T) {
 			root, res := fixture(t)
 			g := &fakeGit{fail: tt.gitFail}
 			pc := &fakePC{fail: tt.pcFail}
-			acts, errs := Run(t.Context(), Options{MaxNewPRs: 10, AuthorEmail: email, Managers: managers}, root, res, nil, pc, g)
+			acts, errs := Run(t.Context(), Options{MaxNewPRs: 10, AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
 			if len(errs) != 1 || errs[0].Error() != tt.want || !errors.Is(errs[0], errBoom) {
 				t.Fatalf("errs = %v, want [%s]", errs, tt.want)
 			}
@@ -1001,7 +1004,7 @@ func TestRunProgress(t *testing.T) {
 	p := &countProgress{}
 	post := map[string]engine.PostProcessor{"github-actions": inapplicable{fail: true}}
 	o := Options{AuthorEmail: email, Managers: managers, Progress: p}
-	if _, errs := Run(t.Context(), o, root, res, post, &fakePC{}, &fakeGit{}); len(errs) != 1 {
+	if _, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: &fakeGit{}}}, post, &fakePC{}); len(errs) != 1 {
 		t.Fatalf("errs = %v", errs)
 	}
 	if p.starts != 1 || p.total != 2 || p.ends != 1 || p.done != 2 || p.errs != 1 {
@@ -1054,7 +1057,7 @@ func TestRunPRLog(t *testing.T) {
 		}
 	}}
 	g := &fakeGit{fail: map[string]error{"Push:" + branchB: errBoom}}
-	if _, errs := Run(t.Context(), o, root, res, map[string]engine.PostProcessor{"github-actions": post}, &fakePC{}, g); len(errs) != 1 {
+	if _, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, map[string]engine.PostProcessor{"github-actions": post}, &fakePC{}); len(errs) != 1 {
 		t.Fatalf("errs = %v", errs)
 	}
 	if post.got["a/x"] != branchA || post.got["b/y"] != branchB {

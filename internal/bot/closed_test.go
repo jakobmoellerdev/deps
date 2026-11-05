@@ -140,7 +140,7 @@ func TestRunClosedPRs(t *testing.T) {
 			}
 			tt.closed.Merged = tt.merged
 			pc := &fakePC{closed: []platform.PR{tt.closed}}
-			acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, &fakeGit{})
+			acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: &fakeGit{}}}, nil, pc)
 			if len(errs) > 0 {
 				t.Fatal(errs)
 			}

@@ -242,6 +242,9 @@ func describeRule(r config.Rule) string {
 	if r.Datasources != nil {
 		add("datasources", "["+strings.Join(r.Datasources, " ")+"]")
 	}
+	if r.BaseBranches != nil {
+		add("baseBranches", "["+strings.Join(r.BaseBranches, " ")+"]")
+	}
 	if r.CurrentVersion != "" {
 		add("currentVersion", r.CurrentVersion)
 	}

@@ -261,19 +261,10 @@ func (r Repo) DeleteBranch(ctx context.Context, branch string) error {
 	return err
 }
 
-// BranchTip returns the tip commit of branch on origin. Shallow clones (CI) fetch with
-// --depth=1; full clones fetch normally so they are not turned shallow. The raw commit object
-// is parsed, so parents are reported even when shallow grafts hide them.
+// BranchTip returns the tip commit of branch on origin (fetched like FetchBranch). The raw
+// commit object is parsed, so parents are reported even when shallow grafts hide them.
 func (r Repo) BranchTip(ctx context.Context, branch string) (platform.Tip, error) {
-	shallow, err := r.run(ctx, nil, nil, "rev-parse", "--is-shallow-repository")
-	if err != nil {
-		return platform.Tip{}, err
-	}
-	args := []string{"fetch", "--no-tags", "origin", "refs/heads/" + branch}
-	if shallow == "true" {
-		args = []string{"fetch", "--no-tags", "--depth=1", "origin", "refs/heads/" + branch}
-	}
-	if _, err := r.run(ctx, nil, nil, args...); err != nil {
+	if err := r.fetch(ctx, branch); err != nil {
 		return platform.Tip{}, err
 	}
 	obj, err := r.run(ctx, nil, nil, "cat-file", "commit", "FETCH_HEAD")
@@ -281,6 +272,42 @@ func (r Repo) BranchTip(ctx context.Context, branch string) (platform.Tip, error
 		return platform.Tip{}, err
 	}
 	return parseCommitHeader(obj), nil
+}
+
+// FetchBranch fetches branch from origin and returns its tip commit.
+func (r Repo) FetchBranch(ctx context.Context, branch string) (string, error) {
+	if err := r.fetch(ctx, branch); err != nil {
+		return "", err
+	}
+	return r.RevParse(ctx, "FETCH_HEAD")
+}
+
+// fetch fetches branch from origin into FETCH_HEAD. Shallow clones (CI) fetch with --depth=1;
+// full clones fetch normally so they are not turned shallow.
+func (r Repo) fetch(ctx context.Context, branch string) error {
+	shallow, err := r.run(ctx, nil, nil, "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return err
+	}
+	args := []string{"fetch", "--no-tags", "origin", "refs/heads/" + branch}
+	if shallow == "true" {
+		args = []string{"fetch", "--no-tags", "--depth=1", "origin", "refs/heads/" + branch}
+	}
+	_, err = r.run(ctx, nil, nil, args...)
+	return err
+}
+
+// AddWorktree checks commit out into the new linked work tree dir, detached (git worktree add
+// --detach).
+func (r Repo) AddWorktree(ctx context.Context, dir, commit string) error {
+	_, err := r.run(ctx, nil, nil, "worktree", "add", "--detach", dir, commit)
+	return err
+}
+
+// RemoveWorktree removes the linked work tree dir of AddWorktree, with any changes in it.
+func (r Repo) RemoveWorktree(ctx context.Context, dir string) error {
+	_, err := r.run(ctx, nil, nil, "worktree", "remove", "--force", dir)
+	return err
 }
 
 // parseCommitHeader returns the author email, parents and tree of a raw commit object.

@@ -18,6 +18,6 @@ func BenchmarkRenderDashboard(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = renderDashboard(actions, nil, deps)
+		_ = renderDashboard([]dashboardSection{{actions: actions, deps: deps}}, nil)
 	}
 }

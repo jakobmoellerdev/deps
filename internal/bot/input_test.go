@@ -175,7 +175,7 @@ func TestRunInputFingerprint(t *testing.T) {
 			g.branches = map[string]string{"refs/heads/" + branchA: "x"}
 			g.authors = map[string]string{branchA: email}
 
-			acts, errs := Run(t.Context(), o, root, res, post, &pc, &g)
+			acts, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: &g}}, post, &pc)
 			if len(errs) > 0 {
 				t.Fatal(errs)
 			}
@@ -207,7 +207,7 @@ func TestRunRecordsInputInNewPRs(t *testing.T) {
 	root, res := fixture(t)
 	g := &fakeGit{}
 	pc := &fakePC{}
-	if _, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, g); len(errs) > 0 {
+	if _, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, pc); len(errs) > 0 {
 		t.Fatal(errs)
 	}
 	in := inputOf(t, root, res, "a/x", nil, &fakeGit{})

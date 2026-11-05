@@ -79,7 +79,7 @@ func TestRunFetchesNotesOnlyForWrittenPRs(t *testing.T) {
 			o := tt.o
 			o.Notes, o.AuthorEmail, o.MaxNewPRs, o.Managers = n, email, 10, managers
 			g := &fakeGit{}
-			if _, errs := Run(t.Context(), o, root, res, nil, &tt.pc, g); len(errs) > 0 {
+			if _, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, nil, &tt.pc); len(errs) > 0 {
 				t.Fatal(errs)
 			}
 			if n.sections != tt.want {

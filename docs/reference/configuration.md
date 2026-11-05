@@ -89,6 +89,7 @@ customDatasources:
 - [`timezone`](#timezone)
 - [`security`](#security)
 - [`branchPrefix`](#branchprefix)
+- [`baseBranches`](#basebranches)
 - [`rebaseWhen`](#rebasewhen)
 - [`monorepos`](#monorepos)
 - [`replacements`](#replacements)
@@ -132,6 +133,7 @@ customDatasources:
   - [`rules[].depTypes`](#rulesdeptypes)
   - [`rules[].paths`](#rulespaths)
   - [`rules[].datasources`](#rulesdatasources)
+  - [`rules[].baseBranches`](#rulesbasebranches)
   - [`rules[].currentVersion`](#rulescurrentversion)
   - [`rules[].currentAge`](#rulescurrentage)
   - [`rules[].updateTypes`](#rulesupdatetypes)
@@ -376,13 +378,36 @@ Prefix of update branches (\<prefix>\<manager>/\<name>, \<prefix>group/\<group>)
 - **Type:** string
 - **Default:** `deps/`
 
-Branches are `<prefix><manager>/<slug(name)>[-<bucket>]`, `<prefix>group/<slug(group)>[-<bucket>]` and, for [security groups](#rulessecuritygroup), `<prefix>group/<slug(securityGroup)>[-<bucket>]-security`. deps never touches branches and PRs outside the prefix.
+Branches are `<prefix><manager>/<slug(name)>[-<bucket>]`, `<prefix>group/<slug(group)>[-<bucket>]` and, for [security groups](#rulessecuritygroup), `<prefix>group/<slug(securityGroup)>[-<bucket>]-security`; with several [base branches](#basebranches) the base follows the prefix (`<prefix><base>/…`). deps never touches branches and PRs outside the prefix.
 
 - It must end with `/`.
 - It must not contain spaces, control characters, any of `~^:?*[\`, `..` or `@{`.
 - No component may be empty, start with `.` or end with `.lock`.
 
 To take over Renovate's open PRs, set `branchPrefix: renovate/` (see [branch prefix takeover](../migrating-from-renovate.md#branch-prefix-takeover)).
+
+## `baseBranches`
+
+Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes `/<RE2>/` (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (\<prefix>\<base>/\<manager>/\<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it.
+
+- **Type:** list of strings
+
+`deps run` proposes the updates of each base branch on its own: it resolves the dependencies of the branch's tip and opens the PRs against it. Renovate calls this `baseBranchPatterns` (formerly `baseBranches`); Dependabot sets a `target-branch` per update entry.
+
+- **Entries.** A branch name, `$default` (the repository's default branch), or an RE2 regex `/<RE2>/` (flag `i` allowed) matching branch names on origin, in their sorted order. The unfolded list keeps the order of the entries without duplicates. A name origin lacks is skipped with a warning (`base branch not found on origin, skipping it`); when nothing is left, `run` fails with `baseBranches: no branch on origin matches [...]`.
+- **Branch names.** With more than one entry, or a regex entry (it can match more branches later), every update branch carries its base: `<branchPrefix><base>/<manager>/<slug(name)>`, `<branchPrefix><base>/group/<slug(group)>`, e.g. `deps/release/1.x/gomod/golang.org-x-net`. A single named entry keeps the plain names. Switching from one base to several renames the branches: the open PRs of the old names are closed as obsolete in that run.
+- **Checkouts.** The checkout of `--dir` serves the base whose tip it is; every other base is fetched (shallow in a shallow clone) and checked out into a temporary linked work tree, removed when `run` ends. Every base is resolved with the config of the checkout (Renovate's default `useBaseBranchConfig: none`), its rules matching that base with [`rules[].baseBranches`](#rulesbasebranches).
+- **Per base:** the PRs of a base are those targeting it, so its obsolete PRs are closed only when its own resolution had no error; branches without a PR are deleted only when no base had one. PRs to branches the run does not handle are left alone.
+- **For the run:** the PR limits ([`prConcurrentLimit`](#prconcurrentlimit), `prHourlyLimit`, `--max-new-prs`) count all bases together, and the [dashboard](#dependencydashboard) is one issue with a section per base.
+- `run --base <branch>` overrides the key: one base, the checkout's, with the plain branch names. `plan`, `apply`, `explain` and `preview` work on the checkout as before.
+
+```yaml
+baseBranches: [$default, '/^release\/v\d+$/']
+rules:
+  - baseBranches: ['/^release\//']   # release branches get no majors
+    updateTypes: [major]
+    ignore: true
+```
 
 ## `rebaseWhen`
 
@@ -843,6 +868,7 @@ Maintain a dependency dashboard issue listing pending, blocked and open updates,
 6. **Errors** of the run (at most 20, each cut to 300 characters).
 7. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.
 
+- With several [base branches](#basebranches), items 1 to 5 are listed per base under ``## Base branch `<base>` `` (a base with nothing to list is left out), errors of a base's resolution start with `<base>: `, and the detected dependencies have one ``### `<base>` `` block per base.
 - The body is capped at 60 000 bytes (GitHub allows 65 536 characters). Lists that do not fit end with a `… not listed` note.
 - The body is deterministic: the issue is only edited when its content changes. Every run regenerates it, so ticked checkboxes are unticked again once handled.
 - The issue is found by its exact title and the `<!-- deps:dashboard -->` marker in its body, among the first 1 000 (GitHub) or 500 (Gitea/Forgejo) open issues.
@@ -894,7 +920,7 @@ Policy rules, evaluated top to bottom; every set field of a matching rule overri
 
 - **Type:** list of objects
 
-A rule **matches** a dep when every selector it sets matches. The selectors are `manager`, `names`, `depTypes`, `paths`, `datasources`, `currentVersion`, `currentAge` and `updateTypes`; every other field is an action. Every field a matching rule sets **overrides** the value from earlier rules (field-wise); `updates` replaces the earlier list, it is not merged.
+A rule **matches** a dep when every selector it sets matches. The selectors are `manager`, `names`, `depTypes`, `paths`, `datasources`, `baseBranches`, `currentVersion`, `currentAge` and `updateTypes`; every other field is an action. Every field a matching rule sets **overrides** the value from earlier rules (field-wise); `updates` replaces the earlier list, it is not merged.
 
 **Evaluation.**
 
@@ -959,6 +985,14 @@ Only match deps looked up with these datasources, or custom.\<name> of customDat
 - **Values:** `git-tags`, `git-refs`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `terraform-provider`, `terraform-module`, `maven`, `gradle-version`, `rubygems`, `ruby-version`, `rust-version`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`. `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
+
+### `rules[].baseBranches`
+
+Only match deps on these base branches of run (baseBranches, --base, else the default branch): names or RE2 regexes `/<RE2>/` (flag i allowed); an entry starting with `!` excludes the branches it matches, and a list of only exclusions matches every other branch. plan, apply, explain and preview have no base branch, so no rule with baseBranches matches there.
+
+- **Type:** list of strings
+
+Renovate's `matchBaseBranches`. The base branch is the one `deps run` resolves: each of [`baseBranches`](#basebranches), the `--base` branch, else the default branch. Entries are exact names or RE2 regexes `/<RE2>/` (flag `i` allowed); a leading `!` excludes (`'!main'`, `'!/^release\//'`), exclusions win regardless of their position, and a list of only exclusions matches every other base. `plan`, `apply`, `explain` and `preview` resolve without a base branch, so a rule with `baseBranches` matches nothing there.
 
 ### `rules[].currentVersion`
 

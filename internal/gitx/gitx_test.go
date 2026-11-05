@@ -102,6 +102,46 @@ func TestReadOps(t *testing.T) {
 	}
 }
 
+func TestFetchBranchAndWorktree(t *testing.T) {
+	origin, clone := setup(t)
+	ctx := t.Context()
+	// release is a commit on origin the clone has not fetched.
+	seed := filepath.Join(filepath.Dir(origin), "seed")
+	git(t, seed, "checkout", "-q", "-b", "release")
+	write(t, filepath.Join(seed, "sub", "a.txt"), "release\n")
+	git(t, seed, "commit", "-qam", "release")
+	git(t, seed, "push", "-q", "origin", "release")
+	want := git(t, seed, "rev-parse", "HEAD")
+
+	r := Repo{Dir: filepath.Join(clone, "sub")}
+	sha, err := r.FetchBranch(ctx, "release")
+	if err != nil || sha != want {
+		t.Fatalf("FetchBranch = %q, %v; want %q", sha, err, want)
+	}
+	tree := filepath.Join(t.TempDir(), "tree")
+	if err := r.AddWorktree(ctx, tree, sha); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(tree, "sub", "a.txt")); err != nil || string(b) != "release\n" {
+		t.Fatalf("work tree file = %q, %v", b, err)
+	}
+	if got := git(t, tree, "rev-parse", "HEAD"); got != want {
+		t.Errorf("work tree HEAD = %s, want %s", got, want)
+	}
+	if err := r.RemoveWorktree(ctx, tree); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(tree); !os.IsNotExist(err) {
+		t.Errorf("work tree still there: %v", err)
+	}
+	if _, err := r.FetchBranch(ctx, "gone"); err == nil {
+		t.Error("FetchBranch of a missing branch succeeded")
+	}
+	if err := r.AddWorktree(ctx, tree, "nope"); err == nil {
+		t.Error("AddWorktree of a missing commit succeeded")
+	}
+}
+
 func TestObjectIDs(t *testing.T) {
 	_, clone := setup(t)
 	ctx := t.Context()

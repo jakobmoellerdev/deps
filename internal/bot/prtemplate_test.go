@@ -37,7 +37,7 @@ func TestRunPRTemplates(t *testing.T) {
 	root, res := fixture(t)
 	templated(t, res, "deps: bump {{.Name}} from {{.From}} to {{.To}}", "Hello from {{.Name}}.", "{{.Count}} dependency, {{.UpdateType}}")
 	pc, g := &fakePC{}, &fakeGit{}
-	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, g)
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
 	if len(errs) > 0 || statusOf(acts, branchA) != StatusCreated {
 		t.Fatalf("%v %+v", errs, acts)
 	}
@@ -66,14 +66,14 @@ func TestRunPRTemplateChanges(t *testing.T) {
 	open := platform.PR{Number: 1, Head: branch, Title: titleA, Body: "<!-- deps:fingerprint=" + fp + " -->", Mergeable: &yes}
 	pc := &fakePC{open: []platform.PR{open}}
 	g := &fakeGit{branches: map[string]string{"refs/heads/" + branch: "x"}, authors: map[string]string{branch: email}}
-	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, g)
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
 	if len(errs) > 0 || statusOf(acts, branch) != StatusUpToDate || len(g.pushed) != 0 || len(pc.updated) != 0 {
 		t.Fatalf("open PR: %v %+v pushed %v updated %v", errs, acts, g.pushed, pc.updated)
 	}
 
 	closed := platform.PR{Number: 4, Head: branch, Title: titleA, Body: "x\n<!-- deps:versions=a%2Fx=v2 -->\n"}
 	pc = &fakePC{closed: []platform.PR{closed}}
-	acts, errs = Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, &fakeGit{})
+	acts, errs = Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: &fakeGit{}}}, nil, pc)
 	if len(errs) > 0 || statusOf(acts, branch) != StatusSkipClosed || len(pc.created) != 0 {
 		t.Fatalf("closed PR: %v %+v created %v", errs, acts, pc.created)
 	}

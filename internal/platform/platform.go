@@ -34,6 +34,7 @@ type PR struct {
 	Body      string
 	Head      string
 	HeadSHA   string // head.sha
+	Base      string // base (target) branch; "" when the forge does not report it
 	State     string
 	URL       string
 	Merged    bool

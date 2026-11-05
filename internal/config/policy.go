@@ -190,14 +190,16 @@ func (c *Config) matches(r *Rule, d dep.Dep, kind dep.UpdateType, age time.Durat
 	return c.matchesDep(r, d)
 }
 
-// matchesDep reports whether the selectors of r other than updateTypes and currentAge match d.
+// matchesDep reports whether the selectors of r other than updateTypes and currentAge match d
+// on the base branch of c (ForBaseBranch; rules with baseBranches match nothing without one).
 func (c *Config) matchesDep(r *Rule, d dep.Dep) bool {
 	switch {
 	case r.Manager != "" && r.Manager != d.Manager,
 		len(r.Names) > 0 && !MatchGlobs(r.Names, d.Name),
 		len(r.DepTypes) > 0 && !slices.Contains(r.DepTypes, d.DepType),
 		len(r.Paths) > 0 && !MatchGlobs(r.Paths, d.File),
-		len(r.Datasources) > 0 && !slices.ContainsFunc(r.Datasources, func(ds string) bool { return CanonicalDatasource(ds) == d.Datasource }):
+		len(r.Datasources) > 0 && !slices.ContainsFunc(r.Datasources, func(ds string) bool { return CanonicalDatasource(ds) == d.Datasource }),
+		len(r.BaseBranches) > 0 && (c.baseBranch == "" || !matchBranches(r.baseBranches, c.baseBranch)):
 		return false
 	}
 	return r.currentVersion == nil || c.currentMatches(r.currentVersion, d)
