@@ -439,12 +439,16 @@ func (t *translator) translate(cfg map[string]any) omap {
 	}
 	va, _ := get("vulnerabilityAlerts")
 	osv, _ := get("osvVulnerabilityAlerts")
-	security := true
-	if m, ok := va.(map[string]any); ok && m["enabled"] == false && osv != true {
-		security = false
+	vam, isMap := va.(map[string]any)
+	if va != nil && !isMap {
+		t.n.warn("vulnerabilityAlerts", "must be an object; ignored")
 	}
+	security := vam["enabled"] != false || osv == true
 	emit("security", security)
 	t.n.info("vulnerabilityAlerts", "security updates come from OSV")
+	t.n.builtin = t.builtinOnly("vulnerabilityAlerts")
+	securityGroup := t.vulnerabilityAlerts(vam)
+	t.n.builtin = false
 	emit("monorepos", t.monorepos)
 	automerge, _ := cfg["automerge"].(bool)
 	rebase := ""
@@ -585,6 +589,10 @@ func (t *translator) translate(cfg map[string]any) omap {
 		}
 	}
 	t.rulesFrom(cfg, done)
+	// Renovate forces vulnerabilityAlerts over every packageRule: the last rule wins in deps.
+	if security && securityGroup != "" {
+		t.addRule("vulnerabilityAlerts", omap{{"securityGroup", securityGroup}})
+	}
 	t.rules = append(t.rules, t.exclusionRules...)
 
 	for _, k := range slices.Sorted(func(yield func(string) bool) {
@@ -617,6 +625,54 @@ func originOf(m map[string]any, def string) string {
 		return s
 	}
 	return def
+}
+
+// vulnerabilityAlerts reports the keys of the vulnerabilityAlerts object, the config
+// Renovate forces on its security-update PRs, and returns its groupName ("" = none):
+// rules[].securityGroup without matchers, since Renovate groups all of them.
+func (t *translator) vulnerabilityAlerts(va map[string]any) string {
+	var group string
+	for _, k := range slices.Sorted(mapKeys(va)) {
+		v, p := va[k], "vulnerabilityAlerts."+k
+		switch k {
+		case "enabled": // security
+		case "groupName":
+			switch s, ok := v.(string); {
+			case ok:
+				group = s
+			case v != nil:
+				t.n.warn(p, "must be a string; ignored")
+			}
+		case "schedule":
+			t.n.info(p, "Renovate and deps both ignore schedules for security updates")
+		case "minimumReleaseAge":
+			if v != nil {
+				t.n.warn(p, "deps security updates bypass minimumReleaseAge; ignored")
+			}
+		case "dependencyDashboardApproval":
+			if v != false {
+				t.n.warn(p, "not supported; ignored (deps creates PRs without approval)")
+			}
+		case "vulnerabilityFixStrategy":
+			if v == "lowest" {
+				t.n.info(p, "deps default: the lowest update at or above the minimum fixed version")
+			} else {
+				t.n.warn(p, "not supported; deps picks the lowest update at or above the minimum fixed version")
+			}
+		case "labels", "addLabels", "assignees", "reviewers":
+			t.n.info(p, "no deps equivalent for security updates only; ignored")
+		default:
+			if silentKey(k) {
+				continue
+			}
+			if isInfoKey(k) {
+				t.n.info(p, "no deps equivalent for security updates only; ignored")
+			} else {
+				t.n.warn(p, "no deps equivalent for security updates only; ignored")
+			}
+		}
+	}
+	return group
 }
 
 // rangeStrategy maps a Renovate rangeStrategy.

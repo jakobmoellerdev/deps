@@ -18,6 +18,7 @@ Both use one translator, so a migrated file behaves exactly like compatibility m
 - `matchManagers` and `matchCategories` expand to one rule per deps manager: `github-actions` matches the `github-actions` manager and the `docker` manager's `workflow`/`action` images, `dockerfile` the `docker` manager's `dockerfile` dep type. `enabledManagers`, `<manager>.enabled: false` and Renovate's default-off `pre-commit` become trailing `ignore: true` rules.
 - Renovate's `/regex/` and `!negated` patterns in package names, file names and custom manager files work in deps as they are.
 - `github-release-attachments` digests, the common JSONata `transformTemplates` shapes (`$map(<list>, function($v){ {"version": …} })`, `<path>.{"version": <field>}`, with `$keys`, `$distinct` and `$replace(…, /^v/, "")`), `matchCurrentVersion`, `matchCurrentAge`, `extractVersion`, labels, reviewers, assignees, `platformCommit` and `minimumReleaseAgeBehaviour` (default `timestamp-required`, as in Renovate 42+) are translated.
+- `vulnerabilityAlerts.groupName` becomes a trailing rule `{securityGroup: <groupName>}` without matchers (Renovate forces `vulnerabilityAlerts` over every package rule), unless security updates are off.
 
 ### What compatibility mode cannot translate
 
@@ -41,6 +42,7 @@ Each of these is reported when it occurs; the rest of the config still applies.
 | custom datasources with templated `defaultRegistryUrlTemplate`, `format: html`, several or other JSONata `transformTemplates` | the datasource is dropped, and every custom manager and rule that uses it |
 | `fileMatch`/`managerFilePatterns` on built-in managers | ignored: deps' managers find their files themselves |
 | `hostRules` | ignored: credentials come from the environment (`deps help environment`) |
+| other `vulnerabilityAlerts` keys (`labels`, `automerge`, `prConcurrentLimit`, `rangeStrategy`, `vulnerabilityFixStrategy: highest`, a non-null `minimumReleaseAge`, …) | ignored: deps has no settings for security updates only (info for labels, assignees, reviewers and PR texts, warning otherwise); `schedule` is ignored by both |
 | PR and commit texts (`commitMessage*`, `prTitle`, `prBody*`, `groupSlug`, …), `semanticCommits: disabled`, onboarding and dashboard texts | ignored (info); `semanticCommits: disabled` warns, as deps always writes conventional commits |
 
 ### With an AI agent

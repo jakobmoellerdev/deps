@@ -236,6 +236,49 @@ func TestLoadRules(t *testing.T) {
 				return out
 			}(), "\n"),
 		},
+		{
+			name: "vulnerabilityAlerts.groupName is a securityGroup rule after the packageRules",
+			src: `{vulnerabilityAlerts: {groupName: 'security', labels: ['sec'], automerge: true, schedule: ['at any time'],
+				minimumReleaseAge: null, vulnerabilityFixStrategy: 'highest', commitMessageSuffix: '[SECURITY]'},
+				packageRules: [{matchManagers: ['gomod'], groupName: 'go'}], ignoreDeps: ['x']}`,
+			rules: `  - # packageRules[0]
+    manager: gomod
+    group: go
+  - # ignoreDeps
+    names: [x]
+    ignore: true
+  - # vulnerabilityAlerts
+    securityGroup: security` + preCommitExclusion,
+			notes: []string{
+				"info vulnerabilityAlerts.labels: no deps equivalent for security updates only; ignored",
+				"info vulnerabilityAlerts.commitMessageSuffix: no deps equivalent for security updates only; ignored",
+				"warn vulnerabilityAlerts.automerge: no deps equivalent for security updates only; ignored",
+				"info vulnerabilityAlerts.schedule: Renovate and deps both ignore schedules for security updates",
+				"warn vulnerabilityAlerts.vulnerabilityFixStrategy: not supported; deps picks the lowest update at or above the minimum fixed version",
+			},
+		},
+		{
+			name:  "disabled vulnerabilityAlerts have no securityGroup",
+			src:   `{vulnerabilityAlerts: {enabled: false, groupName: 'security'}}`,
+			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+		},
+		{
+			name: "osvVulnerabilityAlerts keeps the securityGroup of disabled vulnerabilityAlerts",
+			src:  `{osvVulnerabilityAlerts: true, vulnerabilityAlerts: {enabled: false, groupName: 'security'}}`,
+			rules: `  - # vulnerabilityAlerts
+    securityGroup: security` + preCommitExclusion,
+		},
+		{
+			name:  "a null groupName is no securityGroup",
+			src:   `{vulnerabilityAlerts: {groupName: null}}`,
+			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+		},
+		{
+			name:  "a non-string groupName is ignored",
+			src:   `{vulnerabilityAlerts: {groupName: 1}}`,
+			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+			notes: []string{"warn vulnerabilityAlerts.groupName: must be a string; ignored"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
