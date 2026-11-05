@@ -27,7 +27,9 @@ const (
 type Policy struct {
 	Ignore       bool
 	IgnoreReason string // why Ignore is set: default for the dep type, or the deciding rule
-	Pin          string
+	// IgnoredByDefault: Ignore is the dep type's default (IgnoredByDefault), no rule set ignore.
+	IgnoredByDefault bool
+	Pin              string
 	// RangeStrategy is the npm and Python range strategy (RangeStrategies); never "" in a Policy.
 	RangeStrategy string
 	Allow         *Allowed
@@ -88,8 +90,8 @@ func IgnoredByDefault(depType string) bool { return defaultIgnored[depType] }
 // Policy is the pre-policy of d: the policy before the type of an update is known. It
 // evaluates the built-in monorepo rule (unless monorepos is false), then the user rules
 // without updateTypes top-to-bottom; each set field of a matching rule overwrites the
-// policy (Updates is replaced, not merged). Indirect Go requirements, go directives, npm
-// peerDependencies and engines are ignored unless a rule sets `ignore: false`. Its Versioning
+// policy (Updates is replaced, not merged). Indirect Go requirements and pip-compile pins, go
+// directives, npm peerDependencies and engines are ignored unless a rule sets `ignore: false`. Its Versioning
 // and ExtractVersion replace the dep's before resolution (only rules without updateTypes may
 // set them). The age of the current version is unknown, so no currentAge rule matches (see
 // PolicyAt).
@@ -200,7 +202,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		}
 	}
 	if defaultIgnored[d.DepType] {
-		p.Ignore = true
+		p.Ignore, p.IgnoredByDefault = true, true
 		p.IgnoreReason = "ignored by default (" + d.DepType + "; enable with a rule setting ignore: false)"
 	}
 	for _, t := range dep.UpdateTypes {
@@ -213,7 +215,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		}
 		p.Rules = append(p.Rules, i)
 		if r.Ignore != nil {
-			p.Ignore = *r.Ignore
+			p.Ignore, p.IgnoredByDefault = *r.Ignore, false
 			p.IgnoreReason = fmt.Sprintf("ignored by rule #%d", i)
 			if len(r.UpdateTypes) > 0 {
 				p.IgnoreReason += " for " + string(kind)

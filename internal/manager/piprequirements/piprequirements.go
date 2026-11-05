@@ -1,81 +1,184 @@
-// Package piprequirements extracts the requirements of pip requirements files.
+// Package piprequirements extracts the requirements of pip requirements files, and of the
+// input files (`*.in`) pip-compile and `uv pip compile` output files are compiled from.
 package piprequirements
 
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Name is the manager name (Renovate's).
 const Name = "pip_requirements"
 
-// DepType of every requirement.
-const DepType = "requirements"
+// Dep types: every requirement of a requirements or input file, and the pins of a compiled
+// file that no input names (Renovate's pip-compile `indirect`).
+const (
+	DepType         = "requirements"
+	DepTypeIndirect = "indirect"
+)
 
 // matchRe is Renovate's default pip_requirements file pattern.
 var matchRe = regexp.MustCompile(`(^|/)[\w-]*requirements([-.]\w+)?\.(txt|pip)$`)
 
-type pipManager struct{}
+// pipManager records the compile graph sources of the files Extract sees until Link.
+type pipManager struct {
+	mu   sync.Mutex
+	srcs map[string]source
+}
 
 // New returns the pip_requirements manager.
-func New() manager.Manager { return pipManager{} }
+func New() manager.Manager { return &pipManager{} }
 
-func (pipManager) Name() string { return Name }
+func (*pipManager) Name() string { return Name }
 
 // Match reports whether the slash path is a requirements file (`requirements.txt`,
-// `requirements-dev.txt`, `dev-requirements.txt`, `requirements.pip`, …). The name check skips
+// `requirements-dev.txt`, `dev-requirements.txt`, `requirements.pip`, …) or a pip-compile
+// input (`*.in`; Link drops the deps of those no compiled file names). The name check skips
 // the regexp for the paths that cannot match.
-func (pipManager) Match(p string) bool {
-	return strings.Contains(p, "requirements") && matchRe.MatchString(p)
+func (*pipManager) Match(p string) bool { return match(p) }
+
+func match(p string) bool {
+	return isInput(p) || strings.Contains(p, "requirements") && matchRe.MatchString(p)
 }
 
 // Edits rewrites the specifier (pyreq.Edits).
-func (pipManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
+func (*pipManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
 
 // InRange implements manager.RangeUpdater.
-func (pipManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
+func (*pipManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
 
 // NewRange implements manager.RangeUpdater.
-func (pipManager) NewRange(d dep.Dep, v string) (string, bool) { return pyreq.NewRange(d, v) }
+func (*pipManager) NewRange(d dep.Dep, v string) (string, bool) { return pyreq.NewRange(d, v) }
 
 // Extract returns one dep per requirement line. Backslash continuations are joined, comments
 // dropped; option lines (`-r`, `-c`, `-e`, `--extra-index-url`, …) yield no deps, an
 // `--index-url`/`-i` anywhere in the file becomes the Source of every dep and each
 // `--extra-index-url` one of its ExtraSources. Requirements with `--hash` options are updated
-// like the others; post-processing rewrites their hashes.
-func (pipManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+// like the others; post-processing rewrites their hashes. Link sorts the deps of compiled
+// files and their inputs out.
+func (m *pipManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	reqs := parse(file, src)
 	deps := make([]dep.Dep, len(reqs))
 	for i, r := range reqs {
 		deps[i] = r.Dep
 	}
+	exists := env.Exists
+	if exists == nil {
+		exists = func(string) bool { return false }
+	}
+	s := newSource(file, src, reqs, exists)
+	m.mu.Lock()
+	if m.srcs == nil {
+		m.srcs = map[string]source{}
+	}
+	m.srcs[file] = s
+	m.mu.Unlock()
 	return deps, nil
 }
 
-// Hashed is a requirement with `--hash` options.
-type Hashed struct {
-	Dep    dep.Dep    // as Extract returns it
-	Hashes []dep.Span // the `--hash=…` options, in file order
-}
-
-// HashedRequirements returns the updatable requirements of src that have `--hash` options.
-func HashedRequirements(file string, src []byte) []Hashed {
-	var out []Hashed
-	for _, r := range parse(file, src) {
-		if r.Dep.Skip == "" && len(r.Hashes) > 0 {
-			out = append(out, r)
+// Link implements manager.Linker: the deps of a pip-compile or `uv pip compile` output file
+// whose inputs are all requirements files of the run come from those inputs. The compiled
+// file keeps only the pins no input names, as DepTypeIndirect; each requirement of an input
+// gets the lowest version its compiled files pin as Locked; a `*.in` file no such compiled
+// file names yields no deps. Compiled files with other inputs (pyproject.toml, setup.py) keep
+// all their pins as requirements. Then it forgets the run's files.
+func (m *pipManager) Link(files [][]dep.Dep) {
+	m.mu.Lock()
+	srcs := m.srcs
+	m.srcs = nil
+	m.mu.Unlock()
+	g := newGraph(srcs)
+	for k, deps := range files {
+		if len(deps) > 0 {
+			files[k] = g.link(deps[0].File, deps, srcs)
 		}
 	}
+}
+
+// FileEdits implements manager.FileEditor: an update of a requirement of an input file also
+// rewrites its pin in each compiled file regenerated from it (CompiledOutputs), so the
+// post-processor regenerates them with the new version: to the new version for an update of
+// the input's specifier, and for a lockfile-only update where the pin is older.
+func (*pipManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error) {
+	outs, _, ok := CompiledOutputs(root, u.Dep.File)
+	if !ok {
+		return nil, nil
+	}
+	pep440, _ := versioning.Get(pyreq.Versioning)
+	name := pyreq.Normalize(u.Dep.Name)
+	var edits map[string][]patch.Edit
+	for _, o := range outs {
+		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(o)))
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range parse(o, src) {
+			pin, ok := strings.CutPrefix(r.Dep.Range, "==")
+			if r.Dep.Skip != "" || !ok || pyreq.Normalize(r.Dep.Name) != name || pin == u.NewVersion ||
+				u.Lockfile && pep440.Valid(pin) && pep440.Compare(pin, u.NewVersion) > 0 {
+				continue
+			}
+			e, err := pyreq.Edits(dep.Update{Dep: r.Dep, NewVersion: u.NewVersion})
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", o, err)
+			}
+			if edits == nil {
+				edits = map[string][]patch.Edit{}
+			}
+			edits[o] = append(edits[o], e...)
+		}
+	}
+	return edits, nil
+}
+
+// LockRoots implements manager.LockMaintainer: every compiled file among files whose header
+// command can be re-run (its inputs exist) is its own lock root, refreshed by re-running the
+// command with `--upgrade`.
+func (*pipManager) LockRoots(root string, files []string) []manager.LockRoot {
+	exists := func(p string) bool {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(p)))
+		return err == nil
+	}
+	var out []manager.LockRoot
+	for _, f := range files {
+		if isInput(f) {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(f)))
+		if err != nil {
+			continue
+		}
+		s := newSource(f, src, nil, exists)
+		if s.inputs != nil && !slices.ContainsFunc(s.inputs, func(in string) bool { return !exists(in) }) {
+			out = append(out, manager.LockRoot{Manifest: f, Lockfile: f})
+		}
+	}
+	slices.SortFunc(out, func(a, b manager.LockRoot) int { return strings.Compare(a.Lockfile, b.Lockfile) })
 	return out
+}
+
+// Hashed is a requirement with its `--hash` options.
+type Hashed struct {
+	Dep    dep.Dep    // as Extract returns it
+	Hashes []dep.Span // the `--hash=…` options, in file order; nil = none
+}
+
+// Requirements returns the updatable requirements of src with their `--hash` options.
+func Requirements(file string, src []byte) []Hashed {
+	return slices.DeleteFunc(parse(file, src), func(r Hashed) bool { return r.Dep.Skip != "" })
 }
 
 func parse(file string, src []byte) []Hashed {

@@ -75,6 +75,14 @@ type LockMaintainer interface {
 	Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error)
 }
 
+// ManifestMaintainer is LockMaintainer for post-processors whose lockfiles are the manifests
+// themselves (compiled requirements files): MaintainManifests gets the scope's manifests of
+// the lock file maintenance update, by path relative to dir, besides the siblings, and
+// returns the changed ones under the same paths. The engine prefers it over Maintain.
+type ManifestMaintainer interface {
+	MaintainManifests(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error)
+}
+
 // ScopeSiblingLister is implemented by post-processors whose siblings depend on the scope
 // (the gradle.lockfile of every project of a Gradle build): ScopeSiblings replaces Siblings
 // and lists the slash paths relative to dir, the absolute scope directory.
@@ -165,7 +173,7 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 	var out []FileChange
 	for i, b := range builds {
 		if b.err != nil {
-			errKeyed = append(errKeyed, keyed{i, fmt.Errorf("%s: %w", files[i], b.err)})
+			errKeyed = append(errKeyed, keyed{i, &BuildError{Files: []string{files[i]}, Err: b.err}})
 		} else if !b.dropped {
 			for _, c := range b.changes {
 				if !bytes.Equal(c.Old, c.New) { // a manifest with only lockfile-only updates
@@ -180,7 +188,7 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 			for j, i := range s.files {
 				names[j] = files[i]
 			}
-			errKeyed = append(errKeyed, keyed{s.files[0], fmt.Errorf("%s: %w", strings.Join(names, ", "), s.err)})
+			errKeyed = append(errKeyed, keyed{s.files[0], &BuildError{Files: names, Err: s.err}})
 		} else {
 			out = append(out, s.changes...)
 		}
@@ -415,8 +423,9 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 		return nil, fmt.Errorf("the %s post-processor cannot apply lockfile-only updates", s.manager)
 	}
 	lm, _ := p.(LockMaintainer)
+	mm, _ := p.(ManifestMaintainer)
 	switch {
-	case maintain && lm == nil:
+	case maintain && lm == nil && mm == nil:
 		return nil, fmt.Errorf("the %s post-processor cannot maintain lockfiles", s.manager)
 	case maintain && (locks != nil || slices.ContainsFunc(s.files, func(i int) bool { c := builds[i].changes[0]; return !bytes.Equal(c.Old, c.New) })):
 		return nil, errors.New("lock file maintenance cannot be combined with other updates of its lockfile")
@@ -454,6 +463,8 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 	var out map[string][]byte
 	var err error
 	switch {
+	case maintain && mm != nil:
+		out, err = mm.MaintainManifests(ctx, abs, manifests, contents)
 	case maintain:
 		out, err = lm.Maintain(ctx, abs, contents)
 	case up != nil:

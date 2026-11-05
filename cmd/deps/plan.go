@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/diff"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
@@ -60,7 +62,12 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	}
 	// A dep with several PR buckets gets one local update; report marks the others.
 	updates, separate := engine.Local(res.Updates)
-	changes, buildErrs := engine.Build(ctx, s.root, s.managers, updates, post)
+	changes, inapplicable, buildErrs := engine.BuildApplicable(ctx, s.root, s.managers, updates, post)
+	separate = skipInapplicable(res, separate, inapplicable)
+	for _, sk := range inapplicable {
+		from, to := sk.Update.FromTo()
+		fmt.Fprintf(stderr, "skip    %s:%d  %s  %s -> %s  (cannot be applied: %s)\n", sk.Update.Dep.File, sk.Update.Dep.Line, sk.Update.Dep.Name, from, to, sk.Reason)
+	}
 	if write {
 		for _, c := range changes {
 			var err error
@@ -96,7 +103,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 		fmt.Fprintln(stderr, "note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run")
 	}
 	if !write && hashedUpdate(s.root, res) {
-		fmt.Fprintln(stderr, "note    --hash lines of requirements files are computed by apply/run")
+		fmt.Fprintln(stderr, "note    pip-compile output and --hash lines of requirements files are computed by apply/run")
 	}
 	if !write && hasManager(res, terraform.Name) {
 		fmt.Fprintln(stderr, "note    .terraform.lock.hcl changes are computed by apply/run")
@@ -179,7 +186,8 @@ func hasManager(res *engine.Result, name string) bool {
 	return false
 }
 
-// hashedUpdate reports whether an update is in a requirements file with --hash options.
+// hashedUpdate reports whether an update is in a requirements file with --hash options or
+// compiled by pip-compile, or in an input of one.
 func hashedUpdate(root string, res *engine.Result) bool {
 	for _, u := range res.Updates {
 		if u.Dep.Manager != piprequirements.Name {
@@ -190,4 +198,44 @@ func hashedUpdate(root string, res *engine.Result) bool {
 		}
 	}
 	return false
+}
+
+// skipInapplicable records the updates Build could not apply as `run` records their groups:
+// they leave res.Updates (with their separate marks), and their deps are skipped with the
+// reason in res.Skipped and res.Deps. It returns the separate marks of the remaining updates.
+func skipInapplicable(res *engine.Result, separate []bool, skipped []engine.SkippedUpdate) []bool {
+	if len(skipped) == 0 {
+		return separate
+	}
+	type key struct {
+		file, name, version string
+		line                int
+		kind                dep.UpdateType
+	}
+	keyOf := func(u dep.Update) key { return key{u.Dep.File, u.Dep.Name, u.NewVersion, u.Dep.Line, u.Type} }
+	reasons := map[key]string{}
+	for _, s := range skipped {
+		reasons[keyOf(s.Update)] = "cannot be applied: " + s.Reason
+	}
+	var ups []dep.Update
+	var sep []bool
+	for i, u := range res.Updates {
+		reason, ok := reasons[keyOf(u)]
+		if !ok {
+			ups = append(ups, u)
+			sep = append(sep, i < len(separate) && separate[i])
+			continue
+		}
+		d := u.Dep
+		same := func(o dep.Dep) bool { return o.File == d.File && o.Line == d.Line && o.Name == d.Name }
+		if j := slices.IndexFunc(res.Deps, same); j >= 0 {
+			res.Deps[j].Skip = reason
+		}
+		if !slices.ContainsFunc(res.Skipped, same) {
+			d.Skip = reason
+			res.Skipped = append(res.Skipped, d)
+		}
+	}
+	res.Updates = ups
+	return sep
 }

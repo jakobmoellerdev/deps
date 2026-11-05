@@ -25,6 +25,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -250,7 +251,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 				continue
 			}
 			_, timed := o.Datasources[d.Datasource].(datasource.Timer)
-			d, pol := classify(cfg, d, kindRules, timed)
+			d, pol := classify(cfg, d, kindRules, timed, o.Security != nil)
 			res.Deps = append(res.Deps, d)
 			if d.Skip != "" {
 				res.Skipped = append(res.Skipped, d)
@@ -276,12 +277,14 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	// Security updates bypass per-kind rules but not a pre-policy ignore: deps resolved only
 	// because an updateTypes rule opted some update types in are not looked up. Deps whose
 	// pre-policy waits for currentAge are (applySecurity drops them if it ignores them).
-	// Non-version tags have no version to look up.
+	// Non-version tags have no version to look up. Deps ignored by default whose
+	// security updates still apply (securityByDefault) are looked up; they are resolved only
+	// when affected.
 	var secDeps []dep.Dep
 	secIdx := make([]int, len(todo))
 	for i, d := range todo {
 		secIdx[i] = -1
-		if (!pols[i].pre.Ignore || pols[i].aged) && !tagOnly(d) {
+		if (!pols[i].pre.Ignore || pols[i].aged || pols[i].securityOnly) && !tagOnly(d) {
 			secIdx[i] = len(secDeps)
 			secDeps = append(secDeps, d)
 		}
@@ -305,8 +308,16 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	for i := range todo {
 		wg.Go(func() {
 			d := todo[i]
+			if pols[i].securityOnly && len(sec.of(secIdx[i])) == 0 {
+				d.Skip = pols[i].pre.IgnoreReason
+				outs[i] = Trace{Dep: d, Rules: pols[i].pre.Rules, Policy: pols[i].pre}
+				return
+			}
 			r := resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now, ranger: rangers[d.Manager]}
 			t, u := r.run(func() []Vuln { return sec.of(secIdx[i]) })
+			if pols[i].securityOnly && t.Err == nil && u == nil {
+				t.Dep.Skip = pols[i].pre.IgnoreReason // no fix for its advisories
+			}
 			var skip *dep.SkipError
 			switch {
 			case errors.As(t.Err, &skip):
@@ -364,8 +375,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 // the returned dep has Skip set when it is not. pol is nil only for deps the manager
 // already skipped. timed reports whether the dep's datasource has release times: when a
 // currentAge rule can match, the policy decisions wait for the age of the current version
-// (resolver.applyAge).
-func classify(cfg *config.Config, d dep.Dep, kindRules, timed bool) (dep.Dep, *policies) {
+// (resolver.applyAge). With security lookups, a dep whose default ignore security updates
+// bypass (securityByDefault) is kept as securityOnly.
+func classify(cfg *config.Config, d dep.Dep, kindRules, timed, security bool) (dep.Dep, *policies) {
 	if d.Skip != "" {
 		return d, nil
 	}
@@ -382,6 +394,8 @@ func classify(cfg *config.Config, d dep.Dep, kindRules, timed bool) (dep.Dep, *p
 	switch s, ok := versioning.Get(d.Versioning); {
 	case ok && !s.Valid(d.Version) && !tagOnly(d) && !goPseudo(d):
 		d.Skip = "non-version value " + strconv.Quote(d.Version)
+	case !pol.aged && pol.pre.Ignore && !pol.anyKind() && security && securityByDefault(d, pol.pre):
+		pol.securityOnly = true
 	case !pol.aged:
 		d.Skip = pol.skip(d)
 	}
@@ -687,6 +701,9 @@ type policies struct {
 	// and its datasource has release times; age is config.UnknownAge until setAge.
 	aged bool
 	age  time.Duration
+	// securityOnly: the dep is ignored by default but security updates still apply
+	// (securityByDefault); it is looked up only when advisories affect it.
+	securityOnly bool
 }
 
 func newPolicies(cfg *config.Config, d dep.Dep, kindRules bool) *policies {
@@ -697,6 +714,14 @@ func newPolicies(cfg *config.Config, d dep.Dep, kindRules bool) *policies {
 func (p *policies) setAge(age time.Duration) {
 	p.age, p.kinds = age, nil
 	p.pre = p.cfg.PolicyAt(p.d, "", age)
+}
+
+// securityByDefault reports whether security updates apply to d although its dep type is
+// ignored by default: the transitive pins of compiled requirements files (Renovate's
+// pip-compile indirect deps, which vulnerability alerts force-enable). A rule's ignore still
+// wins.
+func securityByDefault(d dep.Dep, pre config.Policy) bool {
+	return pre.IgnoredByDefault && d.Manager == piprequirements.Name && d.DepType == piprequirements.DepTypeIndirect
 }
 
 // of returns the policy of an update of kind.
@@ -1068,7 +1093,9 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	}
 
 	var vs []Vuln
-	if !r.pol.pre.Ignore { // not looked up unless a currentAge rule could opt the dep in
+	// An ignored dep is looked up only when a currentAge rule could opt it in, or when its
+	// default ignore lets security updates through (securityOnly).
+	if !r.pol.pre.Ignore || r.pol.securityOnly {
 		vs = vulns()
 	}
 	ups = r.applySecurity(ups, scheme, names, vs)

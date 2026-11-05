@@ -51,7 +51,7 @@ func check(t *testing.T, deps []dep.Dep, wants []want) {
 func TestMatch(t *testing.T) {
 	for p, want := range map[string]bool{
 		"requirements.txt": true, "a/requirements-dev.txt": true, "requirements.dev.txt": true, "dev-requirements.txt": true,
-		"test_requirements.txt": true, "requirements.pip": true, "requirements.in": false, "requirements/base.txt": false, "myrequirements.txt.bak": false,
+		"test_requirements.txt": true, "requirements.pip": true, "requirements.in": true, "requirements/base.in": true, "requirements/base.txt": false, "myrequirements.txt.bak": false,
 	} {
 		if got := New().Match(p); got != want {
 			t.Errorf("Match(%q) = %v", p, got)
@@ -193,12 +193,12 @@ func TestEdits(t *testing.T) {
 	}
 }
 
-func TestHashedRequirements(t *testing.T) {
+func TestRequirements(t *testing.T) {
 	src, err := os.ReadFile("testdata/mypal68-flake8-requirements.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqs := HashedRequirements("requirements.txt", src)
+	reqs := Requirements("requirements.txt", src)
 	var got []string
 	for _, r := range reqs {
 		for _, s := range r.Hashes {
@@ -212,8 +212,9 @@ func TestHashedRequirements(t *testing.T) {
 	if strings.Join(got, "|") != want {
 		t.Errorf("got %s", strings.Join(got, "|"))
 	}
-	if n := len(HashedRequirements("r.txt", []byte("a==1\nb==2 ; python_version > '3' --hash=sha256:x\n"))); n != 1 {
-		t.Errorf("unhashed requirement listed: %d", n)
+	reqs = Requirements("r.txt", []byte("a==1\nb==2 ; python_version > '3' --hash=sha256:x\ngit+https://x/y\n"))
+	if len(reqs) != 2 || len(reqs[0].Hashes) != 0 || len(reqs[1].Hashes) != 1 {
+		t.Errorf("requirements = %+v", reqs)
 	}
 }
 
@@ -234,9 +235,9 @@ func TestHashEdit(t *testing.T) {
 		{"no hashes", "x==2 --hash=sha256:old\n", "", "no hashes", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reqs := HashedRequirements("requirements.txt", []byte(tc.src))
-			if len(reqs) != 1 {
-				t.Fatalf("%d hashed requirements", len(reqs))
+			reqs := Requirements("requirements.txt", []byte(tc.src))
+			if len(reqs) == 0 || len(reqs[0].Hashes) == 0 {
+				t.Fatalf("requirements %+v", reqs)
 			}
 			e, err := HashEdit([]byte(tc.src), reqs[0], tc.hashes)
 			if tc.err != "" {

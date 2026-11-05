@@ -58,7 +58,7 @@ Write the updates to the files, including go mod tidy, package-lock.json and Car
 deps apply
 ```
 
-Resolves every dependency, prints the same report as `deps plan` on stderr, and writes the changed files, including `go mod tidy` output (`go.mod`, `go.sum`), regenerated `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`, `poetry.lock` or `Pipfile.lock`, `Cargo.lock` updated with `cargo update`, and the `--hash` lines of requirements files (pip-compile/`uv pip compile` output is regenerated from its header command, other files get the new release's hashes from the index). Post-processors run on temporary copies; a failed one drops that module's or lockfile root's changes and is reported as an error.
+Resolves every dependency, prints the same report as `deps plan` on stderr, and writes the changed files, including `go mod tidy` output (`go.mod`, `go.sum`), regenerated `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`, `poetry.lock` or `Pipfile.lock`, `Cargo.lock` updated with `cargo update`, and the `--hash` lines of requirements files (pip-compile/`uv pip compile` output is regenerated from its header command, other files get the new release's hashes from the index). An update of a pip-compile input (`requirements.in`) rewrites the input and regenerates every compiled file named after it. Post-processors run on temporary copies; a failed one drops that module's or lockfile root's changes and is reported as an error. An update a post-processor finds inapplicable (a compiled requirements file whose inputs do not admit the version, a Go module version that declares another path) is left out instead, and the other updates of its files are applied: it is reported as `skip    <file>:<line>  <name>  <from> -> <to>  (cannot be applied: <reason>)`, counts as skipped, and is no error.
 
 A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`, as is the lock file maintenance update (`lockFileMaintenance`), which only `deps run` makes.
 
@@ -542,7 +542,7 @@ note    go.sum changes are computed by apply/run              (plan, when a gomo
 note    package-lock.json changes are computed by apply/run   (plan, when an npm update exists)
 note    Cargo.lock changes are computed by apply/run          (plan, when a cargo update exists)
 note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run   (plan, when a Python update exists)
-note    --hash lines of requirements files are computed by apply/run   (plan, when a requirements file with --hash has an update)
+note    pip-compile output and --hash lines of requirements files are computed by apply/run   (plan, when a compiled requirements file, an input of one or a requirements file with --hash has an update)
 note    .terraform.lock.hcl changes are computed by apply/run (plan, when a terraform update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)

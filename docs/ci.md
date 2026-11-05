@@ -416,7 +416,7 @@ Actions with a full URL (`uses: https://host/owner/repo@ref`) are looked up on t
 | `npm`, `pnpm`, `yarn` | regenerating lockfiles; see the note below the table |
 | `cargo` | updating `Cargo.lock` (requirement changes and lockfile-only updates), e.g. from `dtolnay/rust-toolchain`; without it those manifests fail with `cargo not found (needed to update Cargo.lock)` |
 | `uv`, `poetry`, `pipenv` | regenerating `uv.lock`, `poetry.lock`, `Pipfile.lock`; poetry and pipenv fall back to `uvx --from <tool>`, so `uv` (e.g. `astral-sh/setup-uv`) is enough |
-| `uv` or `pip-compile` | regenerating `requirements*.txt` written by `uv pip compile` or pip-compile with `--generate-hashes` (the tool its header names); pip-compile falls back to `uvx --from pip-tools pip-compile`. Other hashed requirements files need no tool. |
+| `uv` or `pip-compile` | regenerating `requirements*.txt` written by `uv pip compile` or pip-compile (the tool its header names) after an update of it or of its `.in` inputs; pip-compile falls back to `uvx --from pip-tools pip-compile`. Other hashed requirements files need no tool. |
 | `terraform`, `tofu` | refreshing `.terraform.lock.hcl`; see the note below the table |
 | Terraform CLI config | private registries: `TF_TOKEN_<host>`, or the `credentials` / `credentials_helper` of `~/.terraformrc` / `$TF_CLI_CONFIG_FILE` and `~/.terraform.d/credentials.tfrc.json` (as written by `terraform login`) |
 | Java (`java` on `PATH` or `JAVA_HOME`, e.g. `actions/setup-java`) | Gradle lockfiles and dependency verification metadata, and regenerating the Gradle and Maven wrappers (`./gradlew`/`gradle`, `./mvnw`/`mvn`) |

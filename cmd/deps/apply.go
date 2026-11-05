@@ -39,8 +39,8 @@ func newApply(o *rootOpts) *cobra.Command {
 // postProcessors regenerate go.sum (go mod tidy), package-lock.json (npm), Cargo.lock
 // (cargo update), uv.lock, poetry.lock, pdm.lock and Pipfile.lock (pytool), .terraform.lock.hcl
 // (terraform init), Gradle lockfiles and verification metadata and the Gradle and Maven wrapper
-// files (jvmtool) on temporary copies, Chart.lock in process and the hashes of requirements files (pytool.Compiler:
-// pip-compile/uv, else from the session's pypi datasource), for apply and run.
+// files (jvmtool) on temporary copies, Chart.lock in process and requirements files (pytool.Compiler:
+// pip-compile/uv output regenerated, other hashes from the session's pypi datasource), for apply and run.
 func postProcessors(s *session) map[string]engine.PostProcessor {
 	hashes, _ := s.sources[pypi.Name].(pytool.Hasher)
 	return map[string]engine.PostProcessor{

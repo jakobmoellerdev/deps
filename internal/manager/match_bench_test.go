@@ -44,7 +44,7 @@ var matchCases = []struct {
 	{"npm", npm.New(), regexpOnly(`(^|/)package\.json$`)},
 	{"pep621", pep621.New(), regexpOnly(`(^|/)pyproject\.toml$`)},
 	{"pipenv", pipenv.New(), regexpOnly(`(^|/)Pipfile$`)},
-	{"piprequirements", piprequirements.New(), regexpOnly(`(^|/)[\w-]*requirements([-.]\w+)?\.(txt|pip)$`)},
+	{"piprequirements", piprequirements.New(), regexpOnly(`(^|/)[\w-]*requirements([-.]\w+)?\.(txt|pip)$|\.in$`)},
 	{"poetry", poetry.New(), regexpOnly(`(^|/)pyproject\.toml$`)},
 	{"precommit", precommit.New(), regexpOnly(`(^|/)\.pre-commit-config\.ya?ml$`)},
 	{"terragrunt", terraform.NewTerragrunt(), regexpOnly(`(^|/)terragrunt\.hcl$`, ".terragrunt-cache")},
@@ -59,7 +59,7 @@ var matchCases = []struct {
 var matchSeeds = []string{
 	"Cargo.toml", "a/Cargo.toml", "xCargo.toml", "go.mod", "a/go.mod", "ago.mod", "package.json",
 	"a/package.json", "pyproject.toml", "Pipfile", "a/Pipfile.lock", "requirements.txt",
-	"a/dev-requirements.txt", "requirements-dev.pip", "requirements/base.txt", ".pre-commit-config.yaml",
+	"a/dev-requirements.txt", "requirements-dev.pip", "requirements/base.txt", "requirements/base.in", "MANIFEST.in", ".pre-commit-config.yaml",
 	"a/.pre-commit-config.yml", "terragrunt.hcl", ".terragrunt-cache/x/terragrunt.hcl",
 	"a/.terragrunt-cache/terragrunt.hcl", ".terraform-version", "a/.opentofu-version",
 	".tflint.hcl", ".nvmrc", "a/.node-version", ".tool-versions", "mise.toml", ".mise.toml",
