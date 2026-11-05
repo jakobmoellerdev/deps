@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -765,5 +766,52 @@ func TestRunStateErrors(t *testing.T) {
 				t.Errorf("acted despite state error: actions=%v pushed=%v created=%v", acts, g.pushed, pc.created)
 			}
 		})
+	}
+}
+
+// countProgress counts the PR phase.
+type countProgress struct {
+	mu                  sync.Mutex
+	starts, total, ends int
+	done, errs          int
+}
+
+func (c *countProgress) Start(p engine.Phase, total int) {
+	if p == engine.PhasePRs {
+		c.starts++
+		c.total = total
+	}
+}
+
+func (c *countProgress) Done(p engine.Phase, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if p == engine.PhasePRs {
+		c.done++
+		if err != nil {
+			c.errs++
+		}
+	}
+}
+
+func (c *countProgress) End(p engine.Phase) {
+	if p == engine.PhasePRs {
+		c.ends++
+	}
+}
+
+func (*countProgress) RateLimited(string, time.Time) {}
+
+// Every group counts once in the PR phase, a failed one as an error; skipped ones are done.
+func TestRunProgress(t *testing.T) {
+	root, res := fixture(t)
+	p := &countProgress{}
+	post := map[string]engine.PostProcessor{"github-actions": inapplicable{fail: true}}
+	o := Options{AuthorEmail: email, Managers: managers, Progress: p}
+	if _, errs := Run(t.Context(), o, root, res, post, &fakePC{}, &fakeGit{}); len(errs) != 1 {
+		t.Fatalf("errs = %v", errs)
+	}
+	if p.starts != 1 || p.total != 2 || p.ends != 1 || p.done != 2 || p.errs != 1 {
+		t.Errorf("starts=%d total=%d ends=%d done=%d errs=%d", p.starts, p.total, p.ends, p.done, p.errs)
 	}
 }

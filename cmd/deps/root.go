@@ -44,7 +44,9 @@ type rootOpts struct {
 	config      string
 	verbose     bool
 	log         logOpts
-	term        terminal // set up with the logger
+	term        terminal     // set up with the logger
+	stderr      *logx.Writer // stderr of the command, set up with the logger
+	rawStderr   io.Writer    // the writer behind stderr (the terminal's file)
 	prof        profiler
 	concurrency int
 	report      string // --report: JSON result file of plan, apply and run
@@ -70,6 +72,7 @@ func newRoot() *cobra.Command {
 			tty := logx.IsTerminal(stderr)
 			w := logx.NewWriter(stderr)
 			cmd.SetErr(w)
+			o.stderr, o.rawStderr = w, stderr
 			actionsLog = newAnnotator(os.Getenv, w, o.dir)
 			t, err := setupLogger(o.log, w, tty, os.Getenv)
 			if err != nil {
@@ -138,6 +141,7 @@ type session struct {
 	auth      *httpx.Auth
 	gh        *githubapi.Client // shared GitHub release lists (datasources and release notes)
 	sem       chan struct{}     // the default request pool (httpx.Limits.Default)
+	progress  engine.Progress   // the live status line on a terminal; nil = none
 	info      platform.Info
 	client    *http.Client // sibling sessions build their custom datasources on it
 }
@@ -204,6 +208,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		auth:      auth,
 		gh:        gh,
 		sem:       sem,
+		progress:  o.progress(limits),
 		info:      info,
 	}, nil
 }
@@ -288,7 +293,16 @@ func gitLabAuth(gitlabURL string, getenv func(string) string) []httpx.AuthOption
 
 // options returns the engine options of this session; callers add Filter/Trace.
 func (s *session) options() engine.Options {
-	return engine.Options{Managers: s.managers, Datasources: s.sources, Security: s.security, Checksums: s.checksums}
+	return engine.Options{Managers: s.managers, Datasources: s.sources, Security: s.security, Checksums: s.checksums, Progress: s.progress}
+}
+
+// progress returns the live status line (newStatusLine) when stderr is a terminal that can
+// redraw a line (TERM is not dumb), else nil: piped output never gets one.
+func (o *rootOpts) progress(limits httpx.Limits) engine.Progress {
+	if !o.term.tty || o.stderr == nil || os.Getenv("TERM") == "dumb" {
+		return nil
+	}
+	return newStatusLine(o.stderr, o.rawStderr, o.term.style, limits)
 }
 
 func (s *session) resolve(ctx context.Context) (*engine.Result, error) {

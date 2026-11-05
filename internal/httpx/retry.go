@@ -27,6 +27,15 @@ func Idempotent(ctx context.Context) context.Context {
 	return context.WithValue(ctx, idempotentKey{}, true)
 }
 
+type rateLimitHookKey struct{}
+
+// WithRateLimitHook returns ctx with fn called whenever a request sent with it waits out a
+// rate limit (429 or an exhausted quota with a reset deps is willing to wait for): host is the
+// limited server, until the time the request is sent again. fn must be safe for concurrent use.
+func WithRateLimitHook(ctx context.Context, fn func(host string, until time.Time)) context.Context {
+	return context.WithValue(ctx, rateLimitHookKey{}, fn)
+}
+
 const (
 	maxRetries       = 3 // 4 attempts
 	backoffBase      = 500 * time.Millisecond
@@ -87,6 +96,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			discard(resp)
 			if limited && hinted {
 				slog.InfoContext(ctx, "rate limited, waiting", "host", req.URL.Hostname(), "wait", wait, "until", until.UTC().Format(time.RFC3339))
+				if fn, ok := ctx.Value(rateLimitHookKey{}).(func(string, time.Time)); ok {
+					fn(req.URL.Hostname(), t.now().Add(wait))
+				}
 			} else {
 				if !hinted {
 					wait = t.backoff(attempt)

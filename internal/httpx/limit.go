@@ -1,6 +1,9 @@
 package httpx
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 // Limits are the request semaphores of one run, one pool per upstream, sized from
 // --concurrency n. A datasource holds a slot of its pool for each request (or `go list` run),
@@ -42,6 +45,25 @@ func NewLimits(n int) Limits {
 		Crates:  make(chan struct{}, 2*n),
 		Maven:   make(chan struct{}, 2*n),
 	}
+}
+
+// PoolUse is the number of held slots of one pool of Limits.
+type PoolUse struct {
+	Name string // "npm", "docker", "osv", "crates", "maven", "default"
+	N    int
+}
+
+// InFlight returns the pools with held slots, busiest first (ties in field order): the
+// requests running right now per upstream. It only reads the channel lengths.
+func (l Limits) InFlight() []PoolUse {
+	var out []PoolUse
+	for _, p := range []PoolUse{{"npm", len(l.NPM)}, {"docker", len(l.Docker)}, {"osv", len(l.OSV)}, {"crates", len(l.Crates)}, {"maven", len(l.Maven)}, {"default", len(l.Default)}} {
+		if p.N > 0 {
+			out = append(out, p)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b PoolUse) int { return b.N - a.N })
+	return out
 }
 
 // Acquire takes a slot of sem, waiting until one is free or ctx is done (then it returns

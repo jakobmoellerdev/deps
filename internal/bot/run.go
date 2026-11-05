@@ -71,6 +71,9 @@ type Options struct {
 	Notes   Notes // release ages and notes in PR bodies; nil = none
 	// Dashboard maintains the dependency dashboard issue; nil leaves an existing one alone.
 	Dashboard *DashboardOptions
+	// Progress observes the PR phase (engine.PhasePRs, one item per group, done once the
+	// group is handled) and rate-limit waits; nil = off.
+	Progress engine.Progress
 }
 
 // Notes renders release information for PR bodies (implemented by releasenotes.Notes). Age
@@ -146,6 +149,7 @@ var fingerprintRe = regexp.MustCompile(`<!-- deps:fingerprint=([0-9a-f]+) -->`)
 // marked in res.Deps): retrying cannot help, so it holds back neither the cleanup nor other
 // groups; an open PR of it stays open.
 func Run(ctx context.Context, o Options, root string, res *engine.Result, post map[string]engine.PostProcessor, pc platform.Client, g Git) ([]Action, []error) {
+	ctx, prog := engine.WithProgress(ctx, o.Progress)
 	base := o.Base
 	if base == "" {
 		b, err := pc.DefaultBranch(ctx)
@@ -201,6 +205,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		}
 	}
 	groups := engine.GroupUpdates(res.Updates, prefix)
+	prog.Start(engine.PhasePRs, len(groups))
 	built := make([][]engine.FileChange, len(groups))
 	buildErrs := make([][]error, len(groups))
 	ran := make([]bool, len(groups))
@@ -241,55 +246,64 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	slog.DebugContext(ctx, "new PR limit", "limit", s.limit, "maxNewPRs", o.MaxNewPRs, "prConcurrentLimit", o.ConcurrentLimit, "prHourlyLimit", o.HourlyLimit)
 	wanted := map[string]bool{}
 	for i, grp := range groups {
-		wanted[grp.Branch] = true // out-of-schedule branches are still wanted: keep their PRs open
-		if buildErrs[i] != nil {
-			if reason, ok := skipReason(buildErrs[i]); ok {
-				slog.InfoContext(ctx, "update cannot be applied", "branch", grp.Branch, "reason", reason)
-				skipGroup(res, grp, reason)
-				actions = append(actions, Action{Branch: grp.Branch, Title: grp.Title, Status: StatusSkipApply, Reason: reason})
-				continue
+		nErrs := len(errs)
+		func() {
+			wanted[grp.Branch] = true // out-of-schedule branches are still wanted: keep their PRs open
+			if buildErrs[i] != nil {
+				if reason, ok := skipReason(buildErrs[i]); ok {
+					slog.InfoContext(ctx, "update cannot be applied", "branch", grp.Branch, "reason", reason)
+					skipGroup(res, grp, reason)
+					actions = append(actions, Action{Branch: grp.Branch, Title: grp.Title, Status: StatusSkipApply, Reason: reason})
+					return
+				}
+				errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, errors.Join(buildErrs[i]...)))
+				return
 			}
-			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, errors.Join(buildErrs[i]...)))
-			continue
-		}
-		if ran[i] && !skipped[i] && len(built[i]) == 0 {
-			// Nothing to change (a lockfile that lock file maintenance finds current): no
-			// branch, and an open PR of it is obsolete.
-			slog.InfoContext(ctx, "no changes", "branch", grp.Branch)
-			delete(wanted, grp.Branch)
-			continue
-		}
-		b := groupBuild{changes: built[i], input: inputs[i]}
-		if skipped[i] {
-			b.build = func() ([]engine.FileChange, error) {
-				changes, errs := engine.Build(ctx, root, o.Managers, grp.Updates, post)
-				return changes, errors.Join(errs...)
+			if ran[i] && !skipped[i] && len(built[i]) == 0 {
+				// Nothing to change (a lockfile that lock file maintenance finds current): no
+				// branch, and an open PR of it is obsolete.
+				slog.InfoContext(ctx, "no changes", "branch", grp.Branch)
+				delete(wanted, grp.Branch)
+				return
 			}
-		}
-		a, target, err := handle(ctx, o, s, grp, b, inSchedule[i], forced[i], pc, g)
-		if errors.Is(err, errNoChanges) {
-			slog.InfoContext(ctx, "no changes", "branch", grp.Branch)
-			delete(wanted, grp.Branch)
-			continue
-		}
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
-			continue
-		}
-		if a.Status == StatusCreated && a.Number > 0 {
-			if m := (platform.PRMetadata{Labels: grp.Labels, Reviewers: grp.Reviewers, Assignees: grp.Assignees}); !m.Empty() {
-				if err := pc.SetPRMetadata(ctx, a.Number, m); err != nil {
+			b := groupBuild{changes: built[i], input: inputs[i]}
+			if skipped[i] {
+				b.build = func() ([]engine.FileChange, error) {
+					changes, errs := engine.Build(ctx, root, o.Managers, grp.Updates, post)
+					return changes, errors.Join(errs...)
+				}
+			}
+			a, target, err := handle(ctx, o, s, grp, b, inSchedule[i], forced[i], pc, g)
+			if errors.Is(err, errNoChanges) {
+				slog.InfoContext(ctx, "no changes", "branch", grp.Branch)
+				delete(wanted, grp.Branch)
+				return
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
+				return
+			}
+			if a.Status == StatusCreated && a.Number > 0 {
+				if m := (platform.PRMetadata{Labels: grp.Labels, Reviewers: grp.Reviewers, Assignees: grp.Assignees}); !m.Empty() {
+					if err := pc.SetPRMetadata(ctx, a.Number, m); err != nil {
+						errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
+					}
+				}
+			}
+			if grp.Automerge && target != nil {
+				if err := automerge(ctx, o, grp, &a, *target, pc); err != nil {
 					errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
 				}
 			}
+			actions = append(actions, a)
+		}()
+		var err error
+		if len(errs) > nErrs {
+			err = errors.Join(errs[nErrs:]...)
 		}
-		if grp.Automerge && target != nil {
-			if err := automerge(ctx, o, grp, &a, *target, pc); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
-			}
-		}
-		actions = append(actions, a)
+		prog.Done(engine.PhasePRs, err)
 	}
+	prog.End(engine.PhasePRs)
 
 	switch {
 	case o.DryRun:

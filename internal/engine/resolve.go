@@ -60,6 +60,7 @@ type Options struct {
 	Filter      func(dep.Dep) bool    // nil = all; deps it rejects are dropped before any lookup
 	Trace       func(Trace)           // nil = off; called sequentially from the Resolve goroutine
 	Now         time.Time             // reference time of minimumReleaseAge; zero = time.Now()
+	Progress    Progress              // nil = off; discover, extract and resolve phases, rate-limit waits
 }
 
 // Trace explains the decision for one dep.
@@ -145,9 +146,11 @@ type tree struct {
 
 // extractTree discovers the dependency files under root, extracts them, links the deps
 // across files, reads locked versions and drops deps a custom dep covers.
-func extractTree(ctx context.Context, root string, cfg *config.Config, env manager.Env, managers []manager.Manager) (*tree, error) {
+func extractTree(ctx context.Context, root string, cfg *config.Config, env manager.Env, managers []manager.Manager, prog Progress) (*tree, error) {
 	start := time.Now()
+	prog.Start(PhaseDiscover, 0)
 	found, err := discover(root, cfg.IgnorePaths, managers)
+	prog.End(PhaseDiscover)
 	if err != nil {
 		return nil, fmt.Errorf("walk %s: %w", root, err)
 	}
@@ -170,7 +173,9 @@ func extractTree(ctx context.Context, root string, cfg *config.Config, env manag
 			return err == nil
 		}
 	}
-	ex := extractAll(root, jobs, env)
+	prog.Start(PhaseExtract, len(jobs))
+	ex := extractAll(root, jobs, env, prog)
+	prog.End(PhaseExtract)
 	linkAll(managers, found, ex)
 	lockErrs := readLocks(root, managers, found, ex)
 	dedupeCovered(ex)
@@ -180,7 +185,7 @@ func extractTree(ctx context.Context, root string, cfg *config.Config, env manag
 // Extract returns every dependency under root as extracted (Skip set by the managers only;
 // no policy, no lookups), in discovery order, with the per-file errors.
 func Extract(ctx context.Context, root string, cfg *config.Config, env manager.Env, managers []manager.Manager) ([]dep.Dep, []error, error) {
-	t, err := extractTree(ctx, root, cfg, env, managers)
+	t, err := extractTree(ctx, root, cfg, env, managers, noProgress{})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -201,7 +206,8 @@ func Extract(ctx context.Context, root string, cfg *config.Config, env manager.E
 // per-file and per-dependency failures are collected in Result.Errors.
 func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.Env, o Options) (*Result, error) {
 	start := time.Now()
-	t, err := extractTree(ctx, root, cfg, env, o.Managers)
+	ctx, prog := WithProgress(ctx, o.Progress)
+	t, err := extractTree(ctx, root, cfg, env, o.Managers, prog)
 	if err != nil {
 		return nil, err
 	}
@@ -263,6 +269,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	if now.IsZero() {
 		now = time.Now()
 	}
+	prog.Start(PhaseResolve, len(todo))
 	sec := lookupSecurity(ctx, o.Security, secDeps)
 	outs := make([]Trace, len(todo))
 	ups := make([][]dep.Update, len(todo))
@@ -293,9 +300,11 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 				}
 			}
 			outs[i], ups[i], pend[i] = t, u, r.pending
+			prog.Done(PhaseResolve, t.Err)
 		})
 	}
 	wg.Wait()
+	prog.End(PhaseResolve)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -396,7 +405,7 @@ func planAll(sources map[string]Datasource, todo []dep.Dep) {
 
 // extractAll reads and parses files on GOMAXPROCS workers. Only the extracted deps are kept;
 // file bytes and parse trees are dropped as soon as a file is done.
-func extractAll(root string, jobs []job, env manager.Env) []extracted {
+func extractAll(root string, jobs []job, env manager.Env, prog Progress) []extracted {
 	ex := make([]extracted, len(jobs))
 	next := make(chan int)
 	var wg sync.WaitGroup
@@ -404,6 +413,7 @@ func extractAll(root string, jobs []job, env manager.Env) []extracted {
 		wg.Go(func() {
 			for i := range next {
 				ex[i] = extractOne(root, jobs[i], env)
+				prog.Done(PhaseExtract, ex[i].err)
 			}
 		})
 	}

@@ -520,3 +520,27 @@ func TestSleepAndJitter(t *testing.T) {
 		t.Errorf("backoff(10) = %v, want cap %v", d, backoffCap)
 	}
 }
+
+func TestRateLimitHook(t *testing.T) {
+	_, srv := newReplay(t,
+		reply{code: 503},
+		reply{code: 429, hdr: map[string]string{"Retry-After": "2"}},
+		reply{code: 200})
+	c, _ := fakeRetry(srv.Client().Transport)
+	type wait struct {
+		host  string
+		until time.Time
+	}
+	var got []wait
+	ctx := WithRateLimitHook(t.Context(), func(host string, until time.Time) { got = append(got, wait{host, until}) })
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, http.NoBody)
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	// The 503 backoff is no rate limit; the 429 waits 2s after the 500ms backoff.
+	if want := []wait{{"127.0.0.1", clockStart.Add(2500 * time.Millisecond)}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hook calls = %v, want %v", got, want)
+	}
+}
