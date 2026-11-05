@@ -16,10 +16,12 @@ import (
 // update type.
 var updateTypeBlocks = []struct{ key, typ string }{
 	{"major", "major"}, {"minor", "minor"}, {"patch", "patch"}, {"digest", "digest"}, {"pinDigest", "pin"},
+	{"replacement", "replacement"},
 }
 
 // effectOrder is the output order of rule effects (the field order of config.Rule).
-var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versioning", "extractVersion", "separateMajorMinor",
+var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versioning", "extractVersion", "replacementName",
+	"replacementVersion", "replacementPrefix", "separateMajorMinor",
 	"separateMultipleMajor", "separateMinorPatch", "group", "commitType", "commitScope", "schedule",
 	"minimumReleaseAge", "minimumReleaseAgeBehaviour", "automerge", "automergeStrategy", "automergeType",
 	"labels", "addLabels", "reviewers", "assignees"}
@@ -76,7 +78,7 @@ func (t *translator) rulesFrom(cfg map[string]any, done map[string]bool) {
 		maps.Copy(r, block)
 		t.rule(b.key, r)
 	}
-	for _, k := range []string{"pin", "rollback", "replacement"} {
+	for _, k := range []string{"pin", "rollback"} {
 		if _, ok := cfg[k]; ok {
 			done[k] = true
 			t.n.info(k, "no deps equivalent; ignored")
@@ -234,6 +236,8 @@ func (t *translator) rule(origin string, r map[string]any) {
 					updateTypes = appendNew(updateTypes, u)
 				case "pinDigest":
 					updateTypes = appendNew(updateTypes, "pin")
+				case "replacement":
+					updateTypes = appendNew(updateTypes, u)
 				default:
 					t.n.info(origin, "update type %s has no deps equivalent; dropped", u)
 				}
@@ -285,7 +289,7 @@ func (t *translator) rule(origin string, r map[string]any) {
 
 	eff := t.effects(origin, r)
 	if len(updateTypes) > 0 {
-		for _, k := range []string{"pin", "rangeStrategy", "versioning", "extractVersion"} {
+		for _, k := range []string{"pin", "rangeStrategy", "versioning", "extractVersion", "replacementName", "replacementVersion", "replacementPrefix"} {
 			if e, ok := eff[k]; ok {
 				t.n.warn(origin+"."+e.src, "deps decides %s before the update type is known; dropped", k)
 				delete(eff, k)
@@ -463,6 +467,20 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			if s, ok := t.rangeStrategy(p, v); ok {
 				set(k, s)
 			}
+		case "replacementName", "replacementVersion":
+			set(k, v)
+		case "replacementNameTemplate":
+			switch from, to, ok := prefixTemplate(v); {
+			case r["replacementName"] != nil:
+				t.n.info(p, "replacementName takes precedence; ignored")
+			case ok:
+				set("replacementPrefix", from)
+				set("replacementName", to)
+			default:
+				t.n.warn(p, "only the prefix form {{{replace '<prefix>' '<new prefix>' packageName}}} is supported; dropped")
+			}
+		case "replacementVersionTemplate":
+			t.n.warn(p, "not supported; dropped")
 		case "semanticCommitType":
 			set("commitType", v)
 		case "semanticCommitScope":
@@ -476,7 +494,24 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			}
 		}
 	}
+	var repl omap
+	for _, key := range []string{"replacementName", "replacementVersion", "replacementPrefix"} {
+		if e, ok := eff[key]; ok {
+			repl.set(key, e.v)
+		}
+	}
+	if len(repl) > 0 {
+		if msg := check(omap{{"rules", []item{{body: repl}}}}); msg != "" {
+			for _, f := range repl {
+				t.n.warn(origin+"."+eff[f.k].src, "dropped: %s", msg)
+				delete(eff, f.k)
+			}
+		}
+	}
 	for key, e := range eff {
+		if strings.HasPrefix(key, "replacement") {
+			continue // validated together above
+		}
 		if msg := check(omap{{"rules", []item{{body: omap{{key, e.v}}}}}}); msg != "" {
 			t.n.warn(origin+"."+e.src, "dropped: %s", msg)
 			delete(eff, key)
@@ -598,4 +633,36 @@ func (t *translator) exclusions(cfg map[string]any, done map[string]bool) map[st
 		}
 	}
 	return full
+}
+
+// prefixTemplateRe is the replacementNameTemplate form of Renovate's registry-move presets.
+var prefixTemplateRe = regexp.MustCompile(`^\{{3}replace '([^']+)' '([^']*)' packageName\}{3}$`)
+
+// prefixTemplate returns the prefix a replacementNameTemplate of the form
+// {{{replace '<prefix regex>' '<new prefix>' packageName}}} moves and its new prefix; the
+// regex must be a literal (escaped metacharacters allowed), optionally anchored with ^.
+func prefixTemplate(v any) (from, to string, ok bool) {
+	s, _ := v.(string)
+	m := prefixTemplateRe.FindStringSubmatch(s)
+	if m == nil {
+		return "", "", false
+	}
+	re := strings.TrimPrefix(m[1], "^")
+	var lit strings.Builder
+	for i := 0; i < len(re); i++ {
+		c := re[i]
+		switch {
+		case c == '\\' && i+1 < len(re) && strings.IndexByte(`\\.+*?()|[]{}^$/-`, re[i+1]) >= 0:
+			i++
+			lit.WriteByte(re[i])
+		case strings.IndexByte(`\\.+*?()|[]{}^$`, c) >= 0:
+			return "", "", false
+		default:
+			lit.WriteByte(c)
+		}
+	}
+	if lit.Len() == 0 || m[2] == "" {
+		return "", "", false
+	}
+	return lit.String(), m[2], true
 }

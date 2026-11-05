@@ -77,7 +77,8 @@ type rule struct {
 }
 
 type preset struct {
-	PackageRules []rule `json:"packageRules"`
+	Extends      []string `json:"extends"`
+	PackageRules []rule   `json:"packageRules"`
 }
 
 // templateRe is the one replacementNameTemplate form deps translates: a prefix replace.
@@ -115,6 +116,19 @@ func generate(src []byte) ([]byte, []string, error) {
 			}
 			fmt.Fprintf(&b, "\t{Name: %q, %s},\n", n, entry)
 		}
+	}
+	b.WriteString("}\n\n")
+	var all preset
+	if err := json.Unmarshal(presets["all"], &all); err != nil {
+		return nil, nil, fmt.Errorf("all: %w", err)
+	}
+	b.WriteString("// ReplacementsAll are the presets Renovate's replacements:all extends, by name.\nvar ReplacementsAll = []string{\n")
+	for _, e := range all.Extends {
+		fmt.Fprintf(&b, "\t%q,\n", strings.TrimPrefix(e, "replacements:"))
+	}
+	b.WriteString("}\n\n// ReplacementsSkipped are the replacement rules of Renovate's presets deps cannot apply\n// (<preset>[<rule index>]: reason).\nvar ReplacementsSkipped = []string{\n")
+	for _, s := range skipped {
+		fmt.Fprintf(&b, "\t%q,\n", s)
 	}
 	b.WriteString("}\n")
 	out, err := format.Source(b.Bytes())

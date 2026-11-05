@@ -68,6 +68,7 @@ prConcurrentLimit: 10
 prHourlyLimit: 2
 security: true
 monorepos: false
+replacements: false
 rebaseWhen: conflicted
 minimumReleaseAgeBehaviour: timestamp-required
 ignorePaths: ['**/node_modules/**', '**/bower_components/**']
@@ -137,6 +138,44 @@ func TestLoadRules(t *testing.T) {
     updateTypes: [pin]
     group: pins` + preCommitExclusion,
 			notes: []string{"info packageRules[0]: update type bump has no deps equivalent; dropped"},
+		},
+		{
+			name: "replacementName and replacementVersion",
+			src:  `{packageRules: [{matchPackageNames: ['foo'], replacementName: 'bar', replacementVersion: '2.0.0', replacementVersionTemplate: 'x'}]}`,
+			rules: `  - # packageRules[0]
+    names: [foo]
+    replacementName: bar
+    replacementVersion: 2.0.0` + preCommitExclusion,
+			notes: []string{"warn packageRules[0].replacementVersionTemplate: not supported; dropped"},
+		},
+		{
+			name: "a prefix replacementNameTemplate is replacementPrefix",
+			src:  `{packageRules: [{matchDatasources: ['docker'], matchPackageNames: ['k8s.gcr.io/**'], replacementNameTemplate: "{{{replace 'k8s\\.gcr\\.io/' 'registry.k8s.io/' packageName}}}"}]}`,
+			rules: `  - # packageRules[0]
+    names: [k8s.gcr.io/**]
+    datasources: [docker]
+    replacementName: registry.k8s.io/
+    replacementPrefix: k8s.gcr.io/` + preCommitExclusion,
+		},
+		{
+			name:  "other replacementNameTemplates and a lone replacementVersion are dropped",
+			src:   `{packageRules: [{matchPackageNames: ['a'], replacementNameTemplate: '{{{packageName}}}-x'}, {matchPackageNames: ['b'], replacementVersion: '1'}]}`,
+			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+			notes: []string{
+				"warn packageRules[0].replacementNameTemplate: only the prefix form {{{replace '<prefix>' '<new prefix>' packageName}}} is supported; dropped",
+				"warn packageRules[1].replacementVersion: dropped: replacementVersion: requires replacementName",
+			},
+		},
+		{
+			name: "matchUpdateTypes replacement and the replacement block",
+			src:  `{replacement: {automerge: true}, packageRules: [{matchUpdateTypes: ['replacement'], matchPackageNames: ['x'], enabled: false}]}`,
+			rules: `  - # replacement
+    updateTypes: [replacement]
+    automerge: true
+  - # packageRules[0]
+    names: [x]
+    updateTypes: [replacement]
+    ignore: true` + preCommitExclusion,
 		},
 		{
 			name: "rangeStrategy with matchUpdateTypes is dropped",
@@ -317,6 +356,7 @@ prConcurrentLimit: 3
 pin: digest
 security: false
 monorepos: false
+replacements: false
 rebaseWhen: behind-base-branch
 minimumReleaseAge: 7 days
 minimumReleaseAgeBehaviour: timestamp-required

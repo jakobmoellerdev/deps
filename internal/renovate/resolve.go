@@ -148,6 +148,8 @@ type resolver struct {
 	fetcher   *Fetcher
 	notes     *notes
 	monorepos bool
+	// replacements holds the replacements:* presets in the chain (see translator.replacements).
+	replacements replacementPresets
 	// remoteKeys are the top-level keys of fetched presets (see translator.builtinOnly).
 	remoteKeys map[string]bool
 }
@@ -240,7 +242,10 @@ func (r *resolver) preset(e string, i int) (map[string]any, error) {
 			r.notes.info(e, "deps' built-in monorepo groups (monorepos: true)")
 			return nil, nil
 		case name == "helpers:pinGitHubActionDigests":
-		case slices.Contains([]string{"replacements", "workarounds", "mergeConfidence", "abandonments", "helpers"}, ref.repo),
+		case ref.repo == "replacements":
+			r.replacements.add(e, ref.name)
+			return nil, nil
+		case slices.Contains([]string{"workarounds", "mergeConfidence", "abandonments", "helpers"}, ref.repo),
 			name == "security:openssf-scorecard", name == "security:php2shell":
 			r.notes.info(e, "no deps equivalent")
 			return nil, nil

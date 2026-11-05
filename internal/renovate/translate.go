@@ -95,7 +95,7 @@ func Load(ctx context.Context, dir, explicitPath string, f *Fetcher) (*Result, e
 	if enabled, ok := cfg["enabled"].(bool); ok && !enabled {
 		return nil, configErr("%s: enabled: false disables Renovate for this repository", p)
 	}
-	t := &translator{n: n, monorepos: r.monorepos, cdKept: map[string]bool{}, own: raw, remote: r.remoteKeys}
+	t := &translator{n: n, monorepos: r.monorepos, repl: r.replacements, cdKept: map[string]bool{}, own: raw, remote: r.remoteKeys}
 	doc := t.translate(cfg)
 
 	shown := p
@@ -311,6 +311,7 @@ func silentKey(k string) bool { return k == "$schema" || k == "description" || k
 type translator struct {
 	n         *notes
 	monorepos bool
+	repl      replacementPresets
 	cds       omap            // translated customDatasources
 	cdKept    map[string]bool // names in cds
 	custom    []item
@@ -450,6 +451,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 	securityGroup := t.vulnerabilityAlerts(vam)
 	t.n.builtin = false
 	emit("monorepos", t.monorepos)
+	emit("replacements", t.replacements(t.repl))
 	automerge, _ := cfg["automerge"].(bool)
 	rebase := ""
 	if v, ok := get("rebaseWhen"); ok {

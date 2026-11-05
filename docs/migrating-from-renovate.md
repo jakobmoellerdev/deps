@@ -18,6 +18,7 @@ Both use one translator, so a migrated file behaves exactly like compatibility m
 - `matchManagers` and `matchCategories` expand to one rule per deps manager: `github-actions` matches the `github-actions` manager and the `docker` manager's `workflow`/`action` images, `dockerfile` the `docker` manager's `dockerfile` dep type. `enabledManagers`, `<manager>.enabled: false` and Renovate's default-off `pre-commit` become trailing `ignore: true` rules.
 - Renovate's `/regex/` and `!negated` patterns in package names, file names and custom manager files work in deps as they are.
 - `github-release-attachments` digests, the common JSONata `transformTemplates` shapes (`$map(<list>, function($v){ {"version": …} })`, `<path>.{"version": <field>}`, with `$keys`, `$distinct` and `$replace(…, /^v/, "")`), `matchCurrentVersion`, `matchCurrentAge`, `extractVersion`, labels, reviewers, assignees, `platformCommit` and `minimumReleaseAgeBehaviour` (default `timestamp-required`, as in Renovate 42+) are translated.
+- Replacements: Renovate only replaces packages through `replacements:*` presets and rules. With `replacements:all` (part of `config:recommended`) the translation keeps deps' built-in list (`replacements: true`) and adds rules `{updateTypes: [replacement], ignore: true}` for the built-in presets `replacements:all` does not extend (`clang-format-to-maintenance-fork`, `corentinmusard-otel-cicd-action-to-dash0hq`). Without it, it writes `replacements: false`, and each extended `replacements:<name>` becomes rules with that preset's `replacementName`/`replacementVersion`/`replacementPrefix`. `packageRules[].replacementName`/`replacementVersion`, the prefix form of `replacementNameTemplate` (`replacementPrefix`) and `matchUpdateTypes: [replacement]` translate directly; the top-level `replacement` block becomes a rule with `updateTypes: [replacement]`.
 - `vulnerabilityAlerts.groupName` becomes a trailing rule `{securityGroup: <groupName>}` without matchers (Renovate forces `vulnerabilityAlerts` over every package rule), unless security updates are off.
 
 ### What compatibility mode cannot translate
@@ -27,12 +28,13 @@ Each of these is reported when it occurs; the rest of the config still applies.
 | Renovate setting | What happens |
 |---|---|
 | `extends` from `gitlab>`, npm packages, URLs, relative files | skipped (warning) |
-| built-in `replacements:*`, `workarounds:*`, `mergeConfidence:*`, `abandonments:*`, `helpers:*` (except `pinGitHubActionDigests`), `security:openssf-scorecard` | skipped (info) |
+| `replacements:<name>` presets deps' built-in list lacks (`spectre-cli-to-spectre-console-cli`, nuget; `material-ui-to-mui`, `messageFormat-to-scoped`, defined in Renovate's code), `replacementNameTemplate` other than `{{{replace '<prefix>' '<new prefix>' packageName}}}`, `replacementVersionTemplate` | skipped / the field is dropped (warning) |
+| built-in `workarounds:*`, `mergeConfidence:*`, `abandonments:*`, `helpers:*` (except `pinGitHubActionDigests`), `security:openssf-scorecard` | skipped (info) |
 | `matchCurrentValue`, `matchJsonata`, `matchSourceUrls`, `matchRepositories`, `matchBaseBranches`, other unknown `match*`/`exclude*` keys | the rule is dropped |
 | `matchPackageNames` together with `matchDepNames` in one rule | the rule is dropped (deps has one `names` list) |
 | managers deps lacks (`devcontainer`, `pyenv`, `nuget`, `git-submodules`, `bundler`, …), unknown categories and dep types | dropped from the rule; a rule left without any is dropped |
-| update types `lockFileMaintenance`, `replacement`, `rollback`, `bump`, `lockfileUpdate` in `matchUpdateTypes` | dropped; a rule left without update types is dropped |
-| `pin`, `rangeStrategy`, `versioning` or `extractVersion` in a rule with `matchUpdateTypes` | the field is dropped (deps decides them before the update type is known) |
+| update types `lockFileMaintenance`, `rollback`, `bump`, `lockfileUpdate` in `matchUpdateTypes` | dropped; a rule left without update types is dropped |
+| `pin`, `rangeStrategy`, `versioning`, `extractVersion`, `replacementName`/`replacementVersion` in a rule with `matchUpdateTypes` | the field is dropped (deps decides them before the update type is known) |
 | `rangeStrategy: pin`, `widen`, `in-range-only` | dropped |
 | `automergeType: branch`, `automergeStrategy: fast-forward`/`rebase-merge`, `platformAutomerge: false` | dropped; deps always automerges the PR through the platform |
 | `dependencyDashboardApproval` | ignored: deps creates PRs without approval |
