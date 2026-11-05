@@ -120,11 +120,17 @@ func parseMaven(s string) (mavenVersion, bool) {
 		return mavenVersion{}, false
 	}
 	s = strings.ToLower(s)
-	// stack[i] is the list being built at depth i; a finished child is attached to its
-	// parent's last item when popped.
-	stack := [][]mavenItem{nil}
-	push := func() { stack = append(stack, nil) }
-	add := func(it mavenItem) { stack[len(stack)-1] = append(stack[len(stack)-1], it) }
+	// Every list lives in one buffer. Items are only ever added to the innermost list, which
+	// runs to the end of buf; a nested list starts after the placeholder of its list item in
+	// the parent (opens), filled in once all lists are complete.
+	buf := make([]mavenItem, 0, mavenItemCount(s))
+	var openBuf [8]int
+	opens := openBuf[:0]
+	push := func() {
+		opens = append(opens, len(buf))
+		buf = append(buf, mavenItem{kind: mavenList})
+	}
+	add := func(it mavenItem) { buf = append(buf, it) }
 	digit, start := false, 0
 	for i := range len(s) {
 		c := s[i]
@@ -158,12 +164,12 @@ func parseMaven(s string) (mavenVersion, bool) {
 	if len(s) > start {
 		add(mavenParseItem(digit, s[start:]))
 	}
-	for len(stack) > 1 {
-		child := mavenNormalize(stack[len(stack)-1])
-		stack = stack[:len(stack)-1]
-		add(mavenItem{kind: mavenList, list: child})
+	end := len(buf)
+	for _, p := range slices.Backward(opens) {
+		buf[p].list = mavenNormalize(buf[p+1 : end : end])
+		end = p + 1
 	}
-	v := mavenVersion{items: mavenNormalize(stack[0])}
+	v := mavenVersion{items: mavenNormalize(buf[:end:end])}
 	var walk func([]mavenItem)
 	walk = func(l []mavenItem) {
 		for _, it := range l {
@@ -195,6 +201,24 @@ func parseMaven(s string) (mavenVersion, bool) {
 	}
 	v.rest = strings.TrimLeft(s[i:], ".-_")
 	return v, true
+}
+
+// mavenItemCount is the number of items and nested-list placeholders parseMaven adds for
+// the lowercased s: one item per "." or "-" and per change between digits and letters
+// within a word, which also opens a list as "-" does, plus the last item.
+func mavenItemCount(s string) int {
+	n := 1
+	for i := range len(s) {
+		switch c := s[i]; {
+		case c == '.':
+			n++
+		case c == '-':
+			n += 2
+		case i > 0 && s[i-1] != '.' && s[i-1] != '-' && isDigit(c) != isDigit(s[i-1]):
+			n += 2
+		}
+	}
+	return n
 }
 
 // mavenSuffix returns the first unknown qualifier that follows a "-" in the lowercased s
