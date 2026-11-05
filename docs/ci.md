@@ -986,13 +986,13 @@ GitHub runners download from the mirror because the Gitea instance's edge blocks
 
 Pushing a `v*` tag runs `.gitea/workflows/ci.yml`. Its `check` job (`task check`) and `test` job (`task cover`) run in parallel, each with Go from `actions/setup-go@v7.0.0` (`go-version-file: go.mod`, i.e. `toolchain go1.27.3`, and `cache: true`); `check` also restores the pinned golangci-lint binary from `actions/cache`. Then the `release` job runs (`needs: [check, test]`, `contents: write`):
 
-1. `task release:build VERSION=<tag>` builds `dist/deps_linux_amd64` and `dist/deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath` and `-ldflags "-s -w -buildid= -X main.version=<tag>"`. It writes `dist/checksums.txt` (`sha256sum`).
-2. Each binary is checked to be static: `readelf -l` must not show `Requesting program interpreter`, because the action runs it on arbitrary runner images.
+1. `task release:build VERSION=<tag>` builds `dist/deps_<os>_<arch>` for `linux`, `darwin` and `windows` (`.exe`) on `amd64` and `arm64` with `CGO_ENABLED=0`, `-trimpath` and `-ldflags "-s -w -buildid= -X main.version=<tag>"`. It writes `dist/checksums.txt` (`sha256sum`).
+2. Each Linux binary is checked to be static: `readelf -l` must not show `Requesting program interpreter`, because the action runs it on arbitrary runner images.
 3. `task release:notes` runs [git-cliff](https://git-cliff.org) with `cliff.toml` and writes the notes of the tag, `git-cliff --latest --strip header`, to `dist/RELEASE_NOTES.md`.
    - git-cliff is pinned to v2.14.2, installed and sha512-verified by `task changelog:install`.
    - The checkout uses `fetch-depth: 0`, so git-cliff sees all commits and tags.
 4. `task release:packages VERSION=<tag>` builds the Debian, Arch Linux and Alpine packages from those binaries (`release:deb`, `release:arch` and `release:apk`), then rewrites `dist/checksums.txt` to cover the binaries and the packages (`task release:checksums`):
-   - `dist/deps_<version>_amd64.deb` and `dist/deps_<version>_arm64.deb`, by `packaging/deb/build.sh`;
+   - `dist/deps_<version>_amd64.deb` and `dist/deps_<version>_arm64.deb`, by `packaging/nfpm/build.sh deb`;
    - `dist/deps-<pkgver>-1-x86_64.pkg.tar.zst` and `dist/deps-<pkgver>-1-aarch64.pkg.tar.zst`, by `packaging/nfpm/build.sh archlinux`;
    - `dist/deps-<pkgver>-r0-x86_64.apk` and `dist/deps-<pkgver>-r0-aarch64.apk`, by `packaging/nfpm/build.sh apk`.
 5. `packaging/publish.sh dist/*.deb dist/*.pkg.tar.zst dist/*.apk` uploads the packages to the owner's Debian, Arch Linux and Alpine package registries (see below).
@@ -1005,7 +1005,7 @@ git-cliff is installed from its GitHub release instead of through `orhun/git-cli
 
 | | Debian | Arch Linux | Alpine |
 |---|---|---|---|
-| Built by | `dpkg-deb` | [nfpm](https://nfpm.goreleaser.com) v2.48.0 (`packaging/nfpm/nfpm.yaml`) | nfpm |
+| Built by | [nfpm](https://nfpm.goreleaser.com) v2.48.0 (`packaging/nfpm/nfpm.yaml`) | nfpm | nfpm |
 | Architectures | `amd64`, `arm64` | `x86_64`, `aarch64` | `x86_64`, `aarch64` |
 | Version of `v1.2.3` | `1.2.3` | `1.2.3-1` | `1.2.3-r0` |
 | Version of `v1.2.3-rc.1` | `1.2.3~rc.1` | `1.2.3rc.1-1` | `1.2.3_rc1-r0` |
@@ -1017,7 +1017,7 @@ git-cliff is installed from its GitHub release instead of through `orhun/git-cli
   - Debian: the first `-` becomes `~`.
   - Arch Linux: the `-` is dropped, because pacman reserves it for the package release (`pkgrel`, always `1`). The pre-release must start with a letter: vercmp sorts `1.2.3rc.1` before `1.2.3`, but `1.2.3.1` after it.
   - Alpine: only `alpha`, `beta`, `pre` and `rc`, optionally numbered, become the suffixes `_alpha`, `_beta`, `_pre` and `_rc`. Any other pre-release fails the build, since Alpine has no other suffixes that sort before the release.
-- **Reproducible.** Every mtime is `SOURCE_DATE_EPOCH`, by default the commit time of the tag (of `HEAD` if the tag does not exist). Owners are root:root (`dpkg-deb --root-owner-group`; nfpm always) and modes are fixed, so rebuilding a tag gives byte-identical packages.
+- **Reproducible.** Every mtime is `SOURCE_DATE_EPOCH`, by default the commit time of the tag (of `HEAD` if the tag does not exist). nfpm sets owners to root:root and modes are fixed, so rebuilding a tag gives byte-identical packages.
 - **nfpm** is pinned to v2.48.0, installed and sha256-verified by `task nfpm:install` (a matching `nfpm` on `PATH` is used as is).
 - **Signing.** The packages are unsigned. Gitea signs the Arch Linux packages and database on upload (with the owner's key from `/api/packages/<owner>/arch/repository.key`) and the Alpine `APKINDEX.tar.gz` (key at `/api/packages/<owner>/alpine/key`); apk trusts an unsigned package through its checksum in the signed index. apk finds that key by its file name, `<owner>@<sha256 of the key>.rsa.pub`, so the [install guide](install.md#packages) names it explicitly.
 - **Registries.** The Alpine branch is a name only: one `stable` branch serves every Alpine release, because the binary is static (installs verified on Alpine 3.22 with apk-tools 2 and 3.24 with apk-tools 3). The Arch repository is named after the owner, because its name is also the `pacman.conf` section, which must not clash with `core` or `extra`.

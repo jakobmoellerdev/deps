@@ -58,6 +58,8 @@ jobs:
         with:
           subject-path: |
             dist/deps_linux_*
+            dist/deps_darwin_*
+            dist/deps_windows_*
             dist/*.deb
             dist/*.pkg.tar.zst
             dist/*.apk
@@ -93,7 +95,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          files=(dist/deps_linux_amd64 dist/deps_linux_arm64 dist/*.deb dist/*.pkg.tar.zst dist/*.apk dist/checksums.txt dist/attest/*)
+          files=(dist/deps_linux_* dist/deps_darwin_* dist/deps_windows_* dist/*.deb dist/*.pkg.tar.zst dist/*.apk dist/checksums.txt dist/attest/*)
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" --clobber "${files[@]}"
             gh release edit "$TAG" --notes-file dist/RELEASE_NOTES.md

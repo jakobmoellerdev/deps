@@ -173,13 +173,16 @@ tasks:
       - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o bin/deps ./cmd/deps
 
   release:build:
-    desc: Build static linux/amd64 and linux/arm64 release binaries and checksums into dist/
+    desc: Build static release binaries for linux, darwin and windows (amd64, arm64) and checksums into dist/
     env:
       CGO_ENABLED: "0"
     cmds:
       - rm -rf dist && mkdir -p dist
-      - for: [amd64, arm64]
-        cmd: GOOS=linux GOARCH={{.ITEM}} go build -trimpath -ldflags "-s -w -buildid= -X main.version={{.VERSION}}" -o dist/deps_linux_{{.ITEM}} ./cmd/deps
+      - for:
+          matrix:
+            OS: [linux, darwin, windows]
+            ARCH: [amd64, arm64]
+        cmd: GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build -trimpath -ldflags "-s -w -buildid= -X main.version={{.VERSION}}" -o dist/deps_{{.ITEM.OS}}_{{.ITEM.ARCH}}{{if eq .ITEM.OS "windows"}}.exe{{end}} ./cmd/deps
       - task: release:checksums
 
   release:checksums:
@@ -196,11 +199,12 @@ tasks:
 
   release:deb:
     desc: Build reproducible dist/deps_<version>_<arch>.deb packages (amd64, arm64) from the release binaries and add them to dist/checksums.txt
+    deps: [nfpm:install]
     preconditions:
       - sh: test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64
         msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
     cmds:
-      - packaging/deb/build.sh "{{.VERSION}}"
+      - NFPM="{{.NFPM}}" packaging/nfpm/build.sh deb "{{.VERSION}}"
       - task: release:checksums
 
   release:arch:

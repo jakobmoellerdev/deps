@@ -47,13 +47,15 @@ apk checks the index signature against the key file name, so keep the name. The 
 
 ## Static binary
 
-For linux/amd64 and linux/arm64. Download it from the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) and verify it:
+For linux, macOS (`darwin`) and Windows on amd64 and arm64: `deps_<os>_<arch>`, with `.exe` on Windows. Download it from the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) and verify it:
 
 ```sh
 base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.2.5
 curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
 grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 ~/.local/bin/deps
 ```
+
+On macOS use `shasum -a 256 -c` instead of `sha256sum -c`. The composite action and the packages stay Linux-only.
 
 ## From source
 
