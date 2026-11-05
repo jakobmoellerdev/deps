@@ -1,8 +1,8 @@
 // Package nodetool runs the JavaScript package managers where deps cannot avoid it:
-// regenerating package-lock.json, pnpm-lock.yaml and yarn.lock for npm, pnpm and yarn
-// (classic and berry) projects and workspaces, refreshing them (lock file maintenance), and
-// applying lockfile-only updates to package-lock.json. It also reads the versions a
-// package-lock.json locks (ReadLocked).
+// regenerating package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock and bun.lock
+// for npm, pnpm, yarn (classic and berry) and bun projects and workspaces, refreshing them
+// (lock file maintenance), and applying lockfile-only updates to them. It also reads the
+// versions they lock (ReadLocked).
 package nodetool
 
 import (
@@ -26,26 +26,29 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
-// Lockfiles Locker regenerates. npm-shrinkwrap.json is not handled: npm 12 no longer reads or
-// writes it.
+// Lockfiles Locker regenerates. npm 12 no longer reads or writes npm-shrinkwrap.json: it is
+// installed as package-lock.json in the temporary copy, which has the same format.
 const (
-	PackageLock = "package-lock.json"
-	PnpmLock    = "pnpm-lock.yaml"
-	YarnLock    = "yarn.lock"
+	PackageLock   = "package-lock.json"
+	NpmShrinkwrap = "npm-shrinkwrap.json"
+	PnpmLock      = "pnpm-lock.yaml"
+	YarnLock      = "yarn.lock"
+	BunLock       = "bun.lock"
 )
 
 const (
 	npmrc         = ".npmrc"
 	pnpmWorkspace = "pnpm-workspace.yaml"
 	yarnrc        = ".yarnrc.yml"
+	bunfig        = "bunfig.toml"
 )
 
 // lockfiles in the order a lock root's lockfile is picked when packageManager names none of
-// the present ones.
-var lockfiles = []string{PackageLock, PnpmLock, YarnLock}
+// the present ones; npm-shrinkwrap.json comes first, as npm preferred it over package-lock.json.
+var lockfiles = []string{NpmShrinkwrap, PackageLock, PnpmLock, YarnLock, BunLock}
 
 // toolOf maps a lockfile to the tool that maintains it.
-var toolOf = map[string]string{PackageLock: "npm", PnpmLock: "pnpm", YarnLock: "yarn"}
+var toolOf = map[string]string{NpmShrinkwrap: "npm", PackageLock: "npm", PnpmLock: "pnpm", YarnLock: "yarn", BunLock: "bun"}
 
 // Locker is the npm post-processor (engine.PostProcessor): it regenerates the lockfile of a
 // lock root (a project or workspace root) after deps patched package.json files in it, with
@@ -55,7 +58,7 @@ type Locker struct{}
 // Siblings lists the lockfiles and the (read-only) package manager configuration of a lock
 // root.
 func (Locker) Siblings() []string {
-	return []string{PackageLock, PnpmLock, YarnLock, npmrc, pnpmWorkspace, yarnrc}
+	return []string{NpmShrinkwrap, PackageLock, PnpmLock, YarnLock, BunLock, npmrc, pnpmWorkspace, yarnrc, bunfig}
 }
 
 // Process copies the lock root's package.json, every workspace member's package.json (the
@@ -68,21 +71,21 @@ func (l Locker) Process(ctx context.Context, dir string, manifests, files map[st
 }
 
 // ProcessLocked is Process plus the lockfile-only updates of the lock root (dep.Update.Lockfile,
-// by manifest path relative to dir). They need package-lock.json: after the plain install
-// (only when a manifest changed or there are no lockfile-only updates), npm installs
-// `<name>@<version>` (per workspace member with --workspace) and the ranges it saves into the
-// lockfile's own package entries are restored to the manifests' unchanged ones.
+// by manifest path relative to dir), which move a locked version within the manifest's
+// unchanged range (lockOnly). The manifests on disk are never touched: only the lockfile is
+// read back from the temporary copy.
 func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error) {
 	return install(ctx, dir, manifests, files, locks, false)
 }
 
 // Maintain implements engine.LockMaintainer (lockFileMaintenance): the lock root's lockfile is
-// regenerated from scratch in the temporary copy, as Renovate does: package-lock.json and
-// pnpm-lock.yaml are left out, yarn.lock is copied empty (so yarn keeps the directory as its
-// project root), and the plain install resolves every package, direct and transitive, of the
-// root and its workspace members to the newest version its range admits. npm installs twice:
-// its first lockfile can be out of sync with package.json (renovate#37531). The manifests are
-// unchanged. It returns the lockfile when it changed; without a lockfile it does nothing.
+// regenerated from scratch in the temporary copy, as Renovate does: package-lock.json,
+// npm-shrinkwrap.json, pnpm-lock.yaml and bun.lock are left out, yarn.lock is copied empty (so
+// yarn keeps the directory as its project root), and the plain install resolves every package,
+// direct and transitive, of the root and its workspace members to the newest version its range
+// admits. npm installs twice: its first lockfile can be out of sync with package.json
+// (renovate#37531). The manifests are unchanged. It returns the lockfile when it changed;
+// without a lockfile it does nothing.
 func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error) {
 	return install(ctx, dir, nil, files, nil, true)
 }
@@ -156,7 +159,7 @@ func stage(ctx context.Context, dir string, manifests, files map[string][]byte, 
 	case maintain:
 		delete(s.write, s.lockName)
 	}
-	for _, n := range []string{npmrc, pnpmWorkspace, yarnrc} {
+	for _, n := range []string{npmrc, pnpmWorkspace, yarnrc, bunfig} {
 		if b := files[n]; b != nil {
 			s.write[n] = b
 		}
@@ -207,8 +210,14 @@ func install(ctx context.Context, dir string, manifests, files map[string][]byte
 	}
 	defer s.t.root.Close()
 	lockName, lock, t := s.lockName, s.lock, s.t
-	if len(locks) > 0 && lockName != PackageLock {
-		return nil, fmt.Errorf("lockfile-only updates need %s, the lock root uses %s", PackageLock, lockName)
+	// npm 12 ignores npm-shrinkwrap.json; the copy holds it as package-lock.json.
+	tmpLock := lockName
+	if lockName == NpmShrinkwrap {
+		tmpLock = PackageLock
+		if b, ok := s.write[NpmShrinkwrap]; ok {
+			delete(s.write, NpmShrinkwrap)
+			s.write[PackageLock] = b
+		}
 	}
 
 	// npm names an unnamed root package after its directory (package-lock.json "name"), so the
@@ -224,34 +233,27 @@ func install(ctx context.Context, dir string, manifests, files map[string][]byte
 		return nil, err
 	}
 
-	c := command(lockName, s.berry)
-	version := ""
-	if s.pmTool == c.tool {
-		version = s.pmVersion
+	r := runner{ctx: ctx, dir: dir, tmp: tmp, lockName: lockName, c: command(lockName, s.berry)}
+	if s.pmTool == r.c.tool {
+		r.version = s.pmVersion
 	}
-	runs := lockCommands(locks)
 	switch {
-	case maintain && c.tool == "npm":
-		runs = [][]string{nil, nil}
-	case len(locks) == 0 || toolrun.Changed(dir, manifests):
-		runs = slices.Insert(runs, 0, nil) // the plain install first
+	case maintain && r.c.tool == "npm":
+		err = r.runAll(r.c, r.c)
+	case len(locks) == 0:
+		err = r.runAll(r.c)
+	default:
+		err = r.lockOnly(s, locks, toolrun.Changed(dir, manifests))
 	}
-	for _, extra := range runs {
-		cc := c
-		cc.args = append(slices.Clone(c.args), extra...)
-		if err := cc.run(ctx, tmp, version); err != nil {
-			if errors.Is(err, exec.ErrNotFound) {
-				return nil, fmt.Errorf("%s not found (needed to update %s)", c.tool, lockName)
-			}
-			return nil, fmt.Errorf("%s install in %s: %w", c.tool, dir, err)
-		}
-	}
-	out, err := os.ReadFile(filepath.Join(tmp, lockName))
 	if err != nil {
 		return nil, err
 	}
-	if len(locks) > 0 {
-		if out, err = restoreRanges(out, locks); err != nil {
+	out, err := os.ReadFile(filepath.Join(tmp, tmpLock))
+	if err != nil {
+		return nil, err
+	}
+	if len(locks) > 0 && (toolOf[lockName] == "npm" || lockName == BunLock) {
+		if out, err = restoreRanges(out, locks, lockName); err != nil {
 			return nil, err
 		}
 	}
@@ -259,6 +261,75 @@ func install(ctx context.Context, dir string, manifests, files map[string][]byte
 		return nil, nil
 	}
 	return map[string][]byte{lockName: out}, nil
+}
+
+// runner runs package manager commands in the temporary copy tmp of the lock root dir.
+type runner struct {
+	ctx      context.Context
+	dir, tmp string
+	lockName string
+	c        cmdSpec // the lockfile's install command
+	version  string  // the packageManager version of c's tool
+}
+
+// runAll runs the commands in order; a failure names the tool and its subcommand.
+func (r runner) runAll(cmds ...cmdSpec) error {
+	for _, c := range cmds {
+		if err := c.run(r.ctx, r.tmp, r.version); err != nil {
+			if errors.Is(err, exec.ErrNotFound) {
+				return fmt.Errorf("%s not found (needed to update %s)", c.tool, r.lockName)
+			}
+			return fmt.Errorf("%s %s in %s: %w", c.tool, c.args[0], r.dir, err)
+		}
+	}
+	return nil
+}
+
+// lockOnly applies the lockfile-only updates: npm, pnpm and yarn berry run the plain install
+// first only when a manifest changed, then lockCommands. yarn classic and bun cannot install
+// one version within a range, so they install from manifests whose updated ranges are pinned
+// to the new versions (pinManifests): bun once, after which restoreRanges puts the ranges back
+// into bun.lock; yarn classic moves each `<name>@<range>` descriptor to the entry of the pinned
+// `<name>@<version>` (moveDescriptors) and installs again from the unpinned manifests, which
+// keeps the moved descriptors and drops the pinned ones nothing else needs.
+func (r runner) lockOnly(s *staged, locks map[string][]dep.Update, changed bool) error {
+	switch {
+	case s.lockName == BunLock, s.lockName == YarnLock && !s.berry:
+		pinned, err := pinManifests(s.write, locks)
+		if err != nil {
+			return err
+		}
+		if err := toolrun.WriteFiles(r.tmp, pinned); err != nil {
+			return err
+		}
+		if err := r.runAll(r.c); err != nil || s.lockName == BunLock {
+			return err
+		}
+		restore := make(map[string][]byte, len(locks))
+		for m := range locks {
+			restore[m] = s.write[m]
+		}
+		if err := toolrun.WriteFiles(r.tmp, restore); err != nil {
+			return err
+		}
+		p := filepath.Join(r.tmp, YarnLock)
+		lock, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if lock, err = moveDescriptors(lock, locks); err != nil {
+			return err
+		}
+		if err := os.WriteFile(p, lock, 0o644); err != nil {
+			return err
+		}
+		return r.runAll(r.c)
+	}
+	cmds := lockCommands(r.c, s.lockName, s.berry, locks)
+	if changed {
+		cmds = slices.Insert(cmds, 0, r.c) // the plain install first
+	}
+	return r.runAll(cmds...)
 }
 
 // pickLock returns the lockfile of tool when present, else the first present lockfile.
@@ -324,6 +395,8 @@ func command(lockName string, berry bool) cmdSpec {
 			env: []string{"YARN_ENABLE_SCRIPTS=0", "YARN_ENABLE_IMMUTABLE_INSTALLS=0"}}
 	case lockName == YarnLock:
 		return cmdSpec{tool: "yarn", args: []string{"install", "--ignore-scripts", "--ignore-engines", "--non-interactive", "--no-progress"}}
+	case lockName == BunLock:
+		return cmdSpec{tool: "bun", args: []string{"install", "--lockfile-only", "--ignore-scripts"}}
 	}
 	return cmdSpec{tool: "npm", args: []string{"install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"}}
 }

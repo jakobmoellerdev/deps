@@ -125,15 +125,15 @@ func (npmManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 	return out, true
 }
 
-// ReadLocks records the version package-lock.json locks each dependency-section dep to
-// (nodetool.ReadLocked), or LockUnread when its lock root uses another lockfile.
+// ReadLocks records the version the lock root's lockfile locks each dependency-section dep to
+// (nodetool.ReadLocked), or LockUnread when it cannot be read.
 func (npmManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	var wants []nodetool.Want
 	var refs []*dep.Dep
 	for _, f := range files {
 		for j := range f {
 			if d := &f[j]; d.Range != "" && d.Skip == "" {
-				wants = append(wants, nodetool.Want{Manifest: d.File, Name: d.Name})
+				wants = append(wants, nodetool.Want{Manifest: d.File, Name: d.Name, Range: d.Range})
 				refs = append(refs, d)
 			}
 		}

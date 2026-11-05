@@ -109,8 +109,8 @@ pin: digest
 
 It applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` (`^1.2.3`, `~1.2.3`, `>=1.2.3`, `=1.2.3` and exact `1.2.3`), to every cargo requirement (`1.2`, `~2.7.0`, `">= 0.10, < 0.11"`, `1.*`, `*`) and to every Python specifier of the pip_requirements, pep621, poetry and pipenv managers (see Python ranges below), and to terraform version constraints (below). Other deps always replace their exact version. `rules[].rangeStrategy` overrides it per dep (not together with `updateTypes`).
 
-- `update-lockfile`: the current version is the one the lock root's `package-lock.json` resolves the dep to, and update types compare it with the new version.
-  - A newer version the range admits is a **lockfile-only update**: package.json is unchanged. `apply` and `run` run `npm install --package-lock-only <name>@<version>` (with `--workspace=<dir>` for a workspace member) on a copy and restore the range npm writes into the lockfile's own package entries. `plan` lists the update but shows no diff for it.
+- `update-lockfile`: the current version is the one the lock root's lockfile (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock` or `bun.lock`) resolves the dep to, and update types compare it with the new version.
+  - A newer version the range admits is a **lockfile-only update**: package.json is unchanged and the lockfile locks exactly that version. `apply` and `run` run, on a copy, `npm install --package-lock-only <name>@<version>` (with `--workspace=<dir>` for a workspace member; deps restores the range npm writes into the lockfile's own package entries), `pnpm update --no-save --lockfile-only --filter <dir> <name>@<version>`, `yarn set resolution <name>@npm:<range> npm:<version>` (berry), or install from a copy of package.json pinned to the version and put the range back into the lockfile (yarn classic, bun). `plan` lists the update but shows no diff for it.
   - A version outside the range replaces the range's version and keeps its operator (`^5.2.8` → `^6.0.0`).
   - Without a lockfile, versions the range admits are not proposed: an install already gets them.
 - `bump`: every newer version raises the range (`^1.2.3` → `^1.4.0`), and the lockfile is regenerated.
@@ -119,7 +119,7 @@ It applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDepe
 
 peerDependencies never get lockfile-only updates: under `update-lockfile` and `auto`, versions their range admits are left alone. Renovate widens peer ranges (`^1.0.0 || ^2.0.0`); deps replaces the range when a version falls outside it.
 
-Lockfile-only updates need a `package-lock.json` with `lockfileVersion` 2 or 3. When the lock root uses `pnpm-lock.yaml`, `yarn.lock` or a v1 `package-lock.json`, deps does not read the locked versions, and `update-lockfile` and `auto` act as `bump`.
+Locked versions are read from every lockfile deps updates; see the [npm manager](managers.md#npm) for the details. When the lockfile does not parse (or a `package-lock.json` has no `lockfileVersion`), `update-lockfile` and `auto` act as `bump`. A v1 `package-lock.json` is read, and npm rewrites it as version 3 on the first update.
 
 Security updates check the locked version against OSV when it is known, so a fix that is already locked is not proposed. When the locked version is vulnerable, the fix is a lockfile-only update if the range admits it. Without a lock, the version in package.json is checked.
 
@@ -771,7 +771,7 @@ Renovate's `lockFileMaintenance`. With `enabled: true`, `run` keeps one PR on th
 
 - Supported lockfiles, each refreshed on a temporary copy so that every locked dependency, transitive ones included, moves to the newest version its manifest admits (see each manager's "Lock file maintenance" section):
   - cargo: every `Cargo.lock` of a scanned `Cargo.toml` (the workspace's): `cargo update`.
-  - npm: the `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock` of every lock root (a workspace and its members share one), regenerated from scratch as Renovate does: the lockfile is removed (`yarn.lock` emptied) and the usual install runs (`npm install --package-lock-only`, `pnpm install --lockfile-only`, `yarn install`).
+  - npm: the `npm-shrinkwrap.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` or `bun.lock` of every lock root (a workspace and its members share one), regenerated from scratch as Renovate does: the lockfile is removed (`yarn.lock` emptied) and the usual install runs (`npm install --package-lock-only`, `pnpm install --lockfile-only`, `yarn install`, `bun install --lockfile-only`).
   - pep621, poetry, pipenv: `uv.lock` (`uv lock --upgrade`), `pdm.lock` (`pdm update --no-sync --update-all`), `poetry.lock` (`poetry update --lock`) and `Pipfile.lock` (`pipenv lock`), one lockfile per directory (a uv workspace once, through its root).
   - gradle: the lockfiles of every Gradle build that uses dependency locking: `dependencies --write-locks` for every locked project, re-resolving dynamic versions; `gradle/verification-metadata.xml` is regenerated with them.
   - terraform: every `.terraform.lock.hcl` next to a scanned Terraform/OpenTofu configuration: `terraform init -upgrade -backend=false` (`tofu` for OpenTofu), with fresh hashes.

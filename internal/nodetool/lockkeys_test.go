@@ -7,10 +7,11 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"maps"
+	"strings"
 	"testing"
 )
 
-// lockedVersionsToken is lockedVersions as it read every `packages` name with ReadToken;
+// lockedVersionsToken is lockedVersions as it read every entry name with ReadToken;
 // lockedVersions must return the same for every input.
 func lockedVersionsToken(r *bufio.Reader, keys map[string]bool) (int, map[string]string, error) {
 	dec := jsontext.NewDecoder(r, lenient)
@@ -19,44 +20,54 @@ func lockedVersionsToken(r *bufio.Reader, keys map[string]bool) (int, map[string
 	}
 	lockVersion := 0
 	versions := map[string]string{}
+	var v1 map[string]string
+	entries := func(section, prefix string, out map[string]string) error {
+		if err := enterObject(dec); err != nil {
+			return fmt.Errorf("%s: %w", section, err)
+		}
+		for dec.PeekKind() != '}' {
+			tok, err := dec.ReadToken()
+			if err != nil {
+				return err
+			}
+			k := tok.String()
+			if !keys[prefix+k] || prefix != "" && strings.Contains(k, "/node_modules/") {
+				if err := dec.SkipValue(); err != nil {
+					return err
+				}
+				continue
+			}
+			var e struct {
+				Version string `json:"version"`
+				Link    bool   `json:"link"`
+			}
+			if err := json.UnmarshalDecode(dec, &e, lenient); err != nil {
+				return fmt.Errorf("%s[%q]: %w", section, k, err)
+			}
+			if !e.Link && e.Version != "" {
+				out[prefix+k] = e.Version
+			}
+		}
+		_, err := dec.ReadToken()
+		return err
+	}
 	for dec.PeekKind() != '}' {
 		tok, err := dec.ReadToken()
 		if err != nil {
 			return 0, nil, err
 		}
-		switch tok.String() {
-		case "lockfileVersion":
+		switch k := tok.String(); {
+		case k == "lockfileVersion":
 			if err := json.UnmarshalDecode(dec, &lockVersion); err != nil {
 				return 0, nil, fmt.Errorf("lockfileVersion: %w", err)
 			}
-		case "packages":
-			if err := enterObject(dec); err != nil {
-				return 0, nil, fmt.Errorf("packages: %w", err)
+		case k == "packages":
+			if err := entries(k, "", versions); err != nil {
+				return 0, nil, err
 			}
-			for dec.PeekKind() != '}' {
-				tok, err := dec.ReadToken()
-				if err != nil {
-					return 0, nil, err
-				}
-				k := tok.String()
-				if !keys[k] {
-					if err := dec.SkipValue(); err != nil {
-						return 0, nil, err
-					}
-					continue
-				}
-				var e struct {
-					Version string `json:"version"`
-					Link    bool   `json:"link"`
-				}
-				if err := json.UnmarshalDecode(dec, &e, lenient); err != nil {
-					return 0, nil, fmt.Errorf("packages[%q]: %w", k, err)
-				}
-				if !e.Link && e.Version != "" {
-					versions[k] = e.Version
-				}
-			}
-			if _, err := dec.ReadToken(); err != nil {
+		case k == "dependencies" && lockVersion < 2:
+			v1 = map[string]string{}
+			if err := entries(k, "node_modules/", v1); err != nil {
 				return 0, nil, err
 			}
 		default:
@@ -64,6 +75,9 @@ func lockedVersionsToken(r *bufio.Reader, keys map[string]bool) (int, map[string
 				return 0, nil, err
 			}
 		}
+	}
+	if lockVersion < 2 && v1 != nil {
+		versions = v1
 	}
 	return lockVersion, versions, nil
 }
@@ -95,6 +109,11 @@ var lockParitySeeds = []string{
 	`{"lockfileVersion":3,"packages":{"node_modules/a":{"version":1}}}`,
 	`{"lockfileVersion":3,"packages":{"node_modules/a"`,
 	`{"lockfileVersion":3,"packages":{"bad \x":{}}}`,
+	`{"lockfileVersion":1,"dependencies":{"a":{"version":"1.0.0"},"\u00e9":{"version":"2.0.0"},"b":{"version":"3.0.0"}}}`,
+	`{"lockfileVersion":2,"dependencies":{"a":{"version":"1.0.0"}},"packages":{"node_modules/a":{"version":"2.0.0"}}}`,
+	`{"dependencies":{"a":{"version":"1.0.0"}},"lockfileVersion":2,"packages":{}}`,
+	`{"lockfileVersion":1,"dependencies":{"a":{"version":1}}}`,
+	`{"lockfileVersion":1,"dependencies":[]}`,
 	`{"packages":[]}`,
 	`[]`,
 	`{"packages":{{`,

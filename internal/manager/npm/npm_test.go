@@ -157,7 +157,9 @@ func TestReadLocks(t *testing.T) {
 		"web/package.json":      `{"dependencies": {"a": "^1.0.0", "file": "file:x"}, "packageManager": "npm@12.0.0"}`,
 		"web/package-lock.json": `{"lockfileVersion": 3, "packages": {"node_modules/a": {"version": "1.4.0"}}}`,
 		"pn/package.json":       `{"dependencies": {"a": "^1.0.0"}}`,
-		"pn/pnpm-lock.yaml":     "",
+		"pn/pnpm-lock.yaml":     "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      a:\n        specifier: ^1.0.0\n        version: 1.3.0\n",
+		"y/package.json":        `{"dependencies": {"a": "^1.0.0"}}`,
+		"y/yarn.lock":           "# yarn lockfile v1\n\n\na@^1.0.0:\n  version \"1.2.0\"\n", // keyed by the range
 		"bad/package.json":      `{"dependencies": {"a": "^1.0.0"}}`,
 		"bad/package-lock.json": "[",
 	} {
@@ -170,7 +172,7 @@ func TestReadLocks(t *testing.T) {
 	}
 	m := New().(manager.LockReader)
 	var files [][]dep.Dep
-	for _, f := range []string{"web/package.json", "pn/package.json", "bad/package.json"} {
+	for _, f := range []string{"web/package.json", "pn/package.json", "y/package.json", "bad/package.json"} {
 		b, err := os.ReadFile(filepath.Join(root, f))
 		if err != nil {
 			t.Fatal(err)
@@ -195,7 +197,8 @@ func TestReadLocks(t *testing.T) {
 		`web/package.json a locked="1.4.0" unread=false`,
 		`web/package.json file locked="" unread=false`, // skipped deps are not looked up
 		`web/package.json npm locked="" unread=false`,  // nor is packageManager
-		`pn/package.json a locked="" unread=true`,
+		`pn/package.json a locked="1.3.0" unread=false`,
+		`y/package.json a locked="1.2.0" unread=false`,
 		`bad/package.json a locked="" unread=true`,
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {

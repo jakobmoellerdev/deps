@@ -44,24 +44,26 @@ func tarball(t *testing.T, version string) []byte {
 	return buf.Bytes()
 }
 
-// registry serves the package "tiny" in versions 1.0.0 and 1.1.0 (metadata and tarballs).
-func registry(t *testing.T) *httptest.Server {
+// registry serves the package "tiny" in versions (default 1.0.0 and 1.1.0; the last is the
+// latest), metadata and tarballs.
+func registry(t *testing.T, versions ...string) *httptest.Server {
 	t.Helper()
 	tgz := map[string][]byte{}
 	var srv *httptest.Server
+	var latest string
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/tiny" {
-			versions := map[string]any{}
+			meta := map[string]any{}
 			for v, b := range tgz {
 				s512, s1 := sha512.Sum512(b), sha1.Sum(b)
-				versions[v] = map[string]any{"name": "tiny", "version": v, "dist": map[string]string{
+				meta[v] = map[string]any{"name": "tiny", "version": v, "dist": map[string]string{
 					"tarball":   srv.URL + "/tiny/-/tiny-" + v + ".tgz",
 					"integrity": "sha512-" + base64.StdEncoding.EncodeToString(s512[:]),
 					"shasum":    hex.EncodeToString(s1[:]),
 				}}
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.MarshalWrite(w, map[string]any{"name": "tiny", "dist-tags": map[string]string{"latest": "1.1.0"}, "versions": versions})
+			_ = json.MarshalWrite(w, map[string]any{"name": "tiny", "dist-tags": map[string]string{"latest": latest}, "versions": meta})
 			return
 		}
 		for v, b := range tgz {
@@ -72,7 +74,11 @@ func registry(t *testing.T) *httptest.Server {
 		}
 		http.NotFound(w, r)
 	}))
-	for _, v := range []string{"1.0.0", "1.1.0"} {
+	if len(versions) == 0 {
+		versions = []string{"1.0.0", "1.1.0"}
+	}
+	latest = versions[len(versions)-1]
+	for _, v := range versions {
 		tgz[v] = tarball(t, v)
 	}
 	t.Cleanup(srv.Close)
@@ -375,7 +381,7 @@ func stubs(t *testing.T, tools ...string) (log string) {
 if [ -n "$STUB_FAIL" ]; then echo "progress" >&2; echo "ERR something broke"; exit 3; fi
 [ -n "$STUB_CREATE" ] && [ ! -f "$STUB_CREATE" ] && echo created > "$STUB_CREATE"
 [ -n "$STUB_KEEP" ] && exit 0
-for f in package-lock.json pnpm-lock.yaml yarn.lock; do
+for f in package-lock.json pnpm-lock.yaml yarn.lock bun.lock; do
   [ -f "$f" ] && echo modified >> "$f"
 done
 exit 0
@@ -662,7 +668,7 @@ func TestProcessEdgeCases(t *testing.T) {
 	if _, err := (Locker{}).Process(ctx, dir, pkgs("package.json", manifest("1.0.0")), lockOnly); err == nil {
 		t.Error("canceled: no error")
 	}
-	if got := (Locker{}).Siblings(); strings.Join(got, ",") != "package-lock.json,pnpm-lock.yaml,yarn.lock,.npmrc,pnpm-workspace.yaml,.yarnrc.yml" {
+	if got := (Locker{}).Siblings(); strings.Join(got, ",") != "npm-shrinkwrap.json,package-lock.json,pnpm-lock.yaml,yarn.lock,bun.lock,.npmrc,pnpm-workspace.yaml,.yarnrc.yml,bunfig.toml" {
 		t.Errorf("Siblings = %v", got)
 	}
 }

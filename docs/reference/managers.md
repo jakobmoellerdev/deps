@@ -311,15 +311,20 @@ A dep naming a member of the manifest's own workspace is never updated.
 
 **Locked versions.**
 
-Before resolving, deps reads the lock root's `package-lock.json` (`lockfileVersion` 2 or 3; the lockfile the post-processor would update, see below) once per run, streamed, and keeps the `packages` entries of the extracted names: a member's own `<member>/node_modules/<name>` wins over the hoisted `node_modules/<name>`, links are not versions.
+Before resolving, deps reads the lock root's lockfile (the one the post-processor would update, see below) once per run and keeps only the entries of the extracted deps:
 
+- `package-lock.json` and `npm-shrinkwrap.json` (`lockfileVersion` 2 or 3), streamed: the `packages` entries, where a member's own `<member>/node_modules/<name>` wins over the hoisted `node_modules/<name>`; links are not versions. `lockfileVersion` 1: the top-level `dependencies` entries.
+- `pnpm-lock.yaml` (lockfile versions 5.x to 9): the `importers` entry of the manifest's directory (`.` for the root; the top-level sections of a single-project lockfile before version 9), without the peer suffix (`18.3.1(react@18.3.1)`, 5.x `_react@…`). Only each YAML document's head up to its `packages:` is parsed; pnpm 11 and later write `packageManager` and `configDependencies` into a document of their own first.
+- `yarn.lock`, classic and berry: the entry whose header lists the descriptor `<name>@<range>` (berry `<name>@npm:<range>`), with the range as package.json writes it. Descriptors are shared by the whole workspace.
+- `bun.lock` (text; trailing commas allowed): the `packages` entry `<member name>/<name>`, else the hoisted `<name>`; its first element is `<name>@<version>`.
+- `link:`, `workspace:`, `file:`, git and alias resolutions are not versions: such deps count as not locked.
 - The locked version is the current version under `update-lockfile` (update types compare it with the new version) and is what OSV is queried with, so an already locked fix is not proposed again. Without a lock, the version in package.json is used.
-- `pnpm-lock.yaml`, `yarn.lock` and v1 `package-lock.json` are not read: `update-lockfile` and `auto` act as `bump` there, and OSV checks the version in package.json. A `package-lock.json` that does not parse is a run error (`<path>: <err>`), with the same fallback.
+- A lockfile that does not parse is a run error (`<path>: <err>`); its deps are bumped under `update-lockfile` and `auto`, and OSV checks the version in package.json. So is a `package-lock.json` without `lockfileVersion`. `bun.lockb` (bun's binary lockfile) is not a lockfile to deps.
 
 **Lockfile post-processing (`apply`, `run`).**
 
-1. **Lock root.** The lock root is the nearest directory at or above the `package.json` (within `--dir`) that holds `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`. It is accepted if it is the manifest's own directory, or if its `package.json` `workspaces` (an array or `{packages}`) or `pnpm-workspace.yaml` `packages` globs match the manifest directory (`!glob` excludes). Otherwise the manifest is only patched; no lockfile is created.
-2. **Temporary copy.** The root and all member `package.json` files (patched where changed), the lockfile, `.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`, and the files referenced by `yarnPath`/`plugins` are copied to a temp dir. So are the local files the install resolves: yarn `patch:` files (from `package.json` and `yarn.lock`), pnpm `patchedDependencies` files (`package.json` `pnpm` and `pnpm-workspace.yaml`), the pnpmfile (`.pnpmfile.cjs`, or the `pnpmfile` setting), and the targets of `file:`, `link:` and `portal:` dependencies, resolutions and overrides (a tarball itself, a directory's `package.json` only). Such files may lie above the lock root within the repository (the nearest directory with `.git`), at their relative paths; paths outside it are not copied.
+1. **Lock root.** The lock root is the nearest directory at or above the `package.json` (within `--dir`) that holds `npm-shrinkwrap.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` or `bun.lock`. It is accepted if it is the manifest's own directory, or if its `package.json` `workspaces` (an array or `{packages}`) or `pnpm-workspace.yaml` `packages` globs match the manifest directory (`!glob` excludes). Otherwise the manifest is only patched; no lockfile is created.
+2. **Temporary copy.** The root and all member `package.json` files (patched where changed), the lockfile, `.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`, `bunfig.toml`, and the files referenced by `yarnPath`/`plugins` are copied to a temp dir. So are the local files the install resolves: yarn `patch:` files (from `package.json` and `yarn.lock`), pnpm `patchedDependencies` files (`package.json` `pnpm` and `pnpm-workspace.yaml`), the pnpmfile (`.pnpmfile.cjs`, or the `pnpmfile` setting), and the targets of `file:`, `link:` and `portal:` dependencies, resolutions and overrides (a tarball itself, a directory's `package.json` only). Such files may lie above the lock root within the repository (the nearest directory with `.git`), at their relative paths; paths outside it are not copied. npm 12 no longer reads or writes `npm-shrinkwrap.json`, so it is copied as `package-lock.json` (the same format) and the result is written back under its own name.
 3. **Install.**
 
    | Tool | Command |
@@ -328,21 +333,32 @@ Before resolving, deps reads the lock root's `package-lock.json` (`lockfileVersi
    | pnpm | `pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile` |
    | yarn berry (`.yarnrc.yml`, or `__metadata` in the lock) | `yarn install --mode=update-lockfile`, with `YARN_ENABLE_SCRIPTS=0 YARN_ENABLE_IMMUTABLE_INSTALLS=0` |
    | yarn classic | `yarn install --ignore-scripts --ignore-engines --non-interactive --no-progress` |
+   | bun | `bun install --lockfile-only --ignore-scripts` |
 
    The environment always includes `npm_config_update_notifier=false` and `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`.
 4. **Tool lookup.** deps uses the tool binary from `PATH`. Failing that:
    - if the root's `packageManager` names the tool, `npx --yes <tool>@<version>` (for yarn berry, `npx --yes --package=@yarnpkg/cli-dist@<version> -- yarn`);
    - else `npx --yes <tool>`;
    - else error `<tool> not found (needed to update <lock>)`.
-5. **Several lockfiles.** If a root has more than one lockfile, the `packageManager` tool's lockfile wins, else `package-lock.json`, then pnpm, then yarn. `npm-shrinkwrap.json` is not handled.
-6. **Lockfile-only updates** (package-lock.json only). The manifests stay unchanged. After the plain install (run only when a manifest of the root changed), npm runs `npm install … <name>@<version>` for the root manifest's updates and `npm install … --workspace=<dir> <name>@<version>` per workspace member. npm saves `^<version>` into the lockfile's own package entries (`packages[""]`, `packages["<member dir>"]`); deps restores the range package.json holds, so `npm ci` accepts the lockfile. A missing entry is an error.
-7. **Failure.** A failed install reports `<tool> install in <dir>: <last 20 output lines>`, and the root's changes are dropped.
+5. **Several lockfiles.** If a root has more than one lockfile, the `packageManager` tool's lockfile wins, else `npm-shrinkwrap.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, then `bun.lock`.
+6. **Lockfile-only updates.** The manifests stay unchanged: only the lockfile is read back from the copy. The plain install runs first only when a manifest of the root changed (yarn classic and bun install from the pinned manifests instead). Then, per tool:
+
+   | Tool | Commands |
+   |---|---|
+   | npm | `npm install … <name>@<version>` for the root manifest's updates, `npm install … --workspace=<dir> <name>@<version>` per workspace member; npm saves `^<version>` into the lockfile's own package entries (`packages[""]`, `packages["<member dir>"]`), and deps restores the range package.json holds, so `npm ci` accepts the lockfile (a missing entry is an error). A v1 lockfile comes back as npm writes it (version 3). |
+   | pnpm | `pnpm update --no-save --lockfile-only --ignore-scripts --filter <sel> <name>@<version>…` per manifest (`<sel>` is `.` for the root, `./<dir>` for a member); the specifiers stay. |
+   | yarn berry | `yarn set resolution <name>@npm:<range> npm:<version>` per descriptor. |
+   | yarn classic | an install from manifests whose updated ranges are replaced by the new versions, which adds `<name>@<version>` entries; deps moves each `<name>@<range>` descriptor into that entry (out of its old one, which goes away when nothing is left), then installs from the real manifests, which drops the pinned descriptors nothing else uses. |
+   | bun | an install from manifests pinned the same way; deps puts the ranges package.json holds back into `bun.lock`'s `workspaces` entries. |
+
+   Every tool locks exactly `<version>`. In yarn, a descriptor is shared by every manifest and dependency that requests the same `<name>@<range>`, so they all move.
+7. **Failure.** A failed command reports `<tool> <subcommand> in <dir>: <last 20 output lines>` (e.g. `pnpm update in …`), and the root's changes are dropped.
 
 - `plan` does not run installs, and prints `note    package-lock.json changes are computed by apply/run`; lockfile-only updates are listed as `(<type>, lockfile)` without a diff.
 
 **Lock file maintenance (`run`).**
 
-With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the lockfile of every lock root of a scanned `package.json` (the one picked as above; a root without its own `package.json` is skipped) is regenerated from scratch in the temporary copy, as Renovate does: `package-lock.json` and `pnpm-lock.yaml` are left out and `yarn.lock` is copied empty (so yarn keeps the directory as its project root), then the install command above runs (npm twice, since its first lockfile can be out of sync with `package.json`). Every locked package, direct and transitive, of the root and all workspace members moves to the newest version its range admits; the `package.json` files are unchanged, and the lockfile's own root and workspace entries keep their ranges. The tool lookup (`packageManager` version, `npx`) is the same as above. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it.
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the lockfile of every lock root of a scanned `package.json` (the one picked as above; a root without its own `package.json` is skipped) is regenerated from scratch in the temporary copy, as Renovate does: `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml` and `bun.lock` are left out and `yarn.lock` is copied empty (so yarn keeps the directory as its project root), then the install command above runs (npm twice, since its first lockfile can be out of sync with `package.json`). Every locked package, direct and transitive, of the root and all workspace members moves to the newest version its range admits; the `package.json` files are unchanged, and the lockfile's own root and workspace entries keep their ranges. The tool lookup (`packageManager` version, `npx`) is the same as above. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it.
 
 ## helm
 

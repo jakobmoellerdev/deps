@@ -87,8 +87,8 @@ type Dep struct {
 	// bare "1.2" means ^1.2); "" = Range is one (or the versioning scheme matches it itself).
 	Constraint string
 	RangeFixed bool   // the range is never rewritten (terraform `>= 1.0, < 2.0`): only Locked may move within it
-	Locked     string // version the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, .terraform.lock.hcl, gradle.lockfile) resolves the dep to; "" = none
-	LockUnread bool   // the lock root has a lockfile deps does not read (pnpm-lock.yaml, yarn.lock, package-lock.json v1)
+	Locked     string // version the lockfile (package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock, bun.lock, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, .terraform.lock.hcl, gradle.lockfile) resolves the dep to; "" = none
+	LockUnread bool   // the lock root's lockfile cannot be read (it does not parse; a package-lock.json without lockfileVersion)
 
 	// Python managers only (datasource pypi).
 	ExtraSources     []string // extra simple index URLs searched besides Source (pip --extra-index-url, uv/Poetry/Pipenv/pdm secondary sources); releases are merged

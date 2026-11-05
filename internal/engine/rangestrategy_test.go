@@ -95,8 +95,20 @@ func TestRangeStrategy(t *testing.T) {
 			want:  []string{"a 1.0.0->1.2.0 minor", "a 1.0.0->2.0.0 major", "b 2.0.0->2.1.0 minor", "c 1.0.0->1.0.1 patch", "p 1.0.0->2.0.0 major"},
 		},
 		{
-			name: "pnpm lockfile is not read: bump", cfg: peersOn,
-			files: map[string]string{"web/pnpm-lock.yaml": "lockfileVersion: '9.0'\n"},
+			name: "auto with pnpm-lock.yaml", cfg: peersOn,
+			files: map[string]string{"web/pnpm-lock.yaml": "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n" +
+				"      a: {specifier: ^1.0.0, version: 1.1.0}\n      b: {specifier: ~2.0.0, version: 2.0.1}\n" +
+				"    devDependencies:\n      c: {specifier: 1.0.0, version: 1.0.0}\n"},
+			want: []string{"a 1.1.0->1.2.0 minor lockfile", "a 1.0.0->2.0.0 major", "b 2.0.0->2.1.0 minor", "c 1.0.0->1.0.1 patch", "p 1.0.0->2.0.0 major"},
+		},
+		{
+			name: "auto with yarn.lock", cfg: peersOn,
+			files: map[string]string{"web/yarn.lock": "# yarn lockfile v1\n\n\na@^1.0.0:\n  version \"1.1.0\"\n\nb@~2.0.0:\n  version \"2.0.1\"\n"},
+			want:  []string{"a 1.1.0->1.2.0 minor lockfile", "a 1.0.0->2.0.0 major", "b 2.0.0->2.1.0 minor", "c 1.0.0->1.0.1 patch", "p 1.0.0->2.0.0 major"},
+		},
+		{
+			name: "unread lockfile (no lockfileVersion): bump", cfg: peersOn,
+			files: map[string]string{"web/package-lock.json": `{"packages": {}}`},
 			want: []string{
 				"a 1.0.0->1.2.0 minor", "a 1.0.0->2.0.0 major", "b 2.0.0->2.1.0 minor", "c 1.0.0->1.0.1 patch",
 				"p 1.0.0->2.0.0 major", // peers still keep in-range versions
@@ -212,27 +224,37 @@ func (f *versionSec) Advisories(_ context.Context, deps []dep.Dep) ([][]Vuln, er
 
 func TestRangeStrategySecurity(t *testing.T) {
 	pkg := `{"dependencies": {"a": "^1.0.0", "s": "^1.0.0", "x": "^1.0.0"}}`
-	lock := `{"lockfileVersion": 3, "packages": {
-  "node_modules/a": {"version": "1.1.0"}, "node_modules/s": {"version": "1.0.0"}, "node_modules/x": {"version": "1.0.0"}}}`
+	// The same locked versions in each lockfile deps reads.
+	locks := map[string]string{
+		"package-lock.json": `{"lockfileVersion": 3, "packages": {
+  "node_modules/a": {"version": "1.1.0"}, "node_modules/s": {"version": "1.0.0"}, "node_modules/x": {"version": "1.0.0"}}}`,
+		"pnpm-lock.yaml": "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n" +
+			"      a: {specifier: ^1.0.0, version: 1.1.0}\n      s: {specifier: ^1.0.0, version: 1.0.0}\n      x: {specifier: ^1.0.0, version: 1.0.0}\n",
+		"yarn.lock": "\"a@npm:^1.0.0\":\n  version: 1.1.0\n\n\"s@npm:^1.0.0\":\n  version: 1.0.0\n\n\"x@npm:^1.0.0\":\n  version: 1.0.0\n",
+	}
 	releases := fakeGo{"a": {"1.0.0", "1.1.0"}, "s": {"1.0.0", "1.0.1", "1.0.2"}, "x": {"1.0.0", "1.0.1", "2.0.0"}}
-	sec := &versionSec{vulns: map[string][]Vuln{
-		"a": {vuln("GHSA-a", "1.1.0")}, // already locked at the fix
-		"s": {vuln("GHSA-s", "1.0.1")}, // the range admits the fix: lockfile-only
-		"x": {vuln("GHSA-x", "2.0.0")}, // the fix needs a new range
-	}}
-	// Only majors are allowed, so the security updates come from the advisories alone.
-	root, cfg := setup(t, "rules:\n  - updates: [major]\n", map[string]string{"package.json": pkg, "package-lock.json": lock})
-	o := Options{Managers: []manager.Manager{npm.New()}, Datasources: map[string]Datasource{"npm": releases}, Security: sec}
-	res, err := Resolve(t.Context(), root, cfg, env, o)
-	if err != nil || len(res.Errors) > 0 {
-		t.Fatal(err, res.Errors)
-	}
-	want := "s 1.0.0->1.0.1 patch lockfile security\nx 1.0.0->2.0.0 major security"
-	if got := renderUpdates(res.Updates); got != want {
-		t.Errorf("updates =\n%s\nwant\n%s", got, want)
-	}
-	if got := strings.Join(sec.asked, ", "); got != "a@1.0.0 locked 1.1.0, s@1.0.0 locked 1.0.0, x@1.0.0 locked 1.0.0" {
-		t.Errorf("asked = %s", got)
+	for lockName, lock := range locks {
+		t.Run(lockName, func(t *testing.T) {
+			sec := &versionSec{vulns: map[string][]Vuln{
+				"a": {vuln("GHSA-a", "1.1.0")}, // already locked at the fix
+				"s": {vuln("GHSA-s", "1.0.1")}, // the range admits the fix: lockfile-only
+				"x": {vuln("GHSA-x", "2.0.0")}, // the fix needs a new range
+			}}
+			// Only majors are allowed, so the security updates come from the advisories alone.
+			root, cfg := setup(t, "rules:\n  - updates: [major]\n", map[string]string{"package.json": pkg, lockName: lock})
+			o := Options{Managers: []manager.Manager{npm.New()}, Datasources: map[string]Datasource{"npm": releases}, Security: sec}
+			res, err := Resolve(t.Context(), root, cfg, env, o)
+			if err != nil || len(res.Errors) > 0 {
+				t.Fatal(err, res.Errors)
+			}
+			want := "s 1.0.0->1.0.1 patch lockfile security\nx 1.0.0->2.0.0 major security"
+			if got := renderUpdates(res.Updates); got != want {
+				t.Errorf("updates =\n%s\nwant\n%s", got, want)
+			}
+			if got := strings.Join(sec.asked, ", "); got != "a@1.0.0 locked 1.1.0, s@1.0.0 locked 1.0.0, x@1.0.0 locked 1.0.0" {
+				t.Errorf("asked = %s", got)
+			}
+		})
 	}
 }
 

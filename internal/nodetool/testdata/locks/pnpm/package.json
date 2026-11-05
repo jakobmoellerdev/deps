@@ -1,0 +1,14 @@
+{
+  "name": "ws",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "ms": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/ms": "^0.7.31"
+  },
+  "packageManager": "pnpm@12.16.1"
+}
