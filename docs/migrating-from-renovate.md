@@ -17,6 +17,31 @@ Both use one translator, so a migrated file behaves exactly like compatibility m
 - Schedules become the crons of the window's start: `* 0-3 * * 1` and `before 4am on monday` are `0 0 * * 1`, `after 10pm every weekday` is `0 22 * * 1-5`. The crons the workflow's `on.schedule` needs are printed (`migrate`) or logged.
 - `matchManagers` and `matchCategories` expand to one rule per deps manager: `github-actions` matches the `github-actions` manager and the `docker` manager's `workflow`/`action` images, `dockerfile` the `docker` manager's `dockerfile` dep type. `enabledManagers`, `<manager>.enabled: false` and Renovate's default-off `pre-commit` become trailing `ignore: true` rules.
 - Renovate's `/regex/` and `!negated` patterns in package names, file names and custom manager files work in deps as they are.
+- `github-release-attachments` digests, the common JSONata `transformTemplates` shapes (`$map(<list>, function($v){ {"version": …} })`, `<path>.{"version": <field>}`, with `$keys`, `$distinct` and `$replace(…, /^v/, "")`), `matchCurrentVersion`, `matchCurrentAge`, `extractVersion`, labels, reviewers, assignees, `platformCommit` and `minimumReleaseAgeBehaviour` (default `timestamp-required`, as in Renovate 42+) are translated.
+
+### What compatibility mode cannot translate
+
+Each of these is reported when it occurs; the rest of the config still applies.
+
+| Renovate setting | What happens |
+|---|---|
+| `extends` from `gitlab>`, npm packages, URLs, relative files | skipped (warning) |
+| built-in `replacements:*`, `workarounds:*`, `mergeConfidence:*`, `abandonments:*`, `helpers:*` (except `pinGitHubActionDigests`), `security:openssf-scorecard` | skipped (info) |
+| `matchCurrentValue`, `matchJsonata`, `matchSourceUrls`, `matchRepositories`, `matchBaseBranches`, other unknown `match*`/`exclude*` keys | the rule is dropped |
+| `matchPackageNames` together with `matchDepNames` in one rule | the rule is dropped (deps has one `names` list) |
+| managers deps lacks (`devcontainer`, `pyenv`, `nuget`, `git-submodules`, `bundler`, …), unknown categories and dep types | dropped from the rule; a rule left without any is dropped |
+| update types `lockFileMaintenance`, `replacement`, `rollback`, `bump`, `lockfileUpdate` in `matchUpdateTypes` | dropped; a rule left without update types is dropped |
+| `pin`, `rangeStrategy`, `versioning` or `extractVersion` in a rule with `matchUpdateTypes` | the field is dropped (deps decides them before the update type is known) |
+| `rangeStrategy: pin`, `widen`, `in-range-only` | dropped |
+| `automergeType: branch`, `automergeStrategy: fast-forward`/`rebase-merge`, `platformAutomerge: false` | dropped; deps always automerges the PR through the platform |
+| `dependencyDashboardApproval` | ignored: deps creates PRs without approval |
+| `timezone` | ignored: schedules are UTC workflow crons |
+| schedule texts beyond `before`/`after`, weekdays, weekends, day of month and `every <n> months` (`every 2 weeks`, `on the last day of the month`) | the entry is dropped; a rule left without entries inherits the top-level schedule |
+| custom managers with `customType` other than `regex`, `matchStringsStrategy: combination`/`recursive`, `{{templates}}` in `datasourceTemplate`/`depNameTemplate`/`packageNameTemplate`/`versioningTemplate`, `currentValueTemplate`, `extractVersionTemplate`, `autoReplaceStringTemplate` | the custom manager is dropped |
+| custom datasources with templated `defaultRegistryUrlTemplate`, `format: html`, several or other JSONata `transformTemplates` | the datasource is dropped, and every custom manager and rule that uses it |
+| `fileMatch`/`managerFilePatterns` on built-in managers | ignored: deps' managers find their files themselves |
+| `hostRules` | ignored: credentials come from the environment (`deps help environment`) |
+| PR and commit texts (`commitMessage*`, `prTitle`, `prBody*`, `groupSlug`, …), `semanticCommits: disabled`, onboarding and dashboard texts | ignored (info); `semanticCommits: disabled` warns, as deps always writes conventional commits |
 
 ## Option mapping
 
