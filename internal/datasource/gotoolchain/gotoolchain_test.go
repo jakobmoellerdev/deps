@@ -135,19 +135,4 @@ func TestErrors(t *testing.T) {
 	if _, err := s.Digest(context.Background(), dep.Dep{Name: "go"}, "1.27"); err == nil {
 		t.Error("digest should be unsupported")
 	}
-	s.url = "http://127.0.0.1:1/"
-	if _, err := s.Releases(context.Background(), dep.Dep{}, ""); err == nil {
-		t.Error("want connect error")
-	}
-	s = New(http.DefaultClient, nil).(*Source)
-	s.url = "://bad"
-	if _, err := s.Releases(context.Background(), dep.Dep{}, ""); err == nil {
-		t.Error("want url error")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	s = New(http.DefaultClient, make(chan struct{})).(*Source)
-	if _, err := s.Releases(ctx, dep.Dep{}, ""); err == nil {
-		t.Error("want ctx error")
-	}
 }

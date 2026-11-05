@@ -2,10 +2,7 @@
 package gotoolchain
 
 import (
-	"cmp"
 	"context"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +16,6 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name.
@@ -87,7 +83,7 @@ var historyRe = regexp.MustCompile(`Date:\s*Date\{(\d+),\s*(\d+),\s*(\d+)\},\s*V
 // releases before Go 1.21 and the derived minors of Releases.
 func (s *Source) history(ctx context.Context) (map[string]time.Time, error) {
 	var dates map[string]time.Time
-	err := s.get(ctx, s.historyURL, func(r io.Reader) error {
+	err := datasource.GetStream(ctx, s.client, s.sem, s.historyURL, func(r io.Reader) error {
 		body, err := io.ReadAll(io.LimitReader(r, 4<<20))
 		if err != nil {
 			return err
@@ -113,38 +109,9 @@ func (s *Source) history(ctx context.Context) (map[string]time.Time, error) {
 	return dates, err
 }
 
-// get GETs url and passes the body of a 200 response to read.
-func (s *Source) get(ctx context.Context, url string, read func(io.Reader) error) error {
-	if s.sem != nil {
-		select {
-		case s.sem <- struct{}{}:
-			defer func() { <-s.sem }()
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: HTTP %d", url, resp.StatusCode)
-	}
-	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("GET %s: %w", url, err)
-	}
-	return nil
-}
-
 func (s *Source) fetch(ctx context.Context) ([]datasource.Release, error) {
 	var out []datasource.Release
-	err := s.get(ctx, s.url, func(r io.Reader) error {
+	err := datasource.GetStream(ctx, s.client, s.sem, s.url, func(r io.Reader) error {
 		var err error
 		out, err = parseReleases(r)
 		return err
@@ -152,29 +119,24 @@ func (s *Source) fetch(ctx context.Context) ([]datasource.Release, error) {
 	return out, err
 }
 
+// release is an element of the go.dev release list.
+type release struct {
+	Version string `json:"version"`
+	Stable  bool   `json:"stable"`
+}
+
 // parseReleases decodes the go.dev release list.
 func parseReleases(r io.Reader) ([]datasource.Release, error) {
-	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true)) // no per-object name sets
-	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
-		return nil, cmp.Or(err, errors.New("not an array"))
-	}
 	var out []datasource.Release
 	minors := map[string]bool{}
-	for dec.PeekKind() != ']' {
-		var rel struct {
-			Version string `json:"version"`
-			Stable  bool   `json:"stable"`
-		}
-		if err := json.UnmarshalDecode(dec, &rel); err != nil {
-			return nil, err
-		}
+	err := datasource.DecodeArray(r, func(rel release) {
 		v, ok := strings.CutPrefix(rel.Version, "go")
 		if !ok || !rel.Stable {
-			continue
+			return
 		}
 		if strings.Count(v, ".") == 1 {
 			if minors[v] {
-				continue
+				return
 			}
 			minors[v] = true
 		}
@@ -183,6 +145,9 @@ func parseReleases(r io.Reader) ([]datasource.Release, error) {
 			minors[v[:i]] = true
 			out = append(out, datasource.Release{Version: v[:i]})
 		}
+	})
+	if err != nil {
+		return nil, err
 	}
 	if len(out) == 0 {
 		return nil, errors.New("no stable releases")

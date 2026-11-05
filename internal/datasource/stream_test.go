@@ -1,0 +1,108 @@
+package datasource
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+)
+
+func TestGetStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ua := r.Header.Get("User-Agent"); ua != httpx.UserAgent() {
+			t.Errorf("User-Agent = %q", ua)
+		}
+		if r.URL.Path == "/missing" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, "body")
+	}))
+	defer srv.Close()
+
+	sem := make(chan struct{}, 1)
+	var got string
+	if err := GetStream(t.Context(), srv.Client(), sem, srv.URL, func(r io.Reader) error {
+		if len(sem) != 1 {
+			t.Error("read without a semaphore slot")
+		}
+		b, err := io.ReadAll(r)
+		got = string(b)
+		return err
+	}); err != nil || got != "body" {
+		t.Fatalf("GetStream = %q, %v", got, err)
+	}
+	if len(sem) != 0 {
+		t.Error("semaphore slot not released")
+	}
+
+	fail := errors.New("boom")
+	err := GetStream(t.Context(), srv.Client(), nil, srv.URL, func(io.Reader) error { return fail })
+	if want := "GET " + srv.URL + ": boom"; err == nil || err.Error() != want || !errors.Is(err, fail) {
+		t.Errorf("read error = %v, want %q wrapping it", err, want)
+	}
+
+	noRead := func(io.Reader) error {
+		t.Error("read called")
+		return nil
+	}
+	err = GetStream(t.Context(), srv.Client(), nil, srv.URL+"/missing", noRead)
+	if want := "GET " + srv.URL + "/missing: HTTP 404"; err == nil || err.Error() != want {
+		t.Errorf("status error = %v, want %q", err, want)
+	}
+	if err := GetStream(t.Context(), srv.Client(), nil, "http://[::1]:namedport", noRead); err == nil {
+		t.Error("bad URL: want error")
+	}
+	if err := GetStream(t.Context(), srv.Client(), nil, "http://127.0.0.1:1/", noRead); err == nil {
+		t.Error("connect: want error")
+	}
+	full := make(chan struct{}, 1)
+	full <- struct{}{}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := GetStream(ctx, srv.Client(), full, srv.URL, noRead); !errors.Is(err, context.Canceled) {
+		t.Errorf("canceled while waiting for the semaphore = %v", err)
+	}
+}
+
+func TestDecodeArray(t *testing.T) {
+	type elem struct {
+		A string `json:"a"`
+		B bool   `json:"b"`
+	}
+	for _, tc := range []struct {
+		name, body string
+		want       []elem
+		err        string // wanted substring of the error, empty for success
+		notArray   bool
+	}{
+		// Every element starts from a zero T: b of the first must not leak into the second.
+		{name: "elements", body: `[{"a":"x","b":true,"files":[1,2]},{"a":"y"}] trailing`, want: []elem{{"x", true}, {"y", false}}},
+		{name: "empty", body: `[]`},
+		{name: "object", body: `{"a":"x"}`, err: "not an array", notArray: true},
+		{name: "not json", body: `<html>`, err: "invalid character", notArray: true},
+		{name: "empty body", body: ``, err: "EOF", notArray: true},
+		{name: "bad element", body: `[{"a":1}]`, err: "JSON number"},
+		{name: "truncated", body: `[{"a":"x"},`, err: "EOF", want: []elem{{"x", false}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []elem
+			err := DecodeArray(strings.NewReader(tc.body), func(e elem) { got = append(got, e) })
+			if tc.err == "" && err != nil || tc.err != "" && (err == nil || !strings.Contains(err.Error(), tc.err)) {
+				t.Fatalf("err = %v, want %q", err, tc.err)
+			}
+			if errors.Is(err, ErrNotArray) != tc.notArray {
+				t.Errorf("errors.Is(%v, ErrNotArray) = %t", err, !tc.notArray)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("elements = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

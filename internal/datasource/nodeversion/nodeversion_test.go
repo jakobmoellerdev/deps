@@ -1,7 +1,6 @@
 package nodeversion
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -148,16 +147,6 @@ func TestErrors(t *testing.T) {
 	srv := serve(t, index, &hits)
 	if _, err := New(srv.Client(), nil, env(srv.URL+"/other")).Releases(t.Context(), dep.Dep{}, ""); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
 		t.Errorf("404: %v", err)
-	}
-	if _, err := New(srv.Client(), nil, env("http://[::1]:namedport")).Releases(t.Context(), dep.Dep{}, ""); err == nil {
-		t.Error("bad URL: want error")
-	}
-	sem := make(chan struct{}, 1)
-	sem <- struct{}{}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, err := New(srv.Client(), sem, env(srv.URL+"/mirror")).Releases(ctx, dep.Dep{}, ""); err == nil {
-		t.Error("canceled while waiting for the semaphore: want error")
 	}
 	if s := New(nil, nil, env("")); s.url != DefaultDistURL+"/index.json" {
 		t.Errorf("default url %q", s.url)

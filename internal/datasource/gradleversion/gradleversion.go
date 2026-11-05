@@ -3,10 +3,8 @@ package gradleversion
 
 import (
 	"context"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
-	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -14,7 +12,6 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -80,55 +77,37 @@ func (s *Source) load(ctx context.Context) {
 	})
 }
 
+// release is an element of the version index.
+type release struct {
+	Version        string `json:"version"`
+	BuildTime      string `json:"buildTime"`
+	Snapshot       bool   `json:"snapshot"`
+	Nightly        bool   `json:"nightly"`
+	ReleaseNightly bool   `json:"releaseNightly"`
+	Broken         bool   `json:"broken"`
+}
+
 func (s *Source) fetch(ctx context.Context) error {
-	if s.sem != nil {
-		select {
-		case s.sem <- struct{}{}:
-			defer func() { <-s.sem }()
-		case <-ctx.Done():
-			return ctx.Err()
+	return datasource.GetStream(ctx, s.client, s.sem, s.url, func(r io.Reader) error {
+		s.times = map[string]time.Time{}
+		err := datasource.DecodeArray(r, func(rel release) {
+			if rel.Version == "" || rel.Snapshot || rel.Nightly || rel.ReleaseNightly || rel.Broken {
+				return
+			}
+			s.releases = append(s.releases, datasource.Release{Version: rel.Version})
+			if t, err := time.Parse(buildTimeLayout, rel.BuildTime); err == nil {
+				s.times[rel.Version] = t
+			}
+		})
+		if errors.Is(err, datasource.ErrNotArray) {
+			return errors.New("malformed index")
 		}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, http.NoBody)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: HTTP %d", s.url, resp.StatusCode)
-	}
-	dec := jsontext.NewDecoder(resp.Body, jsontext.AllowDuplicateNames(true))
-	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
-		return fmt.Errorf("GET %s: malformed index", s.url)
-	}
-	s.times = map[string]time.Time{}
-	for dec.PeekKind() != ']' {
-		var r struct {
-			Version        string `json:"version"`
-			BuildTime      string `json:"buildTime"`
-			Snapshot       bool   `json:"snapshot"`
-			Nightly        bool   `json:"nightly"`
-			ReleaseNightly bool   `json:"releaseNightly"`
-			Broken         bool   `json:"broken"`
+		if err != nil {
+			return err
 		}
-		if err := json.UnmarshalDecode(dec, &r); err != nil {
-			return fmt.Errorf("GET %s: %w", s.url, err)
+		if len(s.releases) == 0 {
+			return errors.New("no releases")
 		}
-		if r.Version == "" || r.Snapshot || r.Nightly || r.ReleaseNightly || r.Broken {
-			continue
-		}
-		s.releases = append(s.releases, datasource.Release{Version: r.Version})
-		if t, err := time.Parse(buildTimeLayout, r.BuildTime); err == nil {
-			s.times[r.Version] = t
-		}
-	}
-	if len(s.releases) == 0 {
-		return errors.New("GET " + s.url + ": no releases")
-	}
-	return nil
+		return nil
+	})
 }

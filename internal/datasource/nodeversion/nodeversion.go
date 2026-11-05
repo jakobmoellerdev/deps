@@ -3,10 +3,8 @@ package nodeversion
 
 import (
 	"context"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
-	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -15,7 +13,6 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's; the alias node maps to it).
@@ -83,68 +80,50 @@ func (s *Source) load(ctx context.Context) {
 	})
 }
 
+// release is an element of the index, an array of objects with large file lists that is
+// decoded one element at a time.
+type release struct {
+	Version string `json:"version"`
+	Date    string `json:"date"`
+}
+
 func (s *Source) fetch(ctx context.Context) error {
-	if s.sem != nil {
-		select {
-		case s.sem <- struct{}{}:
-			defer func() { <-s.sem }()
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, http.NoBody)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: HTTP %d", s.url, resp.StatusCode)
-	}
-	// The index is an array of objects with large file lists; decode one element at a time.
-	dec := jsontext.NewDecoder(resp.Body, jsontext.AllowDuplicateNames(true)) // no per-object name sets
-	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
-		return fmt.Errorf("GET %s: malformed index", s.url)
-	}
-	s.times = map[string]time.Time{}
-	var derived []datasource.Release
-	for dec.PeekKind() != ']' {
-		var r struct {
-			Version string `json:"version"`
-			Date    string `json:"date"`
-		}
-		if err := json.UnmarshalDecode(dec, &r); err != nil {
-			return fmt.Errorf("GET %s: %w", s.url, err)
-		}
-		if r.Version == "" {
-			continue
-		}
-		s.releases = append(s.releases, datasource.Release{Version: r.Version})
-		t, err := time.Parse(time.DateOnly, r.Date)
-		v := strings.TrimPrefix(r.Version, "v")
-		if err == nil {
-			s.times[v] = t
-		}
-		if strings.ContainsAny(v, "-+") || strings.Count(v, ".") != 2 {
-			continue // prereleases have no release line; partial versions are not published
-		}
-		minor := v[:strings.LastIndexByte(v, '.')]
-		for _, p := range []string{minor, v[:strings.IndexByte(v, '.')]} {
-			if _, seen := s.times[p]; !seen {
-				derived = append(derived, datasource.Release{Version: p})
+	return datasource.GetStream(ctx, s.client, s.sem, s.url, func(r io.Reader) error {
+		s.times = map[string]time.Time{}
+		var derived []datasource.Release
+		err := datasource.DecodeArray(r, func(rel release) {
+			if rel.Version == "" {
+				return
 			}
-			if err == nil || s.times[p].IsZero() {
-				s.times[p] = t // the index is newest first: the last write is the line's first release
+			s.releases = append(s.releases, datasource.Release{Version: rel.Version})
+			t, err := time.Parse(time.DateOnly, rel.Date)
+			v := strings.TrimPrefix(rel.Version, "v")
+			if err == nil {
+				s.times[v] = t
 			}
+			if strings.ContainsAny(v, "-+") || strings.Count(v, ".") != 2 {
+				return // prereleases have no release line; partial versions are not published
+			}
+			minor := v[:strings.LastIndexByte(v, '.')]
+			for _, p := range []string{minor, v[:strings.IndexByte(v, '.')]} {
+				if _, seen := s.times[p]; !seen {
+					derived = append(derived, datasource.Release{Version: p})
+				}
+				if err == nil || s.times[p].IsZero() {
+					s.times[p] = t // the index is newest first: the last write is the line's first release
+				}
+			}
+		})
+		if errors.Is(err, datasource.ErrNotArray) {
+			return errors.New("malformed index")
 		}
-	}
-	if len(s.releases) == 0 {
-		return errors.New("GET " + s.url + ": no releases")
-	}
-	s.releases = append(s.releases, derived...)
-	return nil
+		if err != nil {
+			return err
+		}
+		if len(s.releases) == 0 {
+			return errors.New("no releases")
+		}
+		s.releases = append(s.releases, derived...)
+		return nil
+	})
 }
