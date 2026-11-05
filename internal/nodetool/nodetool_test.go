@@ -669,7 +669,7 @@ func TestProcessEdgeCases(t *testing.T) {
 
 func TestYarnFiles(t *testing.T) {
 	got, err := yarnFiles([]byte("yarnPath: ./.yarn/releases/y.cjs\nplugins:\n  - path: .yarn/plugins/a.cjs\n  - ../outside.cjs\n  - /abs.cjs\n  - [nested]\n"))
-	if err != nil || !slices.Equal(got, []string{".yarn/releases/y.cjs", ".yarn/plugins/a.cjs"}) {
+	if want := []string{"./.yarn/releases/y.cjs", ".yarn/plugins/a.cjs", "../outside.cjs", "/abs.cjs"}; err != nil || !slices.Equal(got, want) {
 		t.Errorf("yarnFiles = %v, %v", got, err)
 	}
 	if _, err := yarnFiles([]byte("plugins:\n  - path: [x]\n")); err == nil {

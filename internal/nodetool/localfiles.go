@@ -17,8 +17,59 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-// addLocalFiles adds to write (slash paths relative to the lock root dir -> content) the
-// local files the package manager reads while it resolves the lockfile, derived from the
+// tree is the repository of a lock root: files are read through root, opened on the
+// repository top (the nearest directory at or above the lock root holding .git, else the lock
+// root), and addressed by slash paths relative to the lock root, which lies at prefix below the
+// top. A lock root below the top can so reference files above it (backstage's
+// workspaces/ui/.yarnrc.yml has `yarnPath: ../../.yarn/releases/yarn-4.18.1.cjs`).
+type tree struct {
+	root   *os.Root
+	top    string
+	prefix string // "." at the top
+}
+
+func openTree(dir string) (*tree, error) {
+	top := dir
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			top = d
+			break
+		}
+		if d == filepath.Dir(d) {
+			break
+		}
+	}
+	prefix, err := filepath.Rel(top, dir)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(top)
+	if err != nil {
+		return nil, err
+	}
+	return &tree{root: root, top: top, prefix: filepath.ToSlash(prefix)}, nil
+}
+
+// local returns the cleaned slash path p (relative to the lock root), or "" when it is empty,
+// absolute, names the lock root itself or leaves the repository top.
+func (t *tree) local(p string) string {
+	if p == "" || path.IsAbs(p) || filepath.IsAbs(p) {
+		return ""
+	}
+	p = path.Clean(filepath.ToSlash(p))
+	if p == "." || !filepath.IsLocal(filepath.FromSlash(path.Join(t.prefix, p))) {
+		return ""
+	}
+	return p
+}
+
+// read reads the file at the local path p; symlinks leaving the top fail.
+func (t *tree) read(p string) ([]byte, error) {
+	return t.root.ReadFile(filepath.FromSlash(path.Join(t.prefix, p)))
+}
+
+// addLocalFiles adds to write (slash paths relative to the lock root -> content) the local
+// files the package manager reads while it resolves the lockfile, derived from the
 // configuration in write and files rather than by copying directories:
 //   - yarn berry `patch:` paths (`#~/p` from the project root, `#./p` from the declaring
 //     package.json's directory) in dependency maps and `resolutions`, and in yarn.lock (relative
@@ -32,15 +83,9 @@ import (
 //     pnpm-workspace.yaml or .npmrc).
 //
 // patch-package patches need no copy: they are applied by a postinstall script, which the
-// installs never run. Paths that leave dir (also through symlinks) and files that cannot be
-// read are left out; the package manager reports what it misses.
-func addLocalFiles(dir string, write, files map[string][]byte, lockName string) error {
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-
+// installs never run. Paths that leave the repository top (also through symlinks) and files
+// that cannot be read are left out; the package manager reports what it misses.
+func addLocalFiles(t *tree, write, files map[string][]byte, lockName string) {
 	var queue []string // package.json paths to scan
 	for p := range write {
 		if p == "package.json" || strings.HasSuffix(p, "/package.json") {
@@ -50,13 +95,13 @@ func addLocalFiles(dir string, write, files map[string][]byte, lockName string) 
 	slices.Sort(queue)
 	seen := map[string]bool{}
 	add := func(p string) {
-		if p == "" || seen[p] || write[p] != nil {
+		if p = t.local(p); p == "" || seen[p] || write[p] != nil {
 			return
 		}
 		seen[p] = true
-		b, err := root.ReadFile(filepath.FromSlash(p))
+		b, err := t.read(p)
 		if err != nil {
-			slog.Debug("local file skipped", "dir", dir, "path", p, "err", err)
+			slog.Debug("local file skipped", "top", t.top, "lockRoot", t.prefix, "path", p, "err", err)
 			return
 		}
 		write[p] = b
@@ -93,11 +138,10 @@ func addLocalFiles(dir string, write, files map[string][]byte, lockName string) 
 		}
 		if p == "package.json" {
 			for _, r := range refs.pnpmPatches {
-				add(localPath(".", r))
+				add(r)
 			}
 		}
 	}
-	return nil
 }
 
 // addPnpmFiles adds the files pnpm reads by its configuration: the pnpm-workspace.yaml
@@ -113,7 +157,7 @@ func addPnpmFiles(files map[string][]byte, add func(string)) {
 		_ = yaml.Unmarshal(b, &ws) // a type error still decodes the other fields
 	}
 	for _, k := range slices.Sorted(maps.Keys(ws.PatchedDependencies)) {
-		add(localPath(".", ws.PatchedDependencies[k]))
+		add(ws.PatchedDependencies[k])
 	}
 	for _, k := range slices.Sorted(maps.Keys(ws.Overrides)) {
 		if t, ok := localSpec(ws.Overrides[k]); ok {
@@ -133,7 +177,7 @@ func addPnpmFiles(files map[string][]byte, add func(string)) {
 		}
 	}
 	for _, p := range pnpmfiles {
-		add(localPath(".", p))
+		add(p)
 	}
 }
 
@@ -228,12 +272,12 @@ func localSpec(s string) (string, bool) {
 }
 
 // localTarget returns the file to copy for the local spec path p of the package.json in base:
-// a tarball itself, else the directory's package.json ("" when p leaves the lock root).
+// a tarball itself, else the directory's package.json ("" for an absolute p).
 func localTarget(base, p string) string {
 	if strings.HasSuffix(p, ".tgz") || strings.HasSuffix(p, ".tar.gz") || strings.HasSuffix(p, ".tar") {
-		return localPath(base, p)
+		return join(base, p)
 	}
-	if d := localPath(base, p); d != "" {
+	if d := join(base, p); d != "" {
 		return path.Join(d, "package.json")
 	}
 	return ""
@@ -258,9 +302,9 @@ func yarnPatchPaths(rng, base string) []string {
 			p = u
 		}
 		if rest, ok := strings.CutPrefix(p, "~/"); ok {
-			out = append(out, localPath(".", rest))
+			out = append(out, join(".", rest))
 		} else {
-			out = append(out, localPath(base, p))
+			out = append(out, join(base, p))
 		}
 	}
 	return out
@@ -309,17 +353,13 @@ func yarnLockPatches(lock []byte) []string {
 	}
 }
 
-// localPath joins the slash path p to base (relative to the lock root); "" when it is
-// absolute or leaves the lock root.
-func localPath(base, p string) string {
+// join joins the path p to base (slash paths relative to the lock root); "" when p is empty or
+// absolute. tree.local checks where the result lies.
+func join(base, p string) string {
 	if p == "" || path.IsAbs(p) || filepath.IsAbs(p) {
 		return ""
 	}
-	j := path.Join(base, filepath.ToSlash(p))
-	if j == "." || !filepath.IsLocal(filepath.FromSlash(j)) {
-		return ""
-	}
-	return j
+	return path.Join(base, filepath.ToSlash(p))
 }
 
 // npmrcValue returns the value of key in an .npmrc (the last assignment wins), or "".

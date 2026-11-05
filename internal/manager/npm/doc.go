@@ -57,7 +57,7 @@ const lockfileBody = "1. **Lock root.** The lock root is the nearest directory a
 	"Otherwise the manifest is only patched; no lockfile is created.\n" +
 	"2. **Temporary copy.** The root and all member `package.json` files (patched where changed), the lockfile, `.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`, and the files referenced by `yarnPath`/`plugins` are copied to a temp dir. " +
 	"So are the local files the install resolves: yarn `patch:` files (from `package.json` and `yarn.lock`), pnpm `patchedDependencies` files (`package.json` `pnpm` and `pnpm-workspace.yaml`), the pnpmfile (`.pnpmfile.cjs`, or the `pnpmfile` setting), and the targets of `file:`, `link:` and `portal:` dependencies, resolutions and overrides (a tarball itself, a directory's `package.json` only). " +
-	"Paths outside the lock root are not copied.\n" +
+	"Such files may lie above the lock root within the repository (the nearest directory with `.git`), at their relative paths; paths outside it are not copied.\n" +
 	"3. **Install.**\n" +
 	"\n" +
 	"   | Tool | Command |\n" +

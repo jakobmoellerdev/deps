@@ -133,6 +133,11 @@ func install(ctx context.Context, dir string, manifests, files map[string][]byte
 		}
 	}
 	maps.Copy(write, manifests)
+	t, err := openTree(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer t.root.Close()
 	berry := lockName == YarnLock && (files[yarnrc] != nil || bytes.Contains(lock, []byte("__metadata:")))
 	if berry {
 		paths, err := yarnFiles(files[yarnrc])
@@ -140,23 +145,25 @@ func install(ctx context.Context, dir string, manifests, files map[string][]byte
 			return nil, fmt.Errorf("%s: %w", yarnrc, err)
 		}
 		for _, p := range paths {
-			if write[p], err = os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+			if p = t.local(p); p == "" {
+				continue
+			}
+			if write[p], err = t.read(p); err != nil {
 				return nil, err
 			}
 		}
 	}
-	if err := addLocalFiles(dir, write, files, lockName); err != nil {
-		return nil, err
-	}
+	addLocalFiles(t, write, files, lockName)
 
 	// npm names an unnamed root package after its directory (package-lock.json "name"), so the
-	// copy lives in a directory named like the lock root.
+	// copy lives in a directory named like the lock root, at its path below the repository top
+	// (files above the lock root keep their relative paths).
 	parent, err := os.MkdirTemp("", "deps-node-*")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(parent)
-	tmp := filepath.Join(parent, filepath.Base(dir))
+	tmp := filepath.Join(parent, filepath.Base(t.top), filepath.FromSlash(t.prefix))
 	if err := toolrun.WriteFiles(tmp, write); err != nil {
 		return nil, err
 	}
@@ -216,7 +223,7 @@ func pickLock(files map[string][]byte, tool string) string {
 }
 
 // yarnFiles returns the local files .yarnrc.yml references (yarnPath, plugins[].path), which
-// yarn berry loads before it touches the lockfile.
+// yarn berry loads before it touches the lockfile, as written (tree.local checks them).
 func yarnFiles(rc []byte) ([]string, error) {
 	var cfg struct {
 		YarnPath string      `yaml:"yarnPath"`
@@ -240,13 +247,7 @@ func yarnFiles(rc []byte) ([]string, error) {
 			paths = append(paths, p.Path)
 		}
 	}
-	out := paths[:0]
-	for _, p := range paths {
-		if p = filepath.ToSlash(filepath.Clean(p)); p != "." && filepath.IsLocal(p) {
-			out = append(out, p)
-		}
-	}
-	return out, nil
+	return slices.DeleteFunc(paths, func(p string) bool { return p == "" }), nil
 }
 
 // cmdSpec is how one lockfile type is updated.
