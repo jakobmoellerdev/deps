@@ -29,7 +29,11 @@ func New() manager.Manager { return gradleWrapper{} }
 
 func (gradleWrapper) Name() string { return Name }
 
-func (gradleWrapper) Match(path string) bool { return matchRe.MatchString(path) }
+// Match reports whether the slash path is a gradle/wrapper/gradle-wrapper.properties. The
+// suffix check skips the regexp for the paths that cannot match.
+func (gradleWrapper) Match(path string) bool {
+	return strings.HasSuffix(path, "gradle/wrapper/gradle-wrapper.properties") && matchRe.MatchString(path)
+}
 
 // Extract returns the Gradle version of `distributionUrl`, with `distributionSha256Sum` as its
 // checksum when present.

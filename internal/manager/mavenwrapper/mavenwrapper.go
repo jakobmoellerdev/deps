@@ -4,6 +4,7 @@ package mavenwrapper
 
 import (
 	"regexp"
+	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jvmtool/properties"
@@ -64,7 +65,11 @@ func New() manager.Manager { return mavenWrapper{} }
 
 func (mavenWrapper) Name() string { return Name }
 
-func (mavenWrapper) Match(path string) bool { return matchRe.MatchString(path) }
+// Match reports whether the slash path is a .mvn/wrapper/maven-wrapper.properties. The
+// suffix check skips the regexp for the paths that cannot match.
+func (mavenWrapper) Match(path string) bool {
+	return strings.HasSuffix(path, ".mvn/wrapper/maven-wrapper.properties") && matchRe.MatchString(path)
+}
 
 // Extract returns the Maven version of distributionUrl and the wrapper version of
 // wrapperVersion and wrapperUrl (one dep when both agree).

@@ -105,7 +105,15 @@ func New() manager.Manager { return &gradleManager{files: map[string]*fileState{
 
 func (*gradleManager) Name() string { return Name }
 
+// Match reports whether the slash path is a version catalog, build script, gradle.properties
+// or buildSrc / convention-plugin source. The suffix check is the regexps' common tail, so
+// the regexps run only for the few paths that can match.
 func (*gradleManager) Match(p string) bool {
+	if !strings.HasSuffix(p, ".kt") && !strings.HasSuffix(p, ".groovy") &&
+		!strings.HasSuffix(p, ".versions.toml") && !strings.HasSuffix(p, ".gradle") &&
+		!strings.HasSuffix(p, ".gradle.kts") && !strings.HasSuffix(p, "gradle.properties") {
+		return false
+	}
 	if sourceRe.MatchString(p) {
 		return !strings.Contains(p, "buildSrc/build/")
 	}

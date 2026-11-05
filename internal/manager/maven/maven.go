@@ -127,8 +127,15 @@ func New() manager.Manager {
 func (*mavenManager) Name() string { return Name }
 
 // Match reports whether the slash path is a pom.xml (also `<name>.pom.xml`),
-// .mvn/extensions.xml or .mvn/maven.config.
-func (*mavenManager) Match(p string) bool { return matchRe.MatchString(p) }
+// .mvn/extensions.xml or .mvn/maven.config. The suffix check skips the regexp for the
+// paths that cannot match.
+func (*mavenManager) Match(p string) bool {
+	if !strings.HasSuffix(p, "pom.xml") && !strings.HasSuffix(p, ".mvn/extensions.xml") &&
+		!strings.HasSuffix(p, ".mvn/maven.config") {
+		return false
+	}
+	return matchRe.MatchString(p)
+}
 
 // Extract parses src into an element tree with the byte span of each element's text and
 // returns one Dep per versioned dependency, plugin, extension, annotation processor path and
