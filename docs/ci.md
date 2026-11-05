@@ -110,11 +110,11 @@ Pass the token to **both** steps:
 **Why not `GITHUB_TOKEN`:**
 
 1. **Workflow files.** `GITHUB_TOKEN` cannot change `.github/workflows/*`. A git push is rejected with `refusing to allow a GitHub App to create or update workflow … without workflows permission`; a platform commit (the default with `GITHUB_TOKEN`, which is an App installation token) fails earlier with `POST …/git/trees: 403 Forbidden: Resource not accessible by integration`. Action updates are exactly such commits.
-2. **CI on the PRs.** PRs and pushes made with `GITHUB_TOKEN` do not trigger workflows (`pull_request`, `push`), so CI never runs on deps PRs, and [automerge](#automerge) would wait forever.
+2. **CI on the PRs.** `pull_request` runs for PRs that `GITHUB_TOKEN` opens or pushes to wait for approval: someone with write access has to approve them on the PR page, every time deps pushes ([GitHub's docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)). Other events, such as `push`, start no runs at all. So CI runs on deps PRs only by hand, and [automerge](#automerge) waits until someone approves.
 
 `permissions: actions: write` does not help. It covers the Actions API (cancel or re-run runs, dispatch workflows, artifacts, caches), not git pushes. The `workflows` permission that the push error asks for exists only for GitHub Apps and PATs; the [`permissions` key](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions) has no `workflows` entry. Verified on 2026-11-04: a job with `contents: write, actions: write, pull-requests: write` was refused when pushing a change to `.github/workflows/check.yml`.
 
-**Only `GITHUB_TOKEN`:** if you can't create an App or PAT, exclude workflow-file updates so the pushes succeed, and accept that the PRs get no CI (no automerge):
+**Only `GITHUB_TOKEN`:** if you can't create an App or PAT, exclude workflow-file updates so the pushes succeed, and accept that CI on the PRs needs an approval each time (so automerge isn't automatic):
 
 ```yaml
 # yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
@@ -287,7 +287,7 @@ jobs:
 
 | | GitHub | Gitea | Forgejo |
 |---|---|---|---|
-| default token | `GITHUB_TOKEN`: can't change workflow files, and its PRs don't run CI | `GITEA_TOKEN`: its PRs don't run CI | the automatic token: its PRs don't run CI |
+| default token | `GITHUB_TOKEN`: can't change workflow files, and CI on its PRs waits for approval | `GITEA_TOKEN`: its PRs don't run CI | the automatic token: its PRs don't run CI |
 | recommended token | a GitHub App token or PAT, given to `actions/checkout` and the action | the job token, or a PAT secret when CI must run on deps PRs | as on Gitea |
 | push `<branchPrefix>*` branches, delete obsolete ones | `contents: write`; *Workflows* (App) or `workflow` (PAT) when workflow files change | `contents: write` | automatic token |
 | list, create, edit and close PRs | `pull-requests: write` | `pull-requests: write` | automatic token |
@@ -295,7 +295,7 @@ jobs:
 | branch automerge (`automergeType: branch`) | `contents: write` and push rights on the base branch (bypass of its protection or rulesets); `statuses: read` and `checks: read` | push rights on the base branch (branch protection *Enable push*) | as on Gitea |
 | find, create and edit the dashboard issue (`dependencyDashboard`) | `issues: write` | `issues: write` | automatic token |
 | read private actions, modules and release notes | read access to those repositories | Cross-Repository Access or a PAT | a PAT |
-| CI runs on deps PRs | App token or PAT | PAT | PAT |
+| CI runs on deps PRs | App token or PAT (with `GITHUB_TOKEN`: after approval) | PAT | PAT |
 
 `deps run --dry-run` and `deps plan` only read. `--dry-run` works anonymously.
 
@@ -761,7 +761,7 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 |---|---|
 | push fails with `refusing to allow a GitHub App to create or update workflow … without workflows permission` (or `OAuth App … without workflow scope`), or `POST …/git/trees: 403 Forbidden: Resource not accessible by integration` | The token can't change `.github/workflows/*`: `GITHUB_TOKEN` never can. Use an App with *Workflows: write* or a PAT with `workflow` scope, for `actions/checkout` too. The second form is a [platform commit](#platform-commits-github). |
 | `update refs/heads/<branch>: stale info: the branch is at <sha>, expected <sha>` | Someone pushed to the branch after the run listed it (platform commits; git reports `stale info` the same way). The next run checks the branch again. |
-| deps PRs never run CI; automerge never merges | The PRs were pushed with the job token. Pass an App token or PAT to `actions/checkout` and the action ([GitHub](#github), [Gitea](#gitea)). |
+| deps PRs never run CI, or (GitHub) their runs wait for approval; automerge never merges | The PRs were pushed with the job token. Pass an App token or PAT to `actions/checkout` and the action ([GitHub](#github), [Gitea](#gitea)). |
 | `deps: no token for <host>` | No `--token`, no `DEPS_TOKEN`/`GITHUB_TOKEN`/`GITEA_TOKEN`/`FORGEJO_TOKEN`, and no git credential. In a workflow, check that the `token` input isn't an empty secret. |
 | `403` on `POST …/pulls` or on push (Gitea/Forgejo) | The job token lacks permissions: add `contents: write` and `pull-requests: write`, check the maximum in *Settings → Actions → General*, or use a PAT. |
 | `ls-refs https://host/owner/repo: HTTP 401` or `HTTP 404` | A private action repository. Grant cross-repository access (Gitea) or use a token that can read it; for github.com from Gitea/Forgejo set `DEPS_GITHUB_COM_TOKEN`. |

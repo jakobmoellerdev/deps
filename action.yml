@@ -5,9 +5,9 @@ inputs:
     description: >-
       Platform token, exported to deps as DEPS_TOKEN. It needs contents:write and pull-requests:write
       (issues:write for the dependency dashboard). The default is the job token on GitHub, Gitea and
-      Forgejo; on GitHub, PRs created with it do not trigger workflows and it cannot push changes to
-      .github/workflows/*, so pass an App token or PAT (with workflows permission) here and to
-      actions/checkout.
+      Forgejo; on GitHub, CI runs on PRs created with it wait for approval and it cannot push
+      changes to .github/workflows/*, so pass an App token or PAT (with workflows permission) here
+      and to actions/checkout.
     default: "${{ github.token }}"
   signing-key:
     description: >-
