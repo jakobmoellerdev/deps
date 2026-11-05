@@ -126,7 +126,8 @@ func firstByte(br *bufio.Reader) (byte, error) {
 
 // readLine returns the next line of br without its line break; at the end of input it returns
 // the unterminated last line (possibly empty) with io.EOF. Lines longer than br's buffer are
-// assembled in *scratch.
+// assembled in *scratch. Trailing CR and LF bytes are cut in a loop: bytes.TrimRight with a
+// two-byte cutset builds an ASCII set per call and was a sixth of the scan of a large index.
 func readLine(br *bufio.Reader, scratch *[]byte) ([]byte, error) {
 	line, err := br.ReadSlice('\n')
 	if errors.Is(err, bufio.ErrBufferFull) {
@@ -137,7 +138,9 @@ func readLine(br *bufio.Reader, scratch *[]byte) ([]byte, error) {
 		}
 		line = *scratch
 	}
-	line = bytes.TrimRight(line, "\r\n")
+	for len(line) > 0 && (line[len(line)-1] == '\n' || line[len(line)-1] == '\r') {
+		line = line[:len(line)-1]
+	}
 	return line, err
 }
 
