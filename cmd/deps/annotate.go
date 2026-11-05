@@ -12,33 +12,45 @@ import (
 	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 )
 
-// maxAnnotations is how many error and how many warning annotations GitHub shows per step;
-// later ones are dropped by GitHub, so deps does not print them (the result lines remain).
+// maxAnnotations is how many error, how many warning and how many notice annotations GitHub
+// shows per step; later ones are dropped by GitHub, so deps does not print them (the result
+// lines remain).
 const maxAnnotations = 10
 
-// annotator writes GitHub Actions workflow commands: error and warning annotations, located
-// at the file and line when known, and collapsible log groups. It is off outside GitHub
-// Actions. Gitea and Forgejo runners also set GITHUB_ACTIONS but do not render annotations,
-// so it is off there too, and the log stays free of raw "::error::" lines.
+// annotator writes GitHub/Gitea Actions workflow commands: error, warning and notice
+// annotations, located at the file and line when known, collapsible log groups and secret
+// masks. It is on with --log-format actions, which auto selects on an actionsRunner, and
+// writes nothing otherwise.
 type annotator struct {
 	on        bool
+	runner    bool // actionsRunner: auto selects the actions format
 	w         io.Writer
 	dir       string // --dir; dependency files are relative to it
 	workspace string // GITHUB_WORKSPACE; annotation paths are relative to it
 
-	mu          sync.Mutex
-	errs, warns int
+	mu                   sync.Mutex
+	errs, warns, notices int
 }
 
-// actionsLog is the annotator of the running command, set up by the root command.
+// actionsLog is the annotator of the running command, set up by the root command and
+// switched on by setupLogger.
 var actionsLog = &annotator{}
 
+// newAnnotator returns an annotator, off until setupLogger picks the actions format.
 func newAnnotator(getenv func(string) string, w io.Writer, dir string) *annotator {
-	on := getenv("GITHUB_ACTIONS") == "true" && getenv("GITEA_ACTIONS") != "true" && getenv("FORGEJO_ACTIONS") != "true"
-	return &annotator{on: on, w: w, dir: dir, workspace: getenv("GITHUB_WORKSPACE")}
+	return &annotator{runner: actionsRunner(getenv), w: w, dir: dir, workspace: getenv("GITHUB_WORKSPACE")}
+}
+
+// actionsRunner reports whether deps runs on an Actions runner whose log view renders
+// workflow commands: GitHub Actions, and Gitea Actions (GITEA_ACTIONS; Gitea 1.26 shows
+// groups and severity-labeled annotation lines, and its runners also set GITHUB_ACTIONS).
+// Forgejo (FORGEJO_ACTIONS) prints workflow commands literally, so it is none.
+func actionsRunner(getenv func(string) string) bool {
+	return getenv("FORGEJO_ACTIONS") != "true" && (getenv("GITHUB_ACTIONS") == "true" || getenv("GITEA_ACTIONS") == "true")
 }
 
 // path makes p (relative to base, or absolute) relative to the workspace, which is where
@@ -71,8 +83,11 @@ func (a *annotator) command(kind, file string, line int, msg string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	n := &a.errs
-	if kind == "warning" {
+	switch kind {
+	case "warning":
 		n = &a.warns
+	case "notice":
+		n = &a.notices
 	}
 	if *n >= maxAnnotations {
 		return
@@ -109,6 +124,29 @@ func (a *annotator) error(err error) {
 		}
 	default:
 		a.command("error", "", 0, err.Error())
+	}
+}
+
+// security annotates a security update at its dependency's file and line with a notice.
+func (a *annotator) security(u dep.Update) {
+	if a == nil || !a.on || len(u.Advisories) == 0 {
+		return
+	}
+	from, to := u.FromTo()
+	ids := make([]string, len(u.Advisories))
+	for i, adv := range u.Advisories {
+		ids[i] = adv.ID
+		if adv.Summary != "" {
+			ids[i] += " (" + adv.Summary + ")"
+		}
+	}
+	a.command("notice", a.path(a.dir, u.Dep.File), u.Dep.Line, fmt.Sprintf("security update %s %s -> %s: %s", u.Dep.Name, from, to, strings.Join(ids, ", ")))
+}
+
+// mask hides secret in the rest of the job log (::add-mask::). Call it before secret is used.
+func (a *annotator) mask(secret string) {
+	if a != nil && a.on && secret != "" {
+		fmt.Fprintf(a.w, "::add-mask::%s\n", escapeData(secret))
 	}
 }
 

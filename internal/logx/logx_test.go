@@ -15,28 +15,32 @@ import (
 
 func TestFormatSelection(t *testing.T) {
 	tests := []struct {
-		in        string
-		tty, pipe Format
+		in             string
+		tty, pipe, act Format
 	}{
-		{"auto", Pretty, Text},
-		{"AUTO", Pretty, Text},
-		{"pretty", Pretty, Pretty},
-		{"text", Text, Text},
-		{"json", JSON, JSON},
+		{"auto", Pretty, Text, Actions},
+		{"AUTO", Pretty, Text, Actions},
+		{"pretty", Pretty, Pretty, Pretty},
+		{"text", Text, Text, Text},
+		{"json", JSON, JSON, JSON},
+		{"actions", Actions, Actions, Actions},
 	}
 	for _, tt := range tests {
 		f, err := ParseFormat(tt.in)
 		if err != nil {
 			t.Fatalf("%s: %v", tt.in, err)
 		}
-		if got := f.Resolve(true); got != tt.tty {
+		if got := f.Resolve(true, false); got != tt.tty {
 			t.Errorf("%s on a terminal = %s, want %s", tt.in, got, tt.tty)
 		}
-		if got := f.Resolve(false); got != tt.pipe {
+		if got := f.Resolve(false, false); got != tt.pipe {
 			t.Errorf("%s piped = %s, want %s", tt.in, got, tt.pipe)
 		}
+		if got := f.Resolve(true, true); got != tt.act {
+			t.Errorf("%s on an Actions runner = %s, want %s", tt.in, got, tt.act)
+		}
 	}
-	if _, err := ParseFormat("xml"); err == nil || err.Error() != `invalid value "xml" (auto, pretty, text, json)` {
+	if _, err := ParseFormat("xml"); err == nil || err.Error() != `invalid value "xml" (auto, pretty, text, json, actions)` {
 		t.Errorf("xml: %v", err)
 	}
 }

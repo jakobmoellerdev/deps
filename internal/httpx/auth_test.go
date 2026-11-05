@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -138,5 +139,27 @@ func TestParseCredential(t *testing.T) {
 		if u != tt.user || p != tt.pass || ok != tt.ok {
 			t.Errorf("parseCredential(%q) = %q, %q, %v", tt.in, u, p, ok)
 		}
+	}
+}
+
+func TestSecretHook(t *testing.T) {
+	var masked []string
+	calls := 0
+	a := NewAuth(platform.Info{}, "", func(string) string { return "" },
+		WithHelper(func(_ context.Context, host string) (string, string, bool) {
+			calls++
+			return "u", "pw-" + host, host != "none"
+		}),
+		WithSecretHook(func(s string) {
+			if calls == 0 {
+				t.Error("hook before the helper")
+			}
+			masked = append(masked, s)
+		}))
+	for _, h := range []string{"a", "a", "none", "b"} {
+		a.Helper(t.Context(), h)
+	}
+	if want := []string{"pw-a", "pw-b"}; !slices.Equal(masked, want) {
+		t.Errorf("hook calls = %v, want %v (once per found secret)", masked, want)
 	}
 }

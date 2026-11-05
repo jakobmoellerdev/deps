@@ -25,6 +25,10 @@ type AuthOption func(*Auth)
 // WithHelper replaces the `git credential fill` lookup used by Helper.
 func WithHelper(fn HelperFunc) AuthOption { return func(a *Auth) { a.fill = fn } }
 
+// WithSecretHook calls fn with every password the git credential helper returns, once per
+// host and before Helper hands it out, e.g. to mask it in a CI log.
+func WithSecretHook(fn func(secret string)) AuthOption { return func(a *Auth) { a.onSecret = fn } }
+
 // WithToken registers Basic credentials (user, token) for host (without port) unless host
 // already has a token: the platform token and DEPS_GITHUB_COM_TOKEN registered by NewAuth win,
 // then earlier WithToken options. An empty host or token registers nothing.
@@ -35,8 +39,9 @@ func WithToken(host, user, token string) AuthOption {
 // Auth holds static per-host tokens and a cache of git credential helper results.
 // A nil *Auth has no credentials.
 type Auth struct {
-	tokens map[string]static
-	fill   HelperFunc
+	tokens   map[string]static
+	fill     HelperFunc
+	onSecret func(string) // WithSecretHook; nil = none
 
 	mu     sync.Mutex
 	helper map[string]*cred
@@ -103,6 +108,9 @@ func (a *Auth) Helper(ctx context.Context, host string) (user, pass string, ok b
 	a.mu.Unlock()
 	c.once.Do(func() {
 		c.user, c.pass, c.ok = a.fill(ctx, host)
+		if c.ok && a.onSecret != nil {
+			a.onSecret(c.pass)
+		}
 		slog.DebugContext(ctx, "git credential helper", "host", host, "found", c.ok)
 	})
 	return c.user, c.pass, c.ok

@@ -15,6 +15,7 @@
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
+| `RUNNER_DEBUG` | all | `1` (an Actions re-run with debug logging) makes `debug` the default `--log-level`, below `DEPS_LOG_LEVEL` and the flag |
 | `NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE`, `FORCE_COLOR` | all | with `--color auto`: `NO_COLOR` (any value) or `TERM=dumb` turn colors off on a terminal; `CLICOLOR_FORCE` or `FORCE_COLOR` (any value but `0` or `false`) turn them on, also when piped and over `NO_COLOR`. `--color always`/`never` ignore them |
 | `DEPS_REPORT` | `plan`, `apply`, `run` | default of `--report` (JSON report file, see `deps help output`) |
 | `NPM_CONFIG_REGISTRY`, `npm_config_registry` | `npm` datasource | registry when no `.npmrc` sets one (default `https://registry.npmjs.org/`) |
@@ -25,7 +26,7 @@
 | `PIP_EXTRA_INDEX_URL` | `pypi` datasource | space-separated extra indexes searched for every Python dep after the manifest's own; their releases are merged in |
 | `DEPS_PYPI_URL` | `pypi` datasource | base of the PyPI JSON API (default `https://pypi.org`) |
 | `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GOMODCACHE` | `go` datasource | read via `go env -json` (the process environment when `go` is not on `PATH`). `GOMODCACHE`'s `cache/download/**/@v/*.info` files provide release times without network. |
-| `GITHUB_ACTIONS`, `GITEA_ACTIONS`, `FORGEJO_ACTIONS`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_REPOSITORY`, `FORGEJO_SERVER_URL`, `FORGEJO_API_URL`, `FORGEJO_REPOSITORY` | all | platform detection: `FORGEJO_ACTIONS=true` → forgejo, `GITEA_ACTIONS=true` → gitea, `GITHUB_ACTIONS=true` → github; the `FORGEJO_*` variables fall back to the `GITHUB_*` ones. `run` also detects from the `origin` remote; `plan`, `apply` and `explain` only from these variables. |
+| `GITHUB_ACTIONS`, `GITEA_ACTIONS`, `FORGEJO_ACTIONS`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_REPOSITORY`, `FORGEJO_SERVER_URL`, `FORGEJO_API_URL`, `FORGEJO_REPOSITORY` | all | platform detection: `FORGEJO_ACTIONS=true` → forgejo, `GITEA_ACTIONS=true` → gitea, `GITHUB_ACTIONS=true` → github; the `FORGEJO_*` variables fall back to the `GITHUB_*` ones. `GITHUB_ACTIONS` or `GITEA_ACTIONS` without `FORGEJO_ACTIONS` also makes `--log-format auto` the `actions` format (workflow commands). `run` also detects from the `origin` remote; `plan`, `apply` and `explain` only from these variables. |
 | `GITHUB_STEP_SUMMARY`, `GITEA_STEP_SUMMARY` | all | step summary file (see `deps help output`) |
 | `GITHUB_OUTPUT` | `plan`, `apply`, `run` | step outputs file: the counts are appended (see `deps help output`) |
 | `GITHUB_WORKSPACE` | all | on GitHub Actions, annotation paths are made relative to it |

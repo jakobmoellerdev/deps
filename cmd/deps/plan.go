@@ -121,6 +121,9 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 // updates plan/apply leave to their own PR: their type gets a ", separate PR" hint. On a
 // terminal the update lines are left out: the summary lists the same updates, grouped by PR.
 func report(w io.Writer, t terminal, verbose bool, res *engine.Result, errs []error, separate []bool) {
+	for _, u := range res.Updates {
+		actionsLog.security(u)
+	}
 	updates := res.Updates
 	if t.tty {
 		updates = nil

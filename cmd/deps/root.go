@@ -64,6 +64,10 @@ func newRoot() *cobra.Command {
 			// Environment defaults apply here, not as flag defaults, so help and the generated
 			// reference show the same defaults everywhere.
 			envDefault(cmd, "log-level", "DEPS_LOG_LEVEL", &o.log.level)
+			// A re-run with debug logging (RUNNER_DEBUG=1) gets deps' debug records too.
+			if os.Getenv("RUNNER_DEBUG") == "1" && os.Getenv("DEPS_LOG_LEVEL") == "" && !cmd.Flags().Changed("log-level") {
+				o.log.level = "debug"
+			}
 			envDefault(cmd, "log-format", "DEPS_LOG_FORMAT", &o.log.format)
 			envDefault(cmd, "report", "DEPS_REPORT", &o.report)
 			// All of stderr goes through one Writer, so records and result lines never
@@ -91,8 +95,8 @@ func newRoot() *cobra.Command {
 	pf.StringVar(&o.dir, "dir", ".", "repository directory to scan")
 	pf.StringVar(&o.config, "config", "", "config file, which must exist (default: <dir>/.deps.yaml, then .deps.yml, else built-in defaults)")
 	pf.BoolVarP(&o.verbose, "verbose", "v", false, "also print skipped dependencies (skip lines)")
-	pf.StringVar(&o.log.level, "log-level", "warn", "log level: debug, info, warn, error; $DEPS_LOG_LEVEL replaces the default")
-	pf.StringVar(&o.log.format, "log-format", "auto", "log format: auto (pretty on a terminal, else text), pretty, text, json; $DEPS_LOG_FORMAT replaces the default")
+	pf.StringVar(&o.log.level, "log-level", "warn", "log level: debug, info, warn, error; $DEPS_LOG_LEVEL, then $RUNNER_DEBUG=1 (debug) replace the default")
+	pf.StringVar(&o.log.format, "log-format", "auto", "log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (text plus workflow commands: annotations, log groups); $DEPS_LOG_FORMAT replaces the default")
 	pf.StringVar(&o.log.color, "color", "auto", "color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never")
 	pf.IntVar(&o.concurrency, "concurrency", 32, "maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1")
 	pf.StringVar(&o.report, "report", "", "plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT)")
@@ -165,7 +169,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	sem := limits.Default
 	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, os.Getenv)
 	slog.Debug("gitlab url", "url", gitlabURL, "source", gitlabSource)
-	auth := httpx.NewAuth(info, token, os.Getenv, gitLabAuth(gitlabURL, os.Getenv)...)
+	auth := httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(gitlabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask))...)
 	env := configEnv(cfg, info, gitlabURL)
 	slog.Debug("config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
 	var security engine.SecuritySource
@@ -296,13 +300,26 @@ func (s *session) options() engine.Options {
 	return engine.Options{Managers: s.managers, Datasources: s.sources, Security: s.security, Checksums: s.checksums, Progress: s.progress}
 }
 
-// progress returns the live status line (newStatusLine) when stderr is a terminal that can
-// redraw a line (TERM is not dumb), else nil: piped output never gets one.
+// progress returns the progress of the command (newProgress): the live status line when
+// stderr is a terminal that can redraw a line (TERM is not dumb); with the actions format a
+// log group per phase, plus a heartbeat line every 30s when stderr is no terminal. nil when
+// neither applies, so plain piped output is unchanged.
 func (o *rootOpts) progress(limits httpx.Limits) engine.Progress {
-	if !o.term.tty || o.stderr == nil || os.Getenv("TERM") == "dumb" {
+	line := o.term.tty && os.Getenv("TERM") != "dumb"
+	if o.stderr == nil || !line && !actionsLog.on {
 		return nil
 	}
-	return newStatusLine(o.stderr, o.rawStderr, o.term.style, limits)
+	p := newProgress(o.stderr, o.rawStderr, o.term.style, limits)
+	if line {
+		p.line, p.tick = true, statusTick
+	}
+	if actionsLog.on {
+		p.groups = actionsLog
+		if !o.term.tty {
+			p.heartbeat = heartbeatEvery
+		}
+	}
+	return p
 }
 
 func (s *session) resolve(ctx context.Context) (*engine.Result, error) {
@@ -314,6 +331,9 @@ func (s *session) abs(rel string) string { return filepath.Join(s.root, filepath
 // close releases what the datasources keep for the run (the crate datasource's git index
 // clones); failures only matter for temp space, so they are logged.
 func (s *session) close() {
+	if p, ok := s.progress.(*progress); ok {
+		p.endGroup()
+	}
 	for name, ds := range s.sources {
 		if c, ok := ds.(io.Closer); ok {
 			if err := c.Close(); err != nil {

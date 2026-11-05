@@ -42,8 +42,10 @@ func setupLogger(o logOpts, w *logx.Writer, tty bool, getenv func(string) string
 		return terminal{}, &usageError{fmt.Errorf("--color: %w", err)}
 	}
 	color := c.Enabled(tty, getenv)
-	h := logx.NewHandler(f.Resolve(tty), w, logx.Options{Level: lvl, Color: color})
-	if actionsLog.on {
+	f = f.Resolve(tty, actionsLog.runner)
+	h := logx.NewHandler(f, w, logx.Options{Level: lvl, Color: color})
+	if f == logx.Actions {
+		actionsLog.on = true
 		h = &annotatingHandler{Handler: h, a: actionsLog}
 	}
 	slog.SetDefault(slog.New(h))

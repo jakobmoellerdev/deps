@@ -14,10 +14,10 @@ import (
 )
 
 // testStatusLine returns a status line on buf without ticker, on a clock tests advance.
-func testStatusLine(buf *bytes.Buffer, width int, pools ...httpx.PoolUse) (*statusLine, *logx.Writer, *time.Time) {
+func testStatusLine(buf *bytes.Buffer, width int, pools ...httpx.PoolUse) (*progress, *logx.Writer, *time.Time) {
 	w := logx.NewWriter(buf)
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
-	s := &statusLine{w: w, inFlight: func() []httpx.PoolUse { return pools }, width: func() int { return width }, now: func() time.Time { return now }}
+	s := &progress{w: w, line: true, inFlight: func() []httpx.PoolUse { return pools }, width: func() int { return width }, now: func() time.Time { return now }}
 	return s, w, &now
 }
 
@@ -93,8 +93,8 @@ func TestStatusLineCounting(t *testing.T) {
 func TestStatusLineTicker(t *testing.T) {
 	var buf syncBuffer
 	w := logx.NewWriter(&buf)
-	s := newStatusLine(w, &buf, logx.NewStyle(false), httpx.NewLimits(1))
-	s.tick = time.Millisecond
+	s := newProgress(w, &buf, logx.NewStyle(false), httpx.NewLimits(1))
+	s.line, s.tick = true, time.Millisecond
 	s.Start(engine.PhaseResolve, 1)
 	deadline := time.Now().Add(5 * time.Second)
 	for strings.Count(buf.String(), clearLine) < 3 && time.Now().Before(deadline) {
@@ -111,12 +111,15 @@ func TestStatusLineTicker(t *testing.T) {
 	}
 }
 
-// Piped stderr, or a terminal with TERM=dumb, gets no status line.
-func TestProgressOnlyOnTerminals(t *testing.T) {
+// Piped stderr, or a terminal with TERM=dumb, gets no status line; the actions format gets
+// groups, and a heartbeat off a terminal.
+func TestProgressSelection(t *testing.T) {
+	actionsLog = &annotator{}
+	t.Cleanup(func() { actionsLog = &annotator{} })
 	w := logx.NewWriter(&bytes.Buffer{})
 	o := &rootOpts{stderr: w}
 	if o.progress(httpx.NewLimits(1)) != nil {
-		t.Error("status line on a pipe")
+		t.Error("progress on a pipe")
 	}
 	o.term.tty = true
 	t.Setenv("TERM", "dumb")
@@ -124,8 +127,75 @@ func TestProgressOnlyOnTerminals(t *testing.T) {
 		t.Error("status line with TERM=dumb")
 	}
 	t.Setenv("TERM", "xterm")
-	if o.progress(httpx.NewLimits(1)) == nil {
-		t.Error("no status line on a terminal")
+	if p, _ := o.progress(httpx.NewLimits(1)).(*progress); p == nil || !p.line || p.groups != nil || p.heartbeat != 0 {
+		t.Errorf("terminal: %+v", p)
+	}
+	actionsLog = &annotator{on: true}
+	if p, _ := o.progress(httpx.NewLimits(1)).(*progress); p == nil || !p.line || p.groups == nil || p.heartbeat != 0 {
+		t.Errorf("actions on a terminal: %+v", p)
+	}
+	o.term.tty = false
+	if p, _ := o.progress(httpx.NewLimits(1)).(*progress); p == nil || p.line || p.groups == nil || p.heartbeat != heartbeatEvery {
+		t.Errorf("actions piped: %+v", p)
+	}
+}
+
+// With the actions format each phase is a log group (discover and extract share one) that
+// ends with the final counts; records stay inside.
+func TestProgressActionsGroups(t *testing.T) {
+	var buf syncBuffer
+	w := logx.NewWriter(&buf)
+	p := newProgress(w, &buf, logx.NewStyle(false), httpx.NewLimits(1))
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return now }
+	p.groups = &annotator{on: true, w: w}
+	p.Start(engine.PhaseDiscover, 0)
+	p.End(engine.PhaseDiscover)
+	p.Start(engine.PhaseExtract, 2)
+	p.Done(engine.PhaseExtract, nil)
+	p.Done(engine.PhaseExtract, nil)
+	p.End(engine.PhaseExtract)
+	p.Start(engine.PhaseResolve, 1)
+	_, _ = w.Write([]byte("record\n"))
+	p.Done(engine.PhaseResolve, errors.New("x"))
+	p.End(engine.PhaseResolve)
+	p.Start(engine.PhaseDiscover, 0) // a walk that fails: closed with the session
+	p.End(engine.PhaseDiscover)
+	p.endGroup()
+	p.endGroup()
+	want := "::group::Discovering and extracting dependency files\n" +
+		"deps: extracting 2/2 · 0.0s\n" +
+		"::endgroup::\n" +
+		"::group::Resolving 1 dependency\n" +
+		"record\n" +
+		"deps: resolving 1/1 · 1 error · 0.0s\n" +
+		"::endgroup::\n" +
+		"::group::Discovering and extracting dependency files\n" +
+		"::endgroup::\n"
+	if g := buf.String(); g != want {
+		t.Errorf("output:\n%s\nwant\n%s", g, want)
+	}
+}
+
+// A heartbeat line is written while a phase runs, not after it ended.
+func TestProgressHeartbeat(t *testing.T) {
+	var buf syncBuffer
+	w := logx.NewWriter(&buf)
+	p := newProgress(w, &buf, logx.NewStyle(false), httpx.NewLimits(1))
+	p.heartbeat = time.Millisecond
+	p.Start(engine.PhaseResolve, 308)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(buf.String(), "deps: resolving 0/308 · ") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	p.End(engine.PhaseResolve)
+	n := len(buf.String())
+	if n == 0 {
+		t.Fatal("no heartbeat")
+	}
+	time.Sleep(5 * time.Millisecond)
+	if len(buf.String()) != n {
+		t.Errorf("heartbeat after End: %q", buf.String())
 	}
 }
 

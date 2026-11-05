@@ -252,7 +252,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		token = envToken()
 	}
 	if token == "" {
-		if _, pass, ok := httpx.NewAuth(info, "", os.Getenv).Helper(ctx, info.Host); ok {
+		if _, pass, ok := httpx.NewAuth(info, "", os.Getenv, httpx.WithSecretHook(actionsLog.mask)).Helper(ctx, info.Host); ok {
 			token = pass
 		}
 	}

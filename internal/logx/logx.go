@@ -17,14 +17,17 @@ import (
 type Format string
 
 const (
-	Auto   Format = "auto"   // Pretty on a terminal, else Text
+	Auto   Format = "auto"   // Actions on an Actions runner, else Pretty on a terminal, else Text
 	Pretty Format = "pretty" // compact colored records for terminals (PrettyHandler)
 	Text   Format = "text"   // slog.TextHandler, the documented line format
 	JSON   Format = "json"   // slog.JSONHandler
+	// Actions is Text plus GitHub/Gitea Actions workflow commands (annotations, log groups),
+	// which the caller writes; NewHandler returns the Text handler for it.
+	Actions Format = "actions"
 )
 
 // Formats are the accepted --log-format values.
-var Formats = []Format{Auto, Pretty, Text, JSON}
+var Formats = []Format{Auto, Pretty, Text, JSON, Actions}
 
 // ParseFormat parses a --log-format value, ignoring case.
 func ParseFormat(s string) (Format, error) {
@@ -35,13 +38,16 @@ func ParseFormat(s string) (Format, error) {
 	return "", fmt.Errorf("invalid value %q (%s)", s, join(Formats))
 }
 
-// Resolve returns the concrete format: Auto becomes Pretty when stderr is a terminal, else
-// Text; the other formats stay.
-func (f Format) Resolve(tty bool) Format {
-	if f != Auto {
+// Resolve returns the concrete format: Auto becomes Actions on a runner that renders
+// workflow commands (actions), else Pretty when stderr is a terminal, else Text; the other
+// formats stay.
+func (f Format) Resolve(tty, actions bool) Format {
+	switch {
+	case f != Auto:
 		return f
-	}
-	if tty {
+	case actions:
+		return Actions
+	case tty:
 		return Pretty
 	}
 	return Text
