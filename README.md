@@ -117,7 +117,7 @@ The first line turns on completion and checks in editors that use yaml-language-
   - [managers and datasources](docs/reference/managers.md): what is found, skip reasons and lookups
   - [action](docs/reference/action.md): inputs and outputs of the composite action
 - **[Install and verify](docs/install.md)**: Debian, RPM, Arch Linux and Alpine packages, the static binary, `go install`, verifying a download, and running deps locally.
-- **[Migrating from Renovate](docs/migrating-from-renovate.md)**: `deps migrate` and `--renovate` (run from an existing Renovate config), option mapping, what cannot be translated, and differences.
+- **[Migrating from Renovate](docs/migrating-from-renovate.md)**: `deps migrate` and `--renovate` (run from an existing Renovate config), option mapping, what cannot be translated, and differences. An [agent skill](skills/migrate-from-renovate/SKILL.md) does the migration for you.
 - **Background:** [design](docs/design.md), [Renovate parity](docs/renovate-parity.md), [changelog](CHANGELOG.md) ([how releases are made](docs/ci.md#releases-maintainers)).
 
 ## Development

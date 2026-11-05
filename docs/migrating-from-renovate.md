@@ -43,6 +43,18 @@ Each of these is reported when it occurs; the rest of the config still applies.
 | `hostRules` | ignored: credentials come from the environment (`deps help environment`) |
 | PR and commit texts (`commitMessage*`, `prTitle`, `prBody*`, `groupSlug`, …), `semanticCommits: disabled`, onboarding and dashboard texts | ignored (info); `semanticCommits: disabled` warns, as deps always writes conventional commits |
 
+### With an AI agent
+
+The repository ships an agent skill that runs this migration: translate, resolve each warning, compare the plans, wire up the workflow and cut over. It is [`skills/migrate-from-renovate/SKILL.md`](../skills/migrate-from-renovate/SKILL.md), in the common `SKILL.md` format (Claude Code, Codex, Cursor and other agents that load skills from a directory). Fetch it into the target repository, or into your user skill directory:
+
+```sh
+mkdir -p .claude/skills/migrate-from-renovate   # or .agents/skills/…, ~/.claude/skills/…
+curl -fsSL 'https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/skills/migrate-from-renovate/SKILL.md?ref=main' \
+  -o .claude/skills/migrate-from-renovate/SKILL.md
+```
+
+Then ask the agent to "migrate this repository from Renovate to deps". An agent without skill support can be pointed at the same URL. The skill never edits the Renovate config before cutover, and asks before taking over Renovate's branches.
+
 ## Option mapping
 
 | Renovate | deps |
