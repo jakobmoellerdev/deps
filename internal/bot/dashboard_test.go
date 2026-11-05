@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
@@ -301,5 +302,26 @@ func TestDashboardOmitsPRMergedByDeps(t *testing.T) {
 	body := pc.createdIssues[0].Body
 	if strings.Contains(body, "deps:rebase="+branchA) || !strings.Contains(body, "deps:rebase="+branchB) {
 		t.Errorf("open section should list only %s:\n%s", branchB, body)
+	}
+}
+
+// TestDetectedKeepsStableOrder checks the detected list against a stable sort of the deps:
+// deps that compare equal (same manager, file, line and name) keep their input order.
+func TestDetectedKeepsStableOrder(t *testing.T) {
+	var deps []dep.Dep
+	for i := range 400 {
+		deps = append(deps, dep.Dep{Manager: []string{"npm", "gomod"}[i*7%2], File: fmt.Sprintf("f%d", i*5%3), Line: i * 3 % 4, Name: fmt.Sprintf("n%d", i*11%3), Version: fmt.Sprintf("v%d", i)})
+	}
+	stable := slices.Clone(deps)
+	slices.SortStableFunc(stable, func(a, b dep.Dep) int {
+		return cmp.Or(strings.Compare(a.Manager, b.Manager), strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), strings.Compare(a.Name, b.Name))
+	})
+	render := func(deps []dep.Dep) string {
+		w := &budget{left: 1 << 20}
+		w.detected(deps)
+		return w.b.String()
+	}
+	if got, want := render(deps), render(stable); got != want {
+		t.Errorf("detected order differs from a stable sort:\n%s\nwant:\n%s", got, want)
 	}
 }

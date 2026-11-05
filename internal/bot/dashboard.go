@@ -236,9 +236,15 @@ func (w *budget) detected(deps []dep.Dep) {
 	if len(deps) == 0 {
 		return
 	}
-	sorted := slices.Clone(deps)
-	slices.SortStableFunc(sorted, func(a, b dep.Dep) int {
-		return cmp.Or(strings.Compare(a.Manager, b.Manager), strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), strings.Compare(a.Name, b.Name))
+	// Sorting indices moves ints instead of whole deps; the index tiebreak keeps the order
+	// of a stable sort.
+	order := make([]int, len(deps))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortFunc(order, func(i, j int) int {
+		a, b := &deps[i], &deps[j]
+		return cmp.Or(strings.Compare(a.Manager, b.Manager), strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), strings.Compare(a.Name, b.Name), cmp.Compare(i, j))
 	})
 	const (
 		closeFile    = "</details>\n"
@@ -252,7 +258,8 @@ func (w *budget) detected(deps []dep.Dep) {
 	}
 	w.text(head)
 	manager, file := "", ""
-	for i, d := range sorted {
+	for i, k := range order {
+		d := &deps[k]
 		var open strings.Builder
 		if d.Manager != manager {
 			if file != "" {
@@ -276,7 +283,7 @@ func (w *budget) detected(deps []dep.Dep) {
 			if i > 0 {
 				w.text(closeFile + closeManager)
 			}
-			w.text(fmt.Sprintf(truncated, len(sorted)-i))
+			w.text(fmt.Sprintf(truncated, len(order)-i))
 			return
 		}
 		w.text(open.String() + line)
