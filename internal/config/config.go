@@ -4,6 +4,7 @@ package config
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -242,8 +243,10 @@ type Config struct {
 	DependencyDashboardTitle  string   `yaml:"dependencyDashboardTitle" jsonschema:"default=Dependency Dashboard" jsonschema_description:"Title of the dependency dashboard issue; the issue is found by this exact title."`
 	DependencyDashboardLabels []string `yaml:"dependencyDashboardLabels" jsonschema_description:"Labels set when the dashboard issue is created (by name; on Gitea and Forgejo they must exist in the repository or its organization)."`
 	DashboardApproval         bool     `yaml:"dashboardApproval" jsonschema:"default=false" jsonschema_description:"Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dependencyDashboard."`
-	Rules                     []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
-	Custom                    []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
+	// Extends names configs of other repositories this file builds on.
+	Extends []string `yaml:"extends" jsonschema_description:"Configs this file builds on, each '<repo>[//<path>][#<ref>]': owner/name of a repository on the same forge (or a git URL: https://, ssh://, file://, user@host:path), the file in it (default .deps.yaml) and a branch, tag or commit (default: its default branch). Their rules come first, so this file's rules override them; this file's other keys replace theirs, custom managers are appended and customDatasources merged by name. Later entries override earlier ones; extended files may extend others, cycles are errors."`
+	Rules   []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
+	Custom  []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
 	// CustomDatasources are referenced as datasource custom.<name>.
 	CustomDatasources map[string]CustomDatasource `yaml:"customDatasources" jsonschema_description:"User-defined datasources by name; deps (custom[] entries, annotations, Renovate markers) refer to them as datasource custom.<name>. The version list is fetched once per run."`
 	// LockFileMaintenance configures Renovate's lockFileMaintenance: one PR refreshing every
@@ -251,6 +254,7 @@ type Config struct {
 	LockFileMaintenance LockFileMaintenance `yaml:"lockFileMaintenance" jsonschema_description:"Lock file maintenance: one PR (branch <branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, package-lock.json, pnpm-lock.yaml, yarn.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests."`
 
 	path      string         // source path for error messages
+	layers    []layer        // the files of the extends chain, the local one last; nil without extends
 	schedule  *schedule.Set  // parsed Schedule
 	loc       *time.Location // parsed Timezone; UTC when unset
 	templates prtemplate.Set // parsed PRTitle, PRHeader and PRFooter
@@ -471,6 +475,8 @@ type Rule struct {
 	PostUpgradeTasks *PostUpgradeTasks `yaml:"postUpgradeTasks" jsonschema_description:"Shell commands run in the repository after the update is built (apply, run with --allow-tasks), e.g. go generate ./...: a list (once per branch) or {commands, executionMode}. The files they change, apart from .gitignored ones, join the commit. The last matching rule setting it wins; [] clears."`
 
 	baseBranches   []branchPattern // parsed BaseBranches
+	source         string          // the file the rule is written in (Source)
+	line           int             // its line there
 	allow          *Allowed
 	updates        map[dep.UpdateType]bool // set of Updates; nil = not set
 	currentVersion *Allowed                // parsed CurrentVersion; nil = not set
@@ -480,6 +486,11 @@ type Rule struct {
 	minAge         *time.Duration // parsed MinimumReleaseAge; nil = not set
 	abandon        *time.Duration // parsed AbandonmentThreshold; nil = not set
 }
+
+// Source returns the file a loaded rule is written in (the config file's path relative to
+// --dir, or the extends entry of another repository's file) and its line there; "" when the
+// rule was not loaded from a file.
+func (r *Rule) Source() (file string, line int) { return r.source, r.line }
 
 // Custom is a custom manager: annotation mode when Match is empty, regex mode otherwise.
 type Custom struct {
@@ -668,12 +679,13 @@ func Default() *Config {
 }
 
 // Load reads explicitPath (which must exist) or, if empty, .deps.yaml then
-// .deps.yml in dir, falling back to Default. All failures are *Error.
-func Load(dir, explicitPath string) (*Config, error) {
+// .deps.yml in dir, falling back to Default. The files its extends entries name are read
+// with fetch (nil: extends is an error). All failures are *Error.
+func Load(ctx context.Context, dir, explicitPath string, fetch Fetcher) (*Config, error) {
 	var f *os.File
-	var p string
+	var p, display string
 	if explicitPath != "" {
-		p = explicitPath
+		p, display = explicitPath, explicitPath
 		var err error
 		if f, err = os.Open(p); err != nil {
 			return nil, &Error{Err: err}
@@ -683,7 +695,7 @@ func Load(dir, explicitPath string) (*Config, error) {
 			cand := filepath.Join(dir, n)
 			h, err := os.Open(cand)
 			if err == nil {
-				f, p = h, cand
+				f, p, display = h, cand, n
 				break
 			}
 			if !errors.Is(err, fs.ErrNotExist) {
@@ -700,16 +712,29 @@ func Load(dir, explicitPath string) (*Config, error) {
 	if err != nil {
 		return nil, &Error{Err: fmt.Errorf("%s: %w", p, err), File: p}
 	}
+	l := &loader{ctx: ctx, fetch: fetch, path: p, seen: map[string]bool{}}
+	if err := l.add(src, p, display, -1); err != nil {
+		return nil, err
+	}
 	c := &Config{}
+	if len(l.layers) > 1 {
+		// The files decoded strictly one by one, so their merge does too.
+		if src, err = yaml.Marshal(merge(l.layers)); err != nil {
+			return nil, &Error{Err: fmt.Errorf("%s: merge extends: %w", p, err), File: p}
+		}
+		c.layers = l.layers
+	}
 	dec := yaml.NewDecoder(bytes.NewReader(src))
 	dec.KnownFields(true)
 	if err := dec.Decode(c); err != nil && !errors.Is(err, io.EOF) {
 		return nil, &Error{Err: fmt.Errorf("%s: %w", p, err), File: p, Problems: decodeProblems(err)}
 	}
+	c.Extends = l.extends // the merge drops the key
 	if c.IgnorePaths == nil && !hasTopLevelKey(src, "ignorePaths") {
 		c.IgnorePaths = slices.Clone(DefaultIgnorePaths)
 	}
 	c.path = p
+	c.setSources(l.layers)
 	if c.Version == 0 {
 		c.Version = 1
 	}
@@ -722,9 +747,30 @@ func Load(dir, explicitPath string) (*Config, error) {
 		}
 	}
 	if err := c.Validate(); err != nil {
-		return nil, &Error{Err: err, File: p, Problems: fieldProblems(src, err)}
+		extended := func(path string) (int, bool) {
+			for _, ly := range l.layers {
+				if ly.via >= 0 && ly.name == path {
+					return extendsLine(l.local, ly.via), true
+				}
+			}
+			return 0, false
+		}
+		return nil, &Error{Err: err, File: p, Problems: fieldProblems(l.local, err, extended)}
 	}
 	return c, nil
+}
+
+// setSources records the file and line of each rule.
+func (c *Config) setSources(layers []layer) {
+	i := 0
+	for _, ly := range layers {
+		for _, n := range ly.sequence("rules") {
+			if i < len(c.Rules) {
+				c.Rules[i].source, c.Rules[i].line = ly.display, n.Line
+			}
+			i++
+		}
+	}
 }
 
 // hasTopLevelKey reports whether the yaml document src has key at the top level, also
@@ -752,7 +798,14 @@ func (c *Config) Validate() error {
 	}
 	var errs []error
 	add := func(field, format string, a ...any) {
-		errs = append(errs, &FieldError{Path: p, Field: field, Msg: fmt.Sprintf(format, a...)})
+		path := p
+		if j, f := c.attribute(field); j >= 0 {
+			field = f
+			if c.layers[j].via >= 0 {
+				path = c.layers[j].name
+			}
+		}
+		errs = append(errs, &FieldError{Path: path, Field: field, Msg: fmt.Sprintf(format, a...)})
 	}
 	if c.Version != 0 && c.Version != 1 {
 		add("version", "must be 1, got %d", c.Version)

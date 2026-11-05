@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/bot"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -19,6 +20,7 @@ import (
 // documented interface (deps help output).
 type jsonReport struct {
 	Command      string         `json:"command"`
+	Repository   string         `json:"repository,omitempty"` // multi-repository runs: owner/name
 	Dependencies int            `json:"dependencies"`
 	DurationMS   int64          `json:"durationMs"`
 	PRs          []jsonPR       `json:"prs"`
@@ -156,7 +158,7 @@ func countActions(actions []bot.Action) outcomes {
 
 func (s *summary) report() jsonReport {
 	r := jsonReport{
-		Command: s.Command, Dependencies: s.deps(), DurationMS: s.Elapsed.Milliseconds(),
+		Command: s.Command, Repository: s.Repository, Dependencies: s.deps(), DurationMS: s.Elapsed.Milliseconds(),
 		PRs: []jsonPR{}, Other: []jsonAction{}, Pending: []jsonPending{}, Warnings: []jsonWarning{}, Skipped: []jsonSkip{}, Errors: []jsonError{},
 		Counts: s.counts(),
 	}
@@ -194,23 +196,22 @@ func (s *summary) report() jsonReport {
 	return r
 }
 
-// writeReport writes the JSON report to path (replacing it).
-func (s *summary) writeReport(path string) error {
-	b, err := json.Marshal(s.report(), json.Deterministic(true))
+// writeJSON writes the JSON document v to path (replacing it).
+func writeJSON(path string, v any) error {
+	b, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
-// writeOutputs appends the counts as step outputs to the GITHUB_OUTPUT file (GitHub, Gitea
+// writeOutputs appends the counts c as step outputs to the GITHUB_OUTPUT file (GitHub, Gitea
 // and Forgejo all provide it), one `<kebab-case name>=<n>` line each.
-func (s *summary) writeOutputs(path string) error {
+func writeOutputs(path string, c map[string]int) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	c := s.counts()
 	var b strings.Builder
 	for _, k := range outputNames {
 		if n, ok := c[k]; ok {
@@ -238,14 +239,61 @@ func kebab(s string) string {
 
 // writeMachine writes the --report file and the step outputs, reporting failures on stderr.
 func (s *summary) writeMachine(stderr io.Writer, reportPath string) {
+	writeMachine(stderr, reportPath, func() any { return s.report() }, s.counts())
+}
+
+// writeMachine writes the --report document doc() to reportPath ("" = none) and the counts c
+// as step outputs, reporting failures on stderr.
+func writeMachine(stderr io.Writer, reportPath string, doc func() any, c map[string]int) {
 	if reportPath != "" {
-		if err := s.writeReport(reportPath); err != nil {
+		if err := writeJSON(reportPath, doc()); err != nil {
 			fmt.Fprintf(stderr, "deps: report: %v\n", err)
 		}
 	}
 	if p := os.Getenv("GITHUB_OUTPUT"); p != "" {
-		if err := s.writeOutputs(p); err != nil {
+		if err := writeOutputs(p, c); err != nil {
 			fmt.Fprintf(stderr, "deps: step outputs: %v\n", err)
 		}
 	}
+}
+
+// jsonMultiReport is the --report document of a multi-repository run (run --repositories):
+// the report of each repository, and the counts summed over them.
+type jsonMultiReport struct {
+	Command      string       `json:"command"`
+	DurationMS   int64        `json:"durationMs"`
+	Repositories []jsonReport `json:"repositories"`
+	// Errors are those of repositories that failed before they had a result (clone or config
+	// errors), as "<owner/name>: <message>".
+	Errors []jsonError    `json:"errors"`
+	Counts map[string]int `json:"counts"`
+}
+
+// multiRun collects the results of the repositories of a multi-repository run.
+type multiRun struct {
+	report jsonMultiReport
+}
+
+func newMultiRun(command string) *multiRun {
+	return &multiRun{report: jsonMultiReport{Command: command, Repositories: []jsonReport{}, Errors: []jsonError{}, Counts: map[string]int{}}}
+}
+
+// add records the result of one repository.
+func (m *multiRun) add(s *summary) {
+	m.report.Repositories = append(m.report.Repositories, s.report())
+	for k, n := range s.counts() {
+		m.report.Counts[k] += n
+	}
+}
+
+// fail records a repository that failed before it had a result.
+func (m *multiRun) fail(repo string, err error) {
+	m.report.Errors = append(m.report.Errors, jsonError{Message: repo + ": " + err.Error()})
+	m.report.Counts["errors"]++
+}
+
+// write writes the report to reportPath and the summed counts as step outputs.
+func (m *multiRun) write(stderr io.Writer, reportPath string, elapsed time.Duration) {
+	m.report.DurationMS = elapsed.Milliseconds()
+	writeMachine(stderr, reportPath, func() any { return m.report }, m.report.Counts)
 }

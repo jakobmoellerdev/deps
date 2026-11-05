@@ -391,3 +391,28 @@ func TestParseCommitHeader(t *testing.T) {
 		})
 	}
 }
+
+func TestClone(t *testing.T) {
+	origin, _ := setup(t)
+	dir := filepath.Join(t.TempDir(), "c")
+	if err := Clone(t.Context(), "file://"+origin, dir, "", "https://git.example.com/", "AUTHORIZATION: basic eDp5"); err != nil {
+		t.Fatal(err)
+	}
+	r := Repo{Dir: dir}
+	head, err := r.RevParse(t.Context(), "HEAD")
+	if err != nil || head != git(t, origin, "rev-parse", "main") {
+		t.Errorf("HEAD = %q, %v", head, err)
+	}
+	if got := git(t, dir, "config", "--get", "http.https://git.example.com/.extraheader"); got != "AUTHORIZATION: basic eDp5" {
+		t.Errorf("extraheader = %q", got)
+	}
+	if u, err := r.RemoteURL(t.Context()); err != nil || u != "file://"+origin {
+		t.Errorf("origin = %q, %v", u, err)
+	}
+	if git(t, dir, "rev-parse", "--is-shallow-repository") != "true" {
+		t.Error("clone is not shallow")
+	}
+	if err := Clone(t.Context(), "file://"+origin, filepath.Join(t.TempDir(), "d"), "nope", "", ""); err == nil || !strings.Contains(err.Error(), "git fetch") {
+		t.Errorf("missing branch: %v", err)
+	}
+}

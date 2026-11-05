@@ -68,7 +68,7 @@ func TestRunCounts(t *testing.T) {
 		{Title: "Dependency Dashboard", Status: bot.StatusCreated, Dashboard: true},
 	}}
 	p := filepath.Join(t.TempDir(), "out")
-	if err := s.writeOutputs(p); err != nil {
+	if err := writeOutputs(p, s.counts()); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(p)

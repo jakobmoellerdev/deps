@@ -26,6 +26,9 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
 - [Self-hosted runners and actions hosts](#self-hosted-runners-and-actions-hosts)
 - [Self-managed GitLab](#self-managed-gitlab)
 - [Several base branches](#several-base-branches)
+- [Shared config and many repositories](#shared-config-and-many-repositories)
+  - [Shared organisation config](#shared-organisation-config)
+  - [One job for many repositories](#one-job-for-many-repositories)
 - [Schedules](#schedules)
   - [Time windows](#time-windows)
 - [Run on push to the default branch](#run-on-push-to-the-default-branch)
@@ -519,6 +522,58 @@ rules:
 - Branches carry the base: `deps/main/gomod/golang.org-x-net`, `deps/release/v2/gomod/golang.org-x-net`. Run CI on `deps/**` pushes as before.
 - Each base has its own PRs and cleanup; the PR limits count all bases together, so raise `--max-new-prs`, `prConcurrentLimit` and `prHourlyLimit` with the number of bases. The dashboard lists each base in its own section.
 - Branch protection of the release branches applies as on the default branch (automerge, [branch automerge](#branch-automerge)).
+
+## Shared config and many repositories
+
+### Shared organisation config
+
+Keep the settings every repository shares in one config repository, e.g. `my-org/deps-config` with a `.deps.yaml`, and extend it from each repository's `.deps.yaml` ([`extends`](reference/configuration.md#extends)):
+
+```yaml
+# .deps.yaml of my-org/service-a
+extends:
+  - my-org/deps-config            # its .deps.yaml on the default branch
+  - my-org/deps-config//go.yaml#v2 # a preset file at tag v2
+rules:                            # these come after the shared rules, so they win
+  - names: ['github.com/aws/**']
+    group: aws
+```
+
+- **Fetching.** deps fetches each file with git (a shallow fetch of the ref, then the file), sending the platform token to the platform host, and fails the config (exit 2, annotated at the `extends` entry) when a file is missing, does not decode strictly, is invalid or extends itself in a cycle.
+- **Tokens.** A public config repository needs nothing. A private one needs a token that can read it: on GitHub the job's `GITHUB_TOKEN` reads only its own repository, so pass an App token or PAT with access to the config repository as the action's `token` (it becomes `DEPS_TOKEN`). On Gitea and Forgejo the job token reads other private repositories of the owner only when they allow it under *Settings → Actions → General → Cross-Repository Access*.
+- **Pin it.** `#<tag>` or `#<commit>` makes a change of the shared config a reviewed bump in each repository; without a ref every run reads the default branch of the config repository.
+- **Which rule applied.** `deps explain <dep>` prints the file and line of every matching rule, e.g. `#0 names=[actions/*] allow=<7 (from my-org/deps-config//.deps.yaml:3)`.
+
+### One job for many repositories
+
+Instead of a workflow in every repository, one workflow (e.g. in `my-org/deps-config`) can run deps on many repositories with `run --repositories` (Renovate's `repositories` and `autodiscover`):
+
+```yaml
+# .github/workflows/deps.yml of my-org/deps-config
+name: deps
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+concurrency:
+  group: deps
+  cancel-in-progress: false
+jobs:
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: jakobmoellerdev/deps@v0.3.0
+        with:
+          token: ${{ secrets.DEPS_TOKEN }} # write access to every repository
+          args: run -v --log-level info --repositories my-org/*,other-org/tool
+```
+
+- **No checkout needed.** Each repository is cloned shallowly into a temporary directory with the token (as `actions/checkout` would), run, and removed. The forge comes from the job environment.
+- **Patterns.** `owner/name`, or `owner/<glob>` on the names of an organization's (else a user's) repositories the token can list; GitLab cannot list them, so name each project there. Archived repositories and mirrors are skipped. `DEPS_REPOSITORIES` (whitespace- or comma-separated) is the default.
+- **Token.** It must be able to push to, and open PRs in, every repository; the job token cannot, so use a GitHub App installation token (one installation covering the repositories) or a bot account's PAT. CI runs on the PRs it opens, as it is not the job token.
+- **Config.** Each repository's own `.deps.yaml` applies (they can all `extends` the shared config); `--config <file>` instead applies one file to all of them. Schedules match the cron that started this workflow.
+- **Results.** Each repository gets a `repository <owner/name>` line, its own result lines and summary; a failing repository is reported and the others still run (`<n> repositories, <m> failed`, exit 1 if any failed). The step summary has a section per repository, the step outputs are summed, and `--report` holds every repository's report ([Step outputs and report](#step-outputs-and-report)). Annotations name the repository instead of a file.
+- **Releases once.** Datasources are shared across the repositories, so a release list or registry lookup is fetched once per run.
 
 ## Schedules
 

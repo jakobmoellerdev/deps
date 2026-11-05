@@ -57,7 +57,7 @@ func globArgs(_ context.Context, cmd *cli.Command) error {
 
 func explain(ctx context.Context, cmd *cli.Command, o *rootOpts, globs []string) error {
 	info, _ := platform.FromEnv(os.Getenv)
-	s, err := newSession(o, info, envToken(), newHTTPClient())
+	s, err := newSession(ctx, o, info, envToken(), newHTTPClient())
 	if err != nil {
 		return err
 	}
@@ -181,14 +181,22 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 		if i == 0 {
 			label = "rules"
 		}
-		line(label, "#%d %s", r, describeRule(cfg.Rules[r]))
+		desc := describeRule(cfg.Rules[r])
+		if from := ruleSource(&cfg.Rules[r]); from != "" {
+			desc += " (" + from + ")"
+		}
+		line(label, "#%d %s", r, desc)
 	}
 	for i, kr := range kindRules {
 		label := ""
 		if i == 0 && len(t.Rules) == 0 {
 			label = "rules"
 		}
-		line(label, "#%d %s (applies to %s)", kr.rule, describeRule(cfg.Rules[kr.rule]), kr.kind)
+		applies := "applies to " + string(kr.kind)
+		if from := ruleSource(&cfg.Rules[kr.rule]); from != "" {
+			applies += ", " + from
+		}
+		line(label, "#%d %s (%s)", kr.rule, describeRule(cfg.Rules[kr.rule]), applies)
 	}
 	line("policy", "%s", describePolicy(t.Policy))
 	for _, kp := range kindPolicies {
@@ -221,6 +229,16 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 			line("security", "%s", strings.Join(nonEmpty(a.ID, a.Summary, a.URL), "  "))
 		}
 	}
+}
+
+// ruleSource renders the file and line a rule is written in ("from .deps.yaml:12", or the
+// extends entry of another repository's file), "" when it is unknown.
+func ruleSource(r *config.Rule) string {
+	file, line := r.Source()
+	if file == "" {
+		return ""
+	}
+	return fmt.Sprintf("from %s:%d", file, line)
 }
 
 // describeRule lists the fields a rule sets, in declaration order.

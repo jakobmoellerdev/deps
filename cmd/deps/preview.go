@@ -184,12 +184,12 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 	info, _ := platform.FromEnv(os.Getenv)
 	token := envToken()
 	client := newHTTPClient()
-	head, err := newSession(o, info, token, client)
+	head, err := newSession(ctx, o, info, token, client)
 	if err != nil {
 		return err
 	}
 	defer head.close()
-	base, err := head.sibling(baseDir)
+	base, err := head.sibling(ctx, baseDir)
 	if err != nil {
 		return fmt.Errorf("base checkout %s: %w", baseDir, err)
 	}

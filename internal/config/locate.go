@@ -25,18 +25,16 @@ func decodeProblems(err error) []Problem {
 }
 
 // fieldProblems locates each *FieldError of a Validate error at the line of its field in
-// src. A field that is not in the document (a default, or a key the path names only in
-// part) takes the line of its nearest written ancestor.
-func fieldProblems(src []byte, err error) []Problem {
+// the document whose top-level node is root (nil = none). A field that is not in the
+// document (a default, or a key the path names only in part) takes the line of its nearest
+// written ancestor. extended returns the line of an error of another file (FieldError.Path,
+// an extended config) in the document, ok=false for the document's own.
+func fieldProblems(root *yaml.Node, err error, extended func(path string) (line int, ok bool)) []Problem {
 	var errs []error
 	if j, ok := err.(interface{ Unwrap() []error }); ok {
 		errs = j.Unwrap()
 	} else {
 		errs = []error{err}
-	}
-	var doc yaml.Node
-	if yaml.Unmarshal(src, &doc) != nil || len(doc.Content) == 0 {
-		doc = yaml.Node{}
 	}
 	out := make([]Problem, 0, len(errs))
 	for _, e := range errs {
@@ -45,11 +43,11 @@ func fieldProblems(src []byte, err error) []Problem {
 			out = append(out, Problem{Msg: e.Error()})
 			continue
 		}
-		line := 0
-		if len(doc.Content) > 0 {
-			line = fieldLine(doc.Content[0], fe.Field)
+		if line, ok := extended(fe.Path); ok {
+			out = append(out, Problem{Line: line, Msg: fe.Error()})
+			continue
 		}
-		out = append(out, Problem{Line: line, Msg: fe.Field + ": " + fe.Msg})
+		out = append(out, Problem{Line: fieldLine(root, fe.Field), Msg: fe.Field + ": " + fe.Msg})
 	}
 	return out
 }
@@ -85,7 +83,7 @@ func fieldLine(n *yaml.Node, field string) int {
 type mapEntry struct{ key, val *yaml.Node }
 
 func mapValue(n *yaml.Node, key string) *mapEntry {
-	if n.Kind != yaml.MappingNode {
+	if n == nil || n.Kind != yaml.MappingNode {
 		return nil
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {

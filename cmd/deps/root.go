@@ -38,6 +38,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/tfregistry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/logx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -203,20 +204,43 @@ type session struct {
 	sem       chan struct{}     // the default request pool (httpx.Limits.Default)
 	progress  engine.Progress   // the live status line on a terminal; nil = none
 	info      platform.Info
-	client    *http.Client // sibling sessions build their custom datasources on it
+	client    *http.Client          // sibling sessions build their custom datasources on it
+	fetcher   *config.GitFetcher    // reads extended configs; shared by sibling sessions
+	osv       engine.SecuritySource // the OSV source security uses when the config enables it
+}
+
+// extendsFetcher reads the configs of extends with git, sending the platform token (and
+// DEPS_GITHUB_COM_TOKEN) to their hosts. owner/name entries are on the forge of info, else
+// on the one of dir's origin remote.
+func extendsFetcher(info platform.Info, token, dir string) *config.GitFetcher {
+	return &config.GitFetcher{
+		Auth: httpx.NewAuth(info, token, os.Getenv),
+		Server: func(ctx context.Context) (string, error) {
+			if info.ServerURL != "" {
+				return info.ServerURL, nil
+			}
+			remote, err := gitx.Repo{Dir: dir}.RemoteURL(ctx)
+			if err != nil {
+				return "", err
+			}
+			return platform.RemoteServerURL(remote)
+		},
+	}
 }
 
 // newSession loads the config and wires the managers and datasources onto one HTTP client
 // and the request pools of --concurrency (httpx.NewLimits).
-func newSession(o *rootOpts, info platform.Info, token string, client *http.Client) (*session, error) {
+func newSession(ctx context.Context, o *rootOpts, info platform.Info, token string, client *http.Client) (*session, error) {
 	root, err := filepath.Abs(o.dir)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := config.Load(root, o.config)
+	fetcher := extendsFetcher(info, token, root)
+	cfg, err := config.Load(ctx, root, o.config, fetcher)
 	if err != nil {
 		return nil, err
 	}
+	logExtends(ctx, cfg)
 	managers, err := engine.Managers(cfg)
 	if err != nil {
 		return nil, err
@@ -224,13 +248,14 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	limits := httpx.NewLimits(o.concurrency)
 	sem := limits.Default
 	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, info, os.Getenv)
-	slog.Debug("gitlab url", "url", gitlabURL, "source", gitlabSource)
+	slog.DebugContext(ctx, "gitlab url", "url", gitlabURL, "source", gitlabSource)
 	auth := httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(gitlabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask))...)
 	env := configEnv(cfg, info, gitlabURL)
-	slog.Debug("config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
+	slog.DebugContext(ctx, "config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
+	osvSource := osv.New(client, limits.OSV)
 	var security engine.SecuritySource
 	if cfg.SecurityEnabled() {
-		security = osv.New(client, limits.OSV)
+		security = osvSource
 	}
 	gh := githubapi.New(client, auth, sem)
 	releases := githubreleases.New(gh)
@@ -277,7 +302,16 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		sem:       sem,
 		progress:  o.progress(limits),
 		info:      info,
+		fetcher:   fetcher,
+		osv:       osvSource,
 	}, nil
+}
+
+// logExtends logs the configs cfg extends.
+func logExtends(ctx context.Context, cfg *config.Config) {
+	if len(cfg.Extends) > 0 {
+		slog.InfoContext(ctx, "config extends", "configs", cfg.Extends)
+	}
 }
 
 // configEnv is the manager environment of cfg: the actions default host (logged with its
@@ -304,17 +338,24 @@ func addCustomSources(sources map[string]engine.Datasource, client *http.Client,
 }
 
 // sibling is a session for another checkout of the repository (preview's base branch) with
-// the config found there. It shares the datasources, so a release list fetched for one
-// checkout is reused for the other; only custom datasources are the sibling config's own.
-func (s *session) sibling(dir string) (*session, error) {
+// the config found there; see forCheckout.
+func (s *session) sibling(ctx context.Context, dir string) (*session, error) {
+	return s.forCheckout(ctx, dir, "", s.info)
+}
+
+// forCheckout is a session for the checkout dir of the repository of info with the config at
+// configPath, else the one found in dir. It shares the datasources, so a release list fetched
+// for one checkout is reused for the other; only custom datasources are the config's own.
+func (s *session) forCheckout(ctx context.Context, dir, configPath string, info platform.Info) (*session, error) {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := config.Load(root, "")
+	cfg, err := config.Load(ctx, root, configPath, s.fetcher)
 	if err != nil {
 		return nil, err
 	}
+	logExtends(ctx, cfg)
 	managers, err := engine.Managers(cfg)
 	if err != nil {
 		return nil, err
@@ -328,9 +369,13 @@ func (s *session) sibling(dir string) (*session, error) {
 	if err := addCustomSources(sources, s.client, s.sem, cfg); err != nil {
 		return nil, err
 	}
-	gitlabURL, _ := platform.GitLabURL(cfg.GitLabCI.URL, s.info, os.Getenv)
+	gitlabURL, _ := platform.GitLabURL(cfg.GitLabCI.URL, info, os.Getenv)
 	sib := *s
-	sib.root, sib.cfg, sib.managers, sib.sources, sib.env = root, cfg, managers, sources, configEnv(cfg, s.info, gitlabURL)
+	sib.root, sib.cfg, sib.managers, sib.sources, sib.env, sib.info = root, cfg, managers, sources, configEnv(cfg, info, gitlabURL), info
+	sib.security = nil
+	if cfg.SecurityEnabled() {
+		sib.security = s.osv
+	}
 	return &sib, nil
 }
 

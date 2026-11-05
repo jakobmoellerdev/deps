@@ -49,7 +49,7 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	start := time.Now()
 	stderr := cmd.Root().ErrWriter
 	info, _ := platform.FromEnv(os.Getenv)
-	s, err := newSession(o, info, envToken(), newHTTPClient())
+	s, err := newSession(ctx, o, info, envToken(), newHTTPClient())
 	if err != nil {
 		return err
 	}

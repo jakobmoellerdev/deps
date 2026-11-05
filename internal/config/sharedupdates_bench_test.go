@@ -24,7 +24,7 @@ func BenchmarkPolicySharedUpdates(b *testing.B) {
 	if err := os.WriteFile(filepath.Join(dir, ".deps.yaml"), []byte(y.String()), 0o644); err != nil {
 		b.Fatal(err)
 	}
-	c, err := Load(dir, "")
+	c, err := Load(b.Context(), dir, "", nil)
 	if err != nil {
 		b.Fatal(err)
 	}

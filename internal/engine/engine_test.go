@@ -158,7 +158,7 @@ func setup(t testing.TB, cfgYAML string, files map[string]string) (string, *conf
 			t.Fatal(err)
 		}
 	}
-	cfg, err := config.Load(root, "")
+	cfg, err := config.Load(t.Context(), root, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

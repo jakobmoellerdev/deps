@@ -35,6 +35,10 @@ type summary struct {
 	Verbose bool       // text lists the held-back releases, not only their count
 	Report  string     // --report file; "" = none
 	Style   logx.Style // colors of the text; the markdown has none
+	// Repository names the repository of a multi-repository run: the step summary heading
+	// names it, and the run writes the report and step outputs of all repositories at its end
+	// instead of write.
+	Repository string
 }
 
 // plain is the style of markdown: no colors.
@@ -364,7 +368,11 @@ func (s *summary) markdownFit(limit int) string {
 // markdownAt renders the step summary at a detail level.
 func (s *summary) markdownAt(level int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## deps %s\n\n", s.Command)
+	if s.Repository != "" {
+		fmt.Fprintf(&b, "## deps %s: %s\n\n", s.Command, s.Repository)
+	} else {
+		fmt.Fprintf(&b, "## deps %s\n\n", s.Command)
+	}
 	fmt.Fprintf(&b, "**%s**\n\n", s.headline(plain))
 	if len(s.Groups) > 0 {
 		if s.Run {
@@ -465,7 +473,9 @@ func summaryPath(getenv func(string) string) string {
 // step wrote counts against stepSummaryLimit.
 func (s *summary) write(stderr io.Writer) {
 	s.writeText(stderr)
-	s.writeMachine(stderr, s.Report)
+	if s.Repository == "" {
+		s.writeMachine(stderr, s.Report)
+	}
 	p := summaryPath(os.Getenv)
 	if p == "" {
 		return

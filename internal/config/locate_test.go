@@ -45,7 +45,7 @@ func TestLoadProblemLines(t *testing.T) {
 			if err := os.WriteFile(p, []byte(tt.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			_, err := Load(dir, "")
+			_, err := Load(t.Context(), dir, "", nil)
 			var ce *Error
 			if !errors.As(err, &ce) {
 				t.Fatalf("err = %v", err)

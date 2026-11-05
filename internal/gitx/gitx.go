@@ -77,6 +77,47 @@ func (r Repo) RemoteURL(ctx context.Context) (string, error) {
 	return r.run(ctx, nil, nil, "remote", "get-url", "origin")
 }
 
+// Clone makes a shallow checkout of ref ("" = the default branch) of url in dir, which must
+// not exist or be empty, with url as origin and HEAD detached at the fetched commit. A
+// non-empty extraHeader (e.g. "AUTHORIZATION: basic ...") is sent to scope, a URL prefix
+// such as https://github.com/, with this and every later git request of the clone (fetches,
+// pushes), as actions/checkout does; it is written to the clone's config, not the command line.
+func Clone(ctx context.Context, url, dir, ref, scope, extraHeader string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	r := Repo{Dir: dir}
+	if _, err := r.run(ctx, nil, nil, "init", "--quiet"); err != nil {
+		return err
+	}
+	if extraHeader != "" {
+		f, err := os.OpenFile(filepath.Join(dir, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(f, "[http %q]\n\textraheader = %s\n", scope, extraHeader)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if ref == "" {
+		ref = "HEAD"
+	}
+	for _, args := range [][]string{
+		{"remote", "add", "origin", url},
+		{"fetch", "--quiet", "--depth=1", "--no-tags", "origin", ref},
+		{"checkout", "--quiet", "--detach", "FETCH_HEAD"},
+	} {
+		if _, err := r.run(ctx, nil, nil, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // LsRemote lists refs on origin matching pattern as refname -> object id.
 func (r Repo) LsRemote(ctx context.Context, pattern string) (map[string]string, error) {
 	out, err := r.run(ctx, nil, nil, "ls-remote", "origin", pattern)

@@ -64,8 +64,8 @@ actions/checkout  .github/workflows/ci.yml:7  (github-actions, action, git-tags,
 			args:  []string{"actions/checkout", "example.com/*"},
 			stdout: `actions/checkout  .github/workflows/ci.yml:6  (github-actions, action, git-tags, tag)
   current   v6.0.0
-  rules     #0 names=[actions/*] allow=<7
-            #2 manager=github-actions pin=digest group=ci
+  rules     #0 names=[actions/*] allow=<7 (from .deps.yaml:2)
+            #2 manager=github-actions pin=digest group=ci (from .deps.yaml:7)
   policy    pin=digest allow=<7 updates=major,minor,patch,digest,pin group=ci schedule=always minAge=-
   candidates 2
   rejected  not newer: 1 (v6.0.0)  outside allow <7: 1 (v7.0.1)
@@ -73,8 +73,8 @@ actions/checkout  .github/workflows/ci.yml:7  (github-actions, action, git-tags,
 
 actions/checkout  .github/workflows/ci.yml:7  (github-actions, action, git-tags, tag)
   current   v6.0.0@1af3b93
-  rules     #0 names=[actions/*] allow=<7
-            #2 manager=github-actions pin=digest group=ci
+  rules     #0 names=[actions/*] allow=<7 (from .deps.yaml:2)
+            #2 manager=github-actions pin=digest group=ci (from .deps.yaml:7)
   policy    pin=digest allow=<7 updates=major,minor,patch,digest,pin group=ci schedule=always minAge=-
   candidates 2
   rejected  not newer: 1 (v6.0.0)  outside allow <7: 1 (v7.0.1)
@@ -82,7 +82,7 @@ actions/checkout  .github/workflows/ci.yml:7  (github-actions, action, git-tags,
 
 example.com/a  go.mod:5  (gomod, direct, go, go)
   current   v1.0.0
-  rules     #1 manager=gomod updates=[patch] securityGroup=go security
+  rules     #1 manager=gomod updates=[patch] securityGroup=go security (from .deps.yaml:4)
   policy    pin=keep allow=- updates=patch group=- schedule=always minAge=- securityGroup=go security
   candidates 3
   rejected  major: 1 (v2.0.0)  not newer: 1 (v1.0.0)  update type minor not allowed: 1 (v1.1.0)
@@ -90,7 +90,7 @@ example.com/a  go.mod:5  (gomod, direct, go, go)
 
 example.com/i  go.mod:6  (gomod, indirect, go, go)
   current   v1.0.0
-  rules     #1 manager=gomod updates=[patch] securityGroup=go security
+  rules     #1 manager=gomod updates=[patch] securityGroup=go security (from .deps.yaml:4)
   policy    pin=keep allow=- updates=patch group=- schedule=always minAge=- securityGroup=go security
   result    skipped: ignored by default (indirect; enable with a rule setting ignore: false)
 `,
@@ -112,7 +112,7 @@ rules:
 			args: []string{"actions/checkout"},
 			stdout: `actions/checkout  .github/workflows/ci.yml:6  (github-actions, action, git-tags, tag)
   current   v6.0.0
-  rules     #1 manager=github-actions updateTypes=[digest pin] group=Digest pins (applies to pin)
+  rules     #1 manager=github-actions updateTypes=[digest pin] group=Digest pins (applies to pin, from .deps.yaml:6)
   policy    pin=digest allow=- updates=major,minor,patch,digest,pin group=- schedule=always minAge=-
             pin: pin=digest allow=- updates=major,minor,patch,digest,pin group=Digest pins schedule=always minAge=-
   candidates 2

@@ -34,6 +34,16 @@ type annotator struct {
 
 	mu                   sync.Mutex
 	errs, warns, notices int
+	// repo is the repository a multi-repository run works on: its annotations are not
+	// located (the files are in a temporary clone, not the workspace) and name it instead.
+	repo string
+}
+
+// setRepo sets the repository of a multi-repository run; "" restores located annotations.
+func (a *annotator) setRepo(repo string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.repo = repo
 }
 
 // actionsLog is the annotator of the running command, set up by the root command and
@@ -94,6 +104,12 @@ func (a *annotator) command(kind, file string, line int, msg string) {
 	}
 	*n++
 	var props []string
+	if a.repo != "" {
+		if !strings.HasPrefix(msg, a.repo+": ") {
+			msg = a.repo + ": " + msg
+		}
+		file = ""
+	}
 	if file != "" {
 		props = append(props, "file="+escapeProperty(file))
 		if line > 0 {

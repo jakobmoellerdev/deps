@@ -48,7 +48,7 @@ func submit(ctx context.Context, cmd *cli.Command, o *rootOpts, dryRun, all bool
 	}
 	token := envToken()
 	client := newHTTPClient()
-	s, err := newSession(o, info, token, client)
+	s, err := newSession(ctx, o, info, token, client)
 	if err != nil {
 		return err
 	}

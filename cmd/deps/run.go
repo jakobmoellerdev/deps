@@ -2,14 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/urfave/cli/v3"
 
@@ -26,6 +31,7 @@ import (
 
 type runOpts struct {
 	platform, apiURL, repo, token, base string
+	repositories                        []string
 	triggerSchedule, scheduleTime       string
 	authorName, authorEmail             string
 	signingKey                          string
@@ -55,6 +61,7 @@ func newRun(o *rootOpts) *cli.Command {
 			&cli.StringFlag{Name: "platform", Value: "auto", Destination: &r.platform, Usage: "forge type: auto|github|gitea|forgejo|gitlab (auto: from the CI environment, else the origin remote)"},
 			&cli.StringFlag{Name: "api-url", Destination: &r.apiURL, Usage: "API base URL (default: detected)"},
 			&cli.StringFlag{Name: "repo", Destination: &r.repo, Usage: "repository owner/name, or the GitLab project path (default: detected)"},
+			&cli.StringSliceFlag{Name: "repositories", Destination: &r.repositories, Usage: "run on these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, or owner/<glob> (e.g. 'my-org/*', 'my-org/svc-*') for the repositories of an organization or user the token can list (not on GitLab), without archived ones and mirrors (repeatable, comma-separated; default: $DEPS_REPOSITORIES, separated by whitespace or commas)"},
 			&cli.StringFlag{Name: "token", Destination: &r.token, Usage: "platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, $GITLAB_TOKEN, git credential helper)"},
 			&cli.StringFlag{Name: "base", Destination: &r.base, Usage: "base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch)"},
 			&cli.StringFlag{Name: "author-name", Value: defaultAuthorName, Destination: &r.authorName, Usage: "commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)"},
@@ -222,25 +229,42 @@ func (g apiGit) BranchTip(ctx context.Context, branch string) (platform.Tip, err
 	return g.api.BranchTip(ctx, branch)
 }
 
+// runShared is what the repositories of one run share.
+type runShared struct {
+	trigger    schedule.Trigger
+	allowTasks engine.TaskAllowlist
+	signer     *gitx.Signer
+	client     *http.Client
+	token      string
+}
+
 func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) error {
 	start := time.Now()
-	stderr := cmd.Root().ErrWriter
 	switch r.platform {
 	case "auto", "github", "gitea", "forgejo", "gitlab":
 	default:
 		return &usageError{fmt.Errorf("--platform: invalid value %q", r.platform)}
 	}
+	repos := r.repositories
+	if !cmd.IsSet("repositories") {
+		repos = strings.FieldsFunc(os.Getenv("DEPS_REPOSITORIES"), func(c rune) bool { return c == ',' || unicode.IsSpace(c) })
+	}
+	if err := validateRepositories(repos); err != nil {
+		return &usageError{err}
+	}
+	if len(repos) > 0 && r.repo != "" {
+		return &usageError{errors.New("--repo and --repositories are mutually exclusive")}
+	}
 	trigger, err := detectTrigger(ctx, r.triggerSchedule, r.scheduleTime, os.Getenv)
 	if err != nil {
 		return err
 	}
-	allowTasks := taskAllowlist(o)
-	signer, err := newSigner(ctx, r.signingKey, os.Getenv("DEPS_SIGNING_KEY"))
-	if err != nil {
+	sh := &runShared{trigger: trigger, allowTasks: taskAllowlist(o), client: newHTTPClient()}
+	if sh.signer, err = newSigner(ctx, r.signingKey, os.Getenv("DEPS_SIGNING_KEY")); err != nil {
 		return err
 	}
 	defer func() {
-		if err := signer.Close(); err != nil {
+		if err := sh.signer.Close(); err != nil {
 			slog.WarnContext(ctx, "removing commit signing key material", "err", err)
 		}
 	}()
@@ -252,40 +276,56 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	if err != nil {
 		return err
 	}
-	repo := gitx.Repo{Dir: dir, Signer: signer}
-	remote, err := repo.RemoteURL(ctx)
+	remote, err := gitx.Repo{Dir: dir}.RemoteURL(ctx)
 	if err != nil {
-		return err
+		if len(repos) == 0 {
+			return err
+		}
+		remote = "" // the forge must come from the CI environment
 	}
-	client := newHTTPClient()
-	info, err := platform.Detect(ctx, os.Getenv, remote, ov, client)
+	info, err := platform.Detect(ctx, os.Getenv, remote, ov, sh.client)
 	if err != nil {
+		if len(repos) > 0 && remote == "" {
+			return fmt.Errorf("--repositories: no forge in the CI environment and no origin remote in %s to detect it from: %w", dir, err)
+		}
 		return err
 	}
 
-	token := r.token
-	if token == "" {
-		token = envToken()
+	sh.token = r.token
+	if sh.token == "" {
+		sh.token = envToken()
 	}
-	if token == "" {
+	if sh.token == "" {
 		if _, pass, ok := httpx.NewAuth(info, "", os.Getenv, httpx.WithSecretHook(actionsLog.mask)).Helper(ctx, info.Host); ok {
-			token = pass
+			sh.token = pass
 		}
 	}
-	if token == "" && !r.dryRun {
+	if sh.token == "" && !r.dryRun {
 		return fmt.Errorf("no token for %s", info.Host)
 	}
+	if len(repos) > 0 {
+		return runRepositories(ctx, cmd, o, r, sh, info, repos)
+	}
 
-	s, err := newSession(o, info, token, client)
+	s, err := newSession(ctx, o, info, sh.token, sh.client)
 	if err != nil {
 		return err
 	}
 	defer s.close()
+	return runRepo(ctx, cmd, o, r, sh, s, start, nil)
+}
+
+// runRepo runs the bot on the checkout of session s. In a multi-repository run (multi
+// non-nil) its summary names the repository and its result is added to multi.
+func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh *runShared, s *session, start time.Time, multi *multiRun) error {
+	stderr := cmd.Root().ErrWriter
+	info, token, client := s.info, sh.token, sh.client
+	repo := gitx.Repo{Dir: s.root, Signer: sh.signer}
 	name, email, err := commitAuthor(cmd, r, os.Getenv("DEPS_GIT_AUTHOR"), s.cfg.GitAuthor)
 	if err != nil {
 		return err
 	}
-	usePlatform, err := platformCommits(ctx, os.Getenv("DEPS_PLATFORM_COMMIT"), s.cfg.PlatformCommit, info.Kind, token, signer != nil)
+	usePlatform, err := platformCommits(ctx, os.Getenv("DEPS_PLATFORM_COMMIT"), s.cfg.PlatformCommit, info.Kind, token, sh.signer != nil)
 	if err != nil {
 		return err
 	}
@@ -310,7 +350,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 		}
 	}
 	pc := platform.NewClient(info, token, client)
-	bases, multi, err := runBases(ctx, r.base, s.cfg, repo, pc)
+	bases, multiBase, err := runBases(ctx, r.base, s.cfg, repo, pc)
 	if err != nil {
 		return err
 	}
@@ -325,7 +365,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 			return err
 		}
 		errs := res.Errors
-		if multi {
+		if multiBase {
 			fmt.Fprintf(stderr, "base    %s\n", b.name)
 			errs = make([]error, len(res.Errors))
 			for j, e := range res.Errors {
@@ -347,12 +387,12 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 		RebaseLabel:        s.cfg.RebaseLabelName(),
 		StopUpdatingLabel:  s.cfg.StopUpdatingLabelName(),
 		UpdateNotScheduled: s.cfg.UpdateNotScheduledEnabled(),
-		Trigger:            trigger,
+		Trigger:            sh.trigger,
 		MaxNewPRs:          r.maxNewPRs,
 		Managers:           s.managers,
 		BranchPrefix:       s.cfg.Prefix(),
-		MultiBase:          multi,
-		AllowTasks:         allowTasks,
+		MultiBase:          multiBase,
+		AllowTasks:         sh.allowTasks,
 		Notes:              releasenotes.New(client, s.sem, s.auth, s.gh, s.sources),
 		Progress:           s.progress,
 		PRLog:              prLog(stderr),
@@ -373,12 +413,16 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	for _, e := range botErrs {
 		reportError(stderr, o.term, e)
 	}
-	res, groups := runResult(botBases, s.cfg.Prefix(), multi, resErrs)
+	res, groups := runResult(botBases, s.cfg.Prefix(), multiBase, resErrs)
 	nErr := len(res.Errors) + len(botErrs)
 	sum := summary{Command: "run", Run: true, Res: res, Groups: groups, Actions: actions,
 		Errors: append(append([]error(nil), res.Errors...), botErrs...), Elapsed: time.Since(start), Verbose: o.verbose, Report: o.report, Style: o.term.style}
 	if r.dryRun {
 		sum.Command = "run --dry-run"
+	}
+	if multi != nil {
+		sum.Repository = info.Repo
+		multi.add(&sum)
 	}
 	sum.write(stderr)
 	fmt.Fprintf(stderr, "%d created, %d updated, %d closed, %d up-to-date, %d skipped, %d automerge, %d errors", n.created, n.updated, n.closed, n.upToDate, n.skipped, n.automerged, nErr)
@@ -388,6 +432,166 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	fmt.Fprintln(stderr)
 	if nErr > 0 {
 		return errReported
+	}
+	return nil
+}
+
+// validateRepositories checks the --repositories entries: owner/name, or owner/<glob> with
+// a path.Match glob in the name.
+func validateRepositories(repos []string) error {
+	for _, e := range repos {
+		owner, name, ok := strings.Cut(e, "/")
+		if !ok || owner == "" || name == "" || strings.Contains(name, "/") || strings.ContainsAny(owner, "*?[\\") {
+			return fmt.Errorf("--repositories: %q must be owner/name or owner/<glob>", e)
+		}
+		if _, err := path.Match(name, ""); err != nil {
+			return fmt.Errorf("--repositories: %q: %w", e, err)
+		}
+	}
+	return nil
+}
+
+// expandRepositories resolves the --repositories entries to owner/name: a glob entry to the
+// matching repositories of its owner (platform.ListRepos), in the forge's order. Each
+// repository is listed once, where it first matches.
+func expandRepositories(ctx context.Context, info platform.Info, token string, client *http.Client, entries []string) ([]string, error) {
+	var out []string
+	listed := map[string][]string{}
+	for _, e := range entries {
+		owner, pattern, _ := strings.Cut(e, "/")
+		if !strings.ContainsAny(pattern, "*?[\\") {
+			if !slices.ContainsFunc(out, func(r string) bool { return strings.EqualFold(r, e) }) {
+				out = append(out, e)
+			}
+			continue
+		}
+		all, ok := listed[owner]
+		if !ok {
+			var err error
+			if all, err = platform.ListRepos(ctx, info, token, client, owner); err != nil {
+				return nil, fmt.Errorf("--repositories: list the repositories of %s: %w", owner, err)
+			}
+			listed[owner] = all
+		}
+		matched := 0
+		for _, full := range all {
+			_, name, _ := strings.Cut(full, "/")
+			if m, _ := path.Match(pattern, name); !m {
+				continue
+			}
+			matched++
+			if !slices.ContainsFunc(out, func(r string) bool { return strings.EqualFold(r, full) }) {
+				out = append(out, full)
+			}
+		}
+		if matched == 0 {
+			slog.WarnContext(ctx, "no repository matches", "pattern", e)
+		}
+	}
+	return out, nil
+}
+
+// runRepositories runs the bot on each repository of --repositories in turn: a shallow clone
+// of its base branch in a temporary directory, authenticated with the token, and the config
+// found there (or --config). The datasources are shared, so a release list is fetched once
+// for all of them. A failing repository does not stop the others.
+func runRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh *runShared, info platform.Info, entries []string) error {
+	start := time.Now()
+	stderr := cmd.Root().ErrWriter
+	names, err := expandRepositories(ctx, info, sh.token, sh.client, entries)
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return fmt.Errorf("--repositories: no repository matches %s", strings.Join(entries, ", "))
+	}
+	work, err := os.MkdirTemp("", "deps-repositories-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(work)
+	command := "run"
+	if r.dryRun {
+		command = "run --dry-run"
+	}
+	multi := newMultiRun(command)
+	header := gitAuthHeader(sh.token)
+	var base *session // the first session; later repositories share its datasources
+	defer func() {
+		if base != nil {
+			base.close()
+		}
+		actionsLog.setRepo("")
+	}()
+	failed := 0
+	for i, name := range names {
+		fmt.Fprintf(stderr, "repository %s\n", name)
+		actionsLog.setRepo(name)
+		ri := info
+		ri.Repo = name
+		dir := filepath.Join(work, strconv.Itoa(i))
+		err := func() error {
+			defer os.RemoveAll(dir)
+			if err := cloneRepository(ctx, ri, header, r.base, dir); err != nil {
+				return err
+			}
+			var s *session
+			var err error
+			if base == nil {
+				ro := *o
+				ro.dir = dir
+				if s, err = newSession(ctx, &ro, ri, sh.token, sh.client); err == nil {
+					base = s
+				}
+			} else {
+				s, err = base.forCheckout(ctx, dir, o.config, ri)
+			}
+			if err != nil {
+				return err
+			}
+			return runRepo(ctx, cmd, o, r, sh, s, time.Now(), multi)
+		}()
+		if err == nil {
+			continue
+		}
+		failed++
+		if !errors.Is(err, errReported) {
+			reportError(stderr, o.term, fmt.Errorf("%s: %w", name, err))
+			multi.fail(name, err)
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	actionsLog.setRepo("")
+	multi.write(stderr, o.report, time.Since(start))
+	fmt.Fprintf(stderr, "%d repositories, %d failed\n", len(names), failed)
+	if failed > 0 {
+		return errReported
+	}
+	return nil
+}
+
+// gitAuthHeader is the http.extraheader that authenticates git with token as Basic
+// credentials, as actions/checkout sets it; "" without a token. The token and the encoded
+// credentials are masked in the CI log.
+func gitAuthHeader(token string) string {
+	if token == "" {
+		return ""
+	}
+	creds := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+	actionsLog.mask(token)
+	actionsLog.mask(creds)
+	return "AUTHORIZATION: basic " + creds
+}
+
+// cloneRepository clones the base branch (default: the default branch) of the repository
+// info.Repo into dir with the git auth header for the forge, which the clone keeps for the
+// pushes of the run.
+func cloneRepository(ctx context.Context, info platform.Info, header, base, dir string) error {
+	scope := strings.TrimSuffix(info.ServerURL, "/") + "/"
+	if err := gitx.Clone(ctx, scope+info.Repo+".git", dir, base, scope, header); err != nil {
+		return fmt.Errorf("clone: %w", err)
 	}
 	return nil
 }

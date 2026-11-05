@@ -16,6 +16,7 @@
 | `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `DEPS_SCHEDULE_TIME` | `run` | default of `--schedule-time`: the RFC 3339 time schedule time windows are evaluated at instead of now |
+| `DEPS_REPOSITORIES` | `run` | default of `--repositories`: `owner/name` and `owner/<glob>` entries separated by whitespace or commas |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
 | `RUNNER_DEBUG` | all | `1` (an Actions re-run with debug logging) makes `debug` the default `--log-level`, below `DEPS_LOG_LEVEL` and the flag |

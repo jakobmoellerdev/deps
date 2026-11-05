@@ -117,6 +117,16 @@ func parseRemote(remote string) (hostport, hostname, repo string, err error) {
 	return hostport, hostname, p, nil
 }
 
+// RemoteServerURL returns the https base URL of the forge of a git remote URL
+// (https://host[:port]), as Detect derives it without CI environment.
+func RemoteServerURL(remote string) (string, error) {
+	hostport, _, _, err := parseRemote(remote)
+	if err != nil {
+		return "", err
+	}
+	return "https://" + hostport, nil
+}
+
 // Detect determines the platform from CI env, else from the remote URL plus API probes.
 // Non-empty Overrides fields replace detected ones.
 func Detect(ctx context.Context, getenv func(string) string, remoteURL string, o Overrides, c *http.Client) (Info, error) {

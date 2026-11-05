@@ -33,7 +33,7 @@ func load(t *testing.T, name, body string) (*Config, error) {
 			t.Fatal(err)
 		}
 	}
-	return Load(dir, "")
+	return Load(t.Context(), dir, "", nil)
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -43,7 +43,7 @@ func TestLoadDefaults(t *testing.T) {
 			t.Errorf("%q: %+v %v", tc.name, c, err)
 		}
 	}
-	_, err := Load(t.TempDir(), "missing.yaml")
+	_, err := Load(t.Context(), t.TempDir(), "missing.yaml", nil)
 	var ce *Error
 	if !errors.As(err, &ce) || !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("explicit missing path: err = %v, want *Error wrapping ErrNotExist", err)
@@ -58,7 +58,7 @@ func TestLoadUnreadable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".deps.yaml"), []byte("pin: digest\n"), 0); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(dir, "")
+	_, err := Load(t.Context(), dir, "", nil)
 	var ce *Error
 	if !errors.As(err, &ce) || !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("err = %v, want *Error wrapping ErrPermission (no silent fallback to defaults)", err)
