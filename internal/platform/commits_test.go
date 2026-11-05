@@ -181,6 +181,21 @@ func (f *fakeGitData) ref(name string) string {
 	return f.refs[name]
 }
 
+func TestEscapePath(t *testing.T) {
+	for in, want := range map[string]string{
+		"":              "",
+		"v1.2.3":        "v1.2.3",
+		"sub/v1 1":      "sub/v1%201",
+		"deps/a//b/":    "deps/a//b/",
+		"x%2Fy/z?#":     "x%252Fy/z%3F%23",
+		"ünï/c@d+e:f&g": "%C3%BCn%C3%AF/c@d+e:f&g",
+	} {
+		if got := EscapePath(in); got != want {
+			t.Errorf("EscapePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestGitHubCommitsAuthor(t *testing.T) {
 	_, srv := newFakeGitData(t)
 	for _, tc := range []struct {

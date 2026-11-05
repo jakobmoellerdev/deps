@@ -26,6 +26,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
 // Tag is a remote tag and the commit it points to (peeled for annotated tags).
@@ -300,7 +301,7 @@ func (l *Lister) releaseTime(ctx context.Context, repoURL, tag string) (time.Tim
 	var rel struct {
 		PublishedAt *time.Time `json:"published_at"`
 	}
-	found, err := l.getJSON(ctx, u, "/repos/"+repo+"/releases/tags/"+escapeTag(tag), &rel)
+	found, err := l.getJSON(ctx, u, "/repos/"+repo+"/releases/tags/"+platform.EscapePath(tag), &rel)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("release %s of %s: %w", tag, repo, err)
 	}
@@ -323,7 +324,7 @@ func (l *Lister) giteaTagTime(ctx context.Context, repoURL, tag string) (time.Ti
 			Created *time.Time `json:"created"`
 		} `json:"commit"`
 	}
-	found, err := l.getJSON(ctx, u, "/repos/"+repo+"/tags/"+escapeTag(tag), &tg)
+	found, err := l.getJSON(ctx, u, "/repos/"+repo+"/tags/"+platform.EscapePath(tag), &tg)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("tag %s of %s: %w", tag, repo, err)
 	}
@@ -340,15 +341,6 @@ func apiRepo(repoURL string) (*url.URL, string, error) {
 		return nil, "", fmt.Errorf("invalid repository %q", repoURL)
 	}
 	return u, strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git"), nil
-}
-
-// escapeTag escapes each path segment of tag (tags may contain '/').
-func escapeTag(tag string) string {
-	segs := strings.Split(tag, "/")
-	for i, s := range segs {
-		segs[i] = url.PathEscape(s)
-	}
-	return strings.Join(segs, "/")
 }
 
 // getJSON GETs path from the Gitea/Forgejo API of repository u into v. found is false on 404

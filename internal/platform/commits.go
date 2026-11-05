@@ -113,7 +113,7 @@ func (g *GitHubCommits) BranchTip(ctx context.Context, branch string) (Tip, erro
 		} `json:"author"` // the linked GitHub account; null when the email is unknown to GitHub
 		Parents []shaJSON `json:"parents"`
 	}
-	if err := g.gh.do(ctx, http.MethodGet, "/repos/"+g.gh.repo+"/commits/refs/heads/"+branchPath(branch), nil, &c, g.gh.headers); err != nil {
+	if err := g.gh.do(ctx, http.MethodGet, "/repos/"+g.gh.repo+"/commits/refs/heads/"+EscapePath(branch), nil, &c, g.gh.headers); err != nil {
 		return Tip{}, err
 	}
 	t := Tip{Author: c.Commit.Author.Email, Tree: c.Commit.Tree.SHA}
@@ -211,7 +211,7 @@ func (g *GitHubCommits) Push(ctx context.Context, commit, branch, expected strin
 	var cur struct {
 		Object shaJSON `json:"object"`
 	}
-	switch err := g.gh.do(ctx, http.MethodGet, "/repos/"+g.gh.repo+"/git/ref/heads/"+branchPath(branch), nil, &cur, g.gh.headers); {
+	switch err := g.gh.do(ctx, http.MethodGet, "/repos/"+g.gh.repo+"/git/ref/heads/"+EscapePath(branch), nil, &cur, g.gh.headers); {
 	case err == nil && cur.Object.SHA != expected:
 		return fmt.Errorf("update %s: %w: the branch is at %s, expected %s", ref, ErrRefStale, short(cur.Object.SHA), cmp.Or(short(expected), "no branch"))
 	case expected != "" && hasStatus(err, http.StatusNotFound, ""):
@@ -222,9 +222,10 @@ func (g *GitHubCommits) Push(ctx context.Context, commit, branch, expected strin
 
 func short(s string) string { return s[:min(7, len(s))] }
 
-// branchPath escapes branch for a URL path, keeping its slashes.
-func branchPath(branch string) string {
-	segs := strings.Split(branch, "/")
+// EscapePath escapes each '/'-separated segment of p for a URL path, keeping
+// its slashes, so branch and tag names with '/' address the right resource.
+func EscapePath(p string) string {
+	segs := strings.Split(p, "/")
 	for i, s := range segs {
 		segs[i] = url.PathEscape(s)
 	}

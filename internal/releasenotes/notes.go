@@ -14,7 +14,6 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -25,6 +24,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -197,7 +197,7 @@ func (n *Notes) block(ctx context.Context, it item) block {
 	fromTag, okF := n.tagFor(ctx, it.d, r, rels, tagVer, it.from)
 	toTag, okT := n.tagFor(ctx, it.d, r, rels, tagVer, it.to)
 	if okF && okT {
-		b.compare = r.web() + "/compare/" + escapeTag(fromTag) + "..." + escapeTag(toTag)
+		b.compare = r.web() + "/compare/" + platform.EscapePath(fromTag) + "..." + platform.EscapePath(toTag)
 	}
 	return b
 }
@@ -275,14 +275,6 @@ func (n *Notes) tagFor(ctx context.Context, d dep.Dep, r repoRef, rels []release
 		}
 	}
 	return "", false
-}
-
-func escapeTag(tag string) string {
-	segs := strings.Split(tag, "/")
-	for i, s := range segs {
-		segs[i] = url.PathEscape(s)
-	}
-	return strings.Join(segs, "/")
 }
 
 // entry renders one release: a heading linking to it and its sanitized, cut body.
