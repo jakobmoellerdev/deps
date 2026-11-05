@@ -86,9 +86,13 @@ func value(n *yaml.Node) string {
 	return n.Value
 }
 
-// exactRe is a complete SemVer 2 version with an optional "v" prefix: the only chart version
-// form Helm does not treat as a constraint ("1.2" means "1.2.x").
+// exactRe is a complete SemVer 2 version with an optional "v" prefix.
 var exactRe = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+
+// ExactVersion reports whether chart version v is a complete SemVer 2 version with an
+// optional "v" prefix: the only chart version form Helm does not treat as a constraint
+// ("1.2" means "1.2.x"). Managers that pin Helm charts (kustomize, terraform) share it.
+func ExactVersion(v string) bool { return exactRe.MatchString(v) }
 
 // versionSkip returns the skip reason of chart version v: "" for an exact version, "no
 // version" when empty, "template value" for a template, "version range" otherwise (`~1.2.0`,
@@ -99,7 +103,7 @@ func versionSkip(v string) string {
 		return "no version"
 	case strings.Contains(v, "{{"):
 		return "template value"
-	case exactRe.MatchString(v):
+	case ExactVersion(v):
 		return ""
 	}
 	return "version range"

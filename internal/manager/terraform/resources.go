@@ -1,7 +1,6 @@
 package terraform
 
 import (
-	"regexp"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -36,10 +35,6 @@ var kubernetesWorkloads = func() map[string]bool {
 	}
 	return m
 }()
-
-// chartVersionRe is a complete SemVer 2 version with an optional "v" prefix, the only chart
-// version Helm does not treat as a constraint (the helm manager's rule).
-var chartVersionRe = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
 
 // findAttr returns the attribute name of b, or nil.
 func findAttr(b body, name string) *attr {
@@ -242,7 +237,7 @@ func (x *extractor) chartVersion(d *dep.Dep, ver *attr) {
 	switch {
 	case ver.val.str == "":
 		d.Skip = "no version"
-	case !chartVersionRe.MatchString(ver.val.str):
+	case !helm.ExactVersion(ver.val.str):
 		d.Skip = "version range"
 	case ver.val.span == (dep.Span{}):
 		d.Skip = "cannot locate value"

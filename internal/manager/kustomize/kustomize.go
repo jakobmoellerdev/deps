@@ -14,6 +14,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -28,12 +29,7 @@ const (
 	TypeResource  = "resource"
 )
 
-var (
-	fileRe = regexp.MustCompile(`(^|/)(kustomization\.ya?ml|Kustomization)$`)
-	// exactRe is a complete SemVer 2 version with an optional "v" prefix: the only chart
-	// version form Helm does not treat as a constraint.
-	exactRe = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
-)
+var fileRe = regexp.MustCompile(`(^|/)(kustomization\.ya?ml|Kustomization)$`)
 
 type kustomizeManager struct{}
 
@@ -163,7 +159,7 @@ func (x *extractor) helmChart(m *yaml.Node) {
 		d.Skip = "unknown chart repository " + repo
 	case v == nil || v.Value == "":
 		d.Skip = "no version"
-	case !exactRe.MatchString(v.Value):
+	case !helm.ExactVersion(v.Value):
 		d.Skip = "version range"
 	}
 	d.Source = repo
