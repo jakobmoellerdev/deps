@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
@@ -13,12 +14,42 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
-// crdGroups prefilter Kubernetes YAML: a file containing none of these API groups followed by
-// ".io/" is not parsed.
-var crdGroups = [][]byte{[]byte("k0sproject"), []byte("fluxcd"), []byte("argoproj")}
+// crdResources are the resources document extracts, by "<apiVersion group> <kind>". Both
+// prefilters (hasCRDGroup for files, mayHaveCRD for documents) derive their groups from it.
+var crdResources = map[string]func(x *crdExtractor, n, spec *yaml.Node){
+	"helm.k0sproject.io Chart":        func(x *crdExtractor, _, spec *yaml.Node) { x.k0sChart(spec) },
+	"k0s.k0sproject.io ClusterConfig": func(x *crdExtractor, _, spec *yaml.Node) { x.k0sConfig(spec) },
+	"k0sctl.k0sproject.io Cluster": func(x *crdExtractor, _, spec *yaml.Node) {
+		x.k0sConfig(yamlspan.Get(yamlspan.Get(yamlspan.Get(spec, "k0s"), "config"), "spec"))
+	},
+	"helm.toolkit.fluxcd.io HelmRelease":      (*crdExtractor).helmRelease,
+	"source.toolkit.fluxcd.io HelmRepository": (*crdExtractor).helmRepository,
+	"source.toolkit.fluxcd.io OCIRepository":  (*crdExtractor).ociRepository,
+	"argoproj.io Application":                 func(x *crdExtractor, _, spec *yaml.Node) { x.argoSpec(spec) },
+	"argoproj.io ApplicationSet": func(x *crdExtractor, _, spec *yaml.Node) {
+		x.argoSpec(yamlspan.Get(yamlspan.Get(spec, "template"), "spec"))
+	},
+}
 
-// hasCRDGroup reports whether src contains "<group>.io/" for one of crdGroups. One scan for
-// ".io/" replaces one scan of src per group.
+// crdGroups are the distinct API groups of crdResources.
+var crdGroups = func() [][]byte {
+	var gs [][]byte
+	for k := range crdResources {
+		g, _, _ := strings.Cut(k, " ")
+		if !strings.HasSuffix(g, ".io") {
+			panic("helm: hasCRDGroup scans for .io/, group " + g + " does not end in .io")
+		}
+		if g := []byte(g); !slices.ContainsFunc(gs, func(h []byte) bool { return bytes.Equal(g, h) }) {
+			gs = append(gs, g)
+		}
+	}
+	slices.SortFunc(gs, bytes.Compare)
+	return gs
+}()
+
+// hasCRDGroup reports whether src contains "<group>/" for one of crdGroups, the file
+// prefilter: a file without one is not parsed. One scan for ".io/", where every group ends,
+// replaces a scan of src per group.
 func hasCRDGroup(src []byte) bool {
 	for {
 		i := bytes.Index(src, []byte(".io/"))
@@ -26,7 +57,7 @@ func hasCRDGroup(src []byte) bool {
 			return false
 		}
 		for _, g := range crdGroups {
-			if bytes.HasSuffix(src[:i], g) {
+			if bytes.HasSuffix(src[:i+len(".io")], g) {
 				return true
 			}
 		}
@@ -52,7 +83,7 @@ func (m *helmManager) manifests(file string, src []byte) []dep.Dep {
 		return nil
 	}
 	x := crdExtractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
-	dec := yaml.NewDecoder(bytes.NewReader(src))
+	dec := yaml.NewDecoder(bytes.NewReader(yamlspan.KeepDocuments(src, mayHaveCRD)))
 	for {
 		var doc yaml.Node
 		err := dec.Decode(&doc)
@@ -71,28 +102,38 @@ func (m *helmManager) manifests(file string, src []byte) []dep.Dep {
 	return x.deps
 }
 
-// document dispatches one YAML document on its apiVersion group and kind.
+// mayHaveCRD reports whether manifests must parse a document: document dispatches on an
+// apiVersion group of crdGroups, so the group follows "apiVersion" on its line or the next (a
+// value continued or in a block scalar). A CustomResourceDefinition of those groups names them
+// in its spec, not its apiVersion, and is skipped. A templated document ("{{") is parsed too,
+// so an unparsable template still yields no deps.
+func mayHaveCRD(doc []byte) bool {
+	for rest := doc; ; {
+		i := bytes.Index(rest, []byte("apiVersion"))
+		if i < 0 {
+			break
+		}
+		rest = rest[i+len("apiVersion"):]
+		value := rest
+		if j := bytes.IndexByte(value, '\n'); j >= 0 {
+			if k := bytes.IndexByte(value[j+1:], '\n'); k >= 0 {
+				value = value[:j+1+k]
+			}
+		}
+		for _, g := range crdGroups {
+			if bytes.Contains(value, g) {
+				return true
+			}
+		}
+	}
+	return bytes.Contains(doc, []byte("{{"))
+}
+
+// document dispatches one YAML document on its apiVersion group and kind (crdResources).
 func (x *crdExtractor) document(n *yaml.Node) {
 	group, _, _ := strings.Cut(yamlspan.Value(yamlspan.Get(n, "apiVersion")), "/")
-	kind := yamlspan.Value(yamlspan.Get(n, "kind"))
-	spec := yamlspan.Get(n, "spec")
-	switch group + " " + kind {
-	case "helm.k0sproject.io Chart":
-		x.k0sChart(spec)
-	case "k0s.k0sproject.io ClusterConfig":
-		x.k0sConfig(spec)
-	case "k0sctl.k0sproject.io Cluster":
-		x.k0sConfig(yamlspan.Get(yamlspan.Get(yamlspan.Get(spec, "k0s"), "config"), "spec"))
-	case "helm.toolkit.fluxcd.io HelmRelease":
-		x.helmRelease(n, spec)
-	case "source.toolkit.fluxcd.io HelmRepository":
-		x.helmRepository(n, spec)
-	case "source.toolkit.fluxcd.io OCIRepository":
-		x.ociRepository(n, spec)
-	case "argoproj.io Application":
-		x.argoSpec(spec)
-	case "argoproj.io ApplicationSet":
-		x.argoSpec(yamlspan.Get(yamlspan.Get(spec, "template"), "spec"))
+	if extract := crdResources[group+" "+yamlspan.Value(yamlspan.Get(n, "kind"))]; extract != nil {
+		extract(x, n, yamlspan.Get(n, "spec"))
 	}
 }
 

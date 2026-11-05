@@ -36,7 +36,7 @@ var manifestParses atomic.Int64
 // as one. Unparsable files (Helm templates) yield no deps, no error.
 func (x *extractor) manifests() {
 	manifestParses.Add(1)
-	dec := yaml.NewDecoder(bytes.NewReader(x.src))
+	dec := yaml.NewDecoder(bytes.NewReader(yamlspan.KeepDocuments(x.src, mayHaveImage)))
 	for {
 		var doc yaml.Node
 		err := dec.Decode(&doc)
@@ -52,6 +52,37 @@ func (x *extractor) manifests() {
 			x.compose(doc.Content[0])
 		} else {
 			x.walk(&doc)
+		}
+	}
+}
+
+// mayHaveImage reports whether manifests must parse a document: each reference it extracts
+// sits under an "image" or "repository" key (a Helm image mapping keyed ...Image or ...image
+// has a repository key) or is a compose "docker-image://" context, and a templated document
+// ("{{") is parsed too, so an unparsable Helm template still yields no deps. Large
+// CustomResourceDefinitions mention images in descriptions; matching keys skips them.
+func mayHaveImage(doc []byte) bool {
+	return hasKey(doc, "image") || hasKey(doc, "repository") ||
+		bytes.Contains(doc, []byte("docker-image://")) || bytes.Contains(doc, []byte("{{"))
+}
+
+// hasKey reports whether word occurs in doc followed by ':', optionally after a closing quote
+// and blanks: the shape of a YAML key word (plain, quoted or in a flow mapping). Prose
+// mentioning word rarely matches.
+func hasKey(doc []byte, word string) bool {
+	for {
+		i := bytes.Index(doc, []byte(word))
+		if i < 0 {
+			return false
+		}
+		doc = doc[i+len(word):]
+		rest := doc
+		if len(rest) > 0 && (rest[0] == '"' || rest[0] == '\'') {
+			rest = rest[1:]
+		}
+		rest = bytes.TrimLeft(rest, " \t\r\n")
+		if len(rest) > 0 && rest[0] == ':' {
+			return true
 		}
 	}
 }

@@ -23,6 +23,131 @@ func LineStarts(src []byte) []int {
 	}
 }
 
+// KeepDocuments returns src with every YAML document for which keep is false blanked, so a
+// parser skips it cheaply: only its line breaks remain, plus its "---" start marker and any
+// "..." end markers (the scanner treats those as markers in any context). The blanked
+// document parses as an empty one, and every node of a kept document keeps its line and
+// column, so Locate against the original src still works. keep sees a document's bytes
+// including its marker line; it returns src itself when every document is kept.
+//
+// Documents split at lines starting with "---". Where the parser may read the text
+// differently, nothing is blanked: a document with a line starting with "%" (a directive of
+// the next document, or scalar content), everything from a document whose root node is a
+// block scalar on ("|" or ">"; its indentation may be 0, so later "---" lines can be its
+// content), and all of src when it is not split into lines by LF and CRLF alone (see
+// unsplittable).
+func KeepDocuments(src []byte, keep func(doc []byte) bool) []byte {
+	if unsplittable(src) {
+		return src
+	}
+	var out []byte
+	flush := func(start, end int) {
+		doc := src[start:end]
+		if keep(doc) || bytes.HasPrefix(doc, []byte("%")) || bytes.Contains(doc, []byte("\n%")) {
+			if out != nil {
+				out = append(out, doc...)
+			}
+			return
+		}
+		if out == nil {
+			out = make([]byte, 0, len(src))
+			out = append(out, src[:start]...)
+		}
+		for first := true; len(doc) > 0; first = false {
+			line, rest, found := bytes.Cut(doc, []byte{'\n'})
+			switch {
+			case first && isMarker(line, "---"):
+				out = append(out, "---"...)
+			case isMarker(line, "..."):
+				out = append(out, "..."...)
+			}
+			if found {
+				out = append(out, '\n')
+			}
+			doc = rest
+		}
+	}
+	start, split, atRoot := 0, true, true
+	for i := 0; i < len(src) && split; {
+		end := len(src)
+		if j := bytes.IndexByte(src[i:], '\n'); j >= 0 {
+			end = i + j + 1
+		}
+		line := src[i:end]
+		marker := isMarker(line, "---")
+		if i > start && marker {
+			flush(start, i)
+			start, atRoot = i, true
+		}
+		switch {
+		case isMarker(line, "..."):
+			atRoot = true // an implicit document may follow
+		case atRoot:
+			if root, ok := rootToken(line, marker); ok {
+				atRoot, split = false, root != '|' && root != '>'
+			}
+		}
+		i = end
+	}
+	flush(start, len(src))
+	if out == nil {
+		return src
+	}
+	return out
+}
+
+// isMarker reports whether line starts with the document marker m ("---" or "...")
+// followed by a blank or the line end.
+func isMarker(line []byte, m string) bool {
+	if !bytes.HasPrefix(line, []byte(m)) {
+		return false
+	}
+	return len(line) == 3 || line[3] == ' ' || line[3] == '\t' || line[3] == '\n' || line[3] == '\r'
+}
+
+// rootToken returns the first byte of the node line starts, if any: after the "---" marker,
+// blanks and node properties (tags and anchors). ok is false when the line holds no node
+// (blank, comment, or properties only).
+func rootToken(line []byte, marker bool) (b byte, ok bool) {
+	if marker {
+		line = line[3:]
+	}
+	for {
+		line = bytes.TrimLeft(line, " \t")
+		if len(line) == 0 || line[0] == '#' || line[0] == '\n' || line[0] == '\r' {
+			return 0, false
+		}
+		if line[0] != '!' && line[0] != '&' {
+			return line[0], true
+		}
+		j := bytes.IndexAny(line, " \t\r\n")
+		if j < 0 {
+			return 0, false
+		}
+		line = line[j:]
+	}
+}
+
+// unsplittable reports whether src's YAML lines are not its LF and CRLF lines: it is UTF-16
+// (a byte order mark), or it has a CR not followed by LF, a NEL, LS or PS, which the scanner
+// also counts as line breaks.
+func unsplittable(src []byte) bool {
+	if bytes.HasPrefix(src, []byte{0xFE, 0xFF}) || bytes.HasPrefix(src, []byte{0xFF, 0xFE}) {
+		return true
+	}
+	for i := bytes.IndexByte(src, '\r'); i >= 0; {
+		if i+1 == len(src) || src[i+1] != '\n' {
+			return true
+		}
+		j := bytes.IndexByte(src[i+1:], '\r')
+		if j < 0 {
+			break
+		}
+		i += 1 + j
+	}
+	return bytes.Contains(src, []byte("\u0085")) || bytes.Contains(src, []byte("\u2028")) || bytes.Contains(src, []byte("\u2029"))
+}
+
 // Locate returns the byte offset of scalar v's value in src, or -1 when the source bytes differ
 // from the value (escapes, multi-line or block scalars). lines are src's LineStarts. yaml
 // columns count runes, not bytes, and point at the anchor of an anchored value.

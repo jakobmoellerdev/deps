@@ -49,16 +49,16 @@ func BenchmarkManifests(b *testing.B) {
 	}
 }
 
-// crdMarkers and markerScan are the prefilter hasCRDGroup replaces: one scan per marker.
-var crdMarkers = [][]byte{[]byte("k0sproject.io/"), []byte("fluxcd.io/"), []byte("argoproj.io/")}
-
+// markerScan is the prefilter hasCRDGroup replaces: one scan of src per "<group>/".
 func markerScan(src []byte) bool {
-	return slices.ContainsFunc(crdMarkers, func(b []byte) bool { return bytes.Contains(src, b) })
+	return slices.ContainsFunc(crdGroups, func(g []byte) bool { return bytes.Contains(src, append(slices.Clip(g), '/')) })
 }
 
 var crdGroupSeeds = []string{
 	"", ".io/", "k0sproject.io/", "apiVersion: helm.toolkit.fluxcd.io/v2", "argoproj.io", "argoproj.io/",
 	"a.io/fluxcd.io/", "fluxcd.io.io/", "k0sproject.ioo/", "app.kubernetes.io/name: x\nargoproj.io/v1",
+	"notification.toolkit.fluxcd.io/v1", "xhelm.k0sproject.io/", "k0s.k0sproject.io/v1beta1",
+	"source.toolkit.fluxcd.io.io/", "toolkit.fluxcd.io/",
 }
 
 func TestHasCRDGroupParity(t *testing.T) {

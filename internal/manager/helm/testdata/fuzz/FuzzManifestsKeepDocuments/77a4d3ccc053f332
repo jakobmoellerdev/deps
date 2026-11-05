@@ -1,0 +1,2 @@
+go test fuzz v1
+string("0000000000: 00\n0000: 000000000\n000: 000000\napiVersion: source.toolkit.fluxcd.io\nkind: HelmRepository\nspec: {url: 0}\n---\n00fluxcd.io/")
