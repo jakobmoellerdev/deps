@@ -19,7 +19,7 @@ func TestLoadProblemLines(t *testing.T) {
 			src:  "pin: keep\nrules:\n  - manager: gomod\n  - manager: nope\n    schedule:\n      - \"0 5 * * *\"\n      - x\nlockFileMaintenance:\n  enabled: true\n",
 			want: []Problem{
 				{Line: 4, Msg: `rules[1].manager: must be one of ` + list(Managers) + `, got "nope"`},
-				{Line: 7, Msg: `rules[1].schedule[1]: "x": want 5 fields, got 1`},
+				{Line: 7, Msg: `rules[1].schedule[1]: "x": unknown word "x" (want before, after, every, on or a cron)`},
 			},
 		},
 		{

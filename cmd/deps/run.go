@@ -26,7 +26,7 @@ import (
 
 type runOpts struct {
 	platform, apiURL, repo, token, base string
-	triggerSchedule                     string
+	triggerSchedule, scheduleTime       string
 	authorName, authorEmail             string
 	signingKey                          string
 	maxNewPRs                           int
@@ -43,6 +43,8 @@ func newRun(o *rootOpts) *cli.Command {
 			"  deps run --dry-run -v\n" +
 			"  # what the run triggered by the Sunday cron would do\n" +
 			"  deps run --dry-run --trigger-schedule '0 0 * * 0'\n" +
+			"  # what a run on Monday 05:30 UTC would do with schedule time windows\n" +
+			"  deps run --dry-run --schedule-time 2026-11-09T05:30:00Z\n" +
 			"  # in CI (the action runs this with DEPS_TOKEN set)\n" +
 			"  DEPS_TOKEN=$TOKEN deps run -v --log-level info"},
 		ArgValidator: noArgs,
@@ -60,6 +62,7 @@ func newRun(o *rootOpts) *cli.Command {
 			&cli.IntFlag{Name: "max-new-prs", Value: 10, Destination: &r.maxNewPRs, Usage: "maximum number of pull requests to create per run (0 = unlimited)"},
 			&cli.BoolFlag{Name: "dry-run", Destination: &r.dryRun, Usage: "report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token"},
 			&cli.StringFlag{Name: "trigger-schedule", Destination: &r.triggerSchedule, Usage: "act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE)"},
+			&cli.StringFlag{Name: "schedule-time", Destination: &r.scheduleTime, Usage: "evaluate schedule time windows at this RFC 3339 time instead of now, e.g. 2026-11-09T05:30:00+01:00 (default: $DEPS_SCHEDULE_TIME)"},
 			&cli.StringFlag{Name: "signing-key", Destination: &r.signingKey, Usage: "sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (default: $DEPS_SIGNING_KEY)"},
 			allowTasksFlag(o),
 		},
@@ -101,24 +104,36 @@ func commitAuthor(cmd *cli.Command, r *runOpts, env, cfg string) (name, email st
 
 // detectTrigger resolves what started the run: --trigger-schedule, then
 // $DEPS_TRIGGER_SCHEDULE, then the CI event. A schedule event whose cron cannot be read
-// matches every schedule, with a warning.
-func detectTrigger(ctx context.Context, flag string, getenv func(string) string) (schedule.Trigger, error) {
-	override, src := flag, "--trigger-schedule"
+// matches every cron trigger, with a warning. The run time of schedule windows is at
+// (--schedule-time), then $DEPS_SCHEDULE_TIME, then now.
+func detectTrigger(ctx context.Context, cron, at string, getenv func(string) string) (schedule.Trigger, error) {
+	override, src := cron, "--trigger-schedule"
 	if override == "" {
 		override, src = getenv("DEPS_TRIGGER_SCHEDULE"), "DEPS_TRIGGER_SCHEDULE"
 	}
 	if override != "" {
-		if err := schedule.Validate(override); err != nil {
+		if err := schedule.ValidateCron(override); err != nil {
 			return schedule.Trigger{}, &usageError{fmt.Errorf("%s: %q: %w", src, override, err)}
+		}
+	}
+	now, src := time.Now(), "--schedule-time"
+	if at == "" {
+		at, src = getenv("DEPS_SCHEDULE_TIME"), "DEPS_SCHEDULE_TIME"
+	}
+	if at != "" {
+		var err error
+		if now, err = time.Parse(time.RFC3339, at); err != nil {
+			return schedule.Trigger{}, &usageError{fmt.Errorf("%s: %q: want an RFC 3339 time like 2026-11-09T05:30:00Z", src, at)}
 		}
 	}
 	t, err := schedule.Detect(getenv, override)
 	if err != nil {
-		slog.WarnContext(ctx, "cannot read the triggering cron; every schedule matches", "err", err)
+		slog.WarnContext(ctx, "cannot read the triggering cron; every cron trigger matches", "err", err)
 	} else if t.Event == schedule.EventSchedule && t.Cron == "" {
-		slog.WarnContext(ctx, "schedule event without a cron in the payload; every schedule matches")
+		slog.WarnContext(ctx, "schedule event without a cron in the payload; every cron trigger matches")
 	}
-	slog.InfoContext(ctx, "trigger", "event", t.Event, "cron", t.Cron)
+	t.Time = now
+	slog.InfoContext(ctx, "trigger", "event", t.Event, "cron", t.Cron, "time", now.Format(time.RFC3339))
 	return t, nil
 }
 
@@ -215,7 +230,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	default:
 		return &usageError{fmt.Errorf("--platform: invalid value %q", r.platform)}
 	}
-	trigger, err := detectTrigger(ctx, r.triggerSchedule, os.Getenv)
+	trigger, err := detectTrigger(ctx, r.triggerSchedule, r.scheduleTime, os.Getenv)
 	if err != nil {
 		return err
 	}

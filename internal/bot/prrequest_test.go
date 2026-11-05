@@ -72,7 +72,7 @@ func prRequestBody(fp string, ticked bool) string {
 // stopUpdatingLabel set on open PRs.
 func TestRunPRRequests(t *testing.T) {
 	yes := true
-	weekly, err := schedule.Parse([]string{"0 0 * * 0"})
+	weekly, err := schedule.Parse([]string{"0 0 * * 0"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

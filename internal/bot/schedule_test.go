@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
@@ -13,19 +14,30 @@ import (
 )
 
 func TestRunSchedule(t *testing.T) {
-	weekly, err := schedule.Parse([]string{"0 0 * * 0"})
+	weekly, err := schedule.Parse([]string{"0 0 * * 0"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	inWindow := schedule.Trigger{Event: schedule.EventSchedule, Cron: "0  0 * * 0"}
 	outWindow := schedule.Trigger{Event: schedule.EventSchedule, Cron: "0 0 * * *"}
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	window, err := schedule.Parse([]string{"before 6am on monday"}, berlin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	monday5 := time.Date(2026, 11, 9, 4, 0, 0, 0, time.UTC) // 05:00 in Berlin
 	tests := []struct {
 		name               string
 		trigger            schedule.Trigger
+		window             bool // the update's schedule is the window instead of the weekly cron
 		security           bool
 		updateNotScheduled bool
 		noPR               bool // branchA exists without an open PR
 		fresh              bool // the open PR of branchA has the current fingerprint
+		wantWaits          []string
 		wantStatus         map[string]string
 		wantPushed         int
 		wantClosed         []int
@@ -112,11 +124,31 @@ func TestRunSchedule(t *testing.T) {
 			wantStatus: map[string]string{branchA: StatusUpdated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantPushed: 2, wantClosed: []int{9},
 		},
+		{
+			name:       "push run inside the time window creates the PR",
+			trigger:    schedule.Trigger{Event: "push", Time: monday5},
+			window:     true,
+			noPR:       true,
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
+			wantPushed: 2, wantClosed: []int{9},
+		},
+		{
+			name:       "dispatch outside the time window waits",
+			trigger:    schedule.Trigger{Event: "workflow_dispatch", Time: monday5.Add(time.Hour)},
+			window:     true,
+			noPR:       true,
+			wantWaits:  []string{"before 6am on monday"},
+			wantStatus: map[string]string{branchA: StatusSkipSchedule, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
+			wantPushed: 1, wantClosed: []int{9},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root, res := fixture(t)
 			res.Updates[0].Schedule = weekly
+			if tt.window {
+				res.Updates[0].Schedule = window
+			}
 			if tt.security {
 				res.Updates[0].Advisories = []dep.Advisory{{ID: "GHSA-x", Summary: "bad", URL: "https://example.invalid/GHSA-x"}}
 			}
@@ -140,6 +172,9 @@ func TestRunSchedule(t *testing.T) {
 			got := map[string]string{}
 			for _, a := range acts {
 				got[a.Branch] = a.Status
+				if a.Branch == branchA && tt.wantWaits != nil && !slices.Equal(a.Waits, tt.wantWaits) {
+					t.Errorf("waits = %q, want %q", a.Waits, tt.wantWaits)
+				}
 			}
 			if len(got) != len(tt.wantStatus) {
 				t.Errorf("actions = %v, want %v", got, tt.wantStatus)
@@ -164,7 +199,7 @@ func TestRunSchedule(t *testing.T) {
 
 func TestWaitCrons(t *testing.T) {
 	set := func(c ...string) *schedule.Set {
-		s, err := schedule.Parse(c)
+		s, err := schedule.Parse(c, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -179,7 +214,7 @@ func TestWaitCrons(t *testing.T) {
 	if got := waitCrons(ups); !slices.Equal(got, []string{"0 6 * * 1"}) {
 		t.Errorf("waitCrons = %q", got)
 	}
-	if got := waitCrons(ups[:2]); !slices.Equal(got, []string{"0 0 * * 0", "0 6 * * 1"}) || ups[0].Schedule.Crons()[0] != "0 0 * * 0" {
+	if got := waitCrons(ups[:2]); !slices.Equal(got, []string{"0 0 * * 0", "0 6 * * 1"}) || ups[0].Schedule.Entries()[0] != "0 0 * * 0" {
 		t.Errorf("waitCrons = %q", got)
 	}
 }

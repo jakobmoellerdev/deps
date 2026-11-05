@@ -45,7 +45,7 @@ func branchFixture(t *testing.T, both bool) (string, *engine.Result) {
 
 func TestRunBranchAutomerge(t *testing.T) {
 	yes := true
-	weekly, err := schedule.Parse([]string{"0 0 * * 0"})
+	weekly, err := schedule.Parse([]string{"0 0 * * 0"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

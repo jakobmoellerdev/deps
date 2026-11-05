@@ -57,7 +57,7 @@ type Options struct {
 	// config defaults (config.DefaultRebaseLabel, config.DefaultStopUpdatingLabel).
 	RebaseLabel, StopUpdatingLabel string
 	// UpdateNotScheduled keeps updating and rebasing open PRs outside their schedule; only
-	// new PRs wait for a run triggered by one of their crons (Renovate's
+	// new PRs wait for a run triggered by one of their crons or inside a time window (Renovate's
 	// updateNotScheduled). false skips such groups.
 	UpdateNotScheduled bool
 	MaxNewPRs          int // PRs created per run; 0 = unlimited
@@ -72,8 +72,8 @@ type Options struct {
 	// AllowTasks are the postUpgradeTasks commands that may run (engine.BuildWithTasks); a
 	// group with another command fails.
 	AllowTasks engine.TaskAllowlist
-	// Trigger is what started the run; groups are in schedule when it matches all their
-	// non-security updates' schedules (schedule.Set.Matches).
+	// Trigger is what started the run and when; groups are in schedule when it matches all
+	// their non-security updates' schedules (schedule.Set.Matches).
 	Trigger schedule.Trigger
 	Notes   Notes // release ages and notes in PR bodies; nil = none
 	// Dashboard maintains the dependency dashboard issue; nil leaves an existing one alone.
@@ -144,7 +144,7 @@ type Action struct {
 	Branch, Title, Status, URL string
 	Number                     int
 	Automerge                  string   // automerge outcome; "" = not an automerge PR
-	Waits                      []string // StatusSkipSchedule: the crons that would put the group in schedule
+	Waits                      []string // StatusSkipSchedule: the schedule entries (crons, windows) that would put the group in schedule
 	Dashboard                  bool
 	Reason                     string // StatusSkipApply: why; StatusSkipStopped: the label
 }
@@ -951,8 +951,8 @@ func scheduled(ups []dep.Update, t schedule.Trigger) bool {
 	return true
 }
 
-// waitCrons returns the crons that put every non-security update of ups in schedule:
-// the intersection of their schedules, in the order of the first one.
+// waitCrons returns the schedule entries (crons and windows) that put every non-security
+// update of ups in schedule: the intersection of their schedules, in the order of the first one.
 func waitCrons(ups []dep.Update) []string {
 	var crons []string
 	first := true
@@ -961,10 +961,10 @@ func waitCrons(ups []dep.Update) []string {
 			continue
 		}
 		if first {
-			crons, first = slices.Clone(u.Schedule.Crons()), false
+			crons, first = slices.Clone(u.Schedule.Entries()), false
 			continue
 		}
-		crons = slices.DeleteFunc(crons, func(c string) bool { return !slices.Contains(u.Schedule.Crons(), c) })
+		crons = slices.DeleteFunc(crons, func(c string) bool { return !slices.Contains(u.Schedule.Entries(), c) })
 	}
 	return crons
 }

@@ -338,7 +338,9 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 Only keys without a passphrase are supported; a protected key fails before any work is done. The temporary key material is removed when `run` exits, also on errors and on SIGINT/SIGTERM. The key is logged at info by fingerprint only, as `commit signing format=ssh|openpgp key=<fingerprint>`. A value that is neither format nor a readable file exits 2; a missing `ssh-keygen`/`gpg` exits 1. The forge shows the signature as verified only when the committer (`gitAuthor`) is the key owner's verified email. Without a key, git's own configuration applies (`commit.gpgSign` and `user.signingKey` of the checkout).
 
-**Trigger:** schedules (config key `schedule`) are matched against what started the run, not against the clock: `--trigger-schedule`, then `$DEPS_TRIGGER_SCHEDULE`, then `$GITHUB_EVENT_NAME` with the `schedule` field of the payload at `$GITHUB_EVENT_PATH`. `workflow_dispatch`, `repository_dispatch` and local runs without CI variables are in schedule for every group. Every other event (`push`, `issues`, `workflow_run`, …) is a maintenance run outside every schedule: only groups without a schedule (and security updates) get new PRs; open PRs are refreshed per `updateNotScheduled`; dashboard checkboxes still act. Logged at info as `trigger event=<event> cron=<cron>`. The value of `--trigger-schedule` is validated as a 5-field cron; an invalid one exits 2.
+**Trigger:** cron triggers in `schedule` (crons with a fixed minute) are matched against what started the run, not against the clock: `--trigger-schedule`, then `$DEPS_TRIGGER_SCHEDULE`, then `$GITHUB_EVENT_NAME` with the `schedule` field of the payload at `$GITHUB_EVENT_PATH`. `workflow_dispatch`, `repository_dispatch` and local runs without CI variables match every trigger. Every other event (`push`, `issues`, `workflow_run`, …) is a maintenance run outside every trigger: only groups without a schedule (and security updates) get new PRs; open PRs are refreshed per `updateNotScheduled`; dashboard checkboxes still act. The value of `--trigger-schedule` is validated as a 5-field cron; an invalid one exits 2.
+
+**Time windows** in `schedule` (`before 6am on monday`, crons with minute `*`) are evaluated against the run time in the config's `timezone`, whatever the event: `--schedule-time` (RFC 3339, e.g. `2026-11-09T05:30:00+01:00`), then `$DEPS_SCHEDULE_TIME`, then now; an invalid value exits 2. Logged at info as `trigger event=<event> cron=<cron> time=<RFC 3339>`.
 
 **New-PR limit:** the minimum of `--max-new-prs` and the room left below `prConcurrentLimit`/`prHourlyLimit`, counting only the non-zero ones. Existing PRs are always updated.
 
@@ -356,7 +358,7 @@ Only keys without a passphrase are supported; a protected key fails before any w
 | `skipped: closed PR for this version` | an unmerged closed PR has the same branch and title, or the same versions of a major update (the dashboard's recreate checkbox overrides it) |
 | `skipped: closed PR for this major` | an unmerged closed PR of the same major branch (`-major`, `-v<N>`) targeted the same majors: closing a major PR ignores that major until the next one (the dashboard's recreate checkbox overrides it) |
 | `skipped: awaiting dashboard approval` | the group needs `dashboardApproval` and has no PR or branch yet: listed under *Pending approval* on the dashboard, whose create checkbox approves it |
-| `skipped: outside schedule` | the run was triggered by a cron that is not in the group's `schedule` (the dashboard's create checkbox overrides it) |
+| `skipped: outside schedule` | the run was triggered by a cron that is not in the group's `schedule`, or by another event, and no time window of it contains the run time (the dashboard's create checkbox overrides it) |
 | `skipped: new PR limit reached` | a PR limit is exhausted (dashboard checkboxes override it) |
 | `skipped: branch modified by someone else` | the branch tip's author is neither the bot nor in `gitIgnoredAuthors` (a rebase request discards those commits) |
 | `skipped: stop-updating label` | the open PR has the `stopUpdatingLabel`: not pushed, rebased or closed as obsolete |
@@ -383,6 +385,8 @@ Only keys without a passphrase are supported; a protected key fails before any w
 deps run --dry-run -v
 # what the run triggered by the Sunday cron would do
 deps run --dry-run --trigger-schedule '0 0 * * 0'
+# what a run on Monday 05:30 UTC would do with schedule time windows
+deps run --dry-run --schedule-time 2026-11-09T05:30:00Z
 # in CI (the action runs this with DEPS_TOKEN set)
 DEPS_TOKEN=$TOKEN deps run -v --log-level info
 ```
@@ -400,6 +404,7 @@ DEPS_TOKEN=$TOKEN deps run -v --log-level info
 | `--max-new-prs` | int | `10` | maximum number of pull requests to create per run (0 = unlimited) |
 | `--platform` | string | `"auto"` | forge type: auto\|github\|gitea\|forgejo (auto: from the CI environment, else the origin remote) |
 | `--repo` | string | `""` | repository owner/name (default: detected) |
+| `--schedule-time` | string | `""` | evaluate schedule time windows at this RFC 3339 time instead of now, e.g. 2026-11-09T05:30:00+01:00 (default: $DEPS_SCHEDULE_TIME) |
 | `--signing-key` | string | `""` | sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (default: $DEPS_SIGNING_KEY) |
 | `--token` | string | `""` | platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, git credential helper) |
 | `--trigger-schedule` | string | `""` | act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE) |
@@ -488,6 +493,7 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `DEPS_ALLOW_TASKS` | `apply`, `run` | default of `--allow-tasks`: the `postUpgradeTasks` commands that may run (repository code), one pattern per line, `*` matching any text without `;`, `&`, `|`, backticks, `$(` or line breaks (`go generate ./...`, `make *`; `*` alone allows everything). Commands get the environment without `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`, and without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CEILING_DIRECTORIES`, so their git uses the repository they run in |
 | `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
+| `DEPS_SCHEDULE_TIME` | `run` | default of `--schedule-time`: the RFC 3339 time schedule time windows are evaluated at instead of now |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
 | `RUNNER_DEBUG` | all | `1` (an Actions re-run with debug logging) makes `debug` the default `--log-level`, below `DEPS_LOG_LEVEL` and the flag |
@@ -522,7 +528,7 @@ Exit codes of every command. Also shown by `deps help exit-codes`.
 |---|---|
 | `0` | success, no errors |
 | `1` | any error, including per-dependency lookup errors and per-PR errors (already printed as `error` lines), or a fatal error printed as `deps: <err>` |
-| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE`, a `--signing-key`/`DEPS_SIGNING_KEY` that is no OpenSSH or armored OpenPGP private key, an invalid `DEPS_PLATFORM_COMMIT`, `platformCommit: enabled` on Gitea/Forgejo or with a signing key, or any config error (parse error, unknown key, failed validation, unreadable `--config` file) |
+| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE` or `--schedule-time`/`DEPS_SCHEDULE_TIME`, a `--signing-key`/`DEPS_SIGNING_KEY` that is no OpenSSH or armored OpenPGP private key, an invalid `DEPS_PLATFORM_COMMIT`, `platformCommit: enabled` on Gitea/Forgejo or with a signing key, or any config error (parse error, unknown key, failed validation, unreadable `--config` file) |
 
 ## Output
 
@@ -568,7 +574,7 @@ Also on a terminal (unless `TERM=dumb`), a **status line** below the output show
 
 - `debug`: every HTTP request (credential-free URL), every `git`/`go`/`npm`/`cargo` process, credential-helper outcomes (never secrets), and per-dependency and per-PR decisions.
 - `info`: the run trigger (`run`), the detected platform and how it was detected, the actions default host and its source (`actions default host host=<h> source=<s>`), phase counts and durations (one `files discovered files=<n> duration=<d> managers="docker 137, helm 134"` line for the walk, listing managers that matched files by count), and the bot's view of the repository.
-- `warn` (the default): obsolete PRs left open because the run had errors, a schedule event whose cron cannot be read (every schedule matches), a dashboard skipped because issues are disabled, and dashboard labels that do not exist (Gitea/Forgejo).
+- `warn` (the default): obsolete PRs left open because the run had errors, a schedule event whose cron cannot be read (every cron trigger matches), a dashboard skipped because issues are disabled, and dashboard labels that do not exist (Gitea/Forgejo).
 
 Text logs round durations to 0.1ms below a second and to 1ms above (`duration=23ms`, `duration=11.003s`); JSON logs keep them in nanoseconds.
 
@@ -576,7 +582,7 @@ Text logs round durations to 0.1ms below a second and to 1ms above (`duration=23
 
 ```
 Summary: <n> dependencies, <u> updates in <g> PRs[, PRs: <count> <status>, ...][, <p> held back by minimumReleaseAge], <k> skipped, <e> errors (<duration>)
-  PR <branch>  <title>  [<status> <url>; <automerge>; waiting for <cron>]   (run; plan/apply: [automerge; schedule <crons>])
+  PR <branch>  <title>  [<status> <url>; <automerge>; waiting for <schedule entries>]   (run; plan/apply: [automerge; schedule <entries>])
       <name>  <file>:<line>  <from> -> <to>  (<type>[, security: <id>,...])
   <status>  <branch>  <url>                                            (run: closed obsolete PRs and the dashboard)
   Held back by minimumReleaseAge:
@@ -594,7 +600,7 @@ The PRs are the ones `run` opens: plan and apply group their updates the same wa
 **JSON report.** `--report <file>` (or `$DEPS_REPORT`) makes `plan`, `apply` and `run` also write the summary as one JSON object, replacing the file. It is not written when deps fails before it has a result (usage or config errors, exit 2). Fields:
 
 - `command` (`plan`, `apply`, `run`, `run --dry-run`), `dependencies`, `durationMs`;
-- `prs[]`: `branch`, `title`, `updates[]` (`name`, `manager`, `file`, `line`, `from`, `to`, `type`, `lockfile`, `advisories` as IDs; a lock file maintenance has type `lockFileMaintenance` and no versions); for `run` also `status`, `automerge`, `number`, `url`, `waitsFor` (crons) and `reason` (why a `skipped: update cannot be applied` update cannot be applied; the label of a `skipped: stop-updating label` PR);
+- `prs[]`: `branch`, `title`, `updates[]` (`name`, `manager`, `file`, `line`, `from`, `to`, `type`, `lockfile`, `advisories` as IDs; a lock file maintenance has type `lockFileMaintenance` and no versions); for `run` also `status`, `automerge`, `number`, `url`, `waitsFor` (schedule entries: crons and time windows) and `reason` (why a `skipped: update cannot be applied` update cannot be applied; the label of a `skipped: stop-updating label` PR);
 - `otherActions[]`: closed obsolete PRs, obsolete PRs kept open by the `stopUpdatingLabel`, and the dashboard (`branch`, `title`, `status`, `number`, `url`, `dashboard`);
 - `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `skipped[]` (`reason`, `count`), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error, `file` for a file that cannot be read or parsed);
 - `counts`: the step outputs below, by camelCase name.

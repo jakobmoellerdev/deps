@@ -132,7 +132,7 @@ func TestDashboardUnchangedNoWrite(t *testing.T) {
 
 func TestDashboardCheckboxCreateBypassesScheduleAndLimit(t *testing.T) {
 	root, res := dashFixture(t)
-	weekly, err := schedule.Parse([]string{"0 0 * * 0", "0 6 * * 1"})
+	weekly, err := schedule.Parse([]string{"0 0 * * 0", "0 6 * * 1"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestDashboardCheckboxCreateBypassesScheduleAndLimit(t *testing.T) {
 	// Without the checkbox a/x waits for its schedule and is listed as such.
 	pc = &fakePC{closed: closed}
 	acts, _, _ = dashRun(t, o, res, root, pc, &fakeGit{})
-	if statusOf(acts, branchA) != StatusSkipSchedule || !strings.Contains(pc.createdIssues[0].Body, "## Awaiting schedule\n\nThese updates wait for a run triggered by one of their crons. Tick one to create its PR now.\n\n- [ ] <!-- deps:create="+branchA+" --> "+titleA+" (waits for `0 0 * * 0` or `0 6 * * 1`)\n") {
+	if statusOf(acts, branchA) != StatusSkipSchedule || !strings.Contains(pc.createdIssues[0].Body, "## Awaiting schedule\n\nThese updates wait for a run triggered by one of their crons or inside one of their time windows. Tick one to create its PR now.\n\n- [ ] <!-- deps:create="+branchA+" --> "+titleA+" (waits for `0 0 * * 0` or `0 6 * * 1`)\n") {
 		t.Errorf("actions %+v body:\n%s", acts, pc.createdIssues[0].Body)
 	}
 }

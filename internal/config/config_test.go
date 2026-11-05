@@ -96,7 +96,11 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{currentAge: '> 1 year', replacementName: x}]\n", "rules[0].replacementName: cannot be combined with currentAge"},
 		{"rules: [{updates: [huge]}]\n", "rules[0].updates[0]"},
 		{"ignorePaths: ['[']\n", "ignorePaths[0]"},
-		{"timezone: Europe/Berlin\n", "line 1: field timezone not found"},
+		{"timezone: Europe/Berln\n", `timezone: unknown IANA time zone "Europe/Berln"`},
+		{"timezone: Local\n", `timezone: must be an IANA time zone like Europe/Berlin, got "Local"`},
+		{"timezone: [x]\n", "line 1"},
+		{"schedule: ['befor 6am on monday']\n", `schedule[0]: "befor 6am on monday": unknown word "befor"`},
+		{"rules: [{schedule: ['before 25:00']}]\n", `rules[0].schedule[0]: "before 25:00": before: want a time like 6am or 18:30, got "25:00"`},
 		{"schedule: ['60 5 * * *']\n", `schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`},
 		{"schedule: ['* 25 * * *']\n", "schedule[0]"},
 		{"rules: [{schedule: ['* * * *']}]\n", "rules[0].schedule[0]"},
@@ -322,6 +326,45 @@ custom:
 	xy := c.Policy(dep.Dep{Manager: "custom", Name: "x/y"})
 	if xy.Group != "xy" || xy.Schedule == nil || xy.Schedule.Matches(daily) || !xy.Schedule.Matches(weekly) || !slices.Equal(xy.Rules, []int{1, 2}) {
 		t.Errorf("x/y: %+v", xy)
+	}
+}
+
+// timezone applies to the time windows of every schedule (top level, rules, lock file
+// maintenance); cron triggers still match the triggering cron as text.
+func TestTimezone(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `timezone: America/New_York
+schedule: ["before 6am on monday", "0 5 * * 3"]
+rules:
+  - names: ["x/*"]
+    schedule: ["every weekend"]
+lockFileMaintenance:
+  enabled: true
+  schedule: ["on the first day of the month"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Monday 2026-11-09 10:00 UTC is 05:00 in New York (UTC-5).
+	monday := schedule.Trigger{Event: "push", Time: time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)}
+	late := schedule.Trigger{Event: "push", Time: time.Date(2026, 11, 9, 11, 0, 0, 0, time.UTC)}
+	wed := schedule.Trigger{Event: schedule.EventSchedule, Cron: "0 5 * * 3", Time: late.Time}
+	top := c.Policy(dep.Dep{Manager: "gomod", Name: "a/b"}).Schedule
+	if !top.Matches(monday) || top.Matches(late) || !top.Matches(wed) {
+		t.Errorf("top schedule %s", top)
+	}
+	if got := top.String(); got != "before 6am on monday; 0 5 * * 3 (America/New_York)" {
+		t.Errorf("String() = %q", got)
+	}
+	weekend := c.Policy(dep.Dep{Manager: "gomod", Name: "x/y"}).Schedule
+	if weekend.Matches(schedule.Trigger{Time: time.Date(2026, 11, 10, 3, 0, 0, 0, time.UTC)}) {
+		t.Error("Tuesday 03:00 UTC is Monday in New York, not the weekend")
+	}
+	if !weekend.Matches(schedule.Trigger{Time: time.Date(2026, 11, 9, 3, 0, 0, 0, time.UTC)}) {
+		t.Error("Monday 03:00 UTC is Sunday in New York")
+	}
+	lfm := c.LockFileMaintenanceSchedule()
+	if !lfm.Matches(schedule.Trigger{Time: time.Date(2026, 12, 1, 12, 0, 0, 0, time.UTC)}) || lfm.Matches(schedule.Trigger{Time: time.Date(2026, 12, 1, 3, 0, 0, 0, time.UTC)}) {
+		t.Errorf("lock file maintenance schedule %s", lfm)
 	}
 }
 

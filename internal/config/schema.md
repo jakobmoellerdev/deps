@@ -156,14 +156,38 @@ rangeStrategy: bump
 
 ## Config.schedule
 
-deps never evaluates the crons as time windows: a group is in schedule when the run was started by one of its crons.
+Each entry is either a **cron trigger** or a **time window**; a group is in schedule when any entry matches. How an entry is classified:
+
+| Entry | Kind | In schedule when |
+|---|---|---|
+| a cron whose minute is fixed: `0 5 * * 1`, `30 4 * * *`, `*/15 6 * * *` | trigger | the run was started by that cron of the workflow |
+| a cron whose minute is `*`: `* 0-5 * * 1` (Renovate's cron schedules) | window | the run time is in every listed hour, day of month, month and day of week |
+| text, i.e. the entry starts with a letter: `before 6am on monday` | window | the run time is inside the window |
+
+**Cron triggers** are matched against what started the run, never against the clock:
 
 - The trigger is read from the CI environment: `GITHUB_EVENT_NAME` (GitHub, Gitea and Forgejo set it) and, for `schedule` events, the `schedule` field of the event payload at `GITHUB_EVENT_PATH`. GitHub and Gitea (verified in 28.3) put the triggering cron there. `--trigger-schedule <cron>` or `DEPS_TRIGGER_SCHEDULE` override the detection (for local tests or runners that lack the payload).
 - Crons are compared as strings after collapsing whitespace: `0 0 * * 0` matches `0  0 * * 0` but not the equivalent `0 0 * * 7`. Copy them verbatim from `on.schedule`.
-- `workflow_dispatch`, `repository_dispatch` and a local `deps run` act immediately: every schedule matches. Any other event (`push` after merging a deps PR, `issues` when the dashboard is ticked, `workflow_run` after CI, …) matches no schedule: only unscheduled groups and security updates get new PRs, and open PRs are refreshed per `updateNotScheduled`. A `schedule` event whose cron cannot be read matches every schedule, with a warning.
-- Cron triggers of CI systems are UTC, so there is no time zone setting.
-- Each entry must be a valid 5-field cron (`minute hour day-of-month month day-of-week`; `*`, `n`, `a-b`, comma lists, `/step` on `*` or a range; day of week `0-7`; no names). Errors look like `schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`.
-- The schedule only gates creating new PRs and, with `updateNotScheduled: false`, updating existing ones. Security updates ignore schedules.
+- `workflow_dispatch`, `repository_dispatch` and a local `deps run` act immediately: every trigger matches. Any other event (`push` after merging a deps PR, `issues` when the dashboard is ticked, `workflow_run` after CI, …) matches no trigger: only unscheduled groups and security updates get new PRs, and open PRs are refreshed per `updateNotScheduled`. A `schedule` event whose cron cannot be read matches every trigger, with a warning.
+- Cron triggers of CI systems are UTC; [`timezone`](#timezone) does not apply to them.
+- Fields: `minute hour day-of-month month day-of-week`; `*`, `n`, `a-b`, comma lists, `/step` on `*` or a range; day of week `0-7`; no names. Errors look like `schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`.
+
+**Time windows** (Renovate's `schedule`) are evaluated against the time of the run, in [`timezone`](#timezone) (UTC by default), whatever started it, so `workflow_dispatch`, `push` and local runs outside the window do not create PRs either. `--schedule-time <RFC 3339 time>` or `DEPS_SCHEDULE_TIME` evaluate them at another time (for local tests). The workflow still needs crons that run inside the windows, e.g. hourly. Text windows are a subset of Renovate's [later](https://breejs.github.io/later/parsers.html#text) syntax, case-insensitive, with clauses in any order separated by spaces or `and`:
+
+| Clause | Meaning |
+|---|---|
+| `before 6am`, `before 6:30am`, `before 18:00` | minutes of the day before that time |
+| `after 10pm`, `after 22:00` | from that time to midnight |
+| `after 10pm and before 5am` | both: a range, wrapping past midnight when the start is later |
+| `every weekday`, `every weekend`, `every monday` | Monday to Friday, Saturday and Sunday, one day |
+| `on monday`, `on friday and saturday`, `on mon, wed`, `on monday through friday` | days of the week (full names, `mon`…`sun`, plurals) |
+| `on the first day of the month`, `on the 15th day of the month`, `on the last day of the month` | day of the month |
+| `every 3 months` | months 1, 4, 7 and 10 (every n-th month from January) |
+| `at any time` | always |
+
+Examples: `before 6am on monday`, `after 10pm and before 5am every weekday`, `every weekend`, `before 4am on the first day of the month`, `every 3 months on the first day of the month`. A time needs `am`/`pm` or minutes (`6am`, `18:00`; not `6`). Errors look like `schedule[0]: "befor 6am": unknown word "befor" (want before, after, every, on or a cron)`.
+
+The schedule only gates creating new PRs and, with `updateNotScheduled: false`, updating existing ones. Security updates ignore schedules.
 
 A daily workflow cron plus a weekly one, with the weekly cron reserved for some groups:
 
@@ -183,7 +207,19 @@ rules:
     schedule: ["0 0 * * 0"]   # PRs are created only by the Sunday run
 ```
 
-Other deps have no schedule, so both crons create their PRs.
+Other deps have no schedule, so both crons create their PRs. The same with a time window, for a workflow that runs hourly:
+
+```yaml
+timezone: Europe/Berlin
+rules:
+  - updateTypes: [digest, pin]
+    group: digest-pins
+    schedule: ["before 6am on sunday"]   # PRs are created by runs on Sunday before 06:00 in Berlin
+```
+
+## Config.timezone
+
+Renovate's `timezone`. An [IANA time zone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) name such as `Europe/Berlin` or `America/New_York`; the time zone database is built into deps. It applies to the time windows of every schedule (top level, `rules[].schedule`, `lockFileMaintenance.schedule`), including daylight saving time; cron triggers are matched as text and are unaffected. `Local` is rejected, unknown names fail with `timezone: unknown IANA time zone "Europe/Berln"`. Summaries and `deps explain` print a schedule with windows outside UTC with its zone, e.g. `before 6am on monday (Europe/Berlin)`.
 
 ## Config.security
 
@@ -379,7 +415,7 @@ See the bucket table under [`separateMajorMinor`](#separatemajorminor).
 
 ## Config.updateNotScheduled
 
-- `true` (the default): open PRs outside their schedule are still updated (content changes, conflicts, `rebaseWhen`). Only *creating* a PR waits for a run triggered by one of their crons.
+- `true` (the default): open PRs outside their schedule are still updated (content changes, conflicts, `rebaseWhen`). Only *creating* a PR waits for a run triggered by one of their crons or inside one of their time windows.
 - `false`: out-of-schedule groups are left untouched (`skipped: outside schedule`).
 
 Out-of-schedule PRs are never closed as obsolete.
@@ -513,7 +549,7 @@ An open update PR with this label is left alone: deps does not build, push or re
 `deps run` maintains one open issue titled [`dependencyDashboardTitle`](#dependencydashboardtitle). It lists, in this order:
 
 1. **Pending approval**: updates of [`dashboardApproval`](#dashboardapproval) without a PR or branch. Ticking one makes the next run create its PR.
-2. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Awaiting-schedule items name the crons they wait for, e.g. ``(waits for `0 0 * * 0`)``. Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.
+2. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Awaiting-schedule items name the schedule entries they wait for, e.g. ``(waits for `0 0 * * 0`)`` or ``(waits for `before 6am on monday`)``. Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.
 3. **Ignored or blocked**: updates whose PR was closed without merging, for that version or, for a major update, for that major (checkbox: recreate the PR), branches someone else pushed to (checkbox: discard those commits and rebuild the branch), and PRs with the [`stopUpdatingLabel`](#stopupdatinglabel).
 4. **Pending branch automerge**: branches of [`automergeType: branch`](#automergetype) waiting for their checks, without a PR. Ticking one makes the next run open its PR instead.
 5. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.
@@ -837,7 +873,7 @@ Renovate's `lockFileMaintenance`. With `enabled: true`, `run` keeps one PR on th
 - The manifests are unchanged, so the PR changes only lockfiles (and, for Go, the `// indirect` requirements of `go.mod`). Directories without a lockfile get none.
 - The PR is rebuilt from the base branch on every run in schedule, like other PRs: it is updated when the result changes (new releases), and closed when the lockfiles are already current. The dashboard lists it with the other PRs, and its checkboxes create, recreate or rebase it.
 - `minimumReleaseAge` does not apply: the tools pick the newest releases regardless of age. Lockfile-only and other updates of the same lockfiles stay in their own PRs.
-- `schedule` (workflow crons, as the top-level `schedule`) overrides the top-level schedule; `[]` means every run. Renovate's default is a weekly window (`before 4am on monday`); deps has no time windows, so pair it with a weekly workflow cron.
+- `schedule` (cron triggers and time windows, as the top-level `schedule`) overrides the top-level schedule; `[]` means every run. Renovate's default is a weekly window; `schedule: ["before 4am on monday"]` restores it, given a workflow cron inside the window (e.g. `0 3 * * *`).
 - It follows the top-level `automerge` and `automergeStrategy`; rules do not apply to it.
 - `plan` and `apply` only list it (`update  Cargo.lock  lock file maintenance  (lockFileMaintenance, separate PR)`); they never write it.
 
@@ -849,4 +885,4 @@ lockFileMaintenance:
 
 ## LockFileMaintenance.schedule
 
-Validated like the top-level `schedule` (`lockFileMaintenance.schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`).
+Validated like the top-level `schedule` (`lockFileMaintenance.schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`); its time windows use [`timezone`](#timezone).

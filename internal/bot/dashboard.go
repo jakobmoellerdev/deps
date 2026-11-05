@@ -159,7 +159,7 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 	w := &budget{left: dashboardMaxBytes - len(dashboardMarker) - 2}
 	w.text("This issue lists the dependency updates [deps](https://git.jakob-moeller.cloud/jakobmoellerdev/deps) manages. Tick a checkbox to make the next run act on it.\n")
 	w.section("Pending approval", "These updates need approval (`dashboardApproval`). Tick one to create its PR.", approval)
-	w.section("Awaiting schedule", "These updates wait for a run triggered by one of their crons. Tick one to create its PR now.", schedule)
+	w.section("Awaiting schedule", "These updates wait for a run triggered by one of their crons or inside one of their time windows. Tick one to create its PR now.", schedule)
 	w.section("Rate-limited", "These updates wait for the PR limits. Tick one to create its PR now.", limited)
 	w.section("Ignored or blocked", "", blocked)
 	w.section("Pending branch automerge", "These branches are merged without a PR once their checks pass. Tick one to create its PR instead.", branches)
@@ -300,10 +300,10 @@ func (w *budget) detected(deps []dep.Dep) {
 	w.text(closeFile + "\n" + closeManager)
 }
 
-// waits renders the crons an out-of-schedule group waits for.
+// waits renders the schedule entries (crons, time windows) an out-of-schedule group waits for.
 func waits(crons []string) string {
 	if len(crons) == 0 {
-		return "no single cron matches all of its updates"
+		return "no single schedule entry matches all of its updates"
 	}
 	return "waits for `" + strings.Join(crons, "` or `") + "`"
 }

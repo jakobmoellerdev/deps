@@ -171,7 +171,8 @@ type Config struct {
 	Version       int      `yaml:"version" jsonschema:"enum=1,default=1" jsonschema_description:"Config format version; must be 1 if set."`
 	Pin           string   `yaml:"pin" jsonschema:"enum=keep,enum=digest,default=keep" jsonschema_description:"Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment."`
 	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=replace,enum=update-lockfile,enum=widen,enum=pin,enum=in-range-only,default=auto" jsonschema_description:"How npm, cargo, Python and bundler dependency ranges, Swift package requirements, terraform version constraints and Gradle dynamic versions (1.+, [1.0,2.0)) are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, Package.resolved, .terraform.lock.hcl, gradle.lockfile) while the range admits the new version (rewriting the range otherwise, 1.+ -> 2.+), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,<2 -> >=1.5.0,<2, ~> 5.0 -> ~> 5.46; Gradle dynamic versions and ranges without a floor keep update-lockfile), in-range-only raises the range like bump but only to versions it admits, widen leaves admitted versions alone and widens the range to admit others (^1.2.3 -> ^1.2.3 || ^2.0.0, >=1.2,<2 -> >=1.2,<3, cargo 1.2 -> >=1.2, <3, Ruby \"~> 7.1\" -> \">= 7.1\", \"< 9\"), pin writes the exact version (^1.2.3 -> 1.4.0, cargo =1.4.0, Python ==1.4.0, Swift exact: 1.4.0 or .exact(1.4.0), Ruby \"= 1.4.0\"): a pin update to the locked or newest admitted version, then each newer one (widen and pin are replace for terraform, terragrunt and Gradle; Swift from: is replaced under widen); auto is Renovate's default per manager: update-lockfile, widen for npm peerDependencies and || ranges, replace for terraform, terragrunt and gemspec dependencies."`
-	Schedule      []string `yaml:"schedule" jsonschema_description:"Cron expressions (5 fields) equal to cron triggers of the workflow running deps: new update PRs are created only in runs triggered by one of them (non-schedule triggers such as workflow_dispatch, push or a local run act immediately); empty means every run."`
+	Schedule      []string `yaml:"schedule" jsonschema_description:"When new update PRs are created: cron triggers of the workflow running deps (minute fixed, e.g. '0 5 * * 1'), matched against the cron that started the run, and time windows evaluated against the run time in timezone: Renovate's text ('before 6am on monday', 'every weekend') or crons with minute * ('* 0-5 * * 1'). Empty means every run."`
+	Timezone      string   `yaml:"timezone" jsonschema_description:"IANA time zone (e.g. Europe/Berlin) of the schedule time windows; default UTC. Cron triggers are unaffected."`
 	Security      *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, updates and schedule."`
 	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
 	RebaseWhen    string   `yaml:"rebaseWhen" jsonschema:"enum=conflicted,enum=behind-base-branch,enum=never,default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
@@ -232,6 +233,7 @@ type Config struct {
 
 	path      string         // source path for error messages
 	schedule  *schedule.Set  // parsed Schedule
+	loc       *time.Location // parsed Timezone; UTC when unset
 	templates prtemplate.Set // parsed PRTitle, PRHeader and PRFooter
 	// lfmSchedule is the parsed LockFileMaintenance.Schedule, or schedule when it is nil.
 	lfmSchedule *schedule.Set
@@ -342,7 +344,7 @@ func (c *Config) Prefix() string { return cmp.Or(c.BranchPrefix, DefaultBranchPr
 type LockFileMaintenance struct {
 	Enabled bool `yaml:"enabled" jsonschema:"default=false" jsonschema_description:"Propose the lock file maintenance PR."`
 	// Schedule overrides the top-level schedule when non-nil; [] = every run.
-	Schedule []string `yaml:"schedule" jsonschema_description:"Workflow cron triggers of the lock file maintenance PR, overriding the top-level schedule; [] means every run."`
+	Schedule []string `yaml:"schedule" jsonschema_description:"Schedule (cron triggers and time windows) of the lock file maintenance PR, overriding the top-level schedule; [] means every run."`
 }
 
 // LockFileMaintenanceSchedule is the schedule of the lock file maintenance PR:
@@ -411,7 +413,7 @@ type Rule struct {
 	SecurityGroup         string   `yaml:"securityGroup" jsonschema_description:"Group name for the security updates of matching deps: those with the same securityGroup share one PR on <prefix>group/<slug>-security, apart from non-security updates (also of a group with the same name). Without it every security update gets its own PR."`
 	CommitType            string   `yaml:"commitType" jsonschema:"enum=fix,enum=chore,enum=build,enum=ci,enum=docs,enum=feat,enum=perf,enum=refactor,enum=revert,enum=style,enum=test" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm, cargo, poetry and bundler dependencies, pep621 project.dependencies, pipenv packages), chore otherwise. Security updates always use fix."`
 	CommitScope           *string  `yaml:"commitScope" jsonschema_description:"Conventional commit scope; default deps, empty string means no scope ('chore: ...')."`
-	Schedule              []string `yaml:"schedule" jsonschema_description:"Workflow cron triggers overriding the top-level schedule; [] means every run."` // non-nil overrides the top-level schedule; [] = always
+	Schedule              []string `yaml:"schedule" jsonschema_description:"Schedule (cron triggers and time windows, like the top-level schedule) overriding the top-level schedule; [] means every run."` // non-nil overrides the top-level schedule; [] = always
 	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
 	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
 	// MinimumReleaseAgeBehaviour overrides the top-level minimumReleaseAgeBehaviour when set.
@@ -777,10 +779,18 @@ func (c *Config) Validate() error {
 		}
 	}
 	validateAgeBehaviour("", c.MinimumReleaseAgeBehaviour, add)
-	c.schedule = parseSchedule("schedule", c.Schedule, add)
+	c.loc = time.UTC
+	if c.Timezone != "" {
+		if loc, err := loadTimezone(c.Timezone); err != nil {
+			add("timezone", "%v", err)
+		} else {
+			c.loc = loc
+		}
+	}
+	c.schedule = c.parseSchedule("schedule", c.Schedule, add)
 	c.lfmSchedule = c.schedule
 	if c.LockFileMaintenance.Schedule != nil {
-		c.lfmSchedule = parseSchedule("lockFileMaintenance.schedule", c.LockFileMaintenance.Schedule, add)
+		c.lfmSchedule = c.parseSchedule("lockFileMaintenance.schedule", c.LockFileMaintenance.Schedule, add)
 	}
 	for i, g := range c.IgnorePaths {
 		if _, err := doublestar.Match(g, ""); err != nil {
@@ -811,9 +821,21 @@ func (c *Config) Validate() error {
 
 type addFunc func(field, format string, a ...any)
 
-// parseSchedule validates each expression separately for precise errors and returns the
-// parsed set, or nil when exprs is empty or invalid.
-func parseSchedule(field string, exprs []string, add addFunc) *schedule.Set {
+// loadTimezone loads an IANA time zone; "Local" is rejected since it depends on the runner.
+func loadTimezone(name string) (*time.Location, error) {
+	if name == "Local" {
+		return nil, fmt.Errorf("must be an IANA time zone like Europe/Berlin, got %q", name)
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, fmt.Errorf("unknown IANA time zone %q", name)
+	}
+	return loc, nil
+}
+
+// parseSchedule validates each entry separately for precise errors and returns the
+// parsed set with windows in the config's time zone, or nil when exprs is empty or invalid.
+func (c *Config) parseSchedule(field string, exprs []string, add addFunc) *schedule.Set {
 	ok := true
 	for i, e := range exprs {
 		if err := schedule.Validate(e); err != nil {
@@ -824,7 +846,7 @@ func parseSchedule(field string, exprs []string, add addFunc) *schedule.Set {
 	if !ok {
 		return nil
 	}
-	s, _ := schedule.Parse(exprs) // expressions are valid here
+	s, _ := schedule.Parse(exprs, c.loc) // entries are valid here
 	return s
 }
 
@@ -959,7 +981,7 @@ func (c *Config) validateRule(i int, add addFunc) {
 			add(f+".postUpgradeTasks.executionMode", "must be one of %s, got %q", list(ExecutionModes), t.ExecutionMode)
 		}
 	}
-	r.schedule = parseSchedule(f+".schedule", r.Schedule, add)
+	r.schedule = c.parseSchedule(f+".schedule", r.Schedule, add)
 	r.minAge = nil
 	if r.MinimumReleaseAge != "" {
 		if d, err := ParseAge(r.MinimumReleaseAge); err != nil {

@@ -25,6 +25,7 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
 - [Self-hosted runners and actions hosts](#self-hosted-runners-and-actions-hosts)
 - [Self-managed GitLab](#self-managed-gitlab)
 - [Schedules](#schedules)
+  - [Time windows](#time-windows)
 - [Run on push to the default branch](#run-on-push-to-the-default-branch)
   - [Run when the dashboard is ticked](#run-when-the-dashboard-is-ticked)
   - [Merge right after CI](#merge-right-after-ci)
@@ -465,7 +466,7 @@ A platform token (`DEPS_TOKEN` and friends) for the same host takes precedence o
 
 ## Schedules
 
-Each [`schedule`](reference/configuration.md#schedule) entry, top-level or in a rule, must be one of the workflow's cron triggers. Crons are compared as text after collapsing whitespace, so write them the same way in both files.
+A [`schedule`](reference/configuration.md#schedule) entry, top-level or in a rule, is either a **cron trigger** of the workflow (a cron with a fixed minute, `0 5 * * 1`) or a **[time window](#time-windows)** (`before 6am on monday`, or a cron with minute `*`). Cron triggers are compared as text after collapsing whitespace, so write them the same way in both files.
 
 - **Reading the trigger.** deps reads the triggering cron from the event payload: `GITHUB_EVENT_PATH`, field `schedule`. GitHub fills it, and so does Gitea (verified in 28.3).
 - **Which groups act.** Only groups whose schedule lists that cron get new PRs. `workflow_dispatch` and other non-cron triggers act on every group. A `push` run is outside every schedule: groups without a schedule get new PRs, scheduled groups only have their open PRs refreshed ([updateNotScheduled](reference/configuration.md#updatenotscheduled)), and security updates are proposed as always.
@@ -496,9 +497,33 @@ rules:
 Both crons fire on Monday at 05:00, so that day has two runs. The second run finds the PRs of the first up to date; a [concurrency group](#overlapping-runs) keeps the two from overlapping.
 
 - **Runners without the payload.** Pass the cron explicitly with `args: run --trigger-schedule "0 5 * * 1"` (or `DEPS_TRIGGER_SCHEDULE`) in a workflow that has only that cron.
-- **A `schedule` event without a readable cron** matches every schedule, and deps logs a warning.
+- **A `schedule` event without a readable cron** matches every cron trigger, and deps logs a warning.
 
-Updates waiting for their cron are reported as `skipped: outside schedule`. They appear on the dashboard under *Awaiting schedule*, where ticking one creates its PR on the next run.
+Updates waiting for their cron or window are reported as `skipped: outside schedule`. They appear on the dashboard under *Awaiting schedule*, where ticking one creates its PR on the next run.
+
+### Time windows
+
+Renovate's schedules are time windows, and deps supports them as well: `before 6am`, `after 10pm`, `every weekend`, `on monday`, `before 6am on monday`, `every weekday`, `on the first day of the month`, `after 10pm and before 5am every weekday`, and crons with minute `*` such as `* 0-5 * * 1` (the [full syntax](reference/configuration.md#schedule)). A window is checked against the time of the run, in [`timezone`](reference/configuration.md#timezone) (UTC by default), whatever started the run. So the workflow needs crons that fire inside the windows, and a `push` run inside a window opens its PRs while a `workflow_dispatch` outside it does not:
+
+```yaml
+on:
+  schedule:
+    - cron: "0 * * * *" # hourly, so every window gets a run
+  push:
+    branches: [main]
+  workflow_dispatch:
+```
+
+```yaml
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+timezone: Europe/Berlin
+schedule: ["after 10pm and before 5am every weekday", "every weekend"] # outside office hours
+rules:
+  - updateTypes: [major]
+    schedule: ["before 6am on monday"]
+```
+
+A schedule may mix triggers and windows; the group is in schedule when any entry matches. To check a config, `deps run --dry-run --schedule-time 2026-11-09T05:30:00+01:00` evaluates the windows at that time (`DEPS_SCHEDULE_TIME` does the same); `deps explain <dep>` prints the schedule with its time zone.
 
 ## Run on push to the default branch
 
@@ -509,7 +534,7 @@ The example workflows also run on `push` to the default branch (`main` in the ex
 - **Config changes.** A pushed `.deps.yaml` takes effect immediately: PRs that a new `ignore` rule or `allow` constraint makes obsolete are closed, and changed groups are rebuilt.
 - **Manual dependency bumps.** If someone updates a dependency by hand, the matching deps PR is closed as obsolete instead of staying open until the next cron.
 
-**What a push run does.** A `push` run is outside every [schedule](#schedules):
+**What a push run does.** A `push` run is outside every cron trigger of a [schedule](#schedules) (a [time window](#time-windows) still applies by the clock):
 
 | Group | Push run |
 |---|---|
@@ -518,7 +543,7 @@ The example workflows also run on `push` to the default branch (`main` in the ex
 | With a `schedule`, no PR yet | `skipped: outside schedule`; waits for its cron |
 | Security update | created regardless of schedules |
 
-So merges never open weekly groups early. `workflow_dispatch` (and `repository_dispatch`) is different: a manual run acts on every group. Every other event is a maintenance run like `push`, which makes the triggers below safe to add.
+So merges never open weekly groups early. `workflow_dispatch` (and `repository_dispatch`) is different: a manual run matches every cron trigger, so it acts on every group except those scheduled only by time windows outside the run time. Every other event is a maintenance run like `push`, which makes the triggers below safe to add.
 
 **Notes.**
 

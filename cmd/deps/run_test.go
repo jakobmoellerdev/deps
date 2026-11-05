@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -332,10 +333,10 @@ func TestRunBranchAutomerge(t *testing.T) {
 func TestDetectTrigger(t *testing.T) {
 	env := func(kv map[string]string) func(string) string { return func(k string) string { return kv[k] } }
 	tests := []struct {
-		name, flag string
-		env        map[string]string
-		want       schedule.Trigger
-		wantErr    string
+		name, flag, at string
+		env            map[string]string
+		want           schedule.Trigger
+		wantErr        string
 	}{
 		{name: "flag", flag: "0 0 * * 0", env: map[string]string{"DEPS_TRIGGER_SCHEDULE": "0 5 * * *", "GITHUB_EVENT_NAME": "push"}, want: schedule.Trigger{Event: "schedule", Cron: "0 0 * * 0"}},
 		{name: "env", env: map[string]string{"DEPS_TRIGGER_SCHEDULE": "0  5 * * *", "GITHUB_EVENT_NAME": "push"}, want: schedule.Trigger{Event: "schedule", Cron: "0 5 * * *"}},
@@ -343,9 +344,15 @@ func TestDetectTrigger(t *testing.T) {
 		{name: "unreadable payload warns", env: map[string]string{"GITHUB_EVENT_NAME": "schedule", "GITHUB_EVENT_PATH": "/nonexistent"}, want: schedule.Trigger{Event: "schedule"}},
 		{name: "invalid flag", flag: "0 5 * *", wantErr: `--trigger-schedule: "0 5 * *": want 5 fields, got 4`},
 		{name: "invalid env", env: map[string]string{"DEPS_TRIGGER_SCHEDULE": "x"}, wantErr: `DEPS_TRIGGER_SCHEDULE: "x": want 5 fields, got 1`},
+		{name: "window is no trigger", flag: "before 6am", wantErr: `--trigger-schedule: "before 6am": want 5 fields, got 2`},
+		{name: "time flag", at: "2026-11-09T05:30:00+01:00", env: map[string]string{"DEPS_SCHEDULE_TIME": "2026-01-01T00:00:00Z"}, want: schedule.Trigger{Time: time.Date(2026, 11, 9, 4, 30, 0, 0, time.UTC)}},
+		{name: "time env", env: map[string]string{"DEPS_SCHEDULE_TIME": "2026-01-01T00:00:00Z"}, want: schedule.Trigger{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}},
+		{name: "invalid time flag", at: "monday", wantErr: `--schedule-time: "monday": want an RFC 3339 time like 2026-11-09T05:30:00Z`},
+		{name: "invalid time env", env: map[string]string{"DEPS_SCHEDULE_TIME": "2026-11-09"}, wantErr: `DEPS_SCHEDULE_TIME: "2026-11-09": want an RFC 3339 time like 2026-11-09T05:30:00Z`},
 	}
 	for _, tt := range tests {
-		got, err := detectTrigger(t.Context(), tt.flag, env(tt.env))
+		before := time.Now()
+		got, err := detectTrigger(t.Context(), tt.flag, tt.at, env(tt.env))
 		var ue *usageError
 		if tt.wantErr != "" {
 			if !errors.As(err, &ue) || err.Error() != tt.wantErr {
@@ -353,7 +360,13 @@ func TestDetectTrigger(t *testing.T) {
 			}
 			continue
 		}
-		if err != nil || got != tt.want {
+		if tt.want.Time.IsZero() {
+			if got.Time.Before(before) || got.Time.After(time.Now()) {
+				t.Errorf("%s: time %v is not now", tt.name, got.Time)
+			}
+			got.Time = time.Time{}
+		}
+		if err != nil || got.Event != tt.want.Event || got.Cron != tt.want.Cron || !got.Time.Equal(tt.want.Time) {
 			t.Errorf("%s: got %+v, %v; want %+v", tt.name, got, err, tt.want)
 		}
 	}
