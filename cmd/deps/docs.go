@@ -1,11 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
@@ -33,27 +34,28 @@ import (
 
 // newDocs is the hidden maintainer command behind `task docs`: it regenerates the reference
 // documentation and the committed schema.
-func newDocs() *cobra.Command {
+func newDocs() *cli.Command {
 	var out, schemaPath, actionPath string
-	cmd := &cobra.Command{
-		Use:    "docs",
-		Short:  "Generate the reference documentation and deps.schema.json",
-		Hidden: true,
-		Args:   noArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return writeDocs(out, schemaPath, actionPath)
+	return &cli.Command{
+		Name:         "docs",
+		Usage:        "Generate the reference documentation and deps.schema.json",
+		Hidden:       true,
+		ArgValidator: noArgs,
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			return writeDocs(cmd.Root(), out, schemaPath, actionPath)
+		},
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "out", Value: "docs/reference", Destination: &out, Usage: "directory of the generated markdown files"},
+			&cli.StringFlag{Name: "schema", Value: "deps.schema.json", Destination: &schemaPath, Usage: "path of the generated JSON Schema"},
+			&cli.StringFlag{Name: "action", Value: "action.yml", Destination: &actionPath, Usage: "action.yml to document"},
 		},
 	}
-	f := cmd.Flags()
-	f.StringVar(&out, "out", "docs/reference", "directory of the generated markdown files")
-	f.StringVar(&schemaPath, "schema", "deps.schema.json", "path of the generated JSON Schema")
-	f.StringVar(&actionPath, "action", "action.yml", "action.yml to document")
-	return cmd
 }
 
 // writeDocs writes configuration.md, cli.md, action.md and managers.md to out and the schema
-// to schemaPath.
-func writeDocs(out, schemaPath, actionPath string) error {
+// to schemaPath. root is the running command tree: it has the built-in completion command,
+// which urfave/cli adds at run time.
+func writeDocs(root *cli.Command, out, schemaPath, actionPath string) error {
 	schema, err := configSchema()
 	if err != nil {
 		return err
@@ -66,9 +68,7 @@ func writeDocs(out, schemaPath, actionPath string) error {
 	if err != nil {
 		return fmt.Errorf("configuration.md: %w", err)
 	}
-	root := newRoot()
-	root.InitDefaultCompletionCmd()
-	cli, err := docgen.CLI(root)
+	cliRef, err := docgen.CLI(root)
 	if err != nil {
 		return fmt.Errorf("cli.md: %w", err)
 	}
@@ -90,7 +90,7 @@ func writeDocs(out, schemaPath, actionPath string) error {
 	files := map[string][]byte{
 		schemaPath:                             schema,
 		filepath.Join(out, "configuration.md"): cfg,
-		filepath.Join(out, "cli.md"):           cli,
+		filepath.Join(out, "cli.md"):           cliRef,
 		filepath.Join(out, "action.md"):        action,
 		filepath.Join(out, "managers.md"):      managers,
 	}

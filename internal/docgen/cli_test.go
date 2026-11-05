@@ -1,33 +1,38 @@
 package docgen
 
 import (
+	"context"
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 )
 
-func fakeTree() *cobra.Command {
-	run := func(*cobra.Command, []string) {}
-	root := &cobra.Command{Use: "tool", Short: "Do things to <files>", Long: "Long **markdown** text."}
-	root.PersistentFlags().String("dir", ".", "directory to scan")
-	root.PersistentFlags().BoolP("verbose", "v", false, "print more")
-	root.PersistentFlags().String("secret", "", "hidden flag")
-	_ = root.PersistentFlags().MarkHidden("secret")
-
-	build := &cobra.Command{Use: "build <target>...", Short: "Build targets", Long: "Builds `<target>`.", Example: "  tool build a\n    tool build b c", Run: run}
-	build.Flags().Int("jobs", 4, "parallel jobs; '0' means one per CPU")
-	build.Flags().String("mode", "fast", "mode: fast|slow")
-	build.Flags().Bool("old", false, "deprecated flag")
-	_ = build.Flags().MarkDeprecated("old", "use --mode")
-
-	cache := &cobra.Command{Use: "cache", Short: "Manage the cache"}
-	cache.AddCommand(&cobra.Command{Use: "clear", Short: "Clear the cache", Run: run})
-
-	hidden := &cobra.Command{Use: "internal", Short: "Internal", Hidden: true, Run: run}
-	topic := &cobra.Command{Use: "exit-codes", Short: "Exit codes", Long: "| Code | When |\n|---|---|\n| `0` | ok |"}
-	root.AddCommand(build, cache, hidden, topic)
-	return root
+func fakeTree() *cli.Command {
+	run := func(context.Context, *cli.Command) error { return nil }
+	build := &cli.Command{
+		Name: "build", ArgsUsage: "<target>...", Usage: "Build targets", Description: "Builds `<target>`.", Action: run,
+		Metadata: map[string]any{MetaExample: "  tool build a\n    tool build b c"},
+		Flags: []cli.Flag{
+			&cli.IntFlag{Name: "jobs", Value: 4, Usage: "parallel jobs; '0' means one per CPU"},
+			&cli.StringFlag{Name: "mode", Value: "fast", Usage: "mode: fast|slow"},
+			&cli.BoolFlag{Name: "old", Usage: "deprecated flag", Deprecated: "use --mode"},
+		},
+	}
+	cache := &cli.Command{Name: "cache", Usage: "Manage the cache", Commands: []*cli.Command{{Name: "clear", Usage: "Clear the cache", Action: run}}}
+	hidden := &cli.Command{Name: "internal", Usage: "Internal", Hidden: true, Action: run}
+	topic := &cli.Command{Name: "exit-codes", Usage: "Exit codes", Description: "| Code | When |\n|---|---|\n| `0` | ok |", Metadata: map[string]any{MetaTopic: true}}
+	help := &cli.Command{Name: "help", Usage: "Help", Action: run}
+	return &cli.Command{
+		Name: "tool", Usage: "Do things to <files>", Description: "Long **markdown** text.",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "dir", Value: ".", Usage: "directory to scan"},
+			&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "print more"},
+			&cli.StringFlag{Name: "secret", Usage: "hidden flag", Hidden: true},
+			&cli.BoolFlag{Name: "help", Aliases: []string{"h"}, Usage: "show help"},
+		},
+		Commands: []*cli.Command{topic, hidden, cache, build, help},
+	}
 }
 
 func TestCLI(t *testing.T) {
@@ -54,7 +59,7 @@ func TestCLI(t *testing.T) {
 			t.Errorf("output lacks\n%s\n--- output:\n%s", want, out)
 		}
 	}
-	for _, absent := range []string{"internal", "secret", "--old", "## help"} {
+	for _, absent := range []string{"internal", "secret", "--old", "## help", "--help"} {
 		if strings.Contains(out, absent) {
 			t.Errorf("output contains hidden/deprecated %q", absent)
 		}

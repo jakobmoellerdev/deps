@@ -117,18 +117,12 @@ To load completions for every new session, execute once:
 
 You will need to start a new shell for this setup to take effect.
 
-### deps completion bash flags
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--no-descriptions` | bool | `false` | disable completion descriptions |
-
 ## deps completion fish
 
 Generate the autocompletion script for fish.
 
 ```
-deps completion fish [flags]
+deps completion fish
 ```
 
 Generate the autocompletion script for the fish shell.
@@ -143,41 +137,33 @@ To load completions for every new session, execute once:
 
 You will need to start a new shell for this setup to take effect.
 
-### deps completion fish flags
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--no-descriptions` | bool | `false` | disable completion descriptions |
-
 ## deps completion powershell
 
 Generate the autocompletion script for powershell.
 
 ```
-deps completion powershell [flags]
+deps completion powershell
 ```
 
 Generate the autocompletion script for powershell.
 
-To load completions in your current shell session:
+The script registers the completer for the command named like the script file, so save it
+as deps.ps1:
 
-	deps completion powershell | Out-String | Invoke-Expression
+	deps completion powershell > deps.ps1
 
-To load completions for every new session, add the output of the above command
-to your powershell profile.
+To load completions in your current shell session, run it:
 
-### deps completion powershell flags
+	. ./deps.ps1
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--no-descriptions` | bool | `false` | disable completion descriptions |
+To load completions for every new session, run it from your powershell profile.
 
 ## deps completion zsh
 
 Generate the autocompletion script for zsh.
 
 ```
-deps completion zsh [flags]
+deps completion zsh
 ```
 
 Generate the autocompletion script for the zsh shell.
@@ -202,12 +188,6 @@ To load completions for every new session, execute once:
 	deps completion zsh > $(brew --prefix)/share/zsh/site-functions/_deps
 
 You will need to start a new shell for this setup to take effect.
-
-### deps completion zsh flags
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--no-descriptions` | bool | `false` | disable completion descriptions |
 
 ## deps explain
 

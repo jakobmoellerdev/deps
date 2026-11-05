@@ -1,5 +1,5 @@
 // Package docgen renders the generated reference documentation (docs/reference): the
-// configuration reference from the JSON Schema, the CLI reference from the cobra command tree,
+// configuration reference from the JSON Schema, the CLI reference from the urfave/cli command tree,
 // the action reference from action.yml, and the managers and datasources reference from the
 // refdoc facts next to their implementations. Output is deterministic.
 package docgen

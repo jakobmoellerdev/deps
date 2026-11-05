@@ -32,7 +32,7 @@ var activeProfiler *profiler
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := newRoot().ExecuteContext(ctx)
+	err := newRoot().Run(ctx, os.Args)
 	stop()
 	if activeProfiler != nil {
 		if perr := activeProfiler.stop(); perr != nil {

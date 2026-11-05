@@ -195,3 +195,51 @@ func TestHelpTopics(t *testing.T) {
 		t.Errorf("run help:\n%s", stdout)
 	}
 }
+
+// Help keeps its layout: usage, examples, local flags with -h and the inherited global flags.
+func TestHelpLayout(t *testing.T) {
+	cleanEnv(t) // a CI runner's GITHUB_ACTIONS adds an ::error annotation to the unknown-command stderr
+	for _, args := range [][]string{{"explain", "--help"}, {"help", "explain"}, {"explain", "-h"}} {
+		stdout, _, code := execute(t, args...)
+		for _, want := range []string{
+			"\n\nUsage:\n  deps explain <name-glob>... [flags]\n\nExamples:\n  deps explain 'actions/*'\n",
+			"\n\nFlags:\n  -h, --help   help for explain\n\nGlobal Flags:\n",
+			"\n      --dir string          repository directory to scan (default \".\")\n",
+			"\n  -v, --verbose             also print skipped dependencies (skip lines)\n",
+		} {
+			if code != 0 || !strings.Contains(stdout, want) {
+				t.Errorf("%v: exit %d, lacks %q:\n%s", args, code, want, stdout)
+			}
+		}
+	}
+	stdout, _, code := execute(t, "help", "nope")
+	if code != 0 || !strings.HasPrefix(stdout, "Unknown help topic [`nope`]\n") {
+		t.Errorf("help nope: exit %d\n%s", code, stdout)
+	}
+	if _, stderr, code := execute(t, "nope"); code != 1 || stderr != "deps: unknown command \"nope\" for \"deps\"\n" {
+		t.Errorf("unknown command: exit %d %q", code, stderr)
+	}
+}
+
+// packaging/common.sh installs the output of `deps completion <shell>`.
+func TestCompletion(t *testing.T) {
+	for shell, want := range map[string]string{
+		"bash":       "complete -o bashdefault -o default -F __deps_bash_autocomplete deps\n",
+		"zsh":        "#compdef deps\n",
+		"fish":       "complete -c deps -f -a '(__deps_perform_completion)'\n",
+		"powershell": "Register-ArgumentCompleter",
+		"pwsh":       "Register-ArgumentCompleter",
+	} {
+		if stdout, stderr, code := execute(t, "completion", shell); code != 0 || !strings.Contains(stdout, want) {
+			t.Errorf("completion %s: exit %d, lacks %q\n%s%s", shell, code, want, stdout, stderr)
+		}
+	}
+	if stdout, _, _ := execute(t, "--help"); !strings.Contains(stdout, "\n  completion  Generate the autocompletion script for the specified shell\n") {
+		t.Errorf("root help lacks completion:\n%s", stdout)
+	}
+	// The scripts ask deps itself: flags of plan (and the global ones) starting with --co.
+	if stdout, _, _ := execute(t, "plan", "--co", "--generate-shell-completion"); !strings.HasPrefix(stdout, "--config:") ||
+		!strings.Contains(stdout, "\n--color:") || !strings.Contains(stdout, "\n--concurrency:") || strings.Contains(stdout, "--dir") {
+		t.Errorf("flag completion:\n%s", stdout)
+	}
+}

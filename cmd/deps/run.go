@@ -11,10 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/bot"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
@@ -32,36 +33,36 @@ type runOpts struct {
 	dryRun                              bool
 }
 
-func newRun(o *rootOpts) *cobra.Command {
+func newRun(o *rootOpts) *cli.Command {
 	r := &runOpts{}
-	cmd := &cobra.Command{
-		Use:   "run",
-		Short: "Push one branch and open or update one pull request per dependency or group",
-		Long:  helpText("run"),
-		Example: "  # what would happen, without a token and without writes\n" +
+	return &cli.Command{
+		Name:        "run",
+		Usage:       "Push one branch and open or update one pull request per dependency or group",
+		Description: helpText("run"),
+		Metadata: map[string]any{docgen.MetaExample: "  # what would happen, without a token and without writes\n" +
 			"  deps run --dry-run -v\n" +
 			"  # what the run triggered by the Sunday cron would do\n" +
 			"  deps run --dry-run --trigger-schedule '0 0 * * 0'\n" +
 			"  # in CI (the action runs this with DEPS_TOKEN set)\n" +
-			"  DEPS_TOKEN=$TOKEN deps run -v --log-level info",
-		Args: noArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runBot(cmd, o, r)
+			"  DEPS_TOKEN=$TOKEN deps run -v --log-level info"},
+		ArgValidator: noArgs,
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return runBot(ctx, cmd, o, r)
+		},
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "platform", Value: "auto", Destination: &r.platform, Usage: "forge type: auto|github|gitea|forgejo (auto: from the CI environment, else the origin remote)"},
+			&cli.StringFlag{Name: "api-url", Destination: &r.apiURL, Usage: "API base URL (default: detected)"},
+			&cli.StringFlag{Name: "repo", Destination: &r.repo, Usage: "repository owner/name (default: detected)"},
+			&cli.StringFlag{Name: "token", Destination: &r.token, Usage: "platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, git credential helper)"},
+			&cli.StringFlag{Name: "base", Destination: &r.base, Usage: "base branch (default: the repository's default branch)"},
+			&cli.StringFlag{Name: "author-name", Value: defaultAuthorName, Destination: &r.authorName, Usage: "commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)"},
+			&cli.StringFlag{Name: "author-email", Value: defaultAuthorEmail, Destination: &r.authorEmail, Usage: "commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)"},
+			&cli.IntFlag{Name: "max-new-prs", Value: 10, Destination: &r.maxNewPRs, Usage: "maximum number of pull requests to create per run (0 = unlimited)"},
+			&cli.BoolFlag{Name: "dry-run", Destination: &r.dryRun, Usage: "report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token"},
+			&cli.StringFlag{Name: "trigger-schedule", Destination: &r.triggerSchedule, Usage: "act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE)"},
+			&cli.StringFlag{Name: "signing-key", Destination: &r.signingKey, Usage: "sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (default: $DEPS_SIGNING_KEY)"},
 		},
 	}
-	f := cmd.Flags()
-	f.StringVar(&r.platform, "platform", "auto", "forge type: auto|github|gitea|forgejo (auto: from the CI environment, else the origin remote)")
-	f.StringVar(&r.apiURL, "api-url", "", "API base URL (default: detected)")
-	f.StringVar(&r.repo, "repo", "", "repository owner/name (default: detected)")
-	f.StringVar(&r.token, "token", "", "platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, git credential helper)")
-	f.StringVar(&r.base, "base", "", "base branch (default: the repository's default branch)")
-	f.StringVar(&r.authorName, "author-name", defaultAuthorName, "commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)")
-	f.StringVar(&r.authorEmail, "author-email", defaultAuthorEmail, "commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)")
-	f.IntVar(&r.maxNewPRs, "max-new-prs", 10, "maximum number of pull requests to create per run (0 = unlimited)")
-	f.BoolVar(&r.dryRun, "dry-run", false, "report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token")
-	f.StringVar(&r.triggerSchedule, "trigger-schedule", "", "act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE)")
-	f.StringVar(&r.signingKey, "signing-key", "", "sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (default: $DEPS_SIGNING_KEY)")
-	return cmd
 }
 
 const (
@@ -72,7 +73,7 @@ const (
 // commitAuthor resolves the commit author field by field: an explicitly set flag, then
 // env ($DEPS_GIT_AUTHOR), then cfg (gitAuthor), then the defaults. env and cfg are
 // 'Name <email>'.
-func commitAuthor(cmd *cobra.Command, r *runOpts, env, cfg string) (name, email string, err error) {
+func commitAuthor(cmd *cli.Command, r *runOpts, env, cfg string) (name, email string, err error) {
 	name, email = defaultAuthorName, defaultAuthorEmail
 	if cfg != "" {
 		a, err := config.ParseAuthor(cfg) // validated by config.Load
@@ -88,10 +89,10 @@ func commitAuthor(cmd *cobra.Command, r *runOpts, env, cfg string) (name, email 
 		}
 		name, email = a.Name, a.Email
 	}
-	if cmd.Flags().Changed("author-name") {
+	if cmd.IsSet("author-name") {
 		name = r.authorName
 	}
-	if cmd.Flags().Changed("author-email") {
+	if cmd.IsSet("author-email") {
 		email = r.authorEmail
 	}
 	return name, email, nil
@@ -206,10 +207,9 @@ func (g apiGit) BranchTip(ctx context.Context, branch string) (gitx.Tip, error) 
 	return gitx.Tip{Author: t.Author, Parents: t.Parents, Tree: t.Tree}, err
 }
 
-func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
+func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) error {
 	start := time.Now()
-	ctx := cmd.Context()
-	stderr := cmd.ErrOrStderr()
+	stderr := cmd.Root().ErrWriter
 	switch r.platform {
 	case "auto", "github", "gitea", "forgejo":
 	default:

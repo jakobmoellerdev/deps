@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -11,31 +12,33 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
-func newPreview(o *rootOpts) *cobra.Command {
+func newPreview(o *rootOpts) *cli.Command {
 	var base string
-	cmd := &cobra.Command{
-		Use:   "preview",
-		Short: "Compare the PRs a pull request's checkout would get with those of the base branch",
-		Long:  helpText("preview"),
-		Example: "  # in a pull_request job with the PR checked out in pr/ and the base branch in base/\n" +
-			"  deps preview --dir pr --base-dir base",
-		Args: noArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+	return &cli.Command{
+		Name:        "preview",
+		Usage:       "Compare the PRs a pull request's checkout would get with those of the base branch",
+		Description: helpText("preview"),
+		Metadata: map[string]any{docgen.MetaExample: "  # in a pull_request job with the PR checked out in pr/ and the base branch in base/\n" +
+			"  deps preview --dir pr --base-dir base"},
+		ArgValidator: noArgs,
+		Action: func(ctx context.Context, cmd *cli.Command) error {
 			if base == "" {
 				return &usageError{errors.New("--base-dir is required")}
 			}
-			return preview(cmd, o, base)
+			return preview(ctx, cmd, o, base)
+		},
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "base-dir", Destination: &base, Usage: "checkout of the base branch to compare with (required)"},
 		},
 	}
-	cmd.Flags().StringVar(&base, "base-dir", "", "checkout of the base branch to compare with (required)")
-	return cmd
 }
 
 // previewPR is one PR of either side, keyed by branch.
@@ -175,10 +178,9 @@ func truncateMarkdown(md string, limit int) string {
 	return md[:cut] + note
 }
 
-func preview(cmd *cobra.Command, o *rootOpts, baseDir string) error {
+func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string) error {
 	start := time.Now()
-	ctx := cmd.Context()
-	stderr := cmd.ErrOrStderr()
+	stderr := cmd.Root().ErrWriter
 	info, _ := platform.FromEnv(os.Getenv)
 	token := envToken()
 	client := newHTTPClient()

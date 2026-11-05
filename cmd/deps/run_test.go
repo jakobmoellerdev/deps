@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
@@ -116,7 +116,7 @@ func TestCommitAuthorPrecedence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := newRun(&rootOpts{})
 			for k, v := range tc.flags {
-				if err := cmd.Flags().Set(k, v); err != nil {
+				if err := cmd.Set(k, v); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -132,11 +132,9 @@ func TestCommitAuthorPrecedence(t *testing.T) {
 }
 
 // flagOpts reads the author flag values back from cmd.
-func flagOpts(t *testing.T, cmd *cobra.Command) *runOpts {
+func flagOpts(t *testing.T, cmd *cli.Command) *runOpts {
 	t.Helper()
-	n, _ := cmd.Flags().GetString("author-name")
-	e, _ := cmd.Flags().GetString("author-email")
-	return &runOpts{authorName: n, authorEmail: e}
+	return &runOpts{authorName: cmd.String("author-name"), authorEmail: cmd.String("author-email")}
 }
 
 // gitAuthor in .deps.yaml sets the commit author and committer of pushed branches.

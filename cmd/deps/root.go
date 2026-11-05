@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
@@ -52,73 +52,104 @@ type rootOpts struct {
 	report      string // --report: JSON result file of plan, apply and run
 }
 
-func newRoot() *cobra.Command {
+func newRoot() *cli.Command {
 	o := &rootOpts{}
-	root := &cobra.Command{
-		Use:           "deps",
-		Short:         "Update GitHub/Gitea/Forgejo Actions, Go module, container image, npm and Cargo dependencies",
-		Long:          helpText("root"),
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+	root := &cli.Command{
+		Name:                            "deps",
+		Usage:                           "Update GitHub/Gitea/Forgejo Actions, Go module, container image, npm and Cargo dependencies",
+		Description:                     helpText("root"),
+		HideVersion:                     true,
+		EnableShellCompletion:           true,
+		ConfigureShellCompletionCommand: configureCompletion,
+		// Errors are printed and mapped to exit codes by main (exitCode), never by urfave/cli.
+		ExitErrHandler: func(context.Context, *cli.Command, error) {},
+		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			// Environment defaults apply here, not as flag defaults, so help and the generated
 			// reference show the same defaults everywhere.
 			envDefault(cmd, "log-level", "DEPS_LOG_LEVEL", &o.log.level)
 			// A re-run with debug logging (RUNNER_DEBUG=1) gets deps' debug records too.
-			if os.Getenv("RUNNER_DEBUG") == "1" && os.Getenv("DEPS_LOG_LEVEL") == "" && !cmd.Flags().Changed("log-level") {
+			if os.Getenv("RUNNER_DEBUG") == "1" && os.Getenv("DEPS_LOG_LEVEL") == "" && !cmd.IsSet("log-level") {
 				o.log.level = "debug"
 			}
 			envDefault(cmd, "log-format", "DEPS_LOG_FORMAT", &o.log.format)
 			envDefault(cmd, "report", "DEPS_REPORT", &o.report)
 			// All of stderr goes through one Writer, so records and result lines never
-			// interleave and a status line can redraw around them.
-			stderr := cmd.ErrOrStderr()
+			// interleave and a status line can redraw around them. Commands write to the
+			// root's ErrWriter.
+			stderr := cmd.ErrWriter
 			tty := logx.IsTerminal(stderr)
 			w := logx.NewWriter(stderr)
-			cmd.SetErr(w)
+			cmd.ErrWriter = w
 			o.stderr, o.rawStderr = w, stderr
 			actionsLog = newAnnotator(os.Getenv, w, o.dir)
 			t, err := setupLogger(o.log, w, tty, os.Getenv)
 			if err != nil {
-				return err
+				return ctx, err
 			}
 			o.term = t
 			if o.concurrency < 1 {
-				return &usageError{fmt.Errorf("--concurrency: must be at least 1, got %d", o.concurrency)}
+				return ctx, &usageError{fmt.Errorf("--concurrency: must be at least 1, got %d", o.concurrency)}
 			}
 			activeProfiler = &o.prof
-			return o.prof.start()
+			return ctx, o.prof.start()
 		},
+		// Without a command: help, as `deps help`; an unknown command is an error.
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			if cmd.Args().Present() {
+				return fmt.Errorf("unknown command %q for %q", cmd.Args().First(), cmd.Name)
+			}
+			return cli.ShowRootCommandHelp(cmd)
+		},
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "dir", Value: ".", Destination: &o.dir, Usage: "repository directory to scan"},
+			&cli.StringFlag{Name: "config", Destination: &o.config, Usage: "config file, which must exist (default: <dir>/.deps.yaml, then .deps.yml, else built-in defaults)"},
+			&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Destination: &o.verbose, Usage: "also print skipped dependencies (skip lines)"},
+			&cli.StringFlag{Name: "log-level", Value: "warn", Destination: &o.log.level, Usage: "log level: debug, info, warn, error; $DEPS_LOG_LEVEL, then $RUNNER_DEBUG=1 (debug) replace the default"},
+			&cli.StringFlag{Name: "log-format", Value: "auto", Destination: &o.log.format, Usage: "log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups); $DEPS_LOG_FORMAT replaces the default"},
+			&cli.StringFlag{Name: "color", Value: "auto", Destination: &o.log.color, Usage: "color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never"},
+			&cli.IntFlag{Name: "concurrency", Value: 32, Destination: &o.concurrency, Usage: "maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1"},
+			&cli.StringFlag{Name: "report", Destination: &o.report, Usage: "plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT)"},
+			&cli.StringFlag{Name: "cpuprofile", Hidden: true, Destination: &o.prof.cpu, Usage: "write a CPU profile to this file"},
+			&cli.StringFlag{Name: "memprofile", Hidden: true, Destination: &o.prof.mem, Usage: "write an allocation profile to this file on exit"},
+		},
+		Commands: append([]*cli.Command{newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newPreview(o), newSubmit(o), newSchema(), newDocs(), newHelp()},
+			newHelpTopics()...),
 	}
-	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err} })
-	pf := root.PersistentFlags()
-	pf.StringVar(&o.dir, "dir", ".", "repository directory to scan")
-	pf.StringVar(&o.config, "config", "", "config file, which must exist (default: <dir>/.deps.yaml, then .deps.yml, else built-in defaults)")
-	pf.BoolVarP(&o.verbose, "verbose", "v", false, "also print skipped dependencies (skip lines)")
-	pf.StringVar(&o.log.level, "log-level", "warn", "log level: debug, info, warn, error; $DEPS_LOG_LEVEL, then $RUNNER_DEBUG=1 (debug) replace the default")
-	pf.StringVar(&o.log.format, "log-format", "auto", "log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups); $DEPS_LOG_FORMAT replaces the default")
-	pf.StringVar(&o.log.color, "color", "auto", "color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never")
-	pf.IntVar(&o.concurrency, "concurrency", 32, "maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1")
-	pf.StringVar(&o.report, "report", "", "plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT)")
-	pf.StringVar(&o.prof.cpu, "cpuprofile", "", "write a CPU profile to this file")
-	pf.StringVar(&o.prof.mem, "memprofile", "", "write an allocation profile to this file on exit")
-	_ = pf.MarkHidden("cpuprofile")
-	_ = pf.MarkHidden("memprofile")
-	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newPreview(o), newSubmit(o), newSchema(), newDocs())
-	root.AddCommand(newHelpTopics()...)
+	_ = root.Walk(func(c *cli.Command) error {
+		c.OnUsageError = flagError
+		if len(c.Commands) == 0 {
+			// `deps plan help` is not help for plan; leaf commands take no subcommands.
+			c.HideHelpCommand = true
+		}
+		return nil
+	})
 	return root
 }
 
+// flagError makes flag parsing errors usage errors (exit code 2), naming unknown flags as
+// they were given.
+func flagError(_ context.Context, _ *cli.Command, err error, _ bool) error {
+	if name, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: -"); ok {
+		dashes := "--"
+		if len(name) == 1 {
+			dashes = "-"
+		}
+		err = fmt.Errorf("unknown flag: %s%s", dashes, name)
+	}
+	return &usageError{err}
+}
+
 // envDefault sets *dst from the environment variable env unless the flag was given.
-func envDefault(cmd *cobra.Command, flag, env string, dst *string) {
-	if v := os.Getenv(env); v != "" && !cmd.Flags().Changed(flag) {
+func envDefault(cmd *cli.Command, flag, env string, dst *string) {
+	if v := os.Getenv(env); v != "" && !cmd.IsSet(flag) {
 		*dst = v
 	}
 }
 
-func noArgs(_ *cobra.Command, args []string) error {
-	if len(args) > 0 {
-		return &usageError{fmt.Errorf("unexpected arguments: %v", args)}
+// noArgs is the cli.ArgValidatorFunc of commands without positional arguments.
+func noArgs(_ context.Context, cmd *cli.Command) error {
+	if cmd.Args().Present() {
+		return &usageError{fmt.Errorf("unexpected arguments: %v", cmd.Args().Slice())}
 	}
 	return nil
 }

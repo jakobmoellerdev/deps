@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -10,36 +11,37 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/depgraph"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
-func newSubmit(o *rootOpts) *cobra.Command {
+func newSubmit(o *rootOpts) *cli.Command {
 	var dryRun, all bool
-	cmd := &cobra.Command{
-		Use:   "submit",
-		Short: "Submit the dependencies to GitHub's dependency graph",
-		Long:  helpText("submit"),
-		Example: "  # in a GitHub Actions job with contents: write\n" +
+	return &cli.Command{
+		Name:        "submit",
+		Usage:       "Submit the dependencies to GitHub's dependency graph",
+		Description: helpText("submit"),
+		Metadata: map[string]any{docgen.MetaExample: "  # in a GitHub Actions job with contents: write\n" +
 			"  deps submit\n" +
 			"  # print the snapshot instead of submitting it\n" +
-			"  deps submit --dry-run > snapshot.json",
-		Args: noArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return submit(cmd, o, dryRun, all)
+			"  deps submit --dry-run > snapshot.json"},
+		ArgValidator: noArgs,
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return submit(ctx, cmd, o, dryRun, all)
+		},
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "dry-run", Destination: &dryRun, Usage: "print the snapshot JSON to stdout instead of submitting it; works outside GitHub Actions"},
+			&cli.BoolFlag{Name: "all-managers", Destination: &all, Usage: "also submit the manifests GitHub reads by itself (go.mod, package.json, Python, Cargo, pom.xml, workflows); a submitted manifest replaces GitHub's own view of that file"},
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the snapshot JSON to stdout instead of submitting it; works outside GitHub Actions")
-	cmd.Flags().BoolVar(&all, "all-managers", false, "also submit the manifests GitHub reads by itself (go.mod, package.json, Python, Cargo, pom.xml, workflows); a submitted manifest replaces GitHub's own view of that file")
-	return cmd
 }
 
-func submit(cmd *cobra.Command, o *rootOpts, dryRun, all bool) error {
-	ctx := cmd.Context()
-	stderr := cmd.ErrOrStderr()
+func submit(ctx context.Context, cmd *cli.Command, o *rootOpts, dryRun, all bool) error {
+	stderr := cmd.Root().ErrWriter
 	info, ok := platform.FromEnv(os.Getenv)
 	if !dryRun && (!ok || info.Kind != platform.GitHub) {
 		return &usageError{errors.New("submit runs in GitHub Actions (GITHUB_ACTIONS=true on a GitHub runner); use --dry-run elsewhere")}
@@ -77,7 +79,7 @@ func submit(cmd *cobra.Command, o *rootOpts, dryRun, all bool) error {
 		if err != nil {
 			return err
 		}
-		if _, err := cmd.OutOrStdout().Write(append(b, '\n')); err != nil {
+		if _, err := cmd.Root().Writer.Write(append(b, '\n')); err != nil {
 			return err
 		}
 	} else {

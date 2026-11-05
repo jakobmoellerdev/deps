@@ -1,9 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
@@ -13,15 +14,16 @@ var version = "dev"
 
 func init() { httpx.Version = version }
 
-func newVersion() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Print the deps version",
-		Long: "Prints the version set at build time with `-ldflags \"-X main.version=<v>\"` (`dev` otherwise). " +
+func newVersion() *cli.Command {
+	return &cli.Command{
+		Name:  "version",
+		Usage: "Print the deps version",
+		Description: "Prints the version set at build time with `-ldflags \"-X main.version=<v>\"` (`dev` otherwise). " +
 			"Release binaries print their tag, e.g. `v0.1.0`; the action prints it after download.",
-		Args: noArgs,
-		Run: func(cmd *cobra.Command, _ []string) {
-			fmt.Fprintln(cmd.OutOrStdout(), version)
+		ArgValidator: noArgs,
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			_, err := fmt.Fprintln(cmd.Root().Writer, version)
+			return err
 		},
 	}
 }

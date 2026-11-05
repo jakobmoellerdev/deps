@@ -9,10 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/diff"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
@@ -26,26 +27,25 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pytool"
 )
 
-func newPlan(o *rootOpts) *cobra.Command {
-	return &cobra.Command{
-		Use:   "plan",
-		Short: "Print the updates as a unified diff without writing files",
-		Long:  helpText("plan"),
-		Example: "  deps plan > deps.diff && git apply --check deps.diff\n" +
+func newPlan(o *rootOpts) *cli.Command {
+	return &cli.Command{
+		Name:        "plan",
+		Usage:       "Print the updates as a unified diff without writing files",
+		Description: helpText("plan"),
+		Metadata: map[string]any{docgen.MetaExample: "  deps plan > deps.diff && git apply --check deps.diff\n" +
 			"  deps plan -v --dir ../other-repo\n" +
-			"  deps plan --config ci/deps.yaml --log-level info",
-		Args: noArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return local(cmd, o, false)
+			"  deps plan --config ci/deps.yaml --log-level info"},
+		ArgValidator: noArgs,
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return local(ctx, cmd, o, false)
 		},
 	}
 }
 
 // local implements plan (write=false) and apply (write=true).
-func local(cmd *cobra.Command, o *rootOpts, write bool) error {
+func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error {
 	start := time.Now()
-	ctx := cmd.Context()
-	stderr := cmd.ErrOrStderr()
+	stderr := cmd.Root().ErrWriter
 	info, _ := platform.FromEnv(os.Getenv)
 	s, err := newSession(o, info, envToken(), newHTTPClient())
 	if err != nil {
@@ -81,7 +81,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 			}
 		}
 	} else {
-		out := cmd.OutOrStdout()
+		out := cmd.Root().Writer
 		for _, c := range changes {
 			if _, err := io.WriteString(out, diff.Unified("a/"+c.Path, "b/"+c.Path, string(c.Old), string(c.New))); err != nil {
 				return fmt.Errorf("write diff: %w", err)

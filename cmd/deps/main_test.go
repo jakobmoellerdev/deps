@@ -207,10 +207,8 @@ func execute(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	var out, errb bytes.Buffer
 	root := newRoot()
-	root.SetOut(&out)
-	root.SetErr(&errb)
-	root.SetArgs(args)
-	code = exitCode(root.ExecuteContext(t.Context()), &errb)
+	root.Writer, root.ErrWriter = &out, &errb
+	code = exitCode(root.Run(t.Context(), append([]string{"deps"}, args...)), &errb)
 	return out.String(), errb.String(), code
 }
 

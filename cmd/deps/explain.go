@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,10 +14,11 @@ import (
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
@@ -25,21 +27,23 @@ import (
 // maxExamples is the number of versions listed per rejection reason.
 const maxExamples = 3
 
-func newExplain(o *rootOpts) *cobra.Command {
-	return &cobra.Command{
-		Use:   "explain <name-glob>...",
-		Short: "Explain the rules, candidates and decision for each matching dependency",
-		Long:  helpText("explain"),
-		Example: "  deps explain 'actions/*'\n" +
-			"  deps explain 'k8s.io/**' github.com/spf13/cobra",
-		Args: globArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return explain(cmd, o, args)
+func newExplain(o *rootOpts) *cli.Command {
+	return &cli.Command{
+		Name:        "explain",
+		ArgsUsage:   "<name-glob>...",
+		Usage:       "Explain the rules, candidates and decision for each matching dependency",
+		Description: helpText("explain"),
+		Metadata: map[string]any{docgen.MetaExample: "  deps explain 'actions/*'\n" +
+			"  deps explain 'k8s.io/**' github.com/spf13/cobra"},
+		ArgValidator: globArgs,
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return explain(ctx, cmd, o, cmd.Args().Slice())
 		},
 	}
 }
 
-func globArgs(_ *cobra.Command, args []string) error {
+func globArgs(_ context.Context, cmd *cli.Command) error {
+	args := cmd.Args().Slice()
 	if len(args) == 0 {
 		return &usageError{errors.New("requires at least one name glob")}
 	}
@@ -51,8 +55,7 @@ func globArgs(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func explain(cmd *cobra.Command, o *rootOpts, globs []string) error {
-	ctx := cmd.Context()
+func explain(ctx context.Context, cmd *cli.Command, o *rootOpts, globs []string) error {
 	info, _ := platform.FromEnv(os.Getenv)
 	s, err := newSession(o, info, envToken(), newHTTPClient())
 	if err != nil {
@@ -87,10 +90,10 @@ func explain(cmd *cobra.Command, o *rootOpts, globs []string) error {
 		}
 		writeTrace(&out, s.cfg, t)
 	}
-	if _, err := cmd.OutOrStdout().Write(out.Bytes()); err != nil {
+	if _, err := cmd.Root().Writer.Write(out.Bytes()); err != nil {
 		return fmt.Errorf("write explanation: %w", err)
 	}
-	stderr := cmd.ErrOrStderr()
+	stderr := cmd.Root().ErrWriter
 	for _, e := range res.Errors {
 		reportError(stderr, o.term, e)
 	}

@@ -1,9 +1,12 @@
 package main
 
 import (
-	"github.com/spf13/cobra"
+	"context"
+
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gotool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jvmtool"
@@ -23,15 +26,15 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pytool"
 )
 
-func newApply(o *rootOpts) *cobra.Command {
-	return &cobra.Command{
-		Use:     "apply",
-		Short:   "Write the updates to the files, including go mod tidy, package-lock.json and Cargo.lock",
-		Long:    helpText("apply"),
-		Example: "  deps apply && git diff --stat",
-		Args:    noArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return local(cmd, o, true)
+func newApply(o *rootOpts) *cli.Command {
+	return &cli.Command{
+		Name:         "apply",
+		Usage:        "Write the updates to the files, including go mod tidy, package-lock.json and Cargo.lock",
+		Description:  helpText("apply"),
+		Metadata:     map[string]any{docgen.MetaExample: "  deps apply && git diff --stat"},
+		ArgValidator: noArgs,
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return local(ctx, cmd, o, true)
 		},
 	}
 }

@@ -10,15 +10,13 @@ require (
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/oras-project/oras-go/v3 v3.0.0
-	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.10
+	github.com/urfave/cli/v3 v3.14.0
 	go.yaml.in/yaml/v4 v4.0.0
 	golang.org/x/mod v0.42.0
 	golang.org/x/term v0.47.0
 )
 
 require (
-	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 )

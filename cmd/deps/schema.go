@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -9,31 +10,31 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/spf13/cobra"
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jsonschema"
 )
 
-func newSchema() *cobra.Command {
-	return &cobra.Command{
-		Use:   "schema",
-		Short: "Print the JSON Schema (draft 2020-12) of .deps.yaml",
-		Long: "Prints the JSON Schema of `.deps.yaml`, reflected from the config types, with every key's " +
+func newSchema() *cli.Command {
+	return &cli.Command{
+		Name:  "schema",
+		Usage: "Print the JSON Schema (draft 2020-12) of .deps.yaml",
+		Description: "Prints the JSON Schema of `.deps.yaml`, reflected from the config types, with every key's " +
 			"description (`markdownDescription` holds the long form editors show on hover). Unknown keys are " +
 			"rejected (`additionalProperties: false`), as in the loader. The repository's `deps.schema.json` is " +
 			"this output.",
-		Example: "  deps schema > deps.schema.json\n" +
+		Metadata: map[string]any{docgen.MetaExample: "  deps schema > deps.schema.json\n" +
 			"  # then start .deps.yaml with:\n" +
-			"  # yaml-language-server: $schema=./deps.schema.json",
-		Args: noArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+			"  # yaml-language-server: $schema=./deps.schema.json"},
+		ArgValidator: noArgs,
+		Action: func(_ context.Context, cmd *cli.Command) error {
 			b, err := configSchema()
 			if err != nil {
 				return err
 			}
-			if _, err := cmd.OutOrStdout().Write(b); err != nil {
+			if _, err := cmd.Root().Writer.Write(b); err != nil {
 				return fmt.Errorf("write schema: %w", err)
 			}
 			return nil
