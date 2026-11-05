@@ -4,7 +4,9 @@
 package tfregistry
 
 import (
+	"bytes"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -201,32 +203,137 @@ func (s *Source) fetchVersions(ctx context.Context, d dep.Dep, base string) (rel
 			"versions", len(rels), "duration", time.Since(start), "err", err)
 	}()
 	target := base + d.Name + "/versions"
-	var doc struct {
-		Versions []struct { // providers
-			Version string `json:"version"`
-		} `json:"versions"`
-		Modules []struct { // modules
-			Versions []struct {
-				Version string `json:"version"`
-			} `json:"versions"`
-		} `json:"modules"`
-	}
+	var doc versionList
 	notFound := fmt.Errorf("%s %s not found in %s", s.kind, d.Name, registryOf(d))
 	if err := s.r.getJSON(ctx, target, notFound, &doc); err != nil {
 		return nil, err
 	}
-	for _, v := range doc.Versions {
-		rels = append(rels, datasource.Release{Version: v.Version})
-	}
-	for _, m := range doc.Modules {
-		for _, v := range m.Versions {
-			rels = append(rels, datasource.Release{Version: v.Version})
-		}
-	}
-	if len(rels) == 0 {
+	if len(doc) == 0 {
 		return nil, notFound
 	}
-	return rels, nil
+	return doc, nil
+}
+
+// versionList decodes a provider (`versions[].version`) or module
+// (`modules[].versions[].version`) version list, skipping every other member (platforms,
+// protocols, submodules, ...) with ReadValue instead of unmarshalling into it.
+type versionList []datasource.Release
+
+func (l *versionList) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	ok, err := open(dec, '{')
+	for ok && err == nil && dec.PeekKind() != '}' {
+		var name []byte
+		if name, err = memberName(dec); err != nil {
+			break
+		}
+		switch string(name) {
+		case "versions": // providers
+			err = l.readVersions(dec)
+		case "modules":
+			err = l.readModules(dec)
+		default:
+			_, err = dec.ReadValue()
+		}
+	}
+	return closeValue(dec, ok, err)
+}
+
+// readModules appends the versions of each module of a `modules` array.
+func (l *versionList) readModules(dec *jsontext.Decoder) error {
+	ok, err := open(dec, '[')
+	for ok && err == nil && dec.PeekKind() != ']' {
+		var mod bool
+		mod, err = open(dec, '{')
+		for mod && err == nil && dec.PeekKind() != '}' {
+			var name []byte
+			if name, err = memberName(dec); err != nil {
+				break
+			}
+			if string(name) == "versions" {
+				err = l.readVersions(dec)
+			} else {
+				_, err = dec.ReadValue()
+			}
+		}
+		err = closeValue(dec, mod, err)
+	}
+	return closeValue(dec, ok, err)
+}
+
+// readVersions appends the `version` of each object of an array.
+func (l *versionList) readVersions(dec *jsontext.Decoder) error {
+	ok, err := open(dec, '[')
+	for ok && err == nil && dec.PeekKind() != ']' {
+		var obj bool
+		var version string
+		obj, err = open(dec, '{')
+		for obj && err == nil && dec.PeekKind() != '}' {
+			var name []byte
+			if name, err = memberName(dec); err != nil {
+				break
+			}
+			if string(name) == "version" {
+				version, err = readString(dec)
+			} else {
+				_, err = dec.ReadValue()
+			}
+		}
+		if err = closeValue(dec, obj, err); err == nil {
+			*l = append(*l, datasource.Release{Version: version})
+		}
+	}
+	return closeValue(dec, ok, err)
+}
+
+// open reads the start of an object or array (kind '{' or '['); it reports false for
+// null, which the struct unmarshal treated as empty.
+func open(dec *jsontext.Decoder, kind jsontext.Kind) (bool, error) {
+	tok, err := dec.ReadToken()
+	switch {
+	case err != nil:
+		return false, err
+	case tok.Kind() == 'n':
+		return false, nil
+	case tok.Kind() != kind:
+		return false, fmt.Errorf("unexpected %v, want %v", tok.Kind(), kind)
+	}
+	return true, nil
+}
+
+// closeValue reads the end of a value opened by open unless reading it failed.
+func closeValue(dec *jsontext.Decoder, opened bool, err error) error {
+	if !opened || err != nil {
+		return err
+	}
+	_, err = dec.ReadToken()
+	return err
+}
+
+// readString reads a string or null (as "") like the struct unmarshal of a string field.
+func readString(dec *jsontext.Decoder) (string, error) {
+	tok, err := dec.ReadToken()
+	switch {
+	case err != nil:
+		return "", err
+	case tok.Kind() == '"':
+		return tok.String(), nil
+	case tok.Kind() == 'n':
+		return "", nil
+	}
+	return "", fmt.Errorf("version: unexpected %v, want string", tok.Kind())
+}
+
+// memberName reads an object member name without allocating unless it is escaped; the
+// result is only valid until the next read.
+func memberName(dec *jsontext.Decoder) ([]byte, error) {
+	v, err := dec.ReadValue()
+	if err != nil {
+		return nil, err
+	}
+	if bytes.IndexByte(v, '\\') < 0 {
+		return v[1 : len(v)-1], nil
+	}
+	return jsontext.AppendUnquote(nil, v)
 }
 
 // fetchDoc reads `published_at` and `source` of a version document; a missing document is
