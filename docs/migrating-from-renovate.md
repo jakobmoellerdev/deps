@@ -10,9 +10,13 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `enabled: false` (package rule) | `rules[].ignore: true` |
 | `enabled: true` for disabled-by-default deps | `rules[].ignore: false` (indirect, `go` directive, peerDependencies, engines) |
 | `matchManagers` | `rules[].manager` (one per rule): `github-actions`, `gomod`, `docker` (covers `dockerfile`, `docker-compose`, `kubernetes`, `helm-values`), `npm`, `helm`, `cargo`, `pip_requirements`, `pep621`, `poetry`, `pipenv`, `maven`, `maven-wrapper`, `gradle`, `gradle-wrapper`, `custom` (covers `custom.regex`) |
-| `matchPackageNames`, `matchDepNames` | `rules[].names` (doublestar globs; `{/,}**` works as in Renovate) |
+| `matchPackageNames`, `matchDepNames` | `rules[].names` (doublestar globs; `{/,}**` works as in Renovate; `!pattern` excludes, a list of only exclusions matches every other name; `/regex/` entries are not supported) |
+| `excludePackageNames`, `excludePackagePrefixes` | `!` entries in `rules[].names` (`!name`, `!prefix**`) |
 | `matchDepTypes` | `rules[].depTypes` (deps names, see [managers](reference/managers.md); Renovate's `golang` = `go`) |
-| `matchFileNames` | `rules[].paths` |
+| `matchFileNames` | `rules[].paths` (`!pattern` excludes, as in `names`) |
+| `matchCurrentVersion` | `rules[].currentVersion`: a semver constraint (`< 2`) or `/regex/`, `!/regex/` against the locked version, else the current one; not combinable with `versioning` in the same rule |
+| `matchCurrentAge` | `rules[].currentAge` (`> 1 year`, `< 30 days`; a month is 30 days, a year 365): the release time of the current version, looked up only for deps the rule's other selectors match; unknown times match no rule |
+| `matchSourceUrls` | not supported: the source repository is only known after a per-dep (for docker: per-image config) lookup; match the packages with `names` instead |
 | `matchDatasources` | `rules[].datasources` (`golang-version`, `github-tags`, `github-release-attachments`, `node` accepted) |
 | `matchUpdateTypes` | `rules[].updateTypes`; `pinDigest` = `pin` |
 | `matchCategories` | not supported; use `manager`/`datasources` (`golang` ≈ `manager: gomod` plus `datasources: [golang-version]`) |

@@ -12,6 +12,61 @@ var ageRe = regexp.MustCompile(`^(\d+)\s*(m|mins?|minutes?|h|hours?|d|days?|w|we
 
 var ageUnits = map[byte]time.Duration{'m': time.Minute, 'h': time.Hour, 'd': 24 * time.Hour, 'w': 7 * 24 * time.Hour}
 
+// UnknownAge is the age of a current version whose release time is unknown: no currentAge
+// rule matches it.
+const UnknownAge time.Duration = -1
+
+// ageRangeRe splits a currentAge into its operator and age ("> 1 year", "<=30 days").
+var ageRangeRe = regexp.MustCompile(`^\s*(<=|>=|<|>)\s*(.+?)\s*$`)
+
+// longAgeRe matches the units only currentAge accepts: months (30 days) and years (365 days).
+var longAgeRe = regexp.MustCompile(`^(\d+)\s*(months?|years?|y)$`)
+
+// ageRange is a parsed currentAge (Renovate's matchCurrentAge): the age of the current
+// version compared with an operator, so "> 1 year" matches versions released over a year ago.
+type ageRange struct {
+	op  string
+	age time.Duration
+}
+
+// parseAgeRange parses a currentAge: an operator <, <=, > or >= and an age as for
+// minimumReleaseAge, or in months (30 days) or years (365 days).
+func parseAgeRange(s string) (*ageRange, error) {
+	m := ageRangeRe.FindStringSubmatch(s)
+	if m == nil {
+		return nil, fmt.Errorf(`invalid age range %q: want an operator <, <=, > or >= and an age, e.g. "> 1 year" or "< 30 days"`, s)
+	}
+	if l := longAgeRe.FindStringSubmatch(m[2]); l != nil {
+		unit := 30 * 24 * time.Hour
+		if l[2][0] == 'y' {
+			unit = 365 * 24 * time.Hour
+		}
+		n, err := strconv.ParseInt(l[1], 10, 64)
+		if err != nil || n > int64(1<<63-1)/int64(unit) {
+			return nil, fmt.Errorf("age %q out of range", m[2])
+		}
+		return &ageRange{op: m[1], age: time.Duration(n) * unit}, nil
+	}
+	d, err := ParseAge(m[2])
+	if err != nil {
+		return nil, fmt.Errorf("invalid age range %q: %w", s, err)
+	}
+	return &ageRange{op: m[1], age: d}, nil
+}
+
+// matches reports whether age (>= 0) satisfies the range.
+func (a *ageRange) matches(age time.Duration) bool {
+	switch a.op {
+	case ">":
+		return age > a.age
+	case ">=":
+		return age >= a.age
+	case "<":
+		return age < a.age
+	}
+	return age <= a.age
+}
+
 // ParseAge parses a minimumReleaseAge: "<n> <unit>" with unit minutes, hours, days or weeks
 // (singular, plural or the first letter, optionally without the space), "0", or a Go
 // duration ("1h30m"). Negative ages are invalid.

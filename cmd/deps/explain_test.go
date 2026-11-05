@@ -208,6 +208,8 @@ func TestWriteTrace(t *testing.T) {
 		{MinimumReleaseAge: "28 days", MinimumReleaseAgeBehaviour: config.TimestampRequired},
 		{Allow: `/^\d+\.\d+$/`, Versioning: "loose", SeparateMultipleMajor: &yes},
 		{RangeStrategy: config.RangeUpdateLockfile},
+		{Names: []string{"x*", "!xy"}, CurrentVersion: "< 2", CurrentAge: "> 1 year", Group: "stale"},
+		{Paths: []string{"!test/**"}, CurrentAge: "< 30 days", Ignore: &yes},
 	}}
 	d := dep.Dep{Manager: "custom", DepType: "regex", Datasource: "docker", Versioning: "docker", File: "Dockerfile", Line: 1, Name: "golang", Version: "1.24-alpine"}
 	tests := []struct {
@@ -334,6 +336,42 @@ func TestWriteTrace(t *testing.T) {
   rejected  none
   result    update 1877.25 -> 1877.28 (minor)
   result    update 1877.25 -> 1878.1 (major, bucket v1878)
+`,
+		},
+		{
+			name: "current version selectors and a known age",
+			t: engine.Trace{
+				Dep:        dep.Dep{Name: "x", File: "f", Line: 5, Versioning: "semver", Version: "1.0.0"},
+				Rules:      []int{6},
+				Policy:     config.Policy{Pin: "keep", Updates: map[dep.UpdateType]bool{dep.Minor: true}, Group: "stale"},
+				AgeLookup:  true,
+				Released:   time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC),
+				Candidates: 1,
+			},
+			want: `x  f:5  (-, -, -, semver)
+  current   1.0.0
+  age       released 2024-03-01
+  rules     #6 names=[x* !xy] currentVersion=< 2 currentAge='> 1 year' group=stale
+  policy    pin=keep allow=- updates=minor group=stale schedule=always minAge=-
+  candidates 1
+  rejected  none
+  result    up to date
+`,
+		},
+		{
+			name: "unknown age, skipped by a currentAge rule",
+			t: engine.Trace{
+				Dep:       dep.Dep{Name: "y", File: "f", Line: 6, Version: "2.0.0", Skip: "ignored by rule #7"},
+				Rules:     []int{7},
+				Policy:    config.Policy{Pin: "keep", Updates: map[dep.UpdateType]bool{}, Ignore: true},
+				AgeLookup: true,
+			},
+			want: `y  f:6  (-, -, -, -)
+  current   2.0.0
+  age       unknown (currentAge rules do not match)
+  rules     #7 paths=[!test/**] currentAge='< 30 days' ignore=true
+  policy    pin=keep allow=- updates=- group=- schedule=always minAge=-
+  result    skipped: ignored by rule #7
 `,
 		},
 	}

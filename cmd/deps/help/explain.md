@@ -18,6 +18,7 @@ github.com/spf13/pflag  go.mod:28  (gomod, indirect, go, go)
 
 The header names the manager, dep type, datasource and versioning. The other lines in a block:
 
+- `age       released <date>` follows `current` when a `currentAge` rule needed the release time of the current version; `age       unknown (currentAge rules do not match)` when the datasource does not know it.
 - `builtin   monorepo <name> -> group "<name> monorepo"` appears for monorepo members.
 - `rules` lists the matching rules as `#<i> <fields>`, or `none` when no rule matched. Rules with `updateTypes` that applied to an update follow as `#<i> <fields> (applies to <type>)`.
 - `policy` is followed by one `<type>: <policy>` line per such type. `versioning=` is appended when a rule set it.

@@ -334,17 +334,21 @@ type Terraform struct {
 
 // Rule overrides the policy for matching deps.
 type Rule struct {
-	Manager       string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=helm,enum=kustomize,enum=pre-commit,enum=gitlabci,enum=nvm,enum=nodenv,enum=asdf,enum=mise,enum=cargo,enum=pip_requirements,enum=pep621,enum=poetry,enum=pipenv,enum=terraform,enum=terraform-version,enum=tflint-plugin,enum=terragrunt,enum=maven,enum=gradle,enum=gradle-wrapper,enum=maven-wrapper,enum=custom" jsonschema_description:"Only match deps of this manager."`
-	Names         []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates)."`
-	DepTypes      []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=chart,enum=helmfile,enum=k0s,enum=flux,enum=argocd,enum=image,enum=helmChart,enum=resource,enum=repository,enum=service,enum=include,enum=component,enum=node,enum=tool,enum=annotation,enum=regex,enum=dev-dependencies,enum=build-dependencies,enum=workspace.dependencies,enum=patch,enum=replace,enum=requirements,enum=project.dependencies,enum=project.optional-dependencies,enum=dependency-groups,enum=tool.uv.dev-dependencies,enum=tool.pdm.dev-dependencies,enum=group,enum=packages,enum=dev-packages,enum=category,enum=required_provider,enum=required_version,enum=module,enum=provider,enum=helm_release,enum=tfe_workspace,enum=docker_image,enum=docker_container,enum=docker_service,enum=docker_registry_image,enum=kubernetes_pod,enum=kubernetes_pod_v1,enum=kubernetes_deployment,enum=kubernetes_deployment_v1,enum=kubernetes_daemonset,enum=kubernetes_daemon_set_v1,enum=kubernetes_stateful_set,enum=kubernetes_stateful_set_v1,enum=kubernetes_job,enum=kubernetes_job_v1,enum=kubernetes_cron_job,enum=kubernetes_cron_job_v1,enum=kubernetes_replication_controller,enum=kubernetes_replication_controller_v1,enum=terraform-version,enum=opentofu-version,enum=plugin,enum=github,enum=gitTags,enum=terragrunt,enum=compile,enum=provided,enum=runtime,enum=test,enum=system,enum=import,enum=parent,enum=build,enum=wrapper,enum=maven" jsonschema_description:"Only match deps of these types."`
-	Paths         []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'."`
-	Datasources   []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=pypi,enum=terraform-provider,enum=terraform-module,enum=maven,enum=gradle-version,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource."`
-	UpdateTypes   []string `yaml:"updateTypes" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`
-	Ignore        *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types."`
-	Pin           string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
-	Allow         string   `yaml:"allow" jsonschema_description:"New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written."`
-	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=replace,enum=update-lockfile" jsonschema_description:"Range strategy for matching npm, cargo, Python and terraform deps and Gradle dynamic versions (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
-	Updates       []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
+	Manager     string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=helm,enum=kustomize,enum=pre-commit,enum=gitlabci,enum=nvm,enum=nodenv,enum=asdf,enum=mise,enum=cargo,enum=pip_requirements,enum=pep621,enum=poetry,enum=pipenv,enum=terraform,enum=terraform-version,enum=tflint-plugin,enum=terragrunt,enum=maven,enum=gradle,enum=gradle-wrapper,enum=maven-wrapper,enum=custom" jsonschema_description:"Only match deps of this manager."`
+	Names       []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates). An entry starting with '!' excludes the names its glob matches (Renovate's '!pattern'); a list of only exclusions matches every other name."`
+	DepTypes    []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=chart,enum=helmfile,enum=k0s,enum=flux,enum=argocd,enum=image,enum=helmChart,enum=resource,enum=repository,enum=service,enum=include,enum=component,enum=node,enum=tool,enum=annotation,enum=regex,enum=dev-dependencies,enum=build-dependencies,enum=workspace.dependencies,enum=patch,enum=replace,enum=requirements,enum=project.dependencies,enum=project.optional-dependencies,enum=dependency-groups,enum=tool.uv.dev-dependencies,enum=tool.pdm.dev-dependencies,enum=group,enum=packages,enum=dev-packages,enum=category,enum=required_provider,enum=required_version,enum=module,enum=provider,enum=helm_release,enum=tfe_workspace,enum=docker_image,enum=docker_container,enum=docker_service,enum=docker_registry_image,enum=kubernetes_pod,enum=kubernetes_pod_v1,enum=kubernetes_deployment,enum=kubernetes_deployment_v1,enum=kubernetes_daemonset,enum=kubernetes_daemon_set_v1,enum=kubernetes_stateful_set,enum=kubernetes_stateful_set_v1,enum=kubernetes_job,enum=kubernetes_job_v1,enum=kubernetes_cron_job,enum=kubernetes_cron_job_v1,enum=kubernetes_replication_controller,enum=kubernetes_replication_controller_v1,enum=terraform-version,enum=opentofu-version,enum=plugin,enum=github,enum=gitTags,enum=terragrunt,enum=compile,enum=provided,enum=runtime,enum=test,enum=system,enum=import,enum=parent,enum=build,enum=wrapper,enum=maven" jsonschema_description:"Only match deps of these types."`
+	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'. An entry starting with '!' excludes the files its glob matches; a list of only exclusions matches every other file."`
+	Datasources []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=pypi,enum=terraform-provider,enum=terraform-module,enum=maven,enum=gradle-version,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node) match their deps datasource."`
+	// CurrentVersion and CurrentAge match the dep's current version (Renovate's
+	// matchCurrentVersion and matchCurrentAge).
+	CurrentVersion string   `yaml:"currentVersion" jsonschema_description:"Only match deps whose current version (the locked one when a lockfile has it) satisfies this Masterminds semver constraint (e.g. '< 2', converted with the dep's versioning scheme), or matches the regex form '/<RE2>/' as written ('!/<RE2>/' excludes matches; flag i allowed). Cannot be combined with versioning."`
+	CurrentAge     string   `yaml:"currentAge" jsonschema_description:"Only match deps whose current version was released this long ago: an operator <, <=, > or >= and an age, e.g. '> 1 year' or '< 30 days' (units of minimumReleaseAge, plus months of 30 days and years of 365 days). The release time is looked up only for deps the other selectors of the rule match, from datasources with release times; an unknown time does not match. Cannot be combined with versioning or extractVersion."`
+	UpdateTypes    []string `yaml:"updateTypes" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`
+	Ignore         *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types."`
+	Pin            string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
+	Allow          string   `yaml:"allow" jsonschema_description:"New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written."`
+	RangeStrategy  string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=replace,enum=update-lockfile" jsonschema_description:"Range strategy for matching npm, cargo, Python and terraform deps and Gradle dynamic versions (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
+	Updates        []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
 	// Versioning overrides the dep's scheme before resolution, so it is a pre-policy field.
 	Versioning string `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|regex:.+)$" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`
 	// ExtractVersion replaces the dep's release-name mapping before resolution (pre-policy).
@@ -369,9 +373,11 @@ type Rule struct {
 	Reviewers                  []string `yaml:"reviewers" jsonschema_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
 	Assignees                  []string `yaml:"assignees" jsonschema_description:"Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates."`
 
-	allow    *Allowed
-	schedule *schedule.Set
-	minAge   *time.Duration // parsed MinimumReleaseAge; nil = not set
+	allow          *Allowed
+	currentVersion *Allowed  // parsed CurrentVersion; nil = not set
+	currentAge     *ageRange // parsed CurrentAge; nil = not set
+	schedule       *schedule.Set
+	minAge         *time.Duration // parsed MinimumReleaseAge; nil = not set
 }
 
 // Custom is a custom manager: annotation mode when Match is empty, regex mode otherwise.
@@ -712,24 +718,38 @@ func (c *Config) validateRule(i int, add addFunc) {
 	if r.Manager != "" && !slices.Contains(Managers, r.Manager) {
 		add(f+".manager", "must be one of %s, got %q", list(Managers), r.Manager)
 	}
-	for j, n := range r.Names {
-		if _, err := doublestar.Match(n, ""); err != nil {
-			add(fmt.Sprintf("%s.names[%d]", f, j), "invalid glob %q: %v", n, err)
-		}
-	}
+	validateMatchGlobs(f+".names", r.Names, add)
 	for j, t := range r.DepTypes {
 		if !slices.Contains(DepTypes, t) {
 			add(fmt.Sprintf("%s.depTypes[%d]", f, j), "must be one of %s, got %q", list(DepTypes), t)
 		}
 	}
-	for j, g := range r.Paths {
-		if _, err := doublestar.Match(g, ""); err != nil {
-			add(fmt.Sprintf("%s.paths[%d]", f, j), "invalid glob %q: %v", g, err)
-		}
-	}
+	validateMatchGlobs(f+".paths", r.Paths, add)
 	for j, ds := range r.Datasources {
 		if !c.KnownDatasource(ds) {
 			add(fmt.Sprintf("%s.datasources[%d]", f, j), "%s", unknownDatasource(ds))
+		}
+	}
+	r.currentVersion = nil
+	if r.CurrentVersion != "" {
+		if a, err := ParseAllowed(r.CurrentVersion); err != nil {
+			add(f+".currentVersion", "%v", err)
+		} else {
+			r.currentVersion = a
+		}
+		if r.Versioning != "" {
+			add(f+".currentVersion", "cannot be combined with versioning: the current version is compared under the scheme other rules decide")
+		}
+	}
+	r.currentAge = nil
+	if r.CurrentAge != "" {
+		if a, err := parseAgeRange(r.CurrentAge); err != nil {
+			add(f+".currentAge", "%v", err)
+		} else {
+			r.currentAge = a
+		}
+		if r.Versioning != "" || r.ExtractVersion != "" {
+			add(f+".currentAge", "cannot be combined with versioning or extractVersion: the release time is looked up after both are decided")
 		}
 	}
 	if r.UpdateTypes != nil && len(r.UpdateTypes) == 0 {
@@ -807,6 +827,21 @@ func (c *Config) validateRule(i int, add addFunc) {
 func validateAgeBehaviour(f, b string, add addFunc) {
 	if b != "" && !slices.Contains(MinimumReleaseAgeBehaviours, b) {
 		add(f+"minimumReleaseAgeBehaviour", "must be one of %s, got %q", list(MinimumReleaseAgeBehaviours), b)
+	}
+}
+
+// validateMatchGlobs checks the doublestar globs of a rule's names or paths (field), each
+// optionally negated with a leading '!'.
+func validateMatchGlobs(field string, globs []string, add addFunc) {
+	for j, g := range globs {
+		pat, neg := strings.CutPrefix(g, "!")
+		if neg && pat == "" {
+			add(fmt.Sprintf("%s[%d]", field, j), "invalid glob %q: missing pattern after !", g)
+			continue
+		}
+		if _, err := doublestar.Match(pat, ""); err != nil {
+			add(fmt.Sprintf("%s[%d]", field, j), "invalid glob %q: %v", g, err)
+		}
 	}
 }
 
