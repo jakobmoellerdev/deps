@@ -444,8 +444,8 @@ func (s *Source) fetchDoc(ctx context.Context, loc location, name string) (times
 
 // decodeDoc reads the top-level `time` (version -> timestamp) and `repository` (string or
 // {url}) of a packument. Every other member, notably the multi-megabyte `versions` and
-// `readme`, is skipped token by token without being held in memory; decoding stops as soon as
-// both members were seen.
+// `readme`, is skipped without being held in memory as a whole (see skipMembers); decoding
+// stops as soon as both members were seen.
 func decodeDoc(r io.Reader) (times map[string]string, repo string, err error) {
 	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true)) // see decodeVersions
 	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '{' {
@@ -482,12 +482,34 @@ func decodeDoc(r io.Reader) (times map[string]string, repo string, err error) {
 				return nil, "", err
 			}
 		default:
-			if err := dec.SkipValue(); err != nil {
+			if err := skipMembers(dec); err != nil {
 				return nil, "", err
 			}
 		}
 	}
 	return times, repo, nil
+}
+
+// skipMembers skips the next value. An object is skipped member by member with ReadValue,
+// which scans a value much faster than SkipValue's token-by-token walk while buffering only
+// one member (one version of `versions`) at a time.
+func skipMembers(dec *jsontext.Decoder) error {
+	if dec.PeekKind() != '{' {
+		return dec.SkipValue()
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return err
+	}
+	for dec.PeekKind() != '}' {
+		if _, err := dec.ReadToken(); err != nil {
+			return err
+		}
+		if _, err := dec.ReadValue(); err != nil {
+			return err
+		}
+	}
+	_, err := dec.ReadToken()
+	return err
 }
 
 // decodeTimes reads the `time` object; values other than strings (`unpublished` is an
@@ -520,8 +542,8 @@ func decodeTimes(dec *jsontext.Decoder) (map[string]string, error) {
 }
 
 // decodeVersions streams the metadata document and returns the versions that are not
-// deprecated and the top-level `modified` (zero when absent or not RFC 3339); only one version
-// object is buffered at a time.
+// deprecated and the top-level `modified` (zero when absent or not RFC 3339); only one member
+// of a version object is buffered at a time.
 // Duplicate-name checking is off: it keeps a name set per object, which made up over 90% of
 // the allocations on large packuments (typescript).
 func decodeVersions(r io.Reader) (rels []datasource.Release, deprecated int, modified time.Time, err error) {
@@ -564,13 +586,11 @@ func decodeVersions(r io.Reader) (rels []datasource.Release, deprecated int, mod
 				return nil, 0, time.Time{}, err
 			}
 			v := tok.String() // tokens are only valid until the next read
-			var meta struct {
-				Deprecated any `json:"deprecated"`
-			}
-			if err := json.UnmarshalDecode(dec, &meta); err != nil {
+			gone, err := versionDeprecated(dec)
+			if err != nil {
 				return nil, 0, time.Time{}, err
 			}
-			if isDeprecated(meta.Deprecated) {
+			if gone {
 				deprecated++
 				continue
 			}
@@ -584,6 +604,43 @@ func decodeVersions(r io.Reader) (rels []datasource.Release, deprecated int, mod
 		return nil, 0, time.Time{}, err
 	}
 	return rels, deprecated, modified, nil
+}
+
+// versionDeprecated reads one version object and reports whether its `deprecated` member marks
+// it deprecated. The other members are consumed with ReadValue: unlike unmarshaling into a
+// struct, which skips unknown members token by token, it scans a whole value at once.
+func versionDeprecated(dec *jsontext.Decoder) (bool, error) {
+	if dec.PeekKind() != '{' {
+		var meta struct {
+			Deprecated any `json:"deprecated"`
+		}
+		return false, json.UnmarshalDecode(dec, &meta) // null, or the unmarshal error
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return false, err
+	}
+	var deprecated *any // allocated only for versions that have the member
+	for dec.PeekKind() != '}' {
+		name, err := dec.ReadToken()
+		if err != nil {
+			return false, err
+		}
+		if name.String() == "deprecated" {
+			if deprecated == nil {
+				deprecated = new(any)
+			}
+			err = json.UnmarshalDecode(dec, deprecated)
+		} else {
+			_, err = dec.ReadValue()
+		}
+		if err != nil {
+			return false, err
+		}
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return false, err
+	}
+	return deprecated != nil && isDeprecated(*deprecated), nil
 }
 
 // isDeprecated reports whether a version's `deprecated` value marks it deprecated: a
