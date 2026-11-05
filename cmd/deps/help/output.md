@@ -14,6 +14,7 @@ note    .terraform.lock.hcl changes are computed by apply/run (plan, when a terr
 note    Gemfile.lock changes are computed by apply/run        (plan, when a bundler update exists)
 note    composer.lock changes are computed by apply/run       (plan, when a composer update exists)
 note    Manifest.toml changes are computed by apply/run       (plan, when a julia update exists)
+note    MODULE.bazel.lock changes are computed by apply/run   (plan, when a bazel-module update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```

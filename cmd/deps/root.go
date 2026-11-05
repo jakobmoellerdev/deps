@@ -16,6 +16,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/azuretasks"
+	bazelds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bazel"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
 	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
@@ -294,6 +295,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		elmpackage.Name:         elmpackage.New(client, sem, os.Getenv),
 		packagist.Name:          packagist.New(client, sem, os.Getenv),
 		juliaregistry.Name:      juliaregistry.New(client, sem, os.Getenv),
+		bazelds.Name:            bazelds.New(client, sem, auth, os.Getenv),
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err

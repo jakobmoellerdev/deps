@@ -50,13 +50,14 @@ type Candidate struct {
 }
 
 // Names are the versioning scheme names; "regex:<RE2>" schemes come on top (RegexPrefix).
-var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia"}
+var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia", "bazel-module"}
 
 // RegexPrefix starts a regex scheme name: "regex:" followed by an RE2 regexp with named groups.
 const RegexPrefix = "regex:"
 
 // Get returns the scheme registered under name ("tag", "go", "docker", "semver", "loose", "cargo",
-// "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia"), or the regex scheme of a valid "regex:<RE2>" name.
+// "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia", "bazel-module"), or the
+// regex scheme of a valid "regex:<RE2>" name.
 func Get(name string) (Scheme, bool) {
 	s, err := Parse(name)
 	return s, err == nil
@@ -94,19 +95,20 @@ func (e *UnknownError) Error() string {
 var regexSchemes sync.Map
 
 var schemes = map[string]Scheme{
-	"tag":       impl[Tag]{parse: ParseTag, compat: tagCompat, cmp: CompareTag, kind: TagKind, semver: Tag.Semver, major: Tag.major},
-	"go":        impl[goVersion]{parse: parseGo, compat: goCompat, cmp: compareGo, kind: goKind, semver: goVersion.semver, major: goVersion.majorNum},
-	"docker":    impl[dockerTag]{parse: parseDocker, compat: dockerCompat, cmp: compareDocker, kind: dockerKind, semver: dockerTag.semver, major: dockerTag.major},
-	"semver":    semverScheme{impl[semverVersion]{parse: parseSemver, compat: semverCompat, cmp: compareSemver, kind: semverKind, semver: semverVersion.semver, major: semverMajor}},
-	"loose":     impl[looseVersion]{parse: parseLoose, compat: looseCompat, cmp: compareLoose, kind: looseKind, semver: looseVersion.semver, major: looseVersion.major},
-	"cargo":     impl[cargoVersion]{parse: parseCargo, compat: cargoCompat, cmp: compareCargo, kind: cargoKind, semver: cargoVersion.semver, major: cargoMajor},
-	"pep440":    pep440Scheme{impl[pep440Version]{parse: parsePEP440, compat: pep440Compat, cmp: comparePEP440, kind: pep440Kind, semver: pep440Version.semver, major: pep440Version.major}},
-	"hashicorp": hashicorpScheme{impl[hcVersion]{parse: parseHashicorp, compat: hashicorpCompat, cmp: compareHashicorp, kind: hashicorpKind, semver: hcVersion.semver, major: hcVersion.major}},
-	"maven":     impl[mavenVersion]{parse: parseMaven, compat: mavenCompat, cmp: compareMaven, kind: mavenKindOf, semver: mavenVersion.semver, major: mavenVersion.major},
-	"ruby":      rubyScheme{impl[rubyVersion]{parse: parseRuby, compat: rubyCompat, cmp: compareRuby, kind: rubyKind, semver: rubyVersion.semver, major: rubyVersion.major}},
-	"conda":     condaScheme{impl[condaVersion]{parse: parseConda, compat: condaCompat, cmp: compareConda, kind: condaKind, semver: condaVersion.semver, major: condaVersion.major}},
-	"composer":  composerScheme{impl[composerVersion]{parse: parseComposer, compat: composerCompat, cmp: compareComposer, kind: composerKind, semver: composerVersion.semver, major: composerVersion.major}},
-	"julia":     juliaScheme{impl[cargoVersion]{parse: parseCargo, compat: juliaCompat, cmp: compareJulia, kind: juliaKind, semver: cargoVersion.semver, major: cargoMajor}},
+	"tag":          impl[Tag]{parse: ParseTag, compat: tagCompat, cmp: CompareTag, kind: TagKind, semver: Tag.Semver, major: Tag.major},
+	"go":           impl[goVersion]{parse: parseGo, compat: goCompat, cmp: compareGo, kind: goKind, semver: goVersion.semver, major: goVersion.majorNum},
+	"docker":       impl[dockerTag]{parse: parseDocker, compat: dockerCompat, cmp: compareDocker, kind: dockerKind, semver: dockerTag.semver, major: dockerTag.major},
+	"semver":       semverScheme{impl[semverVersion]{parse: parseSemver, compat: semverCompat, cmp: compareSemver, kind: semverKind, semver: semverVersion.semver, major: semverMajor}},
+	"loose":        impl[looseVersion]{parse: parseLoose, compat: looseCompat, cmp: compareLoose, kind: looseKind, semver: looseVersion.semver, major: looseVersion.major},
+	"cargo":        impl[cargoVersion]{parse: parseCargo, compat: cargoCompat, cmp: compareCargo, kind: cargoKind, semver: cargoVersion.semver, major: cargoMajor},
+	"pep440":       pep440Scheme{impl[pep440Version]{parse: parsePEP440, compat: pep440Compat, cmp: comparePEP440, kind: pep440Kind, semver: pep440Version.semver, major: pep440Version.major}},
+	"hashicorp":    hashicorpScheme{impl[hcVersion]{parse: parseHashicorp, compat: hashicorpCompat, cmp: compareHashicorp, kind: hashicorpKind, semver: hcVersion.semver, major: hcVersion.major}},
+	"maven":        impl[mavenVersion]{parse: parseMaven, compat: mavenCompat, cmp: compareMaven, kind: mavenKindOf, semver: mavenVersion.semver, major: mavenVersion.major},
+	"ruby":         rubyScheme{impl[rubyVersion]{parse: parseRuby, compat: rubyCompat, cmp: compareRuby, kind: rubyKind, semver: rubyVersion.semver, major: rubyVersion.major}},
+	"conda":        condaScheme{impl[condaVersion]{parse: parseConda, compat: condaCompat, cmp: compareConda, kind: condaKind, semver: condaVersion.semver, major: condaVersion.major}},
+	"composer":     composerScheme{impl[composerVersion]{parse: parseComposer, compat: composerCompat, cmp: compareComposer, kind: composerKind, semver: composerVersion.semver, major: composerVersion.major}},
+	"julia":        juliaScheme{impl[cargoVersion]{parse: parseCargo, compat: juliaCompat, cmp: compareJulia, kind: juliaKind, semver: cargoVersion.semver, major: cargoMajor}},
+	"bazel-module": impl[bazelVersion]{parse: parseBazel, compat: bazelCompat, cmp: compareBazel, kind: bazelKind, semver: bazelVersion.semver, major: bazelVersion.major},
 }
 
 // impl implements Scheme over a parsed version type T so every candidate is parsed once.

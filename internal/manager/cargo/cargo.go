@@ -183,18 +183,29 @@ func entryDep(file, depType, key string, v *tomlspan.Value) dep.Dep {
 	case !ver.Exact:
 		d.Skip = "cannot locate value"
 	default:
-		req, ok := parseRequirement(ver.Str)
-		if !ok {
+		if !SetRequirement(&d, ver.Str) {
 			d.Skip = "unsupported requirement"
 			break
-		}
-		d.Range, d.Version = ver.Str, req.version()
-		if c := req.constraint(); c != ver.Str {
-			d.Constraint = c
 		}
 		d.RefSpan = dep.Span{Start: ver.Start, End: ver.End}
 	}
 	return d
+}
+
+// SetRequirement sets d's Range (raw), Version (its bare version) and Constraint (its
+// Masterminds form when that differs) from the Cargo requirement raw; false when raw is not
+// one cargo deps support. Managers writing Cargo requirements elsewhere (Bazel crate.spec) use
+// it with the cargo manager's Edits and NewRange.
+func SetRequirement(d *dep.Dep, raw string) bool {
+	req, ok := parseRequirement(raw)
+	if !ok {
+		return false
+	}
+	d.Range, d.Version, d.Constraint = raw, req.version(), ""
+	if c := req.constraint(); c != raw {
+		d.Constraint = c
+	}
+	return true
 }
 
 // gitDep makes a `git` dependency with a `tag` on an http(s) repository a git-tags dep; any

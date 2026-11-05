@@ -52,6 +52,8 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`elm`](#elm)
 - [`composer`](#composer)
 - [`julia`](#julia)
+- [`bazel-module`](#bazel-module)
+- [`bazelisk`](#bazelisk)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -2240,6 +2242,84 @@ Updates the `[compat]` entries of Julia projects (`Project.toml`, `JuliaProject.
 
 With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every manifest of a scanned project (a workspace's once) is refreshed with `Pkg.update()` in the temporary copy, which moves every locked package, transitive ones included, to the newest version the compat entries admit. All manifests share the PR on `<branchPrefix>lock-file-maintenance`, which changes only manifests; `minimumReleaseAge` does not apply to it.
 
+## bazel-module
+
+Updates Bazel module dependencies (bzlmod): `bazel_dep` versions from Bazel registries, git overrides and git repository rules, and the images, Maven artifacts and crates of the rules_oci, rules_img, rules_jvm_external and rules_rust module extensions, as Renovate's bazel-module manager. Files are read with a small Starlark lexer (strings, lists, comments, nested calls and list comprehensions); only the string values that change are rewritten. `MODULE.bazel.lock` is regenerated with `bazel mod deps`.
+
+**Files:**
+
+- `MODULE.bazel` and the segments it includes (`<name>.MODULE.bazel`, Renovate's `(^|/|\.)MODULE\.bazel$`)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `bazel_dep` | `bazel_dep(name = …, version = …)` (also with `repo_name`, `dev_dependency`, `max_compatibility_level`) | `bazel` | `bazel-module` | updated |
+| `single_version_override` | `single_version_override(module_name = …, version = …)`: the pinned version is listed but not updated (Renovate: `ignored`); its `registry` becomes the registry of the module's bazel_dep | `bazel` | `bazel-module` | updated |
+| `git_override` | `git_override(module_name = …, remote = …, commit = …)`: a commit tracks the default branch head (digest updates; Renovate's github-tags without a tag), a `tag` (with or without `commit`) the tags. Named after the module; any git host, not only github.com | `git-refs` (commit), `git-tags` (tag) | `tag` | updated |
+| `archive_override` | `archive_override(module_name = …)`: listed and skipped | none | none | updated |
+| `local_path_override` | `local_path_override(module_name = …)`: listed and skipped | none | none | updated |
+| `multiple_version_override` | `multiple_version_override(module_name = …)`: listed and skipped, and its bazel_dep is not updated (the version must stay one of `versions`; beyond Renovate, which updates it) | none | none | updated |
+| `git_repository` | `git_repository(remote = …, commit = …\|tag = …)` repo rules of `use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")`, as git_override; named after the remote's path | `git-refs` (commit), `git-tags` (tag) | `tag` | updated |
+| `new_git_repository` | `new_git_repository(…)` repo rules, as git_repository | `git-refs` (commit), `git-tags` (tag) | `tag` | updated |
+| `oci_pull` | `oci.pull(image = …, tag = …, digest = …)` of `use_extension("@rules_oci//oci:extensions.bzl", "oci")`: the tag, and the digest when there is one | `docker` | `docker` | updated |
+| `rules_img_pull` | rules_img `pull(registry = …, repository = …, tag = …, digest = …)` of `use_repo_rule("@rules_img//img:pull.bzl", "pull")`; without `registry` the image is on Docker Hub | `docker` | `docker` | updated |
+| `maven_install` | `maven.install(artifacts = ["group:artifact[:packaging[:classifier]]:version", …])` and `maven.artifact(group = …, artifact = …, version = …)` of `use_extension("@rules_jvm_external//:extensions.bzl", "maven")`; the repositories are the `repositories` of the installs with the same `name` (default `maven`), else Maven Central | `maven` | `maven` | updated |
+| `crate_spec` | `crate.spec(package = …, version = …)` of `use_extension("@rules_rust//crate_universe:extension.bzl", "crate")`: the version is a Cargo requirement, rewritten as the [cargo](#cargo) manager's (`rangeStrategy`; without a lockfile deps reads, versions it admits are not proposed); `git` crates with a `tag` are git-tags deps | `crate` (crates.io), `git-tags` (git with tag) | `cargo`, `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `no version` | a bazel_dep or maven.artifact without `version` or with `version = ""`, a maven.install artifact without one (`group:artifact`, managed by a BOM) |
+| `non-literal value` | a name, version, remote, image, tag or digest that is not a plain string literal (a variable, a concatenation, `None`, an escaped string) |
+| `pinned by single_version_override` | a bazel_dep whose module has a `single_version_override` with a `version` |
+| `overridden by <override>` | a bazel_dep whose module has a `git_override`, `archive_override`, `local_path_override` or `multiple_version_override` (in the same file or in another module file of the workspace) |
+| `version override` | the `single_version_override` itself: an override pins a version on purpose (often with `patches`), as in Renovate |
+| `archive override` | an `archive_override` |
+| `local path override` | a `local_path_override` |
+| `multiple versions` | a `multiple_version_override` |
+| `unrecognized remote` | a `remote` that is not an https/http/ssh/git or `git@host:path` URL with an owner/repo path |
+| `branch reference` | a git override or repository with `branch` and neither `commit` nor `tag` |
+| `no commit or tag` | a git override or repository without `commit` (a full 40-character SHA-1), `tag` or `branch` |
+| `invalid image` | an image that does not parse, or already carries a tag or digest |
+| `digest without tag` | an image with a `digest` but no `tag` |
+| `no tag` | an image without `tag` and `digest` |
+| `invalid coordinates` | a maven artifact that is not `group:artifact[:packaging[:classifier]]:version` |
+| `path dependency` | a crate.spec with `path` |
+| `git dependency` | a crate.spec with `git` and no `tag` (a `branch` or `rev`), or an unrecognized git URL |
+| `unsupported requirement` | a crate.spec version outside the Cargo requirement forms of the cargo manager |
+
+**Modules and overrides.**
+
+- Only Bazel's module file functions and the extension tags and repo rules above are read; `module()`, `use_repo`, `include` and other extensions are ignored. Extension variables are recognized by their `use_extension`/`use_repo_rule` call in the same file (included segments cannot share variables), not by their name.
+- Overrides apply to the bazel_dep of their `module_name` in every module file of the workspace: the files whose nearest directory holding a scanned `MODULE.bazel` is the same (the root module and its `*.MODULE.bazel` segments). A module with more than one override (an error in Bazel) keeps its bazel_dep updatable.
+- Module versions are looked up in the workspace's registries: the `--registry` flags of the `.bazelrc` next to the `MODULE.bazel`, else the Bazel Central Registry; a `single_version_override(registry = …)` replaces them for its module. See the `bazel` datasource in [Datasources](#datasources).
+- Versioning `bazel-module` orders versions as Bazel does: `RELEASE[-PRERELEASE][+BUILD]` with dot-separated identifiers, digit-only ones numerically and before the others (`1.2.3` < `1.2.3.1` < `1.2.3.bcr.1` < `1.2.4`; registry patches such as `1.8.2.bcr.1` are patch updates), a prerelease below its release, build metadata ignored. Update types follow the first three release identifiers. Prereleases (`1.5.6-9.bcr.2`, `2025-11-05.bcr.1`, whose release is `2025`) are only proposed from a prerelease.
+
+**MODULE.bazel.lock.**
+
+- With an update of a module file whose workspace has a `MODULE.bazel.lock`, `apply` and `run` run `bazel --output_base=<tmp> mod deps --lockfile_mode=update` (`bazelisk` when `bazel` is not on `PATH`; Bazelisk uses the workspace's `.bazelversion`) in a temporary mirror of the workspace with the patched module files (other entries symlinked, so patches, `local_path_override` paths and `.bazelrc` resolve), then `bazel shutdown`. The new lockfile joins the update; a workspace without one gets none.
+- Without Bazel the update fails with `bazel not found (needed to update MODULE.bazel.lock)`; `plan` does not run Bazel and notes `note    MODULE.bazel.lock changes are computed by apply/run`.
+- `lockFileMaintenance` deletes and regenerates every `MODULE.bazel.lock` next to a scanned `MODULE.bazel` the same way, as Renovate does. `.bazelversion` updates (the [bazelisk](#bazelisk) manager) do not regenerate it.
+
+## bazelisk
+
+Updates the Bazel version Bazelisk reads from `.bazelversion` (its first line), as Renovate's bazelisk manager.
+
+**Files:**
+
+- `.bazelversion` at any depth
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `bazel` | the Bazel version (name `bazelbuild/bazel`) | `github-releases` (`bazelbuild/bazel`) | `semver` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `bazel fork` | `<fork>/<version>` (a Bazel fork Bazelisk downloads from another GitHub repository) |
+| `non-release version` | `latest`, `latest-<n>`, `last_green`, `last_rc`, `7.x`, `*`: Bazelisk resolves them itself |
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -2324,6 +2404,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `elm-package` | `author/project` as in elm.json (`elm/json`) | `GET <DEPS_ELM_PACKAGE_URL or https://package.elm-lang.org>/packages/<author>/<project>/releases.json`, once per package; the registry answers an unknown package with HTTP 500. Source repository (release notes): `https://github.com/<author>/<project>`, the only place `elm publish` publishes from | none | the Unix time the registry lists for each version |
 | `packagist` | Composer package name `vendor/package` (case-insensitive, looked up lower-cased); the dep's source is its whitespace-separated Composer repositories in lookup order ("" = Packagist) | Packagist (also when composer.json names `https://packagist.org` or `https://repo.packagist.org`): `GET <DEPS_PACKAGIST_URL or https://repo.packagist.org>/p2/<name>.json` (Composer 2 metadata, minified entries expanded); other Composer repositories: `GET <url>/packages.json` once per repository (the URL itself when it ends in `.json`), then its `metadata-url` with `%package%` replaced (packages.drupal.org, Private Packagist, Satis), or else the packages it lists inline and in its `includes` (older Satis); packages its `available-packages`/`available-package-patterns` do not name are not looked up there; a repository serving only the Composer 1 `providers-url` is an error. Branches (`dev-main`, `2.x-dev`) are not versions. The first repository that has the package answers (Composer's canonical repositories), none → `package <name> not found`. Source repository (release notes): the newest version's http(s) `source.url` | userinfo of the repository URL as basic auth, else Composer's `COMPOSER_AUTH` variable (auth.json as JSON): `http-basic` (`{"repo.example.com": {"username": …, "password": …}}`) and `bearer` (`{"repo.example.com": "<token>"}`) by host; redacted in errors and logs | the version's `time` (the tag's commit date as the repository records it); packages.drupal.org records none |
 | `julia-registry` | Julia package name (`JSON`, `CUDA_jll`); the dep's source is the package UUID of the project's `[deps]`, `[weakdeps]` or `[extras]`, which the registry entry must have | the General registry's files on its default branch: `GET <DEPS_JULIA_REGISTRY_URL or https://raw.githubusercontent.com/JuliaRegistries/General/HEAD>/<L>/<Name>/Package.toml` and `…/Versions.toml` (`<L>` the name's first letter upper-cased; `jll/<L>/<Name>` for `_jll` packages, as the registry files them), concurrently, once per package; no 1.4 MB Registry.toml download. Yanked versions (`yanked = true`) are not listed. A package the registry does not have (a 404: a package of a private registry) or has under another UUID skips the dep with `package <name> is not in the registry <url>` or `… has UUID <x>, not <y>`. Source repository (release notes): Package.toml's `repo` | userinfo of `DEPS_JULIA_REGISTRY_URL` (`https://user:token@host/…`) as basic auth, for a private mirror; redacted in errors and logs | none: registry entries carry no publication time, so `minimumReleaseAge` treats versions as of unknown age (see `minimumReleaseAgeBehaviour`) |
+| `bazel` | Bazel module name (`rules_go`); the dep's source is the registry of its `single_version_override` ("" = the workspace's registries) | `GET <registry>/modules/<name>/metadata.json`, once per (registry, module); yanked versions (`yanked_versions`) are dropped. The registries are the dep's source, else the `--registry` flags of the workspace's `.bazelrc` (the one next to the nearest `MODULE.bazel`; lines without a `:config`, except `startup`; `import`/`try-import` of files in the repository are followed; `%workspace%` is expanded), else the Bazel Central Registry (`DEPS_BAZEL_REGISTRY_URL` or `https://bcr.bazel.build`, also where `.bazelrc` names `https://bcr.bazel.build`). As in Bazel, the first registry that has the module answers; none → `bazel module <name> not found in <registries>`. `file://` registries inside the repository (`file://%workspace%/registry`) are read from disk. Source repository (release notes): the first `repository` entry (`github:<owner>/<repo>`, `gitlab:…`, a URL), else a forge `homepage` | userinfo of the registry URL as basic auth; registries other than the default get the platform token of their host (Basic `x-access-token`), as `git-tags` | none: registries publish no release times, so `minimumReleaseAge` treats every version as of unknown age (`minimumReleaseAgeBehaviour`) |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
