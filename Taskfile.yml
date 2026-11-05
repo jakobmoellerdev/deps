@@ -25,8 +25,8 @@ vars:
         echo "${TMPDIR:-/tmp}/deps-tools/git-cliff-{{.GIT_CLIFF_VERSION}}/git-cliff"
       fi
   NFPM_VERSION: 2.48.0
-  # Pinned nfpm (Arch Linux and Alpine packages), installed by nfpm:install unless the same
-  # version is on PATH.
+  # Pinned nfpm (Debian, RPM, Arch Linux and Alpine packages), installed by nfpm:install unless
+  # the same version is on PATH.
   NFPM:
     sh: |
       if command -v nfpm >/dev/null && nfpm --version 2>/dev/null | grep -Eq '^GitVersion: +v?{{.NFPM_VERSION}}$'; then
