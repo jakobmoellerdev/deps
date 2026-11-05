@@ -481,3 +481,24 @@ func BenchmarkParseSemver(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkBest(b *testing.B) {
+	corpus := benchSemverCorpus()
+	accept := func(v string, _ dep.UpdateType) (bool, string) { return len(v)%7 != 0, "skip" }
+	reject := func(string, string) {}
+	for _, name := range []string{"semver", "docker", "maven"} {
+		s, _ := Get(name)
+		b.Run(name+"/Best", func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				s.Best("1.2.3", corpus, accept, reject)
+			}
+		})
+		b.Run(name+"/Rank", func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				s.Rank("1.2.3", corpus, accept, reject)
+			}
+		})
+	}
+}

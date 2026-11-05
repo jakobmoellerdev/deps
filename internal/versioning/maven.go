@@ -221,16 +221,6 @@ func mavenSuffix(s string) string {
 	return ""
 }
 
-func compareMavenNum(a, b string) int {
-	if len(a) != len(b) {
-		if len(a) < len(b) {
-			return -1
-		}
-		return 1
-	}
-	return strings.Compare(a, b)
-}
-
 // compareMavenNull compares it with an absent item.
 func compareMavenNull(it mavenItem) int {
 	switch it.kind {
@@ -254,7 +244,7 @@ func compareMavenItem(a, b mavenItem) int {
 		if b.kind != mavenInt {
 			return 1
 		}
-		return compareMavenNum(a.num, b.num)
+		return compareNum(a.num, b.num)
 	case mavenString:
 		if b.kind != mavenString {
 			return -1

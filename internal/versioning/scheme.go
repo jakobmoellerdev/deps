@@ -147,9 +147,34 @@ func (s impl[T]) Semver(v string) *msemver.Version {
 }
 
 func (s impl[T]) Compatible(cur, next string) bool {
-	c, okC := s.parse(cur)
-	n, okN := s.parse(next)
-	return okC && okN && s.compat(c, n) == "" && s.cmp(n, c) > 0
+	c, ok := s.parse(cur)
+	if !ok {
+		return false
+	}
+	_, why := s.consider(c, next, nil)
+	return why == ""
+}
+
+// consider parses raw and runs it through the filters Best and rank share, in order:
+// "invalid", the scheme's compat reason, "not newer", then "policy: " + accept's reason.
+// It returns the parsed version and "" when raw is kept, else the reject reason.
+func (s impl[T]) consider(c T, raw string, accept func(string, dep.UpdateType) (bool, string)) (T, string) {
+	n, ok := s.parse(raw)
+	if !ok {
+		return n, "invalid"
+	}
+	if why := s.compat(c, n); why != "" {
+		return n, why
+	}
+	if s.cmp(n, c) <= 0 {
+		return n, "not newer"
+	}
+	if accept != nil {
+		if ok, why := accept(raw, s.kind(c, n)); !ok {
+			return n, "policy: " + why
+		}
+	}
+	return n, ""
 }
 
 func (s impl[T]) Best(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) (string, bool) {
@@ -157,33 +182,16 @@ func (s impl[T]) Best(cur string, cands []string, accept func(string, dep.Update
 	if !ok {
 		return "", false
 	}
-	drop := func(v, reason string) {
-		if reject != nil {
-			reject(v, reason)
-		}
-	}
 	var best string
 	var bestV T
 	found := false
 	for _, raw := range cands {
-		n, ok := s.parse(raw)
-		if !ok {
-			drop(raw, "invalid")
-			continue
-		}
-		if r := s.compat(c, n); r != "" {
-			drop(raw, r)
-			continue
-		}
-		if s.cmp(n, c) <= 0 {
-			drop(raw, "not newer")
-			continue
-		}
-		if accept != nil {
-			if ok, why := accept(raw, s.kind(c, n)); !ok {
-				drop(raw, "policy: "+why)
-				continue
+		n, why := s.consider(c, raw, accept)
+		if why != "" {
+			if reject != nil {
+				reject(raw, why)
 			}
+			continue
 		}
 		if found && s.cmp(n, bestV) <= 0 {
 			continue
@@ -207,19 +215,7 @@ func (s impl[T]) rank(cur string, cands []string, accept func(string, dep.Update
 	}
 	r.cur = c
 	for i, raw := range cands {
-		n, ok := s.parse(raw)
-		why := "invalid"
-		if ok {
-			if why = s.compat(c, n); why == "" {
-				if s.cmp(n, c) <= 0 {
-					why = "not newer"
-				} else if accept != nil {
-					if ok, w := accept(raw, s.kind(c, n)); !ok {
-						why = "policy: " + w
-					}
-				}
-			}
-		}
+		n, why := s.consider(c, raw, accept)
 		if why != "" {
 			if reject != nil {
 				reject(raw, why)
