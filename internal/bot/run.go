@@ -458,15 +458,7 @@ func skipReason(errs []error) (string, bool) {
 // Resolve records the deps it skips: in res.Skipped (once per dep) and in res.Deps.
 func skipGroup(res *engine.Result, grp engine.Group, reason string) {
 	for _, u := range grp.Updates {
-		d := u.Dep
-		same := func(o dep.Dep) bool { return o.File == d.File && o.Line == d.Line && o.Name == d.Name }
-		if i := slices.IndexFunc(res.Deps, same); i >= 0 {
-			res.Deps[i].Skip = reason
-		}
-		if !slices.ContainsFunc(res.Skipped, same) {
-			d.Skip = reason
-			res.Skipped = append(res.Skipped, d)
-		}
+		res.SkipDep(u.Dep, reason)
 	}
 }
 

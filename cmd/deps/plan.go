@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -226,15 +225,7 @@ func skipInapplicable(res *engine.Result, separate []bool, skipped []engine.Skip
 			sep = append(sep, i < len(separate) && separate[i])
 			continue
 		}
-		d := u.Dep
-		same := func(o dep.Dep) bool { return o.File == d.File && o.Line == d.Line && o.Name == d.Name }
-		if j := slices.IndexFunc(res.Deps, same); j >= 0 {
-			res.Deps[j].Skip = reason
-		}
-		if !slices.ContainsFunc(res.Skipped, same) {
-			d.Skip = reason
-			res.Skipped = append(res.Skipped, d)
-		}
+		res.SkipDep(u.Dep, reason)
 	}
 	res.Updates = ups
 	return sep
