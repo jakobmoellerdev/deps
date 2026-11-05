@@ -374,3 +374,13 @@ func TestMinimumReleaseAgeReleaseBound(t *testing.T) {
 		})
 	}
 }
+
+// A dep written without the releases' "v" (Renovate's `v?(?<currentValue>…)` over module
+// versions) is aged by the release it stands for: v1.2.0 is looked up for 1.2.0.
+func TestMinimumReleaseAgeVPrefixless(t *testing.T) {
+	d := []dep.Dep{{Datasource: "go", Versioning: "semver", Name: "example.com/a", Version: "1.0.0", Line: 1}}
+	res, _ := resolveStub(t, "separateMajorMinor: false\nminimumReleaseAge: 28 days\n", "custom", d, goTimed(), nil)
+	if len(res.Updates) != 1 || res.Updates[0].NewVersion != "1.0.1" {
+		t.Fatalf("updates = %+v, want 1.0.1 (newer ones are too new)", res.Updates)
+	}
+}

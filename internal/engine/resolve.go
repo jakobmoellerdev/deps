@@ -1373,7 +1373,7 @@ func (r *resolver) prefetchTimes(timer datasource.Timer, versions []string) {
 			continue
 		}
 		wg.Go(func() {
-			times[i] = r.lookupTime(timer, r.d, v)
+			times[i] = r.lookupTime(timer, r.d, r.upstream(v))
 		})
 	}
 	wg.Wait()
@@ -1470,7 +1470,7 @@ func (r *resolver) releaseTime(timer datasource.Timer, version string) time.Time
 	if t, ok := r.times[version]; ok {
 		return t
 	}
-	t := r.lookupTime(timer, r.d, version)
+	t := r.lookupTime(timer, r.d, r.upstream(version))
 	if r.times == nil {
 		r.times = make(map[string]time.Time, 2)
 	}
@@ -1496,6 +1496,26 @@ func (r *resolver) holdBack(d dep.Dep, version, reason string) {
 	}
 }
 
+// upstream returns the release version that version (as written into the file) stands for:
+// a dep written without the release's "v" (a Renovate regex `v?(?<currentValue>…)` over
+// go module or image tags `v1.9.0`) is looked up as `v1.9.0`, else as written.
+func (r *resolver) upstream(version string) string {
+	has := func(v string) bool {
+		return slices.ContainsFunc(r.rels, func(rel datasource.Release) bool { return rel.Version == v })
+	}
+	if has(version) {
+		return version
+	}
+	alt := "v" + version
+	if s, ok := strings.CutPrefix(version, "v"); ok {
+		alt = s
+	}
+	if has(alt) {
+		return alt
+	}
+	return version
+}
+
 // digestOf returns the digest of version from the releases, asking the datasource when the
 // release carries none. version matches a release exactly, else with a leading "v" added or
 // removed (a `# 7.0.6` comment on a SHA pin of tag v7.0.6).
@@ -1511,7 +1531,7 @@ func (r *resolver) digestOf(version string) (string, error) {
 			}
 		}
 	}
-	return r.ds.Digest(r.ctx, r.d, version)
+	return r.ds.Digest(r.ctx, r.d, r.upstream(version))
 }
 
 // checksumOf fetches the checksum of version, in the letter case and length of the current one.
