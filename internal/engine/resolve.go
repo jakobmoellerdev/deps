@@ -1092,8 +1092,14 @@ func (r *resolver) ageReason(p *config.Policy, version string, t time.Time) stri
 	case t.IsZero():
 		slog.DebugContext(r.ctx, "release time unknown, minimum release age not enforced", "name", r.d.Name, "candidate", version)
 	case r.now.Sub(t) < p.MinAge:
-		slog.DebugContext(r.ctx, "candidate too new", "name", r.d.Name, "candidate", version, "released", t, "minimumReleaseAge", p.MinAge)
-		return fmt.Sprintf("too new (released %s, minimum %s)", t.UTC().Format(time.DateOnly), config.FormatAge(p.MinAge))
+		// Every too-new candidate of a frequently released dep lands here (up to maxRetries
+		// per bucket): skip boxing the log attributes when debug is off, and build the
+		// reason without fmt.
+		if slog.Default().Enabled(r.ctx, slog.LevelDebug) {
+			slog.DebugContext(r.ctx, "candidate too new", "name", r.d.Name, "candidate", version, "released", t, "minimumReleaseAge", p.MinAge)
+		}
+		var day [len(time.DateOnly)]byte
+		return "too new (released " + string(t.UTC().AppendFormat(day[:0], time.DateOnly)) + ", minimum " + config.FormatAge(p.MinAge) + ")"
 	}
 	return ""
 }
