@@ -572,6 +572,7 @@ func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Mana
 				Automerge:         cfg.Automerge,
 				AutomergeStrategy: cmp.Or(cfg.AutomergeStrategy, config.StrategyAuto),
 				AutomergeType:     cmp.Or(cfg.AutomergeType, config.AutomergeTypePR),
+				DashboardApproval: cfg.DashboardApproval,
 				Templates:         cfg.PRTemplates(),
 				Labels:            cfg.Labels,
 				Reviewers:         cfg.Reviewers,
@@ -1151,7 +1152,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 			up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
 			up.Tasks = kp.Tasks
 			if len(up.Advisories) == 0 {
-				up.Group, up.Schedule = kp.Group, kp.Schedule
+				up.Group, up.Schedule, up.DashboardApproval = kp.Group, kp.Schedule, kp.DashboardApproval
 			} else {
 				up.SecurityGroup = kp.SecurityGroup
 			}

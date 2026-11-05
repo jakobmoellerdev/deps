@@ -300,7 +300,7 @@ func describeRule(r config.Rule) string {
 	for _, b := range []struct {
 		k string
 		v *bool
-	}{{"separateMajorMinor", r.SeparateMajorMinor}, {"separateMultipleMajor", r.SeparateMultipleMajor}, {"separateMinorPatch", r.SeparateMinorPatch}} {
+	}{{"separateMajorMinor", r.SeparateMajorMinor}, {"separateMultipleMajor", r.SeparateMultipleMajor}, {"separateMinorPatch", r.SeparateMinorPatch}, {"dashboardApproval", r.DashboardApproval}} {
 		if b.v != nil {
 			add(b.k, strconv.FormatBool(*b.v))
 		}
@@ -360,6 +360,9 @@ func describePolicy(p config.Policy) string {
 		s += " automerge=branch"
 	case p.Automerge:
 		s += " automerge=" + p.AutomergeStrategy
+	}
+	if p.DashboardApproval {
+		s += " dashboardApproval=true"
 	}
 	return s
 }

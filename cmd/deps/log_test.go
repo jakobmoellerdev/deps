@@ -49,7 +49,7 @@ func TestSummaryColors(t *testing.T) {
 	for _, want := range []string{
 		"\x1b[1mSummary:\x1b[0m ",
 		", \x1b[31m1 error\x1b[0m (1s)",
-		"  PR \x1b[1;35mdeps/github-actions/actions-checkout-major\x1b[0m  chore(deps): update actions/checkout to v7.0.1\n",
+		"  PR \x1b[1;35mdeps/github-actions/actions-checkout-major\x1b[0m  chore(deps): update actions/checkout to v7.0.1  [dashboard approval]\n",
 		"      actions/checkout  \x1b[2m.github/workflows/ci.yml:6\x1b[0m  v6.0.0 -> v7.0.1  (\x1b[31mmajor\x1b[0m)\n",
 		"(\x1b[33mminor\x1b[0m)",
 		"(\x1b[32mpatch\x1b[0m, \x1b[1;31msecurity: GO-2026-1\x1b[0m)",

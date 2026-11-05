@@ -29,6 +29,9 @@ type Group struct {
 	Automerge         bool
 	AutomergeStrategy string
 	AutomergeBranch   bool
+	// DashboardApproval is set when any update needs approval on the dependency dashboard
+	// before its PR (or automerge branch) is created.
+	DashboardApproval bool
 	// Labels, Reviewers and Assignees are the union over the updates, in first-seen order.
 	Labels, Reviewers, Assignees []string
 }
@@ -94,6 +97,7 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 			g.AutomergeStrategy = g.Updates[0].AutomergeStrategy
 			g.AutomergeBranch = !slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return u.AutomergeType != config.AutomergeTypeBranch })
 		}
+		g.DashboardApproval = slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return u.DashboardApproval })
 		for _, u := range g.Updates {
 			g.Labels = union(g.Labels, u.Labels)
 			g.Reviewers = union(g.Reviewers, u.Reviewers)

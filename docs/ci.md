@@ -605,7 +605,16 @@ rules:
 
 ## Dependency dashboard
 
-With [`dependencyDashboard: true`](reference/configuration.md#dependencydashboard), `deps run` maintains one issue. It lists the updates waiting for their schedule, rate-limited and blocked updates, open PRs, errors, and the detected dependencies. Ticking a checkbox makes the next run create, recreate or rebase that PR. The token needs `issues: write`, and the repository must have issues enabled. The title, labels and the exact list are in the [configuration reference](reference/configuration.md#dependencydashboard).
+With [`dependencyDashboard: true`](reference/configuration.md#dependencydashboard), `deps run` maintains one issue. It lists the updates waiting for approval or their schedule, rate-limited and blocked updates, open PRs, errors, and the detected dependencies. Ticking a checkbox makes the next run create, recreate or rebase that PR. The token needs `issues: write`, and the repository must have issues enabled. The title, labels and the exact list are in the [configuration reference](reference/configuration.md#dependencydashboard).
+
+To review some updates before deps opens their PRs, for example majors, set [`dashboardApproval`](reference/configuration.md#dashboardapproval) on a rule. Those updates get no PR; they are listed under *Pending approval*, and ticking one makes the next run create its PR:
+
+```yaml
+dependencyDashboard: true
+rules:
+  - updateTypes: [major]
+    dashboardApproval: true
+```
 
 ## Post-upgrade tasks
 

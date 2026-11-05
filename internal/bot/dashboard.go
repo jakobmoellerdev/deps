@@ -121,12 +121,12 @@ func sameBody(a, b string) bool {
 	return norm(a) == norm(b)
 }
 
-// renderDashboard renders the dashboard body: pending PRs (schedule, limits), ignored or
-// blocked updates, branches waiting for branch automerge, open PRs, errors and the detected
-// dependencies. It is deterministic, so an unchanged run does not edit the issue, and bounded
-// to dashboardMaxBytes; every checkbox is unticked again.
+// renderDashboard renders the dashboard body: updates awaiting approval, pending PRs (schedule,
+// limits), ignored or blocked updates, branches waiting for branch automerge, open PRs, errors
+// and the detected dependencies. It is deterministic, so an unchanged run does not edit the
+// issue, and bounded to dashboardMaxBytes; every checkbox is unticked again.
 func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
-	var schedule, limited, blocked, branches, open []string
+	var approval, schedule, limited, blocked, branches, open []string
 	for _, a := range actions {
 		// A PR or branch deps merged in this run is no longer open.
 		if a.Dashboard || a.Status == StatusClosed || a.Status == StatusDeleted || a.Automerge == AutomergeMerged {
@@ -145,6 +145,8 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 			blocked = append(blocked, fmt.Sprintf("- %s (cannot be applied: %s)", a.Title, a.Reason))
 		case a.Status == StatusSkipStopped:
 			blocked = append(blocked, fmt.Sprintf("- %s (%s has the %#q label; deps leaves it alone until the label is removed)", a.Title, prLink(a), a.Reason))
+		case a.Status == StatusSkipApproval:
+			approval = append(approval, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
 		case a.Status == StatusSkipSchedule && a.Number == 0:
 			schedule = append(schedule, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s (%s)", a.Branch, a.Title, waits(a.Waits)))
 		case a.Number == 0 && (a.Automerge == AutomergeBranchWaiting || a.Automerge == AutomergeBranchNextRun):
@@ -156,6 +158,7 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 
 	w := &budget{left: dashboardMaxBytes - len(dashboardMarker) - 2}
 	w.text("This issue lists the dependency updates [deps](https://git.jakob-moeller.cloud/jakobmoellerdev/deps) manages. Tick a checkbox to make the next run act on it.\n")
+	w.section("Pending approval", "These updates need approval (`dashboardApproval`). Tick one to create its PR.", approval)
 	w.section("Awaiting schedule", "These updates wait for a run triggered by one of their crons. Tick one to create its PR now.", schedule)
 	w.section("Rate-limited", "These updates wait for the PR limits. Tick one to create its PR now.", limited)
 	w.section("Ignored or blocked", "", blocked)

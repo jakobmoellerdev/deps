@@ -39,6 +39,7 @@ Only keys without a passphrase are supported; a protected key fails before any w
 | `would-create`, `would-update`, `would-rebase` | `--dry-run` |
 | `skipped: closed PR for this version` | an unmerged closed PR has the same branch and title, or the same versions of a major update (the dashboard's recreate checkbox overrides it) |
 | `skipped: closed PR for this major` | an unmerged closed PR of the same major branch (`-major`, `-v<N>`) targeted the same majors: closing a major PR ignores that major until the next one (the dashboard's recreate checkbox overrides it) |
+| `skipped: awaiting dashboard approval` | the group needs `dashboardApproval` and has no PR or branch yet: listed under *Pending approval* on the dashboard, whose create checkbox approves it |
 | `skipped: outside schedule` | the run was triggered by a cron that is not in the group's `schedule` (the dashboard's create checkbox overrides it) |
 | `skipped: new PR limit reached` | a PR limit is exhausted (dashboard checkboxes override it) |
 | `skipped: branch modified by someone else` | the branch tip's author is neither the bot nor in `gitIgnoredAuthors` (a rebase request discards those commits) |

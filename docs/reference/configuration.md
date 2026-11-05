@@ -124,6 +124,7 @@ customDatasources:
 - [`dependencyDashboard`](#dependencydashboard)
 - [`dependencyDashboardTitle`](#dependencydashboardtitle)
 - [`dependencyDashboardLabels`](#dependencydashboardlabels)
+- [`dashboardApproval`](#dashboardapproval)
 - [`rules`](#rules)
   - [`rules[].manager`](#rulesmanager)
   - [`rules[].names`](#rulesnames)
@@ -156,6 +157,7 @@ customDatasources:
   - [`rules[].automerge`](#rulesautomerge)
   - [`rules[].automergeStrategy`](#rulesautomergestrategy)
   - [`rules[].automergeType`](#rulesautomergetype)
+  - [`rules[].dashboardApproval`](#rulesdashboardapproval)
   - [`rules[].labels`](#ruleslabels)
   - [`rules[].addLabels`](#rulesaddlabels)
   - [`rules[].reviewers`](#rulesreviewers)
@@ -792,12 +794,13 @@ Maintain a dependency dashboard issue listing pending, blocked and open updates,
 
 `deps run` maintains one open issue titled [`dependencyDashboardTitle`](#dependencydashboardtitle). It lists, in this order:
 
-1. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Awaiting-schedule items name the crons they wait for, e.g. ``(waits for `0 0 * * 0`)``. Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.
-2. **Ignored or blocked**: updates whose PR was closed without merging, for that version or, for a major update, for that major (checkbox: recreate the PR), branches someone else pushed to (checkbox: discard those commits and rebuild the branch), and PRs with the [`stopUpdatingLabel`](#stopupdatinglabel).
-3. **Pending branch automerge**: branches of [`automergeType: branch`](#automergetype) waiting for their checks, without a PR. Ticking one makes the next run open its PR instead.
-4. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.
-5. **Errors** of the run (at most 20, each cut to 300 characters).
-6. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.
+1. **Pending approval**: updates of [`dashboardApproval`](#dashboardapproval) without a PR or branch. Ticking one makes the next run create its PR.
+2. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Awaiting-schedule items name the crons they wait for, e.g. ``(waits for `0 0 * * 0`)``. Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.
+3. **Ignored or blocked**: updates whose PR was closed without merging, for that version or, for a major update, for that major (checkbox: recreate the PR), branches someone else pushed to (checkbox: discard those commits and rebuild the branch), and PRs with the [`stopUpdatingLabel`](#stopupdatinglabel).
+4. **Pending branch automerge**: branches of [`automergeType: branch`](#automergetype) waiting for their checks, without a PR. Ticking one makes the next run open its PR instead.
+5. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.
+6. **Errors** of the run (at most 20, each cut to 300 characters).
+7. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.
 
 - The body is capped at 60 000 bytes (GitHub allows 65 536 characters). Lists that do not fit end with a `… not listed` note.
 - The body is deterministic: the issue is only edited when its content changes. Every run regenerates it, so ticked checkboxes are unticked again once handled.
@@ -823,6 +826,27 @@ Labels set when the dashboard issue is created (by name; on Gitea and Forgejo th
 
 Each label must be non-blank and must not contain `,`. GitHub creates missing labels; Gitea and Forgejo look the names up in the repository's and its organization's labels and leave out unknown ones (with a warning).
 
+## `dashboardApproval`
+
+Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dependencyDashboard.
+
+- **Type:** boolean
+- **Default:** `false`
+
+Renovate's `dependencyDashboardApproval`: an update that needs approval gets no PR (and, with [`automergeType: branch`](#automergetype), no branch) until someone approves it on the [dashboard](#dependencydashboard). Usually it is set per rule, e.g. for majors:
+
+```yaml
+dependencyDashboard: true
+rules:
+  - updateTypes: [major]
+    dashboardApproval: true
+```
+
+- The run reports `skipped: awaiting dashboard approval` and does not build the update; the dashboard lists it under **Pending approval** with a checkbox. Ticking it makes the next run create the PR, regardless of `schedule` and the PR limits, like the other `create` checkboxes.
+- Approval is needed once: an update with an open PR or an existing branch is handled as usual, also when its version moves on. A PR closed without merging is ignored as usual (**Ignored or blocked**); its `recreate` checkbox approves it too.
+- A group needs approval when any of its updates does. Security updates never need approval (Renovate's `vulnerabilityAlerts` default). Lock file maintenance follows the top-level value.
+- It requires [`dependencyDashboard: true`](#dependencydashboard). Without issues (`dashboard skipped: issues disabled`) nothing can be approved, so these updates wait.
+
 ## `rules`
 
 Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones.
@@ -838,7 +862,7 @@ A rule **matches** a dep when every selector it sets matches. The selectors are 
 3. **Built-in monorepo groups** set `group: <name> monorepo`, and the Ruby version deps `group: ruby` (unless [`monorepos: false`](#monorepos)).
 4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.
 5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
-6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.
+6. The chosen update takes `group`, `schedule`, `dashboardApproval`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.
 
 `updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules and the resulting policy of a dep.
 
@@ -1149,6 +1173,12 @@ Overrides the top-level automergeType for matching deps; a group merges its bran
 
 - **Type:** string
 - **Values:** `pr`, `branch`
+
+### `rules[].dashboardApproval`
+
+Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does.
+
+- **Type:** boolean
 
 ### `rules[].labels`
 

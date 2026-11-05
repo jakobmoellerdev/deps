@@ -25,7 +25,7 @@ func summaryFixture() *engine.Result {
 	}
 	return &engine.Result{
 		Updates: []dep.Update{
-			{Dep: checkout, Type: dep.Major, NewVersion: "v7.0.1", Bucket: "major"},
+			{Dep: checkout, Type: dep.Major, NewVersion: "v7.0.1", Bucket: "major", DashboardApproval: true},
 			{Dep: cobra, Type: dep.Minor, NewVersion: "v1.10.2", Automerge: true},
 			{Dep: vuln, Type: dep.Patch, NewVersion: "v1.0.1", Advisories: []dep.Advisory{{ID: "GO-2026-1"}}},
 		},
@@ -51,7 +51,7 @@ func TestSummaryRender(t *testing.T) {
 			s:    summary{Command: "plan", Res: res, Groups: groups, Elapsed: 1500 * time.Millisecond, Verbose: true},
 			text: []string{
 				"\nSummary: 6 dependencies, 3 updates in 3 PRs, 1 held back by minimumReleaseAge, 3 skipped, 0 errors (1.5s)\n",
-				"  PR deps/github-actions/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1\n",
+				"  PR deps/github-actions/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1  [dashboard approval]\n",
 				"      actions/checkout  .github/workflows/ci.yml:6  v6.0.0 -> v7.0.1  (major)\n",
 				"  PR deps/gomod/github.com-spf13-cobra  chore(deps): update github.com/spf13/cobra to v1.10.2  [automerge]\n",
 				"      example.com/vuln  go.mod:6  v1.0.0 -> v1.0.1  (patch, security: GO-2026-1)\n",
@@ -61,7 +61,7 @@ func TestSummaryRender(t *testing.T) {
 					"       1  local action  (actions in this repository (./…) have no upstream version)\n",
 			},
 			notText:      []string{"example.com/ind1"},
-			markdownHead: "## deps plan\n\n**6 dependencies, 3 updates in 3 PRs, 1 held back by minimumReleaseAge, 3 skipped, 0 errors (1.5s)**\n\n### Pull requests `deps run` would open\n\n#### chore(deps): update actions/checkout to v7.0.1\n\nBranch `deps/github-actions/actions-checkout-major`\n\n| Dependency | File | From | To | Type |\n|---|---|---|---|---|\n| `actions/checkout` | `.github/workflows/ci.yml:6` | `v6.0.0` | `v7.0.1` | major |\n",
+			markdownHead: "## deps plan\n\n**6 dependencies, 3 updates in 3 PRs, 1 held back by minimumReleaseAge, 3 skipped, 0 errors (1.5s)**\n\n### Pull requests `deps run` would open\n\n#### chore(deps): update actions/checkout to v7.0.1\n\nBranch `deps/github-actions/actions-checkout-major` · dashboard approval\n\n| Dependency | File | From | To | Type |\n|---|---|---|---|---|\n| `actions/checkout` | `.github/workflows/ci.yml:6` | `v6.0.0` | `v7.0.1` | major |\n",
 			md: []string{
 				"Branch `deps/gomod/github.com-spf13-cobra` · automerge\n",
 				"| `example.com/vuln` | `go.mod:6` | `v1.0.0` | `v1.0.1` | patch, security: GO-2026-1 |\n",

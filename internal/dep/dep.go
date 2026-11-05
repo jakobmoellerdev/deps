@@ -189,6 +189,10 @@ type Update struct {
 	Automerge         bool
 	AutomergeStrategy string
 	AutomergeType     string
+	// DashboardApproval holds back a new PR (or automerge branch) of the update until it is
+	// approved on the dependency dashboard (config dashboardApproval); security updates never
+	// need approval. A PR needs approval when any of its updates does.
+	DashboardApproval bool
 	// Lockfile marks a lockfile-only update (rangeStrategy update-lockfile): the range admits
 	// NewVersion, so the manifest stays unchanged and only the lockfile moves from Dep.Locked.
 	Lockfile bool

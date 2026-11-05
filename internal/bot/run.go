@@ -112,7 +112,8 @@ const (
 	StatusSkipLimit       = "skipped: new PR limit reached"
 	StatusSkipModified    = "skipped: branch modified by someone else"
 	StatusSkipSchedule    = "skipped: outside schedule"
-	StatusSkipIssues      = "skipped: issues disabled" // dashboard only: the repository has no issue tracker
+	StatusSkipApproval    = "skipped: awaiting dashboard approval" // dashboardApproval: no PR until approved on the dashboard
+	StatusSkipIssues      = "skipped: issues disabled"             // dashboard only: the repository has no issue tracker
 	// StatusSkipApply: a post-processor found the update inapplicable (*dep.SkipError, e.g.
 	// the new version of a Go module declares another module path); Action.Reason says why.
 	StatusSkipApply = "skipped: update cannot be applied"
@@ -259,8 +260,11 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			slog.DebugContext(ctx, "rebase requested on the PR", "branch", groups[i].Branch, "number", pr.Number, "label", pr.HasLabel(o.RebaseLabel))
 			forced[i].rebase = true
 		}
-		inSchedule[i] = forced[i].any() || scheduled(groups[i].Updates, o.Trigger)
 		_, branchExists := branches["refs/heads/"+groups[i].Branch]
+		if awaitsApproval(groups[i], pr, branchExists, forced[i]) {
+			continue // not built: handled as StatusSkipApproval
+		}
+		inSchedule[i] = forced[i].any() || scheduled(groups[i].Updates, o.Trigger)
 		existing := pr != nil || groups[i].AutomergeBranch && branchExists
 		// Nothing is pushed for the others, so they are not built.
 		ran[i] = inSchedule[i] || o.UpdateNotScheduled && existing
@@ -501,13 +505,20 @@ func deleteObsoleteBranches(ctx context.Context, o Options, s *runState, wanted 
 // force is what the dependency dashboard checkboxes request for one branch; rebase is also
 // requested by the PR's rebase checkbox (rebaseCheckbox) and Options.RebaseLabel.
 type force struct {
-	create   bool // create the PR (or automerge branch) now: bypass schedule and PR limits
+	create   bool // create the PR (or automerge branch) now: bypass schedule, PR limits and dashboardApproval
 	recreate bool // create a PR again although one for this version or major was closed
 	rebase   bool // rebuild the branch even if unchanged or modified by someone else
 	pr       bool // create a PR instead of merging the branch (branch automerge)
 }
 
 func (f force) any() bool { return f.create || f.recreate || f.rebase || f.pr }
+
+// awaitsApproval reports whether grp waits for approval on the dependency dashboard: it needs
+// it (dashboardApproval), has neither a PR nor a branch yet, and none of its dashboard
+// checkboxes is ticked. Once created, a PR or branch is approved for good.
+func awaitsApproval(grp engine.Group, pr *platform.PR, branchExists bool, f force) bool {
+	return grp.DashboardApproval && pr == nil && !branchExists && !f.any()
+}
 
 // automerge requests platform auto-merge for target, the PR of an automerge group after it was
 // created, updated, rebased or found up to date, and records the outcome in a.Automerge. When
@@ -597,6 +608,11 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	}
 	ref := "refs/heads/" + grp.Branch
 	expected, exists := s.branches[ref]
+	if awaitsApproval(grp, pr, exists, f) {
+		a.Status = StatusSkipApproval
+		slog.DebugContext(ctx, "awaiting dashboard approval", "branch", grp.Branch)
+		return a, nil, nil
+	}
 	// Branch automerge opens no PR; once one is open (its checks failed, or the dashboard
 	// asked for it), that PR is automerged like with automergeType pr.
 	branchMode := pr == nil && grp.AutomergeBranch && !f.pr

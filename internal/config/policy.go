@@ -64,6 +64,8 @@ type Policy struct {
 	AutomergeStrategy string
 	// AutomergeType is how the update is automerged (AutomergeTypes).
 	AutomergeType string
+	// DashboardApproval holds back the update's new PR until it is approved on the dashboard.
+	DashboardApproval bool
 	// Labels, Reviewers and Assignees go on the update's new PR.
 	Labels, Reviewers, Assignees []string
 	// Tasks are the postUpgradeTasks of the last matching rule that sets them.
@@ -244,6 +246,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		Automerge:             c.Automerge,
 		AutomergeStrategy:     cmp.Or(c.AutomergeStrategy, StrategyAuto),
 		AutomergeType:         cmp.Or(c.AutomergeType, AutomergeTypePR),
+		DashboardApproval:     c.DashboardApproval,
 		Labels:                c.Labels,
 		Reviewers:             c.Reviewers,
 		Assignees:             c.Assignees,
@@ -355,6 +358,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		}
 		if r.AutomergeType != "" {
 			p.AutomergeType = r.AutomergeType
+		}
+		if r.DashboardApproval != nil {
+			p.DashboardApproval = *r.DashboardApproval
 		}
 		if r.Labels != nil {
 			p.Labels = r.Labels

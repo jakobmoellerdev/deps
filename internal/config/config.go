@@ -221,6 +221,7 @@ type Config struct {
 	DependencyDashboard       bool     `yaml:"dependencyDashboard" jsonschema:"default=false" jsonschema_description:"Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched."`
 	DependencyDashboardTitle  string   `yaml:"dependencyDashboardTitle" jsonschema:"default=Dependency Dashboard" jsonschema_description:"Title of the dependency dashboard issue; the issue is found by this exact title."`
 	DependencyDashboardLabels []string `yaml:"dependencyDashboardLabels" jsonschema_description:"Labels set when the dashboard issue is created (by name; on Gitea and Forgejo they must exist in the repository or its organization)."`
+	DashboardApproval         bool     `yaml:"dashboardApproval" jsonschema:"default=false" jsonschema_description:"Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dependencyDashboard."`
 	Rules                     []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
 	Custom                    []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
 	// CustomDatasources are referenced as datasource custom.<name>.
@@ -418,6 +419,7 @@ type Rule struct {
 	Automerge                  *bool    `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
 	AutomergeStrategy          string   `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
 	AutomergeType              string   `yaml:"automergeType" jsonschema:"enum=pr,enum=branch" jsonschema_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
+	DashboardApproval          *bool    `yaml:"dashboardApproval" jsonschema_description:"Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does."`
 	Labels                     []string `yaml:"labels" jsonschema_description:"Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."`
 	AddLabels                  []string `yaml:"addLabels" jsonschema_description:"Labels added to those of earlier rules and the top level for new PRs of matching deps."`
 	Reviewers                  []string `yaml:"reviewers" jsonschema_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
@@ -787,6 +789,17 @@ func (c *Config) Validate() error {
 	}
 	for i := range c.Rules {
 		c.validateRule(i, add)
+	}
+	// Approval happens on the dashboard: without it, updates needing approval never get a PR.
+	if !c.DependencyDashboard {
+		if c.DashboardApproval {
+			add("dashboardApproval", "requires dependencyDashboard: true")
+		}
+		for i, r := range c.Rules {
+			if r.DashboardApproval != nil && *r.DashboardApproval {
+				add(fmt.Sprintf("rules[%d].dashboardApproval", i), "requires dependencyDashboard: true")
+			}
+		}
 	}
 	for i := range c.Custom {
 		c.Custom[i].validate(fmt.Sprintf("custom[%d]", i), c.KnownDatasource, add)

@@ -83,6 +83,8 @@ func TestLoadErrors(t *testing.T) {
 		{"gitIgnoredAuthors: [nope]\n", "gitIgnoredAuthors[0]: must be an email address"},
 		{"prConcurrentLimit: -1\n", "prConcurrentLimit: must be >= 0"},
 		{"prHourlyLimit: -2\n", "prHourlyLimit: must be >= 0"},
+		{"dashboardApproval: true\n", "dashboardApproval: requires dependencyDashboard: true"},
+		{"rules: [{manager: gomod, dashboardApproval: false}, {updateTypes: [major], dashboardApproval: true}]\n", "rules[1].dashboardApproval: requires dependencyDashboard: true"},
 		{"pin: always\n", "pin: must be keep or digest"},
 		{"rules: [{manager: pip}]\n", "rules[0].manager"},
 		{"rules: [{names: ['[']}]\n", "rules[0].names[0]"},
@@ -980,6 +982,23 @@ func TestDashboardConfig(t *testing.T) {
 	}
 	if !c.DependencyDashboard || c.DashboardTitle() != "Deps" || !slices.Equal(c.DependencyDashboardLabels, []string{"deps", "bot"}) {
 		t.Errorf("set: %v %q %v", c.DependencyDashboard, c.DashboardTitle(), c.DependencyDashboardLabels)
+	}
+
+	// dashboardApproval: the top-level default, overridden by rules (per update type too).
+	c, err = load(t, ".deps.yaml", "dependencyDashboard: true\ndashboardApproval: true\nrules: [{manager: gomod, dashboardApproval: false}, {manager: gomod, updateTypes: [major], dashboardApproval: true}]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkout := dep.Dep{Manager: "github-actions", Name: "actions/checkout"}
+	mod := dep.Dep{Manager: "gomod", Name: "a/b", DepType: "direct"}
+	for _, tc := range []struct {
+		d    dep.Dep
+		kind dep.UpdateType
+		want bool
+	}{{checkout, dep.Minor, true}, {mod, dep.Minor, false}, {mod, dep.Major, true}} {
+		if p := c.PolicyFor(tc.d, tc.kind); p.DashboardApproval != tc.want {
+			t.Errorf("%s %s: dashboardApproval %v, want %v", tc.d.Name, tc.kind, p.DashboardApproval, tc.want)
+		}
 	}
 }
 

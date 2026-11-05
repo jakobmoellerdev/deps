@@ -130,7 +130,7 @@ func TestSchema(t *testing.T) {
 	}
 	if want := []string{"version", "pin", "rangeStrategy", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "platformCommit", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "replacements", "actions", "gitlabci", "terraform", "gomodUpdateImportPaths", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "ignorePaths",
 		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "labels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "rebaseLabel", "stopUpdatingLabel",
-		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "rules", "custom", "customDatasources", "lockFileMaintenance"}; len(s.Properties) != len(want) {
+		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "dashboardApproval", "rules", "custom", "customDatasources", "lockFileMaintenance"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
 		for _, k := range want {
@@ -157,7 +157,7 @@ func TestSchema(t *testing.T) {
 		s.Properties["separateMajorMinor"].Default != true || s.Properties["separateMultipleMajor"].Default != false ||
 		s.Properties["separateMinorPatch"].Default != false || s.Properties["updateNotScheduled"].Default != true ||
 		s.Properties["automerge"].Default != false || s.Properties["automergeStrategy"].Default != "auto" ||
-		s.Properties["dependencyDashboard"].Default != false || s.Properties["dependencyDashboardTitle"].Default != config.DefaultDashboardTitle ||
+		s.Properties["dependencyDashboard"].Default != false || s.Properties["dependencyDashboardTitle"].Default != config.DefaultDashboardTitle || s.Properties["dashboardApproval"].Default != false ||
 		s.Properties["gomodUpdateImportPaths"].Default != true || lfm.Properties["enabled"].Default != false ||
 		s.Properties["minimumReleaseAgeBehaviour"].Default != config.TimestampOptional {
 		t.Error("defaults missing")

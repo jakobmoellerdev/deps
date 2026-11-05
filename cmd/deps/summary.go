@@ -249,6 +249,9 @@ func (s *summary) groupNotes(g engine.Group, link func(a bot.Action) string) []s
 		case g.Automerge:
 			notes = append(notes, "automerge")
 		}
+		if g.DashboardApproval {
+			notes = append(notes, "dashboard approval")
+		}
 		if sch := g.Updates[0].Schedule; sch != nil {
 			notes = append(notes, "schedule "+sch.String())
 		}

@@ -386,3 +386,13 @@ func TestWriteTrace(t *testing.T) {
 		})
 	}
 }
+
+func TestDescribeDashboardApproval(t *testing.T) {
+	yes := true
+	if got := describeRule(config.Rule{DashboardApproval: &yes}); got != "dashboardApproval=true" {
+		t.Errorf("rule = %q", got)
+	}
+	if got := describePolicy(config.Policy{DashboardApproval: true}); !strings.HasSuffix(got, " dashboardApproval=true") {
+		t.Errorf("policy = %q", got)
+	}
+}

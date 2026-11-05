@@ -222,6 +222,55 @@ func TestDashboardRebase(t *testing.T) {
 	}
 }
 
+// TestDashboardApproval: an update needing approval gets no PR but a Pending approval
+// checkbox; ticking it creates the PR on the next run, and an existing PR or branch counts as
+// approved.
+func TestDashboardApproval(t *testing.T) {
+	root, res := dashFixture(t)
+	res.Updates[0].DashboardApproval = true
+	pc := &fakePC{}
+	g := &fakeGit{}
+	acts, errs, _ := dashRun(t, Options{}, res, root, pc, g)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if statusOf(acts, branchA) != StatusSkipApproval || statusOf(acts, branchB) != StatusCreated || !slices.Equal(g.pushed, []string{branchB}) {
+		t.Fatalf("actions %+v pushed %v", acts, g.pushed)
+	}
+	body := pc.createdIssues[0].Body
+	want := "## Pending approval\n\nThese updates need approval (`dashboardApproval`). Tick one to create its PR.\n\n- [ ] <!-- deps:create=" + branchA + " --> " + titleA + "\n"
+	if !strings.Contains(body, want) || strings.Index(body, "## Pending approval") > strings.Index(body, "## Open") {
+		t.Fatalf("body lacks %q before Open:\n%s", want, body)
+	}
+
+	// Ticked: the next run creates the PR, and the regenerated body lists it as open.
+	ticked := strings.Replace(body, "- [ ] <!-- deps:create=", "- [x] <!-- deps:create=", 1)
+	pc = &fakePC{issues: []platform.Issue{{Number: 7, Title: dashTitle, Body: ticked}}}
+	g = &fakeGit{}
+	acts, errs, dash := dashRun(t, Options{}, res, root, pc, g)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if statusOf(acts, branchA) != StatusCreated || !slices.Contains(g.pushed, branchA) || !slices.Contains(pc.created, branchA) {
+		t.Fatalf("actions %+v pushed %v created %v", acts, g.pushed, pc.created)
+	}
+	if b := pc.updatedIssues[0].Body; dash.Status != StatusUpdated || strings.Contains(b, "## Pending approval") || !strings.Contains(b, "- [ ] <!-- deps:rebase="+branchA+" -->") {
+		t.Errorf("dashboard %+v body:\n%s", dash, b)
+	}
+
+	// An open PR or an existing branch was approved before: no checkbox needed.
+	yes := true
+	fpA := fingerprintOf(t, root, res, "a/x")
+	open := []platform.PR{{Number: 1, Head: branchA, Title: titleA, URL: "u1", Mergeable: &yes, Body: "x\n<!-- deps:fingerprint=" + fpA + " -->\n"}}
+	if acts, _, _ = dashRun(t, Options{}, res, root, &fakePC{open: open}, &fakeGit{}); statusOf(acts, branchA) != StatusUpToDate {
+		t.Errorf("open PR: %+v", acts)
+	}
+	g = &fakeGit{branches: map[string]string{"refs/heads/" + branchA: "a"}, authors: map[string]string{branchA: email}}
+	if acts, _, _ = dashRun(t, Options{}, res, root, &fakePC{}, g); statusOf(acts, branchA) != StatusCreated {
+		t.Errorf("existing branch: %+v", acts)
+	}
+}
+
 func TestDashboardErrorsAndSizeCap(t *testing.T) {
 	root, res := dashFixture(t)
 	for i := range 25 {

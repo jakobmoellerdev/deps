@@ -137,6 +137,36 @@ func TestSecurityUpdates(t *testing.T) {
 	}
 }
 
+// TestDashboardApprovalPolicy: updates take dashboardApproval from their policy, except
+// security updates, which never wait for approval (Renovate's vulnerabilityAlerts default).
+func TestDashboardApprovalPolicy(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		vulns []Vuln
+		want  bool
+	}{
+		{name: "normal update waits", want: true},
+		{name: "security update does not", vulns: []Vuln{vuln("A", "v1.1.0")}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root, cfg := setup(t, "dependencyDashboard: true\nrules: [{manager: gomod, dashboardApproval: true}]\n", map[string]string{"go.mod": modA})
+			o := sources(nil, goVersions)
+			o.Security = &fakeSec{vulns: map[string][]Vuln{"example.com/a": tt.vulns}}
+			res, err := Resolve(t.Context(), root, cfg, env, o)
+			if err != nil || len(res.Errors) > 0 || len(res.Updates) != 1 {
+				t.Fatalf("err = %v, errors = %v, updates = %+v", err, res.Errors, res.Updates)
+			}
+			u := res.Updates[0]
+			if u.DashboardApproval != tt.want || (len(u.Advisories) > 0) == tt.want {
+				t.Errorf("update %s advisories %v: dashboardApproval %v, want %v", u.NewVersion, u.Advisories, u.DashboardApproval, tt.want)
+			}
+			if g := GroupUpdates(res.Updates, ""); g[0].DashboardApproval != tt.want {
+				t.Errorf("group dashboardApproval %v, want %v", g[0].DashboardApproval, tt.want)
+			}
+		})
+	}
+}
+
 func TestSecurityPinnedAction(t *testing.T) {
 	wf := "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@" + sha(checkout+"@v4.1.0") + " # v4.1.0\n"
 	root, cfg := setup(t, "rules: [{updates: [digest]}]\n", map[string]string{".github/workflows/ci.yml": wf})
