@@ -3,6 +3,7 @@ package renovate
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"path/filepath"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
 
 // Level is the severity of a Note.
@@ -41,10 +43,10 @@ type Note struct {
 
 // Result is a translated Renovate config.
 type Result struct {
-	Path  string   // Renovate config file used
-	YAML  []byte   // translated .deps.yaml with comments
-	Notes []Note   // in order of occurrence, without duplicates
-	Crons []string // sorted workflow crons the schedules need
+	Path    string   // Renovate config file used
+	YAML    []byte   // translated .deps.yaml with comments
+	Notes   []Note   // in order of occurrence, without duplicates
+	Windows []string // sorted distinct schedule time windows; the workflow must run inside each
 }
 
 // notes collects Notes without duplicates.
@@ -106,13 +108,13 @@ func Load(ctx context.Context, dir, explicitPath string, f *Fetcher) (*Result, e
 	if err != nil {
 		return nil, &config.Error{Err: fmt.Errorf("%s: translation is invalid (deps bug): %w", p, err)}
 	}
-	crons := cronsOf(parsed)
+	windows := windowsOf(parsed)
 	header := []string{
 		"Translated from " + shown + " by deps (Renovate compatibility).",
 		"branchPrefix " + parsed.Prefix() + ": deps run closes open PRs under it that it does not manage; disable Renovate before the first deps run.",
 	}
-	if len(crons) > 0 {
-		header = append(header, "Workflow crons (on.schedule) the schedules need: "+strings.Join(crons, ", "))
+	if len(windows) > 0 {
+		header = append(header, WindowAdvice)
 	}
 	if len(n.list) > 0 {
 		header = append(header, "")
@@ -124,31 +126,31 @@ func Load(ctx context.Context, dir, explicitPath string, f *Fetcher) (*Result, e
 	if _, err := config.Parse(out, p); err != nil {
 		return nil, &config.Error{Err: fmt.Errorf("%s: translation is invalid (deps bug): %w", p, err)}
 	}
-	return &Result{Path: p, YAML: out, Notes: n.list, Crons: crons}, nil
+	return &Result{Path: p, YAML: out, Notes: n.list, Windows: windows}, nil
 }
 
-// cronsOf returns the sorted distinct crons of every schedule of c.
-func cronsOf(c *config.Config) []string {
+// WindowAdvice explains what schedule time windows need from the workflow.
+const WindowAdvice = "Schedules are time windows: the workflow must run inside each of them, e.g. hourly (on.schedule cron \"0 * * * *\")."
+
+// windowsOf returns the sorted distinct schedule entries of c that restrict when PRs are
+// created ("at any time" does not).
+func windowsOf(c *config.Config) []string {
 	set := map[string]bool{}
-	for _, s := range c.Schedule {
-		set[s] = true
-	}
-	for _, r := range c.Rules {
-		for _, s := range r.Schedule {
-			set[s] = true
+	add := func(l []string) {
+		for _, s := range l {
+			if !strings.EqualFold(s, "at any time") {
+				set[s] = true
+			}
 		}
+	}
+	add(c.Schedule)
+	for _, r := range c.Rules {
+		add(r.Schedule)
 	}
 	if c.LockFileMaintenance.Enabled {
-		for _, s := range c.LockFileMaintenance.Schedule {
-			set[s] = true
-		}
+		add(c.LockFileMaintenance.Schedule)
 	}
-	out := make([]string, 0, len(set))
-	for s := range set {
-		out = append(out, s)
-	}
-	slices.Sort(out)
-	return out
+	return slices.Sorted(maps.Keys(set))
 }
 
 // omap is an ordered YAML mapping.
@@ -504,7 +506,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 		}
 	}
 	if v, ok := get("timezone"); ok {
-		t.n.warn("timezone", "timezone %q ignored: deps compares schedules with workflow crons, which are UTC", v)
+		emit("timezone", v)
 	}
 	ignorePaths := []string{"**/node_modules/**", "**/bower_components/**"}
 	if v, ok := get("ignorePaths"); ok {
@@ -760,16 +762,22 @@ func (t *translator) schedule(path string, v any) ([]string, bool) {
 		t.n.warn(path, "schedule must be a list of strings; dropped")
 		return nil, false
 	}
+	// deps evaluates Renovate's time windows (text and crons with minute *) itself, so they are
+	// kept as written. A cron with a fixed minute would be a workflow trigger in deps, but
+	// Renovate rejects it as a schedule.
 	out := []string{}
 	for _, e := range entries {
-		cron, anyTime, err := triggerCron(e)
-		switch {
-		case anyTime:
-			return []string{}, true
-		case err != nil:
-			t.n.warn(path, "%v; entry dropped", err)
-		case !slices.Contains(out, cron):
-			out = append(out, cron)
+		e = schedule.Normalize(e)
+		switch f := strings.Fields(e); {
+		case len(f) == 5 && f[0] != "*" && schedule.ValidateCron(e) == nil:
+			t.n.warn(path, "schedule %q: a cron needs * as minutes in Renovate (it rejects this one); entry dropped", e)
+			continue
+		case schedule.Validate(e) != nil:
+			t.n.warn(path, "schedule %q: %v; entry dropped", e, schedule.Validate(e))
+			continue
+		}
+		if !slices.Contains(out, e) {
+			out = append(out, e)
 		}
 	}
 	if len(entries) > 0 && len(out) == 0 {

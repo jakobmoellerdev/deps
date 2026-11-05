@@ -76,8 +76,8 @@ rules:` + preCommitExclusion + "\n"
 	if got := string(res.YAML); got != want {
 		t.Errorf("YAML:\n%s\nwant:\n%s", got, want)
 	}
-	if len(res.Crons) != 0 || len(res.Notes) != 2 {
-		t.Errorf("crons %v, notes %v", res.Crons, noteLines(res))
+	if len(res.Windows) != 0 || len(res.Notes) != 2 {
+		t.Errorf("windows %v, notes %v", res.Windows, noteLines(res))
 	}
 }
 
@@ -467,28 +467,28 @@ replacements: false
 rebaseWhen: behind-base-branch
 minimumReleaseAge: 7 days
 minimumReleaseAgeBehaviour: timestamp-required
-schedule: [0 0 * * 1]
+schedule: [before 6am on monday]
+timezone: Europe/Berlin
 ignorePaths: [/foo/, '**/bar/**', /^x/]
 automerge: true
 automergeStrategy: merge
 labels: [deps]
 lockFileMaintenance:
   enabled: true
-  schedule: [0 0 * * 1]
+  schedule: [before 4am on monday]
 rules:` + preCommitExclusion + "\n"
 	if body != want {
 		t.Errorf("YAML:\n%s\nwant body:\n%s", y, want)
 	}
-	if !slices.Equal(res.Crons, []string{"0 0 * * 1"}) {
-		t.Errorf("crons = %v", res.Crons)
+	if !slices.Equal(res.Windows, []string{"before 4am on monday", "before 6am on monday"}) {
+		t.Errorf("windows = %v", res.Windows)
 	}
 	notes := noteLines(res)
 	for _, n := range []string{
 		"warn prHourlyLimit: must be a non-negative integer, got 1.5; dropped",
 		"warn ignorePaths[2]: negation \"!keep\" is not supported in ignorePaths; dropped",
 		"warn automergeType: deps automerges through the PR; dropped",
-		"warn schedule: unsupported schedule \"every 2 weeks\"; entry dropped",
-		"warn timezone: timezone \"Europe/Berlin\" ignored: deps compares schedules with workflow crons, which are UTC",
+		`warn schedule: schedule "every 2 weeks": "every" needs weekday, weekend, a day name or <n> months, got "weeks"; entry dropped`,
 		"info lockFileMaintenance.automerge: no deps equivalent; ignored",
 		"warn composer: not supported; ignored",
 	} {
@@ -820,6 +820,31 @@ func TestLoadDashboardApproval(t *testing.T) {
 	for _, n := range noteLines(res) {
 		if strings.Contains(n, "dependencyDashboardApproval") {
 			t.Errorf("unexpected note %q", n)
+		}
+	}
+}
+
+// Renovate's schedules are time windows, which deps evaluates itself: they are kept as written.
+func TestLoadSchedules(t *testing.T) {
+	res, err := load(t, `{schedule: ['* 0-3 * * 1', 'after 10pm   every weekday', '0 5 * * *'],
+		packageRules: [{matchPackageNames: ['a'], schedule: ['at any time']}, {matchPackageNames: ['b'], schedule: ['0 4 * * *']}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y := string(res.YAML)
+	if !strings.Contains(y, "\nschedule: ['* 0-3 * * 1', after 10pm every weekday]\n") || !strings.Contains(y, "schedule: [at any time]") {
+		t.Errorf("YAML:\n%s", y)
+	}
+	if !slices.Equal(res.Windows, []string{"* 0-3 * * 1", "after 10pm every weekday"}) {
+		t.Errorf("windows = %v", res.Windows)
+	}
+	notes := noteLines(res)
+	for _, n := range []string{
+		`warn schedule: schedule "0 5 * * *": a cron needs * as minutes in Renovate (it rejects this one); entry dropped`,
+		`warn packageRules[1].schedule: no schedule entry could be translated; the schedule is omitted (a rule inherits the top-level schedule)`,
+	} {
+		if !slices.Contains(notes, n) {
+			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
 		}
 	}
 }

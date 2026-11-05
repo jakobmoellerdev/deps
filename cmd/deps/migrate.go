@@ -46,7 +46,7 @@ func loadConfig(ctx context.Context, o *rootOpts, root string, info platform.Inf
 		}
 		slog.Log(ctx, level, "renovate compatibility: "+n.Msg, "setting", n.Path)
 	}
-	slog.InfoContext(ctx, "renovate compatibility mode", "config", res.Path, "crons", strings.Join(res.Crons, " | "))
+	slog.InfoContext(ctx, "renovate compatibility mode", "config", res.Path, "windows", strings.Join(res.Windows, " | "))
 	return config.Parse(res.YAML, res.Path)
 }
 
@@ -141,8 +141,8 @@ func migrate(ctx context.Context, cmd *cli.Command, o *rootOpts, output string, 
 	}
 	fmt.Fprintf(stderr, "wrote %s from %s: %d rules, %d custom managers, %d custom datasources; %d warnings, %d notes\n",
 		out, res.Path, len(cfg.Rules), len(cfg.Custom), len(cfg.CustomDatasources), warns, infos)
-	if len(res.Crons) > 0 {
-		fmt.Fprintf(stderr, "schedules need these workflow crons (on.schedule): %s\n", strings.Join(res.Crons, ", "))
+	if len(res.Windows) > 0 {
+		fmt.Fprintf(stderr, "schedule windows: %s\n%s\n", strings.Join(res.Windows, "; "), renovate.WindowAdvice)
 	}
 	return nil
 }

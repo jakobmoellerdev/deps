@@ -14,7 +14,7 @@ Both use one translator, so a migrated file behaves exactly like compatibility m
 - Settings deps cannot express are reported as `warn <setting>: <msg>`, settings without effect on which updates or PRs exist (labels, PR texts, `groupSlug`, …) as `info`. `migrate` prints them and writes them as the file's head comment; compatibility mode logs them.
 - A rule with an untranslatable matcher (`matchJsonata`, a `matchCurrentValue` glob, `matchPackageNames` together with `matchDepNames`) is dropped as a whole, an untranslatable effect only by itself.
 - `branchPrefix` follows Renovate (`renovate/` unless set), so deps takes over Renovate's branches (see [below](#branch-prefix-takeover)). `prConcurrentLimit` and `prHourlyLimit` keep Renovate's defaults 10 and 2, `ignorePaths` Renovate's default list.
-- Schedules become the crons of the window's start: `* 0-3 * * 1` and `before 4am on monday` are `0 0 * * 1`, `after 10pm every weekday` is `0 22 * * 1-5`. The crons the workflow's `on.schedule` needs are printed (`migrate`) or logged.
+- Schedules and `timezone` are kept as written: deps evaluates Renovate's time windows (text and crons with minute `*`) against the run time, like Renovate. The workflow must run inside every window, e.g. hourly; `migrate` lists the windows. A cron with a fixed minute is dropped, as Renovate rejects it.
 - `matchManagers` and `matchCategories` expand to one rule per deps manager: `github-actions` matches the `github-actions` manager and the `docker` manager's `workflow`/`action` images, `dockerfile` the `docker` manager's `dockerfile` dep type. `enabledManagers`, `<manager>.enabled: false` and Renovate's default-off `pre-commit` become trailing `ignore: true` rules.
 - Renovate's `/regex/` and `!negated` patterns in package names, file names and custom manager files work in deps as they are.
 - `dependencyDashboardApproval` (top level and per rule) becomes `dashboardApproval`, and the `rust-toolchain` manager is in the `rust` category.
@@ -55,8 +55,8 @@ Each of these is reported when it occurs; the rest of the config still applies.
 | `postUpgradeTasks` commands with `{{templates}}`; `dataFileTemplate`, `installTools`, `workingDirTemplate` | the tasks are dropped (deps passes the update as `DEPS_*` variables); the other keys are ignored. Translated tasks run only with `--allow-tasks` |
 | `automergeType: branch`, `automergeStrategy: fast-forward`/`rebase-merge`, `platformAutomerge: false` | dropped; deps always automerges the PR through the platform |
 | `dependencyDashboardApproval` without `dependencyDashboard: true` | dropped: deps' `dashboardApproval` needs the dashboard |
-| `timezone` | ignored: schedules are UTC workflow crons |
-| schedule texts beyond `before`/`after`, weekdays, weekends, day of month and `every <n> months` (`every 2 weeks`, `on the last day of the month`) | the entry is dropped; a rule left without entries inherits the top-level schedule |
+| cron schedules with a fixed minute (`0 5 * * 1`) | the entry is dropped (Renovate rejects it too) |
+| schedule texts deps' window parser rejects (`every 2 weeks`) | the entry is dropped; a rule left without entries inherits the top-level schedule |
 | custom managers with `customType` other than `regex`, `matchStringsStrategy: combination`/`recursive`, `{{templates}}` in `datasourceTemplate`/`depNameTemplate`/`packageNameTemplate`/`versioningTemplate`, `currentValueTemplate`, `extractVersionTemplate`, `autoReplaceStringTemplate` | the custom manager is dropped |
 | custom datasources with templated `defaultRegistryUrlTemplate`, `format: html`, several or other JSONata `transformTemplates` | the datasource is dropped, and every custom manager and rule that uses it |
 | `fileMatch`/`managerFilePatterns` on built-in managers | ignored: deps' managers find their files themselves |

@@ -27,7 +27,7 @@ It finds the config like Renovate (`renovate.json(c|5)`, the same under `.github
 
 - `warn    <setting>: <msg>`: deps cannot express it, or translated it approximately. **Every warning needs a decision** (step 2).
 - `info    <setting>: <msg>`: no effect on which updates or PRs exist (labels on presets, PR texts, `groupSlug`, built-in preset settings). Skim; no action unless the user relies on it.
-- The summary line, and `schedules need these workflow crons (on.schedule): …`. Write those crons down; the workflow needs them (step 4).
+- The summary line, and `schedule windows: …` with the advice below it. The workflow must run inside every window (an hourly cron is enough); note them for step 4.
 
 Exit 2 means a config problem (unparsable file, `enabled: false`, a preset that cannot be fetched); fix the cause, don't work around it.
 
@@ -42,8 +42,7 @@ Work through the warnings one by one and record the decision for the user. Typic
 | `rule dropped` (`matchCurrentValue` glob or together with `matchCurrentVersion`, `matchJsonata`, `matchSourceUrls`, package and dep names together, …) | Read the original rule's intent. Rewrite it in `.deps.yaml` with `names`, `paths`, `datasources`, `depTypes`, `currentVersion` (a constraint or `/regex/`) or `currentAge`, or split it into two rules. |
 | custom datasource dropped (templated URL, `html`, JSONata) | Write `customDatasources.<name>` by hand: `url`, `format`, `versions` (jq-subset selector such as `.releases \| keys` or `.items[].tag_name`) and `versionRegex`. The custom managers that used it were dropped too; re-add them once it exists. |
 | custom manager dropped (templates, `combination` strategy, non-regex `customType`) | Rewrite as a `custom[]` entry: regex mode with literal `datasource`/`name`/`versioning`, or annotation mode if the files carry `# renovate: datasource=… depName=…` markers (annotation mode reads those unchanged). |
-| schedule entry dropped (`every 2 weeks`, …) | Pick the nearest workflow cron with the user; deps schedules are crons of the workflow trigger, not time windows. |
-| `timezone` ignored | Convert the intended times to UTC in the crons. |
+| schedule entry dropped (`every 2 weeks`, a cron with a fixed minute, …) | Rewrite it as a window deps accepts (`deps help` lists the clauses in the configuration reference, `schedule`) and confirm with the user. |
 | `automergeType: branch`, `platformAutomerge: false`, `dependencyDashboardApproval` without a dashboard | Explain the deps behavior (platform automerge of the PR; approval needs `dependencyDashboard: true`) and confirm with the user. |
 | `pin`/`rangeStrategy`/`versioning` dropped next to `matchUpdateTypes` | Move the field to a rule without `updateTypes` (deps decides these before the update type is known). |
 | `versioning` (or `extractVersion`) dropped next to `currentVersion`/`currentAge` | Move `versioning` to a rule that selects the same deps without `currentVersion`/`currentAge`, if the deps need that scheme. |
@@ -69,13 +68,13 @@ tail -1 /tmp/compat.err           # "<n> updates in <m> files, <k> skipped, <e> 
 - After hand edits from step 2, re-run `plan --config` and explain every change in updates against the compatibility-mode run.
 - `error` lines: transient (`rate limited`, `timeout`) → re-run; persistent → investigate. Use `deps explain '<name-glob>' --config /tmp/deps.yaml` to see the matching rules, the policy and why candidates were rejected.
 - Compare with Renovate's dependency dashboard issue if there is one: every open or pending Renovate update should be in `compat.err` (as `update`, or held back by `minimumReleaseAge` / schedule). Known differences are listed under "Behavior differences" in the migration guide (deps proposes the newest old-enough release where Renovate waits; unknown release times follow `minimumReleaseAgeBehaviour`).
-- Then simulate the bot itself with the crons from step 1: `deps run --dry-run -v --config /tmp/deps.yaml --trigger-schedule '<cron>'` (needs a platform token and `HEAD` at the tip of the default branch). It lists the branches and PRs deps would create, update and close.
+- Then simulate the bot itself: `deps run --dry-run -v --config /tmp/deps.yaml --schedule-time '<RFC 3339 time inside a window>'` (needs a platform token and `HEAD` at the tip of the default branch; `--schedule-time` evaluates the windows at that time). It lists the branches and PRs deps would create, update and close.
 
 ## 4. Wire up the workflow
 
 Put the config at `.deps.yaml` (or `.github/deps.yaml` with `--config`) and add a workflow (README "Quick start" and `docs/ci.md` per forge; `docs/migrating-from-renovate.md` has a complete GitHub App example):
 
-- `on.schedule`: every cron from step 1, plus one for unscheduled updates (Renovate's own workflow cron, commonly daily).
+- `on.schedule`: a cron that runs inside every window from step 1 (hourly, `0 * * * *`, always works), plus one for unscheduled updates if the windows leave long gaps.
 - `push` to the default branch and `workflow_dispatch`; on `pull_request` touching the config, run `plan` to validate it (exit 2 on an invalid key).
 - The same identity Renovate used (GitHub App token to both `actions/checkout` and the deps action, with workflows write so Action updates can be pushed); keep `gitAuthor`/`gitIgnoredAuthors` from the translation.
 - Pin the action by tag and set `version:` to the same tag, so a later `pin: digest` rewrite of the ref keeps the release.
@@ -93,7 +92,7 @@ At cutover: disable Renovate, set the final `branchPrefix`, drop the trial dashb
 
 ## Report to the user
 
-- the translation summary (rules, custom managers, datasources, warnings, notes) and the required crons;
+- the translation summary (rules, custom managers, datasources, warnings, notes), the schedule windows and the workflow cron that covers them;
 - each warning with its decision and any hand-written replacement;
 - the plan comparison (identical diffs, update counts, errors and their cause);
 - what changes for the team: PR branch names, PR limits (Renovate defaults 10 concurrent / 2 per hour are kept), schedule semantics, anything no longer updated;
