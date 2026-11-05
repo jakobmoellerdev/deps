@@ -42,17 +42,12 @@ type Source struct {
 	goEnv   gotool.GoEnv
 	envErr  error
 
-	mu     sync.Mutex
-	cache  map[string]*entry     // module path
-	times  map[string]*timeEntry // module@version
-	heads  map[string]*headEntry // module path
-	probes map[string]*entry     // probed major module path: versions, nil = missing
-}
+	times datasource.Memo[string, time.Time]           // module@version
+	heads datasource.Memo[string, datasource.Revision] // module path
 
-type headEntry struct {
-	once sync.Once
-	rev  datasource.Revision
-	err  error
+	mu     sync.Mutex
+	cache  map[string]*entry // module path
+	probes map[string]*entry // probed major module path: versions, nil = missing
 }
 
 type entry struct {
@@ -63,20 +58,13 @@ type entry struct {
 	err      error
 }
 
-type timeEntry struct {
-	once sync.Once
-	t    time.Time
-	err  error
-}
-
 // New returns a Source using gotool.Env, gotool.ListVersions, gotool.ModuleTime and
 // gotool.ModuleLatest. sem bounds concurrent requests (including `go list` runs) and is
 // shared with other datasources.
 func New(client *http.Client, sem chan struct{}) *Source {
 	return &Source{
 		client: client, sem: sem, env: gotool.Env, list: gotool.ListVersions, info: gotool.ModuleTime, latest: gotool.ModuleLatest,
-		cache: make(map[string]*entry), times: make(map[string]*timeEntry),
-		heads: make(map[string]*headEntry), probes: make(map[string]*entry),
+		cache: make(map[string]*entry), probes: make(map[string]*entry),
 	}
 }
 
@@ -105,28 +93,14 @@ func (*Source) Digest(_ context.Context, d dep.Dep, version string) (string, err
 // Digest is the commit hash (the proxy's Origin.Hash, else the pseudo-version's 12-digit
 // revision). Deduped per module path; the time also answers ReleaseTime of that version.
 func (s *Source) Head(ctx context.Context, d dep.Dep, dir string) (datasource.Revision, error) {
-	s.mu.Lock()
-	h := s.heads[d.Name]
-	if h == nil {
-		h = &headEntry{}
-		s.heads[d.Name] = h
-	}
-	s.mu.Unlock()
-	h.once.Do(func() {
-		h.rev, h.err = s.head(ctx, d.Name, dir)
-		slog.DebugContext(ctx, "module head", "module", d.Name, "version", h.rev.Version, "time", h.rev.Time, "err", h.err)
-		if h.err == nil && h.rev.Version != "" {
-			s.mu.Lock()
-			te := s.times[d.Name+"@"+h.rev.Version]
-			if te == nil {
-				te = &timeEntry{}
-				s.times[d.Name+"@"+h.rev.Version] = te
-			}
-			s.mu.Unlock()
-			te.once.Do(func() { te.t = h.rev.Time })
+	return s.heads.Do(d.Name, func() (datasource.Revision, error) {
+		rev, err := s.head(ctx, d.Name, dir)
+		slog.DebugContext(ctx, "module head", "module", d.Name, "version", rev.Version, "time", rev.Time, "err", err)
+		if err == nil && rev.Version != "" {
+			_, _ = s.times.Do(d.Name+"@"+rev.Version, func() (time.Time, error) { return rev.Time, nil })
 		}
+		return rev, err
 	})
-	return h.rev, h.err
 }
 
 func (s *Source) head(ctx context.Context, modPath, dir string) (datasource.Revision, error) {
@@ -273,23 +247,17 @@ func (s *Source) get(ctx context.Context, modPath, dir string) *entry {
 // `go list -m -json` for direct and GONOPROXY/GOPRIVATE modules (run in the directory of the
 // module's earlier Releases lookup). Results are deduped per module@version.
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
-	key := d.Name + "@" + version
 	s.mu.Lock()
-	te := s.times[key]
-	if te == nil {
-		te = &timeEntry{}
-		s.times[key] = te
-	}
 	dir := "."
 	if e := s.cache[d.Name]; e != nil && e.dir != "" {
 		dir = e.dir
 	}
 	s.mu.Unlock()
-	te.once.Do(func() {
-		te.t, te.err = s.releaseTime(ctx, d.Name, version, dir)
-		slog.DebugContext(ctx, "module release time", "module", d.Name, "version", version, "time", te.t, "err", te.err)
+	return s.times.Do(d.Name+"@"+version, func() (time.Time, error) {
+		t, err := s.releaseTime(ctx, d.Name, version, dir)
+		slog.DebugContext(ctx, "module release time", "module", d.Name, "version", version, "time", t, "err", err)
+		return t, err
 	})
-	return te.t, te.err
 }
 
 func (s *Source) releaseTime(ctx context.Context, modPath, version, dir string) (time.Time, error) {

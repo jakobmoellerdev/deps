@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
@@ -43,41 +42,23 @@ type Registry struct {
 	sem    chan struct{}
 	creds  *credentials
 
-	mu       sync.Mutex
-	services map[string]*servicesEntry // registry base URL
-	lists    map[string]*listEntry     // service URL + name
-	docs     map[string]*docEntry      // service URL + name + "/" + version
+	services datasource.Memo[string, map[string]string]    // registry base URL -> service -> absolute base URL with trailing slash
+	lists    datasource.Memo[string, []datasource.Release] // service URL + name
+	docs     datasource.Memo[string, versionDoc]           // service URL + name + "/" + version
 }
 
-type servicesEntry struct {
-	once sync.Once
-	svc  map[string]string // service -> absolute base URL with trailing slash
-	err  error
-}
-
-type listEntry struct {
-	once sync.Once
-	rels []datasource.Release
-	err  error
-}
-
-// docEntry is what deps reads of a version document: when it was published and its source
+// versionDoc is what deps reads of a version document: when it was published and its source
 // repository.
-type docEntry struct {
-	once      sync.Once
+type versionDoc struct {
 	published time.Time
 	source    string
-	err       error
 }
 
 // New returns the registry client. sem bounds concurrent requests and is shared with the other
 // datasources; getenv supplies TF_TOKEN_<host>, TF_CLI_CONFIG_FILE and HOME (APPDATA on Windows)
 // for the registry credentials.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Registry {
-	return &Registry{
-		client: client, sem: sem, creds: newCredentials(getenv),
-		services: map[string]*servicesEntry{}, lists: map[string]*listEntry{}, docs: map[string]*docEntry{},
-	}
+	return &Registry{client: client, sem: sem, creds: newCredentials(getenv)}
 }
 
 // Providers returns the terraform-provider datasource: d.Name is `namespace/type`, d.Source
@@ -104,9 +85,7 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 	if err != nil {
 		return nil, err
 	}
-	e := entry(s.r, s.r.lists, base+d.Name, func() *listEntry { return &listEntry{} })
-	e.once.Do(func() { e.rels, e.err = s.fetchVersions(ctx, d, base) })
-	return e.rels, e.err
+	return s.r.lists.Do(base+d.Name, func() ([]datasource.Release, error) { return s.fetchVersions(ctx, d, base) })
 }
 
 // ReleaseTime implements datasource.Timer with the `published_at` of the version document
@@ -114,20 +93,14 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 // `~> 5.31`) has the time of the first release of its line. Zero when the registry has no
 // such document.
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
-	e, err := s.doc(ctx, d, version)
-	if err != nil || e == nil {
-		return time.Time{}, err
-	}
-	return e.published, e.err
+	doc, err := s.doc(ctx, d, version)
+	return doc.published, err
 }
 
 // SourceRepo implements datasource.SourceRepo with the `source` of the version document.
 func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error) {
-	e, err := s.doc(ctx, d, version)
-	if err != nil || e == nil {
-		return "", err
-	}
-	return e.source, e.err
+	doc, err := s.doc(ctx, d, version)
+	return doc.source, err
 }
 
 // Digest is unsupported: registry versions are not digest-pinned.
@@ -141,39 +114,39 @@ func (s *Source) base(ctx context.Context, d dep.Dep) (string, error) {
 	if reg == "" {
 		reg = DefaultRegistry
 	}
-	e := entry(s.r, s.r.services, reg, func() *servicesEntry { return &servicesEntry{} })
-	e.once.Do(func() { e.svc, e.err = s.r.discover(ctx, reg) })
-	if e.err != nil {
-		return "", e.err
+	svc, err := s.r.services.Do(reg, func() (map[string]string, error) { return s.r.discover(ctx, reg) })
+	if err != nil {
+		return "", err
 	}
-	b, ok := e.svc[s.service]
+	b, ok := svc[s.service]
 	if !ok {
 		return "", fmt.Errorf("%s has no %s service", reg, s.service)
 	}
 	return b, nil
 }
 
-// doc returns the version document of d at version; nil when the version is partial and has no
-// published release.
-func (s *Source) doc(ctx context.Context, d dep.Dep, version string) (*docEntry, error) {
+// doc returns the version document of d at version; zero when the version is partial and has
+// no published release.
+func (s *Source) doc(ctx context.Context, d dep.Dep, version string) (versionDoc, error) {
 	version = strings.TrimPrefix(version, "v")
 	if strings.Count(version, ".") < 2 && !strings.Contains(version, "-") {
 		rels, err := s.Releases(ctx, d, "")
 		if err != nil {
-			return nil, err
+			return versionDoc{}, err
 		}
 		if version = firstOfLine(rels, version); version == "" {
-			return nil, nil
+			return versionDoc{}, nil
 		}
 	}
 	base, err := s.base(ctx, d)
 	if err != nil {
-		return nil, err
+		return versionDoc{}, err
 	}
 	key := base + d.Name + "/" + version
-	e := entry(s.r, s.r.docs, key, func() *docEntry { return &docEntry{} })
-	e.once.Do(func() { e.published, e.source, e.err = s.fetchDoc(ctx, d, key) })
-	return e, nil
+	return s.r.docs.Do(key, func() (versionDoc, error) {
+		published, source, err := s.fetchDoc(ctx, d, key)
+		return versionDoc{published, source}, err
+	})
 }
 
 // firstOfLine returns the lowest stable release of rels whose version starts with the parts
@@ -219,17 +192,6 @@ func less(a, b []int) bool {
 		}
 	}
 	return len(a) < len(b)
-}
-
-func entry[T any](r *Registry, m map[string]*T, key string, mk func() *T) *T {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	e := m[key]
-	if e == nil {
-		e = mk()
-		m[key] = e
-	}
-	return e
 }
 
 func (s *Source) fetchVersions(ctx context.Context, d dep.Dep, base string) (rels []datasource.Release, err error) {

@@ -83,14 +83,7 @@ type Source struct {
 	baseURL string
 	batch   int
 
-	mu    sync.Mutex
-	vulns map[string]*vulnEntry
-}
-
-type vulnEntry struct {
-	once sync.Once
-	v    *vuln
-	err  error
+	vulns datasource.Memo[string, *vuln]
 }
 
 // New returns the OSV security source. sem bounds concurrent requests; it is OSV's own pool
@@ -100,7 +93,7 @@ func New(client *http.Client, sem chan struct{}) datasource.SecuritySource {
 }
 
 func newSource(client *http.Client, sem chan struct{}, baseURL string) *Source {
-	return &Source{client: client, sem: sem, baseURL: baseURL, batch: batchSize, vulns: make(map[string]*vulnEntry)}
+	return &Source{client: client, sem: sem, baseURL: baseURL, batch: batchSize}
 }
 
 type pkg struct {
@@ -404,22 +397,15 @@ type vuln struct {
 
 // vuln fetches one advisory, once per ID.
 func (s *Source) vuln(ctx context.Context, id string) (*vuln, error) {
-	s.mu.Lock()
-	e := s.vulns[id]
-	if e == nil {
-		e = &vulnEntry{}
-		s.vulns[id] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() {
+	return s.vulns.Do(id, func() (*vuln, error) {
 		var v vuln
-		e.err = s.do(ctx, http.MethodGet, s.baseURL+"/v1/vulns/"+url.PathEscape(id), nil, &v)
-		if e.err == nil {
-			e.v = &v
+		err := s.do(ctx, http.MethodGet, s.baseURL+"/v1/vulns/"+url.PathEscape(id), nil, &v)
+		slog.DebugContext(ctx, "osv vuln", "id", id, "withdrawn", v.Withdrawn != "", "err", err)
+		if err != nil {
+			return nil, err
 		}
-		slog.DebugContext(ctx, "osv vuln", "id", id, "withdrawn", v.Withdrawn != "", "err", e.err)
+		return &v, nil
 	})
-	return e.v, e.err
 }
 
 // do sends one request (holding a sem slot) and decodes the JSON response into out.

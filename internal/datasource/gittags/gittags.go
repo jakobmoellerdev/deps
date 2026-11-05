@@ -39,16 +39,11 @@ type Lister struct {
 	sem    chan struct{}
 	gh     *githubapi.Client // release times of github.com repositories
 
+	times datasource.Memo[string, time.Time] // repository URL + "@" + tag, for tags not in the release lists
+
 	mu    sync.Mutex
 	cache map[string]*entry
 	lists map[string]*listEntry // Gitea/Forgejo repository URL -> first page of releases
-	times map[string]*timeEntry // repository URL + "@" + tag, for tags not in the release lists
-}
-
-type timeEntry struct {
-	once sync.Once
-	t    time.Time
-	err  error
 }
 
 // listEntry is one page of a Gitea/Forgejo repository's releases.
@@ -73,7 +68,7 @@ type entry struct {
 func New(client *http.Client, auth *httpx.Auth, sem chan struct{}, gh *githubapi.Client) *Lister {
 	return &Lister{
 		client: client, auth: auth, sem: sem, gh: gh,
-		cache: make(map[string]*entry), lists: make(map[string]*listEntry), times: make(map[string]*timeEntry),
+		cache: make(map[string]*entry), lists: make(map[string]*listEntry),
 	}
 }
 
@@ -228,19 +223,11 @@ func githubRepo(repoURL string) (githubapi.Repo, bool) {
 
 // tagTime runs lookup once per repository and tag.
 func (l *Lister) tagTime(ctx context.Context, repoURL, tag string, lookup func() (time.Time, error)) (time.Time, error) {
-	key := repoURL + "@" + tag
-	l.mu.Lock()
-	e := l.times[key]
-	if e == nil {
-		e = &timeEntry{}
-		l.times[key] = e
-	}
-	l.mu.Unlock()
-	e.once.Do(func() {
-		e.t, e.err = lookup()
-		slog.DebugContext(ctx, "tag release time", "repo", repoURL, "tag", tag, "time", e.t, "err", e.err)
+	return l.times.Do(repoURL+"@"+tag, func() (time.Time, error) {
+		t, err := lookup()
+		slog.DebugContext(ctx, "tag release time", "repo", repoURL, "tag", tag, "time", t, "err", err)
+		return t, err
 	})
-	return e.t, e.err
 }
 
 // giteaListSize is the page size of the releases list: Gitea/Forgejo cap at MAX_RESPONSE_ITEMS

@@ -45,9 +45,10 @@ type Source struct {
 	getenv  func(string) string
 	central string
 
+	times datasource.Memo[reqKey, time.Time]
+
 	mu       sync.Mutex
 	meta     map[reqKey]*metaEntry
-	times    map[reqKey]*timeEntry
 	poms     map[reqKey]*pomEntry
 	resolved map[string][]repository   // dep key -> repositories of its Releases lookup
 	settings map[string]*settingsEntry // in-repository settings path ("" = none) -> effective settings
@@ -95,12 +96,6 @@ type metaEntry struct {
 	err      error
 }
 
-type timeEntry struct {
-	once sync.Once
-	t    time.Time
-	err  error
-}
-
 // New returns the maven datasource. sem bounds concurrent requests (nil = unbounded); getenv
 // supplies DEPS_MAVEN_CENTRAL_URL, the settings.xml locations and expansions, and Gradle
 // credentials.
@@ -111,7 +106,7 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 	}
 	return &Source{
 		client: stripHeadersOnRedirect(client), sem: sem, getenv: getenv, central: central,
-		meta: map[reqKey]*metaEntry{}, times: map[reqKey]*timeEntry{}, poms: map[reqKey]*pomEntry{},
+		meta: map[reqKey]*metaEntry{}, poms: map[reqKey]*pomEntry{},
 		resolved: map[string][]repository{}, settings: map[string]*settingsEntry{},
 		nearest: map[string]*nearestEntry{}, files: map[string]*fileEntry{}, gradleAuths: map[string]*auth{},
 	}
@@ -409,29 +404,21 @@ func (s *Source) fetchMetadata(ctx context.Context, u string, a *auth) (versions
 
 // pomTime HEADs the POM at path below repository r once per run.
 func (s *Source) pomTime(ctx context.Context, r repository, path string) (time.Time, error) {
-	k := reqKey{r.url, r.auth, path}
-	s.mu.Lock()
-	e := s.times[k]
-	if e == nil {
-		e = &timeEntry{}
-		s.times[k] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() {
+	return s.times.Do(reqKey{r.url, r.auth, path}, func() (time.Time, error) {
 		u := r.url + path
 		resp, err := s.do(ctx, http.MethodHead, u, r.auth)
 		if err != nil {
-			e.err = err
-			return
+			return time.Time{}, err
 		}
 		closeBody(resp)
+		var t time.Time
 		if resp.StatusCode == http.StatusOK {
 			// A missing or malformed header leaves the time unknown.
-			e.t, _ = http.ParseTime(resp.Header.Get("Last-Modified"))
+			t, _ = http.ParseTime(resp.Header.Get("Last-Modified"))
 		}
-		slog.DebugContext(ctx, "maven release time", "url", u, "status", resp.StatusCode, "time", e.t)
+		slog.DebugContext(ctx, "maven release time", "url", u, "status", resp.StatusCode, "time", t)
+		return t, nil
 	})
-	return e.t, e.err
 }
 
 // authHeadersKey carries the credential header names of a request to the redirect policy.
