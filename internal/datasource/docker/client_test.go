@@ -256,18 +256,16 @@ func TestBearerDeniedToken(t *testing.T) {
 	}
 }
 
-// A realm host that passes validateRealm's lookup but resolves to a blocked address when the
-// token request connects (DNS rebinding) is refused at the connection.
+// A realm on another host reached without a proxy is not resolved beforehand: a blocked address
+// is refused when the token request connects, including a name that resolved to a public address
+// earlier (DNS rebinding).
 func TestTokenDialGuard(t *testing.T) {
 	ts := newTokenServer(t, func(*http.Request) (int, string) { return http.StatusOK, "t" })
 	_, port, _ := net.SplitHostPort(ts.host)
-	fakeLookup(t, map[string][]net.IPAddr{"localhost": {{IP: net.ParseIP("203.0.113.7")}}})
+	lookups := fakeLookup(t, map[string][]net.IPAddr{"localhost": {{IP: net.ParseIP("203.0.113.7")}}})
 	c := newClient(httpx.NewClient(), http.Header{}, anon, "deps")
 	reg, _ := url.Parse(ts.srv.URL + "/v2/img/tags/list")
 	realm := "http://localhost:" + port + "/token"
-	if err := validateRealm(t.Context(), realm, reg); err != nil {
-		t.Fatalf("validateRealm = %v; the lookup should pass", err)
-	}
 	_, err := c.distributionToken(t.Context(), reg, realm, "svc", []string{"repository:img:pull"}, credential{})
 	if err == nil || !strings.Contains(err.Error(), "not allowed") {
 		t.Errorf("err = %v, want the connection refused", err)
@@ -275,9 +273,37 @@ func TestTokenDialGuard(t *testing.T) {
 	if ts.tokens.Load() != 0 {
 		t.Error("token request reached the server")
 	}
+	if n := lookups.Load(); n != 0 {
+		t.Errorf("lookups = %d, want none: the dial check applies", n)
+	}
 	// The registry's own host is not checked: local registries serve their own tokens.
 	if _, err := c.distributionToken(t.Context(), reg, ts.srv.URL+"/token", "svc", []string{"repository:img:pull"}, credential{}); err != nil {
 		t.Errorf("same-host realm: %v", err)
+	}
+}
+
+// Through a proxy the connection is the proxy's, so a realm on another host is resolved
+// beforehand and refused when it resolves to a blocked address.
+func TestTokenProxyLookup(t *testing.T) {
+	var proxied atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { proxied.Add(1) }))
+	t.Cleanup(proxy.Close)
+	proxyURL, _ := url.Parse(proxy.URL)
+	orig := proxyFor
+	proxyFor = func(*http.Request) (*url.URL, error) { return proxyURL, nil }
+	t.Cleanup(func() { proxyFor = orig })
+	lookups := fakeLookup(t, map[string][]net.IPAddr{"metadata.test": {{IP: net.ParseIP("169.254.169.254")}}})
+	c := newClient(httpx.NewClient(), http.Header{}, anon, "deps-test")
+	reg, _ := url.Parse("https://registry.example/v2/img/tags/list")
+	_, err := c.distributionToken(t.Context(), reg, "https://metadata.test/token", "svc", []string{"repository:img:pull"}, credential{})
+	if err == nil || !strings.Contains(err.Error(), "resolves to 169.254.169.254") {
+		t.Errorf("err = %v, want the realm refused by its lookup", err)
+	}
+	if n := lookups.Load(); n != 1 {
+		t.Errorf("lookups = %d, want 1", n)
+	}
+	if n := proxied.Load(); n != 0 {
+		t.Errorf("proxy requests = %d, want none", n)
 	}
 }
 
@@ -445,23 +471,31 @@ func TestValidateRealm(t *testing.T) {
 		{"ftp://auth.example/token", https, false},
 		{"", https, false},
 	} {
-		if err := validateRealm(t.Context(), c.realm, c.reg); (err == nil) != c.ok {
+		if err := validateRealm(t.Context(), c.realm, c.reg, false); (err == nil) != c.ok {
 			t.Errorf("validateRealm(%q, %s) = %v, want ok %v", c.realm, c.reg, err, c.ok)
+		}
+		// With a dial check only the lookup is skipped.
+		if err := validateRealm(t.Context(), c.realm, c.reg, true); (err == nil) != (c.ok || c.realm == "https://metadata.test/token") {
+			t.Errorf("validateRealm(%q, %s, dial checked) = %v", c.realm, c.reg, err)
 		}
 	}
 }
 
-// fakeLookup makes realm host lookups answer from resolved; other names fail to resolve.
-func fakeLookup(t *testing.T, resolved map[string][]net.IPAddr) {
+// fakeLookup makes realm host lookups answer from resolved; other names fail to resolve. It
+// returns the number of lookups made.
+func fakeLookup(t *testing.T, resolved map[string][]net.IPAddr) *atomic.Int32 {
 	t.Helper()
+	var n atomic.Int32
 	orig := lookupIPAddr
 	lookupIPAddr = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		n.Add(1)
 		if addrs, ok := resolved[host]; ok {
 			return addrs, nil
 		}
 		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
 	}
 	t.Cleanup(func() { lookupIPAddr = orig })
+	return &n
 }
 
 // A token request may not be redirected to where the realm itself could not point.

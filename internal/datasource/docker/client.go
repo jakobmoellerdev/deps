@@ -325,9 +325,6 @@ func (c *client) basic(ctx context.Context, r *repository) (string, error) {
 // (sorted, as the Docker CLI and oras-go send them) from the challenge's realm.
 func (c *client) bearer(ctx context.Context, r *repository, reqURL *url.URL, params map[string]string, scopes []string) (string, error) {
 	realm, service := params["realm"], params["service"]
-	if err := validateRealm(ctx, realm, reqURL); err != nil {
-		return "", err
-	}
 	scopes = slices.Clone(scopes)
 	for s := range strings.FieldsSeq(params["scope"]) {
 		if !slices.Contains(scopes, s) {
@@ -364,11 +361,12 @@ func (c *client) bearer(ctx context.Context, r *repository, reqURL *url.URL, par
 // validateRealm refuses a realm the registry's credentials must not go to, as oras-go does: one
 // that is not http(s), plain http when the registry is reached over https, or, on another host
 // than the registry's, a host that is or resolves to an address of blockedRealmPrefixes
-// (IPv4-mapped, NAT64 and 6to4 addresses unwrapped). A failed lookup allows the realm: behind a
-// proxy the name may not resolve here, and a bogus one fails when dialed. DNS rebinding (a name
-// resolving differently when dialed) is not defended against. Token requests check every
-// redirect hop the same way (tokenRequest).
-func validateRealm(ctx context.Context, realm string, registry *url.URL) error {
+// (IPv4-mapped, NAT64 and 6to4 addresses unwrapped). The host is resolved only when dialChecked
+// is false: with a dial check (see dialGuard) the address actually connected to is checked, so a
+// lookup beforehand would only add a DNS round trip. A failed lookup allows the realm: behind a
+// proxy the name may not resolve here, and a bogus one fails when dialed. Through a proxy, DNS
+// rebinding (a name resolving differently when the proxy dials it) is not defended against.
+func validateRealm(ctx context.Context, realm string, registry *url.URL, dialChecked bool) error {
 	u, err := url.Parse(realm)
 	if err != nil || realm == "" {
 		return fmt.Errorf("invalid bearer realm %q", realm)
@@ -387,6 +385,9 @@ func validateRealm(ctx context.Context, realm string, registry *url.URL) error {
 		if blockedRealmAddr(addr) {
 			return fmt.Errorf("bearer realm %q: address %s not allowed", realm, unwrapAddr(addr))
 		}
+		return nil
+	}
+	if dialChecked {
 		return nil
 	}
 	addrs, _ := lookupIPAddr(ctx, host) // a failed lookup allows the realm, see above
@@ -509,15 +510,24 @@ func oauth2Unsupported(err error) bool {
 const maxTokenRedirects = 10
 
 // tokenRequest sends a token request and decodes the token (`access_token`, else `token`).
-// Every redirect hop must pass validateRealm against registry, so a validated realm cannot send
-// the credentials on to a blocked address or from https to http. A realm on another host than
-// the registry's, reached without a proxy, is also checked when connecting (see dialGuard).
+// The request and every redirect hop must pass validateRealm against registry, so a realm cannot
+// send the credentials to a blocked address or from https to http. A request to another host than
+// the registry's, made without a proxy, is checked when connecting instead of by a lookup
+// beforehand (see dialGuard).
 func (c *client) tokenRequest(req *http.Request, registry *url.URL) (string, error) {
+	guarded := dialChecked(req.URL, registry)
+	if err := validateRealm(req.Context(), req.URL.String(), registry, guarded); err != nil {
+		return "", err
+	}
 	maps.Copy(req.Header, c.header)
-	req = dialGuard(req, registry)
+	if guarded {
+		req = dialGuard(req)
+	}
 	hc := *c.http
 	hc.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-		if err := validateRealm(next.Context(), next.URL.String(), registry); err != nil {
+		// The dial check travels with the request's context to every hop.
+		hopChecked := guarded && dialChecked(next.URL, registry)
+		if err := validateRealm(next.Context(), next.URL.String(), registry, hopChecked); err != nil {
 			return fmt.Errorf("token request redirect rejected: %w", err)
 		}
 		if len(via) >= maxTokenRedirects {
@@ -546,18 +556,25 @@ func (c *client) tokenRequest(req *http.Request, registry *url.URL) (string, err
 	return "", fmt.Errorf("%s %q: empty token", req.Method, req.URL.Redacted())
 }
 
+// dialChecked reports whether a token request to u gets dialGuard's dial check: when u is on
+// another host than registry's and is not reached through a proxy (through one, the connection is
+// the proxy's, which is not checked, as in oras-go).
+func dialChecked(u, registry *url.URL) bool {
+	if strings.EqualFold(u.Hostname(), registry.Hostname()) {
+		return false
+	}
+	proxy, err := proxyFor(&http.Request{URL: u})
+	return err == nil && proxy == nil
+}
+
+// proxyFor picks a token request's proxy as httpx's transport does; tests replace it, as
+// http.ProxyFromEnvironment reads the environment only once.
+var proxyFor = http.ProxyFromEnvironment
+
 // dialGuard returns req with a dial check (httpx.WithDialCheck) refusing connections to
-// blockedRealmPrefixes, when req goes to another host than registry's and not through a proxy.
-// validateRealm resolves the realm host beforehand; this check sees the address actually
-// connected to, which a name that resolves differently the second time (DNS rebinding) cannot
-// evade. Through a proxy the connection is the proxy's, which is not checked, as in oras-go.
-func dialGuard(req *http.Request, registry *url.URL) *http.Request {
-	if strings.EqualFold(req.URL.Hostname(), registry.Hostname()) {
-		return req
-	}
-	if proxy, err := http.ProxyFromEnvironment(req); err != nil || proxy != nil {
-		return req
-	}
+// blockedRealmPrefixes. It sees the address actually connected to, which a name that resolves
+// differently the second time (DNS rebinding) cannot evade.
+func dialGuard(req *http.Request) *http.Request {
 	host := req.URL.Host
 	return req.WithContext(httpx.WithDialCheck(req.Context(), func(addr netip.Addr) error {
 		if blockedRealmAddr(addr) {
