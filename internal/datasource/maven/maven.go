@@ -245,14 +245,20 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 	s.mu.Lock()
 	s.resolved[depKey(d)] = repos
 	s.mu.Unlock()
+	// Fetch every repository together (each request takes its own slot), merge in order.
+	entries := make([]*metaEntry, len(repos))
+	var wg sync.WaitGroup
+	for i, r := range repos {
+		wg.Go(func() { entries[i] = s.metadata(ctx, r, d.Name, base) })
+	}
+	wg.Wait()
 	var (
 		rels  []datasource.Release
 		seen  = map[string]bool{}
 		found bool
 		errs  []error
 	)
-	for _, r := range repos {
-		e := s.metadata(ctx, r, d.Name, base)
+	for _, e := range entries {
 		switch {
 		case e.err != nil:
 			errs = append(errs, e.err)
