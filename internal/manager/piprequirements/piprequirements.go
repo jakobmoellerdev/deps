@@ -339,23 +339,35 @@ func (l line) offset(i int) int {
 
 func logicalLines(src []byte) []line {
 	var out []line
-	var cur line
-	var b strings.Builder
+	// arena backs every line's segs; each line gets a clipped sub-slice, so the
+	// in-place shifts in finish never touch another line.
+	var arena []seg
+	var buf []byte
+	start, joined := 0, false
 	for pos := 0; pos < len(src); {
-		end := pos
-		for end < len(src) && src[end] != '\n' {
-			end++
+		end := len(src)
+		if i := bytes.IndexByte(src[pos:], '\n'); i >= 0 {
+			end = pos + i
 		}
 		next := end + 1
-		raw := strings.TrimSuffix(string(src[pos:end]), "\r")
-		cont := strings.HasSuffix(raw, "\\")
-		raw = strings.TrimSuffix(raw, "\\")
-		cur.segs = append(cur.segs, seg{at: b.Len(), file: pos})
-		b.WriteString(raw)
+		raw := bytes.TrimSuffix(src[pos:end], []byte("\r"))
+		cont := len(raw) > 0 && raw[len(raw)-1] == '\\'
+		if cont {
+			raw = raw[:len(raw)-1]
+		}
+		arena = append(arena, seg{at: len(buf), file: pos})
 		if !cont || next >= len(src) {
-			cur.text = b.String()
-			out = append(out, cur.finish())
-			cur, b = line{}, strings.Builder{}
+			var text string
+			if joined {
+				text = string(append(buf, raw...))
+			} else {
+				text = string(raw) // single physical line: no buffer copy
+			}
+			out = append(out, line{text: text, segs: arena[start:len(arena):len(arena)]}.finish())
+			start, joined, buf = len(arena), false, buf[:0]
+		} else {
+			buf = append(buf, raw...)
+			joined = true
 		}
 		pos = next
 	}
