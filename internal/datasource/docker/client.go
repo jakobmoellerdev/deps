@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strconv"
@@ -74,7 +75,7 @@ func (c *client) do(req *http.Request, r *repository) (*http.Response, error) {
 	maps.Copy(req.Header, c.header)
 	scope := "repository:" + r.path + ":pull"
 	key := c.tokenKey(r.registry, scope)
-	used := c.cached(key)
+	used := c.cached(r, key)
 	if used != nil {
 		req.Header.Set("Authorization", used.auth)
 	}
@@ -96,7 +97,7 @@ func (c *client) do(req *http.Request, r *repository) (*http.Response, error) {
 	ctx := req.Context()
 	var e *tokenEntry
 	if scheme == schemeBasic {
-		e = c.fetch(ctx, r.registry+" basic", used, func() (string, error) { return c.basic(ctx, r.registry) })
+		e = c.fetch(ctx, c.basicKey(r), used, func() (string, error) { return c.basic(ctx, r) })
 	} else {
 		e = c.fetch(ctx, key, used, func() (string, error) { return c.bearer(ctx, r, req.URL, params, scope) })
 	}
@@ -111,16 +112,19 @@ func (c *client) do(req *http.Request, r *repository) (*http.Response, error) {
 // tokenKey is the cache key of registry's bearer token for scope.
 func (c *client) tokenKey(registry, scope string) string { return registry + " bearer " + scope }
 
-// cached returns the fetched credential the registry's last challenge scheme asks for; nil
-// when there is none yet.
-func (c *client) cached(bearerKey string) *tokenEntry {
-	registry, _, _ := strings.Cut(bearerKey, " ")
+// basicKey is the cache key of r's Basic credential: per repository, since namespaced
+// credentials (`auths` key ghcr.io/org) may differ between repositories of a registry.
+func (c *client) basicKey(r *repository) string { return r.registry + " basic " + r.path }
+
+// cached returns the fetched credential of r that the registry's last challenge scheme asks
+// for; nil when there is none yet.
+func (c *client) cached(r *repository, bearerKey string) *tokenEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var e *tokenEntry
-	switch c.schemes[registry] {
+	switch c.schemes[r.registry] {
 	case schemeBasic:
-		e = c.tokens[registry+" basic"]
+		e = c.tokens[c.basicKey(r)]
 	case schemeBearer:
 		e = c.tokens[bearerKey]
 	}
@@ -167,9 +171,9 @@ func (c *client) fetch(ctx context.Context, key string, stale *tokenEntry, get f
 	}
 }
 
-// basic returns the Basic Authorization value of registry's credential.
-func (c *client) basic(ctx context.Context, registry string) (string, error) {
-	cred, err := c.cred(ctx, registry)
+// basic returns the Basic Authorization value of r's credential.
+func (c *client) basic(ctx context.Context, r *repository) (string, error) {
+	cred, err := c.cred(ctx, r.registry, r.path)
 	if err != nil {
 		return "", fmt.Errorf("resolve credential: %w", err)
 	}
@@ -186,7 +190,7 @@ func (c *client) basic(ctx context.Context, registry string) (string, error) {
 // (sorted, as the Docker CLI and oras-go send them) from the challenge's realm.
 func (c *client) bearer(ctx context.Context, r *repository, reqURL *url.URL, params map[string]string, scope string) (string, error) {
 	realm, service := params["realm"], params["service"]
-	if err := validateRealm(realm, reqURL); err != nil {
+	if err := validateRealm(ctx, realm, reqURL); err != nil {
 		return "", err
 	}
 	scopes := []string{scope}
@@ -196,7 +200,7 @@ func (c *client) bearer(ctx context.Context, r *repository, reqURL *url.URL, par
 		}
 	}
 	slices.Sort(scopes)
-	cred, err := c.cred(ctx, r.registry)
+	cred, err := c.cred(ctx, r.registry, r.path)
 	if err != nil {
 		return "", err
 	}
@@ -206,26 +210,30 @@ func (c *client) bearer(ctx context.Context, r *repository, reqURL *url.URL, par
 		token = cred.AccessToken
 	case cred.RefreshToken != "":
 		var oauthErr error
-		if token, oauthErr = c.oauth2Token(ctx, realm, service, scopes, cred); oauthErr != nil {
+		if token, oauthErr = c.oauth2Token(ctx, reqURL, realm, service, scopes, cred); oauthErr != nil {
 			if !oauth2Unsupported(oauthErr) {
 				return "", oauthErr
 			}
-			if token, err = c.distributionToken(ctx, realm, service, scopes, cred); err != nil {
+			if token, err = c.distributionToken(ctx, reqURL, realm, service, scopes, cred); err != nil {
 				return "", errors.Join(err, oauthErr)
 			}
 		}
 	default:
-		if token, err = c.distributionToken(ctx, realm, service, scopes, cred); err != nil {
+		if token, err = c.distributionToken(ctx, reqURL, realm, service, scopes, cred); err != nil {
 			return "", err
 		}
 	}
 	return "Bearer " + token, nil
 }
 
-// validateRealm refuses a realm the registry's credentials must not go to: one that is not
-// http(s), plain http when the registry is reached over https, or a loopback, link-local or
-// unspecified address on another host than the registry's.
-func validateRealm(realm string, registry *url.URL) error {
+// validateRealm refuses a realm the registry's credentials must not go to, as oras-go does: one
+// that is not http(s), plain http when the registry is reached over https, or, on another host
+// than the registry's, a host that is or resolves to an address of blockedRealmPrefixes
+// (IPv4-mapped, NAT64 and 6to4 addresses unwrapped). A failed lookup allows the realm: behind a
+// proxy the name may not resolve here, and a bogus one fails when dialed. DNS rebinding (a name
+// resolving differently when dialed) is not defended against. Token requests check every
+// redirect hop the same way (tokenRequest).
+func validateRealm(ctx context.Context, realm string, registry *url.URL) error {
 	u, err := url.Parse(realm)
 	if err != nil || realm == "" {
 		return fmt.Errorf("invalid bearer realm %q", realm)
@@ -236,18 +244,84 @@ func validateRealm(realm string, registry *url.URL) error {
 	default:
 		return fmt.Errorf("bearer realm %q: scheme %q not allowed for a registry reached over %s", realm, u.Scheme, registry.Scheme)
 	}
-	if strings.EqualFold(u.Hostname(), registry.Hostname()) {
+	host := u.Hostname()
+	if strings.EqualFold(host, registry.Hostname()) {
 		return nil
 	}
-	if ip := net.ParseIP(u.Hostname()); ip != nil && (ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()) {
-		return fmt.Errorf("bearer realm %q: address %s not allowed", realm, ip)
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if blockedRealmAddr(addr) {
+			return fmt.Errorf("bearer realm %q: address %s not allowed", realm, unwrapAddr(addr))
+		}
+		return nil
+	}
+	addrs, _ := lookupIPAddr(ctx, host) // a failed lookup allows the realm, see above
+	for _, a := range addrs {
+		if addr, ok := netip.AddrFromSlice(a.IP); ok && blockedRealmAddr(addr) {
+			return fmt.Errorf("bearer realm %q: host %s resolves to %s, not allowed", realm, host, unwrapAddr(addr))
+		}
 	}
 	return nil
 }
 
+// lookupIPAddr resolves realm hosts; tests replace it.
+var lookupIPAddr = net.DefaultResolver.LookupIPAddr
+
+// blockedRealmPrefixes are oras-go's default realm denylist: loopback, link-local (including
+// the cloud metadata address 169.254.169.254), link-local multicast, unspecified, and the
+// metadata addresses of Alibaba, AWS (IPv6), GCP (IPv6) and Azure. Private networks are allowed:
+// self-hosted registries put their token service there.
+var blockedRealmPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("::1/128"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("fe80::/10"),
+	netip.MustParsePrefix("224.0.0.0/24"),
+	netip.MustParsePrefix("ff02::/16"),
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("::/128"),
+	netip.MustParsePrefix("100.100.100.200/32"),
+	netip.MustParsePrefix("fd00:ec2::254/128"),
+	netip.MustParsePrefix("fd00:ec2::23/128"),
+	netip.MustParsePrefix("fd20:ce::254/128"),
+	netip.MustParsePrefix("168.63.129.16/32"),
+}
+
+var (
+	nat64Prefix  = netip.MustParsePrefix("64:ff9b::/96")
+	sixTo4Prefix = netip.MustParsePrefix("2002::/16")
+)
+
+// blockedRealmAddr reports whether addr, as is or unwrapped, is in blockedRealmPrefixes.
+func blockedRealmAddr(addr netip.Addr) bool {
+	unwrapped := unwrapAddr(addr)
+	for _, p := range blockedRealmPrefixes {
+		if p.Contains(unwrapped) || p.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// unwrapAddr returns the IPv4 address an IPv4-mapped, NAT64 or 6to4 address embeds, else addr
+// without its zone.
+func unwrapAddr(addr netip.Addr) netip.Addr {
+	addr = addr.Unmap().WithZone("")
+	if !addr.Is6() {
+		return addr
+	}
+	b := addr.As16()
+	switch {
+	case nat64Prefix.Contains(addr):
+		return netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+	case sixTo4Prefix.Contains(addr):
+		return netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]})
+	}
+	return addr
+}
+
 // distributionToken GETs a token from realm, with basic credentials when cred has a username or
 // password, anonymously otherwise.
-func (c *client) distributionToken(ctx context.Context, realm, service string, scopes []string, cred credential) (string, error) {
+func (c *client) distributionToken(ctx context.Context, registry *url.URL, realm, service string, scopes []string, cred credential) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, realm, http.NoBody)
 	if err != nil {
 		return "", err
@@ -263,11 +337,11 @@ func (c *client) distributionToken(ctx context.Context, realm, service string, s
 		q.Add("scope", s)
 	}
 	req.URL.RawQuery = q.Encode()
-	return c.tokenRequest(req)
+	return c.tokenRequest(req, registry)
 }
 
 // oauth2Token POSTs an OAuth2 refresh-token grant to realm.
-func (c *client) oauth2Token(ctx context.Context, realm, service string, scopes []string, cred credential) (string, error) {
+func (c *client) oauth2Token(ctx context.Context, registry *url.URL, realm, service string, scopes []string, cred credential) (string, error) {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {cred.RefreshToken},
@@ -280,7 +354,7 @@ func (c *client) oauth2Token(ctx context.Context, realm, service string, scopes 
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	return c.tokenRequest(req)
+	return c.tokenRequest(req, registry)
 }
 
 // oauth2Unsupported reports whether err is a token endpoint's refusal of an OAuth2 POST.
@@ -296,10 +370,25 @@ func oauth2Unsupported(err error) bool {
 	return false
 }
 
+// maxTokenRedirects bounds the redirects of a token request, as net/http does by default.
+const maxTokenRedirects = 10
+
 // tokenRequest sends a token request and decodes the token (`access_token`, else `token`).
-func (c *client) tokenRequest(req *http.Request) (string, error) {
+// Every redirect hop must pass validateRealm against registry, so a validated realm cannot send
+// the credentials on to a blocked address or from https to http.
+func (c *client) tokenRequest(req *http.Request, registry *url.URL) (string, error) {
 	maps.Copy(req.Header, c.header)
-	resp, err := c.http.Do(req)
+	hc := *c.http
+	hc.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if err := validateRealm(next.Context(), next.URL.String(), registry); err != nil {
+			return fmt.Errorf("token request redirect rejected: %w", err)
+		}
+		if len(via) >= maxTokenRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxTokenRedirects)
+		}
+		return nil
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
 		return "", err
 	}

@@ -100,13 +100,13 @@ func (s stripWriter) WriteHeader(code int) {
 }
 
 // anon resolves every registry to anonymous access.
-func anon(context.Context, string) (credential, error) {
+func anon(context.Context, string, string) (credential, error) {
 	return credential{}, nil
 }
 
 // static returns cred for registry and anonymous access for others.
 func static(registry string, cred credential) credentialFunc {
-	return func(_ context.Context, r string) (credential, error) {
+	return func(_ context.Context, r, _ string) (credential, error) {
 		if r == registry {
 			return cred, nil
 		}

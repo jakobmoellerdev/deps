@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -201,9 +202,9 @@ func TestBasicChallenge(t *testing.T) {
 	f := newFixture(t)
 	f.set(func() { f.user, f.pass = "u", "p" })
 	var lookups atomic.Int32
-	s := newSource(f.srv.Client(), nil, func(_ context.Context, registry string) (credential, error) {
+	s := newSource(f.srv.Client(), nil, func(_ context.Context, registry, path string) (credential, error) {
 		lookups.Add(1)
-		return static(f.host, credential{Username: "u", Password: "p"})(t.Context(), registry)
+		return static(f.host, credential{Username: "u", Password: "p"})(t.Context(), registry, path)
 	})
 	d := dep.Dep{Name: f.host + "/img"}
 	for _, v := range []string{"1.0", "2.0", "latest"} {
@@ -277,6 +278,11 @@ func TestParseChallenge(t *testing.T) {
 }
 
 func TestValidateRealm(t *testing.T) {
+	resolved := map[string][]net.IPAddr{
+		"metadata.test": {{IP: net.ParseIP("203.0.113.7")}, {IP: net.ParseIP("169.254.169.254")}},
+		"public.test":   {{IP: net.ParseIP("203.0.113.7")}},
+	}
+	fakeLookup(t, resolved)
 	https, _ := url.Parse("https://registry.example/v2/x/tags/list")
 	plain, _ := url.Parse("http://127.0.0.1:5000/v2/x/tags/list")
 	for _, c := range []struct {
@@ -289,12 +295,47 @@ func TestValidateRealm(t *testing.T) {
 		{"http://127.0.0.1:5000/token", plain, true},
 		{"https://169.254.169.254/latest", https, false},
 		{"https://127.0.0.1/token", https, false},
+		{"https://[::ffff:127.0.0.1]/token", https, false},
+		{"https://[64:ff9b::a9fe:a9fe]/token", https, false}, // NAT64 of 169.254.169.254
+		{"https://168.63.129.16/token", https, false},
+		{"https://10.0.0.1/token", https, true}, // private token services of self-hosted registries
+		{"https://metadata.test/token", https, false},
+		{"https://public.test/token", https, true},
+		{"https://unresolvable.test/token", https, true},
 		{"ftp://auth.example/token", https, false},
 		{"", https, false},
 	} {
-		if err := validateRealm(c.realm, c.reg); (err == nil) != c.ok {
+		if err := validateRealm(t.Context(), c.realm, c.reg); (err == nil) != c.ok {
 			t.Errorf("validateRealm(%q, %s) = %v, want ok %v", c.realm, c.reg, err, c.ok)
 		}
+	}
+}
+
+// fakeLookup makes realm host lookups answer from resolved; other names fail to resolve.
+func fakeLookup(t *testing.T, resolved map[string][]net.IPAddr) {
+	t.Helper()
+	orig := lookupIPAddr
+	lookupIPAddr = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		if addrs, ok := resolved[host]; ok {
+			return addrs, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+	}
+	t.Cleanup(func() { lookupIPAddr = orig })
+}
+
+// A token request may not be redirected to where the realm itself could not point.
+func TestTokenRedirectValidated(t *testing.T) {
+	fakeLookup(t, map[string][]net.IPAddr{"metadata.test": {{IP: net.ParseIP("169.254.169.254")}}})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://metadata.test/latest/meta-data", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srv.Close)
+	c := newClient(srv.Client(), http.Header{}, anon, "deps")
+	reg, _ := url.Parse(srv.URL + "/v2/x/tags/list")
+	_, err := c.distributionToken(t.Context(), reg, srv.URL+"/token", "svc", []string{"repository:x:pull"}, credential{Username: "u", Password: "p"})
+	if err == nil || !strings.Contains(err.Error(), "token request redirect rejected") {
+		t.Errorf("err = %v, want rejected redirect", err)
 	}
 }
 
@@ -307,7 +348,7 @@ func writeHelper(t *testing.T) {
 [ "$1" = get ] || exit 2
 read -r addr
 case "$addr" in
-  reg.example) echo '{"ServerURL":"reg.example","Username":"u","Secret":"p"}' ;;
+  reg.example|reg.example/team) echo '{"ServerURL":"reg.example","Username":"u","Secret":"p"}' ;;
   https://index.docker.io/v1/) echo '{"ServerURL":"https://index.docker.io/v1/","Username":"<token>","Secret":"rt"}' ;;
   broken.example) echo 'helper exploded'; exit 1 ;;
   *) echo 'credentials not found in native keychain'; exit 1 ;;
@@ -322,7 +363,7 @@ esac
 func TestDockerCredentials(t *testing.T) {
 	writeHelper(t)
 	for _, c := range []struct {
-		name, config, registry string
+		name, config, registry string // registry: host, or host/path for a repository's lookup
 		want                   credential
 		err                    string
 	}{
@@ -342,6 +383,13 @@ func TestDockerCredentials(t *testing.T) {
 		{"helper error", `{"credsStore":"fake"}`, "broken.example", credential{}, "helper exploded"},
 		{"missing helper", `{"credsStore":"absent"}`, "ghcr.io", credential{}, "docker-credential-absent"},
 		{"broken config", `{`, "ghcr.io", credential{}, "docker config: "},
+		{"namespace", `{"auths":{"ghcr.io/org":{"auth":"dTpw"},"ghcr.io":{"auth":"eDp5"}}}`, "ghcr.io/org/app", credential{Username: "u", Password: "p"}, ""},
+		{"most specific namespace", `{"auths":{"ghcr.io/org":{"auth":"eDp5"},"GHCR.io/org/app/":{"auth":"dTpw"}}}`, "ghcr.io/org/app", credential{Username: "u", Password: "p"}, ""},
+		{"other namespace", `{"auths":{"ghcr.io/org":{"auth":"eDp5"},"ghcr.io":{"auth":"dTpw"}}}`, "ghcr.io/other/app", credential{Username: "u", Password: "p"}, ""},
+		{"namespace over creds store", `{"credsStore":"absent","auths":{"ghcr.io/org":{"auth":"dTpw"}}}`, "ghcr.io/org/app", credential{Username: "u", Password: "p"}, ""},
+		{"namespace helper", `{"credHelpers":{"reg.example/team":"fake"}}`, "reg.example/team/app", credential{Username: "u", Password: "p"}, ""},
+		{"namespace helper not found", `{"credHelpers":{"ghcr.io/org":"fake"},"auths":{"ghcr.io":{"auth":"dTpw"}}}`, "ghcr.io/org/app", credential{Username: "u", Password: "p"}, ""},
+		{"hub has no namespaces", `{"auths":{"docker.io/library":{"auth":"eDp5"},"https://index.docker.io/v1/":{"auth":"dTpw"}}}`, "docker.io/library/alpine", credential{Username: "u", Password: "p"}, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -351,7 +399,8 @@ func TestDockerCredentials(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			got, err := dockerCredentials()(t.Context(), c.registry)
+			registry, path, _ := strings.Cut(c.registry, "/")
+			got, err := dockerCredentials()(t.Context(), registry, path)
 			if c.err != "" {
 				if err == nil || !strings.Contains(err.Error(), c.err) {
 					t.Errorf("err = %v, want %q", err, c.err)

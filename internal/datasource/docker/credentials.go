@@ -23,8 +23,9 @@ type credential struct {
 	AccessToken        string
 }
 
-// credentialFunc returns the credential of registry (host[:port], docker.io for Docker Hub).
-type credentialFunc func(ctx context.Context, registry string) (credential, error)
+// credentialFunc returns the credential of repository path (library/alpine) on registry
+// (host[:port], docker.io for Docker Hub).
+type credentialFunc func(ctx context.Context, registry, path string) (credential, error)
 
 // hubServerAddress is the key of Docker Hub credentials in the Docker config and credential
 // helpers, as the Docker CLI stores them.
@@ -47,12 +48,13 @@ type authConfig struct {
 
 // dockerCredentials reads credentials from the Docker config ($DOCKER_CONFIG or ~/.docker) and
 // its credential helpers, as the Docker CLI does: a credential helper named for the registry in
-// `credHelpers`, else the `credsStore` helper when the config names one, else `auths`. An
-// unreadable config fails every authenticated lookup with its error.
+// `credHelpers`, else the `credsStore` helper when the config names one, else `auths`. Keys
+// naming a namespace of the registry (`ghcr.io/org`) take precedence, most specific first, as
+// in oras-go. An unreadable config fails every authenticated lookup with its error.
 func dockerCredentials() credentialFunc {
 	cfg, err := loadDockerConfig()
 	if err != nil {
-		return func(context.Context, string) (credential, error) {
+		return func(context.Context, string, string) (credential, error) {
 			return credential{}, fmt.Errorf("docker config: %w", err)
 		}
 	}
@@ -84,13 +86,33 @@ func loadDockerConfig() (*dockerConfig, error) {
 	return cfg, nil
 }
 
-// credential looks up registry: Docker Hub (docker.io) under its server address
-// https://index.docker.io/v1/ (or, failing that, one of its hosts), other registries by host.
-// Keys match regardless of an http(s):// prefix, a trailing slash and the host's case.
-func (c *dockerConfig) credential(ctx context.Context, registry string) (credential, error) {
+// credential looks up repository path on registry: first the `credHelpers` and `auths` keys of
+// its namespaces, most specific first (ghcr.io/org/app, then ghcr.io/org), then the registry
+// itself. Docker Hub (docker.io) is looked up under its server address
+// https://index.docker.io/v1/ (or, failing that, one of its hosts) and has no namespaces, as in
+// oras-go. The credsStore helper is only asked for the registry, so a lookup runs it at most
+// once. Keys match regardless of an http(s):// prefix, a trailing slash and the host's case.
+func (c *dockerConfig) credential(ctx context.Context, registry, path string) (credential, error) {
 	addr, keys := registry, []string{normalizeServerAddress(registry)}
 	if isHub(registry) {
 		addr, keys = hubServerAddress, hubKeys
+	} else {
+		for ns := path; ns != ""; {
+			key := keys[0] + "/" + ns
+			if helper, ok := lookup(c.CredHelpers, key); ok && helper != "" {
+				if cred, err := helperCredential(ctx, helper, registry+"/"+ns); err != nil || cred != (credential{}) {
+					return cred, err
+				}
+			}
+			if a, ok := lookup(c.Auths, key); ok {
+				return a.credential()
+			}
+			i := strings.LastIndexByte(ns, '/')
+			if i < 0 {
+				break
+			}
+			ns = ns[:i]
+		}
 	}
 	for _, k := range keys {
 		if helper, ok := lookup(c.CredHelpers, k); ok && helper != "" {
