@@ -206,6 +206,13 @@ func TestEdits(t *testing.T) {
 		{"a/exact", "4.0.0", "", `        .package(url: "https://github.com/a/exact", exact: "4.0.0"),`},
 		{"a/old", "1.40.0", "", `        .package(name: "Old", url: "https://github.com/a/old.git", .exact("1.40.0")),`},
 		{"a/multi", "0.1.8", "", `            exact: "0.1.8",`},
+		{"apple/swift-log", "1.16.0", dep.RangePin, `        .package(url: "https://github.com/apple/swift-log.git", exact: "1.16.0"),`},
+		{"apple/swift-log", "1.15.1", dep.RangePin, `        .package(url: "https://github.com/apple/swift-log.git", exact: "1.15.1"),`},
+		{"apple/swift-nio", "2.61.0", dep.RangePin, `        .package(url: "git@github.com:apple/swift-nio.git", exact: "2.61.0"),`},
+		{"a/minor", "0.4.5", dep.RangePin, `        .package(url: "https://github.com/a/minor", exact: "0.4.5"),`},
+		{"a/half", "1.4.0", dep.RangePin, `        .package(url: "https://github.com/a/half", exact: "1.4.0"),`},
+		{"a/closed", "1.5.0", dep.RangePin, `        .package(url: "https://github.com/a/closed", exact: "1.5.0"),`},
+		{"g/sub/proj", "4.0.0", dep.RangePin, `        Package.Dependency.package(url: "https://gitlab.com/g/sub/proj", exact: "4.0.0"),`},
 	}
 	for _, tt := range tests {
 		d := byName[tt.name]
@@ -224,9 +231,6 @@ func TestEdits(t *testing.T) {
 			t.Errorf("%s: %d edits changed more than the versions", tt.name, len(edits))
 		}
 	}
-	if _, err := New().Edits(dep.Update{Dep: byName["apple/swift-log"], NewVersion: "2.0.0", RangeStrategy: dep.RangePin}); err == nil {
-		t.Error("pin: no error")
-	}
 }
 
 func TestNewRange(t *testing.T) {
@@ -239,7 +243,8 @@ func TestNewRange(t *testing.T) {
 		{`from: "1.15.1"`, "1.16.0", "bump", `from: "1.16.0"`, true},
 		{`from: "0.3.0"`, "0.9.0", "bump", `from: "0.9.0"`, true},
 		{`from: "1.15.1"`, "1.15.1", "", "", false},
-		{`from: "1.15.1"`, "2.0.0", dep.RangePin, "", false},
+		{`from: "1.15.1"`, "2.0.0", dep.RangePin, `.exact("2.0.0")`, true},
+		{`"1.2.3"..<"2.0.0"`, "1.4.0", dep.RangePin, `.exact("1.4.0")`, true},
 		{`from: "1.15.1"`, "2.0.0", dep.RangeWiden, `from: "2.0.0"`, true},
 		{`.upToNextMinor(from: "1.2.0")`, "1.3.4", "", `.upToNextMinor(from: "1.3.4")`, true},
 		{`"1.2.3"..<"1.5.0"`, "1.7.2", "", `"1.7.2"..<"1.8.0"`, true},
@@ -253,6 +258,53 @@ func TestNewRange(t *testing.T) {
 		got, ok := rr.NewRange(dep.Dep{Range: tt.rng}, tt.v, tt.strategy)
 		if got != tt.want || ok != tt.ok {
 			t.Errorf("NewRange(%s, %s, %q) = %q, %v; want %q, %v", tt.rng, tt.v, tt.strategy, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+// TestPinForms pins range requirements to 1.4.0 in the form the call compiles with (checked
+// against SwiftPM 6.1's PackageDescription): `exact:` from swift-tools-version 5.6 on, which
+// also combines with `traits:`; `.exact(…)` before 5.6, with `name:` and without a tools
+// version. Only the requirement tokens change.
+func TestPinForms(t *testing.T) {
+	const url = `url: "https://github.com/apple/swift-log.git"`
+	for _, tt := range []struct{ tools, args, want string }{
+		{"5.9", url + `, from: "1.2.3"`, url + `, exact: "1.4.0"`},
+		{"5.9", url + `,  from :  /* min */ "1.2.3" `, url + `,  exact :  /* min */ "1.4.0" `},
+		{"5.6", url + `, .upToNextMajor(from: "1.2.3")`, url + `, exact: "1.4.0"`},
+		{"6.1", url + `, .upToNextMinor( from: "1.4.0" ), traits: ["A"]`, url + `, exact: "1.4.0", traits: ["A"]`},
+		{"6.0", url + ",\n            \"1.0.0\"..<\"2.0.0\"\n", url + ",\n            exact: \"1.4.0\"\n"},
+		{"5.10", url + `, "1.0.0" ... "1.9.0"`, url + `, exact: "1.4.0"`},
+		{"5.5", url + `, from: "1.2.3"`, url + `, .exact("1.4.0")`},
+		{"5.5", url + `, .upToNextMajor(from: "1.2.3")`, url + `, .exact("1.4.0")`},
+		{"5.0", url + `, "1.0.0"..<"2.0.0"`, url + `, .exact("1.4.0")`},
+		{"5.9", `name: "swift-log", ` + url + `, from: "1.2.3"`, `name: "swift-log", ` + url + `, .exact("1.4.0")`},
+		{"", url + `, from: "1.2.3"`, url + `, .exact("1.4.0")`},
+	} {
+		head := ""
+		if tt.tools != "" {
+			head = "// swift-tools-version:" + tt.tools + "\n"
+		}
+		src := head + "let package = Package(dependencies: [.package(" + tt.args + ")])\n"
+		deps, err := New().Extract("Package.swift", []byte(src), manager.Env{})
+		if err != nil || len(deps) != 1 || deps[0].Range == "" {
+			t.Fatalf("%s: %+v, %v", tt.args, deps, err)
+		}
+		edits, err := New().Edits(dep.Update{Dep: deps[0], NewVersion: "1.4.0", RangeStrategy: dep.RangePin})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := patch.Apply([]byte(src), edits)
+		if want := head + "let package = Package(dependencies: [.package(" + tt.want + ")])\n"; err != nil || string(out) != want {
+			t.Errorf("%s %q:\n%s\nwant\n%s", tt.tools, tt.args, out, want)
+		}
+	}
+	for src, want := range map[string]bool{
+		"// swift-tools-version:5.6": true, "\ufeff\n//swift-tools-version: 6.0.1;(swiftlang-5.0)": true, "// Swift-Tools-Version:10.0": true,
+		"// swift-tools-version:5.5": false, "// swift-tools-version:4.2": false, "import PackageDescription": false, "": false,
+	} {
+		if got := exactLabelTools([]byte(src)); got != want {
+			t.Errorf("exactLabelTools(%q) = %v", src, got)
 		}
 	}
 }

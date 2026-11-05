@@ -121,6 +121,11 @@ type Dep struct {
 	ExtraSources     []string // extra simple index URLs searched besides Source (pip --extra-index-url, uv/Poetry/Pipenv/pdm secondary sources); releases are merged
 	PythonConstraint string   // the project's Python version constraint (requires-python, Poetry `python`, Pipfile [requires]); releases whose requires-python does not admit all of it are dropped
 	DefinedIn        string   // pep621, poetry: slash path of a scanned pyproject.toml whose project has the dep's (normalized) name; when no index has the package, the dep is skipped (pyreq.InRepository) instead of failing
+
+	// Swift manager only. ExactLabel: the `.package` call can take an `exact:` requirement
+	// (swift-tools-version 5.6 or later, no `name:` argument), which rangeStrategy pin writes;
+	// otherwise it writes `.exact(…)`.
+	ExactLabel bool
 }
 
 // Renamable reports whether d's name can be rewritten in its file (NameParts are set).

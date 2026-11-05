@@ -234,7 +234,7 @@ func (l *Locker) pinEdits(ctx context.Context, res resolved, ups []dep.Update) (
 }
 
 // newRequirement returns the requirement of u's dep after u: the range rewritten for the new
-// version (kept for a lockfile-only update), or the exact new version.
+// version (kept for a lockfile-only update; exact under pin), or the exact new version.
 func newRequirement(u dep.Update) requirement {
 	v := strings.TrimPrefix(u.NewVersion, "v")
 	if u.Dep.Range == "" {
@@ -244,7 +244,7 @@ func newRequirement(u dep.Update) requirement {
 	if u.Lockfile {
 		return r
 	}
-	return parseRequirement(r.rewrite(u.Dep.Range, v, u.RangeStrategy))
+	return parseRequirement(r.rewrite(u.Dep.Range, v, u.RangeStrategy, u.Dep.ExactLabel))
 }
 
 func sha256Hex(b []byte) string {

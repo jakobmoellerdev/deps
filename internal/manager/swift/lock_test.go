@@ -15,6 +15,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
 const resolvedV1 = `{
@@ -370,6 +371,28 @@ let package = Package(
 	out, err = l.ProcessUpdates(ctx, top, manifests, map[string][]byte{"app/Package.resolved": []byte(stale)}, map[string][]dep.Update{"app/Package.swift": {ua}}, nil)
 	if err != nil || !strings.Contains(string(out["app/Package.resolved"]), `"originHash" : "`+strings.Repeat("0", 64)) || !strings.Contains(string(out["app/Package.resolved"]), `"version" : "1.1.0"`) {
 		t.Errorf("stale origin: %s, %v", out["app/Package.resolved"], err)
+	}
+
+	// Under pin the requirement becomes exact: the pin update to the locked version keeps the
+	// pin (the origin hash follows the manifest), a newer version moves it.
+	for _, tt := range []struct{ v, rev string }{{"1.2.0", "3"}, {"1.3.0", "4"}} {
+		u := dep.Update{Dep: b, NewVersion: tt.v, RangeStrategy: dep.RangePin}
+		edits, err := New().Edits(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pinned, err := patch.Apply([]byte(appManifest), edits)
+		if want := strings.Replace(appManifest, `from: "1.0.0"`, `exact: "`+tt.v+`"`, 1); err != nil || string(pinned) != want {
+			t.Fatalf("pin %s: %s, %v", tt.v, pinned, err)
+		}
+		out, err = l.ProcessUpdates(ctx, top, map[string][]byte{"app/Package.swift": pinned}, sibs, map[string][]dep.Update{"app/Package.swift": {u}}, nil)
+		want := resolvedJSON(sha256Hex(pinned),
+			pinJSON(url("/o/a.git"), "1.0.0", strings.Repeat("1", 40)),
+			pinJSON(url("/o/b"), tt.v, strings.Repeat(tt.rev, 40)),
+			pinJSON(url("/o/c"), "2.0.0", strings.Repeat("5", 40)))
+		if err != nil || string(out["app/Package.resolved"]) != want {
+			t.Errorf("pin %s: %s, %v\nwant\n%s", tt.v, out["app/Package.resolved"], err, want)
+		}
 	}
 }
 

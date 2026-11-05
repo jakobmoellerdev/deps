@@ -4,6 +4,7 @@
 package swift
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -47,6 +49,21 @@ const (
 
 var matchRe = regexp.MustCompile(`(^|/)Package\.swift$`)
 
+// toolsVersionRe matches the `// swift-tools-version:X.Y` comment that opens a manifest.
+var toolsVersionRe = regexp.MustCompile(`(?i)^//\s*swift-tools-version\s*:\s*(\d+)\.(\d+)`)
+
+// exactLabelTools reports whether the manifest src declares swift-tools-version 5.6 or later,
+// which introduced the `exact:` requirement (`package(url:exact:)`).
+func exactLabelTools(src []byte) bool {
+	m := toolsVersionRe.FindSubmatch(bytes.TrimLeft(src, "\ufeff \t\r\n"))
+	if m == nil {
+		return false
+	}
+	major, _ := strconv.Atoi(string(m[1]))
+	minor, _ := strconv.Atoi(string(m[2]))
+	return major > 5 || major == 5 && minor >= 6
+}
+
 type swiftManager struct{}
 
 // New returns the swift manager.
@@ -68,21 +85,23 @@ func (swiftManager) Match(p string) bool {
 func (swiftManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	lines := lineStarts(src)
 	calls := packageCalls(tokenize(src))
+	exactLabel := exactLabelTools(src)
 	deps := make([]dep.Dep, 0, len(calls))
 	for _, c := range calls {
-		deps = append(deps, callDep(file, src, lines, c))
+		deps = append(deps, callDep(file, src, lines, c, exactLabel))
 	}
 	return deps, nil
 }
 
-// callDep makes the Dep of one `.package(…)` call.
-func callDep(file string, src []byte, lines []int, c call) dep.Dep {
+// callDep makes the Dep of one `.package(…)` call; exactLabel is exactLabelTools of the
+// manifest.
+func callDep(file string, src []byte, lines []int, c call, exactLabel bool) dep.Dep {
 	d := dep.Dep{
 		Manager: Name, Datasource: Datasource, Versioning: Versioning, DepType: DepTypeDependencies,
 		ExtractVersion: extractVersion, File: file, Line: lineOf(lines, c.start),
 	}
 	var u, req *arg
-	extra := false
+	extra, named := false, false
 	for i := range c.args {
 		a := &c.args[i]
 		switch a.label {
@@ -97,7 +116,9 @@ func callDep(file string, src []byte, lines []int, c call) dep.Dep {
 				d.Name = a.toks[0].text
 			}
 			return d
-		case "name", "traits":
+		case "name":
+			named = true
+		case "traits":
 		case "", "from", "exact", "branch", "revision":
 			extra = extra || req != nil
 			req = a
@@ -134,6 +155,7 @@ func callDep(file string, src []byte, lines []int, c call) dep.Dep {
 		d.Line = lineOf(lines, d.RefSpan.Start)
 	case r.isRange():
 		d.Range, d.Version, d.Constraint = text, r.lower.v, r.constraint()
+		d.ExactLabel = exactLabel && !named
 		d.RefSpan = dep.Span{Start: req.start, End: req.end}
 		d.Line = lineOf(lines, req.start+r.lower.span.Start)
 	default:
@@ -142,9 +164,9 @@ func callDep(file string, src []byte, lines []int, c call) dep.Dep {
 	return d
 }
 
-// Edits replaces an exact version, or rewrites the version strings of a range requirement
-// for the new version under the update's rangeStrategy (requirement.edits); the rest of the
-// requirement is kept byte for byte.
+// Edits replaces an exact version, or rewrites a range requirement for the new version under
+// the update's rangeStrategy (requirement.edits): its version strings, under pin its label or
+// all of its tokens; the rest of the requirement is kept byte for byte.
 func (swiftManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	if d.Range == "" {
@@ -154,11 +176,8 @@ func (swiftManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	if !r.isRange() {
 		return nil, fmt.Errorf("unsupported requirement %q", d.Range)
 	}
-	if u.RangeStrategy == dep.RangePin {
-		return nil, fmt.Errorf("cannot pin the requirement %q", d.Range)
-	}
 	var edits []patch.Edit
-	for _, e := range r.edits(u.NewVersion, u.RangeStrategy) {
+	for _, e := range r.edits(d.Range, u.NewVersion, u.RangeStrategy, d.ExactLabel) {
 		edits = append(edits, patch.Edit{Start: d.RefSpan.Start + e.span.Start, End: d.RefSpan.Start + e.span.End, Old: e.old, New: e.to})
 	}
 	return edits, nil
@@ -170,7 +189,7 @@ func (swiftManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 	if !r.isRange() {
 		return "", false
 	}
-	out := r.rewrite(d.Range, v, strategy)
+	out := r.rewrite(d.Range, v, strategy, d.ExactLabel)
 	if out == d.Range || !parseRequirement(out).admits(strings.TrimPrefix(v, "v")) {
 		return "", false
 	}

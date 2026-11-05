@@ -30,10 +30,12 @@ type version struct {
 	span dep.Span
 }
 
-// requirement is a parsed package requirement. upper is only set for the binary ranges.
+// requirement is a parsed package requirement. upper is only set for the binary ranges; label
+// is the span of the `from` label of `from: "…"`, whole that of all requirement tokens.
 type requirement struct {
 	kind         reqKind
 	lower, upper version
+	label, whole dep.Span
 }
 
 // parseRequirement parses the requirement argument text of a `.package(url:…)` call: the
@@ -44,13 +46,25 @@ type requirement struct {
 // reqUnsupported.
 func parseRequirement(text string) requirement {
 	toks := tokenize([]byte(text))
+	r := parseTokens(toks)
+	if r.kind != reqUnsupported && len(toks) > 0 {
+		r.whole = dep.Span{Start: toks[0].start, End: toks[len(toks)-1].end}
+	}
+	return r
+}
+
+// parseTokens is parseRequirement of the requirement's tokens, without whole.
+func parseTokens(toks []token) requirement {
 	label := ""
+	var labelSpan dep.Span
 	if len(toks) >= 2 && toks[0].kind == tokIdent && toks[1].kind == tokPunct && toks[1].text == ":" {
-		label, toks = toks[0].text, toks[2:]
+		label, labelSpan, toks = toks[0].text, dep.Span{Start: toks[0].start, End: toks[0].end}, toks[2:]
 	}
 	switch label {
 	case "from":
-		return single(reqFrom, toks)
+		r := single(reqFrom, toks)
+		r.label = labelSpan
+		return r
 	case "exact":
 		return single(reqExact, toks)
 	case "branch":
@@ -155,25 +169,29 @@ func (r requirement) admits(v string) bool {
 	return err == nil && c.Check(sv)
 }
 
-// versionEdit replaces the version string at span (in the requirement's text).
+// versionEdit replaces old, the text at span (in the requirement's text), with to.
 type versionEdit struct {
 	span    dep.Span
 	old, to string
 }
 
-// edits returns the version string changes of the requirement for v under strategy (a
-// config.RangeStrategies value; "" is the default). Only the version strings change, so the
-// form is kept: `from:`, `.upToNextMajor(from:)` and `.upToNextMinor(from:)` take v as their
-// lower bound under every strategy (widen cannot widen them without another form). Binary
-// ranges take v as their lower bound except under widen, which keeps it; an upper bound v
-// reaches moves past it: `..."b"` to v, `..<"b"` to the next boundary of b's precision above v
-// (`..<"2.0.0"` → `..<"4.0.0"` for 3.1.0, `..<"1.5.0"` → `..<"1.8.0"` for 1.7.2). pin cannot be
-// written without changing the form: there are no changes. Edits are in text order.
-func (r requirement) edits(v, strategy string) []versionEdit {
+// edits returns the changes of the requirement text for v under strategy (a
+// config.RangeStrategies value; "" is the default). Except under pin only the version strings
+// change, so the form is kept: `from:`, `.upToNextMajor(from:)` and `.upToNextMinor(from:)`
+// take v as their lower bound under every strategy (widen cannot widen them without another
+// form). Binary ranges take v as their lower bound except under widen, which keeps it; an
+// upper bound v reaches moves past it: `..."b"` to v, `..<"b"` to the next boundary of b's
+// precision above v (`..<"2.0.0"` → `..<"4.0.0"` for 3.1.0, `..<"1.5.0"` → `..<"1.8.0"` for
+// 1.7.2). pin makes the requirement exact (pinEdits). text is the requirement's text, exactLabel
+// whether its call takes `exact:` (dep.Dep.ExactLabel). Edits are in text order.
+func (r requirement) edits(text, v, strategy string, exactLabel bool) []versionEdit {
 	v = strings.TrimPrefix(v, "v")
 	nv, err := semver.StrictNewVersion(v)
-	if !r.isRange() || strategy == dep.RangePin || err != nil {
+	if !r.isRange() || err != nil {
 		return nil
+	}
+	if strategy == dep.RangePin {
+		return r.pinEdits(text, v, exactLabel)
 	}
 	var out []versionEdit
 	if (strategy != dep.RangeWiden || r.kind == reqFrom || r.kind == reqNextMinor) && r.lower.v != v {
@@ -191,11 +209,32 @@ func (r requirement) edits(v, strategy string) []versionEdit {
 	return out
 }
 
+// pinEdits rewrites the range requirement into the exact requirement of v. With exactLabel it
+// becomes `exact: "v"`: `from: "1.2.3"` changes its label and version string, every other
+// form (`.upToNextMajor(from:)`, `.upToNextMinor(from:)`, `"a"..<"b"`, `"a"..."b"`) all of its
+// tokens. Without it, `.exact("v")` replaces all tokens: the `exact:` label needs
+// swift-tools-version 5.6 and does not combine with `name:`, while `.exact(…)` is deprecated
+// from 5.6 on and does not combine with `traits:`.
+func (r requirement) pinEdits(text, v string, exactLabel bool) []versionEdit {
+	if exactLabel && r.label != (dep.Span{}) {
+		out := []versionEdit{{r.label, text[r.label.Start:r.label.End], "exact"}}
+		if r.lower.v != v {
+			out = append(out, versionEdit{r.lower.span, r.lower.v, v})
+		}
+		return out
+	}
+	to := `.exact("` + v + `")`
+	if exactLabel {
+		to = `exact: "` + v + `"`
+	}
+	return []versionEdit{{r.whole, text[r.whole.Start:r.whole.End], to}}
+}
+
 // rewrite returns text, the requirement's text, with the edits for v under strategy.
-func (r requirement) rewrite(text, v, strategy string) string {
+func (r requirement) rewrite(text, v, strategy string, exactLabel bool) string {
 	var b strings.Builder
 	pos := 0
-	for _, e := range r.edits(v, strategy) {
+	for _, e := range r.edits(text, v, strategy, exactLabel) {
 		b.WriteString(text[pos:e.span.Start])
 		b.WriteString(e.to)
 		pos = e.span.End
