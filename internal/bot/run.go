@@ -43,7 +43,7 @@ type Git interface {
 	// gitx.ErrRejected when origin declined the update.
 	Push(ctx context.Context, commit, branch, expected string) error
 	DeleteBranch(ctx context.Context, branch string) error
-	BranchTip(ctx context.Context, branch string) (gitx.Tip, error)
+	BranchTip(ctx context.Context, branch string) (platform.Tip, error)
 }
 
 // Options configure Run.
@@ -613,7 +613,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 
 	// The branch tip is fetched at most once, and only when its author, parents or tree are
 	// needed.
-	var t gitx.Tip
+	var t platform.Tip
 	fetched := false
 	tip := func() error {
 		if fetched {
@@ -770,7 +770,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 // branch is merged by mergeBranch once its checks pass. t is the branch tip, fetched when the
 // branch exists and no rebuild was requested.
 func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group, changes []engine.FileChange, fp, input string, f force,
-	expected string, exists bool, t gitx.Tip, pc platform.Client, g Git,
+	expected string, exists bool, t platform.Tip, pc platform.Client, g Git,
 ) (a Action, target *platform.PR, err error) {
 	a = Action{Branch: grp.Branch, Title: grp.Title}
 	if exists && !f.rebase {

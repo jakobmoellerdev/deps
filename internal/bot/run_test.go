@@ -16,7 +16,6 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -113,13 +112,13 @@ func (g *fakeGit) DeleteBranch(_ context.Context, branch string) error {
 	g.deleted = append(g.deleted, branch)
 	return nil
 }
-func (g *fakeGit) BranchTip(_ context.Context, branch string) (gitx.Tip, error) {
+func (g *fakeGit) BranchTip(_ context.Context, branch string) (platform.Tip, error) {
 	g.tips = append(g.tips, branch)
 	parents, ok := g.parents[branch]
 	if !ok {
 		parents = []string{head}
 	}
-	return gitx.Tip{Author: g.authors[branch], Parents: parents, Tree: g.trees[branch]}, fail(g.fail, "BranchTip", branch)
+	return platform.Tip{Author: g.authors[branch], Parents: parents, Tree: g.trees[branch]}, fail(g.fail, "BranchTip", branch)
 }
 
 type fakePC struct {

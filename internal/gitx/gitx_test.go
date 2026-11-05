@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
 // isolate makes git independent of the user's configuration.
@@ -261,7 +262,7 @@ func TestPushDeleteAuthor(t *testing.T) {
 	}
 
 	// Full clone: fetch must not make it shallow.
-	want := Tip{Author: "bot@example.com", Parents: []string{parent}, Tree: git(t, clone, "rev-parse", c2+"^{tree}")}
+	want := platform.Tip{Author: "bot@example.com", Parents: []string{parent}, Tree: git(t, clone, "rev-parse", c2+"^{tree}")}
 	if got, err := r.BranchTip(ctx, br); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("BranchTip = %+v, %v; want %+v", got, err, want)
 	}
@@ -308,11 +309,11 @@ func TestPushDeleteAuthor(t *testing.T) {
 func TestParseCommitHeader(t *testing.T) {
 	for _, tc := range []struct {
 		name, obj string
-		want      Tip
+		want      platform.Tip
 	}{
-		{"root", "tree t\nauthor A B <a@b> 1 +0000\ncommitter C <c@d> 1 +0000\n\nmsg\n", Tip{Author: "a@b", Tree: "t"}},
-		{"merge", "tree t\nparent p1\nparent p2\nauthor A <a@b> 1 +0000\n\nparent fake\n", Tip{Author: "a@b", Parents: []string{"p1", "p2"}, Tree: "t"}},
-		{"malformed author", "tree t\nparent p\nauthor nobody\n", Tip{Parents: []string{"p"}, Tree: "t"}},
+		{"root", "tree t\nauthor A B <a@b> 1 +0000\ncommitter C <c@d> 1 +0000\n\nmsg\n", platform.Tip{Author: "a@b", Tree: "t"}},
+		{"merge", "tree t\nparent p1\nparent p2\nauthor A <a@b> 1 +0000\n\nparent fake\n", platform.Tip{Author: "a@b", Parents: []string{"p1", "p2"}, Tree: "t"}},
+		{"malformed author", "tree t\nparent p\nauthor nobody\n", platform.Tip{Parents: []string{"p"}, Tree: "t"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := parseCommitHeader(tc.obj); !reflect.DeepEqual(got, tc.want) {

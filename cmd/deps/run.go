@@ -202,9 +202,8 @@ func (g apiGit) Push(ctx context.Context, commit, branch, expected string) error
 	return err
 }
 
-func (g apiGit) BranchTip(ctx context.Context, branch string) (gitx.Tip, error) {
-	t, err := g.api.BranchTip(ctx, branch)
-	return gitx.Tip{Author: t.Author, Parents: t.Parents, Tree: t.Tree}, err
+func (g apiGit) BranchTip(ctx context.Context, branch string) (platform.Tip, error) {
+	return g.api.BranchTip(ctx, branch)
 }
 
 func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) error {

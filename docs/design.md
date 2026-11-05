@@ -576,7 +576,7 @@ type Git interface {
     Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, name, email string) (string, error)
     Push(ctx context.Context, commit, branch, expected string) error // gitx.ErrStale (lease or non-fast-forward), gitx.ErrRejected (origin declined)
     DeleteBranch(ctx context.Context, branch string) error
-    BranchTip(ctx context.Context, branch string) (gitx.Tip, error) // Tip{Author, Parents, Tree}
+    BranchTip(ctx context.Context, branch string) (platform.Tip, error) // Tip{Author, Parents, Tree}
 }
 type Options struct {
     Base, AuthorName, AuthorEmail string

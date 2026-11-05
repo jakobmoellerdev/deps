@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
 // Push errors, wrapped in the git error.
@@ -34,13 +35,6 @@ var (
 type Repo struct {
 	Dir    string
 	Signer *Signer
-}
-
-// Tip is the tip commit of a branch on origin.
-type Tip struct {
-	Author  string   // author email
-	Parents []string // parent ids
-	Tree    string   // tree id
 }
 
 // run runs git and returns its trimmed stdout, also when it fails.
@@ -233,28 +227,28 @@ func (r Repo) DeleteBranch(ctx context.Context, branch string) error {
 // BranchTip returns the tip commit of branch on origin. Shallow clones (CI) fetch with
 // --depth=1; full clones fetch normally so they are not turned shallow. The raw commit object
 // is parsed, so parents are reported even when shallow grafts hide them.
-func (r Repo) BranchTip(ctx context.Context, branch string) (Tip, error) {
+func (r Repo) BranchTip(ctx context.Context, branch string) (platform.Tip, error) {
 	shallow, err := r.run(ctx, nil, nil, "rev-parse", "--is-shallow-repository")
 	if err != nil {
-		return Tip{}, err
+		return platform.Tip{}, err
 	}
 	args := []string{"fetch", "--no-tags", "origin", "refs/heads/" + branch}
 	if shallow == "true" {
 		args = []string{"fetch", "--no-tags", "--depth=1", "origin", "refs/heads/" + branch}
 	}
 	if _, err := r.run(ctx, nil, nil, args...); err != nil {
-		return Tip{}, err
+		return platform.Tip{}, err
 	}
 	obj, err := r.run(ctx, nil, nil, "cat-file", "commit", "FETCH_HEAD")
 	if err != nil {
-		return Tip{}, err
+		return platform.Tip{}, err
 	}
 	return parseCommitHeader(obj), nil
 }
 
 // parseCommitHeader returns the author email, parents and tree of a raw commit object.
-func parseCommitHeader(obj string) Tip {
-	var t Tip
+func parseCommitHeader(obj string) platform.Tip {
+	var t platform.Tip
 	for line := range strings.Lines(obj) {
 		line = strings.TrimSuffix(line, "\n")
 		if line == "" {
