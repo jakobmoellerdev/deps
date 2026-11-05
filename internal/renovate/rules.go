@@ -24,7 +24,7 @@ var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versionin
 	"replacementVersion", "replacementPrefix", "separateMajorMinor",
 	"separateMultipleMajor", "separateMinorPatch", "group", "commitType", "commitScope", "schedule",
 	"minimumReleaseAge", "minimumReleaseAgeBehaviour", "automerge", "automergeStrategy", "automergeType",
-	"labels", "addLabels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter"}
+	"labels", "addLabels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "postUpgradeTasks"}
 
 // rulesFrom translates the rule sources in order: top-level semantic commit settings,
 // manager blocks, update-type blocks, packageRules and ignoreDeps.
@@ -35,6 +35,11 @@ func (t *translator) rulesFrom(cfg map[string]any, done map[string]bool) {
 			done[k] = true
 			lead[k] = v
 		}
+	}
+	if v, ok := cfg["postUpgradeTasks"]; ok {
+		// A top-level postUpgradeTasks applies to every update; packageRules override it.
+		done["postUpgradeTasks"] = true
+		t.rule("postUpgradeTasks", map[string]any{"postUpgradeTasks": v})
 	}
 	if len(lead) > 0 {
 		t.rule("semanticCommitType", lead)
@@ -523,6 +528,10 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			}
 		case "replacementName", "replacementVersion":
 			set(k, v)
+		case "postUpgradeTasks":
+			if tasks, ok := t.postUpgradeTasks(p, v); ok {
+				set(k, tasks)
+			}
 		case "replacementNameTemplate":
 			switch from, to, ok := prefixTemplate(v); {
 			case r["replacementName"] != nil:
@@ -733,4 +742,47 @@ func prefixTemplate(v any) (from, to string, ok bool) {
 		return "", "", false
 	}
 	return lit.String(), m[2], true
+}
+
+// postUpgradeTasks translates Renovate's {commands, fileFilters, executionMode}. Renovate
+// templates commands (`{{{depName}}}`); deps passes the update as DEPS_* variables instead,
+// so templated commands are dropped.
+func (t *translator) postUpgradeTasks(path string, v any) (omap, bool) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		t.n.warn(path, "must be an object; ignored")
+		return nil, false
+	}
+	cmds, ok := strs(m["commands"])
+	if !ok {
+		t.n.warn(path, "commands must be a list of strings; dropped")
+		return nil, false
+	}
+	for _, c := range cmds {
+		if strings.Contains(c, "{{") {
+			t.n.warn(path, "command %q is a template; deps passes the update as DEPS_* environment variables (deps help environment); dropped", c)
+			return nil, false
+		}
+	}
+	out := omap{{"commands", cmds}}
+	for _, k := range slices.Sorted(mapKeys(m)) {
+		switch k {
+		case "commands":
+		case "executionMode":
+			out.set("executionMode", m[k])
+		case "fileFilters":
+			files, ok := strs(m[k])
+			if !ok {
+				t.n.warn(path+".fileFilters", "must be a list of strings; ignored")
+				continue
+			}
+			out.set("files", files)
+		case "dataFileTemplate", "installTools", "workingDirTemplate":
+			t.n.warn(path+"."+k, "no deps equivalent; ignored")
+		default:
+			t.untranslated(path+"."+k, k)
+		}
+	}
+	t.n.info(path, "deps runs postUpgradeTasks only with --allow-tasks (or DEPS_ALLOW_TASKS) listing the commands, like Renovate's allowedCommands")
+	return out, true
 }

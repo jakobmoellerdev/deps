@@ -199,6 +199,34 @@ func TestLoadRules(t *testing.T) {
     assignees: [alice]` + preCommitExclusion,
 		},
 		{
+			name: "postUpgradeTasks top level and per rule, Ruby and Swift managers, rangeStrategy widen",
+			src: `{postUpgradeTasks: {commands: ['make generate'], fileFilters: ['**/*.go'], executionMode: 'branch'},
+				packageRules: [{matchCategories: ['ruby'], rangeStrategy: 'widen', postUpgradeTasks: {commands: ['bundle exec rake']}},
+					{matchManagers: ['swift'], postUpgradeTasks: {commands: ['swift build {{{depName}}}']}, enabled: false}]}`,
+			rules: `  - # postUpgradeTasks
+    postUpgradeTasks:
+      commands: [make generate]
+      executionMode: branch
+      files: ['**/*.go']
+  - # packageRules[0]
+    manager: bundler
+    rangeStrategy: widen
+    postUpgradeTasks:
+      commands: [bundle exec rake]
+  - # packageRules[0]
+    manager: ruby-version
+    rangeStrategy: widen
+    postUpgradeTasks:
+      commands: [bundle exec rake]
+  - # packageRules[1]
+    manager: swift
+    ignore: true` + preCommitExclusion,
+			notes: []string{
+				"info postUpgradeTasks.postUpgradeTasks: deps runs postUpgradeTasks only with --allow-tasks (or DEPS_ALLOW_TASKS) listing the commands, like Renovate's allowedCommands",
+				"warn packageRules[1].postUpgradeTasks: command \"swift build {{{depName}}}\" is a template; deps passes the update as DEPS_* environment variables (deps help environment); dropped",
+			},
+		},
+		{
 			name: "matchCurrentValue regexes and exact strings are currentVersion",
 			src: `{packageRules: [{matchCurrentValue: '/^1/', matchPackageNames: ['a'], enabled: false},
 				{matchCurrentValue: '!/-rc/i', matchPackageNames: ['b'], enabled: false},
@@ -417,6 +445,7 @@ func TestLoadTopLevel(t *testing.T) {
 	const want = ` bot/
 prConcurrentLimit: 3
 pin: digest
+rangeStrategy: pin
 security: false
 monorepos: false
 replacements: false
@@ -446,7 +475,6 @@ rules:` + preCommitExclusion + "\n"
 		"warn schedule: unsupported schedule \"every 2 weeks\"; entry dropped",
 		"warn timezone: timezone \"Europe/Berlin\" ignored: deps compares schedules with workflow crons, which are UTC",
 		"info lockFileMaintenance.automerge: no deps equivalent; ignored",
-		"warn rangeStrategy: rangeStrategy pin is not supported; dropped",
 		"warn git-submodules: not supported; ignored",
 	} {
 		if !slices.Contains(notes, n) {

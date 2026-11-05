@@ -714,8 +714,7 @@ func (t *translator) vulnerabilityAlerts(va map[string]any) string {
 // rangeStrategy maps a Renovate rangeStrategy.
 func (t *translator) rangeStrategy(path string, v any) (string, bool) {
 	s, _ := v.(string)
-	switch s {
-	case config.RangeAuto, config.RangeBump, config.RangeReplace, config.RangeUpdateLockfile:
+	if slices.Contains(config.RangeStrategies, s) {
 		return s, true
 	}
 	t.n.warn(path, "rangeStrategy %v is not supported; dropped", v)
