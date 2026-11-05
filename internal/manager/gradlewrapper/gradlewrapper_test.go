@@ -100,21 +100,12 @@ func TestEdits(t *testing.T) {
 		u    dep.Update
 		old  []string
 		new  []string
-		err  string
 	}{
 		{name: "version and checksum", u: dep.Update{Dep: d, NewVersion: "8.10.2", NewChecksum: newSum},
 			old: []string{"gradle-9.7.1-bin", nowSum}, new: []string{"gradle-8.10.2-bin", newSum}},
-		{name: "missing checksum", u: dep.Update{Dep: d, NewVersion: "8.10.2"}, err: "no checksum was resolved"},
-		{name: "no checksum span", u: dep.Update{Dep: dep.Dep{Version: "1", RefSpan: d.RefSpan}, NewVersion: "2", NewChecksum: newSum}, err: "no checksum to update"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			edits, err := New().Edits(tc.u)
-			if tc.err != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.err) {
-					t.Fatalf("err = %v, want %q", err, tc.err)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatal(err)
 			}

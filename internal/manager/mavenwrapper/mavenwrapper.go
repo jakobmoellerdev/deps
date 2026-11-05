@@ -3,7 +3,6 @@
 package mavenwrapper
 
 import (
-	"errors"
 	"regexp"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -34,7 +33,6 @@ const central = "https://repo.maven.apache.org/maven2/"
 var (
 	matchRe   = regexp.MustCompile(`(^|/)\.mvn/wrapper/maven-wrapper\.properties$`)
 	versionRe = regexp.MustCompile(`^\d[0-9A-Za-z.+-]*$`)
-	sha256Re  = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 )
 
 // artifact is one URL key of the properties file and the checksum key next to it.
@@ -125,7 +123,7 @@ func (a artifact) dep(file string, u properties.Property, props map[string]prope
 	if !ok {
 		return d
 	}
-	if !sha256Re.MatchString(sum.Value) {
+	if !manager.IsSHA256(sum.Value) {
 		d.Skip = a.invalidSum
 		return d
 	}
@@ -140,13 +138,6 @@ func (a artifact) dep(file string, u properties.Property, props map[string]prope
 // wrapperVersion) and, when the dep pins one, the checksum.
 func (mavenWrapper) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
-	hasChecksum := d.ChecksumSpan.End > d.ChecksumSpan.Start
-	switch {
-	case u.NewChecksum != "" && !hasChecksum:
-		return nil, errors.New("dependency has no checksum to update")
-	case u.NewChecksum == "" && hasChecksum && u.NewVersion != d.Version:
-		return nil, errors.New("checksum must be updated together with the version, but no checksum was resolved")
-	}
 	var edits []patch.Edit
 	if u.NewVersion != d.Version {
 		for _, s := range [...]dep.Span{d.RefSpan, d.VersionSpan, d.InputSpan} {
@@ -155,8 +146,5 @@ func (mavenWrapper) Edits(u dep.Update) ([]patch.Edit, error) {
 			}
 		}
 	}
-	if u.NewChecksum != "" && u.NewChecksum != d.Checksum {
-		edits = append(edits, patch.Edit{Start: d.ChecksumSpan.Start, End: d.ChecksumSpan.End, Old: d.Checksum, New: u.NewChecksum})
-	}
-	return edits, nil
+	return manager.ChecksumEdits(edits, u)
 }

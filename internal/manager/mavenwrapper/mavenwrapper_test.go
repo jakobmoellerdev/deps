@@ -173,16 +173,4 @@ func TestEdits(t *testing.T) {
 	if out := apply(t, src, ds[0], "3.9.15", sum3915); out != strings.ReplaceAll(strings.ReplaceAll(src, "3.9.16", "3.9.15"), flinkSum, sum3915) {
 		t.Errorf("flink update:\n%s", out)
 	}
-	const newSum = sum3915
-	for _, tc := range []struct {
-		u   dep.Update
-		err string
-	}{
-		{dep.Update{Dep: ds[0], NewVersion: "3.9.10"}, "no checksum was resolved"},
-		{dep.Update{Dep: dep.Dep{Version: "1", RefSpan: ds[0].RefSpan}, NewVersion: "2", NewChecksum: newSum}, "no checksum to update"},
-	} {
-		if _, err := New().Edits(tc.u); err == nil || !strings.Contains(err.Error(), tc.err) {
-			t.Errorf("err = %v, want %q", err, tc.err)
-		}
-	}
 }
