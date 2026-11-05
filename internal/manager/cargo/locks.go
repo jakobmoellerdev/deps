@@ -25,6 +25,11 @@ func (cargoManager) ReadLocks(root string, files [][]dep.Dep) []error {
 		pkgs []lockedPackage
 		err  error
 	}
+	type scope struct {
+		dir string
+		ok  bool
+	}
+	scopes := map[string]scope{} // manifest -> workspace, so each manifest is scoped once
 	locks := map[string]*lockState{}
 	var errs []error
 	for _, f := range files {
@@ -33,7 +38,12 @@ func (cargoManager) ReadLocks(root string, files [][]dep.Dep) []error {
 			if d.Range == "" || d.Skip != "" {
 				continue
 			}
-			dir, ok := Locker{}.Scope(root, d.File)
+			sc, seen := scopes[d.File]
+			if !seen {
+				sc.dir, sc.ok = Locker{}.Scope(root, d.File)
+				scopes[d.File] = sc
+			}
+			dir, ok := sc.dir, sc.ok
 			var st *lockState
 			if ok {
 				if st = locks[dir]; st == nil {
@@ -93,12 +103,14 @@ func lockedVersion(pkgs []lockedPackage, d *dep.Dep) string {
 // (Locker.Scope) with the Cargo.toml next to it.
 func (cargoManager) LockRoots(root string, files []string) []manager.LockRoot {
 	var out []manager.LockRoot
+	seen := map[string]bool{}
 	for _, f := range files {
 		dir, ok := Locker{}.Scope(root, f)
-		lr := manager.LockRoot{Manifest: path.Join(dir, manifestFile), Lockfile: path.Join(dir, lockFile)}
-		if ok && !slices.Contains(out, lr) {
-			out = append(out, lr)
+		if !ok || seen[dir] {
+			continue
 		}
+		seen[dir] = true
+		out = append(out, manager.LockRoot{Manifest: path.Join(dir, manifestFile), Lockfile: path.Join(dir, lockFile)})
 	}
 	slices.SortFunc(out, func(a, b manager.LockRoot) int { return strings.Compare(a.Lockfile, b.Lockfile) })
 	return out

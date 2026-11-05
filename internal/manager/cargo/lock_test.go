@@ -18,7 +18,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 )
 
-func write(t *testing.T, dir string, files map[string]string) {
+func write(t testing.TB, dir string, files map[string]string) {
 	t.Helper()
 	for p, c := range files {
 		abs := filepath.Join(dir, filepath.FromSlash(p))
