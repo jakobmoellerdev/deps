@@ -132,9 +132,11 @@ func myers(a, b []string) []op {
 	n, m := len(a), len(b)
 	off := n + m + 1
 	v := make([]int, 2*off+1) // v[off+k]: furthest x on diagonal k
-	var trace [][]int         // v before each round d
+	// trace[d] holds v[off-d-1 : off+d+2] before round d: the diagonals -d-1..d+1 that
+	// round reads, so trace[d][k+d+1] is v[off+k].
+	var trace [][]int
 	for d := 0; ; d++ {
-		trace = append(trace, slices.Clone(v))
+		trace = append(trace, slices.Clone(v[off-d-1:off+d+2]))
 		for k := -d; k <= d; k += 2 {
 			var x int
 			if k == -d || (k != d && v[off+k-1] < v[off+k+1]) {
@@ -149,22 +151,22 @@ func myers(a, b []string) []op {
 			}
 			v[off+k] = x
 			if x >= n && y >= m {
-				return backtrack(a, b, trace, off)
+				return backtrack(a, b, trace)
 			}
 		}
 	}
 }
 
-func backtrack(a, b []string, trace [][]int, off int) []op {
+func backtrack(a, b []string, trace [][]int) []op {
 	x, y := len(a), len(b)
 	var rev []op
 	for d := len(trace) - 1; d > 0; d-- {
 		v, k := trace[d], x-y
 		prevK := k - 1
-		if k == -d || (k != d && v[off+k-1] < v[off+k+1]) {
+		if k == -d || (k != d && v[k+d] < v[k+d+2]) {
 			prevK = k + 1
 		}
-		prevX := v[off+prevK]
+		prevX := v[prevK+d+1]
 		prevY := prevX - prevK
 		for x > prevX && y > prevY {
 			x, y = x-1, y-1
