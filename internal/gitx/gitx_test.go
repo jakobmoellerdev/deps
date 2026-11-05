@@ -2,10 +2,11 @@ package gitx
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -114,9 +115,16 @@ func TestCommit(t *testing.T) {
 		{Path: "a.txt", Mode: 0o644, New: []byte("changed\n")},
 		{Path: "run.sh", Mode: 0o755, New: []byte("#!/bin/sh\n")},
 	}
+	tree, err := r.WriteTree(ctx, parent, changes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	c, err := r.Commit(ctx, parent, changes, "msg title\n\nbody\n", "Bot", "bot@example.com")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := git(t, clone, "rev-parse", c+"^{tree}"); got != tree {
+		t.Errorf("commit tree = %s, want %s", got, tree)
 	}
 
 	if got := git(t, clone, "rev-parse", c+"^"); got != parent {
@@ -131,12 +139,12 @@ func TestCommit(t *testing.T) {
 	if got := git(t, clone, "show", c+":README"); got != "readme" {
 		t.Errorf("README = %q (unchanged file lost)", got)
 	}
-	tree := git(t, clone, "ls-tree", "-r", c)
-	if !strings.Contains(tree, "100755 blob") || !strings.Contains(tree, "\tsub/run.sh") {
-		t.Errorf("tree lacks executable sub/run.sh:\n%s", tree)
+	files := git(t, clone, "ls-tree", "-r", c)
+	if !strings.Contains(files, "100755 blob") || !strings.Contains(files, "\tsub/run.sh") {
+		t.Errorf("tree lacks executable sub/run.sh:\n%s", files)
 	}
-	if !strings.Contains(tree, "100644 blob") {
-		t.Errorf("tree lacks regular files:\n%s", tree)
+	if !strings.Contains(files, "100644 blob") {
+		t.Errorf("tree lacks regular files:\n%s", files)
 	}
 
 	// Working tree, real index and HEAD untouched.
@@ -168,9 +176,22 @@ func TestCommit(t *testing.T) {
 	if _, err := r.Commit(ctx, "0000000000000000000000000000000000000000", changes, "m", "n", "e@x"); err == nil {
 		t.Error("Commit with unknown parent succeeded")
 	}
-	if _, err := (Repo{Dir: t.TempDir()}).Commit(ctx, parent, changes, "m", "n", "e@x"); err == nil {
-		t.Error("Commit outside a repo succeeded")
+	if _, err := r.WriteTree(ctx, "0000000000000000000000000000000000000000", changes); err == nil {
+		t.Error("WriteTree with unknown parent succeeded")
 	}
+	if _, err := (Repo{Dir: t.TempDir()}).WriteTree(ctx, parent, changes); err == nil {
+		t.Error("WriteTree outside a repo succeeded")
+	}
+}
+
+// mkCommit commits changes on top of parent.
+func mkCommit(t *testing.T, r Repo, parent string, changes []engine.FileChange, msg string) string {
+	t.Helper()
+	c, err := r.Commit(t.Context(), parent, changes, msg, "Bot", "bot@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }
 
 func TestPushDeleteAuthor(t *testing.T) {
@@ -178,14 +199,8 @@ func TestPushDeleteAuthor(t *testing.T) {
 	ctx := t.Context()
 	r := Repo{Dir: clone}
 	parent := git(t, clone, "rev-parse", "HEAD")
-	c1, err := r.Commit(ctx, parent, []engine.FileChange{{Path: "f", Mode: 0o644, New: []byte("1")}}, "one", "Bot", "bot@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c2, err := r.Commit(ctx, parent, []engine.FileChange{{Path: "f", Mode: 0o644, New: []byte("2")}}, "two", "Bot", "bot@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
+	c1 := mkCommit(t, r, parent, []engine.FileChange{{Path: "f", Mode: 0o644, New: []byte("1")}}, "one")
+	c2 := mkCommit(t, r, parent, []engine.FileChange{{Path: "f", Mode: 0o644, New: []byte("2")}}, "two")
 	const br = "deps/x"
 	tip := func() string {
 		out, _ := exec.Command("git", "-C", origin, "rev-parse", "--verify", "-q", "refs/heads/"+br).Output()
@@ -198,11 +213,11 @@ func TestPushDeleteAuthor(t *testing.T) {
 	if tip() != c1 {
 		t.Fatalf("tip = %s, want %s", tip(), c1)
 	}
-	if err := r.Push(ctx, c2, br, ""); err == nil {
-		t.Fatal("create over existing branch succeeded")
+	if err := r.Push(ctx, c2, br, ""); !errors.Is(err, ErrStale) {
+		t.Fatalf("create over existing branch: %v", err)
 	}
-	if err := r.Push(ctx, c2, br, parent); err == nil {
-		t.Fatal("push with wrong expected succeeded")
+	if err := r.Push(ctx, c2, br, parent); !errors.Is(err, ErrStale) || !strings.Contains(err.Error(), "[rejected] (stale info)") {
+		t.Fatalf("push with wrong expected: %v", err)
 	}
 	if tip() != c1 {
 		t.Fatalf("rejected push moved tip to %s", tip())
@@ -215,9 +230,9 @@ func TestPushDeleteAuthor(t *testing.T) {
 	}
 
 	// Full clone: fetch must not make it shallow.
-	author, parents, err := r.BranchTip(ctx, br)
-	if err != nil || author != "bot@example.com" || !slices.Equal(parents, []string{parent}) {
-		t.Fatalf("BranchTip = %q, %v, %v; want parent %s", author, parents, err, parent)
+	want := Tip{Author: "bot@example.com", Parents: []string{parent}, Tree: git(t, clone, "rev-parse", c2+"^{tree}")}
+	if got, err := r.BranchTip(ctx, br); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("BranchTip = %+v, %v; want %+v", got, err, want)
 	}
 	if s := git(t, clone, "rev-parse", "--is-shallow-repository"); s != "false" {
 		t.Fatalf("full clone became shallow: %s", s)
@@ -229,9 +244,8 @@ func TestPushDeleteAuthor(t *testing.T) {
 	if s := git(t, shallow, "rev-parse", "--is-shallow-repository"); s != "true" {
 		t.Fatalf("clone not shallow: %s", s)
 	}
-	author, parents, err = (Repo{Dir: shallow}).BranchTip(ctx, br)
-	if err != nil || author != "bot@example.com" || !slices.Equal(parents, []string{parent}) {
-		t.Fatalf("shallow BranchTip = %q, %v, %v; want parent %s", author, parents, err, parent)
+	if got, err := (Repo{Dir: shallow}).BranchTip(ctx, br); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("shallow BranchTip = %+v, %v; want %+v", got, err, want)
 	}
 
 	if err := r.DeleteBranch(ctx, br); err != nil {
@@ -240,27 +254,38 @@ func TestPushDeleteAuthor(t *testing.T) {
 	if tip() != "" {
 		t.Fatalf("branch still exists at %s", tip())
 	}
-	if _, _, err := r.BranchTip(ctx, br); err == nil {
+	if _, err := r.BranchTip(ctx, br); err == nil {
 		t.Fatal("BranchTip of deleted branch succeeded")
 	}
-	if _, _, err := (Repo{Dir: t.TempDir()}).BranchTip(ctx, br); err == nil {
+	if _, err := (Repo{Dir: t.TempDir()}).BranchTip(ctx, br); err == nil {
 		t.Fatal("BranchTip outside a repo succeeded")
+	}
+
+	// A push origin declines (branch protection) is ErrRejected, not ErrStale.
+	hook := filepath.Join(origin, "hooks", "pre-receive")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'protected branch' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Push(ctx, c1, "main", parent); !errors.Is(err, ErrRejected) || errors.Is(err, ErrStale) {
+		t.Fatalf("declined push: %v", err)
+	}
+	if err := (Repo{Dir: t.TempDir()}).Push(ctx, c1, br, ""); err == nil || errors.Is(err, ErrStale) || errors.Is(err, ErrRejected) {
+		t.Fatalf("push outside a repo: %v", err)
 	}
 }
 
 func TestParseCommitHeader(t *testing.T) {
 	for _, tc := range []struct {
-		name, obj, email string
-		parents          []string
+		name, obj string
+		want      Tip
 	}{
-		{"root", "tree t\nauthor A B <a@b> 1 +0000\ncommitter C <c@d> 1 +0000\n\nmsg\n", "a@b", nil},
-		{"merge", "tree t\nparent p1\nparent p2\nauthor A <a@b> 1 +0000\n\nparent fake\n", "a@b", []string{"p1", "p2"}},
-		{"malformed author", "tree t\nparent p\nauthor nobody\n", "", []string{"p"}},
+		{"root", "tree t\nauthor A B <a@b> 1 +0000\ncommitter C <c@d> 1 +0000\n\nmsg\n", Tip{Author: "a@b", Tree: "t"}},
+		{"merge", "tree t\nparent p1\nparent p2\nauthor A <a@b> 1 +0000\n\nparent fake\n", Tip{Author: "a@b", Parents: []string{"p1", "p2"}, Tree: "t"}},
+		{"malformed author", "tree t\nparent p\nauthor nobody\n", Tip{Parents: []string{"p"}, Tree: "t"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			email, parents := parseCommitHeader(tc.obj)
-			if email != tc.email || !slices.Equal(parents, tc.parents) {
-				t.Errorf("got %q %v, want %q %v", email, parents, tc.email, tc.parents)
+			if got := parseCommitHeader(tc.obj); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %+v, want %+v", got, tc.want)
 			}
 		})
 	}

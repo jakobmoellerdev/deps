@@ -43,9 +43,11 @@ type Policy struct {
 	TimestampRequired bool
 	Versioning        string // versioning scheme set by a rule, "" = the dep's own
 	ExtractVersion    string // extractVersion set by a rule, "" = the dep's own
-	Automerge         bool   // request platform auto-merge for the PR
+	Automerge         bool   // automerge the update's PR or branch
 	// AutomergeStrategy is the merge method of an automerged PR (AutomergeStrategies).
 	AutomergeStrategy string
+	// AutomergeType is how the update is automerged (AutomergeTypes).
+	AutomergeType string
 	// PR buckets (separateMajorMinor, separateMultipleMajor, separateMinorPatch).
 	SeparateMajorMinor, SeparateMultipleMajor, SeparateMinorPatch bool
 }
@@ -130,6 +132,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		SeparateMinorPatch:    c.SeparateMinorPatch != nil && *c.SeparateMinorPatch,
 		Automerge:             c.Automerge,
 		AutomergeStrategy:     cmp.Or(c.AutomergeStrategy, StrategyAuto),
+		AutomergeType:         cmp.Or(c.AutomergeType, AutomergeTypePR),
 	}
 	if production(d) {
 		p.CommitType = CommitFix
@@ -212,6 +215,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		}
 		if r.AutomergeStrategy != "" {
 			p.AutomergeStrategy = r.AutomergeStrategy
+		}
+		if r.AutomergeType != "" {
+			p.AutomergeType = r.AutomergeType
 		}
 	}
 	return p

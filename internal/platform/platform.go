@@ -51,6 +51,16 @@ type Issue struct {
 	URL    string
 }
 
+// CheckState is the combined state of the commit statuses and check runs of a commit.
+type CheckState string
+
+const (
+	ChecksNone    CheckState = "none"    // no commit status and no check run
+	ChecksPending CheckState = "pending" // some have not finished, none failed
+	ChecksSuccess CheckState = "success" // at least one, and all succeeded
+	ChecksFailure CheckState = "failure" // at least one failed
+)
+
 // Errors the caller handles without reporting an error.
 var (
 	// ErrAutoMergePending means the forge cannot schedule the merge yet (Gitea/Forgejo: the
@@ -78,9 +88,8 @@ type Client interface {
 	// ErrAutoMergePending or ErrAutoMergeUnavailable (wrapped) when that is not possible now;
 	// a merge that is already scheduled counts as success.
 	EnableAutoMerge(ctx context.Context, pr PR, strategy string) error
-	// ChecksPassed reports whether commit sha has at least one commit status or check run and
-	// all of them succeeded.
-	ChecksPassed(ctx context.Context, sha string) (bool, error)
+	// Checks combines the commit statuses and check runs of commit sha.
+	Checks(ctx context.Context, sha string) (CheckState, error)
 	// MergePR merges pr now with strategy, provided its head is still pr.HeadSHA.
 	MergePR(ctx context.Context, pr PR, strategy string) error
 	ListIssues(ctx context.Context, maxPages int) ([]Issue, error) // open issues, PRs excluded; ErrIssuesDisabled

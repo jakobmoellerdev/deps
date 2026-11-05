@@ -290,6 +290,7 @@ jobs:
 | push `<branchPrefix>*` branches, delete obsolete ones | `contents: write`; *Workflows* (App) or `workflow` (PAT) when workflow files change | `contents: write` | automatic token |
 | list, create, edit and close PRs | `pull-requests: write` | `pull-requests: write` | automatic token |
 | request auto-merge (`automerge`) | merge rights on the base branch; *Allow auto-merge* in the settings; `statuses: read` and `checks: read` for the direct-merge fallback | merge rights on the base branch | merge rights on the base branch |
+| branch automerge (`automergeType: branch`) | `contents: write` and push rights on the base branch (bypass of its protection or rulesets); `statuses: read` and `checks: read` | push rights on the base branch (branch protection *Enable push*) | as on Gitea |
 | find, create and edit the dashboard issue (`dependencyDashboard`) | `issues: write` | `issues: write` | automatic token |
 | read private actions, modules and release notes | read access to those repositories | Cross-Repository Access or a PAT | a PAT |
 | CI runs on deps PRs | App token or PAT | PAT | PAT |
@@ -513,7 +514,7 @@ So merges never open weekly groups early. `workflow_dispatch` is different: a ma
 
 **Notes.**
 
-- **No loops.** deps pushes only to its own branches (`deps/…`), never to the default branch, so its pushes don't match `branches: [main]`. Merging a deps PR is a push to `main` and does trigger a run; that is the point.
+- **No loops.** deps pushes only to its own branches (`deps/…`), so its pushes don't match `branches: [main]`. Merging a deps PR is a push to `main` and does trigger a run; that is the point. With [branch automerge](#branch-automerge) deps pushes to `main` itself, at most once per run and only for a branch whose checks passed; with an App token or PAT that push starts the next run, which ends the chain once no green branch is left.
 - **The token decides whether merges trigger.** On GitHub, pushes made with `GITHUB_TOKEN` (including automerges performed with it) start no workflows, so the follow-up run only happens for merges by a user, an App token or a PAT. Gitea and Forgejo behave the same for their job tokens.
 - **Busy repositories.** Every push to `main` starts a run. Keep the [concurrency group](#overlapping-runs) with `cancel-in-progress: false`: bursts queue up behind one run instead of racing. To skip pushes that can't matter, add `paths-ignore` (e.g. `docs/**`), keeping `.deps.yaml` and the dependency files included.
 - **Cost.** A run without changes takes seconds (lookups are deduplicated per run; the binary comes from the [action's cache](#the-composite-action)).
@@ -535,6 +536,31 @@ So merges never open weekly groups early. `workflow_dispatch` is different: a ma
 2. The forge waits only for the status checks that branch protection marks as required. Without branch protection with required checks, it merges **immediately**.
 3. Since the job token doesn't start CI on deps PRs, use a PAT and configure required status checks on the base branch.
 4. A fresh push whose mergeability check is still running is reported as `automerge pending` and requested again on the next run.
+
+### Branch automerge
+
+With [`automergeType: branch`](reference/configuration.md#automergetype) (Renovate's branch automerge) updates reach the base branch without a PR: deps pushes the branch, and a later run fast-forwards the base branch to it once the branch's commit statuses and check runs are all green, then deletes the branch. Failed checks, or a base branch that refuses the push, open the PR instead.
+
+```yaml
+automerge: true
+automergeType: branch
+rules:
+  - updateTypes: [major]   # majors as PRs, reviewed by hand
+    automerge: false
+```
+
+1. **CI on the branches.** Your CI workflow must run on pushes to the update branches, or they never get checks and wait forever (`branch automerge waiting for checks`):
+
+   ```yaml
+   on:
+     push:
+       branches: [main, 'deps/**']
+   ```
+
+   As for PRs, pushes with the job token start no workflows: give deps an [App token or PAT](#github).
+2. **Pushing to the base branch.** The token must be allowed to push to `main`. GitHub branch protection or rulesets that require PRs or status checks refuse it, unless the App or user is on the bypass list. On Gitea and Forgejo, the branch protection must allow pushes (*Enable push*, with the token's user in the allowlist if it is restricted). A refused push opens the PR, which is then automerged like `automergeType: pr`.
+3. **One merge per run.** Merging moves `main`, so the other branches are behind it. The next run rebuilds them, their checks run again, and a later run merges them. Run deps often enough (or [on push](#run-on-push-to-the-default-branch)) to work through a backlog.
+4. **Waiting branches** are listed on the [dependency dashboard](#dependency-dashboard) under *Pending branch automerge*; tick one to get a PR instead.
 
 ## Dependency dashboard
 

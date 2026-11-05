@@ -3,6 +3,7 @@ package platform
 import (
 	"encoding/base64"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -125,7 +126,7 @@ func (f *fakeGitData) serve(w http.ResponseWriter, r *http.Request) {
 		for _, p := range c.parents {
 			parents = append(parents, map[string]string{"sha": p})
 		}
-		reply(map[string]any{"sha": sha, "commit": map[string]any{"author": map[string]string{"email": c.email}}, "author": account, "parents": parents})
+		reply(map[string]any{"sha": sha, "commit": map[string]any{"author": map[string]string{"email": c.email}, "tree": map[string]string{"sha": c.tree}}, "author": account, "parents": parents})
 	case r.Method == http.MethodGet && strings.HasPrefix(p, "/repos/o/r/git/ref/heads/"):
 		sha, ok := f.refs["refs/"+strings.TrimPrefix(p, "/repos/o/r/git/ref/")]
 		if !ok {
@@ -141,7 +142,8 @@ func (f *fakeGitData) serve(w http.ResponseWriter, r *http.Request) {
 		case strings.Contains(q, "updateRefs") && strings.Contains(q, "force: true"):
 			ref, before, after := vars["ref"].(string), vars["before"].(string), vars["after"].(string)
 			cur, exists := f.refs[ref]
-			if _, ok := f.commits[after]; vars["repo"] != "R_1" || !ok || (exists && cur != before) || (!exists && before != zeroOID) {
+			// refs/heads/protected is behind branch protection: never updated, though it exists.
+			if _, ok := f.commits[after]; vars["repo"] != "R_1" || !ok || (exists && cur != before) || (!exists && before != zeroOID) || ref == "refs/heads/protected" {
 				reply(map[string]any{"errors": []map[string]string{{"message": "Something went wrong while executing your query."}}})
 				return
 			}
@@ -242,17 +244,17 @@ func TestGitHubCommits(t *testing.T) {
 	}
 
 	// The tip GitHub links to the token's account is deps' own, whatever its email.
-	author, parents, err := g.BranchTip(ctx, branch)
-	if _, email := g.Author(); err != nil || author != email || len(parents) != 1 || parents[0] != "c0" {
-		t.Errorf("BranchTip = %q, %v, %v", author, parents, err)
+	tip, err := g.BranchTip(ctx, branch)
+	if _, email := g.Author(); err != nil || tip.Author != email || len(tip.Parents) != 1 || tip.Parents[0] != "c0" || tip.Tree != f.commit(c1).tree {
+		t.Errorf("BranchTip = %+v, %v", tip, err)
 	}
 	// A tip without a linked account reports its email.
-	if author, _, err := g.BranchTip(ctx, "main"); err != nil || author != "human@example.com" {
-		t.Errorf("BranchTip(main) = %q, %v", author, err)
+	if tip, err := g.BranchTip(ctx, "main"); err != nil || tip.Author != "human@example.com" || tip.Tree != "t0" {
+		t.Errorf("BranchTip(main) = %+v, %v", tip, err)
 	}
 
 	// Creating a branch that exists is a compare-and-swap conflict.
-	if err := g.Push(ctx, c1, branch, ""); err == nil || !strings.Contains(err.Error(), "update refs/heads/"+branch+": stale info: the branch is at "+c1+", expected no branch") {
+	if err := g.Push(ctx, c1, branch, ""); !errors.Is(err, ErrRefStale) || !strings.Contains(err.Error(), "update refs/heads/"+branch+": stale info: the branch is at "+c1+", expected no branch") {
 		t.Errorf("create existing branch: err = %v", err)
 	}
 
@@ -276,15 +278,22 @@ func TestGitHubCommits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := g.Push(ctx, c3, branch, c1); err == nil || !strings.Contains(err.Error(), "stale info: the branch is at "+c2+", expected "+c1) {
+	if err := g.Push(ctx, c3, branch, c1); !errors.Is(err, ErrRefStale) || !strings.Contains(err.Error(), "stale info: the branch is at "+c2+", expected "+c1) {
 		t.Errorf("stale push: err = %v", err)
 	}
 	if got := f.ref("refs/heads/" + branch); got != c2 {
 		t.Errorf("stale push moved the branch to %s", got)
 	}
 	// The expected branch was deleted meanwhile.
-	if err := g.Push(ctx, c3, "deps/gone", c1); err == nil || !strings.Contains(err.Error(), "stale info: the branch was deleted, expected "+c1) {
+	if err := g.Push(ctx, c3, "deps/gone", c1); !errors.Is(err, ErrRefStale) || !strings.Contains(err.Error(), "stale info: the branch was deleted, expected "+c1) {
 		t.Errorf("push to a deleted branch: err = %v", err)
+	}
+	// A branch GitHub refuses to move although it is at the expected commit.
+	f.mu.Lock()
+	f.refs["refs/heads/protected"] = "c0"
+	f.mu.Unlock()
+	if err := g.Push(ctx, c3, "protected", "c0"); !errors.Is(err, ErrRefRejected) || errors.Is(err, ErrRefStale) {
+		t.Errorf("push to a protected branch: err = %v", err)
 	}
 
 	// An unknown parent fails before anything is created.

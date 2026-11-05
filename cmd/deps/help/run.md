@@ -1,9 +1,9 @@
 Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else from the `origin` remote), resolves every dependency, builds one commit per group on a temporary index (no checkout; the working tree is never modified), pushes it with `--force-with-lease`, and creates or updates the PRs. With platform commits (GitHub, see below) the commits are created and the branches moved through the GitHub API instead.
 
-- PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested.
+- PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested. With `automergeType: branch` there is no PR: the branch is pushed, and once its checks pass the base branch is fast-forwarded to it (one branch per run); failed checks open the PR.
 - With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
 - With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every `Cargo.lock` (`cargo update`) and `.terraform.lock.hcl` (`terraform init -upgrade`); it is closed when the lockfiles are current.
-- Obsolete PRs under `branchPrefix` are closed and their branches deleted, but only when the run had no errors.
+- Obsolete PRs under `branchPrefix` are closed and their branches deleted, and obsolete branches without any PR (branch automerge) are deleted, but only when the run had no errors.
 - The local `HEAD` must be the tip of `origin/<base>`.
 
 **Token:** `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`, which uses the API anonymously. Git pushes use the checkout's credentials.
@@ -23,15 +23,16 @@ Only keys without a passphrase are supported; a protected key fails before any w
 
 **New-PR limit:** the minimum of `--max-new-prs` and the room left below `prConcurrentLimit`/`prHourlyLimit`, counting only the non-zero ones. Existing PRs are always updated.
 
-**PR statuses** (the `pr` lines, see `deps help output`):
+**PR statuses** (the `pr` lines, see `deps help output`; for a branch automerge group without a PR they describe its branch):
 
 | Status | Meaning |
 |---|---|
-| `created` | new PR |
-| `updated` | content changed or the PR was unmergeable; force-pushed and PR edited |
+| `created` | new PR, or new branch (branch automerge) |
+| `updated` | content changed or the PR was unmergeable; force-pushed and PR edited. A branch automerge branch is also rebuilt when the base moved |
 | `rebased` | unchanged content rebuilt on a moved base (`rebaseWhen: behind-base-branch`), or on request from the dashboard |
 | `up-to-date` | nothing to do |
 | `closed` | obsolete PR closed and branch deleted |
+| `deleted` | obsolete branch without a PR deleted (branch automerge) |
 | `would-create`, `would-update`, `would-rebase` | `--dry-run` |
 | `skipped: closed PR for this version` | an unmerged closed PR has the same branch and title (the dashboard's recreate checkbox overrides it) |
 | `skipped: outside schedule` | the run was triggered by a cron that is not in the group's `schedule` (the dashboard's create checkbox overrides it) |
@@ -46,7 +47,9 @@ Only keys without a passphrase are supported; a protected key fails before any w
 | `automerge enabled` | GitHub reports auto-merge enabled already; not requested again |
 | `automerge pending` | Gitea/Forgejo cannot schedule it yet (mergeability check of a fresh push still running); the next run asks again |
 | `automerge waiting for checks` | GitHub will not auto-merge (auto-merge disallowed, or nothing to wait for) and the PR is not mergeable yet or its statuses/check runs are not all green; the next run checks again |
-| `merged` | GitHub fallback: merged directly, mergeable with all statuses and check runs green |
+| `merged` | merged directly: the GitHub fallback (mergeable with all statuses and check runs green), or a branch automerge branch fast-forwarded into the base and deleted |
+| `branch automerge waiting for checks` | branch automerge: the branch has no PR and its checks have not finished or none are reported; the next run checks again |
+| `branch automerge next run` | branch automerge: the checks passed, but another branch was merged in this run or the base moved; the next run rebases or merges it |
 | `would-automerge` | `--dry-run` |
 
 **Dashboard statuses** (the `dashboard` line): `created`, `updated`, `up-to-date` (body unchanged, not edited), `would-create`, `would-update` (`--dry-run`), and `skipped: issues disabled` (the repository has no issue tracker; not an error).

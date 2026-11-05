@@ -15,6 +15,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -39,12 +40,17 @@ type fakeGit struct {
 	branches map[string]string   // ref -> sha
 	authors  map[string]string   // branch -> email
 	parents  map[string][]string // branch -> tip parents; unset = [head]
+	trees    map[string]string   // branch -> tip tree; WriteTree always returns newTree
 	fail     map[string]error
 	pushed   []string // branches
+	pushes   []string // "<commit>:<branch>@<expected>"
 	deleted  []string
 	patterns []string // LsRemote patterns
 	tips     []string // BranchTip branches
 }
+
+// newTree is the tree fakeGit.WriteTree writes.
+const newTree = "7777777777777777777777777777777777777777"
 
 func (g *fakeGit) RevParse(context.Context, string) (string, error) {
 	return head, fail(g.fail, "RevParse", "")
@@ -60,17 +66,21 @@ func (g *fakeGit) LsRemote(_ context.Context, pattern string) (map[string]string
 	}
 	return g.branches, nil
 }
+func (g *fakeGit) WriteTree(context.Context, string, []engine.FileChange) (string, error) {
+	return newTree, fail(g.fail, "WriteTree", "")
+}
 func (g *fakeGit) Commit(context.Context, string, []engine.FileChange, string, string, string) (string, error) {
 	if err := fail(g.fail, "Commit", ""); err != nil {
 		return "", err
 	}
 	return "2222222222222222222222222222222222222222", nil
 }
-func (g *fakeGit) Push(_ context.Context, _, branch, _ string) error {
+func (g *fakeGit) Push(_ context.Context, commit, branch, expected string) error {
 	if err := fail(g.fail, "Push", branch); err != nil {
 		return err
 	}
 	g.pushed = append(g.pushed, branch)
+	g.pushes = append(g.pushes, commit+":"+branch+"@"+expected)
 	return nil
 }
 func (g *fakeGit) DeleteBranch(_ context.Context, branch string) error {
@@ -80,13 +90,13 @@ func (g *fakeGit) DeleteBranch(_ context.Context, branch string) error {
 	g.deleted = append(g.deleted, branch)
 	return nil
 }
-func (g *fakeGit) BranchTip(_ context.Context, branch string) (string, []string, error) {
+func (g *fakeGit) BranchTip(_ context.Context, branch string) (gitx.Tip, error) {
 	g.tips = append(g.tips, branch)
 	parents, ok := g.parents[branch]
 	if !ok {
 		parents = []string{head}
 	}
-	return g.authors[branch], parents, fail(g.fail, "BranchTip", branch)
+	return gitx.Tip{Author: g.authors[branch], Parents: parents, Tree: g.trees[branch]}, fail(g.fail, "BranchTip", branch)
 }
 
 type fakePC struct {
@@ -96,13 +106,14 @@ type fakePC struct {
 	fail         map[string]error // EnableAutoMerge errors are keyed by the PR number
 	got          []int            // GetPR numbers
 	created      []string         // heads
+	bodies       []string         // CreatePR bodies
 	updated      []int
 	closedNow    []int
 
-	checksPassed bool
-	automerge    []string // EnableAutoMerge "<number>:<strategy>@<head sha>"
-	checked      []string // ChecksPassed shas
-	merged       []string // MergePR "<number>:<strategy>@<head sha>"
+	checks    platform.CheckState
+	automerge []string // EnableAutoMerge "<number>:<strategy>@<head sha>"
+	checked   []string // Checks shas
+	merged    []string // MergePR "<number>:<strategy>@<head sha>"
 
 	issues        []platform.Issue
 	issuePages    int
@@ -130,11 +141,12 @@ func (c *fakePC) GetPR(_ context.Context, n int) (platform.PR, error) {
 	c.got = append(c.got, n)
 	return platform.PR{Number: n, Mergeable: c.mergeable, HeadSHA: c.headSHA}, nil
 }
-func (c *fakePC) CreatePR(_ context.Context, head, _, _, _ string) (platform.PR, error) {
+func (c *fakePC) CreatePR(_ context.Context, head, _, _, body string) (platform.PR, error) {
 	if err := fail(c.fail, "CreatePR", head); err != nil {
 		return platform.PR{}, err
 	}
 	c.created = append(c.created, head)
+	c.bodies = append(c.bodies, body)
 	return platform.PR{Number: 100 + len(c.created), Head: head}, nil
 }
 func (c *fakePC) UpdatePR(_ context.Context, n int, _, _ string) error {
@@ -155,9 +167,9 @@ func (c *fakePC) EnableAutoMerge(_ context.Context, pr platform.PR, strategy str
 	c.automerge = append(c.automerge, fmt.Sprintf("%d:%s@%s", pr.Number, strategy, pr.HeadSHA))
 	return fail(c.fail, "EnableAutoMerge", strconv.Itoa(pr.Number))
 }
-func (c *fakePC) ChecksPassed(_ context.Context, sha string) (bool, error) {
+func (c *fakePC) Checks(_ context.Context, sha string) (platform.CheckState, error) {
 	c.checked = append(c.checked, sha)
-	return c.checksPassed, fail(c.fail, "ChecksPassed", "")
+	return c.checks, fail(c.fail, "Checks", "")
 }
 func (c *fakePC) MergePR(_ context.Context, pr platform.PR, strategy string) error {
 	if err := fail(c.fail, "MergePR", ""); err != nil {

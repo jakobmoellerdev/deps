@@ -106,7 +106,7 @@ func TestRunAutomerge(t *testing.T) {
 		},
 		{
 			name:       "fallback merges a mergeable PR with green checks at the checked head",
-			pc:         fakePC{open: freshA(platform.PR{}), mergeable: &yes, headSHA: "bbbb", checksPassed: true, fail: map[string]error{"EnableAutoMerge": unavailable}},
+			pc:         fakePC{open: freshA(platform.PR{}), mergeable: &yes, headSHA: "bbbb", checks: platform.ChecksSuccess, fail: map[string]error{"EnableAutoMerge": unavailable}},
 			wantA:      AutomergeMerged,
 			wantEnable: []string{"1:squash@aaaa"},
 			wantChecks: []string{"bbbb"},
@@ -115,7 +115,7 @@ func TestRunAutomerge(t *testing.T) {
 		},
 		{
 			name:       "fallback check errors are reported",
-			pc:         fakePC{open: freshA(platform.PR{}), mergeable: &yes, headSHA: "bbbb", fail: map[string]error{"EnableAutoMerge": unavailable, "ChecksPassed": errBoom}},
+			pc:         fakePC{open: freshA(platform.PR{}), mergeable: &yes, headSHA: "bbbb", fail: map[string]error{"EnableAutoMerge": unavailable, "Checks": errBoom}},
 			wantA:      AutomergeWaiting,
 			wantErr:    branchA + ": boom",
 			wantEnable: []string{"1:squash@aaaa"},

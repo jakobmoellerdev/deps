@@ -175,9 +175,8 @@ func TestLoadErrors(t *testing.T) {
 		{"customDatasources: {e: {url: 'https://x/y', transformTemplates: []}}\n", "line 1"},
 		{"automergeStrategy: fast-forward\n", `automergeStrategy: must be one of auto, merge, squash, rebase, got "fast-forward"`},
 		{"rules: [{automergeStrategy: merge-commit}]\n", `rules[0].automergeStrategy: must be one of auto, merge, squash, rebase, got "merge-commit"`},
-		{"automergeType: branch\n", "automergeType: branch is not supported: deps automerges through the platform's pull request auto-merge; use automergeType: pr"},
-		{"rules: [{automergeType: branch}]\n", "rules[0].automergeType: branch is not supported"},
-		{"rules: [{automergeType: pr-comment}]\n", `rules[0].automergeType: must be pr, got "pr-comment"`},
+		{"automergeType: pr-comment\n", `automergeType: must be one of pr, branch, got "pr-comment"`},
+		{"rules: [{automergeType: fast-forward}]\n", `rules[0].automergeType: must be one of pr, branch, got "fast-forward"`},
 		{"automerge: sometimes\n", "line 1"},
 		{"dependencyDashboard: maybe\n", "line 1"},
 		{"dependencyDashboardTitle: '  '\n", "dependencyDashboardTitle: must be a non-blank single line"},
@@ -811,6 +810,7 @@ rules:
     automerge: true
   - manager: gomod
     automergeStrategy: squash
+    automergeType: branch
   - names: ["actions/cache"]
     updateTypes: [patch]
     automerge: false
@@ -827,30 +827,34 @@ rules:
 		kind     dep.UpdateType
 		want     bool
 		strategy string
+		typ      string
 	}{
-		{"pre-policy", checkout, "", false, StrategyAuto},
-		{"minor automerges", checkout, dep.Minor, true, StrategyAuto},
-		{"patch automerges", checkout, dep.Patch, true, StrategyAuto},
-		{"major does not", checkout, dep.Major, false, StrategyAuto},
-		{"digest does not", checkout, dep.Digest, false, StrategyAuto},
-		{"later kind rule turns it off", cache, dep.Patch, false, StrategyAuto},
-		{"strategy from a rule", mod, dep.Minor, true, StrategySquash},
+		{"pre-policy", checkout, "", false, StrategyAuto, AutomergeTypePR},
+		{"minor automerges", checkout, dep.Minor, true, StrategyAuto, AutomergeTypePR},
+		{"patch automerges", checkout, dep.Patch, true, StrategyAuto, AutomergeTypePR},
+		{"major does not", checkout, dep.Major, false, StrategyAuto, AutomergeTypePR},
+		{"digest does not", checkout, dep.Digest, false, StrategyAuto, AutomergeTypePR},
+		{"later kind rule turns it off", cache, dep.Patch, false, StrategyAuto, AutomergeTypePR},
+		{"strategy and type from a rule", mod, dep.Minor, true, StrategySquash, AutomergeTypeBranch},
 	} {
 		p := c.PolicyFor(tc.d, tc.kind)
 		if tc.kind == "" {
 			p = c.Policy(tc.d)
 		}
-		if p.Automerge != tc.want || p.AutomergeStrategy != tc.strategy {
-			t.Errorf("%s: automerge %v %q, want %v %q", tc.name, p.Automerge, p.AutomergeStrategy, tc.want, tc.strategy)
+		if p.Automerge != tc.want || p.AutomergeStrategy != tc.strategy || p.AutomergeType != tc.typ {
+			t.Errorf("%s: automerge %v %q %q, want %v %q %q", tc.name, p.Automerge, p.AutomergeStrategy, p.AutomergeType, tc.want, tc.strategy, tc.typ)
 		}
 	}
 
-	top, err := load(t, ".deps.yaml", "automerge: true\nautomergeStrategy: rebase\nrules: [{manager: gomod, automerge: false}]\n")
+	top, err := load(t, ".deps.yaml", "automerge: true\nautomergeStrategy: rebase\nautomergeType: branch\nrules: [{manager: gomod, automerge: false}, {names: [actions/cache], automergeType: pr}]\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := top.PolicyFor(checkout, dep.Major); !p.Automerge || p.AutomergeStrategy != StrategyRebase {
-		t.Errorf("top-level automerge: %v %q", p.Automerge, p.AutomergeStrategy)
+	if p := top.PolicyFor(checkout, dep.Major); !p.Automerge || p.AutomergeStrategy != StrategyRebase || p.AutomergeType != AutomergeTypeBranch {
+		t.Errorf("top-level automerge: %v %q %q", p.Automerge, p.AutomergeStrategy, p.AutomergeType)
+	}
+	if p := top.PolicyFor(cache, dep.Major); p.AutomergeType != AutomergeTypePR {
+		t.Errorf("rule did not override automergeType: %q", p.AutomergeType)
 	}
 	if p := top.PolicyFor(mod, dep.Patch); p.Automerge {
 		t.Error("rule did not turn automerge off")

@@ -276,6 +276,9 @@ func describeRule(r config.Rule) string {
 	if r.AutomergeStrategy != "" {
 		add("automergeStrategy", r.AutomergeStrategy)
 	}
+	if r.AutomergeType != "" {
+		add("automergeType", r.AutomergeType)
+	}
 	if len(f) == 0 {
 		return "(matches all)"
 	}
@@ -308,7 +311,10 @@ func describePolicy(p config.Policy) string {
 	if p.RangeStrategy != "" && p.RangeStrategy != config.RangeAuto {
 		s += " rangeStrategy=" + p.RangeStrategy
 	}
-	if p.Automerge {
+	switch {
+	case p.Automerge && p.AutomergeType == config.AutomergeTypeBranch:
+		s += " automerge=branch"
+	case p.Automerge:
 		s += " automerge=" + p.AutomergeStrategy
 	}
 	return s

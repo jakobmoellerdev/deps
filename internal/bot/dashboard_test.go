@@ -288,11 +288,11 @@ func TestDashboardOmitsPRMergedByDeps(t *testing.T) {
 	yes := true
 	fp := fingerprintOf(t, root, res, "a/x")
 	pc := &fakePC{
-		open:         []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "<!-- deps:fingerprint=" + fp + " -->", HeadSHA: "aaaa", Mergeable: &yes, URL: "https://forge/pulls/1"}},
-		mergeable:    &yes,
-		headSHA:      "aaaa",
-		checksPassed: true,
-		fail:         map[string]error{"EnableAutoMerge": fmt.Errorf("enable auto-merge #1: %w: disabled in the repository settings", platform.ErrAutoMergeUnavailable)},
+		open:      []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "<!-- deps:fingerprint=" + fp + " -->", HeadSHA: "aaaa", Mergeable: &yes, URL: "https://forge/pulls/1"}},
+		mergeable: &yes,
+		headSHA:   "aaaa",
+		checks:    platform.ChecksSuccess,
+		fail:      map[string]error{"EnableAutoMerge": fmt.Errorf("enable auto-merge #1: %w: disabled in the repository settings", platform.ErrAutoMergeUnavailable)},
 	}
 	acts, errs, _ := dashRun(t, Options{}, res, root, pc, &fakeGit{})
 	if len(errs) > 0 || len(pc.merged) != 1 {

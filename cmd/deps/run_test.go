@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -258,6 +259,74 @@ func TestRunAutomergeAndDashboard(t *testing.T) {
 			t.Errorf("dashboard body lacks %q:\n%s", want, body)
 		}
 	}
+}
+
+// automergeType: branch end to end on Gitea with a real origin: the first run pushes the branch
+// without a PR; once its commit status is green, the next run fast-forwards main to it and
+// deletes it. A main branch that declines the push gets the PR instead.
+func TestRunBranchAutomerge(t *testing.T) {
+	const branch = "deps/github-actions/actions-checkout-major"
+	setup := func(t *testing.T) (*fakeNet, string, string) {
+		t.Helper()
+		cleanEnv(t)
+		f := newFakeNet(t)
+		giteaEnv(t)
+		t.Setenv("DEPS_TOKEN", "tok")
+		origin, work := gitRepo(t, map[string]string{
+			".github/workflows/ci.yml": workflow,
+			".deps.yaml":               "automerge: true\nautomergeType: branch\n",
+		})
+		_, stderr, code := execute(t, "run", "--dir", work, "--author-email", "bot@example.invalid")
+		if code != 0 || len(f.created) != 0 ||
+			!strings.Contains(stderr, "pr      created, branch automerge waiting for checks  "+branch+"  chore(deps): update actions/checkout to v7.0.1  \n") {
+			t.Fatalf("first run: exit %d, created %v\n%s", code, f.created, stderr)
+		}
+		f.mux.HandleFunc("GET git.test/api/v1/repos/o/r/commits/{sha}/status", func(w http.ResponseWriter, _ *http.Request) {
+			io.WriteString(w, `{"state":"success","total_count":1}`)
+		})
+		return f, origin, work
+	}
+
+	t.Run("merged", func(t *testing.T) {
+		f, origin, work := setup(t)
+		tip := git(t, origin, "rev-parse", branch)
+		base := git(t, origin, "rev-parse", "main")
+		_, stderr, code := execute(t, "run", "--dir", work, "--author-email", "bot@example.invalid")
+		if code != 0 || len(f.created) != 0 ||
+			!strings.Contains(stderr, "pr      up-to-date, merged  "+branch+"  ") ||
+			!strings.Contains(stderr, "0 created, 0 updated, 0 closed, 1 up-to-date, 0 skipped, 1 automerge, 0 errors\n") {
+			t.Fatalf("second run: exit %d, created %v\n%s", code, f.created, stderr)
+		}
+		if got := git(t, origin, "rev-parse", "main"); got != tip {
+			t.Errorf("main = %s, want the branch tip %s", got, tip)
+		}
+		if parent := git(t, origin, "rev-parse", tip+"^"); parent != base {
+			t.Errorf("merged commit's parent = %s, want the old main %s (fast-forward)", parent, base)
+		}
+		if out := git(t, origin, "branch", "--list", branch); out != "" {
+			t.Errorf("branch not deleted: %q", out)
+		}
+	})
+
+	t.Run("declined", func(t *testing.T) {
+		f, origin, work := setup(t)
+		hook := "#!/bin/sh\nwhile read old new ref; do [ \"$ref\" = refs/heads/main ] && { echo 'main is protected' >&2; exit 1; }; done\nexit 0\n"
+		if err := os.WriteFile(filepath.Join(origin, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		base := git(t, origin, "rev-parse", "main")
+		_, stderr, code := execute(t, "run", "--dir", work, "--author-email", "bot@example.invalid")
+		if code != 0 || len(f.created) != 1 || len(f.merges) != 1 ||
+			!strings.Contains(stderr, "pr      created, automerge  "+branch+"  chore(deps): update actions/checkout to v7.0.1  https://git.test/o/r/pulls/7\n") {
+			t.Fatalf("second run: exit %d, created %v, merges %v\n%s", code, f.created, f.merges, stderr)
+		}
+		if body := f.created[0]["body"]; !strings.Contains(body, "but `main` declined the push, so deps opened this PR.") {
+			t.Errorf("PR body: %s", body)
+		}
+		if got := git(t, origin, "rev-parse", "main"); got != base {
+			t.Errorf("main moved to %s", got)
+		}
+	})
 }
 
 func TestDetectTrigger(t *testing.T) {

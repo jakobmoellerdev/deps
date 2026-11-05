@@ -87,11 +87,7 @@ func signedCommit(t *testing.T, s *Signer) (clone, commit string) {
 	_, clone = setup(t)
 	parent := git(t, clone, "rev-parse", "HEAD")
 	r := Repo{Dir: clone, Signer: s}
-	c, err := r.Commit(t.Context(), parent, []engine.FileChange{{Path: "README", Mode: 0o644, New: []byte("x\n")}}, "signed\n", "Bot", "bot@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return clone, c
+	return clone, mkCommit(t, r, parent, []engine.FileChange{{Path: "README", Mode: 0o644, New: []byte("x\n")}}, "signed\n")
 }
 
 func TestSSHSigner(t *testing.T) {

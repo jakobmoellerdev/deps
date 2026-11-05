@@ -417,6 +417,7 @@ func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Mana
 				Schedule:          cfg.LockFileMaintenanceSchedule(),
 				Automerge:         cfg.Automerge,
 				AutomergeStrategy: cmp.Or(cfg.AutomergeStrategy, config.StrategyAuto),
+				AutomergeType:     cmp.Or(cfg.AutomergeType, config.AutomergeTypePR),
 			})
 		}
 	}
@@ -800,7 +801,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 		up := &ups[i]
 		kp := r.pol.of(up.Type)
 		up.CommitType, up.CommitScope = kp.CommitType, kp.CommitScope
-		up.Automerge, up.AutomergeStrategy = kp.Automerge, kp.AutomergeStrategy
+		up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
 		if len(up.Advisories) == 0 {
 			up.Group, up.Schedule = kp.Group, kp.Schedule
 		}

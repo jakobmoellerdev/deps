@@ -44,7 +44,7 @@ separateMinorPatch: true # separateMinorPatch: true
 separateMultipleMajor: true # separateMultipleMajor: true
 updateNotScheduled: true # updateNotScheduled: true: open PRs are kept current outside their schedule
 automerge: false # automerge: false (rule 2 automerges minor and patch updates)
-automergeType: pr # automergeType: 'pr' (the only supported type)
+automergeType: pr # automergeType: 'pr'
 dependencyDashboard: true # :dependencyDashboard
 # Renovate's issue #331 is titled "Dependency Dashboard". deps finds its own issue by title plus a
 # marker, so it would not edit #331, but a second issue with the same title is confusing while both

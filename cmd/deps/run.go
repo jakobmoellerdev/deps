@@ -172,7 +172,9 @@ func platformCommits(ctx context.Context, env, cfg string, kind platform.Kind, t
 }
 
 // apiGit is a gitx.Repo whose commits, branch updates and branch tips go through the GitHub
-// API (platformCommit); remote listing and branch deletion stay with git.
+// API (platformCommit); remote listing, branch deletion and WriteTree stay with git. Git
+// object ids are content hashes, so the tree WriteTree computes locally is the tree of the
+// API commit made from the same changes.
 type apiGit struct {
 	gitx.Repo
 	api *platform.GitHubCommits
@@ -187,12 +189,21 @@ func (g apiGit) Commit(ctx context.Context, parent string, changes []engine.File
 	return g.api.Commit(ctx, parent, files, msg)
 }
 
+// Push maps refused updates to the errors of gitx.Repo.Push.
 func (g apiGit) Push(ctx context.Context, commit, branch, expected string) error {
-	return g.api.Push(ctx, commit, branch, expected)
+	err := g.api.Push(ctx, commit, branch, expected)
+	switch {
+	case errors.Is(err, platform.ErrRefStale):
+		return fmt.Errorf("%w: %w", gitx.ErrStale, err)
+	case errors.Is(err, platform.ErrRefRejected):
+		return fmt.Errorf("%w: %w", gitx.ErrRejected, err)
+	}
+	return err
 }
 
-func (g apiGit) BranchTip(ctx context.Context, branch string) (string, []string, error) {
-	return g.api.BranchTip(ctx, branch)
+func (g apiGit) BranchTip(ctx context.Context, branch string) (gitx.Tip, error) {
+	t, err := g.api.BranchTip(ctx, branch)
+	return gitx.Tip{Author: t.Author, Parents: t.Parents, Tree: t.Tree}, err
 }
 
 func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
@@ -326,7 +337,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 			created++
 		case a.Status == bot.StatusUpdated || a.Status == bot.StatusRebased:
 			updated++
-		case a.Status == bot.StatusClosed:
+		case a.Status == bot.StatusClosed || a.Status == bot.StatusDeleted:
 			closed++
 		case a.Status == bot.StatusUpToDate:
 			upToDate++

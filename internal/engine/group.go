@@ -19,8 +19,11 @@ type Group struct {
 	Manager, Name, Branch, Title string
 	Updates                      []dep.Update
 	// Automerge is set when every update automerges; AutomergeStrategy is the first update's.
+	// AutomergeBranch is set when every update also automerges with automergeType branch: the
+	// branch is merged into the base without a PR while its checks pass.
 	Automerge         bool
 	AutomergeStrategy string
+	AutomergeBranch   bool
 }
 
 // GroupManager is the Group.Manager of policy groups.
@@ -73,6 +76,7 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 		g.Automerge = !slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return !u.Automerge })
 		if g.Automerge {
 			g.AutomergeStrategy = g.Updates[0].AutomergeStrategy
+			g.AutomergeBranch = !slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return u.AutomergeType != config.AutomergeTypeBranch })
 		}
 	}
 	slices.SortFunc(groups, func(a, b Group) int {

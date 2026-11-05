@@ -31,13 +31,13 @@ const (
 )
 
 // checkedRe finds ticked dashboard checkboxes: "- [x] <!-- deps:<action>=<branch> -->".
-var checkedRe = regexp.MustCompile(`(?m)^\s*[-*] \[[xX]\] <!-- deps:(create|recreate|rebase)=(\S+) -->`)
+var checkedRe = regexp.MustCompile(`(?m)^\s*[-*] \[[xX]\] <!-- deps:(create|recreate|rebase|pr)=(\S+) -->`)
 
 // dashboard is the dashboard issue found at the start of a run (issue nil = none yet) and the
 // requests of its ticked checkboxes.
 type dashboard struct {
-	issue                    *platform.Issue
-	create, recreate, rebase map[string]bool // branches
+	issue                        *platform.Issue
+	create, recreate, rebase, pr map[string]bool // branches
 }
 
 // loadDashboard finds the open issue titled title whose body has the dashboard marker (the
@@ -47,7 +47,7 @@ func loadDashboard(ctx context.Context, pc platform.Client, title string) (*dash
 	if err != nil {
 		return nil, fmt.Errorf("list issues: %w", err)
 	}
-	d := &dashboard{create: map[string]bool{}, recreate: map[string]bool{}, rebase: map[string]bool{}}
+	d := &dashboard{create: map[string]bool{}, recreate: map[string]bool{}, rebase: map[string]bool{}, pr: map[string]bool{}}
 	for i := range issues {
 		is := &issues[i]
 		if is.Title != title || !strings.Contains(is.Body, dashboardMarker) {
@@ -68,6 +68,8 @@ func loadDashboard(ctx context.Context, pc platform.Client, title string) (*dash
 			d.recreate[m[2]] = true
 		case "rebase":
 			d.rebase[m[2]] = true
+		case "pr":
+			d.pr[m[2]] = true
 		}
 	}
 	return d, nil
@@ -78,7 +80,7 @@ func (d *dashboard) force(branch string) force {
 	if d == nil {
 		return force{}
 	}
-	return force{create: d.create[branch], recreate: d.recreate[branch], rebase: d.rebase[branch]}
+	return force{create: d.create[branch], recreate: d.recreate[branch], rebase: d.rebase[branch], pr: d.pr[branch]}
 }
 
 // write creates the dashboard issue or updates its body when it changed; a dry run only
@@ -120,14 +122,14 @@ func sameBody(a, b string) bool {
 }
 
 // renderDashboard renders the dashboard body: pending PRs (schedule, limits), ignored or
-// blocked updates, open PRs, errors and the detected dependencies. It is deterministic, so an
-// unchanged run does not edit the issue, and bounded to dashboardMaxBytes; every checkbox is
-// unticked again.
+// blocked updates, branches waiting for branch automerge, open PRs, errors and the detected
+// dependencies. It is deterministic, so an unchanged run does not edit the issue, and bounded
+// to dashboardMaxBytes; every checkbox is unticked again.
 func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
-	var schedule, limited, blocked, open []string
+	var schedule, limited, blocked, branches, open []string
 	for _, a := range actions {
-		// A PR deps merged directly (GitHub fallback) in this run is no longer open.
-		if a.Dashboard || a.Status == StatusClosed || a.Automerge == AutomergeMerged {
+		// A PR or branch deps merged in this run is no longer open.
+		if a.Dashboard || a.Status == StatusClosed || a.Status == StatusDeleted || a.Automerge == AutomergeMerged {
 			continue
 		}
 		switch {
@@ -139,6 +141,8 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 			limited = append(limited, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
 		case a.Status == StatusSkipSchedule && a.Number == 0:
 			schedule = append(schedule, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s (%s)", a.Branch, a.Title, waits(a.Waits)))
+		case a.Number == 0 && (a.Automerge == AutomergeBranchWaiting || a.Automerge == AutomergeBranchNextRun):
+			branches = append(branches, fmt.Sprintf("- [ ] <!-- deps:pr=%s --> %s (%#q)", a.Branch, a.Title, a.Branch))
 		case a.Number > 0:
 			open = append(open, fmt.Sprintf("- [ ] <!-- deps:rebase=%s --> %s (%s)", a.Branch, a.Title, prLink(a)))
 		}
@@ -149,6 +153,7 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 	w.section("Awaiting schedule", "These updates wait for a run triggered by one of their crons. Tick one to create its PR now.", schedule)
 	w.section("Rate-limited", "These updates wait for the PR limits. Tick one to create its PR now.", limited)
 	w.section("Ignored or blocked", "", blocked)
+	w.section("Pending branch automerge", "These branches are merged without a PR once their checks pass. Tick one to create its PR instead.", branches)
 	w.section("Open", "These PRs are open. Tick one to rebuild its branch.", open)
 
 	if len(errs) > 0 {

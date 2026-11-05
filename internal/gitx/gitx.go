@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,6 +19,16 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 )
 
+// Push errors, wrapped in the git error.
+var (
+	// ErrStale means origin refused the push because the ref no longer points at the
+	// expected commit (it moved since it was read) or the push is not a fast-forward.
+	ErrStale = errors.New("ref moved on origin")
+	// ErrRejected means origin itself declined the update, e.g. branch protection or a
+	// pre-receive hook.
+	ErrRejected = errors.New("push rejected by origin")
+)
+
 // Repo is a git repository; Dir may be any directory inside the work tree. A non-nil Signer
 // signs the commits Commit creates; without one, git's own config (commit.gpgSign) applies.
 type Repo struct {
@@ -25,6 +36,14 @@ type Repo struct {
 	Signer *Signer
 }
 
+// Tip is the tip commit of a branch on origin.
+type Tip struct {
+	Author  string   // author email
+	Parents []string // parent ids
+	Tree    string   // tree id
+}
+
+// run runs git and returns its trimmed stdout, also when it fails.
 func (r Repo) run(ctx context.Context, stdin []byte, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = r.Dir
@@ -37,10 +56,11 @@ func (r Repo) run(ctx context.Context, stdin []byte, env []string, args ...strin
 	start := time.Now()
 	err := cmd.Run()
 	slog.DebugContext(ctx, "git command", "args", args, "duration", time.Since(start), "err", err)
+	out := strings.TrimSpace(stdout.String())
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", subcommand(args), err, strings.TrimSpace(stderr.String()))
+		return out, fmt.Errorf("git %s: %w: %s", subcommand(args), err, strings.TrimSpace(stderr.String()))
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return out, nil
 }
 
 // subcommand returns the git subcommand of args, skipping leading -c key=value options.
@@ -84,10 +104,10 @@ func (r Repo) Prefix(ctx context.Context) (string, error) {
 	return r.run(ctx, nil, nil, "rev-parse", "--show-prefix")
 }
 
-// Commit creates a commit on top of parent with changes applied, using a temporary index.
-// Change paths are relative to Dir; a change with nil New deletes its file. The working tree
-// and the real index are not touched.
-func (r Repo) Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, name, email string) (string, error) {
+// WriteTree writes the tree of parent with changes applied, using a temporary index, and
+// returns its id. Change paths are relative to Dir; a change with nil New deletes its file.
+// The working tree and the real index are not touched.
+func (r Repo) WriteTree(ctx context.Context, parent string, changes []engine.FileChange) (string, error) {
 	prefix, err := r.Prefix(ctx)
 	if err != nil {
 		return "", err
@@ -122,7 +142,12 @@ func (r Repo) Commit(ctx context.Context, parent string, changes []engine.FileCh
 	if _, err := r.run(ctx, []byte(info.String()), idx, "update-index", "--index-info"); err != nil {
 		return "", err
 	}
-	tree, err := r.run(ctx, nil, idx, "write-tree")
+	return r.run(ctx, nil, idx, "write-tree")
+}
+
+// Commit creates a commit on top of parent with changes applied (WriteTree).
+func (r Repo) Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, name, email string) (string, error) {
+	tree, err := r.WriteTree(ctx, parent, changes)
 	if err != nil {
 		return "", err
 	}
@@ -139,11 +164,26 @@ func (r Repo) Commit(ctx context.Context, parent string, changes []engine.FileCh
 }
 
 // Push sets refs/heads/<branch> on origin to commit if it currently points at expected
-// ("" = must not exist).
+// ("" = must not exist). A refused update wraps ErrStale (expected is out of date) or
+// ErrRejected (origin declined it).
 func (r Repo) Push(ctx context.Context, commit, branch, expected string) error {
 	ref := "refs/heads/" + branch
-	_, err := r.run(ctx, nil, nil, "push", "--porcelain",
+	out, err := r.run(ctx, nil, nil, "push", "--porcelain",
 		"--force-with-lease="+ref+":"+expected, "origin", commit+":"+ref)
+	if err == nil {
+		return nil
+	}
+	// Porcelain status lines: "!\t<src>:<dst>\t[rejected] (stale info)" or
+	// "!\t<src>:<dst>\t[remote rejected] (<reason>)".
+	for line := range strings.Lines(out) {
+		switch f := strings.Split(strings.TrimSpace(line), "\t"); {
+		case len(f) < 3 || f[0] != "!":
+		case strings.HasPrefix(f[2], "[remote rejected]"):
+			return fmt.Errorf("%w: %s: %w", ErrRejected, f[2], err)
+		case strings.HasPrefix(f[2], "[rejected]"):
+			return fmt.Errorf("%w: %s: %w", ErrStale, f[2], err)
+		}
+	}
 	return err
 }
 
@@ -153,43 +193,45 @@ func (r Repo) DeleteBranch(ctx context.Context, branch string) error {
 	return err
 }
 
-// BranchTip returns the author email and parent ids of the tip of branch on origin. Shallow
-// clones (CI) fetch with --depth=1; full clones fetch normally so they are not turned shallow.
-// The raw commit object is parsed, so parents are reported even when shallow grafts hide them.
-func (r Repo) BranchTip(ctx context.Context, branch string) (author string, parents []string, err error) {
+// BranchTip returns the tip commit of branch on origin. Shallow clones (CI) fetch with
+// --depth=1; full clones fetch normally so they are not turned shallow. The raw commit object
+// is parsed, so parents are reported even when shallow grafts hide them.
+func (r Repo) BranchTip(ctx context.Context, branch string) (Tip, error) {
 	shallow, err := r.run(ctx, nil, nil, "rev-parse", "--is-shallow-repository")
 	if err != nil {
-		return "", nil, err
+		return Tip{}, err
 	}
 	args := []string{"fetch", "--no-tags", "origin", "refs/heads/" + branch}
 	if shallow == "true" {
 		args = []string{"fetch", "--no-tags", "--depth=1", "origin", "refs/heads/" + branch}
 	}
 	if _, err := r.run(ctx, nil, nil, args...); err != nil {
-		return "", nil, err
+		return Tip{}, err
 	}
 	obj, err := r.run(ctx, nil, nil, "cat-file", "commit", "FETCH_HEAD")
 	if err != nil {
-		return "", nil, err
+		return Tip{}, err
 	}
-	author, parents = parseCommitHeader(obj)
-	return author, parents, nil
+	return parseCommitHeader(obj), nil
 }
 
-// parseCommitHeader returns the author email and parents from a raw commit object.
-func parseCommitHeader(obj string) (email string, parents []string) {
+// parseCommitHeader returns the author email, parents and tree of a raw commit object.
+func parseCommitHeader(obj string) Tip {
+	var t Tip
 	for line := range strings.Lines(obj) {
 		line = strings.TrimSuffix(line, "\n")
 		if line == "" {
 			break // end of header
 		}
 		if p, ok := strings.CutPrefix(line, "parent "); ok {
-			parents = append(parents, p)
+			t.Parents = append(t.Parents, p)
+		} else if tr, ok := strings.CutPrefix(line, "tree "); ok {
+			t.Tree = tr
 		} else if a, ok := strings.CutPrefix(line, "author "); ok {
 			if i, j := strings.IndexByte(a, '<'), strings.LastIndexByte(a, '>'); i >= 0 && j > i {
-				email = a[i+1 : j]
+				t.Author = a[i+1 : j]
 			}
 		}
 	}
-	return email, parents
+	return t
 }

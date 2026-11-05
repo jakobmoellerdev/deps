@@ -85,8 +85,16 @@ const (
 // MinimumReleaseAgeBehaviours are the accepted minimumReleaseAgeBehaviour values.
 var MinimumReleaseAgeBehaviours = []string{TimestampOptional, TimestampRequired}
 
-// AutomergeTypePR is the only supported automergeType: the platform merges the PR.
-const AutomergeTypePR = "pr"
+// Automerge types of automergeType: pr requests the platform's auto-merge of the PR; branch
+// pushes the update branch without a PR and fast-forwards the base branch to it once its
+// checks pass.
+const (
+	AutomergeTypePR     = "pr"
+	AutomergeTypeBranch = "branch"
+)
+
+// AutomergeTypes are the accepted automergeType values.
+var AutomergeTypes = []string{AutomergeTypePR, AutomergeTypeBranch}
 
 // DefaultDashboardTitle is the dependency dashboard issue title when none is configured.
 const DefaultDashboardTitle = "Dependency Dashboard"
@@ -172,7 +180,7 @@ type Config struct {
 	UpdateNotScheduled    *bool  `yaml:"updateNotScheduled" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
 	Automerge             bool   `yaml:"automerge" jsonschema:"default=false" jsonschema_description:"Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only."`
 	AutomergeStrategy     string `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase,default=auto" jsonschema_description:"Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase."`
-	AutomergeType         string `yaml:"automergeType" jsonschema:"enum=pr,default=pr" jsonschema_description:"How updates are automerged; only pr (platform auto-merge of the PR) is supported."`
+	AutomergeType         string `yaml:"automergeType" jsonschema:"enum=pr,enum=branch,default=pr" jsonschema_description:"How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail)."`
 	// DependencyDashboard* configure the dashboard issue (Renovate's :dependencyDashboard).
 	DependencyDashboard       bool     `yaml:"dependencyDashboard" jsonschema:"default=false" jsonschema_description:"Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched."`
 	DependencyDashboardTitle  string   `yaml:"dependencyDashboardTitle" jsonschema:"default=Dependency Dashboard" jsonschema_description:"Title of the dependency dashboard issue; the issue is found by this exact title."`
@@ -221,12 +229,8 @@ func validateAutomerge(f, strategy, typ string, add addFunc) {
 	if strategy != "" && !slices.Contains(AutomergeStrategies, strategy) {
 		add(f+"automergeStrategy", "must be one of %s, got %q", list(AutomergeStrategies), strategy)
 	}
-	switch typ {
-	case "", AutomergeTypePR:
-	case "branch":
-		add(f+"automergeType", "branch is not supported: deps automerges through the platform's pull request auto-merge; use automergeType: pr")
-	default:
-		add(f+"automergeType", "must be pr, got %q", typ)
+	if typ != "" && !slices.Contains(AutomergeTypes, typ) {
+		add(f+"automergeType", "must be one of %s, got %q", list(AutomergeTypes), typ)
 	}
 }
 
@@ -324,7 +328,7 @@ type Rule struct {
 	MinimumReleaseAgeBehaviour string `yaml:"minimumReleaseAgeBehaviour" jsonschema:"enum=timestamp-optional,enum=timestamp-required" jsonschema_description:"Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updateTypes: for candidates of those types)."`
 	Automerge                  *bool  `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
 	AutomergeStrategy          string `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
-	AutomergeType              string `yaml:"automergeType" jsonschema:"enum=pr" jsonschema_description:"Accepted for Renovate compatibility; only pr is supported."`
+	AutomergeType              string `yaml:"automergeType" jsonschema:"enum=pr,enum=branch" jsonschema_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
 
 	allow    *Allowed
 	schedule *schedule.Set

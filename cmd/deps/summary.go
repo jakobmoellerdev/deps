@@ -200,7 +200,10 @@ func (s *summary) groupNotes(g engine.Group, link func(a bot.Action) string) []s
 	case s.Run:
 		notes = append(notes, "not processed (see errors)")
 	default:
-		if g.Automerge {
+		switch {
+		case g.AutomergeBranch:
+			notes = append(notes, "branch automerge")
+		case g.Automerge:
 			notes = append(notes, "automerge")
 		}
 		if sch := g.Updates[0].Schedule; sch != nil {
@@ -296,7 +299,7 @@ func (s *summary) markdown() string {
 	if oa := s.others(); len(oa) > 0 {
 		b.WriteString("### Other pull request actions\n\n| PR | Status | Link |\n|---|---|---|\n")
 		for _, a := range oa {
-			title := a.Title
+			title := cmp.Or(a.Title, a.Branch)
 			if a.Dashboard {
 				title = "dashboard: " + title
 			}

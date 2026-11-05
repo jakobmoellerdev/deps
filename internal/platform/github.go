@@ -332,18 +332,26 @@ func graphqlURL(api string) string {
 	return api + "/graphql"
 }
 
-// ChecksPassed combines the commit statuses and the check runs of sha. A combined status of a
-// commit without statuses is "pending", so statuses only count when there are some.
-func (g *githubClient) ChecksPassed(ctx context.Context, sha string) (bool, error) {
+// Checks combines the commit statuses and the check runs of sha: a failed one wins over an
+// unfinished one. The combined status of a commit without statuses is "pending", so statuses
+// only count when there are some.
+func (g *githubClient) Checks(ctx context.Context, sha string) (CheckState, error) {
 	var st struct {
 		State      string `json:"state"`
 		TotalCount int    `json:"total_count"`
 	}
 	if err := g.do(ctx, http.MethodGet, "/repos/"+g.repo+"/commits/"+sha+"/status", nil, &st, g.headers); err != nil {
-		return false, err
+		return "", err
 	}
-	if st.TotalCount > 0 && st.State != "success" {
-		return false, nil
+	pending := false
+	if st.TotalCount > 0 {
+		switch st.State {
+		case "success":
+		case "pending":
+			pending = true
+		default: // failure, error
+			return ChecksFailure, nil
+		}
 	}
 	runs := 0
 	for page := 1; page <= 10; page++ {
@@ -356,14 +364,14 @@ func (g *githubClient) ChecksPassed(ctx context.Context, sha string) (bool, erro
 		}
 		path := "/repos/" + g.repo + "/commits/" + sha + "/check-runs?per_page=100&page=" + strconv.Itoa(page)
 		if err := g.do(ctx, http.MethodGet, path, nil, &cr, g.headers); err != nil {
-			return false, err
+			return "", err
 		}
 		for _, r := range cr.CheckRuns {
 			switch {
 			case r.Status != "completed":
-				return false, nil
+				pending = true
 			case r.Conclusion != "success" && r.Conclusion != "neutral" && r.Conclusion != "skipped":
-				return false, nil
+				return ChecksFailure, nil
 			}
 		}
 		runs += len(cr.CheckRuns)
@@ -371,7 +379,13 @@ func (g *githubClient) ChecksPassed(ctx context.Context, sha string) (bool, erro
 			break
 		}
 	}
-	return st.TotalCount+runs > 0, nil
+	switch {
+	case pending:
+		return ChecksPending, nil
+	case st.TotalCount+runs == 0:
+		return ChecksNone, nil
+	}
+	return ChecksSuccess, nil
 }
 
 // MergePR merges with PUT /pulls/{n}/merge; sha makes GitHub refuse a head that moved.

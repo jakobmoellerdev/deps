@@ -167,30 +167,33 @@ func TestGraphQLURL(t *testing.T) {
 	}
 }
 
-func TestGitHubChecksPassedAndMerge(t *testing.T) {
+func TestGitHubChecksAndMerge(t *testing.T) {
 	const statusURI, runsURI = "GET /repos/o/r/commits/abc/status", "GET /repos/o/r/commits/abc/check-runs?per_page=100&page=1"
 	run := func(status, conclusion string) string {
 		return fmt.Sprintf(`{"status":%q,"conclusion":%q}`, status, conclusion)
 	}
 	for _, tc := range []struct {
 		name, status, runs string
-		want               bool
+		want               CheckState
 		wantCalls          int
 	}{
-		{"nothing reported", `{"state":"pending","total_count":0}`, `{"total_count":0,"check_runs":[]}`, false, 2},
-		{"statuses only", `{"state":"success","total_count":2}`, `{"total_count":0,"check_runs":[]}`, true, 2},
-		{"pending status", `{"state":"pending","total_count":1}`, ``, false, 1},
-		{"failed status", `{"state":"failure","total_count":1}`, ``, false, 1},
-		{"check runs only", `{"state":"pending","total_count":0}`, `{"total_count":3,"check_runs":[` + run("completed", "success") + "," + run("completed", "skipped") + "," + run("completed", "neutral") + `]}`, true, 2},
-		{"running check", `{"state":"success","total_count":1}`, `{"total_count":2,"check_runs":[` + run("completed", "success") + "," + run("in_progress", "") + `]}`, false, 2},
-		{"failed check", `{"state":"success","total_count":1}`, `{"total_count":1,"check_runs":[` + run("completed", "failure") + `]}`, false, 2},
+		{"nothing reported", `{"state":"pending","total_count":0}`, `{"total_count":0,"check_runs":[]}`, ChecksNone, 2},
+		{"statuses only", `{"state":"success","total_count":2}`, `{"total_count":0,"check_runs":[]}`, ChecksSuccess, 2},
+		{"pending status", `{"state":"pending","total_count":1}`, `{"total_count":0,"check_runs":[]}`, ChecksPending, 2},
+		{"pending status, failed check", `{"state":"pending","total_count":1}`, `{"total_count":1,"check_runs":[` + run("completed", "failure") + `]}`, ChecksFailure, 2},
+		{"failed status", `{"state":"failure","total_count":1}`, ``, ChecksFailure, 1},
+		{"errored status", `{"state":"error","total_count":1}`, ``, ChecksFailure, 1},
+		{"check runs only", `{"state":"pending","total_count":0}`, `{"total_count":3,"check_runs":[` + run("completed", "success") + "," + run("completed", "skipped") + "," + run("completed", "neutral") + `]}`, ChecksSuccess, 2},
+		{"running check", `{"state":"success","total_count":1}`, `{"total_count":2,"check_runs":[` + run("completed", "success") + "," + run("in_progress", "") + `]}`, ChecksPending, 2},
+		{"running then failed check", `{"state":"success","total_count":1}`, `{"total_count":2,"check_runs":[` + run("queued", "") + "," + run("completed", "timed_out") + `]}`, ChecksFailure, 2},
+		{"failed check", `{"state":"success","total_count":1}`, `{"total_count":1,"check_runs":[` + run("completed", "failure") + `]}`, ChecksFailure, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, calls := routes(t, map[string]route{statusURI: {body: tc.status}, runsURI: {body: tc.runs}})
 			c := NewClient(Info{Kind: GitHub, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client())
-			ok, err := c.ChecksPassed(t.Context(), "abc")
-			if err != nil || ok != tc.want || len(calls()) != tc.wantCalls {
-				t.Errorf("ChecksPassed = %v %v, calls %v", ok, err, uris(calls()))
+			got, err := c.Checks(t.Context(), "abc")
+			if err != nil || got != tc.want || len(calls()) != tc.wantCalls {
+				t.Errorf("Checks = %v %v, calls %v; want %v", got, err, uris(calls()), tc.want)
 			}
 		})
 	}
@@ -266,6 +269,8 @@ func TestGiteaAutoMerge(t *testing.T) {
 				"POST /repos/o/r/pulls/5/merge":     {code: http.StatusConflict, body: `{"message":"merge failed because of conflict"}`},
 				"GET /repos/o/r/commits/abc/status": {body: `{"state":"success","total_count":2}`},
 				"GET /repos/o/r/commits/new/status": {body: `{"state":"pending","total_count":0}`},
+				"GET /repos/o/r/commits/run/status": {body: `{"state":"pending","total_count":1}`},
+				"GET /repos/o/r/commits/bad/status": {body: `{"state":"warning","total_count":2}`},
 			})
 			c := NewClient(Info{Kind: kind, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client())
 			ctx := t.Context()
@@ -284,17 +289,16 @@ func TestGiteaAutoMerge(t *testing.T) {
 			if err := c.MergePR(ctx, PR{Number: 5, HeadSHA: "abc"}, "rebase"); err == nil || !strings.Contains(err.Error(), "POST /repos/o/r/pulls/5/merge: 409 Conflict") {
 				t.Errorf("merge conflict: %v", err)
 			}
-			if ok, err := c.ChecksPassed(ctx, "abc"); !ok || err != nil {
-				t.Errorf("checks abc: %v %v", ok, err)
-			}
-			if ok, err := c.ChecksPassed(ctx, "new"); ok || err != nil {
-				t.Errorf("checks without statuses: %v %v", ok, err)
+			for sha, want := range map[string]CheckState{"abc": ChecksSuccess, "new": ChecksNone, "run": ChecksPending, "bad": ChecksFailure} {
+				if got, err := c.Checks(ctx, sha); got != want || err != nil {
+					t.Errorf("checks %s: %v %v, want %v", sha, got, err, want)
+				}
 			}
 			cs := calls()
 			want := []string{"GET /repos/o/r", "POST /repos/o/r/pulls/1/merge", "POST /repos/o/r/pulls/2/merge", "POST /repos/o/r/pulls/3/merge", "POST /repos/o/r/pulls/4/merge",
-				"POST /repos/o/r/pulls/5/merge", "GET /repos/o/r/commits/abc/status", "GET /repos/o/r/commits/new/status"}
-			if !slices.Equal(uris(cs), want) {
-				t.Fatalf("calls %v", uris(cs))
+				"POST /repos/o/r/pulls/5/merge"}
+			if got := uris(cs); len(got) != len(want)+4 || !slices.Equal(got[:len(want)], want) {
+				t.Fatalf("calls %v", got)
 			}
 			for _, c := range cs {
 				if c.auth != "token tok" {

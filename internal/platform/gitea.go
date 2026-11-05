@@ -126,17 +126,25 @@ func (g *giteaClient) style(ctx context.Context, strategy string) (string, error
 	return "", fmt.Errorf("unknown merge strategy %q", strategy)
 }
 
-// ChecksPassed reads the combined commit status (Gitea and Forgejo Actions report commit
-// statuses).
-func (g *giteaClient) ChecksPassed(ctx context.Context, sha string) (bool, error) {
+// Checks reads the combined commit status (Gitea and Forgejo Actions report commit statuses).
+// States other than success and pending (failure, error, warning) count as failed.
+func (g *giteaClient) Checks(ctx context.Context, sha string) (CheckState, error) {
 	var st struct {
 		State      string `json:"state"`
 		TotalCount int    `json:"total_count"`
 	}
 	if err := g.do(ctx, http.MethodGet, "/repos/"+g.repo+"/commits/"+sha+"/status", nil, &st, g.headers); err != nil {
-		return false, err
+		return "", err
 	}
-	return st.TotalCount > 0 && st.State == "success", nil
+	switch {
+	case st.TotalCount == 0:
+		return ChecksNone, nil
+	case st.State == "success":
+		return ChecksSuccess, nil
+	case st.State == "pending":
+		return ChecksPending, nil
+	}
+	return ChecksFailure, nil
 }
 
 // ListIssues pages through open issues. A 404 for an existing repository whose issues are

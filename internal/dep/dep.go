@@ -115,10 +115,12 @@ type Update struct {
 	// with separateMultipleMajor), "minor" or "patch" (separateMinorPatch). A non-empty bucket
 	// is appended to the branch as "-<bucket>".
 	Bucket string
-	// Automerge requests platform auto-merge of the update's PR with AutomergeStrategy
-	// (config.AutomergeStrategies); a PR automerges only when all of its updates do.
+	// Automerge requests automerge of the update's PR with AutomergeStrategy
+	// (config.AutomergeStrategies), or of its branch when AutomergeType is branch
+	// (config.AutomergeTypes); a PR or branch automerges only when all of its updates do.
 	Automerge         bool
 	AutomergeStrategy string
+	AutomergeType     string
 	// Lockfile marks a lockfile-only update (rangeStrategy update-lockfile): the range admits
 	// NewVersion, so the manifest stays unchanged and only the lockfile moves from Dep.Locked.
 	Lockfile bool

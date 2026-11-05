@@ -16,6 +16,21 @@ import (
 // GitHub Actions is: such tokens start with "ghs_" (Renovate's GitHub App detection).
 func IsAppToken(token string) bool { return strings.HasPrefix(token, "ghs_") }
 
+// Errors of GitHubCommits.Push.
+var (
+	// ErrRefStale means the branch no longer points at the expected commit.
+	ErrRefStale = errors.New("stale info")
+	// ErrRefRejected means GitHub declined the update, e.g. branch protection or a ruleset.
+	ErrRefRejected = errors.New("rejected")
+)
+
+// Tip is the tip commit of a branch.
+type Tip struct {
+	Author  string   // author email; Author's email for commits of the token's account
+	Parents []string // parent ids
+	Tree    string   // tree id
+}
+
 // GitHubCommits creates commits and moves branches through the GitHub API instead of git
 // (Renovate's platformCommit). GitHub signs the commits it creates for a GitHub App
 // installation token, so they show as verified, authored by the App's bot account; for other
@@ -81,16 +96,17 @@ func NewGitHubCommits(ctx context.Context, info Info, token string, c *http.Clie
 // this email for every commit GitHub links to the account, whatever email the commit carries.
 func (g *GitHubCommits) Author() (name, email string) { return g.name, g.email }
 
-// BranchTip returns the author email and parent ids of the tip of branch (GET
-// /repos/{repo}/commits/refs/heads/{branch}). A tip whose author GitHub links to the token's
-// account reports Author's email, so commits GitHub created for the token, and commits of the
-// same user under any of their verified emails, count as deps' own.
-func (g *GitHubCommits) BranchTip(ctx context.Context, branch string) (author string, parents []string, err error) {
+// BranchTip returns the tip of branch (GET /repos/{repo}/commits/refs/heads/{branch}). A tip
+// whose author GitHub links to the token's account reports Author's email, so commits GitHub
+// created for the token, and commits of the same user under any of their verified emails,
+// count as deps' own.
+func (g *GitHubCommits) BranchTip(ctx context.Context, branch string) (Tip, error) {
 	var c struct {
 		Commit struct {
 			Author struct {
 				Email string `json:"email"`
 			} `json:"author"`
+			Tree shaJSON `json:"tree"`
 		} `json:"commit"`
 		Author *struct {
 			ID int64 `json:"id"`
@@ -98,16 +114,16 @@ func (g *GitHubCommits) BranchTip(ctx context.Context, branch string) (author st
 		Parents []shaJSON `json:"parents"`
 	}
 	if err := g.gh.do(ctx, http.MethodGet, "/repos/"+g.gh.repo+"/commits/refs/heads/"+branchPath(branch), nil, &c, g.gh.headers); err != nil {
-		return "", nil, err
+		return Tip{}, err
 	}
-	author = c.Commit.Author.Email
+	t := Tip{Author: c.Commit.Author.Email, Tree: c.Commit.Tree.SHA}
 	if c.Author != nil && c.Author.ID == g.id {
-		author = g.email
+		t.Author = g.email
 	}
 	for _, p := range c.Parents {
-		parents = append(parents, p.SHA)
+		t.Parents = append(t.Parents, p.SHA)
 	}
-	return author, parents, nil
+	return t, nil
 }
 
 // treeEntry is an entry of POST /git/trees; a nil SHA deletes the path from the base tree.
@@ -178,7 +194,8 @@ const zeroOID = "0000000000000000000000000000000000000000"
 
 // Push sets refs/heads/<branch> to commit if it currently points at expected ("" = must not
 // exist), like git push --force-with-lease: GraphQL updateRefs with beforeOid and force
-// compares and sets the ref atomically.
+// compares and sets the ref atomically. A refused update wraps ErrRefStale when the branch
+// moved, else ErrRefRejected.
 func (g *GitHubCommits) Push(ctx context.Context, commit, branch, expected string) error {
 	repo, err := g.gh.repository(ctx, g.gh.headers)
 	if err != nil {
@@ -196,11 +213,11 @@ func (g *GitHubCommits) Push(ctx context.Context, commit, branch, expected strin
 	}
 	switch err := g.gh.do(ctx, http.MethodGet, "/repos/"+g.gh.repo+"/git/ref/heads/"+branchPath(branch), nil, &cur, g.gh.headers); {
 	case err == nil && cur.Object.SHA != expected:
-		return fmt.Errorf("update %s: stale info: the branch is at %s, expected %s", ref, short(cur.Object.SHA), cmp.Or(short(expected), "no branch"))
+		return fmt.Errorf("update %s: %w: the branch is at %s, expected %s", ref, ErrRefStale, short(cur.Object.SHA), cmp.Or(short(expected), "no branch"))
 	case expected != "" && hasStatus(err, http.StatusNotFound, ""):
-		return fmt.Errorf("update %s: stale info: the branch was deleted, expected %s", ref, short(expected))
+		return fmt.Errorf("update %s: %w: the branch was deleted, expected %s", ref, ErrRefStale, short(expected))
 	}
-	return fmt.Errorf("update %s: %s", ref, msg)
+	return fmt.Errorf("update %s: %w: %s", ref, ErrRefRejected, msg)
 }
 
 func short(s string) string { return s[:min(7, len(s))] }

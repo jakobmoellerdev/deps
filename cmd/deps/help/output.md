@@ -27,7 +27,7 @@ dashboard <status>  <title>  <url>                            (run, with depende
 ... (dry run: <w> would change, <m> would automerge)                                              (run --dry-run, appended)
 ```
 
-`rebased` counts as updated. `<a>` counts auto-merge requests and direct merges (`automerge`, `merged`); the dashboard line is not counted.
+`rebased` counts as updated, `deleted` (obsolete branches without a PR) as closed. `<a>` counts auto-merge requests and direct merges, branch merges included (`automerge`, `merged`); the dashboard line is not counted.
 
 **Diagnostics** are written with `log/slog` to stderr, filtered by `--log-level` and formatted by `--log-format`:
 

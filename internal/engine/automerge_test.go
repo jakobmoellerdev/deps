@@ -74,13 +74,23 @@ rules:
 	}
 }
 
-func TestGroupAutomergeStrategyFromFirst(t *testing.T) {
+func TestGroupAutomergeStrategyAndType(t *testing.T) {
 	ups := []dep.Update{
-		{Dep: dep.Dep{Manager: "gomod", Name: "a"}, NewVersion: "v2", Group: "g", Automerge: true, AutomergeStrategy: "rebase"},
-		{Dep: dep.Dep{Manager: "gomod", Name: "b"}, NewVersion: "v2", Group: "g", Automerge: true, AutomergeStrategy: "merge"},
+		{Dep: dep.Dep{Manager: "gomod", Name: "a"}, NewVersion: "v2", Group: "g", Automerge: true, AutomergeStrategy: "rebase", AutomergeType: config.AutomergeTypeBranch},
+		{Dep: dep.Dep{Manager: "gomod", Name: "b"}, NewVersion: "v2", Group: "g", Automerge: true, AutomergeStrategy: "merge", AutomergeType: config.AutomergeTypeBranch},
 	}
 	g := GroupUpdates(ups, "")
-	if len(g) != 1 || !g[0].Automerge || g[0].AutomergeStrategy != "rebase" {
+	if len(g) != 1 || !g[0].Automerge || g[0].AutomergeStrategy != "rebase" || !g[0].AutomergeBranch {
 		t.Fatalf("groups = %+v", g)
+	}
+	// One update automerging its PR keeps the whole group on PR automerge.
+	ups[1].AutomergeType = config.AutomergeTypePR
+	if g := GroupUpdates(ups, ""); !g[0].Automerge || g[0].AutomergeBranch {
+		t.Fatalf("mixed types: %+v", g)
+	}
+	// A group that does not automerge never merges its branch.
+	ups[1].AutomergeType, ups[1].Automerge = config.AutomergeTypeBranch, false
+	if g := GroupUpdates(ups, ""); g[0].Automerge || g[0].AutomergeBranch {
+		t.Fatalf("not automerged: %+v", g)
 	}
 }

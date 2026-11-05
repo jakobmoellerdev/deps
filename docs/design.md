@@ -324,6 +324,7 @@ type Update struct {
     Bucket      string        // PR bucket among the dep's updates: "" (only or non-major), "major", "v<N>", "minor", "patch"
     Automerge   bool          // policy automerge of the update's type
     AutomergeStrategy string  // policy automergeStrategy: auto, merge, squash, rebase
+    AutomergeType string      // policy automergeType: pr, branch
     Lockfile    bool          // lockfile-only update: the manifest keeps its range, the lockfile moves from Dep.Locked
 }
 ```
@@ -461,7 +462,7 @@ type Trace struct {
 type TraceUpdate struct{ Update dep.Update; Policy *config.Policy } // Policy: of Update.Type (updateTypes rules included)
 type Result     struct{ Updates []dep.Update; Skipped []dep.Dep; Errors []error; Deps []dep.Dep } // Deps: every extracted dep, Skipped included (dashboard)
 type FileChange struct{ Path string; Mode fs.FileMode; Old, New []byte }
-type Group      struct{ Manager, Name, Branch, Title string; Updates []dep.Update; Automerge bool; AutomergeStrategy string } // Automerge: all updates automerge; strategy of the first
+type Group      struct{ Manager, Name, Branch, Title string; Updates []dep.Update; Automerge bool; AutomergeStrategy string; AutomergeBranch bool } // Automerge: all updates automerge; strategy of the first; AutomergeBranch: all of them with automergeType branch
 
 func Managers(cfg *config.Config) ([]manager.Manager, error)
 func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.Env, o Options) (*Result, error)
@@ -506,7 +507,7 @@ type Client interface {
     UpdatePR(ctx context.Context, number int, title, body string) error
     ClosePR(ctx context.Context, number int) error
     EnableAutoMerge(ctx context.Context, pr PR, strategy string) error // ErrAutoMergePending, ErrAutoMergeUnavailable
-    ChecksPassed(ctx context.Context, sha string) (bool, error)        // >= 1 status or check run, all green
+    Checks(ctx context.Context, sha string) (CheckState, error)       // none, pending, success, failure over statuses and check runs
     MergePR(ctx context.Context, pr PR, strategy string) error         // pinned to pr.HeadSHA
     ListIssues(ctx context.Context, maxPages int) ([]Issue, error)     // open, PRs excluded; ErrIssuesDisabled
     CreateIssue(ctx context.Context, title, body string, labels []string) (Issue, error)
@@ -534,10 +535,11 @@ type Git interface {
     RevParse(ctx context.Context, rev string) (string, error)
     RemoteURL(ctx context.Context) (string, error)
     LsRemote(ctx context.Context, pattern string) (map[string]string, error)
+    WriteTree(ctx context.Context, parent string, changes []engine.FileChange) (string, error) // local temporary index; equals the tree of Commit's commit
     Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, name, email string) (string, error)
-    Push(ctx context.Context, commit, branch, expected string) error
+    Push(ctx context.Context, commit, branch, expected string) error // gitx.ErrStale (lease or non-fast-forward), gitx.ErrRejected (origin declined)
     DeleteBranch(ctx context.Context, branch string) error
-    BranchTip(ctx context.Context, branch string) (author string, parents []string, err error)
+    BranchTip(ctx context.Context, branch string) (gitx.Tip, error) // Tip{Author, Parents, Tree}
 }
 type Options struct {
     Base, AuthorName, AuthorEmail string
@@ -625,7 +627,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 | UpdatePR | `PATCH .../pulls/{n} {title,body}` |
 | ClosePR | `PATCH .../pulls/{n} {state:"closed"}` |
 | EnableAutoMerge | `POST {graphql}` mutation `enablePullRequestAutoMerge(input:{pullRequestId:<node_id>, mergeMethod:MERGE\|SQUASH\|REBASE})`; not sent when `allow_auto_merge` is `false` |
-| ChecksPassed | `GET .../commits/{sha}/status` (`state`, `total_count`) and `GET .../commits/{sha}/check-runs?per_page=100&page=N` (`status`, `conclusion`) |
+| Checks | `GET .../commits/{sha}/status` (`state`, `total_count`) and `GET .../commits/{sha}/check-runs?per_page=100&page=N` (`status`, `conclusion`); a failed status or check run wins over an unfinished one |
 | MergePR | `PUT .../pulls/{n}/merge {merge_method, sha}` |
 | ListIssues | `GET {api}/repos/{repo}/issues?state=open&per_page=100&page=N`, entries with `pull_request` dropped; 410 → issues disabled |
 | CreateIssue | `POST .../issues {title,body,labels:[names]}` |
@@ -641,7 +643,7 @@ On GitHub, `Merged` is `merged_at != null` and `AutoMerge` is `auto_merge != nul
 | ListPRs | `GET {api}/repos/{repo}/pulls?state=<s>&sort=recentupdate&limit=50&page=N` |
 | GetPR / CreatePR / UpdatePR / ClosePR | same paths and bodies as GitHub |
 | EnableAutoMerge | `POST .../pulls/{n}/merge {do, merge_when_checks_succeed: true, delete_branch_after_merge: true, head_commit_id}`; the style field is `do` on Gitea 28 and `Do` on Forgejo (both `swagger.v1.json`). 409 `already scheduled` is success; 405 `Please try again later` is pending. |
-| ChecksPassed | `GET .../commits/{sha}/status` (Actions report commit statuses) |
+| Checks | `GET .../commits/{sha}/status` (Actions report commit statuses); `total_count` 0 → none, `success`, `pending`, anything else (`failure`, `error`, `warning`) → failure |
 | MergePR | `POST .../pulls/{n}/merge {do, delete_branch_after_merge: true, head_commit_id}` |
 | ListIssues | `GET {api}/repos/{repo}/issues?state=open&type=issues&limit=50&page=N`; a 404 with `has_issues: false` or an `external_tracker` → issues disabled |
 | CreateIssue | `POST .../issues {title,body,labels:[ids]}`; ids from `GET .../labels` and `GET {api}/orgs/{owner}/labels` (case-insensitive names) |
@@ -702,18 +704,19 @@ Both clients share these rules:
    3. The open PR's fingerprint matches (its content is unchanged):
       - `rebaseWhen: never` → `up-to-date`, even when the PR conflicts.
       - The PR is not unmergeable and `rebaseWhen` is `conflicted` (the default), or the branch does not exist → `up-to-date`. On GitHub, a nil `mergeable` triggers a `GetPR` call; nil still counts as mergeable.
-      - The PR is not unmergeable and `rebaseWhen: behind-base-branch`: the branch tip is fetched (`BranchTip`). If it is the bot's and its only parent is the base head → `up-to-date`; otherwise it is rebuilt on the base head (step 7, status `rebased`). deps branches are one commit on top of base, so the parent alone tells whether base moved.
+      - The PR is not unmergeable and `rebaseWhen: behind-base-branch`: the branch tip is fetched (`BranchTip`). If it is the bot's and its only parent is the base head → `up-to-date`; otherwise it is rebuilt on the base head (step 8, status `rebased`). deps branches are one commit on top of base, so the parent alone tells whether base moved.
       - An unmergeable PR falls through and is rebuilt (`updated`).
-   4. No open PR exists and the new-PR limit is exhausted → `skipped: new PR limit reached`. The limit of a run is the minimum over the non-zero limits: `--max-new-prs` (default 10) minus PRs created this run; `prConcurrentLimit` minus the open managed PRs; `prHourlyLimit` minus the managed PRs (open and closed) whose `created_at` is within the last hour. `0` means unlimited for each; `prConcurrentLimit` and `prHourlyLimit` default to 0 (Renovate defaults to 10 and 2).
+   4. No open PR exists, it is not an existing branch automerge branch, and the new-PR limit is exhausted → `skipped: new PR limit reached`. The limit of a run is the minimum over the non-zero limits: `--max-new-prs` (default 10) minus PRs (and branch automerge branches) created this run; `prConcurrentLimit` minus the open managed PRs; `prHourlyLimit` minus the managed PRs (open and closed) whose `created_at` is within the last hour. `0` means unlimited for each; `prConcurrentLimit` and `prHourlyLimit` default to 0 (Renovate defaults to 10 and 2).
    5. The branch exists and the author email of its last commit is neither the bot's (`AuthorEmail`) nor in `gitIgnoredAuthors` (case-insensitive) → `skipped: branch modified by someone else`. Such branches are never rebased.
-   6. `--dry-run` → `would-create`, `would-update` or `would-rebase`, with no git or API writes.
-   7. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet); with platform commits, the API commit and `updateRefs` with that sha as `beforeOid` (section 3). Then update the PR (`updated`) or create one (`created`). A rebase only pushes: content, title and body are unchanged, so the PR is not edited and no release notes are fetched (`rebased`, counted as updated in the run summary line).
+   6. A branch automerge group (`Group.AutomergeBranch`) without an open PR and without the dashboard's `pr` request continues in [Branch automerge](#branch-automerge).
+   7. `--dry-run` → `would-create`, `would-update` or `would-rebase`, with no git or API writes.
+   8. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet); with platform commits, the API commit and `updateRefs` with that sha as `beforeOid` (section 3). Then update the PR (`updated`) or create one (`created`). A rebase only pushes: content, title and body are unchanged, so the PR is not edited and no release notes are fetched (`rebased`, counted as updated in the run summary line).
 
-   **Branch tip fetch:** `BranchTip` runs `git fetch --no-tags origin refs/heads/<b>` (with `--depth=1` in shallow clones, so full clones stay full) and parses the raw `git cat-file commit FETCH_HEAD` header for the author email and parents; the raw object still lists the parent when a shallow graft hides it. With platform commits it reads `GET /commits/refs/heads/<b>` instead and reports the bot's email for a tip GitHub links to the token's account. It is fetched at most once per group and only when the branch exists and the author or parent is needed.
+   **Branch tip fetch:** `BranchTip` runs `git fetch --no-tags origin refs/heads/<b>` (with `--depth=1` in shallow clones, so full clones stay full) and parses the raw `git cat-file commit FETCH_HEAD` header for the author email, parents and tree; the raw object still lists the parent when a shallow graft hides it. With platform commits it reads `GET /commits/refs/heads/<b>` instead (`commit.tree.sha` is the tree) and reports the bot's email for a tip GitHub links to the token's account. It is fetched at most once per group and only when the branch exists and the author, parent or tree is needed.
 
    A build, git or API error in one group is recorded, and the next group is processed.
 8. **Automerge:** for a group whose updates all automerge, after `created`, `updated`, `rebased` or `up-to-date` (see [Automerge](#automerge)). An automerge error is recorded; the PR's action is kept.
-9. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open PR under `branchPrefix` whose branch matches no current group is closed and its branch deleted (`closed`). Groups that are outside their schedule still count as current, so their PRs are never closed as obsolete. This guard ensures that a failed upstream lookup never closes a valid PR.
+9. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open PR under `branchPrefix` whose branch matches no current group is closed and its branch deleted (`closed`). Then every branch under `branchPrefix` that matches no current group and has no PR in the open or closed lists is deleted (`deleted`, counted as closed in the run summary line) if its tip is the bot's: branch automerge branches whose update is gone, or merged ones whose deletion failed. Groups that are outside their schedule still count as current, so their PRs and branches are never removed as obsolete. This guard ensures that a failed upstream lookup never closes a valid PR.
 10. **Dashboard:** with `dependencyDashboard`, the body is rendered from the actions, the engine and bot errors and `Result.Deps`, then the issue is created (with `dependencyDashboardLabels`), edited when the body changed, or left alone (`up-to-date`). A dry run reports `would-create`/`would-update`.
 
 ### Automerge
@@ -723,9 +726,22 @@ A group automerges when every update in it has `Automerge` from the policy of it
 - **Already enabled** (GitHub `auto_merge` non-null) → `automerge enabled`, no request.
 - **Dry run** → `would-automerge`, no request.
 - **Gitea / Forgejo:** `POST /pulls/{n}/merge` with `merge_when_checks_succeed: true` schedules the merge; the forge merges once the required status checks succeed (right away when they already did) and deletes the branch. 201/200 and 409 `already scheduled` → `automerge`. 405 `Please try again later` (the mergeability check of a fresh push is still running, or the PR conflicts) → `automerge pending`, retried next run without an error. `head_commit_id` pins the head deps pushed or saw.
-- **GitHub:** `enablePullRequestAutoMerge` → `automerge`. GitHub refuses it when auto-merge is disallowed in the repository (also known up front from `allow_auto_merge: false`) or when the PR has nothing left to wait for (`Pull request is in clean status`, also `unstable`/`has_hooks`). Then deps falls back to merging directly, but only when a fresh `GetPR` reports `mergeable: true` and `ChecksPassed(head.sha)` is true: at least one commit status or check run exists, the combined status is `success` (when there are statuses) and every check run is `completed` with `success`, `neutral` or `skipped`. Then `PUT /pulls/{n}/merge` with `sha` = the checked head → `merged`. Otherwise → `automerge waiting for checks`, and the next run checks again. A repository without any checks therefore never merges through the fallback.
+- **GitHub:** `enablePullRequestAutoMerge` → `automerge`. GitHub refuses it when auto-merge is disallowed in the repository (also known up front from `allow_auto_merge: false`) or when the PR has nothing left to wait for (`Pull request is in clean status`, also `unstable`/`has_hooks`). Then deps falls back to merging directly, but only when a fresh `GetPR` reports `mergeable: true` and `Checks(head.sha)` is `success`: at least one commit status or check run exists, the combined status is `success` (when there are statuses) and every check run is `completed` with `success`, `neutral` or `skipped`. Then `PUT /pulls/{n}/merge` with `sha` = the checked head → `merged`. Otherwise → `automerge waiting for checks`, and the next run checks again. A repository without any checks therefore never merges through the fallback.
 - `auto` maps to the repository default: Gitea/Forgejo `default_merge_style` (else `merge`); GitHub the first allowed of merge commit, squash, rebase (else `MERGE`).
 - Security updates follow the same policy.
+
+### Branch automerge
+
+`automergeType: branch` (Renovate's branch automerge) merges a group's branch without a PR. It applies to a group whose updates all automerge with that type (`Group.AutomergeBranch`), has no open PR, and was not ticked under *Pending branch automerge* on the dashboard (`deps:pr=<branch>`). An open PR (raised below, or left from `automergeType: pr`) is always automerged as a PR. Steps 1 to 5 of the per-group decision apply first; an existing branch outside its schedule is still handled under `updateNotScheduled`, like an open PR.
+
+1. **Fresh branch:** the branch exists, its tip is the bot's, its only parent is the base head and its tree equals `WriteTree(head, changes)`. Anything else (no branch, base moved, new content, a dashboard rebase) is rebuilt and force-pushed: `created` (counts toward the new-PR limit), `updated` or `rebased`, outcome `branch automerge waiting for checks`. A dry run reports `would-…` with `would-automerge`. Unlike PR branches, a branch behind base is always rebuilt, whatever `rebaseWhen` says: only a branch directly on base can be fast-forwarded.
+2. **Checks** of a fresh branch (`Checks(tip)`), status `up-to-date`:
+   - `none` or `pending` → `branch automerge waiting for checks`. A repository without checks never merges; the dashboard lists the branch.
+   - `failure` → the PR is created (within the new-PR limit, else `skipped: new PR limit reached`), its body starting with why, and Run requests platform auto-merge for it → `created, automerge`.
+   - `success` → dry run: `would-automerge`; another branch already merged in this run: `branch automerge next run`; otherwise `push --force-with-lease=refs/heads/<base>:<head> origin <tip>:refs/heads/<base>`, a fast-forward because the tip's parent is head.
+3. **Push result:** success → the branch is deleted (a failed delete only warns; cleanup removes it next run) → `merged`, and no further branch is merged in this run, since base moved. `ErrStale` (base moved since the run started) → `branch automerge next run`, no error. `ErrRejected` (branch protection, a pre-receive hook) → the PR is raised as for failed checks. Other errors are recorded.
+
+`gitx.Push` classifies a refused push from its `--porcelain` status line: `[rejected]` (`stale info`, non-fast-forward) is `ErrStale`, `[remote rejected]` is `ErrRejected`. With platform commits the fast-forward is `updateRefs` with `beforeOid` = head; `platform.ErrRefStale` (the branch moved) and `platform.ErrRefRejected` (any other refusal, e.g. branch protection) map to the same errors. `WriteTree` stays local there: git object ids are content hashes, so the local tree equals the tree of the API commit made from the same changes on the same parent.
 
 ### Lock file maintenance
 
@@ -738,8 +754,8 @@ A group automerges when every update in it has `Automerge` from the policy of it
 ### Dependency dashboard
 
 - **Finding it.** The first open issue (lowest number) among up to 10 pages of open issues whose title equals `dependencyDashboardTitle` and whose body contains `<!-- deps:dashboard -->`. GitHub lists PRs as issues; they are dropped. deps never closes it; with `dependencyDashboard: false` it is neither read nor written.
-- **Checkboxes.** `- [x] <!-- deps:<action>=<branch> -->` lines (`x` or `X`) are requests for the next run: `create` (awaiting schedule, rate-limited), `recreate` (closed without merging), `rebase` (open PRs, and branches modified by someone else, whose commits are then discarded). Every body deps writes has all boxes unticked.
-- **Body.** Sections in this order, each left out when empty: `Awaiting schedule` (each item names the crons it waits for: the intersection of its updates' schedules, ``(waits for `0 0 * * 0`)``), `Rate-limited`, `Ignored or blocked`, `Open` (PR links), `Errors` (at most 20, flattened to one line of at most 300 characters), `Detected dependencies` (`<details>` per manager and per file, one `` `name version` `` line per extracted dep, sorted by manager, file, line and name). Items follow the group order, so the body is deterministic and an unchanged run does not edit the issue (line endings and surrounding whitespace are ignored in the comparison). The body is capped at 60 000 bytes (GitHub allows 65 536 characters); lists that do not fit end with a `not listed` note, and open `<details>` are always closed.
+- **Checkboxes.** `- [x] <!-- deps:<action>=<branch> -->` lines (`x` or `X`) are requests for the next run: `create` (awaiting schedule, rate-limited), `recreate` (closed without merging), `rebase` (open PRs, and branches modified by someone else, whose commits are then discarded), `pr` (pending branch automerge: open the PR instead). Every body deps writes has all boxes unticked.
+- **Body.** Sections in this order, each left out when empty: `Awaiting schedule` (each item names the crons it waits for: the intersection of its updates' schedules, ``(waits for `0 0 * * 0`)``), `Rate-limited`, `Ignored or blocked`, `Pending branch automerge` (branches without a PR waiting for their checks or the next run), `Open` (PR links), `Errors` (at most 20, flattened to one line of at most 300 characters), `Detected dependencies` (`<details>` per manager and per file, one `` `name version` `` line per extracted dep, sorted by manager, file, line and name). Items follow the group order, so the body is deterministic and an unchanged run does not edit the issue (line endings and surrounding whitespace are ignored in the comparison). The body is capped at 60 000 bytes (GitHub allows 65 536 characters); lists that do not fit end with a `not listed` note, and open `<details>` are always closed.
 
 ### Release age and notes
 
@@ -888,7 +904,7 @@ The user-facing reference (every key, its default and validation, rule semantics
 - **Pre-policy vs per-type policy.** Decisions needed before an update exists (`ignore` of the dep, `pin`, `rangeStrategy`, `versioning`, whether to look it up) come from rules without `updateTypes`; everything else is evaluated per candidate type (section 4), which is why `pin`, `rangeStrategy` and `versioning` are rejected on `updateTypes` rules.
 - **Renovate-compatible defaults where they matter.** Default `ignorePaths`, default-ignored dep types (indirect, `go`, peerDependencies, engines), semantic commit prefixes and built-in monorepo groups replace the presets OCM relies on; the PR limits default to unlimited (`prConcurrentLimit`/`prHourlyLimit` 0), capped per run by `--max-new-prs`.
 - **Validated at load.** Constraints, `allow` regexes, schedules, ages and regex versioning schemes are compiled in `Validate`; custom `match` expressions and datasource selectors are checked there too, so a bad config never starts a lookup.
-- **Automerge through the platform only.** `automergeType` accepts only `pr`; `branch` (Renovate's merge without a PR) is rejected, because deps never pushes to the base branch.
+- **Branch automerge only on green, fast-forward only.** `automergeType: branch` pushes to the base branch, but only a tip whose parent is the base head, with all checks green, leased against the head the run started from; anything else opens a PR or waits. There is no `ignoreTests`.
 
 ## 10. Why Go
 
