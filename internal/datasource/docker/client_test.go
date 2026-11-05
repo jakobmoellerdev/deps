@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -401,13 +402,16 @@ func TestTokenRedirectValidated(t *testing.T) {
 }
 
 // writeHelper puts a fake docker-credential-fake on PATH: it answers reg.example with a
-// username and password, Docker Hub with an identity token, and nothing else.
-func writeHelper(t *testing.T) {
+// username and password, Docker Hub with an identity token, and nothing else. It returns the
+// file each run appends its server address to.
+func writeHelper(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
 	script := `#!/bin/sh
 [ "$1" = get ] || exit 2
 read -r addr
+echo "$addr" >> '` + calls + `'
 case "$addr" in
   reg.example|reg.example/team) echo '{"ServerURL":"reg.example","Username":"u","Secret":"p"}' ;;
   https://index.docker.io/v1/) echo '{"ServerURL":"https://index.docker.io/v1/","Username":"<token>","Secret":"rt"}' ;;
@@ -419,6 +423,62 @@ esac
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return calls
+}
+
+// helperCalls returns the server addresses the fake helper was run for, in order.
+func helperCalls(t *testing.T, calls string) []string {
+	t.Helper()
+	b, err := os.ReadFile(calls)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Fields(string(b))
+}
+
+// TestHelperCredentialMemo checks that a credential helper runs once per server address for the
+// many repositories of a registry, concurrent lookups included, that a "not found" is kept too,
+// and that a failed run is not.
+func TestHelperCredentialMemo(t *testing.T) {
+	calls := writeHelper(t)
+	dir := t.TempDir()
+	t.Setenv("DOCKER_CONFIG", dir)
+	config := `{"credsStore":"fake","credHelpers":{"reg.example/team":"fake"}}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cred := dockerCredentials()
+	lookup := func(registry, path string) (credential, error) { return cred(t.Context(), registry, path) }
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			if got, err := lookup("reg.example", fmt.Sprintf("app%d", i)); err != nil || got != (credential{Username: "u", Password: "p"}) {
+				t.Errorf("reg.example/app%d = %+v, %v", i, got, err)
+			}
+			if got, err := lookup("reg.example", fmt.Sprintf("team/app%d", i)); err != nil || got != (credential{Username: "u", Password: "p"}) {
+				t.Errorf("reg.example/team/app%d = %+v, %v", i, got, err)
+			}
+		})
+	}
+	wg.Wait()
+	for range 2 {
+		if got, err := lookup("ghcr.io", "org/app"); err != nil || got != (credential{}) {
+			t.Errorf("ghcr.io = %+v, %v; want not found", got, err)
+		}
+		if _, err := lookup("broken.example", "app"); err == nil || !strings.Contains(err.Error(), "helper exploded") {
+			t.Errorf("broken.example err = %v", err)
+		}
+	}
+	got := helperCalls(t, calls)
+	slices.Sort(got)
+	want := []string{"broken.example", "broken.example", "ghcr.io", "reg.example", "reg.example/team"}
+	if !slices.Equal(got, want) {
+		t.Errorf("helper runs = %q, want %q", got, want)
+	}
 }
 
 func TestDockerCredentials(t *testing.T) {

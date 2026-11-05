@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // credential is what the Docker config holds for a registry: a username and password, an
@@ -31,11 +32,25 @@ type credentialFunc func(ctx context.Context, registry, path string) (credential
 // helpers, as the Docker CLI stores them.
 const hubServerAddress = "https://index.docker.io/v1/"
 
-// dockerConfig is the part of the Docker config deps reads.
+// dockerConfig is the part of the Docker config deps reads, and the credential helper results
+// looked up from it.
 type dockerConfig struct {
 	Auths       map[string]authConfig `json:"auths"`
 	CredsStore  string                `json:"credsStore"`
 	CredHelpers map[string]string     `json:"credHelpers"`
+
+	mu      sync.Mutex
+	helpers map[helperKey]*helperCall
+}
+
+// helperKey is a credential helper and the server address it is asked for.
+type helperKey struct{ helper, addr string }
+
+// helperCall is a credential helper lookup: done closes when cred and err are set.
+type helperCall struct {
+	done chan struct{}
+	cred credential
+	err  error
 }
 
 type authConfig struct {
@@ -50,7 +65,8 @@ type authConfig struct {
 // its credential helpers, as the Docker CLI does: a credential helper named for the registry in
 // `credHelpers`, else the `credsStore` helper when the config names one, else `auths`. Keys
 // naming a namespace of the registry (`ghcr.io/org`) take precedence, most specific first, as
-// in oras-go. An unreadable config fails every authenticated lookup with its error.
+// in oras-go. Credential helper results are kept for the life of the returned func
+// (helperCredential). An unreadable config fails every authenticated lookup with its error.
 func dockerCredentials() credentialFunc {
 	cfg, err := loadDockerConfig()
 	if err != nil {
@@ -91,7 +107,8 @@ func loadDockerConfig() (*dockerConfig, error) {
 // itself. Docker Hub (docker.io) is looked up under its server address
 // https://index.docker.io/v1/ (or, failing that, one of its hosts) and has no namespaces, as in
 // oras-go. The credsStore helper is only asked for the registry, so a lookup runs it at most
-// once. Keys match regardless of an http(s):// prefix, a trailing slash and the host's case.
+// once, and each helper runs once per server address (helperCredential). Keys match regardless
+// of an http(s):// prefix, a trailing slash and the host's case.
 func (c *dockerConfig) credential(ctx context.Context, registry, path string) (credential, error) {
 	addr, keys := registry, []string{normalizeServerAddress(registry)}
 	if isHub(registry) {
@@ -100,7 +117,7 @@ func (c *dockerConfig) credential(ctx context.Context, registry, path string) (c
 		for ns := path; ns != ""; {
 			key := keys[0] + "/" + ns
 			if helper, ok := lookup(c.CredHelpers, key); ok && helper != "" {
-				if cred, err := helperCredential(ctx, helper, registry+"/"+ns); err != nil || cred != (credential{}) {
+				if cred, err := c.helperCredential(ctx, helper, registry+"/"+ns); err != nil || cred != (credential{}) {
 					return cred, err
 				}
 			}
@@ -116,11 +133,11 @@ func (c *dockerConfig) credential(ctx context.Context, registry, path string) (c
 	}
 	for _, k := range keys {
 		if helper, ok := lookup(c.CredHelpers, k); ok && helper != "" {
-			return helperCredential(ctx, helper, addr)
+			return c.helperCredential(ctx, helper, addr)
 		}
 	}
 	if c.CredsStore != "" {
-		return helperCredential(ctx, c.CredsStore, addr)
+		return c.helperCredential(ctx, c.CredsStore, addr)
 	}
 	if a, ok := c.Auths[addr]; ok {
 		return a.credential()
@@ -189,8 +206,41 @@ const helperTokenUser = "<token>"
 // errHelperNotFound is the message of a credential helper that has no credential for the server.
 const errHelperNotFound = "credentials not found in native keychain"
 
-// helperCredential runs `docker-credential-<helper> get` with the server address on stdin.
-func helperCredential(ctx context.Context, helper, addr string) (credential, error) {
+// helperCredential returns the credential helper's credential for addr, running
+// `docker-credential-<helper> get` once per helper and address for the life of the config:
+// concurrent lookups wait for the running one, and credentials and "not found" are kept. A
+// failed run is not, so the next lookup runs the helper again.
+func (c *dockerConfig) helperCredential(ctx context.Context, helper, addr string) (credential, error) {
+	key := helperKey{helper, addr}
+	c.mu.Lock()
+	call := c.helpers[key]
+	if call == nil {
+		if c.helpers == nil {
+			c.helpers = make(map[helperKey]*helperCall)
+		}
+		call = &helperCall{done: make(chan struct{})}
+		c.helpers[key] = call
+		c.mu.Unlock()
+		call.cred, call.err = runHelper(ctx, helper, addr)
+		if call.err != nil {
+			c.mu.Lock()
+			delete(c.helpers, key)
+			c.mu.Unlock()
+		}
+		close(call.done)
+		return call.cred, call.err
+	}
+	c.mu.Unlock()
+	select {
+	case <-call.done:
+		return call.cred, call.err
+	case <-ctx.Done():
+		return credential{}, ctx.Err()
+	}
+}
+
+// runHelper runs `docker-credential-<helper> get` with the server address on stdin.
+func runHelper(ctx context.Context, helper, addr string) (credential, error) {
 	name := "docker-credential-" + helper
 	cmd := exec.CommandContext(ctx, name, "get")
 	cmd.Stdin = strings.NewReader(addr)
