@@ -528,6 +528,7 @@ func decodeReleases(dec *jsontext.Decoder, p *project) (yanked int, err error) {
 	if err := expectDelim(dec, '{'); err != nil {
 		return 0, err
 	}
+	var f releaseFile
 	for dec.PeekKind() != '}' {
 		tok, err := dec.ReadToken()
 		if err != nil {
@@ -539,12 +540,7 @@ func decodeReleases(dec *jsontext.Decoder, p *project) (yanked int, err error) {
 		}
 		files, allYanked, first, py := 0, true, time.Time{}, pyReq{}
 		for dec.PeekKind() != ']' {
-			var f struct {
-				Yanked         bool   `json:"yanked"`
-				Upload         string `json:"upload_time_iso_8601"`
-				RequiresPython string `json:"requires_python"`
-			}
-			if err := json.UnmarshalDecode(dec, &f); err != nil {
+			if err := decodeFile(dec, &f); err != nil {
 				return 0, err
 			}
 			files++
@@ -575,6 +571,48 @@ func decodeReleases(dec *jsontext.Decoder, p *project) (yanked int, err error) {
 	}
 	_, err = dec.ReadToken()
 	return yanked, err
+}
+
+// releaseFile is what deps keeps of one file of a release (unnamed, as in unmarshal errors).
+type releaseFile = struct {
+	Yanked         bool   `json:"yanked"`
+	Upload         string `json:"upload_time_iso_8601"`
+	RequiresPython string `json:"requires_python"`
+}
+
+// decodeFile reads one file object of a release into f, which it resets first; f is reused so
+// that unmarshaling its fields does not allocate. The kept members are unmarshaled one by one
+// and the others consumed with ReadValue: unmarshaling the whole object into a struct looks up
+// every unknown name (also case-folded) and skips nested values (`digests`) token by token.
+func decodeFile(dec *jsontext.Decoder, f *releaseFile) error {
+	*f = releaseFile{}
+	if dec.PeekKind() != '{' {
+		return json.UnmarshalDecode(dec, f) // null, or the unmarshal error
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return err
+	}
+	for dec.PeekKind() != '}' {
+		name, err := dec.ReadToken()
+		if err != nil {
+			return err
+		}
+		switch name.String() {
+		case "yanked":
+			err = json.UnmarshalDecode(dec, &f.Yanked)
+		case "upload_time_iso_8601":
+			err = json.UnmarshalDecode(dec, &f.Upload)
+		case "requires_python":
+			err = json.UnmarshalDecode(dec, &f.RequiresPython)
+		default:
+			_, err = dec.ReadValue()
+		}
+		if err != nil {
+			return err
+		}
+	}
+	_, err := dec.ReadToken()
+	return err
 }
 
 // pyReq accumulates the requires-python of a version's files that are not yanked; it has a
