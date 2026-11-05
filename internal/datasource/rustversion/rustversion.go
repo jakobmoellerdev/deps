@@ -1,0 +1,129 @@
+// Package rustversion lists Rust releases from the manifest index of static.rust-lang.org, the
+// distribution server rustup installs toolchains from.
+package rustversion
+
+import (
+	"bufio"
+	"cmp"
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+)
+
+// Name is the datasource name (Renovate's).
+const Name = "rust-version"
+
+// DefaultURL lists the URL of every channel manifest rustup can install, oldest first
+// (`static.rust-lang.org/dist/2024-10-17/channel-rust-1.82.0.toml`); DEPS_RUST_MANIFESTS_URL
+// overrides it.
+const DefaultURL = "https://static.rust-lang.org/manifests.txt"
+
+// Repo is the source repository of the Rust toolchain, whose GitHub releases carry the
+// release notes.
+const Repo = "https://github.com/rust-lang/rust"
+
+// manifestRe matches a release manifest URL: group 1 is its date, group 2 a stable `X.Y.Z` or
+// a numbered beta `X.Y.Z-beta.N`. Channel manifests (`channel-rust-stable.toml`, `-nightly`),
+// release-line aliases (`1.82`, `1.83-beta`) and unnumbered betas name no fixed release.
+var manifestRe = regexp.MustCompile(`/dist/(\d{4}-\d{2}-\d{2})/channel-rust-(\d+\.\d+\.\d+(?:-beta\.\d+)?)\.toml$`)
+
+// Source fetches the manifest index once per run.
+type Source struct {
+	client *http.Client
+	sem    chan struct{}
+	url    string
+
+	once     sync.Once
+	releases []datasource.Release
+	times    map[string]time.Time
+	err      error
+}
+
+// New returns the rust-version datasource. sem bounds concurrent requests (nil = unbounded);
+// getenv supplies DEPS_RUST_MANIFESTS_URL.
+func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
+	return &Source{client: client, sem: sem, url: cmp.Or(getenv("DEPS_RUST_MANIFESTS_URL"), DefaultURL)}
+}
+
+// Releases returns every stable and numbered beta release (`1.82.0`, `1.83.0-beta.5`; schemes
+// drop betas for stable current versions) in index order, then a derived "X.Y" per stable
+// release line, so a toolchain pinned to a line (`channel = "1.82"`) has candidates of its
+// precision under tag versioning.
+func (s *Source) Releases(ctx context.Context, _ dep.Dep, _ string) ([]datasource.Release, error) {
+	s.load(ctx)
+	return s.releases, s.err
+}
+
+// ReleaseTime implements datasource.Timer with the date of the first manifest of version (a
+// manifest re-published later keeps its first date); a derived "X.Y" has the date of X.Y.0.
+// Zero when unknown.
+func (s *Source) ReleaseTime(ctx context.Context, _ dep.Dep, version string) (time.Time, error) {
+	s.load(ctx)
+	if s.err != nil {
+		return time.Time{}, s.err
+	}
+	return s.times[version], nil
+}
+
+// SourceRepo implements datasource.SourceRepo: every release is built from rust-lang/rust.
+func (*Source) SourceRepo(context.Context, dep.Dep, string) (string, error) { return Repo, nil }
+
+// Digest is unsupported.
+func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
+	return "", datasource.UnsupportedDigest(Name, d)
+}
+
+func (s *Source) load(ctx context.Context) {
+	s.once.Do(func() {
+		start := time.Now()
+		s.err = datasource.GetStream(ctx, s.client, s.sem, s.url, s.read)
+		if s.err != nil {
+			s.releases, s.times = nil, nil
+		}
+		slog.DebugContext(ctx, "rust releases", "url", s.url, "releases", len(s.releases), "duration", time.Since(start), "err", s.err)
+	})
+}
+
+// read parses the manifest index, one URL per line.
+func (s *Source) read(r io.Reader) error {
+	s.times = map[string]time.Time{}
+	var derived []datasource.Release
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		m := manifestRe.FindStringSubmatch(strings.TrimSpace(sc.Text()))
+		if m == nil {
+			continue
+		}
+		version := m[2]
+		if _, seen := s.times[version]; seen {
+			continue // re-published manifest (1.8.0, 1.14.0): the first date is the release
+		}
+		t, _ := time.Parse(time.DateOnly, m[1])
+		s.releases = append(s.releases, datasource.Release{Version: version})
+		s.times[version] = t
+		if !strings.Contains(version, "-") {
+			line := version[:strings.LastIndexByte(version, '.')]
+			if _, seen := s.times[line]; !seen {
+				derived = append(derived, datasource.Release{Version: line})
+				s.times[line] = t
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return err
+	}
+	if len(s.releases) == 0 {
+		return errors.New("no releases")
+	}
+	s.releases = append(s.releases, derived...)
+	return nil
+}

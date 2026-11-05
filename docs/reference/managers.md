@@ -40,6 +40,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`bundler`](#bundler)
 - [`ruby-version`](#ruby-version)
 - [`git-submodules`](#git-submodules)
+- [`rust-toolchain`](#rust-toolchain)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -1756,6 +1757,38 @@ Moves git submodules to the newest commit of the branch they track, or to the ne
 - A relative `url` resolves against `remote.origin.url` like a URL path (Renovate's `new URL(url, origin + "/")`): `../lib.git` with origin `https://github.com/acme/app` is `https://github.com/acme/lib.git`.
 - `run` commits the new gitlink (mode `160000`) without fetching the submodule; `plan` prints it as `Subproject commit <sha>`. `apply` stages it with `git update-index --cacheinfo` and leaves the submodule's checkout alone: run `git submodule update` to check the commit out.
 
+## rust-toolchain
+
+Updates the Rust toolchain rustup selects for a directory: `channel` of the `[toolchain]` table in `rust-toolchain.toml` (and in a `rust-toolchain` file written as TOML), or the toolchain name of a legacy one-line `rust-toolchain` file (a single line without `=` or `[`, as rustup reads it). The TOML is read with the span-keeping parser `internal/tomlspan`, so comments, `components`, `targets` and `profile` are kept.
+
+**Files:**
+
+- any `rust-toolchain.toml`
+- any `rust-toolchain`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `toolchain` | the pinned toolchain version (name `rust`), `X.Y.Z` or `X.Y`, optionally followed by a host triple (`1.82.0-x86_64-unknown-linux-gnu`) | `rust-version` | `semver`; `X.Y` `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unpinned channel` | a release channel that is no version: `stable`, `beta`, `nightly` (with or without a host triple) |
+| `dated channel` | a dated channel such as `nightly-2025-10-10` or `beta-2025-10-01` |
+| `local path` | `[toolchain] path` (a custom toolchain directory) |
+| `no channel` | a `[toolchain]` table without a string `channel` |
+| `cannot locate value` | `channel` is written with escapes, so its bytes cannot be replaced in place |
+| `unsupported toolchain` | any other toolchain name, such as a beta `1.83.0-beta.5` or a custom toolchain linked with `rustup toolchain link` |
+
+**Versions.**
+
+- A full `X.Y.Z` uses `semver`; betas are never proposed.
+- A release line `X.Y` uses `tag` versioning and keeps its precision (`1.82` → `1.91`) against the `X.Y` lines the datasource derives.
+- Only the version is replaced; a host triple after it and the rest of the file are kept.
+- A file without a `[toolchain]` table has no dep.
+- `rust-version` in `Cargo.toml` (`package.rust-version`, `workspace.package.rust-version`), the minimum supported Rust version, is not extracted: neither Renovate nor Dependabot updates it.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -1832,6 +1865,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `gradle-version` | any (`gradle`) | `<DEPS_GRADLE_VERSIONS_URL or https://services.gradle.org/versions/all>`, once per run; snapshots, nightlies and broken releases are dropped, release candidates and milestones kept | none | `buildTime` |
 | `rubygems` | gem name (case-sensitive, as on the gem server); the dep's source is its whitespace-separated gem servers in lookup order ("" = rubygems.org) | rubygems.org (also when a Gemfile names `https://rubygems.org`): `GET <DEPS_RUBYGEMS_URL or https://rubygems.org>/api/v1/versions/<name>.json`; other gem servers: the compact index `GET <source>/info/<name>` (what Bundler reads), and on a 404 `GET <source>/api/v1/versions/<name>.json`; once per (server, gem); platform builds (`1.18.10-x86_64-linux-gnu`) count as their version; yanked versions are not listed by either API; the first server that has the gem answers, none → `gem <name> not found`. Source repository (release notes, rubygems.org only): `GET <base>/api/v1/gems/<name>.json` `source_code_uri`, else a forge `homepage_uri`, only for versions in a pull request | userinfo of the source URL (`https://user:pass@gems.example.com`) as basic auth, else Bundler's `BUNDLE_<HOST>` variable (`gems.example-corp.com` → `BUNDLE_GEMS__EXAMPLE___CORP__COM`) holding `user:password` or a token; redacted in errors and logs | rubygems.org `created_at` (the earliest of the version's platform builds); the compact index of other servers has none |
 | `ruby-version` | any (`ruby`) | `<DEPS_RUBY_RELEASES_URL or https://raw.githubusercontent.com/ruby/www.ruby-lang.org/master/_data/releases.yml>`, the list the ruby-lang.org release pages are built from, once per run; published versions plus a derived `X.Y` and `X` per stable line | none | `date` |
+| `rust-version` | any (`rust`) | `<DEPS_RUST_MANIFESTS_URL or https://static.rust-lang.org/manifests.txt>`, the index of every channel manifest rustup can install, once per run; stable `X.Y.Z` and numbered betas `X.Y.Z-beta.N` from the manifest names (channel manifests such as `channel-rust-stable.toml` and dated nightlies are not listed), plus a derived `X.Y` per stable line. Source repository (release notes): `rust-lang/rust` | none | the date directory of the version's first manifest (`dist/2024-10-17/channel-rust-1.82.0.toml`), day precision |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.

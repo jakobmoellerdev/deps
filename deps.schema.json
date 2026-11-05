@@ -71,6 +71,7 @@
                 "gradle-version",
                 "rubygems",
                 "ruby-version",
+                "rust-version",
                 "golang-version",
                 "github-tags",
                 "github-release-attachments",
@@ -242,6 +243,7 @@
             "bundler",
             "ruby-version",
             "git-submodules",
+            "rust-toolchain",
             "custom"
           ],
           "description": "Only match deps of this manager.",
@@ -389,6 +391,7 @@
                   "gradle-version",
                   "rubygems",
                   "ruby-version",
+                  "rust-version",
                   "golang-version",
                   "github-tags",
                   "github-release-attachments",

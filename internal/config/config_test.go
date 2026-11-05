@@ -167,7 +167,7 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{minimumReleaseAge: 3 fortnights}]\n", `rules[0].minimumReleaseAge: invalid age "3 fortnights"`},
 		{"minimumReleaseAgeBehaviour: timestamp-strict\n", `minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "timestamp-strict"`},
 		{"rules: [{minimumReleaseAgeBehaviour: required}]\n", `rules[0].minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "required"`},
-		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, git-refs, github-releases, go, go-toolchain, docker, npm, node-version, helm, crate, pypi, terraform-provider, terraform-module, maven, gradle-version, rubygems, ruby-version, golang-version, github-tags, github-release-attachments, node or custom.<name> of customDatasources, got "custom.envtest"`},
+		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, git-refs, github-releases, go, go-toolchain, docker, npm, node-version, helm, crate, pypi, terraform-provider, terraform-module, maven, gradle-version, rubygems, ruby-version, rust-version, golang-version, github-tags, github-release-attachments, node or custom.<name> of customDatasources, got "custom.envtest"`},
 		{"custom: [{files: [x], datasource: custom.envtest}]\n", `custom[0].datasource: must be one of git-tags`},
 		{"customDatasources: {envtest: {}}\n", "customDatasources.envtest.url: required"},
 		{"customDatasources: {envtest: {url: 'ftp://x/y'}}\n", `customDatasources.envtest.url: must be an http(s) URL, got "ftp://x/y"`},
