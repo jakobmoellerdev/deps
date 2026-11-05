@@ -51,12 +51,12 @@ func IsWorkflowFile(path string) bool {
 // Extract returns every `uses:` reference in src with byte spans into src;
 // owner/repo refs resolve against env.DefaultHost.
 func (actionsManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
-	var root yaml.Node
-	if err := yaml.Unmarshal(src, &root); err != nil {
+	root, err := env.YAML.Document(src)
+	if err != nil {
 		return nil, err
 	}
 	x := extractor{file: file, src: src, host: env.DefaultHost, lines: yamlspan.LineStarts(src)}
-	x.walk(&root)
+	x.walk(root)
 	return x.deps, nil
 }
 

@@ -16,10 +16,10 @@ import (
 
 const dockerPrefix = "docker://"
 
-// yaml parses src and runs walk on the top-level mapping.
-func (x *extractor) yaml(walk func(root *yaml.Node)) error {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(x.src, &doc); err != nil {
+// yaml parses src (through p, the file's shared parse) and runs walk on the top-level mapping.
+func (x *extractor) yaml(p *yamlspan.Parsed, walk func(root *yaml.Node)) error {
+	doc, err := p.Document(x.src)
+	if err != nil {
 		return err
 	}
 	if len(doc.Content) == 1 && doc.Content[0].Kind == yaml.MappingNode {

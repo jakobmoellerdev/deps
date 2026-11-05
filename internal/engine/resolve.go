@@ -29,6 +29,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // Aliases of the leaf datasource package, so implementations need not import the engine.
@@ -449,22 +450,37 @@ func planAll(sources map[string]Datasource, todo []dep.Dep) {
 	}
 }
 
-// extractAll reads and parses files on GOMAXPROCS workers. Only the extracted deps are kept;
-// file bytes and parse trees are dropped as soon as a file is done.
+// extractAll reads and parses files on GOMAXPROCS workers. A worker takes one file with all
+// its jobs (managers matching it): the file is read once, and its managers share the bytes
+// and a single-document YAML parse (manager.Env.YAML). Only the extracted deps are kept; file
+// bytes and parse trees are dropped as soon as a file is done.
 func extractAll(root string, jobs []job, env manager.Env, prog Progress) []extracted {
 	ex := make([]extracted, len(jobs))
-	next := make(chan int)
+	at := make(map[string]int, len(jobs)) // file → index in files
+	var files [][]int                     // job indexes per file, in first-job order
+	for i, j := range jobs {
+		k, ok := at[j.file]
+		if !ok {
+			k = len(files)
+			at[j.file] = k
+			files = append(files, nil)
+		}
+		files[k] = append(files[k], i)
+	}
+	next := make(chan []int)
 	var wg sync.WaitGroup
-	for range min(runtime.GOMAXPROCS(0), len(jobs)) {
+	for range min(runtime.GOMAXPROCS(0), len(files)) {
 		wg.Go(func() {
-			for i := range next {
-				ex[i] = extractOne(root, jobs[i], env)
-				prog.Done(PhaseExtract, ex[i].err)
+			for idx := range next {
+				extractFile(root, jobs, idx, env, ex)
+				for _, i := range idx {
+					prog.Done(PhaseExtract, ex[i].err)
+				}
 			}
 		})
 	}
-	for i := range jobs {
-		next <- i
+	for _, idx := range files {
+		next <- idx
 	}
 	close(next)
 	wg.Wait()
@@ -566,13 +582,22 @@ func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Mana
 	return out
 }
 
-func extractOne(root string, j job, env manager.Env) extracted {
-	src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(j.file)))
+// extractFile extracts the file of jobs[idx[0]] with the manager of every job in idx (all of
+// the same file) into ex.
+func extractFile(root string, jobs []job, idx []int, env manager.Env, ex []extracted) {
+	file := jobs[idx[0]].file
+	src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
 	if err != nil {
-		return extracted{err: err}
+		for _, i := range idx {
+			ex[i] = extracted{err: err}
+		}
+		return
 	}
-	deps, err := j.m.Extract(j.file, src, env)
-	return extracted{deps: deps, err: err}
+	env.YAML = &yamlspan.Parsed{}
+	for _, i := range idx {
+		deps, err := jobs[i].m.Extract(file, src, env)
+		ex[i] = extracted{deps: deps, err: err}
+	}
 }
 
 // dedupeCovered skips deps whose bytes are also claimed by a custom dep in the same file: an

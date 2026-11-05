@@ -10,9 +10,10 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/imageref"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
-// Env carries run-wide settings to Extract.
+// Env carries run-wide settings to Extract, and YAML, which is per file.
 type Env struct {
 	DefaultHost string // actions default host
 	GitLabURL   string // GitLab instance base URL without trailing slash; "" means https://gitlab.com
@@ -31,6 +32,10 @@ type Env struct {
 	// tree of the scanned root ("" when unset or HEAD is detached), which relative submodule
 	// urls and `branch = .` resolve against. engine.Resolve supplies a git lookup when nil.
 	Superproject func() (origin, branch string, err error)
+	// YAML is the shared single-document parse of the file being extracted: the engine sets
+	// a new one per file and passes the same src to every manager of that file, so managers
+	// reading the same workflow parse it once. nil parses anew.
+	YAML *yamlspan.Parsed
 }
 
 // GitRepo turns an https/http/ssh/git or scp-style (`git@host:owner/repo`) git URL into the

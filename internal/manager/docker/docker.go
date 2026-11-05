@@ -63,7 +63,7 @@ func isDockerfile(path string) bool {
 }
 
 // Extract returns every image reference in src with byte spans into src.
-func (dockerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+func (dockerManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	switch {
 	case isDockerfile(file):
 		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
@@ -71,7 +71,7 @@ func (dockerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep,
 		return x.deps, nil
 	case strings.Contains(file, "compose") && composeRe.MatchString(file):
 		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
-		if err := x.yaml(x.compose); err != nil {
+		if err := x.yaml(env.YAML, x.compose); err != nil {
 			// Not standalone YAML (e.g. an indented fragment concatenated by a script).
 			slog.Debug("skipping unparsable compose file", "file", file, "err", err)
 			return []dep.Dep{{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeCompose,
@@ -87,7 +87,7 @@ func (dockerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep,
 			return nil, nil
 		}
 		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
-		return x.deps, x.yaml(x.workflow)
+		return x.deps, x.yaml(env.YAML, x.workflow)
 	}
 	if !bytes.Contains(src, []byte("image:")) && !bytes.Contains(src, []byte("repository:")) {
 		return nil, nil
