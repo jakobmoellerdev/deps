@@ -36,15 +36,15 @@ type errUnsupportedSource struct{}
 
 func (errUnsupportedSource) Error() string { return "unsupported preset source, skipped" }
 
-// parsePreset parses an extends entry; presets of unsupported sources (gitlab>, npm>, npm
-// packages, URLs, relative files) return errUnsupportedSource.
+// parsePreset parses an extends entry; presets of unsupported sources (npm>, npm packages,
+// URLs, relative files) return errUnsupportedSource.
 func parsePreset(s string) (presetRef, error) {
 	var ref presetRef
 	str := strings.TrimSpace(s)
 	if str == "" {
 		return ref, errors.New("empty preset")
 	}
-	for _, src := range []string{"github", "gitea", "forgejo", "local"} {
+	for _, src := range []string{"github", "gitlab", "gitea", "forgejo", "local"} {
 		if rest, ok := strings.CutPrefix(str, src+">"); ok {
 			ref.source, str = src, rest
 			break
@@ -52,7 +52,7 @@ func parsePreset(s string) (presetRef, error) {
 	}
 	if ref.source == "" {
 		switch {
-		case strings.HasPrefix(str, "gitlab>"), strings.HasPrefix(str, "npm>"), strings.HasPrefix(str, "http://"),
+		case strings.HasPrefix(str, "npm>"), strings.HasPrefix(str, "http://"),
 			strings.HasPrefix(str, "https://"), strings.HasPrefix(str, "./"), strings.HasPrefix(str, "../"), strings.HasPrefix(str, "@"):
 			return ref, errUnsupportedSource{}
 		case !strings.HasPrefix(str, ":") && strings.Contains(str, "/"):
@@ -245,7 +245,7 @@ func (r *resolver) preset(e string, i int) (map[string]any, error) {
 		case ref.repo == "replacements":
 			r.replacements.add(e, ref.name)
 			return nil, nil
-		case slices.Contains([]string{"workarounds", "mergeConfidence", "abandonments", "helpers"}, ref.repo),
+		case slices.Contains([]string{"workarounds", "mergeConfidence", "helpers"}, ref.repo),
 			name == "security:openssf-scorecard", name == "security:php2shell":
 			r.notes.info(e, "no deps equivalent")
 			return nil, nil

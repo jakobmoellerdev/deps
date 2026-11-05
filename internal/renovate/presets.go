@@ -3,6 +3,7 @@ package renovate
 // builtin holds Renovate's built-in presets used by translation, copied from renovatebot/renovate lib/config/presets/internal/ (main, 2026-11-05) without descriptions.
 // Source commit: 432153f71f127c9258d0174447a89fb3c3d23d03.
 var builtin = map[string]string{
+	"abandonments:recommended":                             `{"packageRules":[{"abandonmentThreshold":"1 year","matchPackageNames":["*"]},{"abandonmentThreshold":null,"matchDatasources":["npm"],"matchPackageNames":["@types/*"]},{"abandonmentThreshold":"5 years","matchDatasources":["npm"],"matchPackageNames":["eslint-plugin-no-only-tests"]},{"abandonmentThreshold":"6 years","matchDatasources":["npm"],"matchPackageNames":["lodash"]}]}`,
 	"config:best-practices":                                `{"extends":["config:recommended","docker:pinDigests","helpers:pinGitHubActionDigests",":configMigration",":pinDevDependencies","abandonments:recommended","security:minimumReleaseAgeNpm",":maintainLockFilesWeekly"]}`,
 	"config:js-app":                                        `{"extends":["config:recommended",":pinAllExceptPeerDependencies"]}`,
 	"config:js-lib":                                        `{"extends":["config:recommended",":pinOnlyDevDependencies"]}`,

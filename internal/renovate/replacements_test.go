@@ -34,13 +34,13 @@ func TestLoadReplacements(t *testing.T) {
 		{
 			name:  "no replacements preset switches the built-in list off",
 			src:   `{}`,
-			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+			rules: strings.TrimPrefix(defaultExclusions, "\n"),
 		},
 		{
 			name:  "replacements:all keeps the built-in list",
 			src:   `{extends: ['replacements:all']}`,
 			on:    true,
-			rules: allOff + preCommitExclusion,
+			rules: allOff + defaultExclusions,
 			notes: allNotes,
 		},
 		{
@@ -59,7 +59,7 @@ func TestLoadReplacements(t *testing.T) {
     manager: github-actions
     names: [corentinmusard/otel-cicd-action]
     updateTypes: [replacement]
-    ignore: true` + preCommitExclusion,
+    ignore: true` + defaultExclusions,
 			notes: "info replacements:all: deps' built-in replacements cover it (replacements: true)" +
 				"|info replacements:all: deps cannot apply " + config.ReplacementsSkipped[0] +
 				"|info replacements:clang-format-to-maintenance-fork: deps' built-in replacements cover it (replacements: true)" +
@@ -94,11 +94,36 @@ func TestLoadReplacements(t *testing.T) {
     names: [/^k8s\.gcr\.io/.+$/]
     replacementName: registry.k8s.io/
     replacementPrefix: k8s.gcr.io/
+  - # replacements:k8s-registry-move
+    manager: bitbucket-pipelines
+    names: [/^k8s\.gcr\.io/.+$/]
+    replacementName: registry.k8s.io/
+    replacementPrefix: k8s.gcr.io/
+  - # replacements:k8s-registry-move
+    manager: woodpecker
+    names: [/^k8s\.gcr\.io/.+$/]
+    replacementName: registry.k8s.io/
+    replacementPrefix: k8s.gcr.io/
+  - # replacements:k8s-registry-move
+    manager: droneci
+    names: [/^k8s\.gcr\.io/.+$/]
+    replacementName: registry.k8s.io/
+    replacementPrefix: k8s.gcr.io/
+  - # replacements:k8s-registry-move
+    manager: circleci
+    names: [/^k8s\.gcr\.io/.+$/]
+    replacementName: registry.k8s.io/
+    replacementPrefix: k8s.gcr.io/
+  - # replacements:k8s-registry-move
+    manager: azure-pipelines
+    names: [/^k8s\.gcr\.io/.+$/]
+    replacementName: registry.k8s.io/
+    replacementPrefix: k8s.gcr.io/
   - # replacements:cpx-to-maintenance-fork
     manager: npm
     names: [cpx]
     replacementName: cpx2
-    replacementVersion: 2.0.0` + preCommitExclusion,
+    replacementVersion: 2.0.0` + defaultExclusions,
 			notes: "info replacements:k8s-registry-move: translated into rules from deps' built-in replacements" +
 				"|info replacements:cpx-to-maintenance-fork: translated into rules from deps' built-in replacements" +
 				"|warn replacements:" + nuget + ": deps cannot apply " + config.ReplacementsSkipped[0] + "; skipped" +

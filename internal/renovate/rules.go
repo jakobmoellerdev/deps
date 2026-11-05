@@ -23,8 +23,9 @@ var updateTypeBlocks = []struct{ key, typ string }{
 var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versioning", "extractVersion", "replacementName",
 	"replacementVersion", "replacementPrefix", "separateMajorMinor",
 	"separateMultipleMajor", "separateMinorPatch", "group", "commitType", "commitScope", "schedule",
-	"minimumReleaseAge", "minimumReleaseAgeBehaviour", "automerge", "automergeStrategy", "automergeType",
-	"labels", "addLabels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "postUpgradeTasks", "dashboardApproval"}
+	"minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "automerge", "automergeStrategy", "automergeType",
+	"labels", "addLabels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "postUpgradeTasks", "dashboardApproval",
+	"draftPR", "prCreation"}
 
 // rulesFrom translates the rule sources in order: top-level semantic commit settings,
 // manager blocks, update-type blocks, packageRules and ignoreDeps.
@@ -58,9 +59,10 @@ func (t *translator) rulesFrom(cfg map[string]any, done map[string]bool) {
 		for bk, bv := range block {
 			switch bk {
 			case "enabled":
-				// Renovate and deps both skip git submodules by default: opting in needs a rule.
-				// Every other manager's enabled is handled by exclusions.
-				if k == "git-submodules" && bv == true {
+				// Renovate disables git-submodules and azure-pipelines by default, deps their
+				// submodules and tasks: opting in needs a rule. Every other manager's enabled is
+				// handled by exclusions.
+				if (k == "git-submodules" || k == "azure-pipelines") && bv == true {
 					r[bk] = bv
 				}
 			case "fileMatch", "managerFilePatterns":
@@ -151,6 +153,14 @@ func currentValue(v string) (string, bool) {
 	return neg + "/^" + regexp.QuoteMeta(body) + "$/i", true
 }
 
+// depsDatasource returns the deps name of Renovate datasource ds (datasourceMap), else ds.
+func depsDatasource(ds string) string {
+	if n, ok := datasourceMap[ds]; ok {
+		return n
+	}
+	return ds
+}
+
 // knownDatasource reports whether ds is a deps datasource name or custom.<name> of a
 // translated custom datasource.
 func (t *translator) knownDatasource(ds string) bool {
@@ -177,9 +187,17 @@ var listMatchers = func() map[string]bool {
 	return m
 }()
 
+// isBlock reports whether top-level key k is a manager or update-type block.
+func isBlock(k string) bool {
+	_, manager := managerMap[k]
+	return manager || slices.ContainsFunc(updateTypeBlocks, func(b struct{ key, typ string }) bool { return b.key == k })
+}
+
 // rule translates one Renovate rule (a packageRules element or a block) into rules.
 func (t *translator) rule(origin string, r map[string]any) {
-	t.n.builtin = builtinOrigin(origin)
+	// A manager or update-type block only built-in presets set (nuget of
+	// :ignoreModulesAndTests) is reported like their packageRules.
+	t.n.builtin = builtinOrigin(origin) || (isBlock(origin) && t.builtinOnly(origin))
 	defer func() { t.n.builtin = false }()
 	var pkg, dep, paths, depTypes, datasources, updateTypes, managers, cats []string
 	var current omap // currentVersion, currentAge
@@ -254,6 +272,7 @@ func (t *translator) rule(origin string, r map[string]any) {
 			}
 		case "matchDatasources":
 			for _, d := range l {
+				d = depsDatasource(d)
 				if t.knownDatasource(d) {
 					datasources = appendNew(datasources, d)
 				} else {
@@ -535,6 +554,17 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			set(k, v)
 		case "dependencyDashboardApproval":
 			set("dashboardApproval", v)
+		case "draftPR":
+			set(k, v)
+		case "prCreation":
+			if s, ok := t.prCreation(p, v); ok {
+				set(k, s)
+			}
+		case "abandonmentThreshold":
+			if v == nil {
+				v = "0" // null turns the check off
+			}
+			set(k, v)
 		case "postUpgradeTasks":
 			if tasks, ok := t.postUpgradeTasks(p, v); ok {
 				set(k, tasks)
@@ -621,8 +651,9 @@ func appendNew(l []string, s string) []string {
 }
 
 // exclusions computes the rules for managers Renovate does not run (enabledManagers,
-// enabled: false blocks, pre-commit off by default) into t.exclusionRules and returns the
-// fully excluded deps managers.
+// enabled: false blocks, pre-commit and azure-pipelines off by default, deps managers
+// without a Renovate counterpart) into t.exclusionRules and returns the fully excluded deps
+// managers.
 func (t *translator) exclusions(cfg map[string]any, done map[string]bool) map[string]bool {
 	var enabledSet map[string]bool
 	if v, ok := cfg["enabledManagers"]; ok {
@@ -646,8 +677,8 @@ func (t *translator) exclusions(cfg map[string]any, done map[string]bool) map[st
 			return rm + ".enabled: false"
 		case enabledSet != nil && !enabledSet[rm]:
 			return "enabledManagers"
-		case rm == "pre-commit" && !(hasBE && be) && !enabledSet[rm]:
-			return "pre-commit is disabled by default in Renovate"
+		case (rm == "pre-commit" || rm == "azure-pipelines") && !(hasBE && be) && !enabledSet[rm]:
+			return rm + " is disabled by default in Renovate"
 		}
 		return ""
 	}
@@ -693,7 +724,13 @@ func (t *translator) exclusions(cfg map[string]any, done map[string]bool) map[st
 	full := map[string]bool{}
 	for _, m := range config.Managers {
 		a := aggs[m]
-		if a == nil || !a.anyDisabled || a.enabledAll {
+		if a == nil {
+			// Renovate has no such manager, so it never updates these files.
+			full[m] = true
+			t.exclusionRules = append(t.exclusionRules, item{origin: "Renovate has no " + m + " manager", body: omap{{"manager", m}, {"ignore", true}}})
+			continue
+		}
+		if !a.anyDisabled || a.enabledAll {
 			continue
 		}
 		universe := depTypeUniverse[m]

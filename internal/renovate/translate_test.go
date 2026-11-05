@@ -47,9 +47,26 @@ func noteLines(res *Result) []string {
 	return out
 }
 
-const preCommitExclusion = `
+// defaultExclusions are the rules of every translation: the managers Renovate disables by
+// default and the deps managers Renovate does not have.
+const defaultExclusions = `
   - # pre-commit is disabled by default in Renovate
     manager: pre-commit
+    ignore: true` + otherExclusions
+
+// otherExclusions are defaultExclusions without pre-commit.
+const otherExclusions = `
+  - # Renovate has no conda manager
+    manager: conda
+    ignore: true
+  - # azure-pipelines is disabled by default in Renovate
+    manager: azure-pipelines
+    ignore: true
+  - # Renovate has no vcpkg manager
+    manager: vcpkg
+    ignore: true
+  - # Renovate has no elm manager
+    manager: elm
     ignore: true`
 
 func TestLoadDefaults(t *testing.T) {
@@ -72,7 +89,7 @@ replacements: false
 rebaseWhen: conflicted
 minimumReleaseAgeBehaviour: timestamp-required
 ignorePaths: ['**/node_modules/**', '**/bower_components/**']
-rules:` + preCommitExclusion + "\n"
+rules:` + defaultExclusions + "\n"
 	if got := string(res.YAML); got != want {
 		t.Errorf("YAML:\n%s\nwant:\n%s", got, want)
 	}
@@ -95,7 +112,7 @@ func TestLoadRules(t *testing.T) {
   - # packageRules[0]
     manager: docker
     depTypes: [workflow, action]
-    group: GitHub Actions` + preCommitExclusion,
+    group: GitHub Actions` + defaultExclusions,
 		},
 		{
 			name: "dockerfile is docker with depType dockerfile",
@@ -103,12 +120,12 @@ func TestLoadRules(t *testing.T) {
 			rules: `  - # packageRules[0]
     manager: docker
     depTypes: [dockerfile]
-    ignore: true` + preCommitExclusion,
+    ignore: true` + defaultExclusions,
 		},
 		{
 			name:  "unknown depTypes only drop the rule",
 			src:   `{packageRules: [{matchManagers: ['dockerfile'], matchDepTypes: ['final', 'stage'], enabled: false}]}`,
-			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+			rules: strings.TrimPrefix(defaultExclusions, "\n"),
 			notes: []string{"warn packageRules[0]: depType final has no deps equivalent; dropped", "warn packageRules[0]: matches no deps depType; rule dropped"},
 		},
 		{
@@ -121,7 +138,7 @@ func TestLoadRules(t *testing.T) {
   - # packageRules[0]
     manager: github-actions
     depTypes: [action]
-    pin: digest` + preCommitExclusion,
+    pin: digest` + defaultExclusions,
 		},
 		{
 			name: "golang depType is go, categories select managers",
@@ -129,14 +146,14 @@ func TestLoadRules(t *testing.T) {
 			rules: `  - # packageRules[0]
     manager: gomod
     depTypes: [go]
-    ignore: true` + preCommitExclusion,
+    ignore: true` + defaultExclusions,
 		},
 		{
 			name: "pinDigest is pin; unknown update types are dropped",
 			src:  `{packageRules: [{matchUpdateTypes: ['pinDigest', 'bump'], groupName: 'pins'}]}`,
 			rules: `  - # packageRules[0]
     updateTypes: [pin]
-    group: pins` + preCommitExclusion,
+    group: pins` + defaultExclusions,
 			notes: []string{"info packageRules[0]: update type bump has no deps equivalent; dropped"},
 		},
 		{
@@ -145,7 +162,7 @@ func TestLoadRules(t *testing.T) {
 			rules: `  - # packageRules[0]
     names: [foo]
     replacementName: bar
-    replacementVersion: 2.0.0` + preCommitExclusion,
+    replacementVersion: 2.0.0` + defaultExclusions,
 			notes: []string{"warn packageRules[0].replacementVersionTemplate: not supported; dropped"},
 		},
 		{
@@ -155,12 +172,12 @@ func TestLoadRules(t *testing.T) {
     names: [k8s.gcr.io/**]
     datasources: [docker]
     replacementName: registry.k8s.io/
-    replacementPrefix: k8s.gcr.io/` + preCommitExclusion,
+    replacementPrefix: k8s.gcr.io/` + defaultExclusions,
 		},
 		{
 			name:  "other replacementNameTemplates and a lone replacementVersion are dropped",
 			src:   `{packageRules: [{matchPackageNames: ['a'], replacementNameTemplate: '{{{packageName}}}-x'}, {matchPackageNames: ['b'], replacementVersion: '1'}]}`,
-			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+			rules: strings.TrimPrefix(defaultExclusions, "\n"),
 			notes: []string{
 				"warn packageRules[0].replacementNameTemplate: only the prefix form {{{replace '<prefix>' '<new prefix>' packageName}}} is supported; dropped",
 				"warn packageRules[1].replacementVersion: dropped: replacementVersion: requires replacementName",
@@ -175,14 +192,14 @@ func TestLoadRules(t *testing.T) {
   - # packageRules[0]
     names: [x]
     updateTypes: [replacement]
-    ignore: true` + preCommitExclusion,
+    ignore: true` + defaultExclusions,
 		},
 		{
 			name: "rangeStrategy with matchUpdateTypes is dropped",
 			src:  `{packageRules: [{matchUpdateTypes: ['major'], rangeStrategy: 'bump', automerge: false}]}`,
 			rules: `  - # packageRules[0]
     updateTypes: [major]
-    automerge: false` + preCommitExclusion,
+    automerge: false` + defaultExclusions,
 			notes: []string{"warn packageRules[0].rangeStrategy: deps decides rangeStrategy before the update type is known; dropped"},
 		},
 		{
@@ -196,7 +213,7 @@ func TestLoadRules(t *testing.T) {
     labels: [deps]
     addLabels: [jq]
     reviewers: ['team:core']
-    assignees: [alice]` + preCommitExclusion,
+    assignees: [alice]` + defaultExclusions,
 		},
 		{
 			name: "dependencyDashboardApproval per rule, rust-toolchain manager",
@@ -204,12 +221,64 @@ func TestLoadRules(t *testing.T) {
 			rules: `  - # packageRules[0]
     manager: rust-toolchain
     updateTypes: [major]
-    dashboardApproval: true` + preCommitExclusion,
+    dashboardApproval: true` + defaultExclusions,
 		},
 		{
 			name:  "devcontainer manager",
 			src:   `{packageRules: [{matchManagers: ['devcontainer'], enabled: false}]}`,
-			rules: "  - # packageRules[0]\n    manager: devcontainer\n    ignore: true" + preCommitExclusion,
+			rules: "  - # packageRules[0]\n    manager: devcontainer\n    ignore: true" + defaultExclusions,
+		},
+		{
+			name: "php, bazel and ci categories; julia datasource; draftPR, prCreation and abandonmentThreshold per rule; azure-pipelines opt-in",
+			src: `{'azure-pipelines': {enabled: true}, packageRules: [{matchCategories: ['php', 'bazel'], groupName: 'g'},
+				{matchManagers: ['nuget', 'julia'], matchDatasources: ['julia-general-metadata'], draftPR: true, prCreation: 'status-success', abandonmentThreshold: null},
+				{matchCategories: ['ci'], matchPackageNames: ['x'], prCreation: 'approval', abandonmentThreshold: '2 years'}]}`,
+			rules: `  - # azure-pipelines
+    manager: azure-pipelines
+    ignore: false
+  - # packageRules[0]
+    manager: composer
+    group: g
+  - # packageRules[0]
+    manager: bazel-module
+    group: g
+  - # packageRules[0]
+    manager: bazelisk
+    group: g
+  - # packageRules[1]
+    manager: nuget
+    datasources: [julia-registry]
+    abandonmentThreshold: "0"
+    draftPR: true
+    prCreation: status-success
+  - # packageRules[1]
+    manager: julia
+    datasources: [julia-registry]
+    abandonmentThreshold: "0"
+    draftPR: true
+    prCreation: status-success` + strings.Join(func() []string {
+				var out []string
+				for _, m := range []string{"github-actions", "gitlabci", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines"} {
+					out = append(out, "  - # packageRules[2]\n    manager: "+m+"\n    names: [x]\n    abandonmentThreshold: 2 years")
+					if m == "github-actions" {
+						out = append(out, "  - # packageRules[2]\n    manager: docker\n    names: [x]\n    depTypes: [workflow, action]\n    abandonmentThreshold: 2 years")
+					}
+				}
+				return append([]string{""}, out...)
+			}(), "\n") + `
+  - # pre-commit is disabled by default in Renovate
+    manager: pre-commit
+    ignore: true
+  - # Renovate has no conda manager
+    manager: conda
+    ignore: true
+  - # Renovate has no vcpkg manager
+    manager: vcpkg
+    ignore: true
+  - # Renovate has no elm manager
+    manager: elm
+    ignore: true`,
+			notes: []string{"warn packageRules[2].prCreation: approval is not supported (deps' dashboardApproval also holds back the branch); dropped"},
 		},
 		{
 			name: "postUpgradeTasks top level and per rule, Ruby and Swift managers, rangeStrategy widen",
@@ -233,7 +302,7 @@ func TestLoadRules(t *testing.T) {
       commands: [bundle exec rake]
   - # packageRules[1]
     manager: swift
-    ignore: true` + preCommitExclusion,
+    ignore: true` + defaultExclusions,
 			notes: []string{
 				"info postUpgradeTasks.postUpgradeTasks: deps runs postUpgradeTasks only with --allow-tasks (or DEPS_ALLOW_TASKS) listing the commands, like Renovate's allowedCommands",
 				"warn packageRules[1].postUpgradeTasks: command \"swift build {{{depName}}}\" is a template; deps passes the update as DEPS_* environment variables (deps help environment); dropped",
@@ -260,7 +329,7 @@ func TestLoadRules(t *testing.T) {
   - # packageRules[3]
     names: [d]
     currentVersion: '!/^latest$/i'
-    ignore: true` + preCommitExclusion,
+    ignore: true` + defaultExclusions,
 		},
 		{
 			name: "matchCurrentValue globs, matchCurrentValue with matchCurrentVersion and invalid regexes drop the rule",
@@ -268,7 +337,7 @@ func TestLoadRules(t *testing.T) {
 				{matchCurrentValue: '/^1/', matchCurrentVersion: '< 2', matchPackageNames: ['b'], enabled: false},
 				{matchCurrentValue: '/(?=x)/', matchPackageNames: ['c'], enabled: false},
 				{matchCurrentValue: 1, matchPackageNames: ['d'], enabled: false}]}`,
-			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+			rules: strings.TrimPrefix(defaultExclusions, "\n"),
 			notes: []string{
 				`warn packageRules[0]: matchCurrentValue "1.*": globs have no deps equivalent; rule dropped`,
 				"warn packageRules[1]: matchCurrentVersion and matchCurrentValue together cannot be expressed (one currentVersion); rule dropped",
@@ -287,7 +356,7 @@ func TestLoadRules(t *testing.T) {
   - # packageRules[1]
     names: [b]
     currentAge: '> 1 year'
-    ignore: true` + preCommitExclusion,
+    ignore: true` + defaultExclusions,
 			notes: []string{
 				"warn packageRules[0].versioning: deps cannot combine versioning with currentVersion; dropped",
 				"warn packageRules[1].extractVersion: deps cannot combine extractVersion with currentAge; dropped",
@@ -305,7 +374,7 @@ func TestLoadRules(t *testing.T) {
     prFooter: ""
   - # packageRules[1]
     names: [b]
-    prFooter: Group {{"{{"}}groupName}} {{.Group}}` + preCommitExclusion,
+    prFooter: Group {{"{{"}}groupName}} {{.Group}}` + defaultExclusions,
 			notes: []string{"warn packageRules[1].prHeader: unsupported Handlebars expression {{#if isMajor}}; dropped"},
 		},
 		{
@@ -316,7 +385,7 @@ func TestLoadRules(t *testing.T) {
     currentVersion: < 2
     currentAge: '> 1 year'
     updateTypes: [major]
-    ignore: true` + preCommitExclusion,
+    ignore: true` + defaultExclusions,
 		},
 		{
 			name: "deprecated patterns, prefixes and exclusions",
@@ -325,12 +394,12 @@ func TestLoadRules(t *testing.T) {
 			rules: `  - # packageRules[0]
     names: ['!k8s.io/kube-openapi', /^k8s\.io//, /^sigs\.k8s\.io//]
     paths: [charts/**]
-    minimumReleaseAge: 3 days` + preCommitExclusion,
+    minimumReleaseAge: 3 days` + defaultExclusions,
 		},
 		{
 			name:  "package and dep names together drop the rule",
 			src:   `{packageRules: [{matchPackageNames: ['a'], matchDepNames: ['b'], enabled: false}]}`,
-			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+			rules: strings.TrimPrefix(defaultExclusions, "\n"),
 			notes: []string{"warn packageRules[0]: matchPackageNames and matchDepNames together cannot be expressed; rule dropped"},
 		},
 		{
@@ -350,7 +419,7 @@ func TestLoadRules(t *testing.T) {
     ignore: true
   - # gomod.enabled: false
     manager: gomod
-    ignore: true`,
+    ignore: true` + otherExclusions,
 		},
 		{
 			name: "enabledManagers excludes every other manager",
@@ -372,8 +441,14 @@ func TestLoadRules(t *testing.T) {
 ` + strings.Join(func() []string {
 				var out []string
 				for _, m := range config.Managers {
+					why := "Renovate has no " + m + " manager"
+					for _, xs := range managerMap {
+						if slices.ContainsFunc(xs, func(x expansion) bool { return x.manager == m }) {
+							why = "enabledManagers"
+						}
+					}
 					if !slices.Contains([]string{"github-actions", "gomod", "docker", "npm", "helm", "custom"}, m) {
-						out = append(out, "  - # enabledManagers\n    manager: "+m+"\n    ignore: true")
+						out = append(out, "  - # "+why+"\n    manager: "+m+"\n    ignore: true")
 					}
 				}
 				return out
@@ -391,7 +466,7 @@ func TestLoadRules(t *testing.T) {
     names: [x]
     ignore: true
   - # vulnerabilityAlerts
-    securityGroup: security` + preCommitExclusion,
+    securityGroup: security` + defaultExclusions,
 			notes: []string{
 				"info vulnerabilityAlerts.labels: no deps equivalent for security updates only; ignored",
 				"info vulnerabilityAlerts.commitMessageSuffix: no deps equivalent for security updates only; ignored",
@@ -403,23 +478,23 @@ func TestLoadRules(t *testing.T) {
 		{
 			name:  "disabled vulnerabilityAlerts have no securityGroup",
 			src:   `{vulnerabilityAlerts: {enabled: false, groupName: 'security'}}`,
-			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+			rules: strings.TrimPrefix(defaultExclusions, "\n"),
 		},
 		{
 			name: "osvVulnerabilityAlerts keeps the securityGroup of disabled vulnerabilityAlerts",
 			src:  `{osvVulnerabilityAlerts: true, vulnerabilityAlerts: {enabled: false, groupName: 'security'}}`,
 			rules: `  - # vulnerabilityAlerts
-    securityGroup: security` + preCommitExclusion,
+    securityGroup: security` + defaultExclusions,
 		},
 		{
 			name:  "a null groupName is no securityGroup",
 			src:   `{vulnerabilityAlerts: {groupName: null}}`,
-			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+			rules: strings.TrimPrefix(defaultExclusions, "\n"),
 		},
 		{
 			name:  "a non-string groupName is ignored",
 			src:   `{vulnerabilityAlerts: {groupName: 1}}`,
-			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
+			rules: strings.TrimPrefix(defaultExclusions, "\n"),
 			notes: []string{"warn vulnerabilityAlerts.groupName: must be a string; ignored"},
 		},
 		{
@@ -427,7 +502,7 @@ func TestLoadRules(t *testing.T) {
 			src:  `{'git-submodules': {enabled: true}}`,
 			rules: `  - # git-submodules
     manager: git-submodules
-    ignore: false` + preCommitExclusion,
+    ignore: false` + defaultExclusions,
 		},
 	}
 	for _, tt := range tests {
@@ -455,7 +530,7 @@ func TestLoadTopLevel(t *testing.T) {
 		ignorePaths: ['foo', '**/bar/**', '!keep', '/^x/'], automergeStrategy: 'merge-commit', automergeType: 'branch',
 		minimumReleaseAge: '7 days', vulnerabilityAlerts: {enabled: false}, schedule: ['before 6am on monday', 'every 2 weeks'],
 		timezone: 'Europe/Berlin', lockFileMaintenance: {enabled: true, automerge: true}, labels: ['deps'],
-		pinDigests: true, rangeStrategy: 'pin', composer: {enabled: true},
+		pinDigests: true, rangeStrategy: 'pin', cocoapods: {enabled: true},
 	}`)
 	if err != nil {
 		t.Fatal(err)
@@ -481,7 +556,7 @@ labels: [deps]
 lockFileMaintenance:
   enabled: true
   schedule: [before 4am on monday]
-rules:` + preCommitExclusion + "\n"
+rules:` + defaultExclusions + "\n"
 	if body != want {
 		t.Errorf("YAML:\n%s\nwant body:\n%s", y, want)
 	}
@@ -495,7 +570,7 @@ rules:` + preCommitExclusion + "\n"
 		"warn automergeType: deps automerges through the PR; dropped",
 		`warn schedule: schedule "every 2 weeks": "every" needs weekday, weekend, a day name or <n> months, got "weeks"; entry dropped`,
 		"info lockFileMaintenance.automerge: no deps equivalent; ignored",
-		"warn composer: not supported; ignored",
+		"warn cocoapods: not supported; ignored",
 	} {
 		if !slices.Contains(notes, n) {
 			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
@@ -795,16 +870,16 @@ func TestIsConfigName(t *testing.T) {
 // Settings only Renovate's built-in presets set are reported as info, the repository's own as
 // warnings.
 func TestLoadBuiltinPresetNotes(t *testing.T) {
-	res, err := load(t, `{extends: [':pinDevDependencies', ':ignoreModulesAndTests'], packageRules: [{matchDepTypes: ['dev'], enabled: false}], composer: {enabled: true}}`)
+	res, err := load(t, `{extends: [':pinDevDependencies', ':ignoreModulesAndTests'], packageRules: [{matchDepTypes: ['dev'], enabled: false}], cocoapods: {enabled: true}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	notes := noteLines(res)
 	for _, n := range []string{
 		"info :pinDevDependencies packageRules[0]: depType dev has no deps equivalent; dropped (from a built-in preset)",
-		"info nuget: not supported; ignored (from a built-in preset)",
+		"info nuget.ignorePaths: not supported; ignored (from a built-in preset)",
 		"warn packageRules[0]: depType dev has no deps equivalent; dropped",
-		"warn composer: not supported; ignored",
+		"warn cocoapods: not supported; ignored",
 	} {
 		if !slices.Contains(notes, n) {
 			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
@@ -824,6 +899,69 @@ func TestLoadDashboardApproval(t *testing.T) {
 	}
 	for _, n := range noteLines(res) {
 		if strings.Contains(n, "dependencyDashboardApproval") {
+			t.Errorf("unexpected note %q", n)
+		}
+	}
+}
+
+// draftPR, prCreation and abandonmentThreshold keep their meaning; prCreation approval and a
+// null abandonmentThreshold (Renovate's default) have no deps setting.
+func TestLoadPRCreation(t *testing.T) {
+	for _, tt := range []struct {
+		src, want string
+		notes     []string
+	}{
+		{
+			src:   `{draftPR: true, prCreation: 'not-pending', abandonmentThreshold: '2 years'}`,
+			want:  "draftPR: true\nprCreation: not-pending\nabandonmentThreshold: 2 years\n",
+			notes: []string{"warn prCreation: deps has no prNotPendingHours fallback: a branch without checks gets its PR only when ticked on the dashboard"},
+		},
+		{
+			src:   `{prCreation: 'approval', abandonmentThreshold: null, prNotPendingHours: 4}`,
+			notes: []string{"warn prCreation: approval is not supported (deps' dashboardApproval also holds back the branch); dropped", "info prNotPendingHours: no deps equivalent; ignored"},
+		},
+	} {
+		res, err := load(t, tt.src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, body, _ := strings.Cut(string(res.YAML), "\nignorePaths: ['**/node_modules/**', '**/bower_components/**']\n")
+		body, _, _ = strings.Cut(body, "rules:\n")
+		if body != tt.want {
+			t.Errorf("%s: top level after ignorePaths:\n%s\nwant:\n%s", tt.src, body, tt.want)
+		}
+		if notes := noteLines(res); !slices.Equal(notes[2:], tt.notes) {
+			t.Errorf("%s: notes = %q, want %q", tt.src, notes[2:], tt.notes)
+		}
+	}
+}
+
+// abandonments:recommended (in config:best-practices) becomes abandonmentThreshold rules.
+func TestLoadAbandonments(t *testing.T) {
+	res, err := load(t, `{extends: ['abandonments:recommended']}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `  - # abandonments:recommended packageRules[0]
+    names: ['**']
+    abandonmentThreshold: 1 year
+  - # abandonments:recommended packageRules[1]
+    names: ['@types/*']
+    datasources: [npm]
+    abandonmentThreshold: "0"
+  - # abandonments:recommended packageRules[2]
+    names: [eslint-plugin-no-only-tests]
+    datasources: [npm]
+    abandonmentThreshold: 5 years
+  - # abandonments:recommended packageRules[3]
+    names: [lodash]
+    datasources: [npm]
+    abandonmentThreshold: 6 years` + defaultExclusions
+	if got := section(t, res, "rules"); got != want {
+		t.Errorf("rules:\n%s\nwant:\n%s", got, want)
+	}
+	for _, n := range noteLines(res) {
+		if strings.Contains(n, "abandonments") {
 			t.Errorf("unexpected note %q", n)
 		}
 	}

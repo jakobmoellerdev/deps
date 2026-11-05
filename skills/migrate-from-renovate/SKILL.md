@@ -23,7 +23,7 @@ deps migrate -v --output /tmp/deps.yaml            # -v also prints info notes
 # or: deps migrate --config .github/renovate.json5 --output -
 ```
 
-It finds the config like Renovate (`renovate.json(c|5)`, the same under `.github/`, `.gitlab/`, `.gitea/`, `.forgejo/`, `.renovaterc*`, `package.json`'s `renovate` key), resolves `extends` (built-in presets; `github>`, `gitea>`, `forgejo>`, `local>` fetched) and prints:
+It finds the config like Renovate (`renovate.json(c|5)`, the same under `.github/`, `.gitlab/`, `.gitea/`, `.forgejo/`, `.renovaterc*`, `package.json`'s `renovate` key), resolves `extends` (built-in presets; `github>`, `gitlab>`, `gitea>`, `forgejo>`, `local>` fetched) and prints:
 
 - `warn    <setting>: <msg>`: deps cannot express it, or translated it approximately. **Every warning needs a decision** (step 2).
 - `info    <setting>: <msg>`: no effect on which updates or PRs exist (labels on presets, PR texts, `groupSlug`, built-in preset settings). Skim; no action unless the user relies on it.

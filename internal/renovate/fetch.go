@@ -15,10 +15,13 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
-// maxPresetSize bounds a preset file fetched from Gitea or Forgejo.
+// maxPresetSize bounds a preset file fetched from Gitea, Forgejo or GitLab.
 const maxPresetSize = 1 << 20
 
-// Fetcher fetches remote presets (github>, gitea>, forgejo>, local>).
+// gitLabCom is the forge of gitlab> presets, as in Renovate.
+var gitLabCom = platform.Info{Kind: platform.GitLab, Host: "gitlab.com", ServerURL: "https://gitlab.com", APIURL: "https://gitlab.com/api/v4"}
+
+// Fetcher fetches remote presets (github>, gitlab>, gitea>, forgejo>, local>).
 type Fetcher struct {
 	Platform func(ctx context.Context) (platform.Info, error) // the repository's forge; called at most once
 	GitHub   *githubapi.Client
@@ -112,6 +115,8 @@ func (f *Fetcher) read(ctx context.Context, ref presetRef, file, label string) (
 			return nil, configErr("%s: gitea>/forgejo> presets need a Gitea or Forgejo repository", label)
 		}
 		return f.gitea(ctx, info, ref, file, label)
+	case "gitlab":
+		return f.gitlab(ctx, gitLabCom, ref, file, label)
 	}
 	info, err := f.platform(ctx)
 	if err == nil && info.Kind == "" {
@@ -120,8 +125,11 @@ func (f *Fetcher) read(ctx context.Context, ref presetRef, file, label string) (
 	if err != nil {
 		return nil, configErr("%s: cannot detect the repository's forge for local> presets: %v", label, err)
 	}
-	if info.Kind == platform.GitHub {
+	switch info.Kind {
+	case platform.GitHub:
 		return f.github(ctx, info, ref, file, label)
+	case platform.GitLab:
+		return f.gitlab(ctx, info, ref, file, label)
 	}
 	return f.gitea(ctx, info, ref, file, label)
 }
@@ -152,17 +160,34 @@ func (f *Fetcher) gitea(ctx context.Context, info platform.Info, ref presetRef, 
 	if ref.tag != "" {
 		u += "?ref=" + url.QueryEscape(ref.tag)
 	}
+	return f.get(ctx, info.Host, u, "token ", file, label)
+}
+
+// gitlab reads file through the GitLab repository files API, at ref.tag, else HEAD (the
+// default branch).
+func (f *Fetcher) gitlab(ctx context.Context, info platform.Info, ref presetRef, file, label string) ([]byte, error) {
+	tag := ref.tag
+	if tag == "" {
+		tag = "HEAD"
+	}
+	u := info.APIURL + "/projects/" + url.PathEscape(ref.repo) + "/repository/files/" + url.PathEscape(file) + "/raw?ref=" + url.QueryEscape(tag)
+	return f.get(ctx, info.Host, u, "Bearer ", file, label)
+}
+
+// get reads the raw preset file at u, sending the token of host after scheme in the
+// Authorization header; a 404 is errPresetNotFound.
+func (f *Fetcher) get(ctx context.Context, host, u, scheme, file, label string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", label, err)
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
-	_, pass, ok := f.Auth.Static(info.Host)
+	_, pass, ok := f.Auth.Static(host)
 	if !ok {
-		_, pass, ok = f.Auth.Helper(ctx, info.Host)
+		_, pass, ok = f.Auth.Helper(ctx, host)
 	}
 	if ok {
-		req.Header.Set("Authorization", "token "+pass)
+		req.Header.Set("Authorization", scheme+pass)
 	}
 	client := f.Client
 	if client == nil {

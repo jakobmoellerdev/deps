@@ -252,7 +252,7 @@ var managerMap = func() map[string][]expansion {
 		"regex":            {{"custom", nil}},
 		"custom.regex":     {{"custom", nil}},
 	}
-	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 poetry pipenv terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer") {
+	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 poetry pipenv terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker droneci circleci azure-pipelines composer julia bazel-module bazelisk nuget") {
 		m[n] = []expansion{{n, nil}}
 	}
 	return m
@@ -268,7 +268,7 @@ var depTypeUniverse = map[string][]string{
 // categories maps Renovate manager categories (lib/modules/manager/*/index.ts) to the
 // mapped Renovate managers.
 var categories = map[string][]string{
-	"ci":         {"github-actions", "gitlabci", "gitlabci-include"},
+	"ci":         {"github-actions", "gitlabci", "gitlabci-include", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines"},
 	"golang":     {"gomod"},
 	"docker":     {"dockerfile", "docker-compose", "devcontainer"},
 	"kubernetes": {"kubernetes", "helm-values", "helmv3", "helmfile", "flux", "argocd", "kustomize"},
@@ -283,15 +283,23 @@ var categories = map[string][]string{
 	"java":       {"maven", "gradle", "gradle-wrapper", "maven-wrapper"},
 	"ruby":       {"bundler", "ruby-version"},
 	"swift":      {"swift"},
+	"php":        {"composer"},
+	"julia":      {"julia"},
+	"bazel":      {"bazel-module", "bazelisk"},
+	"dotnet":     {"nuget"},
 }
+
+// datasourceMap maps the Renovate datasources whose deps datasource has another name that
+// config.DatasourceAliases does not cover.
+var datasourceMap = map[string]string{"julia-general-metadata": "julia-registry"}
 
 // infoKeys have no effect on which updates or PRs exist.
 var infoKeys = func() map[string]bool {
 	m := map[string]bool{}
 	for k := range strings.FieldsSeq(`assigneesFromCodeOwners assignAutomerge
 		reviewersFromCodeOwners additionalReviewers automergeComment keepUpdatedLabel milestone
-		commitBody commitBodyTable commitTrailers prTitle prTitleStrict prCreation prPriority
-		prNotPendingHours draftPR configMigration onboarding onboardingConfig onboardingConfigFileName requireConfig
+		commitBody commitBodyTable commitTrailers prTitle prTitleStrict prPriority
+		prNotPendingHours configMigration onboarding onboardingConfig onboardingConfigFileName requireConfig
 		printConfig dependencyDashboardHeader dependencyDashboardFooter dependencyDashboardAutoclose
 		dependencyDashboardOSVVulnerabilitySummary dependencyDashboardCategory customizeDashboard userStrings
 		branchConcurrentLimit commitHourlyLimit branchNameStrict branchTopic hashedBranchLength additionalBranchPrefix
@@ -593,6 +601,17 @@ func (t *translator) translate(cfg map[string]any) omap {
 	}
 	if v, ok := get("dependencyDashboardApproval"); ok {
 		emit("dashboardApproval", v)
+	}
+	if v, ok := get("draftPR"); ok {
+		emit("draftPR", v)
+	}
+	if v, ok := get("prCreation"); ok {
+		if s, ok := t.prCreation("prCreation", v); ok {
+			emit("prCreation", s)
+		}
+	}
+	if v, ok := get("abandonmentThreshold"); ok && v != nil {
+		emit("abandonmentThreshold", v) // null: Renovate's default, no abandonment check
 	}
 	if v, ok := get("lockFileMaintenance"); ok {
 		if l, ok := t.lockFileMaintenance(v); ok {
@@ -959,7 +978,7 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 			}
 			switch k {
 			case "datasourceTemplate":
-				datasource = s
+				datasource = depsDatasource(s)
 			case "versioningTemplate":
 				versioning = s
 			case "packageNameTemplate":
@@ -1007,4 +1026,20 @@ func (t *translator) ruleContext(frag omap) omap {
 		return append(omap{{"dependencyDashboard", true}}, frag...)
 	}
 	return frag
+}
+
+// prCreation translates a prCreation value; approval has no deps equivalent.
+func (t *translator) prCreation(path string, v any) (string, bool) {
+	switch s, _ := v.(string); s {
+	case config.PRCreationImmediate, config.PRCreationStatusSuccess:
+		return s, true
+	case config.PRCreationNotPending:
+		t.n.warn(path, "deps has no prNotPendingHours fallback: a branch without checks gets its PR only when ticked on the dashboard")
+		return s, true
+	case "approval":
+		t.n.warn(path, "approval is not supported (deps' dashboardApproval also holds back the branch); dropped")
+		return "", false
+	}
+	t.n.warn(path, "unsupported value %v; dropped", v)
+	return "", false
 }

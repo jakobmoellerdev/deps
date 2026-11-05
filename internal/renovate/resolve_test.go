@@ -39,7 +39,7 @@ func TestParsePreset(t *testing.T) {
 		{in: "local>o/r:sub", want: presetRef{source: "local", repo: "o/r", name: "sub"}},
 		{in: "o/r", want: presetRef{source: "local", repo: "o/r", name: "default"}},
 		{in: "o/r(x)", want: presetRef{source: "local", repo: "o/r", name: "default", params: []string{"x"}}},
-		{in: "gitlab>o/r", err: "unsupported preset source, skipped"},
+		{in: "gitlab>group/sub/r:p#v1", want: presetRef{source: "gitlab", repo: "group/sub/r", name: "p", tag: "v1"}},
 		{in: "npm>x", err: "unsupported preset source, skipped"},
 		{in: "@scope/x", err: "unsupported preset source, skipped"},
 		{in: "renovate-config-x", err: "unsupported preset source, skipped"},
@@ -113,7 +113,7 @@ func TestResolve(t *testing.T) {
 		"default:testA":      `{extends: [':testB'], packageRules: [{matchPackageNames: ['a'], groupName: '{{arg0}}'}], schedule: ['before 1am']}`,
 		"default:testB":      `{extends: [':testA'], packageRules: [{matchPackageNames: ['b']}], prHourlyLimit: 4}`,
 		"default:testWeekly": `{schedule: ['on monday']}`,
-	}, `{extends: [':testA(grp)', 'group:monorepos', 'gitlab>x/y'], schedule: ['on sunday'],
+	}, `{extends: [':testA(grp)', 'group:monorepos', 'npm>x'], schedule: ['on sunday'],
 		packageRules: [{matchPackageNames: ['c'], extends: [':testWeekly']}], lockFileMaintenance: {extends: [':testWeekly']}}`)
 	rules := got["packageRules"].([]any)
 	var origins []string
@@ -141,7 +141,7 @@ func TestResolve(t *testing.T) {
 	want := []string{
 		"warn :testA: preset cycle, skipped",
 		"info group:monorepos: deps' built-in monorepo groups (monorepos: true)",
-		"warn gitlab>x/y: unsupported preset source, skipped",
+		"warn npm>x: unsupported preset source, skipped",
 	}
 	var gotNotes []string
 	for _, note := range n.list {
@@ -246,5 +246,51 @@ func TestFetcher(t *testing.T) {
 	_, err = Load(t.Context(), dir, "", f)
 	if err == nil || err.Error() != `extends[0] "local>org/presets": cannot detect the repository's forge for local> presets: no origin` {
 		t.Errorf("no forge: %v", err)
+	}
+}
+
+// local> presets of a GitLab repository and gitlab> presets are read through the GitLab
+// repository files API, at HEAD unless a tag is given.
+func TestFetcherGitLab(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a := r.Header.Get("Authorization"); a != "Bearer gltok" {
+			t.Errorf("Authorization = %q", a)
+		}
+		got = append(got, r.URL.EscapedPath()+"?"+r.URL.RawQuery)
+		switch r.URL.EscapedPath() {
+		case "/api/v4/projects/group%2Fsub%2Fpresets/repository/files/default.json/raw":
+			_, _ = io.WriteString(w, `{extends: ['gitlab>org/shared//ci/base#v1']}`)
+		case "/api/v4/projects/org%2Fshared/repository/files/ci%2Fbase.json/raw":
+			_, _ = io.WriteString(w, `{prHourlyLimit: 5}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	gl := platform.Info{Kind: platform.GitLab, ServerURL: srv.URL, APIURL: srv.URL + "/api/v4", Host: "127.0.0.1", Repo: "group/sub/app"}
+	old := gitLabCom
+	gitLabCom = gl // gitlab> presets are on gitlab.com
+	t.Cleanup(func() { gitLabCom = old })
+	auth := httpx.NewAuth(platform.Info{Host: "127.0.0.1"}, "gltok", func(string) string { return "" },
+		httpx.WithHelper(func(context.Context, string) (string, string, bool) { return "", "", false }))
+	f := &Fetcher{Platform: func(context.Context) (platform.Info, error) { return gl, nil }, Client: srv.Client(), Auth: auth}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "renovate.json"), []byte(`{extends: ['local>group/sub/presets']}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Load(t.Context(), dir, "", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y := string(res.YAML); !strings.Contains(y, "\nprHourlyLimit: 5\n") {
+		t.Errorf("YAML:\n%s", y)
+	}
+	want := []string{
+		"/api/v4/projects/group%2Fsub%2Fpresets/repository/files/default.json/raw?ref=HEAD",
+		"/api/v4/projects/org%2Fshared/repository/files/ci%2Fbase.json/raw?ref=v1",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("requests = %q, want %q", got, want)
 	}
 }
