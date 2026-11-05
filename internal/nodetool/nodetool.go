@@ -20,6 +20,7 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // Lockfiles Locker regenerates. npm-shrinkwrap.json is not handled: npm 12 no longer reads or
@@ -129,14 +130,8 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 	}
 	defer os.RemoveAll(parent)
 	tmp := filepath.Join(parent, filepath.Base(dir))
-	for p, b := range write {
-		abs := filepath.Join(tmp, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(abs, b, 0o644); err != nil {
-			return nil, err
-		}
+	if err := toolrun.WriteFiles(tmp, write); err != nil {
+		return nil, err
 	}
 
 	c := command(lockName, berry)
@@ -145,7 +140,7 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 		version = pmVersion
 	}
 	runs := lockCommands(locks)
-	if len(locks) == 0 || manifestsChanged(dir, manifests) {
+	if len(locks) == 0 || toolrun.Changed(dir, manifests) {
 		runs = slices.Insert(runs, 0, nil) // the plain install first
 	}
 	for _, extra := range runs {
@@ -171,16 +166,6 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 		return nil, nil
 	}
 	return map[string][]byte{lockName: out}, nil
-}
-
-// manifestsChanged reports whether any patched manifest differs from its file in dir.
-func manifestsChanged(dir string, manifests map[string][]byte) bool {
-	for p, b := range manifests {
-		if old, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))); err != nil || !bytes.Equal(old, b) {
-			return true
-		}
-	}
-	return false
 }
 
 // pickLock returns the lockfile of tool when present, else the first present lockfile.

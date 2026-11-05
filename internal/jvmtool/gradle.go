@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // Gradle files GradleLocker reads and regenerates.
@@ -265,7 +266,7 @@ func (GradleLocker) ProcessLocked(ctx context.Context, dir string, manifests, fi
 		return nil, fmt.Errorf("gradle not found (needed to update %s)", target)
 	}
 	keyring := files[KeysKeyring] != nil || files[GPGKeyring] != nil
-	argv := gradleArgs(tool, lockfiles, files[VerificationMetadata], keyring, manifestsChanged(dir, manifests), locks)
+	argv := gradleArgs(tool, lockfiles, files[VerificationMetadata], keyring, toolrun.Changed(dir, manifests), locks)
 	if err := run(ctx, tmp, argv); err != nil {
 		return nil, fmt.Errorf("gradle in %s: %w", dir, err)
 	}

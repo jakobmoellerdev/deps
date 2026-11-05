@@ -16,6 +16,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // waitDelay bounds the wait for a killed tool's children (Gradle daemons, forked JVMs) to
@@ -92,7 +94,7 @@ func copyBuild(dir string, overlay map[string][]byte, skip func(path string, d f
 		return nil // sockets, devices
 	})
 	if err == nil {
-		err = writeOverlay(tmp, overlay)
+		err = toolrun.WriteFiles(tmp, overlay)
 	}
 	if err != nil {
 		os.RemoveAll(parent)
@@ -122,35 +124,10 @@ func copyFile(src, dst string) error {
 	return out.Close()
 }
 
-// writeOverlay writes files (slash paths relative to tmp) into tmp, keeping the mode of a
-// file it replaces.
-func writeOverlay(tmp string, files map[string][]byte) error {
-	for rel, b := range files {
-		p := filepath.Join(tmp, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(p, b, 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // hasAny reports whether dir contains one of names.
 func hasAny(dir string, names ...string) bool {
 	for _, n := range names {
 		if _, err := os.Lstat(filepath.Join(dir, n)); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-// manifestsChanged reports whether any patched manifest differs from its file in dir.
-func manifestsChanged(dir string, manifests map[string][]byte) bool {
-	for p, b := range manifests {
-		if old, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))); err != nil || !bytes.Equal(old, b) {
 			return true
 		}
 	}

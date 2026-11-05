@@ -24,6 +24,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // Manifests and lockfiles.
@@ -149,7 +150,7 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 		}
 	}
 	runs := lockOnlyCmds(lockName, files[lockName], pipfile, c, locks)
-	if len(locks) == 0 || manifestsChanged(dir, manifests) {
+	if len(locks) == 0 || toolrun.Changed(dir, manifests) {
 		runs = slices.Insert(runs, 0, c)
 	}
 	write, err := topLevel(dir)
@@ -168,14 +169,8 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	for p, b := range write {
-		abs := filepath.Join(tmp, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(abs, b, 0o644); err != nil {
-			return nil, err
-		}
+	if err := toolrun.WriteFiles(tmp, write); err != nil {
+		return nil, err
 	}
 	for _, c := range runs {
 		if err := c.run(ctx, tmp); err != nil {
@@ -193,16 +188,6 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 		return nil, nil
 	}
 	return map[string][]byte{lockName: out}, nil
-}
-
-// manifestsChanged reports whether a manifest differs from its file in dir.
-func manifestsChanged(dir string, manifests map[string][]byte) bool {
-	for p, b := range manifests {
-		if old, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))); err != nil || !bytes.Equal(old, b) {
-			return true
-		}
-	}
-	return false
 }
 
 // lockOnlyCmds returns the commands that move the lockfile-only updates in lockName (whose

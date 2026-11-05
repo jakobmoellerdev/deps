@@ -18,6 +18,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // Hasher looks up the sha256 digests (lowercase hex) of the files of a release of d
@@ -330,14 +331,8 @@ func (c compileCmd) regenerate(ctx context.Context, dir, name string, patched []
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	for p, b := range files {
-		abs := filepath.Join(tmp, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(abs, b, 0o644); err != nil {
-			return nil, err
-		}
+	if err := toolrun.WriteFiles(tmp, files); err != nil {
+		return nil, err
 	}
 	spec := c.spec(out, changed)
 	if err := spec.run(ctx, tmp); err != nil {
