@@ -232,13 +232,8 @@ func matchAny(globs []string, name string) bool {
 	return false
 }
 
-// Accepts reports whether an update of kind to version v is allowed; see Check.
-func (p Policy) Accepts(kind dep.UpdateType, v string, semverOf func(string) *semver.Version) bool {
-	ok, _ := p.Check(kind, v, semverOf)
-	return ok
-}
-
-// Check is Accepts with the reason for a rejection: "update type <kind> not allowed"
+// Check reports whether an update of kind to version v is allowed, with the reason for
+// a rejection: "update type <kind> not allowed"
 // or "outside allow <allow>". semverOf converts v for a constraint allow and is only called
 // then (Allowed.Check).
 func (p Policy) Check(kind dep.UpdateType, v string, semverOf func(string) *semver.Version) (bool, string) {

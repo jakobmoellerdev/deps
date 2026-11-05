@@ -222,15 +222,28 @@ rules:
 	if co.Pin != "digest" || co.Allow == nil || !co.Updates[dep.Minor] || co.Updates[dep.Patch] || co.Ignore {
 		t.Errorf("checkout: %+v", co)
 	}
-	if !co.Accepts(dep.Major, "6.1.0", sv) || co.Accepts(dep.Major, "7.0.0", sv) || co.Accepts(dep.Major, "main", sv) || co.Accepts(dep.Major, "6.1.0", nil) || co.Accepts(dep.Patch, "6.0.1", sv) {
-		t.Error("checkout Accepts")
+	for _, tc := range []struct {
+		kind     dep.UpdateType
+		v        string
+		semverOf func(string) *semver.Version
+		want     bool
+	}{
+		{dep.Major, "6.1.0", sv, true},
+		{dep.Major, "7.0.0", sv, false},
+		{dep.Major, "main", sv, false},
+		{dep.Major, "6.1.0", nil, false},
+		{dep.Patch, "6.0.1", sv, false},
+	} {
+		if ok, _ := co.Check(tc.kind, tc.v, tc.semverOf); ok != tc.want {
+			t.Errorf("checkout Check(%s, %q) = %v, want %v", tc.kind, tc.v, ok, tc.want)
+		}
 	}
 	ca := c.Policy(dep.Dep{Manager: "github-actions", Name: "actions/cache"})
 	if ca.Pin != "keep" || ca.Updates[dep.Minor] || !ca.Updates[dep.Patch] || ca.Allow == nil {
 		t.Errorf("cache: %+v", ca)
 	}
 	other := c.Policy(dep.Dep{Manager: "github-actions", Name: "foo/bar"})
-	if other.Pin != "digest" || len(other.Updates) != 5 || other.Allow != nil || !other.Accepts(dep.Pin, "", nil) {
+	if ok, _ := other.Check(dep.Pin, "", nil); other.Pin != "digest" || len(other.Updates) != 5 || other.Allow != nil || !ok {
 		t.Errorf("other: %+v", other)
 	}
 	if !c.Policy(dep.Dep{Manager: "gomod", Name: "x"}).Ignore {
@@ -798,7 +811,9 @@ func TestPolicyFor(t *testing.T) {
 		})
 	}
 	ca := c.PolicyFor(cache, dep.Minor)
-	if ca.CommitType != "ci" || ca.Allow == nil || ca.Schedule == nil || !ca.Accepts(dep.Minor, "4.1.0", sv) || ca.Accepts(dep.Minor, "5.0.0", sv) {
+	okIn, _ := ca.Check(dep.Minor, "4.1.0", sv)
+	okOut, _ := ca.Check(dep.Minor, "5.0.0", sv)
+	if ca.CommitType != "ci" || ca.Allow == nil || ca.Schedule == nil || !okIn || okOut {
 		t.Errorf("cache minor: %+v", ca)
 	}
 }
