@@ -14,6 +14,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
@@ -25,6 +26,7 @@ import (
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
+	nugetds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nuget"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/orb"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/packagist"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
@@ -169,7 +171,7 @@ func TestManagerDocsComplete(t *testing.T) {
 }
 
 func TestDatasourceDocsComplete(t *testing.T) {
-	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, customds.Doc}
+	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, customds.Doc}
 	var names []string
 	for _, d := range docs {
 		if d.Name == "" || d.NameForm == "" || d.Endpoints == "" || d.Auth == "" || d.ReleaseTimes == "" {

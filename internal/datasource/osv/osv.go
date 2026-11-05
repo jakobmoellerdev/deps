@@ -49,6 +49,12 @@
 //     (dep.Dep.Locked), else the constraint's anchor, without a "v" prefix; OSV matches
 //     server-side, affected entries by case-insensitive name. Fixed versions are returned as
 //     published ("6.4.2").
+//   - nuget-datasource deps (the nuget manager's packages, MSBuild SDKs and tools, custom
+//     entries) are queried as ecosystem "NuGet" with the package id as written and the
+//     version (a bare or exact version; an interval's floor; floating versions are not
+//     queried); OSV matches server-side.
+//     Affected entries are matched by id case-insensitively, as NuGet ids are. Fixed versions
+//     are returned as published.
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -92,6 +98,7 @@ const (
 	ecoMaven   = "Maven"
 	ecoRuby    = "RubyGems"
 	ecoPHP     = "Packagist"
+	ecoNuGet   = "NuGet"
 )
 
 // Source queries OSV. Advisory documents are fetched once per ID per run.
@@ -234,6 +241,12 @@ func targetOf(d dep.Dep) *target {
 			return nil
 		}
 		return newTarget(query{Package: pkg{Name: strings.ToLower(d.Name), Ecosystem: ecoPHP}, Version: v})
+	}
+	if d.Datasource == "nuget" {
+		if d.Name == "" || d.Version == "" || strings.Contains(d.Range, "*") {
+			return nil
+		}
+		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoNuGet}, Version: d.Version})
 	}
 	switch d.Manager {
 	case "gomod":
@@ -568,7 +581,7 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			if len(t.tag.Parts) > 0 {
 				fixed = t.actionsFixed(entries) // partial requirement: at its precision
 			}
-		case ecoMaven, ecoRuby, ecoPHP:
+		case ecoMaven, ecoRuby, ecoPHP, ecoNuGet:
 			fixed = mavenFixed(entries)
 		case ecoGo:
 			if len(t.tag.Parts) > 0 {
@@ -594,7 +607,8 @@ func (v *vuln) entries(p pkg) []affected {
 		switch {
 		case a.Package.Ecosystem != p.Ecosystem:
 		case a.Package.Name == p.Name, p.Ecosystem == ecoPyPI && pyreq.Normalize(a.Package.Name) == p.Name,
-			p.Ecosystem == ecoPHP && strings.EqualFold(a.Package.Name, p.Name):
+			p.Ecosystem == ecoPHP && strings.EqualFold(a.Package.Name, p.Name),
+			p.Ecosystem == ecoNuGet && strings.EqualFold(a.Package.Name, p.Name):
 			exact = append(exact, a)
 		case p.Ecosystem == ecoGo && strings.HasPrefix(a.Package.Name, p.Name+"/"):
 			sub = append(sub, a)

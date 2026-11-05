@@ -1,0 +1,88 @@
+{
+  "channel-version": "8.0",
+  "latest-release": "8.0.33",
+  "latest-release-date": "2026-10-25",
+  "latest-release-security": true,
+  "latest-runtime": "8.0.33",
+  "latest-sdk": "8.0.427",
+  "support-phase": "maintenance",
+  "release-type": "lts",
+  "eol-date": "2026-11-10",
+  "lifecycle-policy": "https://aka.ms/dotnetcoresupport",
+  "releases": [
+    {
+      "release-date": "2026-10-25",
+      "release-version": "8.0.33",
+      "security": true,
+      "runtime": {
+        "version": "8.0.33"
+      },
+      "sdk": {
+        "version": "8.0.427"
+      },
+      "sdks": [
+        {
+          "version": "8.0.427"
+        },
+        {
+          "version": "8.0.133"
+        }
+      ]
+    },
+    {
+      "release-date": "2026-10-13",
+      "release-version": "8.0.32",
+      "security": true,
+      "runtime": {
+        "version": "8.0.32"
+      },
+      "sdk": {
+        "version": "8.0.426"
+      },
+      "sdks": [
+        {
+          "version": "8.0.426"
+        },
+        {
+          "version": "8.0.132"
+        }
+      ]
+    },
+    {
+      "release-date": "2023-03-14",
+      "release-version": "8.0.0-preview.2",
+      "security": false,
+      "runtime": {
+        "version": "8.0.0-preview.2.23128.3"
+      },
+      "sdk": {
+        "version": "8.0.100-preview.2.23157.25"
+      },
+      "sdks": [
+        {
+          "version": "8.0.100-preview.2.23157.25"
+        }
+      ]
+    },
+    {
+      "release-date": "2023-02-21",
+      "release-version": "8.0.0-preview.1",
+      "security": false,
+      "runtime": {
+        "version": "8.0.0-preview.1.23110.8"
+      },
+      "sdk": {
+        "version": "8.0.100-preview.1.23115.2"
+      },
+      "sdks": [
+        {
+          "version": "8.0.100-preview.1.23115.2"
+        }
+      ]
+    }
+  ],
+  "signature": {
+    "expiration": "2027-01-23T19:29:48.3503965+00:00",
+    "file": "releases.json.20261025192948.p7s"
+  }
+}

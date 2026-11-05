@@ -1,0 +1,117 @@
+{
+ "@id": "https://api.nuget.org/v3/registration5-gz-semver2/newtonsoft.json/index.json",
+ "@type": [
+  "catalog:CatalogRoot",
+  "PackageRegistration",
+  "catalog:Permalink"
+ ],
+ "commitId": "bb8efd07-6f92-4ccf-b982-ca229cca2e96",
+ "commitTimeStamp": "2026-09-21T10:20:03.1010053+00:00",
+ "count": 2,
+ "items": [
+  {
+   "@id": "https://api.nuget.org/v3/registration5-gz-semver2/newtonsoft.json/index.json#page/3.5.8/12.0.1-beta2",
+   "@type": "catalog:CatalogPage",
+   "commitId": "bb8efd07-6f92-4ccf-b982-ca229cca2e96",
+   "commitTimeStamp": "2026-09-21T10:20:03.1010053+00:00",
+   "count": 1,
+   "items": [
+    {
+     "@id": "https://api.nuget.org/v3/registration5-gz-semver2/newtonsoft.json/11.0.2.json",
+     "@type": "Package",
+     "commitId": "29803214-bbd1-4347-bdbf-bc4906742ca2",
+     "commitTimeStamp": "2022-12-08T16:44:02.0217374+00:00",
+     "catalogEntry": {
+      "@id": "https://api.nuget.org/v3/catalog0/data/2022.12.08.16.43.03/newtonsoft.json.11.0.2.json",
+      "@type": "PackageDetails",
+      "authors": "James Newton-King",
+      "description": "Json.NET is a popular high-performance JSON framework for .NET",
+      "iconUrl": "https://api.nuget.org/v3-flatcontainer/newtonsoft.json/11.0.2/icon",
+      "id": "Newtonsoft.Json",
+      "language": "",
+      "licenseExpression": "",
+      "licenseUrl": "https://raw.github.com/JamesNK/Newtonsoft.Json/master/LICENSE.md",
+      "listed": true,
+      "minClientVersion": "2.12",
+      "packageContent": "https://api.nuget.org/v3-flatcontainer/newtonsoft.json/11.0.2/newtonsoft.json.11.0.2.nupkg",
+      "projectUrl": "https://www.newtonsoft.com/json",
+      "published": "2018-03-24T20:18:14.76+00:00",
+      "requireLicenseAcceptance": false,
+      "summary": "",
+      "tags": [
+       "json"
+      ],
+      "title": "Json.NET",
+      "version": "11.0.2"
+     },
+     "packageContent": "https://api.nuget.org/v3-flatcontainer/newtonsoft.json/11.0.2/newtonsoft.json.11.0.2.nupkg",
+     "registration": "https://api.nuget.org/v3/registration5-gz-semver2/newtonsoft.json/index.json"
+    }
+   ],
+   "parent": "https://api.nuget.org/v3/registration5-gz-semver2/newtonsoft.json/index.json",
+   "lower": "3.5.8",
+   "upper": "12.0.1-beta2"
+  },
+  {
+   "@id": "https://api.nuget.org/v3/registration5-gz-semver2/newtonsoft.json/page/12.0.1/14.0.1-beta2.json",
+   "@type": "catalog:CatalogPage",
+   "commitId": "bb8efd07-6f92-4ccf-b982-ca229cca2e96",
+   "commitTimeStamp": "2026-09-21T10:20:03.1010053+00:00",
+   "count": 8,
+   "parent": "https://api.nuget.org/v3/registration5-gz-semver2/newtonsoft.json/index.json",
+   "lower": "12.0.1",
+   "upper": "14.0.1-beta2"
+  }
+ ],
+ "@context": {
+  "@vocab": "http://schema.nuget.org/schema#",
+  "catalog": "http://schema.nuget.org/catalog#",
+  "xsd": "http://www.w3.org/2001/XMLSchema#",
+  "items": {
+   "@id": "catalog:item",
+   "@container": "@set"
+  },
+  "commitTimeStamp": {
+   "@id": "catalog:commitTimeStamp",
+   "@type": "xsd:dateTime"
+  },
+  "commitId": {
+   "@id": "catalog:commitId"
+  },
+  "count": {
+   "@id": "catalog:count"
+  },
+  "parent": {
+   "@id": "catalog:parent",
+   "@type": "@id"
+  },
+  "tags": {
+   "@id": "tag",
+   "@container": "@set"
+  },
+  "reasons": {
+   "@container": "@set"
+  },
+  "packageTargetFrameworks": {
+   "@id": "packageTargetFramework",
+   "@container": "@set"
+  },
+  "dependencyGroups": {
+   "@id": "dependencyGroup",
+   "@container": "@set"
+  },
+  "dependencies": {
+   "@id": "dependency",
+   "@container": "@set"
+  },
+  "packageContent": {
+   "@type": "@id"
+  },
+  "published": {
+   "@type": "xsd:dateTime"
+  },
+  "registration": {
+   "@type": "@id"
+  }
+ }
+}

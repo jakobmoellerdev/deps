@@ -54,6 +54,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`julia`](#julia)
 - [`bazel-module`](#bazel-module)
 - [`bazelisk`](#bazelisk)
+- [`nuget`](#nuget)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -2320,6 +2321,58 @@ Updates the Bazel version Bazelisk reads from `.bazelversion` (its first line), 
 | `bazel fork` | `<fork>/<version>` (a Bazel fork Bazelisk downloads from another GitHub repository) |
 | `non-release version` | `latest`, `latest-<n>`, `last_green`, `last_rc`, `7.x`, `*`: Bazelisk resolves them itself |
 
+## nuget
+
+Updates NuGet package references, MSBuild project SDKs and .NET tools in MSBuild files, central package management (`Directory.Packages.props`), `global.json` (also the .NET SDK) and `dotnet-tools.json`. MSBuild files are scanned with encoding/xml at byte offsets and only the version is rewritten, so attribute order, quotes, comments, whitespace and a UTF-8 byte order mark are kept. NuGet is not run; `packages.lock.json` files are not updated.
+
+**Files:**
+
+- `*.csproj`, `*.fsproj`, `*.vbproj` and MSBuild imports `*.props`, `*.targets` (`Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, any other; not the `*.nuget.g.props`/`*.nuget.g.targets` restore generates). A file whose root element is not `<Project>` yields no deps
+- `global.json` (comments allowed, as the .NET SDK reads it)
+- `dotnet-tools.json` (the local tool manifest, usually `.config/dotnet-tools.json`)
+- `nuget.config` (any case: `NuGet.Config`, `NuGet.config`): package sources only, no deps
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `nuget` | `PackageReference`, `PackageVersion` (central package management), `GlobalPackageReference`, `PackageDownload` and `DotNetCliToolReference` items in an `<ItemGroup>` (conditions included) with `Include` or `Update` and a `Version` (or `VersionOverride`, which wins) attribute or child element; dotnet-tools.json `tools.<id>.version` | `nuget` (nuget.org, or the nuget.config package sources) | `nuget` | updated |
+| `msbuild-sdk` | `<Project Sdk="Microsoft.Build.NoTargets/3.7.134">` (each `;`-separated `Name/Version`), `<Sdk Name="…" Version="…" />`, `<Import Project="…" Sdk="…" Version="…" />`, global.json `msbuild-sdks` entries; SDKs without a version ship with the .NET SDK and are not deps | `nuget` (nuget.org, or the nuget.config package sources) | `nuget` | updated |
+| `dotnet-sdk` | global.json `sdk.version` (name `dotnet-sdk`); `rollForward` is kept | `dotnet-version` | `nuget` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `no version` | an empty version (`Version=""`) |
+| `invalid version "<v>"` | a version outside NuGet's version and range grammar (`latest`, `1.0-*-*`, a floating bound inside an interval) |
+| `floating version <v>` | `*` or `*-*`: every version is admitted, so there is nothing to update |
+| `non-literal version <v>` | a version that combines properties or text (`$(Major).1.0`, `$(A)$(B)`) |
+| `undefined property $(<name>)` | a `$(Name)` version no unconditional `<PropertyGroup>` of the file, of a `Directory.Packages.props` or of a `Directory.Build.props` above it defines |
+| `property cycle $(<name>)` | a chain of property references deeper than 8 |
+| `cannot locate value` | a version written with XML entities, CDATA or a comment inside the element |
+| `non-literal package id` | an `Include` that is not one literal package id (`$(Prefix).Core`, `A;B`) |
+| `no http(s) package source in nuget.config` | the nuget.config files clear the package sources and add only local folders or `%VAR%` URLs |
+| `no packageSourceMapping pattern matches the package` | `packageSourceMapping` is configured and no pattern matches the package id |
+
+**Versions and ranges.**
+
+- Versioning `nuget` is NuGetVersion: one to four numeric parts (missing ones are 0, `1.2` = `1.2.0.0`), a `-` prerelease compared as SemVer 2.0 (case-insensitive), `+metadata` ignored. Update types follow the first two parts (a third or fourth one is a patch). Prereleases are only proposed from a prerelease.
+- A bare version (`Version="13.0.3"`, NuGet's minimum version) and an exact range (`[13.0.3]`) are updated as the pinned version they are in practice: the new version replaces the old one (`[13.0.3]` → `[13.0.4]`), as Renovate does.
+- Floating versions and intervals are ranges, rewritten per [rangeStrategy](configuration.md#rangestrategy) (`auto` is `update-lockfile`; deps does not read `packages.lock.json`, so versions a range admits are not proposed): a floating version moves at its precision when a version leaves it (`13.*` → `14.*`, `1.2.*` → `1.3.*`, `1.0.0-rc*` → `1.1.0-rc*`); an interval gets a new upper bound, the new version when inclusive, else the next value at the position where the bounds differ (`[1.0,2.0)` → `[1.0,3.0)` for 2.5.1, `(,2.0)` → `(,3.0)`), with its lower bound kept. `bump` raises an interval's lower bound to every newer version it admits (`[1.0,2.0)` → `[1.5.0,2.0)`); `pin` writes the bare version. `*` and `*-*` are skipped.
+
+**Properties.**
+
+- A version written as `$(Name)` (`<PackageVersion Include="Serilog" Version="$(SerilogVersion)" />`) is read from the last definition of `<Name>` in an unconditional top-level `<PropertyGroup>` of the file itself, else of the `Directory.Packages.props`, else of the `Directory.Build.props` of its directory, then of each directory above (MSBuild property names are case-insensitive). The update edits the definition, and deps sharing it are grouped into one PR with one version. Properties inside a `Condition`, `<Choose>` or `<Target>` are not read.
+
+**Package sources.**
+
+- Packages are looked up on nuget.org unless `nuget.config` files say otherwise: the files of the dep's directory and every directory above it up to the repository root are applied from the root down, as NuGet merges them (nearer files win): `<packageSources>` `<add key value>`, `<remove key>` and `<clear/>` (dropping nuget.org and the sources of files above), `<disabledPackageSources>`, and `<packageSourceMapping>`, under which a package is looked up only on the sources whose patterns hold its most specific match (an exact id over the longest `Prefix.*`, `*` last). The machine and user configurations of the runner are not read.
+- Local folder sources (`./packages`, `C:\feed`) and URLs with `%VAR%` references are left out. The versions of all remaining sources are merged, as NuGet restores from all of them; v2 feeds (`…/api/v2`) are not read. Credentials come from `NuGetPackageSourceCredentials_<key>` (see [Datasources](#datasources)).
+
+**global.json and dotnet-tools.json.**
+
+- global.json's `sdk.version` is the .NET SDK (`dotnet-sdk`, datasource `dotnet-version`): updates move it to a newer SDK, feature bands included (`8.0.100` → `8.0.404`, a patch), and to newer majors as major updates; previews only from a preview. Its `msbuild-sdks` (`"Microsoft.Build.Traversal": "4.1.0"`) are NuGet packages of dep type `msbuild-sdk`.
+- dotnet-tools.json `tools.<id>.version` entries are NuGet packages of dep type `nuget` (`dotnet-ef`, `csharpier`); the `commands` are kept.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -2405,6 +2458,8 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `packagist` | Composer package name `vendor/package` (case-insensitive, looked up lower-cased); the dep's source is its whitespace-separated Composer repositories in lookup order ("" = Packagist) | Packagist (also when composer.json names `https://packagist.org` or `https://repo.packagist.org`): `GET <DEPS_PACKAGIST_URL or https://repo.packagist.org>/p2/<name>.json` (Composer 2 metadata, minified entries expanded); other Composer repositories: `GET <url>/packages.json` once per repository (the URL itself when it ends in `.json`), then its `metadata-url` with `%package%` replaced (packages.drupal.org, Private Packagist, Satis), or else the packages it lists inline and in its `includes` (older Satis); packages its `available-packages`/`available-package-patterns` do not name are not looked up there; a repository serving only the Composer 1 `providers-url` is an error. Branches (`dev-main`, `2.x-dev`) are not versions. The first repository that has the package answers (Composer's canonical repositories), none → `package <name> not found`. Source repository (release notes): the newest version's http(s) `source.url` | userinfo of the repository URL as basic auth, else Composer's `COMPOSER_AUTH` variable (auth.json as JSON): `http-basic` (`{"repo.example.com": {"username": …, "password": …}}`) and `bearer` (`{"repo.example.com": "<token>"}`) by host; redacted in errors and logs | the version's `time` (the tag's commit date as the repository records it); packages.drupal.org records none |
 | `julia-registry` | Julia package name (`JSON`, `CUDA_jll`); the dep's source is the package UUID of the project's `[deps]`, `[weakdeps]` or `[extras]`, which the registry entry must have | the General registry's files on its default branch: `GET <DEPS_JULIA_REGISTRY_URL or https://raw.githubusercontent.com/JuliaRegistries/General/HEAD>/<L>/<Name>/Package.toml` and `…/Versions.toml` (`<L>` the name's first letter upper-cased; `jll/<L>/<Name>` for `_jll` packages, as the registry files them), concurrently, once per package; no 1.4 MB Registry.toml download. Yanked versions (`yanked = true`) are not listed. A package the registry does not have (a 404: a package of a private registry) or has under another UUID skips the dep with `package <name> is not in the registry <url>` or `… has UUID <x>, not <y>`. Source repository (release notes): Package.toml's `repo` | userinfo of `DEPS_JULIA_REGISTRY_URL` (`https://user:token@host/…`) as basic auth, for a private mirror; redacted in errors and logs | none: registry entries carry no publication time, so `minimumReleaseAge` treats versions as of unknown age (see `minimumReleaseAgeBehaviour`) |
 | `bazel` | Bazel module name (`rules_go`); the dep's source is the registry of its `single_version_override` ("" = the workspace's registries) | `GET <registry>/modules/<name>/metadata.json`, once per (registry, module); yanked versions (`yanked_versions`) are dropped. The registries are the dep's source, else the `--registry` flags of the workspace's `.bazelrc` (the one next to the nearest `MODULE.bazel`; lines without a `:config`, except `startup`; `import`/`try-import` of files in the repository are followed; `%workspace%` is expanded), else the Bazel Central Registry (`DEPS_BAZEL_REGISTRY_URL` or `https://bcr.bazel.build`, also where `.bazelrc` names `https://bcr.bazel.build`). As in Bazel, the first registry that has the module answers; none → `bazel module <name> not found in <registries>`. `file://` registries inside the repository (`file://%workspace%/registry`) are read from disk. Source repository (release notes): the first `repository` entry (`github:<owner>/<repo>`, `gitlab:…`, a URL), else a forge `homepage` | userinfo of the registry URL as basic auth; registries other than the default get the platform token of their host (Basic `x-access-token`), as `git-tags` | none: registries publish no release times, so `minimumReleaseAge` treats every version as of unknown age (`minimumReleaseAgeBehaviour`) |
+| `nuget` | package id (case-insensitive, `Newtonsoft.Json`); the dep's source is its whitespace-separated package sources `<key>=<service index URL>` in nuget.config order (the key query-escaped; "" = nuget.org) | the feed's v3 service index (`<DEPS_NUGET_URL or https://api.nuget.org/v3/index.json>` for nuget.org), once per feed, for its `RegistrationsBaseUrl` (the SemVer 2.0 `3.6.0` one first) and `PackageBaseAddress/3.0.0`; then `GET <registration>/<id lower-case>/index.json`, pages that are not inlined fetched concurrently, once per (feed, package); unlisted versions (`listed: false`, nuget.org's publish year 1900) are left out and `+metadata` dropped. A feed without registration is read through its flat container `GET <base>/<id>/index.json` (every version, unlisted ones included). The versions of all of a dep's feeds are merged, as NuGet restores from all of them; none has the package → `package <id> not found`. v2 feeds (a URL not ending in `.json`, such as `https://www.powershellgallery.com/api/v2`) are not read; a dep with only v2 feeds is skipped. Source repository (release notes): the `<repository url>` of `GET <flat container>/<id>/<version>/<id>.nuspec`, else the registration's forge `projectUrl`, only for versions in a pull request | userinfo of the feed URL as basic auth, else NuGet's `NuGetPackageSourceCredentials_<key>` variable of the nuget.config source (`Username=<user>;Password=<token>`), sent to the feed's host only; redacted in errors and logs. nuget.config `packageSourceCredentials` are not read | the registration's `published`; none from a flat container |
+| `dotnet-version` | `dotnet-sdk` (the .NET SDK, every feature band) or `dotnet-runtime` | `<DEPS_DOTNET_RELEASES_URL or https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json>` once per run for the channels (`8.0`, `9.0`, …), then each channel's `releases.json` at most once, only the channels at or above the dep's major.minor (older ones cannot hold an update); previews and release candidates are listed (versioning drops them for stable current versions) | none | `release-date` of the release that shipped the version |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.

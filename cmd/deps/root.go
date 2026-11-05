@@ -22,6 +22,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
@@ -33,6 +34,7 @@ import (
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
+	nugetds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nuget"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/orb"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/packagist"
@@ -296,6 +298,8 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		packagist.Name:          packagist.New(client, sem, os.Getenv),
 		juliaregistry.Name:      juliaregistry.New(client, sem, os.Getenv),
 		bazelds.Name:            bazelds.New(client, sem, auth, os.Getenv),
+		nugetds.Name:            nugetds.New(client, sem, os.Getenv),
+		dotnetversion.Name:      dotnetversion.New(client, sem, os.Getenv),
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err

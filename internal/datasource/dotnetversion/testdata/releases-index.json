@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json.schemastore.org/dotnet-releases-index.json",
+  "releases-index": [
+    {
+      "channel-version": "9.0",
+      "latest-release": "9.0.22",
+      "latest-release-date": "2026-10-25",
+      "security": true,
+      "latest-runtime": "9.0.22",
+      "latest-sdk": "9.0.320",
+      "product": ".NET",
+      "support-phase": "maintenance",
+      "release-type": "sts",
+      "releases.json": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json",
+      "supported-os.json": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/supported-os.json",
+      "eol-date": "2026-11-10"
+    },
+    {
+      "channel-version": "8.0",
+      "latest-release": "8.0.33",
+      "latest-release-date": "2026-10-25",
+      "security": true,
+      "latest-runtime": "8.0.33",
+      "latest-sdk": "8.0.427",
+      "product": ".NET",
+      "support-phase": "maintenance",
+      "release-type": "lts",
+      "releases.json": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/8.0/releases.json",
+      "supported-os.json": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/8.0/supported-os.json",
+      "eol-date": "2026-11-10"
+    },
+    {
+      "channel-version": "7.0",
+      "latest-release": "7.0.20",
+      "latest-release-date": "2024-05-28",
+      "security": true,
+      "latest-runtime": "7.0.20",
+      "latest-sdk": "7.0.410",
+      "product": ".NET",
+      "support-phase": "eol",
+      "eol-date": "2024-05-14",
+      "release-type": "sts",
+      "releases.json": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/7.0/releases.json",
+      "supported-os.json": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/7.0/supported-os.json"
+    }
+  ],
+  "signature": {
+    "expiration": "2027-01-23T19:29:48.3503965+00:00",
+    "file": "releases-index.json.20261025192948.p7s"
+  }
+}

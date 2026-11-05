@@ -28,6 +28,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nuget"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
@@ -49,7 +50,7 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	ms := make([]manager.Manager, 0, 41+len(cs))
+	ms := make([]manager.Manager, 0, 44+len(cs))
 	ms = append(ms, actions.New(), gomod.New(), docker.New(), npm.New(), helm.New(),
 		kustomize.New(), precommit.New(), gitlabci.New(),
 		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise(), cargo.New(),
@@ -58,7 +59,7 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New(), bundler.New(), toolversions.NewRubyVersion(), gitsubmodules.New(),
 		rusttoolchain.New(), devcontainer.New(),
 		bitbucketpipelines.New(), woodpecker.New(), droneci.New(), circleci.New(), azurepipelines.New(), vcpkg.New(), elm.New(), composer.New(), julia.New(),
-		bazel.New(), bazel.NewBazelisk())
+		bazel.New(), bazel.NewBazelisk(), nuget.New())
 	return append(ms, cs...), nil
 }
 
@@ -81,5 +82,5 @@ func ManagerDocs() []refdoc.Manager {
 		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc,
 		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, bundler.Doc, toolversions.DocRubyVersion, gitsubmodules.Doc,
 		rusttoolchain.Doc, devcontainer.Doc,
-		bitbucketpipelines.Doc, woodpecker.Doc, droneci.Doc, circleci.Doc, azurepipelines.Doc, vcpkg.Doc, elm.Doc, composer.Doc, julia.Doc, bazel.Doc, bazel.BazeliskDoc, custom.Doc}
+		bitbucketpipelines.Doc, woodpecker.Doc, droneci.Doc, circleci.Doc, azurepipelines.Doc, vcpkg.Doc, elm.Doc, composer.Doc, julia.Doc, bazel.Doc, bazel.BazeliskDoc, nuget.Doc, custom.Doc}
 }

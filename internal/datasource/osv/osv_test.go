@@ -779,3 +779,29 @@ func TestAdvisoriesPackagist(t *testing.T) {
 		t.Errorf("batches = %+v", f.batches)
 	}
 }
+
+// GHSA-5crp-9r3c-p9vr as api.osv.dev serves it (2026-11-05), affected list cut to the package;
+// OSV matches NuGet ids case-insensitively, so a lower-case query returns it too.
+func TestAdvisoriesNuGet(t *testing.T) {
+	f := newFake(t)
+	f.results["NuGet|newtonsoft.json|12.0.3|"] = result{ids: []string{"GHSA-5crp-9r3c-p9vr"}}
+	f.vulns["GHSA-5crp-9r3c-p9vr"] = `{"id":"GHSA-5crp-9r3c-p9vr","summary":"Improper Handling of Exceptional Conditions in Newtonsoft.Json","aliases":["CVE-2024-21907"],
+		"affected":[{"package":{"name":"Newtonsoft.Json","ecosystem":"NuGet","purl":"pkg:nuget/Newtonsoft.Json"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"13.0.1"}]}]}]}`
+	s := f.start(nil)
+	deps := []dep.Dep{
+		{Manager: "nuget", Datasource: "nuget", DepType: "nuget", Name: "newtonsoft.json", Version: "12.0.3"},
+		{Manager: "nuget", Datasource: "nuget", DepType: "nuget", Name: "Floating", Version: "1", Range: "1.*"},
+		{Manager: "nuget", Datasource: "dotnet-version", DepType: "dotnet-sdk", Name: "dotnet-sdk", Version: "8.0.100"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nj := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-5crp-9r3c-p9vr", Summary: "Improper Handling of Exceptional Conditions in Newtonsoft.Json", URL: "https://osv.dev/vulnerability/GHSA-5crp-9r3c-p9vr"}, Fixed: []string{"13.0.1"}}}
+	if want := [][]datasource.Vuln{nj, nil, nil}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if len(f.batches) != 1 || len(f.batches[0]) != 1 || f.batches[0][0].Package != (pkg{Name: "newtonsoft.json", Ecosystem: "NuGet"}) {
+		t.Errorf("batches = %+v", f.batches)
+	}
+}

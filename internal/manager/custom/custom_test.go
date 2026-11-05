@@ -81,7 +81,7 @@ func TestAnnotations(t *testing.T) {
 		"# deps: docker alpine",                         // 11
 		"# deps: go example.com/m",                      // 12 annotation on annotation's next line
 		"v1.0.0",                                        // 13
-		"# deps: nuget Foo",                             // 14
+		"# deps: cpan Foo",                              // 14
 		"1.0.0",                                         // 15
 		"# deps: go example.com/v versioning=bogus",     // 16
 		"1.0.0",                         // 17
@@ -106,7 +106,7 @@ func TestAnnotations(t *testing.T) {
 				{10, "git-tags", "https://gitea.com/o/r", "https://gitea.com/o/r", "semver", "1.2.3-rc.1+b5", "", ""},
 				{12, "docker", "alpine", "", "semver", "", "", "no version on next line"},
 				{13, "go", "example.com/m", "", "semver", "v1.0.0", "", ""},
-				{15, "nuget", "Foo", "", "semver", "", "", `unknown datasource "nuget"`},
+				{15, "cpan", "Foo", "", "semver", "", "", `unknown datasource "cpan"`},
 				{17, "go", "example.com/v", "", "bogus", "", "", `unknown versioning "bogus"`},
 				{19, "git-tags", "ftp://x/y", "", "semver", "", "", `invalid git-tags name "ftp://x/y"`},
 				{21, "github-releases", "a/b/c", "", "semver", "", "", `invalid github-releases name "a/b/c"`},
@@ -243,9 +243,9 @@ func TestNewErrors(t *testing.T) {
 	}{
 		{config.Custom{}, "custom[1]: files: must not be empty"},
 		{config.Custom{Files: []string{"a/[b"}}, `files: invalid glob "a/[b"`},
-		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module or regex:<RE2>, got "nope"`},
+		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget or regex:<RE2>, got "nope"`},
 		{config.Custom{Files: []string{"x"}, Versioning: "regex:(?<minor>1)"}, `versioning: regex: must have a (?<major>...) group`},
-		{config.Custom{Files: []string{"x"}, Datasource: "nuget"}, `datasource: unknown "nuget"`},
+		{config.Custom{Files: []string{"x"}, Datasource: "cpan"}, `datasource: unknown "cpan"`},
 		{config.Custom{Files: []string{"x"}, Datasource: "custom.envtest"}, `datasource: unknown "custom.envtest"`},
 		{config.Custom{Files: []string{"x"}, Match: "("}, "match: error parsing regexp"},
 		{config.Custom{Files: []string{"x"}, Match: "a", Datasource: "go", Name: "n"}, "match: must have a (?P<version>...) group"},
