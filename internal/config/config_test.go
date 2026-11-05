@@ -190,6 +190,9 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{automergeStrategy: merge-commit}]\n", `rules[0].automergeStrategy: must be one of auto, merge, squash, rebase, got "merge-commit"`},
 		{"automergeType: pr-comment\n", `automergeType: must be one of pr, branch, got "pr-comment"`},
 		{"rules: [{automergeType: fast-forward}]\n", `rules[0].automergeType: must be one of pr, branch, got "fast-forward"`},
+		{"prCreation: approval\n", `prCreation: must be one of immediate, not-pending, status-success, got "approval"`},
+		{"rules: [{prCreation: later}]\n", `rules[0].prCreation: must be one of immediate, not-pending, status-success, got "later"`},
+		{"draftPR: maybe\n", "line 1"},
 		{"automerge: sometimes\n", "line 1"},
 		{"dependencyDashboard: maybe\n", "line 1"},
 		{"dependencyDashboardTitle: '  '\n", "dependencyDashboardTitle: must be a non-blank single line"},
@@ -1011,6 +1014,36 @@ rules:
 	}
 	if p := top.PolicyFor(mod, dep.Patch); p.Automerge {
 		t.Error("rule did not turn automerge off")
+	}
+}
+
+func TestDraftPRAndPRCreationPolicy(t *testing.T) {
+	checkout := dep.Dep{Manager: "github-actions", Name: "actions/checkout"}
+	mod := dep.Dep{Manager: "gomod", Name: "a/b", DepType: "direct"}
+	def, err := load(t, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := def.PolicyFor(checkout, dep.Major); p.DraftPR || p.PRCreation != PRCreationImmediate {
+		t.Errorf("defaults: %v %q", p.DraftPR, p.PRCreation)
+	}
+	c, err := load(t, ".deps.yaml", "draftPR: true\nprCreation: not-pending\nrules:\n  - updateTypes: [major]\n    prCreation: status-success\n  - manager: gomod\n    draftPR: false\n    prCreation: immediate\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		d     dep.Dep
+		kind  dep.UpdateType
+		draft bool
+		mode  string
+	}{
+		{checkout, dep.Minor, true, PRCreationNotPending},
+		{checkout, dep.Major, true, PRCreationStatusSuccess},
+		{mod, dep.Major, false, PRCreationImmediate},
+	} {
+		if p := c.PolicyFor(tc.d, tc.kind); p.DraftPR != tc.draft || p.PRCreation != tc.mode {
+			t.Errorf("%s %s: draftPR %v prCreation %q, want %v %q", tc.d.Name, tc.kind, p.DraftPR, p.PRCreation, tc.draft, tc.mode)
+		}
 	}
 }
 

@@ -320,6 +320,12 @@ func describeRule(r config.Rule) string {
 	if r.AutomergeType != "" {
 		add("automergeType", r.AutomergeType)
 	}
+	if r.DraftPR != nil {
+		add("draftPR", strconv.FormatBool(*r.DraftPR))
+	}
+	if r.PRCreation != "" {
+		add("prCreation", r.PRCreation)
+	}
 	if len(f) == 0 {
 		return "(matches all)"
 	}
@@ -369,6 +375,12 @@ func describePolicy(p config.Policy) string {
 	}
 	if p.DashboardApproval {
 		s += " dashboardApproval=true"
+	}
+	if p.DraftPR {
+		s += " draftPR=true"
+	}
+	if p.PRCreation != "" && p.PRCreation != config.PRCreationImmediate {
+		s += " prCreation=" + p.PRCreation
 	}
 	return s
 }

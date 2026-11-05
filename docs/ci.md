@@ -32,6 +32,7 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
   - [Run when the dashboard is ticked](#run-when-the-dashboard-is-ticked)
   - [Merge right after CI](#merge-right-after-ci)
 - [Automerge](#automerge)
+- [Draft PRs and PRs after CI](#draft-prs-and-prs-after-ci)
 - [Dependency dashboard](#dependency-dashboard)
 - [Labels, reviewers and assignees](#labels-reviewers-and-assignees)
 - [Post-upgrade tasks](#post-upgrade-tasks)
@@ -335,6 +336,7 @@ Add a pipeline schedule (*Build → Pipeline schedules*) on the default branch, 
 | list, create, edit and close PRs | `pull-requests: write` | `pull-requests: write` | automatic token |
 | request auto-merge (`automerge`) | merge rights on the base branch; *Allow auto-merge* in the settings; `statuses: read` and `checks: read` for the direct-merge fallback | merge rights on the base branch | merge rights on the base branch |
 | branch automerge (`automergeType: branch`) | `contents: write` and push rights on the base branch (bypass of its protection or rulesets); `statuses: read` and `checks: read` | push rights on the base branch (branch protection *Enable push*) | as on Gitea |
+| open PRs after their checks (`prCreation`) | `statuses: read` and `checks: read` | read access (commit statuses) | as on Gitea |
 | find, create and edit the dashboard issue (`dependencyDashboard`) | `issues: write` | `issues: write` | automatic token |
 | read private actions, modules and release notes | read access to those repositories | Cross-Repository Access or a PAT | a PAT |
 | CI runs on deps PRs | App token or PAT (with `GITHUB_TOKEN`: after approval) | PAT | PAT |
@@ -637,7 +639,7 @@ jobs:
     if: github.event_name != 'workflow_run' || startsWith(github.event.workflow_run.head_branch, 'deps/')
 ```
 
-`check_suite` doesn't work for this: GitHub doesn't start workflows for check suites created by GitHub Actions. The same applies to [branch automerge](#branch-automerge). With native auto-merge the forge merges without deps, and this trigger is not needed.
+`check_suite` doesn't work for this: GitHub doesn't start workflows for check suites created by GitHub Actions. The same applies to [branch automerge](#branch-automerge) and to [`prCreation`](#draft-prs-and-prs-after-ci). With native auto-merge the forge merges without deps, and this trigger is not needed.
 
 ## Automerge
 
@@ -688,6 +690,24 @@ rules:
 2. **Pushing to the base branch.** The token must be allowed to push to `main`. GitHub branch protection or rulesets that require PRs or status checks refuse it, unless the App or user is on the bypass list. On Gitea and Forgejo, the branch protection must allow pushes (*Enable push*, with the token's user in the allowlist if it is restricted). A refused push opens the PR, which is then automerged like `automergeType: pr`.
 3. **One merge per run.** Merging moves `main`, so the other branches are behind it. The next run rebuilds them, their checks run again, and a later run merges them. Run deps often enough (or [on push](#run-on-push-to-the-default-branch)) to work through a backlog.
 4. **Waiting branches** are listed on the [dependency dashboard](#dependency-dashboard) under *Pending branch automerge*; tick one to get a PR instead.
+
+## Draft PRs and PRs after CI
+
+[`draftPR: true`](reference/configuration.md#draftpr) opens new update PRs as drafts: GitHub draft PRs, on Gitea and Forgejo PRs whose title starts with `WIP: `, and on GitLab merge requests whose title starts with `Draft: ` (their API has no draft flag). PRs that automerge are never drafts, since forges do not merge drafts.
+
+[`prCreation`](reference/configuration.md#prcreation) delays the PR until the branch's checks are in, so reviewers are only notified about updates whose CI result is known:
+
+```yaml
+prCreation: status-success  # or not-pending: also open the PR when a check failed
+rules:
+  - updateTypes: [major]
+    prCreation: not-pending
+    draftPR: true
+```
+
+1. **CI on the branches.** The first run only pushes the branch; a later run reads its commit statuses and check runs. CI must therefore run on pushes to the update branches, not only on `pull_request`, or the branch waits forever (`PR waiting for checks`). As for [branch automerge](#branch-automerge): `on: push: branches: [main, 'deps/**']`, and an [App token or PAT](#github), since job-token pushes start no workflows.
+2. **A later run opens the PR.** deps does not wait within a run. Run it often enough, or [after CI](#merge-right-after-ci) with `workflow_run`, so PRs follow their checks closely.
+3. **Waiting branches** are listed on the [dependency dashboard](#dependency-dashboard) under *Pending status checks* (with `checks failed` for a failed branch under `status-success`); tick one to get its PR right away.
 
 ## Dependency dashboard
 

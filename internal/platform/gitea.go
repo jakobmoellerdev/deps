@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,7 +36,39 @@ func giteaPR(p *apiPR) PR {
 	pr.Merged = p.Merged
 	m := p.Mergeable != nil && *p.Mergeable
 	pr.Mergeable = &m
+	pr.Draft = pr.Draft || hasPrefixFold(p.Title, wipPrefixes) // older forges report no draft field
 	return pr
+}
+
+// wipPrefix marks a draft PR on Gitea and Forgejo; their default WORK_IN_PROGRESS_PREFIXES
+// are wipPrefixes, compared case-insensitively.
+const wipPrefix = "WIP: "
+
+var wipPrefixes = []string{"WIP:", "[WIP]"}
+
+// hasPrefixFold reports whether title starts with one of the upper-case prefixes, compared
+// case-insensitively.
+func hasPrefixFold(title string, prefixes []string) bool {
+	up := strings.ToUpper(title)
+	return slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(up, p) })
+}
+
+// draftTitle returns title with prefix when draft and it starts with none of the marks yet.
+func draftTitle(title string, draft bool, prefix string, marks []string) string {
+	if !draft || hasPrefixFold(title, marks) {
+		return title
+	}
+	return prefix + title
+}
+
+// CreatePR opens a draft PR by its title: the forges' API has no draft flag.
+func (g *giteaClient) CreatePR(ctx context.Context, head, base, title, body string, draft bool) (PR, error) {
+	return g.createPR(ctx, prCreate{Title: draftTitle(title, draft, wipPrefix, wipPrefixes), Head: head, Base: base, Body: body})
+}
+
+// UpdatePR keeps the WIP prefix of a draft PR, which marks it as one.
+func (g *giteaClient) UpdatePR(ctx context.Context, n int, title, body string, draft bool) error {
+	return g.updatePR(ctx, n, draftTitle(title, draft, wipPrefix, wipPrefixes), body)
 }
 
 func (g *giteaClient) ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) {

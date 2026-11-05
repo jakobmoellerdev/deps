@@ -49,8 +49,11 @@ type fakeGit struct {
 	patterns []string          // LsRemote patterns
 	tips     []string          // BranchTip branches
 	objects  map[string]string // path -> object id at head; unset = "obj:<path>", "" = missing
-	oidCalls int               // ObjectIDs calls
-	messages []string          // Commit messages
+	// revObjects are the object ids at other revs (branch tips, written trees): rev -> path
+	// -> id, unset paths missing.
+	revObjects map[string]map[string]string
+	oidCalls   int      // ObjectIDs calls
+	messages   []string // Commit messages
 }
 
 // newTree is the tree fakeGit.WriteTree writes.
@@ -83,7 +86,15 @@ func (g *fakeGit) ObjectIDs(_ context.Context, rev string, paths []string) ([]st
 		return nil, err
 	}
 	if rev != head {
-		return nil, fmt.Errorf("ObjectIDs at %s, want head", rev)
+		objs, ok := g.revObjects[rev]
+		if !ok {
+			return nil, fmt.Errorf("ObjectIDs at %s, want head", rev)
+		}
+		ids := make([]string, len(paths))
+		for i, p := range paths {
+			ids[i] = objs[p]
+		}
+		return ids, nil
 	}
 	ids := make([]string, len(paths))
 	for i, p := range paths {
@@ -140,8 +151,10 @@ type fakePC struct {
 	metadata     map[int]platform.PRMetadata // SetPRMetadata calls by PR number
 	bodies       []string                    // CreatePR bodies
 	titles       []string                    // CreatePR titles
+	drafts       []bool                      // CreatePR draft flags
 	updated      []int
-	recorded     []int // UpdatePR calls that only set the input fingerprint of the listed body
+	updateDrafts []bool // UpdatePR draft flags
+	recorded     []int  // UpdatePR calls that only set the input fingerprint of the listed body
 	closedNow    []int
 	prBodies     map[int]string // last UpdatePR body by PR number
 	unlabeled    []string       // RemovePRLabel "<number>:<label>"
@@ -177,7 +190,7 @@ func (c *fakePC) GetPR(_ context.Context, n int) (platform.PR, error) {
 	c.got = append(c.got, n)
 	return platform.PR{Number: n, Mergeable: c.mergeable, HeadSHA: c.headSHA}, nil
 }
-func (c *fakePC) CreatePR(_ context.Context, head, base, title, body string) (platform.PR, error) {
+func (c *fakePC) CreatePR(_ context.Context, head, base, title, body string, draft bool) (platform.PR, error) {
 	if err := fail(c.fail, "CreatePR", head); err != nil {
 		return platform.PR{}, err
 	}
@@ -185,12 +198,14 @@ func (c *fakePC) CreatePR(_ context.Context, head, base, title, body string) (pl
 	c.createdBases = append(c.createdBases, base)
 	c.bodies = append(c.bodies, body)
 	c.titles = append(c.titles, title)
-	return platform.PR{Number: 100 + len(c.created), Head: head}, nil
+	c.drafts = append(c.drafts, draft)
+	return platform.PR{Number: 100 + len(c.created), Head: head, Draft: draft}, nil
 }
-func (c *fakePC) UpdatePR(_ context.Context, n int, _, body string) error {
+func (c *fakePC) UpdatePR(_ context.Context, n int, _, body string, draft bool) error {
 	if err := fail(c.fail, "UpdatePR", ""); err != nil {
 		return err
 	}
+	c.updateDrafts = append(c.updateDrafts, draft)
 	if c.prBodies == nil {
 		c.prBodies = map[int]string{}
 	}

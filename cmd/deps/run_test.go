@@ -330,6 +330,49 @@ func TestRunBranchAutomerge(t *testing.T) {
 	})
 }
 
+// prCreation: status-success and draftPR end to end on Gitea with a real origin: the first run
+// pushes the branch without a PR, the next one waits while its checks run, and once they are
+// green the PR is opened as a draft (WIP: title).
+func TestRunPRCreationDraft(t *testing.T) {
+	const branch = "deps/github-actions/actions-checkout-major"
+	cleanEnv(t)
+	f := newFakeNet(t)
+	giteaEnv(t)
+	t.Setenv("DEPS_TOKEN", "tok")
+	origin, work := gitRepo(t, map[string]string{
+		".github/workflows/ci.yml": workflow,
+		".deps.yaml":               "draftPR: true\nprCreation: status-success\n",
+	})
+	state := "pending"
+	f.mux.HandleFunc("GET git.test/api/v1/repos/o/r/commits/{sha}/status", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"state":%q,"total_count":1}`, state)
+	})
+	run := func(want ...string) {
+		t.Helper()
+		_, stderr, code := execute(t, "run", "--dir", work, "--author-email", "bot@example.invalid")
+		for _, w := range want {
+			if code != 0 || !strings.Contains(stderr, w) {
+				t.Fatalf("exit %d, stderr lacks %q:\n%s", code, w, stderr)
+			}
+		}
+	}
+	run("pr      created, PR waiting for checks  "+branch+"  chore(deps): update actions/checkout to v7.0.1  \n",
+		"1 created, 0 updated, 0 closed, 0 up-to-date, 0 skipped, 0 automerge, 0 errors\n")
+	tip := git(t, origin, "rev-parse", branch)
+	run("pr      up-to-date, PR waiting for checks  " + branch + "  ")
+	if len(f.created) != 0 {
+		t.Fatalf("PR created while checks run: %v", f.created)
+	}
+	state = "success"
+	run("pr      created  " + branch + "  chore(deps): update actions/checkout to v7.0.1  https://git.test/o/r/pulls/7\n")
+	if len(f.created) != 1 || f.created[0]["title"] != "WIP: chore(deps): update actions/checkout to v7.0.1" || f.created[0]["head"] != branch {
+		t.Fatalf("created = %v", f.created)
+	}
+	if got := git(t, origin, "rev-parse", branch); got != tip {
+		t.Errorf("branch rebuilt: %s, want %s", got, tip)
+	}
+}
+
 func TestDetectTrigger(t *testing.T) {
 	env := func(kv map[string]string) func(string) string { return func(k string) string { return kv[k] } }
 	tests := []struct {

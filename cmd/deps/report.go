@@ -35,6 +35,7 @@ type jsonPR struct {
 	Title     string       `json:"title"`
 	Status    string       `json:"status,omitempty"` // run only
 	Automerge string       `json:"automerge,omitempty"`
+	PRWait    string       `json:"prWait,omitempty"`
 	Number    int          `json:"number,omitzero"`
 	URL       string       `json:"url,omitempty"`
 	Waits     []string     `json:"waitsFor,omitempty"`
@@ -165,7 +166,7 @@ func (s *summary) report() jsonReport {
 			pr.Updates[i] = reportUpdate(u)
 		}
 		if a, ok := s.action(g); ok {
-			pr.Status, pr.Automerge, pr.Number, pr.URL, pr.Waits, pr.Reason = a.Status, a.Automerge, a.Number, a.URL, a.Waits, a.Reason
+			pr.Status, pr.Automerge, pr.PRWait, pr.Number, pr.URL, pr.Waits, pr.Reason = a.Status, a.Automerge, a.PRWait, a.Number, a.URL, a.Waits, a.Reason
 		}
 		r.PRs = append(r.PRs, pr)
 	}

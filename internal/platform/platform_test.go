@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -353,17 +354,17 @@ func TestClients(t *testing.T) {
 			if !eqPtr(p3.Mergeable, tc.merge3) {
 				t.Fatalf("GetPR 3 %+v", p3)
 			}
-			np, err := c.CreatePR(ctx, "deps/a", "main", "t", "b")
+			np, err := c.CreatePR(ctx, "deps/a", "main", "t", "b", false)
 			if err != nil || np.Number != 7 || np.URL != "https://x/pr/7" {
 				t.Fatalf("CreatePR %+v %v", np, err)
 			}
-			if err := c.UpdatePR(ctx, 2, "t2", "b2"); err != nil {
+			if err := c.UpdatePR(ctx, 2, "t2", "b2", false); err != nil {
 				t.Fatal(err)
 			}
 			if err := c.ClosePR(ctx, 2); err != nil {
 				t.Fatal(err)
 			}
-			err = c.UpdatePR(ctx, 9, "t", "b")
+			err = c.UpdatePR(ctx, 9, "t", "b", false)
 			want := "PATCH /repos/o/r/pulls/9: 422 Unprocessable Entity: " + strings.Repeat("e", 200)
 			if err == nil || err.Error() != want {
 				t.Fatalf("error format: %v", err)
@@ -436,7 +437,7 @@ func TestClientErrors(t *testing.T) {
 			assertErrPrefix(t, "ListPRs", err, "GET /repos/o/missing/pulls?state=open&")
 			_, err = missing.GetPR(ctx, 1)
 			assertErrPrefix(t, "GetPR", err, "GET /repos/o/missing/pulls/1: 404 Not Found: ")
-			_, err = missing.CreatePR(ctx, "deps/a", "main", "t", "b")
+			_, err = missing.CreatePR(ctx, "deps/a", "main", "t", "b", false)
 			assertErrPrefix(t, "CreatePR", err, "POST /repos/o/missing/pulls: 404 Not Found: ")
 
 			_, err = client("o/empty").DefaultBranch(ctx)
@@ -457,6 +458,73 @@ func TestClientErrors(t *testing.T) {
 			badURL := NewClient(Info{Kind: kind, APIURL: "https://%zz", Repo: "o/r"}, "tok", srv.Client())
 			_, err = badURL.DefaultBranch(ctx)
 			assertErrPrefix(t, "invalid api url", err, `parse "https://%zz/repos/o/r": `)
+		})
+	}
+}
+
+// Draft PRs: GitHub sends the draft flag and keeps titles; Gitea and Forgejo mark drafts by
+// the WIP: title prefix, added once and kept on updates of a draft. Both report Draft.
+func TestDraftPRs(t *testing.T) {
+	for _, tc := range []struct {
+		kind                  Kind
+		create, update, plain string // request bodies: draft create, draft update, ready update
+		listed                string // PR JSON of the list
+		draft                 bool   // listed is a draft
+	}{
+		{
+			GitHub,
+			`{"title":"chore: x","head":"deps/a","base":"main","body":"b","draft":true}`,
+			`{"title":"chore: x","body":"b"}`, `{"title":"chore: x","body":"b"}`,
+			`{"number":1,"title":"chore: x","draft":true,"head":{"ref":"deps/a"}}`, true,
+		},
+		{
+			Gitea,
+			`{"title":"WIP: chore: x","head":"deps/a","base":"main","body":"b"}`,
+			`{"title":"WIP: chore: x","body":"b"}`, `{"title":"chore: x","body":"b"}`,
+			`{"number":1,"title":"[wip] chore: x","head":{"ref":"deps/a"}}`, true,
+		},
+		{
+			Forgejo,
+			`{"title":"WIP: chore: x","head":"deps/a","base":"main","body":"b"}`,
+			`{"title":"WIP: chore: x","body":"b"}`, `{"title":"chore: x","body":"b"}`,
+			`{"number":1,"title":"chore: x","draft":false,"head":{"ref":"deps/a"}}`, false,
+		},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			var bodies []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				if r.Method == http.MethodGet {
+					io.WriteString(w, "["+tc.listed+"]")
+					return
+				}
+				bodies = append(bodies, string(b))
+				io.WriteString(w, `{"number":7,"title":"t","draft":true,"head":{"ref":"deps/a"}}`)
+			}))
+			t.Cleanup(srv.Close)
+			c := NewClient(Info{Kind: tc.kind, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client())
+			ctx := t.Context()
+			np, err := c.CreatePR(ctx, "deps/a", "main", "chore: x", "b", true)
+			if err != nil || !np.Draft {
+				t.Fatalf("CreatePR %+v %v", np, err)
+			}
+			for _, draft := range []bool{true, false} {
+				if err := c.UpdatePR(ctx, 7, "chore: x", "b", draft); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The prefix is not added twice.
+			if err := c.UpdatePR(ctx, 7, "WIP: chore: x", "b", true); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{tc.create, tc.update, tc.plain, `{"title":"WIP: chore: x","body":"b"}`}
+			if !slices.Equal(bodies, want) {
+				t.Errorf("requests\n%q\nwant\n%q", bodies, want)
+			}
+			prs, err := c.ListPRs(ctx, "open", 1)
+			if err != nil || len(prs) != 1 || prs[0].Draft != tc.draft {
+				t.Errorf("ListPRs %+v %v, want draft %v", prs, err, tc.draft)
+			}
 		})
 	}
 }

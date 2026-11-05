@@ -144,6 +144,7 @@ type apiPR struct {
 	Merged    bool           `json:"merged"`
 	MergedAt  *string        `json:"merged_at"`
 	Mergeable *bool          `json:"mergeable"`
+	Draft     bool           `json:"draft"`
 	AutoMerge jsontext.Value `json:"auto_merge"`
 	CreatedAt time.Time      `json:"created_at"`
 	Head      struct {
@@ -162,7 +163,7 @@ type apiPR struct {
 func present(v jsontext.Value) bool { return len(v) > 0 && string(v) != "null" }
 
 func (p *apiPR) pr() PR {
-	pr := PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, HeadSHA: p.Head.SHA, Base: p.Base.Ref, State: p.State, URL: p.HTMLURL, CreatedAt: p.CreatedAt}
+	pr := PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, HeadSHA: p.Head.SHA, Base: p.Base.Ref, State: p.State, URL: p.HTMLURL, CreatedAt: p.CreatedAt, Draft: p.Draft}
 	for _, l := range p.Labels {
 		pr.Labels = append(pr.Labels, l.Name)
 	}
@@ -180,6 +181,7 @@ type prCreate struct {
 	Head  string `json:"head"`
 	Base  string `json:"base"`
 	Body  string `json:"body"`
+	Draft bool   `json:"draft,omitzero"` // GitHub only
 }
 
 // apiIssue covers the issue JSON of GitHub and Gitea/Forgejo.
@@ -210,16 +212,15 @@ func (r *rest) GetPR(ctx context.Context, n int) (PR, error) {
 	return r.toPR(&p), nil
 }
 
-func (r *rest) CreatePR(ctx context.Context, head, base, title, body string) (PR, error) {
+func (r *rest) createPR(ctx context.Context, in prCreate) (PR, error) {
 	var p apiPR
-	in := prCreate{Title: title, Head: head, Base: base, Body: body}
 	if err := r.do(ctx, http.MethodPost, "/repos/"+r.repo+"/pulls", in, &p, r.headers); err != nil {
 		return PR{}, err
 	}
 	return r.toPR(&p), nil
 }
 
-func (r *rest) UpdatePR(ctx context.Context, n int, title, body string) error {
+func (r *rest) updatePR(ctx context.Context, n int, title, body string) error {
 	return r.do(ctx, http.MethodPatch, prPath(r.repo, n), prEdit{Title: title, Body: body}, nil, r.headers)
 }
 
@@ -235,6 +236,16 @@ type githubClient struct{ rest }
 
 func newGitHub(info Info, token string, c *http.Client) *githubClient {
 	return &githubClient{api: info.APIURL, repo: info.Repo, c: c, headers: githubHeaders(token), toPR: githubPR}
+}
+
+// CreatePR opens a draft PR with the REST API's draft flag.
+func (g *githubClient) CreatePR(ctx context.Context, head, base, title, body string, draft bool) (PR, error) {
+	return g.createPR(ctx, prCreate{Title: title, Head: head, Base: base, Body: body, Draft: draft})
+}
+
+// UpdatePR leaves the draft state alone: editing title and body does not change it.
+func (g *githubClient) UpdatePR(ctx context.Context, n int, title, body string, _ bool) error {
+	return g.updatePR(ctx, n, title, body)
 }
 
 func githubHeaders(token string) func(http.Header) {

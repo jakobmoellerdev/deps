@@ -494,6 +494,40 @@ rules:
 - Branches no update wants anymore and without a PR are deleted after an error-free run (`deleted`), unless someone else committed to them.
 - A group merges its branch only when **every** update in it uses `automergeType: branch`; otherwise it automerges as a PR. Lock file maintenance follows the top-level value.
 
+## Config.draftPR
+
+Renovate's `draftPR`: new update PRs are opened as drafts, which the forge does not merge until someone marks them ready for review. It applies when the PR is created; deps never turns an existing PR into a draft or back.
+
+- GitHub opens a draft PR (the `draft` flag of the API). Marking it ready is up to you.
+- Gitea and Forgejo have no draft flag in their API: the title starts with `WIP: `, one of the forges' default work-in-progress prefixes. Title updates keep the prefix while the PR is a draft; remove it from the title to mark the PR ready, and deps leaves it off.
+- GitLab likewise marks a draft merge request by its title: it starts with `Draft: `, kept on title updates while the merge request is a draft (GitLab reports `draft`).
+- A PR that automerges is never a draft: forges do not merge drafts. Rules turn it on or off per dep or update type, e.g. drafts for majors only:
+
+```yaml
+rules:
+  - updateTypes: [major]
+    draftPR: true
+```
+
+## Config.prCreation
+
+Renovate's `prCreation`. With `immediate` (the default) the PR is opened right after the branch is pushed. The other modes push the branch first and open its PR on a later run, once its commit statuses and check runs are in, so a PR arrives with its test results:
+
+| Mode | The PR is opened when the branch's checks | Until then |
+|---|---|---|
+| `immediate` | (right away) | |
+| `not-pending` | have finished: all passed, or one failed | `PR waiting for checks` |
+| `status-success` | all passed | `PR waiting for checks`, or `PR waiting for green checks` after a failure |
+
+1. The first run pushes the branch (one commit on top of the base) without a PR: `created, PR waiting for checks`.
+2. Later runs read the checks of the branch tip and open the PR when the mode allows (`created`); until then the branch is `up-to-date` with the outcome above. deps does not wait for the checks within a run.
+3. A branch with other content than this run builds is rebuilt and pushed again (`updated`), and its checks start over. A branch that is only behind the base is kept, unless `rebaseWhen: behind-base-branch` (then it is rebuilt on the base, like a PR branch) or its commit was made through the API (`platformCommit`): deps cannot read such a branch's files locally, so it rebuilds it whenever the base moved.
+4. Waiting branches are listed under **Pending status checks** on the [dashboard](#dependencydashboard); ticking one opens its PR on the next run without waiting.
+
+- CI must run on pushes to the update branches (`deps/**`); with workflows that only run on `pull_request` the branch never gets checks and never gets its PR. A repository without any checks waits forever too (Renovate's `prNotPendingHours` fallback is not offered); tick the branch on the dashboard to open its PR.
+- New branches count toward the PR limits of the run that pushes them, as does opening the PR of a waiting branch.
+- Once the PR is open, the branch is handled like any PR branch. Groups use the most waiting mode of their updates; [`automergeType: branch`](#automergetype) groups have no PR anyway and ignore it. Lock file maintenance follows the top-level value.
+
 ## Config.prTitle
 
 The title of each update PR and the subject of its commit, as a [Go `text/template`](https://pkg.go.dev/text/template) over these fields of the PR:
@@ -587,11 +621,12 @@ An open update PR with this label is left alone: deps does not build, push or re
 2. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Awaiting-schedule items name the schedule entries they wait for, e.g. ``(waits for `0 0 * * 0`)`` or ``(waits for `before 6am on monday`)``. Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.
 3. **Ignored or blocked**: updates whose PR was closed without merging, for that version or, for a major update, for that major (checkbox: recreate the PR), branches someone else pushed to (checkbox: discard those commits and rebuild the branch), and PRs with the [`stopUpdatingLabel`](#stopupdatinglabel).
 4. **Pending branch automerge**: branches of [`automergeType: branch`](#automergetype) waiting for their checks, without a PR. Ticking one makes the next run open its PR instead.
-5. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.
-6. **Deprecated dependencies**: deps whose registry marks the package or the installed version deprecated (npm `deprecated`: a deprecated `dist-tags.latest` deprecates the package, else the installed version's message counts), yanked (crates, PyPI JSON API) or inactive (PyPI `Development Status :: 7 - Inactive`), or whose GitHub repository is archived (github-releases deps, when a GitHub token makes the release list a GraphQL query). These come from the documents the release lookup already fetched: no extra requests. The update PRs of such a dep repeat the reason under **Warnings**.
-7. **Abandoned dependencies**: deps whose newest release is older than [`abandonmentThreshold`](#abandonmentthreshold) (off by default).
-8. **Errors** of the run (at most 20, each cut to 300 characters).
-9. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.
+5. **Pending status checks**: branches whose [`prCreation`](#prcreation) waits for their checks, without a PR (`checks failed` under `status-success`). Ticking one makes the next run open its PR now.
+6. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.
+7. **Deprecated dependencies**: deps whose registry marks the package or the installed version deprecated (npm `deprecated`: a deprecated `dist-tags.latest` deprecates the package, else the installed version's message counts), yanked (crates, PyPI JSON API) or inactive (PyPI `Development Status :: 7 - Inactive`), or whose GitHub repository is archived (github-releases deps, when a GitHub token makes the release list a GraphQL query). These come from the documents the release lookup already fetched: no extra requests. The update PRs of such a dep repeat the reason under **Warnings**.
+8. **Abandoned dependencies**: deps whose newest release is older than [`abandonmentThreshold`](#abandonmentthreshold) (off by default).
+9. **Errors** of the run (at most 20, each cut to 300 characters).
+10. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.
 
 - With several [base branches](#basebranches), items 1 to 5 are listed per base under ``## Base branch `<base>` `` (a base with nothing to list is left out), errors of a base's resolution start with `<base>: `, and the detected dependencies have one ``### `<base>` `` block per base.
 - The body is capped at 60 000 bytes (GitHub allows 65 536 characters). Lists that do not fit end with a `… not listed` note.

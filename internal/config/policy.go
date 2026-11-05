@@ -69,6 +69,10 @@ type Policy struct {
 	AutomergeType string
 	// DashboardApproval holds back the update's new PR until it is approved on the dashboard.
 	DashboardApproval bool
+	// DraftPR opens the update's new PR as a draft; PRCreation is when it is opened
+	// (PRCreations).
+	DraftPR    bool
+	PRCreation string
 	// Labels, Reviewers and Assignees go on the update's new PR.
 	Labels, Reviewers, Assignees []string
 	// Tasks are the postUpgradeTasks of the last matching rule that sets them.
@@ -255,6 +259,8 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		AutomergeStrategy:     cmp.Or(c.AutomergeStrategy, StrategyAuto),
 		AutomergeType:         cmp.Or(c.AutomergeType, AutomergeTypePR),
 		DashboardApproval:     c.DashboardApproval,
+		DraftPR:               c.DraftPR,
+		PRCreation:            cmp.Or(c.PRCreation, PRCreationImmediate),
 		Labels:                c.Labels,
 		Reviewers:             c.Reviewers,
 		Assignees:             c.Assignees,
@@ -372,6 +378,12 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		}
 		if r.DashboardApproval != nil {
 			p.DashboardApproval = *r.DashboardApproval
+		}
+		if r.DraftPR != nil {
+			p.DraftPR = *r.DraftPR
+		}
+		if r.PRCreation != "" {
+			p.PRCreation = r.PRCreation
 		}
 		if r.Labels != nil {
 			p.Labels = r.Labels

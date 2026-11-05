@@ -193,6 +193,11 @@ type Update struct {
 	// approved on the dependency dashboard (config dashboardApproval); security updates never
 	// need approval. A PR needs approval when any of its updates does.
 	DashboardApproval bool
+	// DraftPR opens the update's new PR as a draft; a group's PR is one when any of its
+	// updates asks. PRCreation (config.PRCreations) is when the PR of a pushed branch is
+	// opened; a group waits as long as its most waiting update asks. "" = immediate.
+	DraftPR    bool
+	PRCreation string
 	// Lockfile marks a lockfile-only update (rangeStrategy update-lockfile): the range admits
 	// NewVersion, so the manifest stays unchanged and only the lockfile moves from Dep.Locked.
 	Lockfile bool

@@ -367,6 +367,8 @@ type Update struct {
     Automerge   bool          // policy automerge of the update's type
     AutomergeStrategy string  // policy automergeStrategy: auto, merge, squash, rebase
     AutomergeType string      // policy automergeType: pr, branch
+    DraftPR     bool          // policy draftPR: open the new PR as a draft
+    PRCreation  string        // policy prCreation: immediate, not-pending, status-success ("" = immediate)
     Lockfile    bool          // lockfile-only update: the manifest keeps its range, the lockfile moves from Dep.Locked
     RangeStrategy string      // effective rangeStrategy of a range dep's update (never auto); managers write widen and pin from it
 }
@@ -526,7 +528,7 @@ type Trace struct {
 type TraceUpdate struct{ Update dep.Update; Policy *config.Policy } // Policy: of Update.Type (updateTypes rules included)
 type Result     struct{ Updates []dep.Update; Skipped []dep.Dep; Errors []error; Deps []dep.Dep; Warnings []Warning } // Deps: every extracted dep, Skipped included (dashboard); Warnings: deprecated/abandoned deps (dashboard, PR bodies)
 type FileChange struct{ Path string; Mode fs.FileMode; Old, New []byte; Gitlink bool } // Gitlink: Old/New are the submodule commits at Path
-type Group      struct{ Manager, Name, Branch, Title, Header, Footer string; Updates []dep.Update; Automerge bool; AutomergeStrategy string; AutomergeBranch bool } // Title/Header/Footer: rendered PR templates (the first update's); Automerge: all updates automerge; strategy of the first; AutomergeBranch: all of them with automergeType branch
+type Group      struct{ Manager, Name, Branch, Title, Header, Footer string; Updates []dep.Update; Automerge bool; AutomergeStrategy string; AutomergeBranch, Draft bool; PRCreation string } // Title/Header/Footer: rendered PR templates (the first update's); Automerge: all updates automerge; strategy of the first; AutomergeBranch: all of them with automergeType branch; Draft: some update has draftPR and the group does not automerge; PRCreation: the most waiting mode of its updates (status-success > not-pending > immediate)
 
 func Managers(cfg *config.Config) ([]manager.Manager, error)
 func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.Env, o Options) (*Result, error)
@@ -564,6 +566,7 @@ type PR struct {
     NodeID    string    // GitHub GraphQL id; "" elsewhere
     AutoMerge bool      // GitHub auto_merge non-null; always false on Gitea/Forgejo (not reported) and GitLab (pushes cancel it)
     Labels    []string  // label names (labels[].name); PR.HasLabel compares case-insensitively
+    Draft     bool      // draft: GitHub/Gitea/GitLab `draft`, on Gitea/Forgejo also a WIP:/[WIP] title prefix
 }
 type Issue struct{ Number int; Title, Body, URL string }
 var ErrAutoMergePending, ErrAutoMergeUnavailable, ErrIssuesDisabled error
@@ -571,8 +574,8 @@ type Client interface {
     DefaultBranch(ctx context.Context) (string, error)
     ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) // "open" | "closed"
     GetPR(ctx context.Context, number int) (PR, error)
-    CreatePR(ctx context.Context, head, base, title, body string) (PR, error)
-    UpdatePR(ctx context.Context, number int, title, body string) error
+    CreatePR(ctx context.Context, head, base, title, body string, draft bool) (PR, error) // draft: GitHub draft flag, Gitea/Forgejo "WIP: ", GitLab "Draft: " title prefix
+    UpdatePR(ctx context.Context, number int, title, body string, draft bool) error      // draft: the PR is one now; Gitea/Forgejo/GitLab keep the title prefix
     ClosePR(ctx context.Context, number int) error
     RemovePRLabel(ctx context.Context, number int, label string) error // a label the PR lacks is no error
     EnableAutoMerge(ctx context.Context, pr PR, strategy string) error // ErrAutoMergePending, ErrAutoMergeUnavailable
@@ -695,8 +698,8 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 | DefaultBranch | `GET {api}/repos/{repo}` → `.default_branch` (the repository JSON is fetched once per run and also gives `allow_auto_merge`, `allow_merge_commit`, `allow_squash_merge`, `allow_rebase_merge`, `has_issues`) |
 | ListPRs | `GET {api}/repos/{repo}/pulls?state=<s>&sort=updated&direction=desc&per_page=100&page=N` |
 | GetPR | `GET .../pulls/{n}` (nullable `mergeable`, `node_id`, `head.sha`, nullable `auto_merge`) |
-| CreatePR | `POST .../pulls {title,head,base,body}` |
-| UpdatePR | `PATCH .../pulls/{n} {title,body}` |
+| CreatePR | `POST .../pulls {title,head,base,body,draft}` (`draft` only when set) |
+| UpdatePR | `PATCH .../pulls/{n} {title,body}` (the draft state is left alone) |
 | ClosePR | `PATCH .../pulls/{n} {state:"closed"}` |
 | RemovePRLabel | `DELETE .../issues/{n}/labels/{name}` (path-escaped); 404 (the PR lacks it) is success |
 | EnableAutoMerge | `POST {graphql}` mutation `enablePullRequestAutoMerge(input:{pullRequestId:<node_id>, mergeMethod:MERGE\|SQUASH\|REBASE})`; not sent when `allow_auto_merge` is `false` |
@@ -714,7 +717,7 @@ On GitHub, `Merged` is `merged_at != null` and `AutoMerge` is `auto_merge != nul
 |---|---|
 | DefaultBranch | `GET {api}/repos/{repo}` (also `default_merge_style`, `has_issues`, `external_tracker`) |
 | ListPRs | `GET {api}/repos/{repo}/pulls?state=<s>&sort=recentupdate&limit=50&page=N` |
-| GetPR / CreatePR / UpdatePR / ClosePR | same paths and bodies as GitHub |
+| GetPR / CreatePR / UpdatePR / ClosePR | same paths and bodies as GitHub, without `draft`: a draft PR's title gets the `WIP: ` prefix (one of the default `WORK_IN_PROGRESS_PREFIXES`) at creation and keeps it on updates while the PR is a draft (`draft` in the PR JSON, or a `WIP:`/`[WIP]` title prefix, case-insensitive) |
 | RemovePRLabel | `DELETE .../issues/{n}/labels/{id}`, the id resolved like CreateIssue's; an unknown name or a 404 is success |
 | EnableAutoMerge | `POST .../pulls/{n}/merge {do, merge_when_checks_succeed: true, delete_branch_after_merge: true, head_commit_id}`; the style field is `do` on Gitea 28 and `Do` on Forgejo (both `swagger.v1.json`). 409 `already scheduled` is success; 405 `Please try again later` is pending. |
 | Checks | `GET .../commits/{sha}/status` (Actions report commit statuses); `total_count` 0 → none, `success`, `pending`, anything else (`failure`, `error`, `warning`) → failure |
@@ -732,8 +735,8 @@ On Gitea and Forgejo, `Merged` is the `merged` field and `Mergeable` is the `mer
 | DefaultBranch | `GET {project}` → `.default_branch` (fetched once per run; also `issues_enabled`) |
 | ListPRs | `GET {project}/merge_requests?state=<opened\|all>&order_by=updated_at&sort=desc&per_page=100&page=N`; `closed` lists `state=all` and keeps `closed` and `merged` ones |
 | GetPR | `GET {project}/merge_requests/{iid}` |
-| CreatePR | `POST {project}/merge_requests {source_branch, target_branch, title, description, remove_source_branch: true}` |
-| UpdatePR / ClosePR | `PUT {project}/merge_requests/{iid} {title, description}` / `{state_event: "close"}` |
+| CreatePR | `POST {project}/merge_requests {source_branch, target_branch, title, description, remove_source_branch: true}`; a draft's title gets the `Draft: ` prefix (no draft flag in the REST API) |
+| UpdatePR / ClosePR | `PUT {project}/merge_requests/{iid} {title, description}` (a draft keeps its `Draft:`, `[Draft]`, `(Draft)` or `Draft - ` prefix, case-insensitive) / `{state_event: "close"}` |
 | SetPRMetadata | `PUT .../merge_requests/{iid}` with `add_labels` (comma-separated names; GitLab creates missing labels), `reviewer_ids`, `assignee_ids` (ids from `GET {api}/users?username=<u>`, cached per run); `team:` reviewers are an error (GitLab has no team reviewers) |
 | RemovePRLabel | `GET .../merge_requests/{iid}`, then `PUT {remove_labels}` with the labels equal to the name case-insensitively; none is success |
 | EnableAutoMerge | `PUT .../merge_requests/{iid}/merge {merge_when_pipeline_succeeds: true, auto_merge: true, should_remove_source_branch: true, sha, squash}`; 405, 406, 409 and 422 are pending |
@@ -743,7 +746,7 @@ On Gitea and Forgejo, `Merged` is the `merged` field and `Mergeable` is the `mer
 | CreateIssue | `POST {project}/issues {title, description, labels: "a,b"}` |
 | UpdateIssue | `PUT {project}/issues/{iid} {description}` |
 
-On GitLab, `Head` = `source_branch`, `HeadSHA` = `sha`, `Base` = `target_branch`, `URL` = `web_url`, `Merged` is state `merged`. `AutoMerge` is always false: a push to the source branch cancels auto-merge (verified on GitLab 19.5), and the bot keeps the listed PR's flag after its own push, so the idempotent request (200 when already set) is repeated on every run, as on Gitea. `Mergeable` is false for `has_conflicts` or `detailed_merge_status` `conflict`/`need_rebase` (deps rebuilds the branch), true for `mergeable`, and unknown (nil) while GitLab checks or the MR waits for a pipeline or approval. `automergeStrategy` only sets `squash` (`squash` true, `merge`/`rebase` false, `auto` the project's default): merge commit, semi-linear or fast-forward is the project's merge method.
+On GitLab, `Head` = `source_branch`, `HeadSHA` = `sha`, `Base` = `target_branch`, `URL` = `web_url`, `Merged` is state `merged`, `Draft` = `draft`. `AutoMerge` is always false: a push to the source branch cancels auto-merge (verified on GitLab 19.5), and the bot keeps the listed PR's flag after its own push, so the idempotent request (200 when already set) is repeated on every run, as on Gitea. `Mergeable` is false for `has_conflicts` or `detailed_merge_status` `conflict`/`need_rebase` (deps rebuilds the branch), true for `mergeable`, and unknown (nil) while GitLab checks or the MR waits for a pipeline or approval. `automergeStrategy` only sets `squash` (`squash` true, `merge`/`rebase` false, `auto` the project's default): merge commit, semi-linear or fast-forward is the project's merge method.
 
 All clients share these rules:
 - `Head` = `head.ref`; `URL` = `html_url` (GitHub, Gitea, Forgejo).
@@ -819,11 +822,11 @@ All clients share these rules:
       - The PR is not unmergeable and `rebaseWhen` is `conflicted` (the default), or the branch does not exist → `up-to-date`. On GitHub, a nil `mergeable` triggers a `GetPR` call; nil still counts as mergeable.
       - The PR is not unmergeable and `rebaseWhen: behind-base-branch`: the branch tip is fetched (`BranchTip`). If it is the bot's and its only parent is the base head → `up-to-date`; otherwise it is rebuilt on the base head (step 8, status `rebased`). deps branches are one commit on top of base, so the parent alone tells whether base moved.
       - An unmergeable PR falls through and is rebuilt (`updated`).
-   4. No open PR exists, it is not an existing branch automerge branch, and the new-PR limit is exhausted → `skipped: new PR limit reached`. The limit of a run is the minimum over the non-zero limits: `--max-new-prs` (default 10) minus PRs (and branch automerge branches) created this run; `prConcurrentLimit` minus the open managed PRs; `prHourlyLimit` minus the managed PRs (open and closed) whose `created_at` is within the last hour. `0` means unlimited for each; `prConcurrentLimit` and `prHourlyLimit` default to 0 (Renovate defaults to 10 and 2).
+   4. No open PR exists, it is not an existing branch without a PR (branch automerge, `prCreation`), and the new-PR limit is exhausted → `skipped: new PR limit reached`. The limit of a run is the minimum over the non-zero limits: `--max-new-prs` (default 10) minus PRs (and branches without a PR) created this run; `prConcurrentLimit` minus the open managed PRs; `prHourlyLimit` minus the managed PRs (open and closed) whose `created_at` is within the last hour. `0` means unlimited for each; `prConcurrentLimit` and `prHourlyLimit` default to 0 (Renovate defaults to 10 and 2).
    5. The branch exists and the author email of its last commit is neither the bot's (`AuthorEmail`) nor in `gitIgnoredAuthors` (case-insensitive) → `skipped: branch modified by someone else`. Such branches are never rebased.
-   6. A branch automerge group (`Group.AutomergeBranch`) without an open PR and without the dashboard's `pr` request continues in [Branch automerge](#branch-automerge).
+   6. A branch automerge group (`Group.AutomergeBranch`) or a group whose `Group.PRCreation` is `not-pending` or `status-success`, without an open PR and without the dashboard's `pr` request, continues in [Branch automerge](#branch-automerge) or [Waiting for checks](#waiting-for-checks).
    7. `--dry-run` → `would-create`, `would-update` or `would-rebase`, with no git or API writes.
-   8. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet); with platform commits, the API commit and `updateRefs` with that sha as `beforeOid` (section 3). Then update the PR (`updated`) or create one (`created`). A rebase only pushes: content and title are unchanged, so apart from the input fingerprint (rule 3) the PR is not edited and no release notes are fetched (`rebased`, counted as updated in the run summary line).
+   8. Otherwise: commit on a temporary index, then `push --force-with-lease` against the expected sha (empty means the branch must not exist yet); with platform commits, the API commit and `updateRefs` with that sha as `beforeOid` (section 3). Then update the PR (`updated`, passing its `Draft` so Gitea keeps the prefix) or create one (`created`, a draft when `Group.Draft`). A rebase only pushes: content and title are unchanged, so apart from the input fingerprint (rule 3) the PR is not edited and no release notes are fetched (`rebased`, counted as updated in the run summary line).
 
    **Branch tip fetch:** `BranchTip` runs `git fetch --no-tags origin refs/heads/<b>` (with `--depth=1` in shallow clones, so full clones stay full) and parses the raw `git cat-file commit FETCH_HEAD` header for the author email, parents and tree; the raw object still lists the parent when a shallow graft hides it. With platform commits it reads `GET /commits/refs/heads/<b>` instead (`commit.tree.sha` is the tree) and reports the bot's email for a tip GitHub links to the token's account. It is fetched at most once per group and only when the branch exists and the author, parent or tree is needed.
 
@@ -857,6 +860,13 @@ A group automerges when every update in it has `Automerge` from the policy of it
 
 `gitx.Push` classifies a refused push from its `--porcelain` status line: `[rejected]` (`stale info`, non-fast-forward) is `ErrStale`, `[remote rejected]` is `ErrRejected`. With platform commits the fast-forward is `updateRefs` with `beforeOid` = head; `platform.ErrRefStale` (the branch moved) and `platform.ErrRefRejected` (any other refusal, e.g. branch protection) map to the same errors. `WriteTree` stays local there: git object ids are content hashes, so the local tree equals the tree of the API commit made from the same changes on the same parent.
 
+### Waiting for checks
+
+`prCreation: not-pending` or `status-success` (Renovate's options) push a group's branch without a PR and open the PR on a later run, once the branch's checks allow it. It applies to a group whose `Group.PRCreation` is one of them, that is not a branch automerge group, has no open PR, and was not ticked under *Pending status checks* on the dashboard (`deps:pr=<branch>`, which opens the PR now). Steps 1 to 5 of the per-group decision apply first, as for branch automerge.
+
+1. **Fresh branch:** the branch exists, its tip is the bot's, and either its only parent is the base head and its tree equals `WriteTree(head, changes)`, or (unless `rebaseWhen: behind-base-branch`) the objects of the changed paths in the tip equal those in `WriteTree(head, changes)` (one `ObjectIDs` call each; the tip's root tree must be local, which it is after `BranchTip`'s fetch but not with platform commits). A branch only behind base is thus kept, like a PR branch under `conflicted`. Anything else is rebuilt and force-pushed: `created` (counts toward the new-PR limit), `updated` or `rebased`, outcome `PR waiting for checks`; a dry run reports `would-…` with it.
+2. **Checks** of a fresh branch (`Checks(tip)`), status `up-to-date`: `success`, or `failure` under `not-pending` → the PR is created as in step 8 (within the new-PR limit, else `skipped: new PR limit reached`; a dry run `would-create`), a draft when `Group.Draft`, and automerged when the group automerges; `failure` under `status-success` → `PR waiting for green checks`; `none` or `pending` → `PR waiting for checks`. There is no `prNotPendingHours`: a repository without checks waits until the dashboard checkbox is ticked.
+
 ### Lock file maintenance
 
 `lockFileMaintenance: {enabled, schedule}` (Renovate's option) adds one update per lock root in `Resolve`: `Type` `lockFileMaintenance` (not rule-selectable), `Dep.File` the manifest next to the lockfile, `Dep.Name` the lockfile path, `Schedule` from `lockFileMaintenance.schedule` (else the top-level one), the top-level automerge settings; rules do not apply, and none are added with `Options.Filter` (`explain`). Managers opt in with `manager.LockMaintainer` (`LockRoots`; a lockfile is claimed by one manager only), post-processors with `engine.LockMaintainer` (`Maintain`, called instead of `Process`; other updates of the same scope are an error; a result under the manifest's path replaces it) or `engine.ManifestMaintainer` (`MaintainManifests`, which also gets the maintained manifests). Implementations, all on temp copies:
@@ -876,8 +886,8 @@ A group automerges when every update in it has `Automerge` from the policy of it
 ### Dependency dashboard
 
 - **Finding it.** The first open issue (lowest number) among up to 10 pages of open issues whose title equals `dependencyDashboardTitle` and whose body contains `<!-- deps:dashboard -->`. GitHub lists PRs as issues; they are dropped. deps never closes it; with `dependencyDashboard: false` it is neither read nor written.
-- **Checkboxes.** `- [x] <!-- deps:<action>=<branch> -->` lines (`x` or `X`) are requests for the next run: `create` (pending approval, awaiting schedule, rate-limited), `recreate` (closed without merging), `rebase` (open PRs, and branches modified by someone else, whose commits are then discarded), `pr` (pending branch automerge: open the PR instead). Every body deps writes has all boxes unticked.
-- **Body.** Sections in this order, each left out when empty: `Pending approval` (`skipped: awaiting dashboard approval`), `Awaiting schedule` (each item names the crons it waits for: the intersection of its updates' schedules, ``(waits for `0 0 * * 0`)``), `Rate-limited`, `Ignored or blocked`, `Pending branch automerge` (branches without a PR waiting for their checks or the next run), `Open` (PR links), `Deprecated dependencies` and `Abandoned dependencies` (`engine.Result.Warnings`: one line per dep name and reason with its files, sorted by name), `Errors` (at most 20, flattened to one line of at most 300 characters), `Detected dependencies` (`<details>` per manager and per file, one `` `name version` `` line per extracted dep, sorted by manager, file, line and name). Items follow the group order, so the body is deterministic and an unchanged run does not edit the issue (line endings and surrounding whitespace are ignored in the comparison). The body is capped at 60 000 bytes (GitHub allows 65 536 characters); lists that do not fit end with a `not listed` note, and open `<details>` are always closed.
+- **Checkboxes.** `- [x] <!-- deps:<action>=<branch> -->` lines (`x` or `X`) are requests for the next run: `create` (pending approval, awaiting schedule, rate-limited), `recreate` (closed without merging), `rebase` (open PRs, and branches modified by someone else, whose commits are then discarded), `pr` (pending branch automerge or pending status checks: open the PR now). Every body deps writes has all boxes unticked.
+- **Body.** Sections in this order, each left out when empty: `Pending approval` (`skipped: awaiting dashboard approval`), `Awaiting schedule` (each item names the crons it waits for: the intersection of its updates' schedules, ``(waits for `0 0 * * 0`)``), `Rate-limited`, `Ignored or blocked`, `Pending branch automerge` (branches without a PR waiting for their checks or the next run), `Pending status checks` (branches whose `prCreation` waits for their checks; `checks failed` under `status-success`), `Open` (PR links), `Deprecated dependencies` and `Abandoned dependencies` (`engine.Result.Warnings`: one line per dep name and reason with its files, sorted by name), `Errors` (at most 20, flattened to one line of at most 300 characters), `Detected dependencies` (`<details>` per manager and per file, one `` `name version` `` line per extracted dep, sorted by manager, file, line and name). Items follow the group order, so the body is deterministic and an unchanged run does not edit the issue (line endings and surrounding whitespace are ignored in the comparison). The body is capped at 60 000 bytes (GitHub allows 65 536 characters); lists that do not fit end with a `not listed` note, and open `<details>` are always closed.
 
 ### Release age and notes
 

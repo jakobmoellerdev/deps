@@ -101,6 +101,18 @@ const (
 // AutomergeTypes are the accepted automergeType values.
 var AutomergeTypes = []string{AutomergeTypePR, AutomergeTypeBranch}
 
+// PR creation modes of prCreation: immediate opens the PR right after the branch is pushed;
+// not-pending once the branch's checks finished (passed or failed); status-success once they
+// all passed. Until then the branch waits without a PR.
+const (
+	PRCreationImmediate     = "immediate"
+	PRCreationNotPending    = "not-pending"
+	PRCreationStatusSuccess = "status-success"
+)
+
+// PRCreations are the accepted prCreation values, from the least to the most waiting.
+var PRCreations = []string{PRCreationImmediate, PRCreationNotPending, PRCreationStatusSuccess}
+
 // DefaultDashboardTitle is the dependency dashboard issue title when none is configured.
 const DefaultDashboardTitle = "Dependency Dashboard"
 
@@ -211,6 +223,8 @@ type Config struct {
 	Automerge             bool   `yaml:"automerge" jsonschema:"default=false" jsonschema_description:"Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only."`
 	AutomergeStrategy     string `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase,default=auto" jsonschema_description:"Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase."`
 	AutomergeType         string `yaml:"automergeType" jsonschema:"enum=pr,enum=branch,default=pr" jsonschema_description:"How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail)."`
+	DraftPR               bool   `yaml:"draftPR" jsonschema:"default=false" jsonschema_description:"Open new update PRs as drafts (GitHub draft PRs; on Gitea and Forgejo the title starts with WIP:, on GitLab with Draft:). PRs that automerge are never drafts. Rules override it."`
+	PRCreation            string `yaml:"prCreation" jsonschema:"enum=immediate,enum=not-pending,enum=status-success,default=immediate" jsonschema_description:"When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed) or status-success (once they all passed). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it."`
 	// Labels, Reviewers and Assignees are set on new update PRs; rules override them.
 	Labels    []string `yaml:"labels" jsonschema_description:"Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels)."`
 	Reviewers []string `yaml:"reviewers" jsonschema_description:"Reviewers requested on new update PRs: user names, or team:<slug> for a team of the repository's organization (not on GitLab). Rules replace them."`
@@ -292,6 +306,13 @@ func validateAutomerge(f, strategy, typ string, add addFunc) {
 	}
 	if typ != "" && !slices.Contains(AutomergeTypes, typ) {
 		add(f+"automergeType", "must be one of %s, got %q", list(AutomergeTypes), typ)
+	}
+}
+
+// validatePRCreation checks prCreation of the top level (f "") or a rule (f "rules[i].").
+func validatePRCreation(f, v string, add addFunc) {
+	if v != "" && !slices.Contains(PRCreations, v) {
+		add(f+"prCreation", "must be one of %s, got %q", list(PRCreations), v)
 	}
 }
 
@@ -436,6 +457,8 @@ type Rule struct {
 	AutomergeStrategy    string   `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
 	AutomergeType        string   `yaml:"automergeType" jsonschema:"enum=pr,enum=branch" jsonschema_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
 	DashboardApproval    *bool    `yaml:"dashboardApproval" jsonschema_description:"Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does."`
+	DraftPR              *bool    `yaml:"draftPR" jsonschema_description:"Overrides the top-level draftPR for matching deps (with updateTypes: for updates of those types). A group's PR is a draft when any of its updates asks for one."`
+	PRCreation           string   `yaml:"prCreation" jsonschema:"enum=immediate,enum=not-pending,enum=status-success" jsonschema_description:"Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (status-success over not-pending over immediate)."`
 	Labels               []string `yaml:"labels" jsonschema_description:"Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."`
 	AddLabels            []string `yaml:"addLabels" jsonschema_description:"Labels added to those of earlier rules and the top level for new PRs of matching deps."`
 	Reviewers            []string `yaml:"reviewers" jsonschema_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
@@ -769,6 +792,7 @@ func (c *Config) Validate() error {
 		add("platformCommit", "must be one of %s, got %q", list(PlatformCommits), c.PlatformCommit)
 	}
 	validateAutomerge("", c.AutomergeStrategy, c.AutomergeType, add)
+	validatePRCreation("", c.PRCreation, add)
 	if c.DependencyDashboardTitle != "" && (strings.TrimSpace(c.DependencyDashboardTitle) == "" || strings.ContainsAny(c.DependencyDashboardTitle, "\r\n")) {
 		add("dependencyDashboardTitle", "must be a non-blank single line, got %q", c.DependencyDashboardTitle)
 	}
@@ -991,6 +1015,7 @@ func (c *Config) validateRule(i int, add addFunc) {
 		add(f+".commitScope", "must match %s, got %q", commitScopeRe, *r.CommitScope)
 	}
 	validateAutomerge(f+".", r.AutomergeStrategy, r.AutomergeType, add)
+	validatePRCreation(f+".", r.PRCreation, add)
 	validatePRMeta(f+".", r.Labels, r.AddLabels, r.Reviewers, r.Assignees, add)
 	if t := r.PostUpgradeTasks; t != nil {
 		key := f + ".postUpgradeTasks.commands"

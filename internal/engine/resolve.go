@@ -582,6 +582,8 @@ func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Mana
 				AutomergeStrategy: cmp.Or(cfg.AutomergeStrategy, config.StrategyAuto),
 				AutomergeType:     cmp.Or(cfg.AutomergeType, config.AutomergeTypePR),
 				DashboardApproval: cfg.DashboardApproval,
+				DraftPR:           cfg.DraftPR,
+				PRCreation:        cmp.Or(cfg.PRCreation, config.PRCreationImmediate),
 				Templates:         cfg.PRTemplates(),
 				Labels:            cfg.Labels,
 				Reviewers:         cfg.Reviewers,
@@ -1160,6 +1162,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 			kp := r.pol.of(up.Type)
 			up.CommitType, up.CommitScope, up.Templates = kp.CommitType, kp.CommitScope, kp.Templates
 			up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
+			up.DraftPR, up.PRCreation = kp.DraftPR, kp.PRCreation
 			up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
 			up.Tasks = kp.Tasks
 			up.Warnings = warnings

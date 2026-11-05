@@ -212,7 +212,7 @@ func recordInput(ctx context.Context, o Options, pc platform.Client, grp engine.
 	if o.DryRun || body == pr.Body {
 		return
 	}
-	if err := pc.UpdatePR(ctx, pr.Number, cmp.Or(pr.Title, grp.Title), body); err != nil {
+	if err := pc.UpdatePR(ctx, pr.Number, cmp.Or(pr.Title, grp.Title), body, pr.Draft); err != nil {
 		slog.WarnContext(ctx, "recording the input fingerprint", "branch", grp.Branch, "number", pr.Number, "err", err)
 		return
 	}

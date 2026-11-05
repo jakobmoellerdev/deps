@@ -114,14 +114,14 @@ func TestGitLabWrites(t *testing.T) {
 		"POST " + glAPI + "/issues":          {code: http.StatusCreated, body: `{"iid":2,"title":"Dependency Dashboard","description":"d","web_url":"iu"}`},
 		"PUT " + glAPI + "/issues/2":         {body: `{}`},
 	})
-	pr, err := c.CreatePR(t.Context(), "deps/a", "main", "title", "body")
+	pr, err := c.CreatePR(t.Context(), "deps/a", "main", "title", "body", false)
 	if err != nil || pr.Number != 7 || pr.URL != "u" || pr.HeadSHA != "s" || pr.Base != "main" {
 		t.Fatalf("CreatePR = %+v %v", pr, err)
 	}
-	if err := c.UpdatePR(t.Context(), 7, "t2", "b2"); err != nil {
+	if err := c.UpdatePR(t.Context(), 7, "t2", "b2", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.UpdatePR(t.Context(), 7, "", "b3"); err != nil {
+	if err := c.UpdatePR(t.Context(), 7, "", "b3", true); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.ClosePR(t.Context(), 7); err != nil {
@@ -145,6 +145,42 @@ func TestGitLabWrites(t *testing.T) {
 		"POST " + glAPI + "/issues map[description:d labels:deps,dashboard title:Dependency Dashboard]",
 		"POST " + glAPI + "/issues map[description:y title:x]",
 		"PUT " + glAPI + "/issues/2 map[description:d2]",
+	}
+	got := calls()
+	if len(got) != len(want) {
+		t.Fatalf("calls = %v", uris(got))
+	}
+	for i, w := range want {
+		if s := fmt.Sprintf("%s %s %v", got[i].method, got[i].uri, got[i].body); s != w {
+			t.Errorf("call %d = %s\nwant %s", i, s, w)
+		}
+	}
+}
+
+// Draft merge requests: the Draft: title prefix, added once and kept on updates of a draft;
+// GitLab reports the draft state.
+func TestGitLabDraft(t *testing.T) {
+	c, calls := gitlabTestClient(t, map[string]route{
+		"POST " + glAPI + "/merge_requests":  {code: http.StatusCreated, body: `{"iid":7,"state":"opened","title":"Draft: chore: x","draft":true}`},
+		"PUT " + glAPI + "/merge_requests/7": {body: `{}`},
+	})
+	pr, err := c.CreatePR(t.Context(), "deps/a", "main", "chore: x", "b", true)
+	if err != nil || !pr.Draft {
+		t.Fatalf("CreatePR = %+v %v", pr, err)
+	}
+	for _, title := range []string{"chore: x", "(draft) chore: x"} {
+		if err := c.UpdatePR(t.Context(), 7, title, "b", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.UpdatePR(t.Context(), 7, "chore: x", "b", false); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"POST " + glAPI + "/merge_requests map[description:b remove_source_branch:true source_branch:deps/a target_branch:main title:Draft: chore: x]",
+		"PUT " + glAPI + "/merge_requests/7 map[description:b title:Draft: chore: x]",
+		"PUT " + glAPI + "/merge_requests/7 map[description:b title:(draft) chore: x]",
+		"PUT " + glAPI + "/merge_requests/7 map[description:b title:chore: x]",
 	}
 	got := calls()
 	if len(got) != len(want) {

@@ -1,9 +1,10 @@
 Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else from the `origin` remote), resolves every dependency, builds one commit per group on a temporary index (no checkout; the working tree is never modified), pushes it with `--force-with-lease`, and creates or updates the PRs. With platform commits (GitHub, see below) the commits are created and the branches moved through the GitHub API instead.
 
 - PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested. With `automergeType: branch` there is no PR: the branch is pushed, and once its checks pass the base branch is fast-forwarded to it (one branch per run); failed checks open the PR.
+- With `prCreation: not-pending` or `status-success` the branch is pushed without a PR, and a later run opens the PR once its checks finished or all passed. With `draftPR` new PRs are drafts (GitHub's draft flag; a `WIP: ` title prefix on Gitea and Forgejo, `Draft: ` on GitLab), unless they automerge.
 - With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
 - With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every lockfile deps maintains (`Cargo.lock`, npm, pnpm, yarn and bun locks, `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `Gemfile.lock`, Gradle lockfiles, `.terraform.lock.hcl`, and the `// indirect` requirements of `go.mod` with `go.sum`) with the ecosystem's tool; it is closed when the lockfiles are current.
-- Obsolete PRs of the base under `branchPrefix` are closed and their branches deleted when the base's resolution had no errors, and obsolete branches without any PR (branch automerge) are deleted when no base had any. PRs to other branches are left alone.
+- Obsolete PRs of the base under `branchPrefix` are closed and their branches deleted when the base's resolution had no errors, and obsolete branches without any PR (branch automerge, `prCreation`) are deleted when no base had any. PRs to other branches are left alone.
 - On an open PR, its ticked rebase checkbox or the `rebaseLabel` (default `rebase`) requests a rebuild like the dashboard's rebase checkbox; deps unticks the box and removes the label afterwards. The `stopUpdatingLabel` (default `stop-updating`) makes deps leave the PR alone.
 - With `--base` or the default branch, the local `HEAD` must be the tip of `origin/<base>`.
 
@@ -30,16 +31,16 @@ Only keys without a passphrase are supported; a protected key fails before any w
 
 **New-PR limit:** the minimum of `--max-new-prs` and the room left below `prConcurrentLimit`/`prHourlyLimit`, counting only the non-zero ones. Existing PRs are always updated.
 
-**PR statuses** (the `pr` lines, see `deps help output`; for a branch automerge group without a PR they describe its branch):
+**PR statuses** (the `pr` lines, see `deps help output`; for a group without a PR, branch automerge or waiting for `prCreation`, they describe its branch):
 
 | Status | Meaning |
 |---|---|
-| `created` | new PR, or new branch (branch automerge) |
+| `created` | new PR, or new branch (branch automerge, `prCreation`) |
 | `updated` | content changed or the PR was unmergeable; force-pushed and PR edited. A branch automerge branch is also rebuilt when the base moved |
 | `rebased` | unchanged content rebuilt on a moved base (`rebaseWhen: behind-base-branch`), or on request (the PR's rebase checkbox or `rebaseLabel`, or the dashboard) |
 | `up-to-date` | nothing to do |
 | `closed` | obsolete PR closed and branch deleted |
-| `deleted` | obsolete branch without a PR deleted (branch automerge) |
+| `deleted` | obsolete branch without a PR deleted (branch automerge, `prCreation`) |
 | `would-create`, `would-update`, `would-rebase` | `--dry-run` |
 | `skipped: closed PR for this version` | an unmerged closed PR has the same branch and title, or the same versions of a major update (the dashboard's recreate checkbox overrides it) |
 | `skipped: closed PR for this major` | an unmerged closed PR of the same major branch (`-major`, `-v<N>`) targeted the same majors: closing a major PR ignores that major until the next one (the dashboard's recreate checkbox overrides it) |
@@ -61,5 +62,12 @@ Only keys without a passphrase are supported; a protected key fails before any w
 | `branch automerge waiting for checks` | branch automerge: the branch has no PR and its checks have not finished or none are reported; the next run checks again |
 | `branch automerge next run` | branch automerge: the checks passed, but another branch was merged in this run or the base moved; the next run rebases or merges it |
 | `would-automerge` | `--dry-run` |
+
+**PR creation outcomes** (appended to the status of a branch without a PR under `prCreation: not-pending` or `status-success`, e.g. `created, PR waiting for checks`):
+
+| Outcome | Meaning |
+|---|---|
+| `PR waiting for checks` | the branch's checks have not finished or none are reported; the next run checks again |
+| `PR waiting for green checks` | `status-success`: a check failed; the PR is opened once they all pass, or when ticked on the dashboard |
 
 **Dashboard statuses** (the `dashboard` line): `created`, `updated`, `up-to-date` (body unchanged, not edited), `would-create`, `would-update` (`--dry-run`), and `skipped: issues disabled` (the repository has no issue tracker; not an error).

@@ -129,7 +129,7 @@ func TestSchema(t *testing.T) {
 		}
 	}
 	if want := []string{"version", "pin", "rangeStrategy", "schedule", "timezone", "security", "branchPrefix", "baseBranches", "rebaseWhen", "gitAuthor", "platformCommit", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "replacements", "actions", "gitlabci", "terraform", "gomodUpdateImportPaths", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "ignorePaths",
-		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "labels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "rebaseLabel", "stopUpdatingLabel",
+		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "draftPR", "prCreation", "labels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "rebaseLabel", "stopUpdatingLabel",
 		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "dashboardApproval", "rules", "custom", "customDatasources", "lockFileMaintenance"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
@@ -157,6 +157,7 @@ func TestSchema(t *testing.T) {
 		s.Properties["separateMajorMinor"].Default != true || s.Properties["separateMultipleMajor"].Default != false ||
 		s.Properties["separateMinorPatch"].Default != false || s.Properties["updateNotScheduled"].Default != true ||
 		s.Properties["automerge"].Default != false || s.Properties["automergeStrategy"].Default != "auto" ||
+		s.Properties["draftPR"].Default != false || s.Properties["prCreation"].Default != config.PRCreationImmediate ||
 		s.Properties["dependencyDashboard"].Default != false || s.Properties["dependencyDashboardTitle"].Default != config.DefaultDashboardTitle || s.Properties["dashboardApproval"].Default != false ||
 		s.Properties["gomodUpdateImportPaths"].Default != true || lfm.Properties["enabled"].Default != false ||
 		s.Properties["minimumReleaseAgeBehaviour"].Default != config.TimestampOptional {

@@ -47,6 +47,9 @@ type PR struct {
 	// Forgejo do not report it, so it is always false there and requests are idempotent.
 	AutoMerge bool
 	Labels    []string // label names; nil when it has none
+	// Draft reports a draft PR: GitHub's, Gitea's and GitLab's draft field, on Gitea and
+	// Forgejo also a title with a work-in-progress prefix (WIP: or [WIP]).
+	Draft bool
 }
 
 // HasLabel reports whether p has the label name (case-insensitive, as forges compare label
@@ -112,8 +115,12 @@ type Client interface {
 	DefaultBranch(ctx context.Context) (string, error)
 	ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) // "open" | "closed"
 	GetPR(ctx context.Context, number int) (PR, error)
-	CreatePR(ctx context.Context, head, base, title, body string) (PR, error)
-	UpdatePR(ctx context.Context, number int, title, body string) error
+	// CreatePR opens a PR; draft opens it as a draft (GitHub: the draft flag; Gitea and
+	// Forgejo: the title gets the "WIP: " prefix; GitLab: the "Draft: " prefix).
+	CreatePR(ctx context.Context, head, base, title, body string, draft bool) (PR, error)
+	// UpdatePR sets the title and body of PR number; draft is whether it is a draft now, so
+	// Gitea, Forgejo and GitLab keep its title prefix (GitHub keeps the draft state anyway).
+	UpdatePR(ctx context.Context, number int, title, body string, draft bool) error
 	ClosePR(ctx context.Context, number int) error
 	// SetPRMetadata adds labels (by name), requests reviewers (users, or team:<slug> teams)
 	// and adds assignees on PR number; empty lists are skipped. Each part is attempted; the

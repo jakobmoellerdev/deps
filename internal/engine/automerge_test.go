@@ -22,11 +22,14 @@ func TestAutomerge(t *testing.T) {
 	}
 	root, cfg := setup(t, `automergeStrategy: squash
 separateMajorMinor: false
+draftPR: true
 rules:
   - updateTypes: [minor, patch]
     automerge: true
   - names: ["actions/cache", "actions/setup-go"]
     group: tools
+  - names: ["actions/cache"]
+    prCreation: status-success
 `, files)
 	o := Options{
 		Managers: []manager.Manager{actions.New()},
@@ -44,6 +47,9 @@ rules:
 	for _, u := range res.Updates {
 		if u.Automerge != want[u.Dep.Name] || u.AutomergeStrategy != config.StrategySquash {
 			t.Errorf("%s %s: automerge %v %q, want %v squash", u.Dep.Name, u.Type, u.Automerge, u.AutomergeStrategy, want[u.Dep.Name])
+		}
+		if mode := map[bool]string{false: config.PRCreationImmediate, true: config.PRCreationStatusSuccess}[u.Dep.Name == "actions/cache"]; !u.DraftPR || u.PRCreation != mode {
+			t.Errorf("%s: draftPR %v prCreation %q, want true %q", u.Dep.Name, u.DraftPR, u.PRCreation, mode)
 		}
 	}
 	if len(res.Updates) != 3 {
@@ -92,5 +98,29 @@ func TestGroupAutomergeStrategyAndType(t *testing.T) {
 	ups[1].AutomergeType, ups[1].Automerge = config.AutomergeTypeBranch, false
 	if g := GroupUpdates(ups, ""); g[0].Automerge || g[0].AutomergeBranch {
 		t.Fatalf("not automerged: %+v", g)
+	}
+}
+
+func TestGroupDraftAndPRCreation(t *testing.T) {
+	ups := []dep.Update{
+		{Dep: dep.Dep{Manager: "gomod", Name: "a"}, NewVersion: "v2", Group: "g", PRCreation: config.PRCreationImmediate},
+		{Dep: dep.Dep{Manager: "gomod", Name: "b"}, NewVersion: "v2", Group: "g"},
+	}
+	if g := GroupUpdates(ups, ""); g[0].Draft || g[0].PRCreation != config.PRCreationImmediate {
+		t.Fatalf("defaults: %+v", g)
+	}
+	// One draft update makes the PR a draft; the most waiting prCreation wins.
+	ups[1].DraftPR, ups[1].PRCreation = true, config.PRCreationNotPending
+	if g := GroupUpdates(ups, ""); !g[0].Draft || g[0].PRCreation != config.PRCreationNotPending {
+		t.Fatalf("draft, not-pending: %+v", g)
+	}
+	ups[0].PRCreation = config.PRCreationStatusSuccess
+	if g := GroupUpdates(ups, ""); g[0].PRCreation != config.PRCreationStatusSuccess {
+		t.Fatalf("status-success: %+v", g)
+	}
+	// An automerge PR is never a draft.
+	ups[0].Automerge, ups[1].Automerge = true, true
+	if g := GroupUpdates(ups, ""); g[0].Draft {
+		t.Fatalf("automerge draft: %+v", g)
 	}
 }

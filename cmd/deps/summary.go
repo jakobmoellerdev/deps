@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/bot"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/logx"
@@ -234,8 +235,10 @@ func (s *summary) groupNotes(g engine.Group, link func(a bot.Action) string) []s
 		if a.Reason != "" {
 			notes = append(notes, a.Reason)
 		}
-		if a.Automerge != "" {
-			notes = append(notes, a.Automerge)
+		for _, o := range []string{a.Automerge, a.PRWait} {
+			if o != "" {
+				notes = append(notes, o)
+			}
 		}
 		if len(a.Waits) > 0 {
 			notes = append(notes, "waiting for "+strings.Join(a.Waits, " or "))
@@ -251,6 +254,12 @@ func (s *summary) groupNotes(g engine.Group, link func(a bot.Action) string) []s
 		}
 		if g.DashboardApproval {
 			notes = append(notes, "dashboard approval")
+		}
+		if g.Draft {
+			notes = append(notes, "draft")
+		}
+		if (g.PRCreation == config.PRCreationNotPending || g.PRCreation == config.PRCreationStatusSuccess) && !g.AutomergeBranch {
+			notes = append(notes, "prCreation "+g.PRCreation)
 		}
 		if sch := g.Updates[0].Schedule; sch != nil {
 			notes = append(notes, "schedule "+sch.String())

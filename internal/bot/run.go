@@ -141,6 +141,13 @@ const (
 	AutomergeBranchNextRun = "branch automerge next run"
 )
 
+// PR creation outcomes (Action.PRWait) of a branch pushed without a PR because its
+// prCreation (not-pending, status-success) waits for its checks; the next run checks again.
+const (
+	PRWaitChecks = "PR waiting for checks"       // none reported yet, or still running
+	PRWaitFailed = "PR waiting for green checks" // status-success: a check failed
+)
+
 // Action is what happened to one branch/PR, or to the dependency dashboard issue
 // (Dashboard set, Status created, updated, up-to-date, would-create, would-update or
 // StatusSkipIssues).
@@ -148,17 +155,23 @@ type Action struct {
 	Branch, Title, Status, URL string
 	Number                     int
 	Automerge                  string   // automerge outcome; "" = not an automerge PR
+	PRWait                     string   // why a branch has no PR yet (prCreation); "" = none
 	Waits                      []string // StatusSkipSchedule: the schedule entries (crons, windows) that would put the group in schedule
 	Dashboard                  bool
 	Reason                     string // StatusSkipApply: why; StatusSkipStopped: the label
 }
 
-// Display is Status with the automerge outcome appended ("created, automerge").
+// Display is Status with the automerge and PR creation outcomes appended ("created,
+// automerge").
 func (a Action) Display() string {
-	if a.Automerge == "" {
-		return a.Status
+	s := a.Status
+	if a.Automerge != "" {
+		s += ", " + a.Automerge
 	}
-	return a.Status + ", " + a.Automerge
+	if a.PRWait != "" {
+		s += ", " + a.PRWait
+	}
+	return s
 }
 
 var fingerprintRe = regexp.MustCompile(`<!-- deps:fingerprint=([0-9a-f]+) -->`)
@@ -393,7 +406,7 @@ func (r *baseRun) handleGroups(ctx context.Context, o Options, dash *dashboard, 
 			continue // not built: handled as StatusSkipApproval
 		}
 		inSchedule[i] = forced[i].any() || scheduled(groups[i].Updates, o.Trigger)
-		existing := pr != nil || groups[i].AutomergeBranch && branchExists
+		existing := pr != nil || withoutPR(groups[i]) && branchExists
 		// Nothing is pushed for the others, so they are not built.
 		ran[i] = inSchedule[i] || o.UpdateNotScheduled && existing
 	}
@@ -619,7 +632,7 @@ type force struct {
 	create   bool // create the PR (or automerge branch) now: bypass schedule, PR limits and dashboardApproval
 	recreate bool // create a PR again although one for this version or major was closed
 	rebase   bool // rebuild the branch even if unchanged or modified by someone else
-	pr       bool // create a PR instead of merging the branch (branch automerge)
+	pr       bool // create the PR now instead of merging the branch (branch automerge) or waiting for its checks (prCreation)
 }
 
 func (f force) any() bool { return f.create || f.recreate || f.rebase || f.pr }
@@ -707,10 +720,10 @@ type groupBuild struct {
 // errNoChanges is handle's error when a deferred build (groupBuild.build) yields no changes.
 var errNoChanges = errors.New("no changes")
 
-// handle creates, updates or skips the PR of one group, or the branch of a branch automerge
-// group without a PR (handleBranch). target is the PR an automerge group requests auto-merge
-// for: the open, created or pushed PR (with the pushed head), an empty PR in a dry run, nil
-// when the group was skipped or has no PR.
+// handle creates, updates or skips the PR of one group, or the branch of a group without a PR
+// (handleBranch: branch automerge, or a prCreation waiting for checks). target is the PR an
+// automerge group requests auto-merge for: the open, created or pushed PR (with the pushed
+// head), an empty PR in a dry run, nil when the group was skipped or has no PR.
 func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b groupBuild, inSchedule bool, f force,
 	pc platform.Client, g Git,
 ) (a Action, target *platform.PR, err error) {
@@ -733,14 +746,15 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 		return a, nil, nil
 	}
 	// Branch automerge opens no PR; once one is open (its checks failed, or the dashboard
-	// asked for it), that PR is automerged like with automergeType pr.
-	branchMode := pr == nil && grp.AutomergeBranch && !f.pr
+	// asked for it), that PR is automerged like with automergeType pr. A prCreation waiting
+	// for checks opens the PR on a later run, or when the dashboard asks for it.
+	branchMode := pr == nil && withoutPR(grp) && !f.pr
 	switch {
 	case inSchedule:
 	case pr != nil && o.UpdateNotScheduled:
 		slog.DebugContext(ctx, "outside schedule, updating the open PR", "branch", grp.Branch, "number", pr.Number)
 	case branchMode && exists && o.UpdateNotScheduled:
-		slog.DebugContext(ctx, "outside schedule, updating the automerge branch", "branch", grp.Branch)
+		slog.DebugContext(ctx, "outside schedule, updating the branch without a PR", "branch", grp.Branch)
 	default:
 		a.Status, a.Waits = StatusSkipSchedule, waitCrons(grp.Updates)
 		slog.DebugContext(ctx, "outside schedule", "branch", grp.Branch, "waits", a.Waits)
@@ -816,7 +830,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 			rebase = true
 		}
 	}
-	// Dashboard requests bypass the PR limits; an existing automerge branch is not new.
+	// Dashboard requests bypass the PR limits; an existing branch without a PR is not new.
 	if pr == nil && !(branchMode && exists) && !f.any() && s.budget.full() {
 		a.Status = StatusSkipLimit
 		return a, nil, nil
@@ -884,13 +898,13 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	// contents only, so changing upstream notes never churns PRs.
 	body := prBody(ctx, o.Notes, grp, fp, b.input)
 	if pr != nil {
-		if err := pc.UpdatePR(ctx, pr.Number, grp.Title, body); err != nil {
+		if err := pc.UpdatePR(ctx, pr.Number, grp.Title, body, pr.Draft); err != nil {
 			return a, nil, err
 		}
 		a.Status = StatusUpdated
 		return a, target, nil
 	}
-	np, err := pc.CreatePR(ctx, grp.Branch, s.base, grp.Title, body)
+	np, err := pc.CreatePR(ctx, grp.Branch, s.base, grp.Title, body, grp.Draft)
 	if err != nil {
 		return a, nil, err
 	}
@@ -900,11 +914,20 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	return a, &np, nil
 }
 
-// handleBranch handles a branch automerge group without a PR (Renovate's automergeType
-// branch). The branch, one commit on top of base, is pushed and rebuilt like a PR branch, and
-// always when base moved: only a branch directly on base can be fast-forwarded. An unchanged
-// branch is merged by mergeBranch once its checks pass. t is the branch tip, fetched when the
-// branch exists and no rebuild was requested.
+// withoutPR reports whether grp's branch is pushed without a PR: branch automerge, or a
+// prCreation that waits for the branch's checks.
+func withoutPR(grp engine.Group) bool {
+	return grp.AutomergeBranch || grp.PRCreation == config.PRCreationNotPending || grp.PRCreation == config.PRCreationStatusSuccess
+}
+
+// handleBranch handles a group without a PR (withoutPR): a branch automerge group
+// (Renovate's automergeType branch), or one whose prCreation waits for the branch's checks.
+// The branch, one commit on top of base, is pushed and rebuilt like a PR branch. A branch
+// automerge branch is also rebuilt whenever base moved, since only a branch directly on base
+// can be fast-forwarded; a waiting branch behind base is kept while its changed files are
+// what this run built, unless rebaseWhen is behind-base-branch. An unchanged branch goes to
+// mergeBranch or awaitChecks. t is the branch tip, fetched when the branch exists and no
+// rebuild was requested.
 func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group, changes []engine.FileChange, fp, input string, f force,
 	expected string, exists bool, t platform.Tip, pc platform.Client, g Git,
 ) (a Action, target *platform.PR, err error) {
@@ -914,10 +937,19 @@ func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group,
 		if err != nil {
 			return a, nil, err
 		}
-		if slices.Equal(t.Parents, []string{s.head}) && t.Tree == tree {
-			return mergeBranch(ctx, o, s, grp, fp, input, f, expected, pc, g)
+		fresh := slices.Equal(t.Parents, []string{s.head}) && t.Tree == tree
+		if !fresh && !grp.AutomergeBranch && o.RebaseWhen != config.RebaseBehindBase {
+			if fresh, err = sameChanges(ctx, g, expected, tree, changes); err != nil {
+				return a, nil, err
+			}
 		}
-		slog.DebugContext(ctx, "automerge branch changed or behind base, rebuilding", "branch", grp.Branch, "parents", t.Parents, "head", short(s.head))
+		switch {
+		case fresh && grp.AutomergeBranch:
+			return mergeBranch(ctx, o, s, grp, fp, input, f, expected, pc, g)
+		case fresh:
+			return awaitChecks(ctx, o, s, grp, fp, input, f, expected, pc)
+		}
+		slog.DebugContext(ctx, "branch without a PR changed or behind base, rebuilding", "branch", grp.Branch, "parents", t.Parents, "head", short(s.head))
 	}
 	switch {
 	case !exists:
@@ -927,23 +959,71 @@ func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group,
 	default:
 		a.Status = StatusUpdated
 	}
+	if !grp.AutomergeBranch {
+		a.PRWait = PRWaitChecks
+	}
 	if o.DryRun {
 		a.Status = map[string]string{StatusCreated: StatusWouldCreate, StatusRebased: StatusWouldRebase, StatusUpdated: StatusWouldUpdate}[a.Status]
-		a.Automerge = AutomergeWould
+		if grp.AutomergeBranch {
+			a.Automerge = AutomergeWould
+		}
 		return a, nil, nil
 	}
 	commit, err := g.Commit(ctx, s.head, changes, commitMessage(grp), o.AuthorName, o.AuthorEmail)
 	if err != nil {
 		return a, nil, err
 	}
-	slog.DebugContext(ctx, "pushing automerge branch", "branch", grp.Branch, "commit", short(commit), "expected", short(expected))
+	slog.DebugContext(ctx, "pushing branch without a PR", "branch", grp.Branch, "commit", short(commit), "expected", short(expected))
 	if err := g.Push(ctx, commit, grp.Branch, expected); err != nil {
 		return a, nil, err
 	}
 	if !exists {
 		s.budget.created++
 	}
-	a.Automerge = AutomergeBranchWaiting
+	if grp.AutomergeBranch {
+		a.Automerge = AutomergeBranchWaiting
+	}
+	return a, nil, nil
+}
+
+// sameChanges reports whether the files changes touch are the same in commit sha (the
+// branch tip) as in tree (base head with changes applied). A tip whose objects are not local
+// (platformCommit) never matches, so the branch is rebuilt.
+func sameChanges(ctx context.Context, g Git, sha, tree string, changes []engine.FileChange) (bool, error) {
+	paths := make([]string, 1, len(changes)+1)
+	paths[0] = "."
+	for _, c := range changes {
+		paths = append(paths, c.Path)
+	}
+	have, err := g.ObjectIDs(ctx, sha, paths)
+	if err != nil {
+		return false, err
+	}
+	want, err := g.ObjectIDs(ctx, tree, paths[1:])
+	if err != nil {
+		return false, err
+	}
+	return have[0] != "" && slices.Equal(have[1:], want), nil
+}
+
+// awaitChecks acts on an unchanged branch of a group whose prCreation waits for its checks,
+// sha its tip, by their state: passed (or, with not-pending, failed), the PR is opened; still
+// running or none reported (or failed, with status-success), it waits for the next run.
+func awaitChecks(ctx context.Context, o Options, s *runState, grp engine.Group, fp, input string, f force, sha string, pc platform.Client) (Action, *platform.PR, error) {
+	a := Action{Branch: grp.Branch, Title: grp.Title, Status: StatusUpToDate}
+	state, err := pc.Checks(ctx, sha)
+	if err != nil {
+		return a, nil, err
+	}
+	slog.DebugContext(ctx, "checks of the branch without a PR", "branch", grp.Branch, "commit", short(sha), "state", state, "prCreation", grp.PRCreation)
+	switch {
+	case state == platform.ChecksSuccess, state == platform.ChecksFailure && grp.PRCreation == config.PRCreationNotPending:
+		return raisePR(ctx, o, s, grp, fp, input, f, sha, "", pc)
+	case state == platform.ChecksFailure:
+		a.PRWait = PRWaitFailed
+	default:
+		a.PRWait = PRWaitChecks
+	}
 	return a, nil, nil
 }
 
@@ -993,8 +1073,9 @@ func mergeBranch(ctx context.Context, o Options, s *runState, grp engine.Group, 
 	return a, nil, nil
 }
 
-// raisePR opens the PR of a branch automerge group whose branch (head sha) cannot be merged,
-// why says why, within the PR limits. Run then requests platform auto-merge for it.
+// raisePR opens the PR of a group whose branch (head sha) was pushed without one, within the
+// PR limits: a branch automerge branch that cannot be merged, why says why, or a branch whose
+// checks prCreation waited for (why ""). Run then requests platform auto-merge for it.
 func raisePR(ctx context.Context, o Options, s *runState, grp engine.Group, fp, input string, f force, sha, why string, pc platform.Client) (Action, *platform.PR, error) {
 	a := Action{Branch: grp.Branch, Title: grp.Title}
 	switch {
@@ -1005,10 +1086,12 @@ func raisePR(ctx context.Context, o Options, s *runState, grp engine.Group, fp, 
 		a.Status = StatusWouldCreate
 		return a, &platform.PR{}, nil
 	}
-	slog.InfoContext(ctx, "raising a PR for the automerge branch", "branch", grp.Branch, "reason", why)
-	body := "This update is configured to merge its branch without a PR (`automergeType: branch`), but " + why + ", so deps opened this PR.\n\n" +
-		prBody(ctx, o.Notes, grp, fp, input)
-	np, err := pc.CreatePR(ctx, grp.Branch, s.base, grp.Title, body)
+	body := prBody(ctx, o.Notes, grp, fp, input)
+	if why != "" {
+		slog.InfoContext(ctx, "raising a PR for the automerge branch", "branch", grp.Branch, "reason", why)
+		body = "This update is configured to merge its branch without a PR (`automergeType: branch`), but " + why + ", so deps opened this PR.\n\n" + body
+	}
+	np, err := pc.CreatePR(ctx, grp.Branch, s.base, grp.Title, body, grp.Draft)
 	if err != nil {
 		return a, nil, err
 	}

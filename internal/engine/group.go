@@ -32,6 +32,11 @@ type Group struct {
 	// DashboardApproval is set when any update needs approval on the dependency dashboard
 	// before its PR (or automerge branch) is created.
 	DashboardApproval bool
+	// Draft opens the group's new PR as a draft: some update asks for one (draftPR) and the
+	// group does not automerge (forges do not merge drafts). PRCreation is when the PR of
+	// the pushed branch is opened (config.PRCreations): the most waiting of its updates' modes.
+	Draft      bool
+	PRCreation string
 	// Labels, Reviewers and Assignees are the union over the updates, in first-seen order.
 	Labels, Reviewers, Assignees []string
 }
@@ -98,7 +103,12 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 			g.AutomergeBranch = !slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return u.AutomergeType != config.AutomergeTypeBranch })
 		}
 		g.DashboardApproval = slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return u.DashboardApproval })
+		g.Draft = !g.Automerge && slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return u.DraftPR })
+		g.PRCreation = config.PRCreationImmediate
 		for _, u := range g.Updates {
+			if slices.Index(config.PRCreations, u.PRCreation) > slices.Index(config.PRCreations, g.PRCreation) {
+				g.PRCreation = u.PRCreation
+			}
 			g.Labels = union(g.Labels, u.Labels)
 			g.Reviewers = union(g.Reviewers, u.Reviewers)
 			g.Assignees = union(g.Assignees, u.Assignees)

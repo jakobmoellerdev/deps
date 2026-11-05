@@ -89,6 +89,7 @@ type gitlabMR struct {
 	TargetBranch string    `json:"target_branch"`
 	SHA          string    `json:"sha"`
 	Labels       []string  `json:"labels"`
+	Draft        bool      `json:"draft"`
 	HasConflicts bool      `json:"has_conflicts"`
 	// DetailedMergeStatus is mergeable, conflict, need_rebase, or why the MR waits (checking,
 	// ci_must_pass, not_approved, …).
@@ -105,7 +106,7 @@ func (m *gitlabMR) pr() PR {
 	pr := PR{
 		Number: m.IID, Title: m.Title, Body: m.Description, Head: m.SourceBranch, HeadSHA: m.SHA,
 		Base: m.TargetBranch,
-		URL:  m.WebURL, CreatedAt: m.CreatedAt, Merged: m.State == "merged",
+		URL:  m.WebURL, CreatedAt: m.CreatedAt, Merged: m.State == "merged", Draft: m.Draft,
 		State: "open",
 	}
 	if m.State == "closed" || m.State == "merged" {
@@ -165,11 +166,19 @@ func (g *gitlabClient) GetPR(ctx context.Context, n int) (PR, error) {
 	return m.pr(), nil
 }
 
-// CreatePR opens a merge request that deletes its source branch when merged.
-func (g *gitlabClient) CreatePR(ctx context.Context, head, base, title, body string) (PR, error) {
+// gitlabDraftPrefix marks a draft merge request: GitLab derives the draft state from a title
+// starting with one of gitlabDraftPrefixes (case-insensitive), and its REST API has no draft
+// flag.
+const gitlabDraftPrefix = "Draft: "
+
+var gitlabDraftPrefixes = []string{"DRAFT:", "[DRAFT]", "(DRAFT)", "DRAFT - "}
+
+// CreatePR opens a merge request that deletes its source branch when merged; a draft gets
+// the Draft: title prefix.
+func (g *gitlabClient) CreatePR(ctx context.Context, head, base, title, body string, draft bool) (PR, error) {
 	in := map[string]any{
-		"source_branch": head, "target_branch": base, "title": title, "description": body,
-		"remove_source_branch": true,
+		"source_branch": head, "target_branch": base, "title": draftTitle(title, draft, gitlabDraftPrefix, gitlabDraftPrefixes),
+		"description": body, "remove_source_branch": true,
 	}
 	var m gitlabMR
 	if err := g.do(ctx, http.MethodPost, g.project+"/merge_requests", in, &m); err != nil {
@@ -178,10 +187,12 @@ func (g *gitlabClient) CreatePR(ctx context.Context, head, base, title, body str
 	return m.pr(), nil
 }
 
-func (g *gitlabClient) UpdatePR(ctx context.Context, n int, title, body string) error {
+// UpdatePR keeps the Draft: prefix of a draft merge request: a title without it marks the MR
+// ready.
+func (g *gitlabClient) UpdatePR(ctx context.Context, n int, title, body string, draft bool) error {
 	in := map[string]string{}
 	if title != "" {
-		in["title"] = title
+		in["title"] = draftTitle(title, draft, gitlabDraftPrefix, gitlabDraftPrefixes)
 	}
 	if body != "" {
 		in["description"] = body
