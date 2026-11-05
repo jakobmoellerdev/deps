@@ -18,6 +18,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `matchCategories` | not supported; use `manager`/`datasources` (`golang` ≈ `manager: gomod` plus `datasources: [golang-version]`) |
 | `allowedVersions` | `rules[].allow` (semver constraint or `/regex/`, `!/regex/`) |
 | `versioning` | `rules[].versioning` (`semver`, `loose`, `regex:…`, plus deps' `tag`, `go`, `docker`) |
+| `extractVersion` | `rules[].extractVersion`, marker `extractVersion=` (RE2 with a `version` group, same syntax) |
 | `groupName` | `rules[].group` (`groupSlug` is derived: `slug(group)`) |
 | `schedule` | `schedule` / `rules[].schedule`, as crons of the workflow's `on.schedule` triggers (see below) |
 | `timezone` | not supported: workflow crons are UTC |
@@ -65,7 +66,7 @@ Annotation-mode `custom[]` entries accept Renovate's markers unchanged:
 GOLANGCI_VERSION=v2.5.0
 ```
 
-- `packageName` wins over `depName`, `versioning=` takes a scheme name, and `registryUrl` and unknown keys are ignored.
+- `packageName` wins over `depName`, `versioning=` takes a scheme name, `extractVersion=` maps release names (`extractVersion=^jq-(?<version>.+)$`), and `registryUrl` and unknown keys are ignored.
 - The marker applies to the **next line's** first version token. A Renovate regex that spans more lines needs a regex-mode `custom[]` entry instead.
 - deps' own `# deps: <datasource> <name>` form works the same way.
 

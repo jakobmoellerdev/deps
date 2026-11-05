@@ -15,11 +15,11 @@ var Doc = refdoc.Manager{
 	DepTypes: []refdoc.DepType{
 		{Name: "image", What: "`image` (string or `name:`) at top level, in `default` and in jobs", Datasource: "`docker`", Versioning: "`docker`"},
 		{Name: "service", What: "`services[]` entries (string or `name:`) at top level, in `default` and in jobs", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "include", What: "`include` entries with `project` + `ref` (single mapping or list); Source `https://gitlab.com/<project>`", Datasource: "`git-tags`", Versioning: "`tag`"},
-		{Name: "component", What: "`include` entries `component: <host>/<project>/<name>@<version>`; Source `https://<host>/<project>`", Datasource: "`git-tags`", Versioning: "`tag`"},
+		{Name: "include", What: "`include` entries with `project` + `ref` (single mapping or list); Source `<instance URL>/<project>`", Datasource: "`git-tags`", Versioning: "`tag`"},
+		{Name: "component", What: "`include` entries `component: <host>/<project>/<name>@<version>`; Source `<instance URL>/<project>` when `<host>` is the instance host or `$CI_SERVER_FQDN`/`$CI_SERVER_HOST`, else `https://<host>/<project>`", Datasource: "`git-tags`", Versioning: "`tag`"},
 	},
 	Skips: []refdoc.Skip{
-		{Reason: "variable reference", When: "`$` in the image, project, component (e.g. `$CI_SERVER_FQDN`) or ref"},
+		{Reason: "variable reference", When: "`$` in the image, project, component or ref, other than a leading `$CI_SERVER_FQDN`/`$CI_SERVER_HOST` in a component"},
 		{Reason: "no ref", When: "a project include without `ref` (default branch)"},
 		{Reason: "no version", When: "a component without `@<version>`"},
 		{Reason: "invalid component", When: "a component path with fewer than three segments"},
@@ -33,7 +33,9 @@ var Doc = refdoc.Manager{
 		{Title: "Details", Items: []string{
 			"Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.",
 			"String includes and `local`, `remote` and `template` includes are not deps.",
-			"Project includes always resolve against gitlab.com; self-managed instances are not detected.",
+			"The instance URL is `gitlabci.url` from the config, else `CI_SERVER_URL` (set by GitLab CI), else `https://gitlab.com`; a path prefix such as `https://example.com/gitlab` is kept.",
+			"A leading `$CI_SERVER_FQDN`, `${CI_SERVER_FQDN}`, `$CI_SERVER_HOST` or `${CI_SERVER_HOST}` in a component path is the instance host; the dep name keeps the variable as written.",
+			"Private instances authenticate with `DEPS_GITLAB_TOKEN`, or `CI_JOB_TOKEN` when running in GitLab CI against the same instance.",
 			"Every YAML document is scanned, so component templates with a `spec:` header work.",
 		}},
 	},

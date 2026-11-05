@@ -152,6 +152,9 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{updateTypes: [major], versioning: loose}]\n", "rules[0].versioning: cannot be combined with updateTypes"},
 		{"rules: [{allow: '/(/'}]\n", `rules[0].allow: invalid regex "/(/"`},
 		{"custom: [{files: [x], versioning: 'regex:('}]\n", "custom[0].versioning: regex: invalid RE2 regexp"},
+		{"rules: [{extractVersion: '^jq-(.+)$'}]\n", "rules[0].extractVersion: needs a (?<version>…) group"},
+		{"rules: [{extractVersion: '('}]\n", "rules[0].extractVersion: invalid RE2 regexp"},
+		{"rules: [{updateTypes: [major], extractVersion: '^v(?<version>.+)$'}]\n", "rules[0].extractVersion: cannot be combined with updateTypes"},
 		{"separateMinorPatch: maybe\n", "line 1"},
 		{"rules: [{separateMultipleMajor: 1}]\n", "line 1"},
 		{"updateNotScheduled: sometimes\n", "line 1"},
@@ -181,6 +184,12 @@ func TestLoadErrors(t *testing.T) {
 		{"dependencyDashboardTitle: \"a\\nb\"\n", "dependencyDashboardTitle: must be a non-blank single line"},
 		{"dependencyDashboardLabels: [deps, '']\n", "dependencyDashboardLabels[1]: must be a non-blank label name"},
 		{"dependencyDashboardLabels: ['a,b']\n", "dependencyDashboardLabels[0]: must be a non-blank label name without ','"},
+		{"gitlabci: {url: 'gitlab.example.com'}\n", `gitlabci.url: must be an absolute http(s) URL without query or fragment, got "gitlab.example.com"`},
+		{"gitlabci: {url: 'ssh://gitlab.example.com'}\n", "gitlabci.url: must be an absolute http(s) URL"},
+		{"gitlabci: {url: 'https://'}\n", "gitlabci.url: must be an absolute http(s) URL"},
+		{"gitlabci: {url: 'https://gitlab.example.com?x=1'}\n", "gitlabci.url: must be an absolute http(s) URL"},
+		{"gitlabci: {url: 'https://gitlab.example.com/#x'}\n", "gitlabci.url: must be an absolute http(s) URL"},
+		{"gitlabci: {url: '%zz'}\n", "gitlabci.url: must be an absolute http(s) URL"},
 	} {
 		_, err := load(t, ".deps.yaml", tc.body)
 		var ce *Error
@@ -443,6 +452,22 @@ func TestGitAuthorAndLimits(t *testing.T) {
 	}
 	if len(c.GitIgnoredAuthors) != 1 || c.PRConcurrentLimit != 3 || c.PRHourlyLimit != 1 {
 		t.Errorf("config = %+v", c)
+	}
+}
+
+func TestGitLabCIURL(t *testing.T) {
+	for body, want := range map[string]string{
+		"": "",
+		"gitlabci: {url: 'https://gitlab.example.com'}\n":      "https://gitlab.example.com",
+		"gitlabci: {url: 'http://example.com:8080/gitlab/'}\n": "http://example.com:8080/gitlab",
+	} {
+		c, err := load(t, ".deps.yaml", body)
+		if err != nil {
+			t.Fatalf("%q: %v", body, err)
+		}
+		if c.GitLabCI.URL != want {
+			t.Errorf("%q: url = %q, want %q", body, c.GitLabCI.URL, want)
+		}
 	}
 }
 

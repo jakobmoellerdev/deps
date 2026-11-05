@@ -45,6 +45,46 @@ func TestNewAuthStatic(t *testing.T) {
 	}
 }
 
+func TestWithTokenPrecedence(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	tests := []struct {
+		name       string
+		info       platform.Info
+		token      string
+		opts       []AuthOption
+		user, pass string // "" = no static credentials
+	}{
+		{
+			name: "registered user", info: platform.Info{Host: "git.example.com"}, token: "plat",
+			opts: []AuthOption{WithToken("gitlab.example.com", "oauth2", "gl")}, user: "oauth2", pass: "gl",
+		},
+		{
+			name: "first option wins", opts: []AuthOption{
+				WithToken("gitlab.example.com", "oauth2", "gl"), WithToken("gitlab.example.com", "gitlab-ci-token", "job"),
+			}, user: "oauth2", pass: "gl",
+		},
+		{
+			name: "empty token skipped", opts: []AuthOption{
+				WithToken("gitlab.example.com", "oauth2", ""), WithToken("gitlab.example.com", "gitlab-ci-token", "job"),
+			}, user: "gitlab-ci-token", pass: "job",
+		},
+		{
+			name: "platform token wins", info: platform.Info{Host: "gitlab.example.com"}, token: "plat",
+			opts: []AuthOption{WithToken("gitlab.example.com", "oauth2", "gl")}, user: "x-access-token", pass: "plat",
+		},
+		{name: "empty host", opts: []AuthOption{WithToken("", "oauth2", "gl")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			host := "gitlab.example.com"
+			user, pass, ok := NewAuth(tt.info, tt.token, noEnv, tt.opts...).Static(host)
+			if ok != (tt.pass != "") || user != tt.user || pass != tt.pass {
+				t.Fatalf("Static(%q) = %q, %q, %v; want %q, %q", host, user, pass, ok, tt.user, tt.pass)
+			}
+		})
+	}
+}
+
 func TestHelperCachesPerHost(t *testing.T) {
 	var calls atomic.Int32
 	a := NewAuth(platform.Info{}, "", func(string) string { return "" }, WithHelper(

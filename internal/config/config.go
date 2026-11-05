@@ -156,7 +156,8 @@ type Config struct {
 	Terraform         Terraform `yaml:"terraform" jsonschema_description:"terraform manager settings."`
 	// GomodUpdateImportPaths enables major module path updates (Renovate's
 	// postUpdateOptions: [gomodUpdateImportPaths]).
-	GomodUpdateImportPaths *bool `yaml:"gomodUpdateImportPaths" jsonschema:"default=true" jsonschema_description:"Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports)."`
+	GomodUpdateImportPaths *bool    `yaml:"gomodUpdateImportPaths" jsonschema:"default=true" jsonschema_description:"Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports)."`
+	GitLabCI               GitLabCI `yaml:"gitlabci" jsonschema_description:"gitlabci manager settings."`
 	// MinimumReleaseAge is a string, not a duration, so "28 days" style values are accepted.
 	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed unless minimumReleaseAgeBehaviour is timestamp-required; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time."`
 	// MinimumReleaseAgeBehaviour decides whether an unknown release time passes
@@ -269,6 +270,24 @@ type Actions struct {
 	DefaultHost string `yaml:"defaultHost" jsonschema_description:"Host for owner/repo@ref actions; empty means auto-detected from the platform."`
 }
 
+// GitLabCI holds gitlabci manager settings.
+type GitLabCI struct {
+	URL string `yaml:"url" jsonschema_description:"Base URL of the GitLab instance project includes and $CI_SERVER_FQDN components resolve against, e.g. https://gitlab.example.com or https://example.com/gitlab; empty means auto-detected (CI_SERVER_URL, else https://gitlab.com)."`
+}
+
+// validate checks URL and strips a trailing slash.
+func (g *GitLabCI) validate(add addFunc) {
+	if g.URL == "" {
+		return
+	}
+	u, err := url.Parse(g.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.User != nil {
+		add("gitlabci.url", "must be an absolute http(s) URL without query or fragment, got %q", g.URL)
+		return
+	}
+	g.URL = strings.TrimRight(g.URL, "/")
+}
+
 // Terraform holds terraform manager settings.
 type Terraform struct {
 	DefaultRegistry string `yaml:"defaultRegistry" jsonschema_description:"Registry host of provider and module addresses without one in *.tf files, e.g. registry.opentofu.org; empty means registry.terraform.io. *.tofu files default to registry.opentofu.org unless this is set."`
@@ -289,6 +308,8 @@ type Rule struct {
 	Updates       []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
 	// Versioning overrides the dep's scheme before resolution, so it is a pre-policy field.
 	Versioning string `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|regex:.+)$" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`
+	// ExtractVersion replaces the dep's release-name mapping before resolution (pre-policy).
+	ExtractVersion string `yaml:"extractVersion" jsonschema_description:"RE2 regexp with a (?<version>) group extracting the version from the datasource's release names, e.g. '^jq-(?<version>.+)$' for jq-1.7.1 tags or '^kustomize/(?<version>.+)$'; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes."`
 	// Separate* override the top-level PR bucket options for matching deps.
 	SeparateMajorMinor    *bool    `yaml:"separateMajorMinor" jsonschema_description:"Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types)."`
 	SeparateMultipleMajor *bool    `yaml:"separateMultipleMajor" jsonschema_description:"Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types)."`
@@ -598,6 +619,7 @@ func (c *Config) Validate() error {
 		c.Custom[i].validate(fmt.Sprintf("custom[%d]", i), c.KnownDatasource, add)
 	}
 	c.validateCustomDatasources(add)
+	c.GitLabCI.validate(add)
 	return errors.Join(errs...)
 }
 
@@ -681,6 +703,14 @@ func (c *Config) validateRule(i int, add addFunc) {
 		}
 		if len(r.UpdateTypes) > 0 {
 			add(f+".versioning", "cannot be combined with updateTypes: the versioning scheme is decided before the update type is known")
+		}
+	}
+	if r.ExtractVersion != "" {
+		if _, err := versioning.CompileExtract(r.ExtractVersion); err != nil {
+			add(f+".extractVersion", "%v", err)
+		}
+		if len(r.UpdateTypes) > 0 {
+			add(f+".extractVersion", "cannot be combined with updateTypes: release names are mapped before the update type is known")
 		}
 	}
 	for j, u := range r.Updates {

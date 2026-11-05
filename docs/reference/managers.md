@@ -453,14 +453,14 @@ Updates container images, project includes and CI/CD components in GitLab CI con
 |---|---|---|---|---|
 | `image` | `image` (string or `name:`) at top level, in `default` and in jobs | `docker` | `docker` | updated |
 | `service` | `services[]` entries (string or `name:`) at top level, in `default` and in jobs | `docker` | `docker` | updated |
-| `include` | `include` entries with `project` + `ref` (single mapping or list); Source `https://gitlab.com/<project>` | `git-tags` | `tag` | updated |
-| `component` | `include` entries `component: <host>/<project>/<name>@<version>`; Source `https://<host>/<project>` | `git-tags` | `tag` | updated |
+| `include` | `include` entries with `project` + `ref` (single mapping or list); Source `<instance URL>/<project>` | `git-tags` | `tag` | updated |
+| `component` | `include` entries `component: <host>/<project>/<name>@<version>`; Source `<instance URL>/<project>` when `<host>` is the instance host or `$CI_SERVER_FQDN`/`$CI_SERVER_HOST`, else `https://<host>/<project>` | `git-tags` | `tag` | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
-| `variable reference` | `$` in the image, project, component (e.g. `$CI_SERVER_FQDN`) or ref |
+| `variable reference` | `$` in the image, project, component or ref, other than a leading `$CI_SERVER_FQDN`/`$CI_SERVER_HOST` in a component |
 | `no ref` | a project include without `ref` (default branch) |
 | `no version` | a component without `@<version>` |
 | `invalid component` | a component path with fewer than three segments |
@@ -474,7 +474,9 @@ Updates container images, project includes and CI/CD components in GitLab CI con
 
 - Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
 - String includes and `local`, `remote` and `template` includes are not deps.
-- Project includes always resolve against gitlab.com; self-managed instances are not detected.
+- The instance URL is `gitlabci.url` from the config, else `CI_SERVER_URL` (set by GitLab CI), else `https://gitlab.com`; a path prefix such as `https://example.com/gitlab` is kept.
+- A leading `$CI_SERVER_FQDN`, `${CI_SERVER_FQDN}`, `$CI_SERVER_HOST` or `${CI_SERVER_HOST}` in a component path is the instance host; the dep name keeps the variable as written.
+- Private instances authenticate with `DEPS_GITLAB_TOKEN`, or `CI_JOB_TOKEN` when running in GitLab CI against the same instance.
 - Every YAML document is scanned, so component templates with a `spec:` header work.
 
 ## nvm
@@ -544,7 +546,6 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | Reason | When |
 |---|---|
 | `unsupported tool` | a tool that is not in the tool table (or, for mise, an unsupported backend) |
-| `unsupported tag prefix` | a known tool whose release tags carry a prefix other than `v` (see the tool table) |
 | `non-version value` | empty or a word such as `latest`, `system`, `lts` |
 | `git ref` | `ref:…` |
 | `local path` | `path:…` |
@@ -560,13 +561,13 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 
 **Tools.**
 
-| Tool | Datasource | Name | Skip |
+| Tool | Datasource | Name | Release tags |
 |---|---|---|---|
 | `actionlint` | `github-releases` | `rhysd/actionlint` |  |
 | `age` | `github-releases` | `FiloSottile/age` |  |
 | `argocd` | `github-releases` | `argoproj/argo-cd` |  |
 | `buf` | `github-releases` | `bufbuild/buf` |  |
-| `bun` | `github-releases` | `oven-sh/bun` | unsupported tag prefix |
+| `bun` | `github-releases` | `oven-sh/bun` | extractVersion `^bun-v(?<version>\d.*)$` |
 | `cosign` | `github-releases` | `sigstore/cosign` |  |
 | `crane` | `github-releases` | `google/go-containerregistry` |  |
 | `deno` | `github-releases` | `denoland/deno` |  |
@@ -584,7 +585,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `helm` | `github-releases` | `helm/helm` |  |
 | `helm-docs` | `github-releases` | `norwoodj/helm-docs` |  |
 | `helmfile` | `github-releases` | `helmfile/helmfile` |  |
-| `jq` | `github-releases` | `jqlang/jq` | unsupported tag prefix |
+| `jq` | `github-releases` | `jqlang/jq` | extractVersion `^jq-(?<version>\d.*)$` |
 | `just` | `github-releases` | `casey/just` |  |
 | `k3d` | `github-releases` | `k3d-io/k3d` |  |
 | `k9s` | `github-releases` | `derailed/k9s` |  |
@@ -592,7 +593,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `ko` | `github-releases` | `ko-build/ko` |  |
 | `kubeconform` | `github-releases` | `yannh/kubeconform` |  |
 | `kubectl` | `github-releases` | `kubernetes/kubernetes` |  |
-| `kustomize` | `github-releases` | `kubernetes-sigs/kustomize` | unsupported tag prefix |
+| `kustomize` | `github-releases` | `kubernetes-sigs/kustomize` | extractVersion `^kustomize/v(?<version>\d.*)$` |
 | `maven` | `maven` | `org.apache.maven:apache-maven` |  |
 | `node` | `node-version` | `node` |  |
 | `nodejs` | `node-version` | `node` |  |
@@ -613,7 +614,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `vault` | `github-releases` | `hashicorp/vault` |  |
 | `yq` | `github-releases` | `mikefarah/yq` |  |
 
-- github-releases repositories are listed when their release tags are the version with or without a leading `v`.
+- github-releases tags are the version with or without a leading `v`, unless the table lists an extractVersion; a rule's `extractVersion` overrides it.
 - Tools that are not listed are skipped as `unsupported tool`.
 
 ## mise
@@ -635,7 +636,6 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | Reason | When |
 |---|---|
 | `unsupported tool` | a tool that is not in the tool table (or, for mise, an unsupported backend) |
-| `unsupported tag prefix` | a known tool whose release tags carry a prefix other than `v` (see the tool table) |
 | `non-version value` | empty or a word such as `latest`, `system`, `lts` |
 | `git ref` | `ref:…` |
 | `local path` | `path:…` |
@@ -658,13 +658,13 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 
 **Tools.**
 
-| Tool | Datasource | Name | Skip |
+| Tool | Datasource | Name | Release tags |
 |---|---|---|---|
 | `actionlint` | `github-releases` | `rhysd/actionlint` |  |
 | `age` | `github-releases` | `FiloSottile/age` |  |
 | `argocd` | `github-releases` | `argoproj/argo-cd` |  |
 | `buf` | `github-releases` | `bufbuild/buf` |  |
-| `bun` | `github-releases` | `oven-sh/bun` | unsupported tag prefix |
+| `bun` | `github-releases` | `oven-sh/bun` | extractVersion `^bun-v(?<version>\d.*)$` |
 | `cosign` | `github-releases` | `sigstore/cosign` |  |
 | `crane` | `github-releases` | `google/go-containerregistry` |  |
 | `deno` | `github-releases` | `denoland/deno` |  |
@@ -682,7 +682,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `helm` | `github-releases` | `helm/helm` |  |
 | `helm-docs` | `github-releases` | `norwoodj/helm-docs` |  |
 | `helmfile` | `github-releases` | `helmfile/helmfile` |  |
-| `jq` | `github-releases` | `jqlang/jq` | unsupported tag prefix |
+| `jq` | `github-releases` | `jqlang/jq` | extractVersion `^jq-(?<version>\d.*)$` |
 | `just` | `github-releases` | `casey/just` |  |
 | `k3d` | `github-releases` | `k3d-io/k3d` |  |
 | `k9s` | `github-releases` | `derailed/k9s` |  |
@@ -690,7 +690,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `ko` | `github-releases` | `ko-build/ko` |  |
 | `kubeconform` | `github-releases` | `yannh/kubeconform` |  |
 | `kubectl` | `github-releases` | `kubernetes/kubernetes` |  |
-| `kustomize` | `github-releases` | `kubernetes-sigs/kustomize` | unsupported tag prefix |
+| `kustomize` | `github-releases` | `kubernetes-sigs/kustomize` | extractVersion `^kustomize/v(?<version>\d.*)$` |
 | `maven` | `maven` | `org.apache.maven:apache-maven` |  |
 | `node` | `node-version` | `node` |  |
 | `nodejs` | `node-version` | `node` |  |
@@ -711,7 +711,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `vault` | `github-releases` | `hashicorp/vault` |  |
 | `yq` | `github-releases` | `mikefarah/yq` |  |
 
-- github-releases repositories are listed when their release tags are the version with or without a leading `v`.
+- github-releases tags are the version with or without a leading `v`, unless the table lists an extractVersion; a rule's `extractVersion` overrides it.
 - Tools that are not listed are skipped as `unsupported tool`.
 
 ## cargo
@@ -1454,6 +1454,7 @@ User-defined managers: each `custom[]` entry is one manager instance; see [`cust
 | `invalid git-tags name "<name>"` | a `git-tags` dep whose name is not a repository URL |
 | `invalid github-releases name "<name>"` | a `github-releases` dep whose name is not `owner/repo` or a repository URL |
 | `invalid helm name "<name>"` | a `helm` dep without an `https://`, `http://` or `oci://` repository and a chart name |
+| `invalid extractVersion: <err>` | a Renovate marker's `extractVersion=` is not an RE2 regexp with a `version` group |
 | `unknown datasource "<ds>"` | the datasource is neither built in nor `custom.<name>` of `customDatasources` |
 
 **Edits.**
@@ -1465,6 +1466,11 @@ The version is replaced. A captured digest (`@sha256:` for docker markers, or a 
 - `# deps: helm <repository>/<chart>` or `# deps: helm <repository> <chart>`, with an `https://` (index.yaml) or `oci://` repository: `# deps: helm https://charts.jetstack.io cert-manager`.
 - Renovate markers give the repository as `registryUrl=`: `# renovate: datasource=helm depName=redis registryUrl=https://charts.bitnami.com/bitnami`.
 - Regex mode takes `<repository>/<chart>` as the name.
+
+**Release names (extractVersion).**
+
+- A Renovate marker's `extractVersion=<RE2>` (or a rule's `extractVersion`, which overrides it) maps release names to versions: `# renovate: datasource=github-releases depName=jqlang/jq extractVersion=^jq-(?<version>.+)$`.
+- Release names the expression does not match are ignored; the extracted version is compared and written. Digests, release times and checksum assets are looked up by the original release name.
 
 **Precedence over native managers.**
 

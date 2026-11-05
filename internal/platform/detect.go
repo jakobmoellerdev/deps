@@ -209,3 +209,19 @@ func DefaultActionsHost(info Info, getenv func(string) string) (host, source str
 	}
 	return "github.com", "platform default"
 }
+
+// DefaultGitLabURL is the GitLab instance used when neither config nor CI env name one.
+const DefaultGitLabURL = "https://gitlab.com"
+
+// GitLabURL returns the base URL of the GitLab instance the gitlabci manager resolves against
+// and where it came from: configured ("config"), else CI_SERVER_URL as set by GitLab CI
+// ("env"), else https://gitlab.com ("default"). The result has no trailing slash.
+func GitLabURL(configured string, getenv func(string) string) (u, source string) {
+	if configured != "" {
+		return strings.TrimRight(configured, "/"), "config"
+	}
+	if v := getenv("CI_SERVER_URL"); v != "" {
+		return strings.TrimRight(v, "/"), "env"
+	}
+	return DefaultGitLabURL, "default"
+}

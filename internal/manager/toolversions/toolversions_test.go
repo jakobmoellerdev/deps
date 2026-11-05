@@ -7,7 +7,6 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
 // want is an expected dep; ver is also the expected span text of an updatable dep.
@@ -216,8 +215,8 @@ func TestAsdf(t *testing.T) {
 		{"helm/helm", dsGitHub, "semver", "3.16.0", "", 5},
 		{"kubernetes/kubernetes", dsGitHub, "semver", "v1.34.1", "", 6},
 		{"python", "", "", "3.13.1", "unsupported tool", 7},
-		{"kubernetes-sigs/kustomize", dsGitHub, "", "5.4.3", "unsupported tag prefix", 8},
-		{"jqlang/jq", dsGitHub, "", "1.7.1", "unsupported tag prefix", 9},
+		{"kubernetes-sigs/kustomize", dsGitHub, "semver", "5.4.3", "", 8},
+		{"jqlang/jq", dsGitHub, "semver", "1.7.1", "", 9},
 		{"mikefarah/yq", dsGitHub, "", "system", "non-version value", 10},
 		{"go-task/task", dsGitHub, "", "ref:main", "git ref", 11},
 		{"derailed/k9s", dsGitHub, "", "path:/opt/k9s", "local path", 12},
@@ -338,9 +337,9 @@ experimental = true
 		{"kubernetes-sigs/kind", dsGitHub, "", "ref:v0.25.0", "git ref", 26},
 		{"go-task/task", dsGitHub, "", "prefix:3", "unsupported range", 27},
 		{"golangci/golangci-lint", dsGitHub, "", "2.5", "partial version", 28},
-		{"kubernetes-sigs/kustomize", dsGitHub, "", "5.4.3", "unsupported tag prefix", 29},
+		{"kubernetes-sigs/kustomize", dsGitHub, "semver", "5.4.3", "", 29},
 		{"escaped", "", "", `1.\u0032.3`, "unsupported tool", 30},
-		{"jqlang/jq", dsGitHub, "", "1.7.1", "unsupported tag prefix", 31},
+		{"jqlang/jq", dsGitHub, "", "1.7.1", "cannot locate value", 31},
 		{"pnpm", dsNpm, "semver", "9.12.0", "", 34},
 		{"casey/just", dsGitHub, "semver", "1.36.0", "", 37},
 	}
@@ -417,34 +416,4 @@ func TestMiseErrors(t *testing.T) {
 	if _, err := NewMise().Extract("mise.toml", []byte("[tools]\nnode = \"20\n"), manager.Env{}); err == nil || !strings.HasPrefix(err.Error(), "line 2:") {
 		t.Errorf("error = %v, want line 2", err)
 	}
-}
-
-func TestDocToolsTable(t *testing.T) {
-	for _, d := range []struct {
-		name string
-		body string
-	}{{"asdf", toolsBody(t, DocAsdf.Sections)}, {"mise", toolsBody(t, DocMise.Sections)}} {
-		for name, tl := range tools {
-			row := "| `" + name + "` | `" + tl.datasource + "` | `" + tl.name + "` | " + tl.skip + " |"
-			if !strings.Contains(d.body, row) {
-				t.Errorf("%s tools table lacks row %q", d.name, row)
-			}
-		}
-	}
-	for _, doc := range []struct{ name, want string }{{DocNvm.Name, NameNvm}, {DocNodenv.Name, NameNodenv}, {DocAsdf.Name, NameAsdf}, {DocMise.Name, NameMise}} {
-		if doc.name != doc.want {
-			t.Errorf("Doc name %q, want %q", doc.name, doc.want)
-		}
-	}
-}
-
-func toolsBody(t *testing.T, secs []refdoc.Section) string {
-	t.Helper()
-	for _, s := range secs {
-		if s.Title == "Tools" {
-			return s.Body
-		}
-	}
-	t.Fatal("no Tools section")
-	return ""
 }

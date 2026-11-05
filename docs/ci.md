@@ -23,6 +23,7 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
   - [Platform commits (GitHub)](#platform-commits-github)
   - [Signing with a key](#signing-with-a-key)
 - [Self-hosted runners and actions hosts](#self-hosted-runners-and-actions-hosts)
+- [Self-managed GitLab](#self-managed-gitlab)
 - [Schedules](#schedules)
 - [Run on push to the default branch](#run-on-push-to-the-default-branch)
 - [Automerge](#automerge)
@@ -427,6 +428,31 @@ For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back
 - the release download host.
 
 deps honors `HTTPS_PROXY`/`NO_PROXY`.
+
+## Self-managed GitLab
+
+The [`gitlabci`](reference/managers.md#gitlabci) manager resolves `include: {project, ref}` and components whose host is the GitLab instance against one base URL. deps picks it in this order:
+
+1. [`gitlabci.url`](reference/configuration.md#gitlabciurl) in `.deps.yaml`, an absolute http(s) URL without query or fragment. A path prefix is kept, e.g. `https://example.com/gitlab`;
+2. `CI_SERVER_URL`, set by GitLab CI;
+3. `https://gitlab.com`.
+
+With `--log-level info`, deps logs it as `gitlab url url=<u> source=<config|env|default>`.
+
+```yaml
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+gitlabci:
+  url: https://gitlab.example.com
+```
+
+A component path starting with `$CI_SERVER_FQDN` or `$CI_SERVER_HOST` (also `${...}`) is on the instance. So is one whose host, port included, is the instance's host. Components on other hosts are looked up at `https://<host>/<project>`.
+
+**Private instances.** deps clones tags with Basic credentials for the instance's host:
+
+1. `DEPS_GITLAB_TOKEN`, a personal, group or project access token with `read_repository`, as user `oauth2`;
+2. otherwise, in a GitLab CI job on the same instance (`CI_SERVER_HOST`, or the host of `CI_SERVER_URL`), `CI_JOB_TOKEN` as user `gitlab-ci-token`. The job token reads only projects that allow it in their job token allowlist.
+
+A platform token (`DEPS_TOKEN` and friends) for the same host takes precedence over both. Without any of them, deps falls back to `git credential fill` on a 401.
 
 ## Schedules
 

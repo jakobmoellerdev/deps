@@ -18,7 +18,6 @@ var nodeSkips = []refdoc.Skip{
 // toolSkips are the skip reasons of a tool version (asdf, mise).
 var toolSkips = []refdoc.Skip{
 	{Reason: "unsupported tool", When: "a tool that is not in the tool table (or, for mise, an unsupported backend)"},
-	{Reason: "unsupported tag prefix", When: "a known tool whose release tags carry a prefix other than `v` (see the tool table)"},
 	{Reason: "non-version value", When: "empty or a word such as `latest`, `system`, `lts`"},
 	{Reason: "git ref", When: "`ref:…`"},
 	{Reason: "local path", When: "`path:…`"},
@@ -99,16 +98,20 @@ var DocMise = refdoc.Manager{
 // toolsSection documents the tool table, sorted by tool name.
 func toolsSection() refdoc.Section {
 	var b strings.Builder
-	b.WriteString("| Tool | Datasource | Name | Skip |\n|---|---|---|---|\n")
+	b.WriteString("| Tool | Datasource | Name | Release tags |\n|---|---|---|---|\n")
 	for _, name := range slices.Sorted(maps.Keys(tools)) {
 		t := tools[name]
-		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | %s |\n", name, t.datasource, t.name, t.skip)
+		tags := ""
+		if t.extract != "" {
+			tags = "extractVersion `" + t.extract + "`"
+		}
+		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | %s |\n", name, t.datasource, t.name, tags)
 	}
 	return refdoc.Section{
 		Title: "Tools",
 		Body:  strings.TrimSuffix(b.String(), "\n"),
 		Items: []string{
-			"github-releases repositories are listed when their release tags are the version with or without a leading `v`.",
+			"github-releases tags are the version with or without a leading `v`, unless the table lists an extractVersion; a rule's `extractVersion` overrides it.",
 			"Tools that are not listed are skipped as `unsupported tool`.",
 		},
 	}

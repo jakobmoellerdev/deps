@@ -6,8 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -141,7 +143,9 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	}
 	limits := httpx.NewLimits(o.concurrency)
 	sem := limits.Default
-	auth := httpx.NewAuth(info, token, os.Getenv)
+	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, os.Getenv)
+	slog.Debug("gitlab url", "url", gitlabURL, "source", gitlabSource)
+	auth := httpx.NewAuth(info, token, os.Getenv, gitLabAuth(gitlabURL, os.Getenv)...)
 	host, source := cfg.Actions.DefaultHost, "config"
 	if host == "" {
 		host, source = platform.DefaultActionsHost(info, os.Getenv)
@@ -188,12 +192,36 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		sources:   sources,
 		security:  security,
 		checksums: checksum.New(client, sem, releases, map[string]checksum.ArtifactOpener{mavends.Name: maven}),
-		env:       manager.Env{DefaultHost: host, TerraformRegistry: cfg.Terraform.DefaultRegistry},
+		env:       manager.Env{DefaultHost: host, GitLabURL: gitlabURL, TerraformRegistry: cfg.Terraform.DefaultRegistry},
 		stderr:    stderr,
 		auth:      auth,
 		gh:        gh,
 		sem:       sem,
 	}, nil
+}
+
+// gitLabAuth returns the credentials for the host of the GitLab instance at gitlabURL, in
+// precedence order: DEPS_GITLAB_TOKEN (user oauth2), then CI_JOB_TOKEN (user gitlab-ci-token)
+// when the GitLab CI job runs on that instance (CI_SERVER_HOST, else CI_SERVER_URL's host).
+// httpx.NewAuth keeps the platform token over both when the platform shares the host: it is
+// the token explicitly given for the host deps runs against.
+func gitLabAuth(gitlabURL string, getenv func(string) string) []httpx.AuthOption {
+	u, err := url.Parse(gitlabURL)
+	if err != nil || u.Hostname() == "" {
+		return nil
+	}
+	host := u.Hostname()
+	opts := []httpx.AuthOption{httpx.WithToken(host, "oauth2", getenv("DEPS_GITLAB_TOKEN"))}
+	ciHost := getenv("CI_SERVER_HOST")
+	if ciHost == "" {
+		if cu, err := url.Parse(getenv("CI_SERVER_URL")); err == nil {
+			ciHost = cu.Hostname()
+		}
+	}
+	if ciHost != "" && strings.EqualFold(ciHost, host) {
+		opts = append(opts, httpx.WithToken(host, "gitlab-ci-token", getenv("CI_JOB_TOKEN")))
+	}
+	return opts
 }
 
 // options returns the engine options of this session; callers add Filter/Trace.

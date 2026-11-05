@@ -30,23 +30,27 @@ type Span struct{ Start, End int }
 
 // Dep is a single dependency occurrence extracted from a file.
 type Dep struct {
-	Manager     string // "github-actions" | "gomod" | "docker" | "npm" | "pip_requirements" | "pep621" | "poetry" | "pipenv" | "helm" | "cargo" | "maven" | "gradle" | "gradle-wrapper" | "maven-wrapper" | "custom"
-	Datasource  string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "pypi" | "helm" | "crate" | "maven" | "gradle-version" | "custom.<name>"
-	Versioning  string // "tag" | "go" | "docker" | "semver" | "pep440" | "loose" | "cargo" | "maven" | "regex:<RE2>" (rules[].versioning overrides the manager's)
-	DepType     string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"|"setup"; docker: "dockerfile"|"compose"|"workflow"|"action"|"kubernetes"|"helm"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"|"engines"|"volta"; pip_requirements: "requirements"; pep621: "project.dependencies"|"project.optional-dependencies"|"dependency-groups"|"tool.uv.dev-dependencies"|"tool.pdm.dev-dependencies"; poetry: "dependencies"|"dev-dependencies"|"group"; pipenv: "packages"|"dev-packages"|"category"; helm: "chart"|"helmfile"|"k0s"|"flux"|"argocd"; cargo: "dependencies"|"dev-dependencies"|"build-dependencies"|"workspace.dependencies"; terraform: "required_provider"|"provider"|"module"|"required_version"|"helm_release"|"tfe_workspace"|resource type; terraform-version: "terraform-version"|"opentofu-version"; tflint-plugin: "plugin"; terragrunt: "github"|"gitTags"|"terragrunt"; maven: scope|"parent"|"build"; gradle: "dependencies"|"plugin"; gradle-wrapper: "wrapper"; maven-wrapper: "maven"|"wrapper"; custom: "annotation"|"regex"
-	File        string // slash path relative to --dir
-	Line        int    // 1-based
-	Name        string // actions: owner/repo[/sub]; gomod: module path; helm: chart; maven datasource: group:artifact or a Gradle plugin id
-	Source      string // actions: https://<host>/<owner>/<repo>; gomod: ""; helm: repository URL (https:// or oci://); maven datasource: whitespace-separated repositories `[<id>=]<url>/` in lookup order ("" = Maven Central)
-	Version     string // current version (ref tag, comment version, or module version)
-	Digest      string // actions: full SHA when pinned, else ""
-	RefSpan     Span   // actions: ref after '@'; gomod: version token
-	NameSpan    Span   // gomod: module path token of a require (rewritten by major module path updates)
-	VersionSpan Span   // actions: version token in trailing comment (pinned only)
-	DigestSpan  Span   // docker/custom: digest token, when the digest is stored apart from RefSpan
-	InputSpan   Span   // actions: `with: version:` value equal to the current version, bumped along with the ref
-	InsertAt    int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
-	Skip        string // non-empty = not updatable, with the reason
+	Manager    string // "github-actions" | "gomod" | "docker" | "npm" | "pip_requirements" | "pep621" | "poetry" | "pipenv" | "helm" | "cargo" | "maven" | "gradle" | "gradle-wrapper" | "maven-wrapper" | "custom"
+	Datasource string // "git-tags" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "pypi" | "helm" | "crate" | "maven" | "gradle-version" | "custom.<name>"
+	Versioning string // "tag" | "go" | "docker" | "semver" | "pep440" | "loose" | "cargo" | "maven" | "regex:<RE2>" (rules[].versioning overrides the manager's)
+	// ExtractVersion is an RE2 regexp with a `version` group mapping release names of the
+	// datasource to versions as written (`^jq-(?<version>.+)$`); "" = release names are
+	// versions. Set by managers and markers; rules[].extractVersion overrides.
+	ExtractVersion string
+	DepType        string // gomod: "direct"|"indirect"|"go"|"toolchain"; actions: "action"|"setup"; docker: "dockerfile"|"compose"|"workflow"|"action"|"kubernetes"|"helm"; npm: "dependencies"|"devDependencies"|"optionalDependencies"|"peerDependencies"|"packageManager"|"engines"|"volta"; pip_requirements: "requirements"; pep621: "project.dependencies"|"project.optional-dependencies"|"dependency-groups"|"tool.uv.dev-dependencies"|"tool.pdm.dev-dependencies"; poetry: "dependencies"|"dev-dependencies"|"group"; pipenv: "packages"|"dev-packages"|"category"; helm: "chart"|"helmfile"|"k0s"|"flux"|"argocd"; cargo: "dependencies"|"dev-dependencies"|"build-dependencies"|"workspace.dependencies"; terraform: "required_provider"|"provider"|"module"|"required_version"|"helm_release"|"tfe_workspace"|resource type; terraform-version: "terraform-version"|"opentofu-version"; tflint-plugin: "plugin"; terragrunt: "github"|"gitTags"|"terragrunt"; maven: scope|"parent"|"build"; gradle: "dependencies"|"plugin"; gradle-wrapper: "wrapper"; maven-wrapper: "maven"|"wrapper"; custom: "annotation"|"regex"
+	File           string // slash path relative to --dir
+	Line           int    // 1-based
+	Name           string // actions: owner/repo[/sub]; gomod: module path; helm: chart; maven datasource: group:artifact or a Gradle plugin id
+	Source         string // actions: https://<host>/<owner>/<repo>; gomod: ""; helm: repository URL (https:// or oci://); maven datasource: whitespace-separated repositories `[<id>=]<url>/` in lookup order ("" = Maven Central)
+	Version        string // current version (ref tag, comment version, or module version)
+	Digest         string // actions: full SHA when pinned, else ""
+	RefSpan        Span   // actions: ref after '@'; gomod: version token
+	NameSpan       Span   // gomod: module path token of a require (rewritten by major module path updates)
+	VersionSpan    Span   // actions: version token in trailing comment (pinned only)
+	DigestSpan     Span   // docker/custom: digest token, when the digest is stored apart from RefSpan
+	InputSpan      Span   // actions: `with: version:` value equal to the current version, bumped along with the ref
+	InsertAt       int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
+	Skip           string // non-empty = not updatable, with the reason
 	// VersionRef names the definition the version is read from when several deps can share
 	// it (a Maven property, a Gradle catalog version.ref or variable), e.g. "jackson.version";
 	// RefSpan then points at the definition, which may be in another file than the dep's

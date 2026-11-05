@@ -142,6 +142,17 @@
         "url"
       ]
     },
+    "GitLabCI": {
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Base URL of the GitLab instance project includes and $CI_SERVER_FQDN components resolve against, e.g. https://gitlab.example.com or https://example.com/gitlab; empty means auto-detected (CI_SERVER_URL, else https://gitlab.com).",
+          "markdownDescription": "Base URL of the GitLab instance project includes and $CI_SERVER_FQDN components resolve against, e.g. https://gitlab.example.com or https://example.com/gitlab; empty means auto-detected (CI_SERVER_URL, else https://gitlab.com)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "LockFileMaintenance": {
       "properties": {
         "enabled": {
@@ -414,6 +425,11 @@
           "description": "Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes.",
           "markdownDescription": "Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, or regex:\\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\\<name>) and (?P\\<name>) syntax both work. Cannot be combined with updateTypes.\n\nThe scheme validates the current value, ranks candidates, classifies update kinds, converts versions for `allow`, and computes security fixes. A current value that the new scheme cannot parse is skipped as `non-version value \"<v>\"`.\n\n| Scheme | Accepts | Notes |\n|---|---|---|\n| `tag` | `^(v?)\\d+(\\.\\d+)?(\\.\\d+)?$` | candidates need the same prefix and the same number of parts (`v4` → `v5`, `v4.1.0` → `v4.2.0`); no suffixes or prereleases |\n| `go` | Go module semver | no pseudo-versions; prereleases only from a prerelease; `+incompatible` only from `+incompatible`; same major except v0 → v1 |\n| `docker` | `^(v?)(\\d+(\\.\\d+)*)(.*)$` | same prefix, part count and suffix (`1.27-alpine` → `1.28-alpine`); `latest` and commit hashes (7–40 lowercase hex digits, not all decimal: `3a22eba`) are invalid |\n| `semver` | Masterminds loose semver | any precision; prereleases only from a prerelease; keeps the `v` style; the default of `custom[]` and npm |\n| `loose` | 1–6 numeric parts, optional `v`, optional `-`/`_` suffix | the suffix counts as a prerelease. Missing parts compare as 0 (`1877` < `1877.25`); then fewer parts sort below more (`1.2` < `1.2.0`). Any precision is a candidate, so combine it with an `allow` regex. |\n| `cargo` | `MAJOR[.MINOR[.PATCH[-pre][+build]]]`, no `v` | candidates need the same number of parts (`0.4` → `0.5`); prereleases only from a prerelease. Update types follow Cargo's compatibility: leaving the range of the leftmost non-zero part is `major` (`0.4` → `0.5`, `0.0.3` → `0.0.4`), a minor change of a `1.x` version `minor`, anything else `patch`. The default of cargo deps |\n| `pep440` | PEP 440 (epochs, pre/post/dev releases, local versions; at most 10 release parts) | ordered like Python's `packaging`; pre and dev releases only from a pre or dev release; local versions only from a local version. A candidate may have more release parts than the current version only if the extra parts are 0, and is then written at the current precision (`4.2` → `5.0` from `5.0.0`, never `5.0.1`). The default of the Python managers |\n| `hashicorp` | 1–3 numeric parts, optional `v`, `-prerelease` on full versions | Terraform constraints: candidates are written at the current precision and `v` style (`5.0` → `5.31` from `5.31.2`, `1.5.7` → `1.9.5` from the tag `v1.9.5`); prereleases only from a prerelease; the default of the terraform managers |\n| `maven` | Maven `ComparableVersion`: a leading digit, then `[0-9A-Za-z._-]` | `1.0` = `1.0.0` = `1.0-final`; `alpha` < `beta` < `milestone` < `rc` < `snapshot` < release < `sp`. SNAPSHOTs are never candidates, other prereleases only from a prerelease; the first unknown qualifier after a `-` must match (`-jre` stays `-jre`; `.v20230217` dates and hashes are not compared). The default of the maven, gradle and gradle-wrapper managers. |\n| `regex:<RE2>` | the expression's named groups | `major` (required), `minor`, `patch`, `build`, `revision` (numeric, absent = 0), `prerelease`, `compatibility`; other names are errors. `(?<name>)` and `(?P<name>)` both work. Candidates must share `compatibility`. |\n\nErrors: `rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group \"x\" (allowed: ...)`, `regex: invalid RE2 regexp: ...`, and `cannot be combined with updateTypes: ...`.\n\n```yaml\nrules:\n  - names: ['ghcr.io/gardenlinux/gardenlinux/fips']\n    versioning: loose\n    allow: '/^\\d+\\.\\d+$/'\n  - names: ['open-component-model/cosign']\n    versioning: 'regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)[-+]ocm\\.(?<build>\\d+)$'\n```"
         },
+        "extractVersion": {
+          "type": "string",
+          "description": "RE2 regexp with a (?<version>) group extracting the version from the datasource's release names, e.g. '^jq-(?<version>.+)$' for jq-1.7.1 tags or '^kustomize/(?<version>.+)$'; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes.",
+          "markdownDescription": "RE2 regexp with a (?\\<version>) group extracting the version from the datasource's release names, e.g. `^jq-(?<version>.+)$` for jq-1.7.1 tags or `^kustomize/(?<version>.+)$`; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes."
+        },
         "separateMajorMinor": {
           "type": "boolean",
           "description": "Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types).",
@@ -642,6 +658,11 @@
       "description": "Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports).",
       "default": true,
       "markdownDescription": "Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports).\n\nGo majors from v2 on live under their own module path (`github.com/google/go-github/v92` → `/v93`). For every go.mod requirement whose major updates the rules allow, deps lists the next module paths (`/v<N+1>`, … up to 5; `/v2` for v0/v1 modules, `gopkg.in/x.v<N+1>`) from the GOPROXY and proposes the newest release of each as a `major` update (PR buckets as for other majors, see [`separateMajorMinor`](#separatemajorminor)).\n\n- The update rewrites the require (path and version) and the import paths of the old module and its packages in the `.go` files of that module (vendor, testdata and nested modules excluded); `go mod tidy` sees the rewritten files.\n- The new major's API may differ, so the PR may need code changes before it builds; its body says so.\n- `false` proposes no module path changes at all: without rewritten imports `go mod tidy` would put the old path back.\n- Renovate's equivalent is `postUpdateOptions: [gomodUpdateImportPaths]`, which is off there by default.\n\n```yaml\ngomodUpdateImportPaths: false\n```"
+    },
+    "gitlabci": {
+      "$ref": "#/$defs/GitLabCI",
+      "description": "gitlabci manager settings.",
+      "markdownDescription": "gitlabci manager settings."
     },
     "minimumReleaseAge": {
       "type": "string",

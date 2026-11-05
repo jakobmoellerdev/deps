@@ -568,6 +568,23 @@ func TestSectionNoCompareWithoutTags(t *testing.T) {
 	}
 }
 
+// With extractVersion, releases and compare tags are found by the extracted version: jq's
+// `jq-1.8.1` tag holds the notes of 1.7.1 → 1.8.1, other tags of the repository do not count.
+func TestSectionExtractVersion(t *testing.T) {
+	f := newForge(t)
+	f.rels["/repos/jqlang/jq"] = []map[string]any{rel("jq-1.8.1", "eight"), rel("other-1.8.0", "no"), rel("jq-1.7.1", "seven")}
+	n := f.newNotes(nil, nil, nil)
+	u := dep.Update{Dep: dep.Dep{Datasource: "github-releases", Name: "jqlang/jq", Source: "https://github.com/jqlang/jq",
+		Version: "1.7.1", ExtractVersion: `^jq-(?<version>\d.*)$`}, NewVersion: "1.8.1"}
+	got := n.Section(t.Context(), []dep.Update{u})
+	if !strings.Contains(got, "eight") || strings.Contains(got, "no\n") || strings.Contains(got, "seven") {
+		t.Errorf("section = %q, want only the jq-1.8.1 notes", got)
+	}
+	if !strings.Contains(got, "https://github.com/jqlang/jq/compare/jq-1.7.1...jq-1.8.1") {
+		t.Errorf("section = %q, want a jq-1.7.1...jq-1.8.1 compare link", got)
+	}
+}
+
 func TestSectionCaps(t *testing.T) {
 	f := newForge(t)
 	var ups []dep.Update

@@ -42,6 +42,7 @@ type Policy struct {
 	// version whose release time is unknown is held back.
 	TimestampRequired bool
 	Versioning        string // versioning scheme set by a rule, "" = the dep's own
+	ExtractVersion    string // extractVersion set by a rule, "" = the dep's own
 	Automerge         bool   // request platform auto-merge for the PR
 	// AutomergeStrategy is the merge method of an automerged PR (AutomergeStrategies).
 	AutomergeStrategy string
@@ -82,8 +83,9 @@ func IgnoredByDefault(depType string) bool { return defaultIgnored[depType] }
 // evaluates the built-in monorepo rule (unless monorepos is false), then the user rules
 // without updateTypes top-to-bottom; each set field of a matching rule overwrites the
 // policy (Updates is replaced, not merged). Indirect Go requirements, go directives, npm
-// peerDependencies and engines are ignored unless a rule sets `ignore: false`. Its Versioning replaces the
-// dep's scheme before resolution (only rules without updateTypes may set it).
+// peerDependencies and engines are ignored unless a rule sets `ignore: false`. Its Versioning
+// and ExtractVersion replace the dep's before resolution (only rules without updateTypes may
+// set them).
 func (c *Config) Policy(d dep.Dep) Policy { return c.policy(d, "") }
 
 // PolicyFor is the policy of an update of kind to d: like Policy, but rules with updateTypes
@@ -192,6 +194,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		}
 		if r.Versioning != "" {
 			p.Versioning = r.Versioning
+		}
+		if r.ExtractVersion != "" {
+			p.ExtractVersion = r.ExtractVersion
 		}
 		if r.SeparateMajorMinor != nil {
 			p.SeparateMajorMinor = *r.SeparateMajorMinor

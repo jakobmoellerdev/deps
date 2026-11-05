@@ -68,8 +68,9 @@ func New(client *http.Client, sem chan struct{}, assets Assets, openers map[stri
 	return &Source{client: client, sem: sem, assets: assets, openers: openers, cache: make(map[string]*entry)}
 }
 
-// Checksum returns the checksum of version per d.ChecksumSource.
-func (s *Source) Checksum(ctx context.Context, d dep.Dep, version string) (string, error) {
+// Checksum returns the checksum of version per d.ChecksumSource. Templates expand version;
+// the github-releases asset is looked up in the release named release.
+func (s *Source) Checksum(ctx context.Context, d dep.Dep, version, release string) (string, error) {
 	cs := d.ChecksumSource
 	switch {
 	case cs == nil:
@@ -78,7 +79,7 @@ func (s *Source) Checksum(ctx context.Context, d dep.Dep, version string) (strin
 		if d.Datasource != "github-releases" || s.assets == nil {
 			return "", fmt.Errorf("checksum asset requires the github-releases datasource, have %q", d.Datasource)
 		}
-		return s.assets.AssetDigest(ctx, d.Name, version, dep.ExpandVersion(cs.Asset, version))
+		return s.assets.AssetDigest(ctx, d.Name, release, dep.ExpandVersion(cs.Asset, version))
 	case cs.Artifact != "":
 		return s.artifactDigest(ctx, d, dep.ExpandVersion(cs.Artifact, version))
 	case cs.URL == "":

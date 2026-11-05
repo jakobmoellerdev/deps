@@ -80,7 +80,7 @@ func TestChecksumURL(t *testing.T) {
 		{"asset without releases", dep.Dep{Datasource: "github-releases", ChecksumSource: &dep.ChecksumSource{Asset: "a"}}, "", "checksum asset requires the github-releases datasource"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := s.Checksum(ctx, c.d, "1.2.0")
+			got, err := s.Checksum(ctx, c.d, "1.2.0", "1.2.0")
 			if got != c.want || (err == nil) != (c.err == "") || err != nil && !strings.HasPrefix(err.Error(), c.err) {
 				t.Errorf("got %q, %v; want %q, %q", got, err, c.want, c.err)
 			}
@@ -103,7 +103,7 @@ func TestChecksumConcurrentDedupe(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			if got, err := s.Checksum(context.Background(), d, "1"); got != h1 || err != nil {
+			if got, err := s.Checksum(context.Background(), d, "1", "1"); got != h1 || err != nil {
 				t.Errorf("got %q, %v", got, err)
 			}
 		})
@@ -118,16 +118,16 @@ func TestChecksumAsset(t *testing.T) {
 	a := &fakeAssets{}
 	s := New(http.DefaultClient, nil, a, nil)
 	d := dep.Dep{Datasource: "github-releases", Name: "cli/cli", ChecksumSource: &dep.ChecksumSource{Asset: "gh_{{version}}_linux_amd64.tar.gz"}}
-	got, err := s.Checksum(context.Background(), d, "2.61.0")
+	got, err := s.Checksum(context.Background(), d, "2.61.0", "2.61.0")
 	if got != h1 || err != nil || *a != (fakeAssets{"cli/cli", "2.61.0", "gh_2.61.0_linux_amd64.tar.gz"}) {
 		t.Errorf("got %q, %v, %+v", got, err, *a)
 	}
 	d.ChecksumSource.Asset = "none"
-	if _, err := s.Checksum(context.Background(), d, "1"); err == nil || err.Error() != "release v1 has no digest for asset none" {
+	if _, err := s.Checksum(context.Background(), d, "1", "1"); err == nil || err.Error() != "release v1 has no digest for asset none" {
 		t.Errorf("missing: %v", err)
 	}
 	d.Datasource = "git-tags"
-	if _, err := s.Checksum(context.Background(), d, "1"); err == nil {
+	if _, err := s.Checksum(context.Background(), d, "1", "1"); err == nil {
 		t.Error("asset with git-tags: no error")
 	}
 }
@@ -137,11 +137,11 @@ func TestChecksumCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	d := dep.Dep{ChecksumSource: &dep.ChecksumSource{URL: "http://127.0.0.1:1/x"}}
-	if _, err := s.Checksum(ctx, d, "1"); !errors.Is(err, context.Canceled) {
+	if _, err := s.Checksum(ctx, d, "1", "1"); !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled: %v", err)
 	}
 	s2 := New(http.DefaultClient, nil, nil, nil)
-	if _, err := s2.Checksum(context.Background(), d, "1"); err == nil {
+	if _, err := s2.Checksum(context.Background(), d, "1", "1"); err == nil {
 		t.Error("connection refused: no error")
 	}
 }
@@ -186,7 +186,7 @@ func TestChecksumArtifact(t *testing.T) {
 		{"too large", art("/big", h1), "", "artifact " + srv.URL + "/big: larger than 268435456 bytes"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := s.Checksum(t.Context(), c.d, "1.2.0")
+			got, err := s.Checksum(t.Context(), c.d, "1.2.0", "1.2.0")
 			if got != c.want || (err == nil) != (c.err == "") || err != nil && err.Error() != c.err {
 				t.Errorf("got %q, %v; want %q, %q", got, err, c.want, c.err)
 			}
@@ -229,7 +229,7 @@ func TestChecksumArtifactOpener(t *testing.T) {
 	d := dep.Dep{Datasource: "maven", Name: "org.apache.maven:apache-maven", Checksum: h1,
 		ChecksumSource: &dep.ChecksumSource{Artifact: "https://repo.example.com/m/{{version}}/m-{{version}}.zip"}}
 	for range 3 {
-		got, err := s.Checksum(t.Context(), d, "3.9.15")
+		got, err := s.Checksum(t.Context(), d, "3.9.15", "3.9.15")
 		if err != nil || got != hex.EncodeToString(want[:]) {
 			t.Fatalf("got %q, %v", got, err)
 		}
@@ -238,10 +238,10 @@ func TestChecksumArtifactOpener(t *testing.T) {
 		t.Errorf("calls %d, closed %d, last %v", o.calls.Load(), o.closed.Load(), o.last.Load())
 	}
 	d.ChecksumSource = &dep.ChecksumSource{Artifact: "https://repo.example.com/m/{{version}}/m.jar"}
-	if _, err := s.Checksum(t.Context(), d, "1"); err == nil || err.Error() != "artifact https://repo.example.com/m/1/m.jar: HTTP 401" {
+	if _, err := s.Checksum(t.Context(), d, "1", "1"); err == nil || err.Error() != "artifact https://repo.example.com/m/1/m.jar: HTTP 401" {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := s.Checksum(t.Context(), d, "2"); err == nil || err.Error() != "artifact https://repo.example.com/m/2/m.jar: HTTP 401" {
+	if _, err := s.Checksum(t.Context(), d, "2", "2"); err == nil || err.Error() != "artifact https://repo.example.com/m/2/m.jar: HTTP 401" {
 		t.Errorf("semaphore not released after an opener error: %v", err)
 	}
 }

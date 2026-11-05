@@ -85,19 +85,19 @@ func (*toolManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
 }
 
-// tool is the dep a tool name resolves to. skip, when set, is the reason a known tool is not
+// tool is the dep a tool name resolves to. extract is the extractVersion of repositories
+// whose release tags carry a prefix; skip, when set, is the reason a known tool is not
 // updatable.
-type tool struct{ datasource, name, source, skip string }
+type tool struct{ datasource, name, source, extract, skip string }
 
 const (
-	dsNode    = "node-version"
-	dsGo      = "go-toolchain"
-	dsGitHub  = "github-releases"
-	dsNpm     = "npm"
-	dsMaven   = "maven"
-	dsGradle  = "gradle-version"
-	skipTool  = "unsupported tool"
-	skipTagPx = "unsupported tag prefix"
+	dsNode   = "node-version"
+	dsGo     = "go-toolchain"
+	dsGitHub = "github-releases"
+	dsNpm    = "npm"
+	dsMaven  = "maven"
+	dsGradle = "gradle-version"
+	skipTool = "unsupported tool"
 )
 
 var (
@@ -112,11 +112,18 @@ func githubTool(repo string) tool {
 	return tool{datasource: dsGitHub, name: repo, source: "https://github.com/" + repo}
 }
 
+// prefixedTool is a github-releases tool whose tags carry a prefix extract strips.
+func prefixedTool(repo, extract string) tool {
+	t := githubTool(repo)
+	t.extract = extract
+	return t
+}
+
 func npmTool(pkg string) tool { return tool{datasource: dsNpm, name: pkg} }
 
-// tools maps asdf plugin and mise tool names to their dep. github-releases repositories are
-// listed only when their release tags are the version with or without a leading "v" (the
-// datasource's tag match); repositories with other tag prefixes are known but skipped.
+// tools maps asdf plugin and mise tool names to their dep. github-releases tags are the
+// version with or without a leading "v" (the datasource's tag match) unless the tool sets
+// extract.
 var tools = map[string]tool{
 	"node":          nodeTool,
 	"nodejs":        nodeTool,
@@ -165,10 +172,11 @@ var tools = map[string]tool{
 	"trivy":         githubTool("aquasecurity/trivy"),
 	"vault":         githubTool("hashicorp/vault"),
 	"yq":            githubTool("mikefarah/yq"),
-	// Tags `bun-v1.2.3`, `jq-1.7.1`, `kustomize/v5.4.3`.
-	"bun":       {datasource: dsGitHub, name: "oven-sh/bun", source: "https://github.com/oven-sh/bun", skip: skipTagPx},
-	"jq":        {datasource: dsGitHub, name: "jqlang/jq", source: "https://github.com/jqlang/jq", skip: skipTagPx},
-	"kustomize": {datasource: dsGitHub, name: "kubernetes-sigs/kustomize", source: "https://github.com/kubernetes-sigs/kustomize", skip: skipTagPx},
+	// Tags `bun-v1.2.3`, `jq-1.7.1`, `kustomize/v5.4.3` (the repository also tags `api/…`,
+	// `kyaml/…`); files write the bare version.
+	"bun":       prefixedTool("oven-sh/bun", `^bun-v(?<version>\d.*)$`),
+	"jq":        prefixedTool("jqlang/jq", `^jq-(?<version>\d.*)$`),
+	"kustomize": prefixedTool("kubernetes-sigs/kustomize", `^kustomize/v(?<version>\d.*)$`),
 }
 
 // lookup returns the dep of tool name; an unknown name is kept as the dep name and skipped.
@@ -238,7 +246,7 @@ func classify(t tool, raw string) (ver string, off int, versioning, skip string)
 func newDep(mgr, depType, file string, line int, t tool, raw string, at int) dep.Dep {
 	d := dep.Dep{
 		Manager: mgr, Datasource: t.datasource, DepType: depType, File: file, Line: line,
-		Name: t.name, Source: t.source, Version: raw, Skip: t.skip,
+		Name: t.name, Source: t.source, Version: raw, Skip: t.skip, ExtractVersion: t.extract,
 	}
 	if d.Skip != "" {
 		return d

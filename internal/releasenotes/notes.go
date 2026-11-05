@@ -25,6 +25,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 const (
@@ -172,15 +173,7 @@ func (n *Notes) block(ctx context.Context, it item) block {
 	if err != nil {
 		slog.DebugContext(ctx, "release notes unavailable", "name", it.d.Name, "repo", r.web(), "err", err)
 	}
-	prefixes := []string{r.tagPrefix}
-	switch it.d.Datasource {
-	case dsNpm:
-		prefixes = append(prefixes, it.d.Name+"@")
-	case dsMaven: // maven-release-plugin's default tag: <artifactId>-<version>
-		if _, artifact, ok := strings.Cut(it.d.Name, ":"); ok {
-			prefixes = append(prefixes, artifact+"-")
-		}
-	}
+	tagVer := tagVersions(it.d, r)
 	from, okFrom := parseVersion(it.from)
 	to, okTo := parseVersion(it.to)
 	type picked struct {
@@ -189,7 +182,7 @@ func (n *Notes) block(ctx context.Context, it item) block {
 	}
 	var sel []picked
 	for _, rel := range rels {
-		v, ok := tagVersion(rel.tag, prefixes)
+		v, ok := tagVer(rel.tag)
 		if !ok || !okFrom || !okTo || rel.draft || (rel.pre && compareAt(v, to) != 0) {
 			continue
 		}
@@ -201,24 +194,74 @@ func (n *Notes) block(ctx context.Context, it item) block {
 	for _, p := range sel {
 		b.entries = append(b.entries, entry(p.rel, r))
 	}
-	fromTag, okF := n.tagFor(ctx, it.d, r, rels, prefixes, it.from)
-	toTag, okT := n.tagFor(ctx, it.d, r, rels, prefixes, it.to)
+	fromTag, okF := n.tagFor(ctx, it.d, r, rels, tagVer, it.from)
+	toTag, okT := n.tagFor(ctx, it.d, r, rels, tagVer, it.to)
 	if okF && okT {
 		b.compare = r.web() + "/compare/" + escapeTag(fromTag) + "..." + escapeTag(toTag)
 	}
 	return b
 }
 
+// tagVersions returns the version of a tag of d's repository r: the extractVersion match
+// when d has one, else the tag after r's tag prefix (or npm's `<name>@`).
+func tagVersions(d dep.Dep, r repoRef) func(tag string) (version, bool) {
+	if x := extractor(d); x != nil {
+		return func(tag string) (version, bool) {
+			v, ok := x.Version(tag)
+			if !ok {
+				return version{}, false
+			}
+			return parseVersion(v)
+		}
+	}
+	prefixes := []string{r.tagPrefix}
+	switch d.Datasource {
+	case dsNpm:
+		prefixes = append(prefixes, d.Name+"@")
+	case dsMaven: // maven-release-plugin's default tag: <artifactId>-<version>
+		if _, artifact, ok := strings.Cut(d.Name, ":"); ok {
+			prefixes = append(prefixes, artifact+"-")
+		}
+	}
+	return func(tag string) (version, bool) { return tagVersion(tag, prefixes) }
+}
+
+// extractor returns d's compiled extractVersion, nil when it has none (or an invalid one,
+// which the engine already reported).
+func extractor(d dep.Dep) *versioning.Extractor {
+	if d.ExtractVersion == "" {
+		return nil
+	}
+	x, err := versioning.CompileExtract(d.ExtractVersion)
+	if err != nil {
+		return nil
+	}
+	return x
+}
+
 // tagFor returns the tag of version in r: Go module versions are tags by definition, git-tags
-// versions are tag names when the tag exists, and others must have a release.
-func (n *Notes) tagFor(ctx context.Context, d dep.Dep, r repoRef, rels []release, prefixes []string, ver string) (string, bool) {
+// versions are tag names (or extracted from them) when the tag exists, and others must have
+// a release.
+func (n *Notes) tagFor(ctx context.Context, d dep.Dep, r repoRef, rels []release, tagVer func(string) (version, bool), ver string) (string, bool) {
 	switch d.Datasource {
 	case dsGo:
 		return r.tagPrefix + ver, true
 	case dsGitTags:
 		if ds := n.sources[dsGitTags]; ds != nil {
 			tags, err := ds.Releases(ctx, d, "")
-			return ver, err == nil && slices.ContainsFunc(tags, func(t datasource.Release) bool { return t.Version == ver })
+			if err != nil {
+				return "", false
+			}
+			x := extractor(d)
+			for _, t := range tags {
+				v, ok := t.Version, true
+				if x != nil {
+					v, ok = x.Version(t.Version)
+				}
+				if ok && v == ver {
+					return t.Version, true
+				}
+			}
 		}
 		return "", false
 	}
@@ -227,7 +270,7 @@ func (n *Notes) tagFor(ctx context.Context, d dep.Dep, r repoRef, rels []release
 		return "", false
 	}
 	for _, rel := range rels {
-		if v, ok := tagVersion(rel.tag, prefixes); ok && len(v.parts) == len(want.parts) && compareAt(v, want) == 0 {
+		if v, ok := tagVer(rel.tag); ok && len(v.parts) == len(want.parts) && compareAt(v, want) == 0 {
 			return rel.tag, true
 		}
 	}

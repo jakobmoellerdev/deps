@@ -182,6 +182,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 				if v := pol.pre.Versioning; v != "" {
 					d.Versioning, pol.d.Versioning = v, v
 				}
+				if x := pol.pre.ExtractVersion; x != "" {
+					d.ExtractVersion, pol.d.ExtractVersion = x, x
+				}
 			}
 			if s, ok := versioning.Get(d.Versioning); d.Skip == "" && ok && !s.Valid(d.Version) && !tagOnly(d) && !goPseudo(d) {
 				d.Skip = "non-version value " + strconv.Quote(d.Version)
@@ -769,6 +772,13 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 	if r.ds == nil {
 		return nil, fmt.Errorf("no datasource %q", d.Datasource)
 	}
+	if d.ExtractVersion != "" {
+		x, err := versioning.CompileExtract(d.ExtractVersion)
+		if err != nil {
+			return nil, fmt.Errorf("extractVersion: %w", err)
+		}
+		r.ds = withExtract(r.ds, x)
+	}
 	var ups []dep.Update
 	var err error
 	switch {
@@ -1168,7 +1178,11 @@ func (r *resolver) checksumOf(version string) (string, error) {
 	if r.cs == nil {
 		return "", errors.New("no checksum source")
 	}
-	c, err := r.cs.Checksum(r.ctx, r.d, version)
+	release := version
+	if e, ok := r.ds.(releaseNamer); ok {
+		release = e.name(version)
+	}
+	c, err := r.cs.Checksum(r.ctx, r.d, version, release)
 	if err != nil {
 		return "", fmt.Errorf("checksum of %s: %w", version, err)
 	}

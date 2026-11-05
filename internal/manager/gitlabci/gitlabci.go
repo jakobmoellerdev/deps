@@ -8,7 +8,9 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -18,6 +20,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -32,8 +35,9 @@ const (
 	TypeComponent = "component"
 )
 
-// DefaultHost is the GitLab instance project includes are resolved against.
-const DefaultHost = "gitlab.com"
+// serverVars are the GitLab CI predefined variables that name the instance host
+// (CI_SERVER_FQDN with port, CI_SERVER_HOST without) when leading a component path.
+var serverVars = []string{"$CI_SERVER_FQDN", "${CI_SERVER_FQDN}", "$CI_SERVER_HOST", "${CI_SERVER_HOST}"}
 
 var (
 	ciFileRe = regexp.MustCompile(`(^|/)([^/]*\.)?\.?gitlab-ci\.ya?ml$`)
@@ -61,9 +65,16 @@ func (gitlabManager) Match(path string) bool {
 }
 
 // Extract returns the deps of every YAML document in src (component templates carry a
-// `spec:` header document).
-func (gitlabManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
-	x := extractor{file: file, src: src, lines: lineStarts(src)}
+// `spec:` header document). Project includes and components on the instance resolve against
+// env.GitLabURL.
+func (gitlabManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
+	x := extractor{file: file, src: src, lines: lineStarts(src), base: env.GitLabURL}
+	if x.base == "" {
+		x.base = platform.DefaultGitLabURL
+	}
+	if u, err := url.Parse(x.base); err == nil {
+		x.host = u.Host
+	}
 	dec := yaml.NewDecoder(bytes.NewReader(src))
 	for {
 		var doc yaml.Node
@@ -100,6 +111,8 @@ type extractor struct {
 	src   []byte
 	lines []int
 	deps  []dep.Dep
+	base  string // GitLab instance base URL without trailing slash
+	host  string // host[:port] of base
 }
 
 func lineStarts(src []byte) []int {
@@ -203,14 +216,17 @@ func (x *extractor) includeEntry(m *yaml.Node) {
 	case r == nil || r.Kind != yaml.ScalarNode || r.Value == "":
 		d.Skip = "no ref"
 	default:
-		d.Source = "https://" + DefaultHost + "/" + project
+		d.Source = x.base + "/" + project
 		d.Line = r.Line
 		x.version(&d, r, r.Value, 0)
 	}
 	x.deps = append(x.deps, d)
 }
 
-// component handles `component: <host>/<project path>/<name>@<version>`.
+// component handles `component: <host>/<project path>/<name>@<version>`. A leading
+// `$CI_SERVER_FQDN` or `$CI_SERVER_HOST` (also `${...}`) is the instance host; components on
+// the instance resolve against its base URL (scheme and path prefix included), others
+// against `https://<host>`.
 func (x *extractor) component(v *yaml.Node) {
 	d := dep.Dep{Manager: Name, Datasource: "git-tags", Versioning: "tag", DepType: TypeComponent, File: x.file, Line: v.Line, Name: v.Value}
 	at := strings.LastIndexByte(v.Value, '@')
@@ -219,6 +235,9 @@ func (x *extractor) component(v *yaml.Node) {
 		path = v.Value[:at]
 	}
 	d.Name = path
+	if first, rest, ok := strings.Cut(path, "/"); ok && x.host != "" && slices.Contains(serverVars, first) {
+		path = x.host + "/" + rest
+	}
 	slash := strings.LastIndexByte(path, '/')
 	switch {
 	case strings.Contains(path, "$"):
@@ -228,10 +247,18 @@ func (x *extractor) component(v *yaml.Node) {
 	case slash < 0 || strings.Count(path, "/") < 2:
 		d.Skip = "invalid component"
 	default:
-		d.Source = "https://" + path[:slash]
+		d.Source = x.componentSource(path[:slash])
 		x.version(&d, v, v.Value[at+1:], at+1)
 	}
 	x.deps = append(x.deps, d)
+}
+
+// componentSource returns the repository URL of project, given as `<host>/<project path>`.
+func (x *extractor) componentSource(project string) string {
+	if host, rest, _ := strings.Cut(project, "/"); strings.EqualFold(host, x.host) {
+		return x.base + "/" + rest
+	}
+	return "https://" + project
 }
 
 // version sets d's version to ver, found at byte rel of scalar v's value.

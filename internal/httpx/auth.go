@@ -13,7 +13,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
-// staticUser is the Basic auth user sent with static tokens; GitHub, Gitea and Forgejo accept it.
+// staticUser is the Basic auth user sent with platform tokens; GitHub, Gitea and Forgejo accept it.
 const staticUser = "x-access-token"
 
 // HelperFunc returns credentials for host, or ok=false if there are none.
@@ -25,15 +25,24 @@ type AuthOption func(*Auth)
 // WithHelper replaces the `git credential fill` lookup used by Helper.
 func WithHelper(fn HelperFunc) AuthOption { return func(a *Auth) { a.fill = fn } }
 
+// WithToken registers Basic credentials (user, token) for host (without port) unless host
+// already has a token: the platform token and DEPS_GITHUB_COM_TOKEN registered by NewAuth win,
+// then earlier WithToken options. An empty host or token registers nothing.
+func WithToken(host, user, token string) AuthOption {
+	return func(a *Auth) { a.add(host, user, token) }
+}
+
 // Auth holds static per-host tokens and a cache of git credential helper results.
 // A nil *Auth has no credentials.
 type Auth struct {
-	tokens map[string]string
+	tokens map[string]static
 	fill   HelperFunc
 
 	mu     sync.Mutex
 	helper map[string]*cred
 }
+
+type static struct{ user, token string }
 
 type cred struct {
 	once       sync.Once
@@ -42,14 +51,12 @@ type cred struct {
 }
 
 // NewAuth registers platformToken for info.Host and DEPS_GITHUB_COM_TOKEN for github.com
-// (when the platform host is not github.com itself).
+// (when the platform host is not github.com itself), then applies opts.
 func NewAuth(info platform.Info, platformToken string, getenv func(string) string, opts ...AuthOption) *Auth {
-	a := &Auth{tokens: make(map[string]string, 2), fill: gitCredentialFill, helper: make(map[string]*cred)}
-	if platformToken != "" && info.Host != "" {
-		a.tokens[info.Host] = platformToken
-	}
-	if t := getenv("DEPS_GITHUB_COM_TOKEN"); t != "" && info.Host != "github.com" {
-		a.tokens["github.com"] = t
+	a := &Auth{tokens: make(map[string]static, 2), fill: gitCredentialFill, helper: make(map[string]*cred)}
+	a.add(info.Host, staticUser, platformToken)
+	if info.Host != "github.com" {
+		a.add("github.com", staticUser, getenv("DEPS_GITHUB_COM_TOKEN"))
 	}
 	for _, o := range opts {
 		o(a)
@@ -57,16 +64,28 @@ func NewAuth(info platform.Info, platformToken string, getenv func(string) strin
 	return a
 }
 
-// Static returns the configured token for host as Basic credentials ("x-access-token", token).
+// add registers (user, token) for host unless host is empty, token is empty or host already
+// has a token.
+func (a *Auth) add(host, user, token string) {
+	if host == "" || token == "" {
+		return
+	}
+	if _, ok := a.tokens[host]; !ok {
+		a.tokens[host] = static{user, token}
+	}
+}
+
+// Static returns the configured Basic credentials for host: ("x-access-token", token) for the
+// platform and github.com tokens, the registered user for WithToken ones.
 func (a *Auth) Static(host string) (user, pass string, ok bool) {
 	if a == nil {
 		return "", "", false
 	}
-	t, ok := a.tokens[host]
+	s, ok := a.tokens[host]
 	if !ok {
 		return "", "", false
 	}
-	return staticUser, t, true
+	return s.user, s.token, true
 }
 
 // Helper asks the git credential helper for host once; success and failure are both cached.

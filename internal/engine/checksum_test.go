@@ -29,7 +29,7 @@ type fakeChecksums struct {
 	got  []string
 }
 
-func (f *fakeChecksums) Checksum(_ context.Context, d dep.Dep, v string) (string, error) {
+func (f *fakeChecksums) Checksum(_ context.Context, d dep.Dep, v, _ string) (string, error) {
 	f.mu.Lock()
 	f.got = append(f.got, d.Name+"@"+v)
 	f.mu.Unlock()

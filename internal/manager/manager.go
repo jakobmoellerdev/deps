@@ -9,6 +9,7 @@ import (
 // Env carries run-wide settings to Extract.
 type Env struct {
 	DefaultHost string // actions default host
+	GitLabURL   string // GitLab instance base URL without trailing slash; "" means https://gitlab.com
 	// TerraformRegistry is the registry host of hostless provider and module addresses
 	// (config terraform.defaultRegistry); "" = the default of the file type.
 	TerraformRegistry string

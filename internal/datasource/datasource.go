@@ -110,8 +110,9 @@ type SecuritySource interface {
 
 // ChecksumSource looks up the checksum of a release artifact of d (see dep.ChecksumSource).
 type ChecksumSource interface {
-	// Checksum returns the lowercase hex checksum for version.
-	Checksum(ctx context.Context, d dep.Dep, version string) (string, error)
+	// Checksum returns the lowercase hex checksum for version as written; release is the
+	// datasource's release name of version (they differ under extractVersion).
+	Checksum(ctx context.Context, d dep.Dep, version, release string) (string, error)
 }
 
 // Overview documents what all datasources share (HTTP client, retries, rate limits, dedupe).

@@ -468,6 +468,29 @@ func TestRenovateMarkers(t *testing.T) {
 	})
 }
 
+func TestExtractVersion(t *testing.T) {
+	src := strings.Join([]string{
+		"# renovate: datasource=github-releases depName=jqlang/jq extractVersion=^jq-(?<version>.+)$",
+		"JQ=1.7.1",
+		"# renovate: datasource=github-releases depName=o/bad extractVersion=^x-(.+)$",
+		"B=1.0.0",
+	}, "\n")
+	m := oneWith(t, &config.Config{Custom: []config.Custom{{Files: []string{"**/.env"}}}})
+	got := extract(t, m, src)
+	want := []struct{ extract, skip string }{
+		{"^jq-(?<version>.+)$", ""},
+		{"^x-(.+)$", "invalid extractVersion: needs a (?<version>…) group"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d deps, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if got[i].ExtractVersion != w.extract || got[i].Skip != w.skip {
+			t.Errorf("dep %d: extractVersion %q, skip %q; want %q, %q", i, got[i].ExtractVersion, got[i].Skip, w.extract, w.skip)
+		}
+	}
+}
+
 func TestDockerRefBoundaries(t *testing.T) {
 	for _, c := range []struct{ line, tag string }{
 		{"X=a/b:1.2 y", "1.2"},

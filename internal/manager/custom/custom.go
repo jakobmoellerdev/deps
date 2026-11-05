@@ -2,7 +2,7 @@
 //
 // Annotation mode (no `match`): a comment `deps: <datasource> <name> [versioning=<scheme>]`
 // or a Renovate marker `renovate: datasource=<ds> depName=<name> [packageName=<p>]
-// [versioning=<scheme>] [registryUrl=<url>]` annotates the next line, whose first version
+// [versioning=<scheme>] [registryUrl=<url>] [extractVersion=<RE2>]` annotates the next line, whose first version
 // token is the dependency version. For the docker datasource the next line's first image
 // reference with a tag wins instead: its tag is the version and a following `@sha256:` digest
 // is captured, so tag and digest update together; a non-version tag (`latest`) with a digest
@@ -298,6 +298,8 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 			scheme = v
 		case "registryUrl":
 			registry = v
+		case "extractVersion":
+			d.ExtractVersion = v
 		}
 	}
 	d.Name = cmp.Or(pkgName, depName)
@@ -323,6 +325,9 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 	}
 	if d.Skip == "" && !m.knownVersioning(d.Versioning) {
 		d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
+	}
+	if _, err := versioning.CompileExtract(d.ExtractVersion); d.Skip == "" && d.ExtractVersion != "" && err != nil {
+		d.Skip = "invalid extractVersion: " + err.Error()
 	}
 	return d
 }

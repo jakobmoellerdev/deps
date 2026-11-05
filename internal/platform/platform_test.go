@@ -199,6 +199,24 @@ func TestDefaultActionsHost(t *testing.T) {
 	}
 }
 
+func TestGitLabURL(t *testing.T) {
+	tests := []struct {
+		configured, env string
+		url, src        string
+	}{
+		{"", "", "https://gitlab.com", "default"},
+		{"", "https://gitlab.example.com/", "https://gitlab.example.com", "env"},
+		{"https://example.com/gitlab", "https://gitlab.example.com", "https://example.com/gitlab", "config"},
+		{"http://git.example:8080/", "", "http://git.example:8080", "config"},
+	}
+	for _, tt := range tests {
+		u, s := GitLabURL(tt.configured, envFunc(map[string]string{"CI_SERVER_URL": tt.env}))
+		if u != tt.url || s != tt.src {
+			t.Errorf("%q %q: got %q %q", tt.configured, tt.env, u, s)
+		}
+	}
+}
+
 type recorded struct {
 	method, uri, auth, accept, apiVer string
 	body                              map[string]any

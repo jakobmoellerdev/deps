@@ -100,6 +100,8 @@ customDatasources:
 - [`terraform`](#terraform)
   - [`terraform.defaultRegistry`](#terraformdefaultregistry)
 - [`gomodUpdateImportPaths`](#gomodupdateimportpaths)
+- [`gitlabci`](#gitlabci)
+  - [`gitlabci.url`](#gitlabciurl)
 - [`minimumReleaseAge`](#minimumreleaseage)
 - [`minimumReleaseAgeBehaviour`](#minimumreleaseagebehaviour)
 - [`ignorePaths`](#ignorepaths)
@@ -126,6 +128,7 @@ customDatasources:
   - [`rules[].rangeStrategy`](#rulesrangestrategy)
   - [`rules[].updates`](#rulesupdates)
   - [`rules[].versioning`](#rulesversioning)
+  - [`rules[].extractVersion`](#rulesextractversion)
   - [`rules[].separateMajorMinor`](#rulesseparatemajorminor)
   - [`rules[].separateMultipleMajor`](#rulesseparatemultiplemajor)
   - [`rules[].separateMinorPatch`](#rulesseparateminorpatch)
@@ -455,6 +458,18 @@ Go majors from v2 on live under their own module path (`github.com/google/go-git
 ```yaml
 gomodUpdateImportPaths: false
 ```
+
+## `gitlabci`
+
+gitlabci manager settings.
+
+- **Type:** object
+
+### `gitlabci.url`
+
+Base URL of the GitLab instance project includes and $CI_SERVER_FQDN components resolve against, e.g. https://gitlab.example.com or https://example.com/gitlab; empty means auto-detected (CI_SERVER_URL, else https://gitlab.com).
+
+- **Type:** string
 
 ## `minimumReleaseAge`
 
@@ -802,6 +817,12 @@ rules:
   - names: ['open-component-model/cosign']
     versioning: 'regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$'
 ```
+
+### `rules[].extractVersion`
+
+RE2 regexp with a (?\<version>) group extracting the version from the datasource's release names, e.g. `^jq-(?<version>.+)$` for jq-1.7.1 tags or `^kustomize/(?<version>.+)$`; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes.
+
+- **Type:** string
 
 ### `rules[].separateMajorMinor`
 

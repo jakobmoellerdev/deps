@@ -18,7 +18,12 @@ type want struct {
 
 func extract(t *testing.T, src string) []dep.Dep {
 	t.Helper()
-	deps, err := New().Extract(".gitlab-ci.yml", []byte(src), manager.Env{})
+	return extractEnv(t, src, manager.Env{})
+}
+
+func extractEnv(t *testing.T, src string, env manager.Env) []dep.Dep {
+	t.Helper()
+	deps, err := New().Extract(".gitlab-ci.yml", []byte(src), env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +80,7 @@ func TestExtract(t *testing.T) {
 	)
 	tests := []struct {
 		name  string
+		env   manager.Env
 		src   string
 		wants []want
 	}{
@@ -168,16 +174,43 @@ include:
 			wants: []want{
 				{line: 7, depT: TypeComponent, ds: gt, name: "gitlab.com/components/sast/sast", source: "https://gitlab.com/components/sast", version: "2.1.0"},
 				{line: 10, depT: TypeComponent, ds: gt, name: "gitlab.example.com/group/sub/proj/build", source: "https://gitlab.example.com/group/sub/proj", version: "v1.0"},
-				{line: 11, depT: TypeComponent, ds: gt, name: "$CI_SERVER_FQDN/group/proj/lint", skip: "variable reference"},
+				{line: 11, depT: TypeComponent, ds: gt, name: "$CI_SERVER_FQDN/group/proj/lint", source: "https://gitlab.com/group/proj", version: "1.0.0"},
 				{line: 12, depT: TypeComponent, ds: gt, name: "gitlab.com/components/opentofu/full-pipeline", source: "https://gitlab.com/components/opentofu", skip: "non-version ref"},
 				{line: 13, depT: TypeComponent, ds: gt, name: "gitlab.com/components/sast/sast", skip: "no version"},
 				{line: 14, depT: TypeComponent, ds: gt, name: "gitlab.com/x", skip: "invalid component"},
 			},
 		},
+		{
+			name: "self-managed instance with path prefix and port",
+			env:  manager.Env{GitLabURL: "http://git.example:8080/gitlab"},
+			src: `include:
+  - project: group/proj
+    ref: v1.0.0
+  - component: $CI_SERVER_FQDN/group/proj/lint@1.0.0
+  - component: ${CI_SERVER_FQDN}/group/sub/proj/build@v2
+  - component: $CI_SERVER_HOST/group/proj/test@1.1.0
+  - component: git.example:8080/group/proj/fmt@1.2.0
+  - component: gitlab.com/components/sast/sast@2.1.0
+  - component: $CI_SERVER_FQDN/$GROUP/proj/x@1.0.0
+  - component: $CI_SERVER_URL/group/proj/x@1.0.0
+  - component: $CI_SERVER_FQDN@1.0.0
+`,
+			wants: []want{
+				{line: 3, depT: TypeInclude, ds: gt, name: "group/proj", source: "http://git.example:8080/gitlab/group/proj", version: "v1.0.0"},
+				{line: 4, depT: TypeComponent, ds: gt, name: "$CI_SERVER_FQDN/group/proj/lint", source: "http://git.example:8080/gitlab/group/proj", version: "1.0.0"},
+				{line: 5, depT: TypeComponent, ds: gt, name: "${CI_SERVER_FQDN}/group/sub/proj/build", source: "http://git.example:8080/gitlab/group/sub/proj", version: "v2"},
+				{line: 6, depT: TypeComponent, ds: gt, name: "$CI_SERVER_HOST/group/proj/test", source: "http://git.example:8080/gitlab/group/proj", version: "1.1.0"},
+				{line: 7, depT: TypeComponent, ds: gt, name: "git.example:8080/group/proj/fmt", source: "http://git.example:8080/gitlab/group/proj", version: "1.2.0"},
+				{line: 8, depT: TypeComponent, ds: gt, name: "gitlab.com/components/sast/sast", source: "https://gitlab.com/components/sast", version: "2.1.0"},
+				{line: 9, depT: TypeComponent, ds: gt, name: "$CI_SERVER_FQDN/$GROUP/proj/x", skip: "variable reference"},
+				{line: 10, depT: TypeComponent, ds: gt, name: "$CI_SERVER_URL/group/proj/x", skip: "variable reference"},
+				{line: 11, depT: TypeComponent, ds: gt, name: "$CI_SERVER_FQDN", skip: "variable reference"},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			check(t, tt.src, extract(t, tt.src), tt.wants)
+			check(t, tt.src, extractEnv(t, tt.src, tt.env), tt.wants)
 		})
 	}
 }

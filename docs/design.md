@@ -332,6 +332,7 @@ type Update struct {
 // internal/manager
 type Env struct {
     DefaultHost string                // actions default host
+    GitLabURL   string                // GitLab instance base URL; "" means https://gitlab.com
     Vendored    func(dir string) bool // slash dir relative to root; engine supplies a stat check when nil
 }
 type Manager interface {
