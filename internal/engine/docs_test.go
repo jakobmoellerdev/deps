@@ -24,6 +24,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/orb"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/packagist"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubygems"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubyversion"
@@ -165,7 +166,7 @@ func TestManagerDocsComplete(t *testing.T) {
 }
 
 func TestDatasourceDocsComplete(t *testing.T) {
-	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, customds.Doc}
+	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, packagist.Doc, customds.Doc}
 	var names []string
 	for _, d := range docs {
 		if d.Name == "" || d.NameForm == "" || d.Endpoints == "" || d.Auth == "" || d.ReleaseTimes == "" {

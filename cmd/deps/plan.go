@@ -18,6 +18,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
@@ -132,6 +133,9 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	}
 	if !write && hasManager(res, bundler.Name) {
 		fmt.Fprintln(stderr, "note    Gemfile.lock changes are computed by apply/run")
+	}
+	if !write && hasManager(res, composer.Name) {
+		fmt.Fprintln(stderr, "note    composer.lock changes are computed by apply/run")
 	}
 	if write && slices.ContainsFunc(changes, func(c engine.FileChange) bool { return c.Gitlink }) {
 		fmt.Fprintln(stderr, "note    submodule commits are staged in the git index; run git submodule update to check them out")

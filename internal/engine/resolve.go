@@ -25,6 +25,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
@@ -912,11 +913,12 @@ type resolver struct {
 // autoRange is what rangeStrategy auto means per manager (Renovate's defaults): replace for
 // terraform and terragrunt, widen for elm package constraints (Dependabot's; Renovate has no
 // Elm manager), update-lockfile for npm, cargo and any other manager (widen for npm
-// peerDependencies and `||` ranges, replace for the dependencies of a bundler gemspec,
-// rangeStrategy).
+// peerDependencies and `||` ranges and for composer constraints with alternatives, replace for
+// the dependencies of a bundler gemspec, rangeStrategy).
 var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace, "elm": config.RangeWiden}
 
-// rangeStrategy is the effective rangeStrategy of the range dep: auto resolved per manager,
+// rangeStrategy is the effective rangeStrategy of the range dep: auto resolved per manager
+// (bump too for composer constraints with alternatives, which it widens as Renovate does),
 // widen and pin resolved to replace for managers that cannot write them (no
 // manager.RangeRewriter: terraform, Gradle) and for ranges that are never rewritten.
 func (r *resolver) rangeStrategy() string {
@@ -932,7 +934,12 @@ func (r *resolver) rangeStrategy() string {
 			// gem's own, picks one, so a new version only matters when the requirements
 			// exclude it.
 			s = config.RangeReplace
+		case d.Manager == composer.Name && strings.Contains(d.Range, "|"):
+			s = config.RangeWiden
 		}
+	}
+	if s == config.RangeBump && d.Manager == composer.Name && strings.Contains(d.Range, "|") {
+		s = config.RangeWiden // Renovate's composer getRangeStrategy: bump cannot raise `^1 || ^2`
 	}
 	if (s == config.RangeWiden || s == config.RangePin) && (r.rewriter == nil || d.RangeFixed) {
 		s = config.RangeReplace

@@ -458,6 +458,7 @@ Actions with a full URL (`uses: https://host/owner/repo@ref`) are looked up on t
 | `go` | only for `go mod tidy` after go.mod updates, and `go list` for `GOPRIVATE`/direct modules. `go env` falls back to the environment without it. `GOTOOLCHAIN=auto` fetches a newer toolchain when go.mod requires one. |
 | `npm`, `pnpm`, `yarn` | regenerating lockfiles; see the note below the table |
 | `cargo` | updating `Cargo.lock` (requirement changes and lockfile-only updates), e.g. from `dtolnay/rust-toolchain`; without it those manifests fail with `cargo not found (needed to update Cargo.lock)` |
+| `composer` 2.7+ (PHP with Composer, e.g. `shivammathur/setup-php`) | updating `composer.lock` (constraint changes and lockfile-only updates) with `composer update --no-install`; without it those composer.json files fail with `composer not found (needed to update composer.lock)`. Platform requirements are ignored (except a `config.platform.php`), so any PHP version works |
 | `bundle` (Ruby with Bundler, e.g. `ruby/setup-ruby`) | updating `Gemfile.lock` (requirement changes and lockfile-only updates) with `bundle lock`; without it those Gemfiles fail with `bundle not found (needed to update Gemfile.lock)`. Bundler records its own version under `BUNDLED WITH`, so use the version the lock names |
 | `uv`, `poetry`, `pipenv` | regenerating `uv.lock`, `poetry.lock`, `Pipfile.lock`; poetry and pipenv fall back to `uvx --from <tool>`, so `uv` (e.g. `astral-sh/setup-uv`) is enough |
 | `uv` or `pip-compile` | regenerating `requirements*.txt` written by `uv pip compile` or pip-compile (the tool its header names) after an update of it or of its `.in` inputs; pip-compile falls back to `uvx --from pip-tools pip-compile`. Other hashed requirements files need no tool. |
@@ -475,7 +476,7 @@ For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back
 **Network.** The runner needs HTTPS access to:
 
 - the forge;
-- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), pypi.org, api.anaconda.org (conda packages), rubygems.org (and the Gemfiles' `source`s), package.elm-lang.org, raw.githubusercontent.com (Ruby and Go release lists, vcpkg versions databases), static.rust-lang.org (Rust releases), api.osv.dev for security updates;
+- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), pypi.org, api.anaconda.org (conda packages), rubygems.org (and the Gemfiles' `source`s), repo.packagist.org (and composer.json's composer `repositories`, plus whatever Composer fetches for `composer.lock`), package.elm-lang.org, raw.githubusercontent.com (Ruby and Go release lists, vcpkg versions databases), static.rust-lang.org (Rust releases), api.osv.dev for security updates;
 - the release download host.
 
 deps honors `HTTPS_PROXY`/`NO_PROXY`.
@@ -1087,6 +1088,8 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 | `<tool> not found (needed to update <lock>)` | Install Node.js (`actions/setup-node`) so `npm`/`npx` is available. For Python locks install uv (e.g. `astral-sh/setup-uv`); for `.terraform.lock.hcl` install Terraform (`hashicorp/setup-terraform`) or OpenTofu. |
 | `cargo not found (needed to update Cargo.lock)` | Install Rust (`dtolnay/rust-toolchain`) so `cargo` is on `PATH`, or the root's Cargo.toml changes are dropped. |
 | `cargo update in <dir>: …` | cargo could not resolve the patched workspace: a private registry or git dependency without credentials, a conflicting requirement (for example a feature the new version dropped), or a path dependency outside the repository. The root's change is dropped; other updates proceed. |
+| `composer not found (needed to update composer.lock)` | Install PHP with Composer 2.7 or later (`shivammathur/setup-php` with `tools: composer`) so `composer` is on `PATH`, or the composer.json changes are dropped. |
+| `composer update in <dir>: …` | Composer could not resolve the update: a private repository without `COMPOSER_AUTH`, a conflicting constraint of another package, or `The "--minimal-changes" option does not exist` from a Composer older than 2.7. The directory's change is dropped; other updates proceed. |
 | `bundle not found (needed to update Gemfile.lock)` | Install Ruby with Bundler (`ruby/setup-ruby`) so `bundle` is on `PATH`, or the Gemfile changes are dropped. |
 | `bundle lock in <dir>: …` | Bundler could not resolve the patched Gemfile: a private gem server without credentials (set `BUNDLE_<HOST>`), a git or path gem it cannot reach, or a requirement the new version conflicts with. The Gemfile's changes are dropped. |
 | `GET <index>/…: HTTP 401` for a crate | The Cargo registry needs credentials: set `CARGO_REGISTRIES_<NAME>_TOKEN` (the `[registries]` name of the index), add the token to `$CARGO_HOME/credentials.toml`, or provide git credentials for the index host. |

@@ -91,6 +91,8 @@ func production(d dep.Dep) bool {
 		return d.DepType == "dependencies"
 	case "bundler":
 		return d.DepType == "dependencies" || d.DepType == "runtime"
+	case "composer":
+		return d.DepType == "require"
 	case "pep621":
 		return d.DepType == "project.dependencies"
 	case "pipenv":

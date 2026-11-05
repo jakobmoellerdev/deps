@@ -31,6 +31,8 @@
 | `DEPS_PYPI_URL` | `pypi` datasource | base of the PyPI JSON API (default `https://pypi.org`) |
 | `DEPS_RUBY_RELEASES_URL` | `ruby-version` datasource | URL of the Ruby release list (YAML entries with `version` and `date`; default `https://raw.githubusercontent.com/ruby/www.ruby-lang.org/master/_data/releases.yml`) |
 | `DEPS_CONDA_URL` | `conda` datasource | base of the anaconda.org API (default `https://api.anaconda.org`) |
+| `DEPS_PACKAGIST_URL` | `packagist` datasource | base of Packagist's metadata API (`/p2/<name>.json`), also for composer.json repositories naming `https://packagist.org` or `https://repo.packagist.org` (default `https://repo.packagist.org`) |
+| `COMPOSER_AUTH` | `packagist` datasource | Composer's auth.json as JSON: `http-basic` (`{"repo.example.com": {"username": "…", "password": "…"}}`) and `bearer` (`{"repo.example.com": "<token>"}`) credentials by host for composer repositories; `composer update` reads it too |
 | `DEPS_RUBYGEMS_URL` | `rubygems` datasource | base of the rubygems.org API, also for Gemfiles naming `https://rubygems.org` (default `https://rubygems.org`) |
 | `DEPS_RUST_MANIFESTS_URL` | `rust-version` datasource | URL of the Rust manifest index (one `…/dist/<date>/channel-rust-<version>.toml` URL per line; default `https://static.rust-lang.org/manifests.txt`) |
 | `DEPS_ELM_PACKAGE_URL` | `elm-package` datasource | base of the Elm package registry API (default `https://package.elm-lang.org`) |

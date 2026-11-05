@@ -749,3 +749,33 @@ func TestAdvisoriesRubyGems(t *testing.T) {
 		t.Errorf("batches = %+v", f.batches)
 	}
 }
+
+func TestAdvisoriesPackagist(t *testing.T) {
+	f := newFake(t)
+	f.results["Packagist|guzzlehttp/guzzle|7.4.4|"] = result{ids: []string{"GHSA-25mq-v84q-4j7r"}}
+	// GHSA-25mq-v84q-4j7r as OSV serves it (affected entries; fetched 2026-11-05), plus an entry
+	// of another package.
+	f.vulns["GHSA-25mq-v84q-4j7r"] = `{"id":"GHSA-25mq-v84q-4j7r","summary":"CURLOPT_HTTPAUTH option not cleared on change of origin","aliases":["CVE-2022-31090"],
+		"affected":[{"package":{"name":"guzzlehttp/guzzle","ecosystem":"Packagist","purl":"pkg:composer/guzzlehttp/guzzle"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"6.5.8"}]}]},
+		            {"package":{"name":"GuzzleHttp/Guzzle","ecosystem":"Packagist"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"7.0.0"},{"fixed":"7.4.5"}]}]},
+		            {"package":{"name":"guzzlehttp/psr7","ecosystem":"Packagist"},"ranges":[{"type":"ECOSYSTEM","events":[{"fixed":"9.9.9"}]}]}]}`
+	s := f.start(nil)
+	deps := []dep.Dep{
+		// The locked version is queried without its "v", the name lower-cased.
+		{Manager: "composer", Datasource: "packagist", DepType: "require", Name: "GuzzleHttp/Guzzle", Version: "7.4", Range: "^7.4", Locked: "v7.4.4"},
+		{Manager: "composer", Datasource: "packagist", DepType: "require", Name: "guzzlehttp/guzzle", Version: "7.4.4", Range: "7.4.4"},
+		{Manager: "composer", Datasource: "packagist", Name: "unversioned", Range: "*"},
+		{Manager: "composer", Datasource: "git-tags", Name: "acme/fork", Version: "7.4.4", Source: "https://github.com/acme/fork"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guzzle := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-25mq-v84q-4j7r", Summary: "CURLOPT_HTTPAUTH option not cleared on change of origin", URL: "https://osv.dev/vulnerability/GHSA-25mq-v84q-4j7r"}, Fixed: []string{"6.5.8", "7.4.5"}}}
+	if want := [][]datasource.Vuln{guzzle, guzzle, nil, nil}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if len(f.batches) != 1 || len(f.batches[0]) != 1 || f.batches[0][0].Package != (pkg{Name: "guzzlehttp/guzzle", Ecosystem: "Packagist"}) {
+		t.Errorf("batches = %+v", f.batches)
+	}
+}

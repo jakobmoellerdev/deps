@@ -33,6 +33,7 @@ import (
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/orb"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/packagist"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubygems"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubyversion"
@@ -290,6 +291,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		azuretasks.Name:         azuretasks.New(client, sem, os.Getenv),
 		vcpkgds.Name:            vcpkgds.New(client, sem),
 		elmpackage.Name:         elmpackage.New(client, sem, os.Getenv),
+		packagist.Name:          packagist.New(client, sem, os.Getenv),
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err

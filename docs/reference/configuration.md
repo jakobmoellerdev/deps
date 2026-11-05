@@ -231,13 +231,13 @@ pin: digest
 
 ## `rangeStrategy`
 
-How npm, cargo, Python and bundler dependency ranges, Swift package requirements, Elm package constraints, terraform version constraints and Gradle dynamic versions (1.+, [1.0,2.0)) are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, Package.resolved, .terraform.lock.hcl, gradle.lockfile) while the range admits the new version (rewriting the range otherwise, 1.+ -> 2.+), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,\<2 -> >=1.5.0,\<2, ~> 5.0 -> ~> 5.46; Gradle dynamic versions and ranges without a floor keep update-lockfile), in-range-only raises the range like bump but only to versions it admits, widen leaves admitted versions alone and widens the range to admit others (^1.2.3 -> ^1.2.3 || ^2.0.0, >=1.2,\<2 -> >=1.2,\<3, cargo 1.2 -> >=1.2, \<3, Ruby "~> 7.1" -> ">= 7.1", "\< 9"), pin writes the exact version (^1.2.3 -> 1.4.0, cargo =1.4.0, Python ==1.4.0, Swift exact: 1.4.0 or .exact(1.4.0), Ruby "= 1.4.0"): a pin update to the locked or newest admitted version, then each newer one (widen and pin are replace for terraform, terragrunt and Gradle; Swift from: is replaced under widen); auto is Renovate's default per manager: update-lockfile, widen for npm peerDependencies, || ranges and Elm package constraints, replace for terraform, terragrunt and gemspec dependencies.
+How npm, cargo, Python, bundler and composer dependency ranges, Swift package requirements, Elm package constraints, terraform version constraints and Gradle dynamic versions (1.+, [1.0,2.0)) are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Package.resolved, .terraform.lock.hcl, gradle.lockfile) while the range admits the new version (rewriting the range otherwise, 1.+ -> 2.+), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,\<2 -> >=1.5.0,\<2, ~> 5.0 -> ~> 5.46; Gradle dynamic versions and ranges without a floor keep update-lockfile), in-range-only raises the range like bump but only to versions it admits, widen leaves admitted versions alone and widens the range to admit others (^1.2.3 -> ^1.2.3 || ^2.0.0, >=1.2,\<2 -> >=1.2,\<3, cargo 1.2 -> >=1.2, \<3, Ruby "~> 7.1" -> ">= 7.1", "\< 9"), pin writes the exact version (^1.2.3 -> 1.4.0, cargo =1.4.0, Python ==1.4.0, Swift exact: 1.4.0 or .exact(1.4.0), Ruby "= 1.4.0"): a pin update to the locked or newest admitted version, then each newer one (widen and pin are replace for terraform, terragrunt and Gradle; Swift from: is replaced under widen); auto is Renovate's default per manager: update-lockfile, widen for npm peerDependencies, || ranges and Elm package constraints, replace for terraform, terragrunt and gemspec dependencies.
 
 - **Type:** string
 - **Default:** `auto`
 - **Values:** `auto`, `bump`, `replace`, `update-lockfile`, `widen`, `pin`, `in-range-only`
 
-It applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` (`^1.2.3`, `~1.2.3`, `>=1.2.3`, `=1.2.3` and exact `1.2.3`), to every cargo requirement (`1.2`, `~2.7.0`, `">= 0.10, < 0.11"`, `1.*`, `*`), to every Python specifier of the pip_requirements, pep621, poetry and pipenv managers and of conda `pip:` lists (see Python ranges below), to conda version specs (`=1.26`, `>=1.26,<2`; see the [conda manager](managers.md#conda)), to bundler gem requirements (`"2.241.2"`, `"~> 7.1"`, `"~> 7.1", ">= 7.1.2"`, none), to Elm package constraints (`1.0.0 <= v < 2.0.0`, below), and to terraform version constraints (below). Other deps always replace their exact version. `rules[].rangeStrategy` overrides it per dep (not together with `updateTypes`).
+It applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` (`^1.2.3`, `~1.2.3`, `>=1.2.3`, `=1.2.3` and exact `1.2.3`), to every cargo requirement (`1.2`, `~2.7.0`, `">= 0.10, < 0.11"`, `1.*`, `*`), to every Python specifier of the pip_requirements, pep621, poetry and pipenv managers and of conda `pip:` lists (see Python ranges below), to conda version specs (`=1.26`, `>=1.26,<2`; see the [conda manager](managers.md#conda)), to bundler gem requirements (`"2.241.2"`, `"~> 7.1"`, `"~> 7.1", ">= 7.1.2"`, none), to Elm package constraints (`1.0.0 <= v < 2.0.0`, below), to composer.json constraints (`^1.2`, `~1.2.3`, `>=1.0 <2.0`, `1.2.*`, `^1.0|^2.0`; below), and to terraform version constraints (below). Other deps always replace their exact version. `rules[].rangeStrategy` overrides it per dep (not together with `updateTypes`).
 
 - `update-lockfile`: the current version is the one the lock root's lockfile (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock` or `bun.lock`) resolves the dep to, and update types compare it with the new version.
   - A newer version the range admits is a **lockfile-only update**: package.json is unchanged and the lockfile locks exactly that version. `apply` and `run` run, on a copy, `npm install --package-lock-only <name>@<version>` (with `--workspace=<dir>` for a workspace member; deps restores the range npm writes into the lockfile's own package entries), `pnpm update --no-save --lockfile-only --filter <dir> <name>@<version>`, `yarn set resolution <name>@npm:<range> npm:<version>` (berry), or install from a copy of package.json pinned to the version and put the range back into the lockfile (yarn classic, bun). `plan` lists the update but shows no diff for it.
@@ -245,7 +245,7 @@ It applies to the ranges of npm `dependencies`, `devDependencies`, `optionalDepe
   - Without a lockfile, versions the range admits are not proposed: an install already gets them.
 - `bump`: every newer version raises the range (`^1.2.3` → `^1.4.0`), and the lockfile is regenerated.
 - `replace`: versions the range admits are not proposed; a version outside it replaces the range's version (`^5.2.8` → `^6.0.0`). The lockfile is not touched for admitted versions.
-- `auto` (default): Renovate's default for the manager: `update-lockfile` for npm, cargo, Python and bundler Gemfiles, `replace` for terraform, terragrunt and gemspec dependencies, `widen` for Elm package constraints (Dependabot's; Renovate has no Elm manager).
+- `auto` (default): Renovate's default for the manager: `update-lockfile` for npm, cargo, Python, bundler Gemfiles and composer (`widen` for composer constraints with alternatives), `replace` for terraform, terragrunt and gemspec dependencies, `widen` for Elm package constraints (Dependabot's; Renovate has no Elm manager).
 
 peerDependencies never get lockfile-only updates: under `update-lockfile` and `auto`, versions their range admits are left alone. Renovate widens peer ranges (`^1.0.0 || ^2.0.0`); deps replaces the range when a version falls outside it.
 
@@ -267,6 +267,8 @@ For cargo the lock is `Cargo.lock` of the workspace root: a lockfile-only update
 - A gem without requirements (`gem "rake"`, `>= 0`) is never rewritten: under `update-lockfile`, `bump` and `in-range-only` only its Gemfile.lock entry moves; `replace`, `widen` and `pin` propose nothing for it (no gemspec dependency without requirements is ever updated under `auto`).
 
 **Elm** package constraints of the elm manager (`dependencies`, `test-dependencies` and `elm-version` of a package `elm.json`: `1.0.0 <= v < 2.0.0`) have no lockfile, so admitted versions are proposed only under `bump` and `in-range-only`; the lower bound is the current version. `auto` is `widen`, Dependabot's update of Elm packages (Renovate has no Elm manager): the lower bound stays and an upper bound the new version reaches moves past it (`1.0.0 <= v < 2.0.0` → `1.0.0 <= v < 3.0.0` for 2.1.0). `replace` and `update-lockfile` also set the lower bound to the new version (`2.1.0 <= v < 3.0.0`), `bump` does so for admitted versions too, and `pin` writes `2.1.0 <= v <= 2.1.0`. An exclusive upper bound moves to the next boundary of its precision (`< 1.5.0` → `< 1.8.0` for 1.7.2), an inclusive one to the new version. See the [elm manager](managers.md#elm).
+
+**Composer** constraints of the composer manager follow the same strategies with the versions `composer.lock` locks: lockfile-only updates and rewritten constraints are locked to exactly their version with `composer update <name>:<version> --with-dependencies --minimal-changes`. `auto` is `update-lockfile`, except that a constraint with alternatives (`^1.0|^2.0`, `^1 || ^2`) is widened, as in Renovate, which also turns `bump` of one into `widen`. A version outside the constraint replaces it after Renovate's composer versioning: exact versions take it (`1.2.3` → `1.4.0`, a `v` prefix kept), `^`, `~`, `>=` and `>` take it at their precision (`^5.2.8` → `^6.0.1`, `~1.2` → `~1.4`; a two-part `^`/`~` moving to a new major becomes `<major>.0`: `^4.1` → `^5.0` for 5.2.0), wildcards keep theirs (`1.2.*` → `1.4.*`), upper bounds move past it (`>=1.0 <2.0` → `>=2.3 <3.0` for 2.3.0); of alternatives only the last one is kept. `widen` moves the upper bounds of the last alternative (`>=1.0 <2.0` → `>=1.0 <3.0`) or appends the replaced last alternative with the constraint's separator (`^1.2` → `^1.2 || ^2.0`, `^1.0|^2.0` → `^1.0|^2.0|^3.0`); `bump` raises the lower bounds of the alternative admitting the version (`^1.2` → `^1.4`), and leaves versions it cannot raise them for alone (`^1` with 1.5.0); `pin` writes the exact version. Constraints without a lower bound (`*`, `<2.0`) only get lockfile-only updates. See the [composer manager](managers.md#composer).
 
 Python ranges (`>=1.2,<2`, `<1.0.0,>=0.114.2`, `~=1.4`, `^1.2`, `>=1.2 <2`, `^1 || ^2`, `<2`, with `!=` exclusions) follow the same strategies, with the versions `uv.lock`, `poetry.lock`, `pdm.lock` or `Pipfile.lock` lock, or a compiled requirements file pins for the requirements of its inputs (hand-written requirements files have none, so `update-lockfile` proposes only versions outside the range there):
 
@@ -1053,7 +1055,7 @@ rules:
 Only match deps of this manager.
 
 - **Type:** string
-- **Values:** `github-actions`, `gomod`, `docker`, `npm`, `helm`, `kustomize`, `pre-commit`, `gitlabci`, `nvm`, `nodenv`, `asdf`, `mise`, `cargo`, `pip_requirements`, `pep621`, `poetry`, `pipenv`, `conda`, `terraform`, `terraform-version`, `tflint-plugin`, `terragrunt`, `maven`, `gradle`, `gradle-wrapper`, `maven-wrapper`, `swift`, `bundler`, `ruby-version`, `git-submodules`, `rust-toolchain`, `devcontainer`, `bitbucket-pipelines`, `woodpecker`, `droneci`, `circleci`, `azure-pipelines`, `vcpkg`, `elm`, `custom`
+- **Values:** `github-actions`, `gomod`, `docker`, `npm`, `helm`, `kustomize`, `pre-commit`, `gitlabci`, `nvm`, `nodenv`, `asdf`, `mise`, `cargo`, `pip_requirements`, `pep621`, `poetry`, `pipenv`, `conda`, `terraform`, `terraform-version`, `tflint-plugin`, `terragrunt`, `maven`, `gradle`, `gradle-wrapper`, `maven-wrapper`, `swift`, `bundler`, `ruby-version`, `git-submodules`, `rust-toolchain`, `devcontainer`, `bitbucket-pipelines`, `woodpecker`, `droneci`, `circleci`, `azure-pipelines`, `vcpkg`, `elm`, `composer`, `custom`
 
 ### `rules[].names`
 
@@ -1068,7 +1070,7 @@ Renovate's `!pattern` works: `['actions/*', '!actions/cache']` matches every `ac
 Only match deps of these types.
 
 - **Type:** list of strings
-- **Values:** `direct`, `indirect`, `go`, `toolchain`, `action`, `dockerfile`, `compose`, `workflow`, `kubernetes`, `helm`, `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager`, `setup`, `engines`, `volta`, `chart`, `helmfile`, `k0s`, `flux`, `argocd`, `sveltos`, `image`, `helmChart`, `resource`, `repository`, `service`, `include`, `component`, `node`, `tool`, `annotation`, `regex`, `dev-dependencies`, `build-dependencies`, `workspace.dependencies`, `patch`, `replace`, `requirements`, `project.dependencies`, `project.optional-dependencies`, `dependency-groups`, `tool.uv.dev-dependencies`, `tool.pdm.dev-dependencies`, `group`, `packages`, `dev-packages`, `category`, `pip`, `required_provider`, `required_version`, `module`, `provider`, `helm_release`, `tfe_workspace`, `docker_image`, `docker_container`, `docker_service`, `docker_registry_image`, `kubernetes_pod`, `kubernetes_pod_v1`, `kubernetes_deployment`, `kubernetes_deployment_v1`, `kubernetes_daemonset`, `kubernetes_daemon_set_v1`, `kubernetes_stateful_set`, `kubernetes_stateful_set_v1`, `kubernetes_job`, `kubernetes_job_v1`, `kubernetes_cron_job`, `kubernetes_cron_job_v1`, `kubernetes_replication_controller`, `kubernetes_replication_controller_v1`, `terraform-version`, `opentofu-version`, `plugin`, `github`, `gitTags`, `terragrunt`, `compile`, `provided`, `runtime`, `test`, `system`, `import`, `parent`, `build`, `wrapper`, `maven`, `ruby`, `development`, `submodule`, `builtin-baseline`, `default-registry`, `registry`, `overrides`, `feature`, `feature-version`, `pipe`, `orb`, `container`, `task`, `test-direct`, `test-indirect`, `test-dependencies`, `elm-version`
+- **Values:** `direct`, `indirect`, `go`, `toolchain`, `action`, `dockerfile`, `compose`, `workflow`, `kubernetes`, `helm`, `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager`, `setup`, `engines`, `volta`, `chart`, `helmfile`, `k0s`, `flux`, `argocd`, `sveltos`, `image`, `helmChart`, `resource`, `repository`, `service`, `include`, `component`, `node`, `tool`, `annotation`, `regex`, `dev-dependencies`, `build-dependencies`, `workspace.dependencies`, `patch`, `replace`, `requirements`, `project.dependencies`, `project.optional-dependencies`, `dependency-groups`, `tool.uv.dev-dependencies`, `tool.pdm.dev-dependencies`, `group`, `packages`, `dev-packages`, `category`, `pip`, `required_provider`, `required_version`, `module`, `provider`, `helm_release`, `tfe_workspace`, `docker_image`, `docker_container`, `docker_service`, `docker_registry_image`, `kubernetes_pod`, `kubernetes_pod_v1`, `kubernetes_deployment`, `kubernetes_deployment_v1`, `kubernetes_daemonset`, `kubernetes_daemon_set_v1`, `kubernetes_stateful_set`, `kubernetes_stateful_set_v1`, `kubernetes_job`, `kubernetes_job_v1`, `kubernetes_cron_job`, `kubernetes_cron_job_v1`, `kubernetes_replication_controller`, `kubernetes_replication_controller_v1`, `terraform-version`, `opentofu-version`, `plugin`, `github`, `gitTags`, `terragrunt`, `compile`, `provided`, `runtime`, `test`, `system`, `import`, `parent`, `build`, `wrapper`, `maven`, `ruby`, `development`, `submodule`, `builtin-baseline`, `default-registry`, `registry`, `overrides`, `feature`, `feature-version`, `pipe`, `orb`, `container`, `task`, `test-direct`, `test-indirect`, `test-dependencies`, `elm-version`, `require`, `require-dev`
 
 [managers.md](managers.md) lists the dep types of each manager.
 
@@ -1083,7 +1085,7 @@ Only match deps whose file (slash path relative to --dir) matches any of these d
 Only match deps looked up with these datasources, or custom.\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) match their deps datasource.
 
 - **Type:** list of strings
-- **Values:** `git-tags`, `git-refs`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `conda`, `terraform-provider`, `terraform-module`, `maven`, `gradle-version`, `rubygems`, `ruby-version`, `rust-version`, `orb`, `azure-pipelines-tasks`, `vcpkg`, `elm-package`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `git-tags`, `git-refs`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `conda`, `terraform-provider`, `terraform-module`, `maven`, `gradle-version`, `rubygems`, `ruby-version`, `rust-version`, `orb`, `azure-pipelines-tasks`, `vcpkg`, `elm-package`, `packagist`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`, `bitbucket-tags` = `git-tags` (Bitbucket pipes). `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
 
@@ -1170,7 +1172,7 @@ New versions must satisfy this Masterminds semver constraint (e.g. `< 7`), or ma
 
 ### `rules[].rangeStrategy`
 
-Range strategy for matching npm, cargo, Python, Swift, bundler, Elm and terraform deps and Gradle dynamic versions (see the top-level rangeStrategy). Cannot be combined with updateTypes.
+Range strategy for matching npm, cargo, Python, Swift, bundler, Elm, composer and terraform deps and Gradle dynamic versions (see the top-level rangeStrategy). Cannot be combined with updateTypes.
 
 - **Type:** string
 - **Values:** `auto`, `bump`, `replace`, `update-lockfile`, `widen`, `pin`, `in-range-only`
@@ -1186,10 +1188,10 @@ When no rule sets it, all five update types are allowed.
 
 ### `rules[].versioning`
 
-Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, or regex:\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\<name>) and (?P\<name>) syntax both work. Cannot be combined with updateTypes.
+Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, or regex:\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\<name>) and (?P\<name>) syntax both work. Cannot be combined with updateTypes.
 
 - **Type:** string
-- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|regex:.+)$`
+- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|composer|regex:.+)$`
 
 The scheme validates the current value, ranks candidates, classifies update kinds, converts versions for `allow`, and computes security fixes. A current value that the new scheme cannot parse is skipped as `non-version value "<v>"`.
 
@@ -1299,7 +1301,7 @@ rules:
 
 ### `rules[].commitType`
 
-Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm, cargo, poetry and bundler dependencies, pep621 project.dependencies, pipenv packages, elm direct and dependencies), chore otherwise. Security updates always use fix.
+Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm, cargo, poetry and bundler dependencies, composer require, pep621 project.dependencies, pipenv packages, elm direct and dependencies), chore otherwise. Security updates always use fix.
 
 - **Type:** string
 - **Values:** `fix`, `chore`, `build`, `ci`, `docs`, `feat`, `perf`, `refactor`, `revert`, `style`, `test`
@@ -1541,7 +1543,7 @@ custom:
 Datasource of the matched deps, or custom.\<name> of customDatasources; required in regex mode unless match has a (?P\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases.
 
 - **Type:** string
-- **Values:** `git-tags`, `git-refs`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `conda`, `terraform-provider`, `terraform-module`, `maven`, `gradle-version`, `rubygems`, `ruby-version`, `rust-version`, `orb`, `azure-pipelines-tasks`, `vcpkg`, `elm-package`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `git-tags`, `git-refs`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `conda`, `terraform-provider`, `terraform-module`, `maven`, `gradle-version`, `rubygems`, `ruby-version`, `rust-version`, `orb`, `azure-pipelines-tasks`, `vcpkg`, `elm-package`, `packagist`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 ### `custom[].name`
 
@@ -1551,11 +1553,11 @@ Dependency name; required in regex mode unless match has a (?P\<name>), (?P\<dep
 
 ### `custom[].versioning`
 
-Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names.
+Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names.
 
 - **Type:** string
 - **Default:** `semver`
-- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|regex:.+)$`
+- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|composer|regex:.+)$`
 
 Accepts the schemes of [`rules[].versioning`](#rulesversioning).
 
@@ -1670,7 +1672,7 @@ RE2 regexp the selected values must match; its (?P\<version>) group, else the wh
 
 ## `lockFileMaintenance`
 
-Lock file maintenance: one PR (branch \<branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, package-lock.json, pnpm-lock.yaml, yarn.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests.
+Lock file maintenance: one PR (branch \<branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, package-lock.json, pnpm-lock.yaml, yarn.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests.
 
 - **Type:** object
 
@@ -1683,6 +1685,7 @@ Renovate's `lockFileMaintenance`. With `enabled: true`, `run` keeps one PR on th
   - gradle: the lockfiles of every Gradle build that uses dependency locking: `dependencies --write-locks` for every locked project, re-resolving dynamic versions; `gradle/verification-metadata.xml` is regenerated with them.
   - terraform: every `.terraform.lock.hcl` next to a scanned Terraform/OpenTofu configuration: `terraform init -upgrade -backend=false` (`tofu` for OpenTofu), with fresh hashes.
   - bundler: every `Gemfile.lock` next to a scanned `Gemfile`: `bundle lock --update`.
+  - composer: every `composer.lock` next to a scanned `composer.json`: `composer update --no-install` (no scripts or plugins, platform requirements ignored).
   - pip_requirements: every pip-compile or `uv pip compile` output whose header command can be re-run (its inputs exist): the command runs again with `--upgrade`. The compiled file is its own lockfile; the inputs are unchanged.
   - gomod: Go has no lockfile, so the `// indirect` requirements of every `go.mod` with a `go.sum` count as its locked versions: `go get <module>@upgrade` for each (except replaced modules), then `go mod tidy`. The `go`/`toolchain` directives and the direct requirements stay; a module whose upgrade would move them keeps its version.
 - The manifests are unchanged, so the PR changes only lockfiles (and, for Go, the `// indirect` requirements of `go.mod`). Directories without a lockfile get none.

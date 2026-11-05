@@ -50,6 +50,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`azure-pipelines`](#azure-pipelines)
 - [`vcpkg`](#vcpkg)
 - [`elm`](#elm)
+- [`composer`](#composer)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -2130,6 +2131,60 @@ Updates the package dependencies and the compiler version of Elm 0.19 projects (
 - `auto` (default) is `widen`, Dependabot's update of Elm packages: the lower bound stays and an upper bound the new version reaches moves past it (`1.0.0 <= v < 2.0.0` → `1.0.0 <= v < 3.0.0` for 2.1.0).
 - `replace` and `update-lockfile` also set the lower bound to the new version (`2.1.0 <= v < 3.0.0`); `bump` does so for admitted versions too (`1.0.0 <= v < 2.0.0` → `1.2.0 <= v < 2.0.0`). An exclusive upper bound moves to the next boundary of its precision above the new version (`< 2.0.0` → `< 3.0.0`, `< 1.5.0` → `< 1.8.0` for 1.7.2), an inclusive one to the new version. `pin` writes `2.1.0 <= v <= 2.1.0`.
 
+## composer
+
+Updates the version constraints of PHP packages in `composer.json` and moves `composer.lock` with `composer update` (in-range updates only touch the lock, as Renovate's `update-lockfile`). composer.json is read as JSON; only the constraint strings that change are rewritten, so formatting and key order are kept.
+
+**Files:**
+
+- `composer.json` (its lock: the `composer.lock` next to it)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `require` | entries of `require`: `"vendor/package": "<constraint>"` (updates use commit type `fix`) | `packagist` (Packagist, or the `repositories` of type composer), `git-tags` for a package of a vcs repository keyed by its name | `composer` | updated |
+| `require-dev` | entries of `require-dev` | `packagist` (Packagist, or the `repositories` of type composer), `git-tags` for a package of a vcs repository keyed by its name | `composer` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `platform package` | a platform package, any name without a vendor: `php`, `ext-*`, `lib-*`, `composer`, `composer-plugin-api`, `composer-runtime-api` |
+| `unsupported constraint` | a constraint outside Composer's grammar for tagged versions: branches (`dev-main`, `2.x-dev`, `dev-main#abc123`), aliases (`dev-main as 1.0.0`), `self.version`, a bare stability flag (`@dev`) |
+| `cannot locate value` | a constraint written with JSON escapes (`\u003e=1.0`) |
+| `path repository` | a package of a `path` repository: keyed by its name in `repositories`, or installed from one per composer.lock (dist type `path`) |
+| `package repository` | a package a `package` repository defines |
+| `unsupported repository URL` | a vcs repository keyed by the package name whose URL is not a git URL deps can list tags of |
+| `no composer repository` | `"packagist.org": false` and no composer repository whose `only`/`exclude` filters admit the package |
+| `no locked version` | a constraint without a lower bound (`*`, `<2.0`) that the composer.lock next to it does not lock to a tagged version (or without composer.lock) |
+
+**Repositories.**
+
+- `repositories` entries (array or object form) of type `composer` are searched in order with their `only`/`exclude` name patterns, then Packagist unless `"packagist.org": false` (or `"packagist": false`) disables it; the first repository that has the package answers, as Composer's canonical repositories do. See the `packagist` row under [Datasources](#datasources) for the repository formats and `COMPOSER_AUTH`.
+- A `vcs` (`git`, `github`, `gitlab`, `bitbucket`) repository keyed by a package name (object form, or with a `name`, as Renovate reads it) makes that package a `git-tags` dep of its URL; vcs repositories without a name are not mapped to packages (Composer reads their composer.json to find out), so their packages are still looked up in the composer repositories.
+
+**Constraints.**
+
+- Composer's constraint grammar (composer/semver): `^1.2.3`, `~1.2`, `>=1.0 <2.0` and `>=1.0,<2.0` (blanks after an operator belong to it: `>= 1.0`), `!=`/`<>`, exact versions (`1.2.3`, `==1.2.3`, `v1.2.3`), wildcards (`1.2.*`, `1.x`, `*`), hyphen ranges (`1.0 - 2.0`), `||` and `|` alternatives, and stability flags (`^2.0@beta`). `^0.3` is `>=0.3 <0.4`; `~1.2` is `>=1.2 <2.0` and `~1.2.3` `>=1.2.3 <1.3`. As with Composer's default `minimum-stability: stable`, a version below stable (`2.0.0-RC1`) only satisfies a constraint that names one of its stability or a lower one, or carries such a flag (`@RC`, `@dev`).
+- Constraints are rewritten per [rangeStrategy](configuration.md#rangestrategy) (top level or per rule), after Renovate's composer versioning: an exact version takes the new version as published, keeping a `v` prefix as written (`v1.2.3` → `v1.4.0`); `^`, `~`, `>=` and `>` keep their precision (`^5.2.8` → `^6.0.1`, `~1.2` → `~1.4`; `>` becomes `>=`), except that a two-part `^`/`~` moving to a new major is written `<major>.0` (`^4.1` → `^5.0` for 5.2.0); wildcards keep theirs (`1.2.*` → `1.4.*`); upper bounds move past the new version (`>=1.0 <2.0` → `>=2.3 <3.0` for 2.3.0, `<=2.6` → `<=3.1.4`). Stability flags, `v` prefixes and the separators between comparators stay.
+- `auto` is `update-lockfile`, as in Renovate: versions the constraint admits are lockfile-only updates from the version composer.lock locks (`, lockfile` in the report; composer.json is unchanged), others replace the constraint; a constraint with alternatives (`^1.0|^2.0`, `^1 || ^2`) is widened instead (`^1.0|^2.0` → `^1.0|^2.0|^3.0`), and so is it under `bump`. Renovate also widens for `"type": "typo3-cms-extension"`; deps does not (set `rangeStrategy: widen` for such packages). Without composer.lock only versions outside the constraint are proposed.
+- `bump` raises the lower bounds of the first alternative admitting a new version (`^1.2` → `^1.4`, `>=1.2 <2.0` → `>=1.4 <2.0`), `in-range-only` only to versions the constraint admits; `widen` moves only the upper bounds of the last alternative (`>=1.0 <2.0` → `>=1.0 <3.0`), or appends the replaced last alternative (`^1.2` → `^1.2 || ^2.0`); `pin` writes the exact version. A constraint without a lower bound (`*`, `<2.0`) only gets lockfile-only updates.
+- Versioning `composer` orders versions as Composer does: an optional `v`, up to four numeric parts, then `dev` < `alpha` (`a`) < `beta` (`b`) < `RC` < release < `patch` (`p`, `pl`) with their numbers (`1.0.0-beta2`, `2.0.0-RC.1`, `1.0.0-p1`). Branches (`dev-main`, `2.x-dev`) are not versions. Update types follow the first three parts; versions below stable are only proposed from one.
+
+**Lockfile (`apply`, `run`).**
+
+1. **Lockfile.** The lockfile of a `composer.json` is the `composer.lock` next to it; without one the file is only patched.
+2. **Locked versions.** Before resolution each composer.lock is read: a package gets the version of its entry in `packages` or `packages-dev` (a branch such as `dev-main` counts as none). An unreadable lock is reported once and its packages are bumped.
+3. **Temporary copy.** The directory is mirrored to a temp dir: composer.json and composer.lock are copied, every other entry but `vendor` (`auth.json`, path repositories, patches) is symlinked; the directories above it up to the repository top are recreated with their entries symlinked, so path repositories outside resolve as in the checkout.
+4. **Update.** `composer update <name>:<version>… --with-dependencies --minimal-changes` moves every updated package, lockfile-only updates included, to exactly the update's version (the inline constraint keeps Composer from locking a newer one the rewritten constraint admits, e.g. when `minimumReleaseAge` held it back), and its dependencies only where the new version needs it. Every run passes `--no-install --no-scripts --no-plugins --no-audit --no-interaction`: only composer.lock is written. Platform requirements are ignored (`--ignore-platform-reqs`), since the runner's PHP and extensions are not the project's; with a `config.platform.php` in composer.json only extensions and libraries are (`--ignore-platform-req=ext-* --ignore-platform-req=lib-*`), and the PHP requirements are checked against that version. The lock's `content-hash` is recomputed.
+5. **Tool.** `composer` (2.7 or later, for `--minimal-changes`) must be on `PATH`, e.g. from `shivammathur/setup-php`; it runs with `COMPOSER` set to the copy, and `COMPOSER_AUTH` and `COMPOSER_HOME` in effect. Without it, the composer.json files fail with `composer not found (needed to update composer.lock)`.
+6. **Failure.** A failed command reports `composer update in <dir>: <last 20 output lines>`, and the composer.json's changes are dropped.
+
+- `plan` does not run Composer, and prints `note    composer.lock changes are computed by apply/run`.
+
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `composer.lock` next to a scanned `composer.json` is refreshed with `composer update` (same options as below) in the temporary copy, which moves every locked package, transitive ones included, to the newest version the constraints admit. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `composer.lock` files; `minimumReleaseAge` does not apply to it.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -2212,6 +2267,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `azure-pipelines-tasks` | task name (`Bash`), task id, or `<publisher>.<extension>.<contribution>.<name\|id>`; case-insensitive | public lists (Renovate's): `GET <DEPS_AZURE_PIPELINES_TASKS_URL or https://raw.githubusercontent.com/renovatebot/azure-devops-marketplace/main>/azure-pipelines-builtin-tasks.json` once per run, and for tasks it lacks `…/azure-pipelines-marketplace-tasks.json` once (streamed; only the run's tasks are kept). With `DEPS_AZURE_DEVOPS_URL` and `DEPS_AZURE_DEVOPS_TOKEN`: `GET <DEPS_AZURE_DEVOPS_URL>/_apis/distributedtask/tasks/` once per run, the tasks installed in that organization or collection (Renovate's behavior on the Azure platform). After the versions a derived `X.Y` and `X` per release line, so major-only references (`Bash@3`) are updated with their precision | none for the public lists; Basic `deps:<DEPS_AZURE_DEVOPS_TOKEN>` (a personal access token) for the organization | none |
 | `vcpkg` | port name (`fmt`); the dep's source is the registry's file tree at its baseline commit (`https://raw.githubusercontent.com/microsoft/vcpkg/<baseline>`, `<repository>/raw/<baseline>` off github.com) | `GET <source>/versions/<first letter>-/<port>.json` once per (registry commit, port); each entry's `version`, `version-semver`, `version-date` or `version-string` is a release, only of the newest entry's scheme (relaxed and semver count as one; vcpkg does not order across schemes), `#<port-version>` appended when the port version is not 0 (`1.3.1#2`, as `version>=` writes it). A 404 fails the dep: the port is not in the registry at the baseline | none | none (the versions database records no dates) |
 | `elm-package` | `author/project` as in elm.json (`elm/json`) | `GET <DEPS_ELM_PACKAGE_URL or https://package.elm-lang.org>/packages/<author>/<project>/releases.json`, once per package; the registry answers an unknown package with HTTP 500. Source repository (release notes): `https://github.com/<author>/<project>`, the only place `elm publish` publishes from | none | the Unix time the registry lists for each version |
+| `packagist` | Composer package name `vendor/package` (case-insensitive, looked up lower-cased); the dep's source is its whitespace-separated Composer repositories in lookup order ("" = Packagist) | Packagist (also when composer.json names `https://packagist.org` or `https://repo.packagist.org`): `GET <DEPS_PACKAGIST_URL or https://repo.packagist.org>/p2/<name>.json` (Composer 2 metadata, minified entries expanded); other Composer repositories: `GET <url>/packages.json` once per repository (the URL itself when it ends in `.json`), then its `metadata-url` with `%package%` replaced (packages.drupal.org, Private Packagist, Satis), or else the packages it lists inline and in its `includes` (older Satis); packages its `available-packages`/`available-package-patterns` do not name are not looked up there; a repository serving only the Composer 1 `providers-url` is an error. Branches (`dev-main`, `2.x-dev`) are not versions. The first repository that has the package answers (Composer's canonical repositories), none → `package <name> not found`. Source repository (release notes): the newest version's http(s) `source.url` | userinfo of the repository URL as basic auth, else Composer's `COMPOSER_AUTH` variable (auth.json as JSON): `http-basic` (`{"repo.example.com": {"username": …, "password": …}}`) and `bearer` (`{"repo.example.com": "<token>"}`) by host; redacted in errors and logs | the version's `time` (the tag's commit date as the repository records it); packages.drupal.org records none |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
@@ -2281,7 +2337,7 @@ Release notes use the POM of the new version: `<scm><url>`, else `<scm><connecti
 ### Security advisories (OSV)
 
 - deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.
-- Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
+- Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), `Packagist` (`packagist` datasource: composer packages, lower-cased, with the version composer.lock locks without its `v`, else the constraint's anchor), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
 - Not queried, because OSV has no ecosystem for them (checked 2026-11-05): container images (OSV covers the distribution packages inside an image, such as `Debian` or `Alpine`, not the image or its tag), Terraform providers and modules, and Helm charts.
 - Withdrawn advisories are skipped, and aliases are reported once.
 
