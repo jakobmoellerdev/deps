@@ -20,7 +20,7 @@ func parseVersion(s string) (version, bool) {
 	if s == "" {
 		return version{}, false
 	}
-	var v version
+	v := version{parts: make([]int, 0, strings.Count(s, ".")+1)}
 	for p := range strings.SplitSeq(s, ".") {
 		if p == "" || p[0] < '0' || p[0] > '9' {
 			return version{}, false

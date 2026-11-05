@@ -175,16 +175,20 @@ func (n *Notes) block(ctx context.Context, it item) block {
 	if err != nil {
 		slog.DebugContext(ctx, "release notes unavailable", "name", it.d.Name, "repo", r.web(), "err", err)
 	}
-	tagVer := tagVersions(it.d, r)
+	tagVerOf := tagVersions(it.d, r)
 	from, okFrom := parseVersion(it.from)
 	to, okTo := parseVersion(it.to)
 	type picked struct {
 		v   version
 		rel release
 	}
+	vers := make([]tagVer, len(rels))
+	for i, rel := range rels {
+		vers[i].v, vers[i].ok = tagVerOf(rel.tag)
+	}
 	var sel []picked
-	for _, rel := range rels {
-		v, ok := tagVer(rel.tag)
+	for i, rel := range rels {
+		v, ok := vers[i].v, vers[i].ok
 		if !ok || !okFrom || !okTo || rel.draft || (rel.pre && compareAt(v, to) != 0) {
 			continue
 		}
@@ -196,9 +200,7 @@ func (n *Notes) block(ctx context.Context, it item) block {
 	for _, p := range sel {
 		b.entries = append(b.entries, entry(p.rel, r))
 	}
-	fromTag, okF := n.tagFor(ctx, it.d, r, rels, tagVer, it.from)
-	toTag, okT := n.tagFor(ctx, it.d, r, rels, tagVer, it.to)
-	if okF && okT {
+	if fromTag, toTag, ok := n.tagsFor(ctx, it.d, r, rels, vers, it.from, it.to); ok {
 		b.compare = r.web() + "/compare/" + platform.EscapePath(fromTag) + "..." + platform.EscapePath(toTag)
 	}
 	return b
@@ -241,20 +243,30 @@ func extractor(d dep.Dep) *versioning.Extractor {
 	return x
 }
 
-// tagFor returns the tag of version in r: Go module versions are tags by definition, git-tags
-// versions are tag names (or extracted from them) when the tag exists, and others must have
-// a release.
-func (n *Notes) tagFor(ctx context.Context, d dep.Dep, r repoRef, rels []release, tagVer func(string) (version, bool), ver string) (string, bool) {
+// tagVer is the parsed version of a release tag; ok is false when the tag has none.
+type tagVer struct {
+	v  version
+	ok bool
+}
+
+// tagsFor returns the tags of versions from and to in r, ok when both exist: Go module
+// versions are tags by definition, git-tags versions are tag names (or extracted from them)
+// when the tag exists, and others must have a release. vers are the parsed tags of rels.
+func (n *Notes) tagsFor(ctx context.Context, d dep.Dep, r repoRef, rels []release, vers []tagVer, from, to string) (string, string, bool) {
 	switch d.Datasource {
 	case dsGo:
-		return r.tagPrefix + ver, true
+		return r.tagPrefix + from, r.tagPrefix + to, true
 	case dsGitTags:
-		if ds := n.sources[dsGitTags]; ds != nil {
-			tags, err := ds.Releases(ctx, d, "")
-			if err != nil {
-				return "", false
-			}
-			x := extractor(d)
+		ds := n.sources[dsGitTags]
+		if ds == nil {
+			return "", "", false
+		}
+		tags, err := ds.Releases(ctx, d, "")
+		if err != nil {
+			return "", "", false
+		}
+		x := extractor(d)
+		find := func(ver string) (string, bool) {
 			for _, t := range tags {
 				v, ok := t.Version, true
 				if x != nil {
@@ -264,19 +276,27 @@ func (n *Notes) tagFor(ctx context.Context, d dep.Dep, r repoRef, rels []release
 					return t.Version, true
 				}
 			}
+			return "", false
+		}
+		fromTag, okF := find(from)
+		toTag, okT := find(to)
+		return fromTag, toTag, okF && okT
+	}
+	find := func(ver string) (string, bool) {
+		want, ok := parseVersion(ver)
+		if !ok {
+			return "", false
+		}
+		for i, rel := range rels {
+			if v := vers[i]; v.ok && len(v.v.parts) == len(want.parts) && compareAt(v.v, want) == 0 {
+				return rel.tag, true
+			}
 		}
 		return "", false
 	}
-	want, ok := parseVersion(ver)
-	if !ok {
-		return "", false
-	}
-	for _, rel := range rels {
-		if v, ok := tagVer(rel.tag); ok && len(v.parts) == len(want.parts) && compareAt(v, want) == 0 {
-			return rel.tag, true
-		}
-	}
-	return "", false
+	fromTag, okF := find(from)
+	toTag, okT := find(to)
+	return fromTag, toTag, okF && okT
 }
 
 // entry renders one release: a heading linking to it and its sanitized, cut body.
