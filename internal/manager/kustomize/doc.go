@@ -35,6 +35,7 @@ var Doc = refdoc.Manager{
 			"Without `//`, the repository ends at `.git`, after `_git/<repo>` (Azure DevOps), after `org/repo` on github.com, gitlab.com and bitbucket.org, or at the end of the path.",
 			"The dep name is `host/org/repo`; tags are listed from `https://host/org/repo` (also for `ssh://` and scp-like targets). Targets without a `ref` track a branch and are no deps.",
 		}},
+		{Title: "Replacements", Body: "An `images` entry is [replaced](configuration.md#rulesreplacementname) by rewriting its `newName`, or by inserting `newName: <image>` after `name` (which the manifests match on); flow-style entries are not replaced. A `helmCharts` entry takes a chart name, or `<repository URL>/<chart>` to move it, which also rewrites `repo`."},
 		{Title: "Edits", Body: "The tag, chart version or ref is replaced in place; a digest-pinned image also gets its new digest. Images without a digest are not pinned: kustomize would need a new `digest` field."},
 	},
 }

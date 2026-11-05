@@ -6,6 +6,7 @@ package docker
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -90,10 +91,18 @@ func (dockerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep,
 }
 
 // Edits rewrites the reference: tag → tag, pinned → new digest (and tag when the version
-// changed), or tag → digest by appending "@<digest>" after the reference.
+// changed), or tag → digest by appending "@<digest>" after the reference. A replacement
+// (u.NewName) also rewrites the image name.
 func (dockerManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	var edits []patch.Edit
+	if u.NewName != "" {
+		ne, err := manager.NameEdits(d, u.NewName)
+		if err != nil {
+			return nil, err
+		}
+		edits = ne
+	}
 	if u.NewVersion != d.Version {
 		edits = append(edits, patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion})
 	}
@@ -108,6 +117,25 @@ func (dockerManager) Edits(u dep.Update) ([]patch.Edit, error) {
 		edits = append(edits, patch.Edit{Start: d.InsertAt, End: d.InsertAt, New: "@" + u.NewDigest})
 	}
 	return edits, nil
+}
+
+// Rename implements manager.Renamer: name is an image name without tag or digest.
+func (dockerManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	return Rename(d, name)
+}
+
+// Rename returns d as the image name names it (Name, Source), for the managers editing
+// image references like the docker manager.
+func Rename(d dep.Dep, name string) (dep.Dep, error) {
+	r, err := imageref.Parse(name)
+	switch {
+	case err != nil:
+		return d, err
+	case r.Tag != "" || r.Digest != "":
+		return d, fmt.Errorf("image name %q has a tag or digest", name)
+	}
+	d.Name, d.Source = r.Familiar, r.Name
+	return d, nil
 }
 
 type extractor struct {
@@ -144,7 +172,7 @@ func (x *extractor) add(depType string, line, off int, ref string) {
 		d.Skip = "cannot locate value"
 	default:
 		d.Line = x.lineOf(off)
-		ParseRef(&d, off, ref)
+		ParseInlineRef(&d, off, ref)
 	}
 	x.deps = append(x.deps, d)
 }
@@ -174,4 +202,15 @@ func ParseRef(d *dep.Dep, off int, ref string) {
 		d.Version = r.Tag
 		d.RefSpan = dep.Span{Start: end - len(d.Version), End: end}
 	}
+}
+
+// ParseInlineRef is ParseRef for a reference written as one token at off: one NameWhole part
+// locates the image name as written, which replacements rewrite.
+func ParseInlineRef(d *dep.Dep, off int, ref string) {
+	ParseRef(d, off, ref)
+	if d.Skip != "" {
+		return
+	}
+	end := d.RefSpan.Start - 1 // the ':' before the tag
+	d.NameParts = []dep.NamePart{{Span: dep.Span{Start: off, End: end}, Text: ref[:end-off]}}
 }

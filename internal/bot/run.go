@@ -233,7 +233,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			dash = d
 		}
 	}
-	groups := engine.GroupUpdates(res.Updates, prefix)
+	groups := engine.GroupUpdates(declineReplacements(res.Updates, open, closed, prefix, dash), prefix)
 	prog.Start(engine.PhasePRs, len(groups))
 	built := make([][]engine.FileChange, len(groups))
 	buildErrs := make([][]error, len(groups))
@@ -1043,10 +1043,15 @@ func prBody(ctx context.Context, notes Notes, grp engine.Group, fp, input string
 	}
 	moved := map[string]bool{}
 	for _, u := range ups {
-		if u.NewName != "" && !moved[u.Dep.Name+" "+u.NewName] {
-			moved[u.Dep.Name+" "+u.NewName] = true
-			fmt.Fprintf(&b, "\n`%s` moves to the module path `%s`: the require and the import paths in the module's `.go` files are rewritten. The new major version's API may have changed, so the build may need fixes.\n", u.Dep.Name, u.NewName)
+		if u.NewName == "" || moved[u.Dep.Name+" "+u.NewName] {
+			continue
 		}
+		moved[u.Dep.Name+" "+u.NewName] = true
+		if u.Type == dep.Replacement {
+			fmt.Fprintf(&b, "\n`%s` is replaced by `%s` %s: it moved or was renamed upstream. The new package's API may differ, so the build may need fixes.\n", u.Dep.Name, u.NewName, u.NewVersion)
+			continue
+		}
+		fmt.Fprintf(&b, "\n`%s` moves to the module path `%s`: the require and the import paths in the module's `.go` files are rewritten. The new major version's API may have changed, so the build may need fixes.\n", u.Dep.Name, u.NewName)
 	}
 	var adv []dep.Advisory
 	for _, u := range ups {

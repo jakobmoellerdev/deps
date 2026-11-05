@@ -88,6 +88,10 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{names: ['[']}]\n", "rules[0].names[0]"},
 		{"rules: [{pin: x}]\n", "rules[0].pin"},
 		{"rules: [{allow: '>>1'}]\n", "rules[0].allow"},
+		{"rules: [{updateTypes: [major], replacementName: x}]\n", "rules[0].replacementName: cannot be combined with updateTypes"},
+		{"rules: [{replacementVersion: '1.0.0'}]\n", "rules[0].replacementVersion: requires replacementName"},
+		{"rules: [{replacementPrefix: a/}]\n", "rules[0].replacementPrefix: requires replacementName"},
+		{"rules: [{currentAge: '> 1 year', replacementName: x}]\n", "rules[0].replacementName: cannot be combined with currentAge"},
 		{"rules: [{updates: [huge]}]\n", "rules[0].updates[0]"},
 		{"ignorePaths: ['[']\n", "ignorePaths[0]"},
 		{"timezone: Europe/Berlin\n", "line 1: field timezone not found"},
@@ -243,7 +247,7 @@ rules:
 		t.Errorf("cache: %+v", ca)
 	}
 	other := c.Policy(dep.Dep{Manager: "github-actions", Name: "foo/bar"})
-	if ok, _ := other.Check(dep.Pin, "", nil); other.Pin != "digest" || len(other.Updates) != 5 || other.Allow != nil || !ok {
+	if ok, _ := other.Check(dep.Pin, "", nil); other.Pin != "digest" || len(other.Updates) != len(dep.UpdateTypes) || other.Allow != nil || !ok {
 		t.Errorf("other: %+v", other)
 	}
 	if !c.Policy(dep.Dep{Manager: "gomod", Name: "x"}).Ignore {
@@ -605,6 +609,64 @@ func TestMonorepoList(t *testing.T) {
 		for _, g := range m.Names {
 			if !doublestar.ValidatePattern(g) {
 				t.Errorf("%s: invalid glob %q", m.Name, g)
+			}
+		}
+	}
+}
+
+// TestReplacementPolicy: the built-in replacements (prefix moves, currentVersion-gated
+// entries) set the pre-policy's replacement, a rule's replacementName replaces the built-in
+// one with its own version, and replacements: false turns the built-in list off only.
+func TestReplacementPolicy(t *testing.T) {
+	const rules = "rules: [{names: [request], replacementName: got, replacementVersion: 12.0.0}, {names: [jade], replacementName: '@x/pug'}, {manager: docker, replacementPrefix: quay.io/old/, replacementName: ghcr.io/new/}]\n"
+	c, err := load(t, ".deps.yaml", rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	off, err := load(t, ".deps.yaml", "replacements: false\n"+rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		cfg                    *Config
+		d                      dep.Dep
+		name, version, builtin string
+	}{
+		{c, dep.Dep{Manager: "docker", Name: "k8s.gcr.io/ingress-nginx/controller", Version: "v1.9.0", Versioning: "docker"}, "registry.k8s.io/ingress-nginx/controller", "", "k8s-registry-move"},
+		{c, dep.Dep{Manager: "gitlabci", Name: "k8s.gcr.io/pause", Version: "3.9", Versioning: "docker"}, "registry.k8s.io/pause", "", "k8s-registry-move"},
+		{c, dep.Dep{Manager: "helm", Name: "k8s.gcr.io/pause", Version: "3.9"}, "", "", ""},
+		{c, dep.Dep{Manager: "helm", Name: "cilium", Source: "oci://ghcr.io/home-operations/charts-mirror", Version: "1.18.6", Versioning: "semver"}, "quay.io/cilium/charts/cilium", "1.18.6", "home-operations-to-official"},
+		{c, dep.Dep{Manager: "docker", Name: "owasp/zap2docker-stable", Version: "2.13.0", Versioning: "docker"}, "zaproxy/zap-stable", "2.14.0", "zap"},
+		{c, dep.Dep{Manager: "docker", Name: "owasp/zap2docker-stable", Version: "2.14.0", Versioning: "docker"}, "", "", ""},
+		{c, dep.Dep{Manager: "npm", Name: "eslint-plugin-node", Version: "11.0.0", Locked: "11.1.0", Versioning: "semver"}, "eslint-plugin-n", "14.0.0", "eslint-plugin-node-to-maintained-fork"},
+		{c, dep.Dep{Manager: "npm", Name: "eslint-plugin-node", Version: "10.0.0", Versioning: "semver"}, "", "", ""},
+		{c, dep.Dep{Manager: "npm", Name: "jade", Version: "1.11.0", Versioning: "semver"}, "@x/pug", "", ""},
+		{c, dep.Dep{Manager: "npm", Name: "request", Version: "2.88.0", Versioning: "semver"}, "got", "12.0.0", ""},
+		{off, dep.Dep{Manager: "npm", Name: "cucumber", Version: "6.0.0", Versioning: "semver"}, "", "", ""},
+		{c, dep.Dep{Manager: "docker", Name: "quay.io/old/app", Version: "1.0", Versioning: "docker"}, "ghcr.io/new/app", "", ""},
+		{c, dep.Dep{Manager: "docker", Name: "quay.io/other/app", Version: "1.0", Versioning: "docker"}, "", "", ""},
+		{off, dep.Dep{Manager: "npm", Name: "request", Version: "2.88.0", Versioning: "semver"}, "got", "12.0.0", ""},
+	} {
+		p := tc.cfg.Policy(tc.d)
+		if p.ReplacementName != tc.name || p.ReplacementVersion != tc.version || p.Replacement != tc.builtin {
+			t.Errorf("%s %s@%s: replacement %q %q (built-in %q), want %q %q (%q)", tc.d.Manager, tc.d.Name, tc.d.Version, p.ReplacementName, p.ReplacementVersion, p.Replacement, tc.name, tc.version, tc.builtin)
+		}
+	}
+}
+
+func TestReplacementList(t *testing.T) {
+	for _, r := range Replacements {
+		if r.Name == "" || r.To == "" || len(r.Names)+len(r.Patterns) == 0 || len(r.Managers) == 0 {
+			t.Errorf("bad entry %+v", r)
+		}
+		for _, mgr := range r.Managers {
+			if !slices.Contains(Managers, mgr) {
+				t.Errorf("%s: unknown manager %q", r.Name, mgr)
+			}
+		}
+		for _, g := range r.Names {
+			if !doublestar.ValidatePattern(g) {
+				t.Errorf("%s: invalid glob %q", r.Name, g)
 			}
 		}
 	}

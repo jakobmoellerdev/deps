@@ -344,6 +344,10 @@ func title(name string, ups []dep.Update) string {
 		return u.Type == dep.Pin && u.NewDigest == "" && u.NewVersion == first.NewVersion
 	}):
 		return pre + "pin " + name + " to " + first.NewVersion
+	case same(func(u dep.Update) bool {
+		return u.Type == dep.Replacement && u.NewName == first.NewName && u.NewVersion == first.NewVersion
+	}):
+		return pre + "replace " + name + " with " + first.NewName + " " + first.NewVersion
 	case same(func(u dep.Update) bool { return u.Type == dep.Pin && u.NewDigest == first.NewDigest }):
 		return pre + "pin " + name + " to " + short(first.NewDigest)
 	case same(func(u dep.Update) bool { return u.Type == dep.Digest && u.NewDigest == first.NewDigest }):

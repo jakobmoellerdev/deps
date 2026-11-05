@@ -169,3 +169,57 @@ func TestLockerScope(t *testing.T) {
 		t.Errorf("lockStyle = %q", got)
 	}
 }
+
+func TestLockerReplacement(t *testing.T) {
+	const chart = `apiVersion: v2
+name: app
+version: 0.1.0
+dependencies:
+  - name: redis
+    version: 18.0.0
+    repository: oci://registry-1.docker.io/bitnamicharts
+  - name: cert-manager
+    version: v1.14.0
+    repository: https://charts.jetstack.io
+`
+	reqs, err := chartRequirements([]byte(chart))
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := []*chartDependency{
+		{Name: "redis", Repository: "oci://registry-1.docker.io/bitnamicharts", Version: "18.0.0"},
+		{Name: "cert-manager", Repository: "https://charts.jetstack.io", Version: "v1.14.0"},
+	}
+	digest, err := hashReq(reqs, locked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := "dependencies:\n- name: redis\n  repository: oci://registry-1.docker.io/bitnamicharts\n  version: 18.0.0\n" +
+		"- name: cert-manager\n  repository: https://charts.jetstack.io\n  version: v1.14.0\n" +
+		"digest: " + digest + "\ngenerated: \"2026-01-01T00:00:00Z\"\n"
+	dir := chartDir(t, chart, lock)
+	for _, c := range []struct {
+		name   string
+		repl   []string // the replacement in Chart.yaml (old, new pairs)
+		locked []*chartDependency
+	}{
+		{name: "renamed and moved", repl: []string{"name: redis", "name: valkey", "oci://registry-1.docker.io/bitnamicharts", "oci://ghcr.io/valkey-io/charts", "18.0.0", "8.0.0"},
+			locked: []*chartDependency{{Name: "valkey", Repository: "oci://ghcr.io/valkey-io/charts", Version: "8.0.0"}, locked[1]}},
+		{name: "renamed", repl: []string{"name: cert-manager", "name: cm"},
+			locked: []*chartDependency{locked[0], {Name: "cm", Repository: "https://charts.jetstack.io", Version: "v1.14.0"}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			patched := strings.NewReplacer(c.repl...).Replace(chart)
+			out, err := Locker{}.Process(t.Context(), dir, map[string][]byte{chartFile: []byte(patched)}, map[string][]byte{lockFile: []byte(lock)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			newReqs, _ := chartRequirements([]byte(patched))
+			newDigest, _ := hashReq(newReqs, c.locked)
+			want := strings.NewReplacer(append(c.repl, digest, newDigest)...).Replace(lock)
+			if got := string(out[lockFile]); got != want {
+				t.Fatalf("Chart.lock =\n%s\nwant\n%s", got, want)
+			}
+		})
+	}
+}

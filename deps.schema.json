@@ -377,7 +377,8 @@
               "minor",
               "patch",
               "digest",
-              "pin"
+              "pin",
+              "replacement"
             ]
           },
           "type": "array",
@@ -429,8 +430,8 @@
             ]
           },
           "type": "array",
-          "description": "Allowed update types; replaces the earlier list.",
-          "markdownDescription": "Allowed update types; replaces the earlier list.\n\nWhen no rule sets it, all five update types are allowed."
+          "description": "Allowed update types; replaces the earlier list. Replacements are not listed here: they are switched off with ignore (updateTypes: [replacement]) or replacements: false.",
+          "markdownDescription": "Allowed update types; replaces the earlier list. Replacements are not listed here: they are switched off with ignore (updateTypes: [replacement]) or replacements: false.\n\nWhen no rule sets it, all five update types are allowed."
         },
         "versioning": {
           "type": "string",
@@ -442,6 +443,21 @@
           "type": "string",
           "description": "RE2 regexp with a (?<version>) group extracting the version from the datasource's release names, e.g. '^jq-(?<version>.+)$' for jq-1.7.1 tags or '^kustomize/(?<version>.+)$'; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes.",
           "markdownDescription": "RE2 regexp with a (?\\<version>) group extracting the version from the datasource's release names, e.g. `^jq-(?<version>.+)$` for jq-1.7.1 tags or `^kustomize/(?<version>.+)$`; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes."
+        },
+        "replacementName": {
+          "type": "string",
+          "description": "Replace matching deps with this package (image, npm package, owner/repo[/path] action, Go module path, group:artifact, chart or registry address; with replacementPrefix, the new prefix) in one replacement update instead of their usual updates, which run proposes once the replacement's PR is closed. The version is kept unless replacementVersion is set, and the new package must have it (else the dep is skipped with the reason). Supported by the docker, gitlabci, kustomize, helm, terraform (providers, registry modules, images), terragrunt, tflint, maven, gradle, npm, github-actions and gomod managers where the name is written literally (see the managers reference). Overrides earlier rules and the built-in replacements. updates lists do not apply to replacements; select them with updateTypes: [replacement]. Cannot be combined with updateTypes or currentAge.",
+          "markdownDescription": "Replace matching deps with this package (image, npm package, owner/repo[/path] action, Go module path, group:artifact, chart or registry address; with replacementPrefix, the new prefix) in one replacement update instead of their usual updates, which run proposes once the replacement's PR is closed. The version is kept unless replacementVersion is set, and the new package must have it (else the dep is skipped with the reason). Supported by the docker, gitlabci, kustomize, helm, terraform (providers, registry modules, images), terragrunt, tflint, maven, gradle, npm, github-actions and gomod managers where the name is written literally (see the managers reference). Overrides earlier rules and the built-in replacements. updates lists do not apply to replacements; select them with updateTypes: [replacement]. Cannot be combined with updateTypes or currentAge."
+        },
+        "replacementVersion": {
+          "type": "string",
+          "description": "Version written with replacementName (the new package's version; an npm range keeps its operator); empty keeps the current version. Requires replacementName.",
+          "markdownDescription": "Version written with replacementName (the new package's version; an npm range keeps its operator); empty keeps the current version. Requires replacementName."
+        },
+        "replacementPrefix": {
+          "type": "string",
+          "description": "Prefix of the dep name that replacementName replaces, for moves of many names at once (Renovate's replacementNameTemplate with replace): with replacementPrefix: k8s.gcr.io/ and replacementName: registry.k8s.io/, k8s.gcr.io/pause becomes registry.k8s.io/pause. Deps whose name does not start with it get no replacement from the rule. Requires replacementName.",
+          "markdownDescription": "Prefix of the dep name that replacementName replaces, for moves of many names at once (Renovate's replacementNameTemplate with replace): with replacementPrefix: k8s.gcr.io/ and replacementName: registry.k8s.io/, k8s.gcr.io/pause becomes registry.k8s.io/pause. Deps whose name does not start with it get no replacement from the rule. Requires replacementName."
         },
         "separateMajorMinor": {
           "type": "boolean",
@@ -672,6 +688,12 @@
       "description": "Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group.",
       "default": true,
       "markdownDescription": "Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group.\n\nWhen `true`, deps released from one source repository share a PR, with group `<name> monorepo`. The 62 built-in entries include kubernetes (`k8s.io/` staging modules), go-openapi, opentelemetry-go, opentelemetry-go-contrib, aws-sdk-go-v2, azure-sdk-for-go, google-cloud-go, moby, etcd, sigstore, typescript-eslint, eslint, babel, jest, vitest, angular, react, vue, storybook, tailwindcss, playwright, codeql-action and actions-cache. The full list is in `internal/config/monorepos.go`.\n\nThey are applied as implicit rules *before* the user rules, so any rule that sets `group` overrides them. `deps explain` shows them as `builtin  monorepo <name> -> group \"<name> monorepo\"`.\n\n```yaml\nmonorepos: false\n```"
+    },
+    "replacements": {
+      "type": "boolean",
+      "description": "Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/* images to registry.k8s.io/*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep.",
+      "default": true,
+      "markdownDescription": "Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/\\* images to registry.k8s.io/\\*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep."
     },
     "gitAuthor": {
       "type": "string",

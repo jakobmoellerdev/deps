@@ -57,12 +57,28 @@ func Parse(ref string) (Ref, error) {
 	return r, nil
 }
 
+// SplitRegistry splits an image name into its registry and the rest as docker reads it:
+// docker.io and the name unchanged when its first component is not a registry (alpine,
+// bitnami/nginx).
+func SplitRegistry(name string) (registry, path string) {
+	if r, rest, ok := strings.Cut(name, "/"); ok && isRegistry(r) {
+		return r, rest
+	}
+	return dockerHub, name
+}
+
+// isRegistry reports whether the first component of a reference is a registry host: it has
+// a '.' or ':', is localhost or is not lower case.
+func isRegistry(c string) bool {
+	return strings.ContainsAny(c, ".:") || c == "localhost" || strings.ToLower(c) != c
+}
+
 // qualify splits ref into registry and the rest: docker.io when its first component is not a
 // registry (no '.' or ':', not localhost, lower case), with library/ added to single-component
 // Docker Hub names.
 func qualify(ref string) (registry, rest string) {
 	registry, rest, ok := strings.Cut(ref, "/")
-	if !ok || (!strings.ContainsAny(registry, ".:") && registry != "localhost" && strings.ToLower(registry) == registry) {
+	if !ok || !isRegistry(registry) {
 		registry, rest = dockerHub, ref
 	}
 	if registry == dockerHubIndex {

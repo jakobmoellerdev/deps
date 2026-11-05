@@ -11,7 +11,7 @@ import (
 // k0sChart extracts a k0s Chart resource (helm.k0sproject.io): spec.chartName and spec.version,
 // with the repository from spec.repository.url or the chart name's alias.
 func (x *crdExtractor) k0sChart(spec *yaml.Node) {
-	x.k0sChartRef(yamlspan.Get(spec, "chartName"), yamlspan.Get(spec, "version"), yamlspan.Value(yamlspan.Get(yamlspan.Get(spec, "repository"), "url")))
+	x.k0sChartRef(yamlspan.Get(spec, "chartName"), yamlspan.Get(spec, "version"), yamlspan.Str(yamlspan.Get(yamlspan.Get(spec, "repository"), "url")))
 }
 
 // k0sConfig extracts the charts of a k0s ClusterConfig spec (spec.extensions.helm.charts) and
@@ -29,14 +29,15 @@ func (x *crdExtractor) k0sConfig(spec *yaml.Node) {
 		x.k0sRepos[name] = strings.TrimSuffix(url, "/")
 	}
 	for _, c := range seq(yamlspan.Get(h, "charts")) {
-		x.k0sChartRef(yamlspan.Get(c, "chartname"), yamlspan.Get(c, "version"), "")
+		x.k0sChartRef(yamlspan.Get(c, "chartname"), yamlspan.Get(c, "version"), nil)
 	}
 }
 
 // k0sChartRef adds the k0s chart named by chartName: <alias>/<chart>, oci://<repo>/<chart>,
-// or a local archive. inline is the repository URL given with the chart, if any.
-func (x *crdExtractor) k0sChartRef(chartName, version *yaml.Node, inline string) {
-	name := yamlspan.Value(chartName)
+// or a local archive. inline is the scalar of the repository URL given with the chart, if any.
+// The chart is a NamePart, and so is the repository of an oci:// reference or inline.
+func (x *crdExtractor) k0sChartRef(chartName, version, inline *yaml.Node) {
+	name, url := yamlspan.Value(chartName), yamlspan.Value(inline)
 	switch {
 	case name == "":
 		return
@@ -48,9 +49,9 @@ func (x *crdExtractor) k0sChartRef(chartName, version *yaml.Node, inline string)
 			x.add(TypeK0s, "", name, chartName, version, "invalid chart reference")
 			return
 		}
-		x.add(TypeK0s, repo, chart, chartName, version, "")
-	case inline != "":
-		x.add(TypeK0s, inline, name[strings.LastIndexByte(name, '/')+1:], chartName, version, "")
+		x.rename(x.add(TypeK0s, repo, chart, chartName, version, ""), chartName, true, nil)
+	case url != "":
+		x.rename(x.add(TypeK0s, url, name[strings.LastIndexByte(name, '/')+1:], chartName, version, ""), chartName, false, inline)
 	case strings.HasPrefix(name, "/") || strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".tgz"):
 		x.add(TypeK0s, "", name, chartName, version, "local chart")
 	default:
@@ -61,6 +62,7 @@ func (x *crdExtractor) k0sChartRef(chartName, version *yaml.Node, inline string)
 		}
 		i := x.add(TypeK0s, "", chart, chartName, version, "")
 		if x.deps[i].Skip == "" {
+			x.rename(i, chartName, false, nil)
 			x.refs = append(x.refs, ref{i: i, kind: refK0s, key: key{name: alias}})
 		}
 	}

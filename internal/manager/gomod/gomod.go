@@ -4,7 +4,6 @@ package gomod
 
 import (
 	"bytes"
-	"errors"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -17,6 +16,7 @@ import (
 	"strings"
 
 	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/module"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -42,7 +42,7 @@ func (gomodManager) Match(p string) bool {
 	return (strings.HasSuffix(p, "go.mod") || strings.HasSuffix(p, "go.work")) && matchRe.MatchString(p)
 }
 
-// Extract returns one Dep per require entry; RefSpan covers the version token, NameSpan the
+// Extract returns one Dep per require entry; RefSpan covers the version token, NameParts the
 // module path. Pseudo-versions are deps too: the engine proposes newer pseudo-versions (digest
 // updates) or releases for them. A go.work gives its go and toolchain directives.
 func (gomodManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
@@ -85,7 +85,7 @@ func (gomodManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, 
 			d.RefSpan = dep.Span{Start: s + i, End: s + i + len(v)}
 		}
 		if i := bytes.Index(src[s:e], []byte(r.Mod.Path)); i >= 0 {
-			d.NameSpan = dep.Span{Start: s + i, End: s + i + len(r.Mod.Path)}
+			d.NameParts = []dep.NamePart{{Span: dep.Span{Start: s + i, End: s + i + len(r.Mod.Path)}, Text: r.Mod.Path}}
 		}
 		if replaced(f, r.Mod.Path) {
 			d.Skip = "replaced"
@@ -119,25 +119,37 @@ func directive(file string, src []byte, name, value string, x *modfile.Line) dep
 	return d
 }
 
-// Edits replaces the version token, and the module path of a major module path update.
+// Edits replaces the version token, and the module path of a major module path update or a
+// replacement.
 func (gomodManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	edits := []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}
 	if u.NewName != "" {
-		if d.NameSpan.End <= d.NameSpan.Start {
-			return nil, errors.New("cannot locate module path")
+		ne, err := manager.NameEdits(d, u.NewName)
+		if err != nil {
+			return nil, err
 		}
-		edits = append(edits, patch.Edit{Start: d.NameSpan.Start, End: d.NameSpan.End, Old: d.Name, New: u.NewName})
+		edits = append(edits, ne...)
 	}
 	return edits, nil
 }
 
-// FileEdits implements manager.FileEditor: a major module path update (u.NewName) rewrites
-// the import paths of the old module (the path itself and its packages) in the .go files of
-// the dep's module, i.e. every .go file below the go.mod's directory except in directories the
-// go command ignores (vendor, testdata, names starting with . or _) and in nested modules.
-// Only the import path literals change. The default ignorePaths do not apply: tests belong to
-// the module and must keep compiling.
+// Rename implements manager.Renamer: name is a module path. Like a major module path update,
+// a replacement also rewrites the import paths (FileEdits).
+func (gomodManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	if err := module.CheckPath(name); err != nil {
+		return d, err
+	}
+	d.Name = name
+	return d, nil
+}
+
+// FileEdits implements manager.FileEditor: a major module path update or a replacement
+// (u.NewName) rewrites the import paths of the old module (the path itself and its packages)
+// in the .go files of the dep's module, i.e. every .go file below the go.mod's directory
+// except in directories the go command ignores (vendor, testdata, names starting with . or _)
+// and in nested modules. Only the import path literals change. The default ignorePaths do not
+// apply: tests belong to the module and must keep compiling.
 func (gomodManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error) {
 	if u.NewName == "" {
 		return nil, nil

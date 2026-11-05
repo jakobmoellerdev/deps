@@ -180,3 +180,48 @@ func TestTerragruntEdits(t *testing.T) {
 		})
 	}
 }
+
+func TestTerragruntReplacements(t *testing.T) {
+	const (
+		hostless = `terraform { source = "tfr:///acme/vpc/aws//modules/x?version=1.2.3" }`
+		hosted   = `terraform { source = "tfr://App.Terraform.IO/acme/vpc/aws?version=1.2.3" }`
+	)
+	for _, tt := range []struct {
+		src, registry, name, version, wName, wSource, wLine string
+	}{
+		{hostless, "", "acme/net/aws", "", "acme/net/aws", "https://registry.terraform.io",
+			`terraform { source = "tfr:///acme/net/aws//modules/x?version=1.2.3" }`},
+		{hostless, "https://registry.opentofu.org", "acme/net/aws", "1.3.0", "acme/net/aws", "https://registry.opentofu.org",
+			`terraform { source = "tfr:///acme/net/aws//modules/x?version=1.3.0" }`},
+		{hosted, "", "registry.terraform.io/acme/net/aws", "", "acme/net/aws", "https://registry.terraform.io",
+			`terraform { source = "tfr://registry.terraform.io/acme/net/aws?version=1.2.3" }`},
+	} {
+		got, lines, err := replace(t, NewTerragrunt(), "terragrunt.hcl", tt.src, manager.Env{TerraformRegistry: tt.registry}, "acme/vpc/aws", tt.name, tt.version)
+		switch {
+		case err != nil:
+			t.Errorf("%s: %v", tt.name, err)
+		case got.Name != tt.wName || got.Source != tt.wSource:
+			t.Errorf("%s: renamed %s %s, want %s %s", tt.name, got.Name, got.Source, tt.wName, tt.wSource)
+		case !slices.Equal(lines, []string{tt.wLine}):
+			t.Errorf("%s: changed lines %q, want %q", tt.name, lines, tt.wLine)
+		}
+	}
+	for _, tt := range []struct{ src, name string }{
+		{hostless, "registry.terraform.io/acme/net/aws"}, // would read tfr:///host/…
+		{hosted, "acme/net/aws"},                         // would read tfr://acme/…
+		{hostless, "acme/net"},
+		{hostless, "acme/net/aws//modules/y"},
+		{hosted, "github.com/acme/net/aws"},
+	} {
+		if _, _, err := replace(t, NewTerragrunt(), "terragrunt.hcl", tt.src, manager.Env{}, "acme/vpc/aws", tt.name, ""); err == nil {
+			t.Errorf("%s: Rename(%q) accepted", tt.src, tt.name)
+		}
+	}
+	deps, err := NewTerragrunt().Extract("terragrunt.hcl", []byte(`terraform { source = "github.com/acme/vpc?ref=v1.0.0" }`), manager.Env{})
+	if err != nil || len(deps) != 1 || deps[0].Renamable() {
+		t.Errorf("git source: %+v, %v", deps, err)
+	}
+	if _, err := NewTerragrunt().(manager.Renamer).Rename(deps[0], "acme/vpc/aws"); err == nil {
+		t.Error("git source renamed")
+	}
+}

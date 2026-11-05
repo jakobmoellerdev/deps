@@ -1087,3 +1087,52 @@ func TestPluginLocks(t *testing.T) {
 		t.Errorf("unlinked settings plugin: %+v %v", ps[0], errs)
 	}
 }
+
+// TestLinkedRename: Rename chooses the repositories of the new name as Link chose them for
+// the old one (content filters, exclusiveContent, pluginManagement); a dep resolved to a
+// variable defined in another file is not renamable (its edits apply to that file).
+func TestLinkedRename(t *testing.T) {
+	files := map[string]string{
+		"settings.gradle.kts": "pluginManagement { repositories { maven(\"https://plugins.example\") { content { includeGroup(\"x.y\") } }; gradlePluginPortal() } }\n",
+		"gradle.properties":   "v=1.0\n",
+		"build.gradle.kts": "plugins { id(\"x.y\") version \"1.0\" }\n" +
+			"repositories {\n  maven(\"https://corp.example\") { content { includeGroup(\"corp\") } }\n  mavenCentral()\n" +
+			"  exclusiveContent {\n    forRepository { maven(\"https://excl.example\") }\n    filter { includeGroup(\"excl\") }\n  }\n}\n" +
+			"val w = \"2.0\"\n" +
+			"dependencies {\n  implementation(\"corp:lib:1\")\n  implementation(\"g:a:$w\")\n  implementation(\"g:b:$v\")\n}\n",
+	}
+	m := New()
+	var all [][]dep.Dep
+	for _, p := range slices.Sorted(maps.Keys(files)) {
+		ds, err := m.Extract(p, []byte(files[p]), manager.Env{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, ds)
+	}
+	m.(manager.Linker).Link(all)
+	deps := map[string][]dep.Dep{"build.gradle.kts": all[0]}
+	r := m.(manager.Renamer)
+	for _, tc := range []struct{ dep, name, source string }{
+		{"corp:lib", "excl:lib", "https://excl.example/"},
+		{"corp:lib", "corp:other", "https://corp.example/ " + centralRepo},
+		{"g:a", "h:a", centralRepo},
+		{"x.y", "z.w", portalRepo},
+	} {
+		d := get(t, deps, "build.gradle.kts", tc.dep)
+		got, err := r.Rename(d, tc.name)
+		if err != nil || got.Name != tc.name || got.Source != tc.source {
+			t.Errorf("Rename(%s, %s) = %s from %q, %v; want source %q", tc.dep, tc.name, got.Name, got.Source, err, tc.source)
+		}
+	}
+	if d := get(t, deps, "build.gradle.kts", "g:a"); !d.Renamable() || d.File != "build.gradle.kts" {
+		t.Errorf("same-file variable: %+v", d)
+	} else if e, err := m.Edits(dep.Update{Dep: d, NewVersion: "2.1", NewName: "h:b"}); err != nil {
+		t.Error(err)
+	} else if out, err := patch.Apply([]byte(files[d.File]), e); err != nil || !strings.Contains(string(out), "val w = \"2.1\"\n") || !strings.Contains(string(out), `implementation("h:b:$w")`) {
+		t.Errorf("same-file variable edits: %s %v", out, err)
+	}
+	if d := get(t, deps, "build.gradle.kts", "g:b"); d.Renamable() || d.File != "gradle.properties" {
+		t.Errorf("gradle.properties variable: %+v", d)
+	}
+}

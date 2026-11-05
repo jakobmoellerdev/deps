@@ -135,6 +135,18 @@ var (
 	CommitTypes = []string{"fix", "chore", "build", "ci", "docs", "feat", "perf", "refactor", "revert", "style", "test"}
 )
 
+// UpdateTypeSelectors are the accepted updateTypes values: dep.UpdateTypes and replacement.
+var UpdateTypeSelectors = append(slices.Clone(dep.UpdateTypes), dep.Replacement)
+
+// updateTypeList renders dep.UpdateTypes for validation messages.
+var updateTypeList = func() string {
+	s := make([]string, len(dep.UpdateTypes))
+	for i, t := range dep.UpdateTypes {
+		s[i] = string(t)
+	}
+	return strings.Join(s, ", ")
+}()
+
 // CanonicalDatasource maps a Renovate alias to its deps datasource name; other names are
 // returned unchanged.
 func CanonicalDatasource(name string) string {
@@ -164,6 +176,7 @@ type Config struct {
 	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
 	RebaseWhen    string   `yaml:"rebaseWhen" jsonschema:"enum=conflicted,enum=behind-base-branch,enum=never,default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
 	Monorepos     *bool    `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR; rules can override the group."`
+	Replacements  *bool    `yaml:"replacements" jsonschema:"default=true" jsonschema_description:"Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/* images to registry.k8s.io/*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep."`
 	GitAuthor     string   `yaml:"gitAuthor" jsonschema:"default=deps[bot] <deps-bot@noreply.invalid>" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified. Ignored for platform commits (platformCommit), whose author is the token's account; branches whose tip it authored still count as deps' own."`
 	// PlatformCommit creates commits through the GitHub API (Renovate's platformCommit).
 	PlatformCommit string `yaml:"platformCommit" jsonschema:"enum=auto,enum=enabled,enum=disabled,default=auto" jsonschema_description:"Create commits and move update branches through the GitHub API instead of git, so that GitHub signs them and shows them as verified, authored by the GitHub App (e.g. ocmbot[bot]). auto enables it on GitHub when the token is a GitHub App installation token (ghs_..., also GITHUB_TOKEN in Actions) and no signing key is set; enabled requires GitHub and no signing key; disabled always uses git. GitHub signs API commits only for App tokens; with a personal access token they stay unsigned. Overridden by $DEPS_PLATFORM_COMMIT."`
@@ -229,6 +242,9 @@ func (c *Config) SecurityEnabled() bool { return c.Security == nil || *c.Securit
 
 // MonoreposEnabled reports whether the built-in monorepo groups apply (default true).
 func (c *Config) MonoreposEnabled() bool { return c.Monorepos == nil || *c.Monorepos }
+
+// ReplacementsEnabled reports whether the built-in replacements apply (default true).
+func (c *Config) ReplacementsEnabled() bool { return c.Replacements == nil || *c.Replacements }
 
 // GomodUpdateImportPathsEnabled reports whether major module path updates are proposed
 // (default true).
@@ -371,16 +387,21 @@ type Rule struct {
 	// matchCurrentVersion and matchCurrentAge).
 	CurrentVersion string   `yaml:"currentVersion" jsonschema_description:"Only match deps whose current version (the locked one when a lockfile has it) satisfies this Masterminds semver constraint (e.g. '< 2', converted with the dep's versioning scheme), or matches the regex form '/<RE2>/' as written ('!/<RE2>/' excludes matches; flag i allowed). Cannot be combined with versioning."`
 	CurrentAge     string   `yaml:"currentAge" jsonschema_description:"Only match deps whose current version was released this long ago: an operator <, <=, > or >= and an age, e.g. '> 1 year' or '< 30 days' (units of minimumReleaseAge, plus months of 30 days and years of 365 days). The release time is looked up only for deps the other selectors of the rule match, from datasources with release times; an unknown time does not match. Cannot be combined with versioning or extractVersion."`
-	UpdateTypes    []string `yaml:"updateTypes" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`
+	UpdateTypes    []string `yaml:"updateTypes" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin,enum=replacement" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`
 	Ignore         *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types."`
 	Pin            string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
 	Allow          string   `yaml:"allow" jsonschema_description:"New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written."`
 	RangeStrategy  string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=replace,enum=update-lockfile,enum=widen,enum=pin,enum=in-range-only" jsonschema_description:"Range strategy for matching npm, cargo, Python and terraform deps and Gradle dynamic versions (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
-	Updates        []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
+	Updates        []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list. Replacements are not listed here: they are switched off with ignore (updateTypes: [replacement]) or replacements: false."`
 	// Versioning overrides the dep's scheme before resolution, so it is a pre-policy field.
 	Versioning string `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|regex:.+)$" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`
 	// ExtractVersion replaces the dep's release-name mapping before resolution (pre-policy).
 	ExtractVersion string `yaml:"extractVersion" jsonschema_description:"RE2 regexp with a (?<version>) group extracting the version from the datasource's release names, e.g. '^jq-(?<version>.+)$' for jq-1.7.1 tags or '^kustomize/(?<version>.+)$'; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes."`
+	// ReplacementName and ReplacementVersion move matching deps to another package (Renovate's
+	// options of the same names); pre-policy fields.
+	ReplacementName    string `yaml:"replacementName" jsonschema_description:"Replace matching deps with this package (image, npm package, owner/repo[/path] action, Go module path, group:artifact, chart or registry address; with replacementPrefix, the new prefix) in one replacement update instead of their usual updates, which run proposes once the replacement's PR is closed. The version is kept unless replacementVersion is set, and the new package must have it (else the dep is skipped with the reason). Supported by the docker, gitlabci, kustomize, helm, terraform (providers, registry modules, images), terragrunt, tflint, maven, gradle, npm, github-actions and gomod managers where the name is written literally (see the managers reference). Overrides earlier rules and the built-in replacements. updates lists do not apply to replacements; select them with updateTypes: [replacement]. Cannot be combined with updateTypes or currentAge."`
+	ReplacementVersion string `yaml:"replacementVersion" jsonschema_description:"Version written with replacementName (the new package's version; an npm range keeps its operator); empty keeps the current version. Requires replacementName."`
+	ReplacementPrefix  string `yaml:"replacementPrefix" jsonschema_description:"Prefix of the dep name that replacementName replaces, for moves of many names at once (Renovate's replacementNameTemplate with replace): with replacementPrefix: k8s.gcr.io/ and replacementName: registry.k8s.io/, k8s.gcr.io/pause becomes registry.k8s.io/pause. Deps whose name does not start with it get no replacement from the rule. Requires replacementName."`
 	// Separate* override the top-level PR bucket options for matching deps.
 	SeparateMajorMinor    *bool    `yaml:"separateMajorMinor" jsonschema_description:"Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types)."`
 	SeparateMultipleMajor *bool    `yaml:"separateMultipleMajor" jsonschema_description:"Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types)."`
@@ -799,8 +820,8 @@ func (c *Config) validateRule(i int, add addFunc) {
 		add(f+".updateTypes", "must not be empty (omit it to match every update type)")
 	}
 	for j, u := range r.UpdateTypes {
-		if !slices.Contains(dep.UpdateTypes, dep.UpdateType(u)) {
-			add(fmt.Sprintf("%s.updateTypes[%d]", f, j), "must be one of major, minor, patch, digest, pin, got %q", u)
+		if !slices.Contains(UpdateTypeSelectors, dep.UpdateType(u)) {
+			add(fmt.Sprintf("%s.updateTypes[%d]", f, j), "must be one of %s, %s, got %q", updateTypeList, dep.Replacement, u)
 		}
 	}
 	if len(r.UpdateTypes) > 0 && r.Pin != "" {
@@ -840,9 +861,23 @@ func (c *Config) validateRule(i int, add addFunc) {
 			add(f+".extractVersion", "cannot be combined with updateTypes: release names are mapped before the update type is known")
 		}
 	}
+	switch {
+	case r.ReplacementName != "" && len(r.UpdateTypes) > 0:
+		add(f+".replacementName", "cannot be combined with updateTypes: the replacement is decided before the update type is known")
+	case r.ReplacementName != "" && r.CurrentAge != "":
+		add(f+".replacementName", "cannot be combined with currentAge: the replacement is decided before the age of the current version is known")
+	}
+	if r.ReplacementName == "" {
+		if r.ReplacementVersion != "" {
+			add(f+".replacementVersion", "requires replacementName")
+		}
+		if r.ReplacementPrefix != "" {
+			add(f+".replacementPrefix", "requires replacementName")
+		}
+	}
 	for j, u := range r.Updates {
 		if !slices.Contains(dep.UpdateTypes, dep.UpdateType(u)) {
-			add(fmt.Sprintf("%s.updates[%d]", f, j), "must be one of major, minor, patch, digest, pin, got %q", u)
+			add(fmt.Sprintf("%s.updates[%d]", f, j), "must be one of %s, got %q", updateTypeList, u)
 		}
 	}
 	if r.CommitType != "" && !slices.Contains(CommitTypes, r.CommitType) {

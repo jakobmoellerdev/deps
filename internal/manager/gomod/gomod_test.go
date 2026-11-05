@@ -63,8 +63,8 @@ func TestExtract(t *testing.T) {
 		if got := string(b[d.RefSpan.Start:d.RefSpan.End]); got != w.ver {
 			t.Errorf("%d: span %q", i, got)
 		}
-		if got := string(b[d.NameSpan.Start:d.NameSpan.End]); i > 0 && got != w.name {
-			t.Errorf("%d: name span %q", i, got)
+		if i > 0 && (len(d.NameParts) != 1 || string(b[d.NameParts[0].Span.Start:d.NameParts[0].Span.End]) != w.name || d.NameParts[0].Text != w.name) {
+			t.Errorf("%d: name parts %+v", i, d.NameParts)
 		}
 	}
 
@@ -215,7 +215,7 @@ func TestMajorPathEdits(t *testing.T) {
 		t.Errorf("got %q", out)
 	}
 	d := deps[0]
-	d.NameSpan = dep.Span{}
+	d.NameParts = nil
 	if _, err := New().Edits(dep.Update{Dep: d, NewVersion: "v93.0.0", NewName: "x/v93"}); err == nil {
 		t.Error("want error without a name span")
 	}

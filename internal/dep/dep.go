@@ -17,13 +17,19 @@ const (
 	Patch  UpdateType = "patch"
 	Digest UpdateType = "digest"
 	Pin    UpdateType = "pin"
+	// Replacement moves a dep to another package (config replacementName, the built-in
+	// replacements): NewName is the new name, NewVersion its version (the current one unless
+	// replacementVersion is set). It replaces the dep's usual updates (Update.Declined). Rules
+	// select it with updateTypes; it is not in UpdateTypes, so `updates` lists never drop it.
+	Replacement UpdateType = "replacement"
 	// LockFileMaintenance refreshes a whole lockfile (config lockFileMaintenance): Dep.File is
 	// the manifest of the lock root, Dep.Name the lockfile's slash path; there are no versions.
 	// It is not in UpdateTypes, so rules cannot select it.
 	LockFileMaintenance UpdateType = "lockFileMaintenance"
 )
 
-// UpdateTypes lists every update type rules can select, in a stable order.
+// UpdateTypes lists the version update types rules can allow (updates) and select
+// (updateTypes), in a stable order; updateTypes also accepts Replacement.
 var UpdateTypes = []UpdateType{Major, Minor, Patch, Digest, Pin}
 
 // The rangeStrategy values (config.RangeStrategies) that change how a manager rewrites a range
@@ -32,6 +38,22 @@ const (
 	RangeWiden = "widen"
 	RangePin   = "pin"
 )
+
+// Roles of a NamePart.
+const (
+	NameWhole      = ""           // the whole name
+	NameRegistry   = "registry"   // the registry host of an image name (a Helm values registry key)
+	NameRepository = "repository" // the image name after the registry (a Helm values repository key)
+	NameGroup      = "group"      // the groupId of Maven coordinates group:artifact (a pom <groupId>)
+	NameArtifact   = "artifact"   // the artifactId of Maven coordinates (a pom <artifactId>)
+)
+
+// NamePart is where a dep's name, or a part of it (Role), is written: Text as written at Span.
+type NamePart struct {
+	Span Span
+	Text string
+	Role string
+}
 
 // Span is a byte range in a file; End is exclusive.
 type Span struct{ Start, End int }
@@ -63,12 +85,17 @@ type Dep struct {
 	Version        string // current version (ref tag, comment version, or module version)
 	Digest         string // actions: full SHA when pinned, else ""
 	RefSpan        Span   // actions: ref after '@'; gomod: version token
-	NameSpan       Span   // gomod: module path token of a require (rewritten by major module path updates)
-	VersionSpan    Span   // actions: version token in trailing comment (pinned), or the version after the per-action tag prefix of a tag ref (`@get-vault-secrets/v1.3.1`)
-	DigestSpan     Span   // docker/custom: digest token, when the digest is stored apart from RefSpan
-	InputSpan      Span   // actions: `with: version:` value equal to the current version, bumped along with the ref
-	InsertAt       int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
-	Skip           string // non-empty = not updatable, with the reason
+	// NameParts locate the name as written, which major module path updates and replacements
+	// rewrite (manager.NameEdits, or the manager's own Edits for roles it defines): one
+	// NameWhole part for most managers, registry/repository parts for images whose registry is
+	// written apart (Helm values), group/artifact parts for Maven coordinates written apart
+	// (pom elements, Gradle maps); nil = the name cannot be rewritten.
+	NameParts   []NamePart
+	VersionSpan Span   // actions: version token in trailing comment (pinned), or the version after the per-action tag prefix of a tag ref (`@get-vault-secrets/v1.3.1`)
+	DigestSpan  Span   // docker/custom: digest token, when the digest is stored apart from RefSpan
+	InputSpan   Span   // actions: `with: version:` value equal to the current version, bumped along with the ref
+	InsertAt    int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
+	Skip        string // non-empty = not updatable, with the reason
 	// VersionRef names the definition the version is read from when several deps can share
 	// it (a Maven property, a Gradle catalog version.ref or variable), e.g. "jackson.version";
 	// RefSpan then points at the definition, which may be in another file than the dep's
@@ -95,6 +122,9 @@ type Dep struct {
 	PythonConstraint string   // the project's Python version constraint (requires-python, Poetry `python`, Pipfile [requires]); releases whose requires-python does not admit all of it are dropped
 	DefinedIn        string   // pep621, poetry: slash path of a scanned pyproject.toml whose project has the dep's (normalized) name; when no index has the package, the dep is skipped (pyreq.InRepository) instead of failing
 }
+
+// Renamable reports whether d's name can be rewritten in its file (NameParts are set).
+func (d Dep) Renamable() bool { return len(d.NameParts) > 0 }
 
 // ChecksumSource locates the checksum of a version. Asset, URL/File and Artifact are templates
 // in which `{{version}}` is the new version as written into the file; exactly one of Asset, URL
@@ -126,7 +156,7 @@ type Update struct {
 	Type       UpdateType
 	NewVersion string
 	NewDigest  string // "" unless the result is digest-pinned; gomod pseudo-versions: the new commit
-	NewName    string // gomod major module path update: the new module path (`<path>/v<N>`); "" = unchanged
+	NewName    string // gomod major module path update: the new module path (`<path>/v<N>`); replacement: the new package name; "" = unchanged
 	Group      string // policy group name, "" = own PR
 	// SecurityGroup is the policy security group of a security update (rules[].securityGroup),
 	// "" = own PR; a security update never joins Group (unless it edits a shared version).
@@ -161,6 +191,9 @@ type Update struct {
 	// Labels, Reviewers and Assignees go on the PR when it is created; a group's PR gets the
 	// union over its updates.
 	Labels, Reviewers, Assignees []string
+	// Declined holds, for a replacement, the dep's usual updates: `run` proposes them instead
+	// once the replacement's PR was closed without merging. plan and apply ignore them.
+	Declined []Update
 }
 
 // Maintenance reports whether u is a lock file maintenance update.

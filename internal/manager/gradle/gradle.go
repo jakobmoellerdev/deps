@@ -4,6 +4,7 @@
 package gradle
 
 import (
+	"fmt"
 	"path"
 	"regexp"
 	"sort"
@@ -95,9 +96,22 @@ type fileState struct {
 }
 
 type gradleManager struct {
-	mu    sync.Mutex
-	files map[string]*fileState // every file extracted in this run
-	lock  lockState             // left by Link for ReadLocks
+	mu      sync.Mutex
+	files   map[string]*fileState // every file extracted in this run
+	lock    lockState             // left by Link for ReadLocks
+	renames map[namePos]nameRepos // left by Link for Rename, by renamable dep
+}
+
+// namePos identifies a renamable dep: its file and the start of its first NamePart.
+type namePos struct {
+	file  string
+	start int
+}
+
+// nameRepos is what Link chose a renamable dep's repositories from.
+type nameRepos struct {
+	levels *repoLevels
+	class  depClass
 }
 
 // New returns the gradle manager.
@@ -150,18 +164,61 @@ func (m *gradleManager) Extract(file string, src []byte, _ manager.Env) ([]dep.D
 }
 
 // Edits replaces the version token; deps sharing a definition share the span. A range dep
-// (dynamic version) keeps its form: see rangeEdit.
+// (dynamic version) keeps its form: see rangeEdit. A replacement (u.NewName) also rewrites
+// the coordinates or plugin id.
 func (*gradleManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
+	e := patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}
 	if d.Range != "" {
-		e, err := rangeEdit(d, u.NewVersion)
+		var err error
+		if e, err = rangeEdit(d, u.NewVersion); err != nil {
+			return nil, err
+		}
+	}
+	edits := []patch.Edit{e}
+	if u.NewName != "" {
+		ne, err := manager.NameEdits(d, u.NewName)
 		if err != nil {
 			return nil, err
 		}
-		return []patch.Edit{e}, nil
+		edits = append(edits, ne...)
 	}
-	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+	return edits, nil
 }
+
+// Rename implements manager.Renamer for deps whose coordinates or plugin id are written
+// literally: a plugin takes a plugin id, a library `group:artifact`. The repositories are
+// chosen for the new name as Link chose them for the old one (content filters,
+// exclusiveContent); a dep Link did not see keeps its own.
+func (m *gradleManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	if d.DepType == DepTypePlugin {
+		if !gaRe.MatchString(name) {
+			return d, fmt.Errorf("invalid plugin id %q", name)
+		}
+	} else if g, a, ok := strings.Cut(name, ":"); !ok || !gaRe.MatchString(g) || !gaRe.MatchString(a) {
+		return d, fmt.Errorf("%q is not group:artifact", name)
+	}
+	d.Name = name
+	if !d.Renamable() {
+		return d, nil
+	}
+	m.mu.Lock()
+	r, ok := m.renames[namePos{d.File, d.NameParts[0].Span.Start}]
+	m.mu.Unlock()
+	if ok {
+		d.Source = r.levels.source(name, r.class)
+	}
+	return d, nil
+}
+
+// namePart is the NamePart of the name (or part, role) written as text at start.
+func namePart(text string, start int, role string) dep.NamePart {
+	return dep.NamePart{Span: dep.Span{Start: start, End: start + len(text)}, Text: text, Role: role}
+}
+
+// plainString reports whether the contents of a script string literal are what Gradle reads:
+// no interpolation, no escape.
+func plainString(s string) bool { return !strings.ContainsAny(s, `$\`) }
 
 func newDep(file, depType string, line int) dep.Dep {
 	src := LibraryRepositories

@@ -79,14 +79,17 @@ func (x *extractor) walk(n *yaml.Node) {
 }
 
 // helm extracts `{registry?, repository, tag, digest?}` image values with RefSpan on the tag.
+// NameParts locate the repository value (NameWhole), or with a registry key the registry and
+// the repository (NameRegistry, NameRepository), which replacements rewrite.
 func (x *extractor) helm(m *yaml.Node) {
 	repo, tag := yamlspan.Str(yamlspan.Get(m, "repository")), yamlspan.Str(yamlspan.Get(m, "tag"))
 	if repo == nil || tag == nil || repo.Value == "" {
 		return
 	}
 	name := repo.Value
-	if r := yamlspan.Str(yamlspan.Get(m, "registry")); r != nil && r.Value != "" {
-		name = r.Value + "/" + name
+	registry := yamlspan.Str(yamlspan.Get(m, "registry"))
+	if registry != nil && registry.Value != "" {
+		name = registry.Value + "/" + name
 	}
 	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeHelm, File: x.file, Line: tag.Line, Name: name}
 	off := yamlspan.Locate(x.src, x.lines, tag)
@@ -109,8 +112,31 @@ func (x *extractor) helm(m *yaml.Node) {
 				d.Skip = "cannot locate value"
 			}
 		}
+		if d.Skip == "" {
+			x.helmNameParts(&d, registry, repo)
+		}
 	}
 	x.deps = append(x.deps, d)
+}
+
+// helmNameParts sets d's NameParts from the registry (nil or empty: none) and repository
+// values; none when a value cannot be located.
+func (x *extractor) helmNameParts(d *dep.Dep, registry, repo *yaml.Node) {
+	ro := yamlspan.Locate(x.src, x.lines, repo)
+	if ro < 0 {
+		return
+	}
+	rp := dep.NamePart{Span: dep.Span{Start: ro, End: ro + len(repo.Value)}, Text: repo.Value}
+	if registry == nil || registry.Value == "" {
+		d.NameParts = []dep.NamePart{rp}
+		return
+	}
+	gof := yamlspan.Locate(x.src, x.lines, registry)
+	if gof < 0 {
+		return
+	}
+	rp.Role = dep.NameRepository
+	d.NameParts = []dep.NamePart{{Span: dep.Span{Start: gof, End: gof + len(registry.Value)}, Text: registry.Value, Role: dep.NameRegistry}, rp}
 }
 
 // workflow extracts jobs.*.container[.image], jobs.*.services.*.image and

@@ -114,6 +114,11 @@ func (x *crdExtractor) add(depType, repo, chart string, at, v *yaml.Node, skip s
 	return len(x.deps) - 1
 }
 
+// rename sets the NameParts of dep i from its chart scalar n (see chartParts).
+func (x *crdExtractor) rename(i int, n *yaml.Node, ociPrefix bool, repo *yaml.Node) {
+	x.deps[i].NameParts = ChartParts(x.src, x.lines, n, x.deps[i].Name, ociPrefix, repo)
+}
+
 // splitOCI splits oci://host/path/chart into the repository oci://host/path and the chart.
 func splitOCI(ref string) (repo, chart string) {
 	i := strings.LastIndexByte(ref, '/')

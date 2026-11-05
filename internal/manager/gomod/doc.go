@@ -45,6 +45,7 @@ var Doc = refdoc.Manager{
 			"A requirement left without updates this way is skipped with `module path changed to <declared> (<module>@<version>)` (the newest such version): moving to the new path is a code change deps does not make. A failed `.mod` lookup is logged and leaves the candidate to `go mod tidy`; GONOPROXY/GOPRIVATE modules are not checked.",
 			"When `go mod tidy` still refuses a module version this way (`module declares its path as … but was required as …`, for a module the update pulls in, or one the check could not read), `run` skips the update with the same reason instead of failing: its PR group is reported as `skipped: update cannot be applied` and is no error, so it does not keep obsolete PRs open (`apply` leaves the update out and applies the others).",
 		}},
+		{Title: "Replacements", Body: "A require can be [replaced](configuration.md#rulesreplacementname) by another module path; like a major module path update, the import paths in the module's `.go` files are rewritten."},
 		{Title: "Post-processing (`apply`, `run`)", Items: []string{
 			"After any gomod change, deps runs `go mod tidy -modfile=<tmp>/go.mod` in the module directory, on temporary copies of `go.mod` and `go.sum`, with `GOWORK=off` and `GOFLAGS` cleared; source files rewritten by a major module path update are passed with `-overlay`.",
 			"The tidied `go.mod` and `go.sum` replace the patched files. The real files are only written by `apply`.",

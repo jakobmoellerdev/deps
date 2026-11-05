@@ -116,6 +116,8 @@ With `branchPrefix: renovate/`, deps manages the branches and PRs Renovate creat
 | Renovate preset | deps |
 |---|---|
 | `group:monorepos`, `group:kubernetesMonorepo`, `group:goOpenapi` | `monorepos: true` (default; 62 built-in entries) |
+| `replacements:all` (part of `config:recommended`) and its `replacements:*` presets | `replacements: true` (default; generated from Renovate's `lib/data/replacements.json`, every preset deps can write); see `deps explain` (`builtin replacement ...`). Not included: the nuget preset and the material-ui and messageformat presets Renovate defines in code |
+| `packageRules[].replacementName` / `replacementVersion`, `matchUpdateTypes: [replacement]` | `rules[].replacementName` / `replacementVersion`, `updateTypes: [replacement]`. `replacementNameTemplate: "{{{replace 'a/' 'b/' packageName}}}"` is `replacementPrefix: a/` with `replacementName: b/`; other templates have no equivalent. Unlike Renovate, a replacement gets its own `-replacement` branch and closing its PR brings the dep's usual updates back |
 | `:ignoreModulesAndTests` | default `ignorePaths` |
 | `:semanticPrefixFixDepsChoreOthers` | default commit types |
 | `docker:pinDigests`, `helpers:pinGitHubActionDigests` | `pin: digest` |

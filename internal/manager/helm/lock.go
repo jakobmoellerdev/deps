@@ -21,8 +21,10 @@ import (
 // Locker is the helm post-processor (engine.PostProcessor): after deps patched a Chart.yaml it
 // brings the sibling Chart.lock in line, in process and without network access. Every exact
 // dependency version whose locked version differs is written into the lock (matched by
-// position and name, keeping the lock's "v" prefix style), and the lock digest is recomputed
-// as Helm does, so `helm dependency build` accepts the lock. The `generated` timestamp is
+// position and name, keeping the lock's "v" prefix style). A dependency a replacement renamed
+// or moved to another repository (its old name still locked at its position) gets its new name
+// and repository URL locked too. The lock digest is recomputed as Helm does, so `helm
+// dependency build` accepts the lock. The `generated` timestamp is
 // kept, so the same update always yields the same bytes. Lock bytes are edited in place.
 type Locker struct{}
 
@@ -78,26 +80,47 @@ func (Locker) Process(_ context.Context, dir string, manifests, files map[string
 	newDeps := make([]*chartDependency, len(lock.deps))
 	var edits []patch.Edit
 	lines := yamlspan.LineStarts(lockSrc)
-	for i, ld := range lock.deps {
-		nd := *ld
-		newDeps[i] = &nd
-		if i >= len(newReqs) || newReqs[i].Name != ld.Name || versionSkip(newReqs[i].Version) != "" {
-			continue
-		}
-		v := lockStyle(ld.Version, newReqs[i].Version)
-		if v == ld.Version {
-			continue
-		}
-		node := lock.versions[i]
+	edit := func(node *yaml.Node, old, v, what, chart string) error {
 		off := -1
 		if node != nil {
 			off = yamlspan.Locate(lockSrc, lines, node)
 		}
 		if off < 0 {
-			return nil, fmt.Errorf("%s: cannot locate the version of %s", lockFile, ld.Name)
+			return fmt.Errorf("%s: cannot locate the %s of %s", lockFile, what, chart)
 		}
-		edits = append(edits, patch.Edit{Start: off, End: off + len(ld.Version), Old: ld.Version, New: v})
-		nd.Version = v
+		edits = append(edits, patch.Edit{Start: off, End: off + len(old), Old: old, New: v})
+		return nil
+	}
+	for i, ld := range lock.deps {
+		nd := *ld
+		newDeps[i] = &nd
+		if i >= len(newReqs) || versionSkip(newReqs[i].Version) != "" {
+			continue
+		}
+		nr, f := newReqs[i], lock.fields[i]
+		// ld locks the dependency at i, which a replacement may have moved to another chart.
+		same := i < len(oldReqs) && oldReqs[i].Name == ld.Name
+		if nr.Name != ld.Name {
+			if !same {
+				continue
+			}
+			if err := edit(f.name, ld.Name, nr.Name, "name", ld.Name); err != nil {
+				return nil, err
+			}
+			nd.Name = nr.Name
+		}
+		if same && nr.Repository != oldReqs[i].Repository && !isAlias(nr.Repository) && nr.Repository != ld.Repository {
+			if err := edit(f.repository, ld.Repository, nr.Repository, "repository", ld.Name); err != nil {
+				return nil, err
+			}
+			nd.Repository = nr.Repository
+		}
+		if v := lockStyle(ld.Version, nr.Version); v != ld.Version {
+			if err := edit(f.version, ld.Version, v, "version", ld.Name); err != nil {
+				return nil, err
+			}
+			nd.Version = v
+		}
 	}
 	sum, err := hashReq(resolveAliases(newReqs, newDeps), newDeps)
 	if err != nil {
@@ -146,10 +169,13 @@ func chartRequirements(src []byte) ([]*chartDependency, error) {
 
 // chartLock is a decoded Chart.lock with the nodes deps edits.
 type chartLock struct {
-	deps     []*chartDependency
-	versions []*yaml.Node // version scalar per dep, nil when absent
-	digest   *yaml.Node
+	deps   []*chartDependency
+	fields []lockFields // per dep
+	digest *yaml.Node
 }
+
+// lockFields are the scalars of a locked dependency, nil when absent.
+type lockFields struct{ name, repository, version *yaml.Node }
 
 func parseLock(src []byte) (*chartLock, error) {
 	var doc yaml.Node
@@ -169,10 +195,14 @@ func parseLock(src []byte) (*chartLock, error) {
 			return nil, err
 		}
 		for _, n := range deps.Content {
-			l.versions = append(l.versions, yamlspan.Str(yamlspan.Get(n, "version")))
+			l.fields = append(l.fields, lockFields{
+				name:       yamlspan.Str(yamlspan.Get(n, "name")),
+				repository: yamlspan.Str(yamlspan.Get(n, "repository")),
+				version:    yamlspan.Str(yamlspan.Get(n, "version")),
+			})
 		}
 	}
-	if len(l.versions) != len(l.deps) || hasNil(l.deps) {
+	if len(l.fields) != len(l.deps) || hasNil(l.deps) {
 		return nil, errors.New("malformed dependencies")
 	}
 	return l, nil
@@ -194,7 +224,7 @@ func resolveAliases(reqs, locked []*chartDependency) []*chartDependency {
 	out := make([]*chartDependency, len(reqs))
 	for i, r := range reqs {
 		out[i] = r
-		if r == nil || !strings.HasPrefix(r.Repository, "@") && !strings.HasPrefix(r.Repository, "alias:") {
+		if r == nil || !isAlias(r.Repository) {
 			continue
 		}
 		if i < len(locked) && locked[i].Name == r.Name {
@@ -204,6 +234,12 @@ func resolveAliases(reqs, locked []*chartDependency) []*chartDependency {
 		}
 	}
 	return out
+}
+
+// isAlias reports whether a Chart.yaml repository names a repository of the user's Helm
+// repository config (`@name`, `alias:name`).
+func isAlias(repo string) bool {
+	return strings.HasPrefix(repo, "@") || strings.HasPrefix(repo, "alias:")
 }
 
 // hashReq is Helm's resolver.HashReq: "sha256:" + hex sha256 of the JSON of [req, lock].

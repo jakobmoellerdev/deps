@@ -295,12 +295,16 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	var wg sync.WaitGroup
 	rewriters := map[string]manager.RangeRewriter{}
 	rangers := map[string]manager.RangeUpdater{}
+	renamers := map[string]manager.Renamer{}
 	for _, m := range o.Managers {
 		if rw, ok := m.(manager.RangeRewriter); ok {
 			rewriters[m.Name()] = rw
 		}
 		if ru, ok := m.(manager.RangeUpdater); ok {
 			rangers[m.Name()] = ru
+		}
+		if rn, ok := m.(manager.Renamer); ok {
+			renamers[m.Name()] = rn
 		}
 	}
 	for i := range todo {
@@ -312,7 +316,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 				return
 			}
 			r := resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now,
-				rewriter: rewriters[d.Manager], ranger: rangers[d.Manager]}
+				rewriter: rewriters[d.Manager], ranger: rangers[d.Manager], renamer: renamers[d.Manager]}
 			t, u := r.run(func() []Vuln { return sec.of(secIdx[i]) })
 			if pols[i].securityOnly && t.Err == nil && u == nil {
 				t.Dep.Skip = pols[i].pre.IgnoreReason // no fix for its advisories
@@ -743,20 +747,24 @@ func (p *policies) of(kind dep.UpdateType) *config.Policy {
 
 // skip is why the policies leave d (with a valid or tag-only version) alone, "" when it is
 // looked up: ignored for every update type, or a non-version tag without a digest that is not
-// pinned.
+// pinned nor replaced.
 func (p *policies) skip(d dep.Dep) string {
 	switch {
 	case p.pre.Ignore && !p.anyKind():
 		return p.pre.IgnoreReason
-	case d.Digest == "" && p.pre.Pin != config.PinDigest && tagOnly(d):
-		// A non-version tag without a digest can only be pinned.
+	case d.Digest == "" && p.pre.Pin != config.PinDigest && tagOnly(d) && (p.pre.ReplacementName == "" || !d.Renamable()):
+		// A non-version tag without a digest can only be pinned or replaced.
 		return "non-version tag"
 	}
 	return ""
 }
 
-// anyKind reports whether an update of some kind is not ignored.
+// anyKind reports whether an update of some kind is not ignored, a replacement included when
+// the pre-policy names one.
 func (p *policies) anyKind() bool {
+	if p.pre.ReplacementName != "" && !p.of(dep.Replacement).Ignore {
+		return true
+	}
 	return slices.ContainsFunc(dep.UpdateTypes, func(k dep.UpdateType) bool { return !p.of(k).Ignore })
 }
 
@@ -808,10 +816,10 @@ func (p *policies) bucket(c versioning.Candidate) bucketKey {
 func (p *policies) singleBucket() bool { return !p.kindRules && !p.pre.SeparateMajorMinor }
 
 // allows reports whether updates of kind are enabled (digest refresh and pin, which have
-// no new version for allow).
+// no new version for allow). Replacements are not in `updates` lists: only ignore stops them.
 func (p *policies) allows(kind dep.UpdateType) bool {
 	kp := p.of(kind)
-	return !kp.Ignore && kp.Updates[kind]
+	return !kp.Ignore && (kind == dep.Replacement || kp.Updates[kind])
 }
 
 // resolver decides the update of one dep.
@@ -846,6 +854,7 @@ type resolver struct {
 	lockOnly bool
 	rewriter manager.RangeRewriter // the dep's manager rewrites its whole range; nil = by version token
 	ranger   manager.RangeUpdater  // the rewriter also matches the range (Python specifiers)
+	renamer  manager.Renamer       // the dep's manager rewrites names (replacements); nil = none
 }
 
 // autoRange is what rangeStrategy auto means per manager (Renovate's defaults): replace for
@@ -1080,43 +1089,50 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 			r.ds = wrapExtract(prefixed)
 		}
 	}
-	var ups []dep.Update
-	var err error
+	ups, err := r.updates(t, scheme, vulns)
+	if err != nil {
+		return nil, err
+	}
+	var decorate func([]dep.Update)
+	decorate = func(ups []dep.Update) {
+		for i := range ups {
+			// Commit, grouping and automerge settings come from the policy of the update's
+			// type; security updates follow it too, apart from schedule and group: they take
+			// the security group instead.
+			up := &ups[i]
+			if prefixed != nil && len(prefixed.names) > 0 {
+				up.Dep.ExtractVersion = prefixExpr // release notes look up the per-action tags
+			}
+			kp := r.pol.of(up.Type)
+			up.CommitType, up.CommitScope, up.Templates = kp.CommitType, kp.CommitScope, kp.Templates
+			up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
+			up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
+			if len(up.Advisories) == 0 {
+				up.Group, up.Schedule = kp.Group, kp.Schedule
+			} else {
+				up.SecurityGroup = kp.SecurityGroup
+			}
+			decorate(up.Declined)
+		}
+	}
+	decorate(ups)
+	return ups, nil
+}
+
+// usual resolves the dep's updates other than a replacement.
+func (r *resolver) usual(t *Trace, scheme versioning.Scheme, vulns func() []Vuln) ([]dep.Update, error) {
 	switch {
-	case goPseudo(d):
-		ups, err = r.versionUpdates(t, scheme, vulns)
-	case !scheme.Valid(d.Version):
+	case goPseudo(r.d):
+		return r.versionUpdates(t, scheme, vulns)
+	case !scheme.Valid(r.d.Version):
 		// Resolve only lets non-version docker tags through (tagOnly): their digest is kept
 		// current; there are no releases to compare and no advisories to look up.
 		if reason := r.applyAge(t); reason != "" {
 			return nil, &dep.SkipError{Reason: reason}
 		}
-		ups, err = r.digestUpdate()
-	default:
-		ups, err = r.versionUpdates(t, scheme, vulns)
+		return r.digestUpdate()
 	}
-	if err != nil {
-		return nil, err
-	}
-	for i := range ups {
-		// Commit, grouping and automerge settings come from the policy of the update's type;
-		// security updates follow it too, apart from schedule and group: they take the
-		// security group instead.
-		up := &ups[i]
-		if prefixed != nil && len(prefixed.names) > 0 {
-			up.Dep.ExtractVersion = prefixExpr // release notes look up the per-action tags
-		}
-		kp := r.pol.of(up.Type)
-		up.CommitType, up.CommitScope, up.Templates = kp.CommitType, kp.CommitScope, kp.Templates
-		up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
-		up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
-		if len(up.Advisories) == 0 {
-			up.Group, up.Schedule = kp.Group, kp.Schedule
-		} else {
-			up.SecurityGroup = kp.SecurityGroup
-		}
-	}
-	return ups, nil
+	return r.versionUpdates(t, scheme, vulns)
 }
 
 // versionUpdates resolves a dep with a valid version: the best candidate under policy per PR

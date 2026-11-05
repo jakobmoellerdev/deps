@@ -2,6 +2,7 @@ package terraform
 
 import (
 	"bytes"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -124,10 +125,8 @@ func (x *extractor) plugin(d dep.Dep, label string, source, version *attr) dep.D
 		d.Name, d.Skip = source.val.str, "invalid plugin source"
 		return d
 	}
-	d.Name, d.Source = owner+"/"+repo, "https://"+host+"/"+owner+"/"+repo
-	if host != "github.com" {
-		d.Name = d.Source // GitHub Enterprise Server
-	}
+	d.Name, d.Source = pluginName(host, owner, repo)
+	d.NameParts = nameParts(source.val, 0, len(source.val.str))
 	if version == nil {
 		d.Skip = "no version"
 		return d
@@ -144,6 +143,15 @@ func (x *extractor) plugin(d dep.Dep, label string, source, version *attr) dep.D
 	return d
 }
 
+// pluginName returns the Name and Source of the plugin released at host/owner/repo.
+func pluginName(host, owner, repo string) (name, source string) {
+	source = "https://" + host + "/" + owner + "/" + repo
+	if host != "github.com" {
+		return source, source // GitHub Enterprise Server
+	}
+	return owner + "/" + repo, source
+}
+
 // pluginSource splits `host/owner/repo`.
 func pluginSource(s string) (host, owner, repo string, ok bool) {
 	parts := strings.Split(s, "/")
@@ -158,5 +166,16 @@ func pluginSource(s string) (host, owner, repo string, ok bool) {
 	return strings.ToLower(parts[0]), parts[1], parts[2], true
 }
 
-// Edits replaces the version.
-func (tflintManager) Edits(u dep.Update) ([]patch.Edit, error) { return versionEdit(u) }
+// Edits replaces the version and, for a replacement (u.NewName), the source.
+func (tflintManager) Edits(u dep.Update) ([]patch.Edit, error) { return edits(u) }
+
+// Rename implements manager.Renamer: name is a plugin source `host/owner/repo` as the source
+// attribute writes it (github.com/terraform-linters/tflint-ruleset-aws).
+func (tflintManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	host, owner, repo, ok := pluginSource(name)
+	if !ok {
+		return d, fmt.Errorf("%q is not a plugin source host/owner/repo", name)
+	}
+	d.Name, d.Source = pluginName(host, owner, repo)
+	return d, nil
+}

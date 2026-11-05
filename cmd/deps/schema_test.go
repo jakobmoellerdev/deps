@@ -100,7 +100,7 @@ func TestSchema(t *testing.T) {
 		{"rules.depTypes", rule.Properties["depTypes"].Items, config.DepTypes},
 		{"rules.datasources", datasourceEnum(t, "rules.datasources", rule.Properties["datasources"].Items), config.DatasourceNames},
 		{"rules.updates", rule.Properties["updates"].Items, updates},
-		{"rules.updateTypes", rule.Properties["updateTypes"].Items, updates},
+		{"rules.updateTypes", rule.Properties["updateTypes"].Items, append(slices.Clone(updates), string(dep.Replacement))},
 		{"rules.commitType", rule.Properties["commitType"], config.CommitTypes},
 		{"custom.datasource", datasourceEnum(t, "custom.datasource", custom.Properties["datasource"]), config.DatasourceNames},
 		{"customDatasources.format", customDS.Properties["format"], customds.Formats},
@@ -128,7 +128,7 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%s pattern %q is too loose", name, n.Pattern)
 		}
 	}
-	if want := []string{"version", "pin", "rangeStrategy", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "platformCommit", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "actions", "gitlabci", "terraform", "gomodUpdateImportPaths", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "ignorePaths",
+	if want := []string{"version", "pin", "rangeStrategy", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "platformCommit", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "replacements", "actions", "gitlabci", "terraform", "gomodUpdateImportPaths", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "ignorePaths",
 		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "labels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "rebaseLabel", "stopUpdatingLabel",
 		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "rules", "custom", "customDatasources", "lockFileMaintenance"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)

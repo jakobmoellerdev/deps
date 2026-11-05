@@ -60,6 +60,7 @@ var Doc = refdoc.Manager{
 			"Each repository is passed to the datasource as `<id>=<url>/`. Without repositories, only Maven Central is used. URLs with properties are ignored.",
 			"`settings.xml` mirrors, credentials and active-profile repositories are applied by the maven datasource (see its docs), matched by repository id.",
 		}},
+		{Title: "Replacements", Body: "Dependencies, plugins with an explicit `groupId`, extensions, annotation processor paths and the parent can be [replaced](configuration.md#rulesreplacementname) by other `groupId:artifactId` coordinates when both are written literally; only the changed elements are rewritten. A replacement version is not written to a version property (`${...}`) other dependencies may share: such deps keep their version or are skipped."},
 		{Title: "Versioning", Body: "`maven` (Maven's ComparableVersion): `1.0` = `1.0.0` = `1.0-final`, `alpha` < `beta` < `milestone` < `rc` < `snapshot` < release < `sp`. " +
 			"SNAPSHOTs are never proposed, other prereleases only from a prerelease, and the first unknown qualifier after a `-` must match (`33.3.1-jre` stays on `-jre`). " +
 			"Deps sharing a property take the highest version all of them reach. " +

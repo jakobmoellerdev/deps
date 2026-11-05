@@ -262,6 +262,152 @@ func TestEdits(t *testing.T) {
 	}
 }
 
+func TestNameParts(t *testing.T) {
+	deps, err := New().Extract("kustomization.yaml", []byte(kustomization), manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]dep.NamePart{
+		"nginx":           {Text: "  - name: nginx", Role: roleNameLine},
+		"ghcr.io/org/app": {Text: "ghcr.io/org/app"},
+		"redis":           {Text: "  - name: redis", Role: roleNameLine},
+		"postgres":        {Text: "  - name: postgres", Role: roleNameLine},
+	}
+	for _, d := range deps {
+		w, ok := want[d.Name]
+		switch {
+		case d.DepType == TypeHelmChart && d.Skip == "":
+			if len(d.NameParts) != 2 || d.NameParts[0].Text != d.Name || d.NameParts[1].Role != dep.NameRepository {
+				t.Errorf("%s: NameParts = %+v, want chart and repository", d.Name, d.NameParts)
+			}
+			continue
+		case !ok:
+			if d.NameParts != nil {
+				t.Errorf("%s: NameParts = %+v, want none", d.Name, d.NameParts)
+			}
+			continue
+		}
+		if len(d.NameParts) != 1 || d.NameParts[0].Text != w.Text || d.NameParts[0].Role != w.Role {
+			t.Errorf("%s: NameParts = %+v, want %+v", d.Name, d.NameParts, w)
+			continue
+		}
+		if p := d.NameParts[0]; kustomization[p.Span.Start:p.Span.End] != p.Text {
+			t.Errorf("%s: span text %q, want %q", d.Name, kustomization[p.Span.Start:p.Span.End], p.Text)
+		}
+	}
+	// Flow mappings, an empty newName key and a name off its key's line are not renamable.
+	for _, src := range []string{
+		"images: [{name: a, newTag: '1.0'}]\n",
+		"images:\n  - {name: a, newTag: '1.0'}\n",
+		"images:\n  - name: a\n    newName: ''\n    newTag: '1.0'\n",
+		"images:\n  - name:\n      a\n    newTag: '1.0'\n",
+	} {
+		deps, err := New().Extract("kustomization.yaml", []byte(src), manager.Env{})
+		if err != nil || len(deps) != 1 || deps[0].Skip != "" || deps[0].Renamable() {
+			t.Errorf("%q: got %+v, %v; want one updatable, not renamable dep", src, deps, err)
+		}
+	}
+}
+
+func TestRenameEdits(t *testing.T) {
+	m := New()
+	for _, tt := range []struct {
+		name, src, newName, newVersion, newDigest, want string
+	}{
+		{"newName", "images:\n  - name: app\n    newName: ghcr.io/org/app\n    newTag: v1\n", "ghcr.io/org/new", "v1", "",
+			"images:\n  - name: app\n    newName: ghcr.io/org/new\n    newTag: v1\n"},
+		{"quoted newName", "images:\n  - name: app\n    newName: \"ghcr.io/org/app\"\n    newTag: 'v1'\n", "ghcr.io/org/new", "v2", "",
+			"images:\n  - name: app\n    newName: \"ghcr.io/org/new\"\n    newTag: 'v2'\n"},
+		{"insert", "images:\n  - name: nginx\n    newTag: 1.27.3\n  - name: x\n", "cgr.dev/chainguard/nginx", "1.28.0", "",
+			"images:\n  - name: nginx\n    newName: cgr.dev/chainguard/nginx\n    newTag: 1.28.0\n  - name: x\n"},
+		{"insert after quoted name", "images:\n- newTag: \"1.0\"\n  name: 'nginx' # web\n", "ghcr.io/org/nginx", "1.0", "",
+			"images:\n- newTag: \"1.0\"\n  name: 'nginx' # web\n  newName: ghcr.io/org/nginx\n"},
+		{"insert at end of file", "images:\n    - newTag: v1\n      name: a", "b", "v1", "",
+			"images:\n    - newTag: v1\n      name: a\n      newName: b"},
+		{"insert before CRLF", "images:\r\n  - name: a\r\n    newTag: v1\r\n", "b", "v1", "",
+			"images:\r\n  - name: a\n    newName: b\r\n    newTag: v1\r\n"},
+		{"insert with tag digest", "images:\n  - name: redis\n    newTag: 7.4@" + digestA + "\n", "valkey/valkey", "8.0", digestB,
+			"images:\n  - name: redis\n    newName: valkey/valkey\n    newTag: 8.0@" + digestB + "\n"},
+		{"newName with digest field", "images:\n  - name: pg\n    newName: postgres\n    newTag: '16.4'\n    digest: " + digestA + "\n", "ghcr.io/org/pg", "17.0", digestB,
+			"images:\n  - name: pg\n    newName: ghcr.io/org/pg\n    newTag: '17.0'\n    digest: " + digestB + "\n"},
+	} {
+		deps, err := m.Extract("kustomization.yaml", []byte(tt.src), manager.Env{})
+		if err != nil || len(deps) == 0 {
+			t.Fatalf("%s: %+v, %v", tt.name, deps, err)
+		}
+		d, err := m.(manager.Renamer).Rename(deps[0], tt.newName)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		edits, err := m.Edits(dep.Update{Dep: deps[0], NewName: tt.newName, NewVersion: tt.newVersion, NewDigest: tt.newDigest})
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		out, err := patch.Apply([]byte(tt.src), edits)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if string(out) != tt.want {
+			t.Errorf("%s: got\n%q\nwant\n%q", tt.name, out, tt.want)
+			continue
+		}
+		// The result extracts as the renamed image.
+		again, err := m.Extract("kustomization.yaml", out, manager.Env{})
+		if err != nil || len(again) == 0 || again[0].Name != d.Name || again[0].Source != d.Source || again[0].Skip != "" {
+			t.Errorf("%s: re-extracted %+v, %v; want %s", tt.name, again, err, d.Name)
+		}
+	}
+}
+
+func TestRename(t *testing.T) {
+	r := New().(manager.Renamer)
+	d := dep.Dep{Manager: Name, Datasource: "docker", Name: "nginx", Source: "docker.io/library/nginx"}
+	for name, source := range map[string]string{
+		"ghcr.io/org/nginx": "ghcr.io/org/nginx",
+		"bitnami/nginx":     "docker.io/bitnami/nginx",
+	} {
+		got, err := r.Rename(d, name)
+		if err != nil || got.Name != name || got.Source != source {
+			t.Errorf("Rename(%q) = %s %s, %v; want %s %s", name, got.Name, got.Source, err, name, source)
+		}
+	}
+	for _, name := range []string{"UPPER", "nginx:1.0", "nginx@" + digestA, ""} {
+		if _, err := r.Rename(d, name); err == nil {
+			t.Errorf("Rename(%q): no error", name)
+		}
+	}
+}
+
+func TestRenameChart(t *testing.T) {
+	m := New()
+	const src = "helmCharts:\n  - name: redis\n    repo: https://charts.bitnami.com/bitnami/\n    version: 20.1.0\n"
+	deps, err := m.Extract("kustomization.yaml", []byte(src), manager.Env{})
+	if err != nil || len(deps) != 1 || !deps[0].Renamable() {
+		t.Fatalf("got %+v, %v; want one renamable chart", deps, err)
+	}
+	for _, tt := range []struct{ newName, source, want string }{
+		{"valkey", "https://charts.bitnami.com/bitnami", "helmCharts:\n  - name: valkey\n    repo: https://charts.bitnami.com/bitnami/\n    version: 20.2.0\n"},
+		{"oci://registry-1.docker.io/bitnamicharts/valkey", "oci://registry-1.docker.io/bitnamicharts",
+			"helmCharts:\n  - name: valkey\n    repo: oci://registry-1.docker.io/bitnamicharts\n    version: 20.2.0\n"},
+	} {
+		d, err := m.(manager.Renamer).Rename(deps[0], tt.newName)
+		if err != nil || d.Name != "valkey" || d.Source != tt.source {
+			t.Fatalf("Rename(%q) = %s %s, %v", tt.newName, d.Name, d.Source, err)
+		}
+		edits, err := m.Edits(dep.Update{Dep: deps[0], NewName: tt.newName, NewVersion: "20.2.0"})
+		if err != nil {
+			t.Fatalf("%s: %v", tt.newName, err)
+		}
+		out, err := patch.Apply([]byte(src), edits)
+		if err != nil || string(out) != tt.want {
+			t.Errorf("%s: got\n%s\n%v; want\n%s", tt.newName, out, err, tt.want)
+		}
+	}
+	if _, err := m.(manager.Renamer).Rename(deps[0], "Not a chart!"); err == nil {
+		t.Error("invalid chart name accepted")
+	}
+}
+
 func replaceOnce(t *testing.T, s, from, to string) string {
 	t.Helper()
 	i := indexOnce(t, s, from)

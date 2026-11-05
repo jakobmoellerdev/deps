@@ -15,21 +15,8 @@ import (
 // It checks that the span of every updatable dep holds its version.
 func linked(t *testing.T, m manager.Manager, files map[string]string) []string {
 	t.Helper()
-	paths := slices.Sorted(maps.Keys(files))
-	var per [][]dep.Dep
-	for _, p := range paths {
-		if !m.Match(p) {
-			t.Fatalf("%s not matched", p)
-		}
-		ds, err := m.Extract(p, []byte(files[p]), manager.Env{})
-		if err != nil {
-			t.Fatalf("%s: %v", p, err)
-		}
-		per = append(per, ds)
-	}
-	m.(manager.Linker).Link(per)
 	var out []string
-	for _, ds := range per {
+	for _, ds := range linkedDeps(t, m, files) {
 		for _, d := range ds {
 			if d.Manager != Name || d.Datasource != Datasource || d.Versioning != Versioning {
 				t.Errorf("%+v: wrong manager/datasource/versioning", d)
@@ -43,6 +30,33 @@ func linked(t *testing.T, m manager.Manager, files map[string]string) []string {
 		}
 	}
 	return out
+}
+
+// linkedDeps extracts files in path order with one manager and links them like the engine.
+// It checks that every NamePart holds its text.
+func linkedDeps(t *testing.T, m manager.Manager, files map[string]string) [][]dep.Dep {
+	t.Helper()
+	paths := slices.Sorted(maps.Keys(files))
+	var per [][]dep.Dep
+	for _, p := range paths {
+		if !m.Match(p) {
+			t.Fatalf("%s not matched", p)
+		}
+		ds, err := m.Extract(p, []byte(files[p]), manager.Env{})
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		for _, d := range ds {
+			for _, np := range d.NameParts {
+				if got := files[p][np.Span.Start:np.Span.End]; got != np.Text {
+					t.Errorf("%s:%d: name part %q at %v, want %q", p, d.Line, got, np.Span, np.Text)
+				}
+			}
+		}
+		per = append(per, ds)
+	}
+	m.(manager.Linker).Link(per)
+	return per
 }
 
 func check(t *testing.T, got, want []string) {

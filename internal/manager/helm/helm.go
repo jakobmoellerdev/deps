@@ -67,8 +67,20 @@ func (m *helmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep
 	return m.manifests(file, src), nil
 }
 
-// Edits replaces the version.
+// Edits replaces the version and, for a replacement (u.NewName), the chart name and the
+// repository it moves to (see Rename).
 func (*helmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
-	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+	var edits []patch.Edit
+	if u.NewName != "" {
+		ne, err := NameEdits(d, u.NewName)
+		if err != nil {
+			return nil, err
+		}
+		edits = ne
+	}
+	if u.NewVersion != d.Version {
+		edits = append(edits, patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion})
+	}
+	return edits, nil
 }

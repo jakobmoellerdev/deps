@@ -145,6 +145,9 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 	if t.Policy.Monorepo != "" {
 		line("builtin", "monorepo %s -> group %q", t.Policy.Monorepo, config.MonorepoGroup(t.Policy.Monorepo))
 	}
+	if t.Policy.Replacement != "" {
+		line("builtin", "replacement %s -> %s", t.Policy.Replacement, t.Policy.ReplacementName)
+	}
 	// Rules with updateTypes that applied to the updates, after the pre-policy rules, and the
 	// per-type policies they produced (once per type).
 	type kindRule struct {
@@ -164,7 +167,7 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 			kindPolicies = append(kindPolicies, tu.Policy)
 		}
 	}
-	if len(t.Rules) == 0 && len(kindRules) == 0 && t.Policy.Monorepo == "" {
+	if len(t.Rules) == 0 && len(kindRules) == 0 && t.Policy.Monorepo == "" && t.Policy.Replacement == "" {
 		line("rules", "none")
 	}
 	for i, r := range t.Rules {
@@ -279,6 +282,15 @@ func describeRule(r config.Rule) string {
 	if r.RangeStrategy != "" {
 		add("rangeStrategy", r.RangeStrategy)
 	}
+	if r.ReplacementName != "" {
+		add("replacementName", r.ReplacementName)
+	}
+	if r.ReplacementVersion != "" {
+		add("replacementVersion", r.ReplacementVersion)
+	}
+	if r.ReplacementPrefix != "" {
+		add("replacementPrefix", r.ReplacementPrefix)
+	}
 	for _, b := range []struct {
 		k string
 		v *bool
@@ -330,6 +342,12 @@ func describePolicy(p config.Policy) string {
 	}
 	if p.RangeStrategy != "" && p.RangeStrategy != config.RangeAuto {
 		s += " rangeStrategy=" + p.RangeStrategy
+	}
+	if p.ReplacementName != "" {
+		s += " replacement=" + p.ReplacementName
+		if p.ReplacementVersion != "" {
+			s += "@" + p.ReplacementVersion
+		}
 	}
 	switch {
 	case p.Automerge && p.AutomergeType == config.AutomergeTypeBranch:

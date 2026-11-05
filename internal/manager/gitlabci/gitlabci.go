@@ -107,6 +107,15 @@ func (gitlabManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
 }
 
+// Rename implements manager.Renamer for image references, like the docker manager; includes
+// and components cannot be renamed.
+func (gitlabManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	if d.DepType != TypeImage && d.DepType != TypeService {
+		return d, errors.New("only images can be replaced")
+	}
+	return docker.Rename(d, name)
+}
+
 type extractor struct {
 	file  string
 	src   []byte
@@ -169,7 +178,7 @@ func (x *extractor) ref(depType string, v *yaml.Node) {
 	case off < 0:
 		d.Skip = "cannot locate value"
 	default:
-		docker.ParseRef(&d, off, v.Value)
+		docker.ParseInlineRef(&d, off, v.Value)
 	}
 	x.deps = append(x.deps, d)
 }

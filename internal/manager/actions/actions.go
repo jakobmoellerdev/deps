@@ -5,6 +5,7 @@ package actions
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -61,7 +62,8 @@ func (actionsManager) Extract(file string, src []byte, env manager.Env) ([]dep.D
 
 // Edits rewrites the ref: tag → tag, pinned → new digest plus comment version, or
 // tag → digest with " # <version>" inserted after the value. A per-action tag prefix
-// (`@get-vault-secrets/v1.3.1`) is kept.
+// (`@get-vault-secrets/v1.3.1`) is kept; with u.NewName it becomes the new name's prefix
+// (see newPrefix).
 func (actionsManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	var edits []patch.Edit
@@ -82,15 +84,84 @@ func (actionsManager) Edits(u dep.Update) ([]patch.Edit, error) {
 		}
 	default:
 		p := refPrefix(d)
+		np := p
+		if u.NewName != "" {
+			np = newPrefix(p, u.NewName)
+		}
 		edits = []patch.Edit{
 			{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: p + d.Version, New: u.NewDigest},
-			{Start: d.InsertAt, End: d.InsertAt, New: " # " + p + u.NewVersion},
+			{Start: d.InsertAt, End: d.InsertAt, New: " # " + np + u.NewVersion},
 		}
 	}
 	if d.InputSpan.End > d.InputSpan.Start && u.NewVersion != d.Version {
 		edits = append(edits, patch.Edit{Start: d.InputSpan.Start, End: d.InputSpan.End, Old: d.Version, New: u.NewVersion})
 	}
+	if u.NewName != "" {
+		nd, prefix := d, -1
+		for i, p := range d.NameParts {
+			if p.Role == roleTagPrefix {
+				nd.NameParts, prefix = d.NameParts[:i:i], i
+				break
+			}
+		}
+		ne, err := manager.NameEdits(nd, u.NewName)
+		if err != nil {
+			return nil, err
+		}
+		edits = append(edits, ne...)
+		// The ref's prefix is gone when the whole ref became a digest.
+		if prefix >= 0 && (u.NewDigest == "" || d.Digest != "") {
+			p := d.NameParts[prefix]
+			if np := newPrefix(p.Text, u.NewName); np != p.Text {
+				edits = append(edits, patch.Edit{Start: p.Span.Start, End: p.Span.End, Old: p.Text, New: np})
+			}
+		}
+	}
 	return edits, nil
+}
+
+// roleTagPrefix is the role of the NamePart over the per-action tag prefix (`get-vault-secrets/`)
+// of a ref or version comment. Edits writes it itself; it is never passed to NameEdits.
+const roleTagPrefix = "actions-tag-prefix"
+
+// newPrefix returns the per-action tag prefix of name in the form of prefix (without the
+// "/"-joined path elements: the last element; with them: the full subpath), plus "/";
+// "" for no prefix or a root action name. A single-element prefix of a multi-element new
+// path is ambiguous and rejected by Rename.
+func newPrefix(prefix, name string) string {
+	if prefix == "" {
+		return ""
+	}
+	sub, last := subpath(name)
+	if sub == "" {
+		return ""
+	}
+	if strings.Contains(strings.TrimSuffix(prefix, "/"), "/") {
+		return sub + "/"
+	}
+	return last + "/"
+}
+
+// Rename implements manager.Renamer: name is owner/repo[/path] on the host of the current
+// action. A per-action tag prefix follows the new path (Edits) in its written form; a
+// prefix of a one-element path (`x/` of owner/repo/x) cannot tell whether a multi-element
+// new path's tags use the full path or its last element, so that is rejected.
+func (actionsManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	owner, rest, _ := strings.Cut(name, "/")
+	repo, _, _ := strings.Cut(rest, "/")
+	if owner == "" || repo == "" || strings.ContainsAny(name, "@ \t") {
+		return d, fmt.Errorf("action name %q is not owner/repo[/path]", name)
+	}
+	for _, p := range d.NameParts {
+		sub, last := subpath(d.Name)
+		nsub, nlast := subpath(name)
+		if p.Role == roleTagPrefix && sub == last && nsub != nlast {
+			return d, fmt.Errorf("ambiguous per-action tag prefix %q for %q: %s/ or %s/", p.Text, name, nsub, nlast)
+		}
+	}
+	host, _, _ := strings.Cut(strings.TrimPrefix(d.Source, "https://"), "/")
+	d.Name, d.Source = name, "https://"+host+"/"+owner+"/"+repo
+	return d, nil
 }
 
 // refPrefix returns the per-action tag prefix of an unpinned ref (`get-vault-secrets/` of
@@ -188,6 +259,10 @@ func (x *extractor) add(v *yaml.Node) {
 	}
 	end := start + len(v.Value)
 	d.RefSpan = dep.Span{Start: end - len(u.Ref), End: end}
+	if strings.HasPrefix(v.Value, u.Name+"@") {
+		// owner/repo[/sub]@ref written literally: replacements rewrite its name.
+		d.NameParts = []dep.NamePart{{Span: dep.Span{Start: start, End: start + len(u.Name)}, Text: u.Name}}
+	}
 	d.InsertAt = end
 	if q := manager.QuoteChar(v.Style); q != 0 && end < le && x.src[end] == q {
 		d.InsertAt++
@@ -196,8 +271,11 @@ func (x *extractor) add(v *yaml.Node) {
 	switch {
 	case manager.IsHex(u.Ref, 40, 64):
 		d.Digest = u.Ref
-		if sp, ver, ok := x.commentVersion(u.Name, d.InsertAt, le); ok {
+		if sp, ver, p, ok := x.commentVersion(u.Name, d.InsertAt, le); ok {
 			d.Version, d.VersionSpan = ver, sp
+			if s := sp.Start - p; p > 0 && d.NameParts != nil {
+				d.NameParts = append(d.NameParts, dep.NamePart{Span: dep.Span{Start: s, End: sp.Start}, Text: string(x.src[s:sp.Start]), Role: roleTagPrefix})
+			}
 		} else {
 			d.Skip = "pinned without version comment"
 		}
@@ -206,6 +284,9 @@ func (x *extractor) add(v *yaml.Node) {
 			d.Version = u.Ref
 		} else if p := tagPrefixLen(u.Name, u.Ref); p > 0 {
 			d.Version, d.VersionSpan = u.Ref[p:], dep.Span{Start: d.RefSpan.Start + p, End: d.RefSpan.End}
+			if d.NameParts != nil {
+				d.NameParts = append(d.NameParts, dep.NamePart{Span: dep.Span{Start: d.RefSpan.Start, End: d.RefSpan.Start + p}, Text: u.Ref[:p], Role: roleTagPrefix})
+			}
 		} else {
 			d.Skip = "non-version ref"
 		}
@@ -214,11 +295,12 @@ func (x *extractor) add(v *yaml.Node) {
 }
 
 // commentVersion finds the version token in the first comment in src[from:le]; a per-action
-// tag prefix of action name (`# get-vault-secrets/v1.3.1`) is not part of it.
-func (x *extractor) commentVersion(name string, from, le int) (dep.Span, string, bool) {
+// tag prefix of action name (`# get-vault-secrets/v1.3.1`) is not part of it, its length is
+// returned as pre.
+func (x *extractor) commentVersion(name string, from, le int) (sp dep.Span, ver string, pre int, ok bool) {
 	h := bytes.IndexByte(x.src[from:le], '#')
 	if h < 0 {
-		return dep.Span{}, "", false
+		return dep.Span{}, "", 0, false
 	}
 	s := from + h + 1
 	for s < le && (x.src[s] == ' ' || x.src[s] == '\t') {
@@ -232,17 +314,16 @@ func (x *extractor) commentVersion(name string, from, le int) (dep.Span, string,
 	if strings.HasPrefix(tok, "ratchet:") {
 		a := strings.LastIndexByte(tok, '@')
 		if a < 0 {
-			return dep.Span{}, "", false
+			return dep.Span{}, "", 0, false
 		}
 		s += a + 1
 		tok = tok[a+1:]
 	}
-	if p := tagPrefixLen(name, tok); p > 0 {
-		s += p
-		tok = tok[p:]
-	}
+	pre = tagPrefixLen(name, tok)
+	s += pre
+	tok = tok[pre:]
 	if _, ok := versioning.ParseTag(tok); !ok {
-		return dep.Span{}, "", false
+		return dep.Span{}, "", 0, false
 	}
-	return dep.Span{Start: s, End: e}, tok, true
+	return dep.Span{Start: s, End: e}, tok, pre, true
 }

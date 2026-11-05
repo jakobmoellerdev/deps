@@ -98,6 +98,7 @@ var Doc = refdoc.Manager{
 		{Title: "Shared versions", Body: "One `[versions]` entry or variable may serve many libraries and plugins; each becomes a dep with the same file and span. " +
 			"`plan` and `apply` update the definition once. `run` groups the updates of deps sharing a definition into one PR; group rules, for example " +
 			"`{manager: gradle, names: [\"org.jetbrains.kotlin*\"], group: kotlin}`, combine further deps."},
+		{Title: "Replacements", Body: "Literal coordinates (`\"g:a:v\"` strings, `group`/`name` maps, catalog `module` and `group`/`name`, settings `library(...)`) and plugin ids can be [replaced](configuration.md#rulesreplacementname); interpolated names, `kotlin(\"...\")` plugins and deps whose version variable lives in another file are not. A replacement version is not written to a shared `version.ref` or variable."},
 		{Title: "Not covered", Items: []string{
 			"Values computed from expressions (`\"$a.$b\"`, `if`/`?:`, `versions[\"a\"]!![\"b\"]`), catalogs imported in settings with `from(files(…))` (the TOML file itself is a catalog dep source) and `useModule(…)` in `resolutionStrategy`.",
 			"Variables defined in `~/.gradle/gradle.properties`, by `-P`/environment, or in included builds other than `buildSrc`.",

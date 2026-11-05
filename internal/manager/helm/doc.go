@@ -50,6 +50,7 @@ var Doc = refdoc.Manager{
 			"A Flux `OCIRepository` (`spec.ref.semver` skips as `version range`) that neither a HelmRelease `chartRef` names nor declares the Helm chart media type is a Kustomization artifact, not a dep.",
 			"HelmReleases with a `chartRef` carry no version; the OCIRepository does. Container images in the same files (values) are found by the docker manager.",
 		}},
+		{Title: "Replacements", Body: "A chart is [replaced](configuration.md#rulesreplacementname) by a chart name (same repository), or `<http(s):// or oci:// URL>/<chart>` (or `host/path/<chart>` for OCI) to move it, where the repository is written next to the chart (Chart.yaml `repository`, Argo CD `repoURL`, Flux OCIRepository `url`, k0s `url`, `oci://` references); alias and `sourceRef` repositories only allow a new chart name. `Chart.lock` entries follow the renamed or moved chart."},
 		{Title: "Edits", Body: "The version is replaced in place."},
 	},
 }

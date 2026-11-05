@@ -246,6 +246,85 @@ func TestEditsTagPrefix(t *testing.T) {
 	}
 }
 
+// Replacements rewrite root and subdirectory action names; a per-action tag prefix follows
+// the new path in its written form (full subpath or last element).
+func TestEditsRename(t *testing.T) {
+	src := "- uses: a/b@v1\n" +
+		"- uses: o/r/actions/x@v1.0.0\n" +
+		"- uses: o/r/actions/x@x/v1.0.2\n" +
+		"- uses: o/r/actions/x@" + sha + " # x/v1.0.2\n" +
+		"- uses: 'o/r/actions/x@actions/x/v1'\n" +
+		"- uses: o/r/x@x/v1\n"
+	deps, err := New().Extract("action.yml", []byte(src), env)
+	if err != nil || len(deps) != 6 {
+		t.Fatalf("deps = %+v, err = %v", deps, err)
+	}
+	for i, n := range []int{1, 1, 2, 2, 2, 2} {
+		if got := len(deps[i].NameParts); got != n {
+			t.Errorf("%d: %d name parts %+v, want %d", i, got, deps[i].NameParts, n)
+		}
+	}
+	sha2 := strings.Repeat("b", 40)
+	tests := []struct {
+		u    dep.Update
+		want string
+	}{
+		{dep.Update{Dep: deps[0], NewVersion: "v2", NewName: "c/d"}, "- uses: c/d@v2\n"},
+		{dep.Update{Dep: deps[1], NewVersion: "v1.1.0", NewName: "n/m/y"}, "- uses: n/m/y@v1.1.0\n"},
+		{dep.Update{Dep: deps[2], NewVersion: "v1.0.4", NewName: "n/m/actions/y"}, "- uses: n/m/actions/y@y/v1.0.4\n"},
+		{dep.Update{Dep: deps[2], NewVersion: "v1.0.4", NewName: "n/m/tools/x"}, "- uses: n/m/tools/x@x/v1.0.4\n"},
+		{dep.Update{Dep: deps[2], NewVersion: "v1.0.4", NewDigest: sha2, NewName: "n/m/actions/y"}, "- uses: n/m/actions/y@" + sha2 + " # y/v1.0.4\n"},
+		{dep.Update{Dep: deps[3], NewVersion: "v1.0.4", NewDigest: sha2, NewName: "n/m/actions/y"}, "- uses: n/m/actions/y@" + sha2 + " # y/v1.0.4\n"},
+		{dep.Update{Dep: deps[4], NewVersion: "v2", NewName: "o/r/tools/y"}, "- uses: 'o/r/tools/y@tools/y/v2'\n"},
+		{dep.Update{Dep: deps[4], NewVersion: "v2", NewDigest: sha2, NewName: "o/r/tools/y"}, "- uses: 'o/r/tools/y@" + sha2 + "' # tools/y/v2\n"},
+		{dep.Update{Dep: deps[5], NewVersion: "v2", NewName: "o/r/y"}, "- uses: o/r/y@y/v2\n"},
+		{dep.Update{Dep: deps[5], NewVersion: "v2", NewName: "o/s"}, "- uses: o/s@v2\n"},
+	}
+	for i, tt := range tests {
+		edits, err := New().Edits(tt.u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := patch.Apply([]byte(src), edits)
+		if err != nil {
+			t.Fatalf("%d: %v", i, err)
+		}
+		if got := strings.SplitAfter(string(out), "\n")[tt.u.Dep.Line-1]; got != tt.want {
+			t.Errorf("%d: got %q, want %q", i, got, tt.want)
+		}
+	}
+}
+
+func TestRename(t *testing.T) {
+	src := "- uses: a/b/c@v1\n- uses: o/r/x@x/v1\n- uses: https://gitea.com/a/b@v1\n"
+	deps, err := New().Extract("action.yml", []byte(src), env)
+	if err != nil || len(deps) != 3 {
+		t.Fatalf("deps = %+v, err = %v", deps, err)
+	}
+	r := New().(manager.Renamer)
+	for _, tt := range []struct {
+		d                 dep.Dep
+		name, wName, wSrc string
+	}{
+		{deps[0], "n/m/sub/y", "n/m/sub/y", "https://github.com/n/m"},
+		{deps[1], "n/m/y", "n/m/y", "https://github.com/n/m"},
+		{deps[2], "c/d", "c/d", "https://gitea.com/c/d"},
+	} {
+		got, err := r.Rename(tt.d, tt.name)
+		if err != nil || got.Name != tt.wName || got.Source != tt.wSrc {
+			t.Errorf("Rename(%q) = %q %q, %v; want %q %q", tt.name, got.Name, got.Source, err, tt.wName, tt.wSrc)
+		}
+	}
+	for _, tt := range []struct {
+		d    dep.Dep
+		name string
+	}{{deps[0], "n"}, {deps[0], "n/"}, {deps[0], "n/m@v1"}, {deps[1], "n/m/a/y"}} {
+		if _, err := r.Rename(tt.d, tt.name); err == nil {
+			t.Errorf("Rename(%q): want error", tt.name)
+		}
+	}
+}
+
 func TestTagExtract(t *testing.T) {
 	for name, want := range map[string]string{
 		"o/r":           "",

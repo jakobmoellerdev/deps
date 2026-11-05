@@ -150,6 +150,9 @@ func (x *extractor) coordinate(l strLit, class depClass, strict bool) bool {
 	if strings.Contains(parts[0]+parts[1], "$") {
 		d.Skip = "version variable"
 	} else {
+		if plainString(d.Name) {
+			d.NameParts = []dep.NamePart{namePart(d.Name, l.start, dep.NameWhole)}
+		}
 		x.version(&d, &meta, v, dep.Span{Start: start, End: start + len(v)})
 	}
 	x.taken[l.start] = true
@@ -247,6 +250,9 @@ func (x *extractor) mapNotation(i int, class depClass) {
 	default:
 		x.exprVersion(&d, &meta, ver.expr)
 	}
+	if plainString(d.Name) {
+		d.NameParts = []dep.NamePart{namePart(group, g.lit.start, dep.NameGroup), namePart(name, n.lit.start, dep.NameArtifact)}
+	}
 	x.taken[g.lit.start], x.taken[n.lit.start] = true, true
 	x.add(g.off, d, meta)
 }
@@ -268,7 +274,8 @@ func (x *extractor) plugin(m []int) {
 		return
 	}
 	id := s.text(idLit)
-	if string(s.src[m[2]:m[3]]) == "kotlin" {
+	kotlin := string(s.src[m[2]:m[3]]) == "kotlin"
+	if kotlin {
 		id = "org.jetbrains.kotlin." + id
 	}
 	v, _ := x.argValue(m[1])
@@ -277,6 +284,9 @@ func (x *extractor) plugin(m []int) {
 	}
 	d := newDep(x.file, DepTypePlugin, s.lines.at(m[0]))
 	d.Name = id
+	if !kotlin && plainString(id) {
+		d.NameParts = []dep.NamePart{namePart(id, idLit.start, dep.NameWhole)}
+	}
 	meta := depMeta{class: classPlugin}
 	switch {
 	case strings.Contains(id, "$"):

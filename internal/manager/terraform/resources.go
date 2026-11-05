@@ -142,8 +142,9 @@ func (x *extractor) containers(depType string, b body) {
 	}
 }
 
-// image extracts the image reference of attribute name of b like the docker manager does.
-// Expressions (mostly references to a docker_image or a variable) are not deps.
+// image extracts the image reference of attribute name of b like the docker manager does; the
+// literal names the image, which replacements rewrite. Expressions (mostly references to a
+// docker_image or a variable) are not deps.
 func (x *extractor) image(depType string, b body, name string) {
 	a := findAttr(b, name)
 	if a == nil || a.val.kind != kindString || a.val.str == "" {
@@ -154,7 +155,7 @@ func (x *extractor) image(depType string, b body, name string) {
 	if a.val.span == (dep.Span{}) {
 		d.Skip = "cannot locate value"
 	} else {
-		docker.ParseRef(&d, a.val.span.Start, a.val.str)
+		docker.ParseInlineRef(&d, a.val.span.Start, a.val.str)
 	}
 	x.deps = append(x.deps, d)
 }

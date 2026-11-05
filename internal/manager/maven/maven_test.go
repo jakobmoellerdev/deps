@@ -2,6 +2,7 @@ package maven
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -264,6 +265,10 @@ func TestExtractExtensionsXML(t *testing.T) {
 	if ds[0].Source != "" {
 		t.Errorf("source %q", ds[0].Source)
 	}
+	out, err := patch.Apply(src, must(New().Edits(dep.Update{Dep: ds[0], NewVersion: "1.2.0", NewName: "org.example:cache-extension"})))
+	if err != nil || !strings.Contains(string(out), "<groupId>org.example</groupId>\n    <artifactId>cache-extension</artifactId>") {
+		t.Errorf("renamed extensions.xml %q, %v", out, err)
+	}
 }
 
 func TestExtractErrors(t *testing.T) {
@@ -384,6 +389,152 @@ func TestEdits(t *testing.T) {
 	}
 	if len(out) != len(src) {
 		t.Errorf("length changed by %d", len(out)-len(src))
+	}
+}
+
+const renamePOM = `<project>
+  <parent><groupId>org.example</groupId><artifactId>parent</artifactId><version>1.0</version></parent>
+  <properties><lib.version>2.0</lib.version></properties>
+  <dependencies>
+    <dependency><groupId>com.old</groupId><artifactId>lib</artifactId><version>1.0</version></dependency>
+    <dependency><groupId>com.old</groupId><artifactId>prop</artifactId><version>${lib.version}</version></dependency>
+    <dependency><groupId>${project.groupId}</groupId><artifactId>self</artifactId><version>1</version></dependency>
+    <dependency><groupId>com<!-- c -->.old</groupId><artifactId>split</artifactId><version>1</version></dependency>
+  </dependencies>
+  <build><plugins>
+    <plugin><groupId>org.codehaus.mojo</groupId><artifactId>old-plugin</artifactId><version>1.0</version></plugin>
+    <plugin><artifactId>maven-surefire-plugin</artifactId><version>3.0</version></plugin>
+  </plugins></build>
+</project>`
+
+// TestExtractNameParts checks that only deps with a literal, locatable <groupId> and
+// <artifactId> are renamable, and that the parts hold the coordinates.
+func TestExtractNameParts(t *testing.T) {
+	src := []byte(renamePOM)
+	renamable := map[string]bool{
+		"org.example:parent": true, "com.old:lib": true, "com.old:prop": true, "org.codehaus.mojo:old-plugin": true,
+		"org.example:self": false, // ${project.groupId}
+		"com.old:split":    false, // <groupId> text split by a comment
+		"org.apache.maven.plugins:maven-surefire-plugin": false, // default groupId
+	}
+	ds := extract(t, "pom.xml", src)
+	if len(ds) != len(renamable) {
+		t.Fatalf("got %d deps, want %d", len(ds), len(renamable))
+	}
+	for _, d := range ds {
+		want, ok := renamable[d.Name]
+		if !ok || d.Renamable() != want {
+			t.Errorf("%s: Renamable = %v", d.Name, d.Renamable())
+			continue
+		}
+		if !want {
+			continue
+		}
+		group, artifact, _ := strings.Cut(d.Name, ":")
+		if len(d.NameParts) != 2 || d.NameParts[0].Role != dep.NameGroup || d.NameParts[0].Text != group ||
+			d.NameParts[1].Role != dep.NameArtifact || d.NameParts[1].Text != artifact {
+			t.Errorf("%s: NameParts %+v", d.Name, d.NameParts)
+		}
+		for _, p := range d.NameParts {
+			if string(src[p.Span.Start:p.Span.End]) != p.Text {
+				t.Errorf("%s: span %v does not hold %q", d.Name, p.Span, p.Text)
+			}
+		}
+	}
+}
+
+// TestEditsRename checks that a replacement rewrites the version and the <groupId> and
+// <artifactId> that change.
+func TestEditsRename(t *testing.T) {
+	tests := []struct {
+		name, newName, newVersion string
+		edits                     int // version + changed name parts
+		want                      []string
+	}{{
+		name: "com.old:lib", newName: "com.new:lib", newVersion: "1.1", edits: 2,
+		want: []string{"<dependency><groupId>com.new</groupId><artifactId>lib</artifactId><version>1.1</version>"},
+	}, {
+		name: "com.old:prop", newName: "com.new:prop2", newVersion: "2.1", edits: 3,
+		want: []string{"<lib.version>2.1</lib.version>", "<groupId>com.new</groupId><artifactId>prop2</artifactId><version>${lib.version}</version>"},
+	}, {
+		name: "org.codehaus.mojo:old-plugin", newName: "org.codehaus.mojo:new-plugin", newVersion: "2.0", edits: 2,
+		want: []string{"<plugin><groupId>org.codehaus.mojo</groupId><artifactId>new-plugin</artifactId><version>2.0</version>"},
+	}, {
+		name: "org.example:parent", newName: "org.other:parent2", newVersion: "1.0", edits: 3,
+		want: []string{"<parent><groupId>org.other</groupId><artifactId>parent2</artifactId><version>1.0</version>"},
+	}}
+	src := []byte(renamePOM)
+	ds := extract(t, "pom.xml", src)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			i := slices.IndexFunc(ds, func(d dep.Dep) bool { return d.Name == tt.name })
+			if i < 0 {
+				t.Fatalf("no dep %s", tt.name)
+			}
+			edits, err := New().Edits(dep.Update{Dep: ds[i], NewVersion: tt.newVersion, NewName: tt.newName})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(edits) != tt.edits {
+				t.Errorf("got %d edits, want %d: %+v", len(edits), tt.edits, edits)
+			}
+			out, err := patch.Apply(src, edits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, s := range tt.want {
+				if !strings.Contains(string(out), s) {
+					t.Errorf("patched pom lacks %q:\n%s", s, out)
+				}
+			}
+		})
+	}
+}
+
+// TestEditsRenameUnlocatable checks that a replacement of a dep without NameParts fails.
+func TestEditsRenameUnlocatable(t *testing.T) {
+	for _, d := range extract(t, "pom.xml", []byte(renamePOM)) {
+		if d.Renamable() {
+			continue
+		}
+		if _, err := New().Edits(dep.Update{Dep: d, NewVersion: d.Version, NewName: "a:b"}); err == nil {
+			t.Errorf("%s: renamed without NameParts", d.Name)
+		}
+	}
+}
+
+// TestLinkRenameParentProperty checks that a dep whose version is defined in its parent pom
+// (where the dep moves) is not renamable.
+func TestLinkRenameParentProperty(t *testing.T) {
+	files := link(t,
+		"pom.xml", `<project><groupId>g</groupId><artifactId>root</artifactId><version>1</version><properties><lib.version>2.0</lib.version></properties></project>`,
+		"mod/pom.xml", `<project><parent><groupId>g</groupId><artifactId>root</artifactId><version>1</version></parent><artifactId>mod</artifactId>
+<dependencies><dependency><groupId>x</groupId><artifactId>lib</artifactId><version>${lib.version}</version></dependency>
+<dependency><groupId>x</groupId><artifactId>own</artifactId><version>1.0</version></dependency></dependencies></project>`)
+	for _, d := range files["mod/pom.xml"] {
+		switch d.Name {
+		case "x:lib":
+			if d.File != "pom.xml" || d.Renamable() {
+				t.Errorf("x:lib: File %s, Renamable %v", d.File, d.Renamable())
+			}
+		case "x:own":
+			if !d.Renamable() {
+				t.Error("x:own not renamable")
+			}
+		}
+	}
+}
+
+func TestRename(t *testing.T) {
+	d := dep.Dep{Name: "com.old:lib", Source: "https://repo.example/maven2/"}
+	got, err := New().(manager.Renamer).Rename(d, "com.new:lib-2_x.y")
+	if err != nil || got.Name != "com.new:lib-2_x.y" || got.Source != d.Source {
+		t.Errorf("Rename = %+v, %v", got, err)
+	}
+	for _, name := range []string{"", "lib", "com.new:", ":lib", "a:b:c", "a b:c", "a:${v}", "a/b:c"} {
+		if _, err := New().(manager.Renamer).Rename(d, name); err == nil {
+			t.Errorf("Rename(%q) accepted", name)
+		}
 	}
 }
 

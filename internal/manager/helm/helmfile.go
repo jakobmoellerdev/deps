@@ -15,7 +15,8 @@ import (
 // helmfileDeps extracts `releases[]` of every document of a helmfile, resolving `chart:
 // <repo>/<name>` through the `repositories[]` of all documents. In `.gotmpl` files every line
 // containing `{{` is blanked out before parsing (offsets stay valid), so templated values
-// are not deps.
+// are not deps. The chart name of `chart` is a NamePart; the repository is one only in an
+// `oci://` reference (a `<repo>/` alias may serve other releases).
 func helmfileDeps(file string, src []byte) ([]dep.Dep, error) {
 	parse := src
 	if strings.HasSuffix(file, ".gotmpl") {
@@ -67,6 +68,7 @@ func helmfileDeps(file string, src []byte) ([]dep.Dep, error) {
 			d.Line = chart.Line
 			d.Source, d.Name, d.Skip = helmfileChart(chart.Value, repos)
 			if d.Skip == "" {
+				d.NameParts = ChartParts(src, lines, chart, d.Name, strings.HasPrefix(chart.Value, "oci://"), nil)
 				setVersion(&d, src, lines, yamlspan.Get(r, "version"))
 			}
 			deps = append(deps, d)

@@ -80,6 +80,12 @@ tasks:
     cmds:
       - go run ./cmd/deps docs --out docs/reference --schema deps.schema.json --action action.yml
 
+  replacements:update:
+    desc: Refresh internal/config/renovate-replacements.json from Renovate's main branch and regenerate the built-in replacements
+    cmds:
+      - curl -fsSL https://raw.githubusercontent.com/renovatebot/renovate/main/lib/data/replacements.json -o internal/config/renovate-replacements.json
+      - go generate ./internal/config
+
   docs:check:
     desc: Fail if docs/reference or deps.schema.json differ from what `task docs` generates
     cmds:

@@ -18,13 +18,15 @@ func (x *crdExtractor) argoSpec(spec *yaml.Node) {
 }
 
 // argoSource extracts one source when it is a Helm chart (chart is set): the version is
-// targetRevision; a repoURL without a scheme is an OCI registry.
+// targetRevision; a repoURL without a scheme is an OCI registry. chart and repoURL are the
+// NameParts.
 func (x *crdExtractor) argoSource(s *yaml.Node) {
 	chartNode := yamlspan.Str(yamlspan.Get(s, "chart"))
 	if chartNode == nil || chartNode.Value == "" {
 		return
 	}
-	repo := yamlspan.Value(yamlspan.Get(s, "repoURL"))
+	repoNode := yamlspan.Str(yamlspan.Get(s, "repoURL"))
+	repo := yamlspan.Value(repoNode)
 	var skip string
 	switch {
 	case strings.Contains(repo, "{{") || strings.Contains(chartNode.Value, "{{"):
@@ -34,5 +36,8 @@ func (x *crdExtractor) argoSource(s *yaml.Node) {
 	case !strings.Contains(repo, "://"):
 		repo = "oci://" + repo
 	}
-	x.add(TypeArgoCD, repo, chartNode.Value, chartNode, yamlspan.Get(s, "targetRevision"), skip)
+	i := x.add(TypeArgoCD, repo, chartNode.Value, chartNode, yamlspan.Get(s, "targetRevision"), skip)
+	if skip == "" {
+		x.rename(i, chartNode, false, repoNode)
+	}
 }

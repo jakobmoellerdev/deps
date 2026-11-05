@@ -118,13 +118,54 @@ func (x *extractor) walk(b body) {
 	}
 }
 
-// Edits replaces the version token; image references are rewritten like the docker manager
-// rewrites them (tag, digest).
+// Edits replaces the version token and, for a replacement (u.NewName), the source address;
+// image references are rewritten like the docker manager rewrites them (name, tag, digest).
 func (tfManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	if u.Dep.Datasource == "docker" {
 		return docker.New().Edits(u)
 	}
-	return versionEdit(u)
+	return edits(u)
+}
+
+// Rename implements manager.Renamer: name is a provider source address `[host/]namespace/type`
+// or a registry module address `[host/]namespace/name/provider` as the source attribute
+// writes it, or an image name for the images of resources.
+func (tfManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	var host, path, wrote string
+	var ok bool
+	switch d.Datasource {
+	case "docker":
+		return docker.Rename(d, name)
+	case providerDatasource:
+		host, path, ok = providerAddress(name, "")
+		wrote, _, _ = providerAddress(written(d), "")
+	case moduleDatasource:
+		host, path, ok = moduleAddress(name)
+		wrote, _, _ = moduleAddress(written(d))
+	default:
+		return d, fmt.Errorf("%s deps cannot be renamed", d.DepType)
+	}
+	if !ok {
+		return d, fmt.Errorf("%q is not a %s address", name, d.Datasource)
+	}
+	return registryRename(d, name, host, path, wrote != "")
+}
+
+// edits returns the edits of u: the address for a replacement (u.NewName), and the version
+// token unless a replacement keeps the version.
+func edits(u dep.Update) ([]patch.Edit, error) {
+	if u.NewName == "" {
+		return versionEdit(u)
+	}
+	e, err := manager.NameEdits(u.Dep, u.NewName)
+	if err != nil || u.NewVersion == u.Dep.Version {
+		return e, err
+	}
+	v, err := versionEdit(u)
+	if err != nil {
+		return nil, err
+	}
+	return append(e, v...), nil
 }
 
 // versionEdit replaces the version token with the new version, written at the precision and
@@ -140,6 +181,40 @@ func versionEdit(u dep.Update) ([]patch.Edit, error) {
 		v = versioning.FitHashicorp(d.Version, v)
 	}
 	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: v}}, nil
+}
+
+// written returns the name of d as its file writes it ("" when it is not renamable).
+func written(d dep.Dep) string {
+	if !d.Renamable() {
+		return ""
+	}
+	return d.NameParts[0].Text
+}
+
+// registryRename returns d under the registry address name: path on host ("" when name names
+// none). A hostless name resolves against the registry of the dep's hostless written address
+// (d.Source, the default registry); replacing a written host (hosted) needs another host, as
+// the default registry the file would then resolve against (config terraform.defaultRegistry)
+// is not known here.
+func registryRename(d dep.Dep, name, host, path string, hosted bool) (dep.Dep, error) {
+	switch {
+	case host != "":
+		d.Source = "https://" + host
+	case hosted:
+		return d, fmt.Errorf("%q names no registry host, which the written source %q does", name, written(d))
+	}
+	d.Name = path
+	return d, nil
+}
+
+// nameParts locates the address v.str[off:off+n] of the string literal v (one NameWhole part);
+// nil when the bytes of v differ from its value (escapes).
+func nameParts(v value, off, n int) []dep.NamePart {
+	if v.span == (dep.Span{}) {
+		return nil
+	}
+	start := v.span.Start + off
+	return []dep.NamePart{{Span: dep.Span{Start: start, End: start + n}, Text: v.str[off : off+n]}}
 }
 
 // newExtractor returns the extractor of file: hostless addresses resolve against
@@ -194,6 +269,7 @@ func (x *extractor) provider(a attr) {
 	d := x.newDep(Name, DepTypeProvider, a.off)
 	d.Datasource = providerDatasource
 	source, version := "hashicorp/"+a.name, a.val
+	var named value // the literal source; zero for the implied hashicorp/<name>
 	switch a.val.kind {
 	case kindObject:
 		version = value{}
@@ -206,7 +282,7 @@ func (x *extractor) provider(a attr) {
 					x.deps = append(x.deps, d)
 					return
 				}
-				source = it.val.str
+				source, named = it.val.str, it.val
 			case "version":
 				version, hasVersion = it.val, true
 			}
@@ -226,8 +302,11 @@ func (x *extractor) provider(a attr) {
 		return
 	}
 	d.Name, d.Source = name, "https://"+host
-	if host == "terraform.io" && strings.HasPrefix(name, "builtin/") {
+	switch {
+	case host == "terraform.io" && strings.HasPrefix(name, "builtin/"):
 		d.Skip = "builtin provider"
+	case named.kind == kindString:
+		d.NameParts = nameParts(named, 0, len(source))
 	}
 	if d.Skip == "" {
 		setConstraint(&d, version)
@@ -253,6 +332,20 @@ func providerAddress(s, registry string) (host, name string, ok bool) {
 		return strings.ToLower(parts[0]), parts[1] + "/" + parts[2], true
 	}
 	return "", "", false
+}
+
+// moduleAddress splits a registry module address `[host/]namespace/name/provider` without a
+// subdirectory into its lowercase host ("" when absent) and `namespace/name/provider`; git
+// shorthands (`github.com/org/repo/x`) are no registry addresses.
+func moduleAddress(s string) (host, name string, ok bool) {
+	m := moduleRe.FindStringSubmatch(s)
+	if m == nil || strings.Contains(s, "//") {
+		return "", "", false
+	}
+	if _, git := parseGitSource(s); git {
+		return "", "", false
+	}
+	return strings.ToLower(m[1]), m[2], true
 }
 
 // module extracts the source of a module block: a registry address with its version
@@ -292,6 +385,11 @@ func (x *extractor) module(blk block) {
 			host = x.registry
 		}
 		d.Datasource, d.Name, d.Source = moduleDatasource, m[2], "https://"+host
+		n := len(m[2]) // the address before a //subdir
+		if m[1] != "" {
+			n += len(m[1]) + 1
+		}
+		d.NameParts = nameParts(src.val, 0, n)
 		if ver == nil {
 			d.Skip = "no version constraint"
 		} else {

@@ -164,3 +164,45 @@ func closedMatch(c platform.PR, grp engine.Group, major bool) (exact, same bool)
 	}
 	return exact, same
 }
+
+// declineReplacements adds the usual updates (dep.Update.Declined) of every replacement whose
+// PR was closed without merging (closedFor; no open PR on its branch, the dashboard's recreate
+// checkbox not ticked): closing a replacement declines the move, not the dep's updates. The
+// replacement stays, so its group is reported as skipped for the closed PR and the dashboard
+// can recreate it. Order is kept, each fallback right after its replacement.
+func declineReplacements(ups []dep.Update, open, closed []platform.PR, prefix string, dash *dashboard) []dep.Update {
+	if !slices.ContainsFunc(ups, func(u dep.Update) bool { return len(u.Declined) > 0 }) {
+		return ups
+	}
+	type key struct {
+		file    string
+		line    int
+		name    string
+		newName string
+	}
+	declined := map[key]bool{}
+	for _, g := range engine.GroupUpdates(ups, prefix) {
+		if prOf(open, g.Branch) != nil || dash.force(g.Branch).recreate {
+			continue
+		}
+		if c, _ := closedFor(closed, g); c == nil {
+			continue
+		}
+		for _, u := range g.Updates {
+			if len(u.Declined) > 0 {
+				declined[key{u.Dep.File, u.Dep.Line, u.Dep.Name, u.NewName}] = true
+			}
+		}
+	}
+	if len(declined) == 0 {
+		return ups
+	}
+	out := make([]dep.Update, 0, len(ups))
+	for _, u := range ups {
+		out = append(out, u)
+		if declined[key{u.Dep.File, u.Dep.Line, u.Dep.Name, u.NewName}] {
+			out = append(out, u.Declined...)
+		}
+	}
+	return out
+}

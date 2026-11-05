@@ -49,6 +49,7 @@ var Doc = refdoc.Manager{
 		{Title: "Names", Body: "References are parsed as docker does (names without a registry are on docker.io, single-component ones under library/). The dep name is the familiar name (`postgres`, `ghcr.io/org/img`); lookups use the canonical name."},
 		{Title: "Versioning", Body: "`docker`. Candidates need the same prefix, the same number of numeric parts and the same suffix."},
 		{Title: "Non-version tags", Body: "Non-version tags (`latest`, `bookworm`, commit hashes such as `3a22eba`) only get digest maintenance: a pinned ref → `digest` refresh; unpinned with `pin: digest` → `pin`; otherwise skipped as `non-version tag`."},
+		{Title: "Replacements", Body: "Image references written as one token (Dockerfiles, compose, workflows, Kubernetes manifests) and Helm values images (`repository`, and `registry` when set: the new name is split at its registry) can be [replaced](configuration.md#rulesreplacementname) by another image name; the tag and a pinned digest (of the new image) are written with it."},
 		{Title: "Edits", Items: []string{
 			"The tag is replaced in place.",
 			"`tag@sha256:…` is refreshed together with the tag.",

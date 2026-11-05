@@ -95,6 +95,10 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 - An action in a subdirectory of a repository that tags each action (`grafana/shared-workflows/actions/get-vault-secrets` with tags `get-vault-secrets/v1.3.1`) is versioned by the tags prefixed `<path>/` or `<last path element>/`; the version after the prefix is compared and written, digests and release times are looked up by the prefixed tag.
 - Without such tags the repository's tags are the versions. A rule's `extractVersion` replaces this.
 
+**Replacements.**
+
+`uses: owner/repo[/path]@ref` can be [replaced](configuration.md#rulesreplacementname) by another `owner/repo[/path]` on the same host. A per-action tag prefix in the ref or the pinned version comment is rewritten in the same form (full path or last element); a one-element prefix moving to a multi-element path is rejected as ambiguous.
+
 **Edits.**
 
 - A tag is replaced by the new tag at the same precision (`@v4` → `@v5`, `@v4.1.0` → `@v4.2.0`).
@@ -174,6 +178,10 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules, and 
 - A version is only an update when its `go.mod` declares the path it is required as. The `@v/<version>.mod` of a candidate that passed the other checks is read from the module download cache, else the GOPROXY URLs (one request per module@version and run). One that declares another path (`github.com/google/cel-go` v0.32.0 declares `cel.dev/cel-go`) is rejected like a too new one, and the next candidate of its PR bucket is tried; for a renamed module the next 8 are fetched concurrently. This applies to major module paths and pseudo-version heads too.
 - A requirement left without updates this way is skipped with `module path changed to <declared> (<module>@<version>)` (the newest such version): moving to the new path is a code change deps does not make. A failed `.mod` lookup is logged and leaves the candidate to `go mod tidy`; GONOPROXY/GOPRIVATE modules are not checked.
 - When `go mod tidy` still refuses a module version this way (`module declares its path as … but was required as …`, for a module the update pulls in, or one the check could not read), `run` skips the update with the same reason instead of failing: its PR group is reported as `skipped: update cannot be applied` and is no error, so it does not keep obsolete PRs open (`apply` leaves the update out and applies the others).
+
+**Replacements.**
+
+A require can be [replaced](configuration.md#rulesreplacementname) by another module path; like a major module path update, the import paths in the module's `.go` files are rewritten.
 
 **Post-processing (`apply`, `run`).**
 
@@ -259,6 +267,10 @@ References are parsed as docker does (names without a registry are on docker.io,
 
 Non-version tags (`latest`, `bookworm`, commit hashes such as `3a22eba`) only get digest maintenance: a pinned ref → `digest` refresh; unpinned with `pin: digest` → `pin`; otherwise skipped as `non-version tag`.
 
+**Replacements.**
+
+Image references written as one token (Dockerfiles, compose, workflows, Kubernetes manifests) and Helm values images (`repository`, and `registry` when set: the new name is split at its registry) can be [replaced](configuration.md#rulesreplacementname) by another image name; the tag and a pinned digest (of the new image) are written with it.
+
 **Edits.**
 
 - The tag is replaced in place.
@@ -308,6 +320,10 @@ Updates dependencies, tool versions and engines in `package.json`, and the lockf
 **Workspaces.**
 
 A dep naming a member of the manifest's own workspace is never updated.
+
+**Replacements.**
+
+Dependency-section entries can be [replaced](configuration.md#rulesreplacementname) by another package: the key is renamed and the range keeps its operator for the new version; the lockfile is regenerated as for other manifest changes.
 
 **Locked versions.**
 
@@ -415,6 +431,10 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 - A Flux `OCIRepository` (`spec.ref.semver` skips as `version range`) that neither a HelmRelease `chartRef` names nor declares the Helm chart media type is a Kustomization artifact, not a dep.
 - HelmReleases with a `chartRef` carry no version; the OCIRepository does. Container images in the same files (values) are found by the docker manager.
 
+**Replacements.**
+
+A chart is [replaced](configuration.md#rulesreplacementname) by a chart name (same repository), or `<http(s):// or oci:// URL>/<chart>` (or `host/path/<chart>` for OCI) to move it, where the repository is written next to the chart (Chart.yaml `repository`, Argo CD `repoURL`, Flux OCIRepository `url`, k0s `url`, `oci://` references); alias and `sourceRef` repositories only allow a new chart name. `Chart.lock` entries follow the renamed or moved chart.
+
 **Edits.**
 
 The version is replaced in place.
@@ -456,6 +476,10 @@ Updates image tags and digests, Helm chart versions and the `?ref=` of remote gi
 
 - Without `//`, the repository ends at `.git`, after `_git/<repo>` (Azure DevOps), after `org/repo` on github.com, gitlab.com and bitbucket.org, or at the end of the path.
 - The dep name is `host/org/repo`; tags are listed from `https://host/org/repo` (also for `ssh://` and scp-like targets). Targets without a `ref` track a branch and are no deps.
+
+**Replacements.**
+
+An `images` entry is [replaced](configuration.md#rulesreplacementname) by rewriting its `newName`, or by inserting `newName: <image>` after `name` (which the manifests match on); flow-style entries are not replaced. A `helmCharts` entry takes a chart name, or `<repository URL>/<chart>` to move it, which also rewrites `repo`.
 
 **Edits.**
 
@@ -1245,6 +1269,10 @@ Updates provider, module and Terraform version constraints in Terraform and Open
 - Images of the docker provider and of the kubernetes workload resources are parsed and edited like the docker manager's references (tags, `@sha256:` digests, digest refresh and `pin: digest`). Images given as expressions (`docker_image.x.image_id`, `var.image`) are not deps.
 - `tfe_workspace` `terraform_version` follows Terraform CLI releases like `required_version`.
 
+**Replacements.**
+
+Literal provider `source` addresses, registry module sources (a `//subdir` is kept) and container images in resources can be [replaced](configuration.md#rulesreplacementname): a new name with a host moves to that registry, one without keeps the file's registry (rejected when the file names a host). The lock entry of a renamed provider is dropped and the new one locked by `init`. Git, URL and local module sources, implied `hashicorp/` providers and the tool version are not replaced.
+
 **Lock file.**
 
 - `.terraform.lock.hcl` next to a configuration file gives its provider deps their locked version (lock entries are matched by `namespace/type`, so OpenTofu's `registry.opentofu.org/…` entries and a custom default registry match too). A lock file that does not parse is an error of the run.
@@ -1405,6 +1433,10 @@ Updates the versions of dependencies, plugins, build extensions, annotation proc
 - Each repository is passed to the datasource as `<id>=<url>/`. Without repositories, only Maven Central is used. URLs with properties are ignored.
 - `settings.xml` mirrors, credentials and active-profile repositories are applied by the maven datasource (see its docs), matched by repository id.
 
+**Replacements.**
+
+Dependencies, plugins with an explicit `groupId`, extensions, annotation processor paths and the parent can be [replaced](configuration.md#rulesreplacementname) by other `groupId:artifactId` coordinates when both are written literally; only the changed elements are rewritten. A replacement version is not written to a version property (`${...}`) other dependencies may share: such deps keep their version or are skipped.
+
 **Versioning.**
 
 `maven` (Maven's ComparableVersion): `1.0` = `1.0.0` = `1.0-final`, `alpha` < `beta` < `milestone` < `rc` < `snapshot` < release < `sp`. SNAPSHOTs are never proposed, other prereleases only from a prerelease, and the first unknown qualifier after a `-` must match (`33.3.1-jre` stays on `-jre`). Deps sharing a property take the highest version all of them reach. See [`rules[].versioning`](configuration.md#rulesversioning).
@@ -1461,6 +1493,10 @@ Updates Maven dependencies and Gradle plugins in Gradle version catalogs, build 
 **Shared versions.**
 
 One `[versions]` entry or variable may serve many libraries and plugins; each becomes a dep with the same file and span. `plan` and `apply` update the definition once. `run` groups the updates of deps sharing a definition into one PR; group rules, for example `{manager: gradle, names: ["org.jetbrains.kotlin*"], group: kotlin}`, combine further deps.
+
+**Replacements.**
+
+Literal coordinates (`"g:a:v"` strings, `group`/`name` maps, catalog `module` and `group`/`name`, settings `library(...)`) and plugin ids can be [replaced](configuration.md#rulesreplacementname); interpolated names, `kotlin("...")` plugins and deps whose version variable lives in another file are not. A replacement version is not written to a shared `version.ref` or variable.
 
 **Not covered.**
 

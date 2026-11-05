@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"path"
 	"regexp"
@@ -111,14 +112,15 @@ type propCond struct{ name, value string }
 type repo struct{ id, url string }
 
 // decl is the declaration of a dep: its index in the pom's deps, the group:artifact as
-// written, its <version> element, its profile (-1 = none) and a skip reason independent of
-// properties.
+// written, its <version> element, its profile (-1 = none), a skip reason independent of
+// properties and the NameParts of its literal <groupId> and <artifactId> (nil = none).
 type decl struct {
 	idx     int
 	name    string
 	version propDef
 	profile int
 	skip    string
+	names   []dep.NamePart
 }
 
 // New returns the maven manager.
@@ -465,10 +467,32 @@ func (m *mavenManager) parent(p *pom, byGA, byGAV map[string]*pom) *pom {
 	return byGA[p.parentGA]
 }
 
-// Edits replaces the version token (the property value for a `${name}` version).
+// Edits replaces the version token (the property value for a `${name}` version) and, for a
+// replacement, the <groupId> and <artifactId> (manager.NameEdits).
 func (*mavenManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
-	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+	edits := []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}
+	if u.NewName != "" {
+		ne, err := manager.NameEdits(d, u.NewName)
+		if err != nil {
+			return nil, err
+		}
+		edits = append(edits, ne...)
+	}
+	return edits, nil
+}
+
+// coordRe is a groupId:artifactId (Maven's id pattern for both).
+var coordRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$`)
+
+// Rename implements manager.Renamer: name is groupId:artifactId, looked up in the same
+// repositories (Source).
+func (*mavenManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	if !coordRe.MatchString(name) {
+		return d, fmt.Errorf("%q is not groupId:artifactId", name)
+	}
+	d.Name = name
+	return d, nil
 }
 
 type extractor struct {
@@ -690,11 +714,15 @@ func (x *extractor) add(e *node, depType, defaultGroup string, plugin bool, prof
 	if a == nil || v == nil || a.value == "" {
 		return
 	}
+	g := e.child("groupId")
 	group := cmp.Or(e.text("groupId"), defaultGroup)
 	if group == "" {
 		return
 	}
 	u := decl{idx: len(x.deps), name: group + ":" + a.value, version: propDef{value: v.value, span: v.span, line: v.line}, profile: profile}
+	if literal(g) && literal(a) {
+		u.names = []dep.NamePart{{Span: g.span, Text: g.value, Role: dep.NameGroup}, {Span: a.span, Text: a.value, Role: dep.NameArtifact}}
+	}
 	if depType == "system" && isRepoPath(e.text("systemPath")) {
 		u.skip = "system jar in repository"
 	}
@@ -706,6 +734,11 @@ func (x *extractor) add(e *node, depType, defaultGroup string, plugin bool, prof
 	x.pom.decls = append(x.pom.decls, u)
 	x.deps = append(x.deps, d)
 	x.pom.plugin = append(x.pom.plugin, plugin)
+}
+
+// literal reports whether element n holds a locatable value without properties.
+func literal(n *node) bool {
+	return n != nil && n.value != "" && n.span != (dep.Span{}) && !strings.Contains(n.value, "${")
 }
 
 // isRepoPath reports whether a <systemPath> is a file of the project (relative or below
@@ -723,12 +756,13 @@ type scope struct {
 	linked  bool    // poms holds every in-run parent: a missing property is remote
 }
 
-// resolve sets the name, version, RefSpan, VersionRef and skip of d from its declaration u.
-// A version from a property of another file (a parent pom, maven.config) moves the dep
-// (File, Line) to the definition.
+// resolve sets the name, NameParts, version, RefSpan, VersionRef and skip of d from its
+// declaration u. A version from a property of another file (a parent pom, maven.config) moves
+// the dep (File, Line) to the definition; its name is then not renamable, as the edits apply to
+// that file.
 func (s scope) resolve(d *dep.Dep, u decl) {
 	d.File, d.Line, d.Name, d.Version = s.poms[0].file, u.version.line, u.name, u.version.value
-	d.RefSpan, d.VersionRef, d.Skip = dep.Span{}, "", u.skip
+	d.RefSpan, d.VersionRef, d.Skip, d.NameParts = dep.Span{}, "", u.skip, u.names
 	if u.skip != "" {
 		return
 	}
@@ -767,7 +801,7 @@ func (s scope) resolve(d *dep.Dep, u decl) {
 	default:
 		d.Version, d.RefSpan, d.VersionRef = v.value, v.span, ref
 		if owner != s.poms[0].file {
-			d.File, d.Line = owner, v.line
+			d.File, d.Line, d.NameParts = owner, v.line, nil
 		}
 	}
 }

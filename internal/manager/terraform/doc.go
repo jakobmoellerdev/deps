@@ -64,6 +64,7 @@ var Doc = refdoc.Manager{
 			"Images of the docker provider and of the kubernetes workload resources are parsed and edited like the docker manager's references (tags, `@sha256:` digests, digest refresh and `pin: digest`). Images given as expressions (`docker_image.x.image_id`, `var.image`) are not deps.",
 			"`tfe_workspace` `terraform_version` follows Terraform CLI releases like `required_version`.",
 		}},
+		{Title: "Replacements", Body: "Literal provider `source` addresses, registry module sources (a `//subdir` is kept) and container images in resources can be [replaced](configuration.md#rulesreplacementname): a new name with a host moves to that registry, one without keeps the file's registry (rejected when the file names a host). The lock entry of a renamed provider is dropped and the new one locked by `init`. Git, URL and local module sources, implied `hashicorp/` providers and the tool version are not replaced."},
 		{Title: "Lock file", Items: []string{
 			"`.terraform.lock.hcl` next to a configuration file gives its provider deps their locked version (lock entries are matched by `namespace/type`, so OpenTofu's `registry.opentofu.org/…` entries and a custom default registry match too). A lock file that does not parse is an error of the run.",
 			"Post-processing (`apply`, `run`), scope: the directory of a patched configuration file that has a `.terraform.lock.hcl` next to it. Without a lock file nothing happens.",

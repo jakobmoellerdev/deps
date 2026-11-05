@@ -49,6 +49,7 @@ var Doc = refdoc.Manager{
 			"An action in a subdirectory of a repository that tags each action (`grafana/shared-workflows/actions/get-vault-secrets` with tags `get-vault-secrets/v1.3.1`) is versioned by the tags prefixed `<path>/` or `<last path element>/`; the version after the prefix is compared and written, digests and release times are looked up by the prefixed tag.",
 			"Without such tags the repository's tags are the versions. A rule's `extractVersion` replaces this.",
 		}},
+		{Title: "Replacements", Body: "`uses: owner/repo[/path]@ref` can be [replaced](configuration.md#rulesreplacementname) by another `owner/repo[/path]` on the same host. A per-action tag prefix in the ref or the pinned version comment is rewritten in the same form (full path or last element); a one-element prefix moving to a multi-element path is rejected as ambiguous."},
 		{Title: "Edits", Items: []string{
 			"A tag is replaced by the new tag at the same precision (`@v4` → `@v5`, `@v4.1.0` → `@v4.2.0`).",
 			"A pinned ref gets the new SHA, and the comment version is replaced.",

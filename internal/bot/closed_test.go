@@ -265,3 +265,35 @@ func TestClosedForCustomTitles(t *testing.T) {
 		})
 	}
 }
+
+// TestDeclineReplacements: a replacement whose PR was closed brings back the dep's usual
+// updates next to it; an open PR, a ticked recreate checkbox or a closed PR with another
+// title (a new replacement version) keep only the replacement.
+func TestDeclineReplacements(t *testing.T) {
+	d := dep.Dep{Manager: "npm", File: "package.json", Line: 1, Name: "jade", Version: "1.11.0"}
+	usual := dep.Update{Dep: d, Type: dep.Minor, NewVersion: "1.12.0"}
+	rep := dep.Update{Dep: d, Type: dep.Replacement, NewName: "pug", NewVersion: "2.0.0", Bucket: engine.ReplacementBucket, Declined: []dep.Update{usual}}
+	other := dep.Update{Dep: dep.Dep{Manager: "npm", File: "package.json", Line: 1, Name: "left-pad", Version: "1.3.0"}, Type: dep.Patch, NewVersion: "1.3.1"}
+	const branch, title = "deps/npm/jade-replacement", "chore(deps): replace jade with pug 2.0.0"
+	pr := func(t string) []platform.PR { return []platform.PR{{Number: 3, Head: branch, Title: t}} }
+	for _, tt := range []struct {
+		name         string
+		open, closed []platform.PR
+		dash         *dashboard
+		want         []string
+	}{
+		{"closed", nil, pr(title), nil, []string{"jade replacement 2.0.0", "jade minor 1.12.0", "left-pad patch 1.3.1"}},
+		{"no PR", nil, nil, nil, []string{"jade replacement 2.0.0", "left-pad patch 1.3.1"}},
+		{"open PR", pr(title), pr(title), nil, []string{"jade replacement 2.0.0", "left-pad patch 1.3.1"}},
+		{"recreate ticked", nil, pr(title), &dashboard{recreate: map[string]bool{branch: true}}, []string{"jade replacement 2.0.0", "left-pad patch 1.3.1"}},
+		{"other version closed", nil, pr("chore(deps): replace jade with pug 1.0.0"), nil, []string{"jade replacement 2.0.0", "left-pad patch 1.3.1"}},
+	} {
+		var got []string
+		for _, u := range declineReplacements([]dep.Update{rep, other}, tt.open, tt.closed, "", tt.dash) {
+			got = append(got, u.Dep.Name+" "+string(u.Type)+" "+u.NewVersion)
+		}
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("%s: %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

@@ -226,9 +226,9 @@ func lockName(addr string) string {
 	return addr
 }
 
-// changedProviders returns the lockNames of the providers whose version constraint differs
-// between the files in dir and their patched content, and whether any of them is an
-// OpenTofu file.
+// changedProviders returns the lockNames (as before the patch) of the providers whose version
+// constraint or address (a replacement) differs between the files in dir and their patched
+// content, and whether any of them is an OpenTofu file.
 func changedProviders(dir string, manifests map[string][]byte) (map[string]bool, bool, error) {
 	changed := map[string]bool{}
 	tofu := false
@@ -250,8 +250,9 @@ func changedProviders(dir string, manifests map[string][]byte) (map[string]bool,
 			return nil, false, fmt.Errorf("%s: patched file has %d deps, want %d", rel, len(after), len(before))
 		}
 		for i, d := range after {
-			if d.Datasource == providerDatasource && d.Version != before[i].Version {
-				changed[lockName(d.Name)] = true
+			// A renamed provider (replacement) drops the old name's entry; init locks the new one.
+			if d.Datasource == providerDatasource && (d.Version != before[i].Version || d.Name != before[i].Name || d.Source != before[i].Source) {
+				changed[lockName(before[i].Name)] = true
 			}
 		}
 	}

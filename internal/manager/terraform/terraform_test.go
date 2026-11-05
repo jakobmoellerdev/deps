@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +31,8 @@ func read(t *testing.T, name string) []byte {
 }
 
 // summarize renders each dep as "<line> <depType> <datasource> <name> <source> <version> <versioning> [<skip>]"
-// and checks that RefSpan covers the version (ranges that are never rewritten have none).
+// and checks that RefSpan covers the version (ranges that are never rewritten have none) and
+// NameParts their text.
 func summarize(t *testing.T, src []byte, deps []dep.Dep) []string {
 	t.Helper()
 	out := make([]string, 0, len(deps))
@@ -46,6 +48,11 @@ func summarize(t *testing.T, src []byte, deps []dep.Dep) []string {
 		default:
 			if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != d.Version {
 				t.Errorf("%s: RefSpan covers %q", s, got)
+			}
+		}
+		for _, p := range d.NameParts {
+			if got := string(src[p.Span.Start:p.Span.End]); got != p.Text || p.Role != dep.NameWhole {
+				t.Errorf("%s: name part %+v covers %q", s, p, got)
 			}
 		}
 		out = append(out, strings.TrimSpace(s))
@@ -390,5 +397,185 @@ config { call_module_type = "all" }
 	d := dep.Dep{Version: "0.21.1", RefSpan: dep.Span{Start: 1, End: 7}}
 	if e, _ := NewTFLint().Edits(dep.Update{Dep: d, NewVersion: "0.50.0"}); len(e) != 1 || e[0].Start != 1 || e[0].New != "0.50.0" {
 		t.Errorf("edits = %+v", e)
+	}
+}
+
+// replace extracts file with m, renames the first renamable dep named old to name at version
+// ("" = its current one) and returns the renamed dep and the changed lines of the patched file.
+func replace(t *testing.T, m manager.Manager, file, src string, env manager.Env, old, name, version string) (dep.Dep, []string, error) {
+	t.Helper()
+	deps, err := m.Extract(file, []byte(src), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summarize(t, []byte(src), deps) // checks the name parts
+	i := slices.IndexFunc(deps, func(d dep.Dep) bool { return d.Name == old && d.Renamable() })
+	if i < 0 {
+		t.Fatalf("no renamable dep %s", old)
+	}
+	d := deps[i]
+	nd, err := m.(manager.Renamer).Rename(d, name)
+	if err != nil {
+		return nd, nil, err
+	}
+	e, err := m.Edits(dep.Update{Dep: d, Type: dep.Replacement, NewName: name, NewVersion: cmp.Or(version, d.Version)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := patch.Apply([]byte(src), e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, after := strings.Split(src, "\n"), strings.Split(string(out), "\n")
+	var changed []string
+	for i := range after {
+		if after[i] != before[i] {
+			changed = append(changed, after[i])
+		}
+	}
+	return nd, changed, nil
+}
+
+func TestReplacements(t *testing.T) {
+	const src = `terraform {
+  required_providers {
+    aws     = { source = "hashicorp/aws", version = "~> 5.0" }
+    tpl     = { source = "registry.terraform.io/hashicorp/template", version = "2.2.0" }
+    bare    = { source = "null", version = "3.0.0" }
+    implied = { version = "1.0.0" }
+    legacy  = "1.0.0"
+    esc     = { source = "hashicorp/\u0061ws", version = "1.0.0" }
+    builtin = { source = "terraform.io/builtin/terraform" }
+  }
+}
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws//modules/x"
+  version = "5.0.0"
+}
+module "hosted" {
+  source  = "app.terraform.io/acme/vpc/aws"
+  version = "1.0.0"
+}
+module "git" { source = "github.com/acme/vpc?ref=v1.0.0" }
+module "local" { source = "./mod" }
+resource "docker_container" "x" { image = "nginx:1.25.3" }
+resource "docker_image" "y" { name = "busybox" }
+`
+	deps, err := New().Extract("main.tf", []byte(src), manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, d := range deps {
+		if d.Renamable() {
+			names = append(names, d.NameParts[0].Text)
+		}
+	}
+	if want := []string{"hashicorp/aws", "registry.terraform.io/hashicorp/template", "null", "terraform-aws-modules/vpc/aws", "app.terraform.io/acme/vpc/aws", "nginx"}; !slices.Equal(names, want) {
+		t.Errorf("renamable %q, want %q", names, want)
+	}
+	const json = `{"terraform": {"required_providers": {"aws": {"source": "hashicorp/aws", "version": "~> 5.0"}}}}`
+	for _, tt := range []struct {
+		file, src, registry   string // registry: config terraform.defaultRegistry
+		old, name, version    string
+		wName, wSource, wLine string
+	}{
+		{"main.tf", src, "", "hashicorp/aws", "opentofu/aws", "",
+			"opentofu/aws", "https://registry.terraform.io", `    aws     = { source = "opentofu/aws", version = "~> 5.0" }`},
+		{"main.tf", src, "", "hashicorp/aws", "opentofu/aws", "6.2.1",
+			"opentofu/aws", "https://registry.terraform.io", `    aws     = { source = "opentofu/aws", version = "~> 6.2" }`},
+		{"main.tf", src, "", "hashicorp/aws", "Registry.OpenTofu.org/opentofu/aws", "",
+			"opentofu/aws", "https://registry.opentofu.org", `    aws     = { source = "Registry.OpenTofu.org/opentofu/aws", version = "~> 5.0" }`},
+		{"main.tofu", src, "", "hashicorp/aws", "opentofu/aws", "",
+			"opentofu/aws", "https://registry.opentofu.org", `    aws     = { source = "opentofu/aws", version = "~> 5.0" }`},
+		{"main.tf", src, "https://registry.example.com/", "hashicorp/aws", "acme/aws", "",
+			"acme/aws", "https://registry.example.com", `    aws     = { source = "acme/aws", version = "~> 5.0" }`},
+		{"main.tf", src, "", "hashicorp/template", "registry.opentofu.org/opentofu/template", "2.2.1",
+			"opentofu/template", "https://registry.opentofu.org", `    tpl     = { source = "registry.opentofu.org/opentofu/template", version = "2.2.1" }`},
+		{"main.tf", src, "", "hashicorp/null", "opentofu/null", "",
+			"opentofu/null", "https://registry.terraform.io", `    bare    = { source = "opentofu/null", version = "3.0.0" }`},
+		{"main.tf", src, "", "terraform-aws-modules/vpc/aws", "acme/vpc/aws", "",
+			"acme/vpc/aws", "https://registry.terraform.io", `  source  = "acme/vpc/aws//modules/x"`},
+		{"main.tf", src, "", "acme/vpc/aws", "App.Terraform.IO/acme/net/aws", "",
+			"acme/net/aws", "https://app.terraform.io", `  source  = "App.Terraform.IO/acme/net/aws"`},
+		{"main.tf", src, "", "nginx", "ghcr.io/acme/nginx", "",
+			"ghcr.io/acme/nginx", "ghcr.io/acme/nginx", `resource "docker_container" "x" { image = "ghcr.io/acme/nginx:1.25.3" }`},
+		{"main.tf.json", json, "", "hashicorp/aws", "opentofu/aws", "",
+			"opentofu/aws", "https://registry.terraform.io", `{"terraform": {"required_providers": {"aws": {"source": "opentofu/aws", "version": "~> 5.0"}}}}`},
+	} {
+		t.Run(tt.file+" "+tt.name, func(t *testing.T) {
+			got, lines, err := replace(t, New(), tt.file, tt.src, manager.Env{TerraformRegistry: tt.registry}, tt.old, tt.name, tt.version)
+			switch {
+			case err != nil:
+				t.Fatal(err)
+			case got.Name != tt.wName || got.Source != tt.wSource:
+				t.Errorf("renamed %s %s, want %s %s", got.Name, got.Source, tt.wName, tt.wSource)
+			case !slices.Equal(lines, []string{tt.wLine}):
+				t.Errorf("changed lines %q, want %q", lines, tt.wLine)
+			}
+		})
+	}
+	for _, tt := range []struct{ old, name string }{
+		{"hashicorp/aws", ""},
+		{"hashicorp/aws", "a/b/c/d"},
+		{"hashicorp/aws", "hashicorp/a ws"},
+		{"hashicorp/aws", "hashicorp/${x}"},
+		{"hashicorp/aws", "hashicorp//aws"},
+		{"hashicorp/template", "hashicorp/template2"}, // the written host needs another
+		{"terraform-aws-modules/vpc/aws", "acme/vpc"},
+		{"terraform-aws-modules/vpc/aws", "acme/vpc/aws//modules/x"},
+		{"terraform-aws-modules/vpc/aws", "github.com/acme/vpc/aws"},
+		{"terraform-aws-modules/vpc/aws", "git::https://example.com/acme/vpc.git"},
+		{"acme/vpc/aws", "acme/net/aws"}, // the written host needs another
+		{"nginx", "nginx:1.27"},
+		{"nginx", "Nginx"},
+	} {
+		if _, _, err := replace(t, New(), "main.tf", src, manager.Env{}, tt.old, tt.name, ""); err == nil {
+			t.Errorf("%s: Rename(%q) accepted", tt.old, tt.name)
+		}
+	}
+	if _, err := New().(manager.Renamer).Rename(dep.Dep{Datasource: "helm", DepType: DepTypeHelmRelease}, "x"); err == nil {
+		t.Error("helm_release renamed")
+	}
+	fixed := dep.Dep{Datasource: providerDatasource, Version: "1.0", Range: ">= 1.0, < 2.0", RangeFixed: true,
+		NameParts: []dep.NamePart{{Span: dep.Span{Start: 1, End: 4}, Text: "aws"}}}
+	if _, err := New().Edits(dep.Update{Dep: fixed, NewName: "opentofu/aws", NewVersion: "1.1"}); err == nil {
+		t.Error("fixed range rewritten")
+	}
+	if e, err := New().Edits(dep.Update{Dep: fixed, NewName: "opentofu/aws", NewVersion: "1.0"}); err != nil || len(e) != 1 {
+		t.Errorf("fixed range renamed: %+v, %v", e, err)
+	}
+	if got, err := New().(manager.Renamer).Rename(dep.Dep{Datasource: providerDatasource, Source: "https://r.example"}, "acme/x"); err != nil || got.Name != "acme/x" || got.Source != "https://r.example" {
+		t.Errorf("unlocated provider renamed %+v, %v", got, err)
+	}
+}
+
+func TestTFLintReplacements(t *testing.T) {
+	src := string(read(t, "moj/tflint.hcl"))
+	const ghes = "plugin \"x\" {\n  source  = \"GHE.example.com/org/x\"\n  version = \"1.0.0\"\n}\n"
+	for _, tt := range []struct {
+		src, old, name, wName, wSource, wLine string
+	}{
+		{src, "terraform-linters/tflint-ruleset-aws", "github.com/acme/tflint-ruleset-aws",
+			"acme/tflint-ruleset-aws", "https://github.com/acme/tflint-ruleset-aws", `  source  = "github.com/acme/tflint-ruleset-aws"`},
+		{ghes, "https://ghe.example.com/org/x", "github.com/acme/x",
+			"acme/x", "https://github.com/acme/x", `  source  = "github.com/acme/x"`},
+		{src, "terraform-linters/tflint-ruleset-aws", "GHE.example.com/acme/x",
+			"https://ghe.example.com/acme/x", "https://ghe.example.com/acme/x", `  source  = "GHE.example.com/acme/x"`},
+	} {
+		got, lines, err := replace(t, NewTFLint(), ".tflint.hcl", tt.src, manager.Env{}, tt.old, tt.name, "")
+		switch {
+		case err != nil:
+			t.Errorf("%s: %v", tt.name, err)
+		case got.Name != tt.wName || got.Source != tt.wSource:
+			t.Errorf("%s: renamed %s %s, want %s %s", tt.name, got.Name, got.Source, tt.wName, tt.wSource)
+		case !slices.Equal(lines, []string{tt.wLine}):
+			t.Errorf("%s: changed lines %q, want %q", tt.name, lines, tt.wLine)
+		}
+	}
+	for _, name := range []string{"acme/tflint-ruleset-aws", "github.com/acme", "github.com/acme/x/y", "github.com/a b/x"} {
+		if _, _, err := replace(t, NewTFLint(), ".tflint.hcl", src, manager.Env{}, "terraform-linters/tflint-ruleset-aws", name, ""); err == nil {
+			t.Errorf("Rename(%q) accepted", name)
+		}
 	}
 }

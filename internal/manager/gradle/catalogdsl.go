@@ -136,6 +136,13 @@ func (x *extractor) catalogEntry(off, i int, plugin bool, versions map[string]ca
 	if d.Name == ":" || d.Name == "" || d.Skip == "" && d.Version == "" && meta.ref == "" {
 		return
 	}
+	switch {
+	case !plainString(d.Name):
+	case plugin:
+		d.NameParts = []dep.NamePart{namePart(d.Name, first.start, dep.NameWhole)}
+	default:
+		d.NameParts = []dep.NamePart{namePart(s.text(first), first.start, dep.NameGroup), namePart(s.text(second), second.start, dep.NameArtifact)}
+	}
 	x.taken[first.start], x.taken[second.start] = true, true
 	x.add(off, d, meta)
 }

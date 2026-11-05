@@ -2,7 +2,12 @@
 package manager
 
 import (
+	"errors"
+	"fmt"
+	"strings"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/imageref"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -90,4 +95,45 @@ type FileEditor interface {
 	// FileEdits returns the byte edits by slash path relative to root (absolute), excluding
 	// u.Dep.File; nil when the update touches no other file.
 	FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error)
+}
+
+// Renamer is implemented by managers whose deps a replacement update (dep.Replacement) can
+// move to another package: Edits rewrites the name with u.NewName (NameEdits). Rename returns
+// d as the datasource looks it up under the new name (Name, Source), or an error when name is
+// no valid name for the manager. Deps without NameParts are not renamed.
+type Renamer interface {
+	Rename(d dep.Dep, name string) (dep.Dep, error)
+}
+
+// NameEdits returns the edits writing name over d's NameParts: a NameWhole part gets the whole
+// name, registry and repository parts get the name split by imageref.SplitRegistry, group and
+// artifact parts the Maven coordinates split at the first ':'. Parts that already read their
+// new text get no edit.
+func NameEdits(d dep.Dep, name string) ([]patch.Edit, error) {
+	if !d.Renamable() {
+		return nil, errors.New("cannot locate the name")
+	}
+	edits := make([]patch.Edit, 0, len(d.NameParts))
+	for _, p := range d.NameParts {
+		v := name
+		switch p.Role {
+		case dep.NameRegistry, dep.NameRepository:
+			reg, repo := imageref.SplitRegistry(name)
+			if v = repo; p.Role == dep.NameRegistry {
+				v = reg
+			}
+		case dep.NameGroup, dep.NameArtifact:
+			group, artifact, ok := strings.Cut(name, ":")
+			if !ok {
+				return nil, fmt.Errorf("%q is not group:artifact", name)
+			}
+			if v = artifact; p.Role == dep.NameGroup {
+				v = group
+			}
+		}
+		if v != p.Text {
+			edits = append(edits, patch.Edit{Start: p.Span.Start, End: p.Span.End, Old: p.Text, New: v})
+		}
+	}
+	return edits, nil
 }

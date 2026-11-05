@@ -51,7 +51,12 @@ type Policy struct {
 	TimestampRequired bool
 	Versioning        string // versioning scheme set by a rule, "" = the dep's own
 	ExtractVersion    string // extractVersion set by a rule, "" = the dep's own
-	Automerge         bool   // automerge the update's PR or branch
+	// ReplacementName is the package a replacement update moves the dep to (a rule's
+	// replacementName, or the built-in Replacement), "" = none; ReplacementVersion its version,
+	// "" = the current one.
+	ReplacementName, ReplacementVersion string
+	Replacement                         string // built-in replacement that set ReplacementName, "" = none or a rule
+	Automerge                           bool   // automerge the update's PR or branch
 	// AutomergeStrategy is the merge method of an automerged PR (AutomergeStrategies).
 	AutomergeStrategy string
 	// AutomergeType is how the update is automerged (AutomergeTypes).
@@ -154,7 +159,13 @@ func (c *Config) matchesDep(r *Rule, d dep.Dep) bool {
 		len(r.Datasources) > 0 && !slices.ContainsFunc(r.Datasources, func(ds string) bool { return CanonicalDatasource(ds) == d.Datasource }):
 		return false
 	}
-	return r.currentVersion == nil || r.currentVersion.Check(cmp.Or(d.Locked, d.Version), func(v string) *semver.Version {
+	return r.currentVersion == nil || c.currentMatches(r.currentVersion, d)
+}
+
+// currentMatches reports whether d's current version (the locked one when known) satisfies a,
+// converted with the versioning scheme d is resolved with.
+func (c *Config) currentMatches(a *Allowed, d dep.Dep) bool {
+	return a.Check(cmp.Or(d.Locked, d.Version), func(v string) *semver.Version {
 		s, ok := versioning.Get(c.versioningOf(d))
 		if !ok {
 			return nil
@@ -206,6 +217,11 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 			p.Monorepo, p.Group = m.Name, MonorepoGroup(m.Name)
 		}
 	}
+	if c.ReplacementsEnabled() {
+		if rp := c.replacementOf(d); rp != nil {
+			p.Replacement, p.ReplacementName, p.ReplacementVersion = rp.Name, rp.NewName(packageName(d)), rp.Version
+		}
+	}
 	if defaultIgnored[d.DepType] {
 		p.Ignore, p.IgnoredByDefault = true, true
 		p.IgnoreReason = "ignored by default (" + d.DepType + "; enable with a rule setting ignore: false)"
@@ -219,6 +235,13 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 			continue
 		}
 		p.Rules = append(p.Rules, i)
+		if r.ReplacementName != "" && strings.HasPrefix(d.Name, r.ReplacementPrefix) {
+			name := r.ReplacementName
+			if r.ReplacementPrefix != "" {
+				name += d.Name[len(r.ReplacementPrefix):]
+			}
+			p.Replacement, p.ReplacementName, p.ReplacementVersion = "", name, r.ReplacementVersion
+		}
 		if r.Ignore != nil {
 			p.Ignore, p.IgnoredByDefault = *r.Ignore, false
 			p.IgnoreReason = fmt.Sprintf("ignored by rule #%d", i)

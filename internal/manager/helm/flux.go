@@ -29,7 +29,8 @@ func (x *crdExtractor) helmRepository(n, spec *yaml.Node) {
 
 // helmRelease extracts the chart of a Flux HelmRelease (helm.toolkit.fluxcd.io):
 // spec.chart.spec.{chart,version} from the sourceRef HelmRepository, whose namespace defaults
-// to the HelmRelease's. A spec.chartRef to an OCIRepository marks that OCIRepository as a chart.
+// to the HelmRelease's. Only the chart is a NamePart: the repository is the HelmRepository's.
+// A spec.chartRef to an OCIRepository marks that OCIRepository as a chart.
 func (x *crdExtractor) helmRelease(n, spec *yaml.Node) {
 	ns := yamlspan.Value(yamlspan.Get(yamlspan.Get(n, "metadata"), "namespace"))
 	if cr := yamlspan.Get(spec, "chartRef"); cr != nil {
@@ -48,6 +49,7 @@ func (x *crdExtractor) helmRelease(n, spec *yaml.Node) {
 	case "HelmRepository":
 		i := x.add(TypeFlux, "", chartNode.Value, chartNode, yamlspan.Get(cs, "version"), "")
 		if x.deps[i].Skip == "" {
+			x.rename(i, chartNode, false, nil)
 			x.refs = append(x.refs, ref{i: i, kind: refFlux, key: refKey(src, ns)})
 		}
 	case "":
@@ -60,7 +62,8 @@ func (x *crdExtractor) helmRelease(n, spec *yaml.Node) {
 // ociRepository extracts a Flux OCIRepository (source.toolkit.fluxcd.io): the chart is the last
 // path segment of spec.url, the version spec.ref.tag. An OCIRepository is a chart only when its
 // spec.layerSelector.mediaType is the Helm chart media type or a HelmRelease's chartRef names
-// it; Link drops the others (Kustomization artifacts).
+// it; Link drops the others (Kustomization artifacts). spec.url is the NameParts (repository
+// and chart).
 func (x *crdExtractor) ociRepository(n, spec *yaml.Node) {
 	urlNode := yamlspan.Str(yamlspan.Get(spec, "url"))
 	if urlNode == nil || !strings.HasPrefix(urlNode.Value, "oci://") {
@@ -79,6 +82,9 @@ func (x *crdExtractor) ociRepository(n, spec *yaml.Node) {
 		skip = "version range"
 	}
 	i := x.add(TypeFlux, repo, chart, urlNode, yamlspan.Get(r, "tag"), skip)
+	if skip == "" {
+		x.rename(i, urlNode, true, nil)
+	}
 	if yamlspan.Value(yamlspan.Get(yamlspan.Get(spec, "layerSelector"), "mediaType")) != helmChartMediaType {
 		x.refs = append(x.refs, ref{i: i, kind: refOCI, key: objectKey(n)})
 	}

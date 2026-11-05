@@ -73,6 +73,9 @@ func library(file string, e, versions *tomlspan.Value) (dep.Dep, bool) {
 			return d, false // "group:name" without a version is managed by a platform
 		}
 		d.Name = parts[0] + ":" + parts[1]
+		if e.Exact {
+			d.NameParts = []dep.NamePart{namePart(d.Name, e.Start, dep.NameWhole)}
+		}
 		start := e.Start + len(parts[0]) + len(parts[1]) + 2
 		return literalVersion(d, parts[2], dep.Span{Start: start, End: e.End}, e.Exact)
 	}
@@ -82,12 +85,18 @@ func library(file string, e, versions *tomlspan.Value) (dep.Dep, bool) {
 			return d, false
 		}
 		d.Name = m.Str
+		if m.Exact {
+			d.NameParts = []dep.NamePart{namePart(d.Name, m.Start, dep.NameWhole)}
+		}
 	} else {
 		g, a := e.Fields["group"], e.Fields["name"]
 		if g == nil || a == nil || g.Kind != tomlspan.String || a.Kind != tomlspan.String || g.Str == "" || a.Str == "" {
 			return d, false
 		}
 		d.Name = g.Str + ":" + a.Str
+		if g.Exact && a.Exact {
+			d.NameParts = []dep.NamePart{namePart(g.Str, g.Start, dep.NameGroup), namePart(a.Str, a.Start, dep.NameArtifact)}
+		}
 	}
 	return version(d, e, versions)
 }
@@ -100,6 +109,9 @@ func plugin(file string, e, versions *tomlspan.Value) (dep.Dep, bool) {
 			return d, false
 		}
 		d.Name = id
+		if e.Exact {
+			d.NameParts = []dep.NamePart{namePart(id, e.Start, dep.NameWhole)}
+		}
 		return literalVersion(d, v, dep.Span{Start: e.Start + len(id) + 1, End: e.End}, e.Exact)
 	}
 	id := e.Fields["id"]
@@ -107,6 +119,9 @@ func plugin(file string, e, versions *tomlspan.Value) (dep.Dep, bool) {
 		return d, false
 	}
 	d.Name = id.Str
+	if id.Exact {
+		d.NameParts = []dep.NamePart{namePart(id.Str, id.Start, dep.NameWhole)}
+	}
 	return version(d, e, versions)
 }
 

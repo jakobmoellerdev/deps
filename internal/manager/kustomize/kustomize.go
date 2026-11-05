@@ -1,8 +1,10 @@
-// Package kustomize updates Kustomize kustomization files: `images[]` tags and digests,
-// `helmCharts[]` versions, and the `?ref=` of remote git `resources`, `components` and `bases`.
+// Package kustomize updates Kustomize kustomization files: `images[]` tags, digests and names
+// (replacements), `helmCharts[]` versions, and the `?ref=` of remote git `resources`,
+// `components` and `bases`.
 package kustomize
 
 import (
+	"bytes"
 	"errors"
 	"regexp"
 	"strings"
@@ -75,10 +77,18 @@ func (kustomizeManager) Extract(file string, src []byte, _ manager.Env) ([]dep.D
 
 // Edits replaces the version (image tag, chart version or git ref) and, for digest-pinned
 // images, the digest. Images without a digest cannot be pinned: kustomize has no place to
-// insert one without adding a `digest` field.
+// insert one without adding a `digest` field. A replacement (u.NewName) rewrites an image's
+// newName, or inserts one after its `name` line, and a chart's name and repo (helm.NameEdits).
 func (kustomizeManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	var edits []patch.Edit
+	if u.NewName != "" {
+		ne, err := nameEdits(d, u.NewName)
+		if err != nil {
+			return nil, err
+		}
+		edits = ne
+	}
 	if u.NewVersion != d.Version {
 		edits = append(edits, patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion})
 	}
@@ -92,6 +102,35 @@ func (kustomizeManager) Edits(u dep.Update) ([]patch.Edit, error) {
 		edits = append(edits, patch.Edit{Start: d.DigestSpan.Start, End: d.DigestSpan.End, Old: d.Digest, New: u.NewDigest})
 	}
 	return edits, nil
+}
+
+// Rename returns d as name names it: an image (docker.Rename) or a chart, possibly with the
+// repository it moves to (helm.Rename).
+func (kustomizeManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	if d.DepType == TypeHelmChart {
+		return helm.Rename(d, name)
+	}
+	return docker.Rename(d, name)
+}
+
+// roleNameLine is the role of the NamePart over the `name` line of an image without newName
+// (from the line start to the line end, `  - name: nginx`): Edits inserts a newName key after
+// it, indented like the `name` key, instead of rewriting the part. It is never passed to
+// manager.NameEdits.
+const roleNameLine = "kustomize-name-line"
+
+// nameEdits writes name as d's name: a chart's name and repo, an image's newName, or a newName
+// key inserted after an image's `name` line (roleNameLine).
+func nameEdits(d dep.Dep, name string) ([]patch.Edit, error) {
+	if d.DepType == TypeHelmChart {
+		return helm.NameEdits(d, name)
+	}
+	if len(d.NameParts) != 1 || d.NameParts[0].Role != roleNameLine {
+		return manager.NameEdits(d, name)
+	}
+	p := d.NameParts[0]
+	indent := len(p.Text) - len(strings.TrimLeft(p.Text, " -"))
+	return []patch.Edit{{Start: p.Span.End, End: p.Span.End, New: "\n" + strings.Repeat(" ", indent) + "newName: " + name}}, nil
 }
 
 type extractor struct {
@@ -109,8 +148,11 @@ func (x *extractor) image(m *yaml.Node) {
 		return
 	}
 	name := nameNode.Value
-	if n := yamlspan.Str(yamlspan.Get(m, "newName")); n != nil && n.Value != "" {
-		name = n.Value
+	newName := yamlspan.Str(yamlspan.Get(m, "newName"))
+	if newName != nil && newName.Value != "" {
+		name = newName.Value
+	} else {
+		newName = nil
 	}
 	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeImage, File: x.file, Line: nameNode.Line, Name: name}
 	tag, dg := yamlspan.Str(yamlspan.Get(m, "newTag")), yamlspan.Str(yamlspan.Get(m, "digest"))
@@ -143,17 +185,52 @@ func (x *extractor) image(m *yaml.Node) {
 			d.Digest, d.DigestSpan = dg.Value, dep.Span{Start: o, End: o + len(dg.Value)}
 		}
 	}
+	if d.Skip == "" {
+		x.imageNameParts(&d, m, nameNode, newName)
+	}
 	x.deps = append(x.deps, d)
 }
 
-// helmChart extracts a `helmCharts[]` entry: chart name from repo at version.
+// imageNameParts makes the updatable image d renamable: one NameWhole part over its newName
+// value, or without newName (nil) a roleNameLine part over the `name` line, as rewriting
+// `name`, the key matching the manifests' images, would stop the override from applying. Flow
+// mappings, an empty or non-scalar newName, a `name` value off its key's line and values that
+// cannot be located leave d not renamable.
+func (x *extractor) imageNameParts(d *dep.Dep, m, nameNode, newName *yaml.Node) {
+	if newName != nil {
+		if off := yamlspan.Locate(x.src, x.lines, newName); off >= 0 {
+			d.NameParts = []dep.NamePart{{Span: dep.Span{Start: off, End: off + len(newName.Value)}, Text: newName.Value}}
+		}
+		return
+	}
+	key := mappingKey(m, "name")
+	off := yamlspan.Locate(x.src, x.lines, nameNode)
+	if m.Style&yaml.FlowStyle != 0 || mappingKey(m, "newName") != nil || key.Line != nameNode.Line || off < 0 {
+		return
+	}
+	start := x.lines[key.Line-1]
+	if key.Column-1 > off-start || strings.Trim(string(x.src[start:start+key.Column-1]), " -") != "" {
+		return
+	}
+	end := len(x.src)
+	if i := bytes.IndexByte(x.src[off:], '\n'); i >= 0 {
+		end = off + i
+	}
+	end = len(bytes.TrimSuffix(x.src[:end], []byte("\r")))
+	d.NameParts = []dep.NamePart{{Span: dep.Span{Start: start, End: end}, Text: string(x.src[start:end]), Role: roleNameLine}}
+}
+
+// helmChart extracts a `helmCharts[]` entry: chart name from repo at version. The name and
+// the repo are its NameParts (helm.ChartParts); the default releaseName does not derive from
+// the name, so renaming the chart keeps the rendered resources' names.
 func (x *extractor) helmChart(m *yaml.Node) {
 	nameNode := yamlspan.Str(yamlspan.Get(m, "name"))
 	if nameNode == nil || nameNode.Value == "" {
 		return
 	}
 	d := dep.Dep{Manager: Name, Datasource: "helm", Versioning: "semver", DepType: TypeHelmChart, File: x.file, Line: nameNode.Line, Name: nameNode.Value}
-	repo := strings.TrimRight(yamlspan.Value(yamlspan.Get(m, "repo")), "/")
+	repoNode := yamlspan.Str(yamlspan.Get(m, "repo"))
+	repo := strings.TrimRight(yamlspan.Value(repoNode), "/")
 	v := yamlspan.Str(yamlspan.Get(m, "version"))
 	if v != nil {
 		d.Line, d.Version = v.Line, v.Value
@@ -174,6 +251,7 @@ func (x *extractor) helmChart(m *yaml.Node) {
 			d.Skip = "cannot locate value"
 		} else {
 			d.RefSpan = dep.Span{Start: off, End: off + len(v.Value)}
+			d.NameParts = helm.ChartParts(x.src, x.lines, nameNode, nameNode.Value, false, repoNode)
 		}
 	}
 	x.deps = append(x.deps, d)
@@ -228,4 +306,14 @@ func items(n *yaml.Node) []*yaml.Node {
 		return nil
 	}
 	return n.Content
+}
+
+// mappingKey returns the key node of key in mapping m, or nil.
+func mappingKey(m *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i]
+		}
+	}
+	return nil
 }

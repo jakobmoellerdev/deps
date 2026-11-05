@@ -79,13 +79,14 @@ func (ix *index) consumer(file string) string {
 }
 
 // Link resolves the variable references of the run's deps (moving resolved deps to the
-// definition) and sets their repositories, then forgets the run's files; what ReadLocks needs
-// is kept until it runs.
+// definition) and sets their repositories, then forgets the run's files; what ReadLocks and
+// Rename need is kept until the next run.
 func (m *gradleManager) Link(files [][]dep.Dep) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ix := newIndex(m.files)
 	ls := lockState{dirs: make([][]string, len(files)), meta: make([][]depMeta, len(files)), settings: make([]bool, len(files))}
+	renames := map[namePos]nameRepos{}
 	for fi, deps := range files {
 		if len(deps) == 0 {
 			continue
@@ -102,21 +103,28 @@ func (m *gradleManager) Link(files [][]dep.Dep) {
 			if key := st.meta[i].ref; key != "" {
 				ix.resolve(file, d, key)
 			}
+			if d.Renamable() {
+				renames[namePos{file, d.NameParts[0].Span.Start}] = nameRepos{levels: &lv, class: st.meta[i].class}
+			}
 		}
 		ls.dirs[fi], ls.meta[fi], ls.settings[fi] = ix.lockDirs(file, st), st.meta, st.kind == kindSettings
 	}
-	m.lock = ls
+	m.lock, m.renames = ls, renames
 	m.files = map[string]*fileState{}
 }
 
 // resolve points d at the definition of key visible from file: the file itself, the build
 // scripts and gradle.properties of its directory and of each parent directory up to the build
 // root, the scripts in the root's gradle/ directory, then the buildSrc and convention-plugin
-// sources of the build. Unresolved deps keep their skip reason.
+// sources of the build. Unresolved deps keep their skip reason. A dep moved to another file
+// is no longer renamable: its edits apply to the definition's file.
 func (ix *index) resolve(file string, d *dep.Dep, key string) {
 	f, v, ok := ix.lookup(file, key)
 	if !ok {
 		return
+	}
+	if f != file {
+		d.NameParts = nil
 	}
 	d.File, d.Line, d.VersionRef, d.Skip = f, v.line, v.name, ""
 	setVersion(d, v.value, v.span)

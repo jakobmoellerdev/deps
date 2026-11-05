@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -52,8 +53,26 @@ func (terragruntManager) Extract(file string, src []byte, env manager.Env) ([]de
 	return x.deps, nil
 }
 
-// Edits replaces the version token.
-func (terragruntManager) Edits(u dep.Update) ([]patch.Edit, error) { return versionEdit(u) }
+// Edits replaces the version token and, for a replacement (u.NewName), the registry address.
+func (terragruntManager) Edits(u dep.Update) ([]patch.Edit, error) { return edits(u) }
+
+// Rename implements manager.Renamer for `tfr://` sources: name is a registry module address
+// `[host/]namespace/name/provider`, with a host when the source names one (`tfr://host/…`) and
+// without when it names the default registry (`tfr:///…`).
+func (terragruntManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	if d.Datasource != moduleDatasource {
+		return d, fmt.Errorf("%s deps cannot be renamed", d.DepType)
+	}
+	host, path, ok := moduleAddress(name)
+	hosted := strings.Count(written(d), "/") == 3 // host/namespace/name/provider
+	switch {
+	case !ok:
+		return d, fmt.Errorf("%q is not a %s address", name, d.Datasource)
+	case host != "" && !hosted:
+		return d, fmt.Errorf("%q names a registry host, which the written tfr:/// source does not", name)
+	}
+	return registryRename(d, name, host, path, hosted)
+}
 
 // terragrunt extracts `source` of a terraform block: a git source with its `?ref=`, or a
 // `tfr://` registry module with its `?version=` or the block's `version` constraint.
@@ -90,7 +109,7 @@ func (x *extractor) terragrunt(b body) {
 	t, ok := parseTFRSource(s)
 	switch {
 	case ok:
-		x.tfrModule(&d, t, src.val.span, ver)
+		x.tfrModule(&d, t, src.val, ver)
 	case s == "." || s == ".." || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") || strings.HasPrefix(s, "/"):
 		d.Skip = "local module"
 	default:
@@ -99,14 +118,15 @@ func (x *extractor) terragrunt(b body) {
 	x.deps = append(x.deps, d)
 }
 
-// tfrModule fills d from the registry source t whose literal is at span; without `?version=`
-// the version is the constraint of the terraform block's version attribute.
-func (x *extractor) tfrModule(d *dep.Dep, t tfrSource, span dep.Span, ver *attr) {
-	host := t.host
+// tfrModule fills d from the registry source t whose literal is v; without `?version=` the
+// version is the constraint of the terraform block's version attribute.
+func (x *extractor) tfrModule(d *dep.Dep, t tfrSource, v value, ver *attr) {
+	host, span := t.host, v.span
 	if host == "" {
 		host = x.registry
 	}
 	d.Datasource, d.Name, d.Source = moduleDatasource, t.name, "https://"+host
+	d.NameParts = nameParts(v, t.addrOff, len(t.addr))
 	switch {
 	case t.hasVersion && (strings.Contains(t.version, "%") || span == (dep.Span{})):
 		d.Version, d.Skip = t.version, "cannot locate value"
@@ -127,6 +147,8 @@ func (x *extractor) tfrModule(d *dep.Dep, t tfrSource, span dep.Span, ver *attr)
 type tfrSource struct {
 	host       string // lowercase registry host; empty for `tfr:///` (the default registry)
 	name       string // namespace/name/provider
+	addr       string // the address as written: host/name, or name for the default registry
+	addrOff    int    // offset of addr in the source string
 	version    string // the ?version= value
 	versionOff int    // offset of version in the source string
 	hasVersion bool
@@ -158,5 +180,9 @@ func parseTFRSource(s string) (tfrSource, bool) {
 		return tfrSource{}, false
 	}
 	t.host, t.name = strings.ToLower(host), m[2]
+	t.addr, t.addrOff = m[2], len("tfr:///")
+	if host != "" {
+		t.addr, t.addrOff = host+"/"+m[2], len("tfr://")
+	}
 	return t, true
 }

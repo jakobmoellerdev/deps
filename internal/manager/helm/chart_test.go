@@ -1,10 +1,13 @@
 package helm
 
 import (
+	"cmp"
+	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
 // wantChartDep is the expected outcome of one extracted dep; span is the text under RefSpan.
@@ -130,4 +133,186 @@ func TestEdits(t *testing.T) {
 	if err != nil || len(edits) != 1 || edits[0].Old != "v1.14.0" || edits[0].New != "v1.15.1" || src[edits[0].Start:edits[0].End] != "v1.14.0" {
 		t.Fatalf("Edits = %+v, %v", edits, err)
 	}
+}
+
+func TestRename(t *testing.T) {
+	const chart = `dependencies:
+  - name: cert-manager
+    version: v1.14.0
+    repository: https://charts.jetstack.io/
+  - name: redis
+    version: "18.0.0"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+`
+	const helmfile = `repositories:
+  - name: bitnami
+    url: https://charts.bitnami.com/bitnami
+releases:
+  - name: cache
+    chart: bitnami/redis
+    version: 18.0.0
+  - name: db
+    chart: oci://registry-1.docker.io/bitnamicharts/postgresql
+    version: 15.0.0
+`
+	const argo = `apiVersion: argoproj.io/v1alpha1
+kind: Application
+spec:
+  sources:
+    - repoURL: registry-1.docker.io/bitnamicharts
+      chart: redis
+      targetRevision: 18.0.0
+    - repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      targetRevision: v1.14.0
+    - repoURL: https://charts.example.com
+      chart: '{{ .chart }}'
+      targetRevision: 1.0.0
+`
+	const flux = `apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: podinfo
+spec:
+  url: https://stefanprodan.github.io/podinfo
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: podinfo
+spec:
+  chart:
+    spec:
+      chart: podinfo
+      version: 6.5.0
+      sourceRef:
+        kind: HelmRepository
+        name: podinfo
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: cilium
+spec:
+  url: oci://ghcr.io/home-operations/charts-mirror/cilium
+  ref:
+    tag: 1.18.6
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+`
+	const k0s = `apiVersion: k0s.k0sproject.io/v1beta1
+kind: ClusterConfig
+spec:
+  extensions:
+    helm:
+      repositories:
+        - name: stable
+          url: https://charts.example.com
+      charts:
+        - name: a
+          chartname: stable/alpha
+          version: 1.2.3
+---
+apiVersion: helm.k0sproject.io/v1beta1
+kind: Chart
+spec:
+  chartName: beta
+  version: 2.0.0
+  repository:
+    url: https://beta.example.com
+`
+	for _, c := range []struct {
+		name, file, src, old, to, version string
+		repl                              []string // old, new text pairs the update writes
+		wantName, wantSource, wantErr     string
+	}{
+		{name: "chart name", file: "Chart.yaml", src: chart, old: "cert-manager", to: "cm", version: "v1.15.0",
+			repl: []string{"name: cert-manager", "name: cm", "v1.14.0", "v1.15.0"}, wantName: "cm", wantSource: "https://charts.jetstack.io"},
+		{name: "chart same repository", file: "Chart.yaml", src: chart, old: "cert-manager", to: "https://charts.jetstack.io/cm",
+			repl: []string{"name: cert-manager", "name: cm"}, wantName: "cm", wantSource: "https://charts.jetstack.io"},
+		{name: "chart OCI move", file: "Chart.yaml", src: chart, old: "redis", to: "oci://ghcr.io/valkey-io/charts/valkey", version: "8.0.0",
+			repl:     []string{"name: redis", "name: valkey", "oci://registry-1.docker.io/bitnamicharts", "oci://ghcr.io/valkey-io/charts", "18.0.0", "8.0.0"},
+			wantName: "valkey", wantSource: "oci://ghcr.io/valkey-io/charts"},
+		{name: "chart OCI move without scheme", file: "Chart.yaml", src: chart, old: "redis", to: "ghcr.io/valkey-io/charts/valkey",
+			repl:     []string{"name: redis", "name: valkey", "oci://registry-1.docker.io/bitnamicharts", "oci://ghcr.io/valkey-io/charts"},
+			wantName: "valkey", wantSource: "oci://ghcr.io/valkey-io/charts"},
+		{name: "chart move to classic repository", file: "Chart.yaml", src: chart, old: "redis", to: "https://charts.example.com/valkey",
+			repl:     []string{"name: redis", "name: valkey", "oci://registry-1.docker.io/bitnamicharts", "https://charts.example.com"},
+			wantName: "valkey", wantSource: "https://charts.example.com"},
+		{name: "invalid chart", file: "Chart.yaml", src: chart, old: "redis", to: "Valkey Chart", wantErr: "invalid chart name"},
+		{name: "empty chart", file: "Chart.yaml", src: chart, old: "redis", to: "oci://ghcr.io/x/", wantErr: "invalid chart name"},
+		{name: "invalid repository", file: "Chart.yaml", src: chart, old: "redis", to: "ftp://example.com/valkey", wantErr: "invalid chart repository"},
+		{name: "helmfile alias name", file: "helmfile.yaml", src: helmfile, old: "redis", to: "valkey",
+			repl: []string{"bitnami/redis", "bitnami/valkey"}, wantName: "valkey", wantSource: "https://charts.bitnami.com/bitnami"},
+		{name: "helmfile alias move", file: "helmfile.yaml", src: helmfile, old: "redis", to: "oci://ghcr.io/x/valkey", wantErr: "only its name can change"},
+		{name: "helmfile OCI name", file: "helmfile.yaml", src: helmfile, old: "postgresql", to: "pg",
+			repl: []string{"bitnamicharts/postgresql", "bitnamicharts/pg"}, wantName: "pg", wantSource: "oci://registry-1.docker.io/bitnamicharts"},
+		{name: "helmfile OCI move", file: "helmfile.yaml", src: helmfile, old: "postgresql", to: "oci://ghcr.io/x/pg", version: "16.0.0",
+			repl: []string{"oci://registry-1.docker.io/bitnamicharts/postgresql", "oci://ghcr.io/x/pg", "15.0.0", "16.0.0"}, wantName: "pg", wantSource: "oci://ghcr.io/x"},
+		{name: "helmfile OCI to classic", file: "helmfile.yaml", src: helmfile, old: "postgresql", to: "https://charts.example.com/pg", wantErr: "no OCI repository"},
+		{name: "argocd OCI move", file: "app.yaml", src: argo, old: "redis", to: "oci://ghcr.io/valkey-io/charts/valkey",
+			repl:     []string{"registry-1.docker.io/bitnamicharts", "ghcr.io/valkey-io/charts", "chart: redis", "chart: valkey"},
+			wantName: "valkey", wantSource: "oci://ghcr.io/valkey-io/charts"},
+		{name: "argocd name", file: "app.yaml", src: argo, old: "cert-manager", to: "cm",
+			repl: []string{"chart: cert-manager", "chart: cm"}, wantName: "cm", wantSource: "https://charts.jetstack.io"},
+		{name: "argocd template", file: "app.yaml", src: argo, old: "{{ .chart }}", to: "x", version: "1.0.0", wantErr: "cannot locate the name"},
+		{name: "flux HelmRelease name", file: "flux.yaml", src: flux, old: "podinfo", to: "podinfo2", version: "6.6.0",
+			repl: []string{"chart: podinfo", "chart: podinfo2", "6.5.0", "6.6.0"}, wantName: "podinfo2", wantSource: "https://stefanprodan.github.io/podinfo"},
+		{name: "flux HelmRelease move", file: "flux.yaml", src: flux, old: "podinfo", to: "oci://ghcr.io/stefanprodan/charts/podinfo", wantErr: "only its name can change"},
+		{name: "flux OCIRepository move", file: "flux.yaml", src: flux, old: "cilium", to: "quay.io/cilium/charts/cilium",
+			repl: []string{"ghcr.io/home-operations/charts-mirror/cilium", "quay.io/cilium/charts/cilium"}, wantName: "cilium", wantSource: "oci://quay.io/cilium/charts"},
+		{name: "k0s alias name", file: "k0s.yaml", src: k0s, old: "alpha", to: "alpha2",
+			repl: []string{"stable/alpha", "stable/alpha2"}, wantName: "alpha2", wantSource: "https://charts.example.com"},
+		{name: "k0s inline repository move", file: "k0s.yaml", src: k0s, old: "beta", to: "https://charts.beta.io/beta",
+			repl: []string{"https://beta.example.com", "https://charts.beta.io"}, wantName: "beta", wantSource: "https://charts.beta.io"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := New()
+			d, ok := findDep(linkedDeps(t, m, map[string]string{c.file: c.src}), c.old, "")
+			if !ok {
+				t.Fatalf("no dep %s", c.old)
+			}
+			version := cmp.Or(c.version, d.Version)
+			nd, err := m.(manager.Renamer).Rename(d, c.to)
+			var edits []patch.Edit
+			if err == nil {
+				edits, err = m.Edits(dep.Update{Dep: d, Type: dep.Replacement, NewName: c.to, NewVersion: version})
+			}
+			if c.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+					t.Fatalf("err = %v, want %q", err, c.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if nd.Name != c.wantName || nd.Source != c.wantSource {
+				t.Errorf("Rename = %s %s, want %s %s", nd.Name, nd.Source, c.wantName, c.wantSource)
+			}
+			out, err := patch.Apply([]byte(c.src), edits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := strings.NewReplacer(c.repl...).Replace(c.src); string(out) != want {
+				t.Fatalf("file =\n%s\nwant\n%s", out, want)
+			}
+			// The written file holds the dep Rename returned.
+			if got, ok := findDep(linkedDeps(t, New(), map[string]string{c.file: string(out)}), nd.Name, nd.Source); !ok || got.Version != version {
+				t.Errorf("renamed dep %s %s %s not extracted: %+v", nd.Name, nd.Source, version, got)
+			}
+		})
+	}
+}
+
+// findDep returns the first dep of files named name (and from source, if set).
+func findDep(files [][]dep.Dep, name, source string) (dep.Dep, bool) {
+	for _, ds := range files {
+		for _, d := range ds {
+			if d.Name == name && (source == "" || d.Source == source) {
+				return d, true
+			}
+		}
+	}
+	return dep.Dep{}, false
 }

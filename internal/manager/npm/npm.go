@@ -99,17 +99,28 @@ func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 }
 
 // Edits rewrites a dependency-section range for the new version under the update's
-// rangeStrategy (npmRange.newRange), and replaces the version token of the other deps.
+// rangeStrategy (npmRange.newRange), and replaces the version token of the other deps. A
+// replacement (u.NewName) also rewrites the package name.
 func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
+	var edits []patch.Edit
 	if d.Range == "" {
-		return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}
+	} else {
+		r, ok := parseRange(d.Range)
+		if !ok {
+			return nil, fmt.Errorf("unsupported range %q", d.Range)
+		}
+		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: r.newRange(u.NewVersion, u.RangeStrategy)}}
 	}
-	r, ok := parseRange(d.Range)
-	if !ok {
-		return nil, fmt.Errorf("unsupported range %q", d.Range)
+	if u.NewName != "" {
+		ne, err := manager.NameEdits(d, u.NewName)
+		if err != nil {
+			return nil, err
+		}
+		edits = append(edits, ne...)
 	}
-	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: r.newRange(u.NewVersion, u.RangeStrategy)}}, nil
+	return edits, nil
 }
 
 // NewRange implements manager.RangeRewriter (npmRange.newRange).
@@ -123,6 +134,18 @@ func (npmManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 		return "", false
 	}
 	return out, true
+}
+
+// packageNameRe is npm's package name grammar (validate-npm-package-name for new packages).
+var packageNameRe = regexp.MustCompile(`^(?:@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$`)
+
+// Rename implements manager.Renamer for the entries of the dependency sections.
+func (npmManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
+	if !packageNameRe.MatchString(name) || len(name) > 214 {
+		return d, fmt.Errorf("invalid package name %q", name)
+	}
+	d.Name = name
+	return d, nil
 }
 
 // ReadLocks records the version the lock root's lockfile locks each dependency-section dep to
@@ -239,12 +262,18 @@ func (x *extractor) value() (s string, span dep.Span, ok bool, err error) {
 		return "", dep.Span{}, false, err
 	}
 	s = tok.String()
+	return s, x.span(s), true, nil
+}
+
+// span returns the content span of the string token s just read, or the zero span when the
+// raw bytes differ from it (escapes).
+func (x *extractor) span(s string) dep.Span {
 	end := int(x.dec.InputOffset())
 	start := end - len(s) - 2
 	if start >= 0 && x.src[start] == '"' && x.src[end-1] == '"' && string(x.src[start+1:end-1]) == s {
-		span = dep.Span{Start: start + 1, End: end - 1}
+		return dep.Span{Start: start + 1, End: end - 1}
 	}
-	return s, span, true, nil
+	return dep.Span{}
 }
 
 // lineAt returns the 1-based line of offset off (non-decreasing across calls).
@@ -274,6 +303,7 @@ func (x *extractor) section(depType string) error {
 		if err != nil {
 			return err
 		}
+		nameSpan := x.span(name)
 		raw, span, ok, err := x.value()
 		if err != nil {
 			return err
@@ -282,6 +312,9 @@ func (x *extractor) section(depType string) error {
 			continue
 		}
 		d := x.newDep(depType, name, raw, span)
+		if nameSpan != (dep.Span{}) {
+			d.NameParts = []dep.NamePart{{Span: nameSpan, Text: name}}
+		}
 		ver, off, skip := classify(raw)
 		if r, ok := parseRange(raw); ok && skip == skipRange {
 			if a := r.anchor(); a != "" {

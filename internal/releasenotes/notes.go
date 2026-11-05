@@ -66,10 +66,11 @@ func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, gh *githubapi
 }
 
 // Age renders when u.NewVersion was released, e.g. "released 2026-10-30 (4 days ago)"; "" when
-// the datasource does not know. A major module path update asks about the new path.
+// the datasource does not know, and for a replacement (the new package is looked up under
+// another name and source). A major module path update asks about the new path.
 func (n *Notes) Age(ctx context.Context, u dep.Update) string {
 	timer, ok := n.sources[u.Dep.Datasource].(datasource.Timer)
-	if !ok {
+	if !ok || u.Type == dep.Replacement {
 		return ""
 	}
 	d := u.Dep
@@ -126,8 +127,9 @@ func (n *Notes) Section(ctx context.Context, ups []dep.Update) string {
 	return render(blocks)
 }
 
-// collect merges ups per dependency, skipping updates that keep the version (digest, pin). A
-// lockfile-only update starts at the locked version.
+// collect merges ups per dependency, skipping updates that keep the version (digest, pin) and
+// replacements (the versions are of different packages). A lockfile-only update starts at the
+// locked version.
 func collect(ups []dep.Update) []item {
 	var items []item
 	idx := map[string]int{}
@@ -136,7 +138,7 @@ func collect(ups []dep.Update) []item {
 		if u.Lockfile {
 			from = u.Dep.Locked
 		}
-		if from == u.NewVersion {
+		if from == u.NewVersion || u.Type == dep.Replacement {
 			continue
 		}
 		key := u.Dep.Datasource + "\x00" + u.Dep.Name + "\x00" + u.Dep.Source

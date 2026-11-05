@@ -40,6 +40,7 @@ var Doc = refdoc.Manager{
 			"Versioning is `semver`. Prerelease candidates are only considered from a prerelease, and deprecated versions are dropped.",
 		}},
 		{Title: "Workspaces", Body: "A dep naming a member of the manifest's own workspace is never updated."},
+		{Title: "Replacements", Body: "Dependency-section entries can be [replaced](configuration.md#rulesreplacementname) by another package: the key is renamed and the range keeps its operator for the new version; the lockfile is regenerated as for other manifest changes."},
 		{Title: "Locked versions", Body: "Before resolving, deps reads the lock root's lockfile (the one the post-processor would update, see below) once per run and keeps only the entries of the extracted deps:",
 			Items: []string{
 				"`package-lock.json` and `npm-shrinkwrap.json` (`lockfileVersion` 2 or 3), streamed: the `packages` entries, where a member's own `<member>/node_modules/<name>` wins over the hoisted `node_modules/<name>`; links are not versions. `lockfileVersion` 1: the top-level `dependencies` entries.",

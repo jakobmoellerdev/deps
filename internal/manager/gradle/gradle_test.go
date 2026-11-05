@@ -55,6 +55,11 @@ func extract(t *testing.T, file string, src []byte) []dep.Dep {
 				t.Errorf("dep %s: src[RefSpan] = %q, Version %q", d.Name, got, d.Version)
 			}
 		}
+		for _, p := range d.NameParts {
+			if got := string(src[p.Span.Start:p.Span.End]); got != p.Text {
+				t.Errorf("dep %s: src[NamePart] = %q, Text %q", d.Name, got, p.Text)
+			}
+		}
 	}
 	return ds
 }
@@ -356,6 +361,145 @@ func TestEdits(t *testing.T) {
 				t.Errorf("got %q", out)
 			}
 		})
+	}
+}
+
+// TestReplacementEdits: deps whose coordinates or plugin id are written literally carry
+// NameParts; a replacement rewrites them along with the version.
+func TestReplacementEdits(t *testing.T) {
+	whole := func(text string) []string { return []string{dep.NameWhole, text} }
+	ga := func(g, a string) []string { return []string{dep.NameGroup, g, dep.NameArtifact, a} }
+	const catalog = "dependencyResolutionManagement {\n  versionCatalogs {\n    create(\"libs\") {\n"
+	for _, tc := range []struct {
+		name, file, src, dep, newName, to string
+		parts                             []string // role, text pairs
+		want                              string
+	}{
+		{name: "kotlin string notation", file: "build.gradle.kts", src: "dependencies {\n  implementation(\"g:a:1.0\")\n}\n",
+			dep: "g:a", newName: "h:b", to: "2.0", parts: whole("g:a"), want: "dependencies {\n  implementation(\"h:b:2.0\")\n}\n"},
+		{name: "groovy string notation classifier", file: "build.gradle", src: "dependencies {\n  testImplementation 'g:a:1.0:tests@jar'\n}\n",
+			dep: "g:a", newName: "g:b", to: "1.0", parts: whole("g:a"), want: "dependencies {\n  testImplementation 'g:b:1.0:tests@jar'\n}\n"},
+		{name: "coordinate variable", file: "build.gradle.kts", src: "val lib = \"g:a:1.0\"\ndependencies { implementation(lib) }\n",
+			dep: "g:a", newName: "h:b", to: "1.0", parts: whole("g:a"), want: "val lib = \"h:b:1.0\"\ndependencies { implementation(lib) }\n"},
+		{name: "groovy map notation", file: "build.gradle", src: "dependencies {\n  implementation group: 'g', name: 'a', version: '1.0'\n}\n",
+			dep: "g:a", newName: "g:b", to: "1.1", parts: ga("g", "a"), want: "dependencies {\n  implementation group: 'g', name: 'b', version: '1.1'\n}\n"},
+		{name: "kotlin map notation", file: "build.gradle.kts", src: "dependencies {\n  implementation(group = \"g\", name = \"a\", version = \"1.0\")\n}\n",
+			dep: "g:a", newName: "h:b", to: "1.0", parts: ga("g", "a"), want: "dependencies {\n  implementation(group = \"h\", name = \"b\", version = \"1.0\")\n}\n"},
+		{name: "kotlin plugin", file: "build.gradle.kts", src: "plugins {\n  id(\"x.y\") version \"1.0\"\n}\n",
+			dep: "x.y", newName: "z.w", to: "2.0", parts: whole("x.y"), want: "plugins {\n  id(\"z.w\") version \"2.0\"\n}\n"},
+		{name: "groovy plugin", file: "settings.gradle", src: "plugins {\n  id 'x.y' version '1.0'\n}\n",
+			dep: "x.y", newName: "z.w", to: "1.0", parts: whole("x.y"), want: "plugins {\n  id 'z.w' version '1.0'\n}\n"},
+		{name: "catalog string notation", file: "gradle/libs.versions.toml", src: "[libraries]\na = \"g:a:1.0\"\n",
+			dep: "g:a", newName: "h:b", to: "1.1", parts: whole("g:a"), want: "[libraries]\na = \"h:b:1.1\"\n"},
+		{name: "catalog module", file: "gradle/libs.versions.toml", src: "[libraries]\na = { module = \"g:a\", version = \"1.0\" }\n",
+			dep: "g:a", newName: "h:b", to: "1.0", parts: whole("g:a"), want: "[libraries]\na = { module = \"h:b\", version = \"1.0\" }\n"},
+		{name: "catalog group and name", file: "gradle/libs.versions.toml",
+			src: "[versions]\nv = \"1.0\"\n[libraries]\na = { group = \"g\", name = \"a\", version.ref = \"v\" }\n",
+			dep: "g:a", newName: "h:a", to: "1.0", parts: ga("g", "a"),
+			want: "[versions]\nv = \"1.0\"\n[libraries]\na = { group = \"h\", name = \"a\", version.ref = \"v\" }\n"},
+		{name: "catalog plugin string notation", file: "gradle/libs.versions.toml", src: "[plugins]\np = \"x.y:1.0\"\n",
+			dep: "x.y", newName: "z.w", to: "1.0", parts: whole("x.y"), want: "[plugins]\np = \"z.w:1.0\"\n"},
+		{name: "catalog plugin id", file: "gradle/libs.versions.toml", src: "[plugins]\np = { id = \"x.y\", version = \"1.0\" }\n",
+			dep: "x.y", newName: "z.w", to: "2.0", parts: whole("x.y"), want: "[plugins]\np = { id = \"z.w\", version = \"2.0\" }\n"},
+		{name: "settings catalog library", file: "settings.gradle.kts", src: catalog + "      library(\"a\", \"g\", \"a\").version(\"1.0\")\n    }\n  }\n}\n",
+			dep: "g:a", newName: "h:b", to: "1.0", parts: ga("g", "a"), want: catalog + "      library(\"a\", \"h\", \"b\").version(\"1.0\")\n    }\n  }\n}\n"},
+		{name: "settings catalog coordinates", file: "settings.gradle.kts", src: catalog + "      library(\"a\", \"g:a:1.0\")\n    }\n  }\n}\n",
+			dep: "g:a", newName: "h:b", to: "1.0", parts: whole("g:a"), want: catalog + "      library(\"a\", \"h:b:1.0\")\n    }\n  }\n}\n"},
+		{name: "settings catalog plugin", file: "settings.gradle.kts", src: catalog + "      plugin(\"p\", \"x.y\").version(\"1.0\")\n    }\n  }\n}\n",
+			dep: "x.y", newName: "z.w", to: "1.0", parts: whole("x.y"), want: catalog + "      plugin(\"p\", \"z.w\").version(\"1.0\")\n    }\n  }\n}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var d *dep.Dep
+			for _, x := range extract(t, tc.file, []byte(tc.src)) {
+				if x.Name == tc.dep {
+					d = &x
+				}
+			}
+			if d == nil {
+				t.Fatalf("dep %s not found", tc.dep)
+			}
+			var parts []string
+			for _, p := range d.NameParts {
+				parts = append(parts, p.Role, p.Text)
+			}
+			if !slices.Equal(parts, tc.parts) {
+				t.Errorf("NameParts = %q, want %q", parts, tc.parts)
+			}
+			edits, err := New().Edits(dep.Update{Dep: *d, NewVersion: tc.to, NewName: tc.newName})
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := patch.Apply([]byte(tc.src), edits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(out) != tc.want {
+				t.Errorf("got %q", out)
+			}
+		})
+	}
+}
+
+// TestNotRenamable: names that are not written literally have no NameParts, and Edits of a
+// replacement fails for them.
+func TestNotRenamable(t *testing.T) {
+	for _, tc := range []struct{ file, src, dep string }{
+		{"build.gradle.kts", "plugins { kotlin(\"jvm\") version \"2.0.0\" }\n", "org.jetbrains.kotlin.jvm"},
+		{"build.gradle", "dependencies { implementation \"$g:a:1.0\" }\n", "$g:a"},
+		{"build.gradle", "dependencies { implementation group: \"${g}\", name: 'a', version: '1.0' }\n", "${g}:a"},
+		{"build.gradle.kts", "plugins { id(\"x.$y\") version \"1.0\" }\n", "x.$y"},
+		{"build.gradle.kts", "dependencies { implementation(\"g\\u002e:a:1.0\") }\n", "g\\u002e:a"},
+		{"gradle/libs.versions.toml", "[libraries]\na = { module = \"g\\u003aa\", version = \"1.0\" }\n", "g:a"},
+		{"gradle/libs.versions.toml", "[libraries]\na = { group = \"g\", name = \"\\u0061\", version = \"1.0\" }\n", "g:a"},
+		{"gradle/libs.versions.toml", "[plugins]\np = { id = \"x\\u002ey\", version = \"1.0\" }\n", "x.y"},
+	} {
+		var d *dep.Dep
+		for _, x := range extract(t, tc.file, []byte(tc.src)) {
+			if x.Name == tc.dep {
+				d = &x
+			}
+		}
+		switch {
+		case d == nil:
+			t.Errorf("%q: dep %s not found", tc.src, tc.dep)
+		case d.Renamable():
+			t.Errorf("%q: NameParts %+v", tc.src, d.NameParts)
+		default:
+			if _, err := New().Edits(dep.Update{Dep: *d, NewVersion: d.Version, NewName: "h:b"}); err == nil {
+				t.Errorf("%q: replacement edits without NameParts", tc.src)
+			}
+		}
+	}
+}
+
+func TestRename(t *testing.T) {
+	m := New().(manager.Renamer)
+	lib := dep.Dep{DepType: DepTypeDependencies, Name: "g:a", Source: LibraryRepositories}
+	plug := dep.Dep{DepType: DepTypePlugin, Name: "x.y", Source: PluginRepositories}
+	for _, tc := range []struct {
+		d    dep.Dep
+		name string
+		ok   bool
+	}{
+		{lib, "h:b", true},
+		{lib, "org.example:my-lib_2", true},
+		{lib, "x.y", false},
+		{lib, "g:a:1.0", false},
+		{lib, ":a", false},
+		{lib, "g:", false},
+		{lib, "g/x:a", false},
+		{plug, "z.w", true},
+		{plug, "g:a", false},
+		{plug, "", false},
+		{plug, "a b", false},
+	} {
+		got, err := m.Rename(tc.d, tc.name)
+		switch {
+		case (err == nil) != tc.ok:
+			t.Errorf("Rename(%s, %q) err = %v, want ok %v", tc.d.Name, tc.name, err, tc.ok)
+		case tc.ok && (got.Name != tc.name || got.Source != tc.d.Source):
+			t.Errorf("Rename(%s, %q) = %s from %q", tc.d.Name, tc.name, got.Name, got.Source)
+		}
 	}
 }
 

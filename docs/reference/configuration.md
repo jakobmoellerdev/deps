@@ -90,6 +90,7 @@ customDatasources:
 - [`branchPrefix`](#branchprefix)
 - [`rebaseWhen`](#rebasewhen)
 - [`monorepos`](#monorepos)
+- [`replacements`](#replacements)
 - [`gitAuthor`](#gitauthor)
 - [`platformCommit`](#platformcommit)
 - [`gitIgnoredAuthors`](#gitignoredauthors)
@@ -139,6 +140,9 @@ customDatasources:
   - [`rules[].updates`](#rulesupdates)
   - [`rules[].versioning`](#rulesversioning)
   - [`rules[].extractVersion`](#rulesextractversion)
+  - [`rules[].replacementName`](#rulesreplacementname)
+  - [`rules[].replacementVersion`](#rulesreplacementversion)
+  - [`rules[].replacementPrefix`](#rulesreplacementprefix)
   - [`rules[].separateMajorMinor`](#rulesseparatemajorminor)
   - [`rules[].separateMultipleMajor`](#rulesseparatemultiplemajor)
   - [`rules[].separateMinorPatch`](#rulesseparateminorpatch)
@@ -352,6 +356,13 @@ They are applied as implicit rules *before* the user rules, so any rule that set
 ```yaml
 monorepos: false
 ```
+
+## `replacements`
+
+Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/\* images to registry.k8s.io/\*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep.
+
+- **Type:** boolean
+- **Default:** `true`
 
 ## `gitAuthor`
 
@@ -907,7 +918,7 @@ rules:
 Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin.
 
 - **Type:** list of strings
-- **Values:** `major`, `minor`, `patch`, `digest`, `pin`
+- **Values:** `major`, `minor`, `patch`, `digest`, `pin`, `replacement`
 
 Must not be empty. A rule with `updateTypes` is skipped in the pre-policy pass and applies per candidate (see [evaluation](#rules)); it cannot set `pin` or `versioning`.
 
@@ -949,7 +960,7 @@ Range strategy for matching npm, cargo, Python and terraform deps and Gradle dyn
 
 ### `rules[].updates`
 
-Allowed update types; replaces the earlier list.
+Allowed update types; replaces the earlier list. Replacements are not listed here: they are switched off with ignore (updateTypes: [replacement]) or replacements: false.
 
 - **Type:** list of strings
 - **Values:** `major`, `minor`, `patch`, `digest`, `pin`
@@ -992,6 +1003,24 @@ rules:
 ### `rules[].extractVersion`
 
 RE2 regexp with a (?\<version>) group extracting the version from the datasource's release names, e.g. `^jq-(?<version>.+)$` for jq-1.7.1 tags or `^kustomize/(?<version>.+)$`; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes.
+
+- **Type:** string
+
+### `rules[].replacementName`
+
+Replace matching deps with this package (image, npm package, owner/repo[/path] action, Go module path, group:artifact, chart or registry address; with replacementPrefix, the new prefix) in one replacement update instead of their usual updates, which run proposes once the replacement's PR is closed. The version is kept unless replacementVersion is set, and the new package must have it (else the dep is skipped with the reason). Supported by the docker, gitlabci, kustomize, helm, terraform (providers, registry modules, images), terragrunt, tflint, maven, gradle, npm, github-actions and gomod managers where the name is written literally (see the managers reference). Overrides earlier rules and the built-in replacements. updates lists do not apply to replacements; select them with updateTypes: [replacement]. Cannot be combined with updateTypes or currentAge.
+
+- **Type:** string
+
+### `rules[].replacementVersion`
+
+Version written with replacementName (the new package's version; an npm range keeps its operator); empty keeps the current version. Requires replacementName.
+
+- **Type:** string
+
+### `rules[].replacementPrefix`
+
+Prefix of the dep name that replacementName replaces, for moves of many names at once (Renovate's replacementNameTemplate with replace): with replacementPrefix: k8s.gcr.io/ and replacementName: registry.k8s.io/, k8s.gcr.io/pause becomes registry.k8s.io/pause. Deps whose name does not start with it get no replacement from the rule. Requires replacementName.
 
 - **Type:** string
 
