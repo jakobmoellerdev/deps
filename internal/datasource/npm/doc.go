@@ -8,7 +8,7 @@ import (
 var Doc = refdoc.Datasource{
 	Name:         Name,
 	NameForm:     "package name (`@scope/name` sent as `@scope%2fname`)",
-	Endpoints:    "`GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata) once per registry and package, stream-decoded; deprecated versions dropped; 404 → `package <name> not found`. The full packument (`Accept: application/json`) is fetched at most once per registry and package, only for release times and the source repository",
+	Endpoints:    "`GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata) once per registry and package, stream-decoded; deprecated versions dropped, their messages kept for the dashboard's deprecated dependencies (a deprecated `dist-tags.latest` deprecates the package, else the installed version's own message counts); 404 → `package <name> not found`. The full packument (`Accept: application/json`) is fetched at most once per registry and package, only for release times and the source repository",
 	Auth:         "`.npmrc` `//host/path/:_authToken=` (longest prefix), `${VAR}` expansion",
 	ReleaseTimes: "packument `time`; not fetched for `minimumReleaseAge` when the abbreviated `modified` is already older",
 	Notes: []refdoc.Section{{

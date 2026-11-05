@@ -270,3 +270,27 @@ func TestNewerParity(t *testing.T) {
 		}
 	}
 }
+
+// TestDeprecation reports a yanked version from the index lines Releases read, without a
+// request of its own.
+func TestDeprecation(t *testing.T) {
+	var hits atomic.Int32
+	s := newSource(serve(t, &hits))
+	d := dep.Dep{Name: "cc", Version: "1.0.0", File: "Cargo.toml"}
+	if got := s.Deprecation(d, "1.1.0"); got != "" {
+		t.Errorf("Deprecation before Releases = %q, want empty", got)
+	}
+	if _, err := s.Releases(t.Context(), d, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	n := hits.Load()
+	if got := s.Deprecation(d, "1.1.0"); got != "version 1.1.0 yanked" {
+		t.Errorf("Deprecation(1.1.0) = %q", got)
+	}
+	if got := s.Deprecation(d, "1.0.0"); got != "" {
+		t.Errorf("Deprecation(1.0.0) = %q, want empty", got)
+	}
+	if hits.Load() != n {
+		t.Errorf("Deprecation made %d requests", hits.Load()-n)
+	}
+}

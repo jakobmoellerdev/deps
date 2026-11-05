@@ -169,6 +169,9 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{separateMultipleMajor: 1}]\n", "line 1"},
 		{"updateNotScheduled: sometimes\n", "line 1"},
 		{"rules: [{minimumReleaseAge: 3 fortnights}]\n", `rules[0].minimumReleaseAge: invalid age "3 fortnights"`},
+		{"abandonmentThreshold: ages\n", `abandonmentThreshold: invalid age "ages"`},
+		{"abandonmentThreshold: 99999999999 years\n", `abandonmentThreshold: age "99999999999 years" out of range`},
+		{"rules: [{abandonmentThreshold: -1d}]\n", `rules[0].abandonmentThreshold: invalid age "-1d"`},
 		{"minimumReleaseAgeBehaviour: timestamp-strict\n", `minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "timestamp-strict"`},
 		{"rules: [{minimumReleaseAgeBehaviour: required}]\n", `rules[0].minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "required"`},
 		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, git-refs, github-releases, go, go-toolchain, docker, npm, node-version, helm, crate, pypi, terraform-provider, terraform-module, maven, gradle-version, rubygems, ruby-version, rust-version, orb, azure-pipelines-tasks, golang-version, github-tags, github-release-attachments, node, bitbucket-tags or custom.<name> of customDatasources, got "custom.envtest"`},
@@ -1064,6 +1067,32 @@ func TestParseAge(t *testing.T) {
 	for d, want := range map[time.Duration]string{0: "0", day: "1 day", 28 * day: "28 days", 12 * time.Hour: "12h", 90 * time.Minute: "90m", 90 * time.Second: "1m30s"} {
 		if got := FormatAge(d); got != want {
 			t.Errorf("FormatAge(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestAbandonmentThresholdPolicy(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `abandonmentThreshold: 1 year
+rules:
+  - manager: npm
+    abandonmentThreshold: 18 months
+  - names: [left-pad]
+    abandonmentThreshold: "0"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := 24 * time.Hour
+	for _, tc := range []struct {
+		d    dep.Dep
+		want time.Duration
+	}{
+		{dep.Dep{Manager: "docker", Name: "alpine"}, 365 * day},
+		{dep.Dep{Manager: "npm", Name: "react"}, 540 * day},
+		{dep.Dep{Manager: "npm", Name: "left-pad"}, 0},
+	} {
+		if p := c.Policy(tc.d); p.AbandonAfter != tc.want {
+			t.Errorf("%s: AbandonAfter = %v, want %v", tc.d.Name, p.AbandonAfter, tc.want)
 		}
 	}
 }

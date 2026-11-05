@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,5 +75,14 @@ func TestRunCounts(t *testing.T) {
 	want := "updates=3\nprs=3\ncreated=1\nupdated=1\nclosed=1\nup-to-date=2\nautomerged=2\nprs-skipped=1\nheld-back=1\nskipped=3\nerrors=1\n"
 	if string(got) != want {
 		t.Errorf("outputs:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestReportWarnings(t *testing.T) {
+	res := summaryFixture()
+	r := (&summary{Command: "plan", Res: res, Groups: engine.GroupUpdates(res.Updates, "")}).report()
+	want := []jsonWarning{{Name: "example.com/vuln", File: "go.mod", Line: 6, Kind: "abandoned", Reason: "no release since 2020-01-01 (abandonmentThreshold 365 days)"}}
+	if !slices.Equal(r.Warnings, want) {
+		t.Errorf("warnings = %+v, want %+v", r.Warnings, want)
 	}
 }

@@ -374,3 +374,49 @@ func TestDetectedKeepsStableOrder(t *testing.T) {
 		t.Errorf("detected order differs from a stable sort:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// TestDashboardWarnings lists deprecated and abandoned deps once per name and reason, with
+// their files, sorted, and the update PR body repeats the dep's warnings.
+func TestDashboardWarnings(t *testing.T) {
+	req := dep.Dep{Manager: "npm", File: "a/package.json", Name: "request", Version: "2.88.0"}
+	req2 := req
+	req2.File = "b/package.json"
+	pad := dep.Dep{Manager: "npm", File: "package.json", Name: "left-pad", Version: "1.1.0"}
+	warns := []engine.Warning{
+		{Dep: req, Kind: engine.WarnDeprecated, Reason: "package deprecated: request has been\ndeprecated, see `#3142`"},
+		{Dep: pad, Kind: engine.WarnAbandoned, Reason: "no release since 2024-04-16 (abandonmentThreshold 730 days)"},
+		{Dep: req2, Kind: engine.WarnDeprecated, Reason: "package deprecated: request has been\ndeprecated, see `#3142`"},
+		{Dep: pad, Kind: engine.WarnDeprecated, Reason: "package deprecated: use String.prototype.padStart()"},
+	}
+	body := renderDashboard([]dashboardSection{{warns: warns}}, nil)
+	for _, want := range []string{
+		"## Deprecated dependencies\n\nThe registry marks these dependencies or their installed versions deprecated, yanked or inactive, or their source repository is archived. Consider replacing them.\n\n" +
+			"- `left-pad`: package deprecated: use String.prototype.padStart() (`package.json`)\n" +
+			"- `request`: package deprecated: request has been deprecated, see '#3142' (`a/package.json`, `b/package.json`)\n",
+		"## Abandoned dependencies\n\nThese dependencies had no release within `abandonmentThreshold`.\n\n" +
+			"- `left-pad`: no release since 2024-04-16 (abandonmentThreshold 730 days) (`package.json`)\n",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	if body := renderDashboard([]dashboardSection{{}}, nil); strings.Contains(body, "Deprecated dependencies") || strings.Contains(body, "Abandoned dependencies") {
+		t.Errorf("empty warning sections rendered:\n%s", body)
+	}
+
+	ws := []string{"deprecated: package deprecated: use String.prototype.padStart()", "abandoned: no release since 2024-04-16"}
+	grp := engine.Group{Updates: []dep.Update{
+		{Dep: pad, Type: dep.Patch, NewVersion: "1.1.1", Warnings: ws},
+		{Dep: dep.Dep{Manager: "npm", File: "b/package.json", Name: "left-pad", Version: "1.1.0"}, Type: dep.Patch, NewVersion: "1.1.1", Warnings: ws},
+	}}
+	pr := prBody(t.Context(), nil, grp, "fp", "")
+	want := "\n### Warnings\n\nConsider replacing these dependencies rather than updating them.\n\n" +
+		"- `left-pad`: deprecated: package deprecated: use String.prototype.padStart()\n" +
+		"- `left-pad`: abandoned: no release since 2024-04-16\n\n---"
+	if !strings.Contains(pr, want) {
+		t.Errorf("PR body lacks %q:\n%s", want, pr)
+	}
+	if pr := prBody(t.Context(), nil, engine.Group{Updates: []dep.Update{{Dep: pad, Type: dep.Patch, NewVersion: "1.1.1"}}}, "fp", ""); strings.Contains(pr, "### Warnings") {
+		t.Errorf("PR body without warnings has the section:\n%s", pr)
+	}
+}

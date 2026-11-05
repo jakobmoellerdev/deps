@@ -36,22 +36,28 @@ func parseAgeRange(s string) (*ageRange, error) {
 	if m == nil {
 		return nil, fmt.Errorf(`invalid age range %q: want an operator <, <=, > or >= and an age, e.g. "> 1 year" or "< 30 days"`, s)
 	}
-	if l := longAgeRe.FindStringSubmatch(m[2]); l != nil {
+	d, err := parseLongAge(m[2])
+	if err != nil {
+		return nil, fmt.Errorf("invalid age range %q: %w", s, err)
+	}
+	return &ageRange{op: m[1], age: d}, nil
+}
+
+// parseLongAge parses an age as ParseAge does, or in months (30 days) or years (365 days):
+// currentAge and abandonmentThreshold.
+func parseLongAge(s string) (time.Duration, error) {
+	if l := longAgeRe.FindStringSubmatch(s); l != nil {
 		unit := 30 * 24 * time.Hour
 		if l[2][0] == 'y' {
 			unit = 365 * 24 * time.Hour
 		}
 		n, err := strconv.ParseInt(l[1], 10, 64)
 		if err != nil || n > int64(1<<63-1)/int64(unit) {
-			return nil, fmt.Errorf("age %q out of range", m[2])
+			return 0, fmt.Errorf("age %q out of range", s)
 		}
-		return &ageRange{op: m[1], age: time.Duration(n) * unit}, nil
+		return time.Duration(n) * unit, nil
 	}
-	d, err := ParseAge(m[2])
-	if err != nil {
-		return nil, fmt.Errorf("invalid age range %q: %w", s, err)
-	}
-	return &ageRange{op: m[1], age: d}, nil
+	return ParseAge(s)
 }
 
 // matches reports whether age (>= 0) satisfies the range.

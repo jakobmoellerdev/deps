@@ -65,9 +65,10 @@ type location struct{ reg, token string }
 
 // metadata is what deps keeps of a package's abbreviated metadata document.
 type metadata struct {
-	rels     []datasource.Release // versions that are not deprecated
-	latest   string               // `dist-tags.latest`; "" when absent
-	modified time.Time            // `modified`; zero when absent or not RFC 3339
+	rels       []datasource.Release // versions that are not deprecated
+	deprecated map[string]string    // deprecated versions -> message ("" = no message); nil = none
+	latest     string               // `dist-tags.latest`; "" when absent
+	modified   time.Time            // `modified`; zero when absent or not RFC 3339
 }
 
 // packument is what deps keeps of a package's full packument.
@@ -206,6 +207,31 @@ func (s *Source) Latest(d dep.Dep) string {
 		return e.latest
 	}
 	return ""
+}
+
+// Deprecation implements datasource.DeprecationSource from d's earlier Releases lookup: the
+// package is deprecated when its `dist-tags.latest` version is (npm deprecate on the whole
+// package marks every version), else version is when it carries a `deprecated` message.
+func (s *Source) Deprecation(d dep.Dep, version string) string {
+	e := s.loaded(d)
+	if e == nil {
+		return ""
+	}
+	if msg, ok := e.deprecated[e.latest]; ok && e.latest != "" {
+		return "package deprecated" + message(msg)
+	}
+	if msg, ok := e.deprecated[version]; ok {
+		return "version " + version + " deprecated" + message(msg)
+	}
+	return ""
+}
+
+// message renders a deprecation message as a ": <msg>" suffix, "" without one.
+func message(msg string) string {
+	if msg = strings.TrimSpace(msg); msg == "" {
+		return ""
+	}
+	return ": " + msg
 }
 
 // loaded returns the metadata of d's earlier Releases lookup, or nil when there was none or it
@@ -539,6 +565,7 @@ func decodeTimes(dec *jsontext.Decoder) (map[string]string, error) {
 // Duplicate-name checking is off: it keeps a name set per object, which made up over 90% of
 // the allocations on large packuments (typescript).
 func decodePackument(r io.Reader) (p packument, deprecated int, err error) {
+	var gone map[string]string
 	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true))
 	if err := expectObject(dec); err != nil {
 		return packument{}, 0, err
@@ -546,7 +573,7 @@ func decodePackument(r io.Reader) (p packument, deprecated int, err error) {
 	seenVersions, seenTime, seenRepo := false, false, false
 	for dec.PeekKind() != '}' {
 		if seenVersions && seenTime && seenRepo {
-			return p, deprecated, nil
+			return p, len(gone), nil
 		}
 		key, err := dec.ReadToken()
 		if err != nil {
@@ -555,7 +582,7 @@ func decodePackument(r io.Reader) (p packument, deprecated int, err error) {
 		switch name := key.String(); {
 		case name == "versions":
 			seenVersions = true
-			p.rels, deprecated, err = decodeVersions(dec)
+			p.rels, gone, err = decodeVersions(dec)
 		case name == "time" && dec.PeekKind() == '{':
 			seenTime = true
 			p.times, err = decodeTimes(dec)
@@ -572,7 +599,7 @@ func decodePackument(r io.Reader) (p packument, deprecated int, err error) {
 	if _, err := dec.ReadToken(); err != nil {
 		return packument{}, 0, err
 	}
-	return p, deprecated, nil
+	return p, len(gone), nil
 }
 
 // decodeMetadata streams an abbreviated metadata document and keeps the versions that are not
@@ -590,7 +617,7 @@ func decodeMetadata(r io.Reader) (m metadata, deprecated int, err error) {
 		}
 		switch name := key.String(); {
 		case name == "versions":
-			m.rels, deprecated, err = decodeVersions(dec)
+			m.rels, m.deprecated, err = decodeVersions(dec)
 		case name == "dist-tags" && dec.PeekKind() == '{':
 			m.latest, err = decodeLatest(dec)
 		case name == "modified" && dec.PeekKind() == '"':
@@ -608,7 +635,7 @@ func decodeMetadata(r io.Reader) (m metadata, deprecated int, err error) {
 	if _, err := dec.ReadToken(); err != nil {
 		return metadata{}, 0, err
 	}
-	return m, deprecated, nil
+	return m, len(m.deprecated), nil
 }
 
 // decodeLatest reads the `dist-tags` object and returns its `latest`; "" when that is absent
@@ -639,23 +666,27 @@ func decodeLatest(dec *jsontext.Decoder) (latest string, err error) {
 }
 
 // decodeVersions reads the `versions` object and returns the versions that are not
-// deprecated; only one member of a version object is buffered at a time.
-func decodeVersions(dec *jsontext.Decoder) (rels []datasource.Release, deprecated int, err error) {
+// deprecated and, by version, the messages of those that are ("" for `deprecated: true`);
+// only one member of a version object is buffered at a time.
+func decodeVersions(dec *jsontext.Decoder) (rels []datasource.Release, deprecated map[string]string, err error) {
 	if err := expectObject(dec); err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	for dec.PeekKind() != '}' {
 		tok, err := dec.ReadToken()
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 		v := tok.String() // tokens are only valid until the next read
-		gone, err := versionDeprecated(dec)
+		msg, gone, err := versionDeprecated(dec)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 		if gone {
-			deprecated++
+			if deprecated == nil {
+				deprecated = make(map[string]string)
+			}
+			deprecated[v] = msg
 			continue
 		}
 		rels = append(rels, datasource.Release{Version: v})
@@ -684,23 +715,24 @@ func decodeRepository(dec *jsontext.Decoder) (repo string, err error) {
 }
 
 // versionDeprecated reads one version object and reports whether its `deprecated` member marks
-// it deprecated. The other members are consumed with ReadValue: unlike unmarshaling into a
-// struct, which skips unknown members token by token, it scans a whole value at once.
-func versionDeprecated(dec *jsontext.Decoder) (bool, error) {
+// it deprecated, with the message. The other members are consumed with ReadValue: unlike
+// unmarshaling into a struct, which skips unknown members token by token, it scans a whole
+// value at once.
+func versionDeprecated(dec *jsontext.Decoder) (string, bool, error) {
 	if dec.PeekKind() != '{' {
 		var meta struct {
 			Deprecated any `json:"deprecated"`
 		}
-		return false, json.UnmarshalDecode(dec, &meta) // null, or the unmarshal error
+		return "", false, json.UnmarshalDecode(dec, &meta) // null, or the unmarshal error
 	}
 	if _, err := dec.ReadToken(); err != nil {
-		return false, err
+		return "", false, err
 	}
 	var deprecated *any // allocated only for versions that have the member
 	for dec.PeekKind() != '}' {
 		name, err := dec.ReadToken()
 		if err != nil {
-			return false, err
+			return "", false, err
 		}
 		if name.String() == "deprecated" {
 			if deprecated == nil {
@@ -711,25 +743,29 @@ func versionDeprecated(dec *jsontext.Decoder) (bool, error) {
 			_, err = dec.ReadValue()
 		}
 		if err != nil {
-			return false, err
+			return "", false, err
 		}
 	}
 	if _, err := dec.ReadToken(); err != nil {
-		return false, err
+		return "", false, err
 	}
-	return deprecated != nil && isDeprecated(*deprecated), nil
+	if deprecated == nil {
+		return "", false, nil
+	}
+	msg, gone := isDeprecated(*deprecated)
+	return msg, gone, nil
 }
 
-// isDeprecated reports whether a version's `deprecated` value marks it deprecated: a
-// non-empty message or true.
-func isDeprecated(v any) bool {
+// isDeprecated reports whether a version's `deprecated` value marks it deprecated (a
+// non-empty message or true) and returns the message.
+func isDeprecated(v any) (string, bool) {
 	switch d := v.(type) {
 	case string:
-		return d != ""
+		return d, d != ""
 	case bool:
-		return d
+		return "", d
 	}
-	return false
+	return "", false
 }
 
 // expectObject reads the next token and fails unless it starts an object.

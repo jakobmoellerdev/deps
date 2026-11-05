@@ -11,7 +11,7 @@ var Doc = refdoc.Datasource{
 	Endpoints: "PyPI: `GET <DEPS_PYPI_URL or https://pypi.org>/pypi/<name>/json`; other indexes: `GET <index>/<name>/` with " +
 		"`Accept: application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.2, text/html;q=0.01` " +
 		"(simple API: JSON, PEP 691/700, else HTML, PEP 503; an HTTP 406 is retried with `Accept: text/html`); once per (index, name); " +
-		"versions without files or with every file yanked dropped; 404 → `package <name> not found`, or the skip `in-repository package (<file>)` for a pep621 or poetry dep named like the project of a scanned `pyproject.toml`",
+		"versions without files or with every file yanked dropped (an installed version whose files are all yanked, and a JSON API project classified `Development Status :: 7 - Inactive`, are listed under the dashboard's deprecated dependencies); 404 → `package <name> not found`, or the skip `in-repository package (<file>)` for a pep621 or poetry dep named like the project of a scanned `pyproject.toml`",
 	Auth:         "userinfo of the index URL (`https://user:pass@host/simple`) sent as basic auth, redacted in errors and logs",
 	ReleaseTimes: "earliest file upload time of the version on any of the dep's indexes (`upload_time_iso_8601`, `upload-time`, HTML `data-upload-time`)",
 	Notes: []refdoc.Section{{

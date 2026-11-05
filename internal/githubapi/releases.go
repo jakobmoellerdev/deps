@@ -47,6 +47,7 @@ type List struct {
 	cursor   string // GraphQL endCursor of the last page
 	done     bool   // no more pages are fetched: complete, MaxPages reached, or an error
 	complete bool   // every release is listed
+	archived bool   // the repository is archived (GraphQL only; REST lists do not say)
 	err      error
 	rels     []Release
 	byTag    map[string]int // index in rels
@@ -68,6 +69,10 @@ func (l *List) Stable() []datasource.Release { return slices.Clip(l.stable) }
 
 // Complete reports whether the list holds every release of the repository.
 func (l *List) Complete() bool { return l.complete }
+
+// Archived reports whether the repository is archived; known from GraphQL pages only, false
+// for lists fetched over REST.
+func (l *List) Archived() bool { return l.archived }
 
 func (l *List) add(rel Release) {
 	l.byTag[rel.Tag] = len(l.rels)
@@ -126,7 +131,7 @@ func (c *Client) next(ctx context.Context, r Repo, l *List) {
 	}
 }
 
-const releasesQuery = `query($owner:String!,$name:String!,$first:Int!,$cursor:String){repository(owner:$owner,name:$name){` +
+const releasesQuery = `query($owner:String!,$name:String!,$first:Int!,$cursor:String){repository(owner:$owner,name:$name){isArchived ` +
 	`releases(first:$first,after:$cursor,orderBy:{field:CREATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor}` +
 	`nodes{tagName isDraft isPrerelease publishedAt}}}}`
 
@@ -138,7 +143,8 @@ func (c *Client) graphqlPage(ctx context.Context, r Repo, l *List) (bool, error)
 	}
 	var data struct {
 		Repository *struct {
-			Releases struct {
+			IsArchived bool `json:"isArchived"`
+			Releases   struct {
 				PageInfo struct {
 					HasNextPage bool   `json:"hasNextPage"`
 					EndCursor   string `json:"endCursor"`
@@ -158,6 +164,7 @@ func (c *Client) graphqlPage(ctx context.Context, r Repo, l *List) (bool, error)
 	if data.Repository == nil {
 		return false, fmt.Errorf("repository: %w", ErrNotFound)
 	}
+	l.archived = data.Repository.IsArchived
 	rels := data.Repository.Releases
 	for _, n := range rels.Nodes {
 		if n.IsDraft || n.TagName == "" {

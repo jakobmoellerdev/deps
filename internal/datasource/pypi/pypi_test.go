@@ -162,6 +162,11 @@ func TestJSONAPI(t *testing.T) {
 	if got, err := s.SourceRepo(ctx, d, "2.31.0"); err != nil || got != "https://github.com/psf/requests" {
 		t.Errorf("SourceRepo = %q, %v", got, err)
 	}
+	for v, want := range map[string]string{"2.32.0": "version 2.32.0 yanked", "2.31.0": ""} {
+		if got := s.Deprecation(d, v); got != want {
+			t.Errorf("Deprecation(%s) = %q, want %q", v, got, want)
+		}
+	}
 	if n := ix.calls.Load(); n != 1 {
 		t.Errorf("requests = %d, want 1", n)
 	}
@@ -761,5 +766,22 @@ func TestRequiresPython(t *testing.T) {
 	rels, err := s.Releases(t.Context(), dep.Dep{Name: "mixed", PythonConstraint: ">=3.9"}, "")
 	if want := []string{"1.0", "1.2", "1.3", "1.4"}; err != nil || !slices.Equal(versions(rels), want) {
 		t.Errorf("mixed: %v, %v; want %v", versions(rels), err, want)
+	}
+}
+
+// TestDeprecationInactive flags a project classified `Development Status :: 7 - Inactive`.
+func TestDeprecationInactive(t *testing.T) {
+	ix := newIndex(t, "/pypi/nose/json", "application/json",
+		[]byte(`{"info":{"classifiers":["Development Status :: 7 - Inactive","License :: OSI Approved"]},"releases":{"1.3.7":[{"yanked":false}]}}`))
+	s := New(ix.srv.Client(), make(chan struct{}, 1), env(map[string]string{"DEPS_PYPI_URL": ix.srv.URL + "/"}))
+	d := dep.Dep{Name: "nose"}
+	if _, err := s.Releases(t.Context(), d, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := s.Deprecation(d, "1.3.7"), "project inactive (Development Status :: 7 - Inactive)"; got != want {
+		t.Errorf("Deprecation = %q, want %q", got, want)
+	}
+	if n := ix.calls.Load(); n != 1 {
+		t.Errorf("requests = %d, want 1", n)
 	}
 }

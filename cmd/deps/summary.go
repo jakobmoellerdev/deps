@@ -293,6 +293,15 @@ func (s *summary) writeText(w io.Writer) {
 			fmt.Fprintf(w, "      %s  %s:%d  %s  %s\n", p.Dep.Name, p.Dep.File, p.Dep.Line, p.Version, p.Reason)
 		}
 	}
+	switch {
+	case len(s.Res.Warnings) > 0 && !s.Verbose:
+		fmt.Fprintf(w, "  Deprecated or abandoned: %d (-v lists each)\n", len(s.Res.Warnings))
+	case len(s.Res.Warnings) > 0:
+		fmt.Fprintln(w, "  Deprecated or abandoned:")
+		for _, d := range s.Res.Warnings {
+			fmt.Fprintf(w, "      %s  %s:%d  %s: %s\n", d.Dep.Name, d.Dep.File, d.Dep.Line, d.Kind, d.Reason)
+		}
+	}
 	if rs := s.skipReasons(); len(rs) > 0 {
 		fmt.Fprintln(w, "  Skipped (-v lists each dependency):")
 		for _, r := range rs {

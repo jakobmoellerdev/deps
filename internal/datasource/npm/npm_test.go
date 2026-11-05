@@ -330,3 +330,42 @@ func TestReleasesSkipsWorkspaceMembers(t *testing.T) {
 		}
 	})
 }
+
+// TestDeprecation checks that the deprecation messages of the abbreviated metadata are kept:
+// a deprecated `dist-tags.latest` deprecates the package, else the installed version's own
+// message counts; no request is made for it.
+func TestDeprecation(t *testing.T) {
+	doc := func(latest string) string {
+		return `{"dist-tags":{"latest":"` + latest + `"},"versions":{
+			"1.0.0":{"deprecated":"  broken, use 2.x "},"1.1.0":{"deprecated":true},"1.2.0":{},
+			"2.0.0":{"deprecated":"request has been deprecated"}}}`
+	}
+	tests := []struct {
+		name, latest, version, want string
+	}{
+		{"package deprecated", "2.0.0", "1.2.0", "package deprecated: request has been deprecated"},
+		{"version with message", "1.2.0", "1.0.0", "version 1.0.0 deprecated: broken, use 2.x"},
+		{"version without message", "1.2.0", "1.1.0", "version 1.1.0 deprecated"},
+		{"not deprecated", "1.2.0", "1.2.0", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := newRegistry(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(doc(tt.latest))) })
+			s := New(reg.srv.Client(), make(chan struct{}, 1), env(map[string]string{"NPM_CONFIG_REGISTRY": reg.srv.URL}))
+			d := dep.Dep{Name: "request", File: "package.json"}
+			ds := s.(datasource.DeprecationSource)
+			if got := ds.Deprecation(d, tt.version); got != "" {
+				t.Errorf("Deprecation before Releases = %q, want empty", got)
+			}
+			if _, err := s.Releases(t.Context(), d, t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			if got := ds.Deprecation(d, tt.version); got != tt.want {
+				t.Errorf("Deprecation = %q, want %q", got, tt.want)
+			}
+			if len(reg.reqs) != 1 {
+				t.Errorf("requests = %v, want the metadata only", reg.reqs)
+			}
+		})
+	}
+}

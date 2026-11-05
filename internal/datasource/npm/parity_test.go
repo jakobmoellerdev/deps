@@ -69,7 +69,7 @@ func decodeVersionsBefore(dec *jsontext.Decoder) (rels []datasource.Release, dep
 		if err := json.UnmarshalDecode(dec, &meta); err != nil {
 			return nil, 0, err
 		}
-		if isDeprecated(meta.Deprecated) {
+		if _, gone := isDeprecated(meta.Deprecated); gone {
 			deprecated++
 			continue
 		}

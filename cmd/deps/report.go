@@ -24,6 +24,7 @@ type jsonReport struct {
 	PRs          []jsonPR       `json:"prs"`
 	Other        []jsonAction   `json:"otherActions"`
 	Pending      []jsonPending  `json:"heldBack"`
+	Warnings     []jsonWarning  `json:"warnings"`
 	Skipped      []jsonSkip     `json:"skipped"`
 	Errors       []jsonError    `json:"errors"`
 	Counts       map[string]int `json:"counts"`
@@ -68,6 +69,14 @@ type jsonPending struct {
 	Line    int    `json:"line"`
 	Version string `json:"version"`
 	Reason  string `json:"reason"`
+}
+
+type jsonWarning struct {
+	Name   string `json:"name"`
+	File   string `json:"file"`
+	Line   int    `json:"line"`
+	Kind   string `json:"kind"` // deprecated or abandoned
+	Reason string `json:"reason"`
 }
 
 type jsonSkip struct {
@@ -147,7 +156,7 @@ func countActions(actions []bot.Action) outcomes {
 func (s *summary) report() jsonReport {
 	r := jsonReport{
 		Command: s.Command, Dependencies: s.deps(), DurationMS: s.Elapsed.Milliseconds(),
-		PRs: []jsonPR{}, Other: []jsonAction{}, Pending: []jsonPending{}, Skipped: []jsonSkip{}, Errors: []jsonError{},
+		PRs: []jsonPR{}, Other: []jsonAction{}, Pending: []jsonPending{}, Warnings: []jsonWarning{}, Skipped: []jsonSkip{}, Errors: []jsonError{},
 		Counts: s.counts(),
 	}
 	for _, g := range s.Groups {
@@ -165,6 +174,9 @@ func (s *summary) report() jsonReport {
 	}
 	for _, p := range s.Res.Pending {
 		r.Pending = append(r.Pending, jsonPending{Name: p.Dep.Name, File: p.Dep.File, Line: p.Dep.Line, Version: p.Version, Reason: p.Reason})
+	}
+	for _, w := range s.Res.Warnings {
+		r.Warnings = append(r.Warnings, jsonWarning{Name: w.Dep.Name, File: w.Dep.File, Line: w.Dep.Line, Kind: w.Kind, Reason: w.Reason})
 	}
 	for _, sr := range s.skipReasons() {
 		r.Skipped = append(r.Skipped, jsonSkip{Reason: sr.Reason, Count: len(sr.Deps)})

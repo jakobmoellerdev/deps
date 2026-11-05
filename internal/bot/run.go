@@ -309,7 +309,7 @@ func Run(ctx context.Context, o Options, bases []Base, post map[string]engine.Po
 		sections := make([]dashboardSection, len(runs))
 		var resErrs []error
 		for i, r := range runs {
-			sections[i] = dashboardSection{actions: r.actions, deps: r.Res.Deps}
+			sections[i] = dashboardSection{actions: r.actions, deps: r.Res.Deps, warns: r.Res.Warnings}
 			if multi {
 				sections[i].base = r.Name
 			}
@@ -1220,6 +1220,20 @@ func prBody(ctx context.Context, notes Notes, grp engine.Group, fp, input string
 				id = "[" + a.ID + "](" + a.URL + ")"
 			}
 			fmt.Fprintf(&b, "- %s: %s\n", id, a.Summary)
+		}
+	}
+	warned := map[string]bool{}
+	for _, u := range ups {
+		for _, w := range u.Warnings {
+			line := "- `" + u.Dep.Name + "`: " + oneLine(w, dashboardErrorLen)
+			if warned[line] {
+				continue
+			}
+			if len(warned) == 0 {
+				b.WriteString("\n### Warnings\n\nConsider replacing these dependencies rather than updating them.\n\n")
+			}
+			warned[line] = true
+			b.WriteString(line + "\n")
 		}
 	}
 	if notes != nil {

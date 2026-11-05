@@ -285,6 +285,9 @@ func describeRule(r config.Rule) string {
 	if r.MinimumReleaseAgeBehaviour != "" {
 		add("minimumReleaseAgeBehaviour", r.MinimumReleaseAgeBehaviour)
 	}
+	if r.AbandonmentThreshold != "" {
+		add("abandonmentThreshold", r.AbandonmentThreshold)
+	}
 	if r.Versioning != "" {
 		add("versioning", r.Versioning)
 	}

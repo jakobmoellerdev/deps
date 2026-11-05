@@ -398,6 +398,22 @@ rules:
     minimumReleaseAgeBehaviour: timestamp-optional
 ```
 
+## Config.abandonmentThreshold
+
+A dependency whose newest release is older than this is listed under **Abandoned dependencies** on the [dashboard](#dependencydashboard), and its update PRs say so under **Warnings** (Renovate's `abandonmentThreshold`).
+
+- **Syntax:** as for [`minimumReleaseAge`](#minimumreleaseage), plus months (30 days) and years (365 days): `1 year`, `18 months`, `2y`. Empty or `0` turns the check off (the default).
+- **Newest release:** the highest stable release the datasource lists. With npm, the package's `modified` time bounds every release, so a package not modified within the threshold is abandoned without another request (`no release since <date>`); otherwise the newest release's time is looked up, once per dep (`newest release <v> published <date>`; for npm that is the full packument, shared with `minimumReleaseAge` and the PR's age column). Datasources without release times, and unknown times, never flag a dep.
+- Only deps that are looked up are checked: ignored deps and deps without a valid version are not.
+- `rules[].abandonmentThreshold` overrides it per dep; `0` turns it off for matching deps.
+
+```yaml
+abandonmentThreshold: 2 years
+rules:
+  - manager: github-actions
+    abandonmentThreshold: 0
+```
+
 ## Config.ignorePaths
 
 - When the key is **absent**, Renovate's `:ignoreModulesAndTests` list (the default above) applies.
@@ -572,8 +588,10 @@ An open update PR with this label is left alone: deps does not build, push or re
 3. **Ignored or blocked**: updates whose PR was closed without merging, for that version or, for a major update, for that major (checkbox: recreate the PR), branches someone else pushed to (checkbox: discard those commits and rebuild the branch), and PRs with the [`stopUpdatingLabel`](#stopupdatinglabel).
 4. **Pending branch automerge**: branches of [`automergeType: branch`](#automergetype) waiting for their checks, without a PR. Ticking one makes the next run open its PR instead.
 5. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.
-6. **Errors** of the run (at most 20, each cut to 300 characters).
-7. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.
+6. **Deprecated dependencies**: deps whose registry marks the package or the installed version deprecated (npm `deprecated`: a deprecated `dist-tags.latest` deprecates the package, else the installed version's message counts), yanked (crates, PyPI JSON API) or inactive (PyPI `Development Status :: 7 - Inactive`), or whose GitHub repository is archived (github-releases deps, when a GitHub token makes the release list a GraphQL query). These come from the documents the release lookup already fetched: no extra requests. The update PRs of such a dep repeat the reason under **Warnings**.
+7. **Abandoned dependencies**: deps whose newest release is older than [`abandonmentThreshold`](#abandonmentthreshold) (off by default).
+8. **Errors** of the run (at most 20, each cut to 300 characters).
+9. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.
 
 - With several [base branches](#basebranches), items 1 to 5 are listed per base under ``## Base branch `<base>` `` (a base with nothing to list is left out), errors of a base's resolution start with `<base>: `, and the detected dependencies have one ``### `<base>` `` block per base.
 - The body is capped at 60 000 bytes (GitHub allows 65 536 characters). Lists that do not fit end with a `… not listed` note.

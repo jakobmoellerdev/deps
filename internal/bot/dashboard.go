@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
@@ -121,22 +122,24 @@ func sameBody(a, b string) bool {
 	return norm(a) == norm(b)
 }
 
-// dashboardSection is what the dashboard lists for one base branch: the actions of its groups
-// and its detected dependencies. base is "" for the only base of a run whose branches do not
+// dashboardSection is what the dashboard lists for one base branch: the actions of its groups,
+// its deprecated and abandoned dependencies and its detected dependencies. base is "" for the only base of a run whose branches do not
 // carry it; its lists then go without a base heading.
 type dashboardSection struct {
 	base    string
 	actions []Action
 	deps    []dep.Dep
+	warns   []engine.Warning
 }
 
-// dashboardLists are the checkbox lists of one base.
+// dashboardLists are the checkbox lists and dependency warnings of one base.
 type dashboardLists struct {
 	approval, schedule, limited, blocked, branches, open []string
+	deprecated, abandoned                                []string
 }
 
 func (l dashboardLists) empty() bool {
-	return len(l.approval)+len(l.schedule)+len(l.limited)+len(l.blocked)+len(l.branches)+len(l.open) == 0
+	return len(l.approval)+len(l.schedule)+len(l.limited)+len(l.blocked)+len(l.branches)+len(l.open)+len(l.deprecated)+len(l.abandoned) == 0
 }
 
 // dashboardItems sorts actions into the dashboard lists.
@@ -175,7 +178,8 @@ func dashboardItems(actions []Action) dashboardLists {
 
 // renderDashboard renders the dashboard body: per base branch (headed by it when sections name
 // it) updates awaiting approval, pending PRs (schedule, limits), ignored or blocked updates,
-// branches waiting for branch automerge and open PRs, then the errors and the detected
+// branches waiting for branch automerge, open PRs and deprecated and abandoned dependencies,
+// then the errors and the detected
 // dependencies of each base. It is deterministic, so an unchanged run does not edit the issue,
 // and bounded to dashboardMaxBytes; every checkbox is unticked again.
 func renderDashboard(sections []dashboardSection, errs []error) string {
@@ -183,6 +187,8 @@ func renderDashboard(sections []dashboardSection, errs []error) string {
 	w.text("This issue lists the dependency updates [deps](https://git.jakob-moeller.cloud/jakobmoellerdev/deps) manages. Tick a checkbox to make the next run act on it.\n")
 	for _, sec := range sections {
 		l := dashboardItems(sec.actions)
+		l.deprecated = warningLines(sec.warns, engine.WarnDeprecated)
+		l.abandoned = warningLines(sec.warns, engine.WarnAbandoned)
 		level := "##"
 		if sec.base != "" {
 			if l.empty() || !w.heading("## Base branch `"+sec.base+"`") {
@@ -196,6 +202,8 @@ func renderDashboard(sections []dashboardSection, errs []error) string {
 		w.section(level, "Ignored or blocked", "", l.blocked)
 		w.section(level, "Pending branch automerge", "These branches are merged without a PR once their checks pass. Tick one to create its PR instead.", l.branches)
 		w.section(level, "Open", "These PRs are open. Tick one to rebuild its branch.", l.open)
+		w.section(level, "Deprecated dependencies", "The registry marks these dependencies or their installed versions deprecated, yanked or inactive, or their source repository is archived. Consider replacing them.", l.deprecated)
+		w.section(level, "Abandoned dependencies", "These dependencies had no release within `abandonmentThreshold`.", l.abandoned)
 	}
 
 	if len(errs) > 0 {
@@ -225,6 +233,34 @@ func renderDashboard(sections []dashboardSection, errs []error) string {
 	}
 	w.b.WriteString("\n" + dashboardMarker + "\n")
 	return w.b.String()
+}
+
+// warningLines renders the warnings of kind, one line per dep name and reason with the files
+// it is found in, sorted by name.
+func warningLines(warns []engine.Warning, kind string) []string {
+	type key struct{ name, reason string }
+	files := map[key][]string{}
+	var keys []key
+	for _, w := range warns {
+		if w.Kind != kind {
+			continue
+		}
+		k := key{w.Dep.Name, oneLine(w.Reason, dashboardErrorLen)}
+		if _, ok := files[k]; !ok {
+			keys = append(keys, k)
+		}
+		if fs := files[k]; !slices.Contains(fs, w.Dep.File) {
+			files[k] = append(fs, w.Dep.File)
+		}
+	}
+	slices.SortFunc(keys, func(a, b key) int {
+		return cmp.Or(strings.Compare(a.name, b.name), strings.Compare(a.reason, b.reason))
+	})
+	lines := make([]string, len(keys))
+	for i, k := range keys {
+		lines[i] = "- `" + strings.ReplaceAll(k.name, "`", "'") + "`: " + k.reason + " (`" + strings.Join(files[k], "`, `") + "`)"
+	}
+	return lines
 }
 
 // prLink renders "[#n](url)" for a PR action, "the PR" without a number.

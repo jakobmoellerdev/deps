@@ -110,6 +110,8 @@ type Result struct {
 	// Pending lists the deps with a candidate held back by minimumReleaseAge (the newest
 	// one), in discovery order; the update chosen instead, if any, is in Updates.
 	Pending []Pending
+	// Warnings are the deprecated and abandoned deps (Warning), in discovery order.
+	Warnings []Warning
 }
 
 // Pending is the newest candidate of a dep that minimumReleaseAge held back.
@@ -308,6 +310,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	outs := make([]Trace, len(todo))
 	ups := make([][]dep.Update, len(todo))
 	pend := make([]Pending, len(todo))
+	warns := make([][]Warning, len(todo))
 	var wg sync.WaitGroup
 	rewriters := map[string]manager.RangeRewriter{}
 	rangers := map[string]manager.RangeUpdater{}
@@ -350,7 +353,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 					slog.DebugContext(ctx, "update found", "file", d.File, "line", d.Line, "name", d.Name, "from", d.Version, "to", up.NewVersion, "type", up.Type, "bucket", up.Bucket)
 				}
 			}
-			outs[i], ups[i], pend[i] = t, u, r.pending
+			outs[i], ups[i], pend[i], warns[i] = t, u, r.pending, r.warnings
 			prog.Done(PhaseResolve, t.Err)
 		})
 	}
@@ -371,6 +374,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			res.Deps[depAt[i]].Skip = t.Dep.Skip
 		}
 		res.Updates = append(res.Updates, ups[i]...)
+		res.Warnings = append(res.Warnings, warns[i]...)
 		if pend[i].Version != "" {
 			res.Pending = append(res.Pending, pend[i])
 		}
@@ -874,9 +878,10 @@ type resolver struct {
 	// base is ds before extractVersion wrapping: the head of a commit pin (commitUpdates).
 	base Datasource
 
-	rels    []Release
-	times   map[string]time.Time // release times asked so far; zero = unknown
-	pending Pending              // newest candidate held back by minimumReleaseAge
+	rels     []Release
+	times    map[string]time.Time // release times asked so far; zero = unknown
+	pending  Pending              // newest candidate held back by minimumReleaseAge
+	warnings []Warning            // checkLifecycle's findings
 	// declared looks up the module path a Go module version declares (nil = no check);
 	// renamed is the reason of the first candidate pathChange rejected.
 	declared datasource.DeclaredPathSource
@@ -1141,6 +1146,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 	if err != nil {
 		return nil, err
 	}
+	warnings := warningTexts(r.warnings)
 	var decorate func([]dep.Update)
 	decorate = func(ups []dep.Update) {
 		for i := range ups {
@@ -1156,6 +1162,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 			up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
 			up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
 			up.Tasks = kp.Tasks
+			up.Warnings = warnings
 			if len(up.Advisories) == 0 {
 				up.Group, up.Schedule, up.DashboardApproval = kp.Group, kp.Schedule, kp.DashboardApproval
 			} else {
@@ -1205,6 +1212,7 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	if reason := r.applyAge(t); reason != "" {
 		return nil, &dep.SkipError{Reason: reason}
 	}
+	r.checkLifecycle(scheme)
 	r.declared, _ = r.ds.(datasource.DeclaredPathSource)
 	t.Candidates = len(rels)
 	names := make([]string, len(rels))

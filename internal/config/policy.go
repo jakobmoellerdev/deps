@@ -52,8 +52,11 @@ type Policy struct {
 	// TimestampRequired (minimumReleaseAgeBehaviour timestamp-required): with a MinAge, a
 	// version whose release time is unknown is held back.
 	TimestampRequired bool
-	Versioning        string // versioning scheme set by a rule, "" = the dep's own
-	ExtractVersion    string // extractVersion set by a rule, "" = the dep's own
+	// AbandonAfter (abandonmentThreshold) flags the dep as abandoned when its newest release is
+	// older; 0 = off.
+	AbandonAfter   time.Duration
+	Versioning     string // versioning scheme set by a rule, "" = the dep's own
+	ExtractVersion string // extractVersion set by a rule, "" = the dep's own
 	// ReplacementName is the package a replacement update moves the dep to (a rule's
 	// replacementName, or the built-in Replacement), "" = none; ReplacementVersion its version,
 	// "" = the current one.
@@ -239,6 +242,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		Updates:               allUpdates,
 		Schedule:              c.schedule,
 		MinAge:                c.minAge,
+		AbandonAfter:          c.abandon,
 		TimestampRequired:     c.MinimumReleaseAgeBehaviour == TimestampRequired,
 		CommitType:            CommitChore,
 		CommitScope:           DefaultScope,
@@ -335,6 +339,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		}
 		if r.minAge != nil {
 			p.MinAge = *r.minAge
+		}
+		if r.abandon != nil {
+			p.AbandonAfter = *r.abandon
 		}
 		if r.MinimumReleaseAgeBehaviour != "" {
 			p.TimestampRequired = r.MinimumReleaseAgeBehaviour == TimestampRequired

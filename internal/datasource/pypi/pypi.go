@@ -85,6 +85,10 @@ type project struct {
 	times  map[string]time.Time // versionKey -> earliest upload time
 	python map[string]string    // versionKey -> requires-python shared by all files not yanked
 	repo   string               // source repository URL as published (JSON API only)
+	// yanked are the versionKeys of releases whose files are all yanked; inactive marks a
+	// project classified `Development Status :: 7 - Inactive` (JSON API only).
+	yanked   map[string]bool
+	inactive bool
 }
 
 type entry struct {
@@ -140,6 +144,21 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, e
 		return "", err
 	}
 	return e.repo, e.err
+}
+
+// Deprecation implements datasource.DeprecationSource from the JSON API: the project is
+// classified `Development Status :: 7 - Inactive`, or every file of version is yanked.
+func (s *Source) Deprecation(d dep.Dep, version string) string {
+	e, err := s.view(context.Background(), d) // built by the earlier Releases call
+	switch {
+	case err != nil || e.err != nil:
+		return ""
+	case e.inactive:
+		return "project inactive (Development Status :: 7 - Inactive)"
+	case e.yanked[versionKey(version)]:
+		return "version " + version + " yanked"
+	}
+	return ""
 }
 
 // Digest is unsupported: Python versions are not digest-pinned.
@@ -226,6 +245,7 @@ func merge(es []*entry) (project, error) {
 	listed := map[string]bool{}
 	for _, e := range found {
 		p.repo = cmp.Or(p.repo, e.repo)
+		p.inactive = p.inactive || e.inactive
 		for _, r := range e.rels {
 			k := versionKey(r.Version)
 			if !listed[k] {
@@ -239,6 +259,16 @@ func merge(es []*entry) (project, error) {
 		for k, t := range e.times {
 			if cur, ok := p.times[k]; !ok || t.Before(cur) {
 				p.times[k] = t
+			}
+		}
+	}
+	for _, e := range found {
+		for k := range e.yanked {
+			if !listed[k] {
+				if p.yanked == nil {
+					p.yanked = map[string]bool{}
+				}
+				p.yanked[k] = true
 			}
 		}
 	}
@@ -506,11 +536,13 @@ func decodeJSON(r io.Reader) (p project, yanked int, err error) {
 			var info struct {
 				HomePage    string            `json:"home_page"`
 				ProjectURLs map[string]string `json:"project_urls"`
+				Classifiers []string          `json:"classifiers"`
 			}
 			if err := json.UnmarshalDecode(dec, &info); err != nil {
 				return project{}, 0, err
 			}
 			p.repo = sourceRepo(info.ProjectURLs, info.HomePage)
+			p.inactive = slices.Contains(info.Classifiers, "Development Status :: 7 - Inactive")
 		case "releases":
 			if yanked, err = decodeReleases(dec, &p); err != nil {
 				return project{}, 0, err
@@ -562,6 +594,10 @@ func decodeReleases(dec *jsontext.Decoder, p *project) (yanked int, err error) {
 			continue
 		case allYanked:
 			yanked++
+			if p.yanked == nil {
+				p.yanked = map[string]bool{}
+			}
+			p.yanked[versionKey(v)] = true
 			continue
 		}
 		p.rels = append(p.rels, datasource.Release{Version: v})

@@ -114,5 +114,16 @@ func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 	return published, err
 }
 
+// Deprecation implements datasource.DeprecationSource: the repository is archived, as the
+// GraphQL release list (with a token) reports at no extra cost; REST lists do not say. The
+// list is the one Releases fetched for d, so no page is fetched.
+func (s *Source) Deprecation(d dep.Dep, _ string) string {
+	archived := false
+	if err := s.with(context.Background(), d.Name, d.Version, func(l *githubapi.List) { archived = l.Archived() }); err != nil || !archived {
+		return ""
+	}
+	return "repository archived"
+}
+
 // Digest is unsupported: releases carry no digest.
 func (*Source) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }

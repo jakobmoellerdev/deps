@@ -197,8 +197,11 @@ type Config struct {
 	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed unless minimumReleaseAgeBehaviour is timestamp-required; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time."`
 	// MinimumReleaseAgeBehaviour decides whether an unknown release time passes
 	// minimumReleaseAge.
-	MinimumReleaseAgeBehaviour string   `yaml:"minimumReleaseAgeBehaviour" jsonschema:"enum=timestamp-optional,enum=timestamp-required,default=timestamp-optional" jsonschema_description:"How minimumReleaseAge treats a version whose release time is unknown (the datasource has none, or the lookup failed): timestamp-optional proposes it, timestamp-required holds it back like a too-new version (reported as 'release time unknown'). Renovate's default is timestamp-required."`
-	IgnorePaths                []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it."`
+	MinimumReleaseAgeBehaviour string `yaml:"minimumReleaseAgeBehaviour" jsonschema:"enum=timestamp-optional,enum=timestamp-required,default=timestamp-optional" jsonschema_description:"How minimumReleaseAge treats a version whose release time is unknown (the datasource has none, or the lookup failed): timestamp-optional proposes it, timestamp-required holds it back like a too-new version (reported as 'release time unknown'). Renovate's default is timestamp-required."`
+	// AbandonmentThreshold flags deps whose newest release is older than it (Renovate's
+	// abandonmentThreshold); a string like MinimumReleaseAge.
+	AbandonmentThreshold string   `yaml:"abandonmentThreshold" jsonschema_description:"Age of a dependency's newest release after which the dependency dashboard and its PRs flag it as abandoned, e.g. '1 year' or '18 months' (units of minimumReleaseAge, plus months of 30 days and years of 365 days); empty or '0' turns the check off. It costs at most one release time lookup per dep (npm: none when its modified time is old enough)."`
+	IgnorePaths          []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it."`
 	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
 	// same names); rules override them.
 	SeparateMajorMinor    *bool  `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update."`
@@ -240,6 +243,7 @@ type Config struct {
 	// lfmSchedule is the parsed LockFileMaintenance.Schedule, or schedule when it is nil.
 	lfmSchedule *schedule.Set
 	minAge      time.Duration // parsed MinimumReleaseAge
+	abandon     time.Duration // parsed AbandonmentThreshold
 	// baseBranches are the parsed BaseBranches; baseBranch is the base branch rules with
 	// baseBranches match against (ForBaseBranch), "" = none.
 	baseBranches []branchPattern
@@ -425,15 +429,17 @@ type Rule struct {
 	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
 	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
 	// MinimumReleaseAgeBehaviour overrides the top-level minimumReleaseAgeBehaviour when set.
-	MinimumReleaseAgeBehaviour string   `yaml:"minimumReleaseAgeBehaviour" jsonschema:"enum=timestamp-optional,enum=timestamp-required" jsonschema_description:"Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updateTypes: for candidates of those types)."`
-	Automerge                  *bool    `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
-	AutomergeStrategy          string   `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
-	AutomergeType              string   `yaml:"automergeType" jsonschema:"enum=pr,enum=branch" jsonschema_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
-	DashboardApproval          *bool    `yaml:"dashboardApproval" jsonschema_description:"Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does."`
-	Labels                     []string `yaml:"labels" jsonschema_description:"Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."`
-	AddLabels                  []string `yaml:"addLabels" jsonschema_description:"Labels added to those of earlier rules and the top level for new PRs of matching deps."`
-	Reviewers                  []string `yaml:"reviewers" jsonschema_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
-	Assignees                  []string `yaml:"assignees" jsonschema_description:"Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates."`
+	MinimumReleaseAgeBehaviour string `yaml:"minimumReleaseAgeBehaviour" jsonschema:"enum=timestamp-optional,enum=timestamp-required" jsonschema_description:"Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updateTypes: for candidates of those types)."`
+	// AbandonmentThreshold overrides the top-level abandonmentThreshold when set; "0" disables it.
+	AbandonmentThreshold string   `yaml:"abandonmentThreshold" jsonschema_description:"Overrides the top-level abandonmentThreshold for matching deps, e.g. '2 years'; '0' turns the check off for them."`
+	Automerge            *bool    `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
+	AutomergeStrategy    string   `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
+	AutomergeType        string   `yaml:"automergeType" jsonschema:"enum=pr,enum=branch" jsonschema_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
+	DashboardApproval    *bool    `yaml:"dashboardApproval" jsonschema_description:"Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does."`
+	Labels               []string `yaml:"labels" jsonschema_description:"Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."`
+	AddLabels            []string `yaml:"addLabels" jsonschema_description:"Labels added to those of earlier rules and the top level for new PRs of matching deps."`
+	Reviewers            []string `yaml:"reviewers" jsonschema_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
+	Assignees            []string `yaml:"assignees" jsonschema_description:"Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates."`
 	// PRTitle, PRHeader and PRFooter override the top-level templates when set; "" resets them.
 	PRTitle  *string `yaml:"prTitle" jsonschema_description:"Overrides the top-level prTitle for matching deps (with updateTypes: for updates of those types); empty string means the built-in titles. A group's PR uses its first update's templates."`
 	PRHeader *string `yaml:"prHeader" jsonschema_description:"Overrides the top-level prHeader for matching deps; empty string means none."`
@@ -449,6 +455,7 @@ type Rule struct {
 	schedule       *schedule.Set
 	templates      prtemplate.Set // parsed PRTitle, PRHeader and PRFooter; members of unset fields are nil
 	minAge         *time.Duration // parsed MinimumReleaseAge; nil = not set
+	abandon        *time.Duration // parsed AbandonmentThreshold; nil = not set
 }
 
 // Custom is a custom manager: annotation mode when Match is empty, regex mode otherwise.
@@ -797,6 +804,14 @@ func (c *Config) Validate() error {
 			c.loc = loc
 		}
 	}
+	c.abandon = 0
+	if c.AbandonmentThreshold != "" {
+		if d, err := parseLongAge(c.AbandonmentThreshold); err != nil {
+			add("abandonmentThreshold", "%v", err)
+		} else {
+			c.abandon = d
+		}
+	}
 	c.schedule = c.parseSchedule("schedule", c.Schedule, add)
 	c.lfmSchedule = c.schedule
 	if c.LockFileMaintenance.Schedule != nil {
@@ -1002,6 +1017,14 @@ func (c *Config) validateRule(i int, add addFunc) {
 		}
 	}
 	validateAgeBehaviour(f+".", r.MinimumReleaseAgeBehaviour, add)
+	r.abandon = nil
+	if r.AbandonmentThreshold != "" {
+		if d, err := parseLongAge(r.AbandonmentThreshold); err != nil {
+			add(f+".abandonmentThreshold", "%v", err)
+		} else {
+			r.abandon = &d
+		}
+	}
 	r.templates = parseTemplates(f+".", r.PRTitle, r.PRHeader, r.PRFooter, add)
 }
 

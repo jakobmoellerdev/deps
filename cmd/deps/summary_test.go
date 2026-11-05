@@ -29,9 +29,10 @@ func summaryFixture() *engine.Result {
 			{Dep: cobra, Type: dep.Minor, NewVersion: "v1.10.2", Automerge: true},
 			{Dep: vuln, Type: dep.Patch, NewVersion: "v1.0.1", Advisories: []dep.Advisory{{ID: "GO-2026-1"}}},
 		},
-		Skipped: skipped,
-		Deps:    append([]dep.Dep{checkout, cobra, vuln}, skipped...),
-		Pending: []engine.Pending{{Dep: cobra, Version: "v1.11.0", Reason: "too new (released 2026-11-03, minimum 3 days)"}},
+		Skipped:  skipped,
+		Deps:     append([]dep.Dep{checkout, cobra, vuln}, skipped...),
+		Pending:  []engine.Pending{{Dep: cobra, Version: "v1.11.0", Reason: "too new (released 2026-11-03, minimum 3 days)"}},
+		Warnings: []engine.Warning{{Dep: vuln, Kind: engine.WarnAbandoned, Reason: "no release since 2020-01-01 (abandonmentThreshold 365 days)"}},
 	}
 }
 
@@ -56,6 +57,7 @@ func TestSummaryRender(t *testing.T) {
 				"  PR deps/gomod/github.com-spf13-cobra  chore(deps): update github.com/spf13/cobra to v1.10.2  [automerge]\n",
 				"      example.com/vuln  go.mod:6  v1.0.0 -> v1.0.1  (patch, security: GO-2026-1)\n",
 				"  Held back by minimumReleaseAge:\n      github.com/spf13/cobra  go.mod:5  v1.11.0  too new (released 2026-11-03, minimum 3 days)\n",
+				"  Deprecated or abandoned:\n      example.com/vuln  go.mod:6  abandoned: no release since 2020-01-01 (abandonmentThreshold 365 days)\n",
 				"  Skipped (-v lists each dependency):\n" +
 					"       2  ignored by default (indirect; enable with a rule setting ignore: false)\n" +
 					"       1  local action  (actions in this repository (./…) have no upstream version)\n",
@@ -87,6 +89,7 @@ func TestSummaryRender(t *testing.T) {
 				"  closed  deps/gomod/old  https://x/pulls/2\n",
 				"  updated  Dependency Dashboard  https://x/issues/1\n",
 				"  Held back by minimumReleaseAge: 1 (-v lists each)\n",
+				"  Deprecated or abandoned: 1 (-v lists each)\n",
 			},
 			md: []string{
 				"## deps run\n",

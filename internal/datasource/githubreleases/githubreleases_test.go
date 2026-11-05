@@ -398,6 +398,8 @@ func TestGraphQL(t *testing.T) {
 		switch {
 		case v["name"] == "missing":
 			_, _ = w.Write([]byte(`{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository"}]}`))
+		case v["name"] == "archived":
+			_, _ = w.Write([]byte(`{"data":{"repository":{"isArchived":true,"releases":{"pageInfo":{"hasNextPage":false},"nodes":[{"tagName":"v1.0.0","publishedAt":"2020-01-01T00:00:00Z"}]}}}}`))
 		case strings.Contains(q.Query, "releaseAssets"):
 			digest := `"sha256:` + hex + `"`
 			if v["asset"] == "nodigest" {
@@ -440,10 +442,23 @@ func TestGraphQL(t *testing.T) {
 	if _, err := s.Releases(ctx, dep.Dep{Name: "o/missing"}, ""); !errors.Is(err, githubapi.ErrNotFound) || !strings.Contains(err.Error(), "releases o/missing: Could not resolve") {
 		t.Errorf("missing repo: %v", err)
 	}
+	archived := dep.Dep{Name: "o/archived", Version: "v1.0.0"}
+	if _, err := s.Releases(ctx, archived, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Deprecation(archived, "v1.0.0"); got != "repository archived" {
+		t.Errorf("Deprecation(archived) = %q", got)
+	}
+	if got := s.Deprecation(dep.Dep{Name: "o/r", Version: "v1.150.0"}, "v1.150.0"); got != "" {
+		t.Errorf("Deprecation(o/r) = %q, want empty", got)
+	}
+	if got := s.Deprecation(dep.Dep{Name: "not a repo"}, ""); got != "" {
+		t.Errorf("Deprecation(invalid) = %q, want empty", got)
+	}
 	want := []string{
 		"o/r <nil> <nil> <nil>", "o/r c1 <nil> <nil>",
 		"o/r <nil> v1.50.0 a.tgz", "o/r <nil> v1.50.0 nodigest",
-		"o/missing <nil> <nil> <nil>",
+		"o/missing <nil> <nil> <nil>", "o/archived <nil> <nil> <nil>",
 	}
 	if !slices.Equal(reqs, want) {
 		t.Errorf("requests =\n%q\nwant\n%q", reqs, want)

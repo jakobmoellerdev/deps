@@ -70,6 +70,16 @@ type LatestSource interface {
 	Latest(d dep.Dep) string
 }
 
+// DeprecationSource is implemented by datasources whose registry marks packages or versions
+// as deprecated, yanked or archived (npm `deprecated`, a yanked crate or PyPI release, an
+// archived GitHub repository). It is optional and answered from data Releases fetched, so it
+// costs no request.
+type DeprecationSource interface {
+	// Deprecation returns why version of d (or d as a whole) should no longer be used, e.g.
+	// `deprecated: use x instead` or `version 1.2.3 yanked`, or "" when it is not deprecated.
+	Deprecation(d dep.Dep, version string) string
+}
+
 // Planner is implemented by datasources that use the full set of deps they will be asked
 // about before the first lookup, e.g. to keep only the wanted charts of a repository index.
 // It is optional; the engine calls Plan once per run, before any Releases call, with the

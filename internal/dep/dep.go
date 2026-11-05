@@ -209,6 +209,9 @@ type Update struct {
 	Declined []Update
 	// Tasks are the postUpgradeTasks run after the update is built (apply, run).
 	Tasks Tasks
+	// Warnings flag the dep as deprecated or abandoned ("deprecated: package deprecated: …",
+	// "abandoned: no release since …"); the PR body lists them.
+	Warnings []string
 }
 
 // Tasks are postUpgradeTasks: shell commands, run once per branch, or with Update once per

@@ -28,6 +28,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `schedule` | `schedule` / `rules[].schedule`: Renovate's time windows as written (`before 6am on monday`, `every weekend`, `after 10pm and before 5am every weekday`, `on the first day of the month`, crons with minute `*` like `* 0-5 * * 1`), evaluated against the run time; or crons of the workflow's `on.schedule` triggers (see below) |
 | `timezone` | `timezone` (IANA name; applies to time windows, not to cron triggers) |
 | `updateNotScheduled` | `updateNotScheduled` |
+| `abandonmentThreshold` | `abandonmentThreshold` / `rules[].abandonmentThreshold` (same units as `rules[].currentAge`): the dashboard's "Abandoned dependencies" section and a PR body warning. Deprecated npm packages and versions, yanked crates and PyPI releases, inactive PyPI projects and archived GitHub repositories (github-releases with a token) are listed under "Deprecated dependencies" without extra requests |
 | `minimumReleaseAge` | `minimumReleaseAge` / `rules[].minimumReleaseAge` (`null` → `0 days`) |
 | `minimumReleaseAgeBehaviour` | `minimumReleaseAgeBehaviour` / `rules[].minimumReleaseAgeBehaviour` (`timestamp-required`, `timestamp-optional`); the default differs, see below |
 | `separateMajorMinor`, `separateMultipleMajor`, `separateMinorPatch` | same names, top level and per rule |
@@ -300,7 +301,7 @@ Each item comes from the comparison above or from [renovate-parity.md](renovate-
 
 1. **Fallback versus waiting.** deps proposes the newest release that is old enough (node 26.11.1, go-winio v0.6.3); Renovate waits for the newest (26.13.0, v0.6.4). This is a design difference, documented under P10, not a bug. It is listed because it changes which PRs OCM sees.
 3. **Mend badges and the OpenSSF scorecard.** PR bodies show the release age as text, with no adoption, passing or confidence badges (L5) and no scorecard badge (`security:openssf-scorecard`, L6).
-4. **Renovate dashboard extras:** the "Abandoned Dependencies" section and the repository problems list (e.g. hidden Unicode warnings) have no deps equivalent.
+4. **Renovate dashboard extras:** the repository problems list (e.g. hidden Unicode warnings) has no deps equivalent. The "Abandoned Dependencies" section maps to [`abandonmentThreshold`](reference/configuration.md#abandonmentthreshold), and deprecated packages are listed under "Deprecated dependencies".
 5. **Cutover steps not done:**
     - a real (non-dry) trial run in OCM;
     - App permissions confirmed for the installation (checks/statuses read, workflows write);

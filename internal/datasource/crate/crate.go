@@ -58,6 +58,7 @@ type entry struct {
 	times       map[string]time.Time // version or release line -> publication time
 	latest      map[string]string    // release line -> newest version of the line
 	newest      string               // the last published version
+	yanked      map[string]bool      // yanked versions; nil = none
 	err         error
 }
 
@@ -123,6 +124,21 @@ func (s *Source) locate(d dep.Dep) *registry {
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
 	e := s.load(ctx, s.locate(d), d.Name)
 	return e.times[version], e.err
+}
+
+// Deprecation implements datasource.DeprecationSource: version is yanked in the index of d's
+// earlier Releases lookup (complete by then).
+func (s *Source) Deprecation(d dep.Dep, version string) string {
+	s.mu.Lock()
+	var e *entry
+	if r := s.located[d.File+"\x00"+d.Name]; r != nil {
+		e = s.crates[r.index+"\x00"+strings.ToLower(d.Name)]
+	}
+	s.mu.Unlock()
+	if e == nil || !e.yanked[version] {
+		return ""
+	}
+	return "version " + version + " yanked"
 }
 
 // SourceRepo implements datasource.SourceRepo with the `repository` of version from
@@ -305,7 +321,14 @@ func (s *Source) fetch(ctx context.Context, r *registry, name string, e *entry) 
 			}
 			return fmt.Errorf("%s: %w", u, err)
 		}
-		if l.Yanked || l.Vers == "" {
+		if l.Vers == "" {
+			continue
+		}
+		if l.Yanked {
+			if e.yanked == nil {
+				e.yanked = make(map[string]bool)
+			}
+			e.yanked[l.Vers] = true
 			continue
 		}
 		e.rels = append(e.rels, datasource.Release{Version: l.Vers})

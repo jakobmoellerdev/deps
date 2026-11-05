@@ -107,6 +107,7 @@ customDatasources:
   - [`gitlabci.url`](#gitlabciurl)
 - [`minimumReleaseAge`](#minimumreleaseage)
 - [`minimumReleaseAgeBehaviour`](#minimumreleaseagebehaviour)
+- [`abandonmentThreshold`](#abandonmentthreshold)
 - [`ignorePaths`](#ignorepaths)
 - [`separateMajorMinor`](#separatemajorminor)
 - [`separateMultipleMajor`](#separatemultiplemajor)
@@ -157,6 +158,7 @@ customDatasources:
   - [`rules[].schedule`](#rulesschedule)
   - [`rules[].minimumReleaseAge`](#rulesminimumreleaseage)
   - [`rules[].minimumReleaseAgeBehaviour`](#rulesminimumreleaseagebehaviour)
+  - [`rules[].abandonmentThreshold`](#rulesabandonmentthreshold)
   - [`rules[].automerge`](#rulesautomerge)
   - [`rules[].automergeStrategy`](#rulesautomergestrategy)
   - [`rules[].automergeType`](#rulesautomergetype)
@@ -633,6 +635,26 @@ rules:
     minimumReleaseAgeBehaviour: timestamp-optional
 ```
 
+## `abandonmentThreshold`
+
+Age of a dependency's newest release after which the dependency dashboard and its PRs flag it as abandoned, e.g. `1 year` or `18 months` (units of minimumReleaseAge, plus months of 30 days and years of 365 days); empty or `0` turns the check off. It costs at most one release time lookup per dep (npm: none when its modified time is old enough).
+
+- **Type:** string
+
+A dependency whose newest release is older than this is listed under **Abandoned dependencies** on the [dashboard](#dependencydashboard), and its update PRs say so under **Warnings** (Renovate's `abandonmentThreshold`).
+
+- **Syntax:** as for [`minimumReleaseAge`](#minimumreleaseage), plus months (30 days) and years (365 days): `1 year`, `18 months`, `2y`. Empty or `0` turns the check off (the default).
+- **Newest release:** the highest stable release the datasource lists. With npm, the package's `modified` time bounds every release, so a package not modified within the threshold is abandoned without another request (`no release since <date>`); otherwise the newest release's time is looked up, once per dep (`newest release <v> published <date>`; for npm that is the full packument, shared with `minimumReleaseAge` and the PR's age column). Datasources without release times, and unknown times, never flag a dep.
+- Only deps that are looked up are checked: ignored deps and deps without a valid version are not.
+- `rules[].abandonmentThreshold` overrides it per dep; `0` turns it off for matching deps.
+
+```yaml
+abandonmentThreshold: 2 years
+rules:
+  - manager: github-actions
+    abandonmentThreshold: 0
+```
+
 ## `ignorePaths`
 
 Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it.
@@ -865,8 +887,10 @@ Maintain a dependency dashboard issue listing pending, blocked and open updates,
 3. **Ignored or blocked**: updates whose PR was closed without merging, for that version or, for a major update, for that major (checkbox: recreate the PR), branches someone else pushed to (checkbox: discard those commits and rebuild the branch), and PRs with the [`stopUpdatingLabel`](#stopupdatinglabel).
 4. **Pending branch automerge**: branches of [`automergeType: branch`](#automergetype) waiting for their checks, without a PR. Ticking one makes the next run open its PR instead.
 5. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.
-6. **Errors** of the run (at most 20, each cut to 300 characters).
-7. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.
+6. **Deprecated dependencies**: deps whose registry marks the package or the installed version deprecated (npm `deprecated`: a deprecated `dist-tags.latest` deprecates the package, else the installed version's message counts), yanked (crates, PyPI JSON API) or inactive (PyPI `Development Status :: 7 - Inactive`), or whose GitHub repository is archived (github-releases deps, when a GitHub token makes the release list a GraphQL query). These come from the documents the release lookup already fetched: no extra requests. The update PRs of such a dep repeat the reason under **Warnings**.
+7. **Abandoned dependencies**: deps whose newest release is older than [`abandonmentThreshold`](#abandonmentthreshold) (off by default).
+8. **Errors** of the run (at most 20, each cut to 300 characters).
+9. **Detected dependencies**: every extracted dependency (skipped ones too), as `name version` per manager and file in collapsed `<details>` blocks.
 
 - With several [base branches](#basebranches), items 1 to 5 are listed per base under ``## Base branch `<base>` `` (a base with nothing to list is left out), errors of a base's resolution start with `<base>: `, and the detected dependencies have one ``### `<base>` `` block per base.
 - The body is capped at 60 000 bytes (GitHub allows 65 536 characters). Lists that do not fit end with a `… not listed` note.
@@ -1228,6 +1252,12 @@ Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updat
 
 - **Type:** string
 - **Values:** `timestamp-optional`, `timestamp-required`
+
+### `rules[].abandonmentThreshold`
+
+Overrides the top-level abandonmentThreshold for matching deps, e.g. `2 years`; `0` turns the check off for them.
+
+- **Type:** string
 
 ### `rules[].automerge`
 

@@ -136,6 +136,7 @@ func checkJSONParity(t *testing.T, in []byte) {
 	t.Helper()
 	p, yanked, err := decodeJSON(bytes.NewReader(in))
 	want, wantYanked, wantErr := decodeJSONBefore(bytes.NewReader(in))
+	p.yanked, p.inactive = nil, false // deprecation data the earlier decoder did not keep
 	if !sameErr(err, wantErr) || yanked != wantYanked || !reflect.DeepEqual(p, want) {
 		t.Fatalf("decodeJSON(%q) = %+v, %d, %v; before %+v, %d, %v", in, p, yanked, err, want, wantYanked, wantErr)
 	}

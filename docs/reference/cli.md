@@ -593,6 +593,8 @@ Summary: <n> dependencies, <u> updates in <g> PRs[, PRs: <count> <status>, ...][
   <status>  <branch>  <url>                                            (run: closed obsolete PRs and the dashboard)
   Held back by minimumReleaseAge:
       <name>  <file>:<line>  <version>  too new (released <date>, minimum <age>) | release time unknown (minimum <age>, timestamp-required)
+  Deprecated or abandoned: <n> (-v lists each)
+      <name>  <file>:<line>  deprecated: <reason> | abandoned: <reason>   (with -v)
   Skipped (-v lists each dependency):
     <count>  <reason>  (<how to update>)
 ```
@@ -608,7 +610,7 @@ The PRs are the ones `run` opens: plan and apply group their updates the same wa
 - `command` (`plan`, `apply`, `run`, `run --dry-run`), `dependencies`, `durationMs`;
 - `prs[]`: `branch`, `title`, `updates[]` (`name`, `manager`, `file`, `line`, `from`, `to`, `type`, `lockfile`, `advisories` as IDs; a lock file maintenance has type `lockFileMaintenance` and no versions); for `run` also `status`, `automerge`, `number`, `url`, `waitsFor` (schedule entries: crons and time windows) and `reason` (why a `skipped: update cannot be applied` update cannot be applied; the label of a `skipped: stop-updating label` PR);
 - `otherActions[]`: closed obsolete PRs, obsolete PRs kept open by the `stopUpdatingLabel`, and the dashboard (`branch`, `title`, `status`, `number`, `url`, `dashboard`);
-- `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `skipped[]` (`reason`, `count`), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error, `file` for a file that cannot be read or parsed);
+- `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `warnings[]` (`name`, `file`, `line`, `kind` `deprecated` or `abandoned`, `reason`; see `abandonmentThreshold` and the dependency dashboard), `skipped[]` (`reason`, `count`), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error, `file` for a file that cannot be read or parsed);
 - `counts`: the step outputs below, by camelCase name.
 
 **Step outputs.** If `GITHUB_OUTPUT` is set (GitHub, Gitea and Forgejo runners), deps appends `updates`, `prs`, `held-back`, `skipped` and `errors`, and for `run` also `created`, `updated` (including rebased), `closed` (including deleted branches), `up-to-date`, `automerged` (auto-merge requests and direct merges) and `prs-skipped` (any `skipped: …` status), each as `<name>=<count>`. The dashboard is not counted.
