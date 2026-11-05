@@ -262,10 +262,12 @@ flowchart LR
 | Runtime | one static Go binary | Node.js app or container image | hosted by GitHub |
 | GitHub | ✅ | ✅ | ✅ |
 | Gitea / Forgejo | ✅ | ✅ | ❌ |
-| GitLab, Bitbucket | ❌ | ✅ | ❌ |
+| GitLab, Bitbucket | 🟡 partial¹ | ✅ | ❌ |
 | Config | one strict `.deps.yaml`, unknown keys are errors | JSON with presets | `dependabot.yml` |
 | `# renovate:` markers | ✅ | ✅ | ❌ |
 | Single static binary, no runtime | ✅ | ❌ | ❌ |
+
+¹ deps opens PRs on GitHub, Gitea and Forgejo only. In those repos it still updates what points at GitLab and Bitbucket: GitLab CI images, includes and components, and Terraform/Terragrunt modules and Kustomize remotes hosted there.
 
 Renovate covers more platforms and managers; deps trades that breadth for a single binary, a smaller config and predictable diffs. Feature-by-feature status: [Renovate parity](docs/renovate-parity.md).
 
