@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,6 +154,28 @@ func (r Repo) WriteTree(ctx context.Context, parent string, changes []engine.Fil
 	if _, err := r.run(ctx, nil, idx, "read-tree", parent); err != nil {
 		return "", err
 	}
+	// Hash every new blob with one git process: write the contents to temp files and feed
+	// their paths to hash-object --stdin-paths (--no-filters, as hashing stdin applies none).
+	var blobs strings.Builder
+	for i, c := range changes {
+		if c.New == nil {
+			continue
+		}
+		f := filepath.Join(tmp, "blob-"+strconv.Itoa(i))
+		if err := os.WriteFile(f, c.New, 0o600); err != nil {
+			return "", err
+		}
+		blobs.WriteString(f)
+		blobs.WriteByte('\n')
+	}
+	var oids []string
+	if blobs.Len() > 0 {
+		out, err := r.run(ctx, []byte(blobs.String()), nil, "hash-object", "-w", "--no-filters", "--stdin-paths")
+		if err != nil {
+			return "", err
+		}
+		oids = strings.Split(out, "\n")
+	}
 	var info strings.Builder
 	for _, c := range changes {
 		p := path.Join(prefix, c.Path)
@@ -160,15 +183,12 @@ func (r Repo) WriteTree(ctx context.Context, parent string, changes []engine.Fil
 			fmt.Fprintf(&info, "0 %s\t%s\n", strings.Repeat("0", 40), p) // mode 0 removes the entry
 			continue
 		}
-		oid, err := r.run(ctx, c.New, nil, "hash-object", "-w", "--stdin")
-		if err != nil {
-			return "", err
-		}
 		mode := "100644"
 		if c.Mode&0o111 != 0 {
 			mode = "100755"
 		}
-		fmt.Fprintf(&info, "%s %s\t%s\n", mode, oid, p)
+		fmt.Fprintf(&info, "%s %s\t%s\n", mode, oids[0], p)
+		oids = oids[1:]
 	}
 	if _, err := r.run(ctx, []byte(info.String()), idx, "update-index", "--index-info"); err != nil {
 		return "", err
