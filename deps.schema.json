@@ -55,6 +55,7 @@
               "type": "string",
               "enum": [
                 "git-tags",
+                "git-refs",
                 "github-releases",
                 "go",
                 "go-toolchain",
@@ -240,6 +241,7 @@
             "swift",
             "bundler",
             "ruby-version",
+            "git-submodules",
             "custom"
           ],
           "description": "Only match deps of this manager.",
@@ -347,7 +349,8 @@
               "wrapper",
               "maven",
               "ruby",
-              "development"
+              "development",
+              "submodule"
             ]
           },
           "type": "array",
@@ -369,6 +372,7 @@
                 "type": "string",
                 "enum": [
                   "git-tags",
+                  "git-refs",
                   "github-releases",
                   "go",
                   "go-toolchain",
@@ -428,8 +432,8 @@
         },
         "ignore": {
           "type": "boolean",
-          "description": "Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines, and actions pinned to a bare SHA no tag points at (digest updates to the default branch) in. With updateTypes: reject updates of these types.",
-          "markdownDescription": "Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines, and actions pinned to a bare SHA no tag points at (digest updates to the default branch) in. With updateTypes: reject updates of these types.\n\n- `true`: do not update; skipped as `ignored by rule #<i>`.\n- `false`: opt in a default-ignored dep type.\n- With `updateTypes`: reject (or allow) updates of those types only."
+          "description": "Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines, actions pinned to a bare SHA no tag points at (digest updates to the default branch), and git submodules in. With updateTypes: reject updates of these types.",
+          "markdownDescription": "Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines, actions pinned to a bare SHA no tag points at (digest updates to the default branch), and git submodules in. With updateTypes: reject updates of these types.\n\n- `true`: do not update; skipped as `ignored by rule #<i>`.\n- `false`: opt in a default-ignored dep type.\n- With `updateTypes`: reject (or allow) updates of those types only."
         },
         "pin": {
           "type": "string",
@@ -973,7 +977,7 @@
       },
       "type": "array",
       "description": "Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones.",
-      "markdownDescription": "Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones.\n\nA rule **matches** a dep when every selector it sets matches. The selectors are `manager`, `names`, `depTypes`, `paths`, `datasources`, `currentVersion`, `currentAge` and `updateTypes`; every other field is an action. Every field a matching rule sets **overrides** the value from earlier rules (field-wise); `updates` replaces the earlier list, it is not merged.\n\n**Evaluation.**\n\n1. The policy of a dep starts as `{pin: <top-level>, updates: all five types, schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm, cargo, poetry and bundler `dependencies`, pep621 `project.dependencies`, pipenv `packages`) and `chore` otherwise, and the scope as `deps`.\n2. **Default ignores.** Dep types `indirect` (Go, and pip_requirements' transitive pins of compiled requirements files, which still get security updates), `go` (the go.mod `go` directive), `peerDependencies` and `engines` (npm) are ignored unless a rule sets `ignore: false`. The skip reason is `ignored by default (<type>; enable with a rule setting ignore: false)`.\n3. **Built-in monorepo groups** set `group: <name> monorepo`, and the Ruby version deps `group: ruby` (unless [`monorepos: false`](#monorepos)).\n4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.\n5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.\n6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.\n\n`updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules and the resulting policy of a dep.\n\n```yaml\nrules:\n  - manager: gomod                 # opt indirect requirements in\n    depTypes: [indirect]\n    ignore: false\n  - manager: gomod                 # but never their majors\n    depTypes: [indirect]\n    updateTypes: [major]\n    ignore: true\n  - manager: github-actions        # minor+patch in one PR, majors apart\n    updateTypes: [minor, patch]\n    group: GitHub Actions\n```"
+      "markdownDescription": "Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones.\n\nA rule **matches** a dep when every selector it sets matches. The selectors are `manager`, `names`, `depTypes`, `paths`, `datasources`, `currentVersion`, `currentAge` and `updateTypes`; every other field is an action. Every field a matching rule sets **overrides** the value from earlier rules (field-wise); `updates` replaces the earlier list, it is not merged.\n\n**Evaluation.**\n\n1. The policy of a dep starts as `{pin: <top-level>, updates: all five types, schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm, cargo, poetry and bundler `dependencies`, pep621 `project.dependencies`, pipenv `packages`) and `chore` otherwise, and the scope as `deps`.\n2. **Default ignores.** Dep types `indirect` (Go, and pip_requirements' transitive pins of compiled requirements files, which still get security updates), `go` (the go.mod `go` directive), `peerDependencies` and `engines` (npm), and `submodule` (git-submodules, disabled by default as in Renovate) are ignored unless a rule sets `ignore: false`. The skip reason is `ignored by default (<type>; enable with a rule setting ignore: false)`.\n3. **Built-in monorepo groups** set `group: <name> monorepo`, and the Ruby version deps `group: ruby` (unless [`monorepos: false`](#monorepos)).\n4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.\n5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.\n6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.\n\n`updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules and the resulting policy of a dep.\n\n```yaml\nrules:\n  - manager: gomod                 # opt indirect requirements in\n    depTypes: [indirect]\n    ignore: false\n  - manager: gomod                 # but never their majors\n    depTypes: [indirect]\n    updateTypes: [major]\n    ignore: true\n  - manager: github-actions        # minor+patch in one PR, majors apart\n    updateTypes: [minor, patch]\n    group: GitHub Actions\n```"
     },
     "custom": {
       "items": {

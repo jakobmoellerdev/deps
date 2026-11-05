@@ -122,7 +122,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		poetry.Name: {"poetry", "../pyreq"}, pipenv.Name: {"pipenv", "../pyreq"},
 		terraform.Name: {"terraform", "docker"}, terraform.VersionName: {"terraform"}, terraform.TFLintName: {"terraform"},
 		terraform.TerragruntName: {"terraform"},
-		gradlewrapper.Name:       {"gradlewrapper"}, mavenwrapper.Name: {"mavenwrapper"},
+		gradlewrapper.Name:       {"gradlewrapper"}, mavenwrapper.Name: {"mavenwrapper"}, "git-submodules": {"gitsubmodules"},
 	}
 	for _, m := range ManagerDocs() {
 		dirs, ok := pkgDirs[m.Name]
@@ -155,7 +155,7 @@ func TestManagerDocsComplete(t *testing.T) {
 }
 
 func TestDatasourceDocsComplete(t *testing.T) {
-	docs := []refdoc.Datasource{gittags.Doc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, customds.Doc}
+	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, customds.Doc}
 	var names []string
 	for _, d := range docs {
 		if d.Name == "" || d.NameForm == "" || d.Endpoints == "" || d.Auth == "" || d.ReleaseTimes == "" {

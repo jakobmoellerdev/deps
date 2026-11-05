@@ -22,11 +22,14 @@ import (
 )
 
 // FileChange is the new content of one file. Path is a slash path relative to the root;
-// Old is nil when the file does not exist yet, New is nil when the change deletes it.
+// Old is nil when the file does not exist yet, New is nil when the change deletes it. A
+// Gitlink change moves the submodule at Path: Old and New are its commits (hex) instead of
+// file contents, and Mode is unused.
 type FileChange struct {
 	Path     string
 	Mode     fs.FileMode
 	Old, New []byte
+	Gitlink  bool
 }
 
 // PostProcessor regenerates the files derived from manifests (go.sum, a lockfile) after deps
@@ -342,6 +345,11 @@ func buildFile(ctx context.Context, root, file string, managers map[string]manag
 	}
 	slog.DebugContext(ctx, "file patched", "file", file, "edits", len(edits))
 	b.changes = []FileChange{{Path: file, Mode: st.Mode().Perm(), Old: old, New: patched}}
+	for _, u := range b.ups {
+		if d := u.Dep; d.Gitlink != "" && u.NewDigest != "" && u.NewDigest != d.Digest {
+			b.changes = append(b.changes, FileChange{Path: d.Gitlink, Gitlink: true, Old: []byte(d.Digest), New: []byte(u.NewDigest)})
+		}
+	}
 	return b
 }
 

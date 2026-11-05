@@ -26,6 +26,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -117,13 +118,13 @@ type Pending struct {
 }
 
 // digestManagers support digest pinning (pin: digest, digest refresh).
-var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pre-commit": true}
+var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pre-commit": true, gitsubmodules.Name: true}
 
 // digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
-// github-actions, docker and pre-commit deps whatever their versioning (a rule may override
-// it), except setup-action version inputs, which are plain values; gitlabci and terraform
-// images (docker and kubernetes resources), which are edited like docker refs. Custom and
-// kustomize deps can only refresh a digest they already carry (regex `digest` group, an
+// github-actions, docker, pre-commit and git-submodules deps whatever their versioning (a rule
+// may override it), except setup-action version inputs, which are plain values; gitlabci and
+// terraform images (docker and kubernetes resources), which are edited like docker refs. Custom
+// and kustomize deps can only refresh a digest they already carry (regex `digest` group, an
 // annotated `@sha256:`, a kustomize `digest` field); they have no place to insert a new one.
 func digestCapable(d dep.Dep) bool {
 	switch d.Manager {
@@ -135,11 +136,12 @@ func digestCapable(d dep.Dep) bool {
 	return digestManagers[d.Manager] && d.DepType != actions.DepTypeSetup
 }
 
-// tagOnly reports whether d is a docker image whose tag is not a version (latest, bookworm)
-// but whose digest can be maintained: such deps get digest-only resolution.
+// tagOnly reports whether d's version is not a version but a ref whose digest can be
+// maintained: a docker tag (latest, bookworm), or the branch a git submodule tracks. Such deps
+// get digest-only resolution.
 func tagOnly(d dep.Dep) bool {
 	s, ok := versioning.Get(d.Versioning)
-	return ok && d.Datasource == "docker" && digestCapable(d) && !s.Valid(d.Version)
+	return ok && (d.Datasource == "docker" || d.Manager == gitsubmodules.Name) && digestCapable(d) && !s.Valid(d.Version)
 }
 
 type job struct {
@@ -186,6 +188,13 @@ func extractTree(ctx context.Context, root string, cfg *config.Config, env manag
 			return err == nil
 		}
 	}
+	if env.Gitlinks == nil {
+		env.Gitlinks = gitsubmodules.IndexGitlinks(root)
+	}
+	if env.Superproject == nil {
+		env.Superproject = gitsubmodules.GitSuperproject(root)
+	}
+
 	prog.Start(PhaseExtract, len(jobs))
 	ex := extractAll(root, jobs, env, prog)
 	linkAll(managers, found, ex)

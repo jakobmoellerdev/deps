@@ -226,6 +226,35 @@ func mkCommit(t *testing.T, r Repo, parent string, changes []engine.FileChange, 
 	return c
 }
 
+func TestGitlinks(t *testing.T) {
+	_, clone := setup(t)
+	ctx := t.Context()
+	const old, next = "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
+	git(t, clone, "update-index", "--add", "--cacheinfo", "160000,"+old+",sub/lib")
+	git(t, clone, "commit", "-q", "-m", "add submodule")
+	parent := git(t, clone, "rev-parse", "HEAD")
+
+	// Commit records the new commit without having its objects.
+	r := Repo{Dir: filepath.Join(clone, "sub")}
+	c, err := r.Commit(ctx, parent, []engine.FileChange{{Path: "lib", Gitlink: true, Old: []byte(old), New: []byte(next)}}, "m", "Bot", "bot@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := git(t, clone, "ls-tree", c, "sub/lib"); got != "160000 commit "+next+"\tsub/lib" {
+		t.Errorf("ls-tree = %q", got)
+	}
+	if got := git(t, clone, "ls-files", "--stage", "sub/lib"); !strings.HasPrefix(got, "160000 "+old) {
+		t.Errorf("real index changed by Commit: %q", got)
+	}
+
+	if err := r.StageGitlink(ctx, "lib", next); err != nil {
+		t.Fatal(err)
+	}
+	if got := git(t, clone, "ls-files", "--stage", "sub/lib"); !strings.HasPrefix(got, "160000 "+next) {
+		t.Errorf("staged gitlink = %q", got)
+	}
+}
+
 func TestPushDeleteAuthor(t *testing.T) {
 	origin, clone := setup(t)
 	ctx := t.Context()

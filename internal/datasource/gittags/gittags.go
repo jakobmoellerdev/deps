@@ -1,9 +1,10 @@
 // Package gittags lists a remote repository's tags and the commit of its HEAD (the default
-// branch) over the git smart-HTTP protocol, without a git process.
+// branch), or on request its branches, over the git smart-HTTP protocol, without a git process.
 //
-// Protocol v2 `ls-refs` with `ref-prefix refs/tags/`, `ref-prefix HEAD` and `peel` is used when the
-// server advertises it, so only tag refs and HEAD cross the wire; otherwise the v0 ref
-// advertisement is parsed. Responses are parsed as a pkt-line stream.
+// Protocol v2 `ls-refs` with `ref-prefix refs/tags/`, `ref-prefix HEAD` and `peel` (or
+// `ref-prefix HEAD` and `ref-prefix refs/heads/` for branches) is used when the server
+// advertises it, so only those refs cross the wire; otherwise the v0 ref advertisement is
+// parsed. Responses are parsed as a pkt-line stream.
 package gittags
 
 import (
@@ -30,10 +31,12 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
-// Tag is a remote tag and the commit it points to (peeled for annotated tags).
+// Tag is a remote tag and the commit it points to (peeled for annotated tags). Branch listings
+// reuse it: Name is the branch, or HEAD for the default branch.
 type Tag struct{ Name, Commit string }
 
-// Lister fetches tags once per repository URL per run; concurrent callers share the result.
+// Lister fetches tags, and branches when asked, once per repository URL per run; concurrent
+// callers share the result.
 type Lister struct {
 	client *http.Client
 	auth   *httpx.Auth
@@ -44,6 +47,7 @@ type Lister struct {
 
 	mu    sync.Mutex
 	cache map[string]*entry
+	heads map[string]*entry     // repository URL -> branches and HEAD
 	lists map[string]*listEntry // Gitea/Forgejo repository URL -> first page of releases
 }
 
@@ -70,28 +74,28 @@ type entry struct {
 func New(client *http.Client, auth *httpx.Auth, sem chan struct{}, gh *githubapi.Client) *Lister {
 	return &Lister{
 		client: client, auth: auth, sem: sem, gh: gh,
-		cache: make(map[string]*entry), lists: make(map[string]*listEntry),
+		cache: make(map[string]*entry), heads: make(map[string]*entry), lists: make(map[string]*listEntry),
 	}
 }
 
 // Tags returns the tags of the repository at repoURL (e.g. https://github.com/actions/checkout).
 // The returned slice is shared between callers and must not be modified.
 func (l *Lister) Tags(ctx context.Context, repoURL string) ([]Tag, error) {
-	e := l.get(ctx, repoURL)
+	e := l.get(ctx, repoURL, false)
 	return e.tags, e.err
 }
 
 // Releases implements datasource.Datasource: the tags of d.Source, each with its commit as
 // digest. The slice is shared between callers and must not be modified.
 func (l *Lister) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
-	e := l.get(ctx, d.Source)
+	e := l.get(ctx, d.Source, false)
 	return e.rels, e.err
 }
 
 // Digest returns the commit of tag version in d.Source: the tag equal to version, else to
 // version with a leading "v" added or removed.
 func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string, error) {
-	e := l.get(ctx, d.Source)
+	e := l.get(ctx, d.Source, false)
 	if e.err != nil {
 		return "", e.err
 	}
@@ -113,8 +117,38 @@ func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string,
 // from the same ls-refs request as the tags. Version is "": the head is no tag. An empty
 // repository has no head (zero Revision). The time is left unknown; see CommitTime.
 func (l *Lister) Head(ctx context.Context, d dep.Dep, _ string) (datasource.Revision, error) {
-	e := l.get(ctx, d.Source)
+	e := l.get(ctx, d.Source, false)
 	return datasource.Revision{Digest: e.head}, e.err
+}
+
+// RefsName is the name of the git-refs datasource.
+const RefsName = "git-refs"
+
+// Refs is the git-refs datasource: the tags of a repository as releases (as git-tags), and the
+// commit of a branch (HEAD: the default branch) as digest. It shares the Lister's requests and
+// cache.
+type Refs struct{ l *Lister }
+
+// Refs returns the git-refs datasource of l.
+func (l *Lister) Refs() Refs { return Refs{l} }
+
+// Releases implements datasource.Datasource with the tags of d.Source.
+func (r Refs) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
+	return r.l.Releases(ctx, d, dir)
+}
+
+// Digest returns the commit of branch ref in d.Source; HEAD is the default branch.
+func (r Refs) Digest(ctx context.Context, d dep.Dep, ref string) (string, error) {
+	e := r.l.get(ctx, d.Source, true)
+	if e.err != nil {
+		return "", e.err
+	}
+	for _, h := range e.tags {
+		if h.Name == ref {
+			return h.Commit, nil
+		}
+	}
+	return "", fmt.Errorf("branch %s not found upstream", ref)
 }
 
 // CommitTime implements datasource.CommitTimer: the committer date of commit in d.Source, via
@@ -423,17 +457,25 @@ func (l *Lister) getJSON(ctx context.Context, u *url.URL, path string, v any) (f
 	return true, nil
 }
 
-func (l *Lister) get(ctx context.Context, repoURL string) *entry {
+// get returns the tags of repoURL, or with heads its branches and HEAD, fetching them once.
+func (l *Lister) get(ctx context.Context, repoURL string, heads bool) *entry {
 	repoURL = strings.TrimSuffix(repoURL, "/")
+	cache := l.cache
+	if heads {
+		cache = l.heads
+	}
 	l.mu.Lock()
-	e := l.cache[repoURL]
+	e := cache[repoURL]
 	if e == nil {
 		e = &entry{}
-		l.cache[repoURL] = e
+		cache[repoURL] = e
 	}
 	l.mu.Unlock()
 	e.once.Do(func() {
-		e.tags, e.head, e.err = l.fetch(ctx, repoURL)
+		e.tags, e.head, e.err = l.fetch(ctx, repoURL, heads)
+		if heads {
+			return
+		}
 		e.rels = make([]datasource.Release, len(e.tags))
 		for i, t := range e.tags {
 			e.rels[i] = datasource.Release{Version: t.Name, Digest: t.Commit}
@@ -451,16 +493,21 @@ type session struct {
 	hasCreds    bool
 	triedHelper bool
 	head        string // commit of HEAD, set while parsing the refs
+	heads       bool   // list HEAD and branches (as Tags) instead of tags
 }
 
-func (l *Lister) fetch(ctx context.Context, repoURL string) (tags []Tag, head string, err error) {
+func (l *Lister) fetch(ctx context.Context, repoURL string, heads bool) (tags []Tag, head string, err error) {
 	u, err := url.Parse(repoURL)
 	if err != nil {
 		return nil, "", fmt.Errorf("ls-refs %s: %w", repoURL, err)
 	}
 	start, protocol := time.Now(), "v0"
-	s := &session{l: l, url: repoURL, host: u.Host}
+	s := &session{l: l, url: repoURL, host: u.Host, heads: heads}
 	defer func() {
+		if heads {
+			slog.DebugContext(ctx, "branches listed", "repo", repoURL, "protocol", protocol, "refs", len(tags), "duration", time.Since(start), "err", err)
+			return
+		}
 		slog.DebugContext(ctx, "tags listed", "repo", repoURL, "protocol", protocol, "tags", len(tags), "head", s.head, "duration", time.Since(start), "err", err)
 	}()
 	s.user, s.pass, s.hasCreds = l.auth.Static(u.Hostname())
@@ -474,6 +521,19 @@ func (l *Lister) fetch(ctx context.Context, repoURL string) (tags []Tag, head st
 		s.head = ""
 	}
 	return tags, s.head, err
+}
+
+// refName returns the offset of the name in ref when the session lists it: after refs/tags/,
+// or with heads after refs/heads/, and HEAD whole.
+func (s *session) refName(ref string) (int, bool) {
+	prefix := "refs/tags/"
+	if s.heads {
+		if ref == "HEAD" {
+			return 0, true
+		}
+		prefix = "refs/heads/"
+	}
+	return len(prefix), strings.HasPrefix(ref, prefix)
 }
 
 // v2caps is what deps needs from a protocol v2 capability advertisement.
@@ -554,17 +614,16 @@ func (s *session) advertisement(ctx context.Context) ([]Tag, *v2caps, error) {
 		if bytes.HasPrefix(line, []byte("ERR ")) {
 			return nil, nil, fmt.Errorf("ls-refs %s: %s", s.url, line[4:])
 		}
-		oid, ref, ok := bytes.Cut(line, []byte{' '})
-		switch {
-		case ok && string(ref) == "HEAD":
-			s.head = string(oid)
-		case ok && bytes.HasPrefix(ref, []byte("refs/tags/")):
-			name := ref[len("refs/tags/"):]
-			if base, peeled := bytes.CutSuffix(name, []byte("^{}")); peeled {
-				setCommit(tags, base, string(oid))
-			} else {
-				str := string(line) // one allocation per tag; name and commit slice into it
-				tags = append(tags, Tag{Name: str[len(oid)+1+len("refs/tags/"):], Commit: str[:len(oid)]})
+		if oid, ref, ok := bytes.Cut(line, []byte{' '}); ok {
+			if off, ok := s.refName(string(ref)); ok {
+				if base, peeled := bytes.CutSuffix(ref[off:], []byte("^{}")); peeled {
+					setCommit(tags, base, string(oid))
+				} else {
+					str := string(line) // one allocation per ref; name and commit slice into it
+					tags = append(tags, Tag{Name: str[len(oid)+1+off:], Commit: str[:len(oid)]})
+				}
+			} else if string(ref) == "HEAD" {
+				s.head = string(oid)
 			}
 		}
 		if line, kind, err = p.next(); err != nil {
@@ -587,8 +646,8 @@ func setCommit(tags []Tag, name []byte, commit string) {
 	}
 }
 
-// lsRefs runs the protocol v2 ls-refs command restricted to tags and HEAD; HEAD's commit is
-// recorded in s.head.
+// lsRefs runs the protocol v2 ls-refs command restricted to tags and HEAD (HEAD's commit is
+// recorded in s.head), or with heads to HEAD and branches.
 func (s *session) lsRefs(ctx context.Context, caps *v2caps) ([]Tag, error) {
 	body := make([]byte, 0, 128)
 	body = appendPkt(body, "command=ls-refs\n")
@@ -600,8 +659,13 @@ func (s *session) lsRefs(ctx context.Context, caps *v2caps) ([]Tag, error) {
 	}
 	body = append(body, "0001"...)
 	body = appendPkt(body, "peel\n")
-	body = appendPkt(body, "ref-prefix refs/tags/\n")
-	body = appendPkt(body, "ref-prefix HEAD\n")
+	if s.heads {
+		body = appendPkt(body, "ref-prefix HEAD\n")
+		body = appendPkt(body, "ref-prefix refs/heads/\n")
+	} else {
+		body = appendPkt(body, "ref-prefix refs/tags/\n")
+		body = appendPkt(body, "ref-prefix HEAD\n")
+	}
 	body = append(body, "0000"...)
 
 	release, err := httpx.Acquire(ctx, s.l.sem)
@@ -632,20 +696,21 @@ func (s *session) lsRefs(ctx context.Context, caps *v2caps) ([]Tag, error) {
 		if bytes.HasPrefix(line, []byte("ERR ")) {
 			return nil, fmt.Errorf("ls-refs %s: %s", s.url, line[4:])
 		}
-		// "<oid> refs/tags/<name>[ <attr>...]" with attr "peeled:<oid>", or "<oid> HEAD".
+		// "<oid> <ref>[ <attr>...]" with attr "peeled:<oid>".
 		str := string(line) // one allocation per tag; name and commit slice into it
 		oid, rest, ok := strings.Cut(str, " ")
 		if !ok {
 			return nil, s.wrap(errMalformed)
 		}
 		ref, attrs, _ := strings.Cut(rest, " ")
-		name, ok := strings.CutPrefix(ref, "refs/tags/")
+		off, ok := s.refName(ref)
 		if !ok {
 			if ref == "HEAD" {
 				s.head = oid
 			}
 			continue
 		}
+		name := ref[off:]
 		commit := oid
 		for attrs != "" {
 			var a string

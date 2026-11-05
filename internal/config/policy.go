@@ -96,8 +96,9 @@ func production(d dep.Dep) bool {
 // these types use fix).
 var mavenProduction = map[string]bool{"compile": true, "provided": true, "runtime": true, "system": true, "import": true, "parent": true}
 
-// defaultIgnored are the dep types ignored unless a rule sets `ignore: false`.
-var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "engines": true}
+// defaultIgnored are the dep types ignored unless a rule sets `ignore: false`: git submodules
+// are disabled by default as in Renovate.
+var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "engines": true, "submodule": true}
 
 // allUpdates allows every update type; policies share it until a rule sets updates.
 var allUpdates = updateSet(nil)
@@ -137,8 +138,8 @@ func UnversionedPin(d dep.Dep) bool {
 // evaluates the built-in monorepo and Ruby group rules (unless monorepos is false), then the
 // user rules without updateTypes top-to-bottom; each set field of a matching rule overwrites
 // the policy (Updates is replaced, not merged). Indirect Go requirements and pip-compile pins, go
-// directives, npm peerDependencies and engines, and actions pinned to a bare SHA
-// (UnversionedPin) are ignored unless a rule sets `ignore: false`. Its Versioning
+// directives, npm peerDependencies and engines, actions pinned to a bare SHA
+// (UnversionedPin), and git submodules are ignored unless a rule sets `ignore: false`. Its Versioning
 // and ExtractVersion replace the dep's before resolution (only rules without updateTypes may
 // set them). The age of the current version is unknown, so no currentAge rule matches (see
 // PolicyAt).

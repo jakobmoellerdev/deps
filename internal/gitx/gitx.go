@@ -137,8 +137,9 @@ func (r Repo) ObjectIDs(ctx context.Context, rev string, paths []string) ([]stri
 }
 
 // WriteTree writes the tree of parent with changes applied, using a temporary index, and
-// returns its id. Change paths are relative to Dir; a change with nil New deletes its file.
-// The working tree and the real index are not touched.
+// returns its id. Change paths are relative to Dir; a change with nil New deletes its file, a
+// Gitlink change records the submodule commit (mode 160000) without fetching it. The working
+// tree and the real index are not touched.
 func (r Repo) WriteTree(ctx context.Context, parent string, changes []engine.FileChange) (string, error) {
 	prefix, err := r.Prefix(ctx)
 	if err != nil {
@@ -158,7 +159,7 @@ func (r Repo) WriteTree(ctx context.Context, parent string, changes []engine.Fil
 	// their paths to hash-object --stdin-paths (--no-filters, as hashing stdin applies none).
 	var blobs strings.Builder
 	for i, c := range changes {
-		if c.New == nil {
+		if c.New == nil || c.Gitlink {
 			continue
 		}
 		f := filepath.Join(tmp, "blob-"+strconv.Itoa(i))
@@ -179,7 +180,11 @@ func (r Repo) WriteTree(ctx context.Context, parent string, changes []engine.Fil
 	var info strings.Builder
 	for _, c := range changes {
 		p := path.Join(prefix, c.Path)
-		if c.New == nil {
+		switch {
+		case c.Gitlink:
+			fmt.Fprintf(&info, "160000 %s\t%s\n", c.New, p)
+			continue
+		case c.New == nil:
 			fmt.Fprintf(&info, "0 %s\t%s\n", strings.Repeat("0", 40), p) // mode 0 removes the entry
 			continue
 		}
@@ -212,6 +217,18 @@ func (r Repo) Commit(ctx context.Context, parent string, changes []engine.FileCh
 		ident = append(ident, s.env...)
 	}
 	return r.run(ctx, []byte(msg), ident, args...)
+}
+
+// StageGitlink sets the submodule at p (relative to Dir) to commit in the real index, leaving
+// the submodule's checkout alone.
+func (r Repo) StageGitlink(ctx context.Context, p, commit string) error {
+	prefix, err := r.Prefix(ctx)
+	if err != nil {
+		return err
+	}
+	// --cacheinfo paths are relative to the top of the work tree.
+	_, err = r.run(ctx, nil, nil, "update-index", "--cacheinfo", "160000,"+commit+","+path.Join(prefix, p))
+	return err
 }
 
 // Push sets refs/heads/<branch> on origin to commit if it currently points at expected

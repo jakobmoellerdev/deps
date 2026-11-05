@@ -39,6 +39,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`swift`](#swift)
 - [`bundler`](#bundler)
 - [`ruby-version`](#ruby-version)
+- [`git-submodules`](#git-submodules)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -47,7 +48,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 | Reason | When |
 |---|---|
 | `ignored by rule #<i>` | a pre-policy rule set `ignore: true` |
-| `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `go`, `peerDependencies`, `engines` |
+| `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `go`, `peerDependencies`, `engines`, `submodule` |
 | `non-version value "<v>"` | the current value is not valid in the dep's versioning scheme |
 | `non-version tag` | a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep` |
 | `current version <v> not found upstream (pin an existing version)` | a pinned or to-be-pinned dep whose current tag or image tag no longer exists (digest refresh and pin need it) |
@@ -1721,6 +1722,38 @@ Updates the Ruby version in `.ruby-version` (rbenv, chruby, rvm, asdf, mise, Bun
 - A partial `3` or `3.4` uses `tag` versioning and keeps its precision (`3.4` → `4.0`).
 - The `ruby-` prefix stays outside the replaced token; comments and the rest of the file are kept.
 
+## git-submodules
+
+Moves git submodules to the newest commit of the branch they track, or to the newest version tag when `branch` is one. The current commit is the submodule's gitlink in the git index (`git ls-files --stage`). Disabled by default, as in Renovate: enable it with a rule `{manager: git-submodules, ignore: false}`.
+
+**Files:**
+
+- `.gitmodules` at any depth; `path` is relative to its directory
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `submodule` | `[submodule]` with `url`, `path` and `branch` (none: the remote's default branch, `HEAD`; `.`: the superproject's checked-out branch); the name is the URL path (`owner/repo`), the source its `https://` URL without `.git`, the digest the gitlink commit | `git-refs`; `git-tags` when `branch` is a version tag | `tag` | ignored (opt in with a rule setting `ignore: false`) |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `no url` | the section has no `url` |
+| `relative url without a URL origin remote` | `url` is relative (`../lib.git`) and `remote.origin.url` is unset, scp-style (`git@host:path`) or a local path |
+| `unrecognized url` | `url` (resolved against `remote.origin.url` when relative) is not an https/http/ssh/git or `git@host:path` URL with an owner/repo path |
+| `no path` | the section has no `path` |
+| `invalid path` | `path` is absolute or leaves the scanned directory |
+| `not a gitlink in the git index` | the git index has no submodule commit at `path` |
+| `branch = . with a detached HEAD` | `branch = .` while the superproject has no branch checked out |
+| `cannot locate branch value` | a version-tag `branch` is written with escapes |
+
+**Updates.**
+
+- A submodule tracking a branch gets a `digest` update when the branch's commit differs from the gitlink; `.gitmodules` is unchanged. As in Renovate, such PRs have no release notes or compare link.
+- A submodule whose `branch` is a version tag (`v1.2.3`) gets updates to newer tags like any `git-tags` dep, with their release notes and compare link: `branch` is rewritten in place and the gitlink moves to the tag's commit. Without a newer tag, a gitlink that is not the tag's commit gets a `digest` update to it.
+- A relative `url` resolves against `remote.origin.url` like a URL path (Renovate's `new URL(url, origin + "/")`): `../lib.git` with origin `https://github.com/acme/app` is `https://github.com/acme/lib.git`.
+- `run` commits the new gitlink (mode `160000`) without fetching the submodule; `plan` prints it as `Subproject commit <sha>`. `apply` stages it with `git update-index --cacheinfo` and leaves the submodule's checkout alone: run `git submodule update` to check the commit out.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -1781,6 +1814,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | Datasource | Dep name | Endpoints | Auth | Release times |
 |---|---|---|---|---|
 | `git-tags` | repository URL (`https://host/path` or `host/path`) | `GET <url>/info/refs?service=git-upload-pack`, then `POST <url>/git-upload-pack` (protocol v2 `ls-refs`, `ref-prefix refs/tags/`, `ref-prefix HEAD`, `peel`); v0 servers via the advertisement. `HEAD` is the default branch commit that github-actions commit pins track | Basic `x-access-token:<token>` for the platform host; `DEPS_GITHUB_COM_TOKEN` for github.com; on 401, `git credential fill` once per host | the tag's release (github.com: the release list; Gitea/Forgejo: their releases API); a tag without one (a floating `v25`) takes the earliest listed release of the same commit, else the tag date (GitHub GraphQL: tagger date of an annotated tag, else committer date; GitHub REST: committer date; Gitea/Forgejo: `GET /repos/{repo}/tags/{tag}` `commit.created`). The default branch head is dated by its committer date (GitHub GraphQL `object(oid)` or REST `/git/commits/{sha}`; Gitea/Forgejo `GET /repos/{repo}/git/commits/{sha}` `created`), asked only when a `digest` minimumReleaseAge applies |
+| `git-refs` | repository URL (`https://host/path`); the version is a branch, `HEAD` for the default branch, and the digest its commit | as `git-tags`, with `ref-prefix HEAD` and `ref-prefix refs/heads/` for the branch commits; releases are the tags | as `git-tags` | none: branch commits are not dated, so `minimumReleaseAge` never holds a digest update back |
 | `github-releases` | `owner/repo` (github.com) or `https://host/owner/repo` (GHES) | with a token: GraphQL `releases` (`https://api.github.com/graphql`, GHES `<host>/api/graphql`); without: `GET /repos/{repo}/releases?per_page=100`. At most 5 pages, and only until the current release is listed. Drafts and prereleases are dropped. | token for the host | `publishedAt` |
 | `go` | module path | GOPROXY `<proxy>/<escaped path>/@v/list`, following `,` / `\|` fallback semantics (`direct` → `go list -m -versions -json`); GONOPROXY/GOPRIVATE modules via `go list`. Pseudo-version deps also ask `<proxy>/<escaped path>/@latest` (`go list -m -json <path>@latest`); major module path probes list `<path>/v<N+1>/@v/list`, … from the GOPROXY URLs only, reusing the proxy's list of a successor path that is a dependency itself | none for proxy requests; `go list` uses the go command's own auth (git credentials, `.netrc`) | `@v/<v>.info`, read from `$GOMODCACHE/cache/download` first, then the proxy (`go list -m -json` for private modules) |
 | `go-toolchain` | `go` / `toolchain` | `https://go.dev/dl/?mode=json&include=all`, once per run; a derived `X.Y` per minor. Release dates: `https://raw.githubusercontent.com/golang/website/HEAD/internal/history/release.go` (as Renovate's golang-version), once per run when a release time is needed | none | release date from Go's release history (midnight UTC); a derived `X.Y` has the date of `X.Y.0` |

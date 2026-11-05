@@ -4,6 +4,7 @@ package manager
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -22,6 +23,46 @@ type Env struct {
 	// file-based conditions such as Maven profile `<activation><file>`. engine.Resolve
 	// supplies a filesystem check when nil.
 	Exists func(path string) bool
+	// Gitlinks returns the commits of the gitlinks (submodules) recorded in the git index at
+	// paths, slash paths relative to the scanned root; paths without a gitlink are absent.
+	// engine.Resolve supplies `git ls-files --stage` when nil.
+	Gitlinks func(paths []string) (map[string]string, error)
+	// Superproject returns the `remote.origin.url` and the checked-out branch of the git work
+	// tree of the scanned root ("" when unset or HEAD is detached), which relative submodule
+	// urls and `branch = .` resolve against. engine.Resolve supplies a git lookup when nil.
+	Superproject func() (origin, branch string, err error)
+}
+
+// GitRepo turns an https/http/ssh/git or scp-style (`git@host:owner/repo`) git URL into the
+// owner/repo path and the https source git-tags expects; source is "" when the URL is not
+// recognized.
+func GitRepo(s string) (name, source string) {
+	var host, p string
+	switch {
+	case strings.Contains(s, "://"):
+		u, err := url.Parse(s)
+		if err != nil || u.Host == "" {
+			return "", ""
+		}
+		switch u.Scheme {
+		case "https", "http", "ssh", "git":
+		default:
+			return "", ""
+		}
+		host, p = u.Hostname(), u.Path
+	default: // git@host:owner/repo
+		at := strings.IndexByte(s, '@')
+		c := strings.IndexByte(s, ':')
+		if c < 0 || at > c {
+			return "", ""
+		}
+		host, p = s[at+1:c], s[c+1:]
+	}
+	p = strings.TrimSuffix(strings.Trim(p, "/"), ".git")
+	if host == "" || !strings.Contains(p, "/") {
+		return "", ""
+	}
+	return p, "https://" + host + "/" + p
 }
 
 // Manager extracts dependencies from the files it matches and edits them.

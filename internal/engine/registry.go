@@ -9,6 +9,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitlabci"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradle"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
@@ -41,14 +42,14 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise(), cargo.New(),
 		piprequirements.New(), pep621.New(), poetry.New(), pipenv.New(),
 		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt(),
-		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New(), bundler.New(), toolversions.NewRubyVersion())
+		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New(), bundler.New(), toolversions.NewRubyVersion(), gitsubmodules.New())
 	return append(ms, cs...), nil
 }
 
 // SkipDocs are the skip reasons the engine sets for every manager.
 var SkipDocs = []refdoc.Skip{
 	{Reason: "ignored by rule #<i>", When: "a pre-policy rule set `ignore: true`"},
-	{Reason: "ignored by default (<type>; enable with a rule setting ignore: false)", When: "dep types `indirect`, `go`, `peerDependencies`, `engines`"},
+	{Reason: "ignored by default (<type>; enable with a rule setting ignore: false)", When: "dep types `indirect`, `go`, `peerDependencies`, `engines`, `submodule`"},
 	{Reason: "non-version value \"<v>\"", When: "the current value is not valid in the dep's versioning scheme"},
 	{Reason: "non-version tag", When: "a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep`"},
 	{Reason: "current version <v> not found upstream (pin an existing version)", When: "a pinned or to-be-pinned dep whose current tag or image tag no longer exists (digest refresh and pin need it)"},
@@ -62,5 +63,5 @@ func ManagerDocs() []refdoc.Manager {
 		toolversions.DocNvm, toolversions.DocNodenv, toolversions.DocAsdf, toolversions.DocMise, cargo.Doc,
 		piprequirements.Doc, pep621.Doc, poetry.Doc, pipenv.Doc,
 		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc,
-		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, bundler.Doc, toolversions.DocRubyVersion, custom.Doc}
+		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, bundler.Doc, toolversions.DocRubyVersion, gitsubmodules.Doc, custom.Doc}
 }

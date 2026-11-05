@@ -5,7 +5,6 @@ package precommit
 import (
 	"bytes"
 	"errors"
-	"net/url"
 	"regexp"
 	"strings"
 
@@ -110,7 +109,7 @@ func extract(file string, src []byte, e *yaml.Node) (dep.Dep, bool) {
 		d.Name, d.Skip = repo.Value, "meta repository"
 		return d, true
 	}
-	d.Name, d.Source = parseRepo(repo.Value)
+	d.Name, d.Source = manager.GitRepo(repo.Value)
 	if d.Source == "" {
 		d.Name, d.Skip = repo.Value, "unrecognized repo"
 		return d, true
@@ -160,37 +159,6 @@ func extract(file string, src []byte, e *yaml.Node) (dep.Dep, bool) {
 		}
 	}
 	return d, true
-}
-
-// parseRepo turns an https/http/ssh/scp-style git URL into the owner/repo path and the
-// https source git-tags expects; source is "" when the URL is not recognized.
-func parseRepo(s string) (name, source string) {
-	var host, p string
-	switch {
-	case strings.Contains(s, "://"):
-		u, err := url.Parse(s)
-		if err != nil || u.Host == "" {
-			return "", ""
-		}
-		switch u.Scheme {
-		case "https", "http", "ssh", "git":
-		default:
-			return "", ""
-		}
-		host, p = u.Hostname(), u.Path
-	default: // git@host:owner/repo
-		at := strings.IndexByte(s, '@')
-		c := strings.IndexByte(s, ':')
-		if c < 0 || at > c {
-			return "", ""
-		}
-		host, p = s[at+1:c], s[c+1:]
-	}
-	p = strings.TrimSuffix(strings.Trim(p, "/"), ".git")
-	if host == "" || !strings.Contains(p, "/") {
-		return "", ""
-	}
-	return p, "https://" + host + "/" + p
 }
 
 // line returns [start,end) of 1-based line n, excluding "\r\n".

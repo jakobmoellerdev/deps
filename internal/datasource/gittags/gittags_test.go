@@ -523,3 +523,71 @@ func TestTagsCanceledWaitingForSlot(t *testing.T) {
 		})
 	})
 }
+
+func TestRefsDigestV2(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			io.WriteString(w, pkts(serviceHeader, "0000", "version 2\n", "ls-refs\n", "0000"))
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(body))
+		if strings.Contains(string(body), "ref-prefix refs/tags/") {
+			io.WriteString(w, pkts("3333333333333333333333333333333333333333 refs/tags/main\n", "0000"))
+			return
+		}
+		io.WriteString(w, pkts(
+			"1111111111111111111111111111111111111111 HEAD\n",
+			"1111111111111111111111111111111111111111 refs/heads/main\n",
+			"2222222222222222222222222222222222222222 refs/heads/release/1.x\n",
+			"0000"))
+	}))
+	defer srv.Close()
+	refs := newLister(t, srv, nil).Refs()
+	d := dep.Dep{Source: srv.URL + "/a/b"}
+	for ref, want := range map[string]string{
+		"HEAD":        "1111111111111111111111111111111111111111",
+		"release/1.x": "2222222222222222222222222222222222222222",
+	} {
+		if got, err := refs.Digest(t.Context(), d, ref); err != nil || got != want {
+			t.Errorf("Digest(%s) = %q, %v; want %q", ref, got, err, want)
+		}
+	}
+	if _, err := refs.Digest(t.Context(), d, "gone"); err == nil || err.Error() != "branch gone not found upstream" {
+		t.Errorf("Digest(gone) err = %v", err)
+	}
+	// Branches and tags are separate listings; the branches were listed once.
+	if got, err := refs.Digest(t.Context(), d, "main"); err != nil || got != "1111111111111111111111111111111111111111" {
+		t.Errorf("Digest(main) = %q, %v; want the branch, not the tag", got, err)
+	}
+	if rels, err := refs.Releases(t.Context(), d, ""); err != nil || len(rels) != 1 || rels[0].Version != "main" {
+		t.Errorf("Releases = %+v, %v; want the tags", rels, err)
+	}
+	want := []string{
+		pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix HEAD\n", "ref-prefix refs/heads/\n", "0000"),
+		pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix refs/tags/\n", "ref-prefix HEAD\n", "0000"),
+	}
+	if !reflect.DeepEqual(bodies, want) {
+		t.Errorf("ls-refs bodies = %q, want %q", bodies, want)
+	}
+}
+
+func TestRefsDigestV0(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, pkts(serviceHeader, "0000",
+			"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa HEAD\x00multi_ack side-band-64k agent=git/2.1\n",
+			"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main\n",
+			"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refs/heads/dev\n",
+			"1111111111111111111111111111111111111111 refs/tags/dev\n",
+			"0000"))
+	}))
+	defer srv.Close()
+	refs := newLister(t, srv, nil).Refs()
+	d := dep.Dep{Source: srv.URL + "/a/b"}
+	for ref, want := range map[string]string{"HEAD": strings.Repeat("a", 40), "dev": strings.Repeat("b", 40)} {
+		if got, err := refs.Digest(t.Context(), d, ref); err != nil || got != want {
+			t.Errorf("Digest(%s) = %q, %v; want %q", ref, got, err, want)
+		}
+	}
+}

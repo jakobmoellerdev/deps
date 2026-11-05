@@ -147,7 +147,7 @@ const managersIntro = "A **manager** finds dependencies in files and edits them.
 // datasourceDocs documents the datasources newSession registers, in table order.
 func datasourceDocs() []refdoc.Datasource {
 	return []refdoc.Datasource{
-		gittags.Doc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, customds.Doc,
+		gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, customds.Doc,
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/diff"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
@@ -78,9 +80,12 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	if write && denied == nil {
 		for _, c := range changes {
 			var err error
-			if c.New == nil {
+			switch {
+			case c.Gitlink:
+				err = gitx.Repo{Dir: s.root}.StageGitlink(ctx, c.Path, string(c.New))
+			case c.New == nil:
 				err = os.Remove(s.abs(c.Path))
-			} else {
+			default:
 				err = os.WriteFile(s.abs(c.Path), c.New, c.Mode)
 			}
 			if err != nil {
@@ -93,7 +98,11 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	} else if !write {
 		out := cmd.Root().Writer
 		for _, c := range changes {
-			if _, err := io.WriteString(out, diff.Unified("a/"+c.Path, "b/"+c.Path, string(c.Old), string(c.New))); err != nil {
+			from, to := string(c.Old), string(c.New)
+			if c.Gitlink {
+				from, to = "Subproject commit "+from+"\n", "Subproject commit "+to+"\n"
+			}
+			if _, err := io.WriteString(out, diff.Unified("a/"+c.Path, "b/"+c.Path, from, to)); err != nil {
 				return fmt.Errorf("write diff: %w", err)
 			}
 		}
@@ -123,6 +132,9 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	}
 	if !write && hasManager(res, bundler.Name) {
 		fmt.Fprintln(stderr, "note    Gemfile.lock changes are computed by apply/run")
+	}
+	if write && slices.ContainsFunc(changes, func(c engine.FileChange) bool { return c.Gitlink }) {
+		fmt.Fprintln(stderr, "note    submodule commits are staged in the git index; run git submodule update to check them out")
 	}
 	cmdName := "plan"
 	if write {

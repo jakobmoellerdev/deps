@@ -234,8 +234,10 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	docker := dockerds.New(client, limits.Docker)
 	registry := tfregistry.New(client, sem, os.Getenv)
 	maven := mavends.New(client, limits.Maven, os.Getenv)
+	tags := gittags.New(client, auth, sem, gh)
 	sources := map[string]engine.Datasource{
-		"git-tags":              gittags.New(client, auth, sem, gh),
+		"git-tags":              tags,
+		gittags.RefsName:        tags.Refs(),
 		"go":                    goproxy.New(client, sem),
 		gotoolchain.Name:        gotoolchain.New(client, sem),
 		"docker":                docker,
