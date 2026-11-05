@@ -44,7 +44,7 @@ Work through the warnings one by one and record the decision for the user. Typic
 | custom manager dropped (templates, `combination` strategy, non-regex `customType`) | Rewrite as a `custom[]` entry: regex mode with literal `datasource`/`name`/`versioning`, or annotation mode if the files carry `# renovate: datasource=… depName=…` markers (annotation mode reads those unchanged). |
 | schedule entry dropped (`every 2 weeks`, …) | Pick the nearest workflow cron with the user; deps schedules are crons of the workflow trigger, not time windows. |
 | `timezone` ignored | Convert the intended times to UTC in the crons. |
-| `automergeType: branch`, `platformAutomerge: false`, `dependencyDashboardApproval` | Explain the deps behavior (platform automerge of the PR; no approval gate) and confirm with the user. |
+| `automergeType: branch`, `platformAutomerge: false`, `dependencyDashboardApproval` without a dashboard | Explain the deps behavior (platform automerge of the PR; approval needs `dependencyDashboard: true`) and confirm with the user. |
 | `pin`/`rangeStrategy`/`versioning` dropped next to `matchUpdateTypes` | Move the field to a rule without `updateTypes` (deps decides these before the update type is known). |
 | `versioning` (or `extractVersion`) dropped next to `currentVersion`/`currentAge` | Move `versioning` to a rule that selects the same deps without `currentVersion`/`currentAge`, if the deps need that scheme. |
 | `prHeader`/`prFooter`: `unsupported Handlebars expression …` | Rewrite the text as a Go template over `.Type`, `.Scope`, `.Name`, `.Group`, `.From`, `.To`, `.UpdateType`, `.Count`, `.IsSecurity` (`{{if}}` and `{{with}}` work), or drop it. |

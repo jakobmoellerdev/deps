@@ -24,7 +24,7 @@ var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versionin
 	"replacementVersion", "replacementPrefix", "separateMajorMinor",
 	"separateMultipleMajor", "separateMinorPatch", "group", "commitType", "commitScope", "schedule",
 	"minimumReleaseAge", "minimumReleaseAgeBehaviour", "automerge", "automergeStrategy", "automergeType",
-	"labels", "addLabels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "postUpgradeTasks"}
+	"labels", "addLabels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "postUpgradeTasks", "dashboardApproval"}
 
 // rulesFrom translates the rule sources in order: top-level semantic commit settings,
 // manager blocks, update-type blocks, packageRules and ignoreDeps.
@@ -533,6 +533,8 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			}
 		case "replacementName", "replacementVersion":
 			set(k, v)
+		case "dependencyDashboardApproval":
+			set("dashboardApproval", v)
 		case "postUpgradeTasks":
 			if tasks, ok := t.postUpgradeTasks(p, v); ok {
 				set(k, tasks)
@@ -583,7 +585,7 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 		}
 	}
 	if len(repl) > 0 {
-		if msg := check(omap{{"rules", []item{{body: repl}}}}); msg != "" {
+		if msg := check(t.ruleContext(omap{{"rules", []item{{body: repl}}}})); msg != "" {
 			for _, f := range repl {
 				t.n.warn(origin+"."+eff[f.k].src, "dropped: %s", msg)
 				delete(eff, f.k)
@@ -594,7 +596,7 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 		if strings.HasPrefix(key, "replacement") {
 			continue // validated together above
 		}
-		if msg := check(omap{{"rules", []item{{body: omap{{key, e.v}}}}}}); msg != "" {
+		if msg := check(t.ruleContext(omap{{"rules", []item{{body: omap{{key, e.v}}}}}})); msg != "" {
 			t.n.warn(origin+"."+e.src, "dropped: %s", msg)
 			delete(eff, key)
 		}
@@ -604,7 +606,7 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 
 // addRule validates a translated rule and adds it, or drops it with a note.
 func (t *translator) addRule(origin string, body omap) {
-	if msg := check(omap{{"customDatasources", t.cds}, {"rules", []item{{body: body}}}}); msg != "" {
+	if msg := check(t.ruleContext(omap{{"customDatasources", t.cds}, {"rules", []item{{body: body}}}})); msg != "" {
 		t.n.warn(origin, "dropped: %s", msg)
 		return
 	}

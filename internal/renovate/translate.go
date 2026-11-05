@@ -250,7 +250,7 @@ var managerMap = func() map[string][]expansion {
 		"regex":            {{"custom", nil}},
 		"custom.regex":     {{"custom", nil}},
 	}
-	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 poetry pipenv terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules") {
+	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 poetry pipenv terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain") {
 		m[n] = []expansion{{n, nil}}
 	}
 	return m
@@ -274,7 +274,7 @@ var categories = map[string][]string{
 	"cd":         {"helmfile", "flux", "argocd"},
 	"js":         {"npm", "nvm", "nodenv"},
 	"node":       {"nvm", "nodenv"},
-	"rust":       {"cargo"},
+	"rust":       {"cargo", "rust-toolchain"},
 	"python":     {"pip_requirements", "pep621", "poetry", "pipenv"},
 	"terraform":  {"terraform", "terraform-version", "tflint-plugin", "terragrunt"},
 	"iac":        {"terraform", "terragrunt"},
@@ -318,6 +318,7 @@ type translator struct {
 	rules     []item
 	// exclusionRules are appended after every other rule (see exclusions).
 	exclusionRules []item
+	dashboard      bool            // the translated dependencyDashboard; rule settings like dashboardApproval need it
 	own            map[string]any  // the repository's config before presets
 	remote         map[string]bool // top-level keys set by fetched presets
 	titleTop       map[string]any  // top-level title settings (titleKeys) the repository sets
@@ -385,7 +386,11 @@ func (t *translator) translate(cfg map[string]any) omap {
 	var doc omap
 	// emit validates the top-level key alone and adds it, or drops it with a note.
 	emit := func(k string, v any) {
-		if msg := check(omap{{k, v}}); msg != "" {
+		frag := omap{{k, v}}
+		if k == "dashboardApproval" {
+			frag = t.ruleContext(frag)
+		}
+		if msg := check(frag); msg != "" {
 			t.n.warn(k, "dropped: %s", msg)
 			return
 		}
@@ -579,10 +584,13 @@ func (t *translator) translate(cfg map[string]any) omap {
 				v = l
 			}
 			emit(k, v)
+			if k == "dependencyDashboard" {
+				t.dashboard = v == true
+			}
 		}
 	}
-	if _, ok := get("dependencyDashboardApproval"); ok {
-		t.n.warn("dependencyDashboardApproval", "not supported; ignored (deps creates PRs without approval)")
+	if v, ok := get("dependencyDashboardApproval"); ok {
+		emit("dashboardApproval", v)
 	}
 	if v, ok := get("lockFileMaintenance"); ok {
 		if l, ok := t.lockFileMaintenance(v); ok {
@@ -687,7 +695,7 @@ func (t *translator) vulnerabilityAlerts(va map[string]any) string {
 			}
 		case "dependencyDashboardApproval":
 			if v != false {
-				t.n.warn(p, "not supported; ignored (deps creates PRs without approval)")
+				t.n.info(p, "deps never holds back security updates for approval")
 			}
 		case "vulnerabilityFixStrategy":
 			if v == "lowest" {
@@ -983,4 +991,12 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 		}
 		t.custom = append(t.custom, item{origin: o, body: c})
 	}
+}
+
+// ruleContext adds the top-level settings rule validation depends on to a check fragment.
+func (t *translator) ruleContext(frag omap) omap {
+	if t.dashboard {
+		return append(omap{{"dependencyDashboard", true}}, frag...)
+	}
+	return frag
 }

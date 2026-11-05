@@ -199,6 +199,14 @@ func TestLoadRules(t *testing.T) {
     assignees: [alice]` + preCommitExclusion,
 		},
 		{
+			name: "dependencyDashboardApproval per rule, rust-toolchain manager",
+			src:  `{dependencyDashboard: true, packageRules: [{matchManagers: ['rust-toolchain'], matchUpdateTypes: ['major'], dependencyDashboardApproval: true}]}`,
+			rules: `  - # packageRules[0]
+    manager: rust-toolchain
+    updateTypes: [major]
+    dashboardApproval: true` + preCommitExclusion,
+		},
+		{
 			name: "postUpgradeTasks top level and per rule, Ruby and Swift managers, rangeStrategy widen",
 			src: `{postUpgradeTasks: {commands: ['make generate'], fileFilters: ['**/*.go'], executionMode: 'branch'},
 				packageRules: [{matchCategories: ['ruby'], rangeStrategy: 'widen', postUpgradeTasks: {commands: ['bundle exec rake']}},
@@ -795,6 +803,23 @@ func TestLoadBuiltinPresetNotes(t *testing.T) {
 	} {
 		if !slices.Contains(notes, n) {
 			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
+		}
+	}
+}
+
+// Renovate's dashboard approval presets become deps' dashboardApproval.
+func TestLoadDashboardApproval(t *testing.T) {
+	res, err := load(t, `{extends: [':dependencyDashboardApproval'], dependencyDashboard: true}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y := string(res.YAML)
+	if !strings.Contains(y, "\ndependencyDashboard: true\n") || !strings.Contains(y, "\ndashboardApproval: true\n") {
+		t.Errorf("YAML:\n%s", y)
+	}
+	for _, n := range noteLines(res) {
+		if strings.Contains(n, "dependencyDashboardApproval") {
+			t.Errorf("unexpected note %q", n)
 		}
 	}
 }
