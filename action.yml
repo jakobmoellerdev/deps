@@ -26,8 +26,35 @@ inputs:
       DEPS_ALLOW_TASKS (an empty input keeps DEPS_ALLOW_TASKS of the job env). The commands run
       repository code on the runner; a PR with a command no pattern allows fails. Default: none.
     default: ""
+  dry-run:
+    description: >-
+      `true` reports what `deps run` would change without pushing or calling write APIs, exported as
+      DEPS_DRY_RUN. Default: the job env's DEPS_DRY_RUN, else false.
+    default: ""
+  log-level:
+    description: >-
+      Diagnostics level (`debug`, `info`, `warn`, `error`), exported as DEPS_LOG_LEVEL. Default: the
+      job env's DEPS_LOG_LEVEL, else warn.
+    default: ""
+  config:
+    description: >-
+      Config file, which must exist, exported as DEPS_CONFIG. Default: the job env's DEPS_CONFIG,
+      else `.deps.yaml`, then `.deps.yml`, else built-in defaults.
+    default: ""
+  show-skipped:
+    description: >-
+      `true` also prints the skipped dependencies (skip lines), exported as DEPS_SHOW_SKIPPED.
+      Default: the job env's DEPS_SHOW_SKIPPED, else false.
+    default: ""
+  max-new-prs:
+    description: >-
+      Maximum number of pull requests `deps run` creates per run (0 = unlimited), exported as
+      DEPS_MAX_NEW_PRS. Default: the job env's DEPS_MAX_NEW_PRS, else 10.
+    default: ""
   args:
-    description: "Arguments for deps, e.g. `run -v --log-level info` or `plan`."
+    description: >-
+      Command and further flags for deps, e.g. `plan` or `run --base main`. Every flag can also be
+      set as `DEPS_<FLAG>` in the job env; flags given here win over the inputs above.
     default: "run"
   version:
     description: >-
@@ -251,6 +278,11 @@ runs:
         DEPS_TOKEN: ${{ inputs.token }}
         DEPS_SIGNING_KEY: ${{ inputs.signing-key }}
         DEPS_ALLOW_TASKS: ${{ inputs.allow-tasks || env.DEPS_ALLOW_TASKS }}
+        DEPS_DRY_RUN: ${{ inputs.dry-run || env.DEPS_DRY_RUN }}
+        DEPS_LOG_LEVEL: ${{ inputs.log-level || env.DEPS_LOG_LEVEL }}
+        DEPS_CONFIG: ${{ inputs.config || env.DEPS_CONFIG }}
+        DEPS_SHOW_SKIPPED: ${{ inputs.show-skipped || env.DEPS_SHOW_SKIPPED }}
+        DEPS_MAX_NEW_PRS: ${{ inputs.max-new-prs || env.DEPS_MAX_NEW_PRS }}
         # one file per action step (github.action is unique per step) in the job's temp dir
         DEPS_REPORT: ${{ runner.temp }}/deps-report-${{ github.action }}.json
       run: |

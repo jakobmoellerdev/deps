@@ -31,11 +31,11 @@ var Doc = refdoc.Manager{
 				"Kotlin named arguments `implementation(group = \"g\", name = \"n\", version = \"v\")`; " +
 				"coordinates assigned to variables or map entries (`def lib = \"g:n:v\"`, `libs += [x: \"g:n:$versions.x\"]`, `mapOf(\"x\" to \"g:n:v\")`); " +
 				"in `buildSrc`/convention-plugin sources every string literal of the form `group:name:version`; the name is `group:name`",
-			Datasource: "`maven`", Versioning: "`maven`"},
+			Versioning: "`maven`", Datasources: []string{"maven"}},
 		{Name: DepTypePlugin,
 			What: "catalog `[plugins]` and settings catalog `plugin(\"a\", \"id\").version(\"v\")`/`.versionRef(\"k\")`; build-script and settings `plugins { id(\"x\") version \"y\" }`, `id 'x' version 'y'`, `id(\"x\").version(\"y\")`, " +
 				"`kotlin(\"jvm\") version \"y\"` (id `org.jetbrains.kotlin.jvm`), also with a variable as version (`version kotlinVersion`, `version(Versions.kotlin)`); the name is the plugin id",
-			Datasource: "`maven` (Gradle plugin portal marker artifact `<id>:<id>.gradle.plugin`)", Versioning: "`maven`"},
+			Datasource: "`maven` (Gradle plugin portal marker artifact `<id>:<id>.gradle.plugin`)", Versioning: "`maven`", Datasources: []string{"maven"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "unresolved version.ref <k>", When: "a catalog entry (TOML or settings) references a version key that does not exist"},
@@ -97,7 +97,7 @@ var Doc = refdoc.Manager{
 		}},
 		{Title: "Shared versions", Body: "One `[versions]` entry or variable may serve many libraries and plugins; each becomes a dep with the same file and span. " +
 			"`plan` and `apply` update the definition once. `run` groups the updates of deps sharing a definition into one PR; group rules, for example " +
-			"`{manager: gradle, names: [\"org.jetbrains.kotlin*\"], group: kotlin}`, combine further deps."},
+			"`{managers: [gradle], names: [\"org.jetbrains.kotlin*\"], group: kotlin}`, combine further deps."},
 		{Title: "Replacements", Body: "Literal coordinates (`\"g:a:v\"` strings, `group`/`name` maps, catalog `module` and `group`/`name`, settings `library(...)`) and plugin ids can be [replaced](configuration.md#rulesreplacementname); interpolated names, `kotlin(\"...\")` plugins and deps whose version variable lives in another file are not. A replacement version is not written to a shared `version.ref` or variable."},
 		{Title: "Not covered", Items: []string{
 			"Values computed from expressions (`\"$a.$b\"`, `if`/`?:`, `versions[\"a\"]!![\"b\"]`), catalogs imported in settings with `from(files(…))` (the TOML file itself is a catalog dep source) and `useModule(…)` in `resolutionStrategy`.",

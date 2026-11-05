@@ -10,10 +10,10 @@ var Doc = refdoc.Manager{
 	Summary: "Updates the requirements and the `go`/`toolchain` directives of Go modules, and the `go`/`toolchain` directives of Go workspaces. `go.mod` and `go.work` are parsed with `golang.org/x/mod/modfile`.",
 	Files:   []string{"`go.mod`", "`go.work`"},
 	DepTypes: []refdoc.DepType{
-		{Name: "direct", What: "`require` without `// indirect`", Datasource: "`go`", Versioning: "`go`"},
-		{Name: "indirect", What: "`require … // indirect`", Datasource: "`go`", Versioning: "`go`"},
-		{Name: "go", What: "`go 1.x` directive of `go.mod` or `go.work`", Datasource: "`go-toolchain`", Versioning: "`tag`"},
-		{Name: "toolchain", What: "`toolchain go1.x.y` of `go.mod` or `go.work`; the span covers the version after `go`", Datasource: "`go-toolchain`", Versioning: "`tag`"},
+		{Name: "direct", What: "`require` without `// indirect`", Versioning: "`go`", Datasources: []string{"go"}},
+		{Name: "indirect", What: "`require … // indirect`", Versioning: "`go`", Datasources: []string{"go"}},
+		{Name: "go", What: "`go 1.x` directive of `go.mod` or `go.work`", Versioning: "`tag`", Datasources: []string{"go-toolchain"}},
+		{Name: "toolchain", What: "`toolchain go1.x.y` of `go.mod` or `go.work`; the span covers the version after `go`", Versioning: "`tag`", Datasources: []string{"go-toolchain"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "replaced", When: "a `replace` directive targets the module"},
@@ -29,12 +29,12 @@ var Doc = refdoc.Manager{
 		{Title: "Pseudo-versions (digest updates)", Items: []string{
 			"A requirement on a pseudo-version (`v0.0.0-<timestamp>-<commit>`) tracks a commit. A newer release (above the pseudo-version's base, e.g. `v1.2.4` for `v1.2.4-0.<ts>-<commit>`) is proposed as a version update; prereleases only when the base is one.",
 			"Otherwise the module's `@latest` is asked: when it is a newer pseudo-version of the same major (the tip of the default branch of an untagged module), it is proposed as a `digest` update, titled `update <module> digest to <commit7>`.",
-			"Rules apply as for other digest updates (`updates: [digest]`, `ignore`, `updateTypes: [digest]`); `minimumReleaseAge` of the digest type is checked against the commit time.",
+			"Rules apply as for other digest updates (`allowedUpdateTypes: [digest]`, `ignore`, `updateTypes: [digest]`); `minimumReleaseAge` of the digest type is checked against the commit time.",
 			"Modules with releases whose pseudo-version is ahead of the latest release get no digest update (`@latest` is that release, not the branch tip).",
 		}},
 		{Title: "Major module paths (`gomodUpdateImportPaths`)", Items: []string{
 			"Major versions ≥ 2 live under their own module path. For a requirement on `<path>/v<N>` (or an unsuffixed v0/v1 module, `/v<M+1>` for `vM.x.y+incompatible`, `gopkg.in/x.v<N>`), deps lists `/v<N+1>`, `/v<N+2>`, … from the GOPROXY URLs until one has no releases (at most 5).",
-			"The newest stable release of each path that the major policy accepts (`updates`, `allow`, `minimumReleaseAge`, `ignore` per update type) is a `major` update in the major PR bucket (`v<N>` buckets with `separateMultipleMajor`); a newer path replaces an older one in the same bucket.",
+			"The newest stable release of each path that the major policy accepts (`allowedUpdateTypes`, `allow`, `minimumReleaseAge`, `ignore` per update type) is a `major` update in the major PR bucket (`v<N>` buckets with `separateMultipleMajor`); a newer path replaces an older one in the same bucket.",
 			"The update rewrites the require (path and version) and every import of the old path and its packages in the module's `.go` files (below the go.mod, skipping `vendor`, `testdata`, `.`/`_` directories and nested modules; only the import path literals change). `go mod tidy` then sees the rewritten files through `-overlay`.",
 			"The new major's API may have changed: the PR body says so, and the build is not guaranteed to pass.",
 			"`gomodUpdateImportPaths: false` turns module path updates off. Only GOPROXY URLs are probed: GONOPROXY/GOPRIVATE modules, and paths no proxy before `direct` has, get no module path updates.",

@@ -12,8 +12,8 @@ var Doc = refdoc.Manager{
 		"The file is parsed as YAML with byte spans; only the version spec of an entry is rewritten. There is no lockfile (`conda-lock.yml` is not maintained).",
 	Files: []string{"`environment.yml`, `environment.yaml` (any directory)"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeDependencies, What: "`dependencies` match specs: `numpy=1.26` (fuzzy: any 1.26.x), `numpy==1.26.4`, `numpy>=1.26,<2`, `numpy 1.26.*`, `numpy >=1.26`, with a channel prefix `conda-forge::numpy=1.26`", Datasource: "`conda`", Versioning: "`conda`"},
-		{Name: DepTypePip, What: "the PEP 508 requirements of a `- pip:` list in `dependencies` (`requests>=2.31`, `black==24.4.2`)", Datasource: "`pypi` (the list's `--index-url`, `--extra-index-url`)", Versioning: "`pep440`"},
+		{Name: DepTypeDependencies, What: "`dependencies` match specs: `numpy=1.26` (fuzzy: any 1.26.x), `numpy==1.26.4`, `numpy>=1.26,<2`, `numpy 1.26.*`, `numpy >=1.26`, with a channel prefix `conda-forge::numpy=1.26`", Versioning: "`conda`", Datasources: []string{"conda"}},
+		{Name: DepTypePip, What: "the PEP 508 requirements of a `- pip:` list in `dependencies` (`requests>=2.31`, `black==24.4.2`)", Datasource: "`pypi` (the list's `--index-url`, `--extra-index-url`)", Versioning: "`pep440`", Datasources: []string{"pypi"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: pyreq.SkipUnconstrained, When: "a package without version spec (`numpy`, `numpy *`) or with only exclusions (`numpy!=1.26.0`)"},

@@ -11,7 +11,7 @@ var Doc = refdoc.Manager{
 		"Only the version strings of a requirement are rewritten; its form, comments and formatting are kept.",
 	Files: []string{"`Package.swift` at any depth (version-specific manifests `Package@swift-<v>.swift` are not read)"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeDependencies, What: "every `.package(url: …, <requirement>)` call (also with `name:` and `traits:`, and `Package.Dependency.package(…)`); the name is the URL path (`owner/repo`), the source its http(s) URL (https for `ssh://`, `git://` and `git@host:` URLs) without `.git`", Datasource: "`git-tags`", Versioning: "`semver`; tags are read as SwiftPM reads them: full `MAJOR.MINOR.PATCH[-pre][+build]` versions with an optional leading `v`, which is dropped (the dep's `extractVersion`)"},
+		{Name: DepTypeDependencies, What: "every `.package(url: …, <requirement>)` call (also with `name:` and `traits:`, and `Package.Dependency.package(…)`); the name is the URL path (`owner/repo`), the source its http(s) URL (https for `ssh://`, `git://` and `git@host:` URLs) without `.git`", Versioning: "`semver`; tags are read as SwiftPM reads them: full `MAJOR.MINOR.PATCH[-pre][+build]` versions with an optional leading `v`, which is dropped (the dep's `extractVersion`)", Datasources: []string{Datasource}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: skipLocal, When: "`.package(path: …)`"},

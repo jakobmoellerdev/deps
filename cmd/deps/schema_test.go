@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json/v2"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -27,6 +28,10 @@ type schemaNode struct {
 	Properties           map[string]*schemaNode `json:"properties"`
 	Items                *schemaNode            `json:"items"`
 	AnyOf                []*schemaNode          `json:"anyOf"`
+	AllOf                []*schemaNode          `json:"allOf"`
+	If                   *schemaNode            `json:"if"`
+	Then                 *schemaNode            `json:"then"`
+	MinItems             int                    `json:"minItems"`
 	PropertyNames        *schemaNode            `json:"propertyNames"`
 	Defs                 map[string]*schemaNode `json:"$defs"`
 }
@@ -51,7 +56,7 @@ func TestSchema(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &s); err != nil {
 		t.Fatalf("decode: %v\n%s", err, stdout)
 	}
-	if s.Schema != "https://json-schema.org/draft/2020-12/schema" || s.Type != "object" || s.ID != "" {
+	if s.Schema != "https://json-schema.org/draft/2020-12/schema" || s.Type != "object" || s.ID != schemaURL("dev") {
 		t.Errorf("$schema %q $id %q type %q", s.Schema, s.ID, s.Type)
 	}
 	rule, custom, actions, customDS, lfm := s.Defs["Rule"], s.Defs["Custom"], s.Defs["Actions"], s.Defs["CustomDatasource"], s.Defs["LockFileMaintenance"]
@@ -96,10 +101,10 @@ func TestSchema(t *testing.T) {
 	}{
 		{"pin", s.Properties["pin"], pins},
 		{"rules.pin", rule.Properties["pin"], pins},
-		{"rules.manager", rule.Properties["manager"], config.Managers},
+		{"rules.managers", rule.Properties["managers"].Items, config.Managers},
 		{"rules.depTypes", rule.Properties["depTypes"].Items, config.DepTypes},
 		{"rules.datasources", datasourceEnum(t, "rules.datasources", rule.Properties["datasources"].Items), config.DatasourceNames},
-		{"rules.updates", rule.Properties["updates"].Items, updates},
+		{"rules.allowedUpdateTypes", rule.Properties["allowedUpdateTypes"].Items, updates},
 		{"rules.updateTypes", rule.Properties["updateTypes"].Items, append(slices.Clone(updates), string(dep.Replacement))},
 		{"rules.commitType", rule.Properties["commitType"], config.CommitTypes},
 		{"custom.datasource", datasourceEnum(t, "custom.datasource", custom.Properties["datasource"]), config.DatasourceNames},
@@ -107,10 +112,32 @@ func TestSchema(t *testing.T) {
 		{"rebaseWhen", s.Properties["rebaseWhen"], config.RebaseWhens},
 		{"rangeStrategy", s.Properties["rangeStrategy"], config.RangeStrategies},
 		{"rules.rangeStrategy", rule.Properties["rangeStrategy"], config.RangeStrategies},
+		{"automergeStrategy", s.Properties["automergeStrategy"], config.AutomergeStrategies},
+		{"rules.automergeStrategy", rule.Properties["automergeStrategy"], config.AutomergeStrategies},
+		{"automergeType", s.Properties["automergeType"], config.AutomergeTypes},
+		{"rules.automergeType", rule.Properties["automergeType"], config.AutomergeTypes},
 	}
 	for _, e := range enums {
 		if got := strs(e.got.Enum); !slices.Equal(got, e.want) {
-			t.Errorf("%s enum = %v, want %v (keep the jsonschema tags in sync)", e.name, got, e.want)
+			t.Errorf("%s enum = %v, want %v", e.name, got, e.want)
+		}
+	}
+	if v := s.Properties["version"].Enum; len(v) != 1 || v[0] != float64(config.FormatVersion) {
+		t.Errorf("version enum = %v", v)
+	}
+	// rules[].depTypes narrows to the dep types of the only listed manager.
+	if len(rule.AllOf) != len(config.Managers) {
+		t.Fatalf("Rule allOf = %d entries, want one per manager", len(rule.AllOf))
+	}
+	byManager := config.ManagerDepTypes()
+	for i, m := range config.Managers {
+		c := rule.AllOf[i]
+		mgrs := c.If.Properties["managers"]
+		if !slices.Equal(c.If.Required, []string{"managers"}) || mgrs.MinItems != 1 || !slices.Equal(strs(mgrs.Items.Enum), []string{m}) {
+			t.Errorf("allOf[%d].if = %+v", i, c.If)
+		}
+		if got := strs(c.Then.Properties["depTypes"].Items.Enum); !slices.Equal(got, byManager[m]) {
+			t.Errorf("%s: then depTypes = %v, want %v", m, got, byManager[m])
 		}
 	}
 	// versioning takes the scheme names or regex:<RE2>, so it is a pattern instead of an enum.
@@ -121,7 +148,7 @@ func TestSchema(t *testing.T) {
 		}
 		for _, v := range append(slices.Clone(config.Versionings), `regex:^v(?<major>\d+)$`) {
 			if !re.MatchString(v) {
-				t.Errorf("%s pattern %q rejects %q (keep the jsonschema tag in sync)", name, n.Pattern, v)
+				t.Errorf("%s pattern %q rejects %q", name, n.Pattern, v)
 			}
 		}
 		if re.MatchString("calver") || re.MatchString("regex:") {
@@ -173,6 +200,18 @@ func TestSchema(t *testing.T) {
 	}
 }
 
+func TestSchemaURL(t *testing.T) {
+	for version, want := range map[string]string{
+		"v0.4.0":                  "https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.4.0/deps.schema.json",
+		"dev":                     "https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main",
+		"v0.4.0-3-g1234567-dirty": "https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main",
+	} {
+		if got := schemaURL(version); got != want {
+			t.Errorf("schemaURL(%q) = %q, want %q", version, got, want)
+		}
+	}
+}
+
 // datasourceEnum returns the enum of a datasource field, which is anyOf the built-in names and
 // a custom.<name> pattern.
 func datasourceEnum(t *testing.T, name string, n *schemaNode) *schemaNode {
@@ -190,6 +229,20 @@ func datasourceEnum(t *testing.T, name string, n *schemaNode) *schemaNode {
 		}
 	}
 	return n.AnyOf[0]
+}
+
+// TestConfigTagsHaveNoValueLists checks that no jsonschema tag of the config types repeats a
+// list of allowed values: addEnums takes them from config's lists.
+func TestConfigTagsHaveNoValueLists(t *testing.T) {
+	for _, typ := range []reflect.Type{reflect.TypeFor[config.Config](), reflect.TypeFor[config.Rule](), reflect.TypeFor[config.Custom](),
+		reflect.TypeFor[config.CustomDatasource](), reflect.TypeFor[config.Checksum](), reflect.TypeFor[config.LockFileMaintenance](),
+		reflect.TypeFor[config.Actions](), reflect.TypeFor[config.Terraform]()} {
+		for f := range typ.Fields() {
+			if tag := f.Tag.Get("jsonschema"); strings.Contains(tag, "enum=") || strings.Contains(tag, "pattern=") {
+				t.Errorf("%s.%s: jsonschema tag %q lists values", typ.Name(), f.Name, tag)
+			}
+		}
+	}
 }
 
 func TestAddKeyDocsRejectsUnknownKeys(t *testing.T) {

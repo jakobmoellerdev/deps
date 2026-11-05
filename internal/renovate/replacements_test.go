@@ -11,12 +11,12 @@ import (
 func TestLoadReplacements(t *testing.T) {
 	nuget, _, _ := strings.Cut(config.ReplacementsSkipped[0], "[") // the nuget preset deps cannot apply
 	const allOff = `  - # replacements:clang-format-to-maintenance-fork (not in replacements:all)
-    manager: npm
+    managers: [npm]
     names: [clang-format]
     updateTypes: [replacement]
     ignore: true
   - # replacements:corentinmusard-otel-cicd-action-to-dash0hq (not in replacements:all)
-    manager: github-actions
+    managers: [github-actions]
     names: [corentinmusard/otel-cicd-action]
     updateTypes: [replacement]
     ignore: true`
@@ -56,7 +56,7 @@ func TestLoadReplacements(t *testing.T) {
 			src:  `{extends: ['replacements:all', 'replacements:clang-format-to-maintenance-fork', 'replacements:k8s-registry-move']}`,
 			on:   true,
 			rules: `  - # replacements:corentinmusard-otel-cicd-action-to-dash0hq (not in replacements:all)
-    manager: github-actions
+    managers: [github-actions]
     names: [corentinmusard/otel-cicd-action]
     updateTypes: [replacement]
     ignore: true` + defaultExclusions,
@@ -70,57 +70,12 @@ func TestLoadReplacements(t *testing.T) {
 			name: "single presets become rules",
 			src:  `{extends: ['replacements:k8s-registry-move', 'replacements:cpx-to-maintenance-fork', 'replacements:` + nuget + `', 'replacements:nope']}`,
 			rules: `  - # replacements:k8s-registry-move
-    manager: docker
-    names: [/^k8s\.gcr\.io/.+$/]
-    replacementName: registry.k8s.io/
-    replacementPrefix: k8s.gcr.io/
-  - # replacements:k8s-registry-move
-    manager: gitlabci
-    names: [/^k8s\.gcr\.io/.+$/]
-    replacementName: registry.k8s.io/
-    replacementPrefix: k8s.gcr.io/
-  - # replacements:k8s-registry-move
-    manager: kustomize
-    names: [/^k8s\.gcr\.io/.+$/]
-    replacementName: registry.k8s.io/
-    replacementPrefix: k8s.gcr.io/
-  - # replacements:k8s-registry-move
-    manager: terraform
-    names: [/^k8s\.gcr\.io/.+$/]
-    replacementName: registry.k8s.io/
-    replacementPrefix: k8s.gcr.io/
-  - # replacements:k8s-registry-move
-    manager: devcontainer
-    names: [/^k8s\.gcr\.io/.+$/]
-    replacementName: registry.k8s.io/
-    replacementPrefix: k8s.gcr.io/
-  - # replacements:k8s-registry-move
-    manager: bitbucket-pipelines
-    names: [/^k8s\.gcr\.io/.+$/]
-    replacementName: registry.k8s.io/
-    replacementPrefix: k8s.gcr.io/
-  - # replacements:k8s-registry-move
-    manager: woodpecker
-    names: [/^k8s\.gcr\.io/.+$/]
-    replacementName: registry.k8s.io/
-    replacementPrefix: k8s.gcr.io/
-  - # replacements:k8s-registry-move
-    manager: droneci
-    names: [/^k8s\.gcr\.io/.+$/]
-    replacementName: registry.k8s.io/
-    replacementPrefix: k8s.gcr.io/
-  - # replacements:k8s-registry-move
-    manager: circleci
-    names: [/^k8s\.gcr\.io/.+$/]
-    replacementName: registry.k8s.io/
-    replacementPrefix: k8s.gcr.io/
-  - # replacements:k8s-registry-move
-    manager: azure-pipelines
+    managers: [docker, gitlabci, kustomize, terraform, devcontainer, bitbucket-pipelines, woodpecker, droneci, circleci, azure-pipelines]
     names: [/^k8s\.gcr\.io/.+$/]
     replacementName: registry.k8s.io/
     replacementPrefix: k8s.gcr.io/
   - # replacements:cpx-to-maintenance-fork
-    manager: npm
+    managers: [npm]
     names: [cpx]
     replacementName: cpx2
     replacementVersion: 2.0.0` + defaultExclusions,

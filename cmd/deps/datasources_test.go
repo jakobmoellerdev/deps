@@ -129,7 +129,7 @@ custom:
 ignorePaths: []
 `,
 	})
-	stdout, stderr, code := execute(t, "plan", "-v", "--dir", dir)
+	stdout, stderr, code := execute(t, "plan", "--show-skipped", "--dir", dir)
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -186,7 +186,7 @@ jobs:
           node-version: 26
 `,
 		// pin: digest must not try to pin setup inputs: they are values, not refs.
-		".deps.yaml": "pin: digest\nrules: [{manager: github-actions, depTypes: [action], ignore: true}]\n",
+		".deps.yaml": "pin: digest\nrules: [{managers: [github-actions], depTypes: [action], ignore: true}]\n",
 	})
 	stdout, stderr, code := execute(t, "plan", "--dir", dir)
 	if code != 0 {

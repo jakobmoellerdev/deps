@@ -10,9 +10,9 @@ var Doc = refdoc.Manager{
 	Summary: "Updates image tags and digests, Helm chart versions and the `?ref=` of remote git resources in Kustomize kustomization files.",
 	Files:   []string{"`kustomization.yaml`, `kustomization.yml`, `Kustomization`"},
 	DepTypes: []refdoc.DepType{
-		{Name: "image", What: "`images[]` `newTag` (`1.2` or `1.2@sha256:…`) and `digest` of `newName`, else `name`", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "helmChart", What: "`helmCharts[]` `version` of chart `name` from `repo` (`https://`, `http://` or `oci://`)", Datasource: "`helm`", Versioning: "`semver`"},
-		{Name: "resource", What: "remote git targets in `resources[]`, `components[]` and `bases[]` with a `ref` (or `version`) query parameter: `[git::]https://host/org/repo[.git][//path]`, `ssh://[user@]host/…`, `git@host:org/repo[.git][//path]`, `host/org/repo[//path]`; the span covers the ref value", Datasource: "`git-tags`", Versioning: "`tag`"},
+		{Name: "image", What: "`images[]` `newTag` (`1.2` or `1.2@sha256:…`) and `digest` of `newName`, else `name`", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "helmChart", What: "`helmCharts[]` `version` of chart `name` from `repo` (`https://`, `http://` or `oci://`)", Versioning: "`semver`", Datasources: []string{"helm"}},
+		{Name: "resource", What: "remote git targets in `resources[]`, `components[]` and `bases[]` with a `ref` (or `version`) query parameter: `[git::]https://host/org/repo[.git][//path]`, `ssh://[user@]host/…`, `git@host:org/repo[.git][//path]`, `host/org/repo[//path]`; the span covers the ref value", Versioning: "`tag`", Datasources: []string{"git-tags"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "no tag", When: "image: no `newTag` and no `digest` (a rename only)"},

@@ -34,16 +34,16 @@ import (
 
 func newPlan(o *rootOpts) *cli.Command {
 	return &cli.Command{
-		Name:        "plan",
-		Usage:       "Print the updates as a unified diff without writing files",
-		Description: helpText("plan"),
+		Name:  "plan",
+		Usage: "Print the updates as a unified diff without writing files",
 		Metadata: map[string]any{docgen.MetaExample: "  deps plan > deps.diff && git apply --check deps.diff\n" +
-			"  deps plan -v --dir ../other-repo\n" +
+			"  deps plan --show-skipped --dir ../other-repo\n" +
 			"  deps plan --config ci/deps.yaml --log-level info"},
 		ArgValidator: noArgs,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return local(ctx, cmd, o, false)
 		},
+		Flags: scanFlags(o, scanResults),
 	}
 }
 
@@ -52,7 +52,7 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	start := time.Now()
 	stderr := cmd.Root().ErrWriter
 	info, _ := platform.FromEnv(os.Getenv)
-	s, err := newSession(ctx, o, info, envToken(), newHTTPClient())
+	s, err := newSession(ctx, o, info, envToken(), newHTTPClient(), stderr)
 	if err != nil {
 		return err
 	}
@@ -111,7 +111,7 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 		}
 	}
 	errs := append(append([]error(nil), res.Errors...), buildErrs...)
-	report(stderr, o.term, o.verbose, res, errs, separate)
+	report(stderr, o.term, o.showSkipped, res, errs, separate)
 	if !write && hasManager(res, gomod.Name) {
 		fmt.Fprintln(stderr, "note    go.sum changes are computed by apply/run")
 	}
@@ -152,7 +152,8 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	if write {
 		cmdName = "apply"
 	}
-	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, Elapsed: time.Since(start), Verbose: o.verbose, Report: o.report, Style: o.term.style}
+	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, Elapsed: time.Since(start), ShowSkipped: o.showSkipped,
+		Unused: s.cfg.UnusedRules(res.Deps), Config: s.cfg, Report: o.report, Style: o.term.style}
 	sum.write(stderr)
 	files := map[string]bool{}
 	for _, u := range res.Updates {
@@ -165,10 +166,10 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	return nil
 }
 
-// report prints update, skip (verbose) and error lines. separate (nil for run) marks the
+// report prints update, skip (--show-skipped) and error lines. separate (nil for run) marks the
 // updates plan/apply leave to their own PR: their type gets a ", separate PR" hint. On a
 // terminal the update lines are left out: the summary lists the same updates, grouped by PR.
-func report(w io.Writer, t terminal, verbose bool, res *engine.Result, errs []error, separate []bool) {
+func report(w io.Writer, t terminal, showSkipped bool, res *engine.Result, errs []error, separate []bool) {
 	for _, u := range res.Updates {
 		actionsLog.security(u)
 	}
@@ -199,7 +200,7 @@ func report(w io.Writer, t terminal, verbose bool, res *engine.Result, errs []er
 		}
 		fmt.Fprintf(w, "update  %s:%d  %s  %s -> %s  (%s%s)%s\n", u.Dep.File, u.Dep.Line, u.Dep.Name, from, to, u.Type, hint, sec)
 	}
-	if verbose && len(res.Skipped) > 0 {
+	if showSkipped && len(res.Skipped) > 0 {
 		actionsLog.group(plural(len(res.Skipped), "skipped dependency", "skipped dependencies"))
 		for _, d := range res.Skipped {
 			fmt.Fprintf(w, "skip    %s:%d  %s  %s\n", d.File, d.Line, d.Name, d.Skip)

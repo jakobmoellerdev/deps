@@ -9,10 +9,10 @@ var Doc = refdoc.Manager{
 	Name: Name,
 	Summary: "Moves git submodules to the newest commit of the branch they track, or to the newest version tag when `branch` is one. " +
 		"The current commit is the submodule's gitlink in the git index (`git ls-files --stage`). " +
-		"Disabled by default, as in Renovate: enable it with a rule `{manager: git-submodules, ignore: false}`.",
+		"Disabled by default, as in Renovate: enable it with a rule `{managers: [git-submodules], ignore: false}`.",
 	Files: []string{"`.gitmodules` at any depth; `path` is relative to its directory"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeSubmodule, What: "`[submodule]` with `url`, `path` and `branch` (none: the remote's default branch, `HEAD`; `.`: the superproject's checked-out branch); the name is the URL path (`owner/repo`), the source its `https://` URL without `.git`, the digest the gitlink commit", Datasource: "`git-refs`; `git-tags` when `branch` is a version tag", Versioning: "`tag`"},
+		{Name: DepTypeSubmodule, What: "`[submodule]` with `url`, `path` and `branch` (none: the remote's default branch, `HEAD`; `.`: the superproject's checked-out branch); the name is the URL path (`owner/repo`), the source its `https://` URL without `.git`, the digest the gitlink commit", Datasource: "`git-refs`; `git-tags` when `branch` is a version tag", Versioning: "`tag`", Datasources: []string{dsRefs, dsTags}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "no url", When: "the section has no `url`"},

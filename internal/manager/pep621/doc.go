@@ -15,11 +15,11 @@ var Doc = refdoc.Manager{
 		"`include-group` entries, `[build-system] requires` and uv's `constraint-dependencies`/`override-dependencies` are not extracted; `[project] requires-python` is no dep but drops the releases that do not support all of it (see the `pypi` datasource).",
 	Files: []string{"`pyproject.toml`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeDependencies, What: "`[project] dependencies` (updates use commit type `fix`)", Datasource: "`pypi`", Versioning: "`pep440`"},
-		{Name: DepTypeOptional, What: "every array of `[project.optional-dependencies]`", Datasource: "`pypi`", Versioning: "`pep440`"},
-		{Name: DepTypeGroups, What: "every array of `[dependency-groups]` (PEP 735)", Datasource: "`pypi`", Versioning: "`pep440`"},
-		{Name: DepTypeUVDev, What: "`[tool.uv] dev-dependencies`", Datasource: "`pypi`", Versioning: "`pep440`"},
-		{Name: DepTypePDMDev, What: "every array of `[tool.pdm.dev-dependencies]` (editable `-e …` entries are ignored)", Datasource: "`pypi`", Versioning: "`pep440`"},
+		{Name: DepTypeDependencies, What: "`[project] dependencies` (updates use commit type `fix`)", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypeOptional, What: "every array of `[project.optional-dependencies]`", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypeGroups, What: "every array of `[dependency-groups]` (PEP 735)", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypeUVDev, What: "`[tool.uv] dev-dependencies`", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypePDMDev, What: "every array of `[tool.pdm.dev-dependencies]` (editable `-e …` entries are ignored)", Versioning: "`pep440`", Datasources: []string{"pypi"}},
 	},
 	Skips: slices.Concat(pyreq.SpecifierSkips, []refdoc.Skip{
 		{Reason: pyreq.SkipURL, When: "`name @ https://…`, or a `[tool.uv.sources]` entry with `url`"},

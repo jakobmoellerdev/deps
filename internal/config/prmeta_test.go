@@ -13,12 +13,12 @@ func TestPolicyPRMetadata(t *testing.T) {
 reviewers: [alice, team:platform]
 assignees: [bob]
 rules:
-  - manager: gomod
+  - managers: [gomod]
     addLabels: [go, dependencies]
   - names: ["golang.org/x/*"]
     labels: [x]
     reviewers: []
-  - manager: gomod
+  - managers: [gomod]
     updateTypes: [major]
     addLabels: [major]
     assignees: [carol]

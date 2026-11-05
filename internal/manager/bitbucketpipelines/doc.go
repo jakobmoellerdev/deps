@@ -13,9 +13,9 @@ var Doc = refdoc.Manager{
 		"`*-pipelines.yml` (`bitbucket-pipelines.yml`, shared pipeline configurations), except the files of the azure-pipelines manager",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: "image", What: "`image` (string or `name:`) at top level and in steps, wherever they nest (`pipelines.<kind>`, `parallel`, `stage`, `definitions.steps`)", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "service", What: "`definitions.services.<name>.image` (string or `name:`)", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "pipe", What: "`pipe: <account>/<repo>:<version>` (Source `https://bitbucket.org/<account>/<repo>`), `pipe: docker://<image>` as an image", Datasource: "`git-tags`; `docker` for `docker://`", Versioning: "`tag`; `docker` for `docker://`"},
+		{Name: "image", What: "`image` (string or `name:`) at top level and in steps, wherever they nest (`pipelines.<kind>`, `parallel`, `stage`, `definitions.steps`)", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "service", What: "`definitions.services.<name>.image` (string or `name:`)", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "pipe", What: "`pipe: <account>/<repo>:<version>` (Source `https://bitbucket.org/<account>/<repo>`), `pipe: docker://<image>` as an image", Datasource: "`git-tags`; `docker` for `docker://`", Versioning: "`tag`; `docker` for `docker://`", Datasources: []string{"git-tags", "docker"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "variable reference", When: "`$` in the image or pipe"},

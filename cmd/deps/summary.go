@@ -27,14 +27,16 @@ type summary struct {
 	Groups  []engine.Group
 	// prs maps a branch to its first non-dashboard action in Actions, grouped holds the
 	// branches of Groups; index builds both on first use.
-	prs     map[string]int
-	grouped map[string]bool
-	Actions []bot.Action // run only
-	Errors  []error      // engine and build/bot errors
-	Elapsed time.Duration
-	Verbose bool       // text lists the held-back releases, not only their count
-	Report  string     // --report file; "" = none
-	Style   logx.Style // colors of the text; the markdown has none
+	prs         map[string]int
+	grouped     map[string]bool
+	Actions     []bot.Action // run only
+	Errors      []error      // engine and build/bot errors
+	Elapsed     time.Duration
+	ShowSkipped bool           // text lists the held-back releases, not only their count
+	Report      string         // --report file; "" = none
+	Unused      []int          // indices of the rules that matched no dependency (config.UnusedRules)
+	Config      *config.Config // the loaded config, for the positions of Unused rules
+	Style       logx.Style     // colors of the text; the markdown has none
 	// Repository names the repository of a multi-repository run: the step summary heading
 	// names it, and the run writes the report and step outputs of all repositories at its end
 	// instead of write.
@@ -272,10 +274,14 @@ func (s *summary) groupNotes(g engine.Group, link func(a bot.Action) string) []s
 	return notes
 }
 
-// writeText writes the summary block for stderr. It goes before the counts line, so that line
-// stays last. Skip reasons are counts only: -v prints the per-dep skip lines; errors are
-// already printed as error lines.
+// writeText writes the warnings about unused rules and the summary block for stderr. It goes
+// before the counts line, so that line stays last. Skip reasons are counts only: --show-skipped prints the
+// per-dep skip lines; errors are already printed as error lines.
 func (s *summary) writeText(w io.Writer) {
+	for _, i := range s.Unused {
+		fmt.Fprintf(w, "warn    rules[%d] matched no dependency\n", i)
+		actionsLog.configWarning(s.Config, fmt.Sprintf("rules[%d]", i), "matched no dependency")
+	}
 	st := s.Style
 	fmt.Fprintf(w, "\n%s %s\n", st.Paint(logx.Bold, "Summary:"), s.headline(st))
 	for _, g := range s.Groups {
@@ -298,8 +304,8 @@ func (s *summary) writeText(w io.Writer) {
 		fmt.Fprintf(w, "  %s  %s  %s\n", a.Display(), cmp.Or(a.Branch, a.Title), a.URL)
 	}
 	switch {
-	case len(s.Res.Pending) > 0 && !s.Verbose:
-		fmt.Fprintf(w, "  Held back by minimumReleaseAge: %d (-v lists each)\n", len(s.Res.Pending))
+	case len(s.Res.Pending) > 0 && !s.ShowSkipped:
+		fmt.Fprintf(w, "  Held back by minimumReleaseAge: %d (--show-skipped lists each)\n", len(s.Res.Pending))
 	case len(s.Res.Pending) > 0:
 		fmt.Fprintln(w, "  Held back by minimumReleaseAge:")
 		for _, p := range s.Res.Pending {
@@ -307,8 +313,8 @@ func (s *summary) writeText(w io.Writer) {
 		}
 	}
 	switch {
-	case len(s.Res.Warnings) > 0 && !s.Verbose:
-		fmt.Fprintf(w, "  Deprecated or abandoned: %d (-v lists each)\n", len(s.Res.Warnings))
+	case len(s.Res.Warnings) > 0 && !s.ShowSkipped:
+		fmt.Fprintf(w, "  Deprecated or abandoned: %d (--show-skipped lists each)\n", len(s.Res.Warnings))
 	case len(s.Res.Warnings) > 0:
 		fmt.Fprintln(w, "  Deprecated or abandoned:")
 		for _, d := range s.Res.Warnings {
@@ -316,7 +322,7 @@ func (s *summary) writeText(w io.Writer) {
 		}
 	}
 	if rs := s.skipReasons(); len(rs) > 0 {
-		fmt.Fprintln(w, "  Skipped (-v lists each dependency):")
+		fmt.Fprintln(w, "  Skipped (--show-skipped lists each dependency):")
 		for _, r := range rs {
 			fmt.Fprintf(w, "    %4d  %s", len(r.Deps), r.Reason)
 			if h := skipHint(r.Reason); h != "" {
@@ -424,7 +430,7 @@ func (s *summary) markdownAt(level int) string {
 		b.WriteString("\n")
 	}
 	if len(s.Res.Pending) > 0 && level >= mdNoPendingList {
-		fmt.Fprintf(&b, "### Held back by minimumReleaseAge\n\n%s held back (list left out: step summary size limit; `-v` lists them in the log).\n\n",
+		fmt.Fprintf(&b, "### Held back by minimumReleaseAge\n\n%s held back (list left out: step summary size limit; `--show-skipped` lists them in the log).\n\n",
 			plural(len(s.Res.Pending), "release", "releases"))
 	} else if len(s.Res.Pending) > 0 {
 		fmt.Fprintf(&b, "### Held back by minimumReleaseAge\n\n<details><summary>%s held back (too new, or without a release time under timestamp-required)</summary>\n\n| Dependency | File | Version | Reason |\n|---|---|---|---|\n",
@@ -440,7 +446,7 @@ func (s *summary) markdownAt(level int) string {
 			fmt.Fprintf(&b, "| %s | %d | %s |\n", mdCell(r.Reason), len(r.Deps), mdCell(skipHint(r.Reason)))
 		}
 		if level >= mdNoSkippedList {
-			b.WriteString("\nThe skipped dependencies are left out (step summary size limit); `-v` lists them in the log.\n\n")
+			b.WriteString("\nThe skipped dependencies are left out (step summary size limit); `--show-skipped` lists them in the log.\n\n")
 		} else {
 			b.WriteString("\n<details><summary>Skipped dependencies</summary>\n\n")
 			for _, r := range rs {
@@ -452,6 +458,13 @@ func (s *summary) markdownAt(level int) string {
 			}
 			b.WriteString("</details>\n\n")
 		}
+	}
+	if len(s.Unused) > 0 {
+		b.WriteString("### Warnings\n\n")
+		for _, i := range s.Unused {
+			fmt.Fprintf(&b, "- `rules[%d]` matched no dependency\n", i)
+		}
+		b.WriteString("\n")
 	}
 	if len(s.Errors) > 0 {
 		b.WriteString("### Errors\n\n```\n")

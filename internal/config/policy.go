@@ -34,17 +34,17 @@ type Policy struct {
 	// RangeStrategy is the npm and Python range strategy (RangeStrategies); never "" in a Policy.
 	RangeStrategy string
 	Allow         *Allowed
-	// Updates are the allowed update types. The map is shared between policies and
-	// must not be modified.
-	Updates       map[dep.UpdateType]bool
-	Group         string        // "" = own PR
-	SecurityGroup string        // group of the dep's security updates, "" = own PR each
-	Schedule      *schedule.Set // nil = always
-	Rules         []int         // indices of the matching user rules, in order
-	Monorepo      string        // built-in monorepo that set the initial Group, "" = none
-	Toolchain     string        // built-in toolchain group (RubyGroup) that set the initial Group, "" = none
-	CommitType    string        // conventional commit type: fix for production deps, chore otherwise
-	CommitScope   string        // conventional commit scope, "" = none
+	// AllowedUpdateTypes are the allowed update types. The map is shared between policies
+	// and must not be modified.
+	AllowedUpdateTypes map[dep.UpdateType]bool
+	Group              string        // "" = own PR
+	SecurityGroup      string        // group of the dep's security updates, "" = own PR each
+	Schedule           *schedule.Set // nil = always
+	Rules              []int         // indices of the matching user rules, in order
+	Monorepo           string        // built-in monorepo that set the initial Group, "" = none
+	Toolchain          string        // built-in toolchain group (RubyGroup) that set the initial Group, "" = none
+	CommitType         string        // conventional commit type: fix for production deps, chore otherwise
+	CommitScope        string        // conventional commit scope, "" = none
 	// Templates are the prTitle, prHeader and prFooter templates; nil members use the defaults.
 	Templates prtemplate.Set
 	Kind      dep.UpdateType // update type of a PolicyFor result, "" for Policy
@@ -118,7 +118,7 @@ var mavenProduction = map[string]bool{"compile": true, "provided": true, "runtim
 // applications.
 var defaultIgnored = map[string]bool{"indirect": true, "test-indirect": true, "go": true, "peerDependencies": true, "engines": true, "submodule": true, "task": true}
 
-// allUpdates allows every update type; policies share it until a rule sets updates.
+// allUpdates allows every update type; policies share it until a rule sets allowedUpdateTypes.
 var allUpdates = updateSet(nil)
 
 // updateSet returns the set of types, or of every update type when types is nil.
@@ -154,14 +154,13 @@ func UnversionedPin(d dep.Dep) bool {
 
 // Policy is the pre-policy of d: the policy before the type of an update is known. It
 // evaluates the built-in monorepo and Ruby group rules (unless monorepos is false), then the
-// user rules without updateTypes top-to-bottom; each set field of a matching rule overwrites
-// the policy (Updates is replaced, not merged). Indirect Go requirements and pip-compile pins, go
-// directives, npm peerDependencies and engines, actions pinned to a bare SHA
-// (UnversionedPin), git submodules and Azure Pipelines tasks are ignored unless a rule sets
-// `ignore: false`. Its Versioning
-// and ExtractVersion replace the dep's before resolution (only rules without updateTypes may
-// set them). The age of the current version is unknown, so no currentAge rule matches (see
-// PolicyAt).
+// user rules without updateTypes top-to-bottom; each set apply field of a matching rule
+// overwrites the policy (allowedUpdateTypes is replaced, not merged). Indirect Go requirements
+// and pip-compile pins, go directives, npm peerDependencies and engines, actions pinned to a
+// bare SHA (UnversionedPin), git submodules and Azure Pipelines tasks are ignored unless a
+// rule sets `ignore: false`. Its Versioning and ExtractVersion replace the dep's before
+// resolution (only rules without updateTypes may set them). The age of the current version is
+// unknown, so no currentAge rule matches (see PolicyAt).
 func (c *Config) Policy(d dep.Dep) Policy { return c.policy(d, "", UnknownAge) }
 
 // PolicyFor is the policy of an update of kind to d: like Policy, but rules with updateTypes
@@ -207,11 +206,12 @@ func (c *Config) matches(r *Rule, d dep.Dep, kind dep.UpdateType, age time.Durat
 	return c.matchesDep(r, d)
 }
 
-// matchesDep reports whether the selectors of r other than updateTypes and currentAge match d
-// on the base branch of c (ForBaseBranch; rules with baseBranches match nothing without one).
+// matchesDep reports whether the match fields of r other than updateTypes and currentAge
+// match d on the base branch of c (ForBaseBranch; rules with baseBranches match nothing
+// without one).
 func (c *Config) matchesDep(r *Rule, d dep.Dep) bool {
 	switch {
-	case r.Manager != "" && r.Manager != d.Manager,
+	case len(r.Managers) > 0 && !slices.Contains(r.Managers, d.Manager),
 		len(r.Names) > 0 && !r.names.Match(d.Name),
 		len(r.DepTypes) > 0 && !slices.Contains(r.DepTypes, d.DepType),
 		len(r.Paths) > 0 && !r.paths.Match(d.File),
@@ -247,11 +247,28 @@ func (c *Config) versioningOf(d dep.Dep) string {
 	return v
 }
 
+// UnusedRules returns the indices of the rules that match none of deps (the deps of a run,
+// skipped ones included); updateTypes and currentAge are not considered, as a rule matching
+// a dep applies to it once an update of a listed type exists or its release time is known.
+func (c *Config) UnusedRules(deps []dep.Dep) []int {
+	var out []int
+	for i := range c.Rules {
+		r := &c.Rules[i]
+		if len(r.BaseBranches) > 0 && c.baseBranch == "" {
+			continue // without a base branch it cannot match; that says nothing about the rule
+		}
+		if !slices.ContainsFunc(deps, func(d dep.Dep) bool { return c.matchesDep(r, d) }) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Policy {
 	p := Policy{
 		Pin:                   c.Pin,
 		RangeStrategy:         cmp.Or(c.RangeStrategy, RangeAuto),
-		Updates:               allUpdates,
+		AllowedUpdateTypes:    allUpdates,
 		Schedule:              c.schedule,
 		MinAge:                c.minAge,
 		AbandonAfter:          c.abandon,
@@ -324,8 +341,8 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		if r.allow != nil {
 			p.Allow = r.allow
 		}
-		if r.Updates != nil {
-			p.Updates = r.updates
+		if r.AllowedUpdateTypes != nil {
+			p.AllowedUpdateTypes = r.allowedUpdateTypes
 		}
 		if r.Group != "" {
 			p.Group = r.Group
@@ -439,7 +456,7 @@ func MatchGlobs(globs []string, name string) bool {
 // or "outside allow <allow>". semverOf converts v for a constraint allow and is only called
 // then (Allowed.Check).
 func (p Policy) Check(kind dep.UpdateType, v string, semverOf func(string) *semver.Version) (bool, string) {
-	if !p.Updates[kind] {
+	if !p.AllowedUpdateTypes[kind] {
 		return false, "update type " + string(kind) + " not allowed"
 	}
 	if p.Allow != nil && !p.Allow.Check(v, semverOf) {

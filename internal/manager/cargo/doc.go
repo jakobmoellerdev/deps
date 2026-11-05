@@ -10,6 +10,9 @@ const (
 	versionings     = "`cargo`; git tags `tag`"
 )
 
+// depDatasources are the datasources of the versioned dep types: registries and git tags.
+var depDatasources = []string{Datasource, "git-tags"}
+
 // Doc is the reference documentation of the cargo manager (docs/reference/managers.md).
 var Doc = refdoc.Manager{
 	Name: Name,
@@ -18,12 +21,12 @@ var Doc = refdoc.Manager{
 		"`[features]` and `[package]` are not extracted.",
 	Files: []string{"`Cargo.toml`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeDependencies, What: "`[dependencies]` and `[target.<cfg>.dependencies]`: " + dependencyForms + " (updates use commit type `fix`)", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypeDev, What: "`[dev-dependencies]` (also `dev_dependencies`) and `[target.<cfg>.dev-dependencies]`", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypeBuild, What: "`[build-dependencies]` (also `build_dependencies`) and `[target.<cfg>.build-dependencies]`", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypeWorkspace, What: "`[workspace.dependencies]`, inherited by members with `name.workspace = true`", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypePatch, What: "every `[patch.<source>]` table (`[patch.crates-io]`, `[patch.\"https://…\"]`): versioned and git-tag entries; path patches are skipped", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypeReplace, What: "`[replace]`: the git tag of `\"<name>:<version>\" = { git = …, tag = … }` (the key's version is the package being replaced and stays)", Datasource: "`git-tags`", Versioning: "`tag`"},
+		{Name: DepTypeDependencies, What: "`[dependencies]` and `[target.<cfg>.dependencies]`: " + dependencyForms + " (updates use commit type `fix`)", Datasource: datasources, Versioning: versionings, Datasources: depDatasources},
+		{Name: DepTypeDev, What: "`[dev-dependencies]` (also `dev_dependencies`) and `[target.<cfg>.dev-dependencies]`", Datasource: datasources, Versioning: versionings, Datasources: depDatasources},
+		{Name: DepTypeBuild, What: "`[build-dependencies]` (also `build_dependencies`) and `[target.<cfg>.build-dependencies]`", Datasource: datasources, Versioning: versionings, Datasources: depDatasources},
+		{Name: DepTypeWorkspace, What: "`[workspace.dependencies]`, inherited by members with `name.workspace = true`", Datasource: datasources, Versioning: versionings, Datasources: depDatasources},
+		{Name: DepTypePatch, What: "every `[patch.<source>]` table (`[patch.crates-io]`, `[patch.\"https://…\"]`): versioned and git-tag entries; path patches are skipped", Datasource: datasources, Versioning: versionings, Datasources: depDatasources},
+		{Name: DepTypeReplace, What: "`[replace]`: the git tag of `\"<name>:<version>\" = { git = …, tag = … }` (the key's version is the package being replaced and stays)", Versioning: "`tag`", Datasources: []string{"git-tags"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "workspace dependency", When: "`workspace = true`: the requirement is inherited from `[workspace.dependencies]`, which is updated instead"},

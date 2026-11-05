@@ -1,17 +1,30 @@
-package custom
+// Package customdoc declares the identity of the custom manager (its name and dependency
+// types) and its reference documentation. It is apart from package custom, which depends on
+// config, so that the manager registry, and config through it, can import it.
+package customdoc
 
 import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
-// Doc is the reference documentation of the custom manager (docs/reference/managers.md).
+// Name is the manager name shared by every custom manager.
+const Name = "custom"
+
+// Dependency types of custom deps.
+const (
+	DepTypeAnnotation = "annotation"
+	DepTypeRegex      = "regex"
+)
+
+// Doc is the reference documentation of the custom manager (docs/reference/managers.md). Its
+// dep types have no Datasources: a custom dep can use any datasource, custom.<name> included.
 var Doc = refdoc.Manager{
 	Name:    Name,
 	Summary: "User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).",
 	Files:   []string{"`custom[].files` globs"},
 	DepTypes: []refdoc.DepType{
-		{Name: "annotation", What: "`# deps: <datasource> <name>` or `# renovate: datasource=… depName=…` on the previous line", Datasource: "from the marker", Versioning: "from the marker or `custom[].versioning`"},
-		{Name: "regex", What: "`match` RE2 over the whole file", Datasource: "`custom[].datasource` or the `datasource` group", Versioning: "`custom[].versioning` or the `versioning` group"},
+		{Name: DepTypeAnnotation, What: "`# deps: <datasource> <name>` or `# renovate: datasource=… depName=…` on the previous line", Datasource: "from the marker", Versioning: "from the marker or `custom[].versioning`"},
+		{Name: DepTypeRegex, What: "`match` RE2 over the whole file", Datasource: "`custom[].datasource` or the `datasource` group", Versioning: "`custom[].versioning` or the `versioning` group"},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "no version on next line", When: "an annotation is not followed by a line with a version"},

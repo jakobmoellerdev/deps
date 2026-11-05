@@ -15,9 +15,9 @@ var Doc = refdoc.Manager{
 		"`[requires]` is no dep: `python_full_version` (exactly) else `python_version` (`3.11` → `==3.11.*`) drops the releases that do not support it (see the `pypi` datasource).",
 	Files: []string{"`Pipfile`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypePackages, What: "`[packages]` (updates use commit type `fix`)", Datasource: "`pypi`", Versioning: "`pep440`"},
-		{Name: DepTypeDevPackages, What: "`[dev-packages]`", Datasource: "`pypi`", Versioning: "`pep440`"},
-		{Name: DepTypeCategory, What: "every custom package category (pipenv ≥ 2022.10): any other top-level table except `[source]`, `[requires]`, `[pipenv]` and `[scripts]`, e.g. `[docs]`. Match them in rules with `depTypes: [category]` (plus `paths`/`names`); Renovate uses the category name as dep type", Datasource: "`pypi`", Versioning: "`pep440`"},
+		{Name: DepTypePackages, What: "`[packages]` (updates use commit type `fix`)", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypeDevPackages, What: "`[dev-packages]`", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypeCategory, What: "every custom package category (pipenv ≥ 2022.10): any other top-level table except `[source]`, `[requires]`, `[pipenv]` and `[scripts]`, e.g. `[docs]`. Match them in rules with `depTypes: [category]` (plus `paths`/`names`); Renovate uses the category name as dep type", Versioning: "`pep440`", Datasources: []string{"pypi"}},
 	},
 	Skips: slices.Concat(pyreq.SpecifierSkips, []refdoc.Skip{
 		{Reason: pyreq.SkipGit, When: "`{ git = … }`"},

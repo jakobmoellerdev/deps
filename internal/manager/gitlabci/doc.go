@@ -13,10 +13,10 @@ var Doc = refdoc.Manager{
 		"`*.y(a)ml` under `.gitlab/ci/`",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: "image", What: "`image` (string or `name:`) at top level, in `default` and in jobs", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "service", What: "`services[]` entries (string or `name:`) at top level, in `default` and in jobs", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "include", What: "`include` entries with `project` + `ref` (single mapping or list); Source `<instance URL>/<project>`", Datasource: "`git-tags`", Versioning: "`tag`"},
-		{Name: "component", What: "`include` entries `component: <host>/<project>/<name>@<version>`; Source `<instance URL>/<project>` when `<host>` is the instance host or `$CI_SERVER_FQDN`/`$CI_SERVER_HOST`, else `https://<host>/<project>`", Datasource: "`git-tags`", Versioning: "`tag`"},
+		{Name: "image", What: "`image` (string or `name:`) at top level, in `default` and in jobs", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "service", What: "`services[]` entries (string or `name:`) at top level, in `default` and in jobs", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "include", What: "`include` entries with `project` + `ref` (single mapping or list); Source `<instance URL>/<project>`", Versioning: "`tag`", Datasources: []string{"git-tags"}},
+		{Name: "component", What: "`include` entries `component: <host>/<project>/<name>@<version>`; Source `<instance URL>/<project>` when `<host>` is the instance host or `$CI_SERVER_FQDN`/`$CI_SERVER_HOST`, else `https://<host>/<project>`", Versioning: "`tag`", Datasources: []string{"git-tags"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "variable reference", When: "`$` in the image, project, component or ref, other than a leading `$CI_SERVER_FQDN`/`$CI_SERVER_HOST` in a component"},

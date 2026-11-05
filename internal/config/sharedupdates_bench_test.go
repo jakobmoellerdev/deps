@@ -16,9 +16,9 @@ func BenchmarkPolicySharedUpdates(b *testing.B) {
 	var y strings.Builder
 	y.WriteString("rules:\n")
 	for i := range 10 {
-		fmt.Fprintf(&y, "  - manager: npm\n    names: [\"pkg-%d*\"]\n    group: g%d\n", i, i)
-		fmt.Fprintf(&y, "  - manager: gomod\n    names: [\"example.com/m%d/*\"]\n    updates: [minor, patch]\n", i)
-		fmt.Fprintf(&y, "  - manager: docker\n    names: [\"img%d\"]\n    updateTypes: [major]\n    ignore: true\n", i)
+		fmt.Fprintf(&y, "  - managers: [npm]\n    names: [\"pkg-%d*\"]\n    group: g%d\n", i, i)
+		fmt.Fprintf(&y, "  - managers: [gomod]\n    names: [\"example.com/m%d/*\"]\n    allowedUpdateTypes: [minor, patch]\n", i)
+		fmt.Fprintf(&y, "  - managers: [docker]\n    names: [\"img%d\"]\n    updateTypes: [major]\n    ignore: true\n", i)
 	}
 	dir := b.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".deps.yaml"), []byte(y.String()), 0o644); err != nil {

@@ -17,11 +17,11 @@ var Doc = refdoc.Manager{
 		"The files are read with a small Ruby lexer (strings, symbols, hash labels, `%i[]` literals, comments, heredocs, blocks); only the requirement strings that change are rewritten, and of those only the version where the operator stays, so quotes, operators and formatting are kept.",
 	Files: []string{"`Gemfile`, `gems.rb` (Bundler's alternative name, locked in `gems.locked`)", "`*.gemspec` (beyond Renovate, whose bundler manager reads Gemfiles only)"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeDependencies, What: "`gem` statements outside `group` blocks and without a `group:`/`groups:` option: " + gemForms + " (updates use commit type `fix`)", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypeGroup, What: "`gem` statements in a `group :development, :test do … end` block or with a `group:`/`groups:` option", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypeRuby, What: "the `ruby` directive (name `ruby`): `ruby \"3.4.7\"`, `ruby \"~> 3.4.0\"`, `ruby(\">= 3.2\", \"< 5\")`, with `engine: \"ruby\"`; a gemspec's `required_ruby_version` (skipped)", Datasource: "`ruby-version`", Versioning: versionings},
-		{Name: DepTypeRuntime, What: "gemspec `<spec>.add_dependency` and `add_runtime_dependency` calls: `\"name\"` and the requirements as for `gem` (updates use commit type `fix`)", Datasource: "`rubygems` (rubygems.org)", Versioning: versionings},
-		{Name: DepTypeDevelopment, What: "gemspec `<spec>.add_development_dependency` calls", Datasource: "`rubygems` (rubygems.org)", Versioning: versionings},
+		{Name: DepTypeDependencies, What: "`gem` statements outside `group` blocks and without a `group:`/`groups:` option: " + gemForms + " (updates use commit type `fix`)", Datasource: datasources, Versioning: versionings, Datasources: []string{Datasource}},
+		{Name: DepTypeGroup, What: "`gem` statements in a `group :development, :test do … end` block or with a `group:`/`groups:` option", Datasource: datasources, Versioning: versionings, Datasources: []string{Datasource}},
+		{Name: DepTypeRuby, What: "the `ruby` directive (name `ruby`): `ruby \"3.4.7\"`, `ruby \"~> 3.4.0\"`, `ruby(\">= 3.2\", \"< 5\")`, with `engine: \"ruby\"`; a gemspec's `required_ruby_version` (skipped)", Versioning: versionings, Datasources: []string{RubyDatasource}},
+		{Name: DepTypeRuntime, What: "gemspec `<spec>.add_dependency` and `add_runtime_dependency` calls: `\"name\"` and the requirements as for `gem` (updates use commit type `fix`)", Datasource: "`rubygems` (rubygems.org)", Versioning: versionings, Datasources: []string{Datasource}},
+		{Name: DepTypeDevelopment, What: "gemspec `<spec>.add_development_dependency` calls", Datasource: "`rubygems` (rubygems.org)", Versioning: versionings, Datasources: []string{Datasource}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: skipGit, When: "`git:`, `github:`, `gitlab:`, `bitbucket:`, `gist:` or a `git_source(:name)` option, or a gem in a `git`/`github` block"},
@@ -57,7 +57,7 @@ var Doc = refdoc.Manager{
 		}},
 		{Title: "Ruby version", Items: []string{
 			"The `ruby` directive is the dep `ruby` of the `ruby-version` datasource (the ruby-lang.org release list). Its requirement is read and rewritten like a gem's (`ruby \"3.4.7\"` → `ruby \"4.0.9\"`, `~> 3.4.0` → `~> 4.0.9`); a Gemfile.lock never locks it, so versions the requirement admits are not proposed under `update-lockfile`.",
-			"Every dep of the `ruby-version` datasource (this directive, [`.ruby-version`](#ruby-version), the [asdf](#asdf) and [mise](#mise) `ruby` tool) is in the built-in group `ruby` (see [monorepos](configuration.md#monorepos)), so one PR moves all files naming the Ruby version. A rule setting `group` overrides it; `ruby` Docker images (`FROM ruby:3.4-slim`, CI `image: ruby:3.4`) stay [docker](#docker) deps, and a rule such as `{manager: docker, names: [ruby], group: ruby}` adds them to that PR.",
+			"Every dep of the `ruby-version` datasource (this directive, [`.ruby-version`](#ruby-version), the [asdf](#asdf) and [mise](#mise) `ruby` tool) is in the built-in group `ruby` (see [monorepos](configuration.md#monorepos)), so one PR moves all files naming the Ruby version. A rule setting `group` overrides it; `ruby` Docker images (`FROM ruby:3.4-slim`, CI `image: ruby:3.4`) stay [docker](#docker) deps, and a rule such as `{managers: [docker], names: [ruby], group: ruby}` adds them to that PR.",
 			"Gemfile.lock's `RUBY VERSION` moves with it in process (Bundler is not needed for a Ruby-only update): an update of the directive rewrites the version of the lock next to the Gemfile, an update of `.ruby-version`, `.tool-versions` or a mise config does so for the lock whose Gemfile reads it with `ruby file:` in the same directory. The version is written as current Bundlers record it (`ruby 4.0.9`; a patchlevel such as `p108` is dropped, a preview's `-` becomes `.`); a lock without `RUBY VERSION` and a partial version (`4.0`) leave the lock alone.",
 		}},
 		{Title: "Lockfile (`apply`, `run`)", Body: lockBody,

@@ -17,10 +17,10 @@ prFooter: |
   Footer
   {{- if .IsSecurity}} (security){{end}}
 rules:
-  - manager: docker
+  - managers: [docker]
     prTitle: 'docker: {{.Name}}'
     prFooter: ''
-  - manager: docker
+  - managers: [docker]
     updateTypes: [major]
     prHeader: 'Major {{.From}} -> {{.To}}'
   - names: [plain]
@@ -67,11 +67,11 @@ func TestPRTemplateErrors(t *testing.T) {
 	_, err := load(t, ".deps.yaml", `prTitle: '{{.Type}} {{.DepName}}'
 prHeader: '{{.Name'
 rules:
-  - manager: gomod
+  - managers: [gomod]
     prFooter: |
       ok
       {{.Count.Max}}
-  - manager: npm
+  - managers: [npm]
     prTitle: '{{if false}}x{{end}}'
 `)
 	var ce *Error
@@ -79,20 +79,20 @@ rules:
 		t.Fatalf("err = %v", err)
 	}
 	for _, want := range []string{
-		".deps.yaml: prTitle: line 1, column 13: unknown field .DepName (fields: .Type, .Scope, .Name, .Group, .From, .To, .UpdateType, .Count, .IsSecurity)",
-		".deps.yaml: prHeader: line 1: unclosed action",
-		".deps.yaml: rules[0].prFooter: line 2, column 9: .Count has no field .Max",
-		".deps.yaml: rules[1].prTitle: renders an empty title",
+		".deps.yaml:1:10: prTitle: line 1, column 13: unknown field .DepName (fields: .Type, .Scope, .Name, .Group, .From, .To, .UpdateType, .Count, .IsSecurity)",
+		".deps.yaml:2:11: prHeader: line 1: unclosed action",
+		".deps.yaml:5:15: rules[0].prFooter: line 2, column 9: .Count has no field .Max",
+		".deps.yaml:9:14: rules[1].prTitle: renders an empty title",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q:\n%v", want, err)
 		}
 	}
-	lines := make([]int, len(ce.Problems))
-	for i, p := range ce.Problems {
+	lines := make([]int, len(ce.Problems()))
+	for i, p := range ce.Problems() {
 		lines[i] = p.Line
 	}
 	if !slices.Equal(lines, []int{1, 2, 5, 9}) {
-		t.Errorf("problem lines = %v, want [1 2 5 9] (%+v)", lines, ce.Problems)
+		t.Errorf("problem lines = %v, want [1 2 5 9] (%+v)", lines, ce.Problems())
 	}
 }

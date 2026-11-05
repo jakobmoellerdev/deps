@@ -60,11 +60,11 @@ The repository root has a composite [`action.yml`](../action.yml). The same file
 1. **Resolve.** It picks the release (see `version`) and the binary for the runner (linux/amd64 or linux/arm64).
 2. **Preinstalled.** If `deps` is on PATH and `deps version` prints the resolved version, the action uses it and skips the cache and download steps (log: `deps: using preinstalled deps <version> (<path>)`). That binary is trusted as is, not checked against `checksums.txt`; set `use-preinstalled: false` to always take the cache/download path. It is not a cache, so `cache: false` does not disable it.
 3. **Reuse or download.** Otherwise, with `cache: true` it reuses a binary of that version from the tool cache or the Actions cache (see **Binary cache** below). Otherwise it downloads it with `checksums.txt`, verifies it with `sha256sum`, and saves it to the Actions cache. It prints `deps version`.
-4. **Run.** It runs `deps <args>` with `DEPS_TOKEN` set to the `token` input.
+4. **Run.** It runs `deps <args>` with `DEPS_TOKEN` set to the `token` input, and `DEPS_DRY_RUN`, `DEPS_LOG_LEVEL`, `DEPS_CONFIG`, `DEPS_SHOW_SKIPPED` and `DEPS_MAX_NEW_PRS` set to the `dry-run`, `log-level`, `config`, `show-skipped` and `max-new-prs` inputs (or, for an empty input, the job env's variable). Every deps flag reads `DEPS_<FLAG>` when not given, so other flags can be set in the job `env:`; a flag in `args` wins.
 
 Go is not needed to run it; only go.mod updates need `go` for `go mod tidy`.
 
-The inputs (`token`, `signing-key`, `allow-tasks`, `args`, `version`, `repository`, `use-preinstalled`, `cache`), the outputs (`version`, `cache-hit`), where the binary is downloaded from, and the supported runners (linux/amd64 and linux/arm64 only) are described in the generated [action reference](reference/action.md). This section covers how the steps behave.
+The inputs (`token`, `signing-key`, `allow-tasks`, `dry-run`, `log-level`, `config`, `show-skipped`, `max-new-prs`, `args`, `version`, `repository`, `use-preinstalled`, `cache`), the outputs (`version`, `cache-hit`), where the binary is downloaded from, and the supported runners (linux/amd64 and linux/arm64 only) are described in the generated [action reference](reference/action.md). This section covers how the steps behave.
 
 **Binary cache.** Once the version is known, the action looks for that binary in two places before downloading:
 
@@ -111,7 +111,8 @@ jobs:
       - uses: jakobmoellerdev/deps@v0.3.0
         with:
           token: ${{ steps.app.outputs.token }}
-          args: run -v --log-level info
+          show-skipped: true
+          log-level: info
 ```
 
 Pass the token to **both** steps:
@@ -129,9 +130,9 @@ Pass the token to **both** steps:
 **Only `GITHUB_TOKEN`:** if you can't create an App or PAT, exclude workflow-file updates so the pushes succeed, and accept that CI on the PRs needs an approval each time (so automerge isn't automatic):
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 rules:
-  - manager: github-actions
+  - managers: [github-actions]
     ignore: true
 ```
 
@@ -189,7 +190,7 @@ If the action repository isn't reachable, install the binary with `go install` t
         with:
           go-version: stable
       - run: go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@v0.3.0
-      - run: deps run -v --log-level info
+      - run: deps run --show-skipped --log-level info
         env:
           DEPS_TOKEN: ${{ steps.app.outputs.token }}
 ```
@@ -228,7 +229,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.3.0
         with:
-          args: run -v --log-level info
+          show-skipped: true
+          log-level: info
 ```
 
 **`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.3.0` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. This repository's own workflow (`.gitea/workflows/deps.yml`) is this example plus the bot token, signing key and identity, pinned to the latest release; deps opens the PR that bumps that pin after each release. It also has a `dry-run` job for pull requests ([Preview on pull requests](#preview-on-pull-requests)).
@@ -316,7 +318,7 @@ deps:
         grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 /usr/local/bin/deps)
     # The job token can't push: push with the deps token instead.
     - git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${DEPS_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
-    - deps run -v --log-level info
+    - deps run --show-skipped --log-level info
 ```
 
 Add a pipeline schedule (*Build → Pipeline schedules*) on the default branch, e.g. `0 5 * * *`.
@@ -435,7 +437,7 @@ To keep deps' branches fast-forwardable when other changes land first, set [`reb
 With `--log-level info`, deps logs the chosen host as `actions default host host=<h> source=<s>`. For an instance whose `DEFAULT_ACTIONS_URL` is, e.g., `https://gitea.com`, add this to the config:
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 actions:
   defaultHost: gitea.com
 ```
@@ -495,7 +497,7 @@ The [`gitlabci`](reference/managers.md#gitlabci) manager resolves `include: {pro
 With `--log-level info`, deps logs it as `gitlab url url=<u> source=<config|env|platform|default>`.
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 gitlabci:
   url: https://gitlab.example.com
 ```
@@ -514,11 +516,11 @@ A platform token (`DEPS_TOKEN` and friends) for the same host takes precedence o
 To keep release branches updated next to the default branch, list them in [`baseBranches`](reference/configuration.md#basebranches) (Renovate's `baseBranchPatterns`, Dependabot's `target-branch` per update entry). One job handles them all; check out the default branch as usual:
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 baseBranches: [$default, '/^release\/v\d+$/']
 rules:
   - baseBranches: ['/^release\//']   # only patches on release branches
-    updates: [patch]
+    allowedUpdateTypes: [patch]
 ```
 
 - deps fetches every other base (shallow in a shallow clone, so the default `fetch-depth: 1` is fine) into a temporary linked work tree and resolves it with the default branch's config. The token needs write access to those branches like to the default one.
@@ -568,7 +570,9 @@ jobs:
       - uses: jakobmoellerdev/deps@v0.3.0
         with:
           token: ${{ secrets.DEPS_TOKEN }} # write access to every repository
-          args: run -v --log-level info --repositories my-org/*,other-org/tool
+          args: run --repositories my-org/*,other-org/tool
+          show-skipped: true
+          log-level: info
 ```
 
 - **No checkout needed.** Each repository is cloned shallowly into a temporary directory with the token (as `actions/checkout` would), run, and removed. The forge comes from the job environment.
@@ -599,7 +603,7 @@ on:
 ```
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 schedule: ["0 5 * * *"] # default for every dep
 rules:
   - names: ["k8s.io/**"]
@@ -629,7 +633,7 @@ on:
 ```
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 timezone: Europe/Berlin
 schedule: ["after 10pm and before 5am every weekday", "every weekend"] # outside office hours
 rules:
@@ -803,7 +807,7 @@ rules:
 ```yaml
 labels: [dependencies]
 rules:
-  - manager: gomod
+  - managers: [gomod]
     addLabels: [go]
     reviewers: [team:backend]
 ```
@@ -849,9 +853,9 @@ concurrency:
 
 GitHub shows it on the run page. On Gitea and Forgejo it shows where the instance supports job summaries; elsewhere the file is ignored.
 
-GitHub rejects a step summary larger than 1 MiB as a whole, so deps keeps the file within that size, counting what earlier commands of the step wrote. A summary that doesn't fit drops, in this order, the list of skipped dependencies, the held-back releases and the PRs' update tables (the counts stay); a summary still too large is cut at a line and ends with `Step summary truncated to its size limit; the job log has everything.` For scale: `plan -v` on external-secrets (677 updates, 5306 skipped dependencies) writes about 450 KB.
+GitHub rejects a step summary larger than 1 MiB as a whole, so deps keeps the file within that size, counting what earlier commands of the step wrote. A summary that doesn't fit drops, in this order, the list of skipped dependencies, the held-back releases and the PRs' update tables (the counts stay); a summary still too large is cut at a line and ends with `Step summary truncated to its size limit; the job log has everything.` For scale: `plan --show-skipped` on external-secrets (677 updates, 5306 skipped dependencies) writes about 450 KB.
 
-**Annotations and log groups (GitHub, Gitea).** On GitHub and Gitea, errors also become annotations: a failed lookup at its dependency's file and line, a config error at the line of the key in `.deps.yaml`, so a [config check on a pull request](#dry-runs-and-config-checks) marks the changed line in *Files changed*. Warnings (for example obsolete PRs left open because of errors) are warning annotations, security updates notices at their file and line, and `-v` puts the skip lines into a collapsible group of the log. Each phase (discovery and extraction, resolution, PRs) is a collapsible group too, with a progress line every 30 seconds, and a token from the git credential helper is masked. At most 10 error, 10 warning and 10 notice annotations are printed per step, as many as GitHub shows. Gitea 1.26 and later show groups and severity-labelled annotation lines in the job log (older Gitea prints them as plain lines; `--log-format text` turns them off). Forgejo prints workflow commands literally, so deps prints none there. A re-run with debug logging (`RUNNER_DEBUG=1`) logs at `debug`.
+**Annotations and log groups (GitHub, Gitea).** On GitHub and Gitea, errors also become annotations: a failed lookup at its dependency's file and line, each config problem at the line and column of its key in `.deps.yaml`, so a [config check on a pull request](#dry-runs-and-config-checks) marks the changed line in *Files changed*. Warnings (for example obsolete PRs left open because of errors) are warning annotations, security updates notices at their file and line, and `--show-skipped` puts the skip lines into a collapsible group of the log. Each phase (discovery and extraction, resolution, PRs) is a collapsible group too, with a progress line every 30 seconds, and a token from the git credential helper is masked. At most 10 error, 10 warning and 10 notice annotations are printed per step, as many as GitHub shows. Gitea 1.26 and later show groups and severity-labelled annotation lines in the job log (older Gitea prints them as plain lines; `--log-format text` turns them off). Forgejo prints workflow commands literally, so deps prints none there. A re-run with debug logging (`RUNNER_DEBUG=1`) logs at `debug`.
 
 ## Step outputs and report
 
@@ -862,7 +866,8 @@ The action has outputs with the counts of the run (`updates`, `prs`, `created`, 
         id: deps
         continue-on-error: true # keep going on lookup errors; the next step decides
         with:
-          args: run -v
+          args: run
+          show-skipped: true
       - if: steps.deps.outputs.created != '0' || steps.deps.outputs.errors != '0'
         env:
           REPORT: ${{ steps.deps.outputs.report }}
@@ -893,7 +898,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: jakobmoellerdev/deps@v0.3.0 # full URL on Gitea/Forgejo
         with:
-          args: plan -v
+          args: plan
+          show-skipped: true
 ```
 
 Exit codes:
@@ -968,14 +974,14 @@ jobs:
         with:
           go-version-file: pr/go.mod
       - run: go build -C pr -trimpath -o "$RUNNER_TEMP/deps" ./cmd/deps
-      - run: '"$RUNNER_TEMP/deps" plan -v --dir pr'
-      - run: '"$RUNNER_TEMP/deps" run --dry-run -v --dir base --base "$BASE"'
+      - run: '"$RUNNER_TEMP/deps" plan --show-skipped --dir pr'
+      - run: '"$RUNNER_TEMP/deps" run --dry-run --show-skipped --dir base --base "$BASE"'
         env:
           BASE: ${{ github.event.pull_request.base.ref }}
           DEPS_TOKEN: ${{ github.token }}
 ```
 
-With the released action instead of a build, use the same two checkouts and `args: run --dry-run -v --dir base`.
+With the released action instead of a build, use the same two checkouts and `args: run --dry-run --show-skipped --dir base`.
 
 ## Dependency graph (GitHub)
 
@@ -1048,7 +1054,7 @@ Gitea and Forgejo serve the same cache actions through their runner's cache serv
 
 ## Troubleshooting
 
-Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit header, decision and git command. To run deps locally against the same repository without writing anything, use `deps run --dry-run -v`.
+Run with `show-skipped: true` and `log-level: debug` to see every HTTP request, rate-limit header, decision and git command. To run deps locally against the same repository without writing anything, use `deps run --dry-run --show-skipped`.
 
 **Tokens and pushes:**
 
@@ -1133,7 +1139,7 @@ The reset also cleans up:
 
 `hack/e2e-github/e2e.sh reset` runs only the reset.
 
-**Scenario.** Each step runs `deps run -v` with `DEPS_TOKEN=$(gh auth token)` on a fresh clone of `main` and checks the result through the GitHub API. The script stops at the first mismatch.
+**Scenario.** Each step runs `deps run --show-skipped` with `DEPS_TOKEN=$(gh auth token)` on a fresh clone of `main` and checks the result through the GitHub API. The script stops at the first mismatch.
 
 1. **First run.** Three PRs are created, on `deps/github-actions/actions-setup-node`, `deps/github-actions/actions-setup-python` and `deps/gomod/github.com-spf13-cobra`. The script checks:
    - the titles;

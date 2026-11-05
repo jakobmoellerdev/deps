@@ -20,8 +20,8 @@ var Doc = refdoc.Manager{
 		"`*.in` pip-compile inputs, only when a compiled file names them (directly or through `-r`); other `.in` files (`MANIFEST.in`, `Makefile.in`) yield no deps",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: DepType, What: "every requirement line (`name[extras] specifier ; marker`) of a requirements file or a compiled file's input; a compiled file whose inputs deps does not read keeps its pins as `requirements`", Datasource: "`pypi`", Versioning: "`pep440`"},
-		{Name: DepTypeIndirect, What: "a pin of a compiled file that none of its inputs names (a transitive dependency, Renovate's pip-compile `indirect`); ignored by default, but security updates still apply (rules can ignore them)", Datasource: "`pypi`", Versioning: "`pep440`"},
+		{Name: DepType, What: "every requirement line (`name[extras] specifier ; marker`) of a requirements file or a compiled file's input; a compiled file whose inputs deps does not read keeps its pins as `requirements`", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypeIndirect, What: "a pin of a compiled file that none of its inputs names (a transitive dependency, Renovate's pip-compile `indirect`); ignored by default, but security updates still apply (rules can ignore them)", Versioning: "`pep440`", Datasources: []string{"pypi"}},
 	},
 	Skips: slices.Concat(pyreq.SpecifierSkips, []refdoc.Skip{
 		{Reason: pyreq.SkipGit, When: "`git+…`, `hg+…`, `svn+…`, `bzr+…` lines or `name @ git+…`"},

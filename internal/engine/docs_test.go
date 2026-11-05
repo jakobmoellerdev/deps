@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -35,37 +37,126 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rustversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/tfregistry"
 	vcpkgds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/vcpkg"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/registry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
-func TestManagerDocsDepTypesMatchConfig(t *testing.T) {
-	got := map[string]bool{}
-	for _, m := range ManagerDocs() {
+// TestManagerDocsDepTypes checks the dep type facts config derives its lists from: each dep type
+// once per manager, and a Datasource column text naming its datasources; only the custom
+// manager's dep types take any datasource (nil Datasources). TestDatasourceDocsComplete checks
+// that the datasources (config.Datasources) are the documented ones.
+func TestManagerDocsDepTypes(t *testing.T) {
+	for _, m := range registry.Docs() {
 		seen := map[string]bool{}
 		for _, dt := range m.DepTypes {
 			if seen[dt.Name] {
 				t.Errorf("%s: dep type %q documented twice", m.Name, dt.Name)
 			}
 			seen[dt.Name] = true
-			got[dt.Name] = true
+			if (dt.Datasources == nil) != (m.Name == custom.Name) {
+				t.Errorf("%s: dep type %q: Datasources = %v", m.Name, dt.Name, dt.Datasources)
+			}
+			for _, ds := range dt.Datasources {
+				if dt.Datasource != "" && !strings.Contains(dt.Datasource, "`"+ds+"`") && !strings.HasPrefix(dt.Datasource, "per ") {
+					t.Errorf("%s: dep type %q: the Datasource column %q does not name %s", m.Name, dt.Name, dt.Datasource, ds)
+				}
+			}
 		}
 	}
-	for _, dt := range config.DepTypes {
-		if !got[dt] {
-			t.Errorf("config dep type %q is not documented by any manager", dt)
-		}
-		delete(got, dt)
+}
+
+// TestTestdataDepsMatchDocs extracts the testdata of every manager package with the built-in
+// managers of that package and checks each extracted dep against its manager's
+// documentation: its dep type is documented, and its datasource is one of that dep type's
+// Datasources. A file goes to the package's managers that match its path, or to all of them
+// when none does (fixtures are named after their origin, e.g. ripgrep.Cargo.toml).
+func TestTestdataDepsMatchDocs(t *testing.T) {
+	dirs, err := filepath.Glob(filepath.Join("..", "manager", "*", "testdata"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("testdata dirs = %v, %v", dirs, err)
 	}
-	for dt := range got {
-		t.Errorf("documented dep type %q is not in config.DepTypes", dt)
+	env := manager.Env{Exists: func(string) bool { return false }}
+	for _, dir := range dirs {
+		pkg := "/internal/manager/" + filepath.Base(filepath.Dir(dir))
+		var ms []manager.Manager
+		var docs []refdoc.Manager
+		for _, e := range registry.Builtin {
+			m := e.New()
+			rt := reflect.TypeOf(m)
+			if rt.Kind() == reflect.Pointer {
+				rt = rt.Elem()
+			}
+			if strings.HasSuffix(rt.PkgPath(), pkg) {
+				ms, docs = append(ms, m), append(docs, e.Doc)
+			}
+		}
+		if len(ms) == 0 {
+			t.Errorf("%s: no built-in manager in %s", dir, pkg)
+			continue
+		}
+		files := make([][][]dep.Dep, len(ms)) // per manager, the deps of each file it extracted
+		err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			src, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(dir, p)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			matched := slices.ContainsFunc(ms, func(m manager.Manager) bool { return m.Match(rel) })
+			for i, m := range ms {
+				if matched && !m.Match(rel) {
+					continue
+				}
+				// Testdata holds files some or all managers of the package reject (locks, malformed files).
+				if deps, err := m.Extract(rel, src, env); err == nil {
+					files[i] = append(files[i], deps)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		checked := 0
+		for i, m := range ms {
+			if l, ok := m.(manager.Linker); ok {
+				l.Link(files[i])
+			}
+			for _, d := range slices.Concat(files[i]...) {
+				if d.Skip != "" {
+					continue
+				}
+				checked++
+				j := slices.IndexFunc(docs[i].DepTypes, func(dt refdoc.DepType) bool { return dt.Name == d.DepType })
+				switch {
+				case j < 0:
+					t.Errorf("%s/%s:%d: %s dep %s has undocumented dep type %q", dir, d.File, d.Line, m.Name(), d.Name, d.DepType)
+				case !slices.Contains(docs[i].DepTypes[j].Datasources, d.Datasource):
+					t.Errorf("%s/%s:%d: %s dep %s (%s) has datasource %q, documented %v", dir, d.File, d.Line, m.Name(), d.Name, d.DepType, d.Datasource, docs[i].DepTypes[j].Datasources)
+				}
+			}
+		}
+		if checked == 0 {
+			t.Errorf("%s: no dep extracted", dir)
+		}
+		t.Logf("%s: %d deps", dir, checked)
 	}
 }
 
@@ -140,7 +231,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"circleci": {"circleci", "docker"}, "azure-pipelines": {"azurepipelines", "docker"},
 		"bazel-module": {"bazel"}, "bazelisk": {"bazel"},
 	}
-	for _, m := range ManagerDocs() {
+	for _, m := range registry.Docs() {
 		dirs, ok := pkgDirs[m.Name]
 		if !ok {
 			dirs = []string{m.Name}
@@ -153,12 +244,12 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 }
 
 func TestManagerDocsComplete(t *testing.T) {
-	for _, m := range ManagerDocs() {
+	for _, m := range registry.Docs() {
 		if m.Name == "" || m.Summary == "" || len(m.Files) == 0 || len(m.DepTypes) == 0 {
 			t.Errorf("manager doc %q lacks Name, Summary, Files or DepTypes", m.Name)
 		}
 		for _, dt := range m.DepTypes {
-			if dt.What == "" || dt.Datasource == "" || dt.Versioning == "" {
+			if dt.What == "" || dt.Datasource == "" && len(dt.Datasources) == 0 || dt.Versioning == "" {
 				t.Errorf("%s: dep type %q lacks What, Datasource or Versioning", m.Name, dt.Name)
 			}
 		}

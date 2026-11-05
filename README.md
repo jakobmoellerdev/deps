@@ -201,19 +201,19 @@ Add a `deps` job to `.gitlab-ci.yml` that downloads the release binary and runs 
 
 ### Configuration (optional)
 
-Without a `.deps.yaml`, every direct dependency is updated. A small config:
+Without a `.deps.yaml`, every direct dependency is updated. A small config (replace `vX.Y.Z` in the schema modeline with your deps version; see [editor support](docs/reference/configuration.md)):
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 version: 1
 dependencyDashboard: true
 rules:
-  - manager: github-actions # minor and patch bumps in one PR
+  - managers: [github-actions] # minor and patch bumps in one PR
     updateTypes: [minor, patch]
     group: actions
 ```
 
-The first line turns on completion and checks in editors that use yaml-language-server.
+The first line turns on completion and checks in editors that use yaml-language-server. `deps init` writes such a starter file (`--from-renovate renovate.json` adds the `deps migrate` translation of a Renovate config), `deps config check` validates it offline (also as a pre-commit hook), `deps config show --sources` prints the effective values and where they come from, and `deps config describe [key]` documents every key in the terminal.
 
 ## Supported ecosystems
 

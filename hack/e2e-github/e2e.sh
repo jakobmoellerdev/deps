@@ -151,7 +151,7 @@ deps_run() {
   git -C "$clone" config --add credential.https://github.com.helper '!gh auth git-credential'
   local start=$SECONDS rc=0
   # The debug log stays in $DEPS_E2E_LOGS (if set) for diagnosis; $last is the report only.
-  "$bin" run -v --log-level debug --dir "$clone" "$@" >"$last.debug" 2>&1 || rc=$?
+  "$bin" run --show-skipped --log-level debug --dir "$clone" "$@" >"$last.debug" 2>&1 || rc=$?
   grep -v '^time=' "$last.debug" >"$last" || true
   if [ -n "${DEPS_E2E_LOGS:-}" ]; then mkdir -p "$DEPS_E2E_LOGS" && cp "$last.debug" "$DEPS_E2E_LOGS/run-$runs.log"; fi
   sed 's/^/  | /' "$last" >&2

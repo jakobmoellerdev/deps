@@ -101,7 +101,7 @@ func TestPseudoVersionUpdates(t *testing.T) {
 			name: "prerelease base takes prereleases", version: "v1.3.0-rc.1.0.20240101000000-aaaaaaaaaaaa", rels: []string{"v1.3.0-rc.1", "v1.3.0-rc.2"},
 			want: []wantUpdate{{typ: dep.Patch, version: "v1.3.0-rc.2"}},
 		},
-		{name: "digest updates off", cfg: "rules: [{updates: [major, minor, patch]}]\n", version: cur, head: headRev},
+		{name: "digest updates off", cfg: "rules: [{allowedUpdateTypes: [major, minor, patch]}]\n", version: cur, head: headRev},
 		{name: "ignored", cfg: "rules: [{names: [example.com/p], ignore: true}]\n", version: cur, head: headRev, skip: "ignored by rule #0"},
 		{name: "too new", cfg: "minimumReleaseAge: 30 days\n", version: cur, head: headRev, pending: tooNew(14, "30 days")},
 		{
@@ -178,7 +178,7 @@ func TestMajorPathUpdates(t *testing.T) {
 		{name: "one per major", cfg: "separateMultipleMajor: true\n", want: []wantUpdate{minor, withBucket(v3, "v3"), withBucket(v4, "v4")}, wantProbes: 1},
 		{name: "single bucket", cfg: "separateMajorMinor: false\n", want: []wantUpdate{v4}, wantProbes: 1},
 		{name: "switched off", cfg: "gomodUpdateImportPaths: false\n", want: []wantUpdate{minor}},
-		{name: "majors not allowed", cfg: "rules: [{updates: [minor, patch]}]\n", want: []wantUpdate{minor}},
+		{name: "majors not allowed", cfg: "rules: [{allowedUpdateTypes: [minor, patch]}]\n", want: []wantUpdate{minor}},
 		{name: "majors ignored", cfg: "rules: [{updateTypes: [major], ignore: true}]\n", want: []wantUpdate{minor}},
 		{name: "allow", cfg: "rules: [{allow: '< 4'}]\n", want: []wantUpdate{minor, withBucket(v3, "major")}, wantProbes: 1},
 		{
@@ -235,7 +235,7 @@ func TestMajorPathSecurityKept(t *testing.T) {
 		rels:   map[string][]string{name: {"v2.1.0", "v2.1.1", "v2.2.0"}},
 		majors: map[string][]datasource.ModulePath{name: {{Name: "example.com/m/v3", Releases: []Release{{Version: "v3.0.0"}}}}},
 	}
-	root, cfg := setup(t, "separateMajorMinor: false\nrules: [{updates: [major]}]\n", map[string]string{"go.mod": "module example.com/x\n\nrequire " + name + " v2.1.0\n"})
+	root, cfg := setup(t, "separateMajorMinor: false\nrules: [{allowedUpdateTypes: [major]}]\n", map[string]string{"go.mod": "module example.com/x\n\nrequire " + name + " v2.1.0\n"})
 	sec := &fakeSec{vulns: map[string][]Vuln{name: {{Advisory: dep.Advisory{ID: "GO-1"}, Fixed: []string{"v2.1.1"}}}}}
 	res, err := Resolve(t.Context(), root, cfg, env, Options{Managers: managers, Datasources: map[string]Datasource{"go": ds}, Security: sec, Now: ageNow})
 	if err != nil || len(res.Errors) > 0 {
@@ -253,7 +253,7 @@ func TestToolchainSecurity(t *testing.T) {
 		"toolchain": {"1.21.9", "1.22.1", "1.22.2", "1.22.3", "1.23.0"},
 		"go":        {"1.22.2", "1.23.0"},
 	}}
-	root, cfg := setup(t, "rules: [{depTypes: [toolchain], updates: [major]}]\n", map[string]string{"go.mod": "module example.com/x\n\ngo 1.22.0\n\ntoolchain go1.22.0\n"})
+	root, cfg := setup(t, "rules: [{depTypes: [toolchain], allowedUpdateTypes: [major]}]\n", map[string]string{"go.mod": "module example.com/x\n\ngo 1.22.0\n\ntoolchain go1.22.0\n"})
 	sec := &fakeSec{vulns: map[string][]Vuln{
 		"toolchain": {vuln("GO-2024-2687", "1.21.9", "1.22.2"), vuln("GO-2024-2598", "1.21.8", "1.22.1")},
 		"go":        {vuln("GO-2024-2687", "1.21.9", "1.22.2")},

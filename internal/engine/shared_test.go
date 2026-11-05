@@ -238,7 +238,7 @@ func TestLocalShared(t *testing.T) {
 	}
 }
 
-// propManager is a stand-in for the maven manager: each `<artifactId>` of pom.xml with a
+// propManager is a stand-in for the maven managers: [each] `<artifactId>` of pom.xml with a
 // `${name}` version is a dep whose RefSpan is the `<name>` property value.
 type propManager struct{}
 

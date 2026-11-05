@@ -1,0 +1,1 @@
+Works on the configuration without resolving any dependency and without network access: `check` validates it, `show` prints the effective values and `describe` documents the keys. `check` and `show` read the file `plan` would read (`--dir`, `--config`).

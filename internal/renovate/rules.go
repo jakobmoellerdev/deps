@@ -27,6 +27,9 @@ var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versionin
 	"labels", "addLabels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "postUpgradeTasks", "dashboardApproval",
 	"draftPR", "prCreation"}
 
+// managerDepTypes are the dep types of each deps manager.
+var managerDepTypes = config.ManagerDepTypes()
+
 // rulesFrom translates the rule sources in order: top-level semantic commit settings,
 // manager blocks, update-type blocks, packageRules and ignoreDeps.
 func (t *translator) rulesFrom(cfg map[string]any, done map[string]bool) {
@@ -379,10 +382,10 @@ func (t *translator) rule(origin string, r map[string]any) {
 		t.n.info(origin, "no deps effect left; rule dropped")
 		return
 	}
-	build := func(manager string, depTypes []string) omap {
+	build := func(managers, depTypes []string) omap {
 		var b omap
-		if manager != "" {
-			b.set("manager", manager)
+		if len(managers) > 0 {
+			b.set("managers", managers)
 		}
 		for _, m := range []struct {
 			k string
@@ -410,7 +413,7 @@ func (t *translator) rule(origin string, r map[string]any) {
 		return b
 	}
 	if !hasManagers && !hasCats {
-		t.addRule(origin, build("", depTypes))
+		t.addRule(origin, build(nil, depTypes))
 		return
 	}
 	rms := t.renovateManagers(origin, managers, cats, hasManagers, hasCats)
@@ -436,7 +439,10 @@ func (t *translator) rule(origin string, r map[string]any) {
 			}
 		}
 	}
-	added := false
+	// One rule per set of dep types: the managers matched with all of theirs (or the rule's)
+	// share one.
+	type rule struct{ managers, depTypes []string }
+	var out []*rule
 	for _, g := range groups {
 		dt := depTypes
 		switch {
@@ -445,15 +451,25 @@ func (t *translator) rule(origin string, r map[string]any) {
 			dt = g.types
 		default:
 			dt = slices.DeleteFunc(slices.Clone(dt), func(d string) bool { return !slices.Contains(g.types, d) })
+		}
+		if dt != nil {
+			// Only the dep types the deps manager produces (Renovate's poetry has extras, deps' not).
+			dt = slices.DeleteFunc(slices.Clone(dt), func(d string) bool { return !slices.Contains(managerDepTypes[g.manager], d) })
 			if len(dt) == 0 {
 				continue
 			}
 		}
-		t.addRule(origin, build(g.manager, dt))
-		added = true
+		if i := slices.IndexFunc(out, func(r *rule) bool { return slices.Equal(r.depTypes, dt) }); i >= 0 {
+			out[i].managers = append(out[i].managers, g.manager)
+			continue
+		}
+		out = append(out, &rule{managers: []string{g.manager}, depTypes: dt})
 	}
-	if !added {
+	if len(out) == 0 {
 		t.n.warn(origin, "matches no deps manager; rule dropped")
+	}
+	for _, r := range out {
+		t.addRule(origin, build(r.managers, r.depTypes))
 	}
 }
 
@@ -727,7 +743,7 @@ func (t *translator) exclusions(cfg map[string]any, done map[string]bool) map[st
 		if a == nil {
 			// Renovate has no such manager, so it never updates these files.
 			full[m] = true
-			t.exclusionRules = append(t.exclusionRules, item{origin: "Renovate has no " + m + " manager", body: omap{{"manager", m}, {"ignore", true}}})
+			t.exclusionRules = append(t.exclusionRules, item{origin: "Renovate has no " + m + " manager", body: omap{{"managers", []string{m}}, {"ignore", true}}})
 			continue
 		}
 		if !a.anyDisabled || a.enabledAll {
@@ -745,12 +761,12 @@ func (t *translator) exclusions(cfg map[string]any, done map[string]bool) map[st
 		if !a.anyEnabled && (universe == nil || len(excl) == len(universe)) {
 			full[m] = true
 			if m != "custom" {
-				t.exclusionRules = append(t.exclusionRules, item{origin: a.why, body: omap{{"manager", m}, {"ignore", true}}})
+				t.exclusionRules = append(t.exclusionRules, item{origin: a.why, body: omap{{"managers", []string{m}}, {"ignore", true}}})
 			}
 			continue
 		}
 		if len(excl) > 0 {
-			t.exclusionRules = append(t.exclusionRules, item{origin: a.why, body: omap{{"manager", m}, {"depTypes", excl}, {"ignore", true}}})
+			t.exclusionRules = append(t.exclusionRules, item{origin: a.why, body: omap{{"managers", []string{m}}, {"depTypes", excl}, {"ignore", true}}})
 		}
 	}
 	return full

@@ -179,6 +179,11 @@ func cleanEnv(t *testing.T) {
 	} {
 		t.Setenv(k, "")
 	}
+	for _, kv := range os.Environ() { // flag variables (flagEnv)
+		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "DEPS_") {
+			t.Setenv(k, "")
+		}
+	}
 	t.Setenv("GOPROXY", "https://proxy.test")
 	t.Setenv("GOFLAGS", "")
 	t.Setenv("CARGO_HOME", t.TempDir())
@@ -231,7 +236,7 @@ func TestPlan(t *testing.T) {
 	summary := filepath.Join(t.TempDir(), "summary.md")
 	t.Setenv("GITHUB_STEP_SUMMARY", summary)
 
-	stdout, stderr, code := execute(t, "plan", "-v", "--dir", dir)
+	stdout, stderr, code := execute(t, "plan", "--show-skipped", "--dir", dir)
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -313,7 +318,7 @@ func TestPlanNpm(t *testing.T) {
 			dir := t.TempDir()
 			tt.files["package.json"] = pkg
 			writeFiles(t, dir, tt.files)
-			stdout, stderr, code := execute(t, "plan", "-v", "--dir", dir)
+			stdout, stderr, code := execute(t, "plan", "--show-skipped", "--dir", dir)
 			if code != 0 {
 				t.Fatalf("exit %d\n%s", code, stderr)
 			}
@@ -345,7 +350,7 @@ func TestPlanCargo(t *testing.T) {
 		"Cargo.toml": "[dependencies]\nserde = { version = \"1.0.100\", features = [\"derive\"] }\n\n[dev-dependencies]\nrand = \"0.8\"\nlocal = { path = \"../x\" }\ncorp = { version = \"1.0.0\", registry = \"corp\" }\n",
 		"Cargo.lock": "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.100\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n",
 	})
-	stdout, stderr, code := execute(t, "plan", "-v", "--dir", dir)
+	stdout, stderr, code := execute(t, "plan", "--show-skipped", "--dir", dir)
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -367,7 +372,7 @@ func TestPlanCargo(t *testing.T) {
 
 	// lockFileMaintenance: one more update in its own PR, which plan does not write.
 	writeFiles(t, dir, map[string]string{".deps.yaml": "lockFileMaintenance: {enabled: true}\n"})
-	stdout2, stderr, code := execute(t, "plan", "-v", "--dir", dir)
+	stdout2, stderr, code := execute(t, "plan", "--show-skipped", "--dir", dir)
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -393,15 +398,41 @@ func TestPlanSecurityUpdate(t *testing.T) {
 	// Only patch updates are allowed, so v1.1.0 is chosen solely because it fixes GO-TEST-1;
 	// with security disabled nothing is proposed.
 	for _, tt := range []struct{ cfg, want string }{
-		{"rules: [{manager: gomod, updates: [patch]}]\n",
+		{"rules: [{managers: [gomod], allowedUpdateTypes: [patch]}]\n",
 			"update  go.mod:5  example.com/vuln  v1.0.0 -> v1.1.0  (minor)  security: GO-TEST-1\n"},
-		{"security: false\nrules: [{manager: gomod, updates: [patch]}]\n", "0 updates in 0 files"},
+		{"security: false\nrules: [{managers: [gomod], allowedUpdateTypes: [patch]}]\n", "0 updates in 0 files"},
 	} {
 		dir := t.TempDir()
 		writeFiles(t, dir, map[string]string{"go.mod": mod, ".deps.yaml": tt.cfg})
 		_, stderr, code := execute(t, "plan", "--dir", dir)
 		if code != 0 || !strings.Contains(stderr, tt.want) {
 			t.Errorf("cfg %q: exit %d, stderr lacks %q:\n%s", tt.cfg, code, tt.want, stderr)
+		}
+	}
+}
+
+func TestPlanRuleWarnings(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"go.mod": "module example.com/x\n\ngo 1.24\n\nrequire example.com/vuln v1.0.0\n",
+		".deps.yaml": "rules:\n  - {managers: [gomod], depTypes: [devDependencies], datasources: [npm], group: x}\n" +
+			"  - {}\n  - {managers: [npm], group: js}\n  - {managers: [gomod], group: go}\n",
+	})
+	_, stderr, code := execute(t, "plan", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, stderr)
+	}
+	cfg := filepath.Join(dir, ".deps.yaml")
+	for _, want := range []string{
+		"warn    " + cfg + `: rules[0].depTypes[0]: dep type "devDependencies" is not produced by gomod, so it matches nothing` + "\n",
+		"warn    " + cfg + `: rules[0].datasources[0]: datasource "npm" is not used by gomod, so it matches nothing` + "\n",
+		"warn    " + cfg + ": rules[1]: is empty: no match field and no apply field\n",
+		"warn    rules[0] matched no dependency\nwarn    rules[2] matched no dependency\n\nSummary: ",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
 	}
 }
@@ -507,7 +538,7 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 		{"log format", []string{"plan", "--dir", dir, "--log-format", "xml"}, `--log-format: invalid value "xml" (auto, pretty, text, json, actions)`},
 		{"color", []string{"plan", "--dir", dir, "--color", "rainbow"}, `--color: invalid value "rainbow" (auto, always, never)`},
 		{"concurrency", []string{"plan", "--dir", dir, "--concurrency", "0"}, "--concurrency: must be at least 1, got 0"},
-		{"config", []string{"plan", "--dir", bad}, "line 1: field pinn not found"},
+		{"config", []string{"plan", "--dir", bad}, ":1:1: pinn: unknown key (did you mean pin?)"},
 		{"missing explicit config", []string{"plan", "--dir", dir, "--config", filepath.Join(dir, "nope.yaml")}, "nope.yaml"},
 		{"platform", []string{"run", "--dir", dir, "--platform", "bitbucket"}, `--platform: invalid value "bitbucket"`},
 		{"signing key", []string{"run", "--dir", dir, "--signing-key", "not-a-key"}, "--signing-key: signing key: want an OpenSSH private key"},
@@ -522,6 +553,40 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 				t.Errorf("stderr lacks %q:\n%s", tt.want, stderr)
 			}
 		})
+	}
+}
+
+// Every flag reads DEPS_<FLAG> unless given; invalid values name the variable.
+func TestFlagEnv(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	dir := t.TempDir()
+	t.Setenv("DEPS_CONCURRENCY", "abc")
+	if _, stderr, code := execute(t, "plan", "--dir", dir); code != 2 || !strings.Contains(stderr, `DEPS_CONCURRENCY: invalid value "abc" for --concurrency`) {
+		t.Errorf("invalid env: exit %d\n%s", code, stderr)
+	}
+	if _, stderr, code := execute(t, "plan", "--dir", dir, "--concurrency", "1"); code != 0 {
+		t.Errorf("explicit flag over env: exit %d\n%s", code, stderr)
+	}
+	t.Setenv("DEPS_CONCURRENCY", "0")
+	if _, stderr, code := execute(t, "plan", "--dir", dir); code != 2 || !strings.Contains(stderr, "--concurrency: must be at least 1, got 0") {
+		t.Errorf("env value validated: exit %d\n%s", code, stderr)
+	}
+	t.Setenv("DEPS_CONCURRENCY", "")
+	t.Setenv("DEPS_TRIGGER_SCHEDULE", "x")
+	if _, stderr, code := execute(t, "run", "--dry-run", "--dir", dir); code != 2 || !strings.Contains(stderr, `DEPS_TRIGGER_SCHEDULE: "x": want 5 fields, got 1`) {
+		t.Errorf("trigger env: exit %d\n%s", code, stderr)
+	}
+	// Commands that do not scan have no scan flags, so their variables are ignored.
+	t.Setenv("DEPS_CONCURRENCY", "abc")
+	if stdout, _, code := execute(t, "schema", "--help"); code != 0 || strings.Contains(stdout, "--concurrency") || strings.Contains(stdout, "--dir") {
+		t.Errorf("schema --help: exit %d\n%s", code, stdout)
+	}
+	// Offline commands open no session, so they have no --concurrency.
+	for _, args := range [][]string{{"config", "check"}, {"config", "show"}, {"init", "--config", filepath.Join(dir, "init.yaml")}} {
+		if stdout, stderr, code := execute(t, append(args, "--dir", dir)...); code != 0 {
+			t.Errorf("%v with DEPS_CONCURRENCY=abc: exit %d\n%s%s", args, code, stdout, stderr)
+		}
 	}
 }
 

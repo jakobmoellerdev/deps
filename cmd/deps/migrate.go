@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -70,9 +71,37 @@ func renovateFetcher(root string, info platform.Info, client *http.Client, auth 
 	}
 }
 
+// loadRenovate translates the Renovate config of root (path: its file; "" = the first one
+// found), as deps migrate and --renovate do, fetching remote presets with at most
+// concurrency requests per upstream at a time.
+func loadRenovate(ctx context.Context, root, path string, concurrency int) (*renovate.Result, error) {
+	client := newHTTPClient()
+	info, _ := platform.FromEnv(os.Getenv)
+	auth := httpx.NewAuth(info, envToken(), os.Getenv)
+	gh := githubapi.New(client, auth, httpx.NewLimits(concurrency).Default)
+	return renovate.Load(ctx, root, path, renovateFetcher(root, info, client, auth, gh))
+}
+
+// printNotes prints the translation notes of res to w, "warn    <setting>: <msg>", and with
+// verbose also the infos; it returns the number of each.
+func printNotes(w io.Writer, res *renovate.Result, verbose bool) (warns, infos int) {
+	for _, n := range res.Notes {
+		if n.Level == renovate.Warn {
+			warns++
+			fmt.Fprintf(w, "%-8s%s: %s\n", "warn", n.Path, n.Msg)
+			continue
+		}
+		infos++
+		if verbose {
+			fmt.Fprintf(w, "%-8s%s: %s\n", "info", n.Path, n.Msg)
+		}
+	}
+	return warns, infos
+}
+
 func newMigrate(o *rootOpts) *cli.Command {
 	var output string
-	var force bool
+	var force, verbose bool
 	return &cli.Command{
 		Name:        "migrate",
 		Usage:       "Translate the Renovate config into .deps.yaml",
@@ -81,16 +110,20 @@ func newMigrate(o *rootOpts) *cli.Command {
 			"  deps migrate --config .github/renovate.json5 --output -"},
 		ArgValidator: noArgs,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "output", Destination: &output, Usage: "file to write (default: <dir>/.deps.yaml; - writes to stdout)"},
+			dirFlag(o),
+			&cli.StringFlag{Name: "config", Destination: &o.config, Usage: "Renovate config file, which must exist (when not set: the first Renovate config file in <dir>, see below)"},
+			concurrencyFlag(o),
+			&cli.StringFlag{Name: "output", Destination: &output, Usage: "file to write (when not set: <dir>/.deps.yaml; - writes to stdout)"},
 			&cli.BoolFlag{Name: "force", Destination: &force, Usage: "overwrite an existing output file"},
+			&cli.BoolFlag{Name: "verbose", Destination: &verbose, Usage: "also print the info notes (settings without effect on which updates or PRs exist)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return migrate(ctx, cmd, o, output, force)
+			return migrate(ctx, cmd, o, output, force, verbose)
 		},
 	}
 }
 
-func migrate(ctx context.Context, cmd *cli.Command, o *rootOpts, output string, force bool) error {
+func migrate(ctx context.Context, cmd *cli.Command, o *rootOpts, output string, force, verbose bool) error {
 	stderr := cmd.Root().ErrWriter
 	root, err := filepath.Abs(o.dir)
 	if err != nil {
@@ -107,12 +140,7 @@ func migrate(ctx context.Context, cmd *cli.Command, o *rootOpts, output string, 
 			return err
 		}
 	}
-	client := newHTTPClient()
-	info, _ := platform.FromEnv(os.Getenv)
-	limits := httpx.NewLimits(o.concurrency)
-	auth := httpx.NewAuth(info, envToken(), os.Getenv)
-	gh := githubapi.New(client, auth, limits.Default)
-	res, err := renovate.Load(ctx, root, o.config, renovateFetcher(root, info, client, auth, gh))
+	res, err := loadRenovate(ctx, root, o.config, o.concurrency)
 	if err != nil {
 		return err
 	}
@@ -120,18 +148,7 @@ func migrate(ctx context.Context, cmd *cli.Command, o *rootOpts, output string, 
 	if err != nil {
 		return err
 	}
-	var warns, infos int
-	for _, n := range res.Notes {
-		if n.Level == renovate.Warn {
-			warns++
-			fmt.Fprintf(stderr, "%-8s%s: %s\n", "warn", n.Path, n.Msg)
-			continue
-		}
-		infos++
-		if o.verbose {
-			fmt.Fprintf(stderr, "%-8s%s: %s\n", "info", n.Path, n.Msg)
-		}
-	}
+	warns, infos := printNotes(stderr, res, verbose)
 	if out == "-" {
 		if _, err := cmd.Root().Writer.Write(res.YAML); err != nil {
 			return err

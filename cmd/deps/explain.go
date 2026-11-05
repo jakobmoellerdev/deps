@@ -29,16 +29,16 @@ const maxExamples = 3
 
 func newExplain(o *rootOpts) *cli.Command {
 	return &cli.Command{
-		Name:        "explain",
-		ArgsUsage:   "<name-glob>...",
-		Usage:       "Explain the rules, candidates and decision for each matching dependency",
-		Description: helpText("explain"),
+		Name:      "explain",
+		ArgsUsage: "<name-glob>...",
+		Usage:     "Explain the rules, candidates and decision for each matching dependency",
 		Metadata: map[string]any{docgen.MetaExample: "  deps explain 'actions/*'\n" +
 			"  deps explain 'k8s.io/**' github.com/spf13/cobra"},
 		ArgValidator: globArgs,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return explain(ctx, cmd, o, cmd.Args().Slice())
 		},
+		Flags: scanFlags(o, scanSession),
 	}
 }
 
@@ -57,7 +57,7 @@ func globArgs(_ context.Context, cmd *cli.Command) error {
 
 func explain(ctx context.Context, cmd *cli.Command, o *rootOpts, globs []string) error {
 	info, _ := platform.FromEnv(os.Getenv)
-	s, err := newSession(ctx, o, info, envToken(), newHTTPClient())
+	s, err := newSession(ctx, o, info, envToken(), newHTTPClient(), cmd.Root().ErrWriter)
 	if err != nil {
 		return err
 	}
@@ -141,7 +141,7 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 		}
 		line("age", "%s", age)
 	}
-	if d.Skip != "" && t.Policy.Updates == nil { // skipped by the manager: no policy was evaluated
+	if d.Skip != "" && t.Policy.AllowedUpdateTypes == nil { // skipped by the manager: no policy was evaluated
 		line("result", "skipped: %s", d.Skip)
 		return
 	}
@@ -241,37 +241,31 @@ func ruleSource(r *config.Rule) string {
 	return fmt.Sprintf("from %s:%d", file, line)
 }
 
-// describeRule lists the fields a rule sets, in declaration order.
+// describeRule lists the fields a rule sets in two groups, in declaration order: the match
+// fields ("match: all" when none is set), then the apply fields.
 func describeRule(r config.Rule) string {
-	var f []string
-	add := func(k, v string) { f = append(f, k+"="+v) }
-	if r.Manager != "" {
-		add("manager", r.Manager)
+	var match, apply []string
+	f := &match
+	add := func(k, v string) { *f = append(*f, k+"="+v) }
+	list := func(k string, vs []string, sep string) {
+		if vs != nil {
+			add(k, "["+strings.Join(vs, sep)+"]")
+		}
 	}
-	if r.Names != nil {
-		add("names", "["+strings.Join(r.Names, " ")+"]")
-	}
-	if r.DepTypes != nil {
-		add("depTypes", "["+strings.Join(r.DepTypes, " ")+"]")
-	}
-	if r.Paths != nil {
-		add("paths", "["+strings.Join(r.Paths, " ")+"]")
-	}
-	if r.Datasources != nil {
-		add("datasources", "["+strings.Join(r.Datasources, " ")+"]")
-	}
-	if r.BaseBranches != nil {
-		add("baseBranches", "["+strings.Join(r.BaseBranches, " ")+"]")
-	}
+	list("managers", r.Managers, " ")
+	list("names", r.Names, " ")
+	list("depTypes", r.DepTypes, " ")
+	list("paths", r.Paths, " ")
+	list("datasources", r.Datasources, " ")
+	list("baseBranches", r.BaseBranches, " ")
 	if r.CurrentVersion != "" {
 		add("currentVersion", r.CurrentVersion)
 	}
 	if r.CurrentAge != "" {
 		add("currentAge", "'"+r.CurrentAge+"'")
 	}
-	if r.UpdateTypes != nil {
-		add("updateTypes", "["+strings.Join(r.UpdateTypes, " ")+"]")
-	}
+	list("updateTypes", r.UpdateTypes, " ")
+	f = &apply
 	if r.Ignore != nil {
 		add("ignore", strconv.FormatBool(*r.Ignore))
 	}
@@ -285,32 +279,12 @@ func describeRule(r config.Rule) string {
 		}
 		add("allow", allow)
 	}
-	if r.Updates != nil {
-		add("updates", "["+strings.Join(r.Updates, " ")+"]")
-	}
-	if r.Group != "" {
-		add("group", r.Group)
-	}
-	if r.SecurityGroup != "" {
-		add("securityGroup", r.SecurityGroup)
-	}
-	if r.Schedule != nil {
-		add("schedule", "["+strings.Join(r.Schedule, "; ")+"]")
-	}
-	if r.MinimumReleaseAge != "" {
-		add("minimumReleaseAge", r.MinimumReleaseAge)
-	}
-	if r.MinimumReleaseAgeBehaviour != "" {
-		add("minimumReleaseAgeBehaviour", r.MinimumReleaseAgeBehaviour)
-	}
-	if r.AbandonmentThreshold != "" {
-		add("abandonmentThreshold", r.AbandonmentThreshold)
+	list("allowedUpdateTypes", r.AllowedUpdateTypes, " ")
+	if r.RangeStrategy != "" {
+		add("rangeStrategy", r.RangeStrategy)
 	}
 	if r.Versioning != "" {
 		add("versioning", r.Versioning)
-	}
-	if r.RangeStrategy != "" {
-		add("rangeStrategy", r.RangeStrategy)
 	}
 	if r.ReplacementName != "" {
 		add("replacementName", r.ReplacementName)
@@ -329,6 +303,28 @@ func describeRule(r config.Rule) string {
 			add(b.k, strconv.FormatBool(*b.v))
 		}
 	}
+	if r.Group != "" {
+		add("group", r.Group)
+	}
+	if r.SecurityGroup != "" {
+		add("securityGroup", r.SecurityGroup)
+	}
+	if r.CommitType != "" {
+		add("commitType", r.CommitType)
+	}
+	if r.CommitScope != nil {
+		add("commitScope", strconv.Quote(*r.CommitScope))
+	}
+	list("schedule", r.Schedule, "; ")
+	if r.MinimumReleaseAge != "" {
+		add("minimumReleaseAge", r.MinimumReleaseAge)
+	}
+	if r.MinimumReleaseAgeBehaviour != "" {
+		add("minimumReleaseAgeBehaviour", r.MinimumReleaseAgeBehaviour)
+	}
+	if r.AbandonmentThreshold != "" {
+		add("abandonmentThreshold", r.AbandonmentThreshold)
+	}
 	if r.Automerge != nil {
 		add("automerge", strconv.FormatBool(*r.Automerge))
 	}
@@ -344,10 +340,15 @@ func describeRule(r config.Rule) string {
 	if r.PRCreation != "" {
 		add("prCreation", r.PRCreation)
 	}
-	if len(f) == 0 {
-		return "(matches all)"
+	m := "all"
+	if len(match) > 0 {
+		m = strings.Join(match, " ")
 	}
-	return strings.Join(f, " ")
+	a := "nothing"
+	if len(apply) > 0 {
+		a = strings.Join(apply, " ")
+	}
+	return "match: " + m + "; apply: " + a
 }
 
 func describePolicy(p config.Policy) string {
@@ -357,7 +358,7 @@ func describePolicy(p config.Policy) string {
 	}
 	var updates []string
 	for _, u := range dep.UpdateTypes {
-		if p.Updates[u] {
+		if p.AllowedUpdateTypes[u] {
 			updates = append(updates, string(u))
 		}
 	}
@@ -368,7 +369,7 @@ func describePolicy(p config.Policy) string {
 			minAge += " (" + config.TimestampRequired + ")"
 		}
 	}
-	s := fmt.Sprintf("pin=%s allow=%s updates=%s group=%s schedule=%s minAge=%s",
+	s := fmt.Sprintf("pin=%s allow=%s allowedUpdateTypes=%s group=%s schedule=%s minAge=%s",
 		p.Pin, allow, orDash(strings.Join(updates, ",")), orDash(p.Group), p.Schedule.String(), minAge)
 	if p.SecurityGroup != "" {
 		s += " securityGroup=" + p.SecurityGroup

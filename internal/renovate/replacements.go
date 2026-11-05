@@ -90,7 +90,7 @@ func (t *translator) replacements(p replacementPresets) bool {
 	return true
 }
 
-// replacementRules adds one rule per manager of each built-in entry of preset name: with
+// replacementRules adds one rule for the managers of each built-in entry of preset name: with
 // off, it switches the replacement off, else it applies it.
 func (t *translator) replacementRules(origin, name string, off bool) {
 	for _, r := range config.Replacements {
@@ -101,24 +101,22 @@ func (t *translator) replacementRules(origin, name string, off bool) {
 		for _, p := range r.Patterns {
 			names = append(names, "/"+p+"/")
 		}
-		for _, m := range r.Managers {
-			b := omap{{"manager", m}, {"names", names}}
-			if r.CurrentVersion != "" {
-				b.set("currentVersion", r.CurrentVersion)
-			}
-			if off {
-				b.set("updateTypes", []string{string(dep.Replacement)})
-				b.set("ignore", true)
-			} else {
-				b.set("replacementName", r.To)
-				if r.Version != "" {
-					b.set("replacementVersion", r.Version)
-				}
-				if r.Prefix != "" {
-					b.set("replacementPrefix", r.Prefix)
-				}
-			}
-			t.addRule(origin, b)
+		b := omap{{"managers", slices.Clone(r.Managers)}, {"names", names}}
+		if r.CurrentVersion != "" {
+			b.set("currentVersion", r.CurrentVersion)
 		}
+		if off {
+			b.set("updateTypes", []string{string(dep.Replacement)})
+			b.set("ignore", true)
+		} else {
+			b.set("replacementName", r.To)
+			if r.Version != "" {
+				b.set("replacementVersion", r.Version)
+			}
+			if r.Prefix != "" {
+				b.set("replacementPrefix", r.Prefix)
+			}
+		}
+		t.addRule(origin, b)
 	}
 }

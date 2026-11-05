@@ -146,7 +146,7 @@ func TestRangeStrategy(t *testing.T) {
 			},
 		},
 		{
-			name: "pin update", cfg: "rangeStrategy: pin\nrules:\n  - updates: [major, pin]\n",
+			name: "pin update", cfg: "rangeStrategy: pin\nrules:\n  - allowedUpdateTypes: [major, pin]\n",
 			files: map[string]string{"web/package-lock.json": rangeLock},
 			want: []string{
 				"a ^1.0.0->1.1.0 pin", // the locked version; the major gets its own PR
@@ -155,7 +155,7 @@ func TestRangeStrategy(t *testing.T) {
 			},
 		},
 		{
-			name: "pin without a lockfile", cfg: "rangeStrategy: pin\nrules:\n  - updates: [major, pin]\n",
+			name: "pin without a lockfile", cfg: "rangeStrategy: pin\nrules:\n  - allowedUpdateTypes: [major, pin]\n",
 			want: []string{
 				"a ^1.0.0->1.2.0 pin", // the newest version the range admits
 				"a 1.0.0->2.0.0 major",
@@ -241,7 +241,7 @@ func TestRangeStrategySecurity(t *testing.T) {
 				"x": {vuln("GHSA-x", "2.0.0")}, // the fix needs a new range
 			}}
 			// Only majors are allowed, so the security updates come from the advisories alone.
-			root, cfg := setup(t, "rules:\n  - updates: [major]\n", map[string]string{"package.json": pkg, lockName: lock})
+			root, cfg := setup(t, "rules:\n  - allowedUpdateTypes: [major]\n", map[string]string{"package.json": pkg, lockName: lock})
 			o := Options{Managers: []manager.Manager{npm.New()}, Datasources: map[string]Datasource{"npm": releases}, Security: sec}
 			res, err := Resolve(t.Context(), root, cfg, env, o)
 			if err != nil || len(res.Errors) > 0 {

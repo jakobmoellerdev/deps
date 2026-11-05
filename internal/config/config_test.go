@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -67,14 +68,15 @@ func TestLoadUnreadable(t *testing.T) {
 
 func TestValidateWithoutPath(t *testing.T) {
 	err := (&Config{Version: 1, Pin: "always"}).Validate()
-	if err == nil || err.Error() != ".deps.yaml: pin: must be keep or digest, got \"always\"" {
+	if err == nil || err.Error() != ".deps.yaml: pin: must be one of keep, digest, got \"always\"" {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestLoadErrors(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
-		{"pinn: digest\n", "line 1"},
+		{"names: [x]\n", ".deps.yaml:1:1: names: unknown key (names is a key of rules[] entries)"},
+		{"pinn: digest\n", ".deps.yaml:1:1: pinn: unknown key (did you mean pin?)"},
 		{"version: 2\n", "version: must be 1"},
 		{"gitAuthor: bot@example.com\n", "gitAuthor: must be 'Name <email>'"},
 		{"gitAuthor: 'Bot <nope>'\n", "gitAuthor: must be 'Name <email>'"},
@@ -84,9 +86,13 @@ func TestLoadErrors(t *testing.T) {
 		{"prConcurrentLimit: -1\n", "prConcurrentLimit: must be >= 0"},
 		{"prHourlyLimit: -2\n", "prHourlyLimit: must be >= 0"},
 		{"dashboardApproval: true\n", "dashboardApproval: requires dependencyDashboard: true"},
-		{"rules: [{manager: gomod, dashboardApproval: false}, {updateTypes: [major], dashboardApproval: true}]\n", "rules[1].dashboardApproval: requires dependencyDashboard: true"},
-		{"pin: always\n", "pin: must be keep or digest"},
-		{"rules: [{manager: pip}]\n", "rules[0].manager"},
+		{"rules: [{managers: [gomod], dashboardApproval: false}, {updateTypes: [major], dashboardApproval: true}]\n", "rules[1].dashboardApproval: requires dependencyDashboard: true"},
+		{"pin: always\n", "pin: must be one of keep, digest, got \"always\""},
+		{"rules: [{managers: [gomod, pip]}]\n", `.deps.yaml:1:28: rules[0].managers[1]: unknown value "pip" (see deps config describe rules[].managers)`},
+		{"rules: [{manager: gomod}]\n", "rules[0].manager: unknown key (did you mean managers?)"},
+		{"rules: [{updates: [patch]}]\n", "rules[0].updates: unknown key (did you mean allowedUpdateTypes?)"},
+		{"rules: [{packageRules: []}]\n", "rules[0].packageRules: unknown key (Renovate's packageRules is the top-level rules here)"},
+		{"actions: {packageRules: []}\n", "actions.packageRules: unknown key (Renovate's packageRules is the top-level rules here)"},
 		{"rules: [{names: ['[']}]\n", "rules[0].names[0]"},
 		{"rules: [{pin: x}]\n", "rules[0].pin"},
 		{"rules: [{allow: '>>1'}]\n", "rules[0].allow"},
@@ -94,26 +100,29 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{replacementVersion: '1.0.0'}]\n", "rules[0].replacementVersion: requires replacementName"},
 		{"rules: [{replacementPrefix: a/}]\n", "rules[0].replacementPrefix: requires replacementName"},
 		{"rules: [{currentAge: '> 1 year', replacementName: x}]\n", "rules[0].replacementName: cannot be combined with currentAge"},
-		{"rules: [{updates: [huge]}]\n", "rules[0].updates[0]"},
+		{"rules: [{allowedUpdateTypes: [huge]}]\n", "rules[0].allowedUpdateTypes[0]"},
+		{"rules: [{allowedUpdateTypes: [replacement]}]\n", "rules[0].allowedUpdateTypes[0]"},
+		{"rules: [{updateTypes: [replacment]}]\n", `rules[0].updateTypes[0]: must be one of major, minor, patch, digest, pin, replacement, got "replacment" (did you mean replacement?)`},
+		{"rules: [{postUpgradeTasks: {commands: [x], executionMode: updat}}]\n", `rules[0].postUpgradeTasks.executionMode: must be one of branch, update, got "updat" (did you mean update?)`},
 		{"ignorePaths: ['[']\n", "ignorePaths[0]"},
 		{"timezone: Europe/Berln\n", `timezone: unknown IANA time zone "Europe/Berln"`},
 		{"timezone: Local\n", `timezone: must be an IANA time zone like Europe/Berlin, got "Local"`},
-		{"timezone: [x]\n", "line 1"},
+		{"timezone: [x]\n", "1:11: timezone: want a string, got a list"},
 		{"schedule: ['befor 6am on monday']\n", `schedule[0]: "befor 6am on monday": unknown word "befor"`},
 		{"rules: [{schedule: ['before 25:00']}]\n", `rules[0].schedule[0]: "before 25:00": before: want a time like 6am or 18:30, got "25:00"`},
 		{"schedule: ['60 5 * * *']\n", `schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`},
 		{"schedule: ['* 25 * * *']\n", "schedule[0]"},
 		{"rules: [{schedule: ['* * * *']}]\n", "rules[0].schedule[0]"},
 		{"lockFileMaintenance: {enabled: true, schedule: ['60 5 * * *']}\n", `lockFileMaintenance.schedule[0]: "60 5 * * *": minute`},
-		{"lockFileMaintenance: {enable: true}\n", "field enable not found"},
-		{"rules: [{depTypes: [weird]}]\n", "rules[0].depTypes[0]: must be one of direct, indirect"},
-		{"security: maybe\n", "line 1"},
+		{"lockFileMaintenance: {enable: true}\n", "1:23: lockFileMaintenance.enable: unknown key (did you mean enabled?)"},
+		{"rules: [{depTypes: [weird]}]\n", `rules[0].depTypes[0]: unknown value "weird" (see deps config describe rules[].depTypes)`},
+		{"security: maybe\n", `.deps.yaml:1:11: security: want a boolean, got "maybe"`},
 		{"custom: [{}]\n", "custom[0].files: must not be empty"},
 		{"custom: [{files: ['[']}]\n", "custom[0].files[0]: invalid glob"},
 		{"custom: [{files: ['/(/']}]\n", `custom[0].files[0]: invalid regex "/(/"`},
 		{"ignorePaths: ['!x']\n", `ignorePaths[0]: negation is not supported in ignorePaths, got "!x"`},
 		{"rules: [{names: ['/a(/']}]\n", `rules[0].names[0]: invalid regex "/a(/"`},
-		{"custom: [{files: [x], datasource: pip}]\n", "custom[0].datasource: must be one of git-tags"},
+		{"custom: [{files: [x], datasource: pip}]\n", `custom[0].datasource: unknown value "pip" (see deps config describe custom[].datasource)`},
 		{"custom: [{files: [x], versioning: calver}]\n", "custom[0].versioning: must be one of tag"},
 		{"custom: [{files: [x], match: '('}]\n", "custom[0].match: invalid RE2"},
 		{"custom: [{files: [x], match: '(?=x)'}]\n", "custom[0].match: invalid RE2"},
@@ -129,19 +138,22 @@ func TestLoadErrors(t *testing.T) {
 		{"branchPrefix: 'a//'\n", "branchPrefix: must be a valid git ref prefix"},
 		{"branchPrefix: '.x/'\n", "branchPrefix: must be a valid git ref prefix"},
 		{"branchPrefix: 'x.lock/'\n", "branchPrefix: must be a valid git ref prefix"},
-		{"monorepos: maybe\n", "line 1"},
-		{"rules: [{commitType: feature}]\n", "rules[0].commitType: must be one of fix, chore"},
+		{"monorepos: maybe\n", `monorepos: want a boolean, got "maybe"`},
+		{"rules: [{commitType: feature}]\n", `rules[0].commitType: unknown value "feature" (see deps config describe rules[].commitType)`},
+		{"rules: [{commitType: chor}]\n", `rules[0].commitType: unknown value "chor" (did you mean chore?)`},
 		{"rules: [{commitScope: 'a b'}]\n", "rules[0].commitScope: must match"},
 		{"rules: [{names: ['{a']}]\n", "rules[0].names[0]"},
 		{"rules: [{paths: ['[']}]\n", "rules[0].paths[0]: invalid glob"},
-		{"rules: [{datasources: [cpan]}]\n", "rules[0].datasources[0]: must be one of git-tags, git-refs, github-releases"},
+		{"rules: [{datasources: [cpan]}]\n", `rules[0].datasources[0]: unknown value "cpan" (see deps config describe rules[].datasources)`},
+		{"rules: [{datasources: [gihub-tags]}]\n", `rules[0].datasources[0]: unknown value "gihub-tags" (did you mean github-tags?)`},
 		{"rules: [{updateTypes: [huge]}]\n", "rules[0].updateTypes[0]: must be one of major"},
 		{"rules: [{updateTypes: []}]\n", "rules[0].updateTypes: must not be empty"},
 		{"rules: [{updateTypes: [major], pin: digest}]\n", "rules[0].pin: cannot be combined with updateTypes"},
 		{"rangeStrategy: pinned\n", `rangeStrategy: must be one of auto, bump, replace, update-lockfile, widen, pin, in-range-only, got "pinned"`},
+		{"rangeStrategy: bumb\n", `rangeStrategy: must be one of auto, bump, replace, update-lockfile, widen, pin, in-range-only, got "bumb" (did you mean bump?)`},
 		{"rules: [{rangeStrategy: wide}]\n", `rules[0].rangeStrategy: must be one of auto, bump, replace, update-lockfile, widen, pin, in-range-only, got "wide"`},
 		{"rules: [{updateTypes: [major], rangeStrategy: bump}]\n", "rules[0].rangeStrategy: cannot be combined with updateTypes"},
-		{"rules: [{patterns: [x]}]\n", "line 1"},
+		{"rules: [{patterns: [x]}]\n", "1:10: rules[0].patterns: unknown key"},
 		{"custom: [{files: [x], checksum: {url: u}}]\n", "custom[0].checksum: requires match (regex mode)"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+)', datasource: go, name: x, checksum: {url: u}}]\n", "custom[0].checksum: requires a (?P<checksum>...) group in match"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x}]\n", "custom[0].match: (?P<checksum>...) group requires checksum"},
@@ -152,13 +164,14 @@ func TestLoadErrors(t *testing.T) {
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: github-releases, name: o/r, checksum: {asset: 'a_{{ver}}'}}]\n", "custom[0].checksum.asset: unknown template variable {{ver}}"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: 'u/{{version}', file: f}}]\n", "custom[0].checksum.url: unbalanced template braces"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, file: '{{name}}'}}]\n", "custom[0].checksum.file: unknown template variable {{name}}"},
-		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, pathh: f}}]\n", "line 1"},
+		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, pathh: f}}]\n", "custom[0].checksum.pathh: unknown key"},
 		{"rebaseWhen: always\n", `rebaseWhen: must be one of conflicted, behind-base-branch, never, got "always"`},
 		{"platformCommit: always\n", `platformCommit: must be one of auto, enabled, disabled, got "always"`},
 		{"minimumReleaseAge: soon\n", `minimumReleaseAge: invalid age "soon"`},
 		{"minimumReleaseAge: -1h\n", `minimumReleaseAge: invalid age "-1h"`},
 		{"minimumReleaseAge: 99999999999999999 weeks\n", "minimumReleaseAge: age \"99999999999999999 weeks\" out of range"},
 		{"rules: [{versioning: calver}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget or regex:<RE2>, got "calver"`},
+		{"rules: [{versioning: semvr}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget or regex:<RE2>, got "semvr" (did you mean semver?)`},
 		{"rules: [{versioning: 'regex:('}]\n", "rules[0].versioning: regex: invalid RE2 regexp"},
 		{"rules: [{versioning: 'regex:^(?<minor>\\d+)$'}]\n", "rules[0].versioning: regex: must have a (?<major>...) group"},
 		{"rules: [{versioning: 'regex:^(?<major>\\d+)(?P<mjor>x)$'}]\n", `rules[0].versioning: regex: unknown group "mjor" (allowed: major, minor, patch, build, revision, prerelease, compatibility)`},
@@ -168,36 +181,38 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{extractVersion: '^jq-(.+)$'}]\n", "rules[0].extractVersion: needs a (?<version>…) group"},
 		{"rules: [{extractVersion: '('}]\n", "rules[0].extractVersion: invalid RE2 regexp"},
 		{"rules: [{updateTypes: [major], extractVersion: '^v(?<version>.+)$'}]\n", "rules[0].extractVersion: cannot be combined with updateTypes"},
-		{"separateMinorPatch: maybe\n", "line 1"},
-		{"rules: [{separateMultipleMajor: 1}]\n", "line 1"},
-		{"updateNotScheduled: sometimes\n", "line 1"},
+		{"minimumReleaseAgeBehaviour: timestamp-strict\n", `minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "timestamp-strict"`},
+		{"rules: [{minimumReleaseAgeBehaviour: required}]\n", `rules[0].minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "required"`},
+		{"separateMinorPatch: maybe\n", `separateMinorPatch: want a boolean, got "maybe"`},
+		{"rules: [{separateMultipleMajor: 1}]\n", `1:33: rules[0].separateMultipleMajor: want a boolean, got "1"`},
+		{"updateNotScheduled: sometimes\n", "updateNotScheduled: want a boolean"},
 		{"rules: [{minimumReleaseAge: 3 fortnights}]\n", `rules[0].minimumReleaseAge: invalid age "3 fortnights"`},
 		{"abandonmentThreshold: ages\n", `abandonmentThreshold: invalid age "ages"`},
 		{"abandonmentThreshold: 99999999999 years\n", `abandonmentThreshold: age "99999999999 years" out of range`},
 		{"rules: [{abandonmentThreshold: -1d}]\n", `rules[0].abandonmentThreshold: invalid age "-1d"`},
-		{"minimumReleaseAgeBehaviour: timestamp-strict\n", `minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "timestamp-strict"`},
-		{"rules: [{minimumReleaseAgeBehaviour: required}]\n", `rules[0].minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "required"`},
-		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, git-refs, github-releases, go, go-toolchain, docker, npm, node-version, helm, crate, pypi, conda, terraform-provider, terraform-module, maven, gradle-version, rubygems, ruby-version, rust-version, orb, azure-pipelines-tasks, vcpkg, elm-package, packagist, julia-registry, bazel, nuget, dotnet-version, golang-version, github-tags, github-release-attachments, node, bitbucket-tags or custom.<name> of customDatasources, got "custom.envtest"`},
-		{"custom: [{files: [x], datasource: custom.envtest}]\n", `custom[0].datasource: must be one of git-tags`},
+		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: customDatasources has no entry "envtest"`},
+		{"customDatasources: {envtests: {url: 'https://x/y'}}\nrules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: customDatasources has no entry "envtest" (did you mean custom.envtests?)`},
+		{"custom: [{files: [x], datasource: custom.envtest}]\n", `custom[0].datasource: customDatasources has no entry "envtest"`},
 		{"customDatasources: {envtest: {}}\n", "customDatasources.envtest.url: required"},
 		{"customDatasources: {envtest: {url: 'ftp://x/y'}}\n", `customDatasources.envtest.url: must be an http(s) URL, got "ftp://x/y"`},
 		{"customDatasources: {envtest: {url: 'https://'}}\n", `customDatasources.envtest.url: must be an http(s) URL`},
 		{"customDatasources: {envtest: {url: '%zz'}}\n", `customDatasources.envtest.url: must be an http(s) URL`},
 		{"customDatasources: {'-x': {url: 'https://x/y'}}\n", "customDatasources.-x: name must match"},
 		{"customDatasources: {e: {url: 'https://x/y', format: toml}}\n", `customDatasources.e.format: must be one of json, yaml, plain, got "toml"`},
+		{"customDatasources: {e: {url: 'https://x/y', format: jsno}}\n", `1:53: customDatasources.e.format: must be one of json, yaml, plain, got "jsno" (did you mean json?)`},
 		{"customDatasources: {e: {url: 'https://x/y', format: plain, versions: .a}}\n", "customDatasources.e.versions: not allowed with format plain"},
 		{"customDatasources: {e: {url: 'https://x/y', versions: 'a'}}\n", `customDatasources.e.versions: selector "a"`},
 		{"customDatasources: {e: {url: 'https://x/y', versionRegex: '('}}\n", "customDatasources.e.versionRegex: invalid RE2 regexp"},
-		{"customDatasources: {e: {url: 'https://x/y', transformTemplates: []}}\n", "line 1"},
+		{"customDatasources: {e: {url: 'https://x/y', transformTemplates: []}}\n", "customDatasources.e.transformTemplates: unknown key (Renovate's transformTemplates is versions here; a selector plus versionRegex instead of JSONata)"},
 		{"automergeStrategy: fast-forward\n", `automergeStrategy: must be one of auto, merge, squash, rebase, got "fast-forward"`},
 		{"rules: [{automergeStrategy: merge-commit}]\n", `rules[0].automergeStrategy: must be one of auto, merge, squash, rebase, got "merge-commit"`},
 		{"automergeType: pr-comment\n", `automergeType: must be one of pr, branch, got "pr-comment"`},
 		{"rules: [{automergeType: fast-forward}]\n", `rules[0].automergeType: must be one of pr, branch, got "fast-forward"`},
 		{"prCreation: approval\n", `prCreation: must be one of immediate, not-pending, status-success, got "approval"`},
 		{"rules: [{prCreation: later}]\n", `rules[0].prCreation: must be one of immediate, not-pending, status-success, got "later"`},
-		{"draftPR: maybe\n", "line 1"},
-		{"automerge: sometimes\n", "line 1"},
-		{"dependencyDashboard: maybe\n", "line 1"},
+		{"draftPR: maybe\n", `draftPR: want a boolean, got "maybe"`},
+		{"automerge: sometimes\n", `automerge: want a boolean, got "sometimes"`},
+		{"dependencyDashboard: maybe\n", "dependencyDashboard: want a boolean"},
 		{"dependencyDashboardTitle: '  '\n", "dependencyDashboardTitle: must be a non-blank single line"},
 		{"dependencyDashboardTitle: \"a\\nb\"\n", "dependencyDashboardTitle: must be a non-blank single line"},
 		{"dependencyDashboardLabels: [deps, '']\n", "dependencyDashboardLabels[1]: must be a non-blank label name"},
@@ -215,9 +230,130 @@ func TestLoadErrors(t *testing.T) {
 			t.Errorf("%q: err = %v", tc.body, err)
 		}
 	}
-	_, err := load(t, ".deps.yaml", "pinn: digest\n")
-	if !strings.Contains(err.Error(), "pinn") {
-		t.Errorf("unknown key not named: %v", err)
+}
+
+// TestLoadProblemsOnePass checks that unknown keys, type errors and validation errors
+// are reported together, sorted by position, each with its line and column.
+func TestLoadProblemsOnePass(t *testing.T) {
+	dir := t.TempDir()
+	body := `automerg: true
+rules:
+  - updatetypes: [minor]
+  - depTypes: [devDependency]
+  - matchPackageNames: [x]
+    enabled: false
+    groupName: g
+  - 5
+matchPackageNames: [x]
+ignoreDeps: [y]
+customDatasources:
+  e: {defaultRegistryUrlTemplate: 'https://x/y'}
+security: maybe
+`
+	if err := os.WriteFile(filepath.Join(dir, ".deps.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(t.Context(), dir, "", nil)
+	p := filepath.Join(dir, ".deps.yaml")
+	want := strings.Join([]string{
+		p + ":1:1: automerg: unknown key (did you mean automerge?)",
+		p + ":3:5: rules[0].updatetypes: unknown key (did you mean updateTypes?)",
+		p + `:4:16: rules[1].depTypes[0]: unknown value "devDependency" (did you mean devDependencies?)`,
+		p + ":5:5: rules[2].matchPackageNames: unknown key (Renovate's matchPackageNames is names here)",
+		p + ":6:5: rules[2].enabled: unknown key (Renovate's enabled: false is ignore: true here)",
+		p + ":7:5: rules[2].groupName: unknown key (Renovate's groupName is group here)",
+		p + `:8:5: rules[3]: want a mapping, got "5"`,
+		p + ":9:1: matchPackageNames: unknown key (Renovate's matchPackageNames is rules[].names here)",
+		p + ":10:1: ignoreDeps: unknown key (Renovate's ignoreDeps is a rule with names and ignore: true here)",
+		p + ":12:6: customDatasources.e.url: required",
+		p + ":12:7: customDatasources.e.defaultRegistryUrlTemplate: unknown key (Renovate's defaultRegistryUrlTemplate is url here)",
+		p + `:13:11: security: want a boolean, got "maybe"`,
+	}, "\n")
+	var ce *Error
+	if !errors.As(err, &ce) || err.Error() != want {
+		t.Fatalf("err =\n%v\nwant\n%s", err, want)
+	}
+	if ps := ce.Problems(); len(ps) != 12 || ps[0].Line != 1 || ps[0].Field != "automerg" || ps[0].Path != p {
+		t.Errorf("Problems() = %v", ps)
+	}
+}
+
+func TestLoadTypeErrors(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{"rules: {manager: gomod}\n", ".deps.yaml:1:8: rules: want a list, got a mapping"},
+		{"rules: x\n", `.deps.yaml:1:8: rules: want a list, got "x"`},
+		{"actions: x\n", `.deps.yaml:1:10: actions: want a mapping, got "x"`},
+		{"customDatasources: [a]\n", ".deps.yaml:1:20: customDatasources: want a mapping, got a list"},
+		{"customDatasources: {e: [a]}\n", ".deps.yaml:1:24: customDatasources.e: want a mapping, got a list"},
+		{"prConcurrentLimit: many\n", `.deps.yaml:1:20: prConcurrentLimit: want an integer, got "many"`},
+		{"branchPrefix: {a: b}\n", ".deps.yaml:1:15: branchPrefix: want a string, got a mapping"},
+		{"custom: [{files: x}]\n", `.deps.yaml:1:18: custom[0].files: want a list, got "x"`},
+		{"- a\n", `.deps.yaml:1:1: want a mapping, got a list`},
+		{"rules: [\n", ".deps.yaml:2:1: did not find expected node content"},
+	} {
+		_, err := load(t, ".deps.yaml", tc.body)
+		var ce *Error
+		if !errors.As(err, &ce) || !strings.HasSuffix(err.Error(), tc.want) || strings.Count(err.Error(), "\n") != 0 {
+			t.Errorf("%q: err = %v, want %s", tc.body, err, tc.want)
+		}
+	}
+}
+
+func TestLoadAnchors(t *testing.T) {
+	c, err := load(t, ".deps.yaml", "x-base: &base {group: g, allowedUpdateTypes: [minor]}\n")
+	if err == nil || !strings.Contains(err.Error(), "x-base: unknown key") {
+		t.Fatalf("c = %v, err = %v", c, err)
+	}
+	c, err = load(t, ".deps.yaml", "rules:\n  - &base {group: g}\n  - <<: *base\n    names: [a]\n")
+	if err != nil || len(c.Rules) != 2 || c.Rules[1].Group != "g" {
+		t.Fatalf("merge key: c = %+v, err = %v", c, err)
+	}
+	_, err = load(t, ".deps.yaml", "rules:\n  - &base {group: g}\n  - <<: *base\n    nmes: [a]\n")
+	if err == nil || !strings.Contains(err.Error(), ":4:5: rules[1].nmes: unknown key (did you mean names?)") {
+		t.Fatalf("merge key typo: err = %v", err)
+	}
+	// A type error through an alias is reported at the alias and leaves the anchor intact.
+	_, err = load(t, ".deps.yaml", "rules:\n  - {names: [a], group: &g g}\n  - {names: *g, group: g}\n  - {names: *g, group: *g}\n")
+	if err == nil || !strings.Contains(err.Error(), `:3:13: rules[1].names: want a list, got "g"`) || !strings.Contains(err.Error(), `:4:13: rules[2].names: want a list, got "g"`) || strings.Contains(err.Error(), "rules[0]") || strings.Contains(err.Error(), "rules[2].group") {
+		t.Fatalf("alias type error: err = %v", err)
+	}
+}
+
+func TestClosest(t *testing.T) {
+	cands := []string{"gomod", "github-actions", "npm", "updateTypes", "major"}
+	for in, want := range map[string]string{
+		"gomodd": "gomod", "GOMOD": "gomod", "updatetypes": "updateTypes", "majro": "major",
+		"nuget": "", "": "", "x": "", "github-action": "github-actions",
+	} {
+		if got := Closest(in, cands); got != want {
+			t.Errorf("Closest(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestRenovateHintTargets keeps RenovateOptions in step with the yaml keys they point at.
+func TestRenovateHintTargets(t *testing.T) {
+	d := decoder{fields: map[reflect.Type][]structField{}}
+	byScope := map[string]reflect.Type{}
+	for typ, s := range scopes {
+		byScope[s] = typ
+	}
+	for key, h := range RenovateOptions {
+		if h.To == "" {
+			if h.Note == "" {
+				t.Errorf("%s: neither To nor Note", key)
+			}
+			continue
+		}
+		typ, ok := byScope[h.Scope]
+		if !ok {
+			t.Errorf("%s: unknown scope %q", key, h.Scope)
+			continue
+		}
+		to, _, _ := strings.Cut(h.To, ":")
+		if !slices.ContainsFunc(d.structFields(typ), func(f structField) bool { return f.name == to }) {
+			t.Errorf("%s: %s %s is no key", key, h.Scope, h.To)
+		}
 	}
 }
 
@@ -226,19 +362,19 @@ func TestPolicy(t *testing.T) {
 rules:
   - names: ["actions/*"]
     allow: "< 7"
-    updates: [major, minor]
-  - manager: github-actions
+    allowedUpdateTypes: [major, minor]
+  - managers: [github-actions]
     names: ["actions/cache"]
-    updates: [patch]
+    allowedUpdateTypes: [patch]
     pin: keep
-  - manager: gomod
+  - managers: [gomod]
     ignore: true
 `)
 	if err != nil {
 		t.Fatal(err)
 	}
 	co := c.Policy(dep.Dep{Manager: "github-actions", Name: "actions/checkout"})
-	if co.Pin != "digest" || co.Allow == nil || !co.Updates[dep.Minor] || co.Updates[dep.Patch] || co.Ignore {
+	if co.Pin != "digest" || co.Allow == nil || !co.AllowedUpdateTypes[dep.Minor] || co.AllowedUpdateTypes[dep.Patch] || co.Ignore {
 		t.Errorf("checkout: %+v", co)
 	}
 	for _, tc := range []struct {
@@ -258,11 +394,11 @@ rules:
 		}
 	}
 	ca := c.Policy(dep.Dep{Manager: "github-actions", Name: "actions/cache"})
-	if ca.Pin != "keep" || ca.Updates[dep.Minor] || !ca.Updates[dep.Patch] || ca.Allow == nil {
+	if ca.Pin != "keep" || ca.AllowedUpdateTypes[dep.Minor] || !ca.AllowedUpdateTypes[dep.Patch] || ca.Allow == nil {
 		t.Errorf("cache: %+v", ca)
 	}
 	other := c.Policy(dep.Dep{Manager: "github-actions", Name: "foo/bar"})
-	if ok, _ := other.Check(dep.Pin, "", nil); other.Pin != "digest" || len(other.Updates) != len(dep.UpdateTypes) || other.Allow != nil || !ok {
+	if ok, _ := other.Check(dep.Pin, "", nil); other.Pin != "digest" || len(other.AllowedUpdateTypes) != len(dep.UpdateTypes) || other.Allow != nil || !ok {
 		t.Errorf("other: %+v", other)
 	}
 	if !c.Policy(dep.Dep{Manager: "gomod", Name: "x"}).Ignore {
@@ -414,7 +550,7 @@ func TestDefaultIgnore(t *testing.T) {
 func TestPolicyCheck(t *testing.T) {
 	c, err := load(t, ".deps.yaml", `rules:
   - allow: '< 2'
-    updates: [minor]
+    allowedUpdateTypes: [minor]
   - names: [gl]
     allow: '/^\d+\.\d+$/'
   - names: [neg]
@@ -580,14 +716,14 @@ func TestBranchPrefix(t *testing.T) {
 
 func TestCommitTypeAndScope(t *testing.T) {
 	c, err := load(t, ".deps.yaml", `rules:
-  - manager: github-actions
+  - managers: [github-actions]
     commitType: ci
   - names: ["example.com/**"]
     commitType: build
     commitScope: ""
   - names: ["example.com/keep"]
     commitScope: tools
-  - manager: pipenv
+  - managers: [pipenv]
     depTypes: [category]
     commitType: docs
   - depTypes: [tool.pdm.dev-dependencies]
@@ -674,7 +810,7 @@ func TestMonorepos(t *testing.T) {
 }
 
 func TestRubyGroup(t *testing.T) {
-	c, err := load(t, ".deps.yaml", "rules: [{manager: asdf, names: [ruby], group: tools}]\n")
+	c, err := load(t, ".deps.yaml", "rules: [{managers: [asdf], names: [ruby], group: tools}]\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -725,7 +861,7 @@ func TestMonorepoList(t *testing.T) {
 // entries) set the pre-policy's replacement, a rule's replacementName replaces the built-in
 // one with its own version, and replacements: false turns the built-in list off only.
 func TestReplacementPolicy(t *testing.T) {
-	const rules = "rules: [{names: [request], replacementName: got, replacementVersion: 12.0.0}, {names: [jade], replacementName: '@x/pug'}, {manager: docker, replacementPrefix: quay.io/old/, replacementName: ghcr.io/new/}]\n"
+	const rules = "rules: [{names: [request], replacementName: got, replacementVersion: 12.0.0}, {names: [jade], replacementName: '@x/pug'}, {managers: [docker], replacementPrefix: quay.io/old/, replacementName: ghcr.io/new/}]\n"
 	c, err := load(t, ".deps.yaml", rules)
 	if err != nil {
 		t.Fatal(err)
@@ -904,17 +1040,17 @@ func TestCanonicalDatasource(t *testing.T) {
 
 func TestPolicyFor(t *testing.T) {
 	c, err := load(t, ".deps.yaml", `rules:
-  - manager: github-actions
+  - managers: [github-actions]
     schedule: ["* * * * 0"]
-  - manager: github-actions
+  - managers: [github-actions]
     updateTypes: [minor, patch]
     group: GitHub Actions
-  - manager: github-actions
+  - managers: [github-actions]
     updateTypes: [digest, pin]
     group: Digest pins
-  - manager: gomod
+  - managers: [gomod]
     ignore: false
-  - manager: gomod
+  - managers: [gomod]
     depTypes: [indirect]
     updateTypes: [major]
     ignore: true
@@ -923,8 +1059,8 @@ func TestPolicyFor(t *testing.T) {
     group: cache
     commitType: ci
     allow: "< 5"
-    updates: [minor]
-  - manager: npm
+    allowedUpdateTypes: [minor]
+  - managers: [npm]
     updateTypes: [patch]
     ignore: false
 `)
@@ -974,8 +1110,8 @@ func TestPolicyFor(t *testing.T) {
 			if p.Ignore {
 				ignore = p.IgnoreReason
 			}
-			if p.Kind != tc.kind || p.Group != tc.group || !slices.Equal(p.Rules, tc.rules) || ignore != tc.ignore || len(p.Updates) != tc.updates {
-				t.Errorf("got kind %q group %q rules %v ignore %q updates %d, want %q %q %v %q %d", p.Kind, p.Group, p.Rules, ignore, len(p.Updates), tc.kind, tc.group, tc.rules, tc.ignore, tc.updates)
+			if p.Kind != tc.kind || p.Group != tc.group || !slices.Equal(p.Rules, tc.rules) || ignore != tc.ignore || len(p.AllowedUpdateTypes) != tc.updates {
+				t.Errorf("got kind %q group %q rules %v ignore %q updates %d, want %q %q %v %q %d", p.Kind, p.Group, p.Rules, ignore, len(p.AllowedUpdateTypes), tc.kind, tc.group, tc.rules, tc.ignore, tc.updates)
 			}
 		})
 	}
@@ -992,7 +1128,7 @@ func TestAutomergePolicy(t *testing.T) {
 rules:
   - updateTypes: [minor, patch]
     automerge: true
-  - manager: gomod
+  - managers: [gomod]
     automergeStrategy: squash
     automergeType: branch
   - names: ["actions/cache"]
@@ -1030,7 +1166,7 @@ rules:
 		}
 	}
 
-	top, err := load(t, ".deps.yaml", "automerge: true\nautomergeStrategy: rebase\nautomergeType: branch\nrules: [{manager: gomod, automerge: false}, {names: [actions/cache], automergeType: pr}]\n")
+	top, err := load(t, ".deps.yaml", "automerge: true\nautomergeStrategy: rebase\nautomergeType: branch\nrules: [{managers: [gomod], automerge: false}, {names: [actions/cache], automergeType: pr}]\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1055,7 +1191,7 @@ func TestDraftPRAndPRCreationPolicy(t *testing.T) {
 	if p := def.PolicyFor(checkout, dep.Major); p.DraftPR || p.PRCreation != PRCreationImmediate {
 		t.Errorf("defaults: %v %q", p.DraftPR, p.PRCreation)
 	}
-	c, err := load(t, ".deps.yaml", "draftPR: true\nprCreation: not-pending\nrules:\n  - updateTypes: [major]\n    prCreation: status-success\n  - manager: gomod\n    draftPR: false\n    prCreation: immediate\n")
+	c, err := load(t, ".deps.yaml", "draftPR: true\nprCreation: not-pending\nrules:\n  - updateTypes: [major]\n    prCreation: status-success\n  - managers: [gomod]\n    draftPR: false\n    prCreation: immediate\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1092,7 +1228,7 @@ func TestDashboardConfig(t *testing.T) {
 	}
 
 	// dashboardApproval: the top-level default, overridden by rules (per update type too).
-	c, err = load(t, ".deps.yaml", "dependencyDashboard: true\ndashboardApproval: true\nrules: [{manager: gomod, dashboardApproval: false}, {manager: gomod, updateTypes: [major], dashboardApproval: true}]\n")
+	c, err = load(t, ".deps.yaml", "dependencyDashboard: true\ndashboardApproval: true\nrules: [{managers: [gomod], dashboardApproval: false}, {managers: [gomod], updateTypes: [major], dashboardApproval: true}]\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1135,7 +1271,7 @@ func TestParseAge(t *testing.T) {
 func TestAbandonmentThresholdPolicy(t *testing.T) {
 	c, err := load(t, ".deps.yaml", `abandonmentThreshold: 1 year
 rules:
-  - manager: npm
+  - managers: [npm]
     abandonmentThreshold: 18 months
   - names: [left-pad]
     abandonmentThreshold: "0"
@@ -1163,13 +1299,13 @@ func TestMinimumReleaseAgePolicy(t *testing.T) {
 minimumReleaseAgeBehaviour: timestamp-required
 rebaseWhen: behind-base-branch
 rules:
-  - manager: npm
+  - managers: [npm]
     minimumReleaseAge: 3d
   - names: ["cosign"]
     minimumReleaseAge: 0 days
   - datasources: [custom.envtest]
     minimumReleaseAgeBehaviour: timestamp-optional
-  - manager: gomod
+  - managers: [gomod]
     updateTypes: [patch]
     minimumReleaseAge: 12h
     minimumReleaseAgeBehaviour: timestamp-optional
@@ -1210,13 +1346,13 @@ func TestVersioningAndBucketPolicy(t *testing.T) {
 separateMinorPatch: true
 updateNotScheduled: false
 rules:
-  - manager: github-actions
+  - managers: [github-actions]
     separateMinorPatch: false
   - names: [fips]
     versioning: loose
   - names: [cosign]
     versioning: 'regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$'
-  - manager: npm
+  - managers: [npm]
     updateTypes: [major]
     separateMajorMinor: false
 `)

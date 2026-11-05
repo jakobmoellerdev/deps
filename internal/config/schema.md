@@ -13,21 +13,25 @@ Sections must not contain "## " headings; links are relative to docs/reference/.
 The JSON Schema printed by `deps schema` is the authoritative key list; this page is generated from it, and the repository root has a copy as `deps.schema.json`. For editor completion and hover documentation (yaml-language-server, e.g. the VS Code YAML extension), start the file with:
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 ```
 
-or point `$schema` at a local copy (`deps schema > deps.schema.json`, then `# yaml-language-server: $schema=./deps.schema.json`).
+Replace `vX.Y.Z` with your deps version (`deps version`, or the action's `version:`): every release after v0.3.0 carries its schema as the `deps.schema.json` asset (listed in `checksums.txt`), whose `$id` is that URL, so the editor checks exactly the keys your deps accepts; bump the modeline together with deps. To follow the development version instead, use `https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main`, or point `$schema` at a local copy (`deps schema > deps.schema.json`, then `# yaml-language-server: $schema=./deps.schema.json`).
 
 **Loading and validation.**
 
-- Decoding is strict. An unknown key is an error that names its line: `.deps.yaml: yaml: unmarshal errors:\n  line 1: field pinn not found in type config.Config`.
-- All validation errors are reported together, one per line, as `<path>: <field>: <message>`, for example `.deps.yaml: rules[2].allow: invalid constraint "<<7": ...`.
+- Decoding is strict. Every problem is reported as `<path>:<line>:<col>: <field>: <message>`, one per line, sorted by position, all in one run: syntax errors, unknown keys, values of the wrong type and failed validations.
+- An unknown key names a close match or, for a Renovate option, its deps equivalent: `.deps.yaml:1:1: automerg: unknown key (did you mean automerge?)`, `.deps.yaml:3:5: rules[0].matchPackageNames: unknown key (Renovate's matchPackageNames is names here)`.
+- A value of the wrong type names what the key takes: `.deps.yaml:1:8: rules: want a list, got a mapping`.
+- An unknown value of a fixed set (`depTypes`, `datasources`, `updateTypes`, `pin`, `rangeStrategy`, `commitType`, ...) suggests a close match (`unknown value "devDependency" (did you mean devDependencies?)`); without one, sets of up to 10 values are listed, longer ones point at `deps config describe <key>`.
+- Under GitHub Actions, each problem is also printed as an `::error file=<path>,line=<line>,col=<col>,title=deps::<field>: <message>` workflow command, so it shows as an annotation on the config file (Gitea and Forgejo do not render annotations, so deps prints none there).
 - A config error exits with code 2 (see [exit codes](cli.md#exit-codes)).
+- `deps config check` loads and validates the file offline (exit 2 on errors), e.g. in a pre-commit hook; `deps config show --sources` prints the effective values with their source, and `deps config describe <key>` prints a key's section of this page in the terminal. `deps init` writes a starter file.
 
 **Example** using most keys:
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 version: 1
 schedule: ["0 5 * * 1-5"]          # create PRs in the weekday run (a cron of the workflow)
 pin: digest                         # pin actions to SHAs and images to digests
@@ -44,7 +48,7 @@ dependencyDashboardLabels: [dependencies]
 separateMultipleMajor: true
 ignorePaths: ['**/node_modules/**', '**/testdata/**', 'third_party/**']
 rules:
-  - manager: github-actions         # minor+patch of all actions in one PR
+  - managers: [github-actions]      # minor+patch of all actions in one PR
     updateTypes: [minor, patch]
     group: actions
   - updateTypes: [minor, patch]     # automerge minor and patch updates once checks pass
@@ -54,19 +58,19 @@ rules:
     updateTypes: [digest, pin]
     group: digest-pins
     schedule: ['0 5 * * 0']         # the workflow's Sunday cron
-  - manager: gomod                  # include indirect requirements...
+  - managers: [gomod]               # include indirect requirements...
     depTypes: [indirect]
     ignore: false
-  - manager: gomod                  # ...without their majors
+  - managers: [gomod]               # ...without their majors
     depTypes: [indirect]
     updateTypes: [major]
     ignore: true
   - names: ['golang.org/x/**']
     group: golang-x
-  - manager: docker
+  - managers: [docker]
     names: ['postgres']
     allow: '< 18'
-  - manager: npm
+  - managers: [npm]
     depTypes: [devDependencies]
     group: npm-dev
     commitScope: dev-deps
@@ -215,7 +219,7 @@ on:
 ```
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 rules:
   - updateTypes: [digest, pin]
     group: digest-pins
@@ -242,7 +246,7 @@ deps queries [OSV](https://osv.dev) for Go modules, npm packages, crates.io crat
 
 - The go.mod `toolchain` directive is checked against the Go standard library (`stdlib`) and the go command (`toolchain`), so `toolchain go1.22.0` gets a security update to the smallest Go release of its line that fixes its advisories (`1.22.2` for GO-2024-2687). The `go` directive is checked too once a rule un-ignores it (it is ignored by default); a 2-part `go 1.22` admits every 1.22.x toolchain, so only an advisory without a fix in 1.22 moves it.
 - Container images, Terraform providers and modules, and Helm charts get no security updates: OSV has no ecosystem for them. The queries per ecosystem are listed under [Security advisories (OSV)](managers.md#security-advisories-osv).
-- Security updates bypass `allow`, `updates`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`, except the default ignore of pip_requirements `indirect` pins (the transitive pins of pip-compile/`uv pip compile` output, which Renovate's vulnerability alerts enable too): those get security updates, and only those, unless a rule ignores them.
+- Security updates bypass `allow`, `allowedUpdateTypes`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`, except the default ignore of pip_requirements `indirect` pins (the transitive pins of pip-compile/`uv pip compile` output, which Renovate's vulnerability alerts enable too): those get security updates, and only those, unless a rule ignores them.
 - They always use commit type `fix`, get a `[security]` title suffix, and are not put into a `group`. A rule's [`securityGroup`](#rulessecuritygroup) opts in to batching them into a PR of their own.
 - A failed OSV lookup is reported as an error (`security advisories: <err>`).
 
@@ -293,7 +297,7 @@ A PR whose content changed is always updated. Branches with commits by other aut
 
 When `true`, deps released from one source repository share a PR, with group `<name> monorepo`. The 62 built-in entries include kubernetes (`k8s.io/` staging modules), go-openapi, opentelemetry-go, opentelemetry-go-contrib, aws-sdk-go-v2, azure-sdk-for-go, google-cloud-go, moby, etcd, sigstore, typescript-eslint, eslint, babel, jest, vitest, angular, react, vue, storybook, tailwindcss, playwright, codeql-action and actions-cache. The full list is in `internal/config/monorepos.go`.
 
-The Ruby version is grouped the same way: every dep of the `ruby-version` datasource (the Gemfile `ruby` directive, `.ruby-version`, the asdf and mise `ruby` tool) gets group `ruby`, so one PR moves all files naming it, `Gemfile.lock`'s `RUBY VERSION` included. `ruby` Docker images (`ruby:3.4-slim` in a Dockerfile or CI config) stay docker deps; a rule such as `{manager: docker, names: [ruby], group: ruby}` adds them to that PR.
+The Ruby version is grouped the same way: every dep of the `ruby-version` datasource (the Gemfile `ruby` directive, `.ruby-version`, the asdf and mise `ruby` tool) gets group `ruby`, so one PR moves all files naming it, `Gemfile.lock`'s `RUBY VERSION` included. `ruby` Docker images (`ruby:3.4-slim` in a Dockerfile or CI config) stay docker deps; a rule such as `{managers: [docker], names: [ruby], group: ruby}` adds them to that PR.
 
 They are applied as implicit rules *before* the user rules, so any rule that sets `group` overrides them. `deps explain` shows them as `builtin  monorepo <name> -> group "<name> monorepo"` and `builtin  toolchain ruby -> group "ruby"`.
 
@@ -409,7 +413,7 @@ rules:
 minimumReleaseAge: 28 days
 minimumReleaseAgeBehaviour: timestamp-required
 rules:
-  - manager: custom # in-house datasources without release times are not held back
+  - managers: [custom] # in-house datasources without release times are not held back
     minimumReleaseAgeBehaviour: timestamp-optional
 ```
 
@@ -425,7 +429,7 @@ A dependency whose newest release is older than this is listed under **Abandoned
 ```yaml
 abandonmentThreshold: 2 years
 rules:
-  - manager: github-actions
+  - managers: [github-actions]
     abandonmentThreshold: 0
 ```
 
@@ -574,7 +578,7 @@ prHeader: |
   This PR updates {{if eq .Count 1}}{{.Name}}{{else}}{{.Count}} dependencies of {{.Name}}{{end}}.
 prFooter: '{{if .IsSecurity}}**Security update: please review soon.**{{end}}'
 rules:
-  - manager: github-actions
+  - managers: [github-actions]
     prTitle: 'ci: bump {{.Name}} from {{.From}} to {{.To}}'
 ```
 
@@ -600,9 +604,9 @@ Shell commands, Renovate's `postUpgradeTasks`, for generated code or formatting 
 
 ```yaml
 rules:
-  - manager: gomod
+  - managers: [gomod]
     postUpgradeTasks: ["go generate ./..."]
-  - manager: helm
+  - managers: [helm]
     postUpgradeTasks:
       commands: ['helm dependency update "$(dirname "$DEPS_PACKAGE_FILE")"']
       executionMode: update
@@ -697,32 +701,41 @@ rules:
 
 ## Config.rules
 
-A rule **matches** a dep when every selector it sets matches. The selectors are `manager`, `names`, `depTypes`, `paths`, `datasources`, `baseBranches`, `currentVersion`, `currentAge` and `updateTypes`; every other field is an action. Every field a matching rule sets **overrides** the value from earlier rules (field-wise); `updates` replaces the earlier list, it is not merged.
+A rule has two groups of fields:
+
+- **Match** fields select what the rule applies to: `managers`, `names`, `depTypes`, `paths`, `datasources`, `baseBranches`, `currentVersion`, `currentAge` and `updateTypes`. A rule **matches** a dep (or, with `updateTypes`, a candidate update of it) when every match field it sets matches; a list matches when any of its entries does. A rule without match fields matches every dep.
+- **Apply** fields override the policy of what the rule matches: every other field (`ignore`, `pin`, `allow`, `allowedUpdateTypes`, `rangeStrategy`, `versioning`, the `separate*` flags, `group`, `commitType`, `commitScope`, `schedule`, `dashboardApproval`, `minimumReleaseAge` and the `automerge*` fields). Every apply field a matching rule sets **overrides** the value from earlier rules (field-wise); `allowedUpdateTypes` replaces the earlier list, it is not merged.
+
+**Warnings.** `plan`, `apply`, `run` and `explain` warn on stderr (`warn    <path>: <field>: <msg>`) about rules that cannot have an effect: a rule without apply fields (or without any field), a `depTypes` entry no listed manager produces, a `datasources` entry no listed manager uses, and `depTypes` and `datasources` no dep has together (`managers: [gomod], depTypes: [devDependencies]` matches nothing: `devDependencies` are npm's). After resolving, `plan`, `apply` and `run` also warn about every rule that matched none of the repository's dependencies (`warn    rules[<i>] matched no dependency`), e.g. one for a manager the repository does not use or a misspelled name glob.
 
 **Evaluation.**
 
-1. The policy of a dep starts as `{pin: <top-level>, updates: all five types, schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm, cargo, poetry and bundler `dependencies`, pep621 `project.dependencies`, pipenv `packages`, elm `direct` and `dependencies`, julia `deps`) and `chore` otherwise, and the scope as `deps`.
+1. The policy of a dep starts as `{pin: <top-level>, allowedUpdateTypes: all five types, schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm, cargo, poetry and bundler `dependencies`, pep621 `project.dependencies`, pipenv `packages`, elm `direct` and `dependencies`, julia `deps`) and `chore` otherwise, and the scope as `deps`.
 2. **Default ignores.** Dep types `indirect` (Go, pip_requirements' transitive pins of compiled requirements files, which still get security updates, and Elm applications' indirect dependencies), `test-indirect` (Elm applications' indirect test dependencies), `go` (the go.mod `go` directive), `peerDependencies` and `engines` (npm), `submodule` (git-submodules, disabled by default as in Renovate) and `task` (azure-pipelines tasks: Renovate disables the manager, since a public task version may not be installed in the organization yet) are ignored unless a rule sets `ignore: false`. The skip reason is `ignored by default (<type>; enable with a rule setting ignore: false)`.
 3. **Built-in monorepo groups** set `group: <name> monorepo`, and the Ruby version deps `group: ruby` (unless [`monorepos: false`](#monorepos)).
 4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.
-5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
-6. The chosen update takes `group`, `schedule`, `dashboardApproval`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.
+5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `allowedUpdateTypes`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
+6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.
 
-`updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules and the resulting policy of a dep.
+`updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules, each as `match: <fields>; apply: <fields>`, and the resulting policy of a dep.
 
 ```yaml
 rules:
-  - manager: gomod                 # opt indirect requirements in
+  - managers: [gomod]              # opt indirect requirements in
     depTypes: [indirect]
     ignore: false
-  - manager: gomod                 # but never their majors
+  - managers: [gomod]              # but never their majors
     depTypes: [indirect]
     updateTypes: [major]
     ignore: true
-  - manager: github-actions        # minor+patch in one PR, majors apart
+  - managers: [github-actions]     # minor+patch in one PR, majors apart
     updateTypes: [minor, patch]
     group: GitHub Actions
 ```
+
+## Rule.managers
+
+Manager names as in [managers.md](managers.md); `custom` matches the deps of every `custom[]` entry. With exactly one manager listed, the JSON Schema offers only that manager's dep types for `depTypes`.
 
 ## Rule.names
 
@@ -787,9 +800,9 @@ See the top-level [`pin`](#pin). Applies to github-actions and docker deps; not 
 - A **regex** (`/^\d+\.\d+$/`, `!/-rc/`, `/^v1\./i`) matches the candidate *as written* (tag, image tag, module version) and never converts it. Only flag `i` exists.
 - Invalid values are config errors: `rules[i].allow: invalid constraint "<v>": …`, `invalid regex "/(/": …`, `unknown flags "g" (only i)`.
 
-## Rule.updates
+## Rule.allowedUpdateTypes
 
-When no rule sets it, all five update types are allowed.
+When no rule sets it, all five update types are allowed. A later matching rule replaces the list; `[]` allows none (security updates still apply).
 
 ## Rule.versioning
 
@@ -845,7 +858,7 @@ Dependabot's `groups.<name>.applies-to: security-updates`, Renovate's `vulnerabi
 ```yaml
 rules:
   - securityGroup: all           # security updates share deps/group/all-security (majors: all-major-security)...
-  - manager: gomod               # ...except Go's: later rules win
+  - managers: [gomod]            # ...except Go's: later rules win
     group: go
     securityGroup: go            # deps/group/go-security, apart from deps/group/go
 ```

@@ -12,9 +12,9 @@ var Doc = refdoc.Manager{
 		"`.devcontainer.json`, `.devcontainer/devcontainer.json`, `.devcontainer/<folder>/devcontainer.json`, at any depth",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeImage, What: "the top-level `image`", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: DepTypeFeature, What: "the keys of `features` that are OCI references (`ghcr.io/devcontainers/features/node:1`)", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: DepTypeFeatureVersion, What: "the `version` option (or a string option value) of the features `ghcr.io/devcontainers/features/node` (name `node`), `…/go` (`go`), `…/ruby` (`ruby`) and `…/python` (`python`, skipped)", Datasource: "`node-version`, `go-toolchain`, `ruby-version`", Versioning: "as [asdf](#asdf): `semver`/`tag` (node), `tag` (go), `ruby`/`tag` (ruby)"},
+		{Name: DepTypeImage, What: "the top-level `image`", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: DepTypeFeature, What: "the keys of `features` that are OCI references (`ghcr.io/devcontainers/features/node:1`)", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: DepTypeFeatureVersion, What: "the `version` option (or a string option value) of the features `ghcr.io/devcontainers/features/node` (name `node`), `…/go` (`go`), `…/ruby` (`ruby`) and `…/python` (`python`, skipped)", Versioning: "as [asdf](#asdf): `semver`/`tag` (node), `tag` (go), `ruby`/`tag` (ruby)", Datasources: []string{"node-version", "go-toolchain", "ruby-version"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "local feature", When: "a feature in a folder of the repository (`./my-feature`)"},

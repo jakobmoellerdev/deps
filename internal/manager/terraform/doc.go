@@ -12,16 +12,16 @@ var Doc = refdoc.Manager{
 		"JSON configuration ([JSON syntax](https://developer.hashicorp.com/terraform/language/syntax/json), e.g. CDK for Terraform's `cdk.tf.json`) is read into the same structure, so it gives the same deps.",
 	Files: []string{"`*.tf`, `*.tofu`, `*.tf.json`, `*.tofu.json` (not below a `.terraform` data directory)"},
 	DepTypes: append([]refdoc.DepType{
-		{Name: DepTypeProvider, What: "`terraform { required_providers { <name> = { source, version } } }`; a bare `<name> = \"<constraint>\"` means `hashicorp/<name>`", Datasource: "`terraform-provider`", Versioning: "`hashicorp`"},
-		{Name: DepTypeProviderBlock, What: "the legacy `version` of a `provider \"<name>\"` block; the source is the file's `required_providers` entry of that name, else `hashicorp/<name>`. Blocks without `version` are not deps.", Datasource: "`terraform-provider`", Versioning: "`hashicorp`"},
-		{Name: DepTypeModule, What: "`module` blocks: a registry `source` (`[host/]namespace/name/provider[//subdir]`) with its `version`, or a git `source` with `?ref=`", Datasource: "registry: `terraform-module`; git: `git-tags`", Versioning: "registry: `hashicorp`; git: `semver`, partial refs `tag`"},
-		{Name: DepTypeVersion, What: "`terraform { required_version }`", Datasource: "`github-releases` (`hashicorp/terraform`; `opentofu/opentofu` in `*.tofu` files)", Versioning: "`hashicorp`"},
-		{Name: DepTypeHelmRelease, What: "`chart`, `repository` and `version` of a `helm_release` resource (also `chart = \"oci://host/path/name\"`); only exact versions are rewritten, as with the helm manager", Datasource: "`helm`", Versioning: "`semver`"},
-		{Name: DepTypeTFEWorkspace, What: "`terraform_version` of a `tfe_workspace` resource", Datasource: "`github-releases` (`hashicorp/terraform`)", Versioning: "`hashicorp`"},
-		{Name: "docker_image", What: "`name` of a `docker_image` resource", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "docker_container", What: "`image` of a `docker_container` resource", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "docker_service", What: "`task_spec { container_spec { image } }` of a `docker_service` resource", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "docker_registry_image", What: "`name` of a `docker_registry_image` data source", Datasource: "`docker`", Versioning: "`docker`"},
+		{Name: DepTypeProvider, What: "`terraform { required_providers { <name> = { source, version } } }`; a bare `<name> = \"<constraint>\"` means `hashicorp/<name>`", Versioning: "`hashicorp`", Datasources: []string{"terraform-provider"}},
+		{Name: DepTypeProviderBlock, What: "the legacy `version` of a `provider \"<name>\"` block; the source is the file's `required_providers` entry of that name, else `hashicorp/<name>`. Blocks without `version` are not deps.", Versioning: "`hashicorp`", Datasources: []string{"terraform-provider"}},
+		{Name: DepTypeModule, What: "`module` blocks: a registry `source` (`[host/]namespace/name/provider[//subdir]`) with its `version`, or a git `source` with `?ref=`", Datasource: "registry: `terraform-module`; git: `git-tags`", Versioning: "registry: `hashicorp`; git: `semver`, partial refs `tag`", Datasources: []string{"terraform-module", "git-tags"}},
+		{Name: DepTypeVersion, What: "`terraform { required_version }`", Datasource: "`github-releases` (`hashicorp/terraform`; `opentofu/opentofu` in `*.tofu` files)", Versioning: "`hashicorp`", Datasources: []string{"github-releases"}},
+		{Name: DepTypeHelmRelease, What: "`chart`, `repository` and `version` of a `helm_release` resource (also `chart = \"oci://host/path/name\"`); only exact versions are rewritten, as with the helm manager", Versioning: "`semver`", Datasources: []string{"helm"}},
+		{Name: DepTypeTFEWorkspace, What: "`terraform_version` of a `tfe_workspace` resource", Datasource: "`github-releases` (`hashicorp/terraform`)", Versioning: "`hashicorp`", Datasources: []string{"github-releases"}},
+		{Name: "docker_image", What: "`name` of a `docker_image` resource", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "docker_container", What: "`image` of a `docker_container` resource", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "docker_service", What: "`task_spec { container_spec { image } }` of a `docker_service` resource", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "docker_registry_image", What: "`name` of a `docker_registry_image` data source", Versioning: "`docker`", Datasources: []string{"docker"}},
 	}, kubernetesDocs()...),
 	Skips: []refdoc.Skip{
 		{Reason: "unsupported constraint", When: "a value that is not `[op] <version>`, e.g. empty"},
@@ -87,7 +87,7 @@ var Doc = refdoc.Manager{
 func kubernetesDocs() []refdoc.DepType {
 	out := make([]refdoc.DepType, len(kubernetesWorkloadTypes))
 	for i, t := range kubernetesWorkloadTypes {
-		out[i] = refdoc.DepType{Name: t, What: "`image` of every `container` / `init_container` block of a `" + t + "` resource", Datasource: "`docker`", Versioning: "`docker`"}
+		out[i] = refdoc.DepType{Name: t, What: "`image` of every `container` / `init_container` block of a `" + t + "` resource", Versioning: "`docker`", Datasources: []string{"docker"}}
 	}
 	return out
 }
@@ -98,8 +98,8 @@ var VersionDoc = refdoc.Manager{
 	Summary: "Updates the Terraform version pinned in tfenv's `.terraform-version` file, or the OpenTofu version in tofuenv's `.opentofu-version` file (the first non-empty line).",
 	Files:   []string{"`.terraform-version`", "`.opentofu-version`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeVersionFile, What: "the version on the first non-empty line of `.terraform-version`", Datasource: "`github-releases` (`hashicorp/terraform`)", Versioning: "`hashicorp`"},
-		{Name: DepTypeOpenTofuVersionFile, What: "the version on the first non-empty line of `.opentofu-version`", Datasource: "`github-releases` (`opentofu/opentofu`)", Versioning: "`hashicorp`"},
+		{Name: DepTypeVersionFile, What: "the version on the first non-empty line of `.terraform-version`", Datasource: "`github-releases` (`hashicorp/terraform`)", Versioning: "`hashicorp`", Datasources: []string{"github-releases"}},
+		{Name: DepTypeOpenTofuVersionFile, What: "the version on the first non-empty line of `.opentofu-version`", Datasource: "`github-releases` (`opentofu/opentofu`)", Versioning: "`hashicorp`", Datasources: []string{"github-releases"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "non-version value", When: "tfenv/tofuenv keywords: `latest`, `latest:<regex>`, `min-required`, `latest-allowed`"},
@@ -115,7 +115,7 @@ var TFLintDoc = refdoc.Manager{
 	Summary: "Updates the versions of tflint ruleset plugins in `.tflint.hcl`. Plugins without a `source` are bundled with tflint and not extracted.",
 	Files:   []string{"`.tflint.hcl`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypePlugin, What: "`plugin \"<name>\" { source = \"github.com/<owner>/<repo>\", version = \"…\" }`; the name is `<owner>/<repo>` (`https://<host>/<owner>/<repo>` on other hosts)", Datasource: "`github-releases`", Versioning: "`semver`"},
+		{Name: DepTypePlugin, What: "`plugin \"<name>\" { source = \"github.com/<owner>/<repo>\", version = \"…\" }`; the name is `<owner>/<repo>` (`https://<host>/<owner>/<repo>` on other hosts)", Versioning: "`semver`", Datasources: []string{"github-releases"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "no version", When: "a plugin with a `source` but without `version`"},

@@ -11,11 +11,11 @@ var Doc = refdoc.Manager{
 		"and port version constraints (`version>=`, `overrides`) to the newest version in the registry's versions database at the baseline.",
 	Files: []string{"`vcpkg.json` at any depth", "`vcpkg-configuration.json` at any depth (it configures the `vcpkg.json` in the same directory)"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeBuiltinBaseline, What: "`vcpkg.json` `builtin-baseline`: a commit of `microsoft/vcpkg` (name `microsoft/vcpkg`, digest the commit)", Datasource: "`git-refs` (`HEAD`)", Versioning: "`tag`"},
-		{Name: DepTypeDefaultRegistry, What: "`default-registry.baseline` of `vcpkg-configuration.json` or the manifest's embedded `vcpkg-configuration`, of a `builtin` (`microsoft/vcpkg`) or `git` registry (`repository`, tracking `reference` or `HEAD`)", Datasource: "`git-refs`", Versioning: "`tag`"},
-		{Name: DepTypeRegistry, What: "`registries[].baseline` of a `builtin` or `git` registry, as `default-registry`; `artifact` registries are ignored", Datasource: "`git-refs`", Versioning: "`tag`"},
-		{Name: DepTypeDependencies, What: "`dependencies[]` objects with `version>=` (name the port; `1.3.1`, `1.3.1#2` with a port version); ports without a constraint are not deps", Datasource: "`vcpkg`", Versioning: "`regex` of up to four numeric parts separated by `.` or `-` and an optional `#<port-version>`"},
-		{Name: DepTypeOverrides, What: "`overrides[]` `version`, `version-semver` or `version-date` (`21.0.0#2` with a port version)", Datasource: "`vcpkg`", Versioning: "as `dependencies`"},
+		{Name: DepTypeBuiltinBaseline, What: "`vcpkg.json` `builtin-baseline`: a commit of `microsoft/vcpkg` (name `microsoft/vcpkg`, digest the commit)", Datasource: "`git-refs` (`HEAD`)", Versioning: "`tag`", Datasources: []string{"git-refs"}},
+		{Name: DepTypeDefaultRegistry, What: "`default-registry.baseline` of `vcpkg-configuration.json` or the manifest's embedded `vcpkg-configuration`, of a `builtin` (`microsoft/vcpkg`) or `git` registry (`repository`, tracking `reference` or `HEAD`)", Versioning: "`tag`", Datasources: []string{"git-refs"}},
+		{Name: DepTypeRegistry, What: "`registries[].baseline` of a `builtin` or `git` registry, as `default-registry`; `artifact` registries are ignored", Versioning: "`tag`", Datasources: []string{"git-refs"}},
+		{Name: DepTypeDependencies, What: "`dependencies[]` objects with `version>=` (name the port; `1.3.1`, `1.3.1#2` with a port version); ports without a constraint are not deps", Versioning: "`regex` of up to four numeric parts separated by `.` or `-` and an optional `#<port-version>`", Datasources: []string{"vcpkg"}},
+		{Name: DepTypeOverrides, What: "`overrides[]` `version`, `version-semver` or `version-date` (`21.0.0#2` with a port version)", Versioning: "as `dependencies`", Datasources: []string{"vcpkg"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "unrecognized repository", When: "a `git` registry `repository` is not an https/http/ssh/git or `git@host:path` URL with an owner/repo path"},

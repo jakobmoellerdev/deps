@@ -89,7 +89,7 @@ func TestLoadExtendsMerge(t *testing.T) {
 schedule: ["0 5 * * 1"]
 labels: [dependencies]
 rules:
-  - manager: gomod
+  - managers: [gomod]
     group: go
   - names: ["k8s.io/**"]
     group: k8s
@@ -103,7 +103,7 @@ customDatasources:
 extends: [org/presets//go.yaml]
 `
 	presets := `rules:
-  - manager: gomod
+  - managers: [gomod]
     updateTypes: [major]
     ignore: true
 ignorePaths: [vendor/**]
@@ -140,7 +140,7 @@ customDatasources:
 	var got []string
 	for _, r := range c.Rules {
 		file, line := r.Source()
-		got = append(got, fmt.Sprintf("%s:%d %s %s", file, line, r.Manager, strings.Join(r.Names, ",")))
+		got = append(got, fmt.Sprintf("%s:%d %s %s", file, line, strings.Join(r.Managers, ","), strings.Join(r.Names, ",")))
 	}
 	want := []string{
 		"org/presets//go.yaml:2 gomod ",
@@ -190,88 +190,99 @@ func TestLoadExtendsDefaultsAndDiamond(t *testing.T) {
 }
 
 func TestLoadExtendsErrors(t *testing.T) {
+	// Problems of an extended file are located at the local extends entry they came through;
+	// their message is the problem in the extended file.
 	for _, tt := range []struct {
 		name  string
 		local string
 		files map[string]string
-		msg   string // in the error
-		prob  Problem
+		want  []Problem // Path is the local file's base name
 	}{
 		{
 			name:  "cycle",
 			local: "extends: [org/a]\n",
 			files: map[string]string{"org/a//.deps.yaml": "extends: [org/b]\n", "org/b//.deps.yaml": "extends: [org/a]\n"},
-			msg:   "org/b//.deps.yaml: extends[0]: cycle: org/a//.deps.yaml -> org/b//.deps.yaml -> org/a//.deps.yaml",
-			prob:  Problem{Line: 1, Msg: "org/b//.deps.yaml: extends[0]: cycle: org/a//.deps.yaml -> org/b//.deps.yaml -> org/a//.deps.yaml"},
+			want:  []Problem{{Line: 1, Col: 11, Msg: "org/b//.deps.yaml:1:11: extends[0]: cycle: org/a//.deps.yaml -> org/b//.deps.yaml -> org/a//.deps.yaml"}},
 		},
 		{
 			name:  "unknown key in an extended file",
 			local: "pin: digest\nextends:\n  - org/a\n",
 			files: map[string]string{"org/a//.deps.yaml": "rules:\n  - managr: gomod\n"},
-			msg:   "org/a//.deps.yaml: yaml:",
-			prob:  Problem{Line: 3, Msg: "org/a//.deps.yaml:2: field managr not found in type config.Rule"},
+			want:  []Problem{{Line: 3, Col: 5, Msg: "org/a//.deps.yaml:2:5: rules[0].managr: unknown key (did you mean managers?)"}},
 		},
 		{
-			name:  "invalid rule in an extended file",
+			name:  "invalid rules in both files",
 			local: "extends:\n  - org/a\nrules:\n  - allow: '<<1'\n",
 			files: map[string]string{"org/a//.deps.yaml": "rules:\n  - group: x\n  - allow: '<<7'\n"},
-			msg:   "org/a//.deps.yaml: rules[1].allow:",
+			want: []Problem{
+				{Line: 2, Col: 5, Msg: `org/a//.deps.yaml:3:12: rules[1].allow: invalid constraint "<<7": improper constraint: "<<7"`},
+				{Line: 4, Col: 12, Field: "rules[0].allow", Msg: `invalid constraint "<<1": improper constraint: "<<1"`},
+			},
 		},
 		{
 			name:  "fetch failure",
 			local: "extends:\n  - org/missing#v1\n",
-			msg:   ".deps.yaml: extends[0]: org/missing//.deps.yaml#v1: not found",
-			prob:  Problem{Line: 2, Msg: "extends[0]: org/missing//.deps.yaml#v1: not found"},
+			want:  []Problem{{Line: 2, Col: 5, Field: "extends[0]", Msg: "org/missing//.deps.yaml#v1: not found"}},
 		},
 		{
 			name:  "bad entry",
 			local: "extends:\n  - nope\n",
-			msg:   "extends[0]: repository \"nope\" must be owner/name",
-			prob:  Problem{Line: 2, Msg: "extends[0]: repository \"nope\" must be owner/name or a git URL"},
+			want:  []Problem{{Line: 2, Col: 5, Field: "extends[0]", Msg: `repository "nope" must be owner/name or a git URL`}},
 		},
 		{
 			name:  "bad entry in an extended file",
 			local: "extends:\n  - org/a\n",
 			files: map[string]string{"org/a//.deps.yaml": "extends: ['x#']\n"},
-			prob:  Problem{Line: 2, Msg: "org/a//.deps.yaml: extends[0]: invalid ref \"\" after '#'"},
+			want:  []Problem{{Line: 2, Col: 5, Msg: `org/a//.deps.yaml:1:11: extends[0]: invalid ref "" after '#'`}},
+		},
+		{
+			name:  "syntax error in an extended file",
+			local: "pinn: digest\nextends:\n  - org/a\n",
+			files: map[string]string{"org/a//.deps.yaml": "rules: [\n"},
+			want: []Problem{
+				{Line: 1, Col: 1, Field: "pinn", Msg: "unknown key (did you mean pin?)"},
+				{Line: 3, Col: 5, Msg: "org/a//.deps.yaml:2:1: did not find expected node content"},
+			},
+		},
+		{
+			name:  "Renovate preset",
+			local: "extends: [config:recommended, org/a]\n",
+			files: map[string]string{"org/a//.deps.yaml": "rules: [{managers: [gomod], allow: '<<1'}]\n"},
+			want: []Problem{{Line: 1, Col: 11, Field: "extends[0]", Msg: `repository "config:recommended" must be owner/name or a git URL` +
+				" (Renovate presets are not supported; the common ones are built in, see docs/migrating-from-renovate.md#presets)"}},
 		},
 		{
 			name:  "not a list",
 			local: "extends: org/a\n",
-			msg:   "cannot construct",
+			want:  []Problem{{Line: 1, Col: 10, Field: "extends", Msg: `want a list, got "org/a"`}},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, _, err := loadExtends(t, tt.local, tt.files)
-			var ce *Error
-			if !errors.As(err, &ce) {
+			ce, ok := errors.AsType[*Error](err)
+			if !ok {
 				t.Fatalf("err = %v, want *Error", err)
 			}
-			if !strings.Contains(err.Error(), tt.msg) {
-				t.Errorf("err = %v, want it to contain %q", err, tt.msg)
+			var got []Problem
+			for _, p := range ce.Problems() {
+				q := *p
+				q.Path = filepath.Base(q.Path)
+				got = append(got, q)
 			}
-			if !strings.HasSuffix(ce.File, ".deps.yaml") {
-				t.Errorf("File = %q, want the local file", ce.File)
+			for i := range tt.want {
+				tt.want[i].Path = ".deps.yaml"
 			}
-			if tt.prob != (Problem{}) && !slices.Contains(ce.Problems, tt.prob) {
-				t.Errorf("problems = %+v, want %+v", ce.Problems, tt.prob)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("problems =\n%+v\nwant\n%+v", got, tt.want)
 			}
 		})
-	}
-	// Problems of both files: the local one at its line (its own index), the extended one
-	// at the extends entry.
-	_, _, err := loadExtends(t, "extends:\n  - org/a\nrules:\n  - allow: '<<1'\n", map[string]string{"org/a//.deps.yaml": "rules:\n  - group: x\n  - allow: '<<7'\n"})
-	var ce *Error
-	if !errors.As(err, &ce) || len(ce.Problems) != 2 || ce.Problems[0].Line != 2 || ce.Problems[1].Line != 4 ||
-		!strings.HasPrefix(ce.Problems[0].Msg, "org/a//.deps.yaml: rules[1].allow:") || !strings.HasPrefix(ce.Problems[1].Msg, "rules[0].allow:") {
-		t.Errorf("problems = %+v", ce)
 	}
 	// Without a fetcher extends is an error.
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".deps.yaml"), []byte("extends: [org/a]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(t.Context(), dir, "", nil); err == nil || !strings.Contains(err.Error(), "not supported") {
+	if _, err := Load(t.Context(), dir, "", nil); err == nil || !strings.Contains(err.Error(), "extends[0]: extends is not supported by this command") {
 		t.Errorf("nil fetcher: %v", err)
 	}
 }
@@ -311,7 +322,7 @@ func gitRepo(t *testing.T, files map[string]string) string {
 }
 
 func TestGitFetcher(t *testing.T) {
-	u := gitRepo(t, map[string]string{".deps.yaml": "pin: digest\n", "presets/go.yaml": "rules: [{manager: gomod, group: go}]\n"})
+	u := gitRepo(t, map[string]string{".deps.yaml": "pin: digest\n", "presets/go.yaml": "rules: [{managers: [gomod], group: go}]\n"})
 	g := &GitFetcher{}
 	for _, tt := range []struct {
 		e    Extend
@@ -319,8 +330,8 @@ func TestGitFetcher(t *testing.T) {
 		err  string
 	}{
 		{e: Extend{Repo: u, Path: ".deps.yaml"}, want: "pin: digest\n"},
-		{e: Extend{Repo: u, Path: "presets/go.yaml", Ref: "v1"}, want: "rules: [{manager: gomod, group: go}]\n"},
-		{e: Extend{Repo: u, Path: "presets/go.yaml", Ref: "main"}, want: "rules: [{manager: gomod, group: go}]\n"},
+		{e: Extend{Repo: u, Path: "presets/go.yaml", Ref: "v1"}, want: "rules: [{managers: [gomod], group: go}]\n"},
+		{e: Extend{Repo: u, Path: "presets/go.yaml", Ref: "main"}, want: "rules: [{managers: [gomod], group: go}]\n"},
 		{e: Extend{Repo: u, Path: "missing.yaml"}, err: "no file missing.yaml at HEAD of " + u},
 		{e: Extend{Repo: u, Path: ".deps.yaml", Ref: "nope"}, err: "fetch " + u + " nope"},
 		{e: Extend{Repo: "org/cfg", Path: ".deps.yaml"}, err: "no forge to resolve owner/name against"},

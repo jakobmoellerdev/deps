@@ -10,7 +10,7 @@ var Doc = refdoc.Manager{
 	Summary: "Updates the `rev` of the hook repositories in pre-commit configurations, plain tags and SHAs frozen by `pre-commit autoupdate --freeze`.",
 	Files:   []string{"`.pre-commit-config.yaml` / `.pre-commit-config.yml` at any depth"},
 	DepTypes: []refdoc.DepType{
-		{Name: "repository", What: "`repos[]` entry with `repo` and `rev`; the name is the URL path (`owner/repo`), the source its `https://` URL without `.git`", Datasource: "`git-tags`", Versioning: "`tag`"},
+		{Name: "repository", What: "`repos[]` entry with `repo` and `rev`; the name is the URL path (`owner/repo`), the source its `https://` URL without `.git`", Versioning: "`tag`", Datasources: []string{"git-tags"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "local repository", When: "`repo: local`"},

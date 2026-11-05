@@ -34,7 +34,7 @@ func TestPreview(t *testing.T) {
 	// The PR ignores gomod and groups the checkout updates under a new name.
 	writeFiles(t, pr, map[string]string{
 		".github/workflows/ci.yml": workflow, "go.mod": gomodSrc,
-		".deps.yaml": "rules:\n  - manager: gomod\n    ignore: true\n  - names: [actions/checkout]\n    group: checkout\n",
+		".deps.yaml": "rules:\n  - managers: [gomod]\n    ignore: true\n  - names: [actions/checkout]\n    group: checkout\n",
 	})
 	event := filepath.Join(work, "event.json")
 	if err := os.WriteFile(event, []byte(`{"pull_request":{"head":{"sha":"abc123"}}}`), 0o644); err != nil {

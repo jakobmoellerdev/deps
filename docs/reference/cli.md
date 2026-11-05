@@ -12,8 +12,6 @@ deps finds the dependencies of a repository (GitHub/Gitea/Forgejo Actions, Go mo
 
 The configuration is read from `.deps.yaml` (or `.deps.yml`) in `--dir`; `deps schema` prints its JSON Schema. With `--renovate`, the repository's Renovate config is translated instead (`deps migrate` writes that translation to `.deps.yaml`). Results go to stderr, diffs and explanations to stdout. See `deps help output`, `deps help environment` and `deps help exit-codes`.
 
-Hidden flags for profiling: `--cpuprofile <file>` writes a CPU profile, and `--memprofile <file>` writes an allocation profile on exit (pprof format).
-
 ## Commands
 
 | Command | Description |
@@ -24,7 +22,12 @@ Hidden flags for profiling: `--cpuprofile <file>` writes a CPU profile, and `--m
 | [`deps completion fish`](#deps-completion-fish) | Generate the autocompletion script for fish |
 | [`deps completion powershell`](#deps-completion-powershell) | Generate the autocompletion script for powershell |
 | [`deps completion zsh`](#deps-completion-zsh) | Generate the autocompletion script for zsh |
+| [`deps config`](#deps-config) | Check, show and describe the configuration (.deps.yaml) |
+| [`deps config check`](#deps-config-check) | Validate the configuration offline, e.g. in a pre-commit hook |
+| [`deps config describe`](#deps-config-describe) | Describe the configuration keys, or one key in full |
+| [`deps config show`](#deps-config-show) | Print the effective configuration with defaults filled in |
 | [`deps explain`](#deps-explain) | Explain the rules, candidates and decision for each matching dependency |
+| [`deps init`](#deps-init) | Write a starter .deps.yaml, optionally translated from a Renovate config |
 | [`deps migrate`](#deps-migrate) | Translate the Renovate config into .deps.yaml |
 | [`deps plan`](#deps-plan) | Print the updates as a unified diff without writing files |
 | [`deps preview`](#deps-preview) | Compare the PRs a pull request's checkout would get with those of the base branch |
@@ -43,14 +46,8 @@ Every command accepts these flags.
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--color` | string | `"auto"` | color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never |
-| `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
-| `--config` | string | `""` | config file, which must exist (default: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
-| `--dir` | string | `"."` | repository directory to scan |
-| `--log-format` | string | `"auto"` | log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups); $DEPS_LOG_FORMAT replaces the default |
-| `--log-level` | string | `"warn"` | log level: debug, info, warn, error; $DEPS_LOG_LEVEL, then $RUNNER_DEBUG=1 (debug) replace the default |
-| `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
-| `--report` | string | `""` | plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT) |
-| `-v, --verbose` | bool | `false` | also print skipped dependencies (skip lines) |
+| `--log-format` | string | `"auto"` | log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups) |
+| `--log-level` | string | `""` | log level: debug, info, warn, error (when not set: debug with $RUNNER_DEBUG=1, else warn) |
 
 ## deps apply
 
@@ -78,7 +75,13 @@ deps apply && git diff --stat
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--allow-tasks` | strings | `[]` | postUpgradeTasks command allowed to run, `*` matching any text but ; & \| ` $( and line breaks, e.g. `go generate ./...`, `make *` or `*` (repeatable); they run repository code on this machine (default: $DEPS_ALLOW_TASKS, one per line) |
+| `--allow-tasks` | strings | `[]` | postUpgradeTasks command allowed to run, `*` matching any text but ; & \| ` $( and line breaks, e.g. `go generate ./...`, `make *` or `*` (repeatable); they run repository code on this machine |
+| `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
+| `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
+| `--dir` | string | `"."` | repository directory to scan |
+| `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
+| `--report` | string | `""` | also write the result as JSON to this file (see deps help output) |
+| `--show-skipped` | bool | `false` | also print skipped dependencies (skip lines) |
 
 ## deps completion
 
@@ -199,12 +202,147 @@ To load completions for every new session, execute once:
 
 You will need to start a new shell for this setup to take effect.
 
+## deps config
+
+Check, show and describe the configuration (.deps.yaml).
+
+```
+deps config [command]
+```
+
+Works on the configuration without resolving any dependency and without network access: `check` validates it, `show` prints the effective values and `describe` documents the keys. `check` and `show` read the file `plan` would read (`--dir`, `--config`).
+
+Subcommands:
+
+- [`deps config check`](#deps-config-check): Validate the configuration offline, e.g. in a pre-commit hook
+- [`deps config describe`](#deps-config-describe): Describe the configuration keys, or one key in full
+- [`deps config show`](#deps-config-show): Print the effective configuration with defaults filled in
+
+## deps config check
+
+Validate the configuration offline, e.g. in a pre-commit hook.
+
+```
+deps config check [flags]
+```
+
+Loads and validates the config file as `plan` does, offline: strict decoding (unknown keys are errors), every value, glob, constraint, schedule and template. It prints `<path>: ok` and exits 0, or prints every problem and exits 2. Without a config file it reports that the built-in defaults apply and exits 0.
+
+Static warnings, such as rules that can never match, go to stderr as `warn    <path>: <field>: <msg>` and do not change the exit code.
+
+Because it needs no token, network or checkout history, it fits a pre-commit hook. With [pre-commit](https://pre-commit.com):
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: local
+    hooks:
+      - id: deps-config-check
+        name: deps config check
+        entry: deps config check
+        language: system
+        files: ^\.deps\.ya?ml$
+        pass_filenames: false
+```
+
+As a plain git hook, `.git/hooks/pre-commit`:
+
+```sh
+#!/bin/sh
+exec deps config check
+```
+
+For a config elsewhere, add `--config <file>` to the entry and adjust `files`.
+
+### deps config check examples
+
+```sh
+deps config check
+deps config check --config .github/deps.yaml
+```
+
+### deps config check flags
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults) |
+| `--dir` | string | `"."` | repository directory to scan |
+
+## deps config describe
+
+Describe the configuration keys, or one key in full.
+
+```
+deps config describe [key]
+```
+
+Without a key, lists every configuration key, one per line, with the first sentence of its description. Nested keys are paths: `actions.defaultHost`, `rules[].allow`, `custom[].checksum.asset`, `customDatasources.<name>.url`.
+
+With a key, prints its type, default, allowed values and limits, then its full description, as plain text (the content of the [configuration reference](configuration.md), from the same schema). A key is accepted as listed or as it appears in error messages: `rules.allow`, `rules[].allow` and `rules[2].allow` are the same key, and so are `customDatasources.<name>.url` and `customDatasources.envtest.url`.
+
+An unknown key exits 2 and suggests the closest key, or the keys ending in it (`allow` suggests `rules[].allow`).
+
+### deps config describe examples
+
+```sh
+deps config describe
+deps config describe rules[].allow
+deps config describe customDatasources.<name>.versions
+```
+
+## deps config show
+
+Print the effective configuration with defaults filled in.
+
+```
+deps config show [flags]
+```
+
+Prints the effective configuration as YAML: every top-level key in schema order, with the value of the config file or else its default (`pin: keep`, `branchPrefix: deps/`, the default `ignorePaths`, …). Rules, custom managers and custom datasources are printed as written, with the defaults of their unset keys (`custom[].versioning: semver`, `customDatasources.<name>.format: json`) added. A leading comment names the file, or says that the built-in defaults apply.
+
+Four values are shown as the commands resolve them:
+
+- `gitAuthor` is the commit author of `run`: `--author-name`/`--author-email` (accepted here too), then `$DEPS_GIT_AUTHOR`, then the file, then `deps[bot] <deps-bot@noreply.invalid>`.
+- `actions.defaultHost` is the host of `owner/repo@ref` actions: the file, then the host of `$DEPS_DEFAULT_ACTIONS_URL`, then the platform default (`data.forgejo.org` on Forgejo Actions, else `github.com`).
+- `platformCommit` is `$DEPS_PLATFORM_COMMIT` when set, else the file, else `auto`.
+- `gitlabci.url` is the GitLab instance of the `gitlabci` manager: the file, then `$CI_SERVER_URL`, then `https://gitlab.com`.
+
+`--sources` appends where each value comes from as a comment: `default`, `file`, `env` or `flag`. Nested objects (`actions`, `gitlabci`, `terraform`, `lockFileMaintenance`) are annotated per key:
+
+```yaml
+# effective configuration of /repo/.deps.yaml
+version: 1 # default
+pin: digest # file
+...
+gitAuthor: bot <bot@example.com> # env
+...
+actions:
+  defaultHost: github.com # default
+```
+
+### deps config show examples
+
+```sh
+deps config show
+DEPS_GIT_AUTHOR='bot <bot@example.com>' deps config show --sources
+```
+
+### deps config show flags
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--author-email` | string | `""` | commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps-bot@noreply.invalid) |
+| `--author-name` | string | `""` | commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps[bot]) |
+| `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults) |
+| `--dir` | string | `"."` | repository directory to scan |
+| `--sources` | bool | `false` | annotate each value with where it comes from: default, file, env or flag |
+
 ## deps explain
 
 Explain the rules, candidates and decision for each matching dependency.
 
 ```
-deps explain <name-glob>...
+deps explain <name-glob>... [flags]
 ```
 
 Resolves only the dependencies whose name matches any of the doublestar globs (the syntax of rule `names`, for example `'actions/*'` or `'k8s.io/*'`) and prints, per occurrence, the matching rules, the effective policy, the rejected candidates by reason and the resulting update. The report goes to stdout, one block per occurrence:
@@ -213,7 +351,7 @@ Resolves only the dependencies whose name matches any of the doublestar globs (t
 actions/checkout  .gitea/workflows/ci.yml:10  (github-actions, action, git-tags, tag)
   current   v7.0.1
   rules     none
-  policy    pin=keep allow=- updates=major,minor,patch,digest,pin group=- schedule=always minAge=-
+  policy    pin=keep allow=- allowedUpdateTypes=major,minor,patch,digest,pin group=- schedule=always minAge=-
   candidates 68
   rejected  not newer: 58 (v7.0.1, v7.0.0, v6.1.0, ...)  precision: 7 (v7, v6, v5, ...)  invalid: 2 (v2-beta, v6-beta)  prefix: 1 (1.0.0)
   result    up to date
@@ -221,7 +359,7 @@ actions/checkout  .gitea/workflows/ci.yml:10  (github-actions, action, git-tags,
 github.com/spf13/pflag  go.mod:28  (gomod, indirect, go, go)
   current   v1.0.10
   rules     none
-  policy    pin=keep allow=- updates=major,minor,patch,digest,pin group=- schedule=always minAge=-
+  policy    pin=keep allow=- allowedUpdateTypes=major,minor,patch,digest,pin group=- schedule=always minAge=-
   result    skipped: ignored by default (indirect; enable with a rule setting ignore: false)
 ```
 
@@ -229,13 +367,13 @@ The header names the manager, dep type, datasource and versioning. The other lin
 
 - `age       released <date>` follows `current` when a `currentAge` rule needed the release time of the current version; `age       unknown (currentAge rules do not match)` when the datasource does not know it.
 - `builtin   monorepo <name> -> group "<name> monorepo"` appears for monorepo members.
-- `rules` lists the matching rules as `#<i> <fields> (from <file>:<line>)`, or `none` when no rule matched. `<i>` counts the rules of the whole config, those of `extends` first; `<file>` is where the rule is written: the config file (`.deps.yaml`, or the `--config` path), or an extended file as `<repo>//<path>[#<ref>]` (`(from org/deps-config//.deps.yaml:12)`). Rules with `updateTypes` that applied to an update follow as `#<i> <fields> (applies to <type>, from <file>:<line>)`.
-- `policy` is followed by one `<type>: <policy>` line per such type. `versioning=` is appended when a rule set it.
+- `rules` lists the matching rules as `#<i> match: <fields>; apply: <fields> (from <file>:<line>)` (the match fields it sets, `all` when none, then the apply fields it sets), or `none` when no rule matched, for example `#2 match: managers=[gomod] depTypes=[indirect]; apply: ignore=false (from .deps.yaml:12)`. `<i>` counts the rules of the whole config, those of `extends` first; `<file>` is where the rule is written: the config file (`.deps.yaml`, or the `--config` path), or an extended file as `<repo>//<path>[#<ref>]` (`(from org/deps-config//.deps.yaml:12)`). Rules with `updateTypes` that applied to an update follow as `#<i> match: <fields>; apply: <fields> (applies to <type>, from <file>:<line>)`.
+- `policy` is the effective result of the apply fields: `pin`, `allow`, `allowedUpdateTypes`, `group`, `schedule` and `minAge`; `versioning=`, `rangeStrategy=` and `automerge=` are appended when set. It is followed by one `<type>: <policy>` line per type that `updateTypes` rules applied to.
 - `rejected` groups versions by reason, most frequent first, with up to 3 newest examples each. Reasons include `ignored by rule #4 for major`, `outside allow /^\d+\.\d+$/`, `update type major not allowed`, `too new (released 2026-11-01, minimum 28 days)`, `release time unknown (minimum 28 days, timestamp-required)`, `older than current`, `above latest` (npm: a major above `dist-tags.latest`'s), `prerelease`, `precision` and `not newer`. The policy's `minAge=` reads `28 days (timestamp-required)` under `minimumReleaseAgeBehaviour: timestamp-required`.
 - `result` reads `skipped: <reason>`, `error: <err>`, `up to date`, or one `update` line per PR bucket, for example `update v6.0.0 -> v7.0.1 (major, bucket major)`.
 - Each advisory is printed as `security  <id>  <summary>  <url>`.
 
-Errors go to stderr as `error   <msg>`. A glob that matches no dependency fails with `no dependency matches <globs>` (exit 1). No globs, or an invalid glob, exits 2.
+Config warnings (`warn    <config>: <field>: <msg>`) and errors go to stderr; see `deps help output`. A glob that matches no dependency fails with `no dependency matches <globs>` (exit 1). No globs, or an invalid glob, exits 2.
 
 ### deps explain examples
 
@@ -243,6 +381,46 @@ Errors go to stderr as `error   <msg>`. A glob that matches no dependency fails 
 deps explain 'actions/*'
 deps explain 'k8s.io/**' github.com/spf13/cobra
 ```
+
+### deps explain flags
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
+| `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
+| `--dir` | string | `"."` | repository directory to scan |
+| `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
+
+## deps init
+
+Write a starter .deps.yaml, optionally translated from a Renovate config.
+
+```
+deps init [flags]
+```
+
+Writes a starter config to `<dir>/.deps.yaml` (or the file named by `--config`). An existing `.deps.yaml` or `.deps.yml` is only replaced with `--force`. The file starts with a `# yaml-language-server: $schema=` line for editor completion: the `deps.schema.json` asset of the running release (`https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/<tag>/deps.schema.json`), or the main branch's copy for development builds. Then come comments listing the managers that found dependencies in `--dir` (an offline scan: files are read, nothing is looked up), and `version: 1`.
+
+`--from-renovate <file>` adds the translation of a Renovate config to the new file: the same translation as `deps migrate` and compatibility mode (`--renovate`), see `deps help migrate` and [Migrating from Renovate](../migrating-from-renovate.md). JSON, JSONC and JSON5 are accepted, and its `extends` presets are resolved. Settings deps cannot express are printed on stderr as `warn    <setting>: <msg>` and left out.
+
+The written file is validated like `deps config check`; when it does not validate, the command fails with the problems (exit 2) and leaves the file for fixing.
+
+### deps init examples
+
+```sh
+deps init
+deps init --from-renovate renovate.json
+deps init --dir ../service --force
+```
+
+### deps init flags
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults) |
+| `--dir` | string | `"."` | repository directory to scan |
+| `--force` | bool | `false` | overwrite an existing config file |
+| `--from-renovate` | string | `""` | translate this Renovate config (JSON, e.g. renovate.json) into the new file |
 
 ## deps migrate
 
@@ -256,7 +434,7 @@ Translates the repository's Renovate config into a `.deps.yaml` and writes it to
 
 The config is the first of `renovate.json`, `renovate.jsonc`, `renovate.json5`, the same names under `.github/`, `.gitlab/`, `.gitea/` and `.forgejo/`, `.renovaterc`, `.renovaterc.json(c|5)` and the `renovate` key of `package.json`; `--config` names it explicitly. JSON, JSONC and JSON5 are accepted. Its `extends` presets are resolved: Renovate's built-in presets from a table, `github>`, `gitlab>`, `gitea>`, `forgejo>` and `local>` presets by fetching them (credentials as for lookups, see `deps help environment`).
 
-`deps plan|apply|run|explain --renovate` run the same translation in memory, so a migrated file behaves exactly like compatibility mode. Settings deps cannot express are listed on stderr as `warn    <setting>: <msg>`, settings without effect on which updates or PRs exist as `info    <setting>: <msg>` (with `-v`); both also head the written file as comments.
+`deps plan|apply|run|explain --renovate` run the same translation in memory, so a migrated file behaves exactly like compatibility mode. Settings deps cannot express are listed on stderr as `warn    <setting>: <msg>`, settings without effect on which updates or PRs exist as `info    <setting>: <msg>` (with `--verbose`); both also head the written file as comments.
 
 - The branch prefix follows Renovate (`renovate/` by default): `deps run` closes open PRs under it that it does not manage, so turn Renovate off before the first run.
 - Schedules and `timezone` are kept: deps evaluates Renovate's time windows (`before 6am on monday`, `* 0-5 * * 1`) against the run time. The workflow must run inside every window, e.g. hourly; the summary lists the windows.
@@ -275,15 +453,19 @@ deps migrate --config .github/renovate.json5 --output -
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
+| `--config` | string | `""` | Renovate config file, which must exist (when not set: the first Renovate config file in \<dir>, see below) |
+| `--dir` | string | `"."` | repository directory to scan |
 | `--force` | bool | `false` | overwrite an existing output file |
-| `--output` | string | `""` | file to write (default: \<dir>/.deps.yaml; - writes to stdout) |
+| `--output` | string | `""` | file to write (when not set: \<dir>/.deps.yaml; - writes to stdout) |
+| `--verbose` | bool | `false` | also print the info notes (settings without effect on which updates or PRs exist) |
 
 ## deps plan
 
 Print the updates as a unified diff without writing files.
 
 ```
-deps plan
+deps plan [flags]
 ```
 
 Resolves every dependency and prints the report on stderr (see `deps help output`). Then writes a unified diff per changed file to stdout (`a/<path>` → `b/<path>`); `git apply` accepts it. Nothing is written to the repository.
@@ -298,9 +480,20 @@ The platform is only detected from CI environment variables. Locally, lookups ru
 
 ```sh
 deps plan > deps.diff && git apply --check deps.diff
-deps plan -v --dir ../other-repo
+deps plan --show-skipped --dir ../other-repo
 deps plan --config ci/deps.yaml --log-level info
 ```
+
+### deps plan flags
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
+| `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
+| `--dir` | string | `"."` | repository directory to scan |
+| `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
+| `--report` | string | `""` | also write the result as JSON to this file (see deps help output) |
+| `--show-skipped` | bool | `false` | also print skipped dependencies (skip lines) |
 
 ## deps preview
 
@@ -341,6 +534,10 @@ deps preview --dir pr --base-dir base
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--base-dir` | string | `""` | checkout of the base branch to compare with (required) |
+| `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
+| `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
+| `--dir` | string | `"."` | repository directory to scan |
+| `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
 
 ## deps run
 
@@ -430,33 +627,39 @@ Only keys without a passphrase are supported; a protected key fails before any w
 
 ```sh
 # what would happen, without a token and without writes
-deps run --dry-run -v
+deps run --dry-run --show-skipped
 # what the run triggered by the Sunday cron would do
 deps run --dry-run --trigger-schedule '0 0 * * 0'
 # what a run on Monday 05:30 UTC would do with schedule time windows
 deps run --dry-run --schedule-time 2026-11-09T05:30:00Z
 # in CI (the action runs this with DEPS_TOKEN set)
-DEPS_TOKEN=$TOKEN deps run -v --log-level info
+DEPS_TOKEN=$TOKEN deps run --show-skipped --log-level info
 ```
 
 ### deps run flags
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--allow-tasks` | strings | `[]` | postUpgradeTasks command allowed to run, `*` matching any text but ; & \| ` $( and line breaks, e.g. `go generate ./...`, `make *` or `*` (repeatable); they run repository code on this machine (default: $DEPS_ALLOW_TASKS, one per line) |
+| `--allow-tasks` | strings | `[]` | postUpgradeTasks command allowed to run, `*` matching any text but ; & \| ` $( and line breaks, e.g. `go generate ./...`, `make *` or `*` (repeatable); they run repository code on this machine |
 | `--api-url` | string | `""` | API base URL (default: detected) |
-| `--author-email` | string | `"deps-bot@noreply.invalid"` | commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default) |
-| `--author-name` | string | `"deps[bot]"` | commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default) |
+| `--author-email` | string | `""` | commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps-bot@noreply.invalid) |
+| `--author-name` | string | `""` | commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps[bot]) |
 | `--base` | string | `""` | base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch) |
+| `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
+| `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
+| `--dir` | string | `"."` | repository directory to scan |
 | `--dry-run` | bool | `false` | report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token |
 | `--max-new-prs` | int | `10` | maximum number of pull requests to create per run (0 = unlimited) |
 | `--platform` | string | `"auto"` | forge type: auto\|github\|gitea\|forgejo\|gitlab (auto: from the CI environment, else the origin remote) |
+| `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
 | `--repo` | string | `""` | repository owner/name, or the GitLab project path (default: detected) |
-| `--repositories` | strings | `[]` | run on these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, or owner/\<glob> (e.g. `my-org/*`, `my-org/svc-*`) for the repositories of an organization or user the token can list (not on GitLab), without archived ones and mirrors (repeatable, comma-separated; default: $DEPS_REPOSITORIES, separated by whitespace or commas) |
-| `--schedule-time` | string | `""` | evaluate schedule time windows at this RFC 3339 time instead of now, e.g. 2026-11-09T05:30:00+01:00 (default: $DEPS_SCHEDULE_TIME) |
-| `--signing-key` | string | `""` | sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (default: $DEPS_SIGNING_KEY) |
-| `--token` | string | `""` | platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, $GITLAB_TOKEN, git credential helper) |
-| `--trigger-schedule` | string | `""` | act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE) |
+| `--report` | string | `""` | also write the result as JSON to this file (see deps help output) |
+| `--repositories` | strings | `[]` | run on these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, or owner/\<glob> (e.g. `my-org/*`, `my-org/svc-*`) for the repositories of an organization or user the token can list (not on GitLab), without archived ones and mirrors (repeatable, comma-separated) |
+| `--schedule-time` | string | `""` | evaluate schedule time windows at this RFC 3339 time instead of now, e.g. 2026-11-09T05:30:00+01:00 |
+| `--show-skipped` | bool | `false` | also print skipped dependencies (skip lines) |
+| `--signing-key` | string | `""` | sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (when not set: unsigned) |
+| `--token` | string | `""` | platform API token; git pushes use the checkout's credentials (when not set: $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, $GITLAB_TOKEN, then the git credential helper) |
+| `--trigger-schedule` | string | `""` | act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH |
 
 ## deps schema
 
@@ -466,14 +669,14 @@ Print the JSON Schema (draft 2020-12) of .deps.yaml.
 deps schema
 ```
 
-Prints the JSON Schema of `.deps.yaml`, reflected from the config types, with every key's description (`markdownDescription` holds the long form editors show on hover). Unknown keys are rejected (`additionalProperties: false`), as in the loader. The repository's `deps.schema.json` is this output.
+Prints the JSON Schema of `.deps.yaml`, reflected from the config types, with every key's description (`markdownDescription` holds the long form editors show on hover). Unknown keys are rejected (`additionalProperties: false`), as in the loader. The repository's `deps.schema.json` is this output. `$id` is the schema's URL for this version: the `deps.schema.json` asset of the release (`dev` builds: the file on main).
 
 ### deps schema examples
 
 ```sh
 deps schema > deps.schema.json
-# then start .deps.yaml with:
-# yaml-language-server: $schema=./deps.schema.json
+# then start .deps.yaml with the schema of your deps version (`deps version`):
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/<version>/deps.schema.json
 ```
 
 ## deps submit
@@ -510,7 +713,11 @@ deps submit --dry-run > snapshot.json
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all-managers` | bool | `false` | also submit the manifests GitHub reads by itself (go.mod, package.json, Python, Cargo, pom.xml, workflows); a submitted manifest replaces GitHub's own view of that file |
+| `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
+| `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
+| `--dir` | string | `"."` | repository directory to scan |
 | `--dry-run` | bool | `false` | print the snapshot JSON to stdout instead of submitting it; works outside GitHub Actions |
+| `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
 
 ## deps version
 
@@ -526,6 +733,8 @@ Prints the version set at build time with `-ldflags "-X main.version=<v>"` (`dev
 
 Environment variables deps reads. Also shown by `deps help environment`.
 
+Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` as `_`: `--max-new-prs` is `DEPS_MAX_NEW_PRS`) when it is not given on the command line; an invalid value exits 2 naming the variable. Those variables are listed after the others.
+
 | Variable | Used by | Meaning |
 |---|---|---|
 | `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN` | all | platform token, first non-empty wins; `run --token` takes precedence. `run` falls back to `git credential fill` for the platform host, and without any token fails with `no token for <host>` (except `--dry-run`). Sent to the platform host's lookups as Basic `x-access-token:<token>` (`oauth2:<token>` on GitLab). |
@@ -539,17 +748,12 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG` | `terraform-provider`, `terraform-module` datasources | Terraform CLI config read for registry `credentials` blocks and the `credentials_helper`, replacing `~/.terraformrc` (`%APPDATA%/terraform.rc`); when set, the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` (`credentials.tfrc.json`) are not read. `TERRAFORM_CONFIG` is the legacy name |
 | `HOME`, `APPDATA` (Windows) | `terraform-provider`, `terraform-module` datasources | where the Terraform CLI config, `credentials.tfrc.json` and credentials helpers (`.terraform.d/plugins`) are found |
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor`; ignored for platform commits |
-| `DEPS_SIGNING_KEY` | `run` | default of `--signing-key`: a passphrase-less OpenSSH or armored OpenPGP private key, or the path of a file holding one; deps signs its commits with it |
 | `DEPS_ALLOW_TASKS` | `apply`, `run` | default of `--allow-tasks`: the `postUpgradeTasks` commands that may run (repository code), one pattern per line, `*` matching any text without `;`, `&`, `|`, backticks, `$(` or line breaks (`go generate ./...`, `make *`; `*` alone allows everything). Commands get the environment without `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`, and without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CEILING_DIRECTORIES`, so their git uses the repository they run in |
 | `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
-| `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
-| `DEPS_SCHEDULE_TIME` | `run` | default of `--schedule-time`: the RFC 3339 time schedule time windows are evaluated at instead of now |
-| `DEPS_REPOSITORIES` | `run` | default of `--repositories`: `owner/name` and `owner/<glob>` entries separated by whitespace or commas |
+| `DEPS_REPOSITORIES` | `run` | the `--repositories` variable: `owner/name` and `owner/<glob>` entries separated by whitespace or commas |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
-| `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
-| `RUNNER_DEBUG` | all | `1` (an Actions re-run with debug logging) makes `debug` the default `--log-level`, below `DEPS_LOG_LEVEL` and the flag |
+| `RUNNER_DEBUG` | all | `1` (an Actions re-run with debug logging) makes `debug` the default `--log-level`; the flag and its variable (listed below) still win |
 | `NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE`, `FORCE_COLOR` | all | with `--color auto`: `NO_COLOR` (any value) or `TERM=dumb` turn colors off on a terminal; `CLICOLOR_FORCE` or `FORCE_COLOR` (any value but `0` or `false`) turn them on, also when piped and over `NO_COLOR`. `--color always`/`never` ignore them |
-| `DEPS_REPORT` | `plan`, `apply`, `run` | default of `--report` (JSON report file, see `deps help output`) |
 | `NPM_CONFIG_REGISTRY`, `npm_config_registry` | `npm` datasource | registry when no `.npmrc` sets one (default `https://registry.npmjs.org/`) |
 | `DOCKER_CONFIG` | `docker` datasource | directory of the Docker `config.json` with registry credentials and credential helpers (default `~/.docker`) |
 | `DEPS_CRATES_INDEX_URL`, `DEPS_CRATES_API_URL` | `crate` datasource | base URLs of a crates.io sparse index mirror (default `https://index.crates.io`) and of the crates.io API used for source repositories (default `https://crates.io`) |
@@ -578,6 +782,32 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `GITHUB_STEP_SUMMARY`, `GITEA_STEP_SUMMARY` | all | step summary file (see `deps help output`) |
 | `GITHUB_OUTPUT` | `plan`, `apply`, `run` | step outputs file: the counts are appended (see `deps help output`) |
 | `GITHUB_WORKSPACE` | all | on GitHub Actions, annotation paths are made relative to it |
+| `DEPS_ALL_MANAGERS` | `submit` | default of `--all-managers`: also submit the manifests GitHub reads by itself (go.mod, package.json, Python, Cargo, pom.xml, workflows); a submitted manifest replaces GitHub's own view of that file |
+| `DEPS_API_URL` | `run` | default of `--api-url`: API base URL (default: detected) |
+| `DEPS_AUTHOR_EMAIL` | `config show`, `run` | default of `--author-email`: commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps-bot@noreply.invalid) |
+| `DEPS_AUTHOR_NAME` | `config show`, `run` | default of `--author-name`: commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps[bot]) |
+| `DEPS_BASE` | `run` | default of `--base`: base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch) |
+| `DEPS_BASE_DIR` | `preview` | default of `--base-dir`: checkout of the base branch to compare with (required) |
+| `DEPS_COLOR` | all | default of `--color`: color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never |
+| `DEPS_CONCURRENCY` | `apply`, `explain`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--concurrency`: maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
+| `DEPS_CONFIG` | `apply`, `config check`, `config show`, `explain`, `init`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--config`: config file, which must exist (when not set: <dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
+| `DEPS_DIR` | `apply`, `config check`, `config show`, `explain`, `init`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--dir`: repository directory to scan |
+| `DEPS_DRY_RUN` | `run`, `submit` | default of `--dry-run`: report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token |
+| `DEPS_FORCE` | `init`, `migrate` | default of `--force`: overwrite an existing config file |
+| `DEPS_FROM_RENOVATE` | `init` | default of `--from-renovate`: translate this Renovate config (JSON, e.g. renovate.json) into the new file |
+| `DEPS_LOG_FORMAT` | all | default of `--log-format`: log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups) |
+| `DEPS_LOG_LEVEL` | all | default of `--log-level`: log level: debug, info, warn, error (when not set: debug with $RUNNER_DEBUG=1, else warn) |
+| `DEPS_MAX_NEW_PRS` | `run` | default of `--max-new-prs`: maximum number of pull requests to create per run (0 = unlimited) |
+| `DEPS_OUTPUT` | `migrate` | default of `--output`: file to write (when not set: <dir>/.deps.yaml; - writes to stdout) |
+| `DEPS_PLATFORM` | `run` | default of `--platform`: forge type: auto\|github\|gitea\|forgejo\|gitlab (auto: from the CI environment, else the origin remote) |
+| `DEPS_RENOVATE` | `apply`, `explain`, `plan`, `preview`, `run`, `submit` | default of `--renovate`: compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
+| `DEPS_REPO` | `run` | default of `--repo`: repository owner/name, or the GitLab project path (default: detected) |
+| `DEPS_REPORT` | `apply`, `plan`, `run` | default of `--report`: also write the result as JSON to this file (see deps help output) |
+| `DEPS_SCHEDULE_TIME` | `run` | default of `--schedule-time`: evaluate schedule time windows at this RFC 3339 time instead of now, e.g. 2026-11-09T05:30:00+01:00 |
+| `DEPS_SHOW_SKIPPED` | `apply`, `plan`, `run` | default of `--show-skipped`: also print skipped dependencies (skip lines) |
+| `DEPS_SOURCES` | `config show` | default of `--sources`: annotate each value with where it comes from: default, file, env or flag |
+| `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule`: act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH |
+| `DEPS_VERBOSE` | `migrate` | default of `--verbose`: also print the info notes (settings without effect on which updates or PRs exist) |
 
 On a 401 without a static token, git tag lookups call `git credential fill` once per host, with `GIT_TERMINAL_PROMPT=0` and a 10s timeout. Every `git` process deps runs has `GIT_TERMINAL_PROMPT=0`, so deps never prompts. npm lookups use `.npmrc` `_authToken` entries, PyPI index lookups the index URL's userinfo (`https://user:token@host/simple`), and docker lookups the Docker credential chain (`~/.docker/config.json` and credential helpers).
 
@@ -591,7 +821,7 @@ Exit codes of every command. Also shown by `deps help exit-codes`.
 |---|---|
 | `0` | success, no errors |
 | `1` | any error, including per-dependency lookup errors and per-PR errors (already printed as `error` lines), or a fatal error printed as `deps: <err>` |
-| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE` or `--schedule-time`/`DEPS_SCHEDULE_TIME`, a `--signing-key`/`DEPS_SIGNING_KEY` that is no OpenSSH or armored OpenPGP private key, an invalid `DEPS_PLATFORM_COMMIT`, `platformCommit: enabled` on Gitea/Forgejo or with a signing key, or any config error (parse error, unknown key, failed validation, unreadable `--config` file) |
+| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE` or `--schedule-time`/`DEPS_SCHEDULE_TIME`, a `--signing-key`/`DEPS_SIGNING_KEY` that is no OpenSSH or armored OpenPGP private key, an invalid `DEPS_PLATFORM_COMMIT`, `platformCommit: enabled` on Gitea/Forgejo or with a signing key, an unknown key of `deps config describe`, an unreadable or unparsable `--from-renovate` file, or any config error (parse error, unknown key, failed validation, unreadable `--config` file; also a file `deps init` wrote that does not validate) |
 
 ## Output
 
@@ -600,9 +830,10 @@ Report lines, summary lines, diagnostics and the CI step summary. Also shown by 
 Results go to stderr (the diff of `plan` and the report of `explain` go to stdout), in fixed-width lines:
 
 ```
+warn    <config>: <field>: <msg>                              (plan, apply, run, explain: a rule that cannot have an effect)
 update  <file>:<line>  <name>  <from> -> <to>  (<type>[, lockfile][, separate PR])[  security: <id>,<id>]
 update  <lockfile>  lock file maintenance  (lockFileMaintenance, separate PR)   (with lockFileMaintenance)
-skip    <file>:<line>  <name>  <reason>                       (with -v)
+skip    <file>:<line>  <name>  <reason>                       (with --show-skipped)
 error   <message>
 note    go.sum changes are computed by apply/run              (plan, when a gomod update exists)
 note    package-lock.json changes are computed by apply/run   (plan, when an npm update exists)
@@ -619,6 +850,7 @@ dashboard <status>  <title>  <url>                            (run, with depende
 ```
 
 - For digest and pin updates, `<from>`/`<to>` read `<version>@<sha7>`. A lockfile-only update (`, lockfile`) starts at the locked version and changes only the lockfile.
+- Config warnings come first, right after the config is loaded: a rule without apply fields (`rules[1]: is empty: no match field and no apply field`), or match fields no dependency can satisfy (`rules[0].depTypes[0]: dep type "devDependencies" is not produced by gomod, so it matches nothing`). They do not change the exit code.
 - Per-dependency errors read `<file>:<line>: <name>: <err>`; a fatal error is printed as `deps: <err>`.
 - The PR, automerge and dashboard statuses are listed in `deps run --help`; the skip reasons in the managers reference.
 
@@ -644,7 +876,7 @@ Also on a terminal (unless `TERM=dumb`), a **status line** below the output show
 
 Text logs round durations to 0.1ms below a second and to 1ms above (`duration=23ms`, `duration=11.003s`); JSON logs keep them in nanoseconds.
 
-**Summary block.** Before the summary line, a block starting with an empty line and `Summary: ` gives the overview:
+**Summary block.** Before the summary line, a `warn    rules[<i>] matched no dependency` line for every rule that matched none of the extracted dependencies (plan, apply, run), then a block starting with an empty line and `Summary: ` gives the overview:
 
 ```
 Summary: <n> dependencies, <u> updates in <g> PRs[, PRs: <count> <status>, ...][, <p> held back by minimumReleaseAge], <k> skipped, <e> errors (<duration>)
@@ -653,24 +885,24 @@ Summary: <n> dependencies, <u> updates in <g> PRs[, PRs: <count> <status>, ...][
   <status>  <branch>  <url>                                            (run: closed obsolete PRs and the dashboard)
   Held back by minimumReleaseAge:
       <name>  <file>:<line>  <version>  too new (released <date>, minimum <age>) | release time unknown (minimum <age>, timestamp-required)
-  Deprecated or abandoned: <n> (-v lists each)
-      <name>  <file>:<line>  deprecated: <reason> | abandoned: <reason>   (with -v)
-  Skipped (-v lists each dependency):
+  Deprecated or abandoned: <n> (--show-skipped lists each)
+      <name>  <file>:<line>  deprecated: <reason> | abandoned: <reason>   (with --show-skipped)
+  Skipped (--show-skipped lists each dependency):
     <count>  <reason>  (<how to update>)
 ```
 
 The PRs are the ones `run` opens: plan and apply group their updates the same way. Without updates, errors or PR actions, the headline reads `No updates: <n> dependencies up to date, <k> skipped.` Errors are not repeated; they are the `error` lines above.
 
-**Step summary.** If `GITHUB_STEP_SUMMARY` (or else `GITEA_STEP_SUMMARY`) is set, the same summary is appended to that file as markdown, under `## deps <command>`: the headline, one section per PR with its branch, status and link (run), automerge and schedule, and a `| Dependency | File | From | To | Type |` table; other PR actions (closed PRs, the dashboard); held-back releases; skip reasons with counts and how to update, with the skipped dependencies in a collapsible `<details>`; and the errors in full. The file stays within GitHub's 1 MiB per step, counting what is already in it: when the summary does not fit, the list of skipped dependencies is left out first, then the held-back releases, then the PRs' update tables; if it still does not fit, it is cut and ends with a note pointing at the job log.
+**Step summary.** If `GITHUB_STEP_SUMMARY` (or else `GITEA_STEP_SUMMARY`) is set, the same summary is appended to that file as markdown, under `## deps <command>`: the headline, one section per PR with its branch, status and link (run), automerge and schedule, and a `| Dependency | File | From | To | Type |` table; other PR actions (closed PRs, the dashboard); held-back releases; skip reasons with counts and how to update, with the skipped dependencies in a collapsible `<details>`; the rules that matched no dependency (`### Warnings`); and the errors in full. The file stays within GitHub's 1 MiB per step, counting what is already in it: when the summary does not fit, the list of skipped dependencies is left out first, then the held-back releases, then the PRs' update tables; if it still does not fit, it is cut and ends with a note pointing at the job log.
 
-**Actions workflow commands.** With `--log-format actions`, which `auto` selects on GitHub Actions (`GITHUB_ACTIONS=true`) and Gitea Actions (`GITEA_ACTIONS=true`; Gitea 1.26 and later render groups and annotation lines) but not on Forgejo (`FORGEJO_ACTIONS=true`, which prints workflow commands literally), records are `pretty` lines without the elapsed time (the runner timestamps every line), `INF <message>  key=value …`, colored unless `NO_COLOR` is set or `--color never` is given (GitHub and Gitea render ANSI colors; the result lines keep the piped layout, the summary is colored as on a terminal), and deps also prints workflow commands: each `error` line and a fatal error as an `::error` annotation, located at the dependency's file and line, at the file for a file that cannot be read or parsed, or for config errors at the line of the offending key in `.deps.yaml`; `warn` and `error` logs as `::warning`/`::error`; each security update as a `::notice` at its file and line; the `-v` skip lines inside a collapsible `::group::`; every phase as a group (`Discovering and extracting dependency files`, `Resolving <n> dependencies`) holding its records, a `deps: <phase> <done>/<total> · … · <seconds>s` line every 30 seconds while it runs (when stderr is no terminal) and one when it ends; and in `run` the records of each PR as a group `<branch>: <status> (<duration>)` (groups do not nest, so the PR phase has none of its own; its heartbeat and final lines stand between the PR groups). A token deps gets from the git credential helper is masked (`::add-mask::`) before it is used. GitHub shows 10 error, 10 warning and 10 notice annotations per step, so deps prints no more than that; the result lines are complete. Any other `--log-format` prints no workflow commands, also on a runner. With `RUNNER_DEBUG=1` (a re-run with debug logging) the default `--log-level` is `debug`; `$DEPS_LOG_LEVEL` and the flag still win.
+**Actions workflow commands.** With `--log-format actions`, which `auto` selects on GitHub Actions (`GITHUB_ACTIONS=true`) and Gitea Actions (`GITEA_ACTIONS=true`; Gitea 1.26 and later render groups and annotation lines) but not on Forgejo (`FORGEJO_ACTIONS=true`, which prints workflow commands literally), records are `pretty` lines without the elapsed time (the runner timestamps every line), `INF <message>  key=value …`, colored unless `NO_COLOR` is set or `--color never` is given (GitHub and Gitea render ANSI colors; the result lines keep the piped layout, the summary is colored as on a terminal), and deps also prints workflow commands: each `error` line and a fatal error as an `::error` annotation, located at the dependency's file and line, at the file for a file that cannot be read or parsed, or for config errors at the line and column of each problem in `.deps.yaml`; `warn` and `error` logs as `::warning`/`::error`; the config's `warn` lines (lint warnings and rules that matched no dependency) as `::warning` at the rule's line; each security update as a `::notice` at its file and line; the `--show-skipped` skip lines inside a collapsible `::group::`; every phase as a group (`Discovering and extracting dependency files`, `Resolving <n> dependencies`) holding its records, a `deps: <phase> <done>/<total> · … · <seconds>s` line every 30 seconds while it runs (when stderr is no terminal) and one when it ends; and in `run` the records of each PR as a group `<branch>: <status> (<duration>)` (groups do not nest, so the PR phase has none of its own; its heartbeat and final lines stand between the PR groups). A token deps gets from the git credential helper is masked (`::add-mask::`) before it is used. GitHub shows 10 error, 10 warning and 10 notice annotations per step, so deps prints no more than that; the result lines are complete. Any other `--log-format` prints no workflow commands, also on a runner. With `RUNNER_DEBUG=1` (a re-run with debug logging) the default `--log-level` is `debug`; `$DEPS_LOG_LEVEL` and the flag still win.
 
 **JSON report.** `--report <file>` (or `$DEPS_REPORT`) makes `plan`, `apply` and `run` also write the summary as one JSON object, replacing the file. It is not written when deps fails before it has a result (usage or config errors, exit 2). Fields:
 
 - `command` (`plan`, `apply`, `run`, `run --dry-run`), `dependencies`, `durationMs`;
 - `prs[]`: `branch`, `title`, `updates[]` (`name`, `manager`, `file`, `line`, `from`, `to`, `type`, `lockfile`, `advisories` as IDs; a lock file maintenance has type `lockFileMaintenance` and no versions); for `run` also `status`, `automerge`, `prWait` (the PR creation outcome of a branch waiting for its checks), `number`, `url`, `waitsFor` (schedule entries: crons and time windows) and `reason` (why a `skipped: update cannot be applied` update cannot be applied; the label of a `skipped: stop-updating label` PR);
 - `otherActions[]`: closed obsolete PRs, obsolete PRs kept open by the `stopUpdatingLabel`, and the dashboard (`branch`, `title`, `status`, `number`, `url`, `dashboard`);
-- `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `warnings[]` (`name`, `file`, `line`, `kind` `deprecated` or `abandoned`, `reason`; see `abandonmentThreshold` and the dependency dashboard), `skipped[]` (`reason`, `count`), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error, `file` for a file that cannot be read or parsed);
+- `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `warnings[]` (`name`, `file`, `line`, `kind` `deprecated` or `abandoned`, `reason`; see `abandonmentThreshold` and the dependency dashboard), `skipped[]` (`reason`, `count`), `unusedRules[]` (indices of the rules that matched no dependency), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error, `file` for a file that cannot be read or parsed);
 - `counts`: the step outputs below, by camelCase name.
 
 With `run --repositories` the file holds the whole run: `command`, `durationMs`, `repositories[]` (the object above per repository, with `repository` set to its `owner/name`), `errors[]` (repositories that failed before they had a result, a clone or config error, as `<owner/name>: <message>`) and `counts` summed over the repositories (a failed repository counts as one error).

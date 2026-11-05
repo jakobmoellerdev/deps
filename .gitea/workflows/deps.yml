@@ -62,9 +62,9 @@ jobs:
           cache: true
           cache-dependency-path: pr/go.sum
       - run: go build -C pr -trimpath -o "$RUNNER_TEMP/deps" ./cmd/deps
-      - run: '"$RUNNER_TEMP/deps" plan -v --log-level info --dir pr'
+      - run: '"$RUNNER_TEMP/deps" plan --show-skipped --log-level info --dir pr'
       - run: '"$RUNNER_TEMP/deps" preview --log-level info --dir pr --base-dir base'
-      - run: '"$RUNNER_TEMP/deps" run --dry-run -v --log-level info --dir base --base "$BASE"'
+      - run: '"$RUNNER_TEMP/deps" run --dry-run --show-skipped --log-level info --dir base --base "$BASE"'
         env:
           BASE: ${{ github.event.pull_request.base.ref }}
           DEPS_TOKEN: ${{ github.token }}

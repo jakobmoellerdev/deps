@@ -35,13 +35,12 @@ func newApply(o *rootOpts) *cli.Command {
 	return &cli.Command{
 		Name:         "apply",
 		Usage:        "Write the updates to the files, including go mod tidy, package-lock.json and Cargo.lock",
-		Description:  helpText("apply"),
 		Metadata:     map[string]any{docgen.MetaExample: "  deps apply && git diff --stat"},
 		ArgValidator: noArgs,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return local(ctx, cmd, o, true)
 		},
-		Flags: []cli.Flag{allowTasksFlag(o)},
+		Flags: append(scanFlags(o, scanResults), allowTasksFlag(o)),
 	}
 }
 

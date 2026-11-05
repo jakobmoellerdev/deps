@@ -8,6 +8,7 @@ deps can do the translation below itself:
 
 - `deps plan|apply|run|explain --renovate` translates the repository's Renovate config in memory and runs from it. `--config` naming a Renovate file (`renovate.json5`, `.renovaterc`, …) does the same.
 - `deps migrate` writes that translation as a commented `.deps.yaml` (`--output -` prints it). The Renovate config is not touched.
+- `deps init --from-renovate <file>` writes a new `.deps.yaml` from the same translation: the starter file (schema modeline, a comment naming the detected managers) plus the translated settings. `deps config check` validates the result.
 
 Both use one translator, so a migrated file behaves exactly like compatibility mode. It reads every file name Renovate reads (`renovate.json(c|5)`, the same under `.github/`, `.gitlab/`, `.gitea/`, `.forgejo/`, `.renovaterc*`, the `renovate` key of `package.json`) and resolves `extends`: Renovate's built-in presets from a table, `github>` (github.com), `gitlab>` (gitlab.com), `gitea>`, `forgejo>` and `local>` (the repository's forge: GitHub, GitLab, Gitea or Forgejo) presets by fetching them. npm and URL presets are skipped with a warning.
 
@@ -15,7 +16,7 @@ Both use one translator, so a migrated file behaves exactly like compatibility m
 - A rule with an untranslatable matcher (`matchJsonata`, a `matchCurrentValue` glob, `matchPackageNames` together with `matchDepNames`) is dropped as a whole, an untranslatable effect only by itself.
 - `branchPrefix` follows Renovate (`renovate/` unless set), so deps takes over Renovate's branches (see [below](#branch-prefix-takeover)). `prConcurrentLimit` and `prHourlyLimit` keep Renovate's defaults 10 and 2, `ignorePaths` Renovate's default list.
 - Schedules and `timezone` are kept as written: deps evaluates Renovate's time windows (text and crons with minute `*`) against the run time, like Renovate. The workflow must run inside every window, e.g. hourly; `migrate` lists the windows. A cron with a fixed minute is dropped, as Renovate rejects it.
-- `matchManagers` and `matchCategories` expand to one rule per deps manager: `github-actions` matches the `github-actions` manager and the `docker` manager's `workflow`/`action` images, `dockerfile` the `docker` manager's `dockerfile` dep type. `enabledManagers`, `<manager>.enabled: false`, Renovate's default-off `pre-commit` and `azure-pipelines` (`azure-pipelines: {enabled: true}` becomes `{manager: azure-pipelines, ignore: false}`, which also updates its tasks, as Renovate does) and the deps managers Renovate does not have (`conda`, `vcpkg`, `elm`) become trailing `ignore: true` rules.
+- `matchManagers` and `matchCategories` expand to `rules[].managers` lists, one rule per set of dep types (managers whose dep types are not restricted share one): `github-actions` matches the `github-actions` manager and the `docker` manager's `workflow`/`action` images, `dockerfile` the `docker` manager's `dockerfile` dep type. `enabledManagers`, `<manager>.enabled: false`, Renovate's default-off `pre-commit` and `azure-pipelines` (`azure-pipelines: {enabled: true}` becomes `{managers: [azure-pipelines], ignore: false}`, which also updates its tasks, as Renovate does) and the deps managers Renovate does not have (`conda`, `vcpkg`, `elm`) become trailing `ignore: true` rules.
 - Renovate's `/regex/` and `!negated` patterns in package names, file names and custom manager files work in deps as they are.
 - `dependencyDashboardApproval` (top level and per rule) becomes `dashboardApproval`, the `rust-toolchain` manager is in the `rust` category and the `devcontainer` manager in the `docker` category.
 - `postUpgradeTasks` (top level and per rule; `fileFilters` → `files`), every `rangeStrategy` value, and the `bundler`, `ruby-version` and `swift` managers (categories `ruby`, `swift`) are translated.
@@ -86,8 +87,8 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `extends: ["local>org/renovate-config"]`, `github>org/repo//path#ref`, `gitea>…` (shared config presets) | `extends: [org/deps-config]`, `org/repo//path.yaml#ref`, or a git URL (`https://…//path#ref`): a `.deps.yaml`-format file of another repository, decoded strictly, its rules before this file's; see [configuration](reference/configuration.md#extends). `--renovate` and `deps migrate` resolve Renovate presets (built-in ones, `local>`, `github>`, `gitea>`, `forgejo>`) into the translation; `.deps.yaml` does not load Renovate's own presets (`config:recommended`, `group:*`, …): see [built-ins](#presets) |
 | `repositories`, `autodiscover` + `autodiscoverFilter` (self-hosted, one job for many repositories) | `deps run --repositories org/a,org/*` (`$DEPS_REPOSITORIES`; `owner/<glob>` lists an organization's or user's repositories, without archived ones and mirrors); see [CI](ci.md#one-job-for-many-repositories). No onboarding PR: a repository without `.deps.yaml` runs with the defaults (or `--config`) |
 | `enabled: false` (package rule) | `rules[].ignore: true` |
-| `enabled: true` for disabled-by-default deps | `rules[].ignore: false` (indirect, Elm `test-indirect`, `go` directive, peerDependencies, engines, git submodules: `manager: git-submodules`, Azure Pipelines tasks: `{manager: azure-pipelines, depTypes: [task]}`) |
-| `matchManagers` | `rules[].manager` (one per rule): `github-actions`, `gomod`, `docker` (covers `dockerfile`, `docker-compose`, `kubernetes`, `helm-values`), `npm`, `helm` (covers `helmv3`, `helmfile`, `argocd`, `flux`), `kustomize`, `pre-commit`, `gitlabci` (covers `gitlabci-include`), `nvm`, `nodenv`, `asdf`, `mise`, `cargo`, `pip_requirements` (covers `pip-compile`: `*.in` inputs are updated and the compiled files regenerated), `pep621`, `poetry`, `pipenv`, `terraform`, `terraform-version`, `tflint-plugin`, `terragrunt`, `maven`, `maven-wrapper`, `gradle`, `gradle-wrapper`, `swift`, `bundler`, `ruby-version`, `git-submodules`, `rust-toolchain`, `devcontainer` (Dependabot's `conda` ecosystem; Renovate has none), `bitbucket-pipelines`, `woodpecker`, `droneci`, `circleci`, `azure-pipelines`, `vcpkg` (Renovate has none; Dependabot's `vcpkg` ecosystem), `elm` (no Renovate manager; Dependabot's `elm`), `composer`, `julia`, `bazel-module`, `bazelisk`, `nuget`, `custom` (covers `custom.regex`); `deps migrate` writes one rule per manager |
+| `enabled: true` for disabled-by-default deps | `rules[].ignore: false` (indirect, Elm `test-indirect`, `go` directive, peerDependencies, engines, git submodules: `managers: [git-submodules]`, Azure Pipelines tasks: `{managers: [azure-pipelines], depTypes: [task]}`) |
+| `matchManagers` | `rules[].managers` (list): `github-actions`, `gomod`, `docker` (covers `dockerfile`, `docker-compose`, `kubernetes`, `helm-values`), `npm`, `helm` (covers `helmv3`, `helmfile`, `argocd`, `flux`), `kustomize`, `pre-commit`, `gitlabci` (covers `gitlabci-include`), `nvm`, `nodenv`, `asdf`, `mise`, `cargo`, `pip_requirements` (covers `pip-compile`: `*.in` inputs are updated and the compiled files regenerated), `pep621`, `poetry`, `pipenv`, `terraform`, `terraform-version`, `tflint-plugin`, `terragrunt`, `maven`, `maven-wrapper`, `gradle`, `gradle-wrapper`, `swift`, `bundler`, `ruby-version`, `git-submodules`, `rust-toolchain`, `devcontainer`, `conda` (Dependabot's `conda` ecosystem; Renovate has none), `bitbucket-pipelines`, `woodpecker`, `droneci`, `circleci`, `azure-pipelines`, `vcpkg` (Renovate has none; Dependabot's `vcpkg` ecosystem), `elm` (no Renovate manager; Dependabot's `elm`), `composer`, `julia`, `bazel-module`, `bazelisk`, `nuget`, `custom` (covers `custom.regex`); `deps migrate` lists the managers of a Renovate rule in one deps rule per set of dep types |
 | `matchPackageNames`, `matchDepNames` | `rules[].names` (doublestar globs, `/regex/` and `/regex/i`; `{/,}**` works as in Renovate; `!pattern` excludes, a list of only exclusions matches every other name) |
 | `excludePackageNames`, `excludePackagePrefixes` | `!` entries in `rules[].names` (`!name`, `!prefix**`) |
 | `matchDepTypes` | `rules[].depTypes` (deps names, see [managers](reference/managers.md); Renovate's `golang` = `go`) |
@@ -99,7 +100,7 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `matchDatasources` | `rules[].datasources` (`golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags` accepted) |
 | `matchBaseBranches` | `rules[].baseBranches` (names, `/regex/`; `!` excludes, as in `names`; globs are not supported): the base branch `run` resolves; `plan`, `apply`, `explain` and `preview` have none, so such rules match nothing there |
 | `matchUpdateTypes` | `rules[].updateTypes`; `pinDigest` = `pin` |
-| `matchCategories` | `deps migrate` expands it to the category's managers; in `.deps.yaml` use `manager`/`datasources` |
+| `matchCategories` | `deps migrate` expands it to the category's managers; in `.deps.yaml` use `managers`/`datasources` (`golang` ≈ `managers: [gomod]` plus `datasources: [golang-version]`) |
 | `allowedVersions` | `rules[].allow` (semver constraint or `/regex/`, `!/regex/`) |
 | `versioning` | `rules[].versioning` (`semver`, `loose`, `maven`, `ruby`, `nuget`, `regex:…`, plus deps' `tag`, `go`, `docker`) |
 | `extractVersion` | `rules[].extractVersion`, marker `extractVersion=` (RE2 with a `version` group, same syntax) |
@@ -151,10 +152,13 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `automergeStrategy` | `automergeStrategy`: `auto`, `merge`, `squash`, `rebase` (Renovate's `merge-commit` = `merge`; `fast-forward` and `rebase-merge` are not offered) |
 | `platformAutomerge` | always on for PRs: deps automerges PRs through the platform (GitHub falls back to a direct merge once checks are green); with `automergeType: branch` it pushes to the base itself |
 | `ignoreTests` | not supported: deps never merges a PR without green checks |
+| `labels`, `addLabels`, `reviewers`, `assignees` | same names, top level and per rule: a rule's `labels` replaces the labels, its `addLabels` adds to them. deps has no top-level `addLabels`; the translation (`--renovate`, `deps migrate`, `deps init --from-renovate`) appends Renovate's to `labels` |
 | `:dependencyDashboard`, `dependencyDashboardTitle`, `dependencyDashboardLabels` | `dependencyDashboard: true`, `dependencyDashboardTitle`, `dependencyDashboardLabels` |
 | `dependencyDashboardApproval` (top level or in `packageRules`) | `dashboardApproval: true` at the top level or in `rules` (needs `dependencyDashboard: true`): no PR until the *Pending approval* checkbox is ticked; security updates need no approval, as with Renovate's `vulnerabilityAlerts` default |
 | Mend badges, `security:openssf-scorecard` | not supported (release age as text in PR bodies) |
 | repository cache | not applicable (no persistent cache) |
+
+Renovate options left in `.deps.yaml` are unknown keys, and the error names the deps equivalent from this table, for example `.deps.yaml:3:5: rules[0].matchPackageNames: unknown key (Renovate's matchPackageNames is names here)`.
 
 ## Marker compatibility
 
@@ -219,7 +223,7 @@ With `branchPrefix: renovate/`, deps manages the branches and PRs Renovate creat
 
 ```sh
 cd ~/Projects/open-component-model
-DEPS_GITHUB_COM_TOKEN=$(gh auth token) deps plan -v --config ~/Projects/deps/docs/examples-ocm.deps.yaml > /tmp/ocm.diff
+DEPS_GITHUB_COM_TOKEN=$(gh auth token) deps plan --show-skipped --config ~/Projects/deps/docs/examples-ocm.deps.yaml > /tmp/ocm.diff
 git apply --check /tmp/ocm.diff
 ```
 
@@ -241,15 +245,15 @@ How the pieces map:
 | 0: `matchFileNames: [chart/**]`, group "Kubernetes Controller chart" | `paths` + `group` |
 | 1: Garden Linux FIPS `allowedVersions: '/^\\d+\\.\\d+$/'`, `versioning: loose` | `allow: '/^\d+\.\d+$/'`, `versioning: loose` |
 | 2: `matchUpdateTypes: [minor, patch]`, `automerge: true` | `updateTypes: [minor, patch]`, `automerge: true` |
-| 3, 5: `matchManagers` + `separateMinorPatch: false` + schedule | `manager` rules |
+| 3, 5: `matchManagers` + `separateMinorPatch: false` + schedule | `managers` rules |
 | 4, 6: `matchManagers` + `matchUpdateTypes: [minor, patch]` + `groupName` | `updateTypes: [minor, patch]` + `group` |
 | 7: "Digest pins" over `github-actions`, `dockerfile`, `docker-compose` with `[digest, pinDigest]` | two rules: `github-actions`, and `docker` with `depTypes: [dockerfile, compose, workflow, action]` (Renovate's github-actions manager also covers workflow `container:`/`services:` images), both `updateTypes: [digest, pin]` |
 | 8: `matchDatasources: [golang-version]`, `rangeStrategy: bump` | `datasources: [golang-version]` (no `rangeStrategy` needed) |
 | 9, 20, 21, 22: `enabled: false` for kube-openapi, go-ini/ini, crypto11, `open-component-model/.github` | `ignore: true` rules |
-| 10: "Kubernetes dependencies" over `gomod` and `custom.regex` | two rules (`manager: gomod`, `manager: custom`) with the same `names` and `group` |
+| 10: "Kubernetes dependencies" over `gomod` and `custom.regex` | two rules (`managers: [gomod]`, `managers: [custom]`) with the same `names` and `group` |
 | 11, 15, 16, 17: "Docker dependencies", "Golang X Repositories", "Google Golang Repositories", "spf13 repositories" | `names` + `group` + `schedule` |
 | 12: "Garden Linux images", 13: "OCM cosign" (`versioning: 'regex:…'`, `minimumReleaseAge: '0 days'`), 14: "Helm" | same values |
-| 18: `matchCategories: [golang]`, `enabled: true`, `postUpdateOptions: [gomodTidy]`, schedule | `manager: gomod`, `ignore: false`, `schedule` (tidy is always on) |
+| 18: `matchCategories: [golang]`, `enabled: true`, `postUpdateOptions: [gomodTidy]`, schedule | `managers: [gomod]`, `ignore: false`, `schedule` (tidy is always on) |
 | 19: indirect majors off | `depTypes: [indirect]`, `updateTypes: [major]`, `ignore: true` |
 | 23: "Website CLI-docs generator dependencies" | `paths` + `group` + `separateMinorPatch: false` |
 | 24: `matchDepTypes: [golang]` off | `depTypes: [go]`, `ignore: true` |
@@ -326,9 +330,10 @@ jobs:
         with:
           token: ${{ steps.app.outputs.token || github.token }}
           version: v0.3.0 # keep this when pin: digest rewrites the ref above to a SHA
-          args: >-
-            ${{ github.event_name == 'pull_request' && 'plan' || 'run' }}
-            -v --log-level info --config .github/deps.yaml
+          args: ${{ github.event_name == 'pull_request' && 'plan' || 'run' }}
+          config: .github/deps.yaml
+          show-skipped: true
+          log-level: info
 ```
 
 - **Pull requests** that change the config run `plan` with the job token. That validates the config: an invalid key exits 2. `run --dry-run` needs `HEAD` at the tip of `main`, which a PR merge commit is not. To also list the PRs a config change would cause, use the base/PR checkout pair from [ci.md](ci.md#preview-on-pull-requests).
@@ -343,7 +348,7 @@ The run below went against a fresh clone of OCM `b4b5473`, with a GitHub token. 
 
 ```sh
 DEPS_GITHUB_COM_TOKEN=$(gh auth token) DEPS_TOKEN=$(gh auth token) \
-  deps run --dry-run -v --config ~/Projects/deps/docs/examples-ocm.deps.yaml --trigger-schedule '0 0 * * 0'
+  deps run --dry-run --show-skipped --config ~/Projects/deps/docs/examples-ocm.deps.yaml --trigger-schedule '0 0 * * 0'
 ```
 
 The result was `19 would-create, 200 held back by minimumReleaseAge, 91 skipped, 0 errors`. With `--trigger-schedule '0 0 * * *'` (the daily run), 7 PRs would be created: node minor and patch, js-yaml, undici, two golang.org/x/net security PRs, and Garden Linux. The other 12 were `skipped: outside schedule`. Since P18 (locked versions, lockfile-only updates), the js-yaml and undici security PRs are gone from both runs, and the npm group has the same 2 deps as Renovate's (rows below). Since P10 (floating-tag release times, `minimumReleaseAgeBehaviour: timestamp-required` in the example), markdownlint-cli2-action, Garden Linux and envtest are held back as in Renovate (rechecked with `deps plan` on `b4b5473`; `run --dry-run` now refuses that checkout, which is no longer the tip of main).

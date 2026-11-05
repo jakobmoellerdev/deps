@@ -77,13 +77,13 @@ rules:
   - names: [request]
     replacementName: got
     replacementVersion: 12.0.0
-    updates: [patch]
+    allowedUpdateTypes: [patch]
   - names: [alpine]
     replacementName: ghcr.io/x/alpine
   - names: ['quay.io/old/**']
     replacementPrefix: quay.io/old/
     replacementName: ghcr.io/new/
-  - manager: gomod
+  - managers: [gomod]
     replacementName: example.com/new
     replacementVersion: v2.0.0
 `,

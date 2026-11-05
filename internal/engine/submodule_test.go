@@ -55,7 +55,7 @@ func TestSubmodules(t *testing.T) {
 		t.Fatalf("default: err = %v, errors = %v, updates = %v, skipped = %+v", err, res.Errors, res.Updates, res.Skipped)
 	}
 
-	root, cfg = setup(t, "rules: [{manager: git-submodules, ignore: false}]\n", map[string]string{".gitmodules": gitmodules})
+	root, cfg = setup(t, "rules: [{managers: [git-submodules], ignore: false}]\n", map[string]string{".gitmodules": gitmodules})
 	res, err = Resolve(t.Context(), root, cfg, e, opts)
 	if err != nil || len(res.Errors) > 0 {
 		t.Fatalf("err = %v, errors = %v", err, res.Errors)

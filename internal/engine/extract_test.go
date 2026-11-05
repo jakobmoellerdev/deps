@@ -64,7 +64,7 @@ custom:
     datasource: github-releases
     checksum: {asset: 'jq-{{version}}-linux-amd64'}
 rules:
-  - {manager: custom, names: [jqlang/jq], extractVersion: '^jq-(?<version>\d.*)$'}
+  - {managers: [custom], names: [jqlang/jq], extractVersion: '^jq-(?<version>\d.*)$'}
   - {names: [o/kustomize], extractVersion: '^kustomize/v(?<version>\d.*)$'}
 `
 	src := "ARG jqlang/jq_VERSION=1.7.1\nARG X_SHA256=" + h + "\n" +

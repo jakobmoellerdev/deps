@@ -30,10 +30,10 @@ type terminal struct {
 func (t terminal) errorLabel() string { return t.style.Paint(logx.Red, "error") }
 
 // setupLogger installs the default slog logger writing to w and returns how the results on
-// w are rendered. tty tells whether w is a terminal.
+// w are rendered. tty tells whether w is a terminal. An empty level is warn.
 func setupLogger(o logOpts, w *logx.Writer, tty bool, getenv func(string) string) (terminal, error) {
-	var lvl slog.Level
-	if err := lvl.UnmarshalText([]byte(o.level)); err != nil {
+	lvl := slog.LevelWarn
+	if err := lvl.UnmarshalText([]byte(o.level)); o.level != "" && err != nil {
 		return terminal{}, &usageError{fmt.Errorf("--log-level: invalid value %q (debug, info, warn, error)", o.level)}
 	}
 	f, err := logx.ParseFormat(o.format)

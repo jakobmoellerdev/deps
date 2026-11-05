@@ -18,9 +18,9 @@ var Doc = refdoc.Manager{
 		"`nuget.config` (any case: `NuGet.Config`, `NuGet.config`): package sources only, no deps",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeNuGet, What: "`PackageReference`, `PackageVersion` (central package management), `GlobalPackageReference`, `PackageDownload` and `DotNetCliToolReference` items in an `<ItemGroup>` (conditions included) with `Include` or `Update` and a `Version` (or `VersionOverride`, which wins) attribute or child element; dotnet-tools.json `tools.<id>.version`", Datasource: nugetDatasource, Versioning: "`nuget`"},
-		{Name: DepTypeMSBuildSDK, What: "`<Project Sdk=\"Microsoft.Build.NoTargets/3.7.134\">` (each `;`-separated `Name/Version`), `<Sdk Name=\"…\" Version=\"…\" />`, `<Import Project=\"…\" Sdk=\"…\" Version=\"…\" />`, global.json `msbuild-sdks` entries; SDKs without a version ship with the .NET SDK and are not deps", Datasource: nugetDatasource, Versioning: "`nuget`"},
-		{Name: DepTypeDotnetSDK, What: "global.json `sdk.version` (name `dotnet-sdk`); `rollForward` is kept", Datasource: "`dotnet-version`", Versioning: "`nuget`"},
+		{Name: DepTypeNuGet, What: "`PackageReference`, `PackageVersion` (central package management), `GlobalPackageReference`, `PackageDownload` and `DotNetCliToolReference` items in an `<ItemGroup>` (conditions included) with `Include` or `Update` and a `Version` (or `VersionOverride`, which wins) attribute or child element; dotnet-tools.json `tools.<id>.version`", Datasource: nugetDatasource, Versioning: "`nuget`", Datasources: []string{"nuget"}},
+		{Name: DepTypeMSBuildSDK, What: "`<Project Sdk=\"Microsoft.Build.NoTargets/3.7.134\">` (each `;`-separated `Name/Version`), `<Sdk Name=\"…\" Version=\"…\" />`, `<Import Project=\"…\" Sdk=\"…\" Version=\"…\" />`, global.json `msbuild-sdks` entries; SDKs without a version ship with the .NET SDK and are not deps", Datasource: nugetDatasource, Versioning: "`nuget`", Datasources: []string{"nuget"}},
+		{Name: DepTypeDotnetSDK, What: "global.json `sdk.version` (name `dotnet-sdk`); `rollForward` is kept", Versioning: "`nuget`", Datasources: []string{"dotnet-version"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: skipNoVersion, When: "an empty version (`Version=\"\"`)"},

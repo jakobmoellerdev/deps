@@ -1,0 +1,5 @@
+Writes a starter config to `<dir>/.deps.yaml` (or the file named by `--config`). An existing `.deps.yaml` or `.deps.yml` is only replaced with `--force`. The file starts with a `# yaml-language-server: $schema=` line for editor completion: the `deps.schema.json` asset of the running release (`https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/<tag>/deps.schema.json`), or the main branch's copy for development builds. Then come comments listing the managers that found dependencies in `--dir` (an offline scan: files are read, nothing is looked up), and `version: 1`.
+
+`--from-renovate <file>` adds the translation of a Renovate config to the new file: the same translation as `deps migrate` and compatibility mode (`--renovate`), see `deps help migrate` and [Migrating from Renovate](../migrating-from-renovate.md). JSON, JSONC and JSON5 are accepted, and its `extends` presets are resolved. Settings deps cannot express are printed on stderr as `warn    <setting>: <msg>` and left out.
+
+The written file is validated like `deps config check`; when it does not validate, the command fails with the problems (exit 2) and leaves the file for fixing.

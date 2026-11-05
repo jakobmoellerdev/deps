@@ -51,7 +51,7 @@ func Managers(in ManagersInput) ([]byte, error) {
 			if in.IgnoredDefault != nil && in.IgnoredDefault(t.Name) {
 				def = "ignored (opt in with a rule setting `ignore: false`)"
 			}
-			rows = append(rows, []string{codeSpan(t.Name), t.What, t.Datasource, t.Versioning, def})
+			rows = append(rows, []string{codeSpan(t.Name), t.What, datasourceColumn(t), t.Versioning, def})
 		}
 		d.table([]string{"Dep type", "Extracted", "Datasource", "Versioning", "Default"}, rows)
 		if len(m.Skips) > 0 {
@@ -97,4 +97,17 @@ func skipTable(d *doc, skips []refdoc.Skip) {
 		rows = append(rows, []string{codeSpan(s.Reason), s.When})
 	}
 	d.table([]string{"Reason", "When"}, rows)
+}
+
+// datasourceColumn is the datasource column of dep type t: its Datasource text, else its
+// Datasources as code spans.
+func datasourceColumn(t refdoc.DepType) string {
+	if t.Datasource != "" {
+		return t.Datasource
+	}
+	spans := make([]string, len(t.Datasources))
+	for i, ds := range t.Datasources {
+		spans[i] = codeSpan(ds)
+	}
+	return strings.Join(spans, ", ")
 }

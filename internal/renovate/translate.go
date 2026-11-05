@@ -2,6 +2,7 @@ package renovate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -215,16 +216,23 @@ func mustMarshal(m omap, headComment string) []byte {
 
 var elementPrefixRe = regexp.MustCompile(`^(rules\[0\]\.|custom\[0\]\.|customDatasources\.[^.:]+\.)`)
 
-// check validates a .deps.yaml fragment; it returns "" or the error lines without the
-// fragment path and element prefix, joined with "; ".
+// check validates a .deps.yaml fragment; it returns "" or its problems as "<field>: <msg>",
+// the field without the element prefix, joined with "; ".
 func check(fragment omap) string {
 	_, err := config.Parse(mustMarshal(fragment, ""), "renovate")
 	if err == nil {
 		return ""
 	}
+	ce, ok := errors.AsType[*config.Error](err)
+	if !ok || len(ce.Problems()) == 0 {
+		return err.Error()
+	}
 	var lines []string
-	for l := range strings.SplitSeq(err.Error(), "\n") {
-		l = strings.TrimPrefix(l, "renovate: ")
+	for _, p := range ce.Problems() {
+		l := p.Msg
+		if p.Field != "" {
+			l = p.Field + ": " + l
+		}
 		lines = append(lines, elementPrefixRe.ReplaceAllString(l, ""))
 	}
 	return strings.Join(lines, "; ")

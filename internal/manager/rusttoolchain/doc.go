@@ -12,7 +12,7 @@ var Doc = refdoc.Manager{
 		"The TOML is read with the span-keeping parser `internal/tomlspan`, so comments, `components`, `targets` and `profile` are kept.",
 	Files: []string{"any `rust-toolchain.toml`", "any `rust-toolchain`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepType, What: "the pinned toolchain version (name `" + DepName + "`), `X.Y.Z` or `X.Y`, optionally followed by a host triple (`1.82.0-x86_64-unknown-linux-gnu`)", Datasource: "`" + Datasource + "`", Versioning: "`semver`; `X.Y` `tag`"},
+		{Name: DepType, What: "the pinned toolchain version (name `" + DepName + "`), `X.Y.Z` or `X.Y`, optionally followed by a host triple (`1.82.0-x86_64-unknown-linux-gnu`)", Versioning: "`semver`; `X.Y` `tag`", Datasources: []string{Datasource}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: skipChannel, When: "a release channel that is no version: `stable`, `beta`, `nightly` (with or without a host triple)"},

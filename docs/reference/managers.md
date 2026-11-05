@@ -6,7 +6,7 @@ A **manager** finds dependencies in files and edits them. It records byte spans,
 
 Every discovered file goes to every manager whose file pattern matches. Discovery always prunes `.git`, `node_modules`, `vendor` and `testdata`, plus anything matched by [`ignorePaths`](configuration.md#ignorepaths).
 
-The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesdeptypes)) and skip reasons. Skip reasons are exact strings, shown by `deps plan -v` as `skip    <file>:<line>  <name>  <reason>`.
+The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesdeptypes)) and skip reasons. Skip reasons are exact strings, shown by `deps plan --show-skipped` as `skip    <file>:<line>  <name>  <reason>`.
 
 ## Contents
 
@@ -113,7 +113,7 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 **Commit pins.**
 
 - A bare SHA that a tag points at is that tag's version (the newest one: `v4.2.0` rather than a floating `v4` on the same commit). It is updated like a pinned ref, and the new version is written as a comment: `@<sha>` → `@<new sha> # v4.3.0`. Rules match it with that version.
-- A bare SHA no tag points at is ignored by default (`ignored by default (commit pin without version; …)`), as Renovate disables such unversioned references. A rule setting `ignore: false` (e.g. `manager: github-actions`, `names: [owner/repo]`) enables a `digest` update to the commit of the repository's default branch (its `HEAD`, listed with the tags in the same request), without a comment. The `digest` update type's `updates`, schedule and `minimumReleaseAge` (against the commit date, looked up only when a minimum applies) apply.
+- A bare SHA no tag points at is ignored by default (`ignored by default (commit pin without version; …)`), as Renovate disables such unversioned references. A rule setting `ignore: false` (e.g. `managers: [github-actions]`, `names: [owner/repo]`) enables a `digest` update to the commit of the repository's default branch (its `HEAD`, listed with the tags in the same request), without a comment. The `digest` update type's `allowedUpdateTypes`, schedule and `minimumReleaseAge` (against the commit date, looked up only when a minimum applies) apply.
 - Actions of the repository itself are not special-cased: once enabled, each new commit on its default branch is a new digest.
 - Security advisories are not looked up for bare SHAs.
 
@@ -188,13 +188,13 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules, and 
 
 - A requirement on a pseudo-version (`v0.0.0-<timestamp>-<commit>`) tracks a commit. A newer release (above the pseudo-version's base, e.g. `v1.2.4` for `v1.2.4-0.<ts>-<commit>`) is proposed as a version update; prereleases only when the base is one.
 - Otherwise the module's `@latest` is asked: when it is a newer pseudo-version of the same major (the tip of the default branch of an untagged module), it is proposed as a `digest` update, titled `update <module> digest to <commit7>`.
-- Rules apply as for other digest updates (`updates: [digest]`, `ignore`, `updateTypes: [digest]`); `minimumReleaseAge` of the digest type is checked against the commit time.
+- Rules apply as for other digest updates (`allowedUpdateTypes: [digest]`, `ignore`, `updateTypes: [digest]`); `minimumReleaseAge` of the digest type is checked against the commit time.
 - Modules with releases whose pseudo-version is ahead of the latest release get no digest update (`@latest` is that release, not the branch tip).
 
 **Major module paths (`gomodUpdateImportPaths`).**
 
 - Major versions ≥ 2 live under their own module path. For a requirement on `<path>/v<N>` (or an unsuffixed v0/v1 module, `/v<M+1>` for `vM.x.y+incompatible`, `gopkg.in/x.v<N>`), deps lists `/v<N+1>`, `/v<N+2>`, … from the GOPROXY URLs until one has no releases (at most 5).
-- The newest stable release of each path that the major policy accepts (`updates`, `allow`, `minimumReleaseAge`, `ignore` per update type) is a `major` update in the major PR bucket (`v<N>` buckets with `separateMultipleMajor`); a newer path replaces an older one in the same bucket.
+- The newest stable release of each path that the major policy accepts (`allowedUpdateTypes`, `allow`, `minimumReleaseAge`, `ignore` per update type) is a `major` update in the major PR bucket (`v<N>` buckets with `separateMultipleMajor`); a newer path replaces an older one in the same bucket.
 - The update rewrites the require (path and version) and every import of the old path and its packages in the module's `.go` files (below the go.mod, skipping `vendor`, `testdata`, `.`/`_` directories and nested modules; only the import path literals change). `go mod tidy` then sees the rewritten files through `-overlay`.
 - The new major's API may have changed: the PR body says so, and the build is not guaranteed to pass.
 - `gomodUpdateImportPaths: false` turns module path updates off. Only GOPROXY URLs are probed: GONOPROXY/GOPRIVATE modules, and paths no proxy before `direct` has, get no module path updates.
@@ -1578,7 +1578,7 @@ Updates Maven dependencies and Gradle plugins in Gradle version catalogs, build 
 
 **Shared versions.**
 
-One `[versions]` entry or variable may serve many libraries and plugins; each becomes a dep with the same file and span. `plan` and `apply` update the definition once. `run` groups the updates of deps sharing a definition into one PR; group rules, for example `{manager: gradle, names: ["org.jetbrains.kotlin*"], group: kotlin}`, combine further deps.
+One `[versions]` entry or variable may serve many libraries and plugins; each becomes a dep with the same file and span. `plan` and `apply` update the definition once. `run` groups the updates of deps sharing a definition into one PR; group rules, for example `{managers: [gradle], names: ["org.jetbrains.kotlin*"], group: kotlin}`, combine further deps.
 
 **Replacements.**
 
@@ -1749,7 +1749,7 @@ Updates gem requirements and the `ruby` directive in `Gemfile`s (and `gems.rb`) 
 **Ruby version.**
 
 - The `ruby` directive is the dep `ruby` of the `ruby-version` datasource (the ruby-lang.org release list). Its requirement is read and rewritten like a gem's (`ruby "3.4.7"` → `ruby "4.0.9"`, `~> 3.4.0` → `~> 4.0.9`); a Gemfile.lock never locks it, so versions the requirement admits are not proposed under `update-lockfile`.
-- Every dep of the `ruby-version` datasource (this directive, [`.ruby-version`](#ruby-version), the [asdf](#asdf) and [mise](#mise) `ruby` tool) is in the built-in group `ruby` (see [monorepos](configuration.md#monorepos)), so one PR moves all files naming the Ruby version. A rule setting `group` overrides it; `ruby` Docker images (`FROM ruby:3.4-slim`, CI `image: ruby:3.4`) stay [docker](#docker) deps, and a rule such as `{manager: docker, names: [ruby], group: ruby}` adds them to that PR.
+- Every dep of the `ruby-version` datasource (this directive, [`.ruby-version`](#ruby-version), the [asdf](#asdf) and [mise](#mise) `ruby` tool) is in the built-in group `ruby` (see [monorepos](configuration.md#monorepos)), so one PR moves all files naming the Ruby version. A rule setting `group` overrides it; `ruby` Docker images (`FROM ruby:3.4-slim`, CI `image: ruby:3.4`) stay [docker](#docker) deps, and a rule such as `{managers: [docker], names: [ruby], group: ruby}` adds them to that PR.
 - Gemfile.lock's `RUBY VERSION` moves with it in process (Bundler is not needed for a Ruby-only update): an update of the directive rewrites the version of the lock next to the Gemfile, an update of `.ruby-version`, `.tool-versions` or a mise config does so for the lock whose Gemfile reads it with `ruby file:` in the same directory. The version is written as current Bundlers record it (`ruby 4.0.9`; a patchlevel such as `p108` is dropped, a preview's `-` becomes `.`); a lock without `RUBY VERSION` and a partial version (`4.0`) leave the lock alone.
 
 **Lockfile (`apply`, `run`).**
@@ -1794,7 +1794,7 @@ Updates the Ruby version in `.ruby-version` (rbenv, chruby, rvm, asdf, mise, Bun
 
 ## git-submodules
 
-Moves git submodules to the newest commit of the branch they track, or to the newest version tag when `branch` is one. The current commit is the submodule's gitlink in the git index (`git ls-files --stage`). Disabled by default, as in Renovate: enable it with a rule `{manager: git-submodules, ignore: false}`.
+Moves git submodules to the newest commit of the branch they track, or to the newest version tag when `branch` is one. The current commit is the submodule's gitlink in the git index (`git ls-files --stage`). Disabled by default, as in Renovate: enable it with a rule `{managers: [git-submodules], ignore: false}`.
 
 **Files:**
 
@@ -2048,7 +2048,7 @@ Updates container resources, GitHub repository resources and task versions in Az
 
 **Tasks.**
 
-- Renovate disables this manager because a task version listed publicly may not be installed in an Azure DevOps organization or Server yet. deps ignores only DepType `task` by default; `{manager: azure-pipelines, depTypes: [task], ignore: false}` opts in. Containers and repositories are updated by default.
+- Renovate disables this manager because a task version listed publicly may not be installed in an Azure DevOps organization or Server yet. deps ignores only DepType `task` by default; `{managers: [azure-pipelines], depTypes: [task], ignore: false}` opts in. Containers and repositories are updated by default.
 - A major version (`Bash@3`) is updated to the next major (`Bash@4`), a full version (`Bash@3.231.0`) to the newest full version: the precision is kept (Renovate writes the full version unless an `extractVersion` rule cuts it).
 - With `DEPS_AZURE_DEVOPS_URL` and `DEPS_AZURE_DEVOPS_TOKEN`, the versions are the tasks installed in that organization or collection (see the `azure-pipelines-tasks` datasource).
 

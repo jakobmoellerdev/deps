@@ -232,7 +232,7 @@ func TestPythonRangeSecurity(t *testing.T) {
 		"flask":            {vuln("GHSA-f", "2.3.3")},
 	}}
 	// Only majors are allowed, so the other updates come from the advisories alone.
-	root, cfg := setup(t, "rules:\n  - updates: [major]\n", pyFiles(t, true))
+	root, cfg := setup(t, "rules:\n  - allowedUpdateTypes: [major]\n", pyFiles(t, true))
 	o := pyOptions()
 	o.Security = sec
 	res, err := Resolve(t.Context(), root, cfg, env, o)

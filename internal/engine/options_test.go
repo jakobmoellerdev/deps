@@ -12,6 +12,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/registry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -70,15 +71,15 @@ func TestSecurityUpdates(t *testing.T) {
 		wantSkip   string
 		wantNoAsks bool
 	}{
-		{name: "fix bypasses updates", cfg: "rules: [{updates: [patch], group: g, schedule: ['* 1 * * *']}]\n",
+		{name: "fix bypasses updates", cfg: "rules: [{allowedUpdateTypes: [patch], group: g, schedule: ['* 1 * * *']}]\n",
 			vulns: []Vuln{vuln("A", "v1.1.0")}, want: "v1.1.0", wantType: dep.Minor, wantIDs: []string{"A"}},
 		{name: "fix bypasses allow", cfg: "rules: [{allow: '< 1.1'}]\n",
 			vulns: []Vuln{vuln("A", "v1.1.0")}, want: "v1.1.0", wantType: dep.Minor, wantIDs: []string{"A"}},
 		{name: "normal update already fixes", cfg: "rules: [{group: g}]\n",
 			vulns: []Vuln{vuln("A", "v1.1.0")}, want: "v1.2.0", wantType: dep.Minor, wantIDs: []string{"A"}},
-		{name: "minimum fix is max over vulns", cfg: "rules: [{updates: [patch]}]\n",
+		{name: "minimum fix is max over vulns", cfg: "rules: [{allowedUpdateTypes: [patch]}]\n",
 			vulns: []Vuln{vuln("A", "v1.0.1", "v1.1.0"), vuln("B", "v1.1.0")}, want: "v1.1.0", wantType: dep.Minor, wantIDs: []string{"A", "B"}},
-		{name: "only advisories the version fixes", cfg: "rules: [{updates: [patch]}]\n",
+		{name: "only advisories the version fixes", cfg: "rules: [{allowedUpdateTypes: [patch]}]\n",
 			vulns: []Vuln{vuln("A", "v1.0.1"), vuln("B", "v9.9.9")}, want: "v1.0.1", wantType: dep.Patch, wantIDs: []string{"A"}},
 		{name: "no compatible fix keeps normal update", cfg: "rules: [{group: g}]\n",
 			vulns: []Vuln{vuln("A", "v2.0.0")}, want: "v1.2.0", wantType: dep.Minor, wantGroup: "g"},
@@ -149,7 +150,7 @@ func TestDashboardApprovalPolicy(t *testing.T) {
 		{name: "security update does not", vulns: []Vuln{vuln("A", "v1.1.0")}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			root, cfg := setup(t, "dependencyDashboard: true\nrules: [{manager: gomod, dashboardApproval: true}]\n", map[string]string{"go.mod": modA})
+			root, cfg := setup(t, "dependencyDashboard: true\nrules: [{managers: [gomod], dashboardApproval: true}]\n", map[string]string{"go.mod": modA})
 			o := sources(nil, goVersions)
 			o.Security = &fakeSec{vulns: map[string][]Vuln{"example.com/a": tt.vulns}}
 			res, err := Resolve(t.Context(), root, cfg, env, o)
@@ -169,7 +170,7 @@ func TestDashboardApprovalPolicy(t *testing.T) {
 
 func TestSecurityPinnedAction(t *testing.T) {
 	wf := "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@" + sha(checkout+"@v4.1.0") + " # v4.1.0\n"
-	root, cfg := setup(t, "rules: [{updates: [digest]}]\n", map[string]string{".github/workflows/ci.yml": wf})
+	root, cfg := setup(t, "rules: [{allowedUpdateTypes: [digest]}]\n", map[string]string{".github/workflows/ci.yml": wf})
 	o := sources(tags, nil)
 	o.Security = &fakeSec{vulns: map[string][]Vuln{"actions/checkout": {vuln("GHSA-1", "v4.1.1")}}}
 	res, err := Resolve(t.Context(), root, cfg, env, o)
@@ -238,7 +239,7 @@ func TestTrace(t *testing.T) {
 		"      - uses: actions/checkout@v4.1.0\n" +
 		"      - uses: actions/cache@v3\n" +
 		"      - uses: owner/broken@v1\n"
-	root, cfg := setup(t, "rules:\n  - names: ['actions/*']\n    allow: '< 5'\n  - names: [actions/cache]\n    ignore: true\n  - manager: gomod\n",
+	root, cfg := setup(t, "rules:\n  - names: ['actions/*']\n    allow: '< 5'\n  - names: [actions/cache]\n    ignore: true\n  - managers: [gomod]\n",
 		map[string]string{".github/workflows/ci.yml": wf})
 	var traces []Trace
 	o := sources(tags, nil)
@@ -443,26 +444,21 @@ func TestResolveNoDigestNoUpdate(t *testing.T) {
 }
 
 func TestManagersRegistry(t *testing.T) {
-	names := func(ms []manager.Manager) []string {
-		var out []string
-		for _, m := range ms {
-			out = append(out, m.Name())
-		}
-		return out
-	}
-	ms, err := Managers(config.Default())
-	builtin := []string{"github-actions", "gomod", "docker", "npm", "helm", "kustomize", "pre-commit", "gitlabci", "nvm", "nodenv", "asdf", "mise", "cargo",
-		"pip_requirements", "pep621", "poetry", "pipenv", "conda", "terraform", "terraform-version", "tflint-plugin", "terragrunt",
-		"maven", "gradle", "gradle-wrapper", "maven-wrapper", "swift", "bundler", "ruby-version", "git-submodules", "rust-toolchain", "devcontainer",
-		"bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "vcpkg", "elm", "composer", "julia", "bazel-module", "bazelisk", "nuget"}
-	if err != nil || !slices.Equal(names(ms), builtin) {
-		t.Fatalf("default managers = %v, %v", names(ms), err)
-	}
 	cfg := config.Default()
 	cfg.Custom = []config.Custom{{Files: []string{"Taskfile.yml"}}, {Files: []string{"Makefile"}, Match: `V=(?P<version>\S+)`, Datasource: "go", Name: "example.com/x"}}
-	ms, err = Managers(cfg)
-	if err != nil || !slices.Equal(names(ms), append(slices.Clone(builtin), "custom", "custom")) {
-		t.Fatalf("custom managers = %v, %v", names(ms), err)
+	ms, err := Managers(cfg)
+	if err != nil || len(ms) != len(registry.Builtin)+2 {
+		t.Fatalf("managers = %d, %v", len(ms), err)
+	}
+	// The built-in managers in registry order, named as documented, then the custom managers.
+	for i, m := range ms {
+		want := "custom"
+		if i < len(registry.Builtin) {
+			want = registry.Builtin[i].Doc.Name
+		}
+		if m.Name() != want {
+			t.Errorf("managers[%d] = %s, want %s", i, m.Name(), want)
+		}
 	}
 	cfg.Custom = []config.Custom{{}}
 	if _, err := Managers(cfg); err == nil {

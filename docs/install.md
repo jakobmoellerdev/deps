@@ -110,7 +110,7 @@ gh attestation verify checksums.txt -R jakobmoellerdev/deps && sha256sum -c --ig
 
 ```sh
 deps plan                  # unified diff on stdout, one line per update or error on stderr
-deps plan -v               # also list skipped deps and why
+deps plan --show-skipped   # also list skipped deps and why
 deps apply                 # write the updates (plus go mod tidy and lockfiles)
 deps run --dry-run         # which PRs would be created, updated or closed
 deps run                   # push branches and open or update PRs

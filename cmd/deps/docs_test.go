@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -9,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
@@ -57,13 +60,13 @@ func TestDocs(t *testing.T) {
 			t.Errorf("configuration.md lacks key %s", k)
 		}
 	}
-	cli := read("reference/cli.md")
-	for _, want := range []string{"## deps run\n", "| `--trigger-schedule` |", "| `--log-level` | string | `\"warn\"` |", "## Environment\n", "`DEPS_TRIGGER_SCHEDULE`", "## Exit codes\n", "## Output\n", "`skipped: outside schedule`"} {
-		if !strings.Contains(cli, want) {
+	cliRef := read("reference/cli.md")
+	for _, want := range []string{"## deps run\n", "| `--trigger-schedule` |", "| `--log-level` | string | `\"\"` |", "## Environment\n", "`DEPS_TRIGGER_SCHEDULE`", "## Exit codes\n", "## Output\n", "`skipped: outside schedule`"} {
+		if !strings.Contains(cliRef, want) {
 			t.Errorf("cli.md lacks %q", want)
 		}
 	}
-	if strings.Contains(cli, "## deps docs") || strings.Contains(cli, "`--cpuprofile` |") {
+	if strings.Contains(cliRef, "## deps docs") || strings.Contains(cliRef, "`--cpuprofile` |") {
 		t.Error("cli.md documents the hidden docs command or hidden flags")
 	}
 	if action := read("reference/action.md"); !strings.Contains(action, "| `token` | no | `${{ github.token }}` |") {
@@ -162,7 +165,7 @@ func withoutFences(s string) string {
 // The datasource reference documents exactly the datasources a session registers.
 func TestDatasourceDocsMatchSession(t *testing.T) {
 	cleanEnv(t)
-	s, err := newSession(t.Context(), &rootOpts{dir: t.TempDir(), concurrency: 1}, platform.Info{}, "", http.DefaultClient)
+	s, err := newSession(t.Context(), &rootOpts{dir: t.TempDir(), concurrency: 1}, platform.Info{}, "", http.DefaultClient, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +186,9 @@ func TestDatasourceDocsMatchSession(t *testing.T) {
 
 func TestHelpTopics(t *testing.T) {
 	stdout, _, code := execute(t, "help", "environment")
-	if code != 0 || !strings.Contains(stdout, "DEPS_GITHUB_COM_TOKEN") {
+	if code != 0 || !strings.Contains(stdout, "DEPS_GITHUB_COM_TOKEN") ||
+		!strings.Contains(stdout, "| `DEPS_CONCURRENCY` | `apply`, `explain`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--concurrency`: ") ||
+		!strings.Contains(stdout, "| `DEPS_LOG_LEVEL` | all | ") || strings.Count(stdout, "| `DEPS_TOKEN`") != 1 {
 		t.Errorf("help environment: exit %d\n%s", code, stdout)
 	}
 	stdout, _, _ = execute(t, "--help")
@@ -191,7 +196,7 @@ func TestHelpTopics(t *testing.T) {
 		t.Errorf("root help:\n%s", stdout)
 	}
 	stdout, _, _ = execute(t, "run", "--help")
-	if !strings.Contains(stdout, "skipped: branch modified by someone else") || !strings.Contains(stdout, "deps run --dry-run -v") {
+	if !strings.Contains(stdout, "skipped: branch modified by someone else") || !strings.Contains(stdout, "deps run --dry-run --show-skipped") {
 		t.Errorf("run help:\n%s", stdout)
 	}
 }
@@ -203,9 +208,10 @@ func TestHelpLayout(t *testing.T) {
 		stdout, _, code := execute(t, args...)
 		for _, want := range []string{
 			"\n\nUsage:\n  deps explain <name-glob>... [flags]\n\nExamples:\n  deps explain 'actions/*'\n",
-			"\n\nFlags:\n  -h, --help   help for explain\n\nGlobal Flags:\n",
-			"\n      --dir string          repository directory to scan (default \".\")\n",
-			"\n  -v, --verbose             also print skipped dependencies (skip lines)\n",
+			"\n\nFlags:\n      --concurrency int",
+			"\n      --dir string        repository directory to scan (default \".\")\n  -h, --help              help for explain\n      --renovate          compatibility mode: ",
+			"\n\nGlobal Flags:\n",
+			"\n      --log-level string    log level: debug, info, warn, error (when not set: debug with $RUNNER_DEBUG=1, else warn)\n",
 		} {
 			if code != 0 || !strings.Contains(stdout, want) {
 				t.Errorf("%v: exit %d, lacks %q:\n%s", args, code, want, stdout)
@@ -241,5 +247,40 @@ func TestCompletion(t *testing.T) {
 	if stdout, _, _ := execute(t, "plan", "--co", "--generate-shell-completion"); !strings.HasPrefix(stdout, "--config:") ||
 		!strings.Contains(stdout, "\n--color:") || !strings.Contains(stdout, "\n--concurrency:") || strings.Contains(stdout, "--dir") {
 		t.Errorf("flag completion:\n%s", stdout)
+	}
+}
+
+// TestHelpFiles checks that every command and help topic has a help file and every help file a
+// command: newRoot leaves Description to fillHelp.
+func TestHelpFiles(t *testing.T) {
+	root := newRoot()
+	if root.Description != "" {
+		t.Errorf("newRoot filled Description: %q", root.Description)
+	}
+	fillAllHelp(root)
+	used := map[string]bool{}
+	var walk func(c *cli.Command, name string)
+	walk = func(c *cli.Command, name string) {
+		used[name+".md"] = true
+		if c.Description == "" && !c.Hidden {
+			t.Errorf("%s: no help/%s.md", c.Name, name)
+		}
+		for _, sub := range c.Commands {
+			n := sub.Name
+			if c != root {
+				n = name + "-" + sub.Name
+			}
+			walk(sub, n)
+		}
+	}
+	walk(root, "root")
+	files, err := helpFS.ReadDir("help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if !used[f.Name()] {
+			t.Errorf("help/%s belongs to no command", f.Name())
+		}
 	}
 }

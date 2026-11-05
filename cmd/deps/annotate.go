@@ -85,8 +85,9 @@ func (a *annotator) path(base, p string) string {
 	return filepath.ToSlash(rel)
 }
 
-// command prints one annotation unless its kind's budget is used up.
-func (a *annotator) command(kind, file string, line int, msg string) {
+// command prints one annotation unless its kind's budget is used up; line and col are
+// 1-based, 0 when unknown.
+func (a *annotator) command(kind, file string, line, col int, msg string) {
 	if a == nil || !a.on {
 		return
 	}
@@ -114,6 +115,9 @@ func (a *annotator) command(kind, file string, line int, msg string) {
 		props = append(props, "file="+escapeProperty(file))
 		if line > 0 {
 			props = append(props, "line="+strconv.Itoa(line))
+			if col > 0 {
+				props = append(props, "col="+strconv.Itoa(col))
+			}
 		}
 	}
 	props = append(props, "title=deps")
@@ -131,15 +135,19 @@ func (a *annotator) error(err error) {
 	var fe *engine.FileError
 	switch {
 	case errors.As(err, &de):
-		a.command("error", a.path(a.dir, de.File), de.Line, de.Name+": "+de.Err.Error())
+		a.command("error", a.path(a.dir, de.File), de.Line, 0, de.Name+": "+de.Err.Error())
 	case errors.As(err, &fe):
-		a.command("error", a.path(a.dir, fe.File), 0, fe.Err.Error())
-	case errors.As(err, &ce) && ce.File != "" && len(ce.Problems) > 0:
-		for _, p := range ce.Problems {
-			a.command("error", a.path(".", ce.File), p.Line, p.Msg)
+		a.command("error", a.path(a.dir, fe.File), 0, 0, fe.Err.Error())
+	case errors.As(err, &ce) && len(ce.Problems()) > 0:
+		for _, p := range ce.Problems() {
+			msg := p.Msg
+			if p.Field != "" {
+				msg = p.Field + ": " + msg
+			}
+			a.command("error", a.path(".", p.Path), p.Line, p.Col, msg)
 		}
 	default:
-		a.command("error", "", 0, err.Error())
+		a.command("error", "", 0, 0, err.Error())
 	}
 }
 
@@ -156,7 +164,7 @@ func (a *annotator) security(u dep.Update) {
 			ids[i] += " (" + adv.Summary + ")"
 		}
 	}
-	a.command("notice", a.path(a.dir, u.Dep.File), u.Dep.Line, fmt.Sprintf("security update %s %s -> %s: %s", u.Dep.Name, from, to, strings.Join(ids, ", ")))
+	a.command("notice", a.path(a.dir, u.Dep.File), u.Dep.Line, 0, fmt.Sprintf("security update %s %s -> %s: %s", u.Dep.Name, from, to, strings.Join(ids, ", ")))
 }
 
 // mask hides secret in the rest of the job log (::add-mask::). Call it before secret is used.
@@ -164,6 +172,15 @@ func (a *annotator) mask(secret string) {
 	if a != nil && a.on && secret != "" {
 		fmt.Fprintf(a.w, "::add-mask::%s\n", escapeData(secret))
 	}
+}
+
+// configWarning annotates a warning about field of the loaded config c at the field's line.
+func (a *annotator) configWarning(c *config.Config, field, msg string) {
+	if a == nil || !a.on || c == nil {
+		return
+	}
+	line, col := c.Position(field)
+	a.command("warning", a.path(".", c.Path()), line, col, field+": "+msg)
 }
 
 // group starts a collapsible log group; endGroup ends it.
@@ -179,13 +196,13 @@ func (a *annotator) endGroup() {
 	}
 }
 
-func escapeData(s string) string {
-	return strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A").Replace(s)
-}
+var (
+	dataEscaper     = strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A")
+	propertyEscaper = strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A", ":", "%3A", ",", "%2C")
+)
 
-func escapeProperty(s string) string {
-	return strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A", ":", "%3A", ",", "%2C").Replace(s)
-}
+func escapeData(s string) string     { return dataEscaper.Replace(s) }
+func escapeProperty(s string) string { return propertyEscaper.Replace(s) }
 
 // annotatingHandler passes records to the next handler and annotates warnings and errors
 // with their message and attributes.
@@ -211,7 +228,7 @@ func (h *annotatingHandler) Handle(ctx context.Context, r slog.Record) error {
 		if r.Level >= slog.LevelError {
 			kind = "error"
 		}
-		h.a.command(kind, "", 0, b.String())
+		h.a.command(kind, "", 0, 0, b.String())
 	}
 	return h.Handler.Handle(ctx, r)
 }

@@ -17,7 +17,7 @@ func TestManagers(t *testing.T) {
 			Files:   []string{"`*.fake`"},
 			DepTypes: []refdoc.DepType{
 				{Name: "direct", What: "`require`", Datasource: "`go`", Versioning: "`go`"},
-				{Name: "indirect", What: "`// indirect`", Datasource: "`go`", Versioning: "`go`"},
+				{Name: "indirect", What: "`// indirect`", Versioning: "`go`", Datasources: []string{"go", "git-tags"}},
 			},
 			Skips:    []refdoc.Skip{{Reason: "a|b", When: "pipes are escaped"}},
 			Sections: []refdoc.Section{{Title: "Edits", Body: "Body.", Items: []string{"one", "two\nlines"}}},
@@ -45,7 +45,7 @@ func TestManagers(t *testing.T) {
 			"- [`fake`](#fake)\n- [`other`](#other)\n- [Datasources](#datasources)\n",
 		"## Skip reasons of every manager\n\n| Reason | When |\n|---|---|\n| `ignored by rule #<i>` | a rule |\n",
 		"## fake\n\nFinds fakes.\n\n**Files:**\n\n- `*.fake`\n",
-		"| `direct` | `require` | `go` | `go` | updated |\n| `indirect` | `// indirect` | `go` | `go` | ignored (opt in with a rule setting `ignore: false`) |\n",
+		"| `direct` | `require` | `go` | `go` | updated |\n| `indirect` | `// indirect` | `go`, `git-tags` | `go` | ignored (opt in with a rule setting `ignore: false`) |\n",
 		"**Skips:**\n\n| Reason | When |\n|---|---|\n| `a\\|b` | pipes are escaped |\n",
 		"**Edits.**\n\nBody.\n\n- one\n- two\n  lines\n",
 		"## Datasources\n\n- one client\n\n| Datasource | Dep name | Endpoints | Auth | Release times |\n|---|---|---|---|---|\n| `ds` | name | `GET /x` | none | none |\n",

@@ -41,6 +41,7 @@ import (
 	vcpkgds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/registry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/releasenotes"
 )
@@ -81,6 +82,7 @@ func writeDocs(root *cli.Command, out, schemaPath, actionPath string) error {
 	if err != nil {
 		return fmt.Errorf("configuration.md: %w", err)
 	}
+	fillAllHelp(root)
 	cliRef, err := docgen.CLI(root)
 	if err != nil {
 		return fmt.Errorf("cli.md: %w", err)
@@ -153,7 +155,7 @@ const managersIntro = "A **manager** finds dependencies in files and edits them.
 	"Every discovered file goes to every manager whose file pattern matches. Discovery always prunes `.git`, " +
 	"`node_modules`, `vendor` and `testdata`, plus anything matched by [`ignorePaths`](configuration.md#ignorepaths).\n\n" +
 	"The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesdeptypes)) and skip reasons. Skip " +
-	"reasons are exact strings, shown by `deps plan -v` as `skip    <file>:<line>  <name>  <reason>`."
+	"reasons are exact strings, shown by `deps plan --show-skipped` as `skip    <file>:<line>  <name>  <reason>`."
 
 // datasourceDocs documents the datasources newSession registers, in table order.
 func datasourceDocs() []refdoc.Datasource {
@@ -166,7 +168,7 @@ func managersInput() docgen.ManagersInput {
 	return docgen.ManagersInput{
 		Intro:          managersIntro,
 		Skips:          engine.SkipDocs,
-		Managers:       engine.ManagerDocs(),
+		Managers:       registry.Docs(),
 		Datasources:    datasourceDocs(),
 		Aliases:        config.DatasourceAliases,
 		Shared:         datasource.Overview,

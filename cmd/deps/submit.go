@@ -22,9 +22,8 @@ import (
 func newSubmit(o *rootOpts) *cli.Command {
 	var dryRun, all bool
 	return &cli.Command{
-		Name:        "submit",
-		Usage:       "Submit the dependencies to GitHub's dependency graph",
-		Description: helpText("submit"),
+		Name:  "submit",
+		Usage: "Submit the dependencies to GitHub's dependency graph",
 		Metadata: map[string]any{docgen.MetaExample: "  # in a GitHub Actions job with contents: write\n" +
 			"  deps submit\n" +
 			"  # print the snapshot instead of submitting it\n" +
@@ -33,10 +32,10 @@ func newSubmit(o *rootOpts) *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return submit(ctx, cmd, o, dryRun, all)
 		},
-		Flags: []cli.Flag{
+		Flags: append(scanFlags(o, scanSession),
 			&cli.BoolFlag{Name: "dry-run", Destination: &dryRun, Usage: "print the snapshot JSON to stdout instead of submitting it; works outside GitHub Actions"},
 			&cli.BoolFlag{Name: "all-managers", Destination: &all, Usage: "also submit the manifests GitHub reads by itself (go.mod, package.json, Python, Cargo, pom.xml, workflows); a submitted manifest replaces GitHub's own view of that file"},
-		},
+		),
 	}
 }
 
@@ -48,7 +47,7 @@ func submit(ctx context.Context, cmd *cli.Command, o *rootOpts, dryRun, all bool
 	}
 	token := envToken()
 	client := newHTTPClient()
-	s, err := newSession(ctx, o, info, token, client)
+	s, err := newSession(ctx, o, info, token, client, stderr)
 	if err != nil {
 		return err
 	}

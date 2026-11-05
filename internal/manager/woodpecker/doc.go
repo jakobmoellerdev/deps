@@ -12,8 +12,8 @@ var Doc = refdoc.Manager{
 		"`.woodpecker.y(a)ml`, `.woodpecker/<name>.y(a)ml` at the repository root",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: "image", What: "`image` of the `steps`, `clone` and legacy `pipeline` steps (a list, or a mapping of step names)", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "service", What: "`image` of the `services` (list or mapping)", Datasource: "`docker`", Versioning: "`docker`"},
+		{Name: "image", What: "`image` of the `steps`, `clone` and legacy `pipeline` steps (a list, or a mapping of step names)", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "service", What: "`image` of the `services` (list or mapping)", Versioning: "`docker`", Datasources: []string{"docker"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "variable reference", When: "`$` in the image (matrix or environment variables)"},

@@ -80,7 +80,7 @@ func TestElmRangeStrategy(t *testing.T) {
 				`1.2.2 <= v < 2.0.0`, `2.2.0 <= v < 3.0.0`).Replace(elmPackage),
 		},
 		{
-			name: "indirect opted in", cfg: "rules: [{manager: elm, depTypes: [indirect, test-indirect], ignore: false}]\n",
+			name: "indirect opted in", cfg: "rules: [{managers: [elm], depTypes: [indirect, test-indirect], ignore: false}]\n",
 			want: []string{
 				"elm-explorations/test 1.2.2->2.2.0 major", "elm-explorations/test 1.2.2->2.2.0 major",
 				"elm/compiler 0.19.1->0.19.3 patch",

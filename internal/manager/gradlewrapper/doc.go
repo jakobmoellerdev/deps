@@ -12,7 +12,7 @@ var Doc = refdoc.Manager{
 		"and, when present, `distributionSha256Sum`.",
 	Files: []string{"`gradle/wrapper/gradle-wrapper.properties`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeWrapper, What: "`distributionUrl` version", Datasource: "`gradle-version`", Versioning: "`maven`"},
+		{Name: DepTypeWrapper, What: "`distributionUrl` version", Versioning: "`maven`", Datasources: []string{"gradle-version"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "unsupported distributionUrl", When: "the last path segment is not `gradle-<version>-bin.zip` or `gradle-<version>-all.zip`"},

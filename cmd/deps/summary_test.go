@@ -49,7 +49,7 @@ func TestSummaryRender(t *testing.T) {
 	}{
 		{
 			name: "plan with groups",
-			s:    summary{Command: "plan", Res: res, Groups: groups, Elapsed: 1500 * time.Millisecond, Verbose: true},
+			s:    summary{Command: "plan", Res: res, Groups: groups, Elapsed: 1500 * time.Millisecond, ShowSkipped: true},
 			text: []string{
 				"\nSummary: 6 dependencies, 3 updates in 3 PRs, 1 held back by minimumReleaseAge, 3 skipped, 0 errors (1.5s)\n",
 				"  PR deps/github-actions/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1  [dashboard approval]\n",
@@ -58,7 +58,7 @@ func TestSummaryRender(t *testing.T) {
 				"      example.com/vuln  go.mod:6  v1.0.0 -> v1.0.1  (patch, security: GO-2026-1)\n",
 				"  Held back by minimumReleaseAge:\n      github.com/spf13/cobra  go.mod:5  v1.11.0  too new (released 2026-11-03, minimum 3 days)\n",
 				"  Deprecated or abandoned:\n      example.com/vuln  go.mod:6  abandoned: no release since 2020-01-01 (abandonmentThreshold 365 days)\n",
-				"  Skipped (-v lists each dependency):\n" +
+				"  Skipped (--show-skipped lists each dependency):\n" +
 					"       2  ignored by default (indirect; enable with a rule setting ignore: false)\n" +
 					"       1  local action  (actions in this repository (./…) have no upstream version)\n",
 			},
@@ -88,8 +88,8 @@ func TestSummaryRender(t *testing.T) {
 				"[up-to-date https://x/pulls/3; automerge enabled]\n",
 				"  closed  deps/gomod/old  https://x/pulls/2\n",
 				"  updated  Dependency Dashboard  https://x/issues/1\n",
-				"  Held back by minimumReleaseAge: 1 (-v lists each)\n",
-				"  Deprecated or abandoned: 1 (-v lists each)\n",
+				"  Held back by minimumReleaseAge: 1 (--show-skipped lists each)\n",
+				"  Deprecated or abandoned: 1 (--show-skipped lists each)\n",
 			},
 			md: []string{
 				"## deps run\n",
@@ -119,7 +119,7 @@ func TestSummaryRender(t *testing.T) {
 		{
 			name:         "empty",
 			s:            summary{Command: "plan", Res: &engine.Result{Deps: res.Deps, Skipped: res.Skipped}},
-			textExact:    "\nSummary: No updates: 3 dependencies up to date, 3 skipped.\n  Skipped (-v lists each dependency):\n",
+			textExact:    "\nSummary: No updates: 3 dependencies up to date, 3 skipped.\n  Skipped (--show-skipped lists each dependency):\n",
 			markdownHead: "## deps plan\n\n**No updates: 3 dependencies up to date, 3 skipped.**\n\n### Skipped\n",
 		},
 		{
@@ -127,6 +127,12 @@ func TestSummaryRender(t *testing.T) {
 			s:         summary{Command: "apply", Res: &engine.Result{Deps: res.Deps[:1]}},
 			textExact: "\nSummary: No updates: 1 dependency up to date, 0 skipped.\n",
 			md:        []string{"## deps apply\n\n**No updates: 1 dependency up to date, 0 skipped.**\n\n"},
+		},
+		{
+			name:      "rules that matched no dependency",
+			s:         summary{Command: "plan", Res: &engine.Result{Deps: res.Deps[:1]}, Unused: []int{0, 3}},
+			textExact: "warn    rules[0] matched no dependency\nwarn    rules[3] matched no dependency\n\nSummary: No updates: 1 dependency up to date, 0 skipped.\n",
+			md:        []string{"### Warnings\n\n- `rules[0]` matched no dependency\n- `rules[3]` matched no dependency\n\n"},
 		},
 	}
 	for _, tc := range tests {

@@ -869,10 +869,11 @@ func (p *policies) bucket(c versioning.Candidate) bucketKey {
 func (p *policies) singleBucket() bool { return !p.kindRules && !p.pre.SeparateMajorMinor }
 
 // allows reports whether updates of kind are enabled (digest refresh and pin, which have
-// no new version for allow). Replacements are not in `updates` lists: only ignore stops them.
+// no new version for allow). Replacements are not in allowedUpdateTypes lists: only ignore
+// stops them.
 func (p *policies) allows(kind dep.UpdateType) bool {
 	kp := p.of(kind)
-	return !kp.Ignore && (kind == dep.Replacement || kp.Updates[kind])
+	return !kp.Ignore && (kind == dep.Replacement || kp.AllowedUpdateTypes[kind])
 }
 
 // resolver decides the update of one dep.

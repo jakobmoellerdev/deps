@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 )
@@ -32,7 +33,7 @@ func TestAnnotationsPlan(t *testing.T) {
 	})
 	githubActions(t, ws)
 
-	_, stderr, code := execute(t, "plan", "-v", "--dir", dir)
+	_, stderr, code := execute(t, "plan", "--show-skipped", "--dir", dir)
 	if code != 1 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -49,12 +50,56 @@ func TestAnnotationsPlan(t *testing.T) {
 
 func TestAnnotationsConfig(t *testing.T) {
 	cleanEnv(t)
+	newFakeNet(t)
 	dir := t.TempDir()
-	writeFiles(t, dir, map[string]string{".deps.yaml": "rules:\n  - manager: gomod\n    bogus: 1\n"})
+	writeFiles(t, dir, map[string]string{".deps.yaml": "automerg: true\nrules: [{updatetypes: [minor]}]\n"})
 	githubActions(t, dir)
 	_, stderr, code := execute(t, "plan", "--dir", dir)
-	if want := "::error file=.deps.yaml,line=3,title=deps::field bogus not found in type config.Rule\n"; code != 2 || !strings.Contains(stderr, want) {
-		t.Errorf("exit %d, stderr lacks %q:\n%s", code, want, stderr)
+	p := filepath.Join(dir, ".deps.yaml")
+	want := "deps: " + p + ":1:1: automerg: unknown key (did you mean automerge?)\n" +
+		p + ":2:10: rules[0].updatetypes: unknown key (did you mean updateTypes?)\n" +
+		"::error file=.deps.yaml,line=1,col=1,title=deps::automerg: unknown key (did you mean automerge?)\n" +
+		"::error file=.deps.yaml,line=2,col=10,title=deps::rules[0].updatetypes: unknown key (did you mean updateTypes?)\n"
+	if code != 2 || !strings.HasSuffix(stderr, want) {
+		t.Errorf("exit %d, stderr:\n%s\nwant suffix:\n%s", code, stderr, want)
+	}
+}
+
+func TestAnnotationsConfigWarnings(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		".github/workflows/ci.yml": workflow,
+		".deps.yaml":               "rules:\n  - names: [nothing/matches]\n    ignore: true\n  - managers: [gomod]\n",
+	})
+	githubActions(t, dir)
+	_, stderr, _ := execute(t, "plan", "--dir", dir)
+	for _, want := range []string{
+		"::warning file=.deps.yaml,line=4,col=5,title=deps::rules[1]: ",
+		"::warning file=.deps.yaml,line=2,col=5,title=deps::rules[0]: matched no dependency\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+}
+
+func TestAnnotateConfigProblems(t *testing.T) {
+	var b bytes.Buffer
+	env := map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_WORKSPACE": "/ws"}
+	a := newAnnotator(func(k string) string { return env[k] }, &b, ".")
+	a.on = true
+	a.error(&config.Error{Err: errors.Join(
+		&config.Problem{Path: "/ws/a,b:c.yaml", Line: 3, Col: 4, Field: "pin", Msg: "100% wrong\nreally"},
+		&config.Problem{Path: "/elsewhere/.deps.yaml", Field: "x", Msg: "no position"},
+	)})
+	a.error(&config.Error{Err: errors.New("custom datasource e: bad")})
+	want := "::error file=a%2Cb%3Ac.yaml,line=3,col=4,title=deps::pin: 100%25 wrong%0Areally\n" +
+		"::error file=/elsewhere/.deps.yaml,title=deps::x: no position\n" +
+		"::error title=deps::custom datasource e: bad\n"
+	if b.String() != want {
+		t.Errorf("got:\n%s\nwant:\n%s", b.String(), want)
 	}
 }
 
@@ -140,7 +185,7 @@ func TestAnnotationsSecurityNotice(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
 		"go.mod":     "module example.com/x\n\ngo 1.24\n\nrequire example.com/vuln v1.0.0\n",
-		".deps.yaml": "rules: [{manager: gomod, updates: [patch]}]\n",
+		".deps.yaml": "rules: [{managers: [gomod], allowedUpdateTypes: [patch]}]\n",
 	})
 	githubActions(t, dir)
 	_, stderr, code := execute(t, "plan", "--dir", dir)
@@ -205,7 +250,7 @@ func TestAnnotatorLimitAndEscaping(t *testing.T) {
 	b.Reset()
 	for i := range maxAnnotations + 5 {
 		a.error(fmt.Errorf("e%d", i))
-		a.command("warning", "", 0, "w")
+		a.command("warning", "", 0, 0, "w")
 	}
 	if n := strings.Count(b.String(), "::error "); n != maxAnnotations-2 {
 		t.Errorf("%d error annotations after the first two, want %d", n, maxAnnotations-2)

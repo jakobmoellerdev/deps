@@ -22,10 +22,16 @@ type Manager struct {
 
 // DepType documents one dep type of a manager (the values of rules[].depTypes).
 type DepType struct {
-	Name       string
-	What       string // what is extracted
+	Name string
+	What string // what is extracted
+	// Datasource is the datasource column (markdown) when Datasources alone do not say it
+	// (which deps use which, the lookup name); empty renders Datasources as code spans.
 	Datasource string
 	Versioning string
+	// Datasources are the datasource names (dep.Dep.Datasource) deps of this type are looked
+	// up with; nil means any datasource, including custom.<name> (the custom manager). They
+	// are the facts config validation and lint derive from; a Datasource text names each of them.
+	Datasources []string
 }
 
 // Skip is a skip reason exactly as `deps plan -v` prints it; placeholders are written <x>.

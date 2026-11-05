@@ -3,63 +3,22 @@ package engine
 import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/azurepipelines"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bitbucketpipelines"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/circleci"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/droneci"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/elm"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitlabci"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradle"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/maven"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nuget"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/precommit"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/rusttoolchain"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/swift"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/woodpecker"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/registry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
-// Managers returns the managers enabled by cfg, in discovery order: the built-in managers,
-// then one custom manager per cfg.Custom entry.
+// Managers returns the managers enabled by cfg, in discovery order: the built-in managers
+// (registry.Builtin), then one custom manager per cfg.Custom entry.
 func Managers(cfg *config.Config) ([]manager.Manager, error) {
 	cs, err := custom.New(cfg)
 	if err != nil {
 		return nil, err
 	}
-	ms := make([]manager.Manager, 0, 44+len(cs))
-	ms = append(ms, actions.New(), gomod.New(), docker.New(), npm.New(), helm.New(),
-		kustomize.New(), precommit.New(), gitlabci.New(),
-		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise(), cargo.New(),
-		piprequirements.New(), pep621.New(), poetry.New(), pipenv.New(), conda.New(),
-		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt(),
-		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New(), bundler.New(), toolversions.NewRubyVersion(), gitsubmodules.New(),
-		rusttoolchain.New(), devcontainer.New(),
-		bitbucketpipelines.New(), woodpecker.New(), droneci.New(), circleci.New(), azurepipelines.New(), vcpkg.New(), elm.New(), composer.New(), julia.New(),
-		bazel.New(), bazel.NewBazelisk(), nuget.New())
+	ms := make([]manager.Manager, 0, len(registry.Builtin)+len(cs))
+	for _, e := range registry.Builtin {
+		ms = append(ms, e.New())
+	}
 	return append(ms, cs...), nil
 }
 
@@ -70,17 +29,4 @@ var SkipDocs = []refdoc.Skip{
 	{Reason: "non-version value \"<v>\"", When: "the current value is not valid in the dep's versioning scheme"},
 	{Reason: "non-version tag", When: "a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep`"},
 	{Reason: "current version <v> not found upstream (pin an existing version)", When: "a pinned or to-be-pinned dep whose current tag or image tag no longer exists (digest refresh and pin need it)"},
-}
-
-// ManagerDocs returns the reference documentation of the built-in managers and the custom
-// manager, in discovery order.
-func ManagerDocs() []refdoc.Manager {
-	return []refdoc.Manager{actions.Doc, gomod.Doc, docker.Doc, npm.Doc, helm.Doc,
-		kustomize.Doc, precommit.Doc, gitlabci.Doc,
-		toolversions.DocNvm, toolversions.DocNodenv, toolversions.DocAsdf, toolversions.DocMise, cargo.Doc,
-		piprequirements.Doc, pep621.Doc, poetry.Doc, pipenv.Doc, conda.Doc,
-		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc,
-		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, bundler.Doc, toolversions.DocRubyVersion, gitsubmodules.Doc,
-		rusttoolchain.Doc, devcontainer.Doc,
-		bitbucketpipelines.Doc, woodpecker.Doc, droneci.Doc, circleci.Doc, azurepipelines.Doc, vcpkg.Doc, elm.Doc, composer.Doc, julia.Doc, bazel.Doc, bazel.BazeliskDoc, nuget.Doc, custom.Doc}
 }

@@ -9,6 +9,15 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
+// setupDatasources are the datasources of the known setup actions, sorted.
+func setupDatasources() []string {
+	seen := map[string]bool{}
+	for _, in := range setupActions {
+		seen[in.datasource] = true
+	}
+	return slices.Sorted(maps.Keys(seen))
+}
+
 // Doc is the reference documentation of the github-actions manager (docs/reference/managers.md).
 var Doc = refdoc.Manager{
 	Name: Name,
@@ -19,8 +28,8 @@ var Doc = refdoc.Manager{
 		"any `action.y(a)ml`",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: "action", What: "`uses: owner/repo[/path]@ref`", Datasource: "`git-tags`", Versioning: "`tag`"},
-		{Name: "setup", What: "the version input of a setup action (see Setup action inputs)", Datasource: "per action (see Setup action inputs)", Versioning: "`semver` or `tag`"},
+		{Name: "action", What: "`uses: owner/repo[/path]@ref`", Versioning: "`tag`", Datasources: []string{"git-tags"}},
+		{Name: "setup", What: "the version input of a setup action (see Setup action inputs)", Datasource: "per action (see Setup action inputs)", Versioning: "`semver` or `tag`", Datasources: setupDatasources()},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "local action", When: "`./…`, `$/…`"},
@@ -48,7 +57,7 @@ var Doc = refdoc.Manager{
 		}},
 		{Title: "Commit pins", Items: []string{
 			"A bare SHA that a tag points at is that tag's version (the newest one: `v4.2.0` rather than a floating `v4` on the same commit). It is updated like a pinned ref, and the new version is written as a comment: `@<sha>` → `@<new sha> # v4.3.0`. Rules match it with that version.",
-			"A bare SHA no tag points at is ignored by default (`ignored by default (commit pin without version; …)`), as Renovate disables such unversioned references. A rule setting `ignore: false` (e.g. `manager: github-actions`, `names: [owner/repo]`) enables a `digest` update to the commit of the repository's default branch (its `HEAD`, listed with the tags in the same request), without a comment. The `digest` update type's `updates`, schedule and `minimumReleaseAge` (against the commit date, looked up only when a minimum applies) apply.",
+			"A bare SHA no tag points at is ignored by default (`ignored by default (commit pin without version; …)`), as Renovate disables such unversioned references. A rule setting `ignore: false` (e.g. `managers: [github-actions]`, `names: [owner/repo]`) enables a `digest` update to the commit of the repository's default branch (its `HEAD`, listed with the tags in the same request), without a comment. The `digest` update type's `allowedUpdateTypes`, schedule and `minimumReleaseAge` (against the commit date, looked up only when a minimum applies) apply.",
 			"Actions of the repository itself are not special-cased: once enabled, each new commit on its default branch is a new digest.",
 			"Security advisories are not looked up for bare SHAs.",
 		}},

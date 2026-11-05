@@ -16,8 +16,8 @@ var Doc = refdoc.Manager{
 		"composer.json is read as JSON; only the constraint strings that change are rewritten, so formatting and key order are kept.",
 	Files: []string{"`composer.json` (its lock: the `composer.lock` next to it)"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeRequire, What: "entries of `require`: `\"vendor/package\": \"<constraint>\"` (updates use commit type `fix`)", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypeRequireDev, What: "entries of `require-dev`", Datasource: datasources, Versioning: versionings},
+		{Name: DepTypeRequire, What: "entries of `require`: `\"vendor/package\": \"<constraint>\"` (updates use commit type `fix`)", Datasource: datasources, Versioning: versionings, Datasources: []string{"packagist", "git-tags"}},
+		{Name: DepTypeRequireDev, What: "entries of `require-dev`", Datasource: datasources, Versioning: versionings, Datasources: []string{"packagist", "git-tags"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: skipPlatform, When: "a platform package, any name without a vendor: `php`, `ext-*`, `lib-*`, `composer`, `composer-plugin-api`, `composer-runtime-api`"},

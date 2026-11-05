@@ -20,7 +20,7 @@ const (
 	// Replacement moves a dep to another package (config replacementName, the built-in
 	// replacements): NewName is the new name, NewVersion its version (the current one unless
 	// replacementVersion is set). It replaces the dep's usual updates (Update.Declined). Rules
-	// select it with updateTypes; it is not in UpdateTypes, so `updates` lists never drop it.
+	// select it with updateTypes; it is not in UpdateTypes, so allowedUpdateTypes lists never drop it.
 	Replacement UpdateType = "replacement"
 	// LockFileMaintenance refreshes a whole lockfile (config lockFileMaintenance): Dep.File is
 	// the manifest of the lock root, Dep.Name the lockfile's slash path; there are no versions.

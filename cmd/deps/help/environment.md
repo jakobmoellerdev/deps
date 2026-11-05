@@ -1,3 +1,5 @@
+Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` as `_`: `--max-new-prs` is `DEPS_MAX_NEW_PRS`) when it is not given on the command line; an invalid value exits 2 naming the variable. Those variables are listed after the others.
+
 | Variable | Used by | Meaning |
 |---|---|---|
 | `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN` | all | platform token, first non-empty wins; `run --token` takes precedence. `run` falls back to `git credential fill` for the platform host, and without any token fails with `no token for <host>` (except `--dry-run`). Sent to the platform host's lookups as Basic `x-access-token:<token>` (`oauth2:<token>` on GitLab). |
@@ -11,17 +13,12 @@
 | `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG` | `terraform-provider`, `terraform-module` datasources | Terraform CLI config read for registry `credentials` blocks and the `credentials_helper`, replacing `~/.terraformrc` (`%APPDATA%/terraform.rc`); when set, the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` (`credentials.tfrc.json`) are not read. `TERRAFORM_CONFIG` is the legacy name |
 | `HOME`, `APPDATA` (Windows) | `terraform-provider`, `terraform-module` datasources | where the Terraform CLI config, `credentials.tfrc.json` and credentials helpers (`.terraform.d/plugins`) are found |
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor`; ignored for platform commits |
-| `DEPS_SIGNING_KEY` | `run` | default of `--signing-key`: a passphrase-less OpenSSH or armored OpenPGP private key, or the path of a file holding one; deps signs its commits with it |
 | `DEPS_ALLOW_TASKS` | `apply`, `run` | default of `--allow-tasks`: the `postUpgradeTasks` commands that may run (repository code), one pattern per line, `*` matching any text without `;`, `&`, `|`, backticks, `$(` or line breaks (`go generate ./...`, `make *`; `*` alone allows everything). Commands get the environment without `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`, and without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CEILING_DIRECTORIES`, so their git uses the repository they run in |
 | `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
-| `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
-| `DEPS_SCHEDULE_TIME` | `run` | default of `--schedule-time`: the RFC 3339 time schedule time windows are evaluated at instead of now |
-| `DEPS_REPOSITORIES` | `run` | default of `--repositories`: `owner/name` and `owner/<glob>` entries separated by whitespace or commas |
+| `DEPS_REPOSITORIES` | `run` | the `--repositories` variable: `owner/name` and `owner/<glob>` entries separated by whitespace or commas |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
-| `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
-| `RUNNER_DEBUG` | all | `1` (an Actions re-run with debug logging) makes `debug` the default `--log-level`, below `DEPS_LOG_LEVEL` and the flag |
+| `RUNNER_DEBUG` | all | `1` (an Actions re-run with debug logging) makes `debug` the default `--log-level`; the flag and its variable (listed below) still win |
 | `NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE`, `FORCE_COLOR` | all | with `--color auto`: `NO_COLOR` (any value) or `TERM=dumb` turn colors off on a terminal; `CLICOLOR_FORCE` or `FORCE_COLOR` (any value but `0` or `false`) turn them on, also when piped and over `NO_COLOR`. `--color always`/`never` ignore them |
-| `DEPS_REPORT` | `plan`, `apply`, `run` | default of `--report` (JSON report file, see `deps help output`) |
 | `NPM_CONFIG_REGISTRY`, `npm_config_registry` | `npm` datasource | registry when no `.npmrc` sets one (default `https://registry.npmjs.org/`) |
 | `DOCKER_CONFIG` | `docker` datasource | directory of the Docker `config.json` with registry credentials and credential helpers (default `~/.docker`) |
 | `DEPS_CRATES_INDEX_URL`, `DEPS_CRATES_API_URL` | `crate` datasource | base URLs of a crates.io sparse index mirror (default `https://index.crates.io`) and of the crates.io API used for source repositories (default `https://crates.io`) |

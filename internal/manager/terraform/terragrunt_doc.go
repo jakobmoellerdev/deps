@@ -11,9 +11,9 @@ var TerragruntDoc = refdoc.Manager{
 		"Other blocks (`include`, `dependency`, `generate`, `engine`) are not extracted; `.terraform.lock.hcl` is not refreshed.",
 	Files: []string{"`terragrunt.hcl` (not below a `.terragrunt-cache` directory)"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeTerragruntGitHub, What: "`terraform { source }` from `github.com` (`github.com/…`, `git::https://github.com/…`, `git::git@github.com:…`, `git::ssh://git@github.com/…`) with `?ref=`", Datasource: "`git-tags`", Versioning: "`semver`, partial refs `tag`"},
-		{Name: DepTypeTerragruntGitTags, What: "`terraform { source }` from another git host (`git::https://…`, `git::ssh://…`, `git@host:…`, `bitbucket.org/…`) with `?ref=`", Datasource: "`git-tags`", Versioning: "`semver`, partial refs `tag`"},
-		{Name: DepTypeTerragruntRegistry, What: "`terraform { source = \"tfr://[host]/<namespace>/<name>/<provider>[//subdir]?version=<version>\" }`, or without `?version=` the block's `version` constraint; the name is `<namespace>/<name>/<provider>`", Datasource: "`terraform-module`", Versioning: "`hashicorp`"},
+		{Name: DepTypeTerragruntGitHub, What: "`terraform { source }` from `github.com` (`github.com/…`, `git::https://github.com/…`, `git::git@github.com:…`, `git::ssh://git@github.com/…`) with `?ref=`", Versioning: "`semver`, partial refs `tag`", Datasources: []string{"git-tags"}},
+		{Name: DepTypeTerragruntGitTags, What: "`terraform { source }` from another git host (`git::https://…`, `git::ssh://…`, `git@host:…`, `bitbucket.org/…`) with `?ref=`", Versioning: "`semver`, partial refs `tag`", Datasources: []string{"git-tags"}},
+		{Name: DepTypeTerragruntRegistry, What: "`terraform { source = \"tfr://[host]/<namespace>/<name>/<provider>[//subdir]?version=<version>\" }`, or without `?version=` the block's `version` constraint; the name is `<namespace>/<name>/<provider>`", Versioning: "`hashicorp`", Datasources: []string{"terraform-module"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "non-literal source", When: "a `source` that is an expression (`\"${include.envcommon.locals.base_source_url}?ref=v0.8.0\"`, `get_repo_root()`)"},

@@ -42,37 +42,36 @@ type runOpts struct {
 func newRun(o *rootOpts) *cli.Command {
 	r := &runOpts{}
 	return &cli.Command{
-		Name:        "run",
-		Usage:       "Push one branch and open or update one pull request per dependency or group",
-		Description: helpText("run"),
+		Name:  "run",
+		Usage: "Push one branch and open or update one pull request per dependency or group",
 		Metadata: map[string]any{docgen.MetaExample: "  # what would happen, without a token and without writes\n" +
-			"  deps run --dry-run -v\n" +
+			"  deps run --dry-run --show-skipped\n" +
 			"  # what the run triggered by the Sunday cron would do\n" +
 			"  deps run --dry-run --trigger-schedule '0 0 * * 0'\n" +
 			"  # what a run on Monday 05:30 UTC would do with schedule time windows\n" +
 			"  deps run --dry-run --schedule-time 2026-11-09T05:30:00Z\n" +
 			"  # in CI (the action runs this with DEPS_TOKEN set)\n" +
-			"  DEPS_TOKEN=$TOKEN deps run -v --log-level info"},
+			"  DEPS_TOKEN=$TOKEN deps run --show-skipped --log-level info"},
 		ArgValidator: noArgs,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return runBot(ctx, cmd, o, r)
 		},
-		Flags: []cli.Flag{
+		Flags: append(scanFlags(o, scanResults),
 			&cli.StringFlag{Name: "platform", Value: "auto", Destination: &r.platform, Usage: "forge type: auto|github|gitea|forgejo|gitlab (auto: from the CI environment, else the origin remote)"},
 			&cli.StringFlag{Name: "api-url", Destination: &r.apiURL, Usage: "API base URL (default: detected)"},
 			&cli.StringFlag{Name: "repo", Destination: &r.repo, Usage: "repository owner/name, or the GitLab project path (default: detected)"},
-			&cli.StringSliceFlag{Name: "repositories", Destination: &r.repositories, Usage: "run on these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, or owner/<glob> (e.g. 'my-org/*', 'my-org/svc-*') for the repositories of an organization or user the token can list (not on GitLab), without archived ones and mirrors (repeatable, comma-separated; default: $DEPS_REPOSITORIES, separated by whitespace or commas)"},
-			&cli.StringFlag{Name: "token", Destination: &r.token, Usage: "platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, $GITLAB_TOKEN, git credential helper)"},
+			&cli.StringSliceFlag{Name: "repositories", Destination: &r.repositories, Usage: "run on these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, or owner/<glob> (e.g. 'my-org/*', 'my-org/svc-*') for the repositories of an organization or user the token can list (not on GitLab), without archived ones and mirrors (repeatable, comma-separated)"},
+			&cli.StringFlag{Name: "token", Destination: &r.token, Usage: "platform API token; git pushes use the checkout's credentials (when not set: $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, $GITLAB_TOKEN, then the git credential helper)"},
 			&cli.StringFlag{Name: "base", Destination: &r.base, Usage: "base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch)"},
-			&cli.StringFlag{Name: "author-name", Value: defaultAuthorName, Destination: &r.authorName, Usage: "commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)"},
-			&cli.StringFlag{Name: "author-email", Value: defaultAuthorEmail, Destination: &r.authorEmail, Usage: "commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)"},
+			&cli.StringFlag{Name: "author-name", Destination: &r.authorName, Usage: "commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then " + defaultAuthorName + ")"},
+			&cli.StringFlag{Name: "author-email", Destination: &r.authorEmail, Usage: "commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then " + defaultAuthorEmail + ")"},
 			&cli.IntFlag{Name: "max-new-prs", Value: 10, Destination: &r.maxNewPRs, Usage: "maximum number of pull requests to create per run (0 = unlimited)"},
 			&cli.BoolFlag{Name: "dry-run", Destination: &r.dryRun, Usage: "report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token"},
-			&cli.StringFlag{Name: "trigger-schedule", Destination: &r.triggerSchedule, Usage: "act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE)"},
-			&cli.StringFlag{Name: "schedule-time", Destination: &r.scheduleTime, Usage: "evaluate schedule time windows at this RFC 3339 time instead of now, e.g. 2026-11-09T05:30:00+01:00 (default: $DEPS_SCHEDULE_TIME)"},
-			&cli.StringFlag{Name: "signing-key", Destination: &r.signingKey, Usage: "sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (default: $DEPS_SIGNING_KEY)"},
+			&cli.StringFlag{Name: "trigger-schedule", Destination: &r.triggerSchedule, Usage: "act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH"},
+			&cli.StringFlag{Name: "schedule-time", Destination: &r.scheduleTime, Usage: "evaluate schedule time windows at this RFC 3339 time instead of now, e.g. 2026-11-09T05:30:00+01:00"},
+			&cli.StringFlag{Name: "signing-key", Destination: &r.signingKey, Usage: "sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (when not set: unsigned)"},
 			allowTasksFlag(o),
-		},
+		),
 	}
 }
 
@@ -109,28 +108,21 @@ func commitAuthor(cmd *cli.Command, r *runOpts, env, cfg string) (name, email st
 	return name, email, nil
 }
 
-// detectTrigger resolves what started the run: --trigger-schedule, then
-// $DEPS_TRIGGER_SCHEDULE, then the CI event. A schedule event whose cron cannot be read
-// matches every cron trigger, with a warning. The run time of schedule windows is at
-// (--schedule-time), then $DEPS_SCHEDULE_TIME, then now.
-func detectTrigger(ctx context.Context, cron, at string, getenv func(string) string) (schedule.Trigger, error) {
-	override, src := cron, "--trigger-schedule"
-	if override == "" {
-		override, src = getenv("DEPS_TRIGGER_SCHEDULE"), "DEPS_TRIGGER_SCHEDULE"
-	}
+// detectTrigger resolves what started the run: the --trigger-schedule value override (from
+// src, the flag or its variable), then the CI event. A schedule event whose cron cannot be
+// read matches every cron trigger, with a warning. The run time of schedule windows is at
+// (--schedule-time, from atSrc), else now.
+func detectTrigger(ctx context.Context, override, src, at, atSrc string, getenv func(string) string) (schedule.Trigger, error) {
 	if override != "" {
 		if err := schedule.ValidateCron(override); err != nil {
 			return schedule.Trigger{}, &usageError{fmt.Errorf("%s: %q: %w", src, override, err)}
 		}
 	}
-	now, src := time.Now(), "--schedule-time"
-	if at == "" {
-		at, src = getenv("DEPS_SCHEDULE_TIME"), "DEPS_SCHEDULE_TIME"
-	}
+	now := time.Now()
 	if at != "" {
 		var err error
 		if now, err = time.Parse(time.RFC3339, at); err != nil {
-			return schedule.Trigger{}, &usageError{fmt.Errorf("%s: %q: want an RFC 3339 time like 2026-11-09T05:30:00Z", src, at)}
+			return schedule.Trigger{}, &usageError{fmt.Errorf("%s: %q: want an RFC 3339 time like 2026-11-09T05:30:00Z", atSrc, at)}
 		}
 	}
 	t, err := schedule.Detect(getenv, override)
@@ -144,13 +136,9 @@ func detectTrigger(ctx context.Context, cron, at string, getenv func(string) str
 	return t, nil
 }
 
-// newSigner prepares commit signing from --signing-key, then $DEPS_SIGNING_KEY; nil (unsigned)
-// when both are empty. An unrecognized key is a usage error.
-func newSigner(ctx context.Context, flag, env string) (*gitx.Signer, error) {
-	key, src := flag, "--signing-key"
-	if key == "" {
-		key, src = env, "DEPS_SIGNING_KEY"
-	}
+// newSigner prepares commit signing from the --signing-key value key (from src, the flag or
+// its variable); nil (unsigned) when empty. An unrecognized key is a usage error.
+func newSigner(ctx context.Context, key, src string) (*gitx.Signer, error) {
 	if key == "" {
 		return nil, nil
 	}
@@ -165,19 +153,36 @@ func newSigner(ctx context.Context, flag, env string) (*gitx.Signer, error) {
 	return s, nil
 }
 
-// platformCommits resolves platformCommit ($DEPS_PLATFORM_COMMIT, then the config, then
-// auto) to whether commits go through the GitHub API. auto enables them on GitHub for a
-// GitHub App installation token when no signing key is set. enabled on another forge or
-// together with a signing key is a usage error; without a token (a dry run) it falls back to
-// git with a warning.
-func platformCommits(ctx context.Context, env, cfg string, kind platform.Kind, token string, signed bool) (bool, error) {
-	v, src := env, "DEPS_PLATFORM_COMMIT"
+// platformCommitEnv overrides the config key platformCommit.
+const platformCommitEnv = "DEPS_PLATFORM_COMMIT"
+
+// platformCommitSetting resolves platformCommit: env ($DEPS_PLATFORM_COMMIT), then cfg, then
+// auto. It returns the value and where it came from (the variable, the config key, or "" for
+// the default); a value that is none of config.PlatformCommits is a usage error.
+func platformCommitSetting(env, cfg string) (v, src string, err error) {
+	v, src = env, platformCommitEnv
 	if v == "" {
 		v, src = cfg, "platformCommit"
 	}
+	if v == "" {
+		return config.PlatformCommitAuto, "", nil
+	}
+	if !slices.Contains(config.PlatformCommits, v) {
+		return "", "", &usageError{fmt.Errorf("%s: must be one of %s, got %q", src, strings.Join(config.PlatformCommits, ", "), v)}
+	}
+	return v, src, nil
+}
+
+// platformCommits resolves platformCommit (platformCommitSetting) to whether commits go
+// through the GitHub API. auto enables them on GitHub for a GitHub App installation token
+// when no signing key is set. enabled on another forge or together with a signing key is a
+// usage error; without a token (a dry run) it falls back to git with a warning.
+func platformCommits(ctx context.Context, env, cfg string, kind platform.Kind, token string, signed bool) (bool, error) {
+	v, src, err := platformCommitSetting(env, cfg)
+	if err != nil {
+		return false, err
+	}
 	switch v {
-	case "", config.PlatformCommitAuto:
-		return kind == platform.GitHub && platform.IsAppToken(token) && !signed, nil
 	case config.PlatformCommitDisabled:
 		return false, nil
 	case config.PlatformCommitEnabled:
@@ -192,7 +197,7 @@ func platformCommits(ctx context.Context, env, cfg string, kind platform.Kind, t
 		}
 		return true, nil
 	}
-	return false, &usageError{fmt.Errorf("%s: must be one of %s, got %q", src, strings.Join(config.PlatformCommits, ", "), v)}
+	return kind == platform.GitHub && platform.IsAppToken(token) && !signed, nil
 }
 
 // apiGit is a gitx.Repo whose commits, branch updates and branch tips go through the GitHub
@@ -247,7 +252,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	}
 	repos := r.repositories
 	if !cmd.IsSet("repositories") {
-		repos = strings.FieldsFunc(os.Getenv("DEPS_REPOSITORIES"), func(c rune) bool { return c == ',' || unicode.IsSpace(c) })
+		repos = strings.FieldsFunc(os.Getenv(flagEnv("repositories")), func(c rune) bool { return c == ',' || unicode.IsSpace(c) })
 	}
 	if err := validateRepositories(repos); err != nil {
 		return &usageError{err}
@@ -255,12 +260,12 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	if len(repos) > 0 && r.repo != "" {
 		return &usageError{errors.New("--repo and --repositories are mutually exclusive")}
 	}
-	trigger, err := detectTrigger(ctx, r.triggerSchedule, r.scheduleTime, os.Getenv)
+	trigger, err := detectTrigger(ctx, r.triggerSchedule, flagSource(cmd, "trigger-schedule"), r.scheduleTime, flagSource(cmd, "schedule-time"), os.Getenv)
 	if err != nil {
 		return err
 	}
 	sh := &runShared{trigger: trigger, allowTasks: taskAllowlist(o), client: newHTTPClient()}
-	if sh.signer, err = newSigner(ctx, r.signingKey, os.Getenv("DEPS_SIGNING_KEY")); err != nil {
+	if sh.signer, err = newSigner(ctx, r.signingKey, flagSource(cmd, "signing-key")); err != nil {
 		return err
 	}
 	defer func() {
@@ -307,7 +312,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 		return runRepositories(ctx, cmd, o, r, sh, info, repos)
 	}
 
-	s, err := newSession(ctx, o, info, sh.token, sh.client)
+	s, err := newSession(ctx, o, info, sh.token, sh.client, cmd.Root().ErrWriter)
 	if err != nil {
 		return err
 	}
@@ -325,7 +330,7 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 	if err != nil {
 		return err
 	}
-	usePlatform, err := platformCommits(ctx, os.Getenv("DEPS_PLATFORM_COMMIT"), s.cfg.PlatformCommit, info.Kind, token, sh.signer != nil)
+	usePlatform, err := platformCommits(ctx, os.Getenv(platformCommitEnv), s.cfg.PlatformCommit, info.Kind, token, sh.signer != nil)
 	if err != nil {
 		return err
 	}
@@ -358,6 +363,7 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 	// Every base is resolved with the checkout's config, its rules matching that base.
 	botBases := make([]bot.Base, len(bases))
 	var resErrs []error
+	var unused []int
 	for i, b := range bases {
 		bs := s.forBase(b.repo.Dir, b.name)
 		res, err := bs.resolve(ctx)
@@ -372,8 +378,14 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 				errs[j] = fmt.Errorf("%s: %w", b.name, e)
 			}
 		}
-		report(stderr, o.term, o.verbose, res, errs, nil)
+		report(stderr, o.term, o.showSkipped, res, errs, nil)
 		resErrs = append(resErrs, errs...)
+		// A rule is unused when it matched no dependency on any base.
+		u := bs.cfg.UnusedRules(res.Deps)
+		if i > 0 {
+			u = slices.DeleteFunc(u, func(r int) bool { return !slices.Contains(unused, r) })
+		}
+		unused = u
 		botBases[i] = bot.Base{Name: b.name, Root: bs.root, Res: res, Git: gitOf(b.repo)}
 	}
 	bo := bot.Options{
@@ -416,7 +428,7 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 	res, groups := runResult(botBases, s.cfg.Prefix(), multiBase, resErrs)
 	nErr := len(res.Errors) + len(botErrs)
 	sum := summary{Command: "run", Run: true, Res: res, Groups: groups, Actions: actions,
-		Errors: append(append([]error(nil), res.Errors...), botErrs...), Elapsed: time.Since(start), Verbose: o.verbose, Report: o.report, Style: o.term.style}
+		Errors: append(append([]error(nil), res.Errors...), botErrs...), Elapsed: time.Since(start), ShowSkipped: o.showSkipped, Unused: unused, Config: s.cfg, Report: o.report, Style: o.term.style}
 	if r.dryRun {
 		sum.Command = "run --dry-run"
 	}
@@ -540,11 +552,11 @@ func runRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runO
 			if base == nil {
 				ro := *o
 				ro.dir = dir
-				if s, err = newSession(ctx, &ro, ri, sh.token, sh.client); err == nil {
+				if s, err = newSession(ctx, &ro, ri, sh.token, sh.client, stderr); err == nil {
 					base = s
 				}
-			} else {
-				s, err = base.forCheckout(ctx, dir, o.config, ri)
+			} else if s, err = base.forCheckout(ctx, dir, o.config, ri); err == nil {
+				printLint(stderr, s.cfg)
 			}
 			if err != nil {
 				return err

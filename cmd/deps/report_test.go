@@ -56,6 +56,18 @@ func TestPlanReportAndOutputs(t *testing.T) {
 	}
 }
 
+func TestReportUnusedRules(t *testing.T) {
+	res := summaryFixture()
+	s := summary{Command: "plan", Res: res, Unused: []int{1, 3}}
+	if r := s.report(); !slices.Equal(r.UnusedRules, []int{1, 3}) {
+		t.Errorf("unusedRules = %v", r.UnusedRules)
+	}
+	s.Unused = nil
+	if r := s.report(); r.UnusedRules == nil || len(r.UnusedRules) != 0 {
+		t.Errorf("no unused rules: %#v, want []", r.UnusedRules)
+	}
+}
+
 func TestRunCounts(t *testing.T) {
 	res := summaryFixture()
 	s := summary{Command: "run", Run: true, Res: res, Groups: engine.GroupUpdates(res.Updates, ""), Errors: []error{errors.New("x")}, Actions: []bot.Action{

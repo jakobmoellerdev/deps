@@ -75,7 +75,7 @@ func TestNonVersionTagDigests(t *testing.T) {
 		},
 		{
 			name:    "digest updates disabled",
-			cfg:     customCfg + "rules: [{updates: [major, minor, patch]}]\n",
+			cfg:     customCfg + "rules: [{allowedUpdateTypes: [major, minor, patch]}]\n",
 			updates: map[string]dep.UpdateType{},
 			skipped: map[string]string{"debian": "non-version tag", grafana: "non-version tag"},
 		},

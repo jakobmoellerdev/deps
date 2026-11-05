@@ -16,12 +16,12 @@ var Doc = refdoc.Manager{
 		"other `*.y(a)ml` containing `image:` (DepType `kubernetes`) or `repository:` (DepType `helm`)",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: "dockerfile", What: "`FROM` (flags skipped, line continuations and `# escape=` honored), `COPY --from=<image>`, `RUN --mount=…,from=<image>`", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "compose", What: "`services.*.image` (also through `<<:` merges and aliases), `image` in mappings at any depth of top-level `x-*` extension fields, `services.*.build.additional_contexts` entries `docker-image://<ref>`", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "workflow", What: "`jobs.*.container` (string or `.image`), `jobs.*.services.*.image`, `uses: docker://…`", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "action", What: "`runs.image: docker://…` (with `runs.using: docker`), `uses: docker://…` in `runs.steps`", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "kubernetes", What: "scalar `image` in `containers`, `initContainers` and `ephemeralContainers` items (not items with a `container` key: Azure Pipelines container resources, see azure-pipelines)", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "helm", What: "`*image` mappings with `repository` + `tag` (optional `registry`, digest in `tag: x@sha256:…` or sibling `digest:`)", Datasource: "`docker`", Versioning: "`docker`"},
+		{Name: "dockerfile", What: "`FROM` (flags skipped, line continuations and `# escape=` honored), `COPY --from=<image>`, `RUN --mount=…,from=<image>`", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "compose", What: "`services.*.image` (also through `<<:` merges and aliases), `image` in mappings at any depth of top-level `x-*` extension fields, `services.*.build.additional_contexts` entries `docker-image://<ref>`", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "workflow", What: "`jobs.*.container` (string or `.image`), `jobs.*.services.*.image`, `uses: docker://…`", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "action", What: "`runs.image: docker://…` (with `runs.using: docker`), `uses: docker://…` in `runs.steps`", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "kubernetes", What: "scalar `image` in `containers`, `initContainers` and `ephemeralContainers` items (not items with a `container` key: Azure Pipelines container resources, see azure-pipelines)", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "helm", What: "`*image` mappings with `repository` + `tag` (optional `registry`, digest in `tag: x@sha256:…` or sibling `digest:`)", Versioning: "`docker`", Datasources: []string{"docker"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "variable reference", When: "`$` in the reference, or a variable ARG default (Compose: see `interpolated image`)"},

@@ -103,11 +103,11 @@ func TestMinimumReleaseAge(t *testing.T) {
 			tooNew(2, "5 days"): {"v2.0.0"}, tooNew(1, "5 days"): {"v1.2.0"},
 		}},
 		{"hours", "minimumReleaseAge: 36h\n", "v2.0.0", dep.Major, nil},
-		{"all too new", "minimumReleaseAge: 2 weeks\nrules: [{updates: [major, minor]}]\n", "", "", map[string][]string{
+		{"all too new", "minimumReleaseAge: 2 weeks\nrules: [{allowedUpdateTypes: [major, minor]}]\n", "", "", map[string][]string{
 			tooNew(2, "14 days"): {"v2.0.0"}, tooNew(1, "14 days"): {"v1.2.0"}, tooNew(10, "14 days"): {"v1.1.0"},
 		}},
 		{"rule disables with 0 days", "minimumReleaseAge: 28 days\nrules: [{names: [example.com/a], minimumReleaseAge: 0 days}]\n", "v2.0.0", dep.Major, nil},
-		{"rule sets age", "rules: [{manager: gomod, minimumReleaseAge: '3 days'}]\n", "v1.1.0", dep.Minor, map[string][]string{
+		{"rule sets age", "rules: [{managers: [gomod], minimumReleaseAge: '3 days'}]\n", "v1.1.0", dep.Minor, map[string][]string{
 			tooNew(2, "3 days"): {"v2.0.0"}, tooNew(1, "3 days"): {"v1.2.0"},
 		}},
 		{"per-kind override exempts majors", "minimumReleaseAge: 28 days\nrules: [{updateTypes: [major], minimumReleaseAge: '0'}]\n", "v2.0.0", dep.Major, nil},

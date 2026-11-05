@@ -6,12 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
 	"path"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -256,119 +256,165 @@ func gitCmd(ctx context.Context, dir string, env []string, args ...string) ([]by
 	return out, nil
 }
 
-// layer is one file of an extends chain.
+// layer is one file of the config: the local file or a file of its extends chain.
 type layer struct {
-	name    string     // error messages: the local path, or Extend.String()
-	display string     // deps explain: the local path relative to --dir, or Extend.String()
-	root    *yaml.Node // the document's top-level mapping; nil for an empty document
+	name    string // error messages: the local path, or Extend.String()
+	display string // deps explain: the local path relative to --dir, or Extend.String()
+	// root is the document's top-level mapping without the keys and values the decoder
+	// rejected; nil for an empty document.
+	root *yaml.Node
+	pos  map[string]position // position of each field path in the file
+	bad  []string            // fields with a malformed value; validation problems at or below them are dropped
 	// via is the index of the local file's extends entry the layer was reached through;
 	// -1 for the local file.
 	via int
 }
 
+// position returns the 1-based line and column of field in the layer's file, or of its
+// nearest ancestor present in the file; 0, 0 without one.
+func (ly *layer) position(field string) (line, col int) {
+	return lookupPosition(ly.pos, field)
+}
+
 // loader resolves the extends chain of a local config file.
 type loader struct {
-	ctx   context.Context
-	fetch Fetcher
-	path  string     // the local file
-	local *yaml.Node // its top-level mapping, once read
+	ctx    context.Context
+	fetch  Fetcher
+	path   string                         // the local file
+	fields map[reflect.Type][]structField // the decoders' struct keys
+	// localPos are the positions of the local file, once decoded.
+	localPos map[string]position
 	// extends is the local file's extends list.
 	extends []string
 	layers  []layer // extended files first (depth first, in list order), the local file last
-	seen    map[string]bool
-	stack   []string // the chain being loaded, for cycle errors
+	// problems are the problems of the files' content; those of an extended file are located
+	// at the local file's extends entry it came through (located).
+	problems []*Problem
+	// incomplete is set when a file of the chain could not be loaded: its configuration is
+	// not validated.
+	incomplete bool
+	seen       map[string]bool
+	stack      []string // the chain being loaded, for cycle errors
 }
 
-// add decodes src strictly, loads the files it extends, then appends it as a layer.
+// add decodes src, loads the files it extends, then appends it as a layer. Problems of the
+// files' content are collected; a file that cannot be read or parsed, or an extends entry
+// that cannot be loaded, leaves the chain incomplete. Only a syntax error of the local file
+// ends loading (*Error).
 func (l *loader) add(src []byte, name, display string, via int) error {
-	var c Config
-	dec := yaml.NewDecoder(bytes.NewReader(src))
-	dec.KnownFields(true)
-	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
-		return l.decodeError(name, via, err)
-	}
 	var doc yaml.Node
-	_ = yaml.Unmarshal(src, &doc) // decoded above
+	if err := yaml.Unmarshal(src, &doc); err != nil {
+		if via < 0 {
+			return &Error{syntaxProblem(name, err)}
+		}
+		l.report(via, syntaxProblem(name, err))
+		l.incomplete = true
+		return nil
+	}
+	d := &decoder{path: name, pos: map[string]position{}, fields: l.fields}
 	var root *yaml.Node
-	if len(doc.Content) > 0 && doc.Content[0].Kind == yaml.MappingNode {
-		root = doc.Content[0]
+	if len(doc.Content) > 0 {
+		d.walk(doc.Content[0], reflect.TypeFor[Config](), "")
+		if doc.Content[0].Kind == yaml.MappingNode { // a top level of another kind was reported and nulled
+			root = doc.Content[0]
+		}
+	}
+	for _, p := range d.problems {
+		l.report(via, p)
+	}
+	var exts []string
+	if e := mapValue(root, "extends"); e != nil {
+		_ = e.val.Decode(&exts) // the decoder checked it is a list of strings, or nulled it
 	}
 	if via < 0 {
-		l.local, l.extends = root, c.Extends
+		l.localPos, l.extends = d.pos, exts
 	}
-	for i, s := range c.Extends {
+	for i, s := range exts {
 		field := fmt.Sprintf("extends[%d]", i)
+		if d.suppressed(field) {
+			continue
+		}
 		entry := via // the local file's entry this file came through, or its own
 		if via < 0 {
 			entry = i
 		}
-		e, err := ParseExtend(s)
-		if err != nil {
-			return l.fieldError(name, via, entry, field, err.Error())
-		}
-		key := e.String()
-		if at := slices.Index(l.stack, key); at >= 0 {
-			chain := append(slices.Clone(l.stack[at:]), key)
-			return l.fieldError(name, via, entry, field, "cycle: "+strings.Join(chain, " -> "))
-		}
-		if l.seen[key] {
-			continue
-		}
-		l.seen[key] = true
-		if l.fetch == nil {
-			return l.fieldError(name, via, entry, field, "extends is not supported by this command")
-		}
-		data, err := l.fetch.Fetch(l.ctx, e)
-		if err != nil {
-			return l.fieldError(name, via, entry, field, fmt.Sprintf("%s: %v", key, err))
-		}
-		l.stack = append(l.stack, key)
-		err = l.add(data, key, key, entry)
-		l.stack = l.stack[:len(l.stack)-1]
-		if err != nil {
-			return err
+		if msg := l.extend(s, entry); msg != "" {
+			p := &Problem{Path: name, Field: field, Msg: msg}
+			p.Line, p.Col = lookupPosition(d.pos, field)
+			l.report(via, p)
+			l.incomplete = true
 		}
 	}
-	l.layers = append(l.layers, layer{name: name, display: display, root: root, via: via})
+	l.layers = append(l.layers, layer{name: name, display: display, root: root, pos: d.pos, bad: d.bad, via: via})
 	return nil
 }
 
-// decodeError is the *Error of a file that does not decode; problems of an extended file
-// are located at the local file's extends entry it came through.
-func (l *loader) decodeError(name string, via int, err error) error {
-	probs := decodeProblems(err)
-	if via >= 0 {
-		line := extendsLine(l.local, via)
-		for i, p := range probs {
-			msg := name + ": " + p.Msg
-			if p.Line > 0 {
-				msg = fmt.Sprintf("%s:%d: %s", name, p.Line, p.Msg)
-			}
-			probs[i] = Problem{Line: line, Msg: msg}
+// extend loads the file of extends entry s, reached through the local file's entry via;
+// it returns why the entry cannot be loaded, or "".
+func (l *loader) extend(s string, via int) string {
+	e, err := ParseExtend(s)
+	if err != nil {
+		msg := err.Error()
+		if renovatePresetRe.MatchString(s) {
+			msg += " (Renovate presets are not supported; the common ones are built in, see docs/migrating-from-renovate.md#presets)"
+		}
+		return msg
+	}
+	key := e.String()
+	if at := slices.Index(l.stack, key); at >= 0 {
+		return "cycle: " + strings.Join(append(slices.Clone(l.stack[at:]), key), " -> ")
+	}
+	if l.seen[key] {
+		return ""
+	}
+	l.seen[key] = true
+	if l.fetch == nil {
+		return "extends is not supported by this command"
+	}
+	data, err := l.fetch.Fetch(l.ctx, e)
+	if err != nil {
+		return fmt.Sprintf("%s: %v", key, err)
+	}
+	l.stack = append(l.stack, key)
+	defer func() { l.stack = l.stack[:len(l.stack)-1] }()
+	_ = l.add(data, key, key, via) // only the local file's syntax errors are returned
+	return ""
+}
+
+// renovatePresetRe matches Renovate preset names (config:recommended, :semanticCommits,
+// github>org/repo, group:monorepos), which extends entries are not.
+var renovatePresetRe = regexp.MustCompile(`^(:|[A-Za-z][A-Za-z0-9-]*[:>])`)
+
+// report records problem p of the file reached through the local file's extends entry via
+// (-1: the local file itself).
+func (l *loader) report(via int, p *Problem) { l.problems = append(l.problems, l.located(via, p)) }
+
+// located returns p, a problem of the file reached through the local file's extends entry
+// via (-1: the local file itself), as a problem of the local file: an extended file's
+// problem is located at that entry, its message is the problem with its own file and
+// position.
+func (l *loader) located(via int, p *Problem) *Problem {
+	if via < 0 {
+		return p
+	}
+	out := &Problem{Path: l.path, Msg: p.Error()}
+	out.Line, out.Col = lookupPosition(l.localPos, fmt.Sprintf("extends[%d]", via))
+	return out
+}
+
+type mapEntry struct{ key, val *yaml.Node }
+
+// mapValue returns the entry of key in the mapping n, or nil (also when n is no mapping).
+func mapValue(n *yaml.Node, key string) *mapEntry {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return &mapEntry{n.Content[i], n.Content[i+1]}
 		}
 	}
-	return &Error{Err: fmt.Errorf("%s: %w", name, err), File: l.path, Problems: probs}
-}
-
-// fieldError is the *Error of an invalid field of file name (an extends entry); entry is the
-// local file's extends entry it is located at.
-func (l *loader) fieldError(name string, via, entry int, field, msg string) error {
-	fe := &FieldError{Path: name, Field: field, Msg: msg}
-	p := Problem{Msg: field + ": " + msg}
-	if via < 0 {
-		p.Line = fieldLine(l.local, field)
-	} else {
-		p = Problem{Line: extendsLine(l.local, entry), Msg: name + ": " + p.Msg}
-	}
-	return &Error{Err: fe, File: l.path, Problems: []Problem{p}}
-}
-
-// extendsLine returns the line of extends[i] of the local file's mapping (0 = unknown).
-func extendsLine(local *yaml.Node, i int) int {
-	if local == nil {
-		return 0
-	}
-	return fieldLine(local, fmt.Sprintf("extends[%d]", i))
+	return nil
 }
 
 // listKeys are the top-level keys whose lists are concatenated across an extends chain,
@@ -433,12 +479,50 @@ func mapIndex(n *yaml.Node, key string) int {
 	return -1
 }
 
+// Document returns the top-level mapping of the configuration as written: the config file's,
+// or with extends the files of the chain merged as Load merges them (without extends); nil
+// without a file. Its nodes are the configuration's own and must not be modified.
+func (c *Config) Document() *yaml.Node {
+	switch len(c.layers) {
+	case 0:
+		return nil
+	case 1:
+		return c.layers[0].root
+	}
+	return merge(c.layers)
+}
+
+// KeyFile returns the file the top-level key of the configuration comes from: the config
+// file (Path), the name of an extended file (Extend.String()), or "" when no file sets it. Of
+// the keys several files merge (rules, custom, customDatasources), it is the last such file.
+func (c *Config) KeyFile(key string) string {
+	for _, ly := range slices.Backward(c.layers) {
+		if mapValue(ly.root, key) != nil {
+			return ly.name
+		}
+	}
+	return ""
+}
+
 // sequence returns the items of the top-level list key of a layer.
 func (ly layer) sequence(key string) []*yaml.Node {
 	if e := mapValue(ly.root, key); e != nil && e.val.Kind == yaml.SequenceNode {
 		return e.val.Content
 	}
 	return nil
+}
+
+// written returns the layer field of the merged config is written in and the field as
+// written there (see attribute); nil for a config not loaded from a file.
+func (c *Config) written(field string) (*layer, string) {
+	switch len(c.layers) {
+	case 0:
+		return nil, field
+	case 1:
+		return &c.layers[0], field
+	}
+	j, f := c.attribute(field)
+	return &c.layers[j], f
 }
 
 // attribute returns the layer a validation field of the merged config comes from and the

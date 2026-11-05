@@ -12,8 +12,8 @@ var Doc = refdoc.Manager{
 		"in `maven-wrapper.properties`; `apply` and `run` then regenerate the wrapper scripts with `mvn wrapper:wrapper`.",
 	Files: []string{"`.mvn/wrapper/maven-wrapper.properties`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeMaven, What: "`distributionUrl` version, dep `" + MavenName + "`", Datasource: "`maven`", Versioning: "`maven`"},
-		{Name: DepTypeWrapper, What: "`wrapperVersion` and the `wrapperUrl` version (one dep when they agree), dep `" + WrapperName + "`", Datasource: "`maven`", Versioning: "`maven`"},
+		{Name: DepTypeMaven, What: "`distributionUrl` version, dep `" + MavenName + "`", Versioning: "`maven`", Datasources: []string{"maven"}},
+		{Name: DepTypeWrapper, What: "`wrapperVersion` and the `wrapperUrl` version (one dep when they agree), dep `" + WrapperName + "`", Versioning: "`maven`", Datasources: []string{"maven"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "unsupported distributionUrl", When: "the URL does not end in `org/apache/maven/apache-maven/<version>/apache-maven-<version>-bin.zip` with the same version twice"},

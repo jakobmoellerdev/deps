@@ -124,7 +124,7 @@ func TestBucketsSecurity(t *testing.T) {
 			[]string{"1.2.6 patch patch", "1.3.0 minor minor", "2.0.0 major major"}, []string{"1.2.6 GO-1"}},
 		{"a minimal fix replaces its bucket's update", "separateMinorPatch: true\nrules: [{allow: '< 1.2.5'}]\n", "1.2.5",
 			[]string{"1.2.5 patch patch"}, []string{"1.2.5 GO-1"}},
-		{"an update above the fix carries the advisories, whatever its type", "rules: [{updates: [major]}]\n", "1.2.5",
+		{"an update above the fix carries the advisories, whatever its type", "rules: [{allowedUpdateTypes: [major]}]\n", "1.2.5",
 			[]string{"2.0.0 major major"}, []string{"2.0.0 GO-1"}},
 		{"a fix above every update joins in its own bucket", "separateMinorPatch: true\nrules: [{allow: '< 1.3'}]\n", "1.3.0",
 			[]string{"1.2.6 patch patch", "1.3.0 minor minor"}, []string{"1.3.0 GO-1"}},

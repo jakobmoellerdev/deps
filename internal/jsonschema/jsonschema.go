@@ -20,9 +20,13 @@ const Version = "https://json-schema.org/draft/2020-12/schema"
 // without a field, such as markdownDescription) last and sorted.
 type Schema struct {
 	Version              string         `json:"$schema,omitzero"`
+	ID                   string         `json:"$id,omitzero"`
 	Ref                  string         `json:"$ref,omitzero"`
 	Definitions          Definitions    `json:"$defs,omitzero"`
 	AnyOf                []*Schema      `json:"anyOf,omitzero"`
+	AllOf                []*Schema      `json:"allOf,omitzero"`
+	If                   *Schema        `json:"if,omitzero"`
+	Then                 *Schema        `json:"then,omitzero"`
 	Items                *Schema        `json:"items,omitzero"`
 	Properties           *Properties    `json:"properties,omitzero"`
 	AdditionalProperties *Schema        `json:"additionalProperties,omitzero"`

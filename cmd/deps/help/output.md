@@ -1,9 +1,10 @@
 Results go to stderr (the diff of `plan` and the report of `explain` go to stdout), in fixed-width lines:
 
 ```
+warn    <config>: <field>: <msg>                              (plan, apply, run, explain: a rule that cannot have an effect)
 update  <file>:<line>  <name>  <from> -> <to>  (<type>[, lockfile][, separate PR])[  security: <id>,<id>]
 update  <lockfile>  lock file maintenance  (lockFileMaintenance, separate PR)   (with lockFileMaintenance)
-skip    <file>:<line>  <name>  <reason>                       (with -v)
+skip    <file>:<line>  <name>  <reason>                       (with --show-skipped)
 error   <message>
 note    go.sum changes are computed by apply/run              (plan, when a gomod update exists)
 note    package-lock.json changes are computed by apply/run   (plan, when an npm update exists)
@@ -20,6 +21,7 @@ dashboard <status>  <title>  <url>                            (run, with depende
 ```
 
 - For digest and pin updates, `<from>`/`<to>` read `<version>@<sha7>`. A lockfile-only update (`, lockfile`) starts at the locked version and changes only the lockfile.
+- Config warnings come first, right after the config is loaded: a rule without apply fields (`rules[1]: is empty: no match field and no apply field`), or match fields no dependency can satisfy (`rules[0].depTypes[0]: dep type "devDependencies" is not produced by gomod, so it matches nothing`). They do not change the exit code.
 - Per-dependency errors read `<file>:<line>: <name>: <err>`; a fatal error is printed as `deps: <err>`.
 - The PR, automerge and dashboard statuses are listed in `deps run --help`; the skip reasons in the managers reference.
 
@@ -45,7 +47,7 @@ Also on a terminal (unless `TERM=dumb`), a **status line** below the output show
 
 Text logs round durations to 0.1ms below a second and to 1ms above (`duration=23ms`, `duration=11.003s`); JSON logs keep them in nanoseconds.
 
-**Summary block.** Before the summary line, a block starting with an empty line and `Summary: ` gives the overview:
+**Summary block.** Before the summary line, a `warn    rules[<i>] matched no dependency` line for every rule that matched none of the extracted dependencies (plan, apply, run), then a block starting with an empty line and `Summary: ` gives the overview:
 
 ```
 Summary: <n> dependencies, <u> updates in <g> PRs[, PRs: <count> <status>, ...][, <p> held back by minimumReleaseAge], <k> skipped, <e> errors (<duration>)
@@ -54,24 +56,24 @@ Summary: <n> dependencies, <u> updates in <g> PRs[, PRs: <count> <status>, ...][
   <status>  <branch>  <url>                                            (run: closed obsolete PRs and the dashboard)
   Held back by minimumReleaseAge:
       <name>  <file>:<line>  <version>  too new (released <date>, minimum <age>) | release time unknown (minimum <age>, timestamp-required)
-  Deprecated or abandoned: <n> (-v lists each)
-      <name>  <file>:<line>  deprecated: <reason> | abandoned: <reason>   (with -v)
-  Skipped (-v lists each dependency):
+  Deprecated or abandoned: <n> (--show-skipped lists each)
+      <name>  <file>:<line>  deprecated: <reason> | abandoned: <reason>   (with --show-skipped)
+  Skipped (--show-skipped lists each dependency):
     <count>  <reason>  (<how to update>)
 ```
 
 The PRs are the ones `run` opens: plan and apply group their updates the same way. Without updates, errors or PR actions, the headline reads `No updates: <n> dependencies up to date, <k> skipped.` Errors are not repeated; they are the `error` lines above.
 
-**Step summary.** If `GITHUB_STEP_SUMMARY` (or else `GITEA_STEP_SUMMARY`) is set, the same summary is appended to that file as markdown, under `## deps <command>`: the headline, one section per PR with its branch, status and link (run), automerge and schedule, and a `| Dependency | File | From | To | Type |` table; other PR actions (closed PRs, the dashboard); held-back releases; skip reasons with counts and how to update, with the skipped dependencies in a collapsible `<details>`; and the errors in full. The file stays within GitHub's 1 MiB per step, counting what is already in it: when the summary does not fit, the list of skipped dependencies is left out first, then the held-back releases, then the PRs' update tables; if it still does not fit, it is cut and ends with a note pointing at the job log.
+**Step summary.** If `GITHUB_STEP_SUMMARY` (or else `GITEA_STEP_SUMMARY`) is set, the same summary is appended to that file as markdown, under `## deps <command>`: the headline, one section per PR with its branch, status and link (run), automerge and schedule, and a `| Dependency | File | From | To | Type |` table; other PR actions (closed PRs, the dashboard); held-back releases; skip reasons with counts and how to update, with the skipped dependencies in a collapsible `<details>`; the rules that matched no dependency (`### Warnings`); and the errors in full. The file stays within GitHub's 1 MiB per step, counting what is already in it: when the summary does not fit, the list of skipped dependencies is left out first, then the held-back releases, then the PRs' update tables; if it still does not fit, it is cut and ends with a note pointing at the job log.
 
-**Actions workflow commands.** With `--log-format actions`, which `auto` selects on GitHub Actions (`GITHUB_ACTIONS=true`) and Gitea Actions (`GITEA_ACTIONS=true`; Gitea 1.26 and later render groups and annotation lines) but not on Forgejo (`FORGEJO_ACTIONS=true`, which prints workflow commands literally), records are `pretty` lines without the elapsed time (the runner timestamps every line), `INF <message>  key=value …`, colored unless `NO_COLOR` is set or `--color never` is given (GitHub and Gitea render ANSI colors; the result lines keep the piped layout, the summary is colored as on a terminal), and deps also prints workflow commands: each `error` line and a fatal error as an `::error` annotation, located at the dependency's file and line, at the file for a file that cannot be read or parsed, or for config errors at the line of the offending key in `.deps.yaml`; `warn` and `error` logs as `::warning`/`::error`; each security update as a `::notice` at its file and line; the `-v` skip lines inside a collapsible `::group::`; every phase as a group (`Discovering and extracting dependency files`, `Resolving <n> dependencies`) holding its records, a `deps: <phase> <done>/<total> · … · <seconds>s` line every 30 seconds while it runs (when stderr is no terminal) and one when it ends; and in `run` the records of each PR as a group `<branch>: <status> (<duration>)` (groups do not nest, so the PR phase has none of its own; its heartbeat and final lines stand between the PR groups). A token deps gets from the git credential helper is masked (`::add-mask::`) before it is used. GitHub shows 10 error, 10 warning and 10 notice annotations per step, so deps prints no more than that; the result lines are complete. Any other `--log-format` prints no workflow commands, also on a runner. With `RUNNER_DEBUG=1` (a re-run with debug logging) the default `--log-level` is `debug`; `$DEPS_LOG_LEVEL` and the flag still win.
+**Actions workflow commands.** With `--log-format actions`, which `auto` selects on GitHub Actions (`GITHUB_ACTIONS=true`) and Gitea Actions (`GITEA_ACTIONS=true`; Gitea 1.26 and later render groups and annotation lines) but not on Forgejo (`FORGEJO_ACTIONS=true`, which prints workflow commands literally), records are `pretty` lines without the elapsed time (the runner timestamps every line), `INF <message>  key=value …`, colored unless `NO_COLOR` is set or `--color never` is given (GitHub and Gitea render ANSI colors; the result lines keep the piped layout, the summary is colored as on a terminal), and deps also prints workflow commands: each `error` line and a fatal error as an `::error` annotation, located at the dependency's file and line, at the file for a file that cannot be read or parsed, or for config errors at the line and column of each problem in `.deps.yaml`; `warn` and `error` logs as `::warning`/`::error`; the config's `warn` lines (lint warnings and rules that matched no dependency) as `::warning` at the rule's line; each security update as a `::notice` at its file and line; the `--show-skipped` skip lines inside a collapsible `::group::`; every phase as a group (`Discovering and extracting dependency files`, `Resolving <n> dependencies`) holding its records, a `deps: <phase> <done>/<total> · … · <seconds>s` line every 30 seconds while it runs (when stderr is no terminal) and one when it ends; and in `run` the records of each PR as a group `<branch>: <status> (<duration>)` (groups do not nest, so the PR phase has none of its own; its heartbeat and final lines stand between the PR groups). A token deps gets from the git credential helper is masked (`::add-mask::`) before it is used. GitHub shows 10 error, 10 warning and 10 notice annotations per step, so deps prints no more than that; the result lines are complete. Any other `--log-format` prints no workflow commands, also on a runner. With `RUNNER_DEBUG=1` (a re-run with debug logging) the default `--log-level` is `debug`; `$DEPS_LOG_LEVEL` and the flag still win.
 
 **JSON report.** `--report <file>` (or `$DEPS_REPORT`) makes `plan`, `apply` and `run` also write the summary as one JSON object, replacing the file. It is not written when deps fails before it has a result (usage or config errors, exit 2). Fields:
 
 - `command` (`plan`, `apply`, `run`, `run --dry-run`), `dependencies`, `durationMs`;
 - `prs[]`: `branch`, `title`, `updates[]` (`name`, `manager`, `file`, `line`, `from`, `to`, `type`, `lockfile`, `advisories` as IDs; a lock file maintenance has type `lockFileMaintenance` and no versions); for `run` also `status`, `automerge`, `prWait` (the PR creation outcome of a branch waiting for its checks), `number`, `url`, `waitsFor` (schedule entries: crons and time windows) and `reason` (why a `skipped: update cannot be applied` update cannot be applied; the label of a `skipped: stop-updating label` PR);
 - `otherActions[]`: closed obsolete PRs, obsolete PRs kept open by the `stopUpdatingLabel`, and the dashboard (`branch`, `title`, `status`, `number`, `url`, `dashboard`);
-- `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `warnings[]` (`name`, `file`, `line`, `kind` `deprecated` or `abandoned`, `reason`; see `abandonmentThreshold` and the dependency dashboard), `skipped[]` (`reason`, `count`), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error, `file` for a file that cannot be read or parsed);
+- `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `warnings[]` (`name`, `file`, `line`, `kind` `deprecated` or `abandoned`, `reason`; see `abandonmentThreshold` and the dependency dashboard), `skipped[]` (`reason`, `count`), `unusedRules[]` (indices of the rules that matched no dependency), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error, `file` for a file that cannot be read or parsed);
 - `counts`: the step outputs below, by camelCase name.
 
 With `run --repositories` the file holds the whole run: `command`, `durationMs`, `repositories[]` (the object above per repository, with `repository` set to its `owner/name`), `errors[]` (repositories that failed before they had a result, a clone or config error, as `<owner/name>: <message>`) and `counts` summed over the repositories (a failed repository counts as one error).

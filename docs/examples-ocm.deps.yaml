@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 #
 # open-component-model's .github/renovate.json5, translated in full. Every block names the Renovate
 # setting it replaces; packageRules are kept in Renovate's order (rules[] are evaluated top to
@@ -103,23 +103,23 @@ rules:
     versioning: loose
   - updateTypes: [minor, patch]                                 # 2 automerge minor/patch once
     automerge: true                                             #   required checks pass
-  - manager: github-actions                                     # 3 separateMinorPatch off, weekly
+  - managers: [github-actions]                                  # 3 separateMinorPatch off, weekly
     separateMinorPatch: false
     schedule: ['0 0 * * 0']
-  - manager: github-actions                                     # 4 groupName 'GitHub Actions'
+  - managers: [github-actions]                                  # 4 groupName 'GitHub Actions'
     updateTypes: [minor, patch]
     group: GitHub Actions
-  - manager: npm                                                # 5 separateMinorPatch off, weekly
+  - managers: [npm]                                             # 5 separateMinorPatch off, weekly
     separateMinorPatch: false
     schedule: ['0 0 * * 0']
-  - manager: npm                                                # 6 groupName 'npm dependencies'
+  - managers: [npm]                                             # 6 groupName 'npm dependencies'
     updateTypes: [minor, patch]
     group: npm dependencies
-  - manager: github-actions                                     # 7 'Digest pins' (github-actions)
+  - managers: [github-actions]                                  # 7 'Digest pins' (github-actions)
     updateTypes: [digest, pin]
     group: Digest pins
     schedule: ['0 0 * * 0']
-  - manager: docker                                             # 7 'Digest pins' (dockerfile,
+  - managers: [docker]                                          # 7 'Digest pins' (dockerfile,
     depTypes: [dockerfile, compose, workflow, action]           #   docker-compose, and the
     updateTypes: [digest, pin]                                  #   container/services images of
     group: Digest pins                                          #   Renovate's github-actions)
@@ -127,14 +127,14 @@ rules:
   - datasources: [golang-version]                               # 8 'Golang versions'; rangeStrategy
     group: Golang versions                                      #   bump is how deps replaces
     schedule: ['0 0 * * 0']                                     #   toolchain/go versions anyway
-  - manager: gomod                                              # 9 k8s.io/kube-openapi off: tidy
+  - managers: [gomod]                                           # 9 k8s.io/kube-openapi off: tidy
     names: ['k8s.io/kube-openapi']                              #   floats it with the k8s group
     ignore: true
-  - manager: gomod                                              # 10 'Kubernetes dependencies'
+  - managers: [gomod]                                           # 10 'Kubernetes dependencies'
     names: ['sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools', 'k8s.io/*', 'envtest']
     group: Kubernetes dependencies                              #   (matchManagers gomod …
     schedule: ['0 0 * * 0']
-  - manager: custom                                             #   … and custom.regex: envtest,
+  - managers: [custom]                                          #   … and custom.regex: envtest,
     names: ['sigs.k8s.io/controller-runtime', 'sigs.k8s.io/controller-tools', 'k8s.io/*', 'envtest']
     group: Kubernetes dependencies                              #   controller-tools and
     schedule: ['0 0 * * 0']                                     #   code-generator markers)
@@ -160,30 +160,30 @@ rules:
   - names: ['github.com/spf13/{/,}**']                          # 17 'spf13 repositories'
     group: spf13 repositories
     schedule: ['0 0 * * 0']
-  - manager: gomod                                              # 18 matchCategories golang,
+  - managers: [gomod]                                           # 18 matchCategories golang,
     ignore: false                                               #   enabled: true, weekly. Like in
     schedule: ['0 0 * * 0']                                     #   Renovate this turns indirect
                                                                 #   requirements on, and it undoes
                                                                 #   rule 9 (kube-openapi's
                                                                 #   pseudo-version gets digest updates)
-  - manager: gomod                                              # 19 indirect majors off
+  - managers: [gomod]                                           # 19 indirect majors off
     depTypes: [indirect]
     updateTypes: [major]
     ignore: true
-  - manager: gomod                                              # 20 github.com/go-ini/ini off
+  - managers: [gomod]                                           # 20 github.com/go-ini/ini off
     names: ['github.com/go-ini/ini']                            #   (renamed to gopkg.in/ini.v1)
     ignore: true
-  - manager: gomod                                              # 21 ThalesIgnite/crypto11 off
+  - managers: [gomod]                                           # 21 ThalesIgnite/crypto11 off
     names: ['github.com/ThalesIgnite/crypto11']                 #   (renamed to ThalesGroup)
     ignore: true
-  - manager: github-actions                                     # 22 open-component-model/.github
+  - managers: [github-actions]                                  # 22 open-component-model/.github
     names: ['open-component-model/.github']                     #   stays on @main
     ignore: true
   - paths: ['website/hack/generate-cli-docs/**']                # 23 'Website CLI-docs generator
     group: Website CLI-docs generator dependencies              #   dependencies', all bumps
     separateMinorPatch: false
     schedule: ['0 0 * * 0']
-  - manager: gomod                                              # 24 matchDepTypes golang off: the
+  - managers: [gomod]                                           # 24 matchDepTypes golang off: the
     depTypes: [go]                                              #   go directive (toolchain stays)
     ignore: true
   - datasources: [npm]                                          # 25 npm minimumReleaseAge 28 days

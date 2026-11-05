@@ -21,7 +21,12 @@ Runs as `composite` with the steps "Resolve deps version", "Check for a preinsta
 | `token` | no | `${{ github.token }}` | Platform token, exported to deps as DEPS_TOKEN. It needs contents:write and pull-requests:write (issues:write for the dependency dashboard). The default is the job token on GitHub, Gitea and Forgejo; on GitHub, CI runs on PRs created with it wait for approval and it cannot push changes to .github/workflows/*, so pass an App token or PAT (with workflows permission) here and to actions/checkout. |
 | `signing-key` | no | none | Secret holding a passphrase-less private key (OpenSSH, or armored OpenPGP) that deps signs its commits with, exported as DEPS_SIGNING_KEY. The committer identity (config key gitAuthor, or DEPS_GIT_AUTHOR in the job env) must be the key owner's verified email on the forge for the signature to count as verified. Default: no key; on GitHub with an App token (including the job token) deps then creates its commits through the API, and GitHub signs them (config key platformCommit). A key turns that off, and conflicts with platformCommit: enabled. |
 | `allow-tasks` | no | none | postUpgradeTasks commands of the repository's config that may run, one pattern per line, `*` matching any text but `;`, `&`, `\|`, backticks, `$(` and line breaks: `go generate ./...`, `make *`, or `*` alone for every command. Exported as DEPS_ALLOW_TASKS (an empty input keeps DEPS_ALLOW_TASKS of the job env). The commands run repository code on the runner; a PR with a command no pattern allows fails. Default: none. |
-| `args` | no | `run` | Arguments for deps, e.g. `run -v --log-level info` or `plan`. |
+| `dry-run` | no | none | `true` reports what `deps run` would change without pushing or calling write APIs, exported as DEPS_DRY_RUN. Default: the job env's DEPS_DRY_RUN, else false. |
+| `log-level` | no | none | Diagnostics level (`debug`, `info`, `warn`, `error`), exported as DEPS_LOG_LEVEL. Default: the job env's DEPS_LOG_LEVEL, else warn. |
+| `config` | no | none | Config file, which must exist, exported as DEPS_CONFIG. Default: the job env's DEPS_CONFIG, else `.deps.yaml`, then `.deps.yml`, else built-in defaults. |
+| `show-skipped` | no | none | `true` also prints the skipped dependencies (skip lines), exported as DEPS_SHOW_SKIPPED. Default: the job env's DEPS_SHOW_SKIPPED, else false. |
+| `max-new-prs` | no | none | Maximum number of pull requests `deps run` creates per run (0 = unlimited), exported as DEPS_MAX_NEW_PRS. Default: the job env's DEPS_MAX_NEW_PRS, else 10. |
+| `args` | no | `run` | Command and further flags for deps, e.g. `plan` or `run --base main`. Every flag can also be set as `DEPS_<FLAG>` in the job env; flags given here win over the inputs above. |
 | `version` | no | none | Release tag to download, e.g. v0.1.0. Default: the action's ref when it is a release tag (`@v0.1.0`), else the latest release. When it equals the ref's version (`@<sha> # v0.1.0` with `version: v0.1.0`), deps updates it together with the ref. |
 | `repository` | no | none | Repository URL the release is downloaded from. A Gitea/Forgejo URL finds the latest release via `<host>/api/v1/repos/<repo>/releases/latest`; a GitHub URL via api.github.com, and on github.com runners the assets are fetched with `gh release download` and the job token, so private repositories work. Default: https://github.com/jakobmoellerdev/deps on github.com runners, https://git.jakob-moeller.cloud/jakobmoellerdev/deps elsewhere. |
 | `use-preinstalled` | no | `true` | Use a `deps` already on PATH (e.g. baked into the runner image) when `deps version` prints the resolved version; the cache and download steps are skipped then. The binary is trusted as is: it is not checked against the release's checksums.txt. `false` always uses the cache/download path. |
@@ -57,7 +62,17 @@ Use the full URL: a short `jakobmoellerdev/deps@…` is resolved against the ins
     signing-key: ""
     # postUpgradeTasks commands of the repository's config that may run, one pattern per line, `*` matching any text but `;`, `&`, `|`, backticks, `$(` and line breaks: `go generate ./...`, `make *`, or `*` alone for every command.
     allow-tasks: ""
-    # Arguments for deps, e.g. `run -v --log-level info` or `plan`.
+    # `true` reports what `deps run` would change without pushing or calling write APIs, exported as DEPS_DRY_RUN.
+    dry-run: ""
+    # Diagnostics level (`debug`, `info`, `warn`, `error`), exported as DEPS_LOG_LEVEL.
+    log-level: ""
+    # Config file, which must exist, exported as DEPS_CONFIG.
+    config: ""
+    # `true` also prints the skipped dependencies (skip lines), exported as DEPS_SHOW_SKIPPED.
+    show-skipped: ""
+    # Maximum number of pull requests `deps run` creates per run (0 = unlimited), exported as DEPS_MAX_NEW_PRS.
+    max-new-prs: ""
+    # Command and further flags for deps, e.g. `plan` or `run --base main`.
     args: run
     # Release tag to download, e.g. v0.1.0.
     version: ""
@@ -82,7 +97,17 @@ From the GitHub mirror; on github.com runners the binary is downloaded from the 
     signing-key: ""
     # postUpgradeTasks commands of the repository's config that may run, one pattern per line, `*` matching any text but `;`, `&`, `|`, backticks, `$(` and line breaks: `go generate ./...`, `make *`, or `*` alone for every command.
     allow-tasks: ""
-    # Arguments for deps, e.g. `run -v --log-level info` or `plan`.
+    # `true` reports what `deps run` would change without pushing or calling write APIs, exported as DEPS_DRY_RUN.
+    dry-run: ""
+    # Diagnostics level (`debug`, `info`, `warn`, `error`), exported as DEPS_LOG_LEVEL.
+    log-level: ""
+    # Config file, which must exist, exported as DEPS_CONFIG.
+    config: ""
+    # `true` also prints the skipped dependencies (skip lines), exported as DEPS_SHOW_SKIPPED.
+    show-skipped: ""
+    # Maximum number of pull requests `deps run` creates per run (0 = unlimited), exported as DEPS_MAX_NEW_PRS.
+    max-new-prs: ""
+    # Command and further flags for deps, e.g. `plan` or `run --base main`.
     args: run
     # Release tag to download, e.g. v0.1.0.
     version: ""

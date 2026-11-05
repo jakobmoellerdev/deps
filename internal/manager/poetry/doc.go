@@ -15,9 +15,9 @@ var Doc = refdoc.Manager{
 		"The `python` entry (else `[project] requires-python`) is no dep but drops the releases that do not support all of it (see the `pypi` datasource); `[project]` dependencies of Poetry 2 projects belong to the `pep621` manager.",
 	Files: []string{"`pyproject.toml`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeDependencies, What: "`[tool.poetry.dependencies]` (updates use commit type `fix`)", Datasource: "`pypi`", Versioning: "`pep440`"},
-		{Name: DepTypeDevDependencies, What: "`[tool.poetry.dev-dependencies]` (Poetry 1.0/1.1)", Datasource: "`pypi`", Versioning: "`pep440`"},
-		{Name: DepTypeGroup, What: "`[tool.poetry.group.<name>.dependencies]`", Datasource: "`pypi`", Versioning: "`pep440`"},
+		{Name: DepTypeDependencies, What: "`[tool.poetry.dependencies]` (updates use commit type `fix`)", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypeDevDependencies, What: "`[tool.poetry.dev-dependencies]` (Poetry 1.0/1.1)", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypeGroup, What: "`[tool.poetry.group.<name>.dependencies]`", Versioning: "`pep440`", Datasources: []string{"pypi"}},
 	},
 	Skips: slices.Concat(pyreq.PoetrySkips, []refdoc.Skip{
 		{Reason: pyreq.SkipGit, When: "`{ git = … }`"},

@@ -16,10 +16,10 @@ var Doc = refdoc.Manager{
 		"Dependabot's `julia` ecosystem; Renovate has no Julia manager. Only the compat string is rewritten, so the file's layout and comments are kept.",
 	Files: []string{"`Project.toml`, `JuliaProject.toml` (Pkg prefers the latter where both exist; both are read)", "`Manifest.toml`, `JuliaManifest.toml`, `Manifest-v<major>.<minor>.toml` (the locked versions, see below)"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeDeps, What: "`[compat]` entries of packages in `[deps]` (`JSON = \"0.21, 1\"`), and `[deps]` packages without a compat entry, which only the manifest moves (updates use commit type `fix`)", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypeWeakdeps, What: "`[compat]` entries of `[weakdeps]` packages (package extension triggers)", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypeExtras, What: "`[compat]` entries of `[extras]` packages (test dependencies of `[targets]`)", Datasource: datasources, Versioning: versionings},
-		{Name: DepTypeJulia, What: "the `julia` compat entry (skipped)", Datasource: "none", Versioning: versionings},
+		{Name: DepTypeDeps, What: "`[compat]` entries of packages in `[deps]` (`JSON = \"0.21, 1\"`), and `[deps]` packages without a compat entry, which only the manifest moves (updates use commit type `fix`)", Datasource: datasources, Versioning: versionings, Datasources: []string{"julia-registry"}},
+		{Name: DepTypeWeakdeps, What: "`[compat]` entries of `[weakdeps]` packages (package extension triggers)", Datasource: datasources, Versioning: versionings, Datasources: []string{"julia-registry"}},
+		{Name: DepTypeExtras, What: "`[compat]` entries of `[extras]` packages (test dependencies of `[targets]`)", Datasource: datasources, Versioning: versionings, Datasources: []string{"julia-registry"}},
+		{Name: DepTypeJulia, What: "the `julia` compat entry (skipped)", Datasource: "none", Versioning: versionings, Datasources: []string{}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: skipJulia, When: "the `julia` compat entry: which Julia releases a project supports is its authors' decision, not an update"},

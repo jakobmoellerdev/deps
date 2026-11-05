@@ -9,6 +9,16 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
+// toolDatasources are the datasources of the tool table, sorted. The mise backends
+// (github, ubi, npm) use datasources of the table too.
+func toolDatasources() []string {
+	seen := map[string]bool{}
+	for _, t := range tools {
+		seen[t.datasource] = true
+	}
+	return slices.Sorted(maps.Keys(seen))
+}
+
 // nodeSkips are the skip reasons of a Node.js version (nvm, nodenv).
 var nodeSkips = []refdoc.Skip{
 	{Reason: "non-version value", When: "empty or a word or alias such as `lts/*`, `lts/iron`, `node`, `stable`, `system`"},
@@ -37,7 +47,7 @@ var DocNvm = refdoc.Manager{
 	Summary: "Updates the Node.js version in `.nvmrc`: the first token of the first line that is neither blank nor a `#` comment.",
 	Files:   []string{"any `.nvmrc`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeNode, What: "the Node.js version (name `node`)", Datasource: "`node-version`", Versioning: "`semver`; partial versions `tag`"},
+		{Name: DepTypeNode, What: "the Node.js version (name `node`)", Versioning: "`semver`; partial versions `tag`", Datasources: []string{"node-version"}},
 	},
 	Skips:    nodeSkips,
 	Sections: []refdoc.Section{{Title: "Versions", Items: nodeVersionItems}},
@@ -49,7 +59,7 @@ var DocNodenv = refdoc.Manager{
 	Summary: "Updates the Node.js version in `.node-version`: the first token of the first line that is neither blank nor a `#` comment.",
 	Files:   []string{"any `.node-version`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeNode, What: "the Node.js version (name `node`)", Datasource: "`node-version`", Versioning: "`semver`; partial versions `tag`"},
+		{Name: DepTypeNode, What: "the Node.js version (name `node`)", Versioning: "`semver`; partial versions `tag`", Datasources: []string{"node-version"}},
 	},
 	Skips:    nodeSkips,
 	Sections: []refdoc.Section{{Title: "Versions", Items: nodeVersionItems}},
@@ -63,7 +73,7 @@ var DocRubyVersion = refdoc.Manager{
 		"It shares the built-in `ruby` group with the Gemfile `ruby` directive and asdf/mise `ruby` (see [bundler](#bundler)), so a Ruby bump is one PR.",
 	Files: []string{"any `.ruby-version`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeRuby, What: "the Ruby version (name `ruby`), optionally with the `ruby-` prefix (`ruby-3.4.7`)", Datasource: "`ruby-version`", Versioning: "`ruby`; partial versions `tag`"},
+		{Name: DepTypeRuby, What: "the Ruby version (name `ruby`), optionally with the `ruby-` prefix (`ruby-3.4.7`)", Versioning: "`ruby`; partial versions `tag`", Datasources: []string{"ruby-version"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "non-version value", When: "empty, another engine (`jruby-9.4.8.0`, `truffleruby-24.1.0`) or a word such as `system`"},
@@ -92,7 +102,7 @@ var DocAsdf = refdoc.Manager{
 	Summary: "Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Only the first version of a line is a dep; `#` starts a comment.",
 	Files:   []string{"any `.tool-versions`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeTool, What: "a tool line; the dep name comes from the tool table", Datasource: "per tool (see Tools)", Versioning: "`semver`, `tag` or `maven`"},
+		{Name: DepTypeTool, What: "a tool line; the dep name comes from the tool table", Datasource: "per tool (see Tools)", Versioning: "`semver`, `tag` or `maven`", Datasources: toolDatasources()},
 	},
 	Skips:    toolSkips,
 	Sections: []refdoc.Section{{Title: "Versions", Items: toolVersionItems}, toolsSection()},
@@ -105,7 +115,7 @@ var DocMise = refdoc.Manager{
 		"so only the version bytes change.",
 	Files: []string{"`mise.toml`, `.mise.toml`", "`mise/config.toml`, `.mise/config.toml`", "`.config/mise.toml`, `.config/mise/config.toml`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeTool, What: "a `[tools]` entry; the dep name comes from the tool table or the backend", Datasource: "per tool (see Tools)", Versioning: "`semver`, `tag` or `maven`"},
+		{Name: DepTypeTool, What: "a `[tools]` entry; the dep name comes from the tool table or the backend", Datasource: "per tool (see Tools)", Versioning: "`semver`, `tag` or `maven`", Datasources: toolDatasources()},
 	},
 	Skips: append(slices.Clip(toolSkips), refdoc.Skip{Reason: "cannot locate value", When: "a string with escapes or a multi-line string"}),
 	Sections: []refdoc.Section{

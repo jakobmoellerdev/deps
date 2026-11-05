@@ -191,7 +191,7 @@ func TestResolveAndBuildActions(t *testing.T) {
 		},
 		{
 			name: "updates replaced by later rule",
-			cfg:  "rules:\n  - updates: [major]\n  - names: [actions/checkout]\n    updates: [patch]\n",
+			cfg:  "rules:\n  - allowedUpdateTypes: [major]\n  - names: [actions/checkout]\n    allowedUpdateTypes: [patch]\n",
 			wantLines: map[int]string{
 				6: "      - uses: actions/checkout@v4.1.1",
 				8: "      - uses: actions/cache@" + sha("stale") + " # v4",

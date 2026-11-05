@@ -32,18 +32,21 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom/customdoc"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
-// Name is the manager name shared by every custom manager.
-const Name = "custom"
+// Name is the manager name shared by every custom manager. It and the dependency types are
+// declared with the manager's reference docs in customdoc, which the manager registry (and
+// through it config) imports without this package's dependency on config.
+const Name = customdoc.Name
 
 // Dependency types of custom deps.
 const (
-	DepTypeAnnotation = "annotation"
-	DepTypeRegex      = "regex"
+	DepTypeAnnotation = customdoc.DepTypeAnnotation
+	DepTypeRegex      = customdoc.DepTypeRegex
 )
 
 const defaultVersioning = "semver"

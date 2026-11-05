@@ -195,7 +195,7 @@ func TestRuleMatcherErrors(t *testing.T) {
 	// Errors point at the line of the offending key.
 	_, err := load(t, ".deps.yaml", "rules:\n  - names: [a]\n    currentAge: old\n")
 	var ce *Error
-	if !errors.As(err, &ce) || len(ce.Problems) != 1 || ce.Problems[0].Line != 3 {
+	if !errors.As(err, &ce) || len(ce.Problems()) != 1 || ce.Problems()[0].Line != 3 {
 		t.Errorf("problems = %+v, want one on line 3", ce)
 	}
 }

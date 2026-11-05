@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/urfave/cli/v3"
@@ -56,7 +57,7 @@ import (
 type rootOpts struct {
 	dir         string
 	config      string
-	verbose     bool
+	showSkipped bool
 	log         logOpts
 	term        terminal     // set up with the logger
 	stderr      *logx.Writer // stderr of the command, set up with the logger
@@ -65,21 +66,22 @@ type rootOpts struct {
 	concurrency int
 	report      string   // --report: JSON result file of plan, apply and run
 	allowTasks  []string // --allow-tasks of apply and run
-	renovate    bool
+	renovate    bool     // --renovate: compatibility mode (renovateMode)
 }
 
 // allowTasksFlag is --allow-tasks of apply and run.
 func allowTasksFlag(o *rootOpts) cli.Flag {
-	return &cli.StringSliceFlag{Name: "allow-tasks", Destination: &o.allowTasks, Usage: "postUpgradeTasks command allowed to run, '*' matching any text but ; & | ` $( and line breaks, e.g. 'go generate ./...', 'make *' or '*' (repeatable); they run repository code on this machine (default: $DEPS_ALLOW_TASKS, one per line)"}
+	return &cli.StringSliceFlag{Name: "allow-tasks", Destination: &o.allowTasks, Usage: "postUpgradeTasks command allowed to run, '*' matching any text but ; & | ` $( and line breaks, e.g. 'go generate ./...', 'make *' or '*' (repeatable); they run repository code on this machine"}
 }
 
-// taskAllowlist returns the --allow-tasks patterns, else those of DEPS_ALLOW_TASKS (one per line).
+// taskAllowlist returns the --allow-tasks patterns, else those of DEPS_ALLOW_TASKS (one per
+// line; applyEnv leaves string slice flags to their command).
 func taskAllowlist(o *rootOpts) engine.TaskAllowlist {
 	if len(o.allowTasks) > 0 {
 		return o.allowTasks
 	}
 	var a engine.TaskAllowlist
-	for l := range strings.Lines(os.Getenv("DEPS_ALLOW_TASKS")) {
+	for l := range strings.Lines(os.Getenv(flagEnv("allow-tasks"))) {
 		if l = strings.TrimSpace(l); l != "" {
 			a = append(a, l)
 		}
@@ -92,7 +94,6 @@ func newRoot() *cli.Command {
 	root := &cli.Command{
 		Name:                            "deps",
 		Usage:                           "Update GitHub/Gitea/Forgejo Actions, Go module, container image, npm and Cargo dependencies",
-		Description:                     helpText("root"),
 		HideVersion:                     true,
 		EnableShellCompletion:           true,
 		ConfigureShellCompletionCommand: configureCompletion,
@@ -100,14 +101,18 @@ func newRoot() *cli.Command {
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			// Environment defaults apply here, not as flag defaults, so help and the generated
-			// reference show the same defaults everywhere.
-			envDefault(cmd, "log-level", "DEPS_LOG_LEVEL", &o.log.level)
+			// reference show the same defaults everywhere. Before runs once every command of
+			// the chain parsed its flags.
+			run := leaf(cmd)
+			for _, c := range run.Lineage() {
+				if err := applyEnv(c); err != nil {
+					return ctx, err
+				}
+			}
 			// A re-run with debug logging (RUNNER_DEBUG=1) gets deps' debug records too.
-			if os.Getenv("RUNNER_DEBUG") == "1" && os.Getenv("DEPS_LOG_LEVEL") == "" && !cmd.IsSet("log-level") {
+			if o.log.level == "" && os.Getenv("RUNNER_DEBUG") == "1" {
 				o.log.level = "debug"
 			}
-			envDefault(cmd, "log-format", "DEPS_LOG_FORMAT", &o.log.format)
-			envDefault(cmd, "report", "DEPS_REPORT", &o.report)
 			// All of stderr goes through one Writer, so records and result lines never
 			// interleave and a status line can redraw around them. Commands write to the
 			// root's ErrWriter.
@@ -122,7 +127,7 @@ func newRoot() *cli.Command {
 				return ctx, err
 			}
 			o.term = t
-			if o.concurrency < 1 {
+			if hasFlag(run, "concurrency") && o.concurrency < 1 {
 				return ctx, &usageError{fmt.Errorf("--concurrency: must be at least 1, got %d", o.concurrency)}
 			}
 			activeProfiler = &o.prof
@@ -136,19 +141,13 @@ func newRoot() *cli.Command {
 			return cli.ShowRootCommandHelp(cmd)
 		},
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "dir", Value: ".", Destination: &o.dir, Usage: "repository directory to scan"},
-			&cli.StringFlag{Name: "config", Destination: &o.config, Usage: "config file, which must exist (default: <dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate"},
-			&cli.BoolFlag{Name: "renovate", Destination: &o.renovate, Usage: "compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation"},
-			&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Destination: &o.verbose, Usage: "also print skipped dependencies (skip lines)"},
-			&cli.StringFlag{Name: "log-level", Value: "warn", Destination: &o.log.level, Usage: "log level: debug, info, warn, error; $DEPS_LOG_LEVEL, then $RUNNER_DEBUG=1 (debug) replace the default"},
-			&cli.StringFlag{Name: "log-format", Value: "auto", Destination: &o.log.format, Usage: "log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups); $DEPS_LOG_FORMAT replaces the default"},
+			&cli.StringFlag{Name: "log-level", Destination: &o.log.level, Usage: "log level: debug, info, warn, error (when not set: debug with $RUNNER_DEBUG=1, else warn)"},
+			&cli.StringFlag{Name: "log-format", Value: "auto", Destination: &o.log.format, Usage: "log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups)"},
 			&cli.StringFlag{Name: "color", Value: "auto", Destination: &o.log.color, Usage: "color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never"},
-			&cli.IntFlag{Name: "concurrency", Value: 32, Destination: &o.concurrency, Usage: "maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1"},
-			&cli.StringFlag{Name: "report", Destination: &o.report, Usage: "plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT)"},
 			&cli.StringFlag{Name: "cpuprofile", Hidden: true, Destination: &o.prof.cpu, Usage: "write a CPU profile to this file"},
 			&cli.StringFlag{Name: "memprofile", Hidden: true, Destination: &o.prof.mem, Usage: "write an allocation profile to this file on exit"},
 		},
-		Commands: append([]*cli.Command{newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newPreview(o), newSubmit(o), newMigrate(o), newSchema(), newDocs(), newHelp()},
+		Commands: append([]*cli.Command{newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newPreview(o), newSubmit(o), newMigrate(o), newSchema(), newDocs(), newConfig(o), newInit(o), newHelp()},
 			newHelpTopics()...),
 	}
 	_ = root.Walk(func(c *cli.Command) error {
@@ -175,11 +174,117 @@ func flagError(_ context.Context, _ *cli.Command, err error, _ bool) error {
 	return &usageError{err}
 }
 
-// envDefault sets *dst from the environment variable env unless the flag was given.
-func envDefault(cmd *cli.Command, flag, env string, dst *string) {
-	if v := os.Getenv(env); v != "" && !cmd.IsSet(flag) {
-		*dst = v
+// leaf returns the command of the chain below root that runs: urfave/cli runs the root's
+// Before with the root, after every command of the chain parsed its arguments.
+func leaf(root *cli.Command) *cli.Command {
+	c := root
+	for c.Args().Present() {
+		sub := c.Command(c.Args().First())
+		if sub == nil {
+			break
+		}
+		c = sub
 	}
+	return c
+}
+
+// hasFlag reports whether c declares the flag name itself.
+func hasFlag(c *cli.Command, name string) bool {
+	return slices.ContainsFunc(c.Flags, func(f cli.Flag) bool { return slices.Contains(f.Names(), name) })
+}
+
+// scanKind selects the flags of a command that reads a repository and its config.
+type scanKind int
+
+const (
+	// scanOffline: --dir and --config (config check, config show, init).
+	scanOffline scanKind = iota
+	// scanSession adds --renovate and --concurrency for the commands that open a session
+	// (explain, preview, submit).
+	scanSession
+	// scanResults adds --show-skipped and --report for the session commands that print skip
+	// lines and report their result (plan, apply, run).
+	scanResults
+)
+
+// scanFlags returns the scan flags of kind.
+func scanFlags(o *rootOpts, kind scanKind) []cli.Flag {
+	if kind == scanOffline {
+		return []cli.Flag{dirFlag(o), &cli.StringFlag{Name: "config", Destination: &o.config, Usage: "config file, which must exist (when not set: <dir>/.deps.yaml, then .deps.yml, else built-in defaults)"}}
+	}
+	fs := []cli.Flag{
+		dirFlag(o),
+		&cli.StringFlag{Name: "config", Destination: &o.config, Usage: "config file, which must exist (when not set: <dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate"},
+		&cli.BoolFlag{Name: "renovate", Destination: &o.renovate, Usage: "compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation"},
+		concurrencyFlag(o),
+	}
+	if kind == scanResults {
+		fs = append(fs,
+			&cli.BoolFlag{Name: "show-skipped", Destination: &o.showSkipped, Usage: "also print skipped dependencies (skip lines)"},
+			&cli.StringFlag{Name: "report", Destination: &o.report, Usage: "also write the result as JSON to this file (see deps help output)"},
+		)
+	}
+	return fs
+}
+
+// dirFlag is --dir, the repository directory every scanning command reads.
+func dirFlag(o *rootOpts) cli.Flag {
+	return &cli.StringFlag{Name: "dir", Value: ".", Destination: &o.dir, Usage: "repository directory to scan"}
+}
+
+// defaultConcurrency is the default of --concurrency.
+const defaultConcurrency = 32
+
+// concurrencyFlag is --concurrency of the commands that make network requests.
+func concurrencyFlag(o *rootOpts) cli.Flag {
+	return &cli.IntFlag{Name: "concurrency", Value: defaultConcurrency, Destination: &o.concurrency, Usage: "maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1"}
+}
+
+// flagEnv is the environment variable every flag reads its default from: DEPS_ and the flag
+// name in upper case with '-' as '_' (--log-level: DEPS_LOG_LEVEL).
+func flagEnv(name string) string {
+	return "DEPS_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+}
+
+// envMeta prefixes the cli.Command.Metadata key under which applyEnv records the variable
+// that set a flag of the command.
+const envMeta = "deps-env:"
+
+// applyEnv sets every flag c declares that was not given on the command line from its
+// flagEnv variable. An invalid value is a usage error naming the variable. String slice
+// flags read their variable themselves (taskAllowlist: one value per line, so values may
+// hold commas).
+func applyEnv(c *cli.Command) error {
+	for _, f := range c.Flags {
+		name := f.Names()[0]
+		if _, slice := f.(*cli.StringSliceFlag); slice || name == "help" || f.IsSet() {
+			continue
+		}
+		env := flagEnv(name)
+		v := os.Getenv(env)
+		if v == "" {
+			continue
+		}
+		if err := f.Set(name, v); err != nil {
+			return &usageError{fmt.Errorf("%s: invalid value %q for --%s: %w", env, v, name, err)}
+		}
+		if c.Metadata == nil {
+			c.Metadata = map[string]any{}
+		}
+		c.Metadata[envMeta+name] = env
+	}
+	return nil
+}
+
+// flagSource names where the value of flag came from in errors: its variable when
+// applyEnv set it, else --flag.
+func flagSource(cmd *cli.Command, flag string) string {
+	for _, c := range cmd.Lineage() {
+		if env, ok := c.Metadata[envMeta+flag].(string); ok {
+			return env
+		}
+	}
+	return "--" + flag
 }
 
 // noArgs is the cli.ArgValidatorFunc of commands without positional arguments.
@@ -238,9 +343,10 @@ func extendsFetcher(info platform.Info, token, dir string) *config.GitFetcher {
 	}
 }
 
-// newSession loads the config and wires the managers and datasources onto one HTTP client
-// and the request pools of --concurrency (httpx.NewLimits).
-func newSession(ctx context.Context, o *rootOpts, info platform.Info, token string, client *http.Client) (*session, error) {
+// newSession loads the config, prints its lint warnings (config.Lint) to stderr and as
+// annotations, and wires the managers and datasources onto one HTTP client and the request
+// pools of --concurrency (httpx.NewLimits).
+func newSession(ctx context.Context, o *rootOpts, info platform.Info, token string, client *http.Client, stderr io.Writer) (*session, error) {
 	root, err := filepath.Abs(o.dir)
 	if err != nil {
 		return nil, err
@@ -255,15 +361,14 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		return nil, err
 	}
 	logExtends(ctx, cfg)
+	printLint(stderr, cfg)
 	managers, err := engine.Managers(cfg)
 	if err != nil {
 		return nil, err
 	}
-	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, info, os.Getenv)
-	slog.DebugContext(ctx, "gitlab url", "url", gitlabURL, "source", gitlabSource)
-	auth = httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(gitlabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask))...)
+	env := configEnv(ctx, cfg, info)
+	auth = httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(env.GitLabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask))...)
 	gh := githubapi.New(client, auth, sem)
-	env := configEnv(cfg, info, gitlabURL)
 	slog.DebugContext(ctx, "config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
 	osvSource := osv.New(client, limits.OSV)
 	var security engine.SecuritySource
@@ -334,15 +439,23 @@ func logExtends(ctx context.Context, cfg *config.Config) {
 	}
 }
 
-// configEnv is the manager environment of cfg: the actions default host (logged with its
-// source), the GitLab URL and the Terraform registry.
-func configEnv(cfg *config.Config, info platform.Info, gitlabURL string) manager.Env {
-	host, source := cfg.Actions.DefaultHost, "config"
-	if host == "" {
-		host, source = platform.DefaultActionsHost(info, os.Getenv)
-	}
-	slog.Info("actions default host", "host", host, "source", source)
+// configEnv is the manager environment of cfg: the actions default host (actionsHost) and the
+// GitLab URL (platform.GitLabURL), both logged with their source, and the Terraform registry.
+func configEnv(ctx context.Context, cfg *config.Config, info platform.Info) manager.Env {
+	host, source := actionsHost(cfg, info)
+	slog.InfoContext(ctx, "actions default host", "host", host, "source", source)
+	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, info, os.Getenv)
+	slog.DebugContext(ctx, "gitlab url", "url", gitlabURL, "source", gitlabSource)
 	return manager.Env{DefaultHost: host, GitLabURL: gitlabURL, TerraformRegistry: cfg.Terraform.DefaultRegistry}
+}
+
+// actionsHost is the host of owner/repo@ref actions and where it came from: the config's
+// actions.defaultHost ("config"), else platform.DefaultActionsHost.
+func actionsHost(cfg *config.Config, info platform.Info) (host, source string) {
+	if cfg.Actions.DefaultHost != "" {
+		return cfg.Actions.DefaultHost, "config"
+	}
+	return platform.DefaultActionsHost(info, os.Getenv)
 }
 
 // addCustomSources adds the custom datasources of cfg as custom.<name>.
@@ -389,9 +502,8 @@ func (s *session) forCheckout(ctx context.Context, dir, configPath string, info 
 	if err := addCustomSources(sources, s.client, s.sem, cfg); err != nil {
 		return nil, err
 	}
-	gitlabURL, _ := platform.GitLabURL(cfg.GitLabCI.URL, info, os.Getenv)
 	sib := *s
-	sib.root, sib.cfg, sib.managers, sib.sources, sib.env, sib.info = root, cfg, managers, sources, configEnv(cfg, info, gitlabURL), info
+	sib.root, sib.cfg, sib.managers, sib.sources, sib.env, sib.info = root, cfg, managers, sources, configEnv(ctx, cfg, info), info
 	sib.security = nil
 	if cfg.SecurityEnabled() {
 		sib.security = s.osv

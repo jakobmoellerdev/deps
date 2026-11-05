@@ -13,33 +13,163 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/logx"
 )
 
-// helpFS holds the long help texts (markdown) of the commands and help topics; `deps docs`
-// renders them into docs/reference/cli.md.
+// helpFS holds the long help texts (markdown) of the commands and help topics, one file per
+// command (helpName); `deps docs` renders them into docs/reference/cli.md.
 //
 //go:embed help/*.md
 var helpFS embed.FS
 
-// helpText returns help/<name>.md without the trailing newline. A missing file is a
-// programming error caught by the tests.
+// helpText returns help/<name>.md without the trailing newline, or "" when there is none.
 func helpText(name string) string {
 	b, err := helpFS.ReadFile("help/" + name + ".md")
 	if err != nil {
-		panic(err)
+		return ""
 	}
 	return strings.TrimRight(string(b), "\n")
 }
+
+// helpName is the help file name of c: its path below the root joined by '-' (config-show),
+// or root. It needs the parents urfave/cli sets when the tree runs.
+func helpName(c *cli.Command) string {
+	l := c.Lineage()
+	if len(l) == 1 {
+		return "root"
+	}
+	names := make([]string, 0, len(l)-1)
+	for i := len(l) - 2; i >= 0; i-- {
+		names = append(names, l[i].Name)
+	}
+	return strings.Join(names, "-")
+}
+
+// envTopic is the help topic listing the environment variables (environmentHelp).
+const envTopic = "environment"
 
 // newHelpTopics returns the additional help topics (`deps help <topic>`): commands without
 // Action that only carry text.
 func newHelpTopics() []*cli.Command {
 	topic := map[string]any{docgen.MetaTopic: true}
 	return []*cli.Command{
-		{Name: "environment", Usage: "Environment variables deps reads", Description: helpText("environment"), Metadata: topic},
-		{Name: "exit-codes", Usage: "Exit codes of every command", Description: helpText("exit-codes"), Metadata: topic},
-		{Name: "output", Usage: "Report lines, summary lines, diagnostics and the CI step summary", Description: helpText("output"), Metadata: topic},
+		{Name: envTopic, Usage: "Environment variables deps reads", Metadata: topic},
+		{Name: "exit-codes", Usage: "Exit codes of every command", Metadata: topic},
+		{Name: "output", Usage: "Report lines, summary lines, diagnostics and the CI step summary", Metadata: topic},
 	}
+}
+
+// fillHelp sets the Description of c, unless set, from its help file (helpName); the
+// environment topic gets environmentHelp. newRoot leaves Description empty: every invocation
+// builds the command tree, but only help and `deps docs` show the texts.
+func fillHelp(c *cli.Command) {
+	fillNamed(c.Root(), c, helpName(c))
+}
+
+func fillNamed(root, c *cli.Command, name string) {
+	if c.Description != "" {
+		return
+	}
+	if name == envTopic {
+		c.Description = environmentHelp(root)
+	} else {
+		c.Description = helpText(name)
+	}
+}
+
+// fillAllHelp fills the help of root and of every command below it (fillHelp); the tree
+// need not have run.
+func fillAllHelp(root *cli.Command) {
+	var rec func(c *cli.Command, name string)
+	rec = func(c *cli.Command, name string) {
+		fillNamed(root, c, name)
+		for _, sub := range c.Commands {
+			n := sub.Name
+			if c != root {
+				n = name + "-" + sub.Name
+			}
+			rec(sub, n)
+		}
+	}
+	rec(root, "root")
+}
+
+// environmentHelp is help/environment.md with one row per flag variable (flagEnv) appended
+// to its first table; variables the hand-written rows already describe are left out.
+func environmentHelp(root *cli.Command) string {
+	text := helpText(envTopic)
+	var described strings.Builder // the hand-written table rows
+	for l := range strings.Lines(text) {
+		if strings.HasPrefix(l, "|") {
+			described.WriteString(l)
+		}
+	}
+	type row struct {
+		env, usage string
+		cmds       []string
+	}
+	var rows []*row
+	byEnv := map[string]*row{}
+	add := func(fs []cli.Flag, cmd string) {
+		docs, _ := docgen.Flags(fs) // hidden flags and help are left out
+		for _, f := range docs {
+			env := flagEnv(f.Name)
+			if strings.Contains(described.String(), "`"+env+"`") {
+				continue
+			}
+			r := byEnv[env]
+			if r == nil {
+				r = &row{env: env, usage: "default of `--" + f.Name + "`: " + f.Usage}
+				byEnv[env] = r
+				rows = append(rows, r)
+			}
+			if !slices.Contains(r.cmds, cmd) {
+				r.cmds = append(r.cmds, cmd)
+			}
+		}
+	}
+	add(root.Flags, "all")
+	var walk func(c *cli.Command, path string)
+	walk = func(c *cli.Command, path string) {
+		// In name order, without hidden commands, help topics and help.
+		for _, sub := range docgen.Available(c, false) {
+			// urfave/cli adds completion when the tree runs; it has no flags.
+			if c == root && sub.Name == "completion" {
+				continue
+			}
+			p := strings.TrimPrefix(path+" "+sub.Name, " ")
+			if sub.Action != nil {
+				add(sub.Flags, "`"+p+"`")
+			}
+			walk(sub, p)
+		}
+	}
+	walk(root, "")
+	slices.SortFunc(rows, func(a, b *row) int { return strings.Compare(a.env, b.env) })
+	var b strings.Builder
+	for _, r := range rows {
+		b.WriteString("| `" + r.env + "` | " + strings.Join(r.cmds, ", ") + " | " + strings.ReplaceAll(r.usage, "|", `\|`) + " |\n")
+	}
+	lines := strings.SplitAfter(text, "\n")
+	end := len(lines)
+	inTable := false
+	for i, l := range lines {
+		if strings.HasPrefix(l, "|") {
+			inTable = true
+		} else if inTable {
+			end = i
+			break
+		}
+	}
+	return strings.TrimRight(strings.Join(lines[:end], "")+ensureNewline(b.String(), end == len(lines))+strings.Join(lines[end:], ""), "\n")
+}
+
+// ensureNewline prefixes s with a newline when it follows the unterminated last line.
+func ensureNewline(s string, atEnd bool) string {
+	if atEnd {
+		return "\n" + s
+	}
+	return s
 }
 
 func init() { cli.HelpPrinter = printHelp }
@@ -69,10 +199,22 @@ func newHelp() *cli.Command {
 	}
 }
 
+// helpWidth is the column plain help text is wrapped at.
+const helpWidth = 80
+
 // printHelp is the cli.HelpPrinter: it writes helpString instead of urfave/cli's template.
-// cli.HelpPrinterFunc has no error result, so a failed write is dropped, as urfave/cli does.
+// On a terminal the markdown of the description is rendered as plain text; piped help and
+// `deps docs` keep the markdown. cli.HelpPrinterFunc has no error result, so a failed write
+// is dropped, as urfave/cli does.
 func printHelp(w io.Writer, _ string, data any) {
-	_, _ = io.WriteString(w, helpString(data.(*cli.Command)))
+	c := data.(*cli.Command)
+	fillHelp(c)
+	if logx.IsTerminal(w) {
+		desc := c.Description
+		c.Description = docgen.MarkdownToPlain(desc, helpWidth)
+		defer func() { c.Description = desc }()
+	}
+	_, _ = io.WriteString(w, helpString(c))
 }
 
 // helpString renders the help of c: the long description, then usage, examples,

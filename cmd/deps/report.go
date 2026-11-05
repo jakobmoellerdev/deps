@@ -28,6 +28,7 @@ type jsonReport struct {
 	Pending      []jsonPending  `json:"heldBack"`
 	Warnings     []jsonWarning  `json:"warnings"`
 	Skipped      []jsonSkip     `json:"skipped"`
+	UnusedRules  []int          `json:"unusedRules"`
 	Errors       []jsonError    `json:"errors"`
 	Counts       map[string]int `json:"counts"`
 }
@@ -159,7 +160,7 @@ func countActions(actions []bot.Action) outcomes {
 func (s *summary) report() jsonReport {
 	r := jsonReport{
 		Command: s.Command, Repository: s.Repository, Dependencies: s.deps(), DurationMS: s.Elapsed.Milliseconds(),
-		PRs: []jsonPR{}, Other: []jsonAction{}, Pending: []jsonPending{}, Warnings: []jsonWarning{}, Skipped: []jsonSkip{}, Errors: []jsonError{},
+		PRs: []jsonPR{}, Other: []jsonAction{}, Pending: []jsonPending{}, Warnings: []jsonWarning{}, Skipped: []jsonSkip{}, UnusedRules: []int{}, Errors: []jsonError{},
 		Counts: s.counts(),
 	}
 	for _, g := range s.Groups {
@@ -184,6 +185,7 @@ func (s *summary) report() jsonReport {
 	for _, sr := range s.skipReasons() {
 		r.Skipped = append(r.Skipped, jsonSkip{Reason: sr.Reason, Count: len(sr.Deps)})
 	}
+	r.UnusedRules = append(r.UnusedRules, s.Unused...)
 	for _, e := range s.Errors {
 		je := jsonError{Message: e.Error()}
 		if de, ok := errors.AsType[*engine.DepError](e); ok {

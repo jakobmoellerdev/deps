@@ -89,7 +89,7 @@ func TestCommitPins(t *testing.T) {
 		},
 		{name: "no tag, enabled: at the head", pin: untagged, head: untagged, cfg: enable},
 		{name: "no tag, enabled: empty repository", pin: untagged, cfg: enable},
-		{name: "no tag, enabled: digest updates off", pin: untagged, head: c("main"), cfg: enable + "    updates: [major, minor, patch]\n"},
+		{name: "no tag, enabled: digest updates off", pin: untagged, head: c("main"), cfg: enable + "    allowedUpdateTypes: [major, minor, patch]\n"},
 		{
 			name: "no tag, enabled: too new", pin: untagged, head: c("main"), commitTime: daysAgo(14), cfg: "minimumReleaseAge: 30 days\n" + enable,
 			pending: tooNew(14, "30 days"), timeCalls: 1,

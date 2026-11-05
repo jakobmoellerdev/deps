@@ -7,21 +7,25 @@
 The JSON Schema printed by `deps schema` is the authoritative key list; this page is generated from it, and the repository root has a copy as `deps.schema.json`. For editor completion and hover documentation (yaml-language-server, e.g. the VS Code YAML extension), start the file with:
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 ```
 
-or point `$schema` at a local copy (`deps schema > deps.schema.json`, then `# yaml-language-server: $schema=./deps.schema.json`).
+Replace `vX.Y.Z` with your deps version (`deps version`, or the action's `version:`): every release after v0.3.0 carries its schema as the `deps.schema.json` asset (listed in `checksums.txt`), whose `$id` is that URL, so the editor checks exactly the keys your deps accepts; bump the modeline together with deps. To follow the development version instead, use `https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main`, or point `$schema` at a local copy (`deps schema > deps.schema.json`, then `# yaml-language-server: $schema=./deps.schema.json`).
 
 **Loading and validation.**
 
-- Decoding is strict. An unknown key is an error that names its line: `.deps.yaml: yaml: unmarshal errors:\n  line 1: field pinn not found in type config.Config`.
-- All validation errors are reported together, one per line, as `<path>: <field>: <message>`, for example `.deps.yaml: rules[2].allow: invalid constraint "<<7": ...`.
+- Decoding is strict. Every problem is reported as `<path>:<line>:<col>: <field>: <message>`, one per line, sorted by position, all in one run: syntax errors, unknown keys, values of the wrong type and failed validations.
+- An unknown key names a close match or, for a Renovate option, its deps equivalent: `.deps.yaml:1:1: automerg: unknown key (did you mean automerge?)`, `.deps.yaml:3:5: rules[0].matchPackageNames: unknown key (Renovate's matchPackageNames is names here)`.
+- A value of the wrong type names what the key takes: `.deps.yaml:1:8: rules: want a list, got a mapping`.
+- An unknown value of a fixed set (`depTypes`, `datasources`, `updateTypes`, `pin`, `rangeStrategy`, `commitType`, ...) suggests a close match (`unknown value "devDependency" (did you mean devDependencies?)`); without one, sets of up to 10 values are listed, longer ones point at `deps config describe <key>`.
+- Under GitHub Actions, each problem is also printed as an `::error file=<path>,line=<line>,col=<col>,title=deps::<field>: <message>` workflow command, so it shows as an annotation on the config file (Gitea and Forgejo do not render annotations, so deps prints none there).
 - A config error exits with code 2 (see [exit codes](cli.md#exit-codes)).
+- `deps config check` loads and validates the file offline (exit 2 on errors), e.g. in a pre-commit hook; `deps config show --sources` prints the effective values with their source, and `deps config describe <key>` prints a key's section of this page in the terminal. `deps init` writes a starter file.
 
 **Example** using most keys:
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 version: 1
 schedule: ["0 5 * * 1-5"]          # create PRs in the weekday run (a cron of the workflow)
 pin: digest                         # pin actions to SHAs and images to digests
@@ -38,7 +42,7 @@ dependencyDashboardLabels: [dependencies]
 separateMultipleMajor: true
 ignorePaths: ['**/node_modules/**', '**/testdata/**', 'third_party/**']
 rules:
-  - manager: github-actions         # minor+patch of all actions in one PR
+  - managers: [github-actions]      # minor+patch of all actions in one PR
     updateTypes: [minor, patch]
     group: actions
   - updateTypes: [minor, patch]     # automerge minor and patch updates once checks pass
@@ -48,19 +52,19 @@ rules:
     updateTypes: [digest, pin]
     group: digest-pins
     schedule: ['0 5 * * 0']         # the workflow's Sunday cron
-  - manager: gomod                  # include indirect requirements...
+  - managers: [gomod]               # include indirect requirements...
     depTypes: [indirect]
     ignore: false
-  - manager: gomod                  # ...without their majors
+  - managers: [gomod]               # ...without their majors
     depTypes: [indirect]
     updateTypes: [major]
     ignore: true
   - names: ['golang.org/x/**']
     group: golang-x
-  - manager: docker
+  - managers: [docker]
     names: ['postgres']
     allow: '< 18'
-  - manager: npm
+  - managers: [npm]
     depTypes: [devDependencies]
     group: npm-dev
     commitScope: dev-deps
@@ -132,7 +136,7 @@ customDatasources:
 - [`dashboardApproval`](#dashboardapproval)
 - [`extends`](#extends)
 - [`rules`](#rules)
-  - [`rules[].manager`](#rulesmanager)
+  - [`rules[].managers`](#rulesmanagers)
   - [`rules[].names`](#rulesnames)
   - [`rules[].depTypes`](#rulesdeptypes)
   - [`rules[].paths`](#rulespaths)
@@ -144,8 +148,8 @@ customDatasources:
   - [`rules[].ignore`](#rulesignore)
   - [`rules[].pin`](#rulespin)
   - [`rules[].allow`](#rulesallow)
+  - [`rules[].allowedUpdateTypes`](#rulesallowedupdatetypes)
   - [`rules[].rangeStrategy`](#rulesrangestrategy)
-  - [`rules[].updates`](#rulesupdates)
   - [`rules[].versioning`](#rulesversioning)
   - [`rules[].extractVersion`](#rulesextractversion)
   - [`rules[].replacementName`](#rulesreplacementname)
@@ -349,7 +353,7 @@ on:
 ```
 
 ```yaml
-# yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
+# yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 rules:
   - updateTypes: [digest, pin]
     group: digest-pins
@@ -376,7 +380,7 @@ Renovate's `timezone`. An [IANA time zone](https://en.wikipedia.org/wiki/List_of
 
 ## `security`
 
-Look up OSV advisories and propose security updates that bypass allow, updates and schedule.
+Look up OSV advisories and propose security updates that bypass allow, allowedUpdateTypes and schedule.
 
 - **Type:** boolean
 - **Default:** `true`
@@ -385,7 +389,7 @@ deps queries [OSV](https://osv.dev) for Go modules, npm packages, crates.io crat
 
 - The go.mod `toolchain` directive is checked against the Go standard library (`stdlib`) and the go command (`toolchain`), so `toolchain go1.22.0` gets a security update to the smallest Go release of its line that fixes its advisories (`1.22.2` for GO-2024-2687). The `go` directive is checked too once a rule un-ignores it (it is ignored by default); a 2-part `go 1.22` admits every 1.22.x toolchain, so only an advisory without a fix in 1.22 moves it.
 - Container images, Terraform providers and modules, and Helm charts get no security updates: OSV has no ecosystem for them. The queries per ecosystem are listed under [Security advisories (OSV)](managers.md#security-advisories-osv).
-- Security updates bypass `allow`, `updates`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`, except the default ignore of pip_requirements `indirect` pins (the transitive pins of pip-compile/`uv pip compile` output, which Renovate's vulnerability alerts enable too): those get security updates, and only those, unless a rule ignores them.
+- Security updates bypass `allow`, `allowedUpdateTypes`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`, except the default ignore of pip_requirements `indirect` pins (the transitive pins of pip-compile/`uv pip compile` output, which Renovate's vulnerability alerts enable too): those get security updates, and only those, unless a rule ignores them.
 - They always use commit type `fix`, get a `[security]` title suffix, and are not put into a `group`. A rule's [`securityGroup`](#rulessecuritygroup) opts in to batching them into a PR of their own.
 - A failed OSV lookup is reported as an error (`security advisories: <err>`).
 
@@ -456,7 +460,7 @@ Group deps released from one source repository (built-in list, e.g. kubernetes, 
 
 When `true`, deps released from one source repository share a PR, with group `<name> monorepo`. The 62 built-in entries include kubernetes (`k8s.io/` staging modules), go-openapi, opentelemetry-go, opentelemetry-go-contrib, aws-sdk-go-v2, azure-sdk-for-go, google-cloud-go, moby, etcd, sigstore, typescript-eslint, eslint, babel, jest, vitest, angular, react, vue, storybook, tailwindcss, playwright, codeql-action and actions-cache. The full list is in `internal/config/monorepos.go`.
 
-The Ruby version is grouped the same way: every dep of the `ruby-version` datasource (the Gemfile `ruby` directive, `.ruby-version`, the asdf and mise `ruby` tool) gets group `ruby`, so one PR moves all files naming it, `Gemfile.lock`'s `RUBY VERSION` included. `ruby` Docker images (`ruby:3.4-slim` in a Dockerfile or CI config) stay docker deps; a rule such as `{manager: docker, names: [ruby], group: ruby}` adds them to that PR.
+The Ruby version is grouped the same way: every dep of the `ruby-version` datasource (the Gemfile `ruby` directive, `.ruby-version`, the asdf and mise `ruby` tool) gets group `ruby`, so one PR moves all files naming it, `Gemfile.lock`'s `RUBY VERSION` included. `ruby` Docker images (`ruby:3.4-slim` in a Dockerfile or CI config) stay docker deps; a rule such as `{managers: [docker], names: [ruby], group: ruby}` adds them to that PR.
 
 They are applied as implicit rules *before* the user rules, so any rule that sets `group` overrides them. `deps explain` shows them as `builtin  monorepo <name> -> group "<name> monorepo"` and `builtin  toolchain ruby -> group "ruby"`.
 
@@ -651,7 +655,7 @@ How minimumReleaseAge treats a version whose release time is unknown (the dataso
 minimumReleaseAge: 28 days
 minimumReleaseAgeBehaviour: timestamp-required
 rules:
-  - manager: custom # in-house datasources without release times are not held back
+  - managers: [custom] # in-house datasources without release times are not held back
     minimumReleaseAgeBehaviour: timestamp-optional
 ```
 
@@ -671,7 +675,7 @@ A dependency whose newest release is older than this is listed under **Abandoned
 ```yaml
 abandonmentThreshold: 2 years
 rules:
-  - manager: github-actions
+  - managers: [github-actions]
     abandonmentThreshold: 0
 ```
 
@@ -895,7 +899,7 @@ prHeader: |
   This PR updates {{if eq .Count 1}}{{.Name}}{{else}}{{.Count}} dependencies of {{.Name}}{{end}}.
 prFooter: '{{if .IsSecurity}}**Security update: please review soon.**{{end}}'
 rules:
-  - manager: github-actions
+  - managers: [github-actions]
     prTitle: 'ci: bump {{.Name}} from {{.From}} to {{.To}}'
 ```
 
@@ -1034,39 +1038,46 @@ Policy rules, evaluated top to bottom; every set field of a matching rule overri
 
 - **Type:** list of objects
 
-A rule **matches** a dep when every selector it sets matches. The selectors are `manager`, `names`, `depTypes`, `paths`, `datasources`, `baseBranches`, `currentVersion`, `currentAge` and `updateTypes`; every other field is an action. Every field a matching rule sets **overrides** the value from earlier rules (field-wise); `updates` replaces the earlier list, it is not merged.
+A rule has two groups of fields:
+
+- **Match** fields select what the rule applies to: `managers`, `names`, `depTypes`, `paths`, `datasources`, `baseBranches`, `currentVersion`, `currentAge` and `updateTypes`. A rule **matches** a dep (or, with `updateTypes`, a candidate update of it) when every match field it sets matches; a list matches when any of its entries does. A rule without match fields matches every dep.
+- **Apply** fields override the policy of what the rule matches: every other field (`ignore`, `pin`, `allow`, `allowedUpdateTypes`, `rangeStrategy`, `versioning`, the `separate*` flags, `group`, `commitType`, `commitScope`, `schedule`, `dashboardApproval`, `minimumReleaseAge` and the `automerge*` fields). Every apply field a matching rule sets **overrides** the value from earlier rules (field-wise); `allowedUpdateTypes` replaces the earlier list, it is not merged.
+
+**Warnings.** `plan`, `apply`, `run` and `explain` warn on stderr (`warn    <path>: <field>: <msg>`) about rules that cannot have an effect: a rule without apply fields (or without any field), a `depTypes` entry no listed manager produces, a `datasources` entry no listed manager uses, and `depTypes` and `datasources` no dep has together (`managers: [gomod], depTypes: [devDependencies]` matches nothing: `devDependencies` are npm's). After resolving, `plan`, `apply` and `run` also warn about every rule that matched none of the repository's dependencies (`warn    rules[<i>] matched no dependency`), e.g. one for a manager the repository does not use or a misspelled name glob.
 
 **Evaluation.**
 
-1. The policy of a dep starts as `{pin: <top-level>, updates: all five types, schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm, cargo, poetry and bundler `dependencies`, pep621 `project.dependencies`, pipenv `packages`, elm `direct` and `dependencies`, julia `deps`) and `chore` otherwise, and the scope as `deps`.
+1. The policy of a dep starts as `{pin: <top-level>, allowedUpdateTypes: all five types, schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm, cargo, poetry and bundler `dependencies`, pep621 `project.dependencies`, pipenv `packages`, elm `direct` and `dependencies`, julia `deps`) and `chore` otherwise, and the scope as `deps`.
 2. **Default ignores.** Dep types `indirect` (Go, pip_requirements' transitive pins of compiled requirements files, which still get security updates, and Elm applications' indirect dependencies), `test-indirect` (Elm applications' indirect test dependencies), `go` (the go.mod `go` directive), `peerDependencies` and `engines` (npm), `submodule` (git-submodules, disabled by default as in Renovate) and `task` (azure-pipelines tasks: Renovate disables the manager, since a public task version may not be installed in the organization yet) are ignored unless a rule sets `ignore: false`. The skip reason is `ignored by default (<type>; enable with a rule setting ignore: false)`.
 3. **Built-in monorepo groups** set `group: <name> monorepo`, and the Ruby version deps `group: ruby` (unless [`monorepos: false`](#monorepos)).
 4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.
-5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
-6. The chosen update takes `group`, `schedule`, `dashboardApproval`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.
+5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `allowedUpdateTypes`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
+6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.
 
-`updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules and the resulting policy of a dep.
+`updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules, each as `match: <fields>; apply: <fields>`, and the resulting policy of a dep.
 
 ```yaml
 rules:
-  - manager: gomod                 # opt indirect requirements in
+  - managers: [gomod]              # opt indirect requirements in
     depTypes: [indirect]
     ignore: false
-  - manager: gomod                 # but never their majors
+  - managers: [gomod]              # but never their majors
     depTypes: [indirect]
     updateTypes: [major]
     ignore: true
-  - manager: github-actions        # minor+patch in one PR, majors apart
+  - managers: [github-actions]     # minor+patch in one PR, majors apart
     updateTypes: [minor, patch]
     group: GitHub Actions
 ```
 
-### `rules[].manager`
+### `rules[].managers`
 
-Only match deps of this manager.
+Only match deps of these managers.
 
-- **Type:** string
+- **Type:** list of strings
 - **Values:** `github-actions`, `gomod`, `docker`, `npm`, `helm`, `kustomize`, `pre-commit`, `gitlabci`, `nvm`, `nodenv`, `asdf`, `mise`, `cargo`, `pip_requirements`, `pep621`, `poetry`, `pipenv`, `conda`, `terraform`, `terraform-version`, `tflint-plugin`, `terragrunt`, `maven`, `gradle`, `gradle-wrapper`, `maven-wrapper`, `swift`, `bundler`, `ruby-version`, `git-submodules`, `rust-toolchain`, `devcontainer`, `bitbucket-pipelines`, `woodpecker`, `droneci`, `circleci`, `azure-pipelines`, `vcpkg`, `elm`, `composer`, `julia`, `bazel-module`, `bazelisk`, `nuget`, `custom`
+
+Manager names as in [managers.md](managers.md); `custom` matches the deps of every `custom[]` entry. With exactly one manager listed, the JSON Schema offers only that manager's dep types for `depTypes`.
 
 ### `rules[].names`
 
@@ -1078,10 +1089,10 @@ Renovate's `!pattern` works: `['actions/*', '!actions/cache']` matches every `ac
 
 ### `rules[].depTypes`
 
-Only match deps of these types.
+Only match deps of these types; with managers set to one manager, the schema offers that manager's dep types.
 
 - **Type:** list of strings
-- **Values:** `direct`, `indirect`, `go`, `toolchain`, `action`, `dockerfile`, `compose`, `workflow`, `kubernetes`, `helm`, `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager`, `setup`, `engines`, `volta`, `chart`, `helmfile`, `k0s`, `flux`, `argocd`, `sveltos`, `image`, `helmChart`, `resource`, `repository`, `service`, `include`, `component`, `node`, `tool`, `annotation`, `regex`, `dev-dependencies`, `build-dependencies`, `workspace.dependencies`, `patch`, `replace`, `requirements`, `project.dependencies`, `project.optional-dependencies`, `dependency-groups`, `tool.uv.dev-dependencies`, `tool.pdm.dev-dependencies`, `group`, `packages`, `dev-packages`, `category`, `pip`, `required_provider`, `required_version`, `module`, `provider`, `helm_release`, `tfe_workspace`, `docker_image`, `docker_container`, `docker_service`, `docker_registry_image`, `kubernetes_pod`, `kubernetes_pod_v1`, `kubernetes_deployment`, `kubernetes_deployment_v1`, `kubernetes_daemonset`, `kubernetes_daemon_set_v1`, `kubernetes_stateful_set`, `kubernetes_stateful_set_v1`, `kubernetes_job`, `kubernetes_job_v1`, `kubernetes_cron_job`, `kubernetes_cron_job_v1`, `kubernetes_replication_controller`, `kubernetes_replication_controller_v1`, `terraform-version`, `opentofu-version`, `plugin`, `github`, `gitTags`, `terragrunt`, `compile`, `provided`, `runtime`, `test`, `system`, `import`, `parent`, `build`, `wrapper`, `maven`, `ruby`, `development`, `submodule`, `builtin-baseline`, `default-registry`, `registry`, `overrides`, `feature`, `feature-version`, `pipe`, `orb`, `container`, `task`, `test-direct`, `test-indirect`, `test-dependencies`, `elm-version`, `require`, `require-dev`, `deps`, `weakdeps`, `extras`, `julia`, `bazel_dep`, `single_version_override`, `multiple_version_override`, `git_override`, `archive_override`, `local_path_override`, `git_repository`, `new_git_repository`, `oci_pull`, `rules_img_pull`, `maven_install`, `crate_spec`, `bazel`, `nuget`, `msbuild-sdk`, `dotnet-sdk`
+- **Values:** `action`, `setup`, `direct`, `indirect`, `go`, `toolchain`, `dockerfile`, `compose`, `workflow`, `kubernetes`, `helm`, `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager`, `engines`, `volta`, `chart`, `helmfile`, `k0s`, `flux`, `argocd`, `sveltos`, `image`, `helmChart`, `resource`, `repository`, `service`, `include`, `component`, `node`, `tool`, `dev-dependencies`, `build-dependencies`, `workspace.dependencies`, `patch`, `replace`, `requirements`, `project.dependencies`, `project.optional-dependencies`, `dependency-groups`, `tool.uv.dev-dependencies`, `tool.pdm.dev-dependencies`, `group`, `packages`, `dev-packages`, `category`, `pip`, `required_provider`, `provider`, `module`, `required_version`, `helm_release`, `tfe_workspace`, `docker_image`, `docker_container`, `docker_service`, `docker_registry_image`, `kubernetes_pod`, `kubernetes_pod_v1`, `kubernetes_deployment`, `kubernetes_deployment_v1`, `kubernetes_daemonset`, `kubernetes_daemon_set_v1`, `kubernetes_stateful_set`, `kubernetes_stateful_set_v1`, `kubernetes_job`, `kubernetes_job_v1`, `kubernetes_cron_job`, `kubernetes_cron_job_v1`, `kubernetes_replication_controller`, `kubernetes_replication_controller_v1`, `terraform-version`, `opentofu-version`, `plugin`, `github`, `gitTags`, `terragrunt`, `compile`, `provided`, `runtime`, `test`, `system`, `import`, `parent`, `build`, `wrapper`, `maven`, `ruby`, `development`, `submodule`, `feature`, `feature-version`, `pipe`, `orb`, `container`, `task`, `builtin-baseline`, `default-registry`, `registry`, `overrides`, `test-direct`, `test-indirect`, `test-dependencies`, `elm-version`, `require`, `require-dev`, `deps`, `weakdeps`, `extras`, `julia`, `bazel_dep`, `single_version_override`, `git_override`, `archive_override`, `local_path_override`, `multiple_version_override`, `git_repository`, `new_git_repository`, `oci_pull`, `rules_img_pull`, `maven_install`, `crate_spec`, `bazel`, `nuget`, `msbuild-sdk`, `dotnet-sdk`, `annotation`, `regex`
 
 [managers.md](managers.md) lists the dep types of each manager.
 
@@ -1096,7 +1107,7 @@ Only match deps whose file (slash path relative to --dir) matches any of these d
 Only match deps looked up with these datasources, or custom.\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) match their deps datasource.
 
 - **Type:** list of strings
-- **Values:** `git-tags`, `git-refs`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `conda`, `terraform-provider`, `terraform-module`, `maven`, `gradle-version`, `rubygems`, `ruby-version`, `rust-version`, `orb`, `azure-pipelines-tasks`, `vcpkg`, `elm-package`, `packagist`, `julia-registry`, `bazel`, `nuget`, `dotnet-version`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`, `bitbucket-tags` = `git-tags` (Bitbucket pipes). `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
 
@@ -1181,21 +1192,21 @@ New versions must satisfy this Masterminds semver constraint (e.g. `< 7`), or ma
 - A **regex** (`/^\d+\.\d+$/`, `!/-rc/`, `/^v1\./i`) matches the candidate *as written* (tag, image tag, module version) and never converts it. Only flag `i` exists.
 - Invalid values are config errors: `rules[i].allow: invalid constraint "<v>": …`, `invalid regex "/(/": …`, `unknown flags "g" (only i)`.
 
+### `rules[].allowedUpdateTypes`
+
+Update types allowed for matching deps; replaces the earlier list (all five types by default). Replacements are not listed here: they are switched off with ignore (updateTypes: [replacement]) or replacements: false.
+
+- **Type:** list of strings
+- **Values:** `major`, `minor`, `patch`, `digest`, `pin`
+
+When no rule sets it, all five update types are allowed. A later matching rule replaces the list; `[]` allows none (security updates still apply).
+
 ### `rules[].rangeStrategy`
 
 Range strategy for matching npm, cargo, Python, Swift, bundler, Elm, composer, julia, NuGet and terraform deps and Gradle dynamic versions (see the top-level rangeStrategy). Cannot be combined with updateTypes.
 
 - **Type:** string
 - **Values:** `auto`, `bump`, `replace`, `update-lockfile`, `widen`, `pin`, `in-range-only`
-
-### `rules[].updates`
-
-Allowed update types; replaces the earlier list. Replacements are not listed here: they are switched off with ignore (updateTypes: [replacement]) or replacements: false.
-
-- **Type:** list of strings
-- **Values:** `major`, `minor`, `patch`, `digest`, `pin`
-
-When no rule sets it, all five update types are allowed.
 
 ### `rules[].versioning`
 
@@ -1308,7 +1319,7 @@ Dependabot's `groups.<name>.applies-to: security-updates`, Renovate's `vulnerabi
 ```yaml
 rules:
   - securityGroup: all           # security updates share deps/group/all-security (majors: all-major-security)...
-  - manager: gomod               # ...except Go's: later rules win
+  - managers: [gomod]            # ...except Go's: later rules win
     group: go
     securityGroup: go            # deps/group/go-security, apart from deps/group/go
 ```
@@ -1454,9 +1465,9 @@ Shell commands, Renovate's `postUpgradeTasks`, for generated code or formatting 
 
 ```yaml
 rules:
-  - manager: gomod
+  - managers: [gomod]
     postUpgradeTasks: ["go generate ./..."]
-  - manager: helm
+  - managers: [helm]
     postUpgradeTasks:
       commands: ['helm dependency update "$(dirname "$DEPS_PACKAGE_FILE")"']
       executionMode: update
@@ -1557,7 +1568,7 @@ custom:
 Datasource of the matched deps, or custom.\<name> of customDatasources; required in regex mode unless match has a (?P\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases.
 
 - **Type:** string
-- **Values:** `git-tags`, `git-refs`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `conda`, `terraform-provider`, `terraform-module`, `maven`, `gradle-version`, `rubygems`, `ruby-version`, `rust-version`, `orb`, `azure-pipelines-tasks`, `vcpkg`, `elm-package`, `packagist`, `julia-registry`, `bazel`, `nuget`, `dotnet-version`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 ### `custom[].name`
 

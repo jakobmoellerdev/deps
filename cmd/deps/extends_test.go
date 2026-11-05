@@ -42,7 +42,7 @@ func TestExplainExtends(t *testing.T) {
 	cleanEnv(t)
 	newFakeNet(t)
 	giteaEnv(t)
-	root := forge(t, map[string]map[string]string{"org/deps-config": {".deps.yaml": orgConfig, "presets/ci.yaml": "rules:\n  - manager: github-actions\n    group: ci\n"}})
+	root := forge(t, map[string]map[string]string{"org/deps-config": {".deps.yaml": orgConfig, "presets/ci.yaml": "rules:\n  - managers: [github-actions]\n    group: ci\n"}})
 	dir := t.TempDir()
 	byURL := "file://" + filepath.ToSlash(root) + "/org/deps-config.git//presets/ci.yaml#main"
 	writeFiles(t, dir, map[string]string{
@@ -54,9 +54,9 @@ func TestExplainExtends(t *testing.T) {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	for _, want := range []string{
-		"  rules     #0 names=[actions/*] allow=<7 (from org/deps-config//.deps.yaml:3)\n",
-		"            #1 manager=github-actions group=ci (from " + byURL + ":2)\n",
-		"            #2 names=[actions/checkout] pin=keep (from .deps.yaml:5)\n",
+		"  rules     #0 match: names=[actions/*]; apply: allow=<7 (from org/deps-config//.deps.yaml:3)\n",
+		"            #1 match: managers=[github-actions]; apply: group=ci (from " + byURL + ":2)\n",
+		"            #2 match: names=[actions/checkout]; apply: pin=keep (from .deps.yaml:5)\n",
 		"  policy    pin=keep allow=<7 ",
 	} {
 		if !strings.Contains(stdout, want) {
@@ -202,7 +202,7 @@ func TestRunRepositoriesErrors(t *testing.T) {
 			t.Errorf("%v %q: exit %d, want %d and %q:\n%s", tt.args, tt.env, code, tt.code, tt.want, stderr)
 		}
 		if tt.env != "" {
-			for _, want := range []string{"   o/bad: ", "::error title=deps::o/bad: field pinn not found", "   o/missing: clone: ", "::error title=deps::o/missing: clone: ", "repository o/r\n", "(dry run: 1 would change"} {
+			for _, want := range []string{"   o/bad: ", "::error title=deps::o/bad: pinn: unknown key (did you mean pin?)", "   o/missing: clone: ", "::error title=deps::o/missing: clone: ", "repository o/r\n", "(dry run: 1 would change"} {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("stderr lacks %q:\n%s", want, stderr)
 				}

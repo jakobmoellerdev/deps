@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
@@ -145,28 +144,6 @@ func TestDirectives(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestPolicyDefaults(t *testing.T) {
-	deps, err := New().Extract("go.mod", []byte(src+"toolchain go1.27.1\n"), manager.Env{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]bool{"go": true, "indirect": true, "toolchain": false, "direct": false}
-	def := config.Default()
-	f := false
-	optIn := &config.Config{Version: 1, Pin: config.PinKeep, Rules: []config.Rule{{DepTypes: []string{"go", "indirect"}, Ignore: &f}}}
-	for _, d := range deps {
-		if d.Skip != "" {
-			continue
-		}
-		if got := def.Policy(d).Ignore; got != want[d.DepType] {
-			t.Errorf("%s (%s): default Ignore = %v", d.Name, d.DepType, got)
-		}
-		if optIn.Policy(d).Ignore {
-			t.Errorf("%s: opt-in rule should un-ignore", d.Name)
-		}
 	}
 }
 

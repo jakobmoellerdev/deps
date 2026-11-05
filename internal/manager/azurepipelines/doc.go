@@ -14,9 +14,9 @@ var Doc = refdoc.Manager{
 		"paths matching `azure.*pipelines?.*\\.ya?ml$` (`azure-pipelines.yml`, `.azure-pipelines/*.yml`, `azure-pipelines/**/*.yaml`)",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: "container", What: "`resources.containers[].image`", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "repository", What: "`resources.repositories[]` of `type: github` with `ref: refs/tags/<tag>`; Source `https://github.com/<name>`", Datasource: "`git-tags`", Versioning: "`tag`"},
-		{Name: "task", What: "`task: <name>@<version>` of every step, wherever it nests (`steps`, `jobs`, `stages`, deployment strategies, templates, `extends` parameters, `${{ if }}` blocks); ignored by default", Datasource: "`azure-pipelines-tasks`", Versioning: "`tag`"},
+		{Name: "container", What: "`resources.containers[].image`", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "repository", What: "`resources.repositories[]` of `type: github` with `ref: refs/tags/<tag>`; Source `https://github.com/<name>`", Versioning: "`tag`", Datasources: []string{"git-tags"}},
+		{Name: "task", What: "`task: <name>@<version>` of every step, wherever it nests (`steps`, `jobs`, `stages`, deployment strategies, templates, `extends` parameters, `${{ if }}` blocks); ignored by default", Versioning: "`tag`", Datasources: []string{"azure-pipelines-tasks"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "variable reference", When: "`$` (`$(var)`, `${{ … }}`) in the image, repository, ref or task"},
@@ -31,7 +31,7 @@ var Doc = refdoc.Manager{
 	},
 	Sections: []refdoc.Section{
 		{Title: "Tasks", Items: []string{
-			"Renovate disables this manager because a task version listed publicly may not be installed in an Azure DevOps organization or Server yet. deps ignores only DepType `task` by default; `{manager: azure-pipelines, depTypes: [task], ignore: false}` opts in. Containers and repositories are updated by default.",
+			"Renovate disables this manager because a task version listed publicly may not be installed in an Azure DevOps organization or Server yet. deps ignores only DepType `task` by default; `{managers: [azure-pipelines], depTypes: [task], ignore: false}` opts in. Containers and repositories are updated by default.",
 			"A major version (`Bash@3`) is updated to the next major (`Bash@4`), a full version (`Bash@3.231.0`) to the newest full version: the precision is kept (Renovate writes the full version unless an `extractVersion` rule cuts it).",
 			"With `DEPS_AZURE_DEVOPS_URL` and `DEPS_AZURE_DEVOPS_TOKEN`, the versions are the tasks installed in that organization or collection (see the `azure-pipelines-tasks` datasource).",
 		}},

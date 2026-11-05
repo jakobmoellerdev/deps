@@ -51,22 +51,22 @@ func noteLines(res *Result) []string {
 // default and the deps managers Renovate does not have.
 const defaultExclusions = `
   - # pre-commit is disabled by default in Renovate
-    manager: pre-commit
+    managers: [pre-commit]
     ignore: true` + otherExclusions
 
 // otherExclusions are defaultExclusions without pre-commit.
 const otherExclusions = `
   - # Renovate has no conda manager
-    manager: conda
+    managers: [conda]
     ignore: true
   - # azure-pipelines is disabled by default in Renovate
-    manager: azure-pipelines
+    managers: [azure-pipelines]
     ignore: true
   - # Renovate has no vcpkg manager
-    manager: vcpkg
+    managers: [vcpkg]
     ignore: true
   - # Renovate has no elm manager
-    manager: elm
+    managers: [elm]
     ignore: true`
 
 func TestLoadDefaults(t *testing.T) {
@@ -107,10 +107,10 @@ func TestLoadRules(t *testing.T) {
 			name: "github-actions expands to two rules",
 			src:  `{packageRules: [{matchManagers: ['github-actions'], groupName: 'GitHub Actions'}]}`,
 			rules: `  - # packageRules[0]
-    manager: github-actions
+    managers: [github-actions]
     group: GitHub Actions
   - # packageRules[0]
-    manager: docker
+    managers: [docker]
     depTypes: [workflow, action]
     group: GitHub Actions` + defaultExclusions,
 		},
@@ -118,7 +118,7 @@ func TestLoadRules(t *testing.T) {
 			name: "dockerfile is docker with depType dockerfile",
 			src:  `{packageRules: [{matchManagers: ['dockerfile'], enabled: false}]}`,
 			rules: `  - # packageRules[0]
-    manager: docker
+    managers: [docker]
     depTypes: [dockerfile]
     ignore: true` + defaultExclusions,
 		},
@@ -132,11 +132,7 @@ func TestLoadRules(t *testing.T) {
 			name: "intersection of depTypes and the manager restriction, in matchManagers order",
 			src:  `{packageRules: [{matchManagers: ['dockerfile', 'github-actions'], matchDepTypes: ['action'], pinDigests: true}]}`,
 			rules: `  - # packageRules[0]
-    manager: docker
-    depTypes: [action]
-    pin: digest
-  - # packageRules[0]
-    manager: github-actions
+    managers: [docker, github-actions]
     depTypes: [action]
     pin: digest` + defaultExclusions,
 		},
@@ -144,7 +140,7 @@ func TestLoadRules(t *testing.T) {
 			name: "golang depType is go, categories select managers",
 			src:  `{packageRules: [{matchCategories: ['golang'], matchDepTypes: ['golang'], enabled: false}]}`,
 			rules: `  - # packageRules[0]
-    manager: gomod
+    managers: [gomod]
     depTypes: [go]
     ignore: true` + defaultExclusions,
 		},
@@ -219,14 +215,14 @@ func TestLoadRules(t *testing.T) {
 			name: "dependencyDashboardApproval per rule, rust-toolchain manager",
 			src:  `{dependencyDashboard: true, packageRules: [{matchManagers: ['rust-toolchain'], matchUpdateTypes: ['major'], dependencyDashboardApproval: true}]}`,
 			rules: `  - # packageRules[0]
-    manager: rust-toolchain
+    managers: [rust-toolchain]
     updateTypes: [major]
     dashboardApproval: true` + defaultExclusions,
 		},
 		{
 			name:  "devcontainer manager",
 			src:   `{packageRules: [{matchManagers: ['devcontainer'], enabled: false}]}`,
-			rules: "  - # packageRules[0]\n    manager: devcontainer\n    ignore: true" + defaultExclusions,
+			rules: "  - # packageRules[0]\n    managers: [devcontainer]\n    ignore: true" + defaultExclusions,
 		},
 		{
 			name: "php, bazel and ci categories; julia datasource; draftPR, prCreation and abandonmentThreshold per rule; azure-pipelines opt-in",
@@ -234,49 +230,37 @@ func TestLoadRules(t *testing.T) {
 				{matchManagers: ['nuget', 'julia'], matchDatasources: ['julia-general-metadata'], draftPR: true, prCreation: 'status-success', abandonmentThreshold: null},
 				{matchCategories: ['ci'], matchPackageNames: ['x'], prCreation: 'approval', abandonmentThreshold: '2 years'}]}`,
 			rules: `  - # azure-pipelines
-    manager: azure-pipelines
+    managers: [azure-pipelines]
     ignore: false
   - # packageRules[0]
-    manager: composer
-    group: g
-  - # packageRules[0]
-    manager: bazel-module
-    group: g
-  - # packageRules[0]
-    manager: bazelisk
+    managers: [composer, bazel-module, bazelisk]
     group: g
   - # packageRules[1]
-    manager: nuget
+    managers: [nuget, julia]
     datasources: [julia-registry]
     abandonmentThreshold: "0"
     draftPR: true
     prCreation: status-success
-  - # packageRules[1]
-    manager: julia
-    datasources: [julia-registry]
-    abandonmentThreshold: "0"
-    draftPR: true
-    prCreation: status-success` + strings.Join(func() []string {
-				var out []string
-				for _, m := range []string{"github-actions", "gitlabci", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines"} {
-					out = append(out, "  - # packageRules[2]\n    manager: "+m+"\n    names: [x]\n    abandonmentThreshold: 2 years")
-					if m == "github-actions" {
-						out = append(out, "  - # packageRules[2]\n    manager: docker\n    names: [x]\n    depTypes: [workflow, action]\n    abandonmentThreshold: 2 years")
-					}
-				}
-				return append([]string{""}, out...)
-			}(), "\n") + `
+  - # packageRules[2]
+    managers: [github-actions, gitlabci, bitbucket-pipelines, woodpecker, droneci, circleci, azure-pipelines]
+    names: [x]
+    abandonmentThreshold: 2 years
+  - # packageRules[2]
+    managers: [docker]
+    names: [x]
+    depTypes: [workflow, action]
+    abandonmentThreshold: 2 years
   - # pre-commit is disabled by default in Renovate
-    manager: pre-commit
+    managers: [pre-commit]
     ignore: true
   - # Renovate has no conda manager
-    manager: conda
+    managers: [conda]
     ignore: true
   - # Renovate has no vcpkg manager
-    manager: vcpkg
+    managers: [vcpkg]
     ignore: true
   - # Renovate has no elm manager
-    manager: elm
+    managers: [elm]
     ignore: true`,
 			notes: []string{"warn packageRules[2].prCreation: approval is not supported (deps' dashboardApproval also holds back the branch); dropped"},
 		},
@@ -291,17 +275,12 @@ func TestLoadRules(t *testing.T) {
       executionMode: branch
       files: ['**/*.go']
   - # packageRules[0]
-    manager: bundler
-    rangeStrategy: widen
-    postUpgradeTasks:
-      commands: [bundle exec rake]
-  - # packageRules[0]
-    manager: ruby-version
+    managers: [bundler, ruby-version]
     rangeStrategy: widen
     postUpgradeTasks:
       commands: [bundle exec rake]
   - # packageRules[1]
-    manager: swift
+    managers: [swift]
     ignore: true` + defaultExclusions,
 			notes: []string{
 				"info postUpgradeTasks.postUpgradeTasks: deps runs postUpgradeTasks only with --allow-tasks (or DEPS_ALLOW_TASKS) listing the commands, like Renovate's allowedCommands",
@@ -418,24 +397,24 @@ func TestLoadRules(t *testing.T) {
     names: [x]
     ignore: true
   - # gomod.enabled: false
-    manager: gomod
+    managers: [gomod]
     ignore: true` + otherExclusions,
 		},
 		{
 			name: "enabledManagers excludes every other manager",
 			src:  `{enabledManagers: ['npm', 'dockerfile', 'helmv3']}`,
 			rules: `  - # enabledManagers
-    manager: github-actions
+    managers: [github-actions]
     ignore: true
   - # enabledManagers
-    manager: gomod
+    managers: [gomod]
     ignore: true
   - # enabledManagers
-    manager: docker
+    managers: [docker]
     depTypes: [compose, workflow, action, kubernetes, helm]
     ignore: true
   - # enabledManagers
-    manager: helm
+    managers: [helm]
     depTypes: [helmfile, k0s, flux, argocd]
     ignore: true
 ` + strings.Join(func() []string {
@@ -448,7 +427,7 @@ func TestLoadRules(t *testing.T) {
 						}
 					}
 					if !slices.Contains([]string{"github-actions", "gomod", "docker", "npm", "helm", "custom"}, m) {
-						out = append(out, "  - # "+why+"\n    manager: "+m+"\n    ignore: true")
+						out = append(out, "  - # "+why+"\n    managers: ["+m+"]\n    ignore: true")
 					}
 				}
 				return out
@@ -460,7 +439,7 @@ func TestLoadRules(t *testing.T) {
 				minimumReleaseAge: null, vulnerabilityFixStrategy: 'highest', commitMessageSuffix: '[SECURITY]'},
 				packageRules: [{matchManagers: ['gomod'], groupName: 'go'}], ignoreDeps: ['x']}`,
 			rules: `  - # packageRules[0]
-    manager: gomod
+    managers: [gomod]
     group: go
   - # ignoreDeps
     names: [x]
@@ -501,7 +480,7 @@ func TestLoadRules(t *testing.T) {
 			name: "git-submodules opt-in un-ignores the deps manager",
 			src:  `{'git-submodules': {enabled: true}}`,
 			rules: `  - # git-submodules
-    manager: git-submodules
+    managers: [git-submodules]
     ignore: false` + defaultExclusions,
 		},
 	}
@@ -793,7 +772,7 @@ func TestLoadCustom(t *testing.T) {
 	}
 	var dropped bool
 	for _, n := range res.Notes {
-		dropped = dropped || (n.Path == "customManagers[0]" && strings.HasPrefix(n.Msg, "dropped: datasource:") && strings.Contains(n.Msg, `got "custom.envtest"`))
+		dropped = dropped || (n.Path == "customManagers[0]" && strings.HasPrefix(n.Msg, "dropped: datasource:") && strings.Contains(n.Msg, `customDatasources has no entry "envtest"`))
 	}
 	if !dropped {
 		t.Errorf("customManagers[0] (envtest) not dropped:\n%s", strings.Join(notes, "\n"))

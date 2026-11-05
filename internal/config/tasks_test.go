@@ -10,7 +10,7 @@ import (
 
 func TestPolicyPostUpgradeTasks(t *testing.T) {
 	c, err := load(t, ".deps.yaml", `rules:
-  - manager: gomod
+  - managers: [gomod]
     postUpgradeTasks: ["go generate ./...", "make fmt"]
   - names: ["golang.org/x/*"]
     postUpgradeTasks: []
@@ -43,7 +43,7 @@ func TestValidatePostUpgradeTasks(t *testing.T) {
 		"rules:\n  - postUpgradeTasks: ['make', ' ']\n":                             "rules[0].postUpgradeTasks[1]: must be a non-blank command",
 		"rules:\n  - postUpgradeTasks: {commands: [''], executionMode: update}\n":   "rules[0].postUpgradeTasks.commands[0]: must be a non-blank command",
 		"rules:\n  - postUpgradeTasks: {commands: [make], executionMode: always}\n": `rules[0].postUpgradeTasks.executionMode: must be one of branch, update, got "always"`,
-		"rules:\n  - postUpgradeTasks: {commands: [make], fileFilters: ['*.go']}\n": "field fileFilters not found",
+		"rules:\n  - postUpgradeTasks: {commands: [make], fileFilters: ['*.go']}\n": "rules[0].postUpgradeTasks.fileFilters: unknown key (Renovate's fileFilters is files here; doublestar globs, not minimatch)",
 		"rules:\n  - postUpgradeTasks: {commands: [make], files: [a, '!']}\n":       `rules[0].postUpgradeTasks.files[1]: invalid glob "!": missing pattern after !`,
 	} {
 		if _, err := load(t, ".deps.yaml", body); err == nil || !strings.Contains(err.Error(), want) {

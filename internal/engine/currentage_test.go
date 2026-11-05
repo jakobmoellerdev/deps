@@ -60,7 +60,7 @@ func TestCurrentAgeSecurity(t *testing.T) {
 	for _, tc := range []struct {
 		name, cfg, depType, want string
 	}{
-		{"opted in", "rules: [{depTypes: [indirect], currentAge: '> 60 days', ignore: false, updates: [digest]}]", "indirect", "v1.0.1"},
+		{"opted in", "rules: [{depTypes: [indirect], currentAge: '> 60 days', ignore: false, allowedUpdateTypes: [digest]}]", "indirect", "v1.0.1"},
 		{"ignored", "rules: [{currentAge: '> 60 days', ignore: true}]", "direct", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

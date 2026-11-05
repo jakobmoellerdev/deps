@@ -23,9 +23,8 @@ import (
 func newPreview(o *rootOpts) *cli.Command {
 	var base string
 	return &cli.Command{
-		Name:        "preview",
-		Usage:       "Compare the PRs a pull request's checkout would get with those of the base branch",
-		Description: helpText("preview"),
+		Name:  "preview",
+		Usage: "Compare the PRs a pull request's checkout would get with those of the base branch",
 		Metadata: map[string]any{docgen.MetaExample: "  # in a pull_request job with the PR checked out in pr/ and the base branch in base/\n" +
 			"  deps preview --dir pr --base-dir base"},
 		ArgValidator: noArgs,
@@ -35,9 +34,9 @@ func newPreview(o *rootOpts) *cli.Command {
 			}
 			return preview(ctx, cmd, o, base)
 		},
-		Flags: []cli.Flag{
+		Flags: append(scanFlags(o, scanSession),
 			&cli.StringFlag{Name: "base-dir", Destination: &base, Usage: "checkout of the base branch to compare with (required)"},
-		},
+		),
 	}
 }
 
@@ -184,7 +183,7 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 	info, _ := platform.FromEnv(os.Getenv)
 	token := envToken()
 	client := newHTTPClient()
-	head, err := newSession(ctx, o, info, token, client)
+	head, err := newSession(ctx, o, info, token, client, stderr)
 	if err != nil {
 		return err
 	}

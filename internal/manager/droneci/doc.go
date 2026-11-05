@@ -12,8 +12,8 @@ var Doc = refdoc.Manager{
 		"`.drone.yml`",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: "image", What: "`image` of the `steps` (and the Drone 0.8 `pipeline` mapping) of every document", Datasource: "`docker`", Versioning: "`docker`"},
-		{Name: "service", What: "`image` of the `services` (list or mapping) of every document", Datasource: "`docker`", Versioning: "`docker`"},
+		{Name: "image", What: "`image` of the `steps` (and the Drone 0.8 `pipeline` mapping) of every document", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "service", What: "`image` of the `services` (list or mapping) of every document", Versioning: "`docker`", Datasources: []string{"docker"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "variable reference", When: "`$` in the image"},

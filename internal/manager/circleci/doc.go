@@ -12,8 +12,8 @@ var Doc = refdoc.Manager{
 		"`*.y(a)ml` below a `.circleci/` directory",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: "orb", What: "`orbs: {<alias>: <namespace>/<name>@<version>}`, also in inline orb definitions; full (`5.1.0`) and partial (`5`, `5.1`) versions keep their precision", Datasource: "`orb`", Versioning: "`tag`"},
-		{Name: "image", What: "`docker[].image` of `executors` and `jobs` (also in inline orbs), and `image` of top-level `aliases[]` entries", Datasource: "`docker`", Versioning: "`docker`"},
+		{Name: "orb", What: "`orbs: {<alias>: <namespace>/<name>@<version>}`, also in inline orb definitions; full (`5.1.0`) and partial (`5`, `5.1`) versions keep their precision", Versioning: "`tag`", Datasources: []string{"orb"}},
+		{Name: "image", What: "`docker[].image` of `executors` and `jobs` (also in inline orbs), and `image` of top-level `aliases[]` entries", Versioning: "`docker`", Datasources: []string{"docker"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "parameter reference", When: "`<< … >>` (pipeline or job parameters) or `$` in the orb or image"},

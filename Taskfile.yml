@@ -173,7 +173,7 @@ tasks:
       - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o bin/deps ./cmd/deps
 
   release:build:
-    desc: Build static release binaries for linux, darwin and windows (amd64, arm64) and checksums into dist/
+    desc: Build static release binaries for linux, darwin and windows (amd64, arm64), deps.schema.json (with the release's $id) and checksums into dist/
     env:
       CGO_ENABLED: "0"
     cmds:
@@ -183,6 +183,7 @@ tasks:
             OS: [linux, darwin, windows]
             ARCH: [amd64, arm64]
         cmd: GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build -trimpath -ldflags "-s -w -buildid= -X main.version={{.VERSION}}" -o dist/deps_{{.ITEM.OS}}_{{.ITEM.ARCH}}{{if eq .ITEM.OS "windows"}}.exe{{end}} ./cmd/deps
+      - go run -ldflags "-X main.version={{.VERSION}}" ./cmd/deps schema > dist/deps.schema.json
       - task: release:checksums
 
   release:checksums:
@@ -369,13 +370,13 @@ tasks:
     desc: Show the updates deps would make to this repo
     deps: [build]
     cmds:
-      - bin/deps plan -v
+      - bin/deps plan --show-skipped
 
   dry-run:
     desc: Show the PRs deps would create for this repo
     deps: [build]
     cmds:
-      - bin/deps run --dry-run -v
+      - bin/deps run --dry-run --show-skipped
 
   e2e:github:
     desc: End-to-end test of deps run against a real GitHub repository (not part of ci; needs gh with repo and workflow scopes)

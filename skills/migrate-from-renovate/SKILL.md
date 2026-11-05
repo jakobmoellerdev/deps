@@ -19,7 +19,7 @@ Reference while working, fetch when you need it: the migration guide `https://gi
 ## 1. Translate
 
 ```sh
-deps migrate -v --output /tmp/deps.yaml            # -v also prints info notes
+deps migrate --verbose --output /tmp/deps.yaml     # --verbose also prints info notes
 # or: deps migrate --config .github/renovate.json5 --output -
 ```
 
@@ -58,8 +58,8 @@ Do not add settings the Renovate config doesn't have. Keep the translated rule o
 Run both modes and compare. They must agree byte for byte:
 
 ```sh
-deps plan -v --renovate           > /tmp/compat.diff   2> /tmp/compat.err
-deps plan -v --config /tmp/deps.yaml > /tmp/migrated.diff 2> /tmp/migrated.err
+deps plan --show-skipped --renovate           > /tmp/compat.diff   2> /tmp/compat.err
+deps plan --show-skipped --config /tmp/deps.yaml > /tmp/migrated.diff 2> /tmp/migrated.err
 cmp /tmp/compat.diff /tmp/migrated.diff && git apply --check /tmp/compat.diff
 tail -1 /tmp/compat.err           # "<n> updates in <m> files, <k> skipped, <e> errors"
 ```
@@ -68,7 +68,7 @@ tail -1 /tmp/compat.err           # "<n> updates in <m> files, <k> skipped, <e> 
 - After hand edits from step 2, re-run `plan --config` and explain every change in updates against the compatibility-mode run.
 - `error` lines: transient (`rate limited`, `timeout`) → re-run; persistent → investigate. Use `deps explain '<name-glob>' --config /tmp/deps.yaml` to see the matching rules, the policy and why candidates were rejected.
 - Compare with Renovate's dependency dashboard issue if there is one: every open or pending Renovate update should be in `compat.err` (as `update`, or held back by `minimumReleaseAge` / schedule). Known differences are listed under "Behavior differences" in the migration guide (deps proposes the newest old-enough release where Renovate waits; unknown release times follow `minimumReleaseAgeBehaviour`).
-- Then simulate the bot itself: `deps run --dry-run -v --config /tmp/deps.yaml --schedule-time '<RFC 3339 time inside a window>'` (needs a platform token and `HEAD` at the tip of the default branch; `--schedule-time` evaluates the windows at that time). It lists the branches and PRs deps would create, update and close.
+- Then simulate the bot itself: `deps run --dry-run --show-skipped --config /tmp/deps.yaml --schedule-time '<RFC 3339 time inside a window>'` (needs a platform token and `HEAD` at the tip of the default branch; `--schedule-time` evaluates the windows at that time). It lists the branches and PRs deps would create, update and close.
 
 ## 4. Wire up the workflow
 

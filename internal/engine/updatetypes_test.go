@@ -38,26 +38,26 @@ func imageDigest(name, v string) string {
 // Actions group, one "Digest pins" group for actions and images, indirect Go majors off and a
 // path group for the controller chart.
 const ocmConfig = `rules:
-  - manager: github-actions
+  - managers: [github-actions]
     schedule: ["* * * * 0"]
-  - manager: github-actions
+  - managers: [github-actions]
     updateTypes: [minor, patch]
     group: GitHub Actions
   - datasources: [github-tags, docker]
     updateTypes: [digest, pin]
     group: Digest pins
-  - manager: gomod
+  - managers: [gomod]
     ignore: false
-  - manager: gomod
+  - managers: [gomod]
     depTypes: [go]
     ignore: true
-  - manager: gomod
+  - managers: [gomod]
     depTypes: [indirect]
     updateTypes: [major]
     ignore: true
   - paths: ["chart/**"]
     group: Kubernetes Controller chart
-  - manager: docker
+  - managers: [docker]
     names: [redis]
     pin: digest
 `

@@ -19,7 +19,7 @@ func TestPlanRenovate(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{".github/workflows/ci.yml": workflow, "go.mod": gomodSrc, "renovate.json": renovateIgnoreA})
 
-	stdout, stderr, code := execute(t, "plan", "-v", "--renovate", "--dir", dir)
+	stdout, stderr, code := execute(t, "plan", "--show-skipped", "--renovate", "--dir", dir)
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -31,7 +31,7 @@ func TestPlanRenovate(t *testing.T) {
 	}
 
 	// --config naming a Renovate file turns compatibility mode on.
-	stdout2, stderr2, code := execute(t, "plan", "-v", "--dir", dir, "--config", filepath.Join(dir, "renovate.json"))
+	stdout2, stderr2, code := execute(t, "plan", "--show-skipped", "--dir", dir, "--config", filepath.Join(dir, "renovate.json"))
 	if code != 0 || stdout2 != stdout {
 		t.Errorf("--config renovate.json: exit %d\n%s\n%s", code, stderr2, stdout2)
 	}
