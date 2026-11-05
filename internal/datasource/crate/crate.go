@@ -243,6 +243,40 @@ type indexLine struct {
 	Pubtime string `json:"pubtime"`
 }
 
+// decodeIndexLine reads one index entry into l, decoding only the members deps keeps and
+// skipping the rest (deps, features, cksum, ...) as raw values. A value that is not an object
+// goes through UnmarshalDecode, which reports io.EOF at the end of the input or the type error.
+func decodeIndexLine(dec *jsontext.Decoder, l *indexLine) error {
+	*l = indexLine{}
+	if dec.PeekKind() != '{' {
+		return json.UnmarshalDecode(dec, l)
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return err
+	}
+	for dec.PeekKind() != '}' {
+		name, err := dec.ReadToken()
+		if err != nil {
+			return err
+		}
+		switch name.String() {
+		case "vers":
+			err = json.UnmarshalDecode(dec, &l.Vers)
+		case "yanked":
+			err = json.UnmarshalDecode(dec, &l.Yanked)
+		case "pubtime":
+			err = json.UnmarshalDecode(dec, &l.Pubtime)
+		default:
+			_, err = dec.ReadValue()
+		}
+		if err != nil {
+			return err
+		}
+	}
+	_, err := dec.ReadToken()
+	return err
+}
+
 func (s *Source) fetch(ctx context.Context, r *registry, name string, e *entry) error {
 	p, ok := IndexPath(name)
 	if !ok {
@@ -263,9 +297,9 @@ func (s *Source) fetch(ctx context.Context, r *registry, name string, e *entry) 
 	e.times, e.latest = map[string]time.Time{}, map[string]string{}
 	var derived []datasource.Release
 	dec := jsontext.NewDecoder(body, jsontext.AllowDuplicateNames(true))
+	var l indexLine
 	for {
-		var l indexLine
-		if err := json.UnmarshalDecode(dec, &l); err != nil {
+		if err := decodeIndexLine(dec, &l); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
