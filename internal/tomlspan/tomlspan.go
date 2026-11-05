@@ -82,7 +82,7 @@ func (e *Error) Error() string { return fmt.Sprintf("toml: line %d: %s", e.Line,
 
 // Parse parses src and returns the root table.
 func Parse(src []byte) (*Value, error) {
-	p := &parser{src: src, line: 1}
+	p := &parser{src: src, line: 1, names: map[string]string{}}
 	root := newTable(0, 1)
 	root.defined = true
 	cur := root
@@ -115,6 +115,8 @@ type parser struct {
 	src  []byte
 	pos  int
 	line int
+	// names holds each bare key once: lockfiles repeat the same few keys in every entry.
+	names map[string]string
 }
 
 func (p *parser) eof() bool  { return p.pos >= len(p.src) }
@@ -186,7 +188,8 @@ func (p *parser) header(root *Value) (*Value, error) {
 		p.pos++
 	}
 	p.skipSpace()
-	keys, err := p.key()
+	var buf [4]string
+	keys, err := p.key(buf[:0])
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +261,8 @@ func (t *Value) add(k string, v *Value) {
 // keyValue parses `key = value` into t; dotted keys create implicit sub-tables.
 func (p *parser) keyValue(t *Value) error {
 	start, line := p.pos, p.line
-	keys, err := p.key()
+	var buf [4]string
+	keys, err := p.key(buf[:0])
 	if err != nil {
 		return err
 	}
@@ -291,9 +295,8 @@ func (p *parser) keyValue(t *Value) error {
 	return nil
 }
 
-// key parses a possibly dotted key.
-func (p *parser) key() ([]string, error) {
-	var keys []string
+// key parses a possibly dotted key, appending its parts to keys.
+func (p *parser) key(keys []string) ([]string, error) {
 	for {
 		k, err := p.simpleKey()
 		if err != nil {
@@ -331,7 +334,13 @@ func (p *parser) simpleKey() (string, error) {
 	if p.pos == start {
 		return "", p.errf("invalid key character %q", p.peek())
 	}
-	return string(p.src[start:p.pos]), nil
+	raw := p.src[start:p.pos]
+	if k, ok := p.names[string(raw)]; ok {
+		return k, nil
+	}
+	k := string(raw)
+	p.names[k] = k
+	return k, nil
 }
 
 func bareKeyChar(c byte) bool {
@@ -493,8 +502,16 @@ func (p *parser) str() (*Value, error) {
 				return nil, err
 			}
 		default:
-			b.WriteByte(c)
-			p.pos++
+			// Copy the run of plain bytes up to the next quote, newline or backslash at once.
+			end := p.pos + 1
+			for end < len(p.src) {
+				if c := p.src[end]; c == q || c == '\n' || c == '\r' || c == '\\' {
+					break
+				}
+				end++
+			}
+			b.Write(p.src[p.pos:end])
+			p.pos = end
 		}
 	}
 }
