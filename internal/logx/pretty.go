@@ -27,6 +27,7 @@ type PrettyHandler struct {
 	level  slog.Leveler
 	color  bool
 	start  time.Time
+	noTime bool   // the Actions format: no elapsed column (the runner timestamps each line)
 	prefix string // the open groups, "a.b."
 	pre    []byte // attributes of WithAttrs, formatted, each with a leading space
 }
@@ -54,11 +55,13 @@ func (h *PrettyHandler) Handle(_ context.Context, r slog.Record) error {
 	bp := bufPool.Get().(*[]byte)
 	b := (*bp)[:0]
 	var d time.Duration
-	if !r.Time.IsZero() {
+	if !r.Time.IsZero() && !h.noTime {
 		d = max(r.Time.Sub(h.start), 0)
 	}
-	b = appendPaint(b, h.color, Dim, elapsed(d))
-	b = append(b, ' ')
+	if !h.noTime {
+		b = appendPaint(b, h.color, Dim, elapsed(d))
+		b = append(b, ' ')
+	}
 	lvl, sgr := levelLabel(r.Level)
 	b = appendPaint(b, h.color, sgr, lvl)
 	b = append(b, ' ')

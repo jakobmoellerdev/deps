@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -184,7 +185,8 @@ func TestRunSignsCommits(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
-	if !strings.Contains(stderr, `msg="commit signing" format=ssh key=SHA256:`) {
+	// The test runs as a Gitea Actions job: actions log format, colored.
+	if !strings.Contains(regexp.MustCompile("\x1b\\[[0-9;]*m").ReplaceAllString(stderr, ""), "INF commit signing  format=ssh key=SHA256:") {
 		t.Errorf("stderr lacks the signing log line:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "PRIVATE KEY") {

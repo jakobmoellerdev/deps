@@ -138,7 +138,7 @@ func TestPRLog(t *testing.T) {
 		want    string
 	}{
 		{false, "level=INFO msg=free\nlevel=INFO msg=a\nlevel=INFO msg=b\n"},
-		{true, "level=INFO msg=free\n::group::deps/x: created (1.5s)\nlevel=INFO msg=a\nlevel=INFO msg=b\n::endgroup::\n"},
+		{true, "INF free\n::group::deps/x: created (1.5s)\nINF a\nINF b\n::endgroup::\n"},
 	} {
 		var b bytes.Buffer
 		w := logx.NewWriter(&b)
@@ -171,7 +171,7 @@ func TestPRLog(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	done("error", time.Second)
-	if got := regexp.MustCompile(`time=\S+ `).ReplaceAllString(b.String(), ""); got != "::group::deps/y: canceled\nlevel=INFO msg=c\n::endgroup::\n" {
+	if got := regexp.MustCompile(`time=\S+ `).ReplaceAllString(b.String(), ""); got != "::group::deps/y: canceled\nINF c\n::endgroup::\n" {
 		t.Errorf("canceled: %q", got)
 	}
 }

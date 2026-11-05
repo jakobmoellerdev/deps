@@ -21,8 +21,9 @@ const (
 	Pretty Format = "pretty" // compact colored records for terminals (PrettyHandler)
 	Text   Format = "text"   // slog.TextHandler, the documented line format
 	JSON   Format = "json"   // slog.JSONHandler
-	// Actions is Text plus GitHub/Gitea Actions workflow commands (annotations, log groups),
-	// which the caller writes; NewHandler returns the Text handler for it.
+	// Actions is for GitHub/Gitea Actions logs: Pretty records without the elapsed column
+	// (the runner timestamps every line), plus workflow commands (annotations, log groups),
+	// which the caller writes.
 	Actions Format = "actions"
 )
 
@@ -56,7 +57,7 @@ func (f Format) Resolve(tty, actions bool) Format {
 // Options configure the handler of NewHandler.
 type Options struct {
 	Level slog.Leveler
-	Color bool      // Pretty only: ANSI colors
+	Color bool      // Pretty and Actions only: ANSI colors
 	Start time.Time // Pretty only: origin of the elapsed time; zero = when the program started
 }
 
@@ -65,6 +66,10 @@ func NewHandler(f Format, w *Writer, o Options) slog.Handler {
 	switch f {
 	case Pretty:
 		return NewPrettyHandler(w, o)
+	case Actions:
+		h := NewPrettyHandler(w, o)
+		h.noTime = true
+		return h
 	case JSON:
 		return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: o.Level})
 	default:

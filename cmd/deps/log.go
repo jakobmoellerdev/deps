@@ -44,8 +44,12 @@ func setupLogger(o logOpts, w *logx.Writer, tty bool, getenv func(string) string
 	if err != nil {
 		return terminal{}, &usageError{fmt.Errorf("--color: %w", err)}
 	}
-	color := c.Enabled(tty, getenv)
 	f = f.Resolve(tty, actionsLog.runner)
+	color := c.Enabled(tty, getenv)
+	if f == logx.Actions && c == logx.ColorAuto {
+		// GitHub and Gitea render ANSI colors in job logs, whatever TERM says.
+		color = color || getenv("NO_COLOR") == ""
+	}
 	ho := logx.Options{Level: lvl, Color: color}
 	// Records of a PR (bot.Options.PRLog) are held per PR and written as one block.
 	var h slog.Handler = logx.NewBufferHandler(logx.NewHandler(f, w, ho), func(b io.Writer) slog.Handler {

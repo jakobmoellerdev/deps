@@ -155,16 +155,19 @@ type tree struct {
 }
 
 // extractTree discovers the dependency files under root, extracts them, links the deps
-// across files, reads locked versions and drops deps a custom dep covers.
+// across files, reads locked versions and drops deps a custom dep covers. The extract phase
+// of prog is left running: the caller ends it after its own summary record, so a log group
+// of the phase holds it.
 func extractTree(ctx context.Context, root string, cfg *config.Config, env manager.Env, managers []manager.Manager, prog Progress) (*tree, error) {
 	start := time.Now()
 	prog.Start(PhaseDiscover, 0)
 	found, err := discover(root, cfg.IgnorePaths, managers)
-	prog.End(PhaseDiscover)
 	if err != nil {
+		prog.End(PhaseDiscover)
 		return nil, fmt.Errorf("walk %s: %w", root, err)
 	}
 	slog.InfoContext(ctx, "files discovered", discoveryAttrs(managers, found, time.Since(start))...)
+	prog.End(PhaseDiscover)
 	var jobs []job
 	for i, m := range managers {
 		for _, f := range found[i] {
@@ -185,7 +188,6 @@ func extractTree(ctx context.Context, root string, cfg *config.Config, env manag
 	}
 	prog.Start(PhaseExtract, len(jobs))
 	ex := extractAll(root, jobs, env, prog)
-	prog.End(PhaseExtract)
 	linkAll(managers, found, ex)
 	lockErrs := readLocks(root, managers, found, ex)
 	dedupeCovered(ex)
@@ -195,10 +197,12 @@ func extractTree(ctx context.Context, root string, cfg *config.Config, env manag
 // Extract returns every dependency under root as extracted (Skip set by the managers only;
 // no policy, no lookups), in discovery order, with the per-file errors.
 func Extract(ctx context.Context, root string, cfg *config.Config, env manager.Env, managers []manager.Manager) ([]dep.Dep, []error, error) {
-	t, err := extractTree(ctx, root, cfg, env, managers, noProgress{})
+	prog := noProgress{}
+	t, err := extractTree(ctx, root, cfg, env, managers, prog)
 	if err != nil {
 		return nil, nil, err
 	}
+	prog.End(PhaseExtract)
 	errs := t.lockErrs
 	var deps []dep.Dep
 	for i, e := range t.ex {
@@ -260,6 +264,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		}
 	}
 	slog.InfoContext(ctx, "dependencies extracted", "files", len(jobs), "updatable", len(todo), "skipped", len(res.Skipped), "duration", time.Since(start))
+	prog.End(PhaseExtract)
 	start = time.Now()
 	planAll(o.Datasources, todo)
 
@@ -314,8 +319,8 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		})
 	}
 	wg.Wait()
-	prog.End(PhaseResolve)
 	if err := ctx.Err(); err != nil {
+		prog.End(PhaseResolve)
 		return nil, err
 	}
 	if err := sec.wait(); err != nil {
@@ -345,6 +350,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		return a.Dep.Line - b.Dep.Line
 	})
 	slog.InfoContext(ctx, "dependencies resolved", "updates", len(res.Updates), "errors", len(res.Errors), "duration", time.Since(start))
+	prog.End(PhaseResolve)
 	return res, nil
 }
 

@@ -210,3 +210,12 @@ func TestRoundDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestActionsHandler(t *testing.T) {
+	var b bytes.Buffer
+	h := NewHandler(Actions, NewWriter(&b), Options{Level: slog.LevelDebug})
+	slog.New(h).Debug("m", "k", 1, "d", 1500*time.Microsecond)
+	if got, want := b.String(), "DBG m  k=1 d=1.5ms\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

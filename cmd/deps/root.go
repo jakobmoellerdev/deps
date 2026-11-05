@@ -96,7 +96,7 @@ func newRoot() *cobra.Command {
 	pf.StringVar(&o.config, "config", "", "config file, which must exist (default: <dir>/.deps.yaml, then .deps.yml, else built-in defaults)")
 	pf.BoolVarP(&o.verbose, "verbose", "v", false, "also print skipped dependencies (skip lines)")
 	pf.StringVar(&o.log.level, "log-level", "warn", "log level: debug, info, warn, error; $DEPS_LOG_LEVEL, then $RUNNER_DEBUG=1 (debug) replace the default")
-	pf.StringVar(&o.log.format, "log-format", "auto", "log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (text plus workflow commands: annotations, log groups); $DEPS_LOG_FORMAT replaces the default")
+	pf.StringVar(&o.log.format, "log-format", "auto", "log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups); $DEPS_LOG_FORMAT replaces the default")
 	pf.StringVar(&o.log.color, "color", "auto", "color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never")
 	pf.IntVar(&o.concurrency, "concurrency", 32, "maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1")
 	pf.StringVar(&o.report, "report", "", "plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT)")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -211,5 +212,41 @@ func TestAnnotatorLimitAndEscaping(t *testing.T) {
 	}
 	if n := strings.Count(b.String(), "::warning "); n != maxAnnotations {
 		t.Errorf("%d warning annotations, want %d", n, maxAnnotations)
+	}
+}
+
+// The actions format writes pretty records without the elapsed column, colored unless
+// NO_COLOR or --color never; each phase's summary record is inside its group.
+func TestActionsRecords(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{".github/workflows/ci.yml": workflow})
+	githubActions(t, dir)
+	_, stderr, _ := execute(t, "plan", "--dir", dir, "--log-level", "info")
+	if !strings.Contains(stderr, "\x1b[36mINF\x1b[0m files discovered  \x1b[2mfiles=") {
+		t.Errorf("no colored record without elapsed column:\n%q", stderr)
+	}
+	plain := regexp.MustCompile("\x1b\\[[0-9;]*m").ReplaceAllString(stderr, "")
+	for _, order := range [][]string{
+		{"::group::Discovering and extracting dependency files\n", "INF files discovered  ", "INF dependencies extracted  ", "deps: extracting ", "::endgroup::\n::group::Resolving 2 dependencies\n"},
+		{"::group::Resolving 2 dependencies\n", "INF dependencies resolved  ", "deps: resolving 2/2 · ", "::endgroup::\n"},
+	} {
+		at := 0
+		for _, s := range order {
+			i := strings.Index(plain[at:], s)
+			if i < 0 {
+				t.Fatalf("%q missing after offset %d:\n%s", s, at, plain)
+			}
+			at += i + len(s)
+		}
+	}
+	for _, args := range [][]string{{"--color", "never"}, nil} {
+		if args == nil {
+			t.Setenv("NO_COLOR", "1")
+		}
+		if _, stderr, _ := execute(t, append([]string{"plan", "--dir", dir, "--log-level", "info"}, args...)...); strings.Contains(stderr, "\x1b[") || !strings.Contains(stderr, "\nINF files discovered  files=") {
+			t.Errorf("%v: colors or no actions records:\n%q", args, stderr)
+		}
 	}
 }
