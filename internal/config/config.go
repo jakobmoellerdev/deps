@@ -22,6 +22,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/prtemplate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -195,6 +196,10 @@ type Config struct {
 	Labels    []string `yaml:"labels" jsonschema_description:"Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels)."`
 	Reviewers []string `yaml:"reviewers" jsonschema_description:"Reviewers requested on new update PRs: user names, or team:<slug> for a team of the repository's organization. Rules replace them."`
 	Assignees []string `yaml:"assignees" jsonschema_description:"Users assigned to new update PRs. Rules replace them."`
+	// PRTitle, PRHeader and PRFooter are Go templates over prtemplate.Data; rules override them.
+	PRTitle  string `yaml:"prTitle" jsonschema_description:"Go text/template of PR titles and commit subjects over the fields .Type, .Scope, .Name, .Group, .From, .To, .UpdateType, .Count and .IsSecurity, e.g. '{{.Type}}({{.Scope}}): bump {{.Name}} to {{.To}}'; empty means the built-in titles. Security PRs keep the ' [security]' suffix. Rules override it."`
+	PRHeader string `yaml:"prHeader" jsonschema_description:"Go text/template (the fields of prTitle) rendered at the top of update PR bodies; empty means none. Rules override it."`
+	PRFooter string `yaml:"prFooter" jsonschema_description:"Go text/template (the fields of prTitle) rendered at the end of update PR bodies, above the rebase checkbox; empty means none. Rules override it."`
 	// RebaseLabel and StopUpdatingLabel are PR labels people set (Renovate's options of the
 	// same names).
 	RebaseLabel       string `yaml:"rebaseLabel" jsonschema:"default=rebase" jsonschema_description:"Label that makes the next run rebuild an update PR's branch on the current base, like ticking its rebase checkbox (bypassing the schedule and discarding commits by others); deps removes the label afterwards."`
@@ -211,8 +216,9 @@ type Config struct {
 	// lockfile.
 	LockFileMaintenance LockFileMaintenance `yaml:"lockFileMaintenance" jsonschema_description:"Lock file maintenance: one PR (branch <branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, package-lock.json, pnpm-lock.yaml, yarn.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests."`
 
-	path     string        // source path for error messages
-	schedule *schedule.Set // parsed Schedule
+	path      string         // source path for error messages
+	schedule  *schedule.Set  // parsed Schedule
+	templates prtemplate.Set // parsed PRTitle, PRHeader and PRFooter
 	// lfmSchedule is the parsed LockFileMaintenance.Schedule, or schedule when it is nil.
 	lfmSchedule *schedule.Set
 	minAge      time.Duration // parsed MinimumReleaseAge
@@ -395,11 +401,16 @@ type Rule struct {
 	AddLabels                  []string `yaml:"addLabels" jsonschema_description:"Labels added to those of earlier rules and the top level for new PRs of matching deps."`
 	Reviewers                  []string `yaml:"reviewers" jsonschema_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
 	Assignees                  []string `yaml:"assignees" jsonschema_description:"Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates."`
+	// PRTitle, PRHeader and PRFooter override the top-level templates when set; "" resets them.
+	PRTitle  *string `yaml:"prTitle" jsonschema_description:"Overrides the top-level prTitle for matching deps (with updateTypes: for updates of those types); empty string means the built-in titles. A group's PR uses its first update's templates."`
+	PRHeader *string `yaml:"prHeader" jsonschema_description:"Overrides the top-level prHeader for matching deps; empty string means none."`
+	PRFooter *string `yaml:"prFooter" jsonschema_description:"Overrides the top-level prFooter for matching deps; empty string means none."`
 
 	allow          *Allowed
 	currentVersion *Allowed  // parsed CurrentVersion; nil = not set
 	currentAge     *ageRange // parsed CurrentAge; nil = not set
 	schedule       *schedule.Set
+	templates      prtemplate.Set // parsed PRTitle, PRHeader and PRFooter; members of unset fields are nil
 	minAge         *time.Duration // parsed MinimumReleaseAge; nil = not set
 }
 
@@ -681,6 +692,7 @@ func (c *Config) Validate() error {
 		add("dependencyDashboardTitle", "must be a non-blank single line, got %q", c.DependencyDashboardTitle)
 	}
 	validatePRMeta("", c.Labels, nil, c.Reviewers, c.Assignees, add)
+	c.templates = parseTemplates("", &c.PRTitle, &c.PRHeader, &c.PRFooter, add)
 	for i, l := range c.DependencyDashboardLabels {
 		if strings.TrimSpace(l) == "" || strings.Contains(l, ",") {
 			add(fmt.Sprintf("dependencyDashboardLabels[%d]", i), "must be a non-blank label name without ',', got %q", l)
@@ -851,7 +863,31 @@ func (c *Config) validateRule(i int, add addFunc) {
 		}
 	}
 	validateAgeBehaviour(f+".", r.MinimumReleaseAgeBehaviour, add)
+	r.templates = parseTemplates(f+".", r.PRTitle, r.PRHeader, r.PRFooter, add)
 }
+
+// parseTemplates parses the prTitle, prHeader and prFooter templates of the top level (f "")
+// or a rule (f "rules[i]."); a nil or empty source, or an invalid one, leaves its member nil.
+func parseTemplates(f string, title, header, footer *string, add addFunc) prtemplate.Set {
+	one := func(key string, src *string, parse func(string) (*prtemplate.Template, error)) *prtemplate.Template {
+		if src == nil || *src == "" {
+			return nil
+		}
+		t, err := parse(*src)
+		if err != nil {
+			add(f+key, "%v", err)
+		}
+		return t
+	}
+	return prtemplate.Set{
+		Title:  one("prTitle", title, prtemplate.ParseTitle),
+		Header: one("prHeader", header, prtemplate.Parse),
+		Footer: one("prFooter", footer, prtemplate.Parse),
+	}
+}
+
+// PRTemplates returns the parsed top-level prTitle, prHeader and prFooter.
+func (c *Config) PRTemplates() prtemplate.Set { return c.templates }
 
 // validateAgeBehaviour checks minimumReleaseAgeBehaviour of the top level (f "") or a rule
 // (f "rules[i].").

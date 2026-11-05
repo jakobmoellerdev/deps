@@ -12,11 +12,8 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
-// versionsRe finds the versions marker of a major bucket's PR body (versionsMarker).
+// versionsRe finds the versions marker of a PR body (versionsMarker).
 var versionsRe = regexp.MustCompile(`<!-- deps:versions=(\S+(?: \S+)*) -->`)
-
-// securitySuffix ends the title of a PR with security updates (engine.GroupUpdates).
-const securitySuffix = " [security]"
 
 // majorBucket reports whether ups are the updates of a major PR bucket: "major", or "v<N>"
 // per major with separateMultipleMajor (the other buckets are "", "minor" and "patch").
@@ -28,20 +25,22 @@ func majorBucket(ups []dep.Update) bool {
 	return b == "major" || strings.HasPrefix(b, "v")
 }
 
-// versionsMarker renders the marker that records the target version of every dependency of
-// a major bucket's PR, "<!-- deps:versions=<name>=<version> ... -->" with names and versions
-// query-escaped, so a closed PR suppresses later versions of the same majors (closedFor).
-// Other buckets get none ("").
+// versionsMarker renders the marker that records the target of every dependency of a PR,
+// "<!-- deps:versions=<name>=<version>[@<digest>] ... -->" with names, versions and digests
+// query-escaped, so a closed PR suppresses the same targets, and in a major bucket later
+// versions of the same majors (closedFor), whatever the PR titles say. Updates without a
+// version or digest (lock file maintenance) get no entry, and "" means no entries.
 func versionsMarker(ups []dep.Update) string {
-	if !majorBucket(ups) {
-		return ""
-	}
 	var entries []string
 	for _, u := range ups {
-		if u.NewVersion == "" {
+		if u.NewVersion == "" && u.NewDigest == "" {
 			continue
 		}
-		if e := url.QueryEscape(u.Dep.Name) + "=" + url.QueryEscape(u.NewVersion); !slices.Contains(entries, e) {
+		e := url.QueryEscape(u.Dep.Name) + "=" + url.QueryEscape(u.NewVersion)
+		if u.NewDigest != "" {
+			e += "@" + url.QueryEscape(u.NewDigest)
+		}
+		if !slices.Contains(entries, e) {
 			entries = append(entries, e)
 		}
 	}
@@ -51,23 +50,34 @@ func versionsMarker(ups []dep.Update) string {
 	return "<!-- deps:versions=" + strings.Join(entries, " ") + " -->"
 }
 
-// bodyVersions returns the versions recorded by the versions marker of body, by dependency
+// target is a dependency's new version and digest ("" = none) in a versions marker.
+type target struct{ version, digest string }
+
+// bodyVersions returns the targets recorded by the versions marker of body, by dependency
 // name; nil without a marker.
-func bodyVersions(body string) map[string][]string {
+func bodyVersions(body string) map[string][]target {
 	m := versionsRe.FindStringSubmatch(body)
 	if m == nil {
 		return nil
 	}
-	out := map[string][]string{}
+	out := map[string][]target{}
 	for e := range strings.SplitSeq(m[1], " ") {
 		k, v, ok := strings.Cut(e, "=")
+		v, d, _ := strings.Cut(v, "@")
 		name, errK := url.QueryUnescape(k)
 		ver, errV := url.QueryUnescape(v)
-		if ok && errK == nil && errV == nil {
-			out[name] = append(out[name], ver)
+		dig, errD := url.QueryUnescape(d)
+		if ok && errK == nil && errV == nil && errD == nil {
+			out[name] = append(out[name], target{ver, dig})
 		}
 	}
 	return out
+}
+
+// is reports whether t records u's target. A marker entry without a digest (one written
+// before digests were recorded) matches any digest.
+func (t target) is(u dep.Update) bool {
+	return t.version == u.NewVersion && (t.digest == "" || t.digest == u.NewDigest)
 }
 
 // sameMajor reports whether version v is in the major of u's new version under u's
@@ -89,7 +99,7 @@ func sameMajor(u dep.Update, v string) bool {
 
 // titleVersion splits a PR title "<stem> to <version>[ [security]]" into stem and version.
 func titleVersion(title string) (stem, version string, ok bool) {
-	title = strings.TrimSuffix(title, securitySuffix)
+	title = strings.TrimSuffix(title, engine.SecuritySuffix)
 	i := strings.LastIndex(title, " to ")
 	if i < 0 {
 		return "", "", false
@@ -98,34 +108,29 @@ func titleVersion(title string) (stem, version string, ok bool) {
 }
 
 // closedFor returns the closed unmerged PR of grp's branch that suppresses grp, with the skip
-// status, or nil. Like Renovate, closing a PR ignores its version (StatusSkipClosed: the same
-// title, which names the version, or the digest of a digest or pin update); closing a major
-// bucket's PR ignores that major (StatusSkipClosedMajor): every dependency of grp targets the
-// major its closed PR recorded (versionsMarker; PRs without the marker: the version of the
-// title, when grp's title differs only in it). Updates fixing advisories are not suppressed
-// by a closed PR without them (its title lacks " [security]"). An exact match wins.
+// status, or nil. Like Renovate, closing a PR ignores its targets (StatusSkipClosed: every
+// dependency of grp targets the version and digest the closed PR recorded in its versions
+// marker); closing a major bucket's PR ignores that major (StatusSkipClosedMajor): every
+// dependency of grp targets the major its closed PR recorded. The marker makes this
+// independent of the titles (prTitle). Closed PRs without the marker (deps before it) match
+// by title, which names the version or digest: the same title, and in a major bucket the
+// same title up to the version, with that version in the same major. Updates fixing
+// advisories are not suppressed by a closed PR without them (its title lacks
+// engine.SecuritySuffix, which every security title ends with). An exact match wins.
 func closedFor(closed []platform.PR, grp engine.Group) (*platform.PR, string) {
 	major := majorBucket(grp.Updates)
 	security := slices.ContainsFunc(grp.Updates, func(u dep.Update) bool { return len(u.Advisories) > 0 })
 	var found *platform.PR
 	for i := range closed {
 		c := &closed[i]
-		switch {
-		case c.Head != grp.Branch || c.Merged:
-			continue
-		case !major:
-			if c.Title == grp.Title {
-				return c, StatusSkipClosed
-			}
-			continue
-		case security && !strings.HasSuffix(c.Title, securitySuffix):
+		if c.Head != grp.Branch || c.Merged || security && !strings.HasSuffix(c.Title, engine.SecuritySuffix) {
 			continue
 		}
-		exact, same := closedMajor(*c, grp)
+		exact, same := closedMatch(*c, grp, major)
 		if exact {
 			return c, StatusSkipClosed
 		}
-		if same && found == nil {
+		if major && same && found == nil {
 			found = c
 		}
 	}
@@ -135,24 +140,27 @@ func closedFor(closed []platform.PR, grp engine.Group) (*platform.PR, string) {
 	return nil, ""
 }
 
-// closedMajor compares the closed PR c of a major bucket with grp: exact when c targeted the
-// versions of grp, same when it targeted their majors.
-func closedMajor(c platform.PR, grp engine.Group) (exact, same bool) {
+// closedMatch compares the closed PR c with grp: exact when c targeted the versions (and
+// digests) of grp, same when it targeted their majors (only computed in a major bucket).
+func closedMatch(c platform.PR, grp engine.Group, major bool) (exact, same bool) {
 	versions := bodyVersions(c.Body)
 	if versions == nil {
 		// A PR without the marker: its title names the version, if any.
 		if c.Title == grp.Title {
 			return true, true
 		}
+		if !major {
+			return false, false
+		}
 		stem, v, ok := titleVersion(c.Title)
 		newStem, _, newOK := titleVersion(grp.Title)
 		return false, ok && newOK && stem == newStem && !slices.ContainsFunc(grp.Updates, func(u dep.Update) bool { return !sameMajor(u, v) })
 	}
-	exact, same = true, true
+	exact, same = true, major
 	for _, u := range grp.Updates {
-		vs := versions[u.Dep.Name]
-		exact = exact && slices.Contains(vs, u.NewVersion)
-		same = same && slices.ContainsFunc(vs, func(v string) bool { return sameMajor(u, v) })
+		ts := versions[u.Dep.Name]
+		exact = exact && slices.ContainsFunc(ts, func(t target) bool { return t.is(u) })
+		same = same && slices.ContainsFunc(ts, func(t target) bool { return sameMajor(u, t.version) })
 	}
 	return exact, same
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
@@ -44,11 +45,11 @@ func TestRebaseCheckbox(t *testing.T) {
 // fingerprint, so it never reads as new content.
 func TestPRBodyRebaseCheckbox(t *testing.T) {
 	_, res := fixture(t)
-	body := prBody(t.Context(), nil, res.Updates[:1], "abc", "def")
+	body := prBody(t.Context(), nil, engine.Group{Updates: res.Updates[:1]}, "abc", "def")
 	if strings.Count(body, rebaseCheckbox) != 1 || rebaseTicked(body) {
 		t.Fatalf("body lacks one unticked checkbox:\n%s", body)
 	}
-	if !strings.HasSuffix(body, "\n---\n\n"+rebaseCheckbox+"\n\n<!-- deps:fingerprint=abc -->\n<!-- deps:input=def -->\n") {
+	if !strings.HasSuffix(body, "\n---\n\n"+rebaseCheckbox+"\n\n<!-- deps:fingerprint=abc -->\n<!-- deps:versions=a%2Fx=v2 -->\n<!-- deps:input=def -->\n") {
 		t.Errorf("checkbox not above the markers:\n%s", body)
 	}
 	ticked := strings.Replace(body, "- [ ] <!-- deps:rebase -->", "- [x] <!-- deps:rebase -->", 1)

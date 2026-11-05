@@ -11,6 +11,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/prtemplate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -34,15 +35,17 @@ type Policy struct {
 	RangeStrategy string
 	Allow         *Allowed
 	Updates       map[dep.UpdateType]bool
-	Group         string         // "" = own PR
-	SecurityGroup string         // group of the dep's security updates, "" = own PR each
-	Schedule      *schedule.Set  // nil = always
-	Rules         []int          // indices of the matching user rules, in order
-	Monorepo      string         // built-in monorepo that set the initial Group, "" = none
-	CommitType    string         // conventional commit type: fix for production deps, chore otherwise
-	CommitScope   string         // conventional commit scope, "" = none
-	Kind          dep.UpdateType // update type of a PolicyFor result, "" for Policy
-	MinAge        time.Duration  // minimum release age of new versions, 0 = off
+	Group         string        // "" = own PR
+	SecurityGroup string        // group of the dep's security updates, "" = own PR each
+	Schedule      *schedule.Set // nil = always
+	Rules         []int         // indices of the matching user rules, in order
+	Monorepo      string        // built-in monorepo that set the initial Group, "" = none
+	CommitType    string        // conventional commit type: fix for production deps, chore otherwise
+	CommitScope   string        // conventional commit scope, "" = none
+	// Templates are the prTitle, prHeader and prFooter templates; nil members use the defaults.
+	Templates prtemplate.Set
+	Kind      dep.UpdateType // update type of a PolicyFor result, "" for Policy
+	MinAge    time.Duration  // minimum release age of new versions, 0 = off
 	// TimestampRequired (minimumReleaseAgeBehaviour timestamp-required): with a MinAge, a
 	// version whose release time is unknown is held back.
 	TimestampRequired bool
@@ -183,6 +186,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		TimestampRequired:     c.MinimumReleaseAgeBehaviour == TimestampRequired,
 		CommitType:            CommitChore,
 		CommitScope:           DefaultScope,
+		Templates:             c.templates,
 		Kind:                  kind,
 		SeparateMajorMinor:    c.SeparateMajorMinor == nil || *c.SeparateMajorMinor,
 		SeparateMultipleMajor: c.SeparateMultipleMajor != nil && *c.SeparateMultipleMajor,
@@ -251,6 +255,15 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		}
 		if r.CommitScope != nil {
 			p.CommitScope = *r.CommitScope
+		}
+		if r.PRTitle != nil {
+			p.Templates.Title = r.templates.Title
+		}
+		if r.PRHeader != nil {
+			p.Templates.Header = r.templates.Header
+		}
+		if r.PRFooter != nil {
+			p.Templates.Footer = r.templates.Footer
 		}
 		if r.minAge != nil {
 			p.MinAge = *r.minAge

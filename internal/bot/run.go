@@ -746,7 +746,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	}
 	// Notes are fetched only for PRs that are actually written; the fingerprint covers file
 	// contents only, so changing upstream notes never churns PRs.
-	body := prBody(ctx, o.Notes, grp.Updates, fp, b.input)
+	body := prBody(ctx, o.Notes, grp, fp, b.input)
 	if pr != nil {
 		if err := pc.UpdatePR(ctx, pr.Number, grp.Title, body); err != nil {
 			return a, nil, err
@@ -871,7 +871,7 @@ func raisePR(ctx context.Context, o Options, s *runState, grp engine.Group, fp, 
 	}
 	slog.InfoContext(ctx, "raising a PR for the automerge branch", "branch", grp.Branch, "reason", why)
 	body := "This update is configured to merge its branch without a PR (`automergeType: branch`), but " + why + ", so deps opened this PR.\n\n" +
-		prBody(ctx, o.Notes, grp.Updates, fp, input)
+		prBody(ctx, o.Notes, grp, fp, input)
 	np, err := pc.CreatePR(ctx, grp.Branch, s.base, grp.Title, body)
 	if err != nil {
 		return a, nil, err
@@ -996,10 +996,15 @@ func bodyFingerprint(body string) string {
 	return ""
 }
 
-// prBody renders the body of a PR with content fingerprint fp and input fingerprint input
-// ("" = none); it ends with the unticked rebaseCheckbox and the markers.
-func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp, input string) string {
+// prBody renders the body of grp's PR with content fingerprint fp and input fingerprint input
+// ("" = none): the group's header, the update table and notes, its footer, then the unticked
+// rebaseCheckbox and the markers.
+func prBody(ctx context.Context, notes Notes, grp engine.Group, fp, input string) string {
+	ups := grp.Updates
 	var b strings.Builder
+	if grp.Header != "" {
+		b.WriteString(grp.Header + "\n\n")
+	}
 	var ages []string
 	if notes == nil {
 		b.WriteString("| File | From | To | Type |\n|---|---|---|---|\n")
@@ -1067,6 +1072,9 @@ func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp, input string
 			b.WriteString("\n")
 			b.WriteString(s)
 		}
+	}
+	if grp.Footer != "" {
+		b.WriteString("\n" + grp.Footer + "\n")
 	}
 	b.WriteString("\n---\n\n" + rebaseCheckbox + "\n")
 	fmt.Fprintf(&b, "\n<!-- deps:fingerprint=%s -->\n", fp)

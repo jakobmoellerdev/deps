@@ -3,11 +3,13 @@ package engine
 import (
 	"cmp"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/prtemplate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -18,7 +20,9 @@ import (
 // bucket (Manager "group", named after the dep.Dep.VersionRef unless a policy group applies).
 type Group struct {
 	Manager, Name, Branch, Title string
-	Updates                      []dep.Update
+	// Header and Footer are the rendered prHeader and prFooter of the PR body, "" = none.
+	Header, Footer string
+	Updates        []dep.Update
 	// Automerge is set when every update automerges; AutomergeStrategy is the first update's.
 	// AutomergeBranch is set when every update also automerges with automergeType branch: the
 	// branch is merged into the base without a PR while its checks pass.
@@ -84,7 +88,7 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 	}
 	for i := range groups {
 		g := &groups[i]
-		g.Title = groupTitle(*g)
+		g.Title, g.Header, g.Footer = texts(*g)
 		g.Automerge = !slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return !u.Automerge })
 		if g.Automerge {
 			g.AutomergeStrategy = g.Updates[0].AutomergeStrategy
@@ -175,27 +179,111 @@ func sameSharedEdit(u, c dep.Update) bool {
 		u.NewName == c.NewName && u.NewChecksum == c.NewChecksum && u.Lockfile == c.Lockfile && u.RangeStrategy == c.RangeStrategy
 }
 
-// commitPrefix renders the conventional-commit header of a title ("chore(deps): ").
-// Security groups are always fix; otherwise fix if any member is fix, else the first
-// member's type. The scope is the first member's. Updates without a policy type count as
-// chore(deps).
-func commitPrefix(ups []dep.Update, security bool) string {
-	typ, scope := ups[0].CommitType, ups[0].CommitScope
+// SecuritySuffix ends the title of a PR with security updates.
+const SecuritySuffix = " [security]"
+
+// commitType returns the conventional-commit type and scope of a title. Security groups are
+// always fix; otherwise fix if any member is fix, else the first member's type. The scope is
+// the first member's. Updates without a policy type count as chore(deps).
+func commitType(ups []dep.Update, security bool) (typ, scope string) {
+	typ, scope = ups[0].CommitType, ups[0].CommitScope
 	if typ == "" {
 		typ, scope = config.CommitChore, config.DefaultScope
 	}
 	if security || slices.ContainsFunc(ups, func(u dep.Update) bool { return u.CommitType == config.CommitFix }) {
 		typ = config.CommitFix
 	}
+	return typ, scope
+}
+
+// commitPrefix renders the conventional-commit header of a title ("chore(deps): ").
+func commitPrefix(ups []dep.Update, security bool) string {
+	typ, scope := commitType(ups, security)
 	if scope == "" {
 		return typ + ": "
 	}
 	return typ + "(" + scope + "): "
 }
 
-// groupTitle renders the PR title of g. A group with security updates (a security group, or a
-// shared version definition with a security member) gets the security prefix and
-// " [security]".
+// texts renders the title, header and footer of g with the templates of its first update
+// (dep.Update.Templates); nil ones render the built-in title (groupTitle), or no header or
+// footer. The lock file maintenance title is always the built-in one. A templated security
+// title ends with SecuritySuffix like the built-in ones. A template that fails to execute
+// (Config.Validate executed it on sample data) is logged and renders as nil.
+func texts(g Group) (title, header, footer string) {
+	tpl := g.Updates[0].Templates
+	d := templateData(g)
+	render := func(t *prtemplate.Template, key string) string {
+		if t == nil {
+			return ""
+		}
+		s, err := t.Execute(d)
+		if err != nil {
+			slog.Warn("PR template failed, using the default", "template", key, "branch", g.Branch, "err", err)
+		}
+		return s
+	}
+	if g.Manager != MaintenanceBranch {
+		title = render(tpl.Title, "prTitle")
+	}
+	switch {
+	case title == "":
+		title = groupTitle(g)
+	case d.IsSecurity && !strings.HasSuffix(title, SecuritySuffix):
+		title += SecuritySuffix
+	}
+	return title, render(tpl.Header, "prHeader"), render(tpl.Footer, "prFooter")
+}
+
+// templateData is what the PR templates of g see: Name is the dependency, or g's name when it
+// updates several ("lock file maintenance" for that PR); From, To and UpdateType are "" unless
+// every update has the same.
+func templateData(g Group) prtemplate.Data {
+	security := slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return len(u.Advisories) > 0 })
+	typ, scope := commitType(g.Updates, security)
+	var names []string
+	for _, u := range g.Updates {
+		if !slices.Contains(names, u.Dep.Name) {
+			names = append(names, u.Dep.Name)
+		}
+	}
+	d := prtemplate.Data{
+		Type: typ, Scope: scope, Name: g.Name, Count: len(names), IsSecurity: security,
+		From: shared(g.Updates, func(u dep.Update) string {
+			if u.Lockfile {
+				return u.Dep.Locked
+			}
+			return u.Dep.Version
+		}),
+		To:         shared(g.Updates, func(u dep.Update) string { return u.NewVersion }),
+		UpdateType: shared(g.Updates, func(u dep.Update) string { return string(u.Type) }),
+	}
+	switch {
+	case g.Manager == MaintenanceBranch:
+		d.Name = "lock file maintenance"
+	case len(names) == 1:
+		d.Name = names[0]
+	}
+	if g.Manager == GroupManager {
+		d.Group = g.Name
+	}
+	return d
+}
+
+// shared returns f of every update when it is the same for all, else "".
+func shared(ups []dep.Update, f func(dep.Update) string) string {
+	v := f(ups[0])
+	for _, u := range ups[1:] {
+		if f(u) != v {
+			return ""
+		}
+	}
+	return v
+}
+
+// groupTitle renders the built-in PR title of g. A group with security updates (a security
+// group, or a shared version definition with a security member) gets the security prefix and
+// SecuritySuffix.
 func groupTitle(g Group) string {
 	if g.Manager == MaintenanceBranch {
 		return commitPrefix(g.Updates, false) + "lock file maintenance"
@@ -210,7 +298,7 @@ func groupTitle(g Group) string {
 		if len(names) > 1 {
 			pre, suffix := commitPrefix(g.Updates, security), ""
 			if security {
-				suffix = " [security]"
+				suffix = SecuritySuffix
 			}
 			if v, ok := sameVersion(g.Updates); ok {
 				return pre + "update " + g.Name + " to " + v + suffix
@@ -222,9 +310,9 @@ func groupTitle(g Group) string {
 	if security {
 		pre := commitPrefix(g.Updates, true)
 		if v, ok := sameVersion(g.Updates); ok {
-			return pre + "update " + name + " to " + v + " [security]"
+			return pre + "update " + name + " to " + v + SecuritySuffix
 		}
-		return pre + "update " + name + " [security]"
+		return pre + "update " + name + SecuritySuffix
 	}
 	return title(name, g.Updates)
 }

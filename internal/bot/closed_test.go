@@ -113,10 +113,19 @@ func TestRunClosedPRs(t *testing.T) {
 		{
 			name: "minor: closed PR ignores only its version", bucket: "", version: "v1.2", branch: branchA,
 			closed: closedPR(branchA, "chore(deps): update a/x to v1.1", ""), want: StatusCreated,
+			wantMarker: "<!-- deps:versions=a%2Fx=v1.2 -->",
 		},
 		{
 			name: "minor: closed PR for the same version", bucket: "", version: "v1.1", branch: branchA,
 			closed: closedPR(branchA, "chore(deps): update a/x to v1.1", ""), want: StatusSkipClosed,
+		},
+		{
+			name: "minor: marker of the same version under another title", bucket: "", version: "v1.1", branch: branchA,
+			closed: closedPR(branchA, "Update a/x", "a%2Fx=v1.1"), want: StatusSkipClosed,
+		},
+		{
+			name: "minor: marker of another version under the same title", bucket: "", version: "v1.2", branch: branchA,
+			closed: closedPR(branchA, "chore(deps): update a/x to v1.2", "a%2Fx=v1.1"), want: StatusCreated,
 		},
 	}
 	for _, tt := range tests {
@@ -150,9 +159,6 @@ func TestRunClosedPRs(t *testing.T) {
 			if !strings.Contains(pc.bodies[0], tt.wantMarker) {
 				t.Errorf("body lacks %q:\n%s", tt.wantMarker, pc.bodies[0])
 			}
-			if tt.bucket == "" && strings.Contains(pc.bodies[0], "deps:versions=") {
-				t.Errorf("non-major body has a versions marker:\n%s", pc.bodies[0])
-			}
 		})
 	}
 }
@@ -182,10 +188,11 @@ func TestDashboardRecreateClosedMajor(t *testing.T) {
 }
 
 func TestBodyVersions(t *testing.T) {
-	for body, want := range map[string]map[string][]string{
+	for body, want := range map[string]map[string][]target{
 		"no marker": nil,
-		"<!-- deps:versions=a%2Fx=v2 @s%2Fp=2.0.0+b a%2Fx=v2.1 bad -->": {"a/x": {"v2", "v2.1"}, "@s/p": {"2.0.0 b"}},
-		"<!-- deps:versions=%zz=1 a=%zz -->":                            {},
+		"<!-- deps:versions=a%2Fx=v2 @s%2Fp=2.0.0+b a%2Fx=v2.1 bad -->": {"a/x": {{"v2", ""}, {"v2.1", ""}}, "@s/p": {{"2.0.0 b", ""}}},
+		"<!-- deps:versions=img=1.2@sha256%3Aabc tag=@sha256%3Adef -->": {"img": {{"1.2", "sha256:abc"}}, "tag": {{"", "sha256:def"}}},
+		"<!-- deps:versions=%zz=1 a=%zz b=1@%zz -->":                    {},
 	} {
 		got := bodyVersions(body)
 		if (got == nil) != (want == nil) || len(got) != len(want) {
@@ -197,5 +204,64 @@ func TestBodyVersions(t *testing.T) {
 				t.Errorf("bodyVersions(%q)[%q] = %v, want %v", body, k, got[k], v)
 			}
 		}
+	}
+}
+
+func TestVersionsMarker(t *testing.T) {
+	u := func(name, version, digest, bucket string) dep.Update {
+		return dep.Update{Dep: dep.Dep{Name: name}, NewVersion: version, NewDigest: digest, Bucket: bucket}
+	}
+	for _, tt := range []struct {
+		ups  []dep.Update
+		want string
+	}{
+		{[]dep.Update{u("a/x", "v1.1", "", "")}, "<!-- deps:versions=a%2Fx=v1.1 -->"},
+		{[]dep.Update{u("img", "1.2", "sha256:abc", "major"), u("img", "1.2", "sha256:abc", "major")}, "<!-- deps:versions=img=1.2@sha256%3Aabc -->"},
+		{[]dep.Update{{Dep: dep.Dep{Name: "Cargo.lock"}, Type: dep.LockFileMaintenance}}, ""},
+	} {
+		if got := versionsMarker(tt.ups); got != tt.want {
+			t.Errorf("versionsMarker(%+v) = %q, want %q", tt.ups, got, tt.want)
+		}
+	}
+}
+
+// Closed PRs match by their versions marker, so custom titles (prTitle), a title template
+// changed since the PR was closed, or a title without the version still suppress exactly the
+// closed targets.
+func TestClosedForCustomTitles(t *testing.T) {
+	const branch = "deps/docker/img"
+	up := func(version, digest string) dep.Update {
+		return dep.Update{Dep: dep.Dep{Manager: "docker", Name: "img", Versioning: "docker"}, Type: dep.Minor, NewVersion: version, NewDigest: digest}
+	}
+	grp := func(title string, ups ...dep.Update) engine.Group {
+		return engine.Group{Branch: branch, Title: title, Updates: ups}
+	}
+	closed := func(title, body string) []platform.PR {
+		return []platform.PR{{Number: 4, Head: branch, Title: title, Body: body}}
+	}
+	sec := up("1.2", "")
+	sec.Advisories = []dep.Advisory{{ID: "GHSA-1"}}
+	tests := []struct {
+		name   string
+		closed []platform.PR
+		grp    engine.Group
+		want   string
+	}{
+		{"same version, other title", closed("Update img", "<!-- deps:versions=img=1.2 -->"), grp("bump img", up("1.2", "")), StatusSkipClosed},
+		{"title without version, next version", closed("Update img", "<!-- deps:versions=img=1.2 -->"), grp("Update img", up("1.3", "")), ""},
+		{"same version, other digest", closed("Update img", "<!-- deps:versions=img=1.2@sha256%3Aa -->"), grp("Update img", up("1.2", "sha256:b")), ""},
+		{"same version and digest", closed("x", "<!-- deps:versions=img=1.2@sha256%3Aa -->"), grp("y", up("1.2", "sha256:a")), StatusSkipClosed},
+		{"no marker: same title", closed("Update img", ""), grp("Update img", up("1.3", "")), StatusSkipClosed},
+		{"no marker: other title", closed("Update img to 1.2", ""), grp("bump img", up("1.2", "")), ""},
+		{"security: closed PR without advisories", closed("Update img", "<!-- deps:versions=img=1.2 -->"), grp("Update img [security]", sec), ""},
+		{"security: closed security PR", closed("Update img [security]", "<!-- deps:versions=img=1.2 -->"), grp("bump img [security]", sec), StatusSkipClosed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, status := closedFor(tt.closed, tt.grp)
+			if status != tt.want || (c != nil) != (tt.want != "") {
+				t.Fatalf("closedFor = %v, %q, want %q", c, status, tt.want)
+			}
+		})
 	}
 }

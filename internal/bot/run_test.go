@@ -50,6 +50,7 @@ type fakeGit struct {
 	tips     []string          // BranchTip branches
 	objects  map[string]string // path -> object id at head; unset = "obj:<path>", "" = missing
 	oidCalls int               // ObjectIDs calls
+	messages []string          // Commit messages
 }
 
 // newTree is the tree fakeGit.WriteTree writes.
@@ -90,7 +91,8 @@ func (g *fakeGit) ObjectIDs(_ context.Context, rev string, paths []string) ([]st
 func (g *fakeGit) WriteTree(context.Context, string, []engine.FileChange) (string, error) {
 	return newTree, fail(g.fail, "WriteTree", "")
 }
-func (g *fakeGit) Commit(context.Context, string, []engine.FileChange, string, string, string) (string, error) {
+func (g *fakeGit) Commit(_ context.Context, _ string, _ []engine.FileChange, msg, _, _ string) (string, error) {
+	g.messages = append(g.messages, msg)
 	if err := fail(g.fail, "Commit", ""); err != nil {
 		return "", err
 	}
@@ -129,6 +131,7 @@ type fakePC struct {
 	created      []string                    // heads
 	metadata     map[int]platform.PRMetadata // SetPRMetadata calls by PR number
 	bodies       []string                    // CreatePR bodies
+	titles       []string                    // CreatePR titles
 	updated      []int
 	recorded     []int // UpdatePR calls that only set the input fingerprint of the listed body
 	closedNow    []int
@@ -166,12 +169,13 @@ func (c *fakePC) GetPR(_ context.Context, n int) (platform.PR, error) {
 	c.got = append(c.got, n)
 	return platform.PR{Number: n, Mergeable: c.mergeable, HeadSHA: c.headSHA}, nil
 }
-func (c *fakePC) CreatePR(_ context.Context, head, _, _, body string) (platform.PR, error) {
+func (c *fakePC) CreatePR(_ context.Context, head, _, title, body string) (platform.PR, error) {
 	if err := fail(c.fail, "CreatePR", head); err != nil {
 		return platform.PR{}, err
 	}
 	c.created = append(c.created, head)
 	c.bodies = append(c.bodies, body)
+	c.titles = append(c.titles, title)
 	return platform.PR{Number: 100 + len(c.created), Head: head}, nil
 }
 func (c *fakePC) UpdatePR(_ context.Context, n int, _, body string) error {

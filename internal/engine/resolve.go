@@ -521,7 +521,8 @@ func readLocks(root string, managers []manager.Manager, found [][]string, ex []e
 
 // maintenanceUpdates returns one lock file maintenance update (lockFileMaintenance) per lock
 // root of each manager.LockMaintainer, over the files it extracted without error. It carries
-// the lockFileMaintenance schedule and the top-level automerge settings; rules do not apply.
+// the lockFileMaintenance schedule, the top-level automerge settings and PR templates (the
+// title stays fixed, see GroupUpdates); rules do not apply.
 func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Manager, found [][]string, ex []extracted) []dep.Update {
 	var out []dep.Update
 	for i, part := range partition(found, ex) {
@@ -544,6 +545,7 @@ func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Mana
 				Automerge:         cfg.Automerge,
 				AutomergeStrategy: cmp.Or(cfg.AutomergeStrategy, config.StrategyAuto),
 				AutomergeType:     cmp.Or(cfg.AutomergeType, config.AutomergeTypePR),
+				Templates:         cfg.PRTemplates(),
 				Labels:            cfg.Labels,
 				Reviewers:         cfg.Reviewers,
 				Assignees:         cfg.Assignees,
@@ -1105,7 +1107,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 			up.Dep.ExtractVersion = prefixExpr // release notes look up the per-action tags
 		}
 		kp := r.pol.of(up.Type)
-		up.CommitType, up.CommitScope = kp.CommitType, kp.CommitScope
+		up.CommitType, up.CommitScope, up.Templates = kp.CommitType, kp.CommitScope, kp.Templates
 		up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
 		up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
 		if len(up.Advisories) == 0 {

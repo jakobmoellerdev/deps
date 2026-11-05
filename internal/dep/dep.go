@@ -4,6 +4,7 @@ package dep
 import (
 	"strings"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/prtemplate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
 
@@ -134,6 +135,9 @@ type Update struct {
 	NewChecksum   string        // "" unless Dep.ChecksumSource is set and the version changes
 	CommitType    string        // policy conventional-commit type; "" = unset (titles use chore(deps))
 	CommitScope   string        // policy commit scope, "" = no scope; only used when CommitType is set
+	// Templates are the PR title, header and footer templates of the policy (prTitle,
+	// prHeader, prFooter); a group's PR uses its first update's.
+	Templates prtemplate.Set
 	// Bucket is the PR bucket of the update among the dep's updates (separateMajorMinor and
 	// friends): "" for the only bucket or the non-major one, "major", "v<N>" (one per major
 	// with separateMultipleMajor), "minor" or "patch" (separateMinorPatch). A non-empty bucket

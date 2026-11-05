@@ -115,6 +115,9 @@ customDatasources:
 - [`labels`](#labels)
 - [`reviewers`](#reviewers)
 - [`assignees`](#assignees)
+- [`prTitle`](#prtitle)
+- [`prHeader`](#prheader)
+- [`prFooter`](#prfooter)
 - [`rebaseLabel`](#rebaselabel)
 - [`stopUpdatingLabel`](#stopupdatinglabel)
 - [`dependencyDashboard`](#dependencydashboard)
@@ -153,6 +156,9 @@ customDatasources:
   - [`rules[].addLabels`](#rulesaddlabels)
   - [`rules[].reviewers`](#rulesreviewers)
   - [`rules[].assignees`](#rulesassignees)
+  - [`rules[].prTitle`](#rulesprtitle)
+  - [`rules[].prHeader`](#rulesprheader)
+  - [`rules[].prFooter`](#rulesprfooter)
 - [`custom`](#custom)
   - [`custom[].files`](#customfiles)
   - [`custom[].match`](#custommatch)
@@ -671,6 +677,61 @@ Users assigned to new update PRs. Rules replace them.
 
 - **Type:** list of strings
 
+## `prTitle`
+
+Go text/template of PR titles and commit subjects over the fields .Type, .Scope, .Name, .Group, .From, .To, .UpdateType, .Count and .IsSecurity, e.g. `{{.Type}}({{.Scope}}): bump {{.Name}} to {{.To}}`; empty means the built-in titles. Security PRs keep the ' [security]' suffix. Rules override it.
+
+- **Type:** string
+
+The title of each update PR and the subject of its commit, as a [Go `text/template`](https://pkg.go.dev/text/template) over these fields of the PR:
+
+| Field | Value | Renovate |
+|---|---|---|
+| `.Type` | conventional commit type: `fix` for production deps, else `chore`, or [`rules[].commitType`](#rulescommittype); always `fix` for security updates | `semanticCommitType` |
+| `.Scope` | commit scope, `deps` or [`rules[].commitScope`](#rulescommitscope); `""` = none | `semanticCommitScope` |
+| `.Name` | the dependency, or the group name when the PR updates several (`lock file maintenance` for that PR) | `depName` |
+| `.Group` | the policy group, or the shared version definition (`jackson.version`) of the PR; `""` = none | `groupName` |
+| `.From` | the current version (the locked one for lockfile-only updates), when every update has the same; else `""` | `currentVersion` |
+| `.To` | the new version, when every update has the same; else `""` | `newVersion` |
+| `.UpdateType` | `major`, `minor`, `patch`, `digest`, `pin` or `lockFileMaintenance`, when every update has the same; else `""` | `updateType` |
+| `.Count` | the number of dependencies | `upgrades.length` |
+| `.IsSecurity` | some update fixes advisories | `isVulnerabilityAlert` |
+
+- Empty (the default) means the built-in titles described under [`rules[].group`](#rulesgroup).
+- The title is one line: runs of white space, newlines included, become one space.
+- Titles of PRs with security updates end with ` [security]`; deps appends it unless the template already does.
+- The lock file maintenance PR keeps its title (`chore(deps): lock file maintenance`); `prHeader` and `prFooter` apply to it.
+- A group's PR takes the templates of its first update (as for `commitType` and `commitScope`); its type is `fix` when any member's is.
+- [`rules[].prTitle`](#rulesprtitle), `prHeader` and `prFooter` override the templates per dep or, with `updateTypes`, per update type; `''` resets them to the built-in title, or no header or footer.
+- **Validation.** Templates are parsed when the config is loaded: every field reference must name a field above, also in branches that are not taken (`rules[0].prTitle: line 1, column 13: unknown field .DepName (fields: .Type, ...)`), and each template is executed on sample data (a single dependency, and a security group without versions or scope), where a title must not render empty. Errors name the config line and the line and column in the template; the built-in functions of `text/template` (`printf`, `eq`, `and`, `or`, `slice`, ...) are available.
+- **Existing PRs.** The content fingerprint covers the file contents only, so a changed template rewrites the title and body of an open PR the next time its content changes, not before. Closed PRs are matched by the `deps:versions` marker in their body, not by title, so a changed template does not reopen closed updates (see [closed PRs](../design.md#pr-lifecycle-deps-run)).
+
+```yaml
+prTitle: '{{.Type}}{{with .Scope}}({{.}}){{end}}: bump {{.Name}}{{with .To}} to {{.}}{{end}}'
+prHeader: |
+  This PR updates {{if eq .Count 1}}{{.Name}}{{else}}{{.Count}} dependencies of {{.Name}}{{end}}.
+prFooter: '{{if .IsSecurity}}**Security update: please review soon.**{{end}}'
+rules:
+  - manager: github-actions
+    prTitle: 'ci: bump {{.Name}} from {{.From}} to {{.To}}'
+```
+
+## `prHeader`
+
+Go text/template (the fields of prTitle) rendered at the top of update PR bodies; empty means none. Rules override it.
+
+- **Type:** string
+
+Rendered above the update table of every update PR body, with the fields of [`prTitle`](#prtitle); leading and trailing white space is trimmed, and an empty result adds nothing. Use it for review instructions or links. The marker comments and the rebase checkbox stay deps'.
+
+## `prFooter`
+
+Go text/template (the fields of prTitle) rendered at the end of update PR bodies, above the rebase checkbox; empty means none. Rules override it.
+
+- **Type:** string
+
+Rendered below the release notes, above the rule and the rebase checkbox, with the fields of [`prTitle`](#prtitle); trimmed like [`prHeader`](#prheader).
+
 ## `rebaseLabel`
 
 Label that makes the next run rebuild an update PR's branch on the current base, like ticking its rebase checkbox (bypassing the schedule and discarding commits by others); deps removes the label afterwards.
@@ -749,7 +810,7 @@ A rule **matches** a dep when every selector it sets matches. The selectors are 
 3. **Built-in monorepo groups** set `group: <name> monorepo` (unless [`monorepos: false`](#monorepos)).
 4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.
 5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
-6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `automerge` and `automergeStrategy` from the policy of its type. Security updates take only `securityGroup`, the commit scope and the automerge settings.
+6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge` and `automergeStrategy` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates and the automerge settings.
 
 `updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules and the resulting policy of a dep.
 
@@ -961,9 +1022,9 @@ Group name: all deps with the same group share one PR.
 - **Type:** string
 
 - **Groups.** All non-security updates whose policy has the same `group` share a branch `<prefix>group/<slug(group)>` and one PR. The title is `<type>(<scope>): update <group> (<n> dependencies)`, or `update <group> to <v>` when every member moves to one version.
-- **Single deps.** Every other update gets the branch `<prefix><manager>/<slug(name)>`, with titles `<p> update <name> to <ver>`, `<p> pin <name> to <sha7>` and `<p> update <name> digest to <sha7>`.
+- **Single deps.** Every other update gets the branch `<prefix><manager>/<slug(name)>`, with titles `<p> update <name> to <ver>`, `<p> pin <name> to <sha7>` and `<p> update <name> digest to <sha7>`. [`prTitle`](#prtitle) replaces these built-in titles.
 - `slug` lowercases the name, maps bytes outside `[a-z0-9._-]` to `-`, and collapses and trims `-`.
-- **Commit type in groups.** A group uses `fix` if any member's type is `fix`, else the first member's type. It always uses the first member's scope.
+- **Commit type in groups.** A group uses `fix` if any member's type is `fix`, else the first member's type. It always uses the first member's scope and [PR templates](#prtitle).
 - Built-in [monorepo groups](#monorepos) are overridden by any rule that sets `group`.
 - Security updates are not members (except of a shared version definition, which cannot be split); [`securityGroup`](#rulessecuritygroup) groups them apart.
 
@@ -1065,6 +1126,26 @@ Replaces the reviewers of new PRs of matching deps (user names or team:\<slug>);
 Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates.
 
 - **Type:** list of strings
+
+### `rules[].prTitle`
+
+Overrides the top-level prTitle for matching deps (with updateTypes: for updates of those types); empty string means the built-in titles. A group's PR uses its first update's templates.
+
+- **Type:** string
+
+Overrides the top-level [`prTitle`](#prtitle) for matching deps; `''` restores the built-in titles. `rules[].prHeader` and `rules[].prFooter` work the same, with `''` for none. With `updateTypes` the override applies to updates of those types, so majors can get their own title.
+
+### `rules[].prHeader`
+
+Overrides the top-level prHeader for matching deps; empty string means none.
+
+- **Type:** string
+
+### `rules[].prFooter`
+
+Overrides the top-level prFooter for matching deps; empty string means none.
+
+- **Type:** string
 
 ## `custom`
 
