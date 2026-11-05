@@ -1,6 +1,7 @@
 package piprequirements
 
 import (
+	"bytes"
 	"cmp"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Header is the command in the header of a pip-compile or `uv pip compile` output file.
@@ -92,8 +94,17 @@ func ParseHeader(src []byte) (Header, bool) {
 
 // headerLines returns the leading `#` lines of src, each with its line break.
 func headerLines(src []byte) []string {
+	end := 0
+	for end < len(src) && src[end] == '#' {
+		i := bytes.IndexByte(src[end:], '\n')
+		if i < 0 {
+			end = len(src)
+			break
+		}
+		end += i + 1
+	}
 	var out []string
-	for rest := string(src); strings.HasPrefix(rest, "#"); {
+	for rest := string(src[:end]); rest != ""; {
 		l, r, ok := strings.Cut(rest, "\n")
 		if ok {
 			l += "\n"
@@ -285,40 +296,82 @@ const (
 // References returns the files and local projects src names, in file order.
 func References(src []byte) []Reference {
 	var out []Reference
-	for l := range strings.SplitSeq(string(src), "\n") {
-		if i := strings.Index(l, " #"); i >= 0 {
-			l = l[:i]
+	for len(src) > 0 {
+		line := src
+		if i := bytes.IndexByte(src, '\n'); i >= 0 {
+			line, src = src[:i], src[i+1:]
+		} else {
+			src = nil
 		}
-		f := strings.Fields(l)
-		if len(f) == 0 || strings.HasPrefix(f[0], "#") {
-			continue
+		if mayReference(line) {
+			out = appendReference(out, string(line))
 		}
-		opt, val := f[0], ""
-		switch o, v, inline := strings.Cut(opt, "="); {
-		case inline && strings.HasPrefix(o, "--"):
-			opt, val = o, v
-		case len(opt) > 2 && opt[0] == '-' && opt[1] != '-': // -rfile
-			opt, val = opt[:2], opt[2:]
-		case len(f) > 1:
-			val = f[1]
+	}
+	return out
+}
+
+// mayReference reports whether line can name a Reference: its first word starts with
+// `-r`, `-c`, `-e`, `--r`, `--c`, `--e` or `.`. Lines with a non-ASCII byte before the first
+// word take the full path, which splits words on Unicode spaces.
+func mayReference(line []byte) bool {
+	i := 0
+	for i < len(line) && asciiSpace(line[i]) {
+		i++
+	}
+	if i == len(line) {
+		return false
+	}
+	switch c := line[i]; {
+	case c == '.' || c >= utf8.RuneSelf:
+		return true
+	case c != '-':
+		return false
+	}
+	i++
+	if i < len(line) && line[i] == '-' {
+		i++
+	}
+	return i < len(line) && (line[i] == 'r' || line[i] == 'c' || line[i] == 'e')
+}
+
+func asciiSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\r' || c == '\v' || c == '\f'
+}
+
+// appendReference appends the Reference the requirements line l names, if any.
+func appendReference(out []Reference, l string) []Reference {
+	if i := strings.Index(l, " #"); i >= 0 {
+		l = l[:i]
+	}
+	f := strings.Fields(l)
+	if len(f) == 0 || strings.HasPrefix(f[0], "#") {
+		return out
+	}
+	opt, val := f[0], ""
+	switch o, v, inline := strings.Cut(opt, "="); {
+	case inline && strings.HasPrefix(o, "--"):
+		opt, val = o, v
+	case len(opt) > 2 && opt[0] == '-' && opt[1] != '-': // -rfile
+		opt, val = opt[:2], opt[2:]
+	case len(f) > 1:
+		val = f[1]
+	}
+	switch opt {
+	case "-r", "--requirement":
+		if val != "" {
+			out = append(out, Reference{RefRequirement, val})
 		}
-		switch opt {
-		case "-r", "--requirement":
-			if val != "" {
-				out = append(out, Reference{RefRequirement, val})
-			}
-		case "-c", "--constraint":
-			if val != "" {
-				out = append(out, Reference{RefConstraint, val})
-			}
-		case "-e", "--editable":
-			if localPath(val) {
-				out = append(out, Reference{RefLocal, val})
-			}
-		default:
-			if localPath(opt) {
-				out = append(out, Reference{RefLocal, opt})
-			}
+	case "-c", "--constraint":
+		if val != "" {
+			out = append(out, Reference{RefConstraint, val})
+		}
+	case "-e", "--editable":
+		if localPath(val) {
+			out = append(out, Reference{RefLocal, val})
+		}
+	default:
+		if localPath(opt) {
+			out = append(out, Reference{RefLocal, opt})
 		}
 	}
 	return out
