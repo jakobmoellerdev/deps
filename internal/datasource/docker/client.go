@@ -31,8 +31,9 @@ import (
 // otherwise the token GET, with the username and password or anonymously.
 //
 // Tokens are cached per registry and scope for the whole run, so one exchange serves every
-// request of a repository and concurrent callers share it. A cached token the registry rejects
-// (expired) is fetched anew once.
+// request of a repository and concurrent callers share it: once the registry's challenge scheme
+// is known, a request whose credential is being fetched waits for it instead of paying a 401 of
+// its own. A cached token the registry rejects (expired) is fetched anew once.
 type client struct {
 	http     *http.Client
 	header   http.Header // added to every request (User-Agent)
@@ -78,7 +79,10 @@ func (c *client) do(req *http.Request, r *repository) (*http.Response, error) {
 	maps.Copy(req.Header, c.header)
 	scope := "repository:" + r.path + ":pull"
 	key := c.tokenKey(r.registry, scope)
-	used := c.cached(r, key)
+	used, err := c.cached(req.Context(), r, key)
+	if err != nil {
+		return nil, fmt.Errorf("%s %q: %w", req.Method, req.URL, err)
+	}
 	if used != nil {
 		req.Header.Set("Authorization", used.auth)
 	}
@@ -155,11 +159,14 @@ func invalidToken(resp *http.Response) bool {
 // credentials (`auths` key ghcr.io/org) may differ between repositories of a registry.
 func (c *client) basicKey(r *repository) string { return r.registry + " basic " + r.path }
 
-// cached returns the fetched credential of r that the registry's last challenge scheme asks
-// for; nil when there is none yet.
-func (c *client) cached(r *repository, bearerKey string) *tokenEntry {
+// cached returns the credential of r that the registry's last challenge scheme asks for, waiting
+// while another request fetches it, so that concurrent requests of a repository share that
+// request's 401 rather than each sending their own (the challenger answers those only for
+// challengeHosts). Nil when the scheme is not known yet (the request then discovers the
+// challenge), there is no credential, or its fetch failed (the request gets the challenge
+// itself and fetches anew); the error is ctx's when it is done first.
+func (c *client) cached(ctx context.Context, r *repository, bearerKey string) (*tokenEntry, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	var e *tokenEntry
 	switch c.schemes[r.registry] {
 	case schemeBasic:
@@ -167,17 +174,19 @@ func (c *client) cached(r *repository, bearerKey string) *tokenEntry {
 	case schemeBearer:
 		e = c.tokens[bearerKey]
 	}
+	c.mu.Unlock()
 	if e == nil {
-		return nil
+		return nil, nil
 	}
 	select {
 	case <-e.done:
-		if e.err == nil {
-			return e
-		}
-	default:
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	return nil
+	if e.err != nil {
+		e = nil
+	}
+	return e, nil
 }
 
 // fetch returns the credential of key, fetching it with get unless another caller does or has.

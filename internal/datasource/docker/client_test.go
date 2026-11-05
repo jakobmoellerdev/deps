@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
@@ -112,6 +113,83 @@ func TestBearerAnonymous(t *testing.T) {
 	}
 	if query.Get("service") != "test-registry" || strings.Join(query["scope"], " ") != "repository:img:pull" {
 		t.Errorf("token query = %v", query)
+	}
+}
+
+// TestBearerConcurrentWait checks that once the registry's scheme is known, concurrent requests
+// of a repository wait for the token the first one fetches instead of each paying a 401 (on
+// registries the challenger does not answer for), that a waiter gives up when its context is
+// done, and that after a failed fetch the waiters get the challenge and a token themselves.
+func TestBearerConcurrentWait(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint("fail=", fail), func(t *testing.T) {
+			var slow atomic.Bool
+			entered, release := make(chan struct{}, 1), make(chan struct{})
+			ts := newTokenServer(t, func(*http.Request) (int, string) {
+				if slow.CompareAndSwap(true, false) {
+					entered <- struct{}{}
+					<-release
+					if fail {
+						return http.StatusUnauthorized, ""
+					}
+				}
+				return http.StatusOK, "t"
+			})
+			s := newSource(ts.srv.Client(), nil, anon)
+			// Another repository's challenge makes the registry's scheme known.
+			if _, err := s.manifestRequest(t.Context(), s.repository(ts.host+"/other"), http.MethodHead, "1.0"); !errors.Is(err, errNotFound) {
+				t.Fatalf("other repository: %v", err)
+			}
+			tokens, denied := ts.tokens.Load(), ts.denied.Load()
+			r := s.repository(ts.host + "/img")
+			head := func(ctx context.Context) error {
+				resp, err := s.manifestRequest(ctx, r, http.MethodHead, "1.0")
+				if err == nil {
+					resp.Body.Close()
+				}
+				return err
+			}
+
+			slow.Store(true)
+			first := make(chan error, 1)
+			go func() { first <- head(t.Context()) }()
+			<-entered // the first request's token fetch is in flight
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			if err := head(ctx); !errors.Is(err, context.Canceled) {
+				t.Errorf("canceled waiter err = %v", err)
+			}
+			const n = 8
+			var wg sync.WaitGroup
+			for range n - 1 {
+				wg.Go(func() {
+					if err := head(t.Context()); err != nil {
+						t.Error(err)
+					}
+				})
+			}
+			time.Sleep(50 * time.Millisecond) // the others reach the wait
+			close(release)
+			wg.Wait()
+			err := <-first
+
+			gotTokens, gotDenied := ts.tokens.Load()-tokens, ts.denied.Load()-denied
+			if fail {
+				if err == nil {
+					t.Error("first request succeeded despite its token refusal")
+				}
+				if gotTokens != 2 {
+					t.Errorf("token requests = %d, want 2", gotTokens)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotTokens != 1 || gotDenied != 1 {
+				t.Errorf("token requests = %d, 401s = %d; want 1 each for %d concurrent requests", gotTokens, gotDenied, n)
+			}
+		})
 	}
 }
 
