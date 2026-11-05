@@ -14,6 +14,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/imageref"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -34,8 +35,6 @@ var (
 	dockerfileRe    = regexp.MustCompile(`(^|/)(Dockerfile|Containerfile)(\.[^/]*)?$`)
 	dockerfileExtRe = regexp.MustCompile(`(^|/)[^/]*\.(Dockerfile|Containerfile)$`)
 	composeRe       = regexp.MustCompile(`(^|/)([^/]*\.)?(docker-)?compose(\.[^/]*)?\.ya?ml$`)
-	workflowRe      = regexp.MustCompile(`(^|/)(workflow-templates|\.(github|gitea|forgejo)/(workflows|actions))/.+\.ya?ml$`)
-	actionRe        = regexp.MustCompile(`(^|/)action\.ya?ml$`)
 	yamlRe          = regexp.MustCompile(`\.ya?ml$`)
 )
 
@@ -67,7 +66,7 @@ func (dockerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep,
 	case composeRe.MatchString(file):
 		x := extractor{file: file, src: src, lines: lineStarts(src)}
 		return x.deps, x.yaml(x.compose)
-	case workflowRe.MatchString(file) || actionRe.MatchString(file):
+	case actions.IsWorkflowFile(file):
 		x := extractor{file: file, src: src, lines: lineStarts(src)}
 		return x.deps, x.yaml(x.workflow)
 	}

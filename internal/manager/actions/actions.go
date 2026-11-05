@@ -33,6 +33,12 @@ func (actionsManager) Name() string { return Name }
 
 // Match reports whether the slash path is a workflow or action file.
 func (actionsManager) Match(path string) bool {
+	return IsWorkflowFile(path)
+}
+
+// IsWorkflowFile reports whether path is a GitHub, Gitea or Forgejo
+// workflow, workflow template or composite action file.
+func IsWorkflowFile(path string) bool {
 	return workflowRe.MatchString(path) || actionRe.MatchString(path)
 }
 
