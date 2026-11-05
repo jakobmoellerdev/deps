@@ -37,7 +37,7 @@ deps plan                                  # preview every update as a diff, no 
 
 Also packaged for <img src="https://cdn.simpleicons.org/debian" height="16" alt=""> <img src="https://cdn.simpleicons.org/ubuntu" height="16" alt=""> [Debian/Ubuntu (`apt`)](docs/install.md#packages), <img src="https://cdn.simpleicons.org/archlinux" height="16" alt=""> [Arch Linux (`pacman`)](docs/install.md#packages) and <img src="https://cdn.simpleicons.org/alpinelinux" height="16" alt=""> [Alpine (`apk`)](docs/install.md#packages); checksums and Sigstore verification: [install](docs/install.md).
 
-**Coming from Renovate?** Disable Renovate, add `branchPrefix: renovate/` to `.deps.yaml`, then `deps run --dry-run` to see which PRs deps would open and which old ones it would close. Option mapping: [migrating from Renovate](docs/migrating-from-renovate.md).
+**Coming from Renovate?** Disable Renovate, add `branchPrefix: renovate/` to `.deps.yaml`, then `deps run --dry-run` to see which PRs deps would open. Once a real run completes without errors, deps closes Renovate's old PRs under that prefix. Option mapping: [migrating from Renovate](docs/migrating-from-renovate.md).
 
 ## Getting started
 
@@ -141,7 +141,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 | <img src="https://cdn.simpleicons.org/docker" width="20" alt=""> | **Containers** | Dockerfiles, Compose, workflow containers, Kubernetes manifests, Helm values | |
 | <img src="https://cdn.simpleicons.org/kubernetes" width="20" alt=""> | **Kubernetes** | Kustomize images, charts and remote refs | |
 | <img src="https://cdn.simpleicons.org/helm/_/white" width="20" alt=""> | **Helm** | `Chart.yaml`, helmfiles, chart custom resources (classic repos and OCI) | `Chart.lock` |
-| <img src="https://cdn.simpleicons.org/nodedotjs" width="20" alt=""> | **Node.js**<br>npm, pnpm, Yarn | `package.json` (deps, `packageManager`, `engines`, `volta`), `.nvmrc`, `.node-version` | `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` |
+| <img src="https://cdn.simpleicons.org/nodedotjs" width="20" alt=""> | **Node.js**<br>npm, pnpm, Yarn, Bun | `package.json` (deps, `packageManager`, `engines`, `volta`), `.nvmrc`, `.node-version` | `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` |
 | <img src="https://cdn.simpleicons.org/python" width="20" alt=""> | **Python**<br>pip, pip-tools, uv, Poetry, pdm, Pipenv | `requirements*.txt` and pip-compile inputs, `pyproject.toml` (PEP 621/735), `Pipfile` | `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, pip-compile outputs |
 | <img src="https://cdn.simpleicons.org/ruby" width="20" alt=""> | **Ruby**<br>Bundler | `Gemfile`/`gems.rb`, `*.gemspec`, Ruby version (`ruby` directive, `.ruby-version`, asdf/mise) | `Gemfile.lock`/`gems.locked` (incl. `RUBY VERSION`) |
 | <img src="https://cdn.simpleicons.org/rust/_/white" width="20" alt=""> | **Rust** | `Cargo.toml`, with well-known crate monorepos grouped | `Cargo.lock` |
