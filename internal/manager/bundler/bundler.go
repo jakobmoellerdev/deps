@@ -77,13 +77,14 @@ func (bundlerManager) Match(p string) bool {
 func isGemspec(p string) bool { return strings.HasSuffix(p, ".gemspec") }
 
 // Extract returns one Dep per `gem` statement and one for the `ruby` directive, in file order.
-// Range is the gem's requirements joined with ", " (`~> 7.1, >= 7.1.2`; `>= 0` without any);
+// Range is the gem's requirement strings as written, from the first quote to the last
+// (`"~> 7.1", ">= 7.1.2"`, as Renovate's currentValue; RefSpan its bytes), Constraint the
+// requirements joined with ", " (`~> 7.1, >= 7.1.2`), which the ruby versioning matches; a gem
+// without any has Range `>= 0` and is never rewritten (RangeFixed), only moved in Gemfile.lock.
 // Version is the version of its first lower bound, "" without one (ReadLocks takes the locked
-// version then). A single requirement with a lower bound (`2.241.2`, `= 1.2`, `~> 7.1`,
-// `>= 1.2`, `> 1.2`) gets a RefSpan on its version, so the version is rewritten; any other
-// requirement list is never rewritten (RangeFixed), only moved in Gemfile.lock. The `ruby`
-// directive is the dep RubyName of RubyDatasource with its requirements read the same way. A
-// gemspec gets extractGemspec's deps.
+// version then). Edits and NewRange rewrite the requirements per rangeStrategy (reqList.rewrite).
+// The `ruby` directive is the dep RubyName of RubyDatasource with its requirements read the
+// same way. A gemspec gets extractGemspec's deps.
 func (bundlerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	if isGemspec(file) {
 		return extractGemspec(file, src), nil
@@ -105,12 +106,12 @@ func (bundlerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep
 		case g.nonLiteral:
 			d.Skip = skipNonLiteral
 		default:
-			setRequirements(&d, g.reqs)
+			setRequirements(&d, src, g.reqs)
 		}
 		deps = append(deps, d)
 	}
 	if r := f.ruby; r != nil {
-		d := rubyDep(file, r)
+		d := rubyDep(file, src, r)
 		i, _ := slices.BinarySearchFunc(deps, d.Line, func(g dep.Dep, line int) int { return g.Line - line })
 		deps = slices.Insert(deps, i, d)
 	}
@@ -131,7 +132,7 @@ func extractGemspec(file string, src []byte) []dep.Dep {
 		if g.nonLiteral {
 			d.Skip = skipNonLiteral
 		} else {
-			setRequirements(&d, g.reqs)
+			setRequirements(&d, src, g.reqs)
 		}
 		deps = append(deps, d)
 	}
@@ -147,8 +148,8 @@ func extractGemspec(file string, src []byte) []dep.Dep {
 	return deps
 }
 
-// rubyDep is the dep of the `ruby` directive r of file.
-func rubyDep(file string, r *rubyDecl) dep.Dep {
+// rubyDep is the dep of the `ruby` directive r of file (src).
+func rubyDep(file string, src []byte, r *rubyDecl) dep.Dep {
 	d := dep.Dep{Manager: Name, Datasource: RubyDatasource, Versioning: Versioning, DepType: DepTypeRuby, File: file, Line: r.line, Name: RubyName}
 	switch {
 	case r.skip != "":
@@ -158,7 +159,7 @@ func rubyDep(file string, r *rubyDecl) dep.Dep {
 	case len(r.reqs) == 0:
 		d.Skip = skipRubyNoFloor
 	default:
-		setRequirements(&d, r.reqs)
+		setRequirements(&d, src, r.reqs)
 		if d.Skip == "" && d.Version == "" {
 			d.Skip = skipRubyNoFloor
 		}
@@ -166,17 +167,17 @@ func rubyDep(file string, r *rubyDecl) dep.Dep {
 	return d
 }
 
-// floorOps are the operators of requirements with a lower bound, whose version a bump raises.
+// floorOps are the operators of requirements with a lower bound, whose version is the dep's.
 var floorOps = map[string]bool{"": true, "=": true, "~>": true, ">=": true, ">": true}
 
-// setRequirements sets the Range, Version and RefSpan of d from its requirement strings.
-func setRequirements(d *dep.Dep, reqs []token) {
+// setRequirements sets the Range, Constraint, Version and RefSpan of d from its requirement
+// strings in src.
+func setRequirements(d *dep.Dep, src []byte, reqs []token) {
 	if len(reqs) == 0 {
 		d.Range, d.RangeFixed = anyVersion, true
 		return
 	}
 	parts := make([]string, len(reqs))
-	var floor *versioning.RubyClause
 	for i, r := range reqs {
 		c, err := versioning.ParseRubyRequirement(r.text)
 		if err != nil {
@@ -184,35 +185,48 @@ func setRequirements(d *dep.Dep, reqs []token) {
 			return
 		}
 		parts[i] = strings.TrimSpace(r.text)
-		if floor == nil && floorOps[c.Op] {
-			floor = &c
-			if len(reqs) == 1 {
-				d.RefSpan = dep.Span{Start: r.vs + c.Off, End: r.vs + c.Off + len(c.Version)}
-			}
+		if d.Version == "" && floorOps[c.Op] {
+			d.Version = c.Version
 		}
 	}
-	d.Range = strings.Join(parts, ", ")
-	if floor != nil {
-		d.Version = floor.Version
-	}
-	d.RangeFixed = d.RefSpan == (dep.Span{})
+	first, last := reqs[0], reqs[len(reqs)-1]
+	d.Range, d.Constraint = string(src[first.start:last.end]), strings.Join(parts, ", ")
+	d.RefSpan = dep.Span{Start: first.start, End: last.end}
 }
 
-// Edits replaces the requirement's version: an exact one (`2.241.2`, `= 2.241.2`) with the new
-// version, a pessimistic or lower bound (`~> 7.1`, `>= 1.2`) with the new version at its
-// precision (versioning.FitRuby: `~> 7.1` → `~> 8.0` for 8.0.1).
+// Edits rewrites the requirement strings for the new version under u.RangeStrategy
+// (reqList.rewrite): only the strings that change, and of those only the version when the
+// operator stays (`~> 7.1` → `~> 8.0` for 8.0.1).
 func (bundlerManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
-	if d.RangeFixed || d.RefSpan == (dep.Span{}) {
-		return nil, fmt.Errorf("requirement %q is not rewritten", d.Range)
+	l := parseReqs(d.Range)
+	if d.RangeFixed || l == nil {
+		return nil, fmt.Errorf("requirement %s is not rewritten", d.Range)
 	}
-	c, err := versioning.ParseRubyRequirement(d.Range)
+	edits, ok := l.rewrite(d.Range, u.NewVersion, u.RangeStrategy)
+	if !ok {
+		return nil, fmt.Errorf("requirement %s cannot be updated to admit %s", d.Range, u.NewVersion)
+	}
+	for i := range edits {
+		edits[i].Start += d.RefSpan.Start
+		edits[i].End += d.RefSpan.Start
+	}
+	return edits, nil
+}
+
+// NewRange implements manager.RangeRewriter (reqList.rewrite).
+func (bundlerManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	l := parseReqs(d.Range)
+	if d.RangeFixed || l == nil {
+		return "", false
+	}
+	edits, ok := l.rewrite(d.Range, v, strategy)
+	if !ok {
+		return "", false
+	}
+	out, err := patch.Apply([]byte(d.Range), edits)
 	if err != nil {
-		return nil, err
+		return "", false
 	}
-	v := u.NewVersion
-	if c.Op != "" && c.Op != "=" {
-		v = versioning.FitRuby(d.Version, v)
-	}
-	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: v}}, nil
+	return string(out), true
 }

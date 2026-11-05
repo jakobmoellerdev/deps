@@ -24,6 +24,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
@@ -858,7 +859,8 @@ type resolver struct {
 
 // autoRange is what rangeStrategy auto means per manager (Renovate's defaults): replace for
 // terraform and terragrunt, update-lockfile for npm, cargo and any other manager (widen for
-// npm peerDependencies and `||` ranges, rangeStrategy).
+// npm peerDependencies and `||` ranges, replace for the dependencies of a bundler gemspec,
+// rangeStrategy).
 var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace}
 
 // rangeStrategy is the effective rangeStrategy of the range dep: auto resolved per manager,
@@ -869,8 +871,14 @@ func (r *resolver) rangeStrategy() string {
 	s := r.pol.pre.RangeStrategy
 	if s == config.RangeAuto {
 		s = cmp.Or(autoRange[d.Manager], config.RangeUpdateLockfile)
-		if d.Manager == npmManager && (d.DepType == "peerDependencies" || strings.Contains(d.Range, "||")) {
+		switch {
+		case d.Manager == npmManager && (d.DepType == "peerDependencies" || strings.Contains(d.Range, "||")):
 			s = config.RangeWiden
+		case d.Manager == bundler.Name && (d.DepType == bundler.DepTypeRuntime || d.DepType == bundler.DepTypeDevelopment):
+			// A gemspec states the versions a gem supports: its users' Gemfile.lock, not the
+			// gem's own, picks one, so a new version only matters when the requirements
+			// exclude it.
+			s = config.RangeReplace
 		}
 	}
 	if (s == config.RangeWiden || s == config.RangePin) && (r.rewriter == nil || d.RangeFixed) {

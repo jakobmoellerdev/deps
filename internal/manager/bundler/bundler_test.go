@@ -20,13 +20,12 @@ func read(t *testing.T, name string) []byte {
 	return b
 }
 
-// describe renders the fields of d that Extract sets, with the bytes RefSpan points at.
+// describe renders the fields of d that Extract sets; RefSpan must point at Range.
 func describe(src []byte, d dep.Dep) string {
-	ref := "-"
-	if d.RefSpan != (dep.Span{}) {
-		ref = string(src[d.RefSpan.Start:d.RefSpan.End])
+	if ref := d.RefSpan; ref != (dep.Span{}) && string(src[ref.Start:ref.End]) != d.Range {
+		return fmt.Sprintf("%d %s: RefSpan %q is not Range %q", d.Line, d.Name, src[ref.Start:ref.End], d.Range)
 	}
-	s := fmt.Sprintf("%d %s %s range=%q version=%q ref=%s source=%s", d.Line, d.Name, d.DepType, d.Range, d.Version, ref, d.Source)
+	s := fmt.Sprintf("%d %s %s range=%s constraint=%q version=%q source=%s", d.Line, d.Name, d.DepType, d.Range, d.Constraint, d.Version, d.Source)
 	if d.RangeFixed {
 		s += " fixed"
 	}
@@ -54,36 +53,36 @@ func TestMatch(t *testing.T) {
 func TestExtractGemspec(t *testing.T) {
 	for file, want := range map[string][]string{
 		"activesupport.gemspec": {
-			`12 ruby ruby range=">= 3.3.5" version="" ref=- source= skip=` + skipRequiredRuby,
-			`37 i18n runtime range=">= 1.6, < 2" version="1.6" ref=- source= fixed`,
-			`38 tzinfo runtime range="~> 2.0, >= 2.0.5" version="2.0" ref=- source= fixed`,
-			`39 concurrent-ruby runtime range="~> 1.0, >= 1.3.1" version="1.0" ref=- source= fixed`,
-			`40 connection_pool runtime range=">= 2.2.5" version="2.2.5" ref=2.2.5 source=`,
-			`41 minitest runtime range=">= 5.1" version="5.1" ref=5.1 source=`,
-			`42 base64 runtime range=">= 0" version="" ref=- source= fixed`,
-			`43 drb runtime range=">= 0" version="" ref=- source= fixed`,
-			`44 bigdecimal runtime range=">= 0" version="" ref=- source= fixed`,
-			`45 json runtime range=">= 0" version="" ref=- source= fixed`,
-			`46 psych runtime range=">= 4" version="4" ref=4 source=`,
-			`47 logger runtime range=">= 1.4.2" version="1.4.2" ref=1.4.2 source=`,
-			`48 securerandom runtime range=">= 0.3" version="0.3" ref=0.3 source=`,
-			`49 uri runtime range=">= 0.13.1" version="0.13.1" ref=0.13.1 source=`,
-			`50 ractor-dispatch runtime range=">= 0.3.0" version="0.3.0" ref=0.3.0 source=`,
+			`12 ruby ruby range=>= 3.3.5 constraint="" version="" source= skip=` + skipRequiredRuby,
+			`37 i18n runtime range=">= 1.6", "< 2" constraint=">= 1.6, < 2" version="1.6" source=`,
+			`38 tzinfo runtime range="~> 2.0", ">= 2.0.5" constraint="~> 2.0, >= 2.0.5" version="2.0" source=`,
+			`39 concurrent-ruby runtime range="~> 1.0", ">= 1.3.1" constraint="~> 1.0, >= 1.3.1" version="1.0" source=`,
+			`40 connection_pool runtime range=">= 2.2.5" constraint=">= 2.2.5" version="2.2.5" source=`,
+			`41 minitest runtime range=">= 5.1" constraint=">= 5.1" version="5.1" source=`,
+			`42 base64 runtime range=>= 0 constraint="" version="" source= fixed`,
+			`43 drb runtime range=>= 0 constraint="" version="" source= fixed`,
+			`44 bigdecimal runtime range=>= 0 constraint="" version="" source= fixed`,
+			`45 json runtime range=>= 0 constraint="" version="" source= fixed`,
+			`46 psych runtime range=">= 4" constraint=">= 4" version="4" source=`,
+			`47 logger runtime range=">= 1.4.2" constraint=">= 1.4.2" version="1.4.2" source=`,
+			`48 securerandom runtime range=">= 0.3" constraint=">= 0.3" version="0.3" source=`,
+			`49 uri runtime range=">= 0.13.1" constraint=">= 0.13.1" version="0.13.1" source=`,
+			`50 ractor-dispatch runtime range=">= 0.3.0" constraint=">= 0.3.0" version="0.3.0" source=`,
 		},
 		"devise.gemspec": {
-			`28 ruby ruby range=">= 2.7.0" version="" ref=- source= skip=` + skipRequiredRuby,
-			`30 warden runtime range="~> 1.2.3" version="1.2.3" ref=1.2.3 source=`,
-			`31 orm_adapter runtime range="~> 0.1" version="0.1" ref=0.1 source=`,
-			`32 bcrypt runtime range="~> 3.0" version="3.0" ref=3.0 source=`,
-			`33 railties runtime range=">= 7.0" version="7.0" ref=7.0 source=`,
-			`34 responders runtime range=">= 0" version="" ref=- source= fixed`,
+			`28 ruby ruby range=>= 2.7.0 constraint="" version="" source= skip=` + skipRequiredRuby,
+			`30 warden runtime range="~> 1.2.3" constraint="~> 1.2.3" version="1.2.3" source=`,
+			`31 orm_adapter runtime range="~> 0.1" constraint="~> 0.1" version="0.1" source=`,
+			`32 bcrypt runtime range="~> 3.0" constraint="~> 3.0" version="3.0" source=`,
+			`33 railties runtime range=">= 7.0" constraint=">= 7.0" version="7.0" source=`,
+			`34 responders runtime range=>= 0 constraint="" version="" source= fixed`,
 		},
 		"shapes.gemspec": {
-			`3 nokogiri runtime range="~> 1.18" version="1.18" ref=1.18 source=`,
-			`4 rspec development range="~> 3.13" version="3.13" ref=3.13 source=`,
-			`6 faraday runtime range="" version="" ref=- source= skip=` + skipNonLiteral,
-			`7 rack runtime range=">= 2.2, < 4" version="2.2" ref=- source= fixed`,
-			`8 ruby ruby range="" version="" ref=- source= skip=` + skipRequiredRuby,
+			`3 nokogiri runtime range="~> 1.18" constraint="~> 1.18" version="1.18" source=`,
+			`4 rspec development range="~> 3.13" constraint="~> 3.13" version="3.13" source=`,
+			`6 faraday runtime range= constraint="" version="" source= skip=` + skipNonLiteral,
+			`7 rack runtime range=">= 2.2", "< 4" constraint=">= 2.2, < 4" version="2.2" source=`,
+			`8 ruby ruby range= constraint="" version="" source= skip=` + skipRequiredRuby,
 		},
 	} {
 		src := read(t, "testdata/"+file)
@@ -123,13 +122,13 @@ func TestExtractOpenclaw(t *testing.T) {
 		t.Fatalf("deps = %+v", deps)
 	}
 	r, d := deps[0], deps[1]
-	if got, want := describe(src, r), `3 ruby ruby range="4.0.7" version="4.0.7" ref=4.0.7 source=`; got != want {
+	if got, want := describe(src, r), `3 ruby ruby range="4.0.7" constraint="4.0.7" version="4.0.7" source=`; got != want {
 		t.Errorf("ruby = %s\nwant   %s", got, want)
 	}
 	if r.Manager != Name || r.Datasource != RubyDatasource || r.Versioning != "ruby" {
 		t.Errorf("ruby = %+v", r)
 	}
-	if got, want := describe(src, d), `5 fastlane dependencies range="2.241.2" version="2.241.2" ref=2.241.2 source=https://rubygems.org`; got != want {
+	if got, want := describe(src, d), `5 fastlane dependencies range="2.241.2" constraint="2.241.2" version="2.241.2" source=https://rubygems.org`; got != want {
 		t.Errorf("dep = %s\nwant  %s", got, want)
 	}
 	if d.Manager != Name || d.Datasource != "rubygems" || d.Versioning != "ruby" || d.File != "apps/ios/Gemfile" {
@@ -139,19 +138,19 @@ func TestExtractOpenclaw(t *testing.T) {
 
 func TestExtractRuby(t *testing.T) {
 	for src, want := range map[string]string{
-		"ruby \"3.4.7\"\n":                            `1 ruby ruby range="3.4.7" version="3.4.7" ref=3.4.7 source=`,
-		"ruby('~> 3.4.0')\n":                          `1 ruby ruby range="~> 3.4.0" version="3.4.0" ref=3.4.0 source=`,
-		"ruby \">= 3.2\", \"< 5\"\n":                  `1 ruby ruby range=">= 3.2, < 5" version="3.2" ref=- source= fixed`,
-		"ruby \"3.3.0\"\ngem \"a\"\nruby \"3.4.1\"\n": `2 a dependencies range=">= 0" version="" ref=- source= fixed` + "\n" + `3 ruby ruby range="3.4.1" version="3.4.1" ref=3.4.1 source=`,
-		"ruby \"3.4.7\", :engine => \"ruby\", :engine_version => \"3.4.7\"\n": `1 ruby ruby range="3.4.7" version="3.4.7" ref=3.4.7 source=`,
-		"ruby \"3.4.7\", engine: \"jruby\", engine_version: \"9.4.8.0\"\n":    `1 ruby ruby range="" version="" ref=- source= skip=` + skipRubyEngine,
-		"ruby \"3.3.6\", patchlevel: \"108\"\n":                               `1 ruby ruby range="" version="" ref=- source= skip=` + skipRubyPatchlevel,
-		"ruby file: \".tool-versions\"\n":                                     `1 ruby ruby range="" version="" ref=- source= skip=` + skipRubyFile,
-		"ruby File.read(\".ruby-version\").strip\n":                           `1 ruby ruby range="" version="" ref=- source= skip=` + skipNonLiteral,
-		"ruby RUBY_VERSION\n":                                                 `1 ruby ruby range="" version="" ref=- source= skip=` + skipNonLiteral,
-		"ruby \"< 4\"\n":                                                      `1 ruby ruby range="< 4" version="" ref=- source= fixed skip=` + skipRubyNoFloor,
-		"ruby\n":                                                              `1 ruby ruby range="" version="" ref=- source= skip=` + skipRubyNoFloor,
-		"platforms :ruby do\n  gem \"a\"\nend\n":                              `2 a dependencies range=">= 0" version="" ref=- source= fixed`,
+		"ruby \"3.4.7\"\n":                            `1 ruby ruby range="3.4.7" constraint="3.4.7" version="3.4.7" source=`,
+		"ruby('~> 3.4.0')\n":                          `1 ruby ruby range='~> 3.4.0' constraint="~> 3.4.0" version="3.4.0" source=`,
+		"ruby \">= 3.2\", \"< 5\"\n":                  `1 ruby ruby range=">= 3.2", "< 5" constraint=">= 3.2, < 5" version="3.2" source=`,
+		"ruby \"3.3.0\"\ngem \"a\"\nruby \"3.4.1\"\n": `2 a dependencies range=>= 0 constraint="" version="" source= fixed` + "\n" + `3 ruby ruby range="3.4.1" constraint="3.4.1" version="3.4.1" source=`,
+		"ruby \"3.4.7\", :engine => \"ruby\", :engine_version => \"3.4.7\"\n": `1 ruby ruby range="3.4.7" constraint="3.4.7" version="3.4.7" source=`,
+		"ruby \"3.4.7\", engine: \"jruby\", engine_version: \"9.4.8.0\"\n":    `1 ruby ruby range= constraint="" version="" source= skip=` + skipRubyEngine,
+		"ruby \"3.3.6\", patchlevel: \"108\"\n":                               `1 ruby ruby range= constraint="" version="" source= skip=` + skipRubyPatchlevel,
+		"ruby file: \".tool-versions\"\n":                                     `1 ruby ruby range= constraint="" version="" source= skip=` + skipRubyFile,
+		"ruby File.read(\".ruby-version\").strip\n":                           `1 ruby ruby range= constraint="" version="" source= skip=` + skipNonLiteral,
+		"ruby RUBY_VERSION\n":                                                 `1 ruby ruby range= constraint="" version="" source= skip=` + skipNonLiteral,
+		"ruby \"< 4\"\n":                                                      `1 ruby ruby range="< 4" constraint="< 4" version="" source= skip=` + skipRubyNoFloor,
+		"ruby\n":                                                              `1 ruby ruby range= constraint="" version="" source= skip=` + skipRubyNoFloor,
+		"platforms :ruby do\n  gem \"a\"\nend\n":                              `2 a dependencies range=>= 0 constraint="" version="" source= fixed`,
 	} {
 		deps, err := New().Extract("Gemfile", []byte(src), manager.Env{})
 		var got []string
@@ -182,45 +181,45 @@ func TestExtractShapes(t *testing.T) {
 	}
 	const rg = "https://rubygems.org"
 	want := []string{
-		`6 ruby ruby range="" version="" ref=- source= skip=` + skipRubyFile,
-		`10 propshaft dependencies range=">= 0" version="" ref=- source=` + rg + ` fixed`,
-		`11 rails dependencies range="~> 8.1.0" version="8.1.0" ref=8.1.0 source=` + rg,
-		`12 haml-rails dependencies range="~>3.0" version="3.0" ref=3.0 source=` + rg,
-		`13 aws-sdk-s3 dependencies range="~> 1.123" version="1.123" ref=1.123 source=` + rg,
-		`14 fog-core dependencies range="<= 2.6.0" version="" ref=- source=` + rg + ` fixed`,
-		`15 omniauth-cas dependencies range="~> 3.0.0.beta.1" version="3.0.0.beta.1" ref=3.0.0.beta.1 source=` + rg,
-		`16 bootsnap dependencies range=">= 0" version="" ref=- source=` + rg + ` fixed`,
-		`17 fastlane dependencies range="2.241.2" version="2.241.2" ref=2.241.2 source=` + rg,
-		`18 rack dependencies range=">= 2.2.8, < 4" version="2.2.8" ref=- source=` + rg + ` fixed`,
-		`19 nokogiri dependencies range=">= 1.16, < 2" version="1.16" ref=- source=` + rg + ` fixed`,
-		`20 puma dependencies range="= 6.4.2" version="6.4.2" ref=6.4.2 source=` + rg,
-		`21 sidekiq dependencies range=">= 7.0" version="7.0" ref=7.0 source=` + rg,
-		`22 webpush dependencies range="~> 1.1" version="1.1" ref=1.1 source=` + rg,
-		`26 pg dependencies range="" version="" ref=- source=` + rg + ` skip=non-literal requirement`,
-		`27 redis dependencies range="" version="" ref=- source=` + rg + ` skip=non-literal requirement`,
-		`28 foo dependencies range="" version="" ref=- source=` + rg + ` skip=non-literal requirement`,
-		`29 x dependencies range="" version="latest" ref=- source=` + rg + ` skip=unsupported requirement`,
-		`30 debug dependencies range=">= 0" version="" ref=- source=` + rg + ` fixed`,
-		`31 rubocop group range=">= 0" version="" ref=- source=` + rg + ` fixed`,
-		`32 raindrops dependencies range="" version="" ref=- source=` + rg + ` skip=git dependency`,
-		`33 rails-html dependencies range="" version="" ref=- source=` + rg + ` skip=git dependency`,
-		`34 mine dependencies range="" version="" ref=- source=` + rg + ` skip=git dependency`,
-		`35 migrations-core dependencies range="" version="" ref=- source=` + rg + ` skip=path dependency`,
-		`36 private-gem dependencies range="~> 2.0" version="2.0" ref=2.0 source=https://gems.example.com`,
-		`37 env-source dependencies range="" version="" ref=- source= skip=non-literal source`,
-		`38 lt dependencies range="< 2" version="" ref=- source=` + rg + ` fixed`,
-		`45 devise_pam_authenticatable2 group range="~> 9.2" version="9.2" ref=9.2 source=` + rg,
-		`49 rspec-rails group range="~> 7.0" version="7.0" ref=7.0 source=` + rg,
-		`51 byebug group range=">= 0" version="" ref=- source=` + rg + ` fixed`,
-		`56 sidekiq-pro dependencies range="~> 7.3" version="7.3" ref=7.3 source=https://gems.contribsys.com/`,
-		`60 activesupport dependencies range="" version="" ref=- source=` + rg + ` skip=git dependency`,
-		`64 engine dependencies range="" version="" ref=- source=` + rg + ` skip=path dependency`,
-		`68 discourse_dev_assets dependencies range=">= 0" version="" ref=- source=` + rg + ` fixed`,
-		`71 faker group range="~> 2.16" version="2.16" ref=2.16 source=` + rg,
-		`76 rb-fsevent dependencies range=">= 0" version="" ref=- source=` + rg + ` fixed`,
-		`79 heredoc dependencies range="" version="" ref=- source=` + rg + ` skip=non-literal requirement`,
-		`83 last dependencies range="1.0.0" version="1.0.0" ref=1.0.0 source=` + rg,
-		`83 same-line dependencies range="2.0" version="2.0" ref=2.0 source=` + rg,
+		`6 ruby ruby range= constraint="" version="" source= skip=` + skipRubyFile,
+		`10 propshaft dependencies range=>= 0 constraint="" version="" source=` + rg + ` fixed`,
+		`11 rails dependencies range='~> 8.1.0' constraint="~> 8.1.0" version="8.1.0" source=` + rg,
+		`12 haml-rails dependencies range='~>3.0' constraint="~>3.0" version="3.0" source=` + rg,
+		`13 aws-sdk-s3 dependencies range='~> 1.123' constraint="~> 1.123" version="1.123" source=` + rg,
+		`14 fog-core dependencies range='<= 2.6.0' constraint="<= 2.6.0" version="" source=` + rg,
+		`15 omniauth-cas dependencies range='~> 3.0.0.beta.1' constraint="~> 3.0.0.beta.1" version="3.0.0.beta.1" source=` + rg,
+		`16 bootsnap dependencies range=>= 0 constraint="" version="" source=` + rg + ` fixed`,
+		`17 fastlane dependencies range="2.241.2" constraint="2.241.2" version="2.241.2" source=` + rg,
+		`18 rack dependencies range=">= 2.2.8", "< 4" constraint=">= 2.2.8, < 4" version="2.2.8" source=` + rg,
+		`19 nokogiri dependencies range=">= 1.16", "< 2" constraint=">= 1.16, < 2" version="1.16" source=` + rg,
+		`20 puma dependencies range="= 6.4.2" constraint="= 6.4.2" version="6.4.2" source=` + rg,
+		`21 sidekiq dependencies range='>= 7.0' constraint=">= 7.0" version="7.0" source=` + rg,
+		`22 webpush dependencies range='~> 1.1' constraint="~> 1.1" version="1.1" source=` + rg,
+		`26 pg dependencies range= constraint="" version="" source=` + rg + ` skip=non-literal requirement`,
+		`27 redis dependencies range= constraint="" version="" source=` + rg + ` skip=non-literal requirement`,
+		`28 foo dependencies range= constraint="" version="" source=` + rg + ` skip=non-literal requirement`,
+		`29 x dependencies range= constraint="" version="latest" source=` + rg + ` skip=unsupported requirement`,
+		`30 debug dependencies range=>= 0 constraint="" version="" source=` + rg + ` fixed`,
+		`31 rubocop group range=>= 0 constraint="" version="" source=` + rg + ` fixed`,
+		`32 raindrops dependencies range= constraint="" version="" source=` + rg + ` skip=git dependency`,
+		`33 rails-html dependencies range= constraint="" version="" source=` + rg + ` skip=git dependency`,
+		`34 mine dependencies range= constraint="" version="" source=` + rg + ` skip=git dependency`,
+		`35 migrations-core dependencies range= constraint="" version="" source=` + rg + ` skip=path dependency`,
+		`36 private-gem dependencies range="~> 2.0" constraint="~> 2.0" version="2.0" source=https://gems.example.com`,
+		`37 env-source dependencies range= constraint="" version="" source= skip=non-literal source`,
+		`38 lt dependencies range="< 2" constraint="< 2" version="" source=` + rg,
+		`45 devise_pam_authenticatable2 group range='~> 9.2' constraint="~> 9.2" version="9.2" source=` + rg,
+		`49 rspec-rails group range="~> 7.0" constraint="~> 7.0" version="7.0" source=` + rg,
+		`51 byebug group range=>= 0 constraint="" version="" source=` + rg + ` fixed`,
+		`56 sidekiq-pro dependencies range="~> 7.3" constraint="~> 7.3" version="7.3" source=https://gems.contribsys.com/`,
+		`60 activesupport dependencies range= constraint="" version="" source=` + rg + ` skip=git dependency`,
+		`64 engine dependencies range= constraint="" version="" source=` + rg + ` skip=path dependency`,
+		`68 discourse_dev_assets dependencies range=>= 0 constraint="" version="" source=` + rg + ` fixed`,
+		`71 faker group range="~> 2.16" constraint="~> 2.16" version="2.16" source=` + rg,
+		`76 rb-fsevent dependencies range=>= 0 constraint="" version="" source=` + rg + ` fixed`,
+		`79 heredoc dependencies range= constraint="" version="" source=` + rg + ` skip=non-literal requirement`,
+		`83 last dependencies range='1.0.0' constraint="1.0.0" version="1.0.0" source=` + rg,
+		`83 same-line dependencies range="2.0" constraint="2.0" version="2.0" source=` + rg,
 	}
 	var got []string
 	for _, d := range deps {
@@ -257,11 +256,13 @@ func TestExtractOddInput(t *testing.T) {
 		}
 	}
 	deps, _ := New().Extract("Gemfile", []byte("gem \"a\", \"1.0\" \\\n  , require: false\n"), manager.Env{})
-	if len(deps) != 1 || deps[0].Range != "1.0" || deps[0].Line != 1 {
+	if len(deps) != 1 || deps[0].Range != `"1.0"` || deps[0].Line != 1 {
 		t.Errorf("line continuation: %+v", deps)
 	}
 }
 
+// TestEdits rewrites the fixture's requirements under the default strategy (""): versions
+// outside them replace them, versions they admit bump them.
 func TestEdits(t *testing.T) {
 	src := read(t, "testdata/Gemfile")
 	deps, err := New().Extract("Gemfile", src, manager.Env{})
@@ -278,10 +279,14 @@ func TestEdits(t *testing.T) {
 		{"rails", "8.2.1", "gem 'rails', '~> 8.2.1'"},
 		{"haml-rails", "4.1.2", "gem 'haml-rails', '~>4.1'"},
 		{"aws-sdk-s3", "2.0.0", "gem 'aws-sdk-s3', '~> 2.0', require: false"},
+		{"fog-core", "2.7.1", "gem 'fog-core', '<= 2.7.1'"},
 		{"fastlane", "2.242.0", `gem "fastlane", "2.242.0"`},
+		{"rack", "4.1.0", `gem "rack", ">= 4.1.0", "< 5"`},
+		{"nokogiri", "2.1.0", `gem "nokogiri", [">= 2.1", "< 3"]`},
 		{"puma", "7.0.0.1", `gem("puma", "= 7.0.0.1")`},
-		{"sidekiq", "8.0.1", `gem 'sidekiq', '>= 8.0' # comment with "quotes" and gem "fake", "1.0"`},
+		{"sidekiq", "8.0.1", `gem 'sidekiq', '>= 8.0.1' # comment with "quotes" and gem "fake", "1.0"`}, // admitted: bumped
 		{"webpush", "2.0.0.rc1", "    '~> 2.0.0.rc1',"},
+		{"lt", "2.0.3", `gem "lt", "< 3"`},
 		{"sidekiq-pro", "8.0.0", `  gem "sidekiq-pro", "~> 8.0"`},
 	} {
 		d := byName[tt.name]
@@ -302,13 +307,133 @@ func TestEdits(t *testing.T) {
 		if got := strings.Split(string(out), "\n")[i]; got != tt.line {
 			t.Errorf("%s: line = %q, want %q", tt.name, got, tt.line)
 		}
-		if len(out)-len(src) != len(edits[0].New)-len(edits[0].Old) {
-			t.Errorf("%s: more than the version changed", tt.name)
+		grown := 0
+		for _, e := range edits {
+			grown += len(e.New) - len(e.Old)
+		}
+		if len(out)-len(src) != grown {
+			t.Errorf("%s: more than the requirements changed", tt.name)
 		}
 	}
-	for _, name := range []string{"rack", "propshaft", "lt"} {
-		if _, err := New().Edits(dep.Update{Dep: byName[name], NewVersion: "9.0.0"}); err == nil {
-			t.Errorf("%s: a requirement that is never rewritten was edited", name)
+	if _, err := New().Edits(dep.Update{Dep: byName["propshaft"], NewVersion: "9.0.0"}); err == nil {
+		t.Error("propshaft: a gem without requirements was edited")
+	}
+}
+
+// TestRangeStrategies rewrites each shape of requirements under each rangeStrategy, through
+// NewRange and Edits: want is the requirement arguments afterwards, "" when they are not
+// rewritten (unchanged, or not admitting the version).
+func TestRangeStrategies(t *testing.T) {
+	const (
+		bump, replace, lockfile, widen, pin, inRange = "bump", "replace", "update-lockfile", dep.RangeWiden, dep.RangePin, "in-range-only"
+	)
+	for _, tt := range []struct{ reqs, strategy, v, want string }{
+		// An exact version is replaced by a newer one under every strategy; widen cannot widen it.
+		{`"= 1.2.3"`, bump, "1.2.3", ""},
+		{`"= 1.2.3"`, bump, "1.3.0", `"= 1.3.0"`},
+		{`"= 1.2.3"`, replace, "1.3.0", `"= 1.3.0"`},
+		{`"= 1.2.3"`, lockfile, "1.3.0", `"= 1.3.0"`},
+		{`"= 1.2.3"`, widen, "1.3.0", `"= 1.3.0"`},
+		{`"= 1.2.3"`, pin, "1.3.0", `"= 1.3.0"`},
+		{`"= 1.2.3"`, pin, "1.2.3", ""},
+		{`"1.2.3"`, pin, "1.3.0", `"1.3.0"`},
+		{`"1.2.3"`, replace, "2.0", `"2.0"`},
+		// `~>` keeps its precision; a bump below it adds the floor.
+		{`"~> 7.1"`, bump, "7.2.3", `"~> 7.2", ">= 7.2.3"`},
+		{`"~> 7.1"`, bump, "7.2.0", `"~> 7.2"`},
+		{`"~> 7.1"`, bump, "7.1", ""},
+		{`"~> 7.1"`, inRange, "7.1.5", `"~> 7.1", ">= 7.1.5"`},
+		{`"~> 7.1"`, replace, "8.0.1", `"~> 8.0"`},
+		{`"~> 7.1"`, replace, "7.2.3", `"~> 7.2", ">= 7.2.3"`}, // admitted: bumped
+		{`"~> 7.1"`, lockfile, "8.0.1", `"~> 8.0"`},
+		{`"~> 7.1"`, lockfile, "8.0.0.rc1", `"~> 8.0.0.rc1"`},
+		{`"~> 7.1"`, widen, "8.0.1", `">= 7.1", "< 9"`},
+		{`"~> 7.1"`, widen, "10.2.0", `">= 7.1", "< 11"`},
+		{`"~> 7.1"`, pin, "8.0.1", `"= 8.0.1"`},
+		{`"~> 7.1"`, pin, "7.2.3", `"= 7.2.3"`},
+		{`'~>7.1'`, widen, "8.0.1", `'>=7.1', '<9'`},
+		{`'~>7.1'`, pin, "8.0.1", `'=8.0.1'`},
+		{`"~> 7.1.2"`, bump, "7.1.5", `"~> 7.1.5"`},
+		{`"~> 7.1.2"`, replace, "8.0.1", `"~> 8.0.1"`},
+		{`"~> 7.1.2"`, replace, "7.2", `"~> 7.2.0"`},
+		{`"~> 7.1.2"`, widen, "8.0.1", `">= 7.1.2", "< 8.1"`},
+		{`"~> 7.1.2"`, widen, "7.2.0", `">= 7.1.2", "< 7.3"`},
+		{`"~> 7.1.2"`, pin, "7.1.5", `"= 7.1.5"`},
+		// Lower bounds.
+		{`">= 1.2"`, bump, "1.4.5", `">= 1.4.5"`},
+		{`">= 1.2"`, lockfile, "1.4.5", `">= 1.4.5"`},
+		{`">= 1.2"`, widen, "1.4.5", `">= 1.4.5"`},
+		{`">= 1.2"`, pin, "1.4.5", `"= 1.4.5"`},
+		{`"> 1.2"`, bump, "1.5.0", `">= 1.5.0"`},
+		// A list with an upper bound: bump raises the floor, replace moves both, widen the bound.
+		{`">= 1.2", "< 2"`, bump, "1.5.0", `">= 1.5.0", "< 2"`},
+		{`">= 1.2", "< 2"`, inRange, "1.5.0", `">= 1.5.0", "< 2"`},
+		{`">= 1.2", "< 2"`, replace, "2.1.0", `">= 2.1", "< 3"`},
+		{`">= 1.2", "< 2"`, lockfile, "2.1.0", `">= 2.1", "< 3"`},
+		{`">= 1.2", "< 2"`, widen, "2.1.0", `">= 1.2", "< 3"`},
+		{`">= 1.2", "< 2.0"`, widen, "2.1.0", `">= 1.2", "< 3.0"`},
+		{`">= 1.2", "< 1.3"`, widen, "1.4.2", `">= 1.2", "< 1.5"`},
+		{`">= 1.2", "<= 1.9"`, widen, "2.1.0", `">= 1.2", "<= 2.1.0"`},
+		{`">= 1.2", "< 2"`, pin, "2.1.0", `"= 2.1.0"`},
+		{`[">= 1.2", "< 2"]`, replace, "2.1.0", `[">= 2.1", "< 3"]`},
+		{`[">= 1.2",
+   "< 2"]`, pin, "1.5.0", `["= 1.5.0"]`},
+		{`">= 1.2", # floor
+   "< 2"`, pin, "1.5.0", ""}, // the comment would go
+		{`">= 1.2", "!= 1.5.0", "< 2"`, replace, "1.5.0", ""}, // excluded
+		{`">= 1.2", "!= 1.5.0", "< 2"`, bump, "1.6.0", `">= 1.6.0", "!= 1.5.0", "< 2"`},
+		// `~>` with a floor: the floor follows, widen moves only the bound.
+		{`"~> 7.1", ">= 7.1.2"`, bump, "7.2.3", `"~> 7.2", ">= 7.2.3"`},
+		{`"~> 7.1", ">= 7.1.2"`, bump, "7.1.5", `"~> 7.1", ">= 7.1.5"`},
+		{`"~> 7.1", ">= 7.1.2"`, replace, "8.0.1", `"~> 8.0", ">= 8.0.1"`},
+		{`"~> 7.1", ">= 7.1.2"`, lockfile, "8.0.1", `"~> 8.0", ">= 8.0.1"`},
+		{`"~> 7.1", ">= 7.1.2"`, widen, "8.0.1", `"< 9", ">= 7.1.2"`},
+		{`"~> 7.1", ">= 7.1.2"`, pin, "8.0.1", `"= 8.0.1"`},
+		// Upper bounds only.
+		{`"< 2"`, bump, "1.5.0", ""},
+		{`"< 2"`, replace, "2.1.0", `"< 3"`},
+		{`"< 2"`, widen, "2.1.0", `"< 3"`},
+		{`"< 2"`, pin, "1.5.0", `"= 1.5.0"`},
+		// Without requirements nothing is written (RangeFixed): only the lock moves.
+		{``, bump, "1.0.0", ""},
+		{``, replace, "1.0.0", ""},
+		{``, lockfile, "1.0.0", ""},
+		{``, widen, "1.0.0", ""},
+		{``, pin, "1.0.0", ""},
+		{``, inRange, "1.0.0", ""},
+	} {
+		gem := `gem "x"`
+		if tt.reqs != "" {
+			gem += ", " + tt.reqs
+		}
+		src := []byte("source \"https://rubygems.org\"\n" + gem + ", require: false # x\n")
+		deps, err := New().Extract("Gemfile", src, manager.Env{})
+		if err != nil || len(deps) != 1 || deps[0].Skip != "" {
+			t.Fatalf("%s: %+v, %v", gem, deps, err)
+		}
+		d := deps[0]
+		got, ok := New().(manager.RangeRewriter).NewRange(d, tt.v, tt.strategy)
+		edits, err := New().Edits(dep.Update{Dep: d, NewVersion: tt.v, RangeStrategy: tt.strategy})
+		if tt.want == "" {
+			if ok || err == nil {
+				t.Errorf("%s %s %s: rewritten to %s (edits %v, %v)", tt.reqs, tt.strategy, tt.v, got, edits, err)
+			}
+			continue
+		}
+		// Range starts at the first string: an array's brackets stay around it.
+		if r := strings.TrimSuffix(strings.TrimPrefix(tt.want, "["), "]"); !ok || got != r {
+			t.Errorf("%s %s %s: NewRange = %s, %v, want %s", tt.reqs, tt.strategy, tt.v, got, ok, tt.want)
+		}
+		out, aerr := patch.Apply(src, edits)
+		want := strings.Replace(string(src), tt.reqs, tt.want, 1)
+		if err != nil || aerr != nil || string(out) != want {
+			t.Errorf("%s %s %s: edits %v (%v, %v) give\n%s\nwant\n%s", tt.reqs, tt.strategy, tt.v, edits, err, aerr, out, want)
+		}
+		// Only string contents change, except where pin joins a list into one string.
+		for _, e := range edits {
+			if strings.ContainsAny(e.Old, `"'`) && !(tt.strategy == pin && strings.Contains(tt.reqs, ",")) {
+				t.Errorf("%s %s %s: edit %+v crosses a string", tt.reqs, tt.strategy, tt.v, e)
+			}
 		}
 	}
 }
