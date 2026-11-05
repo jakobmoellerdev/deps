@@ -343,6 +343,35 @@ func TestSettingsPrecedenceAndProfiles(t *testing.T) {
 	}
 }
 
+// Unfiltered placeholders (`@localCentralUrl@`, as in resource-filtered integration-test
+// settings) and other non-http(s) URLs are not repositories and must never be requested.
+func TestSettingsIgnoresNonHTTPURLs(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "settings.xml"), `<settings>
+  <mirrors><mirror><id>m</id><url>@mirrorUrl@</url><mirrorOf>*</mirrorOf></mirror></mirrors>
+  <profiles><profile><id>it</id><activation><activeByDefault>true</activeByDefault></activation>
+    <repositories>
+      <repository><id>local.central</id><url>@localCentralUrl@</url></repository>
+      <repository><id>file</id><url>file:///tmp/repo</url></repository>
+      <repository><id>ok</id><url>https://ok.example</url></repository>
+    </repositories>
+    <pluginRepositories><pluginRepository><id>p</id><url>${unset.url}</url></pluginRepository></pluginRepositories>
+  </profile></profiles>
+</settings>`)
+	s := New(http.DefaultClient, nil, env(nil))
+	repos, err := s.repositories(dep.Dep{Manager: "maven", File: "pom.xml"}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"ok=https://ok.example/", "central=" + Central}; !slices.Equal(urls(repos), want) {
+		t.Errorf("repositories = %v, want %v", urls(repos), want)
+	}
+	repos, _ = s.repositories(dep.Dep{Manager: "maven", DepType: "build", File: "pom.xml"}, dir)
+	if want := []string{"central=" + Central}; !slices.Equal(urls(repos), want) {
+		t.Errorf("plugin repositories = %v, want %v", urls(repos), want)
+	}
+}
+
 func TestSettingsErrors(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "settings.xml"), `<settings><mirrors>`)

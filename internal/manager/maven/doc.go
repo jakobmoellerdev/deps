@@ -32,6 +32,7 @@ var Doc = refdoc.Manager{
 		{Reason: "cannot locate value", When: "a version written with entities, CDATA or split by a comment"},
 		{Reason: "internal module", When: "the groupId:artifactId of a pom extracted in the same run (a module or parent of the repository); applied after property resolution"},
 		{Reason: "m2e lifecycle mapping (not a published plugin)", When: "`org.eclipse.m2e:lifecycle-mapping`, the Eclipse m2e settings pseudo-plugin (no repository publishes it: Central answers 404 for its `maven-metadata.xml`)"},
+		{Reason: "system jar in repository", When: "a `<scope>system</scope>` dep whose `<systemPath>` is relative or below `${basedir}`/`${project.basedir}`: a jar checked into the repository, which no repository publishes"},
 	},
 	Sections: []refdoc.Section{
 		{Title: "Properties", Items: []string{

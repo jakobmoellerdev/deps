@@ -111,12 +111,14 @@ type propCond struct{ name, value string }
 type repo struct{ id, url string }
 
 // decl is the declaration of a dep: its index in the pom's deps, the group:artifact as
-// written, its <version> element and its profile (-1 = none).
+// written, its <version> element, its profile (-1 = none) and a skip reason independent of
+// properties.
 type decl struct {
 	idx     int
 	name    string
 	version propDef
 	profile int
+	skip    string
 }
 
 // New returns the maven manager.
@@ -693,6 +695,9 @@ func (x *extractor) add(e *node, depType, defaultGroup string, plugin bool, prof
 		return
 	}
 	u := decl{idx: len(x.deps), name: group + ":" + a.value, version: propDef{value: v.value, span: v.span, line: v.line}, profile: profile}
+	if depType == "system" && isRepoPath(e.text("systemPath")) {
+		u.skip = "system jar in repository"
+	}
 	d := dep.Dep{Manager: Name, Datasource: "maven", Versioning: "maven", DepType: depType, Source: x.repos}
 	if plugin {
 		d.Source = x.pluginRepos
@@ -701,6 +706,13 @@ func (x *extractor) add(e *node, depType, defaultGroup string, plugin bool, prof
 	x.pom.decls = append(x.pom.decls, u)
 	x.deps = append(x.deps, d)
 	x.pom.plugin = append(x.pom.plugin, plugin)
+}
+
+// isRepoPath reports whether a <systemPath> is a file of the project (relative or below
+// `${basedir}`/`${project.basedir}`): a jar checked into the repository, not published.
+func isRepoPath(p string) bool {
+	return p != "" && !path.IsAbs(p) && !strings.HasPrefix(p, "${") ||
+		strings.HasPrefix(p, "${basedir}") || strings.HasPrefix(p, "${project.basedir}")
 }
 
 // scope is where the properties of a dep are looked up.
@@ -716,7 +728,10 @@ type scope struct {
 // (File, Line) to the definition.
 func (s scope) resolve(d *dep.Dep, u decl) {
 	d.File, d.Line, d.Name, d.Version = s.poms[0].file, u.version.line, u.name, u.version.value
-	d.RefSpan, d.VersionRef, d.Skip = dep.Span{}, "", ""
+	d.RefSpan, d.VersionRef, d.Skip = dep.Span{}, "", u.skip
+	if u.skip != "" {
+		return
+	}
 	name, ok := s.interpolate(u.name)
 	if !ok {
 		d.Skip = "unresolved property in " + u.name

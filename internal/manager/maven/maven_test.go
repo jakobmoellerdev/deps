@@ -299,6 +299,30 @@ func TestLinkM2ELifecycleMapping(t *testing.T) {
 	}
 }
 
+// spring-boot's *-system-scope integration tests depend on a jar next to the pom, which no
+// repository publishes; system deps elsewhere (${java.home}, absolute) stay updatable.
+func TestSystemJarInRepository(t *testing.T) {
+	src := []byte(`<project><dependencies>
+<dependency><groupId>com.example</groupId><artifactId>sample</artifactId><version>1.0.0</version><scope>system</scope><systemPath>${project.basedir}/sample-1.0.0.jar</systemPath></dependency>
+<dependency><groupId>a</groupId><artifactId>rel</artifactId><version>1</version><scope>system</scope><systemPath>lib/rel.jar</systemPath></dependency>
+<dependency><groupId>a</groupId><artifactId>jdk</artifactId><version>1</version><scope>system</scope><systemPath>${java.home}/lib/tools.jar</systemPath></dependency>
+<dependency><groupId>a</groupId><artifactId>abs</artifactId><version>1</version><scope>system</scope><systemPath>/opt/abs.jar</systemPath></dependency>
+<dependency><groupId>a</groupId><artifactId>compile</artifactId><version>1</version><systemPath>lib/c.jar</systemPath></dependency>
+</dependencies></project>`)
+	m := New()
+	ds, err := m.Extract("pom.xml", src, manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.(manager.Linker).Link([][]dep.Dep{ds})
+	want := map[string]string{"com.example:sample": "system jar in repository", "a:rel": "system jar in repository"}
+	for _, d := range ds {
+		if d.Skip != want[d.Name] {
+			t.Errorf("%s: skip %q, want %q", d.Name, d.Skip, want[d.Name])
+		}
+	}
+}
+
 func TestLinkInternalModules(t *testing.T) {
 	m := New()
 	parent := []byte(`<project><groupId>org.acme</groupId><artifactId>acme-parent</artifactId><version>1.0-SNAPSHOT</version><packaging>pom</packaging>

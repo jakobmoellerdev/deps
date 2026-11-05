@@ -34,6 +34,7 @@ var Doc = refdoc.Datasource{
 				"`${env.NAME}` and `${NAME}` are expanded from the environment (empty when unset).",
 				"Encrypted passwords (`{…}`, `mvn --encrypt-password`) are decrypted with the master password of `settings-security.xml` (`DEPS_MAVEN_SETTINGS_SECURITY`, else next to the user settings; `<relocation>` is followed); a password that cannot be decrypted fails the lookups using it.",
 				"`<repositories>` (plugins: `<pluginRepositories>`) of the profiles listed in `<activeProfiles>` or with `<activeByDefault>true` follow the dep's own repositories, before Maven Central.",
+				"Mirror and profile repository URLs that are not http(s) after expansion (`file:`, unfiltered `@name@` resource placeholders, empty) are ignored.",
 			},
 		},
 		{

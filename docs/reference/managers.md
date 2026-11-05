@@ -1358,6 +1358,7 @@ Updates the versions of dependencies, plugins, build extensions, annotation proc
 | `cannot locate value` | a version written with entities, CDATA or split by a comment |
 | `internal module` | the groupId:artifactId of a pom extracted in the same run (a module or parent of the repository); applied after property resolution |
 | `m2e lifecycle mapping (not a published plugin)` | `org.eclipse.m2e:lifecycle-mapping`, the Eclipse m2e settings pseudo-plugin (no repository publishes it: Central answers 404 for its `maven-metadata.xml`) |
+| `system jar in repository` | a `<scope>system</scope>` dep whose `<systemPath>` is relative or below `${basedir}`/`${project.basedir}`: a jar checked into the repository, which no repository publishes |
 
 **Properties.**
 
@@ -1638,6 +1639,7 @@ maven and maven-wrapper deps apply the user settings (`DEPS_MAVEN_SETTINGS`, els
 - `${env.NAME}` and `${NAME}` are expanded from the environment (empty when unset).
 - Encrypted passwords (`{…}`, `mvn --encrypt-password`) are decrypted with the master password of `settings-security.xml` (`DEPS_MAVEN_SETTINGS_SECURITY`, else next to the user settings; `<relocation>` is followed); a password that cannot be decrypted fails the lookups using it.
 - `<repositories>` (plugins: `<pluginRepositories>`) of the profiles listed in `<activeProfiles>` or with `<activeByDefault>true` follow the dep's own repositories, before Maven Central.
+- Mirror and profile repository URLs that are not http(s) after expansion (`file:`, unfiltered `@name@` resource placeholders, empty) are ignored.
 
 ### Gradle credentials
 

@@ -228,7 +228,7 @@ func (s *Source) merge(local, user *settingsXML) *settings {
 				continue
 			}
 			mirrorSeen[id] = true
-			if u := s.expand(m.URL); u != "" {
+			if u := s.expand(m.URL); isHTTP(u) {
 				st.mirrors = append(st.mirrors, mirror{id: id, url: withSlash(u), mirrorOf: s.expand(m.MirrorOf)})
 			}
 		}
@@ -264,13 +264,20 @@ func (s *Source) merge(local, user *settingsXML) *settings {
 	return st
 }
 
+// appendRepos appends the http(s) repositories of rs; others (`file:`, unfiltered `@…@`
+// placeholders, empty) cannot be requested and are ignored.
 func (s *Source) appendRepos(dst []repository, rs []repoXML) []repository {
 	for _, r := range rs {
-		if u := withSlash(s.expand(r.URL)); u != "/" {
+		if u := s.expand(r.URL); isHTTP(u) {
+			u = withSlash(u)
 			dst = append(dst, repository{id: s.expand(r.ID), url: u, orig: []string{u}})
 		}
 	}
 	return dst
+}
+
+func isHTTP(u string) bool {
+	return strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://")
 }
 
 // mirrorFor returns the mirror of repository r: the first whose mirrorOf is r's id, else the
