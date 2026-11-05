@@ -37,7 +37,6 @@ var (
 	dockerfileRe    = regexp.MustCompile(`(^|/)(Dockerfile|Containerfile)(\.[^/]*)?$`)
 	dockerfileExtRe = regexp.MustCompile(`(^|/)[^/]*\.(Dockerfile|Containerfile)$`)
 	composeRe       = regexp.MustCompile(`(^|/)([^/]*\.)?(docker-)?compose(\.[^/]*)?\.ya?ml$`)
-	yamlRe          = regexp.MustCompile(`\.ya?ml$`)
 )
 
 type dockerManager struct{}
@@ -50,7 +49,7 @@ func (dockerManager) Name() string { return Name }
 // Match reports whether the slash path is a Dockerfile/Containerfile or a YAML file (compose,
 // workflow, action, or any other YAML scanned for Kubernetes and Helm images).
 func (dockerManager) Match(path string) bool {
-	return isDockerfile(path) || yamlRe.MatchString(path)
+	return isDockerfile(path) || strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")
 }
 
 // isDockerfile excludes `Dockerfile.dockerignore`, which is an ignore file, not a Dockerfile.

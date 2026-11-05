@@ -76,7 +76,7 @@ func (tfManager) Name() string { return Name }
 // Match reports whether the slash path is a *.tf, *.tofu, *.tf.json or *.tofu.json file
 // outside a .terraform data directory (installed modules).
 func (tfManager) Match(p string) bool {
-	return matchRe.MatchString(p) && !strings.HasPrefix(p, ".terraform/") && !strings.Contains(p, "/.terraform/")
+	return isConfigFile(p) && !strings.HasPrefix(p, ".terraform/") && !strings.Contains(p, "/.terraform/")
 }
 
 // Extract parses src (HCL or JSON) and returns the required_version and required_providers

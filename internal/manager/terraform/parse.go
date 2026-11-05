@@ -1,12 +1,13 @@
 package terraform
 
-import (
-	"regexp"
-	"strings"
-)
+import "strings"
 
-// matchRe matches the configuration files of the terraform manager.
-var matchRe = regexp.MustCompile(`\.(tf|tofu)(\.json)?$`)
+// isConfigFile reports whether name is a configuration file of the terraform manager
+// (.tf, .tofu, .tf.json, .tofu.json).
+func isConfigFile(name string) bool {
+	name = strings.TrimSuffix(name, ".json")
+	return strings.HasSuffix(name, ".tf") || strings.HasSuffix(name, ".tofu")
+}
 
 // parseConfig parses a configuration file into its body.
 func parseConfig(file string, src []byte) (body, error) {

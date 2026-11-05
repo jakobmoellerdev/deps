@@ -118,3 +118,47 @@ func BenchmarkDiscover(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkDiscoverManagers walks a synthetic monorepo of 12,000 files, mostly sources and
+// docs with some manifests, workflows and YAML, and matches every path against all built-in
+// managers with the default ignore globs, as `deps plan` does on a large JavaScript repository.
+func BenchmarkDiscoverManagers(b *testing.B) {
+	root := b.TempDir()
+	names := []string{"index.ts", "index.test.tsx", "README.md", "CHANGELOG.md", "util.js", "styles.css",
+		"config.yaml", "api-report.md", "schema.json", "logo.svg"}
+	for d := range 400 {
+		dir := filepath.Join(root, "packages", fmt.Sprintf("pkg%d", d%40), "src", fmt.Sprintf("dir%d", d))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			b.Fatal(err)
+		}
+		for f := range 30 {
+			name := fmt.Sprintf("%d-%s", f, names[f%len(names)])
+			switch f {
+			case 0:
+				name = "package.json"
+			case 1:
+				name = "Dockerfile"
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o755); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".github", "workflows", "ci.yml"), nil, 0o644); err != nil {
+		b.Fatal(err)
+	}
+	managers, err := Managers(config.Default())
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		got, err := discover(root, config.DefaultIgnorePaths, managers)
+		if err != nil || len(got[0]) != 1 {
+			b.Fatalf("discovered %d workflows, err %v", len(got[0]), err)
+		}
+	}
+}

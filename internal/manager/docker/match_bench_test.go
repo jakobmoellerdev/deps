@@ -3,6 +3,7 @@ package docker
 import (
 	"io/fs"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,9 @@ func BenchmarkMatch(b *testing.B) {
 		}
 	}
 }
+
+// yamlRe is the YAML file regexp Match replaced with suffix checks.
+var yamlRe = regexp.MustCompile(`\.ya?ml$`)
 
 // regexpMatch is Match without the literal checks that skip the regexps.
 func regexpMatch(p string) bool {

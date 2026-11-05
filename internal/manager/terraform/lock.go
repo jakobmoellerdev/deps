@@ -291,7 +291,7 @@ func localNames(dir string, manifests map[string][]byte) map[string]localName {
 		return out
 	}
 	for _, e := range entries {
-		if e.IsDir() || !matchRe.MatchString(e.Name()) {
+		if e.IsDir() || !isConfigFile(e.Name()) {
 			continue
 		}
 		src, ok := manifests[e.Name()]
@@ -466,7 +466,7 @@ func localSources(dir string) []string {
 	}
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() || !matchRe.MatchString(e.Name()) {
+		if e.IsDir() || !isConfigFile(e.Name()) {
 			continue
 		}
 		src, err := os.ReadFile(filepath.Join(dir, e.Name()))

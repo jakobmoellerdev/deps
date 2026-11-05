@@ -20,10 +20,7 @@ import (
 // Name is the manager name.
 const Name = "github-actions"
 
-var (
-	workflowRe = regexp.MustCompile(`(^|/)(workflow-templates|\.(github|gitea|forgejo)/(workflows|actions))/.+\.ya?ml$`)
-	actionRe   = regexp.MustCompile(`(^|/)action\.ya?ml$`)
-)
+var workflowRe = regexp.MustCompile(`(^|/)(workflow-templates|\.(github|gitea|forgejo)/(workflows|actions))/.+\.ya?ml$`)
 
 type actionsManager struct{}
 
@@ -38,9 +35,16 @@ func (actionsManager) Match(path string) bool {
 }
 
 // IsWorkflowFile reports whether path is a GitHub, Gitea or Forgejo
-// workflow, workflow template or composite action file.
+// workflow, workflow template or composite action file. Only YAML paths with a workflow
+// directory's literal part reach the regexp; action files are matched by their name.
 func IsWorkflowFile(path string) bool {
-	return workflowRe.MatchString(path) || actionRe.MatchString(path)
+	if !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".yaml") {
+		return false
+	}
+	if base := path[strings.LastIndexByte(path, '/')+1:]; base == "action.yml" || base == "action.yaml" {
+		return true
+	}
+	return (strings.Contains(path, "workflow") || strings.Contains(path, "actions/")) && workflowRe.MatchString(path)
 }
 
 // Extract returns every `uses:` reference in src with byte spans into src;

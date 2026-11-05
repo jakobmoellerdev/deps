@@ -33,10 +33,7 @@ const (
 	TypeArgoCD   = "argocd"
 )
 
-var (
-	helmfileRe = regexp.MustCompile(`(^|/)(helmfile\.ya?ml|helmfile\.d/[^/]+\.ya?ml)(\.gotmpl)?$`)
-	yamlRe     = regexp.MustCompile(`\.ya?ml$`)
-)
+var helmfileRe = regexp.MustCompile(`(^|/)(helmfile\.ya?ml|helmfile\.d/[^/]+\.ya?ml)(\.gotmpl)?$`)
 
 type helmManager struct {
 	links links
@@ -50,7 +47,7 @@ func (*helmManager) Name() string { return Name }
 // Match reports whether the slash path is a Chart.yaml, a helmfile or any other YAML file
 // (scanned for chart custom resources).
 func (*helmManager) Match(p string) bool {
-	return yamlRe.MatchString(p) || isHelmfile(p)
+	return strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".yml") || isHelmfile(p)
 }
 
 func isChart(p string) bool { return path.Base(p) == chartFile }
