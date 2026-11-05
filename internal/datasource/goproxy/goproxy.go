@@ -31,12 +31,13 @@ import (
 
 // Source resolves module versions once per module path per run.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
-	env    func(ctx context.Context) (gotool.GoEnv, error)
-	list   func(ctx context.Context, dir, path string) ([]string, error)
-	info   func(ctx context.Context, dir, path, version string) (time.Time, error)
-	latest func(ctx context.Context, dir, path string) (gotool.Module, error)
+	client       *http.Client
+	sem          chan struct{}
+	env          func(ctx context.Context) (gotool.GoEnv, error)
+	list         func(ctx context.Context, dir, path string) ([]string, error)
+	info         func(ctx context.Context, dir, path, version string) (time.Time, error)
+	latest       func(ctx context.Context, dir, path string) (gotool.Module, error)
+	probeTimeout time.Duration // per proxy request of a major path probe; 0 = probeTimeout
 
 	envOnce sync.Once
 	goEnv   gotool.GoEnv
@@ -144,12 +145,20 @@ func (s *Source) head(ctx context.Context, modPath, dir string) (datasource.Revi
 // maxMajorProbes bounds the successive major module paths MajorPaths looks up per module.
 const maxMajorProbes = 5
 
+// probeTimeout bounds each proxy request of a major path probe (httpx.RequestTimeout:
+// retries included, the wait for a request slot not). A probe only decides whether a major
+// update is offered, while proxy.golang.org can hang on a missing path: on six large repos
+// every listed path answered within 0.3 s and 99% of the 404s within 9 s, but some
+// requests got no response headers in 30 s and were retried, for up to two minutes per path.
+const probeTimeout = 10 * time.Second
+
 // MajorPaths implements datasource.MajorPathSource: the module paths of the next majors of
 // d (`<prefix>/v<N+1>`, … for a `/v<N>` path; `/v2`, … for an unsuffixed v0/v1 module, or
 // `/v<M+1>` for one at vM.x.y+incompatible; `gopkg.in/x.v<N+1>` for gopkg.in), each listed
 // from the proxies until one has no releases, at most maxMajorProbes. Only GOPROXY URLs are
 // probed: `direct` and GONOPROXY/GOPRIVATE modules have no major path lookups, since each
-// probe would clone the repository. Probes are deduped per path.
+// probe would clone the repository. Probes are deduped per path. A probe request that takes
+// longer than probeTimeout is logged as a warning and counts as no release.
 func (s *Source) MajorPaths(ctx context.Context, d dep.Dep, _ string) ([]datasource.ModulePath, error) {
 	next, ok := nextMajorPath(d.Name, d.Version)
 	var out []datasource.ModulePath
@@ -201,7 +210,8 @@ func nextMajorPath(modPath, version string) (string, bool) {
 // errNotProbed marks a `direct` GOPROXY entry, or a GONOPROXY module, during a probe.
 var errNotProbed = errors.New("not probed")
 
-// probe returns the versions of modPath from the GOPROXY URLs; nil when no proxy has it.
+// probe returns the versions of modPath from the GOPROXY URLs; nil when no proxy has it or
+// a proxy did not answer within probeTimeout.
 func (s *Source) probe(ctx context.Context, modPath string) ([]string, error) {
 	s.mu.Lock()
 	e := s.probes[modPath]
@@ -221,16 +231,25 @@ func (s *Source) probe(ctx context.Context, modPath string) ([]string, error) {
 			if base == "" {
 				return true, errNotProbed
 			}
-			e.versions, notFound, err = s.fetch(ctx, base+"/"+escaped+"/@v/list")
+			timeout := cmp.Or(s.probeTimeout, probeTimeout)
+			e.versions, notFound, err = s.fetch(httpx.RequestTimeout(ctx, timeout), base+"/"+escaped+"/@v/list")
+			if timedOut(ctx, err) {
+				slog.WarnContext(ctx, "major module path probe timed out; assuming no newer major", "module", modPath, "proxy", base, "timeout", timeout)
+			}
 			return notFound, err
 		})
-		if errors.Is(err, errNotProbed) || errors.Is(err, errNoProxy) {
+		if errors.Is(err, errNotProbed) || errors.Is(err, errNoProxy) || timedOut(ctx, err) {
 			err = nil
 		}
 		e.err = err
 		slog.DebugContext(ctx, "major module path probed", "module", modPath, "versions", len(e.versions), "err", e.err)
 	})
 	return e.versions, e.err
+}
+
+// timedOut reports whether err ended a probe request at its probeTimeout (not at ctx's end).
+func timedOut(ctx context.Context, err error) bool {
+	return ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded)
 }
 
 func (s *Source) get(ctx context.Context, modPath, dir string) *entry {

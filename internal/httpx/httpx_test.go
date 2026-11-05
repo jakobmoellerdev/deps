@@ -33,7 +33,7 @@ func TestClientLogging(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	c := NewClient()
-	c.Transport.(*retryTransport).sleep = func(context.Context, time.Duration) error { return nil }
+	c.Transport.(timeoutTransport).next.(*retryTransport).sleep = func(context.Context, time.Duration) error { return nil }
 
 	get := func(url string) error {
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)

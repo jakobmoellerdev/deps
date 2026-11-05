@@ -158,6 +158,7 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules. `go.
 - The update rewrites the require (path and version) and every import of the old path and its packages in the module's `.go` files (below the go.mod, skipping `vendor`, `testdata`, `.`/`_` directories and nested modules; only the import path literals change). `go mod tidy` then sees the rewritten files through `-overlay`.
 - The new major's API may have changed: the PR body says so, and the build is not guaranteed to pass.
 - `gomodUpdateImportPaths: false` turns module path updates off. Only GOPROXY URLs are probed: GONOPROXY/GOPRIVATE modules, and paths no proxy before `direct` has, get no module path updates.
+- A probe only decides whether a module path update is offered, so each probe request to a proxy gets 10 s, retries included, and is not retried once that runs out. A path no proxy answers in time counts as having no releases and is logged as a warning (`major module path probe timed out; assuming no newer major`); the requirement keeps its other updates.
 
 **Post-processing (`apply`, `run`).**
 
