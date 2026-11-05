@@ -31,11 +31,14 @@
 deps finds the dependencies in a repository, looks up newer versions, and opens one branch and pull request per dependency or group. It rewrites only the version bytes, so formatting and comments stay as they are.
 
 ```sh
-curl -fsSL -o ~/.local/bin/deps "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_linux_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && chmod +x ~/.local/bin/deps
+# Linux and macOS, amd64 and arm64
+mkdir -p ~/.local/bin && curl -fsSL -o ~/.local/bin/deps "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_$(uname -s | tr A-Z a-z)_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && chmod +x ~/.local/bin/deps
 deps plan                                  # preview every update as a diff, no config needed
 ```
 
-Also packaged for <img src="https://cdn.simpleicons.org/debian" height="16" alt=""> <img src="https://cdn.simpleicons.org/ubuntu" height="16" alt=""> [Debian/Ubuntu (`apt`)](docs/install.md#packages), <img src="https://cdn.simpleicons.org/fedora" height="16" alt=""> <img src="https://cdn.simpleicons.org/redhat" height="16" alt=""> [Fedora/RHEL (`dnf`)](docs/install.md#packages), <img src="https://cdn.simpleicons.org/archlinux" height="16" alt=""> [Arch Linux (`pacman`)](docs/install.md#packages) and <img src="https://cdn.simpleicons.org/alpinelinux" height="16" alt=""> [Alpine (`apk`)](docs/install.md#packages), with binaries for macOS and Windows on the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) page; checksums and Sigstore verification: [install](docs/install.md).
+On Windows (PowerShell): `iwr https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_windows_amd64.exe -OutFile deps.exe` (`deps_windows_arm64.exe` on ARM).
+
+Also packaged for <img src="https://cdn.simpleicons.org/debian" height="16" alt=""> <img src="https://cdn.simpleicons.org/ubuntu" height="16" alt=""> [Debian/Ubuntu (`apt`)](docs/install.md#packages), <img src="https://cdn.simpleicons.org/fedora" height="16" alt=""> <img src="https://cdn.simpleicons.org/redhat" height="16" alt=""> [Fedora/RHEL (`dnf`)](docs/install.md#packages), <img src="https://cdn.simpleicons.org/archlinux" height="16" alt=""> [Arch Linux (`pacman`)](docs/install.md#packages) and <img src="https://cdn.simpleicons.org/alpinelinux" height="16" alt=""> [Alpine (`apk`)](docs/install.md#packages); checksums and Sigstore verification: [install](docs/install.md).
 
 **Coming from Renovate?** Disable Renovate, add `branchPrefix: renovate/` to `.deps.yaml`, then `deps run --dry-run` to see which PRs deps would open. Once a real run completes without errors, deps closes Renovate's old PRs under that prefix. Option mapping: [migrating from Renovate](docs/migrating-from-renovate.md).
 
