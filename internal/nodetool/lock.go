@@ -172,12 +172,11 @@ func lockedVersions(r *bufio.Reader, keys map[string]bool) (int, map[string]stri
 				return 0, nil, fmt.Errorf("packages: %w", err)
 			}
 			for dec.PeekKind() != '}' {
-				tok, err := dec.ReadToken()
+				k, ok, err := wantedName(dec, keys)
 				if err != nil {
 					return 0, nil, err
 				}
-				k := tok.String()
-				if !keys[k] {
+				if !ok {
 					if err := dec.SkipValue(); err != nil {
 						return 0, nil, err
 					}
@@ -204,6 +203,34 @@ func lockedVersions(r *bufio.Reader, keys map[string]bool) (int, map[string]stri
 		}
 	}
 	return lockVersion, versions, nil
+}
+
+// wantedName reads the next object name and reports whether keys holds it. Names without
+// escapes are looked up without allocating.
+func wantedName(dec *jsontext.Decoder, keys map[string]bool) (string, bool, error) {
+	if dec.PeekKind() != '"' {
+		// Not a name: ReadToken reports the syntax error (ReadValue would word it differently).
+		tok, err := dec.ReadToken()
+		if err != nil {
+			return "", false, err
+		}
+		k := tok.String()
+		return k, keys[k], nil
+	}
+	n, err := dec.ReadValue()
+	if err != nil {
+		return "", false, err
+	}
+	raw := n[1 : len(n)-1]
+	if bytes.IndexByte(raw, '\\') < 0 {
+		if !keys[string(raw)] {
+			return "", false, nil
+		}
+		return string(raw), true, nil
+	}
+	b, _ := jsontext.AppendUnquote(nil, n) // the decoder already validated the string
+	k := string(b)
+	return k, keys[k], nil
 }
 
 // enterObject reads the '{' of the next value.

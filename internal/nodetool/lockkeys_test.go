@@ -1,0 +1,108 @@
+package nodetool
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"fmt"
+	"maps"
+	"testing"
+)
+
+// lockedVersionsToken is lockedVersions as it read every `packages` name with ReadToken;
+// lockedVersions must return the same for every input.
+func lockedVersionsToken(r *bufio.Reader, keys map[string]bool) (int, map[string]string, error) {
+	dec := jsontext.NewDecoder(r, lenient)
+	if err := enterObject(dec); err != nil {
+		return 0, nil, err
+	}
+	lockVersion := 0
+	versions := map[string]string{}
+	for dec.PeekKind() != '}' {
+		tok, err := dec.ReadToken()
+		if err != nil {
+			return 0, nil, err
+		}
+		switch tok.String() {
+		case "lockfileVersion":
+			if err := json.UnmarshalDecode(dec, &lockVersion); err != nil {
+				return 0, nil, fmt.Errorf("lockfileVersion: %w", err)
+			}
+		case "packages":
+			if err := enterObject(dec); err != nil {
+				return 0, nil, fmt.Errorf("packages: %w", err)
+			}
+			for dec.PeekKind() != '}' {
+				tok, err := dec.ReadToken()
+				if err != nil {
+					return 0, nil, err
+				}
+				k := tok.String()
+				if !keys[k] {
+					if err := dec.SkipValue(); err != nil {
+						return 0, nil, err
+					}
+					continue
+				}
+				var e struct {
+					Version string `json:"version"`
+					Link    bool   `json:"link"`
+				}
+				if err := json.UnmarshalDecode(dec, &e, lenient); err != nil {
+					return 0, nil, fmt.Errorf("packages[%q]: %w", k, err)
+				}
+				if !e.Link && e.Version != "" {
+					versions[k] = e.Version
+				}
+			}
+			if _, err := dec.ReadToken(); err != nil {
+				return 0, nil, err
+			}
+		default:
+			if err := dec.SkipValue(); err != nil {
+				return 0, nil, err
+			}
+		}
+	}
+	return lockVersion, versions, nil
+}
+
+var parityKeys = map[string]bool{"node_modules/a": true, "node_modules/é": true, "x/node_modules/a": true, "": true}
+
+func checkLockedVersionsParity(t *testing.T, src []byte) {
+	t.Helper()
+	gv, gm, gerr := lockedVersions(bufio.NewReader(bytes.NewReader(src)), parityKeys)
+	wv, wm, werr := lockedVersionsToken(bufio.NewReader(bytes.NewReader(src)), parityKeys)
+	if gv != wv || !maps.Equal(gm, wm) || fmt.Sprint(gerr) != fmt.Sprint(werr) {
+		t.Fatalf("lockedVersions(%q) = %d, %v, %v; want %d, %v, %v", src, gv, gm, gerr, wv, wm, werr)
+	}
+}
+
+func TestLockedVersionsParity(t *testing.T) {
+	src, _ := benchLock(200)
+	for _, s := range append(lockParitySeeds, string(src)) {
+		checkLockedVersionsParity(t, []byte(s))
+	}
+}
+
+var lockParitySeeds = []string{
+	`{"lockfileVersion":3,"packages":{"":{"version":"1.0.0"},"node_modules/a":{"version":"1.2.3"},"node_modules/b":{"version":"2.0.0"}}}`,
+	`{"lockfileVersion":3,"packages":{"node_modules/\u0061":{"version":"1.0.0"},"node_modules/\u00e9":{"version":"2.0.0"},"x\/node_modules\/a":{"link":true,"version":"3"}}}`,
+	`{"lockfileVersion":2,"packages":{"node_modules/a":{"version":"1"},"node_modules/a":{"version":"2"}}}`,
+	`{"lockfileVersion":3,"packages":{1:{}}}`,
+	`{"lockfileVersion":3,"packages":{"node_modules/a":}}`,
+	`{"lockfileVersion":3,"packages":{"node_modules/a":{"version":1}}}`,
+	`{"lockfileVersion":3,"packages":{"node_modules/a"`,
+	`{"lockfileVersion":3,"packages":{"bad \x":{}}}`,
+	`{"packages":[]}`,
+	`[]`,
+	`{"packages":{{`,
+}
+
+func FuzzLockedVersionsParity(f *testing.F) {
+	for _, s := range lockParitySeeds {
+		f.Add([]byte(s))
+	}
+	f.Fuzz(checkLockedVersionsParity)
+}
