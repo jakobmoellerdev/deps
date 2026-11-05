@@ -3,6 +3,7 @@ package versioning
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 )
 
@@ -31,6 +32,42 @@ func PEP440Admits(spec, version string) (bool, error) {
 		return false, fmt.Errorf("invalid PEP 440 version %q", version)
 	}
 	return admits || alts == 0, nil // without alternatives spec is blank and admits all
+}
+
+// PEP440Spec is a specifier set compiled by ParsePEP440Spec, for checking many versions.
+type PEP440Spec struct {
+	alts [][]pepSet // the sets of the clauses of each `||` alternative
+}
+
+// ParsePEP440Spec compiles spec (see PEP440Admits), failing as PEP440Admits does.
+func ParsePEP440Spec(spec string) (*PEP440Spec, error) {
+	var p PEP440Spec
+	for alt := range strings.FieldsFuncSeq(spec, isPipe) {
+		var clauses []pepSet
+		if err := eachPEP440Clause(alt, false, func(c pepSet) { clauses = append(clauses, c) }); err != nil {
+			return nil, fmt.Errorf("invalid version specifier %q: %w", spec, err)
+		}
+		p.alts = append(p.alts, clauses)
+	}
+	return &p, nil
+}
+
+// Admits is PEP440Admits for the compiled specifier set.
+func (p *PEP440Spec) Admits(version string) (bool, error) {
+	v, ok := parsePEP440(version)
+	if !ok {
+		return false, fmt.Errorf("invalid PEP 440 version %q", version)
+	}
+	v.local = ""
+	if len(p.alts) == 0 { // spec is blank and admits all
+		return true, nil
+	}
+	for _, clauses := range p.alts {
+		if !slices.ContainsFunc(clauses, func(c pepSet) bool { return !c.contains(v) }) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // PEP440Subset reports whether every version admitted by the specifier set a is admitted by

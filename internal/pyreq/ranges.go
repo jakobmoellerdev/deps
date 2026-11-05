@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
@@ -90,8 +91,7 @@ func parseClause(s string, i int, g Grammar) (clause, int, bool) {
 	if v, ok := strings.CutSuffix(c.ver, ".*"); ok && (c.op == "==" || c.op == "!=" || c.op == "") {
 		c.ver, c.wild = v, true
 	}
-	_, valid := versioning.NormalizePEP440(c.ver)
-	return c, j, valid
+	return c, j, pep440.Valid(c.ver)
 }
 
 // anchor returns the version that stands for the trimmed specifier s (dep.Dep.Version): in
@@ -123,9 +123,29 @@ func anchor(s string, g Grammar) (string, string) {
 	return upper, ""
 }
 
+// specs caches the compiled specifier of each range InRange checks (nil when invalid): the
+// engine checks every candidate release of a dep against its range.
+var specs sync.Map // string -> *versioning.PEP440Spec
+
 // InRange reports whether the range of d admits v.
 func InRange(d dep.Dep, v string) bool {
-	ok, err := versioning.PEP440Admits(d.Range, v)
+	p, ok := specs.Load(d.Range)
+	if !ok {
+		spec, _ := versioning.ParsePEP440Spec(d.Range)
+		p, _ = specs.LoadOrStore(d.Range, spec)
+	}
+	spec := p.(*versioning.PEP440Spec)
+	if spec == nil {
+		return false
+	}
+	ok, err := spec.Admits(v)
+	return ok && err == nil
+}
+
+// admits is InRange for a specifier checked once, such as a rewritten range, which the cache
+// would keep for nothing.
+func admits(s, v string) bool {
+	ok, err := versioning.PEP440Admits(s, v)
 	return ok && err == nil
 }
 
@@ -141,7 +161,7 @@ func NewRange(d dep.Dep, v, strategy string) (string, bool) {
 		return "", false
 	}
 	out, err := patch.Apply([]byte(d.Range), edits)
-	if err != nil || string(out) == d.Range || !InRange(dep.Dep{Range: string(out)}, v) {
+	if err != nil || string(out) == d.Range || !admits(string(out), v) {
 		return "", false
 	}
 	return string(out), true
@@ -191,7 +211,7 @@ func rangeEdits(s, v, strategy string, poetry bool) ([]patch.Edit, bool) {
 	if len(alts) == 1 {
 		if widen {
 			edits := renderAlt(s, alts[0], v, nv, modeWiden)
-			if out, err := patch.Apply([]byte(s), edits); err == nil && InRange(dep.Dep{Range: string(out)}, v) {
+			if out, err := patch.Apply([]byte(s), edits); err == nil && admits(string(out), v) {
 				return edits, true
 			}
 		}
