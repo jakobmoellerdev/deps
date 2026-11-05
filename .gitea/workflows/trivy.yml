@@ -5,6 +5,11 @@ on:
   pull_request:
   schedule:
     - cron: "17 5 * * *" # new advisories show up without a code change
+# A newer push to the same PR or branch cancels the superseded run. Each tag is its own
+# group, so a release is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   scan:
     runs-on: ubuntu-latest
