@@ -207,6 +207,11 @@ func TestLoadRules(t *testing.T) {
     dashboardApproval: true` + preCommitExclusion,
 		},
 		{
+			name:  "devcontainer manager",
+			src:   `{packageRules: [{matchManagers: ['devcontainer'], enabled: false}]}`,
+			rules: "  - # packageRules[0]\n    manager: devcontainer\n    ignore: true" + preCommitExclusion,
+		},
+		{
 			name: "postUpgradeTasks top level and per rule, Ruby and Swift managers, rangeStrategy widen",
 			src: `{postUpgradeTasks: {commands: ['make generate'], fileFilters: ['**/*.go'], executionMode: 'branch'},
 				packageRules: [{matchCategories: ['ruby'], rangeStrategy: 'widen', postUpgradeTasks: {commands: ['bundle exec rake']}},

@@ -252,7 +252,7 @@ var managerMap = func() map[string][]expansion {
 		"regex":            {{"custom", nil}},
 		"custom.regex":     {{"custom", nil}},
 	}
-	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 poetry pipenv terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain") {
+	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 poetry pipenv terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer") {
 		m[n] = []expansion{{n, nil}}
 	}
 	return m
@@ -270,7 +270,7 @@ var depTypeUniverse = map[string][]string{
 var categories = map[string][]string{
 	"ci":         {"github-actions", "gitlabci", "gitlabci-include"},
 	"golang":     {"gomod"},
-	"docker":     {"dockerfile", "docker-compose"},
+	"docker":     {"dockerfile", "docker-compose", "devcontainer"},
 	"kubernetes": {"kubernetes", "helm-values", "helmv3", "helmfile", "flux", "argocd", "kustomize"},
 	"helm":       {"helm-values", "helmv3", "helmfile"},
 	"cd":         {"helmfile", "flux", "argocd"},
