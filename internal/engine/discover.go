@@ -49,13 +49,22 @@ func discover(root string, ignore []string, managers []manager.Manager) ([][]str
 			}
 			return nil
 		}
-		if !d.Type().IsRegular() || ignored(rel) {
+		if !d.Type().IsRegular() {
 			return nil
 		}
+		// ignorePaths is checked only once a manager claims the file: most files match none.
+		var checked, skip bool
 		for i, m := range managers {
-			if m.Match(rel) {
-				out[i] = append(out[i], rel)
+			if !m.Match(rel) {
+				continue
 			}
+			if !checked {
+				checked, skip = true, ignored(rel)
+			}
+			if skip {
+				break
+			}
+			out[i] = append(out[i], rel)
 		}
 		return nil
 	})
