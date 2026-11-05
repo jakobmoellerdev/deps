@@ -124,3 +124,18 @@ func TestGetStrValue(t *testing.T) {
 		t.Errorf("Value of a sequence = %q", v)
 	}
 }
+
+func TestSeq(t *testing.T) {
+	m := parse(t, "s: [a, b]\nm: {k: v}\nv: x\ne: []\n")
+	if got := Seq(Get(m, "s")); len(got) != 2 || got[0].Value != "a" || got[1].Value != "b" {
+		t.Errorf("Seq(sequence) = %v, want [a b]", got)
+	}
+	for _, key := range []string{"m", "v", "e", "missing"} {
+		if got := Seq(Get(m, key)); len(got) != 0 {
+			t.Errorf("Seq(%s) = %v, want empty", key, got)
+		}
+	}
+	if got := Seq(nil); got != nil {
+		t.Errorf("Seq(nil) = %v, want nil", got)
+	}
+}

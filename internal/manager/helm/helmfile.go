@@ -39,27 +39,21 @@ func helmfileDeps(file string, src []byte) ([]dep.Dep, error) {
 	}
 	repos := map[string]string{}
 	for _, doc := range docs {
-		if rs := yamlspan.Get(doc, "repositories"); rs != nil && rs.Kind == yaml.SequenceNode {
-			for _, r := range rs.Content {
-				name, url := yamlspan.Value(yamlspan.Get(r, "name")), strings.TrimRight(yamlspan.Value(yamlspan.Get(r, "url")), "/")
-				if name == "" || url == "" {
-					continue
-				}
-				if yamlspan.Value(yamlspan.Get(r, "oci")) == "true" && !strings.HasPrefix(url, "oci://") {
-					url = "oci://" + url
-				}
-				repos[name] = url
+		for _, r := range yamlspan.Seq(yamlspan.Get(doc, "repositories")) {
+			name, url := yamlspan.Value(yamlspan.Get(r, "name")), strings.TrimRight(yamlspan.Value(yamlspan.Get(r, "url")), "/")
+			if name == "" || url == "" {
+				continue
 			}
+			if yamlspan.Value(yamlspan.Get(r, "oci")) == "true" && !strings.HasPrefix(url, "oci://") {
+				url = "oci://" + url
+			}
+			repos[name] = url
 		}
 	}
 	lines := yamlspan.LineStarts(src)
 	var deps []dep.Dep
 	for _, doc := range docs {
-		rels := yamlspan.Get(doc, "releases")
-		if rels == nil || rels.Kind != yaml.SequenceNode {
-			continue
-		}
-		for _, r := range rels.Content {
+		for _, r := range yamlspan.Seq(yamlspan.Get(doc, "releases")) {
 			chart := yamlspan.Str(yamlspan.Get(r, "chart"))
 			if chart == nil || chart.Value == "" {
 				continue

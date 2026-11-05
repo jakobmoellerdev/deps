@@ -12,7 +12,7 @@ import (
 // spec.template.spec): spec.source and spec.sources[].
 func (x *crdExtractor) argoSpec(spec *yaml.Node) {
 	x.argoSource(yamlspan.Get(spec, "source"))
-	for _, s := range seq(yamlspan.Get(spec, "sources")) {
+	for _, s := range yamlspan.Seq(yamlspan.Get(spec, "sources")) {
 		x.argoSource(s)
 	}
 }

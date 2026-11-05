@@ -156,10 +156,7 @@ func (x *extractor) image(v *yaml.Node) {
 }
 
 func (x *extractor) services(v *yaml.Node) {
-	if v == nil || v.Kind != yaml.SequenceNode {
-		return
-	}
-	for _, s := range v.Content {
+	for _, s := range yamlspan.Seq(v) {
 		if s.Kind == yaml.MappingNode {
 			s = yamlspan.Get(s, "name")
 		}

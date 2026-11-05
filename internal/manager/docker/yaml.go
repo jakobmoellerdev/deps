@@ -161,10 +161,7 @@ func (x *extractor) workflow(root *yaml.Node) {
 }
 
 func (x *extractor) steps(depType string, steps *yaml.Node) {
-	if steps == nil || steps.Kind != yaml.SequenceNode {
-		return
-	}
-	for _, s := range steps.Content {
+	for _, s := range yamlspan.Seq(steps) {
 		x.scalar(depType, yamlspan.Get(s, "uses"), dockerPrefix)
 	}
 }

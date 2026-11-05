@@ -18,7 +18,7 @@ func (x *crdExtractor) k0sChart(spec *yaml.Node) {
 // records its repository aliases (spec.extensions.helm.repositories) for every file of the run.
 func (x *crdExtractor) k0sConfig(spec *yaml.Node) {
 	h := yamlspan.Get(yamlspan.Get(spec, "extensions"), "helm")
-	for _, r := range seq(yamlspan.Get(h, "repositories")) {
+	for _, r := range yamlspan.Seq(yamlspan.Get(h, "repositories")) {
 		name, url := yamlspan.Value(yamlspan.Get(r, "name")), yamlspan.Value(yamlspan.Get(r, "url"))
 		if name == "" || url == "" {
 			continue
@@ -28,7 +28,7 @@ func (x *crdExtractor) k0sConfig(spec *yaml.Node) {
 		}
 		x.k0sRepos[name] = strings.TrimSuffix(url, "/")
 	}
-	for _, c := range seq(yamlspan.Get(h, "charts")) {
+	for _, c := range yamlspan.Seq(yamlspan.Get(h, "charts")) {
 		x.k0sChartRef(yamlspan.Get(c, "chartname"), yamlspan.Get(c, "version"), nil)
 	}
 }
@@ -66,12 +66,4 @@ func (x *crdExtractor) k0sChartRef(chartName, version, inline *yaml.Node) {
 			x.refs = append(x.refs, ref{i: i, kind: refK0s, key: key{name: alias}})
 		}
 	}
-}
-
-// seq returns the items of sequence n (nil if n is not a sequence).
-func seq(n *yaml.Node) []*yaml.Node {
-	if n == nil || n.Kind != yaml.SequenceNode {
-		return nil
-	}
-	return n.Content
 }

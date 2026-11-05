@@ -61,14 +61,14 @@ func (kustomizeManager) Extract(file string, src []byte, _ manager.Env) ([]dep.D
 	}
 	root := doc.Content[0]
 	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
-	for _, m := range items(yamlspan.Get(root, "images")) {
+	for _, m := range yamlspan.Seq(yamlspan.Get(root, "images")) {
 		x.image(m)
 	}
-	for _, m := range items(yamlspan.Get(root, "helmCharts")) {
+	for _, m := range yamlspan.Seq(yamlspan.Get(root, "helmCharts")) {
 		x.helmChart(m)
 	}
 	for _, key := range []string{"resources", "components", "bases"} {
-		for _, v := range items(yamlspan.Get(root, key)) {
+		for _, v := range yamlspan.Seq(yamlspan.Get(root, key)) {
 			x.resource(v)
 		}
 	}
@@ -298,14 +298,6 @@ func (x *extractor) resource(v *yaml.Node) {
 		d.RefSpan = dep.Span{Start: off + r.refOff, End: off + r.refOff + len(r.ref)}
 	}
 	x.deps = append(x.deps, d)
-}
-
-// items returns the elements of sequence n (nil if n is not a sequence).
-func items(n *yaml.Node) []*yaml.Node {
-	if n == nil || n.Kind != yaml.SequenceNode {
-		return nil
-	}
-	return n.Content
 }
 
 // mappingKey returns the key node of key in mapping m, or nil.

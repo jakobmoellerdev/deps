@@ -72,6 +72,14 @@ func Str(n *yaml.Node) *yaml.Node {
 	return n
 }
 
+// Seq returns the items of n if it is a sequence, else nil.
+func Seq(n *yaml.Node) []*yaml.Node {
+	if n == nil || n.Kind != yaml.SequenceNode {
+		return nil
+	}
+	return n.Content
+}
+
 // Value returns the value of scalar n, or "" when n is not a scalar.
 func Value(n *yaml.Node) string {
 	if n = Str(n); n == nil {
