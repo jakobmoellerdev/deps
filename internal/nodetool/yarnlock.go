@@ -2,6 +2,7 @@ package nodetool
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json/jsontext"
 	"fmt"
 	"io"
@@ -32,21 +33,24 @@ func yarnVersions(r io.Reader, ws []lockWant) ([]string, error) {
 	sc.Buffer(nil, 16<<20)
 	var cur []int // the wants of the entry being read
 	for sc.Scan() {
-		line := sc.Text()
+		line := sc.Bytes() // strings only for descriptor lookups and kept versions
 		switch {
-		case line == "" || line[0] == '#':
-			cur = nil
+		case len(line) == 0 || line[0] == '#':
+			cur = cur[:0]
 		case line[0] != ' ':
 			cur = cur[:0]
-			for _, d := range yarnDescriptors(line) {
-				cur = append(cur, want[d]...)
+			header := bytes.TrimSuffix(bytes.TrimRight(line, " \r"), []byte(":"))
+			for more := true; more; {
+				var d []byte
+				d, header, more = bytes.Cut(header, []byte(", "))
+				cur = append(cur, want[string(bytes.Trim(d, `"`))]...)
 			}
 		case len(cur) > 0:
-			rest, ok := strings.CutPrefix(line, "  version")
-			if !ok || rest == "" || (rest[0] != ' ' && rest[0] != ':') {
+			rest, ok := bytes.CutPrefix(line, []byte("  version"))
+			if !ok || len(rest) == 0 || (rest[0] != ' ' && rest[0] != ':') {
 				continue
 			}
-			v := strings.Trim(strings.TrimSpace(strings.TrimPrefix(rest, ":")), `"`)
+			v := string(bytes.Trim(bytes.TrimSpace(bytes.TrimPrefix(rest, []byte(":"))), `"`))
 			for _, i := range cur {
 				out[i] = v
 			}
