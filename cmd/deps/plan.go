@@ -165,7 +165,10 @@ func hasManager(res *engine.Result, name string) bool {
 // hashedUpdate reports whether an update is in a requirements file with --hash options.
 func hashedUpdate(root string, res *engine.Result) bool {
 	for _, u := range res.Updates {
-		if _, ok := (pytool.Compiler{}).Scope(root, u.Dep.File); ok && u.Dep.Manager == piprequirements.Name {
+		if u.Dep.Manager != piprequirements.Name {
+			continue
+		}
+		if _, ok := (pytool.Compiler{}).Scope(root, u.Dep.File); ok {
 			return true
 		}
 	}
