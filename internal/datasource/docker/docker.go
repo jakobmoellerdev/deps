@@ -50,6 +50,9 @@ type Source struct {
 	// challenger answers the first request to each repository of Docker Hub and ghcr.io with
 	// the registry's bearer challenge.
 	challenger *challenger
+	// scopes are the bearer scopes per registry that its challenges ask for besides the
+	// repository's pull scope (registryScopes).
+	scopes map[string][]auth.Scope
 
 	mu      sync.Mutex
 	tags    map[string]*tagsEntry   // canonical repository
@@ -152,6 +155,16 @@ const hubRegistry = "docker.io"
 // the bytes read, not on memory held.
 const maxMetadataBytes = 64 << 20
 
+// registryScopes are the bearer scopes a registry's challenges ask for besides the repository
+// pull scope that deps hints: public.ecr.aws challenges with `aws` alone. oras-go caches a token
+// under the challenged scopes merged with the hinted ones but looks it up under the hinted ones,
+// so without the hint each request is first sent without its token and answered with a 401:
+// every tags/list page, HEAD and manifest or blob GET after the first
+// (public.ecr.aws/lambda/python: 16 pages, 15 extra round trips).
+var registryScopes = map[string][]auth.Scope{
+	"public.ecr.aws": {{ResourceType: "aws"}},
+}
+
 func newSource(client *http.Client, sem chan struct{}, cred credentials.CredentialFunc) *Source {
 	tr := http.DefaultTransport
 	if client != nil && client.Transport != nil {
@@ -175,6 +188,7 @@ func newSource(client *http.Client, sem chan struct{}, cred credentials.Credenti
 		sem:         sem,
 		pullLimited: hubRegistry,
 		challenger:  ch,
+		scopes:      registryScopes,
 		tags:        map[string]*tagsEntry{},
 		digests:     map[string]*digestEntry{},
 		configs:     map[string]*configEntry{},
@@ -199,6 +213,14 @@ func (s *Source) repository(name string) (*remote.Repository, error) {
 	}
 	r.TagListMaxPages = tagPageCap(r.Registry.Reference.Registry)
 	return r, nil
+}
+
+// pullContext returns ctx with the bearer scope hints of a pull from repo: the repository's pull
+// scope and its registry's registryScopes.
+func (s *Source) pullContext(ctx context.Context, repo *remote.Repository) context.Context {
+	ref := repo.Reference()
+	ctx = auth.AppendRepositoryScope(ctx, ref, auth.ActionPull)
+	return auth.AppendScopesForResource(ctx, ref.Resource(), s.scopes[ref.Registry]...)
 }
 
 // plainHTTP reports whether registry (host[:port]) is local: localhost, a loopback or a private
@@ -364,6 +386,7 @@ func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, 
 	if err != nil {
 		return time.Time{}, "", err
 	}
+	ctx = s.pullContext(ctx, repo)
 	desc, b, err := fetchManifest(ctx, repo, ref)
 	if err != nil {
 		return time.Time{}, "", err
@@ -484,6 +507,7 @@ func (s *Source) head(ctx context.Context, name, tag string) (digest string, err
 	if err != nil {
 		return "", fmt.Errorf("digest %s:%s: %w", name, tag, err)
 	}
+	ctx = s.pullContext(ctx, repo)
 	desc, err := repo.Resolve(ctx, tag)
 	if err == nil {
 		return desc.Digest.String(), nil

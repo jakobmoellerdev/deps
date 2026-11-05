@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oras-project/oras-go/v3/registry/remote/auth"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
@@ -187,5 +189,81 @@ func TestChallengerPassesThrough(t *testing.T) {
 	}
 	if got, want := resp.Header.Get("Www-Authenticate"), `Bearer realm="https://reg/token",service="reg",scope="repository:c/d:pull"`; got != want {
 		t.Errorf("challenge = %s; want %s", got, want)
+	}
+}
+
+// TestRegistryScopes: on a registry whose challenge asks for a scope of its own instead of the
+// repository's (public.ecr.aws: `aws`), the token is fetched once and, with the registry's
+// scope hinted, every later request of the repository (the second tags/list page, HEAD,
+// manifest and blob GETs) carries it; without the hint each of them is first answered with a
+// 401.
+func TestRegistryScopes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		hinted  bool
+		want401 int
+	}{
+		{"hinted", true, 1},
+		{"not hinted", false, 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := newMemRegistry()
+			img := reg.image(t, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), nil)
+			reg.tag("lambda/python", "3.12", img)
+			var mu sync.Mutex
+			hits := map[string]int{}
+			hit := func(k string) {
+				mu.Lock()
+				defer mu.Unlock()
+				hits[k]++
+			}
+			var srv *httptest.Server
+			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Path == "/token" {
+					hit("token")
+					_ = json.MarshalWrite(w, map[string]string{"token": "t " + strings.Join(req.URL.Query()["scope"], " ")})
+					return
+				}
+				if req.Header.Get("Authorization") != "Bearer t aws repository:lambda/python:pull" {
+					hit("401")
+					w.Header().Set("Www-Authenticate", `Bearer realm="`+srv.URL+`/token",service="test",scope="aws"`)
+					registryError(w, http.StatusUnauthorized, "DENIED")
+					return
+				}
+				hit(req.Method + " " + req.URL.Path)
+				if strings.HasSuffix(req.URL.Path, "/tags/list") && req.URL.Query().Get("last") == "" {
+					w.Header().Set("Link", `</v2/lambda/python/tags/list?last=3.11>; rel="next"`)
+					_ = json.MarshalWrite(w, map[string]any{"tags": []string{"3.11"}})
+					return
+				}
+				reg.ServeHTTP(w, req) // the last page: 3.12
+			}))
+			t.Cleanup(srv.Close)
+			host := strings.TrimPrefix(srv.URL, "http://")
+			s := newSource(srv.Client(), nil, anon)
+			if tc.hinted {
+				s.scopes = map[string][]auth.Scope{host: {{ResourceType: "aws"}}}
+			}
+			d := dep.Dep{Name: host + "/lambda/python"}
+
+			if rels, err := s.Releases(t.Context(), d, ""); err != nil || len(rels) != 2 {
+				t.Fatalf("Releases = %v, %v", rels, err)
+			}
+			if got, err := s.Digest(t.Context(), d, "3.12"); err != nil || got != img.Digest.String() {
+				t.Errorf("Digest = %q, %v; want %s", got, err, img.Digest)
+			}
+			if got, err := s.ReleaseTime(t.Context(), d, "3.12"); err != nil || got.IsZero() {
+				t.Errorf("ReleaseTime = %v, %v", got, err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if hits["401"] != tc.want401 || hits["token"] != 1 {
+				t.Errorf("401 challenges = %d, token requests = %d; want %d, 1", hits["401"], hits["token"], tc.want401)
+			}
+			if got := hits["GET /v2/lambda/python/tags/list"]; got != 2 {
+				t.Errorf("tags/list pages = %d; want 2", got)
+			}
+		})
 	}
 }

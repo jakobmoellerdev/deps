@@ -14,7 +14,6 @@ import (
 
 	"github.com/oras-project/oras-go/v3/errdef"
 	"github.com/oras-project/oras-go/v3/registry/remote"
-	"github.com/oras-project/oras-go/v3/registry/remote/auth"
 	"github.com/oras-project/oras-go/v3/registry/remote/errcode"
 )
 
@@ -33,13 +32,13 @@ type tagMeta struct {
 // whole, and the map's untagged entries (most of a large gcr.io repository) are skipped.
 //
 // This replaces oras-go's Repository.Tags, which decodes only `tags`. Like it, the request
-// carries the repository's pull scope, n is repo.TagListPageSize, a page is limited to
-// maxMetadataBytes, next links must stay on the origin of the page that sent them, and a next
-// page beyond repo.TagListMaxPages (0 = no limit) fails with errdef.ErrTooManyPages; the tags
-// and meta read until then are kept.
+// carries the repository's pull scope (with the registry's, see pullContext), n is
+// repo.TagListPageSize, a page is limited to maxMetadataBytes, next links must stay on the
+// origin of the page that sent them, and a next page beyond repo.TagListMaxPages (0 = no
+// limit) fails with errdef.ErrTooManyPages; the tags and meta read until then are kept.
 func (s *Source) listTags(ctx context.Context, repo *remote.Repository, fn func(tag string)) (map[string]tagMeta, error) {
 	ref := repo.Reference()
-	ctx = auth.AppendRepositoryScope(ctx, ref, auth.ActionPull)
+	ctx = s.pullContext(ctx, repo)
 	scheme := "https"
 	if repo.Registry.PlainHTTP {
 		scheme = "http"

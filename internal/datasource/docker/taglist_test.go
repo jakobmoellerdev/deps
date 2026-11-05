@@ -3,16 +3,19 @@ package dockerds
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/oras-project/oras-go/v3/errdef"
 	"github.com/oras-project/oras-go/v3/registry/remote/errcode"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
@@ -225,6 +228,35 @@ func TestTagListMaxPages(t *testing.T) {
 	meta, err := s.listTags(t.Context(), repo, func(tag string) { tags = append(tags, tag) })
 	if !errors.Is(err, errdef.ErrTooManyPages) || strings.Join(tags, ",") != "1,11" || len(meta) != 2 {
 		t.Errorf("tags = %v, meta = %v, err = %v", tags, meta, err)
+	}
+}
+
+// TestTagListTimeout: a registry that does not answer a tags/list request in time
+// (docker.elastic.co takes 45-55 s per page) fails the lookup with the transport's timeout, once
+// per repository for all its deps. It stays an error, not a skip: a dep without a lookup yields
+// no PR group, and the bot closes obsolete PRs only when a run has no errors, so a transient
+// timeout must not make the dep's open PR look obsolete.
+func TestTagListTimeout(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	tr := srv.Client().Transport.(*http.Transport).Clone()
+	tr.ResponseHeaderTimeout = 50 * time.Millisecond
+	s := newSource(&http.Client{Transport: tr}, nil, anon)
+	d := dep.Dep{Name: strings.TrimPrefix(srv.URL, "http://") + "/elasticsearch/elasticsearch"}
+
+	for range 2 {
+		_, err := s.Releases(t.Context(), d, "")
+		var nerr net.Error
+		if !errors.As(err, &nerr) || !nerr.Timeout() || errors.Is(err, datasource.ErrVersionNotFound) {
+			t.Errorf("Releases err = %v; want the timeout", err)
+		}
+	}
+	if n := requests.Load(); n != 1 {
+		t.Errorf("tags/list requests = %d; want 1", n)
 	}
 }
 
