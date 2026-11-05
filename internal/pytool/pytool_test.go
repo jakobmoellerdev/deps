@@ -97,7 +97,7 @@ func stubs(t *testing.T, tools ...string) (log string) {
   printf '\nenv: %s %s\n' "$POETRY_NO_INTERACTION" "$PIPENV_VENV_IN_PROJECT"
   '` + find + `' . -type f | LC_ALL=C '` + sort + `' | while read -r f; do printf 'file: %s\n' "$f"; done
 } >> '` + log + `'
-if [ -n "$STUB_FAIL" ]; then echo "progress" >&2; echo "ERR something broke"; exit 3; fi
+if [ -n "$STUB_FAIL" ]; then echo "progress" >&2; echo "${STUB_FAIL_MSG:-ERR something broke}"; exit 3; fi
 [ -n "$STUB_KEEP" ] && exit 0
 for f in uv.lock poetry.lock pdm.lock Pipfile.lock; do
   [ -f "$f" ] && echo locked >> "$f"
@@ -112,6 +112,7 @@ exit 0
 	t.Setenv("PATH", bin)
 	t.Setenv("STUB_KEEP", "")
 	t.Setenv("STUB_FAIL", "")
+	t.Setenv("STUB_FAIL_MSG", "")
 	t.Setenv("STUB_POETRY", "")
 	return log
 }

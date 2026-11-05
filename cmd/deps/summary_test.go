@@ -105,6 +105,15 @@ func TestSummaryRender(t *testing.T) {
 			md:   []string{"## deps run --dry-run\n", "### Errors\n\n```\ngo.mod:5: example.com/a: boom\npush: denied\n```\n"},
 		},
 		{
+			name: "run with an inapplicable update",
+			s: summary{Command: "run", Run: true, Res: &engine.Result{Updates: res.Updates[:1], Deps: res.Deps[:1], Skipped: []dep.Dep{{Name: "actions/checkout", Skip: "module path changed to x (y@v7.0.1)"}}},
+				Groups: groups[:1], Actions: []bot.Action{{Branch: groups[0].Branch, Status: bot.StatusSkipApply, Reason: "module path changed to x (y@v7.0.1)"}}},
+			text: []string{
+				"0 errors (0s)\n", "[skipped: update cannot be applied; module path changed to x (y@v7.0.1)]\n",
+				"       1  module path changed to x (y@v7.0.1)  (the new version's go.mod declares another module path; require that path to update)\n",
+			},
+		},
+		{
 			name:         "empty",
 			s:            summary{Command: "plan", Res: &engine.Result{Deps: res.Deps, Skipped: res.Skipped}},
 			textExact:    "\nSummary: No updates: 3 dependencies up to date, 3 skipped.\n  Skipped (-v lists each dependency):\n",

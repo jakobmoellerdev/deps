@@ -93,6 +93,9 @@ const (
 	StatusSkipModified = "skipped: branch modified by someone else"
 	StatusSkipSchedule = "skipped: outside schedule"
 	StatusSkipIssues   = "skipped: issues disabled" // dashboard only: the repository has no issue tracker
+	// StatusSkipApply: a post-processor found the update inapplicable (*dep.SkipError, e.g.
+	// the new version of a Go module declares another module path); Action.Reason says why.
+	StatusSkipApply = "skipped: update cannot be applied"
 )
 
 // Automerge outcomes (Action.Automerge).
@@ -120,6 +123,7 @@ type Action struct {
 	Automerge                  string   // automerge outcome; "" = not an automerge PR
 	Waits                      []string // StatusSkipSchedule: the crons that would put the group in schedule
 	Dashboard                  bool
+	Reason                     string // StatusSkipApply: why
 }
 
 // Display is Status with the automerge outcome appended ("created, automerge").
@@ -134,7 +138,10 @@ var fingerprintRe = regexp.MustCompile(`<!-- deps:fingerprint=([0-9a-f]+) -->`)
 
 // Run creates, updates and closes dependency PRs for res; post regenerates lockfiles per
 // manager (engine.Build). Obsolete PRs are only closed when neither the engine nor the bot
-// reported an error, so a transient failure never closes PRs.
+// reported an error, so a transient failure never closes PRs. A group whose every build error
+// is a *dep.SkipError is skipped instead (StatusSkipApply, its deps added to res.Skipped and
+// marked in res.Deps): retrying cannot help, so it holds back neither the cleanup nor other
+// groups; an open PR of it stays open.
 func Run(ctx context.Context, o Options, root string, res *engine.Result, post map[string]engine.PostProcessor, pc platform.Client, g Git) ([]Action, []error) {
 	base := o.Base
 	if base == "" {
@@ -192,7 +199,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	}
 	groups := engine.GroupUpdates(res.Updates, prefix)
 	built := make([][]engine.FileChange, len(groups))
-	buildErrs := make([]error, len(groups))
+	buildErrs := make([][]error, len(groups))
 	ran := make([]bool, len(groups))
 	inSchedule := make([]bool, len(groups))
 	forced := make([]force, len(groups))
@@ -211,7 +218,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			changes, errs := engine.Build(ctx, root, o.Managers, groups[i].Updates, post)
-			built[i], buildErrs[i] = changes, errors.Join(errs...)
+			built[i], buildErrs[i] = changes, errs
 		})
 	}
 	wg.Wait()
@@ -223,7 +230,13 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	for i, grp := range groups {
 		wanted[grp.Branch] = true // out-of-schedule branches are still wanted: keep their PRs open
 		if buildErrs[i] != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, buildErrs[i]))
+			if reason, ok := skipReason(buildErrs[i]); ok {
+				slog.InfoContext(ctx, "update cannot be applied", "branch", grp.Branch, "reason", reason)
+				skipGroup(res, grp, reason)
+				actions = append(actions, Action{Branch: grp.Branch, Title: grp.Title, Status: StatusSkipApply, Reason: reason})
+				continue
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, errors.Join(buildErrs[i]...)))
 			continue
 		}
 		if ran[i] && len(built[i]) == 0 {
@@ -287,6 +300,38 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		}
 	}
 	return actions, errs
+}
+
+// skipReason returns the reasons of a group's build errors, deduplicated and joined by "; ",
+// when every one is a *dep.SkipError.
+func skipReason(errs []error) (string, bool) {
+	var reasons []string
+	for _, e := range errs {
+		skip, ok := errors.AsType[*dep.SkipError](e)
+		if !ok {
+			return "", false
+		}
+		if !slices.Contains(reasons, skip.Reason) {
+			reasons = append(reasons, skip.Reason)
+		}
+	}
+	return strings.Join(reasons, "; "), len(reasons) > 0
+}
+
+// skipGroup records the deps of a group that cannot be applied as skipped with reason, as
+// Resolve records the deps it skips: in res.Skipped (once per dep) and in res.Deps.
+func skipGroup(res *engine.Result, grp engine.Group, reason string) {
+	for _, u := range grp.Updates {
+		d := u.Dep
+		same := func(o dep.Dep) bool { return o.File == d.File && o.Line == d.Line && o.Name == d.Name }
+		if i := slices.IndexFunc(res.Deps, same); i >= 0 {
+			res.Deps[i].Skip = reason
+		}
+		if !slices.ContainsFunc(res.Skipped, same) {
+			d.Skip = reason
+			res.Skipped = append(res.Skipped, d)
+		}
+	}
 }
 
 // deleteObsoleteBranches deletes the managed branches no group wants that have no PR, open

@@ -637,6 +637,61 @@ func TestRunBranchPrefixAndUnlimitedPRs(t *testing.T) {
 	}
 }
 
+// inapplicable is a github-actions post-processor that finds the a/x update inapplicable
+// (*dep.SkipError) and fails b/y when fail is set.
+type inapplicable struct{ fail bool }
+
+func (inapplicable) Scope(_, manifest string) (string, bool) { return filepath.Dir(manifest), true }
+func (inapplicable) Siblings() []string                      { return nil }
+
+func (p inapplicable) Process(_ context.Context, _ string, manifests, _ map[string][]byte) (map[string][]byte, error) {
+	switch src := string(manifests["wf.yml"]); {
+	case strings.Contains(src, "a/x@v2"):
+		return nil, fmt.Errorf("wrapped: %w", &dep.SkipError{Reason: "module path changed to example.com/new (a/x@v2)"})
+	case p.fail:
+		return nil, errBoom
+	}
+	return nil, nil
+}
+
+// A group whose post-processor reports a *dep.SkipError is skipped, not an error: its deps
+// join the skipped ones, the dashboard lists it, and obsolete PRs are still closed. Its open
+// PR stays open. A real build error still holds back the cleanup.
+func TestRunSkipsInapplicableUpdate(t *testing.T) {
+	root, res := fixture(t)
+	res.Deps = []dep.Dep{res.Updates[0].Dep, res.Updates[1].Dep}
+	g := &fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x", "refs/heads/" + branchA: "y"}, authors: map[string]string{branchA: email}}
+	pc := &fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}, {Number: 10, Head: branchA}}}
+	post := map[string]engine.PostProcessor{"github-actions": inapplicable{}}
+	o := Options{AuthorEmail: email, Managers: managers, Dashboard: &DashboardOptions{Title: "Dependency Dashboard"}}
+	acts, errs := Run(t.Context(), o, root, res, post, pc, g)
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	const reason = "module path changed to example.com/new (a/x@v2)"
+	i := slices.IndexFunc(acts, func(a Action) bool { return a.Branch == branchA })
+	if i < 0 || acts[i].Status != StatusSkipApply || acts[i].Reason != reason || acts[i].Title != titleA {
+		t.Errorf("actions = %+v", acts)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].Name != "a/x" || res.Skipped[0].Skip != reason || res.Deps[0].Skip != reason || res.Deps[1].Skip != "" {
+		t.Errorf("skipped = %+v, deps = %+v", res.Skipped, res.Deps)
+	}
+	if !slices.Equal(pc.created, []string{branchB}) || !slices.Equal(pc.closedNow, []int{9}) || slices.Contains(g.pushed, branchA) {
+		t.Errorf("created = %v, closed = %v, pushed = %v", pc.created, pc.closedNow, g.pushed)
+	}
+	if len(pc.createdIssues) != 1 || !strings.Contains(pc.createdIssues[0].Body, "- "+titleA+" (cannot be applied: "+reason+")") {
+		t.Errorf("dashboard = %+v", pc.createdIssues)
+	}
+
+	root, res = fixture(t)
+	g = &fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}}
+	pc = &fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}}
+	post = map[string]engine.PostProcessor{"github-actions": inapplicable{fail: true}}
+	if _, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, post, pc, g); len(errs) != 1 || !strings.Contains(errs[0].Error(), branchB+": wf.yml: boom") || len(pc.closedNow) != 0 {
+		t.Errorf("errs = %v, closed = %v", errs, pc.closedNow)
+	}
+}
+
 type staleGit struct{ fakeGit }
 
 func (g *staleGit) LsRemote(_ context.Context, pattern string) (map[string]string, error) {

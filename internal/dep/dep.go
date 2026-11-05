@@ -28,6 +28,16 @@ var UpdateTypes = []UpdateType{Major, Minor, Patch, Digest, Pin}
 // Span is a byte range in a file; End is exclusive.
 type Span struct{ Start, End int }
 
+// SkipError reports a dependency or an update that cannot be handled for a reason that is not
+// a failure: retrying cannot help, the cause is upstream or in the repository's own
+// constraints. A datasource returns it when a dep cannot be looked up (a Cargo registry name
+// no configuration defines), a post-processor when an update cannot be applied (the new
+// version of a Go module declares another module path). The engine and the bot report it as
+// a skip with Reason, not as an error.
+type SkipError struct{ Reason string }
+
+func (e *SkipError) Error() string { return e.Reason }
+
 // Dep is a single dependency occurrence extracted from a file.
 type Dep struct {
 	Manager    string // "github-actions" | "gomod" | "docker" | "npm" | "pip_requirements" | "pep621" | "poetry" | "pipenv" | "helm" | "cargo" | "maven" | "gradle" | "gradle-wrapper" | "maven-wrapper" | "custom"

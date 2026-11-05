@@ -4,12 +4,15 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 // TestTidyOffline tidies a module without requirements, which needs no network.
@@ -241,5 +244,66 @@ func TestTidyOverlay(t *testing.T) {
 	}
 	if scope, ok := (Tidier{}).Scope(t.TempDir(), "a/b.go"); ok {
 		t.Errorf("Scope without go.mod = %q, true", scope)
+	}
+}
+
+// TestTidyPathChanged requires a module version whose go.mod declares another path (a module
+// renamed upstream): tidy cannot succeed, so the update is skipped; other tidy failures stay
+// errors.
+func TestTidyPathChanged(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go not in PATH")
+	}
+	proxy := t.TempDir()
+	writeModule(t, proxy, "example.com/old", "v1.0.0")
+	publish(t, proxy, "example.com/old", "v1.1.0", "module example.com/new\n", map[string]string{"a.go": "package m\n\nconst V = 1\n"})
+	t.Setenv("GOPROXY", "file://"+filepath.ToSlash(proxy))
+	t.Setenv("GOSUMDB", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOMODCACHE", t.TempDir())
+	t.Cleanup(func() { _ = exec.Command("go", "clean", "-modcache").Run() })
+	dir := t.TempDir()
+	src := "package main\n\nimport \"example.com/old\"\n\nfunc main() { _ = m.V }\n"
+	mod := func(version string) string {
+		return "module example.com/x\n\ngo 1.21\n\nrequire example.com/old " + version + "\n"
+	}
+	for name, content := range map[string]string{"main.go": src, "go.mod": mod("v1.0.0")} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tidy := func(version string) error {
+		_, err := Tidier{}.Process(context.Background(), dir, map[string][]byte{"go.mod": []byte(mod(version))}, map[string][]byte{})
+		return err
+	}
+	err := tidy("v1.1.0")
+	if skip, ok := errors.AsType[*dep.SkipError](err); !ok || skip.Reason != "module path changed to example.com/new (example.com/old@v1.1.0)" {
+		t.Errorf("renamed: %v", err)
+	}
+	err = tidy("v1.2.0") // no such version
+	if _, ok := errors.AsType[*dep.SkipError](err); ok || err == nil || !strings.Contains(err.Error(), "go mod tidy in ") {
+		t.Errorf("missing version: %v", err)
+	}
+	if err := tidy("v1.0.0"); err != nil {
+		t.Errorf("valid version: %v", err)
+	}
+}
+
+func TestPathChanged(t *testing.T) {
+	for stderr, want := range map[string]string{
+		// through an import chain (kubernetes' crypto11 update)
+		"go: k8s.io/kms/plugins/mock imports\n\tgithub.com/golang/protobuf/proto: github.com/ThalesIgnite/crypto11@v1.6.8: parsing go.mod:\n\tmodule declares its path as: github.com/eclipse-keypont/crypto11\n\t        but was required as: github.com/ThalesIgnite/crypto11": "module path changed to github.com/eclipse-keypont/crypto11 (github.com/ThalesIgnite/crypto11@v1.6.8)",
+		"go: github.com/flatcar/ignition/v2@v2.2.0: parsing go.mod:\n\tmodule declares its path as: github.com/coreos/ignition/v2\n\t        but was required as: github.com/flatcar/ignition/v2":                                                                                "module path changed to github.com/coreos/ignition/v2 (github.com/flatcar/ignition/v2@v2.2.0)",
+		// a replacement's path differs from the requirement: not this case
+		"go: example.com/a@v1.0.0 (replaced by ../a): parsing ../a/go.mod:\n\tmodule declares its path as: example.com/b\n\t        but was required as: example.com/a": "",
+		"go: example.com/a@v1.2.0: reading example.com/a/go.mod at revision v1.2.0: unknown revision v1.2.0":                                                            "",
+	} {
+		got := pathChanged(&cmdError{args: "mod tidy", stderr: stderr, err: errors.New("exit status 1")})
+		if (got == nil) != (want == "") || got != nil && got.Reason != want {
+			t.Errorf("pathChanged(%q) = %v, want %q", stderr, got, want)
+		}
+	}
+	if got := pathChanged(errors.New("go mod tidy: boom")); got != nil {
+		t.Errorf("non-command error = %v", got)
 	}
 }

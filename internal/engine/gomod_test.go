@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -311,5 +312,101 @@ func TestBuildMajorPathRewritesImports(t *testing.T) {
 	writeFile(t, root, "bad.go", "package\nimport \"example.com/m/v2\"\n")
 	if changes, errs := Build(t.Context(), root, managers, res.Updates, nil); len(changes) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "go.mod: example.com/m/v2: bad.go") {
 		t.Errorf("changes = %v, errors = %v", paths(changes), errs)
+	}
+}
+
+// declaringModules adds declared module paths (DeclaredPathSource) to fakeModules by
+// "path@version"; a missing entry declares the path itself, "!" fails the lookup.
+type declaringModules struct {
+	*fakeModules
+	declared map[string]string
+	mu       sync.Mutex
+	asked    []string
+}
+
+func (f *declaringModules) DeclaredPath(_ context.Context, modPath, version string) (string, error) {
+	f.mu.Lock()
+	f.asked = append(f.asked, modPath+"@"+version)
+	f.mu.Unlock()
+	switch p, ok := f.declared[modPath+"@"+version]; {
+	case !ok:
+		return modPath, nil
+	case p == "!":
+		return "", errors.New("proxy down")
+	default:
+		return p, nil
+	}
+}
+
+// TestModulePathChange: a version whose go.mod declares another module path is no update
+// (go mod tidy would refuse it); the next candidate is offered instead, and a dep left
+// without updates is skipped with the newest such version's reason.
+func TestModulePathChange(t *testing.T) {
+	const name = "example.com/p"
+	renamed := func(vs ...string) map[string]string {
+		m := map[string]string{}
+		for _, v := range vs {
+			m[v] = "example.com/new"
+		}
+		return m
+	}
+	fork := []datasource.ModulePath{{Name: name + "/v2", Releases: []Release{{Version: "v2.0.0"}}}}
+	tests := []struct {
+		name     string
+		rels     []string
+		majors   []datasource.ModulePath
+		declared map[string]string
+		want     []wantUpdate
+		skip     string
+	}{
+		{
+			name: "newest renamed", rels: []string{"v1.0.0", "v1.1.0", "v1.2.0", "v1.3.0"}, declared: renamed(name+"@v1.3.0", name+"@v1.2.0"),
+			want: []wantUpdate{{typ: dep.Minor, version: "v1.1.0"}},
+		},
+		{
+			name: "every newer version renamed", rels: []string{"v1.0.0", "v1.1.0", "v1.2.0", "v1.3.0"}, declared: renamed(name+"@v1.3.0", name+"@v1.2.0", name+"@v1.1.0"),
+			skip: "module path changed to example.com/new (example.com/p@v1.3.0)",
+		},
+		{
+			name: "major path of a fork", rels: []string{"v1.0.0"}, majors: fork, declared: map[string]string{name + "/v2@v2.0.0": "example.com/origin/v2"},
+			skip: "module path changed to example.com/origin/v2 (example.com/p/v2@v2.0.0)",
+		},
+		{
+			name: "minor kept, major path of a fork dropped", rels: []string{"v1.0.0", "v1.1.0"}, majors: fork, declared: map[string]string{name + "/v2@v2.0.0": "example.com/origin/v2"},
+			want: []wantUpdate{{typ: dep.Minor, version: "v1.1.0"}},
+		},
+		{
+			name: "failed lookup leaves it to tidy", rels: []string{"v1.0.0", "v1.1.0"}, declared: map[string]string{name + "@v1.1.0": "!"},
+			want: []wantUpdate{{typ: dep.Minor, version: "v1.1.0"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ds := &declaringModules{
+				fakeModules: &fakeModules{rels: map[string][]string{name: tt.rels}, majors: map[string][]datasource.ModulePath{name: tt.majors}},
+				declared:    tt.declared,
+			}
+			root, cfg := setup(t, "", map[string]string{"go.mod": "module example.com/x\n\nrequire " + name + " v1.0.0\n"})
+			res, err := Resolve(t.Context(), root, cfg, env, Options{Managers: managers, Datasources: map[string]Datasource{"go": ds}, Now: ageNow})
+			if err != nil || len(res.Errors) > 0 {
+				t.Fatal(err, res.Errors)
+			}
+			if got := gotUpdates(res); !slices.Equal(got, tt.want) {
+				t.Errorf("updates = %+v, want %+v", got, tt.want)
+			}
+			var skips []string
+			for _, d := range res.Skipped {
+				skips = append(skips, d.Skip)
+			}
+			if tt.skip == "" && len(skips) > 0 || tt.skip != "" && !slices.Equal(skips, []string{tt.skip}) {
+				t.Errorf("skipped = %q, want %q", skips, tt.skip)
+			}
+			if tt.skip != "" && (len(res.Deps) != 1 || res.Deps[0].Skip != tt.skip) {
+				t.Errorf("deps = %+v", res.Deps)
+			}
+			if slices.Contains(ds.asked, name+"@v1.0.0") {
+				t.Errorf("asked for the current version: %q", ds.asked)
+			}
+		})
 	}
 }

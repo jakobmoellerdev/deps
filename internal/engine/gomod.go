@@ -58,7 +58,8 @@ func pseudoCandidates(cur string, names []string, reject func(v, reason string))
 // headUpdate is the digest update of a pseudo-version: the module head's newer
 // pseudo-version (datasource.HeadSource), under the digest policy (updates, ignore) and the
 // digest minimumReleaseAge against the commit time (an unknown one only holds it back under
-// timestamp-required). A head that is a release, of another major, or not newer gives none.
+// timestamp-required). A head that is a release, of another major, not newer, or whose go.mod
+// declares another module path (pathChange) gives none.
 func (r *resolver) headUpdate(dir string, reject func(v, reason string)) ([]dep.Update, error) {
 	d := r.d
 	hs, ok := r.ds.(datasource.HeadSource)
@@ -79,6 +80,12 @@ func (r *resolver) headUpdate(dir string, reject func(v, reason string)) ([]dep.
 			reject(v, reason)
 		}
 		r.holdBack(d, v, reason)
+		return nil, nil
+	}
+	if why := r.pathChange(d.Name, v); why != "" {
+		if reject != nil {
+			reject(v, why)
+		}
 		return nil, nil
 	}
 	return []dep.Update{{Dep: d, Type: dep.Digest, NewVersion: v, NewDigest: rev.Digest}}, nil
@@ -118,8 +125,8 @@ func (r *resolver) majorPathUpdates(t *Trace, ups []dep.Update, scheme versionin
 }
 
 // bestOfPath returns the newest release of the module path mp that is a stable version,
-// accepted as a major update and, under the major minimumReleaseAge (and
-// minimumReleaseAgeBehaviour), old enough.
+// accepted as a major update, under the major minimumReleaseAge (and
+// minimumReleaseAgeBehaviour) old enough, and declares mp.Name as its module path.
 func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme, timer datasource.Timer, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool) {
 	cands := make([]string, 0, len(mp.Releases))
 	for _, rel := range mp.Releases {
@@ -145,29 +152,39 @@ func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme
 	p := r.pol.of(dep.Major)
 	nd := r.d
 	nd.Name = mp.Name
-	unknown := 0
-	for _, v := range cands[:min(len(cands), maxRetries)] {
-		if p.MinAge <= 0 {
-			return v, true
-		}
-		var tb time.Time
-		if timer != nil {
-			tb = r.lookupTime(timer, nd, v)
-		}
-		reason := r.ageReason(p, mp.Name+"@"+v, tb)
-		if reason == "" {
-			return v, true
-		}
-		if reject != nil {
-			reject(mp.Name+"@"+v, reason)
-		}
-		r.holdBack(r.d, mp.Name+"@"+v, reason)
-		if tb.IsZero() {
-			unknown++
-			if unknown == maxUnknownTimes {
-				break
+	unknown, asked := 0, false
+	cands = cands[:min(len(cands), maxRetries)]
+	for i, v := range cands {
+		if p.MinAge > 0 {
+			var tb time.Time
+			if timer != nil {
+				tb = r.lookupTime(timer, nd, v)
+			}
+			if reason := r.ageReason(p, mp.Name+"@"+v, tb); reason != "" {
+				if reject != nil {
+					reject(mp.Name+"@"+v, reason)
+				}
+				r.holdBack(r.d, mp.Name+"@"+v, reason)
+				if tb.IsZero() {
+					unknown++
+					if unknown == maxUnknownTimes {
+						break
+					}
+				}
+				continue
 			}
 		}
+		if why := r.pathChange(mp.Name, v); why != "" {
+			if reject != nil {
+				reject(mp.Name+"@"+v, why)
+			}
+			if !asked {
+				asked = true
+				r.prefetchPaths(mp.Name, cands[i+1:min(len(cands), i+1+prefetchWindow)])
+			}
+			continue
+		}
+		return v, true
 	}
 	return "", false
 }

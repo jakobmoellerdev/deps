@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
@@ -592,12 +591,12 @@ func TestResolveAndBuildNpm(t *testing.T) {
 	}
 }
 
-// skipping skips "b" with a *datasource.SkipError and lists v1.1.0 for any other dep.
+// skipping skips "b" with a *dep.SkipError and lists v1.1.0 for any other dep.
 type skipping struct{}
 
 func (skipping) Releases(_ context.Context, d dep.Dep, _ string) ([]Release, error) {
 	if d.Name == "b" {
-		return nil, fmt.Errorf("wrapped: %w", &datasource.SkipError{Reason: "unknown registry corp"})
+		return nil, fmt.Errorf("wrapped: %w", &dep.SkipError{Reason: "unknown registry corp"})
 	}
 	return []Release{{Version: "v1.1.0"}}, nil
 }

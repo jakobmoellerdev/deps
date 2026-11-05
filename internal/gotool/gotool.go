@@ -19,6 +19,7 @@ import (
 
 	"golang.org/x/mod/modfile"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
@@ -140,7 +141,8 @@ func ModuleLatest(ctx context.Context, dir, path string) (Module, error) {
 // Tidy runs `go mod tidy` in dir against copies of mod and sum (sum may be nil) and returns
 // the tidied contents. overlay holds patched source files by slash path relative to dir
 // (import paths rewritten by a major module path update); tidy reads them through
-// `-overlay`. The real files in dir are never touched.
+// `-overlay`. The real files in dir are never touched. A failure because a required module
+// version declares another module path is a *dep.SkipError (see pathChanged).
 func Tidy(ctx context.Context, dir string, mod, sum []byte, overlay map[string][]byte) (newMod, newSum []byte, err error) {
 	tmp, err := os.MkdirTemp("", "deps-tidy-*")
 	if err != nil {
@@ -165,6 +167,10 @@ func Tidy(ctx context.Context, dir string, mod, sum []byte, overlay map[string][
 		args = append(args, arg)
 	}
 	if _, err := run(ctx, dir, []string{"GOWORK=off", "GOFLAGS="}, args...); err != nil {
+		if skip := pathChanged(err); skip != nil {
+			slog.InfoContext(ctx, "go mod tidy: a required module declares another path", "dir", dir, "reason", skip.Reason)
+			return nil, nil, skip
+		}
 		return nil, nil, inDir("go mod tidy", dir, err)
 	}
 	if newMod, err = os.ReadFile(modPath); err != nil {
@@ -174,6 +180,27 @@ func Tidy(ctx context.Context, dir string, mod, sum []byte, overlay map[string][
 		return nil, nil, err
 	}
 	return newMod, newSum, nil
+}
+
+// pathMismatch is the go command's refusal of a module version whose go.mod declares another
+// module path: `<path>@<version>: parsing go.mod:` followed by `module declares its path as:
+// <declared>` and `but was required as: <path>`.
+var pathMismatch = regexp.MustCompile(`(\S+)@([^\s:]+): parsing go\.mod:\s+module declares its path as: (\S+)\s+but was required as: (\S+)`)
+
+// pathChanged returns the skip of a go command failure caused by a required module version
+// that declares another module path (the module was renamed upstream, or a fork kept its
+// origin's path): no tidy of this go.mod can succeed until it requires the declared path, so
+// it is the update's skip, not a failure. nil for any other failure.
+func pathChanged(err error) *dep.SkipError {
+	var ce *cmdError
+	if !errors.As(err, &ce) {
+		return nil
+	}
+	m := pathMismatch.FindStringSubmatch(ce.stderr)
+	if len(m) != 5 || m[1] != m[4] {
+		return nil
+	}
+	return &dep.SkipError{Reason: fmt.Sprintf("module path changed to %s (%s@%s)", m[3], m[1], m[2])}
 }
 
 // writeOverlay writes the overlay files and their `-overlay` JSON (absolute paths of dir's

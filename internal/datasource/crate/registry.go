@@ -127,7 +127,7 @@ func (s *Source) loadConfig(dir, root string) (*cargoConfig, error) {
 // registryOf resolves the index of d: d.Source is "" (crates.io, or its [source.crates-io]
 // replacement), an index URL (registry-index), or a registry name (registry = "<name>", from
 // CARGO_REGISTRIES_<NAME>_INDEX or [registries.<name>] index). A name without an index is a
-// *datasource.SkipError, as Cargo cannot resolve it either.
+// *dep.SkipError, as Cargo cannot resolve it either.
 func (s *Source) registryOf(d dep.Dep, dir string) (*registry, error) {
 	cfg, err := s.config(dir, datasource.RootOf(d.File, dir))
 	if err != nil {
@@ -158,7 +158,7 @@ func (s *Source) registryOf(d dep.Dep, dir string) (*registry, error) {
 		idx = cfg.str("registries", name, "index")
 	}
 	if idx == "" {
-		return nil, &datasource.SkipError{Reason: "unknown registry " + name}
+		return nil, &dep.SkipError{Reason: "unknown registry " + name}
 	}
 	return s.registry(name, idx, s.tokenOf(cfg, name), ""), nil
 }

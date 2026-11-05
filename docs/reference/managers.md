@@ -138,6 +138,7 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules. `go.
 | `vendored module (not supported)` | `vendor/modules.txt` exists next to `go.mod` |
 | `prerelease toolchain` | `go1.27rc1` style directive |
 | `cannot locate value` | the version bytes were not found |
+| `module path changed to <path> (<module>@<version>)` | every newer candidate's `go.mod` declares another module path (a renamed module, or a fork that kept its origin's path); go refuses such a version |
 
 **Versioning.**
 
@@ -160,12 +161,18 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules. `go.
 - `gomodUpdateImportPaths: false` turns module path updates off. Only GOPROXY URLs are probed: GONOPROXY/GOPRIVATE modules, and paths no proxy before `direct` has, get no module path updates.
 - A probe only decides whether a module path update is offered, so each probe request to a proxy gets 10 s, retries included, and is not retried once that runs out. A path no proxy answers in time counts as having no releases and is logged as a warning (`major module path probe timed out; assuming no newer major`); the requirement keeps its other updates.
 
+**Module path changes.**
+
+- A version is only an update when its `go.mod` declares the path it is required as. The `@v/<version>.mod` of a candidate that passed the other checks is read from the module download cache, else the GOPROXY URLs (one request per module@version and run). One that declares another path (`github.com/google/cel-go` v0.32.0 declares `cel.dev/cel-go`) is rejected like a too new one, and the next candidate of its PR bucket is tried; for a renamed module the next 8 are fetched concurrently. This applies to major module paths and pseudo-version heads too.
+- A requirement left without updates this way is skipped with `module path changed to <declared> (<module>@<version>)` (the newest such version): moving to the new path is a code change deps does not make. A failed `.mod` lookup is logged and leaves the candidate to `go mod tidy`; GONOPROXY/GOPRIVATE modules are not checked.
+- When `go mod tidy` still refuses a module version this way (`module declares its path as … but was required as …`, for a module the update pulls in, or one the check could not read), `run` skips the update with the same reason instead of failing: its PR group is reported as `skipped: update cannot be applied` and is no error, so it does not keep obsolete PRs open (`apply` reports it as an error).
+
 **Post-processing (`apply`, `run`).**
 
 - After any gomod change, deps runs `go mod tidy -modfile=<tmp>/go.mod` in the module directory, on temporary copies of `go.mod` and `go.sum`, with `GOWORK=off` and `GOFLAGS` cleared; source files rewritten by a major module path update are passed with `-overlay`.
 - The tidied `go.mod` and `go.sum` replace the patched files. The real files are only written by `apply`.
 - At most 4 post-processors (tidy and npm installs together) run concurrently.
-- A failure drops that module's change: `go mod tidy in <dir>: <last 20 lines of stderr>`.
+- A failure drops that module's change: `go mod tidy in <dir>: <last 20 lines of stderr>` (except a module path change, above).
 - `plan` does not run tidy, and prints `note    go.sum changes are computed by apply/run`.
 
 **Lock file maintenance (`run`).**
@@ -795,7 +802,7 @@ With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every 
 
 ## pip_requirements
 
-Updates the PEP 508 requirements of pip requirements files. Lines ending in `\` are joined and comments are dropped. Option lines (`-r`, `-c`, `-e`, `--extra-index-url`, `--find-links`, …) yield no deps; included files are scanned when their own name matches. An `--index-url`/`-i` line anywhere in the file becomes the index of every requirement in it, and every `--extra-index-url` line an extra index whose releases are merged in (see the `pypi` datasource). There is no lockfile: under `auto` and `update-lockfile` only versions outside a requirement's range are proposed (Renovate's `replace`). Requirements with `--hash` options are updated too: `apply`/`run` regenerate a pip-compile or `uv pip compile` output file (recognized by its header) by re-running the command of its header in a temporary copy with `--upgrade-package <name>==<version>` per updated requirement, when the header's input files exist (pip-compile runs from PATH, else through `uvx --from pip-tools`); in any other file the `--hash` options of each updated requirement are replaced by the sha256 digests of the new version's files on its index, one option per digest in pip-compile's order and line style. `plan` shows the version change only.
+Updates the PEP 508 requirements of pip requirements files. Lines ending in `\` are joined and comments are dropped. Option lines (`-r`, `-c`, `-e`, `--extra-index-url`, `--find-links`, …) yield no deps; included files are scanned when their own name matches. An `--index-url`/`-i` line anywhere in the file becomes the index of every requirement in it, and every `--extra-index-url` line an extra index whose releases are merged in (see the `pypi` datasource). There is no lockfile: under `auto` and `update-lockfile` only versions outside a requirement's range are proposed (Renovate's `replace`). Requirements with `--hash` options are updated too: `apply`/`run` regenerate a pip-compile or `uv pip compile` output file (recognized by its header) by re-running the command of its header in a temporary copy with `--upgrade-package <name>==<version>` per updated requirement, when the header's input files exist (pip-compile runs from PATH, else through `uvx --from pip-tools`; a header naming its Python version, `autogenerated by pip-compile with Python 3.12`, runs `uvx --python 3.12 --from pip-tools pip-compile` first, since the result depends on the interpreter and pins without wheels for another one fail to build); in any other file the `--hash` options of each updated requirement are replaced by the sha256 digests of the new version's files on its index, one option per digest in pip-compile's order and line style. `plan` shows the version change only. When the resolver finds that the inputs do not admit the new version (pip's `ResolutionImpossible`, uv's `No solution found`: an `==` pin in `requirements.in`, or another requirement's constraint), `run` skips the update's PR group instead of failing; `apply` reports it as an error.
 
 **Files:**
 
@@ -815,6 +822,7 @@ Updates the PEP 508 requirements of pip requirements files. Lines ending in `\` 
 | `git dependency` | `git+…`, `hg+…`, `svn+…`, `bzr+…` lines or `name @ git+…` |
 | `url dependency` | a URL line or `name @ https://…` |
 | `local dependency` | a local path, archive or wheel (`./pkg`, `/abs`, `x.whl`, `x.tar.gz`, `file:`) |
+| `conflicts with the inputs of <file> (<name>==<version>, …)` | `apply`/`run`: regenerating a compiled file fails with a resolution conflict; the PR group is `skipped: update cannot be applied` |
 
 **Specifiers.**
 

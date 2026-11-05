@@ -108,13 +108,15 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 	assertSkipsInCode(t, "engine", SkipDocs, codeOf(t, ".", "../config"))
 	// pkgDirs maps managers to their package directories when the name differs; kustomize,
 	// gitlabci and terraform report docker.ParseRef's skips, cargo the crate datasource's
-	// registry skip, the Python managers internal/pyreq's.
+	// registry skip, the Python managers internal/pyreq's, gomod the engine's and
+	// internal/gotool's module path skip, pip_requirements internal/pytool's conflict skip.
 	pkgDirs := map[string][]string{
 		actions.Name: {"actions"}, "pre-commit": {"precommit"},
 		"nvm": {"toolversions"}, "nodenv": {"toolversions"}, "asdf": {"toolversions"}, "mise": {"toolversions"},
 		"kustomize": {"kustomize", "docker"}, "gitlabci": {"gitlabci", "docker"},
 		"cargo":              {"cargo", filepath.Join("..", "datasource", "crate")},
-		piprequirements.Name: {"piprequirements", "../pyreq"}, pep621.Name: {"pep621", "../pyreq"},
+		"gomod":              {"gomod", filepath.Join("..", "engine"), filepath.Join("..", "gotool")},
+		piprequirements.Name: {"piprequirements", "../pyreq", "../pytool"}, pep621.Name: {"pep621", "../pyreq"},
 		poetry.Name: {"poetry", "../pyreq"}, pipenv.Name: {"pipenv", "../pyreq"},
 		terraform.Name: {"terraform", "docker"}, terraform.VersionName: {"terraform"}, terraform.TFLintName: {"terraform"},
 		terraform.TerragruntName: {"terraform"},

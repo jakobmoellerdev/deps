@@ -386,6 +386,54 @@ func TestReleaseTimeModuleCache(t *testing.T) {
 	}
 }
 
+// DeclaredPath reads the module directive of a version's .mod: from GOMODCACHE without a
+// request, else from the proxy, once per module@version; private modules are unknown.
+func TestDeclaredPath(t *testing.T) {
+	cache := t.TempDir()
+	dir := filepath.Join(cache, "cache", "download", "example.com", "cached", "@v")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "v1.0.0.mod"), []byte("module example.com/elsewhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		switch r.URL.Path {
+		case "/github.com/!google/cel-go/@v/v0.32.0.mod": // escaped path
+			io.WriteString(w, "module cel.dev/cel-go\n\ngo 1.23.0\n")
+		case "/github.com/!google/cel-go/@v/v0.31.0.mod":
+			io.WriteString(w, "module github.com/Google/cel-go\n")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	s := New(srv.Client(), nil)
+	s.env = func(context.Context) (gotool.GoEnv, error) {
+		return gotool.GoEnv{Proxy: srv.URL, NoProxy: "corp.example", ModCache: cache}, nil
+	}
+	for _, tt := range []struct {
+		mod, version, want string
+		wantErr            bool
+		requests           int32
+	}{
+		{mod: "github.com/Google/cel-go", version: "v0.32.0", want: "cel.dev/cel-go", requests: 1},
+		{mod: "github.com/Google/cel-go", version: "v0.32.0", want: "cel.dev/cel-go"}, // deduped
+		{mod: "github.com/Google/cel-go", version: "v0.31.0", want: "github.com/Google/cel-go", requests: 1},
+		{mod: "example.com/cached", version: "v1.0.0", want: "example.com/elsewhere"},
+		{mod: "corp.example/m", version: "v1.0.0"}, // GONOPROXY: unknown
+		{mod: "example.com/missing", version: "v1.0.0", wantErr: true, requests: 1},
+	} {
+		hits.Store(0)
+		got, err := s.DeclaredPath(t.Context(), tt.mod, tt.version)
+		if got != tt.want || (err != nil) != tt.wantErr || hits.Load() != tt.requests {
+			t.Errorf("%s@%s = %q, %v, %d requests; want %q, %d", tt.mod, tt.version, got, err, hits.Load(), tt.want, tt.requests)
+		}
+	}
+}
+
 func TestHead(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

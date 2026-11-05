@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 
@@ -45,6 +46,7 @@ type Source struct {
 
 	times datasource.Memo[string, time.Time]           // module@version
 	heads datasource.Memo[string, datasource.Revision] // module path
+	paths datasource.Memo[string, string]              // module@version: declared module path
 
 	mu     sync.Mutex
 	cache  map[string]*entry // module path
@@ -340,28 +342,79 @@ func (s *Source) releaseTime(ctx context.Context, modPath, version, dir string) 
 	return t, err
 }
 
-// cachedInfo reads <GOMODCACHE>/cache/download/<escaped path>/@v/<escaped version>.info.
-// Version lists are not read from the cache: they only hold versions fetched locally, so the
-// newest releases would be missing.
+// DeclaredPath implements datasource.DeclaredPathSource: the module directive of the version's
+// go.mod (`@v/<version>.mod`) from the module download cache, else the GOPROXY URLs. It is ""
+// for direct and GONOPROXY/GOPRIVATE modules, whose go.mod only the go command could fetch.
+// Results are deduped per module@version.
+func (s *Source) DeclaredPath(ctx context.Context, modPath, version string) (string, error) {
+	return s.paths.Do(modPath+"@"+version, func() (string, error) {
+		p, err := s.declaredPath(ctx, modPath, version)
+		slog.DebugContext(ctx, "module declared path", "module", modPath, "version", version, "declared", p, "err", err)
+		return p, err
+	})
+}
+
+func (s *Source) declaredPath(ctx context.Context, modPath, version string) (string, error) {
+	escVersion, err := module.EscapeVersion(version)
+	if err != nil {
+		return "", err
+	}
+	if b, ok := s.cached(ctx, modPath, escVersion+".mod"); ok {
+		return modfile.ModulePath(b), nil
+	}
+	var declared string
+	err = s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
+		if base == "" {
+			return false, nil // unknown
+		}
+		target := base + "/" + escaped + "/@v/" + escVersion + ".mod"
+		resp, notFound, err := s.get2xx(ctx, target)
+		if err != nil {
+			return notFound, err
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+		if err != nil {
+			return false, fmt.Errorf("GET %s: %w", target, err)
+		}
+		declared = modfile.ModulePath(b)
+		return false, nil
+	})
+	return declared, err
+}
+
+// cachedInfo reads the release time from the cached .info of a version (see cached).
 func (s *Source) cachedInfo(ctx context.Context, modPath, escVersion string) (time.Time, bool) {
-	if s.loadEnv(ctx) != nil || s.goEnv.ModCache == "" {
-		return time.Time{}, false
-	}
-	escPath, err := module.EscapePath(modPath)
-	if err != nil {
-		return time.Time{}, false
-	}
-	p := filepath.Join(s.goEnv.ModCache, "cache", "download", filepath.FromSlash(escPath), "@v", escVersion+".info")
-	b, err := os.ReadFile(p)
-	if err != nil {
+	b, ok := s.cached(ctx, modPath, escVersion+".info")
+	if !ok {
 		return time.Time{}, false
 	}
 	var info struct{ Time *time.Time }
 	if json.Unmarshal(b, &info) != nil || info.Time == nil {
 		return time.Time{}, false
 	}
-	slog.DebugContext(ctx, "module release time from module cache", "module", modPath, "file", p)
 	return *info.Time, true
+}
+
+// cached reads <GOMODCACHE>/cache/download/<escaped path>/@v/<name>: a version's .info or
+// .mod, both immutable, so the cache answers without a request whenever the go command already
+// fetched the version. Version lists are not read from the cache: they only hold versions
+// fetched locally, so the newest releases would be missing.
+func (s *Source) cached(ctx context.Context, modPath, name string) ([]byte, bool) {
+	if s.loadEnv(ctx) != nil || s.goEnv.ModCache == "" {
+		return nil, false
+	}
+	escPath, err := module.EscapePath(modPath)
+	if err != nil {
+		return nil, false
+	}
+	p := filepath.Join(s.goEnv.ModCache, "cache", "download", filepath.FromSlash(escPath), "@v", name)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, false
+	}
+	slog.DebugContext(ctx, "module file from module cache", "module", modPath, "file", p)
+	return b, true
 }
 
 // loadEnv resolves the go environment once per run.

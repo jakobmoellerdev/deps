@@ -279,7 +279,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			d := todo[i]
 			r := resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now, ranger: rangers[d.Manager]}
 			t, u := r.run(func() []Vuln { return sec.of(secIdx[i]) })
-			var skip *datasource.SkipError
+			var skip *dep.SkipError
 			switch {
 			case errors.As(t.Err, &skip):
 				t.Err, t.Dep.Skip = nil, skip.Reason
@@ -697,6 +697,10 @@ type resolver struct {
 	rels    []Release
 	times   map[string]time.Time // release times asked so far; zero = unknown
 	pending Pending              // newest candidate held back by minimumReleaseAge
+	// declared looks up the module path a Go module version declares (nil = no check);
+	// renamed is the reason of the first candidate pathChange rejected.
+	declared datasource.DeclaredPathSource
+	renamed  string
 
 	// rangeStrategy of a range dep (setRange): inRange reports whether a version is one the
 	// manifest keeps (d.Range admits it; under bump only when a manager.RangeUpdater cannot
@@ -875,7 +879,9 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 // bucket, else the digest refresh or pin of the current version (for a Go pseudo-version the
 // newer pseudo-version of the module's head), then security, the digest and checksum of every
 // resulting version, and Go major module path updates. Updates are ordered by version, lowest
-// first.
+// first. A dep left without updates because candidates declare another module path is
+// skipped with the reason of the newest one (*dep.SkipError): it needs a manual move to the
+// new path, which the dashboard and the run report show.
 func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func() []Vuln) ([]dep.Update, error) {
 	d := r.d
 	dir := filepath.Join(r.root, filepath.FromSlash(path.Dir(d.File)))
@@ -884,6 +890,7 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		return nil, err
 	}
 	r.rels = rels
+	r.declared, _ = r.ds.(datasource.DeclaredPathSource)
 	t.Candidates = len(rels)
 	names := make([]string, len(rels))
 	for i, rel := range rels {
@@ -964,6 +971,9 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 			}
 		}
 	}
+	if len(ups) == 0 && r.renamed != "" {
+		return nil, &dep.SkipError{Reason: r.renamed}
+	}
 	return ups, nil
 }
 
@@ -1001,23 +1011,26 @@ const (
 )
 
 // picks ranks the candidates once and chooses at most one per PR bucket (policies.bucket):
-// the best one of the bucket that passes two release-time guards, each falling back to the
-// bucket's next best candidate:
+// the best one of the bucket that passes two release-time guards and the module path guard,
+// each falling back to the bucket's next best candidate:
 //   - a major update whose release predates the current version is a legacy tag
 //     (k8s.io/client-go v1.5.2 from 2016 versus v0.37.1), not an upgrade; skipped for docker
 //     and git-tags deps, see movingTimes;
 //   - a candidate released less than the minimumReleaseAge of its update type ago is too new;
 //     under minimumReleaseAgeBehaviour timestamp-required, so is one whose release time is
-//     unknown.
+//     unknown;
+//   - a Go module version whose go.mod declares another module path is no version of the
+//     dep (see pathChange).
 //
 // Release times are only asked when a guard applies and the datasource has them, at most
 // once per version; unknown times (zero or an error) only reject under timestamp-required.
+// Declared module paths are only asked for a candidate that passed the time guards.
 // The updates are returned lowest version first.
 func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) []dep.Update {
 	cur := r.cur
 	timer, _ := r.ds.(datasource.Timer)
 	single := r.pol.singleBucket()
-	if timer == nil && single && !(r.pol.pre.MinAge > 0 && r.pol.pre.TimestampRequired) {
+	if timer == nil && r.declared == nil && single && !(r.pol.pre.MinAge > 0 && r.pol.pre.TimestampRequired) {
 		// No guard can apply and there is one bucket: one O(n) pass without ranking.
 		best, ok := scheme.Best(cur, names, accept, reject)
 		if !ok {
@@ -1027,9 +1040,19 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 	}
 	ranked := scheme.Rank(cur, names, accept, reject) // parsed and filtered once
 	type state struct {
-		key                   bucketKey
-		tries, older, unknown int
-		prefetched, done      bool
+		key                          bucketKey
+		tries, older, unknown        int
+		prefetched, pathsAsked, done bool
+	}
+	// next returns the versions of at most limit candidates after i in bucket key.
+	next := func(i int, key bucketKey, limit int) []string {
+		out := make([]string, 0, limit)
+		for n := i + 1; n < ranked.Len() && len(out) < limit; n++ {
+			if nc := ranked.At(n); r.pol.bucket(nc) == key {
+				out = append(out, nc.Version)
+			}
+		}
+		return out
 	}
 	states := make([]state, 0, 4) // a handful of buckets: a linear scan beats a map
 	var out []dep.Update
@@ -1052,6 +1075,18 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 		st.tries++
 		reason := r.guard(timer, c)
 		if reason == "" {
+			if why := r.pathChange(r.d.Name, c.Version); why != "" {
+				if reject != nil {
+					reject(c.Version, why)
+				}
+				if !st.pathsAsked {
+					// A renamed module declares the new path in every later release: ask
+					// for the bucket's next candidates concurrently.
+					st.pathsAsked = true
+					r.prefetchPaths(r.d.Name, next(i, key, min(prefetchWindow, maxRetries-st.tries)))
+				}
+				continue
+			}
 			out = append(out, dep.Update{Dep: r.d, Type: c.Kind, NewVersion: c.Version, Bucket: key.label()})
 			st.done = true
 			if single {
@@ -1085,14 +1120,7 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 			// One rejection suggests a frequently released dependency: fetch the bucket's next
 			// candidates' times concurrently instead of one round trip per candidate.
 			st.prefetched = true
-			limit := min(prefetchWindow, maxRetries-st.tries)
-			next := make([]string, 0, limit)
-			for n := i + 1; n < ranked.Len() && len(next) < limit; n++ {
-				if nc := ranked.At(n); r.pol.bucket(nc) == key {
-					next = append(next, nc.Version)
-				}
-			}
-			r.prefetchTimes(timer, next)
+			r.prefetchTimes(timer, next(i, key, min(prefetchWindow, maxRetries-st.tries)))
 		}
 	}
 	slices.Reverse(out)
@@ -1184,6 +1212,41 @@ func (r *resolver) prefetchTimes(timer datasource.Timer, versions []string) {
 			r.times[v] = times[i]
 		}
 	}
+}
+
+// pathChange returns why version of module path name is no version of it: its go.mod
+// declares another module path (datasource.DeclaredPathSource), which the go command refuses
+// ("module declares its path as … but was required as …"), so go mod tidy would fail on
+// the update. "" when it declares name or the path is unknown; a failed lookup is logged and
+// left to go mod tidy. The first reason is kept for the dep's skip (versionUpdates).
+func (r *resolver) pathChange(name, version string) string {
+	if r.declared == nil {
+		return ""
+	}
+	p, err := r.declared.DeclaredPath(r.ctx, name, version)
+	switch {
+	case err != nil:
+		slog.DebugContext(r.ctx, "declared module path lookup failed", "name", name, "version", version, "err", err)
+		return ""
+	case p == "" || p == name:
+		return ""
+	}
+	slog.DebugContext(r.ctx, "candidate declares another module path", "name", name, "candidate", version, "declared", p)
+	reason := fmt.Sprintf("module path changed to %s (%s@%s)", p, name, version)
+	if r.renamed == "" {
+		r.renamed = reason
+	}
+	return reason
+}
+
+// prefetchPaths asks for the declared module paths of versions of name concurrently; the
+// datasource dedupes them, so pathChange gets the answers without a round trip each.
+func (r *resolver) prefetchPaths(name string, versions []string) {
+	var wg sync.WaitGroup
+	for _, v := range versions {
+		wg.Go(func() { _, _ = r.declared.DeclaredPath(r.ctx, name, v) })
+	}
+	wg.Wait()
 }
 
 // olderThanCurrent reports whether candidate was released before the current version; false

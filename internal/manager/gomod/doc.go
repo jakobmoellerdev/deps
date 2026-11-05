@@ -20,6 +20,7 @@ var Doc = refdoc.Manager{
 		{Reason: "vendored module (not supported)", When: "`vendor/modules.txt` exists next to `go.mod`"},
 		{Reason: "prerelease toolchain", When: "`go1.27rc1` style directive"},
 		{Reason: "cannot locate value", When: "the version bytes were not found"},
+		{Reason: "module path changed to <path> (<module>@<version>)", When: "every newer candidate's `go.mod` declares another module path (a renamed module, or a fork that kept its origin's path); go refuses such a version"},
 	},
 	Sections: []refdoc.Section{
 		{Title: "Versioning", Items: []string{
@@ -40,11 +41,16 @@ var Doc = refdoc.Manager{
 			"`gomodUpdateImportPaths: false` turns module path updates off. Only GOPROXY URLs are probed: GONOPROXY/GOPRIVATE modules, and paths no proxy before `direct` has, get no module path updates.",
 			"A probe only decides whether a module path update is offered, so each probe request to a proxy gets 10 s, retries included, and is not retried once that runs out. A path no proxy answers in time counts as having no releases and is logged as a warning (`major module path probe timed out; assuming no newer major`); the requirement keeps its other updates.",
 		}},
+		{Title: "Module path changes", Items: []string{
+			"A version is only an update when its `go.mod` declares the path it is required as. The `@v/<version>.mod` of a candidate that passed the other checks is read from the module download cache, else the GOPROXY URLs (one request per module@version and run). One that declares another path (`github.com/google/cel-go` v0.32.0 declares `cel.dev/cel-go`) is rejected like a too new one, and the next candidate of its PR bucket is tried; for a renamed module the next 8 are fetched concurrently. This applies to major module paths and pseudo-version heads too.",
+			"A requirement left without updates this way is skipped with `module path changed to <declared> (<module>@<version>)` (the newest such version): moving to the new path is a code change deps does not make. A failed `.mod` lookup is logged and leaves the candidate to `go mod tidy`; GONOPROXY/GOPRIVATE modules are not checked.",
+			"When `go mod tidy` still refuses a module version this way (`module declares its path as … but was required as …`, for a module the update pulls in, or one the check could not read), `run` skips the update with the same reason instead of failing: its PR group is reported as `skipped: update cannot be applied` and is no error, so it does not keep obsolete PRs open (`apply` reports it as an error).",
+		}},
 		{Title: "Post-processing (`apply`, `run`)", Items: []string{
 			"After any gomod change, deps runs `go mod tidy -modfile=<tmp>/go.mod` in the module directory, on temporary copies of `go.mod` and `go.sum`, with `GOWORK=off` and `GOFLAGS` cleared; source files rewritten by a major module path update are passed with `-overlay`.",
 			"The tidied `go.mod` and `go.sum` replace the patched files. The real files are only written by `apply`.",
 			"At most 4 post-processors (tidy and npm installs together) run concurrently.",
-			"A failure drops that module's change: `go mod tidy in <dir>: <last 20 lines of stderr>`.",
+			"A failure drops that module's change: `go mod tidy in <dir>: <last 20 lines of stderr>` (except a module path change, above).",
 			"`plan` does not run tidy, and prints `note    go.sum changes are computed by apply/run`.",
 		}},
 		{Title: "Lock file maintenance (`run`)", Body: "Go has no lockfile, and Renovate has no gomod lock file maintenance. With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, deps treats the `// indirect` requirements (which it does not update by default) as the locked versions of each scanned `go.mod` that has a `go.sum` and no `vendor/modules.txt`. " +

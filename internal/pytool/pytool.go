@@ -371,6 +371,10 @@ type cmdSpec struct {
 	env  []string
 	uvx  bool   // run through uvx when tool is not in PATH
 	from string // package uvx installs the tool from; "" = tool
+	// python is the Python version the tool must run with (`uvx --python`, which installs
+	// it when missing); uvx is then preferred over a tool in PATH, which runs with its own
+	// interpreter. "" = any.
+	python string
 }
 
 func uvCmd() cmdSpec {
@@ -407,26 +411,43 @@ func pipenvCmd() cmdSpec {
 	}}
 }
 
-// argv resolves the command: the tool from PATH, else (when allowed) uvx running it.
+// argv resolves the command: the tool from PATH, else (when allowed) uvx running it; with a
+// python version uvx first.
 func (c cmdSpec) argv() ([]string, error) {
+	uvx, uvxErr := exec.LookPath("uvx")
+	if c.uvx && c.python != "" && uvxErr == nil {
+		return c.uvxArgv(uvx), nil
+	}
 	if p, err := exec.LookPath(c.tool); err == nil {
 		return append([]string{p}, c.args...), nil
 	}
-	if !c.uvx {
+	if !c.uvx || uvxErr != nil {
 		return nil, exec.ErrNotFound
 	}
-	uvx, err := exec.LookPath("uvx")
-	if err != nil {
-		return nil, exec.ErrNotFound
-	}
-	from := c.from
-	if from == "" {
-		from = c.tool
-	}
-	return append([]string{uvx, "--from", from, c.tool}, c.args...), nil
+	return c.uvxArgv(uvx), nil
 }
 
-// run executes the command in dir; a failure carries the last 20 lines of its output.
+func (c cmdSpec) uvxArgv(uvx string) []string {
+	argv := []string{uvx}
+	if c.python != "" {
+		argv = append(argv, "--python", c.python)
+	}
+	return append(append(argv, "--from", cmp.Or(c.from, c.tool), c.tool), c.args...)
+}
+
+// toolError is a failed command: Error is the last 20 lines of its output (or the exit
+// error without output), out the output up to its last 32 KiB.
+type toolError struct {
+	msg string
+	out []byte
+	err error
+}
+
+func (e *toolError) Error() string { return e.msg }
+
+func (e *toolError) Unwrap() error { return e.err }
+
+// run executes the command in dir; a failure is a *toolError.
 func (c cmdSpec) run(ctx context.Context, dir string) error {
 	argv, err := c.argv()
 	if err != nil {
@@ -443,8 +464,5 @@ func (c cmdSpec) run(ctx context.Context, dir string) error {
 	if err == nil {
 		return nil
 	}
-	if t := toolrun.Tail(out.Bytes(), 20); t != "" {
-		return errors.New(t)
-	}
-	return err
+	return &toolError{msg: cmp.Or(toolrun.Tail(out.Bytes(), 20), err.Error()), out: out.Bytes(), err: err}
 }

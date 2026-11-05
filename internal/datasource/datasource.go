@@ -19,18 +19,24 @@ type Release struct{ Version, Digest string }
 type Datasource interface {
 	// Releases lists every release of d. dir is the absolute directory of d.File
 	// (go list needs it). The result may be shared between callers and must not be modified.
-	// A *SkipError skips d instead of failing it.
+	// A *dep.SkipError skips d instead of failing it (a Cargo registry name no configuration
+	// defines: only known once the datasource reads d's configuration).
 	Releases(ctx context.Context, d dep.Dep, dir string) ([]Release, error)
 	// Digest returns the digest of version; used when Release.Digest is "".
 	Digest(ctx context.Context, d dep.Dep, version string) (string, error)
 }
 
-// SkipError is returned by Releases when d cannot be looked up for a reason that is not a
-// failure, only known once the datasource reads d's configuration (a Cargo registry name no
-// configuration defines). The engine reports d as skipped with Reason instead of as an error.
-type SkipError struct{ Reason string }
-
-func (e *SkipError) Error() string { return e.Reason }
+// DeclaredPathSource is implemented by datasources whose releases can belong to another
+// package than the one they are listed under: a Go module version whose go.mod declares
+// another module path (a renamed module such as github.com/google/cel-go v0.32.0, which
+// declares cel.dev/cel-go, or a fork that kept its origin's path). The go command refuses such
+// a version, so the engine does not offer it as an update. It is optional.
+type DeclaredPathSource interface {
+	// DeclaredPath returns the module path the go.mod of modPath at version declares, or ""
+	// when it cannot be read cheaply (a module not served by a GOPROXY). Lookups are deduped
+	// per module@version, so concurrent prefetches are answered once.
+	DeclaredPath(ctx context.Context, modPath, version string) (string, error)
+}
 
 // Timer is implemented by datasources that know when a version was published. It is optional
 // and called lazily, only for versions that end up in a pull request.

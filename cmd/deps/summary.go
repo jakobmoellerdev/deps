@@ -47,6 +47,8 @@ var skipHints = []struct{ prefix, hint string }{
 	{"non-version tag", "a tag without a version; set `pin: digest` to pin it"},
 	{"pinned without version comment", "add a `# vX.Y.Z` comment after the SHA"},
 	{"pseudo-version", "a commit pseudo-version; require a tagged version to get updates"},
+	{"module path changed", "the new version's go.mod declares another module path; require that path to update"},
+	{"conflicts with the inputs", "the compile inputs (requirements.in, constraints) do not admit the new version; relax them to update"},
 	{"replaced", "a replace directive overrides the module"},
 	{"variable reference", "the value is computed at runtime"},
 	{"template value", "the value is computed at runtime"},
@@ -215,6 +217,9 @@ func (s *summary) groupNotes(g engine.Group, link func(a bot.Action) string) []s
 			st += " " + l
 		}
 		notes = append(notes, st)
+		if a.Reason != "" {
+			notes = append(notes, a.Reason)
+		}
 		if a.Automerge != "" {
 			notes = append(notes, a.Automerge)
 		}

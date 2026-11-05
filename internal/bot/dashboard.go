@@ -139,6 +139,8 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 			blocked = append(blocked, fmt.Sprintf("- [ ] <!-- deps:rebase=%s --> %s (branch modified by someone else; tick to discard those commits and rebuild it)", a.Branch, a.Title))
 		case a.Status == StatusSkipLimit:
 			limited = append(limited, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
+		case a.Status == StatusSkipApply:
+			blocked = append(blocked, fmt.Sprintf("- %s (cannot be applied: %s)", a.Title, a.Reason))
 		case a.Status == StatusSkipSchedule && a.Number == 0:
 			schedule = append(schedule, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s (%s)", a.Branch, a.Title, waits(a.Waits)))
 		case a.Number == 0 && (a.Automerge == AutomergeBranchWaiting || a.Automerge == AutomergeBranchNextRun):

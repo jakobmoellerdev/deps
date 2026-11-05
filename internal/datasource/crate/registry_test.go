@@ -13,7 +13,6 @@ import (
 	"sync"
 	"testing"
 
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -102,7 +101,7 @@ func TestNamedRegistry(t *testing.T) {
 		t.Errorf("registry without api: %q, %v", repo, err)
 	}
 	// An unknown name is skipped, not an error (Cargo cannot resolve it either).
-	var skip *datasource.SkipError
+	var skip *dep.SkipError
 	if _, err := s.Releases(t.Context(), dep.Dep{Name: "x", Source: "nowhere", File: "app/Cargo.toml"}, dir); !errors.As(err, &skip) || skip.Reason != "unknown registry nowhere" || err.Error() != skip.Reason {
 		t.Errorf("unknown registry: %v", err)
 	}
