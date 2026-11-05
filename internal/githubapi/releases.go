@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"slices"
@@ -175,20 +176,18 @@ func (c *Client) graphqlPage(ctx context.Context, r Repo, l *List) (bool, error)
 // restPage fetches page l.pages+1 and reports whether it was full. The array is decoded
 // element by element so only one release (with its body) is buffered.
 func (c *Client) restPage(ctx context.Context, r Repo, l *List) (bool, error) {
-	if err := c.acquire(ctx); err != nil {
-		return false, err
-	}
-	defer c.release()
-	resp, err := c.restGet(ctx, r, "/repos/"+r.Path()+"/releases?per_page="+strconv.Itoa(PageSize)+"&page="+strconv.Itoa(l.pages+1))
-	if err != nil {
-		return false, err
-	}
-	defer closeBody(resp)
-	logRateLimit(ctx, r, resp, false)
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return false, statusError(resp)
-	}
-	dec := jsontext.NewDecoder(resp.Body, jsontext.AllowDuplicateNames(true)) // no per-object name sets
+	var more bool
+	err := c.restDo(ctx, r, "/repos/"+r.Path()+"/releases?per_page="+strconv.Itoa(PageSize)+"&page="+strconv.Itoa(l.pages+1), true, func(body io.Reader) error {
+		var err error
+		more, err = decodePage(body, l)
+		return err
+	})
+	return more, err
+}
+
+// decodePage adds the releases of one REST page to l and reports whether it was full.
+func decodePage(body io.Reader, l *List) (bool, error) {
+	dec := jsontext.NewDecoder(body, jsontext.AllowDuplicateNames(true)) // no per-object name sets
 	tok, err := dec.ReadToken()
 	if err == nil && tok.Kind() != '[' {
 		err = errors.New("not an array")
@@ -261,30 +260,24 @@ func (c *Client) releaseTime(ctx context.Context, r Repo, tag string) (time.Time
 		}
 		rel = *data.Repository.Release
 	} else {
-		if err := c.acquire(ctx); err != nil {
-			return time.Time{}, err
-		}
-		defer c.release()
 		segs := strings.Split(tag, "/")
 		for i, s := range segs {
 			segs[i] = url.PathEscape(s)
 		}
-		resp, err := c.restGet(ctx, r, "/repos/"+r.Path()+"/releases/tags/"+strings.Join(segs, "/"))
+		err := c.restDo(ctx, r, "/repos/"+r.Path()+"/releases/tags/"+strings.Join(segs, "/"), false, func(body io.Reader) error {
+			var raw struct {
+				Draft       bool       `json:"draft"`
+				PublishedAt *time.Time `json:"published_at"`
+			}
+			if err := json.UnmarshalRead(body, &raw); err != nil {
+				return fmt.Errorf("malformed response: %w", err)
+			}
+			rel.IsDraft, rel.PublishedAt = raw.Draft, raw.PublishedAt
+			return nil
+		})
 		if err != nil {
 			return time.Time{}, err
 		}
-		defer closeBody(resp)
-		if resp.StatusCode < 200 || resp.StatusCode > 299 {
-			return time.Time{}, statusError(resp)
-		}
-		var raw struct {
-			Draft       bool       `json:"draft"`
-			PublishedAt *time.Time `json:"published_at"`
-		}
-		if err := json.UnmarshalRead(resp.Body, &raw); err != nil {
-			return time.Time{}, fmt.Errorf("malformed response: %w", err)
-		}
-		rel.IsDraft, rel.PublishedAt = raw.Draft, raw.PublishedAt
 	}
 	if rel.IsDraft || rel.PublishedAt == nil {
 		return time.Time{}, nil
@@ -411,19 +404,14 @@ func (c *Client) graphqlNotes(ctx context.Context, r Repo, first int, each func(
 }
 
 func (c *Client) restNotes(ctx context.Context, r Repo, first int, each func(Note)) error {
-	if err := c.acquire(ctx); err != nil {
-		return err
-	}
-	defer c.release()
-	resp, err := c.restGet(ctx, r, "/repos/"+r.Path()+"/releases?per_page="+strconv.Itoa(first))
-	if err != nil {
-		return err
-	}
-	defer closeBody(resp)
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return statusError(resp)
-	}
-	dec := jsontext.NewDecoder(resp.Body, jsontext.AllowDuplicateNames(true)) // no per-object name sets
+	return c.restDo(ctx, r, "/repos/"+r.Path()+"/releases?per_page="+strconv.Itoa(first), false, func(body io.Reader) error {
+		return decodeNotes(body, each)
+	})
+}
+
+// decodeNotes decodes a REST release list release by release.
+func decodeNotes(body io.Reader, each func(Note)) error {
+	dec := jsontext.NewDecoder(body, jsontext.AllowDuplicateNames(true)) // no per-object name sets
 	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '[' {
 		return errors.New("malformed response: not a release list")
 	}

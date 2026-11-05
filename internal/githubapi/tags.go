@@ -67,28 +67,19 @@ func (c *Client) tagTime(ctx context.Context, r Repo, tag, commit string) (time.
 	if commit == "" {
 		return time.Time{}, nil
 	}
-	if err := c.acquire(ctx); err != nil {
-		return time.Time{}, err
-	}
-	defer c.release()
-	resp, err := c.restGet(ctx, r, "/repos/"+r.Path()+"/git/commits/"+url.PathEscape(commit))
-	if err != nil {
-		return time.Time{}, err
-	}
-	defer closeBody(resp)
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return time.Time{}, statusError(resp)
-	}
 	var raw struct {
 		Committer struct {
 			Date *time.Time `json:"date"`
 		} `json:"committer"`
 	}
-	if err := json.UnmarshalRead(io.LimitReader(resp.Body, 1<<20), &raw); err != nil {
-		return time.Time{}, fmt.Errorf("malformed response: %w", err)
-	}
-	if raw.Committer.Date == nil {
-		return time.Time{}, nil
+	err := c.restDo(ctx, r, "/repos/"+r.Path()+"/git/commits/"+url.PathEscape(commit), false, func(body io.Reader) error {
+		if err := json.UnmarshalRead(io.LimitReader(body, 1<<20), &raw); err != nil {
+			return fmt.Errorf("malformed response: %w", err)
+		}
+		return nil
+	})
+	if err != nil || raw.Committer.Date == nil {
+		return time.Time{}, err
 	}
 	return *raw.Committer.Date, nil
 }

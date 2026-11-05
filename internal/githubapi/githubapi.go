@@ -148,6 +148,28 @@ func (c *Client) restGet(ctx context.Context, r Repo, path string) (*http.Respon
 	return c.client.Do(req)
 }
 
+// restDo holds a request slot for a REST GET of path below r's API, turns a non-2xx response
+// into a statusError and otherwise hands the body to decode. logRate logs the response's rate
+// limit headers before the status check.
+func (c *Client) restDo(ctx context.Context, r Repo, path string, logRate bool, decode func(io.Reader) error) error {
+	if err := c.acquire(ctx); err != nil {
+		return err
+	}
+	defer c.release()
+	resp, err := c.restGet(ctx, r, path)
+	if err != nil {
+		return err
+	}
+	defer closeBody(resp)
+	if logRate {
+		logRateLimit(ctx, r, resp, false)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return statusError(resp)
+	}
+	return decode(resp.Body)
+}
+
 // statusError describes a non-2xx REST or GraphQL response: a 404 wraps ErrNotFound and an
 // exhausted rate limit names its reset time.
 func statusError(resp *http.Response) error {
