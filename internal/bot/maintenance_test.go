@@ -64,7 +64,7 @@ func TestRunLockFileMaintenance(t *testing.T) {
 
 func TestPRBodyLockFileMaintenance(t *testing.T) {
 	m := dep.Update{Dep: dep.Dep{Manager: cargo.Name, File: "Cargo.toml", Name: "Cargo.lock"}, Type: dep.LockFileMaintenance}
-	body := prBody(t.Context(), nil, []dep.Update{m}, "abc")
+	body := prBody(t.Context(), nil, []dep.Update{m}, "abc", "")
 	for _, want := range []string{"| `Cargo.lock` | | | lock file maintenance |\n", "\nLock file maintenance moves every locked dependency"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
@@ -77,10 +77,10 @@ func TestPRBodyLockFileMaintenance(t *testing.T) {
 
 	// go.mod maintenance moves its indirect requirements; the body says so.
 	g := dep.Update{Dep: dep.Dep{Manager: "gomod", File: "m/go.mod", Name: "m/go.sum"}, Type: dep.LockFileMaintenance}
-	if body := prBody(t.Context(), nil, []dep.Update{g}, "abc"); !strings.Contains(body, "the manifests are unchanged (in `go.mod`, only the `// indirect` requirements move).\n") {
+	if body := prBody(t.Context(), nil, []dep.Update{g}, "abc", ""); !strings.Contains(body, "the manifests are unchanged (in `go.mod`, only the `// indirect` requirements move).\n") {
 		t.Errorf("go.mod body:\n%s", body)
 	}
-	if body := prBody(t.Context(), nil, []dep.Update{m}, "abc"); !strings.Contains(body, "the manifests are unchanged.\n") {
+	if body := prBody(t.Context(), nil, []dep.Update{m}, "abc", ""); !strings.Contains(body, "the manifests are unchanged.\n") {
 		t.Errorf("cargo body:\n%s", body)
 	}
 }

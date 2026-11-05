@@ -261,6 +261,32 @@ func (Tidier) Scope(root, manifest string) (string, bool) {
 // Siblings lists go.sum.
 func (Tidier) Siblings() []string { return []string{"go.sum"} }
 
+// ScopeInputs implements engine.ScopeInputLister: tidy also reads the module directories that
+// dir's go.mod replaces modules with (`replace m => ../m`), as slash paths relative to root.
+// An absolute replacement path cannot be named relative to root and is an error.
+func (Tidier) ScopeInputs(root, dir string) ([]string, error) {
+	file := filepath.Join(root, filepath.FromSlash(dir), "go.mod")
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	f, err := modfile.Parse(file, b, nil) // ParseLax drops replace directives
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range f.Replace {
+		if r.New.Version != "" || !modfile.IsDirectoryPath(r.New.Path) {
+			continue
+		}
+		if filepath.IsAbs(r.New.Path) {
+			return nil, fmt.Errorf("replace %s => %s: absolute path", r.Old.Path, r.New.Path)
+		}
+		out = append(out, filepath.ToSlash(filepath.Join(filepath.FromSlash(dir), r.New.Path)))
+	}
+	return out, nil
+}
+
 // Process tidies the patched go.mod and returns the tidied go.mod and go.sum (nil when tidy
 // wrote none). Other manifests are patched .go files of the module, passed as the overlay.
 func (Tidier) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {

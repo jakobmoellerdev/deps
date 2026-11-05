@@ -104,6 +104,43 @@ func (r Repo) Prefix(ctx context.Context) (string, error) {
 	return r.run(ctx, nil, nil, "rev-parse", "--show-prefix")
 }
 
+// ObjectIDs returns the ids of the objects at paths in commit rev, in the order of paths: the
+// blob of a file, the tree of a directory, "" when rev has nothing there. Paths are slash
+// paths relative to Dir ("." is Dir itself) inside the work tree. One `git cat-file
+// --batch-check` resolves all of them.
+func (r Repo) ObjectIDs(ctx context.Context, rev string, paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	var in bytes.Buffer
+	for _, p := range paths {
+		if strings.ContainsAny(p, "\n\r") {
+			return nil, fmt.Errorf("path %q contains a line break", p)
+		}
+		in.WriteString(rev)
+		in.WriteString(":./") // relative to Dir, not the top of the work tree
+		if p != "." {
+			in.WriteString(p)
+		}
+		in.WriteByte('\n')
+	}
+	out, err := r.run(ctx, in.Bytes(), nil, "cat-file", "--batch-check=%(objectname)")
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != len(paths) {
+		return nil, fmt.Errorf("git cat-file: %d results for %d paths", len(lines), len(paths))
+	}
+	ids := make([]string, len(paths))
+	for i, l := range lines {
+		if !strings.ContainsRune(l, ' ') { // "<rev>:./<path> missing" (or "ambiguous") otherwise
+			ids[i] = l
+		}
+	}
+	return ids, nil
+}
+
 // WriteTree writes the tree of parent with changes applied, using a temporary index, and
 // returns its id. Change paths are relative to Dir; a change with nil New deletes its file.
 // The working tree and the real index are not touched.

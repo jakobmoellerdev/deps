@@ -8,12 +8,39 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
+
+func TestTidierScopeInputs(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("staging/apiserver/go.mod", "module k8s.io/apiserver\n\nreplace (\n\tk8s.io/api => ../api\n\tk8s.io/x => ./third_party/x\n\tk8s.io/y => k8s.io/y v1.0.0\n)\n")
+	got, err := Tidier{}.ScopeInputs(root, "staging/apiserver")
+	if want := []string{"staging/api", "staging/apiserver/third_party/x"}; err != nil || !slices.Equal(got, want) {
+		t.Errorf("ScopeInputs = %q, %v; want %q", got, err, want)
+	}
+	write("go.mod", "module m\n\nreplace k8s.io/api => /abs/api\n")
+	if _, err := (Tidier{}).ScopeInputs(root, "."); err == nil {
+		t.Error("ScopeInputs accepted an absolute replacement")
+	}
+	if _, err := (Tidier{}).ScopeInputs(root, "missing"); err == nil {
+		t.Error("ScopeInputs without go.mod succeeded")
+	}
+}
 
 // TestTidyOffline tidies a module without requirements, which needs no network.
 func TestTidyOffline(t *testing.T) {

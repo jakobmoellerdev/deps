@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -80,6 +81,74 @@ type LockMaintainer interface {
 // and lists the slash paths relative to dir, the absolute scope directory.
 type ScopeSiblingLister interface {
 	ScopeSiblings(dir string) []string
+}
+
+// ScopeInputLister is implemented by post-processors that read files outside the scope
+// directory (the local replace targets of a go.mod). ScopeInputs lists them as slash paths
+// relative to root; dir is the scope directory, also relative to root.
+type ScopeInputLister interface {
+	ScopeInputs(root, dir string) ([]string, error)
+}
+
+// Inputs lists the paths whose content determines what Build makes of updates with post:
+// every file the updates edit (their deps' files and the manager.FileEditor edits), the
+// post-processing scope directory of each and what a ScopeInputLister reads outside it.
+// Paths are slash paths relative to root ("." is root itself), sorted, without duplicates.
+// Inputs reads files only (Scope, FileEdits) and runs no post-processor; a path outside root
+// is an error, as Inputs then cannot vouch for it. The bot hashes the objects at these paths
+// in the base commit into the input fingerprint of a PR.
+func Inputs(root string, managers []manager.Manager, updates []dep.Update, post map[string]PostProcessor) ([]string, error) {
+	set := map[string]bool{}
+	scopes := map[[2]string]bool{} // (manager, scope directory) already listed
+	add := func(mgr, file string) error {
+		set[file] = true
+		p := post[mgr]
+		if p == nil {
+			return nil
+		}
+		dir, ok := p.Scope(root, file)
+		if !ok || scopes[[2]string{mgr, dir}] {
+			return nil
+		}
+		scopes[[2]string{mgr, dir}] = true
+		set[dir] = true
+		if l, ok := p.(ScopeInputLister); ok {
+			extra, err := l.ScopeInputs(root, dir)
+			if err != nil {
+				return fmt.Errorf("%s: %w", file, err)
+			}
+			for _, e := range extra {
+				set[path.Clean(e)] = true
+			}
+		}
+		return nil
+	}
+	for _, u := range updates {
+		if err := add(u.Dep.Manager, u.Dep.File); err != nil {
+			return nil, err
+		}
+		for _, m := range managers {
+			fe, ok := m.(manager.FileEditor)
+			if !ok || m.Name() != u.Dep.Manager {
+				continue
+			}
+			edits, err := fe.FileEdits(root, u)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %s: %w", u.Dep.File, u.Dep.Name, err)
+			}
+			for f := range edits {
+				if err := add(u.Dep.Manager, f); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	for p := range set {
+		if p == ".." || strings.HasPrefix(p, "../") {
+			return nil, fmt.Errorf("input %s is outside the root", p)
+		}
+	}
+	return slices.Sorted(maps.Keys(set)), nil
 }
 
 // postSem bounds concurrent post-processor runs (go mod tidy, npm install) across all Build

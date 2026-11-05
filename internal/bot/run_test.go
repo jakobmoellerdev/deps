@@ -45,8 +45,10 @@ type fakeGit struct {
 	pushed   []string // branches
 	pushes   []string // "<commit>:<branch>@<expected>"
 	deleted  []string
-	patterns []string // LsRemote patterns
-	tips     []string // BranchTip branches
+	patterns []string          // LsRemote patterns
+	tips     []string          // BranchTip branches
+	objects  map[string]string // path -> object id at head; unset = "obj:<path>", "" = missing
+	oidCalls int               // ObjectIDs calls
 }
 
 // newTree is the tree fakeGit.WriteTree writes.
@@ -65,6 +67,24 @@ func (g *fakeGit) LsRemote(_ context.Context, pattern string) (map[string]string
 		return map[string]string{"refs/heads/main": head}, nil
 	}
 	return g.branches, nil
+}
+func (g *fakeGit) ObjectIDs(_ context.Context, rev string, paths []string) ([]string, error) {
+	g.oidCalls++
+	if err := fail(g.fail, "ObjectIDs", ""); err != nil {
+		return nil, err
+	}
+	if rev != head {
+		return nil, fmt.Errorf("ObjectIDs at %s, want head", rev)
+	}
+	ids := make([]string, len(paths))
+	for i, p := range paths {
+		id, ok := g.objects[p]
+		if !ok {
+			id = "obj:" + p
+		}
+		ids[i] = id
+	}
+	return ids, nil
 }
 func (g *fakeGit) WriteTree(context.Context, string, []engine.FileChange) (string, error) {
 	return newTree, fail(g.fail, "WriteTree", "")
@@ -109,6 +129,7 @@ type fakePC struct {
 	metadata     map[int]platform.PRMetadata // SetPRMetadata calls by PR number
 	bodies       []string                    // CreatePR bodies
 	updated      []int
+	recorded     []int // UpdatePR calls that only set the input fingerprint of the listed body
 	closedNow    []int
 
 	checks    platform.CheckState
@@ -150,9 +171,15 @@ func (c *fakePC) CreatePR(_ context.Context, head, _, _, body string) (platform.
 	c.bodies = append(c.bodies, body)
 	return platform.PR{Number: 100 + len(c.created), Head: head}, nil
 }
-func (c *fakePC) UpdatePR(_ context.Context, n int, _, _ string) error {
+func (c *fakePC) UpdatePR(_ context.Context, n int, _, body string) error {
 	if err := fail(c.fail, "UpdatePR", ""); err != nil {
 		return err
+	}
+	for _, p := range c.open {
+		if p.Number == n && body != p.Body && withInput(p.Body, bodyInput(body)) == body {
+			c.recorded = append(c.recorded, n)
+			return nil
+		}
 	}
 	c.updated = append(c.updated, n)
 	return nil
@@ -264,6 +291,9 @@ func TestRun(t *testing.T) {
 		wantDeleted int
 		wantGetPR   int
 		wantTips    int // BranchTip fetches
+		// UpdatePR calls that only record the input fingerprint in an up-to-date PR's body
+		// (FP_A bodies have none).
+		wantRecorded int
 	}{
 		{
 			name:        "create both",
@@ -278,6 +308,7 @@ func TestRun(t *testing.T) {
 			opts:       Options{MaxNewPRs: 1},
 			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
 			wantPushed: 1, wantCreated: 1,
+			wantRecorded: 1,
 		},
 		{
 			name:       "fingerprint match but conflicting is rebuilt",
@@ -395,6 +426,7 @@ func TestRun(t *testing.T) {
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A"}}, fail: map[string]error{"DefaultBranch": errBoom}},
 			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
 			wantPushed: 1, wantCreated: 1, wantGetPR: 1,
+			wantRecorded: 1,
 		},
 		{
 			name:       "looked up conflicting PR is rebuilt",
@@ -477,6 +509,7 @@ func TestRun(t *testing.T) {
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
 			wantStatus: map[string]string{branchA: StatusRebased, branchB: StatusCreated},
 			wantPushed: 2, wantCreated: 1, wantTips: 1,
+			wantRecorded: 1,
 		},
 		{
 			name:       "behind base in conflicted mode is up to date without fetching",
@@ -485,6 +518,7 @@ func TestRun(t *testing.T) {
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
 			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
 			wantPushed: 1, wantCreated: 1,
+			wantRecorded: 1,
 		},
 		{
 			name:       "parent is base head is up to date",
@@ -493,6 +527,7 @@ func TestRun(t *testing.T) {
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
 			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
 			wantPushed: 1, wantCreated: 1, wantTips: 1,
+			wantRecorded: 1,
 		},
 		{
 			name:       "behind base with foreign author is skipped",
@@ -508,6 +543,7 @@ func TestRun(t *testing.T) {
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &yes}}},
 			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
 			wantPushed: 1, wantCreated: 1,
+			wantRecorded: 1,
 		},
 		{
 			name:       "behind base tip fetch failure",
@@ -533,6 +569,7 @@ func TestRun(t *testing.T) {
 			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "FP_A", Mergeable: &no}}},
 			wantStatus: map[string]string{branchA: StatusUpToDate, branchB: StatusCreated},
 			wantPushed: 1, wantCreated: 1,
+			wantRecorded: 1,
 		},
 		{
 			name:       "never mode still updates changed content",
@@ -581,6 +618,9 @@ func TestRun(t *testing.T) {
 			}
 			if len(tt.pc.got) != tt.wantGetPR {
 				t.Errorf("GetPR calls = %v, want %d", tt.pc.got, tt.wantGetPR)
+			}
+			if len(tt.pc.recorded) != tt.wantRecorded {
+				t.Errorf("input fingerprints recorded = %v, want %d", tt.pc.recorded, tt.wantRecorded)
 			}
 			if len(tt.git.tips) != tt.wantTips {
 				t.Errorf("BranchTip calls = %v, want %d", tt.git.tips, tt.wantTips)

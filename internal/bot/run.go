@@ -32,6 +32,9 @@ type Git interface {
 	RevParse(ctx context.Context, rev string) (string, error)
 	RemoteURL(ctx context.Context) (string, error)
 	LsRemote(ctx context.Context, pattern string) (map[string]string, error)
+	// ObjectIDs returns the object ids at paths (slash paths relative to the root, "." the
+	// root) in commit rev, in order; "" where rev has none. Input fingerprints use them.
+	ObjectIDs(ctx context.Context, rev string, paths []string) ([]string, error)
 	// WriteTree returns the id of the tree of parent with changes applied, computed locally;
 	// it equals the tree of the commit Commit creates from them.
 	WriteTree(ctx context.Context, parent string, changes []engine.FileChange) (string, error)
@@ -203,17 +206,27 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	ran := make([]bool, len(groups))
 	inSchedule := make([]bool, len(groups))
 	forced := make([]force, len(groups))
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 4)
 	for i := range groups {
 		forced[i] = dash.force(groups[i].Branch)
 		inSchedule[i] = forced[i].any() || scheduled(groups[i].Updates, o.Trigger)
 		_, branchExists := branches["refs/heads/"+groups[i].Branch]
-		existing := hasPR(open, groups[i].Branch) || groups[i].AutomergeBranch && branchExists
-		if !inSchedule[i] && !(o.UpdateNotScheduled && existing) {
-			continue // nothing is pushed, so don't build
+		existing := prOf(open, groups[i].Branch) != nil || groups[i].AutomergeBranch && branchExists
+		// Nothing is pushed for the others, so they are not built.
+		ran[i] = inSchedule[i] || o.UpdateNotScheduled && existing
+	}
+	inputs := inputFingerprints(ctx, o, root, head, groups, ran, post, g)
+	skipped := make([]bool, len(groups))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
+	for i := range groups {
+		if !ran[i] {
+			continue
 		}
-		ran[i] = true
+		if pr := prOf(open, groups[i].Branch); pr != nil && reusable(o, *pr, inputs[i], forced[i]) {
+			slog.DebugContext(ctx, "input fingerprint matches the open PR, not building", "branch", groups[i].Branch, "number", pr.Number, "input", inputs[i])
+			skipped[i] = true
+			continue
+		}
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -239,14 +252,26 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, errors.Join(buildErrs[i]...)))
 			continue
 		}
-		if ran[i] && len(built[i]) == 0 {
+		if ran[i] && !skipped[i] && len(built[i]) == 0 {
 			// Nothing to change (a lockfile that lock file maintenance finds current): no
 			// branch, and an open PR of it is obsolete.
 			slog.InfoContext(ctx, "no changes", "branch", grp.Branch)
 			delete(wanted, grp.Branch)
 			continue
 		}
-		a, target, err := handle(ctx, o, s, grp, built[i], inSchedule[i], forced[i], pc, g)
+		b := groupBuild{changes: built[i], input: inputs[i]}
+		if skipped[i] {
+			b.build = func() ([]engine.FileChange, error) {
+				changes, errs := engine.Build(ctx, root, o.Managers, grp.Updates, post)
+				return changes, errors.Join(errs...)
+			}
+		}
+		a, target, err := handle(ctx, o, s, grp, b, inSchedule[i], forced[i], pc, g)
+		if errors.Is(err, errNoChanges) {
+			slog.InfoContext(ctx, "no changes", "branch", grp.Branch)
+			delete(wanted, grp.Branch)
+			continue
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
 			continue
@@ -340,7 +365,7 @@ func skipGroup(res *engine.Result, grp engine.Group, reason string) {
 func deleteObsoleteBranches(ctx context.Context, o Options, s *runState, wanted map[string]bool, g Git, actions []Action, errs []error) ([]Action, []error) {
 	for _, ref := range slices.Sorted(maps.Keys(s.branches)) {
 		b := strings.TrimPrefix(ref, "refs/heads/")
-		if wanted[b] || hasPR(s.open, b) || hasPR(s.closed, b) {
+		if wanted[b] || prOf(s.open, b) != nil || prOf(s.closed, b) != nil {
 			continue
 		}
 		t, err := g.BranchTip(ctx, b)
@@ -427,22 +452,28 @@ type runState struct {
 	merged       bool // a branch was merged into base, which moved: no further branch merges
 }
 
+// groupBuild is a group's build for handle: the changes, or none yet when build is set (the
+// open PR's input fingerprint matched, so Build was skipped). handle then builds only when it
+// pushes the branch.
+type groupBuild struct {
+	changes []engine.FileChange
+	input   string // input fingerprint; "" = none
+	build   func() ([]engine.FileChange, error)
+}
+
+// errNoChanges is handle's error when a deferred build (groupBuild.build) yields no changes.
+var errNoChanges = errors.New("no changes")
+
 // handle creates, updates or skips the PR of one group, or the branch of a branch automerge
 // group without a PR (handleBranch). target is the PR an automerge group requests auto-merge
 // for: the open, created or pushed PR (with the pushed head), an empty PR in a dry run, nil
 // when the group was skipped or has no PR.
-func handle(ctx context.Context, o Options, s *runState, grp engine.Group, changes []engine.FileChange, inSchedule bool, f force,
+func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b groupBuild, inSchedule bool, f force,
 	pc platform.Client, g Git,
 ) (a Action, target *platform.PR, err error) {
 	a = Action{Branch: grp.Branch, Title: grp.Title}
 
-	var pr *platform.PR
-	for i := range s.open {
-		if s.open[i].Head == grp.Branch {
-			pr = &s.open[i]
-			break
-		}
-	}
+	pr := prOf(s.open, grp.Branch)
 	if pr != nil {
 		a.Number, a.URL = pr.Number, pr.URL
 	} else if !f.recreate {
@@ -487,13 +518,24 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, chang
 		return nil
 	}
 
+	changes := b.changes
 	fp := fingerprint(changes)
 	rebase := false
 	matched := false
 	if pr != nil {
 		prFP := bodyFingerprint(pr.Body)
+		if b.build != nil {
+			fp = prFP // same inputs, same content
+		}
 		matched = prFP == fp
-		slog.DebugContext(ctx, "open PR found", "branch", grp.Branch, "number", pr.Number, "fingerprint", fp, "prFingerprint", prFP)
+		slog.DebugContext(ctx, "open PR found", "branch", grp.Branch, "number", pr.Number, "fingerprint", fp, "prFingerprint", prFP,
+			"input", b.input, "prInput", bodyInput(pr.Body), "built", b.build == nil)
+	}
+	// An unchanged open PR is up to date; its body records the current input fingerprint.
+	upToDate := func() (Action, *platform.PR, error) {
+		recordInput(ctx, o, pc, grp, pr, b.input)
+		a.Status = StatusUpToDate
+		return a, pr, nil
 	}
 	switch {
 	case matched && f.rebase:
@@ -501,8 +543,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, chang
 		rebase = true
 	case matched:
 		if o.RebaseWhen == config.RebaseNever {
-			a.Status = StatusUpToDate
-			return a, pr, nil
+			return upToDate()
 		}
 		mergeable := pr.Mergeable
 		if mergeable == nil {
@@ -516,16 +557,14 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, chang
 			slog.DebugContext(ctx, "PR not mergeable, rebuilding", "branch", grp.Branch, "number", pr.Number)
 		} else {
 			if o.RebaseWhen != config.RebaseBehindBase || !exists {
-				a.Status = StatusUpToDate
-				return a, pr, nil
+				return upToDate()
 			}
 			if err := tip(); err != nil {
 				return a, nil, err
 			}
 			// deps branches are one commit on top of base; any other parent means base moved.
 			if ownAuthor(o, t.Author) && slices.Equal(t.Parents, []string{s.head}) {
-				a.Status = StatusUpToDate
-				return a, pr, nil
+				return upToDate()
 			}
 			slog.DebugContext(ctx, "branch behind base, rebasing", "branch", grp.Branch, "number", pr.Number, "head", short(s.head))
 			rebase = true
@@ -545,8 +584,22 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, chang
 			return a, nil, nil
 		}
 	}
+	if b.build != nil {
+		// The input fingerprint matched, but the branch is pushed (the PR conflicts, or base
+		// moved under behind-base-branch): build it now.
+		if changes, err = b.build(); err != nil {
+			return a, nil, err
+		}
+		if len(changes) == 0 {
+			return a, nil, errNoChanges
+		}
+		if built := fingerprint(changes); built != fp {
+			// The same inputs built other content (a registry moved): an update, not a rebase.
+			fp, rebase = built, false
+		}
+	}
 	if branchMode {
-		return handleBranch(ctx, o, s, grp, changes, fp, f, expected, exists, t, pc, g)
+		return handleBranch(ctx, o, s, grp, changes, fp, b.input, f, expected, exists, t, pc, g)
 	}
 	if o.DryRun {
 		switch {
@@ -575,13 +628,15 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, chang
 		target = &pushed
 	}
 	if rebase {
-		// Content and fingerprint are unchanged, so the PR title and body stay as they are.
+		// Content and fingerprint are unchanged, so the PR title and body stay as they are
+		// apart from the input fingerprint.
+		recordInput(ctx, o, pc, grp, pr, b.input)
 		a.Status = StatusRebased
 		return a, target, nil
 	}
 	// Notes are fetched only for PRs that are actually written; the fingerprint covers file
 	// contents only, so changing upstream notes never churns PRs.
-	body := prBody(ctx, o.Notes, grp.Updates, fp)
+	body := prBody(ctx, o.Notes, grp.Updates, fp, b.input)
 	if pr != nil {
 		if err := pc.UpdatePR(ctx, pr.Number, grp.Title, body); err != nil {
 			return a, nil, err
@@ -604,7 +659,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, chang
 // always when base moved: only a branch directly on base can be fast-forwarded. An unchanged
 // branch is merged by mergeBranch once its checks pass. t is the branch tip, fetched when the
 // branch exists and no rebuild was requested.
-func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group, changes []engine.FileChange, fp string, f force,
+func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group, changes []engine.FileChange, fp, input string, f force,
 	expected string, exists bool, t gitx.Tip, pc platform.Client, g Git,
 ) (a Action, target *platform.PR, err error) {
 	a = Action{Branch: grp.Branch, Title: grp.Title}
@@ -614,7 +669,7 @@ func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group,
 			return a, nil, err
 		}
 		if slices.Equal(t.Parents, []string{s.head}) && t.Tree == tree {
-			return mergeBranch(ctx, o, s, grp, fp, f, expected, pc, g)
+			return mergeBranch(ctx, o, s, grp, fp, input, f, expected, pc, g)
 		}
 		slog.DebugContext(ctx, "automerge branch changed or behind base, rebuilding", "branch", grp.Branch, "parents", t.Parents, "head", short(s.head))
 	}
@@ -650,7 +705,7 @@ func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group,
 // by the state of its checks: still running or none reported, it waits; passed, base is
 // fast-forwarded to it (only one branch per run, since base moves) and the branch deleted;
 // failed, or the push to base declined (branch protection), the PR is raised instead.
-func mergeBranch(ctx context.Context, o Options, s *runState, grp engine.Group, fp string, f force, sha string, pc platform.Client, g Git) (Action, *platform.PR, error) {
+func mergeBranch(ctx context.Context, o Options, s *runState, grp engine.Group, fp, input string, f force, sha string, pc platform.Client, g Git) (Action, *platform.PR, error) {
 	a := Action{Branch: grp.Branch, Title: grp.Title, Status: StatusUpToDate}
 	state, err := pc.Checks(ctx, sha)
 	if err != nil {
@@ -659,7 +714,7 @@ func mergeBranch(ctx context.Context, o Options, s *runState, grp engine.Group, 
 	slog.DebugContext(ctx, "automerge branch checks", "branch", grp.Branch, "commit", short(sha), "state", state)
 	switch {
 	case state == platform.ChecksFailure:
-		return raisePR(ctx, o, s, grp, fp, f, sha, "its checks failed", pc)
+		return raisePR(ctx, o, s, grp, fp, input, f, sha, "its checks failed", pc)
 	case state != platform.ChecksSuccess:
 		a.Automerge = AutomergeBranchWaiting
 		return a, nil, nil
@@ -678,7 +733,7 @@ func mergeBranch(ctx context.Context, o Options, s *runState, grp engine.Group, 
 		return a, nil, nil
 	case errors.Is(err, gitx.ErrRejected):
 		slog.WarnContext(ctx, "base declined the fast-forward, raising a PR instead", "branch", grp.Branch, "base", s.base, "err", err)
-		return raisePR(ctx, o, s, grp, fp, f, sha, "`"+s.base+"` declined the push", pc)
+		return raisePR(ctx, o, s, grp, fp, input, f, sha, "`"+s.base+"` declined the push", pc)
 	case err != nil:
 		return a, nil, err
 	}
@@ -694,7 +749,7 @@ func mergeBranch(ctx context.Context, o Options, s *runState, grp engine.Group, 
 
 // raisePR opens the PR of a branch automerge group whose branch (head sha) cannot be merged,
 // why says why, within the PR limits. Run then requests platform auto-merge for it.
-func raisePR(ctx context.Context, o Options, s *runState, grp engine.Group, fp string, f force, sha, why string, pc platform.Client) (Action, *platform.PR, error) {
+func raisePR(ctx context.Context, o Options, s *runState, grp engine.Group, fp, input string, f force, sha, why string, pc platform.Client) (Action, *platform.PR, error) {
 	a := Action{Branch: grp.Branch, Title: grp.Title}
 	switch {
 	case !f.any() && s.limit >= 0 && s.created >= s.limit:
@@ -706,7 +761,7 @@ func raisePR(ctx context.Context, o Options, s *runState, grp engine.Group, fp s
 	}
 	slog.InfoContext(ctx, "raising a PR for the automerge branch", "branch", grp.Branch, "reason", why)
 	body := "This update is configured to merge its branch without a PR (`automergeType: branch`), but " + why + ", so deps opened this PR.\n\n" +
-		prBody(ctx, o.Notes, grp.Updates, fp)
+		prBody(ctx, o.Notes, grp.Updates, fp, input)
 	np, err := pc.CreatePR(ctx, grp.Branch, s.base, grp.Title, body)
 	if err != nil {
 		return a, nil, err
@@ -787,9 +842,14 @@ func waitCrons(ups []dep.Update) []string {
 	return crons
 }
 
-// hasPR reports whether an open PR has branch as its head.
-func hasPR(open []platform.PR, branch string) bool {
-	return slices.ContainsFunc(open, func(p platform.PR) bool { return p.Head == branch })
+// prOf returns the PR of prs with branch as its head, or nil.
+func prOf(prs []platform.PR, branch string) *platform.PR {
+	for i := range prs {
+		if prs[i].Head == branch {
+			return &prs[i]
+		}
+	}
+	return nil
 }
 
 // listDeps lists the PRs in state whose head branch is under prefix.
@@ -826,7 +886,9 @@ func bodyFingerprint(body string) string {
 	return ""
 }
 
-func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp string) string {
+// prBody renders the body of a PR with content fingerprint fp and input fingerprint input
+// ("" = none).
+func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp, input string) string {
 	var b strings.Builder
 	var ages []string
 	if notes == nil {
@@ -897,6 +959,9 @@ func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp string) strin
 		}
 	}
 	fmt.Fprintf(&b, "\n<!-- deps:fingerprint=%s -->\n", fp)
+	if input != "" {
+		fmt.Fprintf(&b, "<!-- deps:input=%s -->\n", input)
+	}
 	return b.String()
 }
 

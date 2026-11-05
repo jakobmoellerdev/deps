@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -97,6 +98,36 @@ func TestReadOps(t *testing.T) {
 
 	if _, err := (Repo{Dir: t.TempDir()}).LsRemote(ctx, "x"); err == nil {
 		t.Fatal("LsRemote outside a repo succeeded")
+	}
+}
+
+func TestObjectIDs(t *testing.T) {
+	_, clone := setup(t)
+	ctx := t.Context()
+	head := git(t, clone, "rev-parse", "HEAD")
+	want := []string{
+		git(t, clone, "rev-parse", head+"^{tree}"),
+		git(t, clone, "rev-parse", head+":sub"),
+		git(t, clone, "rev-parse", head+":sub/a.txt"),
+		"",
+	}
+	got, err := Repo{Dir: clone}.ObjectIDs(ctx, head, []string{".", "sub", "sub/a.txt", "sub/missing file"})
+	if err != nil || !slices.Equal(got, want) {
+		t.Fatalf("ObjectIDs = %q, %v; want %q", got, err, want)
+	}
+	// Paths are relative to Dir, not to the top of the work tree.
+	got, err = Repo{Dir: filepath.Join(clone, "sub")}.ObjectIDs(ctx, head, []string{".", "a.txt"})
+	if err != nil || !slices.Equal(got, want[1:3]) {
+		t.Fatalf("ObjectIDs in sub = %q, %v; want %q", got, err, want[1:3])
+	}
+	if got, err := (Repo{Dir: clone}).ObjectIDs(ctx, head, nil); got != nil || err != nil {
+		t.Fatalf("ObjectIDs(nil) = %q, %v", got, err)
+	}
+	if _, err := (Repo{Dir: clone}).ObjectIDs(ctx, head, []string{"a\nb"}); err == nil {
+		t.Fatal("ObjectIDs accepted a path with a line break")
+	}
+	if _, err := (Repo{Dir: t.TempDir()}).ObjectIDs(ctx, head, []string{"."}); err == nil {
+		t.Fatal("ObjectIDs outside a repo succeeded")
 	}
 }
 
