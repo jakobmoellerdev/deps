@@ -434,7 +434,7 @@ rules:
 - When the key is **absent**, Renovate's `:ignoreModulesAndTests` list (the default above) applies.
 - Any explicit list, including `[]` or a null value, replaces that default.
 - Independently of `ignorePaths`, discovery always prunes `.git`, `node_modules`, `vendor` and `testdata` directories.
-- Each entry must be a valid doublestar glob.
+- Each entry must be a valid doublestar glob or a `/RE2/` regex (flag `i` allowed) matched anywhere in the path; `!` negations are rejected.
 
 ```yaml
 ignorePaths: ['**/node_modules/**', 'docs/**']

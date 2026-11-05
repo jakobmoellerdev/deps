@@ -7,9 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/bmatcuk/doublestar/v4"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
 )
 
 // prunedDirs are never descended into.
@@ -21,16 +20,13 @@ var prunedDirs = map[string]bool{".git": true, "node_modules": true, "vendor": t
 // manager, indexed like managers.
 func discover(root string, ignore []string, managers []manager.Manager) ([][]string, error) {
 	out := make([][]string, len(managers))
-	ignored := func(rel string) bool {
-		for _, p := range ignore {
-			if ok, _ := doublestar.Match(p, rel); ok {
-				return true
-			}
-		}
-		return false
+	ign, err := pattern.Compile(ignore)
+	if err != nil {
+		return nil, err
 	}
 	base := filepath.Clean(root)
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	ignored := ign.Match
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

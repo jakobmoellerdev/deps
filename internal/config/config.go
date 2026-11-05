@@ -23,6 +23,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/prtemplate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
@@ -214,7 +215,7 @@ type Config struct {
 	// AbandonmentThreshold flags deps whose newest release is older than it (Renovate's
 	// abandonmentThreshold); a string like MinimumReleaseAge.
 	AbandonmentThreshold string   `yaml:"abandonmentThreshold" jsonschema_description:"Age of a dependency's newest release after which the dependency dashboard and its PRs flag it as abandoned, e.g. '1 year' or '18 months' (units of minimumReleaseAge, plus months of 30 days and years of 365 days); empty or '0' turns the check off. It costs at most one release time lookup per dep (npm: none when its modified time is old enough)."`
-	IgnorePaths          []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it."`
+	IgnorePaths          []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes."`
 	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
 	// same names); rules override them.
 	SeparateMajorMinor    *bool  `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update."`
@@ -417,9 +418,9 @@ type Terraform struct {
 // Rule overrides the policy for matching deps.
 type Rule struct {
 	Manager     string   `yaml:"manager" jsonschema:"enum=github-actions,enum=gomod,enum=docker,enum=npm,enum=helm,enum=kustomize,enum=pre-commit,enum=gitlabci,enum=nvm,enum=nodenv,enum=asdf,enum=mise,enum=cargo,enum=pip_requirements,enum=pep621,enum=poetry,enum=pipenv,enum=conda,enum=terraform,enum=terraform-version,enum=tflint-plugin,enum=terragrunt,enum=maven,enum=gradle,enum=gradle-wrapper,enum=maven-wrapper,enum=swift,enum=bundler,enum=ruby-version,enum=git-submodules,enum=rust-toolchain,enum=devcontainer,enum=bitbucket-pipelines,enum=woodpecker,enum=droneci,enum=circleci,enum=azure-pipelines,enum=vcpkg,enum=elm,enum=composer,enum=julia,enum=bazel-module,enum=bazelisk,enum=nuget,enum=custom" jsonschema_description:"Only match deps of this manager."`
-	Names       []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates). An entry starting with '!' excludes the names its glob matches (Renovate's '!pattern'); a list of only exclusions matches every other name."`
+	Names       []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates). An entry starting with '!' excludes the names its glob matches (Renovate's '!pattern'); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after '!')."`
 	DepTypes    []string `yaml:"depTypes" jsonschema:"enum=direct,enum=indirect,enum=go,enum=toolchain,enum=action,enum=dockerfile,enum=compose,enum=workflow,enum=kubernetes,enum=helm,enum=dependencies,enum=devDependencies,enum=optionalDependencies,enum=peerDependencies,enum=packageManager,enum=setup,enum=engines,enum=volta,enum=chart,enum=helmfile,enum=k0s,enum=flux,enum=argocd,enum=sveltos,enum=image,enum=helmChart,enum=resource,enum=repository,enum=service,enum=include,enum=component,enum=node,enum=tool,enum=annotation,enum=regex,enum=dev-dependencies,enum=build-dependencies,enum=workspace.dependencies,enum=patch,enum=replace,enum=requirements,enum=project.dependencies,enum=project.optional-dependencies,enum=dependency-groups,enum=tool.uv.dev-dependencies,enum=tool.pdm.dev-dependencies,enum=group,enum=packages,enum=dev-packages,enum=category,enum=pip,enum=required_provider,enum=required_version,enum=module,enum=provider,enum=helm_release,enum=tfe_workspace,enum=docker_image,enum=docker_container,enum=docker_service,enum=docker_registry_image,enum=kubernetes_pod,enum=kubernetes_pod_v1,enum=kubernetes_deployment,enum=kubernetes_deployment_v1,enum=kubernetes_daemonset,enum=kubernetes_daemon_set_v1,enum=kubernetes_stateful_set,enum=kubernetes_stateful_set_v1,enum=kubernetes_job,enum=kubernetes_job_v1,enum=kubernetes_cron_job,enum=kubernetes_cron_job_v1,enum=kubernetes_replication_controller,enum=kubernetes_replication_controller_v1,enum=terraform-version,enum=opentofu-version,enum=plugin,enum=github,enum=gitTags,enum=terragrunt,enum=compile,enum=provided,enum=runtime,enum=test,enum=system,enum=import,enum=parent,enum=build,enum=wrapper,enum=maven,enum=ruby,enum=development,enum=submodule,enum=builtin-baseline,enum=default-registry,enum=registry,enum=overrides,enum=feature,enum=feature-version,enum=pipe,enum=orb,enum=container,enum=task,enum=test-direct,enum=test-indirect,enum=test-dependencies,enum=elm-version,enum=require,enum=require-dev,enum=deps,enum=weakdeps,enum=extras,enum=julia,enum=bazel_dep,enum=single_version_override,enum=multiple_version_override,enum=git_override,enum=archive_override,enum=local_path_override,enum=git_repository,enum=new_git_repository,enum=oci_pull,enum=rules_img_pull,enum=maven_install,enum=crate_spec,enum=bazel,enum=nuget,enum=msbuild-sdk,enum=dotnet-sdk" jsonschema_description:"Only match deps of these types."`
-	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'. An entry starting with '!' excludes the files its glob matches; a list of only exclusions matches every other file."`
+	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'. An entry starting with '!' excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after '!')."`
 	Datasources []string `yaml:"datasources" jsonschema:"enum=git-tags,enum=git-refs,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=pypi,enum=conda,enum=terraform-provider,enum=terraform-module,enum=maven,enum=gradle-version,enum=rubygems,enum=ruby-version,enum=rust-version,enum=orb,enum=azure-pipelines-tasks,enum=vcpkg,enum=elm-package,enum=packagist,enum=julia-registry,enum=bazel,enum=nuget,enum=dotnet-version,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node,enum=bitbucket-tags" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) match their deps datasource."`
 	// BaseBranches matches the base branch of the run (Renovate's matchBaseBranches).
 	BaseBranches []string `yaml:"baseBranches" jsonschema_description:"Only match deps on these base branches of run (baseBranches, --base, else the default branch): names or RE2 regexes '/<RE2>/' (flag i allowed); an entry starting with '!' excludes the branches it matches, and a list of only exclusions matches every other branch. plan, apply, explain and preview have no base branch, so no rule with baseBranches matches there."`
@@ -485,6 +486,7 @@ type Rule struct {
 	templates      prtemplate.Set // parsed PRTitle, PRHeader and PRFooter; members of unset fields are nil
 	minAge         *time.Duration // parsed MinimumReleaseAge; nil = not set
 	abandon        *time.Duration // parsed AbandonmentThreshold; nil = not set
+	names, paths   *pattern.List  // compiled Names and Paths
 }
 
 // Source returns the file a loaded rule is written in (the config file's path relative to
@@ -494,7 +496,7 @@ func (r *Rule) Source() (file string, line int) { return r.source, r.line }
 
 // Custom is a custom manager: annotation mode when Match is empty, regex mode otherwise.
 type Custom struct {
-	Files      []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans."`
+	Files      []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !<pattern> excludes (a negation-only list matches everything else)."`
 	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
 	Datasource string    `yaml:"datasource" jsonschema:"enum=git-tags,enum=git-refs,enum=github-releases,enum=go,enum=go-toolchain,enum=docker,enum=npm,enum=node-version,enum=helm,enum=crate,enum=pypi,enum=conda,enum=terraform-provider,enum=terraform-module,enum=maven,enum=gradle-version,enum=rubygems,enum=ruby-version,enum=rust-version,enum=orb,enum=azure-pipelines-tasks,enum=vcpkg,enum=elm-package,enum=packagist,enum=julia-registry,enum=bazel,enum=nuget,enum=dotnet-version,enum=golang-version,enum=github-tags,enum=github-release-attachments,enum=node,enum=bitbucket-tags" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases."`
 	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
@@ -712,6 +714,18 @@ func Load(ctx context.Context, dir, explicitPath string, fetch Fetcher) (*Config
 	if err != nil {
 		return nil, &Error{Err: fmt.Errorf("%s: %w", p, err), File: p}
 	}
+	return parse(ctx, src, p, display, fetch)
+}
+
+// Parse decodes and validates a .deps.yaml document without extends; path names it in
+// errors. All failures are *Error.
+func Parse(src []byte, path string) (*Config, error) {
+	return parse(context.Background(), src, path, path, nil)
+}
+
+// parse decodes and validates the document src of file p (display: its name in deps
+// explain), reading the files its extends entries name with fetch.
+func parse(ctx context.Context, src []byte, p, display string, fetch Fetcher) (*Config, error) {
 	l := &loader{ctx: ctx, fetch: fetch, path: p, seen: map[string]bool{}}
 	if err := l.add(src, p, display, -1); err != nil {
 		return nil, err
@@ -719,6 +733,7 @@ func Load(ctx context.Context, dir, explicitPath string, fetch Fetcher) (*Config
 	c := &Config{}
 	if len(l.layers) > 1 {
 		// The files decoded strictly one by one, so their merge does too.
+		var err error
 		if src, err = yaml.Marshal(merge(l.layers)); err != nil {
 			return nil, &Error{Err: fmt.Errorf("%s: merge extends: %w", p, err), File: p}
 		}
@@ -895,8 +910,10 @@ func (c *Config) Validate() error {
 		c.lfmSchedule = c.parseSchedule("lockFileMaintenance.schedule", c.LockFileMaintenance.Schedule, add)
 	}
 	for i, g := range c.IgnorePaths {
-		if _, err := doublestar.Match(g, ""); err != nil {
-			add(fmt.Sprintf("ignorePaths[%d]", i), "invalid glob %q: %v", g, err)
+		if strings.HasPrefix(g, "!") {
+			add(fmt.Sprintf("ignorePaths[%d]", i), "negation is not supported in ignorePaths, got %q", g)
+		} else if _, err := pattern.Compile([]string{g}); err != nil {
+			add(fmt.Sprintf("ignorePaths[%d]", i), "%v", err)
 		}
 	}
 	for i := range c.Rules {
@@ -958,13 +975,23 @@ func (c *Config) validateRule(i int, add addFunc) {
 	if r.Manager != "" && !slices.Contains(Managers, r.Manager) {
 		add(f+".manager", "must be one of %s, got %q", list(Managers), r.Manager)
 	}
-	validateMatchGlobs(f+".names", r.Names, add)
+	for j, n := range r.Names {
+		if _, err := pattern.Compile([]string{n}); err != nil {
+			add(fmt.Sprintf("%s.names[%d]", f, j), "%v", err)
+		}
+	}
+	r.names, _ = pattern.Compile(r.Names)
 	for j, t := range r.DepTypes {
 		if !slices.Contains(DepTypes, t) {
 			add(fmt.Sprintf("%s.depTypes[%d]", f, j), "must be one of %s, got %q", list(DepTypes), t)
 		}
 	}
-	validateMatchGlobs(f+".paths", r.Paths, add)
+	for j, g := range r.Paths {
+		if _, err := pattern.Compile([]string{g}); err != nil {
+			add(fmt.Sprintf("%s.paths[%d]", f, j), "%v", err)
+		}
+	}
+	r.paths, _ = pattern.Compile(r.Paths)
 	for j, ds := range r.Datasources {
 		if !c.KnownDatasource(ds) {
 			add(fmt.Sprintf("%s.datasources[%d]", f, j), "%s", unknownDatasource(ds))
@@ -1137,28 +1164,13 @@ func validateAgeBehaviour(f, b string, add addFunc) {
 	}
 }
 
-// validateMatchGlobs checks the doublestar globs of a rule's names or paths (field), each
-// optionally negated with a leading '!'.
-func validateMatchGlobs(field string, globs []string, add addFunc) {
-	for j, g := range globs {
-		pat, neg := strings.CutPrefix(g, "!")
-		if neg && pat == "" {
-			add(fmt.Sprintf("%s[%d]", field, j), "invalid glob %q: missing pattern after !", g)
-			continue
-		}
-		if _, err := doublestar.Match(pat, ""); err != nil {
-			add(fmt.Sprintf("%s[%d]", field, j), "invalid glob %q: %v", g, err)
-		}
-	}
-}
-
 func (cu *Custom) validate(f string, known func(string) bool, add addFunc) {
 	if len(cu.Files) == 0 {
 		add(f+".files", "must not be empty")
 	}
 	for j, g := range cu.Files {
-		if _, err := doublestar.Match(g, ""); err != nil {
-			add(fmt.Sprintf("%s.files[%d]", f, j), "invalid glob %q: %v", g, err)
+		if _, err := pattern.Compile([]string{g}); err != nil {
+			add(fmt.Sprintf("%s.files[%d]", f, j), "%v", err)
 		}
 	}
 	if cu.Datasource != "" && !known(cu.Datasource) {
@@ -1223,4 +1235,19 @@ func checkBranchPrefix(prefix string) string {
 		}
 	}
 	return ""
+}
+
+// validateMatchGlobs checks the doublestar globs of postUpgradeTasks.files (field), each
+// optionally negated with a leading '!'.
+func validateMatchGlobs(field string, globs []string, add addFunc) {
+	for j, g := range globs {
+		pat, neg := strings.CutPrefix(g, "!")
+		if neg && pat == "" {
+			add(fmt.Sprintf("%s[%d]", field, j), "invalid glob %q: missing pattern after !", g)
+			continue
+		}
+		if _, err := doublestar.Match(pat, ""); err != nil {
+			add(fmt.Sprintf("%s[%d]", field, j), "invalid glob %q: %v", g, err)
+		}
+	}
 }

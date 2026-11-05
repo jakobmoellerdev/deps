@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
 )
 
 // DefaultBaseBranch is the baseBranches entry naming the repository's default branch
@@ -27,7 +29,7 @@ func parseBranchPattern(s string, exclude, builtin bool) (branchPattern, error) 
 	if exclude {
 		body, p.negate = strings.CutPrefix(s, "!")
 	}
-	if expr, flags, ok := regexForm(body); ok {
+	if expr, flags, ok := pattern.Regex(body); ok {
 		if flags == "i" {
 			expr = "(?i)" + expr
 		} else if flags != "" {

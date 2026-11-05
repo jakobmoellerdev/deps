@@ -677,7 +677,7 @@ rules:
 
 ## `ignorePaths`
 
-Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it.
+Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes.
 
 - **Type:** list of strings
 - **Default:** `**/node_modules/**`, `**/bower_components/**`, `**/vendor/**`, `**/examples/**`, `**/__tests__/**`, `**/test/**`, `**/tests/**`, `**/__fixtures__/**`
@@ -685,7 +685,7 @@ Doublestar globs on slash paths relative to --dir; matching files and directorie
 - When the key is **absent**, Renovate's `:ignoreModulesAndTests` list (the default above) applies.
 - Any explicit list, including `[]` or a null value, replaces that default.
 - Independently of `ignorePaths`, discovery always prunes `.git`, `node_modules`, `vendor` and `testdata` directories.
-- Each entry must be a valid doublestar glob.
+- Each entry must be a valid doublestar glob or a `/RE2/` regex (flag `i` allowed) matched anywhere in the path; `!` negations are rejected.
 
 ```yaml
 ignorePaths: ['**/node_modules/**', 'docs/**']
@@ -1070,7 +1070,7 @@ Only match deps of this manager.
 
 ### `rules[].names`
 
-Only match deps whose name matches any of these doublestar globs (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates). An entry starting with `!` excludes the names its glob matches (Renovate's `!pattern`); a list of only exclusions matches every other name.
+Only match deps whose name matches any of these doublestar globs (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates). An entry starting with `!` excludes the names its glob matches (Renovate's `!pattern`); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after `!`).
 
 - **Type:** list of strings
 
@@ -1087,7 +1087,7 @@ Only match deps of these types.
 
 ### `rules[].paths`
 
-Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. `charts/**`. An entry starting with `!` excludes the files its glob matches; a list of only exclusions matches every other file.
+Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. `charts/**`. An entry starting with `!` excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after `!`).
 
 - **Type:** list of strings
 
@@ -1518,7 +1518,7 @@ RUN go install golang.org/x/tools/cmd/goimports@v0.38.0
 
 ### `custom[].files`
 
-Doublestar globs of the files this manager scans.
+Doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !\<pattern> excludes (a negation-only list matches everything else).
 
 - **Type:** list of strings
 - **Minimum entries:** 1

@@ -65,6 +65,7 @@ type rootOpts struct {
 	concurrency int
 	report      string   // --report: JSON result file of plan, apply and run
 	allowTasks  []string // --allow-tasks of apply and run
+	renovate    bool
 }
 
 // allowTasksFlag is --allow-tasks of apply and run.
@@ -136,7 +137,8 @@ func newRoot() *cli.Command {
 		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "dir", Value: ".", Destination: &o.dir, Usage: "repository directory to scan"},
-			&cli.StringFlag{Name: "config", Destination: &o.config, Usage: "config file, which must exist (default: <dir>/.deps.yaml, then .deps.yml, else built-in defaults)"},
+			&cli.StringFlag{Name: "config", Destination: &o.config, Usage: "config file, which must exist (default: <dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate"},
+			&cli.BoolFlag{Name: "renovate", Destination: &o.renovate, Usage: "compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation"},
 			&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Destination: &o.verbose, Usage: "also print skipped dependencies (skip lines)"},
 			&cli.StringFlag{Name: "log-level", Value: "warn", Destination: &o.log.level, Usage: "log level: debug, info, warn, error; $DEPS_LOG_LEVEL, then $RUNNER_DEBUG=1 (debug) replace the default"},
 			&cli.StringFlag{Name: "log-format", Value: "auto", Destination: &o.log.format, Usage: "log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups); $DEPS_LOG_FORMAT replaces the default"},
@@ -146,7 +148,7 @@ func newRoot() *cli.Command {
 			&cli.StringFlag{Name: "cpuprofile", Hidden: true, Destination: &o.prof.cpu, Usage: "write a CPU profile to this file"},
 			&cli.StringFlag{Name: "memprofile", Hidden: true, Destination: &o.prof.mem, Usage: "write an allocation profile to this file on exit"},
 		},
-		Commands: append([]*cli.Command{newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newPreview(o), newSubmit(o), newSchema(), newDocs(), newHelp()},
+		Commands: append([]*cli.Command{newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newPreview(o), newSubmit(o), newMigrate(o), newSchema(), newDocs(), newHelp()},
 			newHelpTopics()...),
 	}
 	_ = root.Walk(func(c *cli.Command) error {
@@ -243,8 +245,12 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	if err != nil {
 		return nil, err
 	}
+	limits := httpx.NewLimits(o.concurrency)
+	sem := limits.Default
 	fetcher := extendsFetcher(info, token, root)
-	cfg, err := config.Load(ctx, root, o.config, fetcher)
+	// Remote Renovate presets are fetched before the config (and its GitLab URL) is known.
+	auth := httpx.NewAuth(info, token, os.Getenv, httpx.WithSecretHook(actionsLog.mask))
+	cfg, err := loadConfig(ctx, o, root, info, client, auth, githubapi.New(client, auth, sem), fetcher)
 	if err != nil {
 		return nil, err
 	}
@@ -253,11 +259,10 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	if err != nil {
 		return nil, err
 	}
-	limits := httpx.NewLimits(o.concurrency)
-	sem := limits.Default
 	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, info, os.Getenv)
 	slog.DebugContext(ctx, "gitlab url", "url", gitlabURL, "source", gitlabSource)
-	auth := httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(gitlabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask))...)
+	auth = httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(gitlabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask))...)
+	gh := githubapi.New(client, auth, sem)
 	env := configEnv(cfg, info, gitlabURL)
 	slog.DebugContext(ctx, "config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
 	osvSource := osv.New(client, limits.OSV)
@@ -265,7 +270,6 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	if cfg.SecurityEnabled() {
 		security = osvSource
 	}
-	gh := githubapi.New(client, auth, sem)
 	releases := githubreleases.New(gh)
 	docker := dockerds.New(client, limits.Docker)
 	registry := tfregistry.New(client, sem, os.Getenv)

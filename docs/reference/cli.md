@@ -10,7 +10,7 @@ deps [command] [flags]
 
 deps finds the dependencies of a repository (GitHub/Gitea/Forgejo Actions, Go modules, container images, npm packages, Rust crates, Python packages and custom-annotated versions), looks up newer versions, and either prints the changes as a diff (`plan`), writes them (`apply`), or pushes one branch and opens one pull request per dependency or group (`run`). Files are edited byte-exactly and never reformatted.
 
-The configuration is read from `.deps.yaml` (or `.deps.yml`) in `--dir`; `deps schema` prints its JSON Schema. Results go to stderr, diffs and explanations to stdout. See `deps help output`, `deps help environment` and `deps help exit-codes`.
+The configuration is read from `.deps.yaml` (or `.deps.yml`) in `--dir`; `deps schema` prints its JSON Schema. With `--renovate`, the repository's Renovate config is translated instead (`deps migrate` writes that translation to `.deps.yaml`). Results go to stderr, diffs and explanations to stdout. See `deps help output`, `deps help environment` and `deps help exit-codes`.
 
 Hidden flags for profiling: `--cpuprofile <file>` writes a CPU profile, and `--memprofile <file>` writes an allocation profile on exit (pprof format).
 
@@ -25,6 +25,7 @@ Hidden flags for profiling: `--cpuprofile <file>` writes a CPU profile, and `--m
 | [`deps completion powershell`](#deps-completion-powershell) | Generate the autocompletion script for powershell |
 | [`deps completion zsh`](#deps-completion-zsh) | Generate the autocompletion script for zsh |
 | [`deps explain`](#deps-explain) | Explain the rules, candidates and decision for each matching dependency |
+| [`deps migrate`](#deps-migrate) | Translate the Renovate config into .deps.yaml |
 | [`deps plan`](#deps-plan) | Print the updates as a unified diff without writing files |
 | [`deps preview`](#deps-preview) | Compare the PRs a pull request's checkout would get with those of the base branch |
 | [`deps run`](#deps-run) | Push one branch and open or update one pull request per dependency or group |
@@ -43,10 +44,11 @@ Every command accepts these flags.
 |---|---|---|---|
 | `--color` | string | `"auto"` | color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never |
 | `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
-| `--config` | string | `""` | config file, which must exist (default: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults) |
+| `--config` | string | `""` | config file, which must exist (default: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
 | `--dir` | string | `"."` | repository directory to scan |
 | `--log-format` | string | `"auto"` | log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups); $DEPS_LOG_FORMAT replaces the default |
 | `--log-level` | string | `"warn"` | log level: debug, info, warn, error; $DEPS_LOG_LEVEL, then $RUNNER_DEBUG=1 (debug) replace the default |
+| `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
 | `--report` | string | `""` | plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT) |
 | `-v, --verbose` | bool | `false` | also print skipped dependencies (skip lines) |
 
@@ -241,6 +243,40 @@ Errors go to stderr as `error   <msg>`. A glob that matches no dependency fails 
 deps explain 'actions/*'
 deps explain 'k8s.io/**' github.com/spf13/cobra
 ```
+
+## deps migrate
+
+Translate the Renovate config into .deps.yaml.
+
+```
+deps migrate [flags]
+```
+
+Translates the repository's Renovate config into a `.deps.yaml` and writes it to `<dir>/.deps.yaml` (`--output` elsewhere, `-` to stdout). The Renovate config is never modified or deleted. An existing output file is only replaced with `--force` (else exit 2).
+
+The config is the first of `renovate.json`, `renovate.jsonc`, `renovate.json5`, the same names under `.github/`, `.gitlab/`, `.gitea/` and `.forgejo/`, `.renovaterc`, `.renovaterc.json(c|5)` and the `renovate` key of `package.json`; `--config` names it explicitly. JSON, JSONC and JSON5 are accepted. Its `extends` presets are resolved: Renovate's built-in presets from a table, `github>`, `gitea>`, `forgejo>` and `local>` presets by fetching them (credentials as for lookups, see `deps help environment`).
+
+`deps plan|apply|run|explain --renovate` run the same translation in memory, so a migrated file behaves exactly like compatibility mode. Settings deps cannot express are listed on stderr as `warn    <setting>: <msg>`, settings without effect on which updates or PRs exist as `info    <setting>: <msg>` (with `-v`); both also head the written file as comments.
+
+- The branch prefix follows Renovate (`renovate/` by default): `deps run` closes open PRs under it that it does not manage, so turn Renovate off before the first run.
+- Renovate schedules are time windows, deps schedules are the crons of the workflow triggers that may create PRs. Each entry becomes the cron of the window's start (`* * * * 0` and `before 6am on sunday` become `0 0 * * 0`); the summary lists the crons the workflow's `on.schedule` needs.
+- Renovate's regex (`/re/`) and negated (`!pattern`) name, path and file patterns are kept as they are.
+
+The summary line reads `wrote <file> from <renovate config>: <n> rules, <n> custom managers, <n> custom datasources; <n> warnings, <n> notes`.
+
+### deps migrate examples
+
+```sh
+deps migrate
+deps migrate --config .github/renovate.json5 --output -
+```
+
+### deps migrate flags
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--force` | bool | `false` | overwrite an existing output file |
+| `--output` | string | `""` | file to write (default: \<dir>/.deps.yaml; - writes to stdout) |
 
 ## deps plan
 

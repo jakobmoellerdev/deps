@@ -110,6 +110,9 @@ func TestLoadErrors(t *testing.T) {
 		{"security: maybe\n", "line 1"},
 		{"custom: [{}]\n", "custom[0].files: must not be empty"},
 		{"custom: [{files: ['[']}]\n", "custom[0].files[0]: invalid glob"},
+		{"custom: [{files: ['/(/']}]\n", `custom[0].files[0]: invalid regex "/(/"`},
+		{"ignorePaths: ['!x']\n", `ignorePaths[0]: negation is not supported in ignorePaths, got "!x"`},
+		{"rules: [{names: ['/a/g']}]\n", `rules[0].names[0]: invalid regex "/a/g": unknown flags "g" (only i)`},
 		{"custom: [{files: [x], datasource: pip}]\n", "custom[0].datasource: must be one of git-tags"},
 		{"custom: [{files: [x], versioning: calver}]\n", "custom[0].versioning: must be one of tag"},
 		{"custom: [{files: [x], match: '('}]\n", "custom[0].match: invalid RE2"},
@@ -264,6 +267,31 @@ rules:
 	}
 	if !c.Policy(dep.Dep{Manager: "gomod", Name: "x"}).Ignore {
 		t.Error("gomod ignore")
+	}
+}
+
+func TestPolicyRenovatePatterns(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `rules:
+  - names: ['/^k8s\.io\//', '!k8s.io/kube-openapi']
+    group: k8s
+  - paths: ['!charts/**']
+    pin: digest
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		d          dep.Dep
+		group, pin string
+	}{
+		{dep.Dep{Manager: "gomod", Name: "k8s.io/api", File: "go.mod"}, "k8s", "digest"},
+		{dep.Dep{Manager: "gomod", Name: "k8s.io/kube-openapi", File: "go.mod"}, "", "digest"},
+		{dep.Dep{Manager: "helm", Name: "k8s.io/api", File: "charts/a/Chart.yaml"}, "k8s", "keep"},
+	} {
+		p := c.Policy(tt.d)
+		if p.Group != tt.group || p.Pin != tt.pin {
+			t.Errorf("%s %s: group %q pin %q, want %q %q", tt.d.Name, tt.d.File, p.Group, p.Pin, tt.group, tt.pin)
+		}
 	}
 }
 

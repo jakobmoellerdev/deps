@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
 )
 
 // Allowed is a parsed allow value: a Masterminds semver constraint, or Renovate's
@@ -26,7 +28,7 @@ func ParseAllowed(s string) (*Allowed, error) {
 	if rest, ok := strings.CutPrefix(body, "!"); ok && strings.HasPrefix(rest, "/") {
 		body, negate = rest, true
 	}
-	if expr, flags, ok := regexForm(body); ok {
+	if expr, flags, ok := pattern.Regex(body); ok {
 		if flags == "i" {
 			expr = "(?i)" + expr
 		} else if flags != "" {
@@ -46,18 +48,6 @@ func ParseAllowed(s string) (*Allowed, error) {
 		return nil, fmt.Errorf("invalid constraint %q: %w", s, err)
 	}
 	return &Allowed{constraint: cs}, nil
-}
-
-// regexForm splits "/expr/flags"; ok is false unless s starts with "/" and has a closing "/".
-func regexForm(s string) (expr, flags string, ok bool) {
-	if !strings.HasPrefix(s, "/") {
-		return "", "", false
-	}
-	i := strings.LastIndexByte(s, '/')
-	if i == 0 {
-		return "", "", false
-	}
-	return s[1:i], s[i+1:], true
 }
 
 // String renders the constraint normalized, or the regex form as written.

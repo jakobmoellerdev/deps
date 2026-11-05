@@ -1,4 +1,4 @@
-// Package githubapi reads releases of GitHub and GitHub Enterprise Server repositories.
+// Package githubapi reads releases and files of GitHub and GitHub Enterprise Server repositories.
 //
 // With a token for the host it uses GraphQL, which returns only the requested fields: a page
 // of 100 releases is a few KiB, where the REST list always carries every release body and

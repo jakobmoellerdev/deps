@@ -29,12 +29,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/bmatcuk/doublestar/v4"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -66,7 +65,7 @@ var (
 
 type customManager struct {
 	known      func(datasource string) bool // config.Config.KnownDatasource
-	files      []string
+	files      *pattern.List
 	re         *regexp.Regexp // nil = annotation mode
 	datasource string
 	name       string
@@ -99,12 +98,11 @@ func newManager(c config.Custom, known func(string) bool) (*customManager, error
 	if len(c.Files) == 0 {
 		return nil, errors.New("files: must not be empty")
 	}
-	for _, g := range c.Files {
-		if !doublestar.ValidatePattern(g) {
-			return nil, fmt.Errorf("files: invalid glob %q", g)
-		}
+	files, err := pattern.Compile(c.Files)
+	if err != nil {
+		return nil, fmt.Errorf("files: %w", err)
 	}
-	m := &customManager{known: known, files: c.Files, datasource: c.Datasource, name: c.Name, versioning: c.Versioning,
+	m := &customManager{known: known, files: files, datasource: c.Datasource, name: c.Name, versioning: c.Versioning,
 		gVersion: -1, gName: -1, gDepName: -1, gPackageName: -1, gDatasource: -1, gVersioning: -1, gDigest: -1, gChecksum: -1}
 	if m.versioning == "" {
 		m.versioning = defaultVersioning
@@ -159,15 +157,8 @@ func subexp(re *regexp.Regexp, names ...string) int {
 
 func (*customManager) Name() string { return Name }
 
-// Match reports whether the slash path matches any of the entry's files globs.
-func (m *customManager) Match(path string) bool {
-	for _, g := range m.files {
-		if doublestar.MatchUnvalidated(g, path) {
-			return true
-		}
-	}
-	return false
-}
+// Match reports whether the slash path matches the entry's files patterns.
+func (m *customManager) Match(path string) bool { return m.files.Match(path) }
 
 // Extract returns the annotated or regex-matched deps of src.
 func (m *customManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

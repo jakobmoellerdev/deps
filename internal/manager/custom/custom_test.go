@@ -236,6 +236,17 @@ func TestMatch(t *testing.T) {
 	}
 }
 
+func TestMatchRenovatePatterns(t *testing.T) {
+	m := one(t, config.Custom{Files: []string{`/(^|/)\.env$/`, "!vendor/**"}})
+	for path, ok := range map[string]bool{
+		".env": true, "a/.env": true, "a/x.env": false, "vendor/.env": false,
+	} {
+		if got := m.Match(path); got != ok {
+			t.Errorf("Match(%q) = %v, want %v", path, got, ok)
+		}
+	}
+}
+
 func TestNewErrors(t *testing.T) {
 	for _, c := range []struct {
 		cfg  config.Custom
