@@ -54,6 +54,11 @@ func Inputs(ctx context.Context, root string, managers []manager.Manager, post m
 		err            error
 	}
 	listed := map[string]scopeInputs{} // by manager, scope directory and manifests
+	type scopeOf struct {
+		dir string
+		ok  bool
+	}
+	scoped := map[managedFile]scopeOf{} // Scope results, shared by the groups
 	for g, ups := range groups {
 		if ups == nil {
 			continue
@@ -73,12 +78,17 @@ func Inputs(ctx context.Context, root string, managers []manager.Manager, post m
 			if p == nil {
 				continue
 			}
-			dir, ok := p.Scope(ctx, root, f.path)
-			if !ok {
+			s, seen := scoped[f]
+			if !seen {
+				s.dir, s.ok = p.Scope(ctx, root, f.path)
+				scoped[f] = s
+			}
+			if !s.ok {
 				continue
 			}
-			rel := f.path
+			dir, rel := s.dir, f.path
 			if dir != "." {
+				var ok bool
 				if rel, ok = strings.CutPrefix(rel, dir+"/"); !ok {
 					errs[g] = fmt.Errorf("post-processing scope %s does not contain %s", dir, f.path)
 					break
