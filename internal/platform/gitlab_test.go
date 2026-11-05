@@ -29,7 +29,7 @@ func TestGitLabMRFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := PR{Number: 3, Title: "t", Body: "b", Head: "deps/a", HeadSHA: "abc", State: "open", URL: "https://gl/grp/sub/r/-/merge_requests/3",
+	want := PR{Number: 3, Title: "t", Body: "b", Head: "deps/a", HeadSHA: "abc", Base: "main", State: "open", URL: "https://gl/grp/sub/r/-/merge_requests/3",
 		CreatedAt: time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC), Labels: []string{"Rebase", "dependencies"}} // AutoMerge stays false
 	if pr.Mergeable == nil || !*pr.Mergeable {
 		t.Errorf("mergeable = %v", pr.Mergeable)
@@ -109,13 +109,13 @@ func TestGitLabListPRs(t *testing.T) {
 
 func TestGitLabWrites(t *testing.T) {
 	c, calls := gitlabTestClient(t, map[string]route{
-		"POST " + glAPI + "/merge_requests":  {code: http.StatusCreated, body: `{"iid":7,"state":"opened","web_url":"u","sha":"s","source_branch":"deps/a"}`},
+		"POST " + glAPI + "/merge_requests":  {code: http.StatusCreated, body: `{"iid":7,"state":"opened","web_url":"u","sha":"s","source_branch":"deps/a","target_branch":"main"}`},
 		"PUT " + glAPI + "/merge_requests/7": {body: `{}`},
 		"POST " + glAPI + "/issues":          {code: http.StatusCreated, body: `{"iid":2,"title":"Dependency Dashboard","description":"d","web_url":"iu"}`},
 		"PUT " + glAPI + "/issues/2":         {body: `{}`},
 	})
 	pr, err := c.CreatePR(t.Context(), "deps/a", "main", "title", "body")
-	if err != nil || pr.Number != 7 || pr.URL != "u" || pr.HeadSHA != "s" {
+	if err != nil || pr.Number != 7 || pr.URL != "u" || pr.HeadSHA != "s" || pr.Base != "main" {
 		t.Fatalf("CreatePR = %+v %v", pr, err)
 	}
 	if err := c.UpdatePR(t.Context(), 7, "t2", "b2"); err != nil {

@@ -86,6 +86,7 @@ type gitlabMR struct {
 	WebURL       string    `json:"web_url"`
 	CreatedAt    time.Time `json:"created_at"`
 	SourceBranch string    `json:"source_branch"`
+	TargetBranch string    `json:"target_branch"`
 	SHA          string    `json:"sha"`
 	Labels       []string  `json:"labels"`
 	HasConflicts bool      `json:"has_conflicts"`
@@ -103,7 +104,8 @@ type gitlabMR struct {
 func (m *gitlabMR) pr() PR {
 	pr := PR{
 		Number: m.IID, Title: m.Title, Body: m.Description, Head: m.SourceBranch, HeadSHA: m.SHA,
-		URL: m.WebURL, CreatedAt: m.CreatedAt, Merged: m.State == "merged",
+		Base: m.TargetBranch,
+		URL:  m.WebURL, CreatedAt: m.CreatedAt, Merged: m.State == "merged",
 		State: "open",
 	}
 	if m.State == "closed" || m.State == "merged" {
