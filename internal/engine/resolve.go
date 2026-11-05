@@ -1414,11 +1414,18 @@ func (r *resolver) holdBack(d dep.Dep, version, reason string) {
 }
 
 // digestOf returns the digest of version from the releases, asking the datasource when the
-// release carries none.
+// release carries none. version matches a release exactly, else with a leading "v" added or
+// removed (a `# 7.0.6` comment on a SHA pin of tag v7.0.6).
 func (r *resolver) digestOf(version string) (string, error) {
-	for _, rel := range r.rels {
-		if rel.Version == version && rel.Digest != "" {
-			return rel.Digest, nil
+	toggled, ok := strings.CutPrefix(version, "v")
+	if !ok {
+		toggled = "v" + version
+	}
+	for _, v := range [...]string{version, toggled} {
+		for _, rel := range r.rels {
+			if rel.Version == v && rel.Digest != "" {
+				return rel.Digest, nil
+			}
 		}
 	}
 	return r.ds.Digest(r.ctx, r.d, version)

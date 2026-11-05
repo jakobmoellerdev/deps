@@ -361,6 +361,9 @@ func TestDatasource(t *testing.T) {
 	if c, err := ds.Digest(t.Context(), d, "v2"); err != nil || c != "2222222222222222222222222222222222222222" {
 		t.Errorf("Digest(v2) = %q, %v", c, err)
 	}
+	if c, err := ds.Digest(t.Context(), d, "2"); err != nil || c != "2222222222222222222222222222222222222222" {
+		t.Errorf("Digest(2) = %q, %v, want the commit of v2", c, err)
+	}
 	if _, err := ds.Digest(t.Context(), d, "v3"); err == nil || err.Error() != "tag v3 not found upstream" {
 		t.Errorf("Digest(v3) err = %v", err)
 	}

@@ -147,3 +147,40 @@ func TestNonVersionTagDigests(t *testing.T) {
 		})
 	}
 }
+
+// vTags lists tags v7.0.6 and v7.1.0 with their commits, like git-tags, and fails Digest
+// like git-tags does for a name that is not a tag.
+type vTags struct{}
+
+func (vTags) Releases(context.Context, dep.Dep, string) ([]Release, error) {
+	return []Release{{Version: "v7.0.6", Digest: "aaaa"}, {Version: "v7.1.0", Digest: "bbbb"}}, nil
+}
+
+func (vTags) Digest(_ context.Context, _ dep.Dep, v string) (string, error) {
+	return "", errors.New("tag " + v + " not found upstream")
+}
+
+// TestDigestOfVersionWithoutV checks that a SHA pin commented `# 7.1.0` (grafana's
+// peter-evans/create-pull-request) refreshes against the commit of tag v7.1.0: the digest
+// lookup matches the tag with a leading "v" added or removed.
+func TestDigestOfVersionWithoutV(t *testing.T) {
+	pin := func(version, digest string) []dep.Dep {
+		return []dep.Dep{{Datasource: "git-tags", Versioning: "tag", Name: "o/r", Version: version, Digest: digest, Line: 1}}
+	}
+	for _, tc := range []struct {
+		name, version, digest string
+		want                  []string // type version digest
+	}{
+		{"current", "7.1.0", "bbbb", nil},
+		{"stale digest", "7.1.0", "cccc", []string{"digest 7.1.0 bbbb"}},
+	} {
+		res, _ := resolveStub(t, "", "github-actions", pin(tc.version, tc.digest), vTags{}, nil)
+		var got []string
+		for _, u := range res.Updates {
+			got = append(got, string(u.Type)+" "+u.NewVersion+" "+u.NewDigest)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: updates = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

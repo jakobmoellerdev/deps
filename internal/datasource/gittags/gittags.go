@@ -86,15 +86,22 @@ func (l *Lister) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 	return e.rels, e.err
 }
 
-// Digest returns the commit of tag version in d.Source.
+// Digest returns the commit of tag version in d.Source: the tag equal to version, else to
+// version with a leading "v" added or removed.
 func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string, error) {
 	e := l.get(ctx, d.Source)
 	if e.err != nil {
 		return "", e.err
 	}
-	for _, t := range e.tags {
-		if t.Name == version {
-			return t.Commit, nil
+	toggled, ok := strings.CutPrefix(version, "v")
+	if !ok {
+		toggled = "v" + version
+	}
+	for _, v := range [...]string{version, toggled} {
+		for _, t := range e.tags {
+			if t.Name == v {
+				return t.Commit, nil
+			}
 		}
 	}
 	return "", fmt.Errorf("tag %s not found upstream", version)
