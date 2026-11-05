@@ -175,6 +175,7 @@ func cleanEnv(t *testing.T) {
 		"DEPS_DEFAULT_ACTIONS_URL", "DEPS_GIT_AUTHOR", "DEPS_SIGNING_KEY", "DEPS_PLATFORM_COMMIT", "DEPS_LOG_LEVEL", "DEPS_LOG_FORMAT", "GONOPROXY", "GOPRIVATE",
 		"DEPS_GITLAB_TOKEN", "CI_SERVER_URL", "CI_SERVER_HOST", "CI_JOB_TOKEN",
 		"NPM_CONFIG_REGISTRY", "npm_config_registry", "DEPS_CRATES_INDEX_URL", "DEPS_CRATES_API_URL",
+		"NO_COLOR", "CLICOLOR_FORCE", "FORCE_COLOR",
 	} {
 		t.Setenv(k, "")
 	}
@@ -459,7 +460,8 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 		{"unknown flag", []string{"plan", "--nope"}, "unknown flag: --nope"},
 		{"extra args", []string{"plan", "x"}, "unexpected arguments: [x]"},
 		{"log level", []string{"plan", "--dir", dir, "--log-level", "loud"}, `--log-level: invalid value "loud"`},
-		{"log format", []string{"plan", "--dir", dir, "--log-format", "xml"}, `--log-format: invalid value "xml"`},
+		{"log format", []string{"plan", "--dir", dir, "--log-format", "xml"}, `--log-format: invalid value "xml" (auto, pretty, text, json)`},
+		{"color", []string{"plan", "--dir", dir, "--color", "rainbow"}, `--color: invalid value "rainbow" (auto, always, never)`},
 		{"concurrency", []string{"plan", "--dir", dir, "--concurrency", "0"}, "--concurrency: must be at least 1, got 0"},
 		{"config", []string{"plan", "--dir", bad}, "line 1: field pinn not found"},
 		{"missing explicit config", []string{"plan", "--dir", dir, "--config", filepath.Join(dir, "nope.yaml")}, "nope.yaml"},

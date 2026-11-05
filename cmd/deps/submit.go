@@ -66,7 +66,7 @@ func submit(cmd *cobra.Command, o *rootOpts, dryRun, all bool) error {
 		AllManagers: all,
 	})
 	for _, e := range errs {
-		fmt.Fprintf(stderr, "error   %v\n", e)
+		fmt.Fprintf(stderr, "%s   %v\n", o.term.errorLabel(), e)
 	}
 	files := snap.Files()
 	for _, f := range files {

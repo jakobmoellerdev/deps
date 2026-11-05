@@ -91,8 +91,7 @@ func explain(cmd *cobra.Command, o *rootOpts, globs []string) error {
 	}
 	stderr := cmd.ErrOrStderr()
 	for _, e := range res.Errors {
-		fmt.Fprintf(stderr, "error   %v\n", e)
-		actionsLog.error(e)
+		reportError(stderr, o.term, e)
 	}
 	var unmatched []string
 	for i, g := range globs {

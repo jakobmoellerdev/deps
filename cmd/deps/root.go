@@ -34,6 +34,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/logx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
@@ -43,6 +44,7 @@ type rootOpts struct {
 	config      string
 	verbose     bool
 	log         logOpts
+	term        terminal // set up with the logger
 	prof        profiler
 	concurrency int
 	report      string // --report: JSON result file of plan, apply and run
@@ -62,10 +64,18 @@ func newRoot() *cobra.Command {
 			envDefault(cmd, "log-level", "DEPS_LOG_LEVEL", &o.log.level)
 			envDefault(cmd, "log-format", "DEPS_LOG_FORMAT", &o.log.format)
 			envDefault(cmd, "report", "DEPS_REPORT", &o.report)
-			actionsLog = newAnnotator(os.Getenv, cmd.ErrOrStderr(), o.dir)
-			if err := setupLogger(o.log, cmd.ErrOrStderr()); err != nil {
+			// All of stderr goes through one Writer, so records and result lines never
+			// interleave and a status line can redraw around them.
+			stderr := cmd.ErrOrStderr()
+			tty := logx.IsTerminal(stderr)
+			w := logx.NewWriter(stderr)
+			cmd.SetErr(w)
+			actionsLog = newAnnotator(os.Getenv, w, o.dir)
+			t, err := setupLogger(o.log, w, tty, os.Getenv)
+			if err != nil {
 				return err
 			}
+			o.term = t
 			if o.concurrency < 1 {
 				return &usageError{fmt.Errorf("--concurrency: must be at least 1, got %d", o.concurrency)}
 			}
@@ -79,7 +89,8 @@ func newRoot() *cobra.Command {
 	pf.StringVar(&o.config, "config", "", "config file, which must exist (default: <dir>/.deps.yaml, then .deps.yml, else built-in defaults)")
 	pf.BoolVarP(&o.verbose, "verbose", "v", false, "also print skipped dependencies (skip lines)")
 	pf.StringVar(&o.log.level, "log-level", "warn", "log level: debug, info, warn, error; $DEPS_LOG_LEVEL replaces the default")
-	pf.StringVar(&o.log.format, "log-format", "text", "log format: text, json; $DEPS_LOG_FORMAT replaces the default")
+	pf.StringVar(&o.log.format, "log-format", "auto", "log format: auto (pretty on a terminal, else text), pretty, text, json; $DEPS_LOG_FORMAT replaces the default")
+	pf.StringVar(&o.log.color, "color", "auto", "color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never")
 	pf.IntVar(&o.concurrency, "concurrency", 32, "maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1")
 	pf.StringVar(&o.report, "report", "", "plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT)")
 	pf.StringVar(&o.prof.cpu, "cpuprofile", "", "write a CPU profile to this file")

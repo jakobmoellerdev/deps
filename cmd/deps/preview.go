@@ -119,7 +119,7 @@ func writePRTable(b *strings.Builder, p previewPR) {
 			continue
 		}
 		from, to := u.FromTo()
-		fmt.Fprintf(b, "| `%s` | `%s:%d` | `%s` | `%s` | %s |\n", u.Dep.Name, u.Dep.File, u.Dep.Line, from, to, updateType(u))
+		fmt.Fprintf(b, "| `%s` | `%s:%d` | `%s` | `%s` | %s |\n", u.Dep.Name, u.Dep.File, u.Dep.Line, from, to, updateType(u, plain))
 	}
 	b.WriteString("\n")
 }
@@ -210,7 +210,7 @@ func preview(cmd *cobra.Command, o *rootOpts, baseDir string) error {
 		fmt.Fprintf(stderr, "removed %s  %s\n", p.Branch, p.Title)
 	}
 	for _, e := range headRes.Errors {
-		fmt.Fprintf(stderr, "error   %v\n", e)
+		fmt.Fprintf(stderr, "%s   %v\n", o.term.errorLabel(), e)
 	}
 	md := d.markdown(headRes.Errors)
 	if p := summaryPath(os.Getenv); p != "" {

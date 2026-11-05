@@ -297,7 +297,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	if err != nil {
 		return err
 	}
-	report(stderr, o.verbose, res, res.Errors, nil)
+	report(stderr, o.term, o.verbose, res, res.Errors, nil)
 	bo := bot.Options{
 		Base:               r.base,
 		AuthorName:         name,
@@ -348,12 +348,11 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		}
 	}
 	for _, e := range botErrs {
-		fmt.Fprintf(stderr, "error   %v\n", e)
-		actionsLog.error(e)
+		reportError(stderr, o.term, e)
 	}
 	nErr := len(res.Errors) + len(botErrs)
 	sum := summary{Command: "run", Run: true, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Actions: actions,
-		Errors: append(append([]error(nil), res.Errors...), botErrs...), Elapsed: time.Since(start), Verbose: o.verbose, Report: o.report}
+		Errors: append(append([]error(nil), res.Errors...), botErrs...), Elapsed: time.Since(start), Verbose: o.verbose, Report: o.report, Style: o.term.style}
 	if r.dryRun {
 		sum.Command = "run --dry-run"
 	}

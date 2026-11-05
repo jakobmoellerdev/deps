@@ -6,12 +6,14 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/bot"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/logx"
 )
 
 // summary is the end-of-run overview of plan, apply and run: the updates grouped by PR (the
@@ -29,9 +31,13 @@ type summary struct {
 	Actions []bot.Action // run only
 	Errors  []error      // engine and build/bot errors
 	Elapsed time.Duration
-	Verbose bool   // text lists the held-back releases, not only their count
-	Report  string // --report file; "" = none
+	Verbose bool       // text lists the held-back releases, not only their count
+	Report  string     // --report file; "" = none
+	Style   logx.Style // colors of the text; the markdown has none
 }
+
+// plain is the style of markdown: no colors.
+var plain logx.Style
 
 // skipReason is one aggregated skip reason.
 type skipReason struct {
@@ -168,8 +174,8 @@ func plural(n int, one, many string) string {
 	return fmt.Sprintf("%d %s", n, many)
 }
 
-// headline is the one-line overview, or the empty-case sentence.
-func (s *summary) headline() string {
+// headline is the one-line overview, or the empty-case sentence; st paints the errors red.
+func (s *summary) headline(st logx.Style) string {
 	if len(s.Res.Updates) == 0 && len(s.Errors) == 0 && len(s.others()) == 0 {
 		return fmt.Sprintf("No updates: %s up to date, %d skipped.", plural(s.deps()-len(s.Res.Skipped), "dependency", "dependencies"), len(s.Res.Skipped))
 	}
@@ -185,14 +191,21 @@ func (s *summary) headline() string {
 	if len(s.Res.Pending) > 0 {
 		parts = append(parts, fmt.Sprintf("%d held back by minimumReleaseAge", len(s.Res.Pending)))
 	}
-	parts = append(parts, fmt.Sprintf("%d skipped", len(s.Res.Skipped)), plural(len(s.Errors), "error", "errors"))
+	errs := plural(len(s.Errors), "error", "errors")
+	if len(s.Errors) > 0 {
+		errs = st.Paint(logx.Red, errs)
+	}
+	parts = append(parts, fmt.Sprintf("%d skipped", len(s.Res.Skipped)), errs)
 	return strings.Join(parts, ", ") + " (" + s.Elapsed.Round(time.Millisecond).String() + ")"
 }
 
+// typeColors are the colors of the update types in the text summary, by risk.
+var typeColors = map[dep.UpdateType]string{dep.Major: logx.Red, dep.Minor: logx.Yellow, dep.Patch: logx.Green, dep.Digest: logx.Cyan}
+
 // updateType renders the type with a lockfile-only marker and the security advisories
-// ("patch, lockfile, security: GHSA-1").
-func updateType(u dep.Update) string {
-	t := string(u.Type)
+// ("patch, lockfile, security: GHSA-1"); st colors the type and the advisories.
+func updateType(u dep.Update, st logx.Style) string {
+	t := st.Paint(typeColors[u.Type], string(u.Type))
 	if u.Lockfile {
 		t += ", lockfile"
 	}
@@ -203,7 +216,7 @@ func updateType(u dep.Update) string {
 	for i, a := range u.Advisories {
 		ids[i] = a.ID
 	}
-	return t + ", security: " + strings.Join(ids, ",")
+	return t + ", " + st.Paint(logx.BoldRed, "security: "+strings.Join(ids, ","))
 }
 
 // groupNotes are the PR facts of a group besides its updates: status, automerge, schedule.
@@ -246,10 +259,11 @@ func (s *summary) groupNotes(g engine.Group, link func(a bot.Action) string) []s
 // stays last. Skip reasons are counts only: -v prints the per-dep skip lines; errors are
 // already printed as error lines.
 func (s *summary) writeText(w io.Writer) {
-	fmt.Fprintf(w, "\nSummary: %s\n", s.headline())
+	st := s.Style
+	fmt.Fprintf(w, "\n%s %s\n", st.Paint(logx.Bold, "Summary:"), s.headline(st))
 	for _, g := range s.Groups {
 		notes := s.groupNotes(g, func(a bot.Action) string { return a.URL })
-		fmt.Fprintf(w, "  PR %s  %s", g.Branch, g.Title)
+		fmt.Fprintf(w, "  PR %s  %s", st.Paint(logx.Accent, g.Branch), g.Title)
 		if len(notes) > 0 {
 			fmt.Fprintf(w, "  [%s]", strings.Join(notes, "; "))
 		}
@@ -260,7 +274,7 @@ func (s *summary) writeText(w io.Writer) {
 				continue
 			}
 			from, to := u.FromTo()
-			fmt.Fprintf(w, "      %s  %s:%d  %s -> %s  (%s)\n", u.Dep.Name, u.Dep.File, u.Dep.Line, from, to, updateType(u))
+			fmt.Fprintf(w, "      %s  %s  %s -> %s  (%s)\n", u.Dep.Name, st.Paint(logx.Dim, u.Dep.File+":"+strconv.Itoa(u.Dep.Line)), from, to, updateType(u, st))
 		}
 	}
 	for _, a := range s.others() {
@@ -329,7 +343,7 @@ func (s *summary) markdownFit(limit int) string {
 func (s *summary) markdownAt(level int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## deps %s\n\n", s.Command)
-	fmt.Fprintf(&b, "**%s**\n\n", s.headline())
+	fmt.Fprintf(&b, "**%s**\n\n", s.headline(plain))
 	if len(s.Groups) > 0 {
 		if s.Run {
 			b.WriteString("### Pull requests\n\n")
@@ -360,7 +374,7 @@ func (s *summary) markdownAt(level int) string {
 				continue
 			}
 			from, to := u.FromTo()
-			fmt.Fprintf(&b, "| `%s` | `%s:%d` | `%s` | `%s` | %s |\n", u.Dep.Name, u.Dep.File, u.Dep.Line, from, to, updateType(u))
+			fmt.Fprintf(&b, "| `%s` | `%s:%d` | `%s` | `%s` | %s |\n", u.Dep.Name, u.Dep.File, u.Dep.Line, from, to, updateType(u, plain))
 		}
 		b.WriteString("\n")
 	}

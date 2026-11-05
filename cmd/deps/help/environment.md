@@ -15,6 +15,7 @@
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
+| `NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE`, `FORCE_COLOR` | all | with `--color auto`: `NO_COLOR` (any value) or `TERM=dumb` turn colors off on a terminal; `CLICOLOR_FORCE` or `FORCE_COLOR` (any value but `0` or `false`) turn them on, also when piped and over `NO_COLOR`. `--color always`/`never` ignore them |
 | `DEPS_REPORT` | `plan`, `apply`, `run` | default of `--report` (JSON report file, see `deps help output`) |
 | `NPM_CONFIG_REGISTRY`, `npm_config_registry` | `npm` datasource | registry when no `.npmrc` sets one (default `https://registry.npmjs.org/`) |
 | `DOCKER_CONFIG` | `docker` datasource | directory of the Docker `config.json` with registry credentials and credential helpers (default `~/.docker`) |

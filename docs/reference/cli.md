@@ -41,10 +41,11 @@ Every command accepts these flags.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--color` | string | `"auto"` | color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never |
 | `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `--config` | string | `""` | config file, which must exist (default: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults) |
 | `--dir` | string | `"."` | repository directory to scan |
-| `--log-format` | string | `"text"` | log format: text, json; $DEPS_LOG_FORMAT replaces the default |
+| `--log-format` | string | `"auto"` | log format: auto (pretty on a terminal, else text), pretty, text, json; $DEPS_LOG_FORMAT replaces the default |
 | `--log-level` | string | `"warn"` | log level: debug, info, warn, error; $DEPS_LOG_LEVEL replaces the default |
 | `--report` | string | `""` | plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT) |
 | `-v, --verbose` | bool | `false` | also print skipped dependencies (skip lines) |
@@ -492,6 +493,7 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
+| `NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE`, `FORCE_COLOR` | all | with `--color auto`: `NO_COLOR` (any value) or `TERM=dumb` turn colors off on a terminal; `CLICOLOR_FORCE` or `FORCE_COLOR` (any value but `0` or `false`) turn them on, also when piped and over `NO_COLOR`. `--color always`/`never` ignore them |
 | `DEPS_REPORT` | `plan`, `apply`, `run` | default of `--report` (JSON report file, see `deps help output`) |
 | `NPM_CONFIG_REGISTRY`, `npm_config_registry` | `npm` datasource | registry when no `.npmrc` sets one (default `https://registry.npmjs.org/`) |
 | `DOCKER_CONFIG` | `docker` datasource | directory of the Docker `config.json` with registry credentials and credential helpers (default `~/.docker`) |
@@ -555,7 +557,9 @@ dashboard <status>  <title>  <url>                            (run, with depende
 
 `rebased` counts as updated, `deleted` (obsolete branches without a PR) as closed. `<a>` counts auto-merge requests and direct merges, branch merges included (`automerge`, `merged`); the dashboard line is not counted.
 
-**Diagnostics** are written with `log/slog` to stderr, filtered by `--log-level` and formatted by `--log-format`:
+**On a terminal** (stderr is a TTY) the `update` lines are left out: the summary block below lists the same updates, grouped by the PR they go to. Everything else is printed as above. Piped or redirected stderr always gets the line format above, byte for byte, so scripts and CI logs see no change. With colors (`--color`, default `auto`: on a terminal unless `NO_COLOR` is set or `TERM=dumb`; `CLICOLOR_FORCE` or `FORCE_COLOR` force them, also when piped) `error` is red and the summary colors the branches, `<file>:<line>` (dim), the update types (major red, minor yellow, patch green, digest cyan), security advisories (bold red) and the error count (red). Colors never change the layout; `--color always` keeps the piped layout.
+
+**Diagnostics** are written with `log/slog` to stderr, filtered by `--log-level` and formatted by `--log-format`: `auto` (the default) is `pretty` on a terminal and `text` otherwise; `text` is `slog`'s `time=… level=INFO msg=… key=value` format; `json` one JSON object per record; `pretty` a compact line per record for people, `  3.55s WRN <message>  key=value …`: the time since deps started, right-aligned, a three-letter level (`DBG`, `INF`, `WRN`, `ERR`, colored with colors on), the message and the attributes (dim; grouped keys as `group.key`), durations rounded to 0.1ms below a second, else to the millisecond. Records and result lines are written whole, never interleaved. What each level logs:
 
 - `debug`: every HTTP request (credential-free URL), every `git`/`go`/`npm`/`cargo` process, credential-helper outcomes (never secrets), and per-dependency and per-PR decisions.
 - `info`: the run trigger (`run`), the detected platform and how it was detected, the actions default host and its source (`actions default host host=<h> source=<s>`), phase counts and durations (one `files discovered files=<n> duration=<d> managers="docker 137, helm 134"` line for the walk, listing managers that matched files by count), and the bot's view of the repository.

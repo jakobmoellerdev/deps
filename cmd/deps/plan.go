@@ -81,7 +81,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 		}
 	}
 	errs := append(append([]error(nil), res.Errors...), buildErrs...)
-	report(stderr, o.verbose, res, errs, separate)
+	report(stderr, o.term, o.verbose, res, errs, separate)
 	if !write && hasManager(res, gomod.Name) {
 		fmt.Fprintln(stderr, "note    go.sum changes are computed by apply/run")
 	}
@@ -104,7 +104,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	if write {
 		cmdName = "apply"
 	}
-	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, Elapsed: time.Since(start), Verbose: o.verbose, Report: o.report}
+	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, Elapsed: time.Since(start), Verbose: o.verbose, Report: o.report, Style: o.term.style}
 	sum.write(stderr)
 	files := map[string]bool{}
 	for _, u := range res.Updates {
@@ -118,9 +118,14 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 }
 
 // report prints update, skip (verbose) and error lines. separate (nil for run) marks the
-// updates plan/apply leave to their own PR: their type gets a ", separate PR" hint.
-func report(w io.Writer, verbose bool, res *engine.Result, errs []error, separate []bool) {
-	for i, u := range res.Updates {
+// updates plan/apply leave to their own PR: their type gets a ", separate PR" hint. On a
+// terminal the update lines are left out: the summary lists the same updates, grouped by PR.
+func report(w io.Writer, t terminal, verbose bool, res *engine.Result, errs []error, separate []bool) {
+	updates := res.Updates
+	if t.tty {
+		updates = nil
+	}
+	for i, u := range updates {
 		from, to := u.FromTo()
 		sec := ""
 		if len(u.Advisories) > 0 {
@@ -151,9 +156,14 @@ func report(w io.Writer, verbose bool, res *engine.Result, errs []error, separat
 		actionsLog.endGroup()
 	}
 	for _, e := range errs {
-		fmt.Fprintf(w, "error   %v\n", e)
-		actionsLog.error(e)
+		reportError(w, t, e)
 	}
+}
+
+// reportError prints the error line of e and annotates e.
+func reportError(w io.Writer, t terminal, e error) {
+	fmt.Fprintf(w, "%s   %v\n", t.errorLabel(), e)
+	actionsLog.error(e)
 }
 
 func hasManager(res *engine.Result, name string) bool {
