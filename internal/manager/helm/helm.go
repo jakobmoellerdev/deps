@@ -8,6 +8,7 @@ package helm
 import (
 	"path"
 	"regexp"
+	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -49,17 +50,21 @@ func (*helmManager) Name() string { return Name }
 // Match reports whether the slash path is a Chart.yaml, a helmfile or any other YAML file
 // (scanned for chart custom resources).
 func (*helmManager) Match(p string) bool {
-	return helmfileRe.MatchString(p) || yamlRe.MatchString(p)
+	return yamlRe.MatchString(p) || isHelmfile(p)
 }
 
 func isChart(p string) bool { return path.Base(p) == chartFile }
+
+// isHelmfile reports whether the slash path is a helmfile. The name check skips the regexp
+// for the paths that cannot match.
+func isHelmfile(p string) bool { return strings.Contains(p, "helmfile") && helmfileRe.MatchString(p) }
 
 // Extract returns the chart deps of src with RefSpan on the version.
 func (m *helmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	switch {
 	case isChart(file):
 		return chartDeps(file, src)
-	case helmfileRe.MatchString(file):
+	case isHelmfile(file):
 		return helmfileDeps(file, src)
 	}
 	return m.manifests(file, src), nil

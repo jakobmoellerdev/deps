@@ -38,8 +38,15 @@ func New() manager.Manager { return kustomizeManager{} }
 
 func (kustomizeManager) Name() string { return Name }
 
-// Match reports whether the slash path is a kustomization file.
-func (kustomizeManager) Match(path string) bool { return fileRe.MatchString(path) }
+// Match reports whether the slash path is a kustomization file. The suffix check skips the
+// regexp for the paths that cannot match.
+func (kustomizeManager) Match(path string) bool {
+	if !strings.HasSuffix(path, "kustomization.yaml") && !strings.HasSuffix(path, "kustomization.yml") &&
+		!strings.HasSuffix(path, "Kustomization") {
+		return false
+	}
+	return fileRe.MatchString(path)
+}
 
 // Extract returns the images, Helm charts and remote git resources of src with byte spans
 // into src.

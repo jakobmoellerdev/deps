@@ -52,7 +52,11 @@ func (dockerManager) Match(path string) bool {
 }
 
 // isDockerfile excludes `Dockerfile.dockerignore`, which is an ignore file, not a Dockerfile.
+// The name check skips the regexps for the paths that cannot match.
 func isDockerfile(path string) bool {
+	if !strings.Contains(path, "Dockerfile") && !strings.Contains(path, "Containerfile") {
+		return false
+	}
 	return (dockerfileRe.MatchString(path) || dockerfileExtRe.MatchString(path)) && !strings.HasSuffix(path, ".dockerignore")
 }
 

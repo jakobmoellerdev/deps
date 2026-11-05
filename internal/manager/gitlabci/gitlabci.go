@@ -59,9 +59,10 @@ func New() manager.Manager { return gitlabManager{} }
 func (gitlabManager) Name() string { return Name }
 
 // Match reports whether path is `.gitlab-ci.y(a)ml`, `<x>.gitlab-ci.y(a)ml` or a YAML file
-// under `.gitlab/ci/`.
+// under `.gitlab/ci/`. Each regexp only runs on paths containing its literal part.
 func (gitlabManager) Match(path string) bool {
-	return ciFileRe.MatchString(path) || ciDirRe.MatchString(path)
+	return strings.Contains(path, "gitlab-ci.") && ciFileRe.MatchString(path) ||
+		strings.Contains(path, ".gitlab/ci/") && ciDirRe.MatchString(path)
 }
 
 // Extract returns the deps of every YAML document in src (component templates carry a
