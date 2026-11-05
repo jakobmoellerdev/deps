@@ -191,9 +191,10 @@ tasks:
       - cd dist && find . -maxdepth 1 -type f -name 'deps*' -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > checksums.txt
 
   release:packages:
-    desc: Build the Debian, Arch Linux and Alpine packages from the release binaries and update dist/checksums.txt
+    desc: Build the Debian, RPM, Arch Linux and Alpine packages from the release binaries and update dist/checksums.txt
     cmds:
       - task: release:deb
+      - task: release:rpm
       - task: release:arch
       - task: release:apk
 
@@ -205,6 +206,16 @@ tasks:
         msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
     cmds:
       - NFPM="{{.NFPM}}" packaging/nfpm/build.sh deb "{{.VERSION}}"
+      - task: release:checksums
+
+  release:rpm:
+    desc: Build reproducible dist/deps-<version>-1.<arch>.rpm packages (x86_64, aarch64) from the release binaries and add them to dist/checksums.txt
+    deps: [nfpm:install]
+    preconditions:
+      - sh: test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64
+        msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
+    cmds:
+      - NFPM="{{.NFPM}}" packaging/nfpm/build.sh rpm "{{.VERSION}}"
       - task: release:checksums
 
   release:arch:

@@ -10,7 +10,7 @@ In CI you don't need to install anything: the composite action downloads, verifi
 
 ## Packages
 
-Every release is published to the Debian, Arch Linux and Alpine package registries on git.jakob-moeller.cloud, which need no login. Each package installs `/usr/bin/deps` with bash, zsh and fish completions, and the package files are also attached to each release.
+Every release is published to the Debian, RPM, Arch Linux and Alpine package registries on git.jakob-moeller.cloud, which need no login. Each package installs `/usr/bin/deps` with bash, zsh and fish completions, and the package files are also attached to each release.
 
 **Debian and Ubuntu (amd64, arm64).**
 
@@ -22,6 +22,15 @@ sudo apt-get update && sudo apt-get install deps
 ```
 
 The package recommends `git`, which `deps run` needs.
+
+**Fedora and RHEL (x86_64, aarch64).** Gitea signs the repository metadata, not the packages, so the repository checks the metadata signature (`repo_gpgcheck`) instead of the package signature:
+
+```sh
+printf '[deps]\nname=deps\nbaseurl=https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/rpm\nenabled=1\ngpgcheck=0\nrepo_gpgcheck=1\ngpgkey=https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/rpm/repository.key\n' | sudo tee /etc/yum.repos.d/deps.repo
+sudo dnf install deps
+```
+
+The package recommends `git`, which dnf installs by default.
 
 **Arch Linux (x86_64, aarch64).** The repository is signed with the registry's key, which pacman has to trust:
 

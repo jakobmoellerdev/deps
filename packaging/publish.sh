@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Uploads .deb, .pkg.tar.zst (Arch Linux) and .apk (Alpine) files to the Gitea/Forgejo package
+# Uploads .deb, .rpm, .pkg.tar.zst (Arch Linux) and .apk (Alpine) files to the Gitea/Forgejo package
 # registries of one owner. Usage: publish.sh <file>...
 #
 # Environment:
@@ -7,6 +7,7 @@
 #   PACKAGES_USER   user for HTTP Basic auth (the owner of the token)
 #   PACKAGES_TOKEN  token with the write:package scope
 #   DEB_DISTRIBUTION, DEB_COMPONENT   default stable and main
+#   RPM_GROUP                         default none (the owner's top-level RPM repository)
 #   ARCH_REPOSITORY                   default jakobmoellerdev (the pacman.conf section name)
 #   ALPINE_BRANCH, ALPINE_REPOSITORY  default stable and main
 #
@@ -17,6 +18,7 @@ set -euo pipefail
 : "${PACKAGES_URL:?}" "${PACKAGES_USER:?}" "${PACKAGES_TOKEN:?}"
 registry=${PACKAGES_URL%/}
 deb=$registry/debian/pool/${DEB_DISTRIBUTION:-stable}/${DEB_COMPONENT:-main}
+rpm_repo=$registry/rpm${RPM_GROUP:+/$RPM_GROUP}
 arch_repo=$registry/arch/${ARCH_REPOSITORY:-jakobmoellerdev}
 alpine_repo=$registry/alpine/${ALPINE_BRANCH:-stable}/${ALPINE_REPOSITORY:-main}
 
@@ -49,6 +51,20 @@ for file in "$@"; do
 		upload=$deb/upload
 		existing=$deb/$id.deb
 		delete=$deb/$name/$version/$arch
+		;;
+	*.rpm)
+		# nfpm names them <name>-<version>-<release>.<arch>.rpm; version and release have no "-".
+		if ! [[ ${file##*/} =~ ^(.+)-([^-]+)-([^-]+)\.([^.]+)\.rpm$ ]]; then
+			echo "publish.sh: $file: want <name>-<version>-<release>.<arch>.rpm" >&2
+			exit 1
+		fi
+		name=${BASH_REMATCH[1]}
+		version=${BASH_REMATCH[2]}-${BASH_REMATCH[3]}
+		arch=${BASH_REMATCH[4]}
+		id="$name-$version.$arch"
+		upload=$rpm_repo/upload
+		existing=$rpm_repo/package/$name/$version/$arch
+		delete=$existing
 		;;
 	*.pkg.tar.zst)
 		tar --zstd -xOf "$file" .PKGINFO >"$tmp/pkginfo"

@@ -64,14 +64,14 @@ jobs:
           done
       - run: task release:packages VERSION="${GITHUB_REF_NAME}"
       - name: Publish packages
-        # Debian, Arch Linux and Alpine registries of the owner. The job token can only read
+        # Debian, RPM, Arch Linux and Alpine registries of the owner. The job token can only read
         # packages, so a write:package token of the owner uploads. Re-runs skip files that are
         # already published with the same content.
         env:
           PACKAGES_URL: ${{ github.server_url }}/api/packages/${{ github.repository_owner }}
           PACKAGES_USER: ${{ github.repository_owner }}
           PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
-        run: packaging/publish.sh dist/*.deb dist/*.pkg.tar.zst dist/*.apk
+        run: packaging/publish.sh dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/*.apk
       - name: Publish release
         # gt (the Gitea CLI, preinstalled on the runner) uses GITEA_TOKEN and the Actions server URL.
         env:
@@ -79,7 +79,7 @@ jobs:
           GITEA_CLI_NO_UPDATE_NOTIFIER: "1"
         run: |
           gt release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md --no-input \
-            dist/deps_linux_* dist/deps_darwin_* dist/deps_windows_* dist/*.deb dist/*.pkg.tar.zst dist/*.apk dist/checksums.txt
+            dist/deps_linux_* dist/deps_darwin_* dist/deps_windows_* dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/*.apk dist/checksums.txt
       - name: Attach the GitHub attestations
         # Gitea has no Actions OIDC, so the release is attested on the GitHub mirror, which builds the
         # same bytes. Waits (up to 30 min) for the GitHub release, verifies every bundle against
