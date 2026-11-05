@@ -124,6 +124,8 @@ customDatasources:
   - [`rules[].depTypes`](#rulesdeptypes)
   - [`rules[].paths`](#rulespaths)
   - [`rules[].datasources`](#rulesdatasources)
+  - [`rules[].currentVersion`](#rulescurrentversion)
+  - [`rules[].currentAge`](#rulescurrentage)
   - [`rules[].updateTypes`](#rulesupdatetypes)
   - [`rules[].ignore`](#rulesignore)
   - [`rules[].pin`](#rulespin)
@@ -710,14 +712,14 @@ Policy rules, evaluated top to bottom; every set field of a matching rule overri
 
 - **Type:** list of objects
 
-A rule **matches** a dep when every selector it sets matches. The selectors are `manager`, `names`, `depTypes`, `paths`, `datasources` and `updateTypes`; every other field is an action. Every field a matching rule sets **overrides** the value from earlier rules (field-wise); `updates` replaces the earlier list, it is not merged.
+A rule **matches** a dep when every selector it sets matches. The selectors are `manager`, `names`, `depTypes`, `paths`, `datasources`, `currentVersion`, `currentAge` and `updateTypes`; every other field is an action. Every field a matching rule sets **overrides** the value from earlier rules (field-wise); `updates` replaces the earlier list, it is not merged.
 
 **Evaluation.**
 
 1. The policy of a dep starts as `{pin: <top-level>, updates: all five types, schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm, cargo and poetry `dependencies`, pep621 `project.dependencies`, pipenv `packages`) and `chore` otherwise, and the scope as `deps`.
 2. **Default ignores.** Dep types `indirect` (Go), `go` (the go.mod `go` directive), `peerDependencies` and `engines` (npm) are ignored unless a rule sets `ignore: false`. The skip reason is `ignored by default (<type>; enable with a rule setting ignore: false)`.
 3. **Built-in monorepo groups** set `group: <name> monorepo` (unless [`monorepos: false`](#monorepos)).
-4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`.
+4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.
 5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
 6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `automerge` and `automergeStrategy` from the policy of its type. Security updates take only the commit scope and the automerge settings.
 
@@ -746,9 +748,11 @@ Only match deps of this manager.
 
 ### `rules[].names`
 
-Only match deps whose name matches any of these doublestar globs (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates).
+Only match deps whose name matches any of these doublestar globs (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates). An entry starting with `!` excludes the names its glob matches (Renovate's `!pattern`); a list of only exclusions matches every other name.
 
 - **Type:** list of strings
+
+Renovate's `!pattern` works: `['actions/*', '!actions/cache']` matches every `actions/` dep but `actions/cache`, and a list of only exclusions (`['!k8s.io/**']`) matches every other name. Exclusions win regardless of their position. `paths` works the same on the dep's file. A bare `!` is a config error (`rules[i].names[j]: invalid glob "!": missing pattern after !`).
 
 ### `rules[].depTypes`
 
@@ -761,7 +765,7 @@ Only match deps of these types.
 
 ### `rules[].paths`
 
-Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. `charts/**`.
+Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. `charts/**`. An entry starting with `!` excludes the files its glob matches; a list of only exclusions matches every other file.
 
 - **Type:** list of strings
 
@@ -773,6 +777,41 @@ Only match deps looked up with these datasources, or custom.\<name> of customDat
 - **Values:** `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `helm`, `crate`, `pypi`, `terraform-provider`, `terraform-module`, `maven`, `gradle-version`, `golang-version`, `github-tags`, `github-release-attachments`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`. `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
+
+### `rules[].currentVersion`
+
+Only match deps whose current version (the locked one when a lockfile has it) satisfies this Masterminds semver constraint (e.g. `< 2`, converted with the dep's versioning scheme), or matches the regex form `/<RE2>/` as written (`!/<RE2>/` excludes matches; flag i allowed). Cannot be combined with versioning.
+
+- **Type:** string
+
+Renovate's `matchCurrentVersion`. The current version is the locked one when a lockfile has it (npm, cargo, Python, terraform locks), else the version as written (for a range its bare version: `1.2.3` of `^1.2.3`).
+
+- A **constraint** (`< 2`, `>= 1.20, < 1.22`) is checked against the Masterminds conversion of the dep's scheme, after any [`versioning`](#rulesversioning) rule. A version that cannot be converted (`latest`) does not match.
+- A **regex** (`/^v1\./`, `!/-rc/`, `/^V1/i`) matches the version as written, as in [`allow`](#rulesallow).
+- It cannot be combined with `versioning` in the same rule. Invalid values are errors as for `allow`: `rules[i].currentVersion: invalid constraint "<v>": …`.
+
+### `rules[].currentAge`
+
+Only match deps whose current version was released this long ago: an operator \<, \<=, > or >= and an age, e.g. `> 1 year` or `< 30 days` (units of minimumReleaseAge, plus months of 30 days and years of 365 days). The release time is looked up only for deps the other selectors of the rule match, from datasources with release times; an unknown time does not match. Cannot be combined with versioning or extractVersion.
+
+- **Type:** string
+
+Renovate's `matchCurrentAge`: `> 1 year` matches deps whose current version (the locked one when known) was released more than a year ago, `< 30 days` those released within the last 30 days. Operators are `<`, `<=`, `>` and `>=`; ages take the units of [`minimumReleaseAge`](#minimumreleaseage) plus `month`/`months` (30 days) and `year`/`years`/`y` (365 days).
+
+- The release time comes from the datasource (see the release times of each datasource in [managers.md](managers.md)). It is looked up once per dep and only when the other selectors of a currentAge rule (`updateTypes` aside) match it; other deps cost nothing.
+- An unknown time (a datasource without times, or a failed lookup) matches no currentAge rule. `deps explain` shows the lookup in its `age` line: `released <date>`, or `unknown (currentAge rules do not match)`.
+- Deps whose datasource has release times wait for the lookup before their pre-policy skip (so `currentAge` with `ignore: false` can opt default-ignored deps in). With `updateTypes` the rule applies per candidate as usual.
+- It cannot be combined with `versioning` or `extractVersion` in the same rule: the release time is looked up after both are decided. Errors: `rules[i].currentAge: invalid age range "<v>": want an operator <, <=, > or >= and an age, …`.
+
+```yaml
+rules:
+  - currentAge: '> 1 year'          # deps left behind for a year: one PR
+    group: stale dependencies
+  - names: ['k8s.io/**', '!k8s.io/klog/**']
+    currentVersion: '< 0.30'
+    updateTypes: [major]
+    ignore: true
+```
 
 ### `rules[].updateTypes`
 

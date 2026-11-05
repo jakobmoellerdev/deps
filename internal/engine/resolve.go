@@ -81,7 +81,11 @@ type Trace struct {
 	Candidates int                 // releases returned by the datasource
 	Rejected   map[string][]string // reason -> versions
 	Updates    []TraceUpdate       // one per PR bucket, lowest version first; nil = none
-	Err        error
+	// AgeLookup reports that a currentAge rule made the resolver look up the release time of
+	// the current version: Released, zero when the datasource does not know it.
+	AgeLookup bool
+	Released  time.Time
+	Err       error
 }
 
 // TraceUpdate is one update of a Trace with the policy of its type.
@@ -241,7 +245,8 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			if o.Filter != nil && !o.Filter(d) {
 				continue
 			}
-			d, pol := classify(cfg, d, kindRules)
+			_, timed := o.Datasources[d.Datasource].(datasource.Timer)
+			d, pol := classify(cfg, d, kindRules, timed)
 			res.Deps = append(res.Deps, d)
 			if d.Skip != "" {
 				res.Skipped = append(res.Skipped, d)
@@ -264,13 +269,14 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	planAll(o.Datasources, todo)
 
 	// Security updates bypass per-kind rules but not a pre-policy ignore: deps resolved only
-	// because an updateTypes rule opted some update types in are not looked up. Non-version
-	// tags have no version to look up.
+	// because an updateTypes rule opted some update types in are not looked up. Deps whose
+	// pre-policy waits for currentAge are (applySecurity drops them if it ignores them).
+	// Non-version tags have no version to look up.
 	var secDeps []dep.Dep
 	secIdx := make([]int, len(todo))
 	for i, d := range todo {
 		secIdx[i] = -1
-		if !pols[i].pre.Ignore && !tagOnly(d) {
+		if (!pols[i].pre.Ignore || pols[i].aged) && !tagOnly(d) {
 			secIdx[i] = len(secDeps)
 			secDeps = append(secDeps, d)
 		}
@@ -350,8 +356,10 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 
 // classify applies the pre-policy to an extracted dep and decides whether it is looked up:
 // the returned dep has Skip set when it is not. pol is nil only for deps the manager
-// already skipped.
-func classify(cfg *config.Config, d dep.Dep, kindRules bool) (dep.Dep, *policies) {
+// already skipped. timed reports whether the dep's datasource has release times: when a
+// currentAge rule can match, the policy decisions wait for the age of the current version
+// (resolver.applyAge).
+func classify(cfg *config.Config, d dep.Dep, kindRules, timed bool) (dep.Dep, *policies) {
 	if d.Skip != "" {
 		return d, nil
 	}
@@ -364,14 +372,12 @@ func classify(cfg *config.Config, d dep.Dep, kindRules bool) (dep.Dep, *policies
 	if x := pol.pre.ExtractVersion; x != "" {
 		d.ExtractVersion, pol.d.ExtractVersion = x, x
 	}
+	pol.aged = timed && cfg.WantsCurrentAge(pol.d)
 	switch s, ok := versioning.Get(d.Versioning); {
 	case ok && !s.Valid(d.Version) && !tagOnly(d) && !goPseudo(d):
 		d.Skip = "non-version value " + strconv.Quote(d.Version)
-	case pol.pre.Ignore && !pol.anyKind():
-		d.Skip = pol.pre.IgnoreReason
-	case d.Digest == "" && pol.pre.Pin != config.PinDigest && tagOnly(d):
-		// A non-version tag without a digest can only be pinned.
-		d.Skip = "non-version tag"
+	case !pol.aged:
+		d.Skip = pol.skip(d)
 	}
 	return d, pol
 }
@@ -644,10 +650,20 @@ type policies struct {
 	pre       config.Policy
 	kindRules bool // cfg has updateTypes rules; without them every kind policy is pre
 	kinds     map[dep.UpdateType]*config.Policy
+	// aged: the policies depend on the age of the current version (config.WantsCurrentAge)
+	// and its datasource has release times; age is config.UnknownAge until setAge.
+	aged bool
+	age  time.Duration
 }
 
 func newPolicies(cfg *config.Config, d dep.Dep, kindRules bool) *policies {
-	return &policies{cfg: cfg, d: d, pre: cfg.Policy(d), kindRules: kindRules}
+	return &policies{cfg: cfg, d: d, pre: cfg.Policy(d), kindRules: kindRules, age: config.UnknownAge}
+}
+
+// setAge re-evaluates the policies with age, the age of the current version.
+func (p *policies) setAge(age time.Duration) {
+	p.age, p.kinds = age, nil
+	p.pre = p.cfg.PolicyAt(p.d, "", age)
 }
 
 // of returns the policy of an update of kind.
@@ -661,9 +677,23 @@ func (p *policies) of(kind dep.UpdateType) *config.Policy {
 	if p.kinds == nil {
 		p.kinds = make(map[dep.UpdateType]*config.Policy, len(dep.UpdateTypes))
 	}
-	kp := p.cfg.PolicyFor(p.d, kind)
+	kp := p.cfg.PolicyAt(p.d, kind, p.age)
 	p.kinds[kind] = &kp
 	return &kp
+}
+
+// skip is why the policies leave d (with a valid or tag-only version) alone, "" when it is
+// looked up: ignored for every update type, or a non-version tag without a digest that is not
+// pinned.
+func (p *policies) skip(d dep.Dep) string {
+	switch {
+	case p.pre.Ignore && !p.anyKind():
+		return p.pre.IgnoreReason
+	case d.Digest == "" && p.pre.Pin != config.PinDigest && tagOnly(d):
+		// A non-version tag without a digest can only be pinned.
+		return "non-version tag"
+	}
+	return ""
 }
 
 // anyKind reports whether an update of some kind is not ignored.
@@ -896,6 +926,9 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 	case !scheme.Valid(d.Version):
 		// Resolve only lets non-version docker tags through (tagOnly): their digest is kept
 		// current; there are no releases to compare and no advisories to look up.
+		if reason := r.applyAge(t); reason != "" {
+			return nil, &dep.SkipError{Reason: reason}
+		}
 		ups, err = r.digestUpdate()
 	default:
 		ups, err = r.versionUpdates(t, scheme, vulns)
@@ -933,6 +966,10 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		return nil, err
 	}
 	r.rels = rels
+	// After Releases: with extractVersion, the current version maps back to its release name.
+	if reason := r.applyAge(t); reason != "" {
+		return nil, &dep.SkipError{Reason: reason}
+	}
 	r.declared, _ = r.ds.(datasource.DeclaredPathSource)
 	t.Candidates = len(rels)
 	names := make([]string, len(rels))
@@ -980,7 +1017,11 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		}
 	}
 
-	ups = r.applySecurity(ups, scheme, names, vulns())
+	var vs []Vuln
+	if !r.pol.pre.Ignore { // not looked up unless a currentAge rule could opt the dep in
+		vs = vulns()
+	}
+	ups = r.applySecurity(ups, scheme, names, vs)
 	if r.lockOnly {
 		for i := range ups {
 			ups[i].Lockfile = r.inRange(ups[i].NewVersion)
@@ -1312,6 +1353,26 @@ func (r *resolver) releasedBefore(timer datasource.Timer, t time.Time) bool {
 	}
 	bound := b.ReleasedBy(r.d)
 	return !bound.IsZero() && !bound.After(t)
+}
+
+// applyAge evaluates the policies of a dep whose rules depend on the age of its current
+// version (policies.aged): it looks up the release time of the version installed (the locked
+// one when known) and re-evaluates them with its age, unknown when the datasource has no
+// time. The trace gets the new pre-policy. It returns why the new policy skips the dep, "" if
+// it does not. Other deps are left alone.
+func (r *resolver) applyAge(t *Trace) string {
+	if !r.pol.aged {
+		return ""
+	}
+	age := config.UnknownAge
+	if timer, ok := r.ds.(datasource.Timer); ok {
+		if rt := r.releaseTime(timer, cmp.Or(r.d.Locked, r.d.Version)); !rt.IsZero() {
+			age, t.Released = max(r.now.Sub(rt), 0), rt
+		}
+	}
+	r.pol.setAge(age)
+	t.AgeLookup, t.Rules, t.Policy = true, r.pol.pre.Rules, r.pol.pre
+	return r.pol.skip(r.d)
 }
 
 // releaseTime returns when version was released, asking the datasource once per version;

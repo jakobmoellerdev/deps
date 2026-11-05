@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -11,6 +12,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Commit types and the default scope.
@@ -89,14 +91,23 @@ func IgnoredByDefault(depType string) bool { return defaultIgnored[depType] }
 // policy (Updates is replaced, not merged). Indirect Go requirements, go directives, npm
 // peerDependencies and engines are ignored unless a rule sets `ignore: false`. Its Versioning
 // and ExtractVersion replace the dep's before resolution (only rules without updateTypes may
-// set them).
-func (c *Config) Policy(d dep.Dep) Policy { return c.policy(d, "") }
+// set them). The age of the current version is unknown, so no currentAge rule matches (see
+// PolicyAt).
+func (c *Config) Policy(d dep.Dep) Policy { return c.policy(d, "", UnknownAge) }
 
 // PolicyFor is the policy of an update of kind to d: like Policy, but rules with updateTypes
 // are evaluated too, in file order, when they list kind. Without such rules it equals Policy
 // (apart from Kind). The engine buckets each candidate with the Separate* flags of the policy
 // of its kind, so an updateTypes rule can change them for its types.
-func (c *Config) PolicyFor(d dep.Dep, kind dep.UpdateType) Policy { return c.policy(d, kind) }
+func (c *Config) PolicyFor(d dep.Dep, kind dep.UpdateType) Policy {
+	return c.policy(d, kind, UnknownAge)
+}
+
+// PolicyAt is PolicyFor (Policy for kind "") with age, the age of d's current version, for
+// currentAge rules; UnknownAge (any negative age) matches none of them.
+func (c *Config) PolicyAt(d dep.Dep, kind dep.UpdateType, age time.Duration) Policy {
+	return c.policy(d, kind, age)
+}
 
 // HasUpdateTypeRules reports whether any rule sets updateTypes, i.e. whether PolicyFor can
 // differ from Policy.
@@ -104,21 +115,62 @@ func (c *Config) HasUpdateTypeRules() bool {
 	return slices.ContainsFunc(c.Rules, func(r Rule) bool { return len(r.UpdateTypes) > 0 })
 }
 
-// matches reports whether r applies to d; kind "" skips rules with updateTypes.
-func (r *Rule) matches(d dep.Dep, kind dep.UpdateType) bool {
-	switch {
-	case r.Manager != "" && r.Manager != d.Manager,
-		len(r.Names) > 0 && !matchAny(r.Names, d.Name),
-		len(r.DepTypes) > 0 && !slices.Contains(r.DepTypes, d.DepType),
-		len(r.Paths) > 0 && !matchAny(r.Paths, d.File),
-		len(r.Datasources) > 0 && !slices.ContainsFunc(r.Datasources, func(ds string) bool { return CanonicalDatasource(ds) == d.Datasource }),
-		len(r.UpdateTypes) > 0 && (kind == "" || !slices.Contains(r.UpdateTypes, string(kind))):
-		return false
+// WantsCurrentAge reports whether the policies of d depend on the age of its current version:
+// a rule with currentAge matches d on its other selectors (updateTypes aside). Only then is
+// the release time of the current version worth a lookup.
+func (c *Config) WantsCurrentAge(d dep.Dep) bool {
+	for i := range c.Rules {
+		if r := &c.Rules[i]; r.currentAge != nil && c.matchesDep(r, d) {
+			return true
+		}
 	}
-	return true
+	return false
 }
 
-func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
+// matches reports whether r applies to d; kind "" skips rules with updateTypes, a negative
+// age those with currentAge.
+func (c *Config) matches(r *Rule, d dep.Dep, kind dep.UpdateType, age time.Duration) bool {
+	switch {
+	case len(r.UpdateTypes) > 0 && (kind == "" || !slices.Contains(r.UpdateTypes, string(kind))),
+		r.currentAge != nil && (age < 0 || !r.currentAge.matches(age)):
+		return false
+	}
+	return c.matchesDep(r, d)
+}
+
+// matchesDep reports whether the selectors of r other than updateTypes and currentAge match d.
+func (c *Config) matchesDep(r *Rule, d dep.Dep) bool {
+	switch {
+	case r.Manager != "" && r.Manager != d.Manager,
+		len(r.Names) > 0 && !matchGlobs(r.Names, d.Name),
+		len(r.DepTypes) > 0 && !slices.Contains(r.DepTypes, d.DepType),
+		len(r.Paths) > 0 && !matchGlobs(r.Paths, d.File),
+		len(r.Datasources) > 0 && !slices.ContainsFunc(r.Datasources, func(ds string) bool { return CanonicalDatasource(ds) == d.Datasource }):
+		return false
+	}
+	return r.currentVersion == nil || r.currentVersion.Check(cmp.Or(d.Locked, d.Version), func(v string) *semver.Version {
+		s, ok := versioning.Get(c.versioningOf(d))
+		if !ok {
+			return nil
+		}
+		return s.Semver(v)
+	})
+}
+
+// versioningOf is the versioning scheme d is resolved with: the last matching rule's
+// versioning, else d's own. Rules with versioning have neither currentVersion nor currentAge,
+// so matching them does not recurse.
+func (c *Config) versioningOf(d dep.Dep) string {
+	v := d.Versioning
+	for i := range c.Rules {
+		if r := &c.Rules[i]; r.Versioning != "" && c.matches(r, d, "", UnknownAge) {
+			v = r.Versioning
+		}
+	}
+	return v
+}
+
+func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Policy {
 	p := Policy{
 		Pin:                   c.Pin,
 		RangeStrategy:         cmp.Or(c.RangeStrategy, RangeAuto),
@@ -156,7 +208,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 	}
 	for i := range c.Rules {
 		r := &c.Rules[i]
-		if !r.matches(d, kind) {
+		if !c.matches(r, d, kind, age) {
 			continue
 		}
 		p.Rules = append(p.Rules, i)
@@ -242,13 +294,24 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 	return p
 }
 
-func matchAny(globs []string, name string) bool {
+// matchGlobs reports whether name matches globs as Renovate matches pattern lists: no entry
+// starting with '!' matches it with the rest of the entry, and some other entry matches it,
+// unless every entry is such an exclusion.
+func matchGlobs(globs []string, name string) bool {
+	positive, hit := false, false
 	for _, g := range globs {
-		if ok, _ := doublestar.Match(g, name); ok {
-			return true
+		if pat, neg := strings.CutPrefix(g, "!"); neg {
+			if ok, _ := doublestar.Match(pat, name); ok {
+				return false
+			}
+			continue
+		}
+		positive = true
+		if !hit {
+			hit, _ = doublestar.Match(g, name)
 		}
 	}
-	return false
+	return hit || !positive
 }
 
 // Check reports whether an update of kind to version v is allowed, with the reason for

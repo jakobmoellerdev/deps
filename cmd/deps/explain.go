@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/spf13/cobra"
@@ -130,6 +131,13 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 		cur += " (lockfile not read)"
 	}
 	line("current", "%s", orDash(cur))
+	if t.AgeLookup {
+		age := "unknown (currentAge rules do not match)"
+		if !t.Released.IsZero() {
+			age = "released " + t.Released.UTC().Format(time.DateOnly)
+		}
+		line("age", "%s", age)
+	}
 	if d.Skip != "" && t.Policy.Updates == nil { // skipped by the manager: no policy was evaluated
 		line("result", "skipped: %s", d.Skip)
 		return
@@ -224,6 +232,12 @@ func describeRule(r config.Rule) string {
 	}
 	if r.Datasources != nil {
 		add("datasources", "["+strings.Join(r.Datasources, " ")+"]")
+	}
+	if r.CurrentVersion != "" {
+		add("currentVersion", r.CurrentVersion)
+	}
+	if r.CurrentAge != "" {
+		add("currentAge", "'"+r.CurrentAge+"'")
 	}
 	if r.UpdateTypes != nil {
 		add("updateTypes", "["+strings.Join(r.UpdateTypes, " ")+"]")
