@@ -38,10 +38,76 @@ func describe(src []byte, d dep.Dep) string {
 
 func TestMatch(t *testing.T) {
 	m := New()
-	for p, want := range map[string]bool{"Gemfile": true, "apps/ios/Gemfile": true, "Gemfile.lock": false, "gems.rb": false, "MyGemfile": false, "Gemfile/x": false} {
+	for p, want := range map[string]bool{
+		"Gemfile": true, "apps/ios/Gemfile": true, "Gemfile.lock": false, "MyGemfile": false, "Gemfile/x": false,
+		"gems.rb": true, "sub/gems.rb": true, "gems.locked": false, "mygems.rb": false,
+		"devise.gemspec": true, "lib/x/x.gemspec": true, ".gemspec": false, "x.gemspec.erb": false,
+	} {
 		if m.Match(p) != want {
 			t.Errorf("Match(%s) = %v", p, !want)
 		}
+	}
+}
+
+// testdata/activesupport.gemspec is rails/rails' (1e235cee) and testdata/devise.gemspec
+// heartcombo/devise's (05811fb8), verbatim, 2026-11-05.
+func TestExtractGemspec(t *testing.T) {
+	for file, want := range map[string][]string{
+		"activesupport.gemspec": {
+			`12 ruby ruby range=">= 3.3.5" version="" ref=- source= skip=` + skipRequiredRuby,
+			`37 i18n runtime range=">= 1.6, < 2" version="1.6" ref=- source= fixed`,
+			`38 tzinfo runtime range="~> 2.0, >= 2.0.5" version="2.0" ref=- source= fixed`,
+			`39 concurrent-ruby runtime range="~> 1.0, >= 1.3.1" version="1.0" ref=- source= fixed`,
+			`40 connection_pool runtime range=">= 2.2.5" version="2.2.5" ref=2.2.5 source=`,
+			`41 minitest runtime range=">= 5.1" version="5.1" ref=5.1 source=`,
+			`42 base64 runtime range=">= 0" version="" ref=- source= fixed`,
+			`43 drb runtime range=">= 0" version="" ref=- source= fixed`,
+			`44 bigdecimal runtime range=">= 0" version="" ref=- source= fixed`,
+			`45 json runtime range=">= 0" version="" ref=- source= fixed`,
+			`46 psych runtime range=">= 4" version="4" ref=4 source=`,
+			`47 logger runtime range=">= 1.4.2" version="1.4.2" ref=1.4.2 source=`,
+			`48 securerandom runtime range=">= 0.3" version="0.3" ref=0.3 source=`,
+			`49 uri runtime range=">= 0.13.1" version="0.13.1" ref=0.13.1 source=`,
+			`50 ractor-dispatch runtime range=">= 0.3.0" version="0.3.0" ref=0.3.0 source=`,
+		},
+		"devise.gemspec": {
+			`28 ruby ruby range=">= 2.7.0" version="" ref=- source= skip=` + skipRequiredRuby,
+			`30 warden runtime range="~> 1.2.3" version="1.2.3" ref=1.2.3 source=`,
+			`31 orm_adapter runtime range="~> 0.1" version="0.1" ref=0.1 source=`,
+			`32 bcrypt runtime range="~> 3.0" version="3.0" ref=3.0 source=`,
+			`33 railties runtime range=">= 7.0" version="7.0" ref=7.0 source=`,
+			`34 responders runtime range=">= 0" version="" ref=- source= fixed`,
+		},
+		"shapes.gemspec": {
+			`3 nokogiri runtime range="~> 1.18" version="1.18" ref=1.18 source=`,
+			`4 rspec development range="~> 3.13" version="3.13" ref=3.13 source=`,
+			`6 faraday runtime range="" version="" ref=- source= skip=` + skipNonLiteral,
+			`7 rack runtime range=">= 2.2, < 4" version="2.2" ref=- source= fixed`,
+			`8 ruby ruby range="" version="" ref=- source= skip=` + skipRequiredRuby,
+		},
+	} {
+		src := read(t, "testdata/"+file)
+		deps, err := New().Extract("gem/"+file, src, manager.Env{})
+		var got []string
+		for _, d := range deps {
+			got = append(got, describe(src, d))
+			if d.File != "gem/"+file || d.Manager != Name {
+				t.Errorf("%s: %+v", file, d)
+			}
+		}
+		if g, w := strings.Join(got, "\n"), strings.Join(want, "\n"); err != nil || g != w {
+			t.Errorf("%s:\n%s\nwant:\n%s", file, g, w)
+		}
+	}
+	// A gemspec requirement is rewritten like a Gemfile's.
+	src := read(t, "testdata/devise.gemspec")
+	deps, _ := New().Extract("devise.gemspec", src, manager.Env{})
+	edits, err := New().Edits(dep.Update{Dep: deps[2], NewVersion: "1.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := patch.Apply(src, edits); !strings.Contains(string(out), `s.add_dependency("orm_adapter", "~> 1.3")`) {
+		t.Errorf("edit = %v", edits)
 	}
 }
 

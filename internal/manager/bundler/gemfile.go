@@ -352,7 +352,7 @@ type block struct {
 	source string // blockSource: the URL; "" when it is not a literal
 }
 
-// gemDecl is a `gem` statement.
+// gemDecl is a `gem` statement, or a dependency of a gemspec.
 type gemDecl struct {
 	name    string
 	nameEnd int // the byte after the name's closing quote
@@ -365,7 +365,7 @@ type gemDecl struct {
 	skip             string // git, path or non-literal source
 	source           string // own source (`source:` or the enclosing source block)
 	ownSource        bool
-	group            bool
+	group            bool // Gemfile: in a group; gemspec: a development dependency
 }
 
 // rubyDecl is the `ruby` directive: the Ruby version the Gemfile requires.
@@ -471,6 +471,43 @@ func parse(src []byte) gemfile {
 			b.kind = blockGit
 		}
 		stack = append(stack, b)
+	}
+	return f
+}
+
+// gemspecDeps are the dependency methods of Gem::Specification, and whether they declare a
+// development dependency.
+var gemspecDeps = map[string]bool{"add_dependency": false, "add_runtime_dependency": false, "add_development_dependency": true}
+
+// gemspec is what parseGemspec finds in a *.gemspec.
+type gemspec struct {
+	deps []gemDecl
+	// rubyLine is the line of `spec.required_ruby_version = …`, 0 = none; rubyReqs its
+	// literal requirement strings.
+	rubyLine int
+	rubyReqs []token
+}
+
+// parseGemspec finds the `<spec>.add_dependency "name", <requirements…>` calls (and
+// add_runtime_dependency, add_development_dependency) and the `required_ruby_version` of a
+// gemspec, at any depth (they are in a `Gem::Specification.new do |spec| … end` block).
+func parseGemspec(src []byte) gemspec {
+	var f gemspec
+	for _, s := range statements(lex(src)) {
+		if len(s) < 3 || s[0].kind != tIdent || s[1].kind != tPunct || s[1].text != "." || s[2].kind != tIdent {
+			continue
+		}
+		if dev, ok := gemspecDeps[s[2].text]; ok {
+			if g, ok := parseGem(s[2:], nil); ok {
+				g.group = dev
+				f.deps = append(f.deps, g)
+			}
+			continue
+		}
+		if s[2].text == "required_ruby_version" && len(s) > 4 && s[3].kind == tPunct && s[3].text == "=" {
+			f.rubyLine = s[0].line
+			f.rubyReqs, _ = literalStrings(s[4:])
+		}
 	}
 	return f
 }

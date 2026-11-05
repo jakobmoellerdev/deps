@@ -2,6 +2,7 @@ package bundler
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -22,10 +23,41 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
+// Gemfile names and their lockfiles. Bundler uses gems.rb (with gems.locked) over a Gemfile
+// in the same directory.
 const (
-	manifestFile = "Gemfile"
-	lockFile     = "Gemfile.lock"
+	gemfileName = "Gemfile"
+	gemfileLock = "Gemfile.lock"
+	gemsRB      = "gems.rb"
+	gemsLocked  = "gems.locked"
 )
+
+// lockName returns the lockfile name of the Gemfile named gemfile.
+func lockName(gemfile string) string {
+	if gemfile == gemsRB {
+		return gemsLocked
+	}
+	return gemfileLock
+}
+
+// dirGemfile returns the name of the Gemfile Bundler reads in the absolute directory dir:
+// gems.rb when it exists, else Gemfile.
+func dirGemfile(dir string) string {
+	if st, err := os.Stat(filepath.Join(dir, gemsRB)); err == nil && st.Mode().IsRegular() {
+		return gemsRB
+	}
+	return gemfileName
+}
+
+// lockPath returns the slash path of the lockfile of manifest (relative to the absolute root):
+// next to a Gemfile or gems.rb, its own; for a gemspec, the one of the Gemfile next to it.
+func lockPath(root, manifest string) string {
+	dir := path.Dir(manifest)
+	if isGemspec(manifest) {
+		return path.Join(dir, lockName(dirGemfile(filepath.Join(root, filepath.FromSlash(dir)))))
+	}
+	return path.Join(dir, lockName(path.Base(manifest)))
+}
 
 // lockedGems returns the version each gem of the GEM sections (gems of rubygems servers) of a
 // Gemfile.lock is locked to, without a platform suffix (`nokogiri (1.18.10-x86_64-linux-gnu)`
@@ -66,10 +98,10 @@ func lockedGems(b []byte) (map[string]string, error) {
 	return out, nil
 }
 
-// ReadLocks records the version the Gemfile.lock next to each Gemfile locks its gems to
-// (dep.Dep.Locked). A requirement without a floor (no requirement, `< 2`) takes the locked
-// version as its Version, or is skipped without one. An unreadable Gemfile.lock is reported
-// once and its deps are bumped (LockUnread).
+// ReadLocks records the version the lockfile of each Gemfile, gems.rb or gemspec (lockPath)
+// locks its gems to (dep.Dep.Locked). A requirement without a floor (no requirement, `< 2`)
+// takes the locked version as its Version, or is skipped without one. An unreadable lockfile
+// is reported once and its deps are bumped (LockUnread).
 func (bundlerManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	type lockState struct {
 		gems map[string]string
@@ -83,7 +115,7 @@ func (bundlerManager) ReadLocks(root string, files [][]dep.Dep) []error {
 			if d.Skip != "" || d.Range == "" || d.DepType == DepTypeRuby {
 				continue
 			}
-			file := path.Join(path.Dir(d.File), lockFile)
+			file := lockPath(root, d.File)
 			st := locks[file]
 			if st == nil {
 				st = &lockState{}
@@ -114,34 +146,38 @@ func (bundlerManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	return errs
 }
 
-// LockRoots implements manager.LockMaintainer: the Gemfile.lock next to each Gemfile.
+// LockRoots implements manager.LockMaintainer: the lockfile of each Gemfile, gems.rb and
+// gemspec with one (a gemspec shares its Gemfile's), once.
 func (bundlerManager) LockRoots(root string, files []string) []manager.LockRoot {
 	var out []manager.LockRoot
 	for _, f := range files {
-		if dir, ok := (Locker{}).Scope(context.Background(), root, f); ok {
-			out = append(out, manager.LockRoot{Manifest: f, Lockfile: path.Join(dir, lockFile)})
+		if _, ok := (Locker{}).Scope(context.Background(), root, f); ok {
+			out = append(out, manager.LockRoot{Manifest: f, Lockfile: lockPath(root, f)})
 		}
 	}
-	slices.SortFunc(out, func(a, b manager.LockRoot) int { return strings.Compare(a.Lockfile, b.Lockfile) })
-	return out
+	slices.SortFunc(out, func(a, b manager.LockRoot) int {
+		return cmp.Or(strings.Compare(a.Lockfile, b.Lockfile), strings.Compare(a.Manifest, b.Manifest))
+	})
+	return slices.CompactFunc(out, func(a, b manager.LockRoot) bool { return a.Lockfile == b.Lockfile })
 }
 
 // Locker is the bundler post-processor (engine.PostProcessor, UpdatePinner and
-// LockMaintainer): it updates the Gemfile.lock next to a patched Gemfile with `bundle lock` in
-// a temporary copy of the directory. The working tree is never touched.
+// LockMaintainer): it updates the Gemfile.lock (gems.locked) of a patched Gemfile (gems.rb) or
+// gemspec with `bundle lock` in a temporary copy of the directory. The working tree is never
+// touched.
 type Locker struct{}
 
-// Siblings lists Gemfile.lock.
-func (Locker) Siblings() []string { return []string{lockFile} }
+// Siblings lists Gemfile.lock and gems.locked.
+func (Locker) Siblings() []string { return []string{gemfileLock, gemsLocked} }
 
-// Scope returns the directory of a Gemfile that has a Gemfile.lock next to it.
+// Scope returns the directory of a Gemfile, gems.rb or gemspec that has its lockfile
+// (lockPath) next to it.
 func (Locker) Scope(_ context.Context, root, manifest string) (string, bool) {
-	dir := path.Dir(manifest)
-	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(dir), lockFile))
-	return dir, err == nil && st.Mode().IsRegular()
+	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(lockPath(root, manifest))))
+	return path.Dir(manifest), err == nil && st.Mode().IsRegular()
 }
 
-// Process re-resolves Gemfile.lock for the patched Gemfile with `bundle lock`.
+// Process re-resolves the lockfile for the patched manifests with `bundle lock`.
 func (l Locker) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
 	return l.ProcessUpdates(ctx, dir, manifests, files, nil, nil)
 }
@@ -151,29 +187,37 @@ func (l Locker) Process(ctx context.Context, dir string, manifests, files map[st
 // only those gems (and what they need) move. Bundler would lock the newest version a rewritten
 // requirement admits (`~> 8.0`), or keep the locked one an admitting requirement allows, so
 // each gem the lock already has is pinned for that run: its requirement is written as
-// `= <version>` in the temporary Gemfile. When any was, the patched Gemfile is put back and
-// `bundle lock` runs again, which keeps the versions and records the Gemfile's requirements
-// under DEPENDENCIES. An update of the `ruby` directive moves the lock's RUBY VERSION in
-// process (setLockedRuby) before Bundler runs, which keeps a locked Ruby version the Gemfile
-// admits; with only such updates Bundler does not run. It returns Gemfile.lock when it changed.
+// `= <version>` in the temporary Gemfile (gems.rb) and gemspecs of the scope. When any was,
+// the patched files are put back and `bundle lock` runs again, which keeps the versions and
+// records the requirements under DEPENDENCIES (and a gemspec's under PATH). An update of the
+// `ruby` directive moves the lock's RUBY VERSION in process (setLockedRuby) before Bundler
+// runs, which keeps a locked Ruby version the Gemfile admits; with only such updates Bundler
+// does not run. It returns the lockfile when it changed.
 func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error) {
-	orig, ok := files[lockFile]
+	gemfile := dirGemfile(dir)
+	lf := lockName(gemfile)
+	orig, ok := files[lf]
 	if !ok {
 		if len(locks) > 0 {
-			return nil, fmt.Errorf("lockfile-only updates need %s in %s", lockFile, dir)
+			return nil, fmt.Errorf("lockfile-only updates need %s in %s", lf, dir)
 		}
 		return nil, nil
 	}
-	src, ok := manifests[manifestFile]
-	if !ok {
-		var err error
-		if src, err = os.ReadFile(filepath.Join(dir, manifestFile)); err != nil {
+	// The scope's Gemfile (patched, or as checked out) and its patched gemspecs.
+	patched := maps.Clone(manifests)
+	if _, ok := patched[gemfile]; !ok {
+		src, err := os.ReadFile(filepath.Join(dir, gemfile))
+		if err != nil {
 			return nil, err
 		}
+		if patched == nil {
+			patched = map[string][]byte{}
+		}
+		patched[gemfile] = src
 	}
 	locked, err := lockedGems(orig)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", lockFile, err)
+		return nil, fmt.Errorf("%s: %w", lf, err)
 	}
 	lock := orig
 	var names []string
@@ -195,13 +239,20 @@ func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files m
 		if bytes.Equal(lock, orig) {
 			return nil, nil
 		}
-		return map[string][]byte{lockFile: lock}, nil
+		return map[string][]byte{lf: lock}, nil
 	}
-	pinned, err := pin(src, pins)
-	if err != nil {
-		return nil, err
+	pinned := make(map[string][]byte, len(patched)+1)
+	repin := false
+	for rel, src := range patched {
+		p, err := pin(src, isGemspec(rel), pins)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", rel, err)
+		}
+		pinned[rel] = p
+		repin = repin || !bytes.Equal(p, src)
 	}
-	tmp, base, err := mirrorDir(dir, pinned, lock)
+	pinned[lf] = lock
+	tmp, base, err := mirrorDir(dir, pinned)
 	if err != nil {
 		return nil, err
 	}
@@ -210,18 +261,18 @@ func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files m
 	if len(names) > 0 {
 		args = append(append(append(args, "--update"), names...), "--conservative")
 	}
-	if err := bundle(ctx, base, dir, args...); err != nil {
+	if err := bundle(ctx, base, dir, gemfile, args...); err != nil {
 		return nil, err
 	}
-	if !bytes.Equal(pinned, src) {
-		if err := os.WriteFile(filepath.Join(base, manifestFile), src, 0o644); err != nil {
+	if repin {
+		if err := toolrun.WriteFiles(base, patched); err != nil {
 			return nil, err
 		}
-		if err := bundle(ctx, base, dir, "lock"); err != nil {
+		if err := bundle(ctx, base, dir, gemfile, "lock"); err != nil {
 			return nil, err
 		}
 	}
-	return changedLock(base, orig)
+	return changedLock(base, lf, orig)
 }
 
 // lockedRubySpan returns the byte span of the version in the RUBY VERSION section of a
@@ -269,11 +320,11 @@ func setLockedRuby(lock []byte, v string) []byte {
 	return slices.Concat(lock[:start], []byte(nv), lock[end:])
 }
 
-// VersionFileEdits returns the Gemfile.lock side of an update of the Ruby version in file
-// (`.ruby-version`, `.tool-versions`, a mise config) to v: when the Gemfile next to file reads
-// its Ruby version from it (`ruby file: ".ruby-version"`) and its Gemfile.lock records one
-// (RUBY VERSION), the edit moving that to v, by the lock's slash path relative to root; nil
-// otherwise. The version managers return it as their manager.FileEditor edits.
+// VersionFileEdits returns the lockfile side of an update of the Ruby version in file
+// (`.ruby-version`, `.tool-versions`, a mise config) to v: when the Gemfile (gems.rb) next to
+// file reads its Ruby version from it (`ruby file: ".ruby-version"`) and its lockfile records
+// one (RUBY VERSION), the edit moving that to v, by the lock's slash path relative to root;
+// nil otherwise. The version managers return it as their manager.FileEditor edits.
 func VersionFileEdits(root, file, v string) (map[string][]patch.Edit, error) {
 	dir := path.Dir(file)
 	read := func(name string) ([]byte, error) {
@@ -283,14 +334,16 @@ func VersionFileEdits(root, file, v string) (map[string][]patch.Edit, error) {
 		}
 		return b, err
 	}
-	src, err := read(manifestFile)
+	gemfile := dirGemfile(filepath.Join(root, filepath.FromSlash(dir)))
+	src, err := read(gemfile)
 	if src == nil {
 		return nil, err
 	}
 	if r := parse(src).ruby; r == nil || r.file == "" || path.Join(dir, r.file) != file {
 		return nil, nil
 	}
-	lock, err := read(lockFile)
+	lf := lockName(gemfile)
+	lock, err := read(lf)
 	if lock == nil {
 		return nil, err
 	}
@@ -299,39 +352,41 @@ func VersionFileEdits(root, file, v string) (map[string][]patch.Edit, error) {
 	if !ok || !valid || string(lock[start:end]) == nv {
 		return nil, nil
 	}
-	return map[string][]patch.Edit{path.Join(dir, lockFile): {{Start: start, End: end, Old: string(lock[start:end]), New: nv}}}, nil
+	return map[string][]patch.Edit{path.Join(dir, lf): {{Start: start, End: end, Old: string(lock[start:end]), New: nv}}}, nil
 }
 
 // Maintain implements engine.LockMaintainer (lockFileMaintenance): `bundle lock --update` in a
 // copy of dir moves every locked gem to the newest version its requirements admit; the Gemfile
-// is unchanged. It returns Gemfile.lock when it changed; without one it does nothing.
+// is unchanged. It returns the lockfile when it changed; without one it does nothing.
 func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error) {
-	lock, ok := files[lockFile]
+	gemfile := dirGemfile(dir)
+	lf := lockName(gemfile)
+	lock, ok := files[lf]
 	if !ok {
 		return nil, nil
 	}
-	src, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	src, err := os.ReadFile(filepath.Join(dir, gemfile))
 	if err != nil {
 		return nil, err
 	}
-	tmp, base, err := mirrorDir(dir, src, lock)
+	tmp, base, err := mirrorDir(dir, map[string][]byte{gemfile: src, lf: lock})
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	if err := bundle(ctx, base, dir, "lock", "--update"); err != nil {
+	if err := bundle(ctx, base, dir, gemfile, "lock", "--update"); err != nil {
 		return nil, err
 	}
-	return changedLock(base, lock)
+	return changedLock(base, lf, lock)
 }
 
-// changedLock returns the Gemfile.lock bundle wrote in base when it differs from lock.
-func changedLock(base string, lock []byte) (map[string][]byte, error) {
-	out, err := os.ReadFile(filepath.Join(base, lockFile))
+// changedLock returns the lockfile name bundle wrote in base when it differs from lock.
+func changedLock(base, name string, lock []byte) (map[string][]byte, error) {
+	out, err := os.ReadFile(filepath.Join(base, name))
 	if err != nil || bytes.Equal(out, lock) {
 		return nil, err
 	}
-	return map[string][]byte{lockFile: out}, nil
+	return map[string][]byte{name: out}, nil
 }
 
 // flatten returns the updates of every manifest, in manifest path order.
@@ -344,11 +399,15 @@ func flatten(byManifest map[string][]dep.Update) []dep.Update {
 }
 
 // pin writes the requirements of every gem in pins (name → version) as `"= <version>"` in
-// the Gemfile src: the requirement arguments are replaced, a gem without any gets one after
-// its name. Requirements that already are exactly the version stay.
-func pin(src []byte, pins map[string]string) ([]byte, error) {
+// the Gemfile, or with gemspec the gemspec, src: the requirement arguments are replaced, a gem
+// without any gets one after its name. Requirements that already are exactly the version stay.
+func pin(src []byte, gemspec bool, pins map[string]string) ([]byte, error) {
 	var edits []patch.Edit
-	for _, g := range parse(src).gems {
+	decls := parse(src).gems
+	if gemspec {
+		decls = parseGemspec(src).deps
+	}
+	for _, g := range decls {
 		v, ok := pins[g.name]
 		if !ok || g.skip != "" || g.nonLiteral {
 			continue
@@ -370,11 +429,12 @@ func pin(src []byte, pins map[string]string) ([]byte, error) {
 	return patch.Apply(src, edits)
 }
 
-// mirrorDir builds a temporary tree in which dir's Gemfile (with content gemfile) and
-// Gemfile.lock are copies and every other entry of dir is symlinked, below the mirrored
-// repository ancestors (toolrun.MirrorAncestors), so `path:` gems, `gemspec` and
-// `eval_gemfile` resolve as in the checkout. The caller removes tmp; base is the mirror of dir.
-func mirrorDir(dir string, gemfile, lock []byte) (tmp, base string, err error) {
+// mirrorDir builds a temporary tree in which the files of dir in copies (the Gemfile, the
+// lockfile and patched gemspecs, by name) are written and every other entry of dir is
+// symlinked, below the mirrored repository ancestors (toolrun.MirrorAncestors), so `path:`
+// gems, `gemspec` and `eval_gemfile` resolve as in the checkout. The caller removes tmp; base
+// is the mirror of dir.
+func mirrorDir(dir string, copies map[string][]byte) (tmp, base string, err error) {
 	if tmp, err = os.MkdirTemp("", "deps-bundler-*"); err != nil {
 		return "", "", err
 	}
@@ -391,31 +451,30 @@ func mirrorDir(dir string, gemfile, lock []byte) (tmp, base string, err error) {
 		return "", "", err
 	}
 	for _, e := range entries {
-		switch e.Name() {
-		case manifestFile, lockFile, ".git":
+		if _, ok := copies[e.Name()]; ok || e.Name() == ".git" {
 			continue
 		}
 		if err := os.Symlink(filepath.Join(dir, e.Name()), filepath.Join(base, e.Name())); err != nil {
 			return "", "", err
 		}
 	}
-	if err := toolrun.WriteFiles(base, map[string][]byte{manifestFile: gemfile, lockFile: lock}); err != nil {
+	if err := toolrun.WriteFiles(base, copies); err != nil {
 		return "", "", err
 	}
 	return tmp, base, nil
 }
 
 // bundle runs `bundle args...` in dir (the mirror of scope) with BUNDLE_GEMFILE set to its
-// Gemfile; a failure carries the tail of Bundler's output, with the mirror's paths shown as
-// scope's.
-func bundle(ctx context.Context, dir, scope string, args ...string) error {
+// gemfile (Gemfile or gems.rb); a failure carries the tail of Bundler's output, with the
+// mirror's paths shown as scope's.
+func bundle(ctx context.Context, dir, scope, gemfile string, args ...string) error {
 	bin, err := exec.LookPath("bundle")
 	if err != nil {
-		return fmt.Errorf("bundle not found (needed to update %s)", lockFile)
+		return fmt.Errorf("bundle not found (needed to update %s)", lockName(gemfile))
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "BUNDLE_GEMFILE="+filepath.Join(dir, manifestFile), "NO_COLOR=1")
+	cmd.Env = append(os.Environ(), "BUNDLE_GEMFILE="+filepath.Join(dir, gemfile), "NO_COLOR=1")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

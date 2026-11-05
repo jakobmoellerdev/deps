@@ -35,7 +35,9 @@ const Versioning = "ruby"
 const (
 	DepTypeDependencies = "dependencies" // outside groups
 	DepTypeGroup        = "group"        // in a `group … do` block or with a `group:`/`groups:` option
-	DepTypeRuby         = "ruby"         // the `ruby` directive
+	DepTypeRuby         = "ruby"         // the `ruby` directive, a gemspec's required_ruby_version
+	DepTypeRuntime      = "runtime"      // gemspec add_dependency, add_runtime_dependency
+	DepTypeDevelopment  = "development"  // gemspec add_development_dependency
 )
 
 // Skip reasons.
@@ -50,12 +52,13 @@ const (
 	skipRubyEngine       = "non-MRI engine"
 	skipRubyPatchlevel   = "pinned patchlevel"
 	skipRubyNoFloor      = "ruby requirement without a lower bound"
+	skipRequiredRuby     = "required_ruby_version is the gem's supported range"
 )
 
 // anyVersion is the range of a gem without requirements (Gem::Requirement.default).
 const anyVersion = ">= 0"
 
-var matchRe = regexp.MustCompile(`(^|/)Gemfile$`)
+var matchRe = regexp.MustCompile(`(^|/)(Gemfile|gems\.rb|[^/]+\.gemspec)$`)
 
 type bundlerManager struct{}
 
@@ -64,11 +67,14 @@ func New() manager.Manager { return bundlerManager{} }
 
 func (bundlerManager) Name() string { return Name }
 
-// Match reports whether the slash path is a Gemfile. The suffix check skips the regexp for the
-// paths that cannot match.
+// Match reports whether the slash path is a Gemfile, its alternative name gems.rb, or a
+// gemspec. The suffix checks skip the regexp for the paths that cannot match.
 func (bundlerManager) Match(p string) bool {
-	return strings.HasSuffix(p, "Gemfile") && matchRe.MatchString(p)
+	return (strings.HasSuffix(p, "Gemfile") || strings.HasSuffix(p, "gems.rb") || strings.HasSuffix(p, ".gemspec")) && matchRe.MatchString(p)
 }
+
+// isGemspec reports whether the slash path is a gemspec.
+func isGemspec(p string) bool { return strings.HasSuffix(p, ".gemspec") }
 
 // Extract returns one Dep per `gem` statement and one for the `ruby` directive, in file order.
 // Range is the gem's requirements joined with ", " (`~> 7.1, >= 7.1.2`; `>= 0` without any);
@@ -76,8 +82,12 @@ func (bundlerManager) Match(p string) bool {
 // version then). A single requirement with a lower bound (`2.241.2`, `= 1.2`, `~> 7.1`,
 // `>= 1.2`, `> 1.2`) gets a RefSpan on its version, so the version is rewritten; any other
 // requirement list is never rewritten (RangeFixed), only moved in Gemfile.lock. The `ruby`
-// directive is the dep RubyName of RubyDatasource with its requirements read the same way.
+// directive is the dep RubyName of RubyDatasource with its requirements read the same way. A
+// gemspec gets extractGemspec's deps.
 func (bundlerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+	if isGemspec(file) {
+		return extractGemspec(file, src), nil
+	}
 	f := parse(src)
 	global := strings.Join(f.sources, " ")
 	deps := make([]dep.Dep, 0, len(f.gems)+1)
@@ -105,6 +115,36 @@ func (bundlerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep
 		deps = slices.Insert(deps, i, d)
 	}
 	return deps, nil
+}
+
+// extractGemspec returns one Dep per dependency of a gemspec (DepType runtime or development,
+// looked up on rubygems.org, requirements as for a Gemfile gem) and a skipped one for its
+// required_ruby_version, in file order.
+func extractGemspec(file string, src []byte) []dep.Dep {
+	f := parseGemspec(src)
+	deps := make([]dep.Dep, 0, len(f.deps)+1)
+	for _, g := range f.deps {
+		d := dep.Dep{Manager: Name, Datasource: Datasource, Versioning: Versioning, DepType: DepTypeRuntime, File: file, Line: g.line, Name: g.name}
+		if g.group {
+			d.DepType = DepTypeDevelopment
+		}
+		if g.nonLiteral {
+			d.Skip = skipNonLiteral
+		} else {
+			setRequirements(&d, g.reqs)
+		}
+		deps = append(deps, d)
+	}
+	if f.rubyLine > 0 {
+		parts := make([]string, len(f.rubyReqs))
+		for i, r := range f.rubyReqs {
+			parts[i] = strings.TrimSpace(r.text)
+		}
+		d := dep.Dep{Manager: Name, Datasource: RubyDatasource, Versioning: Versioning, DepType: DepTypeRuby, File: file, Line: f.rubyLine, Name: RubyName, Range: strings.Join(parts, ", "), Skip: skipRequiredRuby}
+		i, _ := slices.BinarySearchFunc(deps, d.Line, func(g dep.Dep, line int) int { return g.Line - line })
+		deps = slices.Insert(deps, i, d)
+	}
+	return deps
 }
 
 // rubyDep is the dep of the `ruby` directive r of file.

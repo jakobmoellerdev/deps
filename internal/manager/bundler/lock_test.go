@@ -115,13 +115,18 @@ func TestReadLocks(t *testing.T) {
 
 func TestPin(t *testing.T) {
 	src := "gem \"exact\", \"2.0.0\"\ngem 'tilde', '~> 8.1' # x\ngem \"bare\", require: false\ngem \"list\", \">= 1\", \"< 3\"\ngem \"arr\", [\">= 1\", \"< 3\"]\ngem \"git\", git: \"g\"\ngem \"other\", \"1.0\"\n"
-	out, err := pin([]byte(src), map[string]string{"exact": "2.0.0", "tilde": "8.1.3", "bare": "1.2.0", "list": "2.5.0", "arr": "2.5.0", "git": "1.0.0"})
+	out, err := pin([]byte(src), false, map[string]string{"exact": "2.0.0", "tilde": "8.1.3", "bare": "1.2.0", "list": "2.5.0", "arr": "2.5.0", "git": "1.0.0"})
 	want := "gem \"exact\", \"2.0.0\"\ngem 'tilde', \"= 8.1.3\" # x\ngem \"bare\", \"= 1.2.0\", require: false\ngem \"list\", \"= 2.5.0\"\ngem \"arr\", \"= 2.5.0\"\ngem \"git\", git: \"g\"\ngem \"other\", \"1.0\"\n"
 	if err != nil || string(out) != want {
 		t.Errorf("pin = %q, %v\nwant  %q", out, err, want)
 	}
-	if out, _ := pin([]byte(src), map[string]string{"exact": "2.0.0"}); string(out) != src {
+	if out, _ := pin([]byte(src), false, map[string]string{"exact": "2.0.0"}); string(out) != src {
 		t.Error("an exact requirement of the version was rewritten")
+	}
+	spec := "Gem::Specification.new do |s|\n  s.add_dependency \"rails\", \">= 7\", \"< 9\"\n  s.add_development_dependency(\"rake\")\nend\n"
+	out, err = pin([]byte(spec), true, map[string]string{"rails": "8.1.0", "rake": "13.4.2"})
+	if want := "Gem::Specification.new do |s|\n  s.add_dependency \"rails\", \"= 8.1.0\"\n  s.add_development_dependency(\"rake\", \"= 13.4.2\")\nend\n"; err != nil || string(out) != want {
+		t.Errorf("gemspec pin = %q, %v", out, err)
 	}
 }
 
@@ -136,10 +141,15 @@ func stub(t *testing.T) (log string) {
 	bin := t.TempDir()
 	log = filepath.Join(t.TempDir(), "log")
 	script := `#!/bin/sh
+lock="$PWD/Gemfile.lock"
+case "$BUNDLE_GEMFILE" in "$PWD/gems.rb") lock="$PWD/gems.locked" ;; esac
 {
   echo "args: $*"
-  [ "$BUNDLE_GEMFILE" = "$PWD/Gemfile" ] || echo "BUNDLE_GEMFILE=$BUNDLE_GEMFILE PWD=$PWD"
+  [ "$BUNDLE_GEMFILE" = "$PWD/Gemfile" ] || [ "$BUNDLE_GEMFILE" = "$PWD/gems.rb" ] || echo "BUNDLE_GEMFILE=$BUNDLE_GEMFILE PWD=$PWD"
   while IFS= read -r l; do echo "  $l"; done < "$BUNDLE_GEMFILE"
+  for f in "$PWD"/*.gemspec; do
+    [ -f "$f" ] && [ ! -L "$f" ] && { echo "${f##*/}:"; while IFS= read -r l; do echo "  $l"; done < "$f"; }
+  done
   [ -L "$PWD/Gemfile" ] && echo "Gemfile is a symlink"
   [ -L "$PWD/Gemfile.lock" ] && echo "Gemfile.lock is a symlink"
   [ -L "$PWD/.bundle" ] && echo ".bundle linked"
@@ -149,7 +159,7 @@ if [ -n "$STUB_FAIL" ]; then
   echo "Could not find gem 'nope' in $PWD"
   exit 1
 fi
-[ -n "$STUB_NOOP" ] || echo "# $*" >> "$PWD/Gemfile.lock"
+[ -n "$STUB_NOOP" ] || echo "# $*" >> "$lock"
 `
 	if err := os.WriteFile(filepath.Join(bin, "bundle"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -234,6 +244,75 @@ func TestProcessExactOnly(t *testing.T) {
 	}
 }
 
+func TestProcessGemspec(t *testing.T) {
+	log := stub(t)
+	dir := appDir(t)
+	gemsRBSrc := "source \"https://rubygems.org\"\ngemspec\ngem \"rake\", \"~> 13.0\"\n"
+	spec := "Gem::Specification.new do |s|\n  s.add_dependency \"rails\", \">= 7\", \"< 9\"\n  s.add_development_dependency \"rspec\", \"~> 3.12\"\nend\n"
+	lock := lockOf("rails (8.0.2)", "rspec (3.12.0)", "rake (13.0.0)")
+	write(t, dir, map[string]string{"gems.rb": gemsRBSrc, "gems.locked": lock, "app.gemspec": spec})
+	root := filepath.Dir(dir)
+	for _, m := range []string{"app/gems.rb", "app/app.gemspec"} {
+		if got := lockPath(root, m); got != "app/gems.locked" {
+			t.Errorf("lockPath(%s) = %s", m, got)
+		}
+		if scope, ok := (Locker{}).Scope(t.Context(), root, m); !ok || scope != "app" {
+			t.Errorf("Scope(%s) = %s, %v", m, scope, ok)
+		}
+	}
+	if roots := New().(manager.LockMaintainer).LockRoots(root, []string{"app/gems.rb", "app/app.gemspec"}); len(roots) != 1 || roots[0] != (manager.LockRoot{Manifest: "app/app.gemspec", Lockfile: "app/gems.locked"}) {
+		t.Errorf("LockRoots = %v", roots)
+	}
+	// A rewritten gemspec requirement and a lockfile-only update of the gems.rb: both files are
+	// pinned in the copy, then restored.
+	patchedSpec := strings.Replace(spec, "~> 3.12", "~> 3.13", 1)
+	ups := map[string][]dep.Update{"app.gemspec": {update("rspec", "3.12.0", "3.13.1")}}
+	locks := map[string][]dep.Update{"app.gemspec": {update("rails", "8.0.2", "8.1.1")}, "gems.rb": {update("rake", "13.0.0", "13.4.2")}}
+	manifests := map[string][]byte{"app.gemspec": []byte(patchedSpec), "gems.rb": []byte(gemsRBSrc)}
+	out, err := Locker{}.ProcessUpdates(t.Context(), dir, manifests, map[string][]byte{"gems.locked": []byte(lock)}, ups, locks)
+	if err != nil || string(out["gems.locked"]) != lock+"# lock --update rspec rails rake --conservative\n# lock\n" {
+		t.Errorf("gems.locked = %q, %v", out["gems.locked"], err)
+	}
+	wantLog := "args: lock --update rspec rails rake --conservative\n" +
+		"  source \"https://rubygems.org\"\n  gemspec\n  gem \"rake\", \"= 13.4.2\"\n" +
+		"app.gemspec:\n  Gem::Specification.new do |s|\n    s.add_dependency \"rails\", \"= 8.1.1\"\n    s.add_development_dependency \"rspec\", \"= 3.13.1\"\n  end\n" +
+		"args: lock\n" +
+		"  source \"https://rubygems.org\"\n  gemspec\n  gem \"rake\", \"~> 13.0\"\n" +
+		"app.gemspec:\n  Gem::Specification.new do |s|\n    s.add_dependency \"rails\", \">= 7\", \"< 9\"\n    s.add_development_dependency \"rspec\", \"~> 3.13\"\n  end\n"
+	if b := read(t, log); string(b) != wantLog {
+		t.Errorf("log:\n%s\nwant:\n%s", b, wantLog)
+	}
+	// Maintenance and a missing tool name the gems.rb lockfile.
+	if out, err := (Locker{}).Maintain(t.Context(), dir, map[string][]byte{"gems.locked": []byte(lock)}); err != nil || !strings.HasSuffix(string(out["gems.locked"]), "# lock --update\n") {
+		t.Errorf("Maintain = %q, %v", out["gems.locked"], err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	if _, err := (Locker{}).ProcessUpdates(t.Context(), dir, manifests, map[string][]byte{"gems.locked": []byte(lock)}, ups, nil); err == nil || err.Error() != "bundle not found (needed to update gems.locked)" {
+		t.Errorf("missing bundle: %v", err)
+	}
+}
+
+func TestReadLocksGemspec(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{
+		"a/Gemfile": "gemspec\n", "a/Gemfile.lock": lockOf("rails (8.0.2)", "rake (13.0.0)"),
+		"a/a.gemspec": "Gem::Specification.new do |s|\n  s.add_dependency \"rails\", \"~> 8.0\"\n  s.add_development_dependency \"rake\"\nend\n",
+		"b/b.gemspec": "Gem::Specification.new do |s|\n  s.add_dependency \"rails\", \"~> 8.0\"\nend\n",
+	})
+	m := New()
+	var files [][]dep.Dep
+	for _, f := range []string{"a/a.gemspec", "b/b.gemspec"} {
+		deps, _ := m.Extract(f, read(t, filepath.Join(root, f)), manager.Env{})
+		files = append(files, deps)
+	}
+	if errs := m.(manager.LockReader).ReadLocks(root, files); errs != nil {
+		t.Fatal(errs)
+	}
+	if a, b := files[0], files[1]; a[0].Locked != "8.0.2" || a[1].Version != "13.0.0" || a[1].Skip != "" || b[0].Locked != "" {
+		t.Errorf("a = %+v\nb = %+v", a, b)
+	}
+}
+
 func TestProcessRuby(t *testing.T) {
 	log := stub(t)
 	dir := appDir(t)
@@ -289,11 +368,15 @@ func TestVersionFileEdits(t *testing.T) {
 		"b/Gemfile": "ruby file: \"./.tool-versions\"\n", "b/Gemfile.lock": lock,
 		"c/Gemfile": "ruby \"3.3.6\"\n", "c/Gemfile.lock": lock,
 		"d/Gemfile": "ruby file: \".ruby-version\"\n",
+		"f/Gemfile": "ruby \"3.3.6\"\n", "f/gems.rb": "ruby file: \".ruby-version\"\n", "f/gems.locked": lock,
 	})
 	edits, err := VersionFileEdits(root, "a/.ruby-version", "3.4.7")
 	start := strings.Index(lock, "3.3.6p108")
 	if want := map[string][]patch.Edit{"a/Gemfile.lock": {{Start: start, End: start + len("3.3.6p108"), Old: "3.3.6p108", New: "3.4.7"}}}; err != nil || !maps.EqualFunc(edits, want, slices.Equal) {
 		t.Errorf("a = %v, %v", edits, err)
+	}
+	if edits, err := VersionFileEdits(root, "f/.ruby-version", "3.4.7"); err != nil || len(edits["f/gems.locked"]) != 1 {
+		t.Errorf("f = %v, %v", edits, err)
 	}
 	if edits, err := VersionFileEdits(root, "b/.tool-versions", "3.4.7"); err != nil || len(edits["b/Gemfile.lock"]) != 1 {
 		t.Errorf("b = %v, %v", edits, err)
