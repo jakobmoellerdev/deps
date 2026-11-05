@@ -44,7 +44,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	ctx := cmd.Context()
 	stderr := cmd.ErrOrStderr()
 	info, _ := platform.FromEnv(os.Getenv)
-	s, err := newSession(o, info, envToken(), newHTTPClient(), stderr)
+	s, err := newSession(o, info, envToken(), newHTTPClient())
 	if err != nil {
 		return err
 	}

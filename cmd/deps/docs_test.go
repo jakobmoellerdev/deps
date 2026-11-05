@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io"
 	"net/http"
 	"os"
 	"path"
@@ -163,7 +162,7 @@ func withoutFences(s string) string {
 // The datasource reference documents exactly the datasources a session registers.
 func TestDatasourceDocsMatchSession(t *testing.T) {
 	cleanEnv(t)
-	s, err := newSession(&rootOpts{dir: t.TempDir(), concurrency: 1}, platform.Info{}, "", http.DefaultClient, io.Discard)
+	s, err := newSession(&rootOpts{dir: t.TempDir(), concurrency: 1}, platform.Info{}, "", http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
 	}

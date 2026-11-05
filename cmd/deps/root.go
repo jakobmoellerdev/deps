@@ -114,13 +114,11 @@ func envToken() string {
 type session struct {
 	root      string
 	cfg       *config.Config
-	client    *http.Client
 	managers  []manager.Manager
 	sources   map[string]engine.Datasource
 	security  engine.SecuritySource // nil when security: false
 	checksums engine.ChecksumSource
 	env       manager.Env
-	stderr    io.Writer
 	auth      *httpx.Auth
 	gh        *githubapi.Client // shared GitHub release lists (datasources and release notes)
 	sem       chan struct{}     // the default request pool (httpx.Limits.Default)
@@ -128,7 +126,7 @@ type session struct {
 
 // newSession loads the config and wires the managers and datasources onto one HTTP client
 // and the request pools of --concurrency (httpx.NewLimits).
-func newSession(o *rootOpts, info platform.Info, token string, client *http.Client, stderr io.Writer) (*session, error) {
+func newSession(o *rootOpts, info platform.Info, token string, client *http.Client) (*session, error) {
 	root, err := filepath.Abs(o.dir)
 	if err != nil {
 		return nil, err
@@ -187,13 +185,11 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	return &session{
 		root:      root,
 		cfg:       cfg,
-		client:    client,
 		managers:  managers,
 		sources:   sources,
 		security:  security,
 		checksums: checksum.New(client, sem, releases, map[string]checksum.ArtifactOpener{mavends.Name: maven}),
 		env:       manager.Env{DefaultHost: host, GitLabURL: gitlabURL, TerraformRegistry: cfg.Terraform.DefaultRegistry},
-		stderr:    stderr,
 		auth:      auth,
 		gh:        gh,
 		sem:       sem,

@@ -53,7 +53,7 @@ func globArgs(_ *cobra.Command, args []string) error {
 func explain(cmd *cobra.Command, o *rootOpts, globs []string) error {
 	ctx := cmd.Context()
 	info, _ := platform.FromEnv(os.Getenv)
-	s, err := newSession(o, info, envToken(), newHTTPClient(), cmd.ErrOrStderr())
+	s, err := newSession(o, info, envToken(), newHTTPClient())
 	if err != nil {
 		return err
 	}

@@ -260,7 +260,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		return fmt.Errorf("no token for %s", info.Host)
 	}
 
-	s, err := newSession(o, info, token, client, stderr)
+	s, err := newSession(o, info, token, client)
 	if err != nil {
 		return err
 	}
