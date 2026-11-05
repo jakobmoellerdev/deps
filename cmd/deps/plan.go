@@ -55,7 +55,7 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	if err != nil {
 		return err
 	}
-	post := planPostProcessors()
+	post := planPostProcessors(s)
 	if write {
 		post = postProcessors(s)
 	}

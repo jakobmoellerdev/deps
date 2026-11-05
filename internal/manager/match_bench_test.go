@@ -16,6 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/precommit"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/swift"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
 )
@@ -47,6 +48,7 @@ var matchCases = []struct {
 	{"piprequirements", piprequirements.New(), regexpOnly(`(^|/)[\w-]*requirements([-.]\w+)?\.(txt|pip)$|\.in$`)},
 	{"poetry", poetry.New(), regexpOnly(`(^|/)pyproject\.toml$`)},
 	{"precommit", precommit.New(), regexpOnly(`(^|/)\.pre-commit-config\.ya?ml$`)},
+	{"swift", swift.New(), regexpOnly(`(^|/)Package\.swift$`)},
 	{"terragrunt", terraform.NewTerragrunt(), regexpOnly(`(^|/)terragrunt\.hcl$`, ".terragrunt-cache")},
 	{"terraform-version", terraform.NewVersion(), regexpOnly(`(^|/)\.(terraform|opentofu)-version$`)},
 	{"tflint", terraform.NewTFLint(), regexpOnly(`(^|/)\.tflint\.hcl$`)},
@@ -63,7 +65,8 @@ var matchSeeds = []string{
 	"a/.pre-commit-config.yml", "terragrunt.hcl", ".terragrunt-cache/x/terragrunt.hcl",
 	"a/.terragrunt-cache/terragrunt.hcl", ".terraform-version", "a/.opentofu-version",
 	".tflint.hcl", ".nvmrc", "a/.node-version", ".tool-versions", "mise.toml", ".mise.toml",
-	".mise/config.toml", ".config/mise.toml", ".config/mise/config.toml", "a/config.toml", "",
+	".mise/config.toml", ".config/mise.toml", ".config/mise/config.toml", "a/config.toml", "Package.swift",
+	"a/Package.swift", "aPackage.swift", "Package@swift-5.9.swift", "",
 }
 
 // repoPaths returns the slash path of every file of this repository, the mix discovery sees.

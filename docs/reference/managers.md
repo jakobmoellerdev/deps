@@ -36,6 +36,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`gradle`](#gradle)
 - [`gradle-wrapper`](#gradle-wrapper)
 - [`maven-wrapper`](#maven-wrapper)
+- [`swift`](#swift)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -1576,6 +1577,43 @@ Updates the Maven version of `distributionUrl` (`…/org/apache/maven/apache-mav
 **Wrapper files.**
 
 After the properties are edited, `apply` and `run` run `./mvnw -B -q org.apache.maven.plugins:maven-wrapper-plugin:<wrapperVersion>:wrapper -Dmaven=<version> -Dtype=<type>` (`mvn` from `PATH` without an executable `mvnw`) on a temporary copy of the project and take `mvnw`, `mvnw.cmd`, `.mvn/wrapper/maven-wrapper.jar` and `.mvn/wrapper/MavenWrapperDownloader.java` from it; the edited properties file is kept. `<type>` is `distributionType`, else `bin` with a `maven-wrapper.jar`, `source` with a `MavenWrapperDownloader.java`, `script` with a `wrapperUrl`, else `only-script`; without a known wrapper version the goal is `wrapper:wrapper`. Without Java (`java` on `PATH` or `JAVA_HOME`) the update fails with `java not found (needed to regenerate the Maven wrapper)`; `plan` shows only the properties edit.
+
+## swift
+
+Updates the package requirements of Swift Package Manager manifests and moves their pins in `Package.resolved` in process (no Swift toolchain needed). Only the version strings of a requirement are rewritten; its form, comments and formatting are kept.
+
+**Files:**
+
+- `Package.swift` at any depth (version-specific manifests `Package@swift-<v>.swift` are not read)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `dependencies` | every `.package(url: …, <requirement>)` call (also with `name:` and `traits:`, and `Package.Dependency.package(…)`); the name is the URL path (`owner/repo`), the source its http(s) URL (https for `ssh://`, `git://` and `git@host:` URLs) without `.git` | `git-tags` | `semver`; tags are read as SwiftPM reads them: full `MAJOR.MINOR.PATCH[-pre][+build]` versions with an optional leading `v`, which is dropped (the dep's `extractVersion`) | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `local package` | `.package(path: …)` |
+| `registry package` | `.package(id: …)` (a package registry identity) |
+| `unrecognized url` | `url` is not a string literal with an https/http/ssh/git or `git@host:path` URL with an owner/repo path (`file://`, a variable) |
+| `branch reference` | `branch: …` / `.branch(…)` |
+| `revision pin` | `revision: …` / `.revision(…)` |
+| `unsupported requirement` | a requirement outside the forms below: a variable, `Version(1, 2, 3)`, an interpolated string, a partial version (`1.2`), a missing requirement |
+
+**Requirements.**
+
+- `exact: "1.2.3"` and `.exact("1.2.3")` are plain versions, replaced by the new one.
+- Ranges: `from: "1.2.3"` and `.upToNextMajor(from: "1.2.3")` (`>=1.2.3 <2.0.0`, also for 0.x versions, as SwiftPM), `.upToNextMinor(from: "1.2.3")` (`>=1.2.3 <1.3.0`), `"1.2.3"..<"2.0.0"` and `"1.2.3"..."1.9.0"`. The version a bump raises is the lower bound.
+- `rangeStrategy` (default `auto` = `update-lockfile`): versions the range admits are lockfile-only updates from the pinned version (`, lockfile` in the report; `Package.swift` is unchanged), newer ones rewrite the requirement, so a `from:` moves with new major versions. Without a `Package.resolved` only versions outside the range are proposed. `bump` (Renovate's `auto` for Swift) rewrites the lower bound for every newer version. A rewrite sets the lower bound to the new version; an upper bound the new version reaches moves past it, `...` to the new version and `..<` to the next boundary of its precision (`"1.2.3"..<"2.0.0"` → `"3.1.0"..<"4.0.0"` for 3.1.0). `widen` keeps the lower bound of `..<` and `...` ranges; `from:` and `.upToNext…` cannot be widened without changing their form, so they take the new version as under `replace`. `pin` is not supported (it would change the requirement's form): no updates are proposed for ranges under it.
+
+**Package.resolved.**
+
+1. **Root packages.** A `Package.swift` with a `Package.resolved` next to it is a root package. Its local graph is its own directory plus every package it reaches through `.package(path:)` dependencies (followed transitively, within `--dir`); the root's `Package.resolved` pins the remote dependencies of all of them. A manifest belongs to every root whose graph holds its directory, so updating a dependency of a local library package (`../shared/Kit`) also moves the pin in the app's `Package.resolved`.
+2. **Locked versions.** The pinned version of a range requirement is the lowest pin it admits among its roots' `Package.resolved` files (formats v1, v2 and v3). Pins are matched by repository URL (case-insensitive, without scheme, user and `.git`), not by identity, so a fork with the same last path component is not mistaken for the package. An unreadable `Package.resolved` is reported once and its requirements are bumped.
+3. **Pins.** With an update (also in `plan`, which prints the `Package.resolved` diff) the pin of the package in each root's `Package.resolved` gets the new version and the commit of its tag, from the tags the `git-tags` datasource already listed: no Swift toolchain, no clone. A pin the new requirement admits that is at or above the new version is kept, so pins never move down. Only the version, revision and origin hash strings are replaced; the file keeps its formatting. Pins of other packages stay: when the new version needs other versions of its own dependencies, SwiftPM notices on the next `swift package resolve` or build that the pins no longer satisfy the graph and re-resolves them, as it does for a manually edited manifest.
+4. **Origin hash.** SwiftPM 5.10+ (`Package.resolved` v3) stores `originHash`, the SHA-256 of the root manifest. When the root's own `Package.swift` changes and the stored hash matched it before, the hash of the new manifest is written, so `-only-use-versions-from-resolved-file` / `-disableAutomaticPackageResolution` builds accept the file. A hash that did not match (a version-specific manifest, an already stale file) is left alone.
+5. **Failure.** A commit that cannot be looked up fails the update, and the other Swift updates built with it, with `<dir>/Package.resolved: commit of <name> <version>: <error>`. Lock file maintenance is not supported.
 
 ## custom
 
