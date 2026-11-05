@@ -591,6 +591,8 @@ concurrency:
 
 GitHub shows it on the run page. On Gitea and Forgejo it shows where the instance supports job summaries; elsewhere the file is ignored.
 
+GitHub rejects a step summary larger than 1 MiB as a whole, so deps keeps the file within that size, counting what earlier commands of the step wrote. A summary that doesn't fit drops, in this order, the list of skipped dependencies, the held-back releases and the PRs' update tables (the counts stay); a summary still too large is cut at a line and ends with `Step summary truncated to its size limit; the job log has everything.` For scale: `plan -v` on external-secrets (677 updates, 5306 skipped dependencies) writes about 450 KB.
+
 ## Dry runs and config checks
 
 These modes only read, so they work with `contents: read`:

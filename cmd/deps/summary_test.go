@@ -197,3 +197,70 @@ func TestSummaryStepFile(t *testing.T) {
 		}
 	})
 }
+
+func TestSummaryMarkdownFit(t *testing.T) {
+	res := summaryFixture()
+	for i := range 2000 {
+		res.Skipped = append(res.Skipped, dep.Dep{File: "go.mod", Line: 100 + i, Name: "example.com/skipped-module-with-a-long-name", Skip: "local action"})
+	}
+	res.Deps = append(res.Deps, res.Skipped[3:]...)
+	s := summary{Command: "plan", Res: res, Groups: engine.GroupUpdates(res.Updates, ""), Errors: []error{errors.New("boom")}}
+	full := s.markdown()
+	if got := s.markdownFit(len(full)); got != full {
+		t.Error("a summary within the limit must be unchanged")
+	}
+	levels := []struct {
+		level      int
+		has, lacks []string
+	}{
+		{mdNoSkippedList, []string{"| local action | 2001 |", "The skipped dependencies are left out", "v1.11.0", "| `actions/checkout` |", "boom"}, []string{"skipped-module"}},
+		{mdNoPendingList, []string{"1 release held back (list left out", "| `actions/checkout` |", "boom"}, []string{"v1.11.0"}},
+		{mdNoPRTables, []string{"#### chore(deps): update actions/checkout to v7.0.1", "1 update (table left out", "boom"}, []string{"| `actions/checkout` |"}},
+	}
+	for _, l := range levels {
+		md := s.markdownAt(l.level)
+		if got := s.markdownFit(len(md)); got != md {
+			t.Errorf("level %d: fit(%d) did not pick it:\n%s", l.level, len(md), got)
+		}
+		for _, w := range l.has {
+			if !strings.Contains(md, w) {
+				t.Errorf("level %d lacks %q", l.level, w)
+			}
+		}
+		for _, w := range l.lacks {
+			if strings.Contains(md, w) {
+				t.Errorf("level %d contains %q", l.level, w)
+			}
+		}
+	}
+	compact := s.markdownAt(mdNoPRTables)
+	cut := s.markdownFit(len(compact) - 1)
+	if len(cut) >= len(compact) || !strings.HasSuffix(cut, "the job log has everything.**\n") || !strings.HasPrefix(cut, "## deps plan\n") {
+		t.Errorf("truncated summary (%d bytes, limit %d):\n%s", len(cut), len(compact)-1, cut)
+	}
+	if got := s.markdownFit(10); got != "" {
+		t.Errorf("fit(10) = %q, want nothing", got)
+	}
+}
+
+func TestSummaryStepFileLimit(t *testing.T) {
+	res := summaryFixture()
+	p := filepath.Join(t.TempDir(), "summary.md")
+	t.Setenv("GITHUB_STEP_SUMMARY", p)
+	t.Setenv("GITEA_STEP_SUMMARY", "")
+	s := summary{Command: "plan", Res: res, Groups: engine.GroupUpdates(res.Updates, "")}
+	// An earlier command of the step already used all but a little of the limit.
+	room := len(s.markdownAt(mdNoSkippedList))
+	if err := os.WriteFile(p, bytes.Repeat([]byte("x"), stepSummaryLimit-room), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	s.write(&stderr)
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) > stepSummaryLimit || !strings.HasSuffix(string(got), s.markdownAt(mdNoSkippedList)) {
+		t.Errorf("file is %d bytes (limit %d), stderr %q", len(got), stepSummaryLimit, stderr.String())
+	}
+}
