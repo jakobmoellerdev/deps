@@ -227,3 +227,27 @@ func TestTagListMaxPages(t *testing.T) {
 		t.Errorf("tags = %v, meta = %v, err = %v", tags, meta, err)
 	}
 }
+
+// BenchmarkReleaseTime measures ReleaseTime of a listed repository's tag the listing has no
+// time for (5.0), answered from the cached config fetch: the per-candidate cost after the
+// first lookup.
+func BenchmarkReleaseTime(b *testing.B) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/img/tags/list" {
+			fmt.Fprint(w, gcrTagList)
+		}
+	}))
+	b.Cleanup(srv.Close)
+	s := newSource(srv.Client(), nil, anon)
+	d := dep.Dep{Name: strings.TrimPrefix(srv.URL, "http://") + "/img"}
+	if _, err := s.Releases(b.Context(), d, ""); err != nil {
+		b.Fatal(err)
+	}
+	_, want := s.ReleaseTime(b.Context(), d, "5.0")
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := s.ReleaseTime(b.Context(), d, "5.0"); !errors.Is(err, want) {
+			b.Fatalf("err = %v, want the cached %v", err, want)
+		}
+	}
+}

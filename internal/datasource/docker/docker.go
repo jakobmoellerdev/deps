@@ -231,14 +231,11 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 	return e.rels, e.err
 }
 
-// listed returns what the finished tag listing of d's repository says about tag version; zero
-// when the registry lists no digests and times, the listing has not finished, or it lacks the
-// tag. It never lists itself: the engine resolves non-version tags (latest) without a listing.
-func (s *Source) listed(d dep.Dep, version string) tagMeta {
-	name, err := repoName(d)
-	if err != nil {
-		return tagMeta{}
-	}
+// listed returns what the finished tag listing of the canonical repository name says about
+// tag version; zero when the registry lists no digests and times, the listing has not
+// finished, or it lacks the tag. It never lists itself: the engine resolves non-version tags
+// (latest) without a listing.
+func (s *Source) listed(name, version string) tagMeta {
 	s.mu.Lock()
 	e := s.tags[name]
 	s.mu.Unlock()
@@ -251,12 +248,12 @@ func (s *Source) listed(d dep.Dep, version string) tagMeta {
 // Digest returns the manifest digest ("sha256:…") of tag version: the index digest for
 // multi-platform images. A digest from the tag listing answers without a request.
 func (s *Source) Digest(ctx context.Context, d dep.Dep, version string) (string, error) {
-	if m := s.listed(d, version); m.digest != "" {
-		return m.digest, nil
-	}
 	name, err := repoName(d)
 	if err != nil {
 		return "", err
+	}
+	if m := s.listed(name, version); m.digest != "" {
+		return m.digest, nil
 	}
 	return s.digest(ctx, name, version)
 }
@@ -279,10 +276,14 @@ func (s *Source) digest(ctx context.Context, name, tag string) (string, error) {
 // Artifact Registry; see tagTime), else the `created` time of the image config of tag version
 // (for an index: of its first platform image); zero when neither has one.
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
-	if m := s.listed(d, version); !m.time.IsZero() {
+	name, err := repoName(d)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if m := s.listed(name, version); !m.time.IsZero() {
 		return m.time, nil
 	}
-	e := s.config(ctx, d, version)
+	e := s.config(ctx, name, version)
 	return e.created, e.err
 }
 
@@ -290,19 +291,19 @@ func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 // `org.opencontainers.image.source` label, from the same config fetch as ReleaseTime (which the
 // tag listing does not replace here: it has no labels).
 func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error) {
-	e := s.config(ctx, d, version)
+	name, err := repoName(d)
+	if err != nil {
+		return "", err
+	}
+	e := s.config(ctx, name, version)
 	return e.source, e.err
 }
 
-// config fetches the image config of tag version once per (repository, tag). On the
-// pull-limited registry the tag is first resolved with the HEAD that Digest shares, which is
-// free, and the config is fetched once per (repository, digest): tags of one image
-// (postgres:18 and postgres:18.6) cost one counted manifest GET.
-func (s *Source) config(ctx context.Context, d dep.Dep, version string) *configEntry {
-	name, err := repoName(d)
-	if err != nil {
-		return &configEntry{err: err}
-	}
+// config fetches the image config of tag version of the canonical repository name once per
+// (repository, tag). On the pull-limited registry the tag is first resolved with the HEAD that
+// Digest shares, which is free, and the config is fetched once per (repository, digest): tags
+// of one image (postgres:18 and postgres:18.6) cost one counted manifest GET.
+func (s *Source) config(ctx context.Context, name, version string) *configEntry {
 	key, ref := name+":"+version, version
 	if s.limitsPulls(name) {
 		dg, err := s.digest(ctx, name, version)
