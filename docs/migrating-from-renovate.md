@@ -39,7 +39,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `prConcurrentLimit`, `prHourlyLimit` | same names; **default 0 (unlimited)** in deps, 10/2 in Renovate; `run --max-new-prs` (default 10) caps each run |
 | `rebaseWhen`, `:rebaseStalePrs` | `rebaseWhen` (`conflicted` default, `behind-base-branch`, `never`) |
 | `ignorePaths`, `:ignoreModulesAndTests` | `ignorePaths` (Renovate's list is the default when absent) |
-| `vulnerabilityAlerts`, `osvVulnerabilityAlerts` | `security` (OSV, default on) |
+| `vulnerabilityAlerts`, `osvVulnerabilityAlerts` | `security` (OSV, default on): Go modules and go.mod `toolchain`/`go` directives (OSV `stdlib`/`toolchain`), npm, crates.io, PyPI, Maven, GitHub Actions; no advisories for images, Terraform or Helm (no OSV ecosystem) |
 | `customManagers` (`customType: regex`) | `custom[]` with `match` (Renovate group names accepted) |
 | `managerFilePatterns` / `fileMatch` | `custom[].files` (doublestar globs, not regexes) |
 | `datasourceTemplate`, `depNameTemplate`, `versioningTemplate` | `custom[].datasource`, `name`, `versioning` (literal values, no templates) |

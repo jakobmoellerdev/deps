@@ -246,6 +246,34 @@ func TestMajorPathSecurityKept(t *testing.T) {
 	}
 }
 
+// TestToolchainSecurity: a vulnerable toolchain directive gets the smallest fixed toolchain
+// even when its rules allow no update; the default-ignored go directive is not looked up.
+func TestToolchainSecurity(t *testing.T) {
+	ds := &fakeModules{rels: map[string][]string{
+		"toolchain": {"1.21.9", "1.22.1", "1.22.2", "1.22.3", "1.23.0"},
+		"go":        {"1.22.2", "1.23.0"},
+	}}
+	root, cfg := setup(t, "rules: [{depTypes: [toolchain], updates: [major]}]\n", map[string]string{"go.mod": "module example.com/x\n\ngo 1.22.0\n\ntoolchain go1.22.0\n"})
+	sec := &fakeSec{vulns: map[string][]Vuln{
+		"toolchain": {vuln("GO-2024-2687", "1.21.9", "1.22.2"), vuln("GO-2024-2598", "1.21.8", "1.22.1")},
+		"go":        {vuln("GO-2024-2687", "1.21.9", "1.22.2")},
+	}}
+	res, err := Resolve(t.Context(), root, cfg, env, Options{Managers: managers, Datasources: map[string]Datasource{"go-toolchain": ds}, Security: sec, Now: ageNow})
+	if err != nil || len(res.Errors) > 0 {
+		t.Fatal(err, res.Errors)
+	}
+	if len(res.Updates) != 1 {
+		t.Fatalf("updates = %+v", res.Updates)
+	}
+	u := &res.Updates[0]
+	if u.Dep.Name != "toolchain" || u.NewVersion != "1.22.2" || u.Type != dep.Patch || !slices.Equal(ids(u), []string{"GO-2024-2687", "GO-2024-2598"}) {
+		t.Errorf("update = %s %s %s %v", u.Dep.Name, u.NewVersion, u.Type, ids(u))
+	}
+	if !slices.Equal(sec.asked, []string{"toolchain"}) {
+		t.Errorf("asked OSV for %v, want only the toolchain", sec.asked)
+	}
+}
+
 func TestBuildMajorPathRewritesImports(t *testing.T) {
 	const (
 		mod = "module example.com/x\n\nrequire example.com/m/v2 v2.1.0\n"

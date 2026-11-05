@@ -7,6 +7,12 @@
 //   - gomod deps with DepType "direct" or "indirect" are queried as ecosystem "Go" with the
 //     module path and version. OSV matches the version server-side. Fixed versions are
 //     returned with the "v" prefix Go modules use ("0.23.0" → "v0.23.0").
+//   - gomod `go` and `toolchain` directives are queried as ecosystem "Go" with the packages
+//     "stdlib" (the standard library) and "toolchain" (the go command) and the directive's
+//     version, without the "go" prefix OSV does not parse; OSV matches server-side. A
+//     directive with fewer than three parts ("1.22") is queried as its lowest version
+//     ("1.22.0") and its fixed versions are cut to its precision ("1.22.2" → "1.22"), so only
+//     fixes outside its line count. Fixed versions are bare ("1.22.2"); prereleases are dropped.
 //   - github-actions deps hosted on github.com are queried as ecosystem "GitHub Actions" with
 //     package "owner/repo" (any subpath is dropped; names are case-sensitive in OSV and sent as
 //     written). OSV does not evaluate ECOSYSTEM ranges for this ecosystem (a versioned query
@@ -107,12 +113,19 @@ type query struct {
 	PageToken string `json:"page_token,omitempty"`
 }
 
-// target is what one dep is checked against: the query and, for GitHub Actions, the version
-// evaluated locally.
+// target is what one dep is checked against: its queries (one per OSV package) and, for GitHub
+// Actions, partial crates.io requirements and Go toolchains, the version evaluated locally.
 type target struct {
-	q   query
-	tag versioning.Tag // GitHub Actions: the dep version
+	qs  []query        // backed by buf
+	buf [2]query       // Go toolchains query two packages, the rest one
+	tag versioning.Tag // GitHub Actions: the dep version; crates.io, Go toolchains: the precision of fixes
 	cmp [3]int         // GitHub Actions: tag padded for range evaluation
+}
+
+func newTarget(qs ...query) *target {
+	t := &target{}
+	t.qs = t.buf[:copy(t.buf[:], qs)]
+	return t
 }
 
 // Advisories implements datasource.SecuritySource. Deps without a supported ecosystem get nil.
@@ -121,21 +134,26 @@ func (s *Source) Advisories(ctx context.Context, deps []dep.Dep) ([][]datasource
 	targets := make([]*target, len(deps))
 	index := make(map[query]int)
 	var queries []query
-	depQuery := make([]int, len(deps))
+	// The query indexes of dep i are keys[span[i][0]:span[i][1]].
+	keys := make([]int, 0, len(deps))
+	span := make([][2]int, len(deps))
 	for i, d := range deps {
-		depQuery[i] = -1
 		t := targetOf(d)
 		if t == nil {
 			continue
 		}
 		targets[i] = t
-		k, ok := index[t.q]
-		if !ok {
-			k = len(queries)
-			index[t.q] = k
-			queries = append(queries, t.q)
+		span[i][0] = len(keys)
+		for _, q := range t.qs {
+			k, ok := index[q]
+			if !ok {
+				k = len(queries)
+				index[q] = k
+				queries = append(queries, q)
+			}
+			keys = append(keys, k)
 		}
-		depQuery[i] = k
+		span[i][1] = len(keys)
 	}
 	if len(queries) == 0 {
 		return out, nil
@@ -145,12 +163,34 @@ func (s *Source) Advisories(ctx context.Context, deps []dep.Dep) ([][]datasource
 	if err != nil {
 		return nil, err
 	}
-	for i, k := range depQuery {
-		if k >= 0 {
-			out[i] = match(targets[i], ids[k], docs)
+	for i, t := range targets {
+		if t == nil {
+			continue
 		}
+		ks := keys[span[i][0]:span[i][1]]
+		found := ids[ks[0]]
+		for _, k := range ks[1:] {
+			found = slices.Concat(found, ids[k])
+		}
+		out[i] = match(t, found, docs)
 	}
 	return out, nil
+}
+
+// goToolchain returns the target of a go.mod `go` or `toolchain` directive at version v: the
+// Go standard library and the go command, both released with the toolchain.
+func goToolchain(v string) *target {
+	tag, ok := versioning.ParseTag(v)
+	if !ok || tag.Prefix != "" {
+		return nil
+	}
+	v += strings.Repeat(".0", 3-len(tag.Parts)) // "1.22" means its line from 1.22.0
+	t := newTarget(
+		query{Package: pkg{Name: "stdlib", Ecosystem: ecoGo}, Version: v},
+		query{Package: pkg{Name: "toolchain", Ecosystem: ecoGo}, Version: v},
+	)
+	t.tag = tag
+	return t
 }
 
 // targetOf returns the OSV query for d, or nil when d has no supported ecosystem.
@@ -160,39 +200,45 @@ func targetOf(d dep.Dep) *target {
 		if d.Name == "" || v == "" {
 			return nil
 		}
-		return &target{q: query{Package: pkg{Name: pyreq.Normalize(d.Name), Ecosystem: ecoPyPI}, Version: v}}
+		return newTarget(query{Package: pkg{Name: pyreq.Normalize(d.Name), Ecosystem: ecoPyPI}, Version: v})
 	}
 	if d.Datasource == "maven" {
 		v := cmp.Or(d.Locked, d.Version) // gradle.lockfile pins the resolved version
 		if !strings.Contains(d.Name, ":") || v == "" {
 			return nil
 		}
-		return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoMaven}, Version: v}}
+		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoMaven}, Version: v})
 	}
 	switch d.Manager {
 	case "gomod":
-		if (d.DepType != "direct" && d.DepType != "indirect") || d.Name == "" || d.Version == "" {
-			return nil
+		switch d.DepType {
+		case "direct", "indirect":
+			if d.Name == "" || d.Version == "" {
+				return nil
+			}
+			return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoGo}, Version: d.Version})
+		case "go", "toolchain":
+			return goToolchain(d.Version)
 		}
-		return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoGo}, Version: d.Version}}
+		return nil
 	case "npm":
 		// The version installs get is the locked one; the range floor only without a lockfile.
 		v := cmp.Or(d.Locked, d.Version)
 		if d.Name == "" || v == "" {
 			return nil
 		}
-		return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoNpm}, Version: v}}
+		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoNpm}, Version: v})
 	case "cargo":
 		if d.Datasource != "crate" || d.Source != "" || d.Name == "" || d.Version == "" {
 			return nil
 		}
 		if d.Locked != "" {
-			return &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoCrates}, Version: d.Locked}}
+			return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoCrates}, Version: d.Locked})
 		}
-		t := &target{q: query{Package: pkg{Name: d.Name, Ecosystem: ecoCrates}, Version: d.Version}}
+		t := newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoCrates}, Version: d.Version})
 		if tag, ok := versioning.ParseTag(d.Version); ok && len(tag.Parts) < 3 {
 			t.tag = tag
-			t.q.Version = d.Version + strings.Repeat(".0", 3-len(tag.Parts))
+			t.qs[0].Version = d.Version + strings.Repeat(".0", 3-len(tag.Parts))
 		}
 		return t
 	case "github-actions":
@@ -209,7 +255,8 @@ func targetOf(d dep.Dep) *target {
 		if !ok {
 			return nil
 		}
-		t := &target{q: query{Package: pkg{Name: owner + "/" + repo, Ecosystem: ecoActions}}, tag: tag}
+		t := newTarget(query{Package: pkg{Name: owner + "/" + repo, Ecosystem: ecoActions}})
+		t.tag = tag
 		for i := range t.cmp {
 			// A floating tag stands for the newest release of its line.
 			t.cmp[i] = math.MaxInt
@@ -451,8 +498,9 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			cands = append(cands, v)
 		}
 	}
+	eco := t.qs[0].Package.Ecosystem
 	native := "GHSA-"
-	switch t.q.Package.Ecosystem {
+	switch eco {
 	case ecoGo:
 		native = "GO-"
 	case ecoCrates:
@@ -473,9 +521,12 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 		if seen[v.ID] {
 			continue
 		}
-		entries := v.entries(t.q.Package)
+		entries := v.entries(t.qs[0].Package)
+		for _, q := range t.qs[1:] {
+			entries = append(entries, v.entries(q.Package)...)
+		}
 		var fixed []string
-		switch t.q.Package.Ecosystem {
+		switch eco {
 		case ecoActions:
 			if !t.affectedBy(entries) {
 				continue
@@ -490,8 +541,12 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			}
 		case ecoMaven:
 			fixed = mavenFixed(entries)
-		default:
-			fixed = goFixed(entries)
+		case ecoGo:
+			if len(t.tag.Parts) > 0 {
+				fixed = t.actionsFixed(entries) // toolchain: bare, at the directive's precision
+			} else {
+				fixed = goFixed(entries)
+			}
 		}
 		seen[v.ID] = true
 		for _, a := range v.Aliases {

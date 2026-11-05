@@ -167,7 +167,7 @@ func TestAdvisoriesGo(t *testing.T) {
 	deps := []dep.Dep{
 		goDep("golang.org/x/net", "v0.17.0"),
 		{Manager: "gomod", DepType: "indirect", Name: "example.com/sub", Version: "v1.0.0"},
-		{Manager: "gomod", DepType: "go", Name: "go", Version: "1.22"},
+		{Manager: "gomod", DepType: "go", Name: "go", Version: "1.26rc1"}, // OSV cannot match a prerelease
 		goDep("golang.org/x/net", "v0.17.0"),
 		{Manager: "docker", Name: "golang", Version: "1.22"},
 	}
@@ -207,6 +207,67 @@ func TestAdvisoriesGo(t *testing.T) {
 	}
 	if f.fetches["GO-2024-2687"] != 1 {
 		t.Errorf("advisory refetched: %v", f.fetches)
+	}
+}
+
+// GO-2024-2687 (stdlib and golang.org/x/net) and GO-2024-2825 (toolchain), trimmed; the fixed
+// versions per release line as OSV lists them for the standard library and the go command.
+func TestAdvisoriesGoToolchain(t *testing.T) {
+	f := newFake(t)
+	f.results["Go|stdlib|1.22.0|"] = result{ids: []string{"GO-2024-2687", "GO-2024-2598"}}
+	f.results["Go|toolchain|1.22.0|"] = result{ids: []string{"GO-2024-2825", "GO-2026-6179"}}
+	f.results["Go|stdlib|1.21.0|"] = result{ids: []string{"GO-2024-2598"}}
+	f.vulns["GO-2024-2687"] = `{"id":"GO-2024-2687","summary":"HTTP/2 CONTINUATION flood in net/http","aliases":["CVE-2023-45288","GHSA-4v7x-pqxf-cx7m"],
+		"affected":[{"package":{"name":"stdlib","ecosystem":"Go"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.21.9"},{"introduced":"1.22.0-0"},{"fixed":"1.22.2"}]}]},
+		            {"package":{"name":"golang.org/x/net","ecosystem":"Go"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"0.23.0"}]}]}]}`
+	f.vulns["GO-2024-2598"] = `{"id":"GO-2024-2598","summary":"Verify panics on certificates with an unknown public key algorithm in crypto/x509",
+		"affected":[{"package":{"name":"stdlib","ecosystem":"Go"},"ranges":[{"type":"SEMVER","events":[{"introduced":"1.21.0-0"},{"fixed":"1.21.8"},{"introduced":"1.22.0-0"},{"fixed":"1.22.1"}]}]}]}`
+	f.vulns["GO-2024-2825"] = `{"id":"GO-2024-2825","summary":"Arbitrary code execution during build on Darwin in cmd/go",
+		"affected":[{"package":{"name":"toolchain","ecosystem":"Go"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.21.10"},{"introduced":"1.22.0-0"},{"fixed":"1.22.3"}]}]}]}`
+	// A prerelease fix is not a version the directive can name.
+	f.vulns["GO-2026-6179"] = `{"id":"GO-2026-6179","summary":"s",
+		"affected":[{"package":{"name":"toolchain","ecosystem":"Go"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.25.13"},{"introduced":"1.27.0-rc.1"},{"fixed":"1.27.0-rc.3"}]}]},
+		            {"package":{"name":"golang.org/x/mod","ecosystem":"Go"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"0.30.0"}]}]}]}`
+	s := f.start(nil)
+
+	deps := []dep.Dep{
+		{Manager: "gomod", DepType: "toolchain", Name: "toolchain", Version: "1.22.0"},
+		{Manager: "gomod", DepType: "go", Name: "go", Version: "1.22"}, // its line from 1.22.0: fixes cut to 1.22
+		{Manager: "gomod", DepType: "go", Name: "go", Version: "1.21.0"},
+		{Manager: "gomod", DepType: "go", Name: "go", Version: "v1.22.0"},                                 // not a directive value
+		{Manager: "github-actions", DepType: "action", Name: "toolchain", Version: "1.22.0", Source: "x"}, // not gomod
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adv := func(id, summary string) dep.Advisory {
+		return dep.Advisory{ID: id, Summary: summary, URL: "https://osv.dev/vulnerability/" + id}
+	}
+	x509 := adv("GO-2024-2598", "Verify panics on certificates with an unknown public key algorithm in crypto/x509")
+	want := [][]datasource.Vuln{
+		{
+			{Advisory: x509, Fixed: []string{"1.21.8", "1.22.1"}},
+			{Advisory: adv("GO-2024-2687", "HTTP/2 CONTINUATION flood in net/http"), Fixed: []string{"1.21.9", "1.22.2"}},
+			{Advisory: adv("GO-2024-2825", "Arbitrary code execution during build on Darwin in cmd/go"), Fixed: []string{"1.21.10", "1.22.3"}},
+			{Advisory: adv("GO-2026-6179", "s"), Fixed: []string{"1.25.13"}},
+		},
+		{
+			{Advisory: x509, Fixed: []string{"1.21", "1.22"}},
+			{Advisory: adv("GO-2024-2687", "HTTP/2 CONTINUATION flood in net/http"), Fixed: []string{"1.21", "1.22"}},
+			{Advisory: adv("GO-2024-2825", "Arbitrary code execution during build on Darwin in cmd/go"), Fixed: []string{"1.21", "1.22"}},
+			{Advisory: adv("GO-2026-6179", "s"), Fixed: []string{"1.25"}},
+		},
+		{{Advisory: x509, Fixed: []string{"1.21.8", "1.22.1"}}},
+		nil,
+		nil,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	// The 2-part directive shares the queries of 1.22.0.
+	if len(f.batches) != 1 || len(f.batches[0]) != 4 {
+		t.Errorf("batches = %+v, want one batch with 4 distinct queries", f.batches)
 	}
 }
 

@@ -176,8 +176,10 @@ Other deps have no schedule, so both crons create their PRs.
 
 ## Config.security
 
-deps queries [OSV](https://osv.dev) for Go, npm and GitHub Actions deps. A vulnerable dep is moved to the smallest compatible release at or above the minimum fixed version.
+deps queries [OSV](https://osv.dev) for Go modules, npm packages, crates.io crates, PyPI packages, Maven artifacts and GitHub Actions. A vulnerable dep is moved to the smallest compatible release at or above the minimum fixed version.
 
+- The go.mod `toolchain` directive is checked against the Go standard library (`stdlib`) and the go command (`toolchain`), so `toolchain go1.22.0` gets a security update to the smallest Go release of its line that fixes its advisories (`1.22.2` for GO-2024-2687). The `go` directive is checked too once a rule un-ignores it (it is ignored by default); a 2-part `go 1.22` admits every 1.22.x toolchain, so only an advisory without a fix in 1.22 moves it.
+- Container images, Terraform providers and modules, and Helm charts get no security updates: OSV has no ecosystem for them. The queries per ecosystem are listed under [Security advisories (OSV)](managers.md#security-advisories-osv).
 - Security updates bypass `allow`, `updates`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`.
 - They always use commit type `fix`, get a `[security]` title suffix, and are never put into a group.
 - A failed OSV lookup is reported as an error (`security advisories: <err>`).
