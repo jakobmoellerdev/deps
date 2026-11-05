@@ -40,6 +40,10 @@
 //     `group:artifact` are queried as ecosystem "Maven" with that name and the locked version
 //     (dep.Dep.Locked), else the version; OSV matches server-side. Gradle plugin ids (no ":")
 //     are not queried. Fixed versions are returned as published.
+//   - rubygems-datasource deps (the bundler manager's gems of Gemfiles, gems.rb and gemspecs,
+//     custom entries) are queried as ecosystem "RubyGems" with the gem name (case-sensitive)
+//     and the locked version (dep.Dep.Locked), else the requirement's floor; OSV matches
+//     server-side. Fixed versions are returned as published ("7.1.3.4").
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -81,6 +85,7 @@ const (
 	ecoCrates  = "crates.io"
 	ecoPyPI    = "PyPI"
 	ecoMaven   = "Maven"
+	ecoRuby    = "RubyGems"
 )
 
 // Source queries OSV. Advisory documents are fetched once per ID per run.
@@ -209,6 +214,13 @@ func targetOf(d dep.Dep) *target {
 			return nil
 		}
 		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoMaven}, Version: v})
+	}
+	if d.Datasource == "rubygems" { // gems of every bundler file, and custom deps of the datasource
+		v := cmp.Or(d.Locked, d.Version)
+		if d.Name == "" || v == "" {
+			return nil
+		}
+		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoRuby}, Version: v})
 	}
 	switch d.Manager {
 	case "gomod":
@@ -543,7 +555,7 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			if len(t.tag.Parts) > 0 {
 				fixed = t.actionsFixed(entries) // partial requirement: at its precision
 			}
-		case ecoMaven:
+		case ecoMaven, ecoRuby:
 			fixed = mavenFixed(entries)
 		case ecoGo:
 			if len(t.tag.Parts) > 0 {

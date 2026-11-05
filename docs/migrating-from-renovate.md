@@ -52,7 +52,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `rebaseLabel`, PR body rebase/retry checkbox | `rebaseLabel` (default `rebase`) and the same checkbox in every PR body: either requests a rebuild on the next run (bypassing the schedule, discarding commits by others); the label is removed and the box unticked afterwards |
 | `stopUpdatingLabel` | `stopUpdatingLabel` (default `stop-updating`): the PR is not pushed, rebased or closed as obsolete (`skipped: stop-updating label`) |
 | `ignorePaths`, `:ignoreModulesAndTests` | `ignorePaths` (Renovate's list is the default when absent) |
-| `vulnerabilityAlerts`, `osvVulnerabilityAlerts` | `security` (OSV, default on): Go modules and go.mod `toolchain`/`go` directives (OSV `stdlib`/`toolchain`), npm, crates.io, PyPI, Maven, GitHub Actions; no advisories for images, Terraform or Helm (no OSV ecosystem) |
+| `vulnerabilityAlerts`, `osvVulnerabilityAlerts` | `security` (OSV, default on): Go modules and go.mod `toolchain`/`go` directives (OSV `stdlib`/`toolchain`), npm, crates.io, PyPI, Maven, RubyGems, GitHub Actions; no advisories for images, Terraform or Helm (no OSV ecosystem) |
 | `vulnerabilityAlerts.groupName` (Dependabot `groups.<name>.applies-to: security-updates`) | `rules[].securityGroup`: security updates of matching deps share one PR on `<prefix>group/<slug>-security`, apart from the non-security group of the same name; titles keep `[security]` |
 | `customManagers` (`customType: regex`) | `custom[]` with `match` (Renovate group names accepted) |
 | `managerFilePatterns` / `fileMatch` | `custom[].files` (doublestar globs, not regexes) |

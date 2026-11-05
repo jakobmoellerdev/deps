@@ -720,3 +720,32 @@ func TestAdvisoriesMaven(t *testing.T) {
 		t.Errorf("batches = %+v", f.batches)
 	}
 }
+
+func TestAdvisoriesRubyGems(t *testing.T) {
+	f := newFake(t)
+	f.results["RubyGems|rack|2.2.8|"] = result{ids: []string{"GHSA-22f2-v57c-j9cx", "CVE-2024-26146"}}
+	f.vulns["GHSA-22f2-v57c-j9cx"] = `{"id":"GHSA-22f2-v57c-j9cx","summary":"Rack has possible DoS Vulnerability with Range Header","aliases":["CVE-2024-26146"],
+		"affected":[{"package":{"name":"rack","ecosystem":"RubyGems"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"2.0.9.4"}]}]},
+		            {"package":{"name":"rack","ecosystem":"RubyGems"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"2.2.0"},{"fixed":"2.2.8.1"}]}]},
+		            {"package":{"name":"Rack","ecosystem":"RubyGems"},"ranges":[{"type":"ECOSYSTEM","events":[{"fixed":"9.9.9"}]}]}]}`
+	f.vulns["CVE-2024-26146"] = `{"id":"CVE-2024-26146","aliases":["GHSA-22f2-v57c-j9cx"],"affected":[{"package":{"name":"rack","ecosystem":"RubyGems"},"ranges":[{"type":"ECOSYSTEM","events":[{"fixed":"2.2.8.1"}]}]}]}`
+	s := f.start(nil)
+	deps := []dep.Dep{
+		// The locked version is queried, not the requirement's floor.
+		{Manager: "bundler", Datasource: "rubygems", DepType: "dependencies", Name: "rack", Version: "2.2", Range: "~> 2.2", Locked: "2.2.8"},
+		{Manager: "bundler", Datasource: "rubygems", DepType: "runtime", Name: "rack", Version: "2.2.8", Range: ">= 2.2.8"},
+		{Manager: "bundler", Datasource: "rubygems", Name: "unversioned", Range: ">= 0"},
+		{Manager: "bundler", Datasource: "ruby-version", DepType: "ruby", Name: "ruby", Version: "3.3.0"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rack := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-22f2-v57c-j9cx", Summary: "Rack has possible DoS Vulnerability with Range Header", URL: "https://osv.dev/vulnerability/GHSA-22f2-v57c-j9cx"}, Fixed: []string{"2.0.9.4", "2.2.8.1"}}}
+	if want := [][]datasource.Vuln{rack, rack, nil, nil}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if len(f.batches) != 1 || len(f.batches[0]) != 1 || f.batches[0][0].Package != (pkg{Name: "rack", Ecosystem: "RubyGems"}) {
+		t.Errorf("batches = %+v", f.batches)
+	}
+}
