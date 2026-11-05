@@ -34,6 +34,8 @@ type Policy struct {
 	// RangeStrategy is the npm and Python range strategy (RangeStrategies); never "" in a Policy.
 	RangeStrategy string
 	Allow         *Allowed
+	// Updates are the allowed update types. The map is shared between policies and
+	// must not be modified.
 	Updates       map[dep.UpdateType]bool
 	Group         string        // "" = own PR
 	SecurityGroup string        // group of the dep's security updates, "" = own PR each
@@ -91,6 +93,25 @@ var mavenProduction = map[string]bool{"compile": true, "provided": true, "runtim
 
 // defaultIgnored are the dep types ignored unless a rule sets `ignore: false`.
 var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "engines": true}
+
+// allUpdates allows every update type; policies share it until a rule sets updates.
+var allUpdates = updateSet(nil)
+
+// updateSet returns the set of types, or of every update type when types is nil.
+func updateSet(types []string) map[dep.UpdateType]bool {
+	if types == nil {
+		m := make(map[dep.UpdateType]bool, len(dep.UpdateTypes))
+		for _, t := range dep.UpdateTypes {
+			m[t] = true
+		}
+		return m
+	}
+	m := make(map[dep.UpdateType]bool, len(types))
+	for _, u := range types {
+		m[dep.UpdateType(u)] = true
+	}
+	return m
+}
 
 // IgnoredByDefault reports whether deps of depType are ignored unless a rule sets
 // `ignore: false`.
@@ -203,7 +224,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 	p := Policy{
 		Pin:                   c.Pin,
 		RangeStrategy:         cmp.Or(c.RangeStrategy, RangeAuto),
-		Updates:               make(map[dep.UpdateType]bool, len(dep.UpdateTypes)),
+		Updates:               allUpdates,
 		Schedule:              c.schedule,
 		MinAge:                c.minAge,
 		TimestampRequired:     c.MinimumReleaseAgeBehaviour == TimestampRequired,
@@ -241,9 +262,6 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 	case UnversionedPin(d):
 		p.Ignore, p.IgnoredByDefault, p.IgnoreReason = true, true, UnversionedReason
 	}
-	for _, t := range dep.UpdateTypes {
-		p.Updates[t] = true
-	}
 	for i := range c.Rules {
 		r := &c.Rules[i]
 		if !c.matches(r, d, kind, age) {
@@ -274,10 +292,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 			p.Allow = r.allow
 		}
 		if r.Updates != nil {
-			clear(p.Updates)
-			for _, u := range r.Updates {
-				p.Updates[dep.UpdateType(u)] = true
-			}
+			p.Updates = r.updates
 		}
 		if r.Group != "" {
 			p.Group = r.Group

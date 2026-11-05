@@ -428,8 +428,9 @@ type Rule struct {
 	PRFooter *string `yaml:"prFooter" jsonschema_description:"Overrides the top-level prFooter for matching deps; empty string means none."`
 
 	allow          *Allowed
-	currentVersion *Allowed  // parsed CurrentVersion; nil = not set
-	currentAge     *ageRange // parsed CurrentAge; nil = not set
+	updates        map[dep.UpdateType]bool // set of Updates; nil = not set
+	currentVersion *Allowed                // parsed CurrentVersion; nil = not set
+	currentAge     *ageRange               // parsed CurrentAge; nil = not set
 	schedule       *schedule.Set
 	templates      prtemplate.Set // parsed PRTitle, PRHeader and PRFooter; members of unset fields are nil
 	minAge         *time.Duration // parsed MinimumReleaseAge; nil = not set
@@ -835,6 +836,10 @@ func (c *Config) validateRule(i int, add addFunc) {
 	}
 	if len(r.UpdateTypes) > 0 && r.RangeStrategy != "" {
 		add(f+".rangeStrategy", "cannot be combined with updateTypes: the range strategy is decided before the update type is known")
+	}
+	r.updates = nil
+	if r.Updates != nil {
+		r.updates = updateSet(r.Updates)
 	}
 	r.allow = nil
 	if r.Allow != "" {
