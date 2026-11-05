@@ -35,7 +35,7 @@ func TestNilSet(t *testing.T) {
 	if err != nil || s != nil {
 		t.Fatalf("Parse(nil) = %v, %v", s, err)
 	}
-	if !s.Matches(Trigger{Event: EventSchedule, Cron: "0 5 * * *"}) || !s.Matches(Trigger{Event: EventPush}) || s.String() != "always" || s.Crons() != nil {
+	if !s.Matches(Trigger{Event: EventSchedule, Cron: "0 5 * * *"}) || !s.Matches(Trigger{Event: "push"}) || s.String() != "always" || s.Crons() != nil {
 		t.Errorf("nil set: string=%q", s.String())
 	}
 }
@@ -55,8 +55,11 @@ func TestMatches(t *testing.T) {
 		{"other cron", Trigger{EventSchedule, "0 5 * * *"}, false},
 		{"no time evaluation", Trigger{EventSchedule, "0 0 * * 7"}, false},
 		{"schedule without cron", Trigger{EventSchedule, ""}, true},
-		{"workflow_dispatch", Trigger{"workflow_dispatch", ""}, true},
-		{"push is outside every schedule", Trigger{EventPush, ""}, false},
+		{"workflow_dispatch", Trigger{EventWorkflowDispatch, ""}, true},
+		{"push is outside every schedule", Trigger{"push", ""}, false},
+		{"issues (dashboard ticked) is maintenance", Trigger{"issues", ""}, false},
+		{"workflow_run is maintenance", Trigger{"workflow_run", ""}, false},
+		{"repository_dispatch", Trigger{EventRepositoryDispatch, ""}, true},
 		{"local", Trigger{}, true},
 	}
 	for _, tt := range tests {

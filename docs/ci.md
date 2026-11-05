@@ -26,6 +26,8 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
 - [Self-managed GitLab](#self-managed-gitlab)
 - [Schedules](#schedules)
 - [Run on push to the default branch](#run-on-push-to-the-default-branch)
+  - [Run when the dashboard is ticked](#run-when-the-dashboard-is-ticked)
+  - [Merge right after CI](#merge-right-after-ci)
 - [Automerge](#automerge)
 - [Dependency dashboard](#dependency-dashboard)
 - [Overlapping runs](#overlapping-runs)
@@ -510,7 +512,7 @@ The example workflows also run on `push` to the default branch (`main` in the ex
 | With a `schedule`, no PR yet | `skipped: outside schedule`; waits for its cron |
 | Security update | created regardless of schedules |
 
-So merges never open weekly groups early. `workflow_dispatch` is different: a manual run acts on every group.
+So merges never open weekly groups early. `workflow_dispatch` (and `repository_dispatch`) is different: a manual run acts on every group. Every other event is a maintenance run like `push`, which makes the triggers below safe to add.
 
 **Notes.**
 
@@ -518,6 +520,39 @@ So merges never open weekly groups early. `workflow_dispatch` is different: a ma
 - **The token decides whether merges trigger.** On GitHub, pushes made with `GITHUB_TOKEN` (including automerges performed with it) start no workflows, so the follow-up run only happens for merges by a user, an App token or a PAT. Gitea and Forgejo behave the same for their job tokens.
 - **Busy repositories.** Every push to `main` starts a run. Keep the [concurrency group](#overlapping-runs) with `cancel-in-progress: false`: bursts queue up behind one run instead of racing. To skip pushes that can't matter, add `paths-ignore` (e.g. `docs/**`), keeping `.deps.yaml` and the dependency files included.
 - **Cost.** A run without changes takes seconds (lookups are deduplicated per run; the binary comes from the [action's cache](#the-composite-action)).
+
+### Run when the dashboard is ticked
+
+A ticked [dashboard](#dependency-dashboard) checkbox acts on the next run. To make that run start right away, also trigger on edits of the dashboard issue:
+
+```yaml
+on:
+  issues:
+    types: [edited]
+jobs:
+  deps:
+    if: >-
+      github.event_name != 'issues' ||
+      (github.event.issue.title == 'Dependency Dashboard' && github.event.sender.type != 'Bot')
+```
+
+Use your [`dependencyDashboardTitle`](reference/configuration.md#dependencydashboardtitle) if you set one. The `sender.type` check skips deps' own edits of the dashboard with an App token (edits made with `GITHUB_TOKEN` start no workflows anyway). With a PAT, deps edits the issue as that user: the edit starts one more run, which finds nothing to do and leaves the dashboard unedited, so it ends there. Checkboxes act in any run, so the ticked PR is created, recreated or rebased; other scheduled groups still wait for their cron. Gitea and Forgejo have the same `issues` event.
+
+### Merge right after CI
+
+Without native auto-merge (GitHub with *Allow auto-merge* off), deps merges an [automerge](#automerge) PR itself once its checks are green, on the next run. To have that run follow CI immediately, trigger on the completion of your CI workflow:
+
+```yaml
+on:
+  workflow_run:
+    workflows: [CI] # the name of the workflow that checks deps PRs
+    types: [completed]
+jobs:
+  deps:
+    if: github.event_name != 'workflow_run' || startsWith(github.event.workflow_run.head_branch, 'deps/')
+```
+
+`check_suite` doesn't work for this: GitHub doesn't start workflows for check suites created by GitHub Actions. The same applies to [branch automerge](#branch-automerge). With native auto-merge the forge merges without deps, and this trigger is not needed.
 
 ## Automerge
 

@@ -129,22 +129,29 @@ func num(s string, f field) (int, error) {
 	return n, nil
 }
 
-// EventPush is the event name of runs triggered by a push.
-const EventPush = "push"
+// Event names that make a run act immediately: a manual dispatch from the UI or API, and an
+// API dispatch. A local run without CI has no event and acts immediately too.
+const (
+	EventWorkflowDispatch   = "workflow_dispatch"
+	EventRepositoryDispatch = "repository_dispatch"
+)
 
 // Matches reports whether a run started by t is in schedule. A nil Set (no schedule)
-// always matches. A push run (e.g. after merging a PR) is follow-up maintenance, so it
-// is outside every schedule: only unscheduled groups get new PRs, open PRs are still
-// refreshed (updateNotScheduled). Other runs not triggered by a cron (dispatch, local)
-// act immediately; so does a schedule event whose cron is unknown. Otherwise the
-// trigger cron must equal one of the Set's crons.
+// always matches. Runs someone asked for (workflow_dispatch, repository_dispatch, a local
+// run without an event) act immediately; so does a schedule event whose cron is unknown. A
+// schedule event's cron must equal one of the Set's crons. Every other event (push after a
+// merge, issues when the dashboard is ticked, workflow_run after CI, …) is follow-up
+// maintenance, so it is outside every schedule: only unscheduled groups get new PRs, open
+// PRs are still refreshed (updateNotScheduled).
 func (s *Set) Matches(t Trigger) bool {
 	switch {
 	case s == nil:
 		return true
-	case t.Event == EventPush:
+	case t.Event == "" || t.Event == EventWorkflowDispatch || t.Event == EventRepositoryDispatch:
+		return true
+	case t.Event != EventSchedule:
 		return false
-	case t.Event != EventSchedule || t.Cron == "":
+	case t.Cron == "":
 		return true
 	}
 	return slices.Contains(s.norm, Normalize(t.Cron))

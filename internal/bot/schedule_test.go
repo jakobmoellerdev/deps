@@ -72,14 +72,14 @@ func TestRunSchedule(t *testing.T) {
 		},
 		{
 			name:               "push run refreshes the scheduled open PR",
-			trigger:            schedule.Trigger{Event: schedule.EventPush},
+			trigger:            schedule.Trigger{Event: "push"},
 			updateNotScheduled: true,
 			wantStatus:         map[string]string{branchA: StatusUpdated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantPushed:         2, wantClosed: []int{9},
 		},
 		{
 			name:               "push run never creates a scheduled PR",
-			trigger:            schedule.Trigger{Event: schedule.EventPush},
+			trigger:            schedule.Trigger{Event: "push"},
 			updateNotScheduled: true,
 			noPR:               true,
 			wantStatus:         map[string]string{branchA: StatusSkipSchedule, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
@@ -87,7 +87,7 @@ func TestRunSchedule(t *testing.T) {
 		},
 		{
 			name:       "push run still creates security PRs",
-			trigger:    schedule.Trigger{Event: schedule.EventPush},
+			trigger:    schedule.Trigger{Event: "push"},
 			security:   true,
 			noPR:       true,
 			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
