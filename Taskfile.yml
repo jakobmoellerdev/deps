@@ -367,3 +367,9 @@ tasks:
     deps: [build]
     cmds:
       - hack/e2e-github/e2e.sh
+
+  e2e:registry:
+    desc: End-to-end test of the registry client against real zot and Harbor registries (not part of ci; needs Docker, see hack/e2e-registry/README.md)
+    dir: hack/e2e-registry
+    cmds:
+      - go test -tags e2e -count=1 -timeout 20m ./...
