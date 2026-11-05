@@ -250,7 +250,7 @@ func CompiledOutputs(root, input string) (outputs []string, base string, ok bool
 		if err != nil {
 			return source{}, false
 		}
-		s := newSource(p, b, parse(p, b), exists)
+		s := newSource(p, b, nil, exists)
 		srcs[p] = s
 		return s, true
 	}
