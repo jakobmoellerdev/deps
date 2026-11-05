@@ -3,8 +3,6 @@
 package goproxy
 
 import (
-	"bufio"
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json/v2"
@@ -531,19 +529,25 @@ func (s *Source) fetch(ctx context.Context, url string) (versions []string, notF
 		return nil, notFound, err
 	}
 	defer resp.Body.Close()
-	sc := bufio.NewScanner(resp.Body)
-	for sc.Scan() {
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false, fmt.Errorf("GET %s: %w", url, err)
+	}
+	// One string for the whole body; versions are substrings of it.
+	body := string(data)
+	versions = make([]string, 0, strings.Count(body, "\n")+1)
+	for line := range strings.Lines(body) {
 		// Each line is "<version>[ <extra>]"; only the first field is the version.
-		line := bytes.TrimSpace(sc.Bytes())
-		if i := bytes.IndexAny(line, " \t"); i >= 0 {
+		line = strings.TrimSpace(line)
+		if i := strings.IndexAny(line, " \t"); i >= 0 {
 			line = line[:i]
 		}
-		if len(line) > 0 {
-			versions = append(versions, string(line))
+		if line != "" {
+			versions = append(versions, line)
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return nil, false, fmt.Errorf("GET %s: %w", url, err)
+	if len(versions) == 0 {
+		return nil, false, nil
 	}
 	return versions, false, nil
 }
