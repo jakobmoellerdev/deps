@@ -435,14 +435,17 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, chang
 
 	fp := fingerprint(changes)
 	rebase := false
+	matched := false
 	if pr != nil {
-		slog.DebugContext(ctx, "open PR found", "branch", grp.Branch, "number", pr.Number, "fingerprint", fp, "prFingerprint", bodyFingerprint(pr.Body))
+		prFP := bodyFingerprint(pr.Body)
+		matched = prFP == fp
+		slog.DebugContext(ctx, "open PR found", "branch", grp.Branch, "number", pr.Number, "fingerprint", fp, "prFingerprint", prFP)
 	}
 	switch {
-	case pr != nil && bodyFingerprint(pr.Body) == fp && f.rebase:
+	case matched && f.rebase:
 		slog.DebugContext(ctx, "rebase requested on the dependency dashboard", "branch", grp.Branch, "number", pr.Number)
 		rebase = true
-	case pr != nil && bodyFingerprint(pr.Body) == fp:
+	case matched:
 		if o.RebaseWhen == config.RebaseNever {
 			a.Status = StatusUpToDate
 			return a, pr, nil
