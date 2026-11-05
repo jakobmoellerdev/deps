@@ -241,14 +241,9 @@ func texts(g Group) (title, header, footer string) {
 func templateData(g Group) prtemplate.Data {
 	security := slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return len(u.Advisories) > 0 })
 	typ, scope := commitType(g.Updates, security)
-	var names []string
-	for _, u := range g.Updates {
-		if !slices.Contains(names, u.Dep.Name) {
-			names = append(names, u.Dep.Name)
-		}
-	}
+	first, count := distinctNames(g.Updates)
 	d := prtemplate.Data{
-		Type: typ, Scope: scope, Name: g.Name, Count: len(names), IsSecurity: security,
+		Type: typ, Scope: scope, Name: g.Name, Count: count, IsSecurity: security,
 		From: shared(g.Updates, func(u dep.Update) string {
 			if u.Lockfile {
 				return u.Dep.Locked
@@ -261,8 +256,8 @@ func templateData(g Group) prtemplate.Data {
 	switch {
 	case g.Manager == MaintenanceBranch:
 		d.Name = "lock file maintenance"
-	case len(names) == 1:
-		d.Name = names[0]
+	case count == 1:
+		d.Name = first
 	}
 	if g.Manager == GroupManager {
 		d.Group = g.Name
@@ -291,11 +286,8 @@ func groupTitle(g Group) string {
 	name := g.Name
 	security := slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return len(u.Advisories) > 0 })
 	if g.Manager == GroupManager {
-		names := map[string]bool{}
-		for _, u := range g.Updates {
-			names[u.Dep.Name] = true
-		}
-		if len(names) > 1 {
+		first, count := distinctNames(g.Updates)
+		if count > 1 {
 			pre, suffix := commitPrefix(g.Updates, security), ""
 			if security {
 				suffix = SecuritySuffix
@@ -303,9 +295,9 @@ func groupTitle(g Group) string {
 			if v, ok := sameVersion(g.Updates); ok {
 				return pre + "update " + g.Name + " to " + v + suffix
 			}
-			return fmt.Sprintf("%supdate %s (%d dependencies)%s", pre, g.Name, len(names), suffix)
+			return fmt.Sprintf("%supdate %s (%d dependencies)%s", pre, g.Name, count, suffix)
 		}
-		name = g.Updates[0].Dep.Name
+		name = first
 	}
 	if security {
 		pre := commitPrefix(g.Updates, true)
@@ -315,6 +307,22 @@ func groupTitle(g Group) string {
 		return pre + "update " + name + SecuritySuffix
 	}
 	return title(name, g.Updates)
+}
+
+// distinctNames returns the first update's dependency name and the number
+// of distinct dependency names in ups. ups must not be empty.
+func distinctNames(ups []dep.Update) (first string, n int) {
+	first = ups[0].Dep.Name
+	i := slices.IndexFunc(ups, func(u dep.Update) bool { return u.Dep.Name != first })
+	if i < 0 {
+		return first, 1
+	}
+	seen := make(map[string]struct{}, len(ups)-i+1)
+	seen[first] = struct{}{}
+	for _, u := range ups[i:] {
+		seen[u.Dep.Name] = struct{}{}
+	}
+	return first, len(seen)
 }
 
 // sameVersion returns the NewVersion shared by all updates.
