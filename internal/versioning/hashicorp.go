@@ -96,23 +96,25 @@ func (h hcVersion) major() string { return strconv.Itoa(h.parts[0]) }
 
 // render writes h at cur's precision and "v" style: a candidate with more parts than cur is
 // cut to cur's (5.31.2 → 5.31 for `~> 5.0`).
-func (h hcVersion) render(cur hcVersion) string {
-	var b strings.Builder
+func (h hcVersion) render(cur hcVersion) string { return string(h.appendRender(nil, cur)) }
+
+// appendRender appends h rendered at cur's form (see render) to b.
+func (h hcVersion) appendRender(b []byte, cur hcVersion) []byte {
 	if cur.v {
-		b.WriteByte('v')
+		b = append(b, 'v')
 	}
 	n := min(h.n, cur.n)
 	for i := range n {
 		if i > 0 {
-			b.WriteByte('.')
+			b = append(b, '.')
 		}
-		b.WriteString(strconv.Itoa(h.parts[i]))
+		b = strconv.AppendInt(b, int64(h.parts[i]), 10)
 	}
 	if h.pre != "" {
-		b.WriteByte('-')
-		b.WriteString(h.pre)
+		b = append(b, '-')
+		b = append(b, h.pre...)
 	}
-	return b.String()
+	return b
 }
 
 // hashicorpScheme keeps the precision and "v" style of the current value, as Terraform
@@ -131,10 +133,17 @@ func (s hashicorpScheme) fit(cur string, cands []string) []string {
 	}
 	out := make([]string, 0, len(cands))
 	seen := make(map[string]bool, len(cands))
+	var buf [64]byte
 	for _, raw := range cands {
 		v := raw
 		if n, ok := parseHashicorp(raw); ok && (n.pre == "" || c.n == 3) {
-			v = n.render(c)
+			b := n.appendRender(buf[:0], c)
+			if seen[string(b)] {
+				continue
+			}
+			if string(b) != raw {
+				v = string(b)
+			}
 		}
 		if !seen[v] {
 			seen[v] = true
