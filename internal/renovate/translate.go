@@ -287,8 +287,8 @@ var categories = map[string][]string{
 var infoKeys = func() map[string]bool {
 	m := map[string]bool{}
 	for k := range strings.FieldsSeq(`assigneesFromCodeOwners assignAutomerge
-		reviewersFromCodeOwners additionalReviewers automergeComment rebaseLabel stopUpdatingLabel keepUpdatedLabel milestone
-		commitBody commitBodyTable commitTrailers prTitle prTitleStrict prHeader prFooter prCreation prPriority
+		reviewersFromCodeOwners additionalReviewers automergeComment keepUpdatedLabel milestone
+		commitBody commitBodyTable commitTrailers prTitle prTitleStrict prCreation prPriority
 		prNotPendingHours draftPR configMigration onboarding onboardingConfig onboardingConfigFileName requireConfig
 		printConfig dependencyDashboardHeader dependencyDashboardFooter dependencyDashboardAutoclose
 		dependencyDashboardOSVVulnerabilitySummary dependencyDashboardCategory customizeDashboard userStrings
@@ -532,6 +532,30 @@ func (t *translator) translate(cfg map[string]any) omap {
 		if v, ok := get(k); ok {
 			l, _ := strs(v)
 			emit(k, l)
+		}
+	}
+	for _, k := range []string{"prHeader", "prFooter"} {
+		if v, ok := get(k); ok {
+			if s, ok := t.prText(k, v); ok && s != "" {
+				emit(k, s)
+			}
+		}
+	}
+	rebaseLabel := config.DefaultRebaseLabel
+	if v, ok := get("rebaseLabel"); ok {
+		if msg := check(omap{{"rebaseLabel", v}}); msg != "" {
+			t.n.warn("rebaseLabel", "dropped: %s", msg)
+		} else {
+			rebaseLabel, _ = v.(string)
+			doc.set("rebaseLabel", v)
+		}
+	}
+	if v, ok := get("stopUpdatingLabel"); ok {
+		// Validated together with rebaseLabel: the two must differ.
+		if msg := check(omap{{"rebaseLabel", rebaseLabel}, {"stopUpdatingLabel", v}}); msg != "" {
+			t.n.warn("stopUpdatingLabel", "dropped: %s", msg)
+		} else {
+			doc.set("stopUpdatingLabel", v)
 		}
 	}
 	for _, k := range []string{"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels"} {

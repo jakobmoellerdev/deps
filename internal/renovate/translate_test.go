@@ -199,10 +199,73 @@ func TestLoadRules(t *testing.T) {
     assignees: [alice]` + preCommitExclusion,
 		},
 		{
-			name:  "matchCurrentValue drops the rule",
-			src:   `{packageRules: [{matchCurrentValue: '/^1/', matchPackageNames: ['a'], enabled: false}]}`,
+			name: "matchCurrentValue regexes and exact strings are currentVersion",
+			src: `{packageRules: [{matchCurrentValue: '/^1/', matchPackageNames: ['a'], enabled: false},
+				{matchCurrentValue: '!/-rc/i', matchPackageNames: ['b'], enabled: false},
+				{matchCurrentValue: 'v1.2.3', matchPackageNames: ['c'], enabled: false},
+				{matchCurrentValue: '!latest', matchPackageNames: ['d'], enabled: false}]}`,
+			rules: `  - # packageRules[0]
+    names: [a]
+    currentVersion: /^1/
+    ignore: true
+  - # packageRules[1]
+    names: [b]
+    currentVersion: '!/-rc/i'
+    ignore: true
+  - # packageRules[2]
+    names: [c]
+    currentVersion: /^v1\.2\.3$/i
+    ignore: true
+  - # packageRules[3]
+    names: [d]
+    currentVersion: '!/^latest$/i'
+    ignore: true` + preCommitExclusion,
+		},
+		{
+			name: "matchCurrentValue globs, matchCurrentValue with matchCurrentVersion and invalid regexes drop the rule",
+			src: `{packageRules: [{matchCurrentValue: '1.*', matchPackageNames: ['a'], enabled: false},
+				{matchCurrentValue: '/^1/', matchCurrentVersion: '< 2', matchPackageNames: ['b'], enabled: false},
+				{matchCurrentValue: '/(?=x)/', matchPackageNames: ['c'], enabled: false},
+				{matchCurrentValue: 1, matchPackageNames: ['d'], enabled: false}]}`,
 			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
-			notes: []string{"warn packageRules[0]: matchCurrentValue has no deps equivalent; rule dropped"},
+			notes: []string{
+				`warn packageRules[0]: matchCurrentValue "1.*": globs have no deps equivalent; rule dropped`,
+				"warn packageRules[1]: matchCurrentVersion and matchCurrentValue together cannot be expressed (one currentVersion); rule dropped",
+				"warn packageRules[3]: matchCurrentValue must be a string; rule dropped",
+			},
+		},
+		{
+			name: "versioning is dropped next to currentVersion and currentAge",
+			src: `{packageRules: [{matchCurrentValue: '/^v1/', matchPackageNames: ['a'], versioning: 'loose', groupName: 'a'},
+				{matchCurrentAge: '> 1 year', matchPackageNames: ['b'], extractVersion: '^v(?<version>.+)$', enabled: false},
+				{matchCurrentVersion: '< 2', matchPackageNames: ['c'], versioning: 'loose'}]}`,
+			rules: `  - # packageRules[0]
+    names: [a]
+    currentVersion: /^v1/
+    group: a
+  - # packageRules[1]
+    names: [b]
+    currentAge: '> 1 year'
+    ignore: true` + preCommitExclusion,
+			notes: []string{
+				"warn packageRules[0].versioning: deps cannot combine versioning with currentVersion; dropped",
+				"warn packageRules[1].extractVersion: deps cannot combine extractVersion with currentAge; dropped",
+				"warn packageRules[2].versioning: deps cannot combine versioning with currentVersion; dropped",
+				"info packageRules[2]: no deps effect left; rule dropped",
+			},
+		},
+		{
+			name: "prHeader and prFooter per rule",
+			src: `{packageRules: [{matchPackageNames: ['a'], prHeader: 'Bumps {{depName}} from {{{currentValue}}} to {{ newVersion }}{{! note }}', prFooter: null},
+				{matchPackageNames: ['b'], prHeader: '{{#if isMajor}}major{{/if}}', prFooter: 'Group \\{{groupName}} {{groupName}}'}]}`,
+			rules: `  - # packageRules[0]
+    names: [a]
+    prHeader: Bumps {{.Name}} from {{.From}} to {{.To}}
+    prFooter: ""
+  - # packageRules[1]
+    names: [b]
+    prFooter: Group {{"{{"}}groupName}} {{.Group}}` + preCommitExclusion,
+			notes: []string{"warn packageRules[1].prHeader: unsupported Handlebars expression {{#if isMajor}}; dropped"},
 		},
 		{
 			name: "matchCurrentVersion and matchCurrentAge",
@@ -388,6 +451,94 @@ rules:` + preCommitExclusion + "\n"
 	} {
 		if !slices.Contains(notes, n) {
 			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
+		}
+	}
+}
+
+func TestLoadLabelsAndPRTexts(t *testing.T) {
+	for _, tt := range []struct {
+		name, src, want string
+		notes           []string
+	}{
+		{
+			name: "translated",
+			src: `{prHeader: 'Update of {{{depName}}}', prFooter: '{{!-- x --}}Thanks {', rebaseLabel: 'deps-rebase',
+				stopUpdatingLabel: 'hands off'}`,
+			want: "prHeader: Update of {{.Name}}\nprFooter: Thanks {\nrebaseLabel: deps-rebase\nstopUpdatingLabel: hands off\n",
+		},
+		{
+			name: "dropped",
+			src:  `{prHeader: 'x {{lookup a b}}', prFooter: '{{depName', rebaseLabel: 'Stop', stopUpdatingLabel: 'stop'}`,
+			want: "rebaseLabel: Stop\n",
+			notes: []string{
+				"warn prHeader: unsupported Handlebars expression {{lookup a b}}; dropped",
+				"warn prFooter: unclosed {{; dropped",
+				`warn stopUpdatingLabel: dropped: stopUpdatingLabel: must differ from rebaseLabel, got "stop"`,
+			},
+		},
+		{
+			name: "an empty prHeader is none",
+			src:  `{prHeader: '', prFooter: null}`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := load(t, tt.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for l := range strings.SplitSeq(string(res.YAML), "\n") {
+				for _, k := range []string{"prTitle:", "prHeader:", "prFooter:", "rebaseLabel:", "stopUpdatingLabel:"} {
+					if strings.HasPrefix(l, k) {
+						got = append(got, l+"\n")
+					}
+				}
+			}
+			if strings.Join(got, "") != tt.want {
+				t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, ""), tt.want)
+			}
+			notes := noteLines(res)
+			for _, n := range tt.notes {
+				if !slices.Contains(notes, n) {
+					t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
+				}
+			}
+		})
+	}
+}
+
+func TestHandlebars(t *testing.T) {
+	vars := map[string]string{"commitMessageTopic": "T"}
+	for _, tt := range []struct {
+		src, want, err string
+		lower          bool
+	}{
+		{src: "plain", want: "plain"},
+		{src: "{{depName}} {{{packageName}}} {{newVersion}} {{newValue}} {{currentVersion}} {{currentValue}} {{groupName}} {{updateType}}",
+			want: "{{.Name}} {{.Name}} {{.To}} {{.To}} {{.From}} {{.From}} {{.Group}} {{.UpdateType}}"},
+		{src: "Up {{{commitMessageTopic}}}", want: "up T", lower: true},
+		{src: `a\{{b}} \\{{depName}}`, want: `a{{"{{"}}b}} \{{.Name}}`},
+		{src: "{{depName}}}}{", want: "{{.Name}}}}{"},
+		{src: `x{\{{ {{{depName}}}`, want: `x{{"{{"}}{ {{.Name}}`},
+		{src: `{\{{`, want: `{{"{{"}}{`},
+		{src: `x{{{depName}}}`, want: `x{{.Name}}`},
+		{src: `x{ {{depName}}{`, want: `x{ {{.Name}}{`},
+		{src: `x{\\{{depName}}`, want: `x{\{{.Name}}`},
+		{src: `x{{{"{"}}`, err: `unclosed {{{`},
+		{src: "{{!-- {{depName}} --}}x", want: "x"},
+		{src: "{{#if isMajor}}x{{/if}}", err: "unsupported Handlebars expression {{#if isMajor}}"},
+		{src: "{{depNameSanitized}}", err: "unsupported Handlebars expression {{depNameSanitized}}"},
+		{src: "{{{depName}}", err: "unclosed {{{"},
+	} {
+		got, err := handlebars(tt.src, vars, tt.lower)
+		if tt.err != "" {
+			if err == nil || err.Error() != tt.err {
+				t.Errorf("%q: err = %v, want %s", tt.src, err, tt.err)
+			}
+			continue
+		}
+		if err != nil || got != tt.want {
+			t.Errorf("%q = %q, %v; want %q", tt.src, got, err, tt.want)
 		}
 	}
 }

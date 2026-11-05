@@ -39,13 +39,15 @@ Work through the warnings one by one and record the decision for the user. Typic
 |---|---|
 | `branchPrefix: deps run closes open PRs under renovate/ …` | Expected. Decide the cutover mode in step 5; do not ignore it. |
 | a manager deps lacks (`git-submodules`, `bundler`, `devcontainer`, …) | Check whether the repository has such files (`git ls-files`). None: say so and move on. Some: tell the user these deps will no longer be updated. |
-| `rule dropped` (`matchCurrentValue`, `matchJsonata`, `matchSourceUrls`, package and dep names together, …) | Read the original rule's intent. Rewrite it in `.deps.yaml` with `names`, `paths`, `datasources`, `depTypes`, `currentVersion` or `currentAge`, or split it into two rules. |
+| `rule dropped` (`matchCurrentValue` glob or together with `matchCurrentVersion`, `matchJsonata`, `matchSourceUrls`, package and dep names together, …) | Read the original rule's intent. Rewrite it in `.deps.yaml` with `names`, `paths`, `datasources`, `depTypes`, `currentVersion` (a constraint or `/regex/`) or `currentAge`, or split it into two rules. |
 | custom datasource dropped (templated URL, `html`, JSONata) | Write `customDatasources.<name>` by hand: `url`, `format`, `versions` (jq-subset selector such as `.releases \| keys` or `.items[].tag_name`) and `versionRegex`. The custom managers that used it were dropped too; re-add them once it exists. |
 | custom manager dropped (templates, `combination` strategy, non-regex `customType`) | Rewrite as a `custom[]` entry: regex mode with literal `datasource`/`name`/`versioning`, or annotation mode if the files carry `# renovate: datasource=… depName=…` markers (annotation mode reads those unchanged). |
 | schedule entry dropped (`every 2 weeks`, …) | Pick the nearest workflow cron with the user; deps schedules are crons of the workflow trigger, not time windows. |
 | `timezone` ignored | Convert the intended times to UTC in the crons. |
 | `automergeType: branch`, `platformAutomerge: false`, `dependencyDashboardApproval` | Explain the deps behavior (platform automerge of the PR; no approval gate) and confirm with the user. |
 | `pin`/`rangeStrategy`/`versioning` dropped next to `matchUpdateTypes` | Move the field to a rule without `updateTypes` (deps decides these before the update type is known). |
+| `versioning` (or `extractVersion`) dropped next to `currentVersion`/`currentAge` | Move `versioning` to a rule that selects the same deps without `currentVersion`/`currentAge`, if the deps need that scheme. |
+| `prHeader`/`prFooter`: `unsupported Handlebars expression …` | Rewrite the text as a Go template over `.Type`, `.Scope`, `.Name`, `.Group`, `.From`, `.To`, `.UpdateType`, `.Count`, `.IsSecurity` (`{{if}}` and `{{with}}` work), or drop it. |
 
 Warnings marked `(from a built-in preset)` are info-level: they come from Renovate's own presets, not from the repository.
 

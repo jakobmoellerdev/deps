@@ -24,7 +24,7 @@ var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versionin
 	"replacementVersion", "replacementPrefix", "separateMajorMinor",
 	"separateMultipleMajor", "separateMinorPatch", "group", "commitType", "commitScope", "schedule",
 	"minimumReleaseAge", "minimumReleaseAgeBehaviour", "automerge", "automergeStrategy", "automergeType",
-	"labels", "addLabels", "reviewers", "assignees"}
+	"labels", "addLabels", "reviewers", "assignees", "prHeader", "prFooter"}
 
 // rulesFrom translates the rule sources in order: top-level semantic commit settings,
 // manager blocks, update-type blocks, packageRules and ignoreDeps.
@@ -122,6 +122,25 @@ func regexEntry(p string) string {
 
 func prefixEntry(p string) string { return "/^" + regexp.QuoteMeta(p) + "/" }
 
+// currentValue converts a matchCurrentValue pattern into the currentVersion regex form.
+// Renovate's regexes (/re/, /re/i, !/re/) carry over; another value is a case-insensitive
+// minimatch glob, which deps can express only when it is an exact string (a leading ! negates
+// it).
+func currentValue(v string) (string, bool) {
+	if body := strings.TrimPrefix(v, "!"); len(body) > 1 && body[0] == '/' &&
+		(strings.HasSuffix(body, "/") || strings.HasSuffix(body, "/i")) {
+		return v, true
+	}
+	neg, body := "", v
+	if rest, ok := strings.CutPrefix(v, "!"); ok {
+		neg, body = "!", rest
+	}
+	if body == "" || strings.ContainsAny(body, `*?[]{}()\!+@`) {
+		return "", false
+	}
+	return neg + "/^" + regexp.QuoteMeta(body) + "$/i", true
+}
+
 // knownDatasource reports whether ds is a deps datasource name or custom.<name> of a
 // translated custom datasource.
 func (t *translator) knownDatasource(ds string) bool {
@@ -156,6 +175,12 @@ func (t *translator) rule(origin string, r map[string]any) {
 	var current omap // currentVersion, currentAge
 	hasManagers, hasCats := false, false
 	keys := slices.Sorted(mapKeys(r))
+	if _, ok := r["matchCurrentVersion"]; ok {
+		if _, ok := r["matchCurrentValue"]; ok {
+			t.n.warn(origin, "matchCurrentVersion and matchCurrentValue together cannot be expressed (one currentVersion); rule dropped")
+			return
+		}
+	}
 	list := func(k string) ([]string, bool) {
 		l, ok := strs(r[k])
 		if !ok {
@@ -253,6 +278,18 @@ func (t *translator) rule(origin string, r map[string]any) {
 				return
 			}
 			current.set(map[string]string{"matchCurrentVersion": "currentVersion", "matchCurrentAge": "currentAge"}[k], v)
+		case "matchCurrentValue":
+			v, ok := r[k].(string)
+			if !ok {
+				t.n.warn(origin, "%s must be a string; rule dropped", k)
+				return
+			}
+			cv, ok := currentValue(v)
+			if !ok {
+				t.n.warn(origin, "matchCurrentValue %q: globs have no deps equivalent; rule dropped", v)
+				return
+			}
+			current.set("currentVersion", cv)
 		case "matchManagers":
 			hasManagers, managers = true, l
 		case "matchCategories":
@@ -292,6 +329,19 @@ func (t *translator) rule(origin string, r map[string]any) {
 		for _, k := range []string{"pin", "rangeStrategy", "versioning", "extractVersion", "replacementName", "replacementVersion", "replacementPrefix"} {
 			if e, ok := eff[k]; ok {
 				t.n.warn(origin+"."+e.src, "deps decides %s before the update type is known; dropped", k)
+				delete(eff, k)
+			}
+		}
+	}
+	// deps compares currentVersion and currentAge under the versioning other rules decide.
+	for _, c := range current {
+		ks := []string{"versioning"}
+		if c.k == "currentAge" {
+			ks = append(ks, "extractVersion")
+		}
+		for _, k := range ks {
+			if e, ok := eff[k]; ok {
+				t.n.warn(origin+"."+e.src, "deps cannot combine %s with %s; dropped", k, c.k)
 				delete(eff, k)
 			}
 		}
@@ -431,6 +481,10 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 				set(k, l)
 			} else {
 				t.n.warn(p, "must be a list of strings; ignored")
+			}
+		case "prHeader", "prFooter":
+			if s, ok := t.prText(p, v); ok {
+				set(k, s)
 			}
 		case "groupName":
 			set("group", v)
