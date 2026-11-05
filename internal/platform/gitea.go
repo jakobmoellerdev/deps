@@ -2,17 +2,23 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // giteaClient serves Gitea and Forgejo (same API surface).
 type giteaClient struct {
 	rest
 	forgejo bool // the merge form field is "Do" on Forgejo, "do" on Gitea
+
+	labelsMu     sync.Mutex
+	labels       map[string]int64 // lowercase name -> id of the labels loaded so far
+	labelSources int              // label lists loaded: the repository's, then the organization's
 }
 
 func giteaHeaders(token string) func(http.Header) {
@@ -154,14 +160,38 @@ func (g *giteaClient) CreateIssue(ctx context.Context, title, body string, label
 	return out.issue(), nil
 }
 
-// labelIDs resolves label names (case-insensitive) to ids.
+// SetPRMetadata adds the labels by id (names resolved like CreateIssue's).
+func (g *giteaClient) SetPRMetadata(ctx context.Context, n int, m PRMetadata) error {
+	var labels any
+	var errs []error
+	if len(m.Labels) > 0 {
+		ids, err := g.labelIDs(ctx, m.Labels)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("labels of #%d: %w", n, err))
+		case len(ids) > 0:
+			labels = ids
+		}
+	}
+	return errors.Join(append(errs, setPRMetadata(ctx, &g.rest, g.headers, g.repo, n, labels, m))...)
+}
+
+// labelIDs resolves label names (case-insensitive) to ids: the repository's labels, then its
+// organization's, each listed at most once per client and only while names are missing.
 func (g *giteaClient) labelIDs(ctx context.Context, names []string) ([]int64, error) {
 	if len(names) == 0 {
 		return nil, nil
 	}
-	byName := map[string]int64{}
+	g.labelsMu.Lock()
+	defer g.labelsMu.Unlock()
+	if g.labels == nil {
+		g.labels = map[string]int64{}
+	}
+	byName := g.labels
 	owner, _, _ := strings.Cut(g.repo, "/")
-	for _, base := range []string{"/repos/" + g.repo + "/labels", "/orgs/" + owner + "/labels"} {
+	bases := []string{"/repos/" + g.repo + "/labels", "/orgs/" + owner + "/labels"}
+	for ; g.labelSources < len(bases) && !allKnown(byName, names); g.labelSources++ {
+		base := bases[g.labelSources]
 		for page := 1; page <= 10; page++ {
 			var ls []struct {
 				ID   int64  `json:"id"`
@@ -183,15 +213,12 @@ func (g *giteaClient) labelIDs(ctx context.Context, names []string) ([]int64, er
 				break
 			}
 		}
-		if allKnown(byName, names) {
-			break
-		}
 	}
 	var ids []int64
 	for _, n := range names {
 		id, ok := byName[strings.ToLower(n)]
 		if !ok {
-			slog.WarnContext(ctx, "label not found, creating the issue without it", "label", n, "repo", g.repo)
+			slog.WarnContext(ctx, "label not found, leaving it out", "label", n, "repo", g.repo)
 			continue
 		}
 		ids = append(ids, id)

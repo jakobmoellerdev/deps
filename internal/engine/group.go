@@ -24,6 +24,8 @@ type Group struct {
 	Automerge         bool
 	AutomergeStrategy string
 	AutomergeBranch   bool
+	// Labels, Reviewers and Assignees are the union over the updates, in first-seen order.
+	Labels, Reviewers, Assignees []string
 }
 
 // GroupManager is the Group.Manager of policy groups.
@@ -78,11 +80,26 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 			g.AutomergeStrategy = g.Updates[0].AutomergeStrategy
 			g.AutomergeBranch = !slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return u.AutomergeType != config.AutomergeTypeBranch })
 		}
+		for _, u := range g.Updates {
+			g.Labels = union(g.Labels, u.Labels)
+			g.Reviewers = union(g.Reviewers, u.Reviewers)
+			g.Assignees = union(g.Assignees, u.Assignees)
+		}
 	}
 	slices.SortFunc(groups, func(a, b Group) int {
 		return cmp.Or(strings.Compare(a.Manager, b.Manager), strings.Compare(a.Name, b.Name), strings.Compare(a.Branch, b.Branch))
 	})
 	return groups
+}
+
+// union appends the entries of add missing from dst.
+func union(dst, add []string) []string {
+	for _, s := range add {
+		if !slices.Contains(dst, s) {
+			dst = append(dst, s)
+		}
+	}
+	return dst
 }
 
 // Local splits updates into the ones plan and apply write and the ones only `run` proposes

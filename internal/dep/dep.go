@@ -124,6 +124,9 @@ type Update struct {
 	// Lockfile marks a lockfile-only update (rangeStrategy update-lockfile): the range admits
 	// NewVersion, so the manifest stays unchanged and only the lockfile moves from Dep.Locked.
 	Lockfile bool
+	// Labels, Reviewers and Assignees go on the PR when it is created; a group's PR gets the
+	// union over its updates.
+	Labels, Reviewers, Assignees []string
 }
 
 // Maintenance reports whether u is a lock file maintenance update.

@@ -237,6 +237,13 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
 			continue
 		}
+		if a.Status == StatusCreated && a.Number > 0 {
+			if m := (platform.PRMetadata{Labels: grp.Labels, Reviewers: grp.Reviewers, Assignees: grp.Assignees}); !m.Empty() {
+				if err := pc.SetPRMetadata(ctx, a.Number, m); err != nil {
+					errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
+				}
+			}
+		}
 		if grp.Automerge && target != nil {
 			if err := automerge(ctx, o, grp, &a, *target, pc); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))

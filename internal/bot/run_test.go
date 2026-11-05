@@ -103,10 +103,11 @@ type fakePC struct {
 	open, closed []platform.PR
 	mergeable    *bool // returned by GetPR
 	headSHA      string
-	fail         map[string]error // EnableAutoMerge errors are keyed by the PR number
-	got          []int            // GetPR numbers
-	created      []string         // heads
-	bodies       []string         // CreatePR bodies
+	fail         map[string]error            // EnableAutoMerge errors are keyed by the PR number
+	got          []int                       // GetPR numbers
+	created      []string                    // heads
+	metadata     map[int]platform.PRMetadata // SetPRMetadata calls by PR number
+	bodies       []string                    // CreatePR bodies
 	updated      []int
 	closedNow    []int
 
@@ -162,6 +163,13 @@ func (c *fakePC) ClosePR(_ context.Context, n int) error {
 	}
 	c.closedNow = append(c.closedNow, n)
 	return nil
+}
+func (c *fakePC) SetPRMetadata(_ context.Context, n int, m platform.PRMetadata) error {
+	if c.metadata == nil {
+		c.metadata = map[int]platform.PRMetadata{}
+	}
+	c.metadata[n] = m
+	return fail(c.fail, "SetPRMetadata", strconv.Itoa(n))
 }
 func (c *fakePC) EnableAutoMerge(_ context.Context, pr platform.PR, strategy string) error {
 	c.automerge = append(c.automerge, fmt.Sprintf("%d:%s@%s", pr.Number, strategy, pr.HeadSHA))

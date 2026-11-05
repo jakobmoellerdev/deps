@@ -519,6 +519,38 @@
           ],
           "description": "Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch.",
           "markdownDescription": "Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."
+        },
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates.",
+          "markdownDescription": "Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."
+        },
+        "addLabels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Labels added to those of earlier rules and the top level for new PRs of matching deps.",
+          "markdownDescription": "Labels added to those of earlier rules and the top level for new PRs of matching deps."
+        },
+        "reviewers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates.",
+          "markdownDescription": "Replaces the reviewers of new PRs of matching deps (user names or team:\\<slug>); [] removes them. A group's PR requests the reviewers of all its updates."
+        },
+        "assignees": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates.",
+          "markdownDescription": "Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates."
         }
       },
       "additionalProperties": false,
@@ -749,6 +781,30 @@
       "description": "How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail).",
       "default": "pr",
       "markdownDescription": "How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail).\n\n`pr` (the default) requests the platform's auto-merge for the update PR. `branch` is Renovate's branch automerge: updates land on the base branch without a PR, so passing updates are silent.\n\n1. deps pushes the update branch (one commit on top of the base) and opens no PR.\n2. Later runs read the commit statuses and check runs of the branch tip:\n   - none reported yet, or still running: `branch automerge waiting for checks`;\n   - all green: deps fast-forwards the base branch to the branch with `git push --force-with-lease` (so the push fails if the base moved) and deletes the branch (`merged`);\n   - one failed: deps opens the PR, noting why in its body, and requests platform auto-merge for it like `automergeType: pr`.\n3. A branch behind the base, or with other content, is rebuilt and pushed again, whatever `rebaseWhen` says: only a branch directly on the base can be fast-forwarded. Its checks then start over.\n4. Only one branch is merged per run, because merging moves the base. Other green branches report `branch automerge next run`; the next run rebases and merges them one by one.\n5. If the base branch declines the push (branch protection, a required PR, a pre-receive hook), deps opens the PR instead, as for failed checks.\n\n- CI must run on pushes to the update branches (`deps/**`), and the token must be allowed to push to the base branch. On GitHub a protected base branch needs the token's App or user on the bypass list; on Gitea and Forgejo it needs push access in the branch protection (*Enable push*, with the user allowlisted if restricted).\n- A repository without any checks never merges: the branch waits. Tick it under **Pending branch automerge** on the [dashboard](#dependencydashboard) to open its PR instead.\n- Once a PR exists for the branch, it stays a PR and is automerged as such; the strategy then applies again.\n- New branches count toward the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`) of the run that pushes them, as does raising a PR for a failed branch.\n- Branches no update wants anymore and without a PR are deleted after an error-free run (`deleted`), unless someone else committed to them.\n- A group merges its branch only when **every** update in it uses `automergeType: branch`; otherwise it automerges as a PR. Lock file maintenance follows the top-level value."
+    },
+    "labels": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels).",
+      "markdownDescription": "Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels)."
+    },
+    "reviewers": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "Reviewers requested on new update PRs: user names, or team:<slug> for a team of the repository's organization. Rules replace them.",
+      "markdownDescription": "Reviewers requested on new update PRs: user names, or team:\\<slug> for a team of the repository's organization. Rules replace them."
+    },
+    "assignees": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "Users assigned to new update PRs. Rules replace them.",
+      "markdownDescription": "Users assigned to new update PRs. Rules replace them."
     },
     "dependencyDashboard": {
       "type": "boolean",

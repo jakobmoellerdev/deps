@@ -4,6 +4,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -51,6 +52,26 @@ type Issue struct {
 	URL    string
 }
 
+// PRMetadata is what a new update PR gets besides its title and body.
+type PRMetadata struct{ Labels, Reviewers, Assignees []string }
+
+// Empty reports whether m sets nothing.
+func (m PRMetadata) Empty() bool {
+	return len(m.Labels) == 0 && len(m.Reviewers) == 0 && len(m.Assignees) == 0
+}
+
+// splitReviewers separates team:<slug> reviewers (config.TeamPrefix) from user names.
+func splitReviewers(rs []string) (users, teams []string) {
+	for _, r := range rs {
+		if t, ok := strings.CutPrefix(r, "team:"); ok {
+			teams = append(teams, t)
+		} else {
+			users = append(users, r)
+		}
+	}
+	return users, teams
+}
+
 // CheckState is the combined state of the commit statuses and check runs of a commit.
 type CheckState string
 
@@ -83,6 +104,10 @@ type Client interface {
 	CreatePR(ctx context.Context, head, base, title, body string) (PR, error)
 	UpdatePR(ctx context.Context, number int, title, body string) error
 	ClosePR(ctx context.Context, number int) error
+	// SetPRMetadata adds labels (by name), requests reviewers (users, or team:<slug> teams)
+	// and adds assignees on PR number; empty lists are skipped. Each part is attempted; the
+	// failures are joined.
+	SetPRMetadata(ctx context.Context, number int, m PRMetadata) error
 	// EnableAutoMerge asks the forge to merge pr with strategy (config.AutomergeStrategies;
 	// auto = the repository default) once its required checks pass. It returns
 	// ErrAutoMergePending or ErrAutoMergeUnavailable (wrapped) when that is not possible now;

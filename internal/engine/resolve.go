@@ -439,6 +439,9 @@ func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Mana
 				Automerge:         cfg.Automerge,
 				AutomergeStrategy: cmp.Or(cfg.AutomergeStrategy, config.StrategyAuto),
 				AutomergeType:     cmp.Or(cfg.AutomergeType, config.AutomergeTypePR),
+				Labels:            cfg.Labels,
+				Reviewers:         cfg.Reviewers,
+				Assignees:         cfg.Assignees,
 			})
 		}
 	}
@@ -823,6 +826,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 		kp := r.pol.of(up.Type)
 		up.CommitType, up.CommitScope = kp.CommitType, kp.CommitScope
 		up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
+		up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
 		if len(up.Advisories) == 0 {
 			up.Group, up.Schedule = kp.Group, kp.Schedule
 		}

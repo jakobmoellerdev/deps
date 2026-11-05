@@ -30,6 +30,7 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
   - [Merge right after CI](#merge-right-after-ci)
 - [Automerge](#automerge)
 - [Dependency dashboard](#dependency-dashboard)
+- [Labels, reviewers and assignees](#labels-reviewers-and-assignees)
 - [Overlapping runs](#overlapping-runs)
 - [Step summary](#step-summary)
 - [Dry runs and config checks](#dry-runs-and-config-checks)
@@ -600,6 +601,23 @@ rules:
 ## Dependency dashboard
 
 With [`dependencyDashboard: true`](reference/configuration.md#dependencydashboard), `deps run` maintains one issue. It lists the updates waiting for their schedule, rate-limited and blocked updates, open PRs, errors, and the detected dependencies. Ticking a checkbox makes the next run create, recreate or rebase that PR. The token needs `issues: write`, and the repository must have issues enabled. The title, labels and the exact list are in the [configuration reference](reference/configuration.md#dependencydashboard).
+
+## Labels, reviewers and assignees
+
+[`labels`](reference/configuration.md#labels), [`reviewers`](reference/configuration.md#reviewers) and [`assignees`](reference/configuration.md#assignees), top-level or per rule (where `addLabels` adds to the labels instead of replacing them), are set on each PR deps creates. A group's PR gets those of all its updates. For example, label every PR for release notes tooling and route Go updates to a team:
+
+```yaml
+labels: [dependencies]
+rules:
+  - manager: gomod
+    addLabels: [go]
+    reviewers: [team:backend]
+```
+
+- **Only new PRs.** They are set right after the PR is created; later runs don't change them, so labels, reviewers and assignees someone adds or removes by hand stay. A config change applies to PRs created after it.
+- **Failures.** If a part fails (an unknown user, a team without access), the PR is still created and the run reports the error, e.g. `deps/gomod/x: request reviewers of #12: 422 …`.
+- **GitHub.** Labels that don't exist are created by GitHub. Teams are `team:<slug>` of the repository's organization. The token needs `pull-requests: write`.
+- **Gitea and Forgejo.** Labels must exist in the repository or its organization; missing ones are left out with a warning. Reviewers and assignees need write access to the repository.
 
 ## Overlapping runs
 

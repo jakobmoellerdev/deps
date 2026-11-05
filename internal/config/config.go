@@ -181,6 +181,10 @@ type Config struct {
 	Automerge             bool   `yaml:"automerge" jsonschema:"default=false" jsonschema_description:"Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only."`
 	AutomergeStrategy     string `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase,default=auto" jsonschema_description:"Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase."`
 	AutomergeType         string `yaml:"automergeType" jsonschema:"enum=pr,enum=branch,default=pr" jsonschema_description:"How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail)."`
+	// Labels, Reviewers and Assignees are set on new update PRs; rules override them.
+	Labels    []string `yaml:"labels" jsonschema_description:"Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels)."`
+	Reviewers []string `yaml:"reviewers" jsonschema_description:"Reviewers requested on new update PRs: user names, or team:<slug> for a team of the repository's organization. Rules replace them."`
+	Assignees []string `yaml:"assignees" jsonschema_description:"Users assigned to new update PRs. Rules replace them."`
 	// DependencyDashboard* configure the dashboard issue (Renovate's :dependencyDashboard).
 	DependencyDashboard       bool     `yaml:"dependencyDashboard" jsonschema:"default=false" jsonschema_description:"Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched."`
 	DependencyDashboardTitle  string   `yaml:"dependencyDashboardTitle" jsonschema:"default=Dependency Dashboard" jsonschema_description:"Title of the dependency dashboard issue; the issue is found by this exact title."`
@@ -231,6 +235,37 @@ func validateAutomerge(f, strategy, typ string, add addFunc) {
 	}
 	if typ != "" && !slices.Contains(AutomergeTypes, typ) {
 		add(f+"automergeType", "must be one of %s, got %q", list(AutomergeTypes), typ)
+	}
+}
+
+// TeamPrefix marks a team reviewer: team:<slug>.
+const TeamPrefix = "team:"
+
+// userRe matches forge user and team names.
+var userRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validatePRMeta checks labels, addLabels, reviewers and assignees of the top level (f "")
+// or a rule (f "rules[i].").
+func validatePRMeta(f string, labels, addLabels, reviewers, assignees []string, add addFunc) {
+	for _, key := range []struct {
+		name string
+		ls   []string
+	}{{"labels", labels}, {"addLabels", addLabels}} {
+		for i, l := range key.ls {
+			if strings.TrimSpace(l) == "" || strings.Contains(l, ",") {
+				add(fmt.Sprintf("%s%s[%d]", f, key.name, i), "must be a non-blank label name without ',', got %q", l)
+			}
+		}
+	}
+	for i, r := range reviewers {
+		if !userRe.MatchString(strings.TrimPrefix(r, TeamPrefix)) {
+			add(fmt.Sprintf("%sreviewers[%d]", f, i), "must be a user name or team:<slug>, got %q", r)
+		}
+	}
+	for i, a := range assignees {
+		if !userRe.MatchString(a) {
+			add(fmt.Sprintf("%sassignees[%d]", f, i), "must be a user name, got %q", a)
+		}
 	}
 }
 
@@ -325,10 +360,14 @@ type Rule struct {
 	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
 	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
 	// MinimumReleaseAgeBehaviour overrides the top-level minimumReleaseAgeBehaviour when set.
-	MinimumReleaseAgeBehaviour string `yaml:"minimumReleaseAgeBehaviour" jsonschema:"enum=timestamp-optional,enum=timestamp-required" jsonschema_description:"Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updateTypes: for candidates of those types)."`
-	Automerge                  *bool  `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
-	AutomergeStrategy          string `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
-	AutomergeType              string `yaml:"automergeType" jsonschema:"enum=pr,enum=branch" jsonschema_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
+	MinimumReleaseAgeBehaviour string   `yaml:"minimumReleaseAgeBehaviour" jsonschema:"enum=timestamp-optional,enum=timestamp-required" jsonschema_description:"Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updateTypes: for candidates of those types)."`
+	Automerge                  *bool    `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
+	AutomergeStrategy          string   `yaml:"automergeStrategy" jsonschema:"enum=auto,enum=merge,enum=squash,enum=rebase" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
+	AutomergeType              string   `yaml:"automergeType" jsonschema:"enum=pr,enum=branch" jsonschema_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
+	Labels                     []string `yaml:"labels" jsonschema_description:"Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."`
+	AddLabels                  []string `yaml:"addLabels" jsonschema_description:"Labels added to those of earlier rules and the top level for new PRs of matching deps."`
+	Reviewers                  []string `yaml:"reviewers" jsonschema_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
+	Assignees                  []string `yaml:"assignees" jsonschema_description:"Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates."`
 
 	allow    *Allowed
 	schedule *schedule.Set
@@ -612,6 +651,7 @@ func (c *Config) Validate() error {
 	if c.DependencyDashboardTitle != "" && (strings.TrimSpace(c.DependencyDashboardTitle) == "" || strings.ContainsAny(c.DependencyDashboardTitle, "\r\n")) {
 		add("dependencyDashboardTitle", "must be a non-blank single line, got %q", c.DependencyDashboardTitle)
 	}
+	validatePRMeta("", c.Labels, nil, c.Reviewers, c.Assignees, add)
 	for i, l := range c.DependencyDashboardLabels {
 		if strings.TrimSpace(l) == "" || strings.Contains(l, ",") {
 			add(fmt.Sprintf("dependencyDashboardLabels[%d]", i), "must be a non-blank label name without ',', got %q", l)
@@ -749,6 +789,7 @@ func (c *Config) validateRule(i int, add addFunc) {
 		add(f+".commitScope", "must match %s, got %q", commitScopeRe, *r.CommitScope)
 	}
 	validateAutomerge(f+".", r.AutomergeStrategy, r.AutomergeType, add)
+	validatePRMeta(f+".", r.Labels, r.AddLabels, r.Reviewers, r.Assignees, add)
 	r.schedule = parseSchedule(f+".schedule", r.Schedule, add)
 	r.minAge = nil
 	if r.MinimumReleaseAge != "" {

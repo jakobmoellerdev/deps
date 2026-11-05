@@ -48,6 +48,8 @@ type Policy struct {
 	AutomergeStrategy string
 	// AutomergeType is how the update is automerged (AutomergeTypes).
 	AutomergeType string
+	// Labels, Reviewers and Assignees go on the update's new PR.
+	Labels, Reviewers, Assignees []string
 	// PR buckets (separateMajorMinor, separateMultipleMajor, separateMinorPatch).
 	SeparateMajorMinor, SeparateMultipleMajor, SeparateMinorPatch bool
 }
@@ -133,6 +135,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		Automerge:             c.Automerge,
 		AutomergeStrategy:     cmp.Or(c.AutomergeStrategy, StrategyAuto),
 		AutomergeType:         cmp.Or(c.AutomergeType, AutomergeTypePR),
+		Labels:                c.Labels,
+		Reviewers:             c.Reviewers,
+		Assignees:             c.Assignees,
 	}
 	if production(d) {
 		p.CommitType = CommitFix
@@ -218,6 +223,20 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType) Policy {
 		}
 		if r.AutomergeType != "" {
 			p.AutomergeType = r.AutomergeType
+		}
+		if r.Labels != nil {
+			p.Labels = r.Labels
+		}
+		for _, l := range r.AddLabels {
+			if !slices.Contains(p.Labels, l) {
+				p.Labels = append(slices.Clip(p.Labels), l)
+			}
+		}
+		if r.Reviewers != nil {
+			p.Reviewers = r.Reviewers
+		}
+		if r.Assignees != nil {
+			p.Assignees = r.Assignees
 		}
 	}
 	return p

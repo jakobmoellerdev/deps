@@ -249,6 +249,41 @@ func (g *githubClient) ListPRs(ctx context.Context, state string, maxPages int) 
 	})
 }
 
+func (g *githubClient) SetPRMetadata(ctx context.Context, n int, m PRMetadata) error {
+	var labels any
+	if len(m.Labels) > 0 {
+		labels = m.Labels
+	}
+	return setPRMetadata(ctx, &g.rest, g.headers, g.repo, n, labels, m)
+}
+
+// setPRMetadata is SetPRMetadata over the REST paths GitHub, Gitea and Forgejo share; labels
+// is the forge's form of m.Labels (names, or Gitea ids), nil for none.
+func setPRMetadata(ctx context.Context, r *rest, h func(http.Header), repo string, n int, labels any, m PRMetadata) error {
+	var errs []error
+	if labels != nil {
+		if err := r.do(ctx, http.MethodPost, issuePath(repo, n)+"/labels", map[string]any{"labels": labels}, nil, h); err != nil {
+			errs = append(errs, fmt.Errorf("add labels to #%d: %w", n, err))
+		}
+	}
+	if len(m.Reviewers) > 0 {
+		users, teams := splitReviewers(m.Reviewers)
+		in := struct {
+			Reviewers []string `json:"reviewers,omitempty"`
+			Teams     []string `json:"team_reviewers,omitempty"`
+		}{users, teams}
+		if err := r.do(ctx, http.MethodPost, prPath(repo, n)+"/requested_reviewers", in, nil, h); err != nil {
+			errs = append(errs, fmt.Errorf("request reviewers of #%d: %w", n, err))
+		}
+	}
+	if len(m.Assignees) > 0 {
+		if err := r.do(ctx, http.MethodPatch, issuePath(repo, n), map[string][]string{"assignees": m.Assignees}, nil, h); err != nil {
+			errs = append(errs, fmt.Errorf("assign #%d: %w", n, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // githubUnavailableRe matches enablePullRequestAutoMerge errors after which GitHub will not
 // auto-merge the PR: the repository disallows auto-merge, or the PR can be merged right away
 // ("Pull request Pull request is in clean status"), so there is nothing to wait for.

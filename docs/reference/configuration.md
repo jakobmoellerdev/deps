@@ -112,6 +112,9 @@ customDatasources:
 - [`automerge`](#automerge)
 - [`automergeStrategy`](#automergestrategy)
 - [`automergeType`](#automergetype)
+- [`labels`](#labels)
+- [`reviewers`](#reviewers)
+- [`assignees`](#assignees)
 - [`dependencyDashboard`](#dependencydashboard)
 - [`dependencyDashboardTitle`](#dependencydashboardtitle)
 - [`dependencyDashboardLabels`](#dependencydashboardlabels)
@@ -141,6 +144,10 @@ customDatasources:
   - [`rules[].automerge`](#rulesautomerge)
   - [`rules[].automergeStrategy`](#rulesautomergestrategy)
   - [`rules[].automergeType`](#rulesautomergetype)
+  - [`rules[].labels`](#ruleslabels)
+  - [`rules[].addLabels`](#rulesaddlabels)
+  - [`rules[].reviewers`](#rulesreviewers)
+  - [`rules[].assignees`](#rulesassignees)
 - [`custom`](#custom)
   - [`custom[].files`](#customfiles)
   - [`custom[].match`](#custommatch)
@@ -639,6 +646,24 @@ How updates are automerged: pr (platform auto-merge of the PR) or branch (push t
 - Branches no update wants anymore and without a PR are deleted after an error-free run (`deleted`), unless someone else committed to them.
 - A group merges its branch only when **every** update in it uses `automergeType: branch`; otherwise it automerges as a PR. Lock file maintenance follows the top-level value.
 
+## `labels`
+
+Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels).
+
+- **Type:** list of strings
+
+## `reviewers`
+
+Reviewers requested on new update PRs: user names, or team:\<slug> for a team of the repository's organization. Rules replace them.
+
+- **Type:** list of strings
+
+## `assignees`
+
+Users assigned to new update PRs. Rules replace them.
+
+- **Type:** list of strings
+
 ## `dependencyDashboard`
 
 Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched.
@@ -927,6 +952,30 @@ Overrides the top-level automergeType for matching deps; a group merges its bran
 
 - **Type:** string
 - **Values:** `pr`, `branch`
+
+### `rules[].labels`
+
+Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates.
+
+- **Type:** list of strings
+
+### `rules[].addLabels`
+
+Labels added to those of earlier rules and the top level for new PRs of matching deps.
+
+- **Type:** list of strings
+
+### `rules[].reviewers`
+
+Replaces the reviewers of new PRs of matching deps (user names or team:\<slug>); [] removes them. A group's PR requests the reviewers of all its updates.
+
+- **Type:** list of strings
+
+### `rules[].assignees`
+
+Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates.
+
+- **Type:** list of strings
 
 ## `custom`
 
