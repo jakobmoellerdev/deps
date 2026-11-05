@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // indexVersion is what deps keeps of one chart version of an index.yaml.

@@ -3,7 +3,7 @@ package helm
 import (
 	"strings"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // argoSpec extracts the Helm sources of an Argo CD Application spec (or an ApplicationSet's

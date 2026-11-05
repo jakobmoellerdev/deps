@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )

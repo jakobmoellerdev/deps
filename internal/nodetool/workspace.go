@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // rootManifest holds the package.json fields of a lock root that nodetool needs.

@@ -3,7 +3,7 @@ package helm
 import (
 	"strings"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // k0sChart extracts a k0s Chart resource (helm.k0sproject.io): spec.chartName and spec.version,

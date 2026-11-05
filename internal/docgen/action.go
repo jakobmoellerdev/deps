@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // ActionUsage is one usage snippet of the action reference: a workflow step using the action
