@@ -363,12 +363,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		}
 	}
 	unifyShared(ctx, res.Updates)
-	slices.SortStableFunc(res.Updates, func(a, b dep.Update) int {
-		if c := strings.Compare(a.Dep.File, b.Dep.File); c != 0 {
-			return c
-		}
-		return a.Dep.Line - b.Dep.Line
-	})
+	sortUpdates(res.Updates)
 	slog.InfoContext(ctx, "dependencies resolved", "updates", len(res.Updates), "errors", len(res.Errors), "duration", time.Since(start))
 	prog.End(PhaseResolve)
 	return res, nil
@@ -1789,4 +1784,15 @@ func minFix(s versioning.Scheme, cur string, v Vuln) string {
 		}
 	}
 	return m
+}
+
+// sortUpdates orders updates by file, then line, keeping the input order
+// of equal positions.
+func sortUpdates(ups []dep.Update) {
+	stableSortInPlace(ups, func(a, b *dep.Update) int {
+		if c := strings.Compare(a.Dep.File, b.Dep.File); c != 0 {
+			return c
+		}
+		return a.Dep.Line - b.Dep.Line
+	})
 }

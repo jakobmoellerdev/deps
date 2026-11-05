@@ -100,7 +100,7 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 			g.Assignees = union(g.Assignees, u.Assignees)
 		}
 	}
-	slices.SortFunc(groups, func(a, b Group) int {
+	stableSortInPlace(groups, func(a, b *Group) int {
 		return cmp.Or(strings.Compare(a.Manager, b.Manager), strings.Compare(a.Name, b.Name), strings.Compare(a.Branch, b.Branch))
 	})
 	return groups
