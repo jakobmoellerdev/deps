@@ -189,8 +189,14 @@ func (*gradleManager) LockRoots(root string, files []string) []manager.LockRoot 
 		lockfile string
 	}
 	builds := map[string]*build{}
+	locks := map[string][]string{} // lockfiles per build root, each build is scanned once
 	for _, f := range slices.Sorted(slices.Values(files)) {
-		dir, lockfiles := jvmtool.GradleLockRoot(root, f)
+		dir := jvmtool.GradleRoot(root, f)
+		lockfiles, ok := locks[dir]
+		if !ok {
+			lockfiles = jvmtool.GradleLockfiles(root, dir)
+			locks[dir] = lockfiles
+		}
 		if len(lockfiles) == 0 {
 			continue
 		}

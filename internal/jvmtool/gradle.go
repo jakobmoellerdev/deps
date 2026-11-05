@@ -51,13 +51,13 @@ type GradleLocker struct{}
 // buildSrc/ (shared versions) belong to the build above buildSrc, whose scripts use them. ok
 // only when the build locks dependencies or verifies them.
 func (GradleLocker) Scope(_ context.Context, root, manifest string) (string, bool) {
-	dir := gradleRoot(root, manifest)
+	dir := GradleRoot(root, manifest)
 	l := scanGradle(filepath.Join(root, filepath.FromSlash(dir)), true)
 	return dir, len(l.lockfiles) > 0 || l.verification
 }
 
-// gradleRoot returns the build root of manifest (slash paths relative to root).
-func gradleRoot(root, manifest string) string {
+// GradleRoot returns the build root of manifest (slash paths relative to root).
+func GradleRoot(root, manifest string) string {
 	start := path.Dir(manifest)
 	if src, ok := buildSrcSource(manifest); ok {
 		start = src
@@ -135,6 +135,9 @@ func scanGradle(dir string, first bool) gradleLayout {
 			if p != dir && (gradleSkip(p, d) || d.Name() == "buildSrc" || hasAny(p, settingsFiles...)) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".lockfile") {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, p)
@@ -262,11 +265,10 @@ func (GradleLocker) Maintain(ctx context.Context, dir string, files map[string][
 	return out, err
 }
 
-// GradleLockRoot returns the build root of manifest (slash paths relative to root) and the
-// lockfiles of its projects (relative to the build root, sorted).
-func GradleLockRoot(root, manifest string) (string, []string) {
-	dir := gradleRoot(root, manifest)
-	return dir, scanGradle(filepath.Join(root, filepath.FromSlash(dir)), false).lockfiles
+// GradleLockfiles returns the lockfiles of the projects of the build root dir (a slash path
+// relative to root, as GradleRoot returns), relative to dir and sorted.
+func GradleLockfiles(root, dir string) []string {
+	return scanGradle(filepath.Join(root, filepath.FromSlash(dir)), false).lockfiles
 }
 
 // lockfilesOf returns the sorted lockfile names of files.
