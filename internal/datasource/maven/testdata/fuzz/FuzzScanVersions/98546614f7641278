@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("<?xml\xbcversion=\"1.0\"?><version></version>")

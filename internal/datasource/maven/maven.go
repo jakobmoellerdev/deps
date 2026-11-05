@@ -8,6 +8,7 @@
 package mavends
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -390,22 +391,39 @@ func (s *Source) fetchMetadata(ctx context.Context, u string, a *auth) (versions
 	case resp.StatusCode != http.StatusOK:
 		return nil, false, fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
 	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxMetadata))
+	if err != nil {
+		return nil, false, fmt.Errorf("GET %s: malformed metadata: %w", u, err)
+	}
+	if versions, ok := scanVersions(b); ok {
+		return versions, false, nil
+	}
+	versions, err = decodeMetadata(b)
+	if err != nil {
+		return nil, false, fmt.Errorf("GET %s: malformed metadata: %w", u, err)
+	}
+	return versions, false, nil
+}
+
+// decodeMetadata reads the versions of a maven-metadata.xml document with encoding/xml;
+// it handles everything scanVersions declines.
+func decodeMetadata(b []byte) ([]string, error) {
 	var m struct {
 		Versions []string `xml:"versioning>versions>version"`
 	}
-	dec := xml.NewDecoder(io.LimitReader(resp.Body, maxMetadata))
+	dec := xml.NewDecoder(bytes.NewReader(b))
 	// plugins.gradle.org declares US-ASCII, other repositories ISO-8859-1; versions are ASCII.
 	dec.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
 	if err := dec.Decode(&m); err != nil {
-		return nil, false, fmt.Errorf("GET %s: malformed metadata: %w", u, err)
+		return nil, err
 	}
-	versions = make([]string, 0, len(m.Versions))
+	versions := make([]string, 0, len(m.Versions))
 	for _, v := range m.Versions {
 		if v = strings.TrimSpace(v); v != "" {
 			versions = append(versions, v)
 		}
 	}
-	return versions, false, nil
+	return versions, nil
 }
 
 // pomTime HEADs the POM at path below repository r once per run.
