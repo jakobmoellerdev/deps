@@ -1,5 +1,7 @@
 package httpx
 
+import "context"
+
 // Limits are the request semaphores of one run, one pool per upstream, sized from
 // --concurrency n. A datasource holds a slot of its pool for each request (or `go list` run),
 // so one busy upstream can't starve the others: OSV advisory fetches start as soon as their
@@ -41,3 +43,20 @@ func NewLimits(n int) Limits {
 		Maven:   make(chan struct{}, 2*n),
 	}
 }
+
+// Acquire takes a slot of sem, waiting until one is free or ctx is done (then it returns
+// ctx.Err()); release frees the slot. A nil sem is unbounded: Acquire returns a no-op release
+// and no error, even for a done ctx, which the request itself then reports.
+func Acquire(ctx context.Context, sem chan struct{}) (release func(), err error) {
+	if sem == nil {
+		return noRelease, nil
+	}
+	select {
+	case sem <- struct{}{}:
+		return func() { <-sem }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func noRelease() {}

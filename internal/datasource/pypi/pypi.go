@@ -376,10 +376,11 @@ func (s *Source) fetchJSON(ctx context.Context, written, name string) (p project
 		slog.DebugContext(ctx, "pypi project fetched", "name", name, "index", redact(s.base), "api", "json",
 			"versions", len(p.rels), "yanked", yanked, "repository", p.repo, "duration", time.Since(start), "err", err)
 	}()
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return project{}, err
 	}
-	defer s.release()
+	defer release()
 	resp, err := s.get(ctx, target, written, "application/json")
 	if err != nil {
 		return project{}, err
@@ -402,10 +403,11 @@ func (s *Source) fetchSimple(ctx context.Context, idx, written, name string) (p 
 		slog.DebugContext(ctx, "pypi project fetched", "name", name, "index", redact(idx), "api", api,
 			"versions", len(p.rels), "yanked", yanked, "duration", time.Since(start), "err", err)
 	}()
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return project{}, err
 	}
-	defer s.release()
+	defer release()
 	resp, err := s.getSimple(ctx, target, written)
 	if errors.Is(err, errNotAcceptable) {
 		return project{}, fmt.Errorf("%s serves neither the JSON nor the HTML simple API", redact(idx))
@@ -966,24 +968,6 @@ func expectDelim(dec *jsontext.Decoder, d jsontext.Kind) error {
 		return fmt.Errorf("expected %v, got %v", d, tok.Kind())
 	}
 	return nil
-}
-
-func (s *Source) acquire(ctx context.Context) error {
-	if s.sem == nil {
-		return nil
-	}
-	select {
-	case s.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (s *Source) release() {
-	if s.sem != nil {
-		<-s.sem
-	}
 }
 
 // closeBody drains a little of the body so the connection can be reused, then closes it.

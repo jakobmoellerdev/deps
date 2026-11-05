@@ -336,10 +336,11 @@ func apiRepo(repoURL string) (*url.URL, string, error) {
 func (l *Lister) getJSON(ctx context.Context, u *url.URL, path string, v any) (found bool, err error) {
 	_, token, authed := l.auth.Static(u.Hostname())
 	target := u.Scheme + "://" + u.Host + "/api/v1" + path
-	if err := l.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, l.sem)
+	if err != nil {
 		return false, err
 	}
-	defer l.release()
+	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return false, err
@@ -424,10 +425,11 @@ type v2caps struct {
 // advertisement performs the info/refs request. For a v2 server it returns the capabilities;
 // for a v0 server it returns the tags parsed from the ref advertisement.
 func (s *session) advertisement(ctx context.Context) ([]Tag, *v2caps, error) {
-	if err := s.l.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.l.sem)
+	if err != nil {
 		return nil, nil, err
 	}
-	defer s.l.release()
+	defer release()
 	resp, err := s.do(ctx, http.MethodGet, s.url+"/info/refs?service=git-upload-pack", nil)
 	if err != nil {
 		return nil, nil, err
@@ -536,10 +538,11 @@ func (s *session) lsRefs(ctx context.Context, caps *v2caps) ([]Tag, error) {
 	body = appendPkt(body, "ref-prefix refs/tags/\n")
 	body = append(body, "0000"...)
 
-	if err := s.l.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.l.sem)
+	if err != nil {
 		return nil, err
 	}
-	defer s.l.release()
+	defer release()
 	// ls-refs only reads: retry it like a GET.
 	resp, err := s.do(httpx.Idempotent(ctx), http.MethodPost, s.url+"/git-upload-pack", body)
 	if err != nil {
@@ -632,24 +635,6 @@ func (s *session) wrap(err error) error {
 		return fmt.Errorf("ls-refs %s: malformed pkt-line", s.url)
 	}
 	return fmt.Errorf("ls-refs %s: %w", s.url, err)
-}
-
-func (l *Lister) acquire(ctx context.Context) error {
-	if l.sem == nil {
-		return nil
-	}
-	select {
-	case l.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (l *Lister) release() {
-	if l.sem != nil {
-		<-l.sem
-	}
 }
 
 // closeBody drains a little of the body so the connection can be reused, then closes it.

@@ -386,10 +386,11 @@ func (s *Source) fetch(ctx context.Context, reg, name, token string) (rels []dat
 		slog.DebugContext(ctx, "npm metadata fetched", "name", name, "registry", reg, "authenticated", token != "",
 			"versions", len(rels), "deprecated", deprecated, "modified", modified, "duration", time.Since(start), "err", err)
 	}()
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return nil, time.Time{}, err
 	}
-	defer s.release()
+	defer release()
 	target := reg + escapeName(name)
 	resp, err := s.get(ctx, target, name, abbreviated, token)
 	if err != nil {
@@ -437,10 +438,11 @@ func (s *Source) fetchDoc(ctx context.Context, loc location, name string) (times
 		slog.DebugContext(ctx, "npm packument fetched", "name", name, "registry", loc.reg, "authenticated", loc.token != "",
 			"times", len(times), "repository", repo, "duration", time.Since(start), "err", err)
 	}()
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return nil, "", err
 	}
-	defer s.release()
+	defer release()
 	target := loc.reg + escapeName(name)
 	resp, err := s.get(ctx, target, name, "application/json", loc.token)
 	if err != nil {
@@ -619,24 +621,6 @@ func expectDelim(dec *jsontext.Decoder, d jsontext.Kind) error {
 		return fmt.Errorf("expected %v, got %v", d, tok.Kind())
 	}
 	return nil
-}
-
-func (s *Source) acquire(ctx context.Context) error {
-	if s.sem == nil {
-		return nil
-	}
-	select {
-	case s.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (s *Source) release() {
-	if s.sem != nil {
-		<-s.sem
-	}
 }
 
 // closeBody drains a little of the body so the connection can be reused, then closes it.

@@ -427,14 +427,11 @@ type authHeadersKey struct{}
 // do sends one request holding a semaphore slot, authenticated with a (nil = anonymous); the
 // caller closes the body.
 func (s *Source) do(ctx context.Context, method, u string, a *auth) (*http.Response, error) {
-	if s.sem != nil {
-		select {
-		case s.sem <- struct{}{}:
-			defer func() { <-s.sem }()
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
+		return nil, err
 	}
+	defer release()
 	if a != nil && len(a.headers) > 0 {
 		ctx = context.WithValue(ctx, authHeadersKey{}, a.headers)
 	}

@@ -229,10 +229,11 @@ func (s *Source) scan(ctx context.Context, repo string, wanted map[string]bool) 
 	defer func() {
 		slog.DebugContext(ctx, "chart index scanned", "repo", repo, "wanted", len(wanted), "bytes", n.n, "duration", time.Since(start), "err", err)
 	}()
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return nil, err
 	}
-	defer s.release()
+	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("chart repository %s: %w", repo, err)
@@ -248,7 +249,7 @@ func (s *Source) scan(ctx context.Context, repo string, wanted map[string]bool) 
 		return nil, fmt.Errorf("chart repository %s: %w", repo, err)
 	}
 	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
@@ -313,21 +314,3 @@ func ociDep(repo, chart string) dep.Dep {
 
 // ociTag is the OCI tag of chart version v: OCI tags cannot contain "+".
 func ociTag(v string) string { return strings.ReplaceAll(v, "+", "_") }
-
-func (s *Source) acquire(ctx context.Context) error {
-	if s.sem == nil {
-		return ctx.Err()
-	}
-	select {
-	case s.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (s *Source) release() {
-	if s.sem != nil {
-		<-s.sem
-	}
-}

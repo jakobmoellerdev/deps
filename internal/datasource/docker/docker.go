@@ -348,10 +348,11 @@ func (s *Source) pullLimitHint(name string, err error) error {
 // further: their manifest's `org.opencontainers.image.created` and `…source` annotations answer
 // instead. An image config without `created` falls back to the manifest annotation as well.
 func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, string, error) {
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return time.Time{}, "", err
 	}
-	defer s.release()
+	defer release()
 	repo, err := s.repository(name)
 	if err != nil {
 		return time.Time{}, "", err
@@ -434,10 +435,11 @@ func (s *Source) list(ctx context.Context, name string) (rels []datasource.Relea
 	defer func() {
 		slog.DebugContext(ctx, "image tags listed", "repo", name, "tags", len(rels), "listed", len(meta), "duration", time.Since(start), "err", err)
 	}()
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return nil, nil, err
 	}
-	defer s.release()
+	defer release()
 	repo, err := s.repository(name)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list tags %s: %w", name, err)
@@ -466,10 +468,11 @@ func (s *Source) head(ctx context.Context, name, tag string) (digest string, err
 	defer func() {
 		slog.DebugContext(ctx, "image digest resolved", "ref", name+":"+tag, "method", method, "digest", digest, "duration", time.Since(start), "err", err)
 	}()
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return "", err
 	}
-	defer s.release()
+	defer release()
 	repo, err := s.repository(name)
 	if err != nil {
 		return "", fmt.Errorf("digest %s:%s: %w", name, tag, err)
@@ -506,22 +509,4 @@ func repoName(d dep.Dep) (string, error) {
 		return "", fmt.Errorf("image %q: %w", ref, err)
 	}
 	return r.Name, nil
-}
-
-func (s *Source) acquire(ctx context.Context) error {
-	if s.sem == nil {
-		return ctx.Err()
-	}
-	select {
-	case s.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (s *Source) release() {
-	if s.sem != nil {
-		<-s.sem
-	}
 }

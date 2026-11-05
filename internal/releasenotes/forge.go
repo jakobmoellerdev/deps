@@ -86,10 +86,11 @@ func (n *Notes) fetchGitea(ctx context.Context, r repoRef) ([]release, error) {
 	if authed {
 		req.Header.Set("Authorization", "token "+token)
 	}
-	if err := n.acquire(ctx); err != nil {
+	done, err := httpx.Acquire(ctx, n.sem)
+	if err != nil {
 		return nil, err
 	}
-	defer n.release()
+	defer done()
 	resp, err := n.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -122,22 +123,4 @@ func (n *Notes) fetchGitea(ctx context.Context, r repoRef) ([]release, error) {
 		}
 	}
 	return rels, nil
-}
-
-func (n *Notes) acquire(ctx context.Context) error {
-	if n.sem == nil {
-		return ctx.Err()
-	}
-	select {
-	case n.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (n *Notes) release() {
-	if n.sem != nil {
-		<-n.sem
-	}
 }

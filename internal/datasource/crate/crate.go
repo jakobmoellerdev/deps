@@ -347,17 +347,9 @@ var errNotFound = errors.New("not found")
 // hosts (a config.json `api` elsewhere) get no credentials. 404 and 410 (the sparse index's
 // answer for unknown crates) are errNotFound.
 func (s *Source) get(ctx context.Context, r *registry, u string) (io.ReadCloser, error) {
-	if s.sem != nil {
-		select {
-		case s.sem <- struct{}{}:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-	release := func() {
-		if s.sem != nil {
-			<-s.sem
-		}
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
+		return nil, err
 	}
 	var user, pass string // the git credential helper's, after a 401
 	for helped := false; ; {

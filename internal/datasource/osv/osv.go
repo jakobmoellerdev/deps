@@ -410,10 +410,11 @@ func (s *Source) vuln(ctx context.Context, id string) (*vuln, error) {
 
 // do sends one request (holding a sem slot) and decodes the JSON response into out.
 func (s *Source) do(ctx context.Context, method, u string, body []byte, out any) error {
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return err
 	}
-	defer s.release()
+	defer release()
 	var r io.Reader = http.NoBody
 	if body != nil {
 		r = bytes.NewReader(body)
@@ -439,24 +440,6 @@ func (s *Source) do(ctx context.Context, method, u string, body []byte, out any)
 		return fmt.Errorf("%s %s: %w", method, u, err)
 	}
 	return nil
-}
-
-func (s *Source) acquire(ctx context.Context) error {
-	if s.sem == nil {
-		return ctx.Err()
-	}
-	select {
-	case s.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (s *Source) release() {
-	if s.sem != nil {
-		<-s.sem
-	}
 }
 
 // match turns the advisories found for t into Vulns: withdrawn ones and (GitHub Actions)

@@ -147,14 +147,11 @@ func (s *Source) fetch(ctx context.Context) ([]datasource.Release, error) {
 }
 
 func (s *Source) get(ctx context.Context) ([]byte, error) {
-	if s.sem != nil {
-		select {
-		case s.sem <- struct{}{}:
-			defer func() { <-s.sem }()
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
+		return nil, err
 	}
+	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.spec.URL, http.NoBody)
 	if err != nil {
 		return nil, err

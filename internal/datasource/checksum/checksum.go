@@ -167,7 +167,7 @@ func (s *Source) hash(ctx context.Context, d dep.Dep, u string, h hash.Hash) (su
 
 // open opens u with o within the semaphore; release closes the body and frees the slot.
 func (s *Source) open(ctx context.Context, o ArtifactOpener, d dep.Dep, u string) (body io.Reader, release func(), err error) {
-	done, err := s.acquire(ctx)
+	done, err := httpx.Acquire(ctx, s.sem)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -177,19 +177,6 @@ func (s *Source) open(ctx context.Context, o ArtifactOpener, d dep.Dep, u string
 		return nil, nil, err
 	}
 	return rc, func() { _ = rc.Close(); done() }, nil
-}
-
-// acquire takes a semaphore slot; done frees it.
-func (s *Source) acquire(ctx context.Context) (done func(), err error) {
-	if s.sem == nil {
-		return func() {}, nil
-	}
-	select {
-	case s.sem <- struct{}{}:
-		return func() { <-s.sem }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
 }
 
 func (s *Source) fetch(ctx context.Context, u string) (first string, files map[string]string, err error) {
@@ -212,7 +199,7 @@ func (s *Source) fetch(ctx context.Context, u string) (first string, files map[s
 // get requests u within the semaphore and returns the body of a 2xx response; release
 // drains and closes it and frees the semaphore slot.
 func (s *Source) get(ctx context.Context, u string) (body io.Reader, release func(), err error) {
-	done, err := s.acquire(ctx)
+	done, err := httpx.Acquire(ctx, s.sem)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 )
 
@@ -32,10 +33,11 @@ func (s *Source) Hashes(ctx context.Context, d dep.Dep, version string) (hashes 
 		slog.DebugContext(ctx, "pypi hashes fetched", "name", name, "version", version, "index", redact(cmp.Or(idx, s.base)),
 			"hashes", len(hashes), "duration", time.Since(start), "err", err)
 	}()
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return nil, err
 	}
-	defer s.release()
+	defer release()
 	if idx == "" {
 		hashes, err = s.jsonHashes(ctx, d.Name, name, version)
 	} else {

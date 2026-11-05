@@ -107,10 +107,11 @@ func (s *Source) head(ctx context.Context, modPath, dir string) (datasource.Revi
 	var m gotool.Module
 	err := s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
 		if base == "" {
-			if err := s.acquire(ctx); err != nil {
+			release, err := httpx.Acquire(ctx, s.sem)
+			if err != nil {
 				return false, err
 			}
-			defer s.release()
+			defer release()
 			m, err = s.latest(ctx, dir, modPath)
 			return false, err
 		}
@@ -273,10 +274,11 @@ func (s *Source) releaseTime(ctx context.Context, modPath, version, dir string) 
 	var t time.Time
 	err = s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
 		if base == "" {
-			if err := s.acquire(ctx); err != nil {
+			release, err := httpx.Acquire(ctx, s.sem)
+			if err != nil {
 				return false, err
 			}
-			defer s.release()
+			defer release()
 			t, err = s.info(ctx, dir, modPath, version)
 			return false, err
 		}
@@ -396,20 +398,22 @@ func (s *Source) walk(ctx context.Context, modPath string, step func(base, escap
 var errNoProxy = errors.New("no proxy has")
 
 func (s *Source) direct(ctx context.Context, dir, modPath string) ([]string, error) {
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return nil, err
 	}
-	defer s.release()
+	defer release()
 	return s.list(ctx, dir, modPath)
 }
 
 // get2xx GETs url holding a semaphore slot until the response headers arrive; notFound reports
 // a 404 or 410. The caller closes the body of a successful response.
 func (s *Source) get2xx(ctx context.Context, url string) (resp *http.Response, notFound bool, err error) {
-	if err := s.acquire(ctx); err != nil {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
 		return nil, false, err
 	}
-	defer s.release()
+	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, false, err
@@ -449,22 +453,4 @@ func (s *Source) fetch(ctx context.Context, url string) (versions []string, notF
 		return nil, false, fmt.Errorf("GET %s: %w", url, err)
 	}
 	return versions, false, nil
-}
-
-func (s *Source) acquire(ctx context.Context) error {
-	if s.sem == nil {
-		return nil
-	}
-	select {
-	case s.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (s *Source) release() {
-	if s.sem != nil {
-		<-s.sem
-	}
 }

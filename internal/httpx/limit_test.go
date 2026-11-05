@@ -1,6 +1,10 @@
 package httpx
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+)
 
 func TestNewLimits(t *testing.T) {
 	for _, c := range []struct {
@@ -41,5 +45,30 @@ func TestLimitsIndependent(t *testing.T) {
 		for range cap(pools[full]) {
 			<-pools[full]
 		}
+	}
+}
+
+func TestAcquire(t *testing.T) {
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	// nil is unbounded: no error even for a done context, and a callable release.
+	release, err := Acquire(canceled, nil)
+	if err != nil || release == nil {
+		t.Fatalf("Acquire(nil sem): release nil %t, err %v; want a release and no error", release == nil, err)
+	}
+	release()
+
+	sem := make(chan struct{}, 1)
+	release, err = Acquire(t.Context(), sem)
+	if err != nil || len(sem) != 1 {
+		t.Fatalf("Acquire = %v, slots taken %d; want nil, 1", err, len(sem))
+	}
+	if _, err := Acquire(canceled, sem); !errors.Is(err, context.Canceled) {
+		t.Errorf("Acquire(full sem, canceled) = %v, want context.Canceled", err)
+	}
+	release()
+	if len(sem) != 0 {
+		t.Errorf("slots taken after release = %d, want 0", len(sem))
 	}
 }

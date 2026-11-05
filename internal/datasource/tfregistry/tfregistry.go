@@ -283,14 +283,11 @@ func (r *Registry) discover(ctx context.Context, base string) (map[string]string
 
 // getJSON GETs target and decodes the JSON body into v; a 404 returns notFound.
 func (r *Registry) getJSON(ctx context.Context, target string, notFound error, v any) error {
-	if r.sem != nil {
-		select {
-		case r.sem <- struct{}{}:
-			defer func() { <-r.sem }()
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	release, err := httpx.Acquire(ctx, r.sem)
+	if err != nil {
+		return err
 	}
+	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return err
@@ -309,7 +306,7 @@ func (r *Registry) getJSON(ctx context.Context, target string, notFound error, v
 		return err
 	}
 	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 		_ = resp.Body.Close()
 	}()
 	switch {
