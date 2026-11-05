@@ -103,7 +103,9 @@ func pnpmHeads(r *bufio.Reader) ([][]byte, error) {
 	start := true // at the start of a line
 	for {
 		line, err := r.ReadSlice('\n')
-		if start {
+		// Only "---", "packages:" and "snapshots:" are of interest, so
+		// skip the trim for lines that cannot start one of them.
+		if start && len(line) > 0 && (line[0] == '-' || line[0] == 'p' || line[0] == 's') {
 			switch string(bytes.TrimRight(line, " \r\n")) {
 			case "---":
 				if len(head) > 0 {
