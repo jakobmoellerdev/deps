@@ -12,17 +12,25 @@ import (
 // separated by spaces, alternatives by `||`); "" admits everything. Prereleases are admitted
 // like any version (callers filter them); local versions are compared by their public part.
 // As in PEP 440, `<V` excludes the prereleases of V and `>V` its post releases.
+//
+// version is checked against each clause in turn: v is in an intersection exactly when it
+// is in every clause, so the clauses' sets are never intersected.
 func PEP440Admits(spec, version string) (bool, error) {
-	set, err := parsePEP440Set(spec, false)
-	if err != nil {
-		return false, err
-	}
 	v, ok := parsePEP440(version)
+	v.local = ""
+	admits, alts := false, 0
+	for alt := range strings.FieldsFuncSeq(spec, isPipe) {
+		in := true
+		err := eachPEP440Clause(alt, false, func(c pepSet) { in = in && c.contains(v) })
+		if err != nil {
+			return false, fmt.Errorf("invalid version specifier %q: %w", spec, err)
+		}
+		admits, alts = admits || in, alts+1
+	}
 	if !ok {
 		return false, fmt.Errorf("invalid PEP 440 version %q", version)
 	}
-	v.local = ""
-	return set.contains(v), nil
+	return admits || alts == 0, nil // without alternatives spec is blank and admits all
 }
 
 // PEP440Subset reports whether every version admitted by the specifier set a is admitted by
@@ -147,7 +155,7 @@ func (s pepSet) complement() pepSet {
 // are left out of the bounds.
 func parsePEP440Set(spec string, final bool) (pepSet, error) {
 	var out pepSet
-	for alt := range strings.FieldsFuncSeq(spec, func(r rune) bool { return r == '|' }) {
+	for alt := range strings.FieldsFuncSeq(spec, isPipe) {
 		set, err := parsePEP440And(alt, final)
 		if err != nil {
 			return nil, fmt.Errorf("invalid version specifier %q: %w", spec, err)
@@ -160,6 +168,8 @@ func parsePEP440Set(spec string, final bool) (pepSet, error) {
 	return out, nil
 }
 
+func isPipe(r rune) bool { return r == '|' }
+
 // pepSpecOps are the specifier operators, longest first.
 var pepSpecOps = []string{"===", "==", "!=", "~=", "<=", ">=", "<", ">", "^", "~", "="}
 
@@ -167,13 +177,22 @@ var pepSpecOps = []string{"===", "==", "!=", "~=", "<=", ">=", "<", ">", "^", "~
 // operator from its version.
 func parsePEP440And(s string, final bool) (pepSet, error) {
 	set := pepAll
+	if err := eachPEP440Clause(s, final, func(c pepSet) { set = set.intersect(c) }); err != nil {
+		return nil, err
+	}
+	return set, nil
+}
+
+// eachPEP440Clause passes the set of each clause of s to f in order (see parsePEP440And) and
+// stops at the first invalid one.
+func eachPEP440Clause(s string, final bool, f func(pepSet)) error {
 	i := 0
 	for {
 		for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == ',') {
 			i++
 		}
 		if i == len(s) {
-			return set, nil
+			return nil
 		}
 		op := ""
 		for _, o := range pepSpecOps {
@@ -191,13 +210,14 @@ func parsePEP440And(s string, final bool) (pepSet, error) {
 			j++
 		}
 		if i == j {
-			return nil, fmt.Errorf("operator %q without version", op)
+			return fmt.Errorf("operator %q without version", op)
 		}
 		c, err := pepClause(op, s[i:j], final)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		set, i = set.intersect(c), j
+		f(c)
+		i = j
 	}
 }
 
