@@ -203,6 +203,61 @@ func TestEdits(t *testing.T) {
 	}
 }
 
+// Per-action tag prefixes of monorepo actions (grafana/shared-workflows tags
+// actions/get-vault-secrets `get-vault-secrets/v1.3.1`) are not part of the version and are
+// kept by edits; other prefixes are not versions.
+func TestEditsTagPrefix(t *testing.T) {
+	src := "- uses: o/r/actions/x@x/v1.0.2\n" +
+		"- uses: o/r/actions/x@" + sha + " # x/v1.0.2\n" +
+		"- uses: 'o/r/actions/x@actions/x/v1'\n" +
+		"- uses: o/r/actions/x@y/v1\n"
+	deps, err := New().Extract("action.yml", []byte(src), env)
+	if err != nil || len(deps) != 4 {
+		t.Fatalf("deps = %+v, err = %v", deps, err)
+	}
+	for i, w := range []struct{ version, skip string }{{"v1.0.2", ""}, {"v1.0.2", ""}, {"v1", ""}, {"", "non-version ref"}} {
+		if d := deps[i]; d.Version != w.version || d.Skip != w.skip {
+			t.Errorf("%d: version %q skip %q, want %q %q", i, d.Version, d.Skip, w.version, w.skip)
+		}
+	}
+	sha2 := strings.Repeat("b", 40)
+	tests := []struct {
+		u    dep.Update
+		want string
+	}{
+		{dep.Update{Dep: deps[0], NewVersion: "v1.0.4"}, "- uses: o/r/actions/x@x/v1.0.4\n"},
+		{dep.Update{Dep: deps[0], NewVersion: "v1.0.4", NewDigest: sha2}, "- uses: o/r/actions/x@" + sha2 + " # x/v1.0.4\n"},
+		{dep.Update{Dep: deps[1], NewVersion: "v1.0.4", NewDigest: sha2}, "- uses: o/r/actions/x@" + sha2 + " # x/v1.0.4\n"},
+		{dep.Update{Dep: deps[2], NewVersion: "v2"}, "- uses: 'o/r/actions/x@actions/x/v2'\n"},
+		{dep.Update{Dep: deps[2], NewVersion: "v2", NewDigest: sha2}, "- uses: 'o/r/actions/x@" + sha2 + "' # actions/x/v2\n"},
+	}
+	for i, tt := range tests {
+		edits, err := New().Edits(tt.u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := patch.Apply([]byte(src), edits)
+		if err != nil {
+			t.Fatalf("%d: %v", i, err)
+		}
+		if got := strings.SplitAfter(string(out), "\n")[tt.u.Dep.Line-1]; got != tt.want {
+			t.Errorf("%d: got %q, want %q", i, got, tt.want)
+		}
+	}
+}
+
+func TestTagExtract(t *testing.T) {
+	for name, want := range map[string]string{
+		"o/r":           "",
+		"o/r/x":         `^x/(?<version>.+)$`,
+		"o/r/actions/x": `^(?:actions/x|x)/(?<version>.+)$`,
+	} {
+		if got := TagExtract(name); got != want {
+			t.Errorf("TagExtract(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestParseUses(t *testing.T) {
 	for _, tc := range []struct{ in, skip string }{
 		{"noat", "unrecognized uses"},

@@ -112,3 +112,56 @@ rules:
 		t.Errorf("Build:\n%s\nwant:\n%s", changes[0].New, want)
 	}
 }
+
+// An action in a monorepo subdirectory is versioned by its per-action tags when the
+// repository has any (grafana/shared-workflows tags actions/get-vault-secrets
+// `get-vault-secrets/v1.3.1`), written as in the file with or without the prefix and
+// pinned by the prefixed tag's commit; repo-wide tags (v9.0.0) are not its versions. An
+// action whose repository has no such tags keeps the repository's tags.
+func TestResolveActionMonorepoTags(t *testing.T) {
+	const (
+		sw     = "https://github.com/grafana/shared-workflows"
+		codeql = "https://github.com/github/codeql-action"
+		vault  = "grafana/shared-workflows/actions/get-vault-secrets"
+	)
+	monorepo := fakeTags{
+		sw: {"v9.0.0", "get-vault-secrets/v1.3.1", "get-vault-secrets/v1.4.0", "dockerhub-login/v1.0.2",
+			"dockerhub-login/v1.0.4", "get-vault-secrets-v2.0.0"},
+		codeql: {"v3.1.0", "v3.2.0"},
+	}
+	wf := "on: push\njobs:\n  a:\n    runs-on: x\n    steps:\n" +
+		"      - uses: " + vault + "@" + sha(sw+"@get-vault-secrets/v1.3.1") + " # v1.3.1\n" +
+		"      - uses: grafana/shared-workflows/actions/dockerhub-login@dockerhub-login/v1.0.2\n" +
+		"      - uses: github/codeql-action/init@v3.1.0\n"
+	root, cfg := setup(t, "", map[string]string{".github/workflows/ci.yml": wf})
+	res, err := Resolve(t.Context(), root, cfg, env, sources(monorepo, nil))
+	if err != nil || len(res.Errors) != 0 {
+		t.Fatal(err, res.Errors)
+	}
+	var got []string
+	for _, u := range res.Updates {
+		got = append(got, u.Dep.Name+" "+u.NewVersion+" "+u.Dep.ExtractVersion)
+	}
+	want := []string{
+		vault + " v1.4.0 " + `^(?:actions/get-vault-secrets|get-vault-secrets)/(?<version>.+)$`,
+		"grafana/shared-workflows/actions/dockerhub-login v1.0.4 " + `^(?:actions/dockerhub-login|dockerhub-login)/(?<version>.+)$`,
+		"github/codeql-action/init v3.2.0 ",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("updates = %q, want %q", got, want)
+	}
+	updates, _ := Local(res.Updates)
+	changes, errs := Build(t.Context(), root, managers, updates, nil)
+	if len(errs) != 0 || len(changes) != 1 {
+		t.Fatalf("Build = %v, %v", changes, errs)
+	}
+	for n, want := range map[int]string{
+		6: "      - uses: " + vault + "@" + sha(sw+"@get-vault-secrets/v1.4.0") + " # v1.4.0",
+		7: "      - uses: grafana/shared-workflows/actions/dockerhub-login@dockerhub-login/v1.0.4",
+		8: "      - uses: github/codeql-action/init@v3.2.0",
+	} {
+		if l := line(n, string(changes[0].New)); l != want {
+			t.Errorf("line %d:\n got %s\nwant %s", n, l, want)
+		}
+	}
+}

@@ -944,12 +944,26 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 	if r.ds == nil {
 		return nil, fmt.Errorf("no datasource %q", d.Datasource)
 	}
-	if d.ExtractVersion != "" {
+	// An action in a monorepo subdirectory without an extractVersion of its own is versioned
+	// by its per-action tags (`get-vault-secrets/v1.3.1`) when the repository has any.
+	var prefixed *extracting
+	var prefixExpr string
+	switch {
+	case d.ExtractVersion != "":
 		x, err := versioning.CompileExtract(d.ExtractVersion)
 		if err != nil {
 			return nil, fmt.Errorf("extractVersion: %w", err)
 		}
 		r.ds = withExtract(r.ds, x)
+	case d.Manager == actions.Name && d.DepType != actions.DepTypeSetup:
+		if prefixExpr = actions.TagExtract(d.Name); prefixExpr != "" {
+			x, err := versioning.CompileExtract(prefixExpr)
+			if err != nil {
+				return nil, fmt.Errorf("per-action tags: %w", err)
+			}
+			prefixed = &extracting{ds: r.ds, x: x, fallback: true}
+			r.ds = wrapExtract(prefixed)
+		}
 	}
 	var ups []dep.Update
 	var err error
@@ -973,6 +987,9 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 		// Commit, grouping and automerge settings come from the policy of the update's type;
 		// security updates follow it too, apart from group and schedule.
 		up := &ups[i]
+		if prefixed != nil && len(prefixed.names) > 0 {
+			up.Dep.ExtractVersion = prefixExpr // release notes look up the per-action tags
+		}
 		kp := r.pol.of(up.Type)
 		up.CommitType, up.CommitScope = kp.CommitType, kp.CommitScope
 		up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType

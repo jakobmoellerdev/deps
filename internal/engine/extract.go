@@ -11,11 +11,13 @@ import (
 
 // extracting is the datasource of one dep with an extractVersion: Releases keeps the release
 // names the expression matches, as their extracted versions, and the other lookups map a
-// version back to its release name. Only one resolver uses it, sequentially.
+// version back to its release name. With fallback, a datasource none of whose release names
+// match keeps all of them unchanged. Only one resolver uses it, sequentially.
 type extracting struct {
-	ds    Datasource
-	x     *versioning.Extractor
-	names map[string]string // extracted version -> release name; first match wins
+	ds       Datasource
+	x        *versioning.Extractor
+	fallback bool
+	names    map[string]string // extracted version -> release name; first match wins
 }
 
 // releaseNamer maps a version back to its release name (implemented by extracting).
@@ -30,8 +32,12 @@ type extractingTimer struct {
 
 // withExtract wraps ds for a dep with extractVersion x.
 func withExtract(ds Datasource, x *versioning.Extractor) Datasource {
-	e := &extracting{ds: ds, x: x}
-	if t, ok := ds.(datasource.Timer); ok {
+	return wrapExtract(&extracting{ds: ds, x: x})
+}
+
+// wrapExtract returns e, as an extractingTimer when its datasource is a Timer.
+func wrapExtract(e *extracting) Datasource {
+	if t, ok := e.ds.(datasource.Timer); ok {
 		return extractingTimer{e, t}
 	}
 	return e
@@ -54,6 +60,9 @@ func (e *extracting) Releases(ctx context.Context, d dep.Dep, dir string) ([]Rel
 		}
 		e.names[v] = rel.Version
 		out = append(out, Release{Version: v, Digest: rel.Digest})
+	}
+	if len(out) == 0 && e.fallback {
+		return rels, nil
 	}
 	return out, nil
 }

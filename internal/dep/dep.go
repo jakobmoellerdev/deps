@@ -56,7 +56,7 @@ type Dep struct {
 	Digest         string // actions: full SHA when pinned, else ""
 	RefSpan        Span   // actions: ref after '@'; gomod: version token
 	NameSpan       Span   // gomod: module path token of a require (rewritten by major module path updates)
-	VersionSpan    Span   // actions: version token in trailing comment (pinned only)
+	VersionSpan    Span   // actions: version token in trailing comment (pinned), or the version after the per-action tag prefix of a tag ref (`@get-vault-secrets/v1.3.1`)
 	DigestSpan     Span   // docker/custom: digest token, when the digest is stored apart from RefSpan
 	InputSpan      Span   // actions: `with: version:` value equal to the current version, bumped along with the ref
 	InsertAt       int    // manager-defined insert offset (actions: after the uses value incl. closing quote)

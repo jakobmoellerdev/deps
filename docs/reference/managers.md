@@ -86,7 +86,13 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 
 - Tag: `@v4`, `@v4.2.0`.
 - Pinned: `@<40/64-hex sha> # v4.2.0`, or `# ratchet:owner/repo@v4`.
+- An action in a subdirectory (`owner/repo/<path>`) may carry a per-action tag prefix, `<path>/` or `<last path element>/`, in the tag or the comment: `@get-vault-secrets/v1.3.1`, `@<sha> # get-vault-secrets/v1.3.1`.
 - Anything else is skipped.
+
+**Monorepo tags.**
+
+- An action in a subdirectory of a repository that tags each action (`grafana/shared-workflows/actions/get-vault-secrets` with tags `get-vault-secrets/v1.3.1`) is versioned by the tags prefixed `<path>/` or `<last path element>/`; the version after the prefix is compared and written, digests and release times are looked up by the prefixed tag.
+- Without such tags the repository's tags are the versions. A rule's `extractVersion` replaces this.
 
 **Edits.**
 
@@ -94,6 +100,7 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 - A pinned ref gets the new SHA, and the comment version is replaced.
 - With `pin: digest`, a tag becomes `@<sha> # <tag>`.
 - A floating pin (`@<sha> # v4`) whose tag moved gets a digest refresh.
+- A per-action tag prefix is kept: `@get-vault-secrets/v1.3.1` → `@get-vault-secrets/v1.4.0`, pinned as `@<sha> # get-vault-secrets/v1.4.0`.
 - A `with: version:` input equal to the current version (the tag or the pinned comment version) is bumped in the same edit, e.g. `@<sha> # v0.2.5` with `version: v0.2.5`. A different value is left alone, and setup actions keep their own version input (DepType `setup`).
 
 **Setup action inputs.**
