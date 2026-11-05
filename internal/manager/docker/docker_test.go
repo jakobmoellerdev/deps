@@ -423,9 +423,14 @@ func TestExtractAction(t *testing.T) {
 }
 
 func TestExtractParseError(t *testing.T) {
-	for _, file := range []string{"compose.yaml", ".github/workflows/x.yml"} {
-		if _, err := New().Extract(file, []byte("a: [\n"), manager.Env{}); err == nil {
-			t.Errorf("%s: want parse error", file)
+	if _, err := New().Extract(".github/workflows/x.yml", []byte("a: [\n"), manager.Env{}); err == nil {
+		t.Error("workflow: want parse error")
+	}
+	// An indented fragment concatenated by a script (grafana devenv blocks) is a skip, not an error.
+	for _, src := range []string{"a: [\n", "  sensu:\n    image: sensu/sensu:6\nvolumes:\n  data: {}\n"} {
+		deps, err := New().Extract("blocks/sensugo/docker-compose.yaml", []byte(src), manager.Env{})
+		if err != nil || len(deps) != 1 || deps[0].Skip != "unparsable compose file" || deps[0].Line != 1 {
+			t.Errorf("%q: got %+v, %v; want one unparsable compose file skip", src, deps, err)
 		}
 	}
 }

@@ -30,6 +30,7 @@ var Doc = refdoc.Manager{
 		{Reason: "invalid reference", When: "the reference does not parse"},
 		{Reason: "no tag", When: "the reference has neither tag nor digest"},
 		{Reason: "digest without tag", When: "the reference has a digest but no tag"},
+		{Reason: "unparsable compose file", When: "a Compose file name whose content is not valid YAML (e.g. an indented fragment); one dep-less skip at line 1"},
 		{Reason: "cannot locate value", When: "the value's bytes could not be found"},
 	},
 	Sections: []refdoc.Section{

@@ -215,6 +215,7 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 | `invalid reference` | the reference does not parse |
 | `no tag` | the reference has neither tag nor digest |
 | `digest without tag` | the reference has a digest but no tag |
+| `unparsable compose file` | a Compose file name whose content is not valid YAML (e.g. an indented fragment); one dep-less skip at line 1 |
 | `cannot locate value` | the value's bytes could not be found |
 
 **Dockerfile details.**
