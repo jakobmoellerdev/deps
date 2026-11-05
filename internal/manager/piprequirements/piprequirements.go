@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -78,12 +79,25 @@ func parse(file string, src []byte) []Hashed {
 	lines := logicalLines(src)
 	index, extras := "", []string(nil)
 	for _, l := range lines {
+		// Option names start with '-'; anything else that strings.Fields would not trim
+		// (ASCII above space) cannot be an option line.
+		if c := l.text; c == "" || c[0] != '-' && c[0] > ' ' && c[0] < utf8.RuneSelf {
+			continue
+		}
 		if u := indexURL(l.text); u != "" {
 			index = u
 		}
 		if u := option(l.text, "--extra-index-url"); u != "" {
 			extras = append(extras, u)
 		}
+	}
+	// Logical lines are in file order and each takes one line number from an offset inside
+	// it, so the offsets only grow and the newlines can be counted incrementally.
+	lineNo, counted := 1, 0
+	lineAt := func(off int) int {
+		lineNo += bytes.Count(src[counted:off], []byte{'\n'})
+		counted = off
+		return lineNo
 	}
 	var reqs []Hashed
 	for _, l := range lines {
@@ -96,10 +110,10 @@ func parse(file string, src []byte) []Hashed {
 		var d dep.Dep
 		switch skip := pathSkip(req); {
 		case ok && r.URL != "":
-			d = pyreq.NewDep(Name, DepType, file, r.Name, pyreq.Line(src, l.offset(r.NameStart)))
+			d = pyreq.NewDep(Name, DepType, file, r.Name, lineAt(l.offset(r.NameStart)))
 			d.Skip = pyreq.URLSkip(r.URL)
 		case skip != "":
-			d = pyreq.NewDep(Name, DepType, file, req, pyreq.Line(src, l.offset(0)))
+			d = pyreq.NewDep(Name, DepType, file, req, lineAt(l.offset(0)))
 			d.Skip = skip
 		case !ok:
 			continue
@@ -109,7 +123,7 @@ func parse(file string, src []byte) []Hashed {
 			reqs = append(reqs, Hashed{Dep: d})
 			continue
 		}
-		d = pyreq.NewDep(Name, DepType, file, r.Name, pyreq.Line(src, l.offset(r.NameStart)))
+		d = pyreq.NewDep(Name, DepType, file, r.Name, lineAt(l.offset(r.NameStart)))
 		d.Source, d.ExtraSources = index, extras
 		at := l.offset(r.SpecStart)
 		exact := at+len(r.Spec) <= len(src) && string(src[at:at+len(r.Spec)]) == r.Spec

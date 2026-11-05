@@ -4,7 +4,6 @@
 package pyreq
 
 import (
-	"bytes"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -177,11 +176,6 @@ func HasAnyPrefix(s string, prefixes ...string) bool {
 		}
 	}
 	return false
-}
-
-// Line returns the 1-based line of offset off in src.
-func Line(src []byte, off int) int {
-	return bytes.Count(src[:off], []byte{'\n'}) + 1
 }
 
 // TableSpec reads a Poetry or Pipenv dependency table (`{version = "…", extras = […]}`): the

@@ -143,9 +143,3 @@ func TestTOMLRequirement(t *testing.T) {
 		t.Errorf("escaped = %+v", d)
 	}
 }
-
-func TestLine(t *testing.T) {
-	if Line([]byte("a\nb\nc"), 4) != 3 || Line([]byte("a"), 0) != 1 {
-		t.Error("Line")
-	}
-}

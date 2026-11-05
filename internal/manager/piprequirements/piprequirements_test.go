@@ -269,3 +269,24 @@ func TestExtraIndexURL(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkExtract extracts a pip-compile style file of 2000 hashed requirements.
+func BenchmarkExtract(b *testing.B) {
+	var sb strings.Builder
+	sb.WriteString("--index-url https://pypi.org/simple\n")
+	for i := range 2000 {
+		fmt.Fprintf(&sb, "pkg%d==1.%d.0 \\\n", i, i)
+		for h := range 3 {
+			fmt.Fprintf(&sb, "    --hash=sha256:%064x \\\n", i*3+h)
+		}
+		fmt.Fprintf(&sb, "    --hash=sha256:%064x\n    # via app\n", i)
+	}
+	src := []byte(sb.String())
+	m := New()
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := m.Extract("requirements.txt", src, manager.Env{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
