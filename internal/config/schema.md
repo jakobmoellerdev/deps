@@ -413,7 +413,7 @@ rules:
 `deps run` maintains one open issue titled [`dependencyDashboardTitle`](#dependencydashboardtitle). It lists, in this order:
 
 1. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Awaiting-schedule items name the crons they wait for, e.g. ``(waits for `0 0 * * 0`)``. Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.
-2. **Ignored or blocked**: updates whose PR was closed without merging (checkbox: recreate the PR), and branches someone else pushed to (checkbox: discard those commits and rebuild the branch).
+2. **Ignored or blocked**: updates whose PR was closed without merging, for that version or, for a major update, for that major (checkbox: recreate the PR), and branches someone else pushed to (checkbox: discard those commits and rebuild the branch).
 3. **Pending branch automerge**: branches of [`automergeType: branch`](#automergetype) waiting for their checks, without a PR. Ticking one makes the next run open its PR instead.
 4. **Open**: the open update PRs, each with a checkbox that forces a rebuild of its branch.
 5. **Errors** of the run (at most 20, each cut to 300 characters).

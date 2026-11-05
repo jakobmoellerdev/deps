@@ -135,6 +135,8 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 		switch {
 		case a.Status == StatusSkipClosed:
 			blocked = append(blocked, fmt.Sprintf("- [ ] <!-- deps:recreate=%s --> %s (%s closed without merging; tick to recreate it)", a.Branch, a.Title, prLink(a)))
+		case a.Status == StatusSkipClosedMajor:
+			blocked = append(blocked, fmt.Sprintf("- [ ] <!-- deps:recreate=%s --> %s (%s closed without merging, so this major is ignored; tick to recreate it)", a.Branch, a.Title, prLink(a)))
 		case a.Status == StatusSkipModified:
 			blocked = append(blocked, fmt.Sprintf("- [ ] <!-- deps:rebase=%s --> %s (branch modified by someone else; tick to discard those commits and rebuild it)", a.Branch, a.Title))
 		case a.Status == StatusSkipLimit:

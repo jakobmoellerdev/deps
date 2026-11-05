@@ -91,20 +91,21 @@ type Notes interface {
 
 // Action statuses.
 const (
-	StatusCreated      = "created"
-	StatusUpdated      = "updated"
-	StatusRebased      = "rebased"
-	StatusUpToDate     = "up-to-date"
-	StatusWouldCreate  = "would-create"
-	StatusWouldUpdate  = "would-update"
-	StatusWouldRebase  = "would-rebase"
-	StatusClosed       = "closed"
-	StatusDeleted      = "deleted" // an obsolete branch without a PR (branch automerge)
-	StatusSkipClosed   = "skipped: closed PR for this version"
-	StatusSkipLimit    = "skipped: new PR limit reached"
-	StatusSkipModified = "skipped: branch modified by someone else"
-	StatusSkipSchedule = "skipped: outside schedule"
-	StatusSkipIssues   = "skipped: issues disabled" // dashboard only: the repository has no issue tracker
+	StatusCreated         = "created"
+	StatusUpdated         = "updated"
+	StatusRebased         = "rebased"
+	StatusUpToDate        = "up-to-date"
+	StatusWouldCreate     = "would-create"
+	StatusWouldUpdate     = "would-update"
+	StatusWouldRebase     = "would-rebase"
+	StatusClosed          = "closed"
+	StatusDeleted         = "deleted" // an obsolete branch without a PR (branch automerge)
+	StatusSkipClosed      = "skipped: closed PR for this version"
+	StatusSkipClosedMajor = "skipped: closed PR for this major"
+	StatusSkipLimit       = "skipped: new PR limit reached"
+	StatusSkipModified    = "skipped: branch modified by someone else"
+	StatusSkipSchedule    = "skipped: outside schedule"
+	StatusSkipIssues      = "skipped: issues disabled" // dashboard only: the repository has no issue tracker
 	// StatusSkipApply: a post-processor found the update inapplicable (*dep.SkipError, e.g.
 	// the new version of a Go module declares another module path); Action.Reason says why.
 	StatusSkipApply = "skipped: update cannot be applied"
@@ -451,7 +452,7 @@ func deleteObsoleteBranches(ctx context.Context, o Options, s *runState, wanted 
 // force is what the dependency dashboard checkboxes request for one branch.
 type force struct {
 	create   bool // create the PR (or automerge branch) now: bypass schedule and PR limits
-	recreate bool // create a PR again although one for this version was closed
+	recreate bool // create a PR again although one for this version or major was closed
 	rebase   bool // rebuild the branch even if unchanged or modified by someone else
 	pr       bool // create a PR instead of merging the branch (branch automerge)
 }
@@ -539,11 +540,9 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	if pr != nil {
 		a.Number, a.URL = pr.Number, pr.URL
 	} else if !f.recreate {
-		for _, c := range s.closed {
-			if c.Head == grp.Branch && !c.Merged && c.Title == grp.Title {
-				a.Status, a.Number, a.URL = StatusSkipClosed, c.Number, c.URL
-				return a, nil, nil
-			}
+		if c, status := closedFor(s.closed, grp); c != nil {
+			a.Status, a.Number, a.URL = status, c.Number, c.URL
+			return a, nil, nil
 		}
 	}
 	ref := "refs/heads/" + grp.Branch
@@ -1021,6 +1020,9 @@ func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp, input string
 		}
 	}
 	fmt.Fprintf(&b, "\n<!-- deps:fingerprint=%s -->\n", fp)
+	if m := versionsMarker(ups); m != "" {
+		b.WriteString(m + "\n")
+	}
 	if input != "" {
 		fmt.Fprintf(&b, "<!-- deps:input=%s -->\n", input)
 	}

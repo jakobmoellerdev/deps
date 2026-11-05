@@ -869,7 +869,8 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 | Symptom | Cause and fix |
 |---|---|
 | `skipped: branch modified by someone else` | The branch's last commit has another author email. Rebase it via the dashboard checkbox, or close the PR. If the bot identity changed, add the old email to `gitIgnoredAuthors`. |
-| `skipped: closed PR for this version` | A PR with the same title was closed without merging, so deps won't reopen it. Tick *recreate* on the dashboard, or wait for the next version. |
+| `skipped: closed PR for this version` | A PR for the same version (same title) was closed without merging, so deps won't reopen it. Tick *recreate* on the dashboard, or wait for the next version. |
+| `skipped: closed PR for this major` | A major update's PR was closed without merging: like Renovate, deps ignores that major (any later version of it) until the next major. Tick *recreate* on the dashboard to get the PR back, or add an `ignore` rule to drop the update for good. |
 | `skipped: outside schedule` on every run | The `schedule` entries don't match the workflow's crons: they are compared as text. Check the `trigger` line in the `--log-level info` output for the cron deps saw. |
 | `skipped: new PR limit reached` | `--max-new-prs` (default 10), `prConcurrentLimit` or `prHourlyLimit`. The next runs continue; the dashboard lists the waiting ones. |
 | obsolete PRs are never closed | deps closes obsolete PRs only after a run without errors. Fix the errors listed at the end of the run. |
@@ -913,7 +914,7 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 The reset also cleans up:
 
 - open PRs are closed;
-- closed unmerged PRs are retitled `[e2e reset] …`, so the next run doesn't skip them as "closed PR for this version";
+- closed unmerged PRs are retitled `[e2e reset] …` and their bodies replaced, so the next run doesn't skip them as "closed PR for this version" or "for this major";
 - branches other than `main` are deleted, and open issues are closed.
 
 `hack/e2e-github/e2e.sh reset` runs only the reset.

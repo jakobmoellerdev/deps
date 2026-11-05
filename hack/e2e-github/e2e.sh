@@ -110,13 +110,14 @@ reset_repo() {
   log "reset $repo"
   ensure_repo
   settings true
-  # Close open PRs and retitle closed unmerged deps PRs: an unmerged closed PR with the same
-  # title would make the next run skip that update ("closed PR for this version").
+  # Close open PRs and retitle closed unmerged deps PRs, dropping their bodies: an unmerged
+  # closed PR with the same title would make the next run skip that update ("closed PR for
+  # this version"), one of a major branch with its versions marker that major.
   local n state title
   gh api --paginate "repos/$repo/pulls?state=all&per_page=100" \
     --jq ".[] | select(.merged_at == null and (.title | startswith(\"$reset_prefix\") | not)) | [.number, .state, .title] | @tsv" |
     while IFS=$'\t' read -r n state title; do
-      gh api -X PATCH "repos/$repo/pulls/$n" -f title="$reset_prefix$title" -f state=closed >/dev/null
+      gh api -X PATCH "repos/$repo/pulls/$n" -f title="$reset_prefix$title" -f body="$reset_prefix" -f state=closed >/dev/null
       if [ "$state" = open ]; then ok "closed PR #$n"; fi
     done
   gh api --paginate "repos/$repo/issues?state=open&per_page=100" --jq '.[] | select(.pull_request == null) | .number' |
