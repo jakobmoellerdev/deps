@@ -46,9 +46,10 @@ type manifest struct {
 
 // index is an OCI image index or Docker manifest list.
 type index struct {
-	SchemaVersion int          `json:"schemaVersion"`
-	MediaType     string       `json:"mediaType,omitempty"`
-	Manifests     []descriptor `json:"manifests"`
+	SchemaVersion int               `json:"schemaVersion"`
+	MediaType     string            `json:"mediaType,omitempty"`
+	Manifests     []descriptor      `json:"manifests"`
+	Annotations   map[string]string `json:"annotations,omitempty"`
 }
 
 // imageConfig is the part of an image config deps reads: its creation time and labels.

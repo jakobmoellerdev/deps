@@ -254,8 +254,9 @@ func (s *Source) digest(ctx context.Context, name, tag string) (string, error) {
 }
 
 // ReleaseTime implements datasource.Timer with the time the tag listing gives (gcr.io,
-// Artifact Registry; see tagTime), else the `created` time of the image config of tag version
-// (for an index: of its first platform image); zero when neither has one.
+// Artifact Registry; see tagTime), else the `created` annotation of an index's first platform
+// descriptor, else the `created` time of the image config of tag version (for an index: of its
+// first platform image); zero when none has one.
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
 	name, err := repoName(d)
 	if err != nil {
@@ -269,8 +270,8 @@ func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 }
 
 // SourceRepo implements datasource.SourceRepo with the image's
-// `org.opencontainers.image.source` label, from the same config fetch as ReleaseTime (which the
-// tag listing does not replace here: it has no labels).
+// `org.opencontainers.image.source` annotation or label, from the same fetch as ReleaseTime
+// (which the tag listing does not replace here: it has no labels).
 func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error) {
 	name, err := repoName(d)
 	if err != nil {
@@ -329,6 +330,9 @@ func (s *Source) pullLimitHint(name string, err error) error {
 // manifest), config. Artifacts whose config is no image config (Helm charts) are not fetched
 // further: their manifest's `org.opencontainers.image.created` and `…source` annotations answer
 // instead. An image config without `created` falls back to the manifest annotation as well.
+// An index whose first platform descriptor carries a `created` annotation (Docker official
+// images, BuildKit with annotations) answers from the descriptor (source: descriptor, else index
+// annotation) without fetching the platform manifest and config.
 func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, string, error) {
 	release, err := httpx.Acquire(ctx, s.sem)
 	if err != nil {
@@ -341,8 +345,12 @@ func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, 
 		return time.Time{}, "", err
 	}
 	if isIndex(desc.MediaType) {
-		if desc, err = firstImage(b); err != nil {
+		var idxAnnotations map[string]string
+		if desc, idxAnnotations, err = firstImage(b); err != nil {
 			return time.Time{}, "", err
+		}
+		if created, err := time.Parse(time.RFC3339, desc.Annotations[annotationCreated]); err == nil {
+			return created, cmp.Or(desc.Annotations[sourceLabel], idxAnnotations[sourceLabel]), nil
 		}
 		if b, err = s.fetch(ctx, repo, desc); err != nil {
 			return time.Time{}, "", err
@@ -376,19 +384,19 @@ func isIndex(mediaType string) bool {
 }
 
 // firstImage returns the first platform image manifest of index b, skipping attestation
-// manifests (platform unknown/unknown).
-func firstImage(b []byte) (descriptor, error) {
+// manifests (platform unknown/unknown), and the index's annotations.
+func firstImage(b []byte) (descriptor, map[string]string, error) {
 	var idx index
 	if err := json.Unmarshal(b, &idx); err != nil {
-		return descriptor{}, fmt.Errorf("index: %w", err)
+		return descriptor{}, nil, fmt.Errorf("index: %w", err)
 	}
 	for _, m := range idx.Manifests {
 		image := m.MediaType == mediaTypeOCIManifest || m.MediaType == mediaTypeDockerManifest
 		if image && (m.Platform == nil || m.Platform.OS != "unknown") {
-			return m, nil
+			return m, idx.Annotations, nil
 		}
 	}
-	return descriptor{}, errors.New("index has no platform image")
+	return descriptor{}, nil, errors.New("index has no platform image")
 }
 
 func (s *Source) list(ctx context.Context, name string) (rels []datasource.Release, meta map[string]tagMeta, err error) {

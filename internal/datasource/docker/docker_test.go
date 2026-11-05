@@ -453,3 +453,62 @@ func TestTagPageCap(t *testing.T) {
 		})
 	}
 }
+
+// TestIndexAnnotations checks that an index whose first platform descriptor carries the
+// `created` annotation answers release time and source with one manifest GET and no blob, and
+// that an index without it still reads the platform manifest and config.
+func TestIndexAnnotations(t *testing.T) {
+	f := newFixture(t)
+	created := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	att := withPlatform(f.reg.image(t, created, nil), "unknown", "unknown")
+	amd := withPlatform(f.reg.image(t, created.Add(time.Minute), map[string]string{sourceLabel: "https://example.com/label"}), "linux", "amd64")
+	amd.Annotations = map[string]string{annotationCreated: created.Format(time.RFC3339)}
+	withSource := amd
+	withSource.Annotations = map[string]string{annotationCreated: created.Format(time.RFC3339), sourceLabel: "https://example.com/desc"}
+	idx := func(m descriptor, annotations map[string]string) descriptor {
+		return f.reg.put(t, mediaTypeOCIIndex, index{SchemaVersion: 2, MediaType: mediaTypeOCIIndex, Manifests: []descriptor{att, m}, Annotations: annotations})
+	}
+	f.reg.tag("img", "3.0", idx(amd, map[string]string{sourceLabel: "https://example.com/index"}))
+	f.reg.tag("img", "4.0", idx(withSource, map[string]string{sourceLabel: "https://example.com/index"}))
+	gets := func() (manifests, blobs int) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for k, n := range f.hits {
+			switch {
+			case strings.HasPrefix(k, "GET /v2/img/manifests/"):
+				manifests += n
+			case strings.HasPrefix(k, "GET /v2/img/blobs/"):
+				blobs += n
+			}
+		}
+		return manifests, blobs
+	}
+	for _, c := range []struct {
+		version, source string
+		created         time.Time
+		manifests       int
+		blobs           int
+	}{
+		{"3.0", "https://example.com/index", created, 1, 0},
+		{"4.0", "https://example.com/desc", created, 1, 0},
+		{"2.0", "", time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC), 2, 1}, // no annotation: old path
+	} {
+		t.Run(c.version, func(t *testing.T) {
+			s := newSource(f.srv.Client(), nil, anon)
+			d := dep.Dep{Name: f.host + "/img"}
+			m0, b0 := gets()
+			src, err := s.SourceRepo(t.Context(), d, c.version)
+			if err != nil || src != c.source {
+				t.Errorf("SourceRepo = %q, %v; want %q", src, err, c.source)
+			}
+			got, err := s.ReleaseTime(t.Context(), d, c.version)
+			if err != nil || !got.Equal(c.created) {
+				t.Errorf("ReleaseTime = %v, %v; want %v", got, err, c.created)
+			}
+			m1, b1 := gets()
+			if m1-m0 != c.manifests || b1-b0 != c.blobs {
+				t.Errorf("GETs = %d manifests, %d blobs; want %d, %d", m1-m0, b1-b0, c.manifests, c.blobs)
+			}
+		})
+	}
+}
