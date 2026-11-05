@@ -550,3 +550,23 @@ func BenchmarkAnnotations(b *testing.B) {
 		m.annotations("x.yaml", src)
 	}
 }
+
+// Renovate's currentDigest of a github-release-attachments dep (OCM's cosign .env pin) is the
+// sha256 of a release asset: it becomes the dep's attachment checksum, not its digest.
+func TestRegexAttachmentDigest(t *testing.T) {
+	sum := strings.Repeat("3a", 32)
+	m := one(t, config.Custom{Files: []string{"x"}, Match: `datasource=(?<datasource>\S+) depName=(?<depName>\S+)\s+V=(?<currentValue>\S+)\s+SUM=(?<currentDigest>[0-9a-f]{64})`})
+	src := "# renovate: datasource=github-release-attachments depName=o/cosign\nV=v3.1.4+ocm.6\nSUM=" + sum + "\n"
+	ds := extract(t, m, src)
+	if len(ds) != 1 {
+		t.Fatalf("deps = %+v", ds)
+	}
+	d := ds[0]
+	if d.Skip != "" || d.Digest != "" || d.Checksum != sum || d.ChecksumSource == nil || !d.ChecksumSource.Attachment || src[d.ChecksumSpan.Start:d.ChecksumSpan.End] != sum {
+		t.Errorf("dep = %+v", d)
+	}
+	edits, err := m.Edits(dep.Update{Dep: d, NewVersion: "v3.2.0+ocm.1", NewChecksum: strings.Repeat("b", 64)})
+	if err != nil || len(edits) != 2 {
+		t.Errorf("edits = %+v, %v", edits, err)
+	}
+}

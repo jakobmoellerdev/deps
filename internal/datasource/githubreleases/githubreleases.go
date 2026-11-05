@@ -85,6 +85,24 @@ func (s *Source) AssetDigest(ctx context.Context, name, version, asset string) (
 	return "", fmt.Errorf("release %s has no digest for asset %s", tag, asset)
 }
 
+// AssetByDigest returns the name of the asset of version's release (see AssetDigest for the
+// tag match) whose sha256 is hex, or "" when there is none.
+func (s *Source) AssetByDigest(ctx context.Context, name, version, hex string) (string, error) {
+	r, err := githubapi.ParseRepo(name)
+	if err != nil {
+		return "", err
+	}
+	var tag string
+	var ok bool
+	if err := s.with(ctx, name, version, func(l *githubapi.List) { tag, _, ok = release(l, version) }); err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("no release %s in %s", version, name)
+	}
+	return s.gh.AssetByDigest(ctx, r, tag, "sha256:"+hex)
+}
+
 // ReleaseTime implements datasource.Timer with the publication time of version's release (see
 // AssetDigest for the tag match) from the shared release list; zero when there is none.
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {

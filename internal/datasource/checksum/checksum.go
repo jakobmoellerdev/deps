@@ -30,9 +30,11 @@ const (
 	maxArtifact = 256 << 20
 )
 
-// Assets returns the hex digest of a release asset (githubreleases.Source implements it).
+// Assets returns the hex digest of a release asset, and finds an asset by its digest
+// (githubreleases.Source implements it).
 type Assets interface {
 	AssetDigest(ctx context.Context, name, version, asset string) (string, error)
+	AssetByDigest(ctx context.Context, name, version, hex string) (string, error)
 }
 
 // ArtifactOpener downloads an artifact of a dep the way its datasource does (repository
@@ -80,6 +82,18 @@ func (s *Source) Checksum(ctx context.Context, d dep.Dep, version, release strin
 			return "", fmt.Errorf("checksum asset requires the github-releases datasource, have %q", d.Datasource)
 		}
 		return s.assets.AssetDigest(ctx, d.Name, release, dep.ExpandVersion(cs.Asset, version))
+	case cs.Attachment:
+		if d.Datasource != "github-releases" || s.assets == nil {
+			return "", fmt.Errorf("attachment checksum requires the github-releases datasource, have %q", d.Datasource)
+		}
+		asset, err := s.assets.AssetByDigest(ctx, d.Name, d.Version, strings.ToLower(d.Checksum))
+		if err != nil {
+			return "", err
+		}
+		if asset == "" {
+			return "", fmt.Errorf("no asset of release %s has sha256 %s", d.Version, d.Checksum)
+		}
+		return s.assets.AssetDigest(ctx, d.Name, release, renameAsset(asset, d.Version, version))
 	case cs.Artifact != "":
 		return s.artifactDigest(ctx, d, dep.ExpandVersion(cs.Artifact, version))
 	case cs.URL == "":
@@ -272,4 +286,17 @@ func isHex(s string) bool {
 		}
 	}
 	return true
+}
+
+// renameAsset returns the name asset (of version cur) has in the release of version next:
+// the version in the name, with or without its "v", is replaced
+// (cosign_v3.1.4_linux.tar.gz -> cosign_v3.2.0_linux.tar.gz); names without it are kept.
+func renameAsset(asset, cur, next string) string {
+	if strings.Contains(asset, cur) {
+		return strings.ReplaceAll(asset, cur, next)
+	}
+	if c := strings.TrimPrefix(cur, "v"); c != cur && strings.Contains(asset, c) {
+		return strings.ReplaceAll(asset, c, strings.TrimPrefix(next, "v"))
+	}
+	return asset
 }

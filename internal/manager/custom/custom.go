@@ -504,6 +504,13 @@ func (m *customManager) classify(d *dep.Dep) {
 			return
 		}
 		d.Source = src
+		if ds == "github-release-attachments" && d.ChecksumSource == nil && manager.IsHex(d.Digest, 64, 128) {
+			// Renovate's currentDigest of github-release-attachments is the sha256 of one of the
+			// release's assets, not a digest of the version: keep it current as a checksum.
+			d.Checksum, d.ChecksumSpan = d.Digest, d.DigestSpan
+			d.ChecksumSource = &dep.ChecksumSource{Attachment: true}
+			d.Digest, d.DigestSpan = "", dep.Span{}
+		}
 	case "helm":
 		repo, chart := d.Source, d.Name
 		if repo == "" {

@@ -97,6 +97,10 @@ type ChecksumSource struct {
 	// Artifact is the URL template of the artifact itself: the checksum is its digest
 	// (sha256/sha512 by the pinned hex length), computed while streaming the download.
 	Artifact string
+	// Attachment (Renovate's github-release-attachments digests): the checksum is the sha256
+	// of the release asset whose digest equals the current checksum, under the new version's
+	// name of that asset.
+	Attachment bool
 }
 
 // ExpandVersion substitutes `{{version}}` in tmpl.

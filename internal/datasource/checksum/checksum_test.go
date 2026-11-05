@@ -33,6 +33,14 @@ func (f *fakeAssets) AssetDigest(_ context.Context, name, version, asset string)
 	return h1, nil
 }
 
+// AssetByDigest knows one asset of release v3.1.4+ocm.6: cosign_checksums.txt with sha256 h2.
+func (f *fakeAssets) AssetByDigest(_ context.Context, _, version, sum string) (string, error) {
+	if version == "v3.1.4+ocm.6" && sum == h2 {
+		return "cosign_checksums.txt", nil
+	}
+	return "", nil
+}
+
 func TestChecksumURL(t *testing.T) {
 	var reqs sync.Map
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -251,4 +259,32 @@ type failTransport struct{ t *testing.T }
 func (f failTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	f.t.Errorf("client used for %s", r.URL)
 	return nil, errors.New("client used")
+}
+
+// Renovate's github-release-attachments digest: the asset of the current release with the
+// current checksum is looked up, then the same asset of the new release.
+func TestChecksumAttachment(t *testing.T) {
+	a := &fakeAssets{}
+	s := New(http.DefaultClient, nil, a, nil)
+	d := dep.Dep{Datasource: "github-releases", Name: "o/cosign", Version: "v3.1.4+ocm.6", Checksum: strings.ToUpper(h2), ChecksumSource: &dep.ChecksumSource{Attachment: true}}
+	got, err := s.Checksum(context.Background(), d, "v3.2.0+ocm.1", "v3.2.0+ocm.1")
+	if got != h1 || err != nil || *a != (fakeAssets{"o/cosign", "v3.2.0+ocm.1", "cosign_checksums.txt"}) {
+		t.Errorf("got %q, %v, %+v", got, err, *a)
+	}
+	d.Checksum = h1
+	if _, err := s.Checksum(context.Background(), d, "v3.2.0+ocm.1", "v3.2.0+ocm.1"); err == nil || err.Error() != "no asset of release v3.1.4+ocm.6 has sha256 "+h1 {
+		t.Errorf("unknown digest: %v", err)
+	}
+}
+
+func TestRenameAsset(t *testing.T) {
+	for _, tt := range []struct{ asset, cur, next, want string }{
+		{"cosign_checksums.txt", "v3.1.4", "v3.2.0", "cosign_checksums.txt"},
+		{"gh_v2.60.0_linux.tar.gz", "v2.60.0", "v2.61.0", "gh_v2.61.0_linux.tar.gz"},
+		{"gh_2.60.0_linux.tar.gz", "v2.60.0", "v2.61.0", "gh_2.61.0_linux.tar.gz"},
+	} {
+		if got := renameAsset(tt.asset, tt.cur, tt.next); got != tt.want {
+			t.Errorf("renameAsset(%q) = %q, want %q", tt.asset, got, tt.want)
+		}
+	}
 }

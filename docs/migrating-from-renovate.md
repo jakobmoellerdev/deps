@@ -50,7 +50,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `managerFilePatterns` / `fileMatch` | `custom[].files` (doublestar globs, not regexes) |
 | `datasourceTemplate`, `depNameTemplate`, `versioningTemplate` | `custom[].datasource`, `name`, `versioning` (literal values, no templates) |
 | `customDatasources` (`defaultRegistryUrlTemplate`, `format`, `transformTemplates`) | `customDatasources` (`url`, `format`, `versions` selector + `versionRegex` instead of JSONata) |
-| `github-release-attachments` digests | `custom[].checksum.asset` / `checksum.url` |
+| `github-release-attachments` digests | a regex `currentDigest` group with datasource `github-release-attachments` is kept current like Renovate: the asset of the current release with that sha256 is found and the same asset of the new release is used; `custom[].checksum.asset` / `checksum.url` name the asset explicitly |
 | `hostRules` (tokens) | env tokens, `.npmrc`, Docker credentials, git credential helper; retries are built in |
 | `automerge` | `automerge` / `rules[].automerge` (platform auto-merge once required checks pass; a PR automerges when all its updates do) |
 | `automergeType: pr`, `automergeType: branch` | `automergeType: pr` or `branch` (top level and per rule). `branch` pushes the branch without a PR and fast-forwards the base to it once its checks pass; failed checks or a refused push open the PR. `pr-comment` is not offered |

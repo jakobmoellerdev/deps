@@ -259,6 +259,11 @@ func TestReleasesREST(t *testing.T) {
 			t.Errorf("AssetDigest(%s) = %q, %v", c2.asset, got, err)
 		}
 	}
+	for digest, want := range map[string]string{"SHA256:AB": "a", "sha256:cd": ""} {
+		if got, err := c.AssetByDigest(ctx, oR, "v2", digest); err != nil || got != want {
+			t.Errorf("AssetByDigest(%s) = %q, %v", digest, got, err)
+		}
+	}
 	for tag, want := range map[string]string{"v3": "2026-10-01", "draft": "", "none": "", "bad": "error", "sub/x 1": "error"} {
 		got, err := c.ReleaseTime(ctx, oR, tag)
 		switch {
@@ -286,6 +291,8 @@ func TestReleaseTimeAndAssetsGraphQL(t *testing.T) {
 			_, _ = io.WriteString(w, `{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"gone"}]}`)
 		case v["name"] == "err":
 			_, _ = io.WriteString(w, `{"errors":[{"message":"boom"}]}`)
+		case strings.Contains(q.Query, "releaseAssets(first:100)"):
+			_, _ = io.WriteString(w, `{"data":{"repository":{"release":{"releaseAssets":{"nodes":[{"name":"x","digest":null},{"name":"c.txt","digest":"sha256:ff"}]}}}}}`)
 		case strings.Contains(q.Query, "releaseAssets"):
 			if v["tag"] == "none" {
 				_, _ = io.WriteString(w, `{"data":{"repository":{"release":null}}}`)
@@ -332,6 +339,11 @@ func TestReleaseTimeAndAssetsGraphQL(t *testing.T) {
 	q := s.reqs[n]
 	if q.Variables["tag"] != "v1" || q.Variables["asset"] != "a.tgz" || !strings.Contains(q.Query, "releaseAssets(first:1,name:$asset){nodes{name digest}}") {
 		t.Errorf("asset query = %+v", q)
+	}
+	for digest, want := range map[string]string{"sha256:FF": "c.txt", "sha256:00": ""} {
+		if got, err := c.AssetByDigest(ctx, oR, "v1", digest); err != nil || got != want {
+			t.Errorf("AssetByDigest(%s) = %q, %v", digest, got, err)
+		}
 	}
 }
 

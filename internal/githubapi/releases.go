@@ -352,6 +352,53 @@ func (c *Client) AssetDigest(ctx context.Context, r Repo, tag, asset string) (st
 	return e.digest, e.err
 }
 
+const assetsQuery = `query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){` +
+	`release(tagName:$tag){releaseAssets(first:100){nodes{name digest}}}}}`
+
+// AssetByDigest returns the name of the asset of the release of tag whose API digest is
+// digest ("sha256:<hex>", compared case-insensitively), or "" when none has it (first 100
+// assets over GraphQL). Renovate's github-release-attachments digests name no asset; this
+// finds it.
+func (c *Client) AssetByDigest(ctx context.Context, r Repo, tag, digest string) (string, error) {
+	if !c.GraphQL(r) {
+		var name string
+		err := c.Releases(ctx, r, func(l *List) bool { _, ok := l.Find(tag); return ok }, func(l *List) {
+			rel, _ := l.Find(tag)
+			for _, a := range rel.assets {
+				if strings.EqualFold(a.Digest, digest) {
+					name = a.Name
+					return
+				}
+			}
+		})
+		return name, err
+	}
+	var data struct {
+		Repository *struct {
+			Release *struct {
+				ReleaseAssets struct {
+					Nodes []struct {
+						Name   string  `json:"name"`
+						Digest *string `json:"digest"`
+					} `json:"nodes"`
+				} `json:"releaseAssets"`
+			} `json:"release"`
+		} `json:"repository"`
+	}
+	if err := graphql(ctx, c, r, assetsQuery, map[string]any{"owner": r.Owner, "name": r.Name, "tag": tag}, &data); err != nil {
+		return "", fmt.Errorf("release %s of %s: assets: %w", tag, r.Path(), err)
+	}
+	if data.Repository == nil || data.Repository.Release == nil {
+		return "", nil
+	}
+	for _, a := range data.Repository.Release.ReleaseAssets.Nodes {
+		if a.Digest != nil && strings.EqualFold(*a.Digest, digest) {
+			return a.Name, nil
+		}
+	}
+	return "", nil
+}
+
 // Note is a release with its notes, for pull request bodies.
 type Note struct {
 	Tag, URL, Body    string
