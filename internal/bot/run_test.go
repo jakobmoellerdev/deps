@@ -457,20 +457,21 @@ func TestRun(t *testing.T) {
 			wantPushed: 1, wantCreated: 1,
 		},
 		{
-			name:       "build error isolates its group and keeps obsolete PRs",
+			// The failed group's own PR stays open; PRs of no group are still closed.
+			name:       "build error isolates its group and closes obsolete PRs",
 			extra:      []dep.Update{{Dep: dep.Dep{Manager: "github-actions", File: "missing.yml", Line: 1, Name: "c/z", Version: "v1", RefSpan: dep.Span{Start: 0, End: 2}}, Type: dep.Major, NewVersion: "v2"}},
-			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
-			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated},
+			pc:         fakePC{open: []platform.PR{{Number: 8, Head: "deps/github-actions/c-z"}, {Number: 9, Head: "deps/gomod/gone"}}},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantErrs:   []string{"deps/github-actions/c-z: missing.yml: "},
-			wantPushed: 2, wantCreated: 2,
+			wantPushed: 2, wantCreated: 2, wantClosed: 1,
 		},
 		{
-			name:       "push failure isolated to its group and keeps obsolete PRs",
+			name:       "push failure isolated to its group and closes obsolete PRs",
 			git:        fakeGit{fail: map[string]error{"Push:" + branchA: errBoom}},
 			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
-			wantStatus: map[string]string{branchB: StatusCreated},
+			wantStatus: map[string]string{branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantErrs:   []string{branchA + ": boom"},
-			wantPushed: 1, wantCreated: 1,
+			wantPushed: 1, wantCreated: 1, wantClosed: 1,
 		},
 		{
 			name:       "commit failure",
@@ -712,7 +713,7 @@ func (p inapplicable) Process(_ context.Context, _ string, manifests, _ map[stri
 
 // A group whose post-processor reports a *dep.SkipError is skipped, not an error: its deps
 // join the skipped ones, the dashboard lists it, and obsolete PRs are still closed. Its open
-// PR stays open. A real build error still holds back the cleanup.
+// PR stays open. A real build error fails only its group: obsolete PRs are still closed.
 func TestRunSkipsInapplicableUpdate(t *testing.T) {
 	root, res := fixture(t)
 	res.Deps = []dep.Dep{res.Updates[0].Dep, res.Updates[1].Dep}
@@ -743,7 +744,7 @@ func TestRunSkipsInapplicableUpdate(t *testing.T) {
 	g = &fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}}
 	pc = &fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}}
 	post = map[string]engine.PostProcessor{"github-actions": inapplicable{fail: true}}
-	if _, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, post, pc, g); len(errs) != 1 || !strings.Contains(errs[0].Error(), branchB+": wf.yml: boom") || len(pc.closedNow) != 0 {
+	if _, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, post, pc, g); len(errs) != 1 || !strings.Contains(errs[0].Error(), branchB+": wf.yml: boom") || !slices.Equal(pc.closedNow, []int{9}) {
 		t.Errorf("errs = %v, closed = %v", errs, pc.closedNow)
 	}
 }

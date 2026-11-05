@@ -884,7 +884,7 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 | `skipped: closed PR for this major` | A major update's PR was closed without merging: like Renovate, deps ignores that major (any later version of it) until the next major. Tick *recreate* on the dashboard to get the PR back, or add an `ignore` rule to drop the update for good. |
 | `skipped: outside schedule` on every run | The `schedule` entries don't match the workflow's crons: they are compared as text. Check the `trigger` line in the `--log-level info` output for the cron deps saw. |
 | `skipped: new PR limit reached` | `--max-new-prs` (default 10), `prConcurrentLimit` or `prHourlyLimit`. The next runs continue; the dashboard lists the waiting ones. |
-| obsolete PRs are never closed | deps closes obsolete PRs only after a run without errors. Fix the errors listed at the end of the run. |
+| obsolete PRs are never closed | deps closes obsolete PRs only after a run without lookup errors (a failed build or push of one PR does not block it). Fix the dependency errors listed at the end of the run. |
 
 **Action download and post-processing:**
 

@@ -362,10 +362,12 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	}
 	prog.End(engine.PhasePRs)
 
+	// A branch that failed to build or push is still in wanted, so only resolution errors
+	// (a dep that may own an open PR yielded no group) make the wanted set incomplete.
 	switch {
 	case o.DryRun:
-	case len(errs) > 0 || len(res.Errors) > 0:
-		slog.WarnContext(ctx, "not closing obsolete PRs because of errors", "errors", len(errs)+len(res.Errors))
+	case len(res.Errors) > 0:
+		slog.WarnContext(ctx, "not closing obsolete PRs because of resolution errors", "errors", len(res.Errors))
 	default:
 		for _, pr := range open {
 			if wanted[pr.Head] {
