@@ -64,10 +64,10 @@ func subpath(name string) (sub, last string) {
 // for an action at the repository root.
 func TagExtract(name string) string {
 	sub, last := subpath(name)
-	switch {
-	case sub == "":
+	switch sub {
+	case "":
 		return ""
-	case sub == last:
+	case last:
 		return "^" + regexp.QuoteMeta(sub) + "/(?<version>.+)$"
 	}
 	return "^(?:" + regexp.QuoteMeta(sub) + "|" + regexp.QuoteMeta(last) + ")/(?<version>.+)$"
