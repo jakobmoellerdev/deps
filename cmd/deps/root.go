@@ -15,6 +15,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/azuretasks"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
@@ -28,6 +29,7 @@ import (
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/orb"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubygems"
@@ -255,6 +257,8 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		rubygems.Name:           rubygems.New(client, sem, os.Getenv),
 		rubyversion.Name:        rubyversion.New(client, sem, os.Getenv),
 		rustversion.Name:        rustversion.New(client, sem, os.Getenv),
+		orb.Name:                orb.New(client, sem, os.Getenv),
+		azuretasks.Name:         azuretasks.New(client, sem, os.Getenv),
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err

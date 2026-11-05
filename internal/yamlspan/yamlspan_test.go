@@ -139,3 +139,16 @@ func TestSeq(t *testing.T) {
 		t.Errorf("Seq(nil) = %v, want nil", got)
 	}
 }
+
+func TestItems(t *testing.T) {
+	m := parse(t, "s: [a, b]\nm: {k: v, l: w}\nv: x\n")
+	if got := Items(Get(m, "s")); len(got) != 2 || got[0].Value != "a" || got[1].Value != "b" {
+		t.Errorf("Items(sequence) = %v, want [a b]", got)
+	}
+	if got := Items(Get(m, "m")); len(got) != 2 || got[0].Value != "v" || got[1].Value != "w" {
+		t.Errorf("Items(mapping) = %v, want [v w]", got)
+	}
+	if Items(Get(m, "v")) != nil || Items(nil) != nil {
+		t.Error("Items of a scalar or nil: want nil")
+	}
+}

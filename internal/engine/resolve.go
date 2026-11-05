@@ -124,17 +124,17 @@ var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pr
 
 // digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
 // github-actions, docker, pre-commit and git-submodules deps whatever their versioning (a rule
-// may override it), except setup-action version inputs, which are plain values; gitlabci and
-// terraform images (docker and kubernetes resources), which are edited like docker refs, and
-// the devcontainer image. Custom and kustomize deps and devcontainer features (never pinned,
-// as Renovate's pinDigests: false) can only refresh a digest they already carry (regex
-// `digest` group, an annotated `@sha256:`, a kustomize `digest` field, `feature:1@sha256:…`);
-// they have no place to insert a new one.
+// may override it), except setup-action version inputs, which are plain values; images of
+// gitlabci, terraform (docker and kubernetes resources) and the CI pipeline managers, which are
+// edited like docker refs, and the devcontainer image. Custom and kustomize deps and
+// devcontainer features (never pinned, as Renovate's pinDigests: false) can only refresh a
+// digest they already carry (regex `digest` group, an annotated `@sha256:`, a kustomize
+// `digest` field, `feature:1@sha256:…`); they have no place to insert a new one.
 func digestCapable(d dep.Dep) bool {
 	switch d.Manager {
 	case "custom", "kustomize":
 		return d.Digest != ""
-	case "gitlabci", "terraform":
+	case "gitlabci", "terraform", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines":
 		return d.Datasource == "docker"
 	case devcontainer.Name:
 		return d.DepType == devcontainer.DepTypeImage || d.DepType == devcontainer.DepTypeFeature && d.Digest != ""

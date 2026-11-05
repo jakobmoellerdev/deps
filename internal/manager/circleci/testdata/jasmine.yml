@@ -1,0 +1,185 @@
+# Run tests against supported Node versions, and (except for pull requests)
+# against supported browsers that are available on Saucelabs.
+
+version: 2.1
+
+orbs:
+  win: circleci/windows@5.0.0
+
+executors:
+  node26:
+    docker:
+      - image: cimg/node:26.0.0
+    working_directory: ~/workspace
+  node24:
+    docker:
+      - image: cimg/node:24.0.0
+    working_directory: ~/workspace
+  node22:
+    docker:
+      - image: cimg/node:22.0.0
+    working_directory: ~/workspace
+  node20:
+    docker:
+      - image: cimg/node:20.0.0
+    working_directory: ~/workspace
+
+jobs:
+  build:
+    parameters:
+      executor:
+        type: executor
+    executor: << parameters.executor >>
+    steps:
+      - checkout
+      - run:
+          name: Update npm or delete .npmrc
+          command: |
+            # jasmine-core's .npmrc requires NPM 12. Upgrade NPM if possible,
+            # or delete .npmrc
+            #
+            # Note: this check may cause spurious warnings about invalid npm
+            # settings. npm 11 validates .npmrc even when you just run --version.
+            if [ $(npm --version | sed 's/\..*//') -lt 12 ]; then
+              if [ $(node --version | sed -e 's/\..*//' -e 's/^v//') -ge 26 ]; then
+                npm install -g npm@latest
+              else
+                # We can't reliably install NPM 12 on anything before Node 26:
+                # * NPM 12 won't run on any Node 20 version, or on older 22 and
+                #   24 minors.
+                # * npm install -g fails on cimg/node:24.* due to permissions.
+                # Removing .npmrc theoretically leaves CI vulnerable to supply
+                # chain attacks, but CI produces no artifacts and has no access
+                # to credentials (except for the Saucelabs API key, and that's
+                # only provided to trusted invocations.)
+                rm .npmrc
+              fi
+            fi
+      - run:
+          name: Report Node and NPM versions
+          command: echo "Using Node $(node --version) and NPM $(npm --version)"
+      - run:
+          name: Install dependencies
+          command: npm install
+      - run:
+          name: Build
+          command: npm run build
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+
+  test_node: &test_node
+    parameters:
+      executor:
+        type: executor
+    executor: << parameters.executor >>
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Report Node and NPM versions
+          command: echo "Using Node $(node --version) and NPM $(npm --version)"
+      - run:
+          name: Run tests
+          command: npm test
+
+  test_win:
+    executor:
+      name: win/default
+      shell: bash.exe
+    steps:
+      - checkout
+      - run:
+          name: Install Node.js
+          command: nvm install 20.0.0 && nvm use 20.0.0
+      - run:
+          name: Report Node and NPM versions
+          command: echo "Using Node $(node --version) and NPM $(npm --version)"
+      - run:
+          name: Install dependencies
+          command: npm install
+      - run:
+          name: Build
+          command: npm run build
+      - run:
+          name: Run tests
+          command: npm test
+
+  test_parallel: &test_parallel
+    parameters:
+      executor:
+        type: executor
+    executor: << parameters.executor >>
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Report Node and NPM versions
+          command: echo "Using Node $(node --version) and NPM $(npm --version)"
+      - run:
+          name: Run tests in parallel
+          command: npm run test:parallel
+
+  test_browsers: &test_browsers
+    executor: node20
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Install Sauce Connect
+          command: |
+            tmpdir=$(mktemp -d)
+            cd "$tmpdir"
+            curl https://saucelabs.com/downloads/sauce-connect/5.2.2/sauce-connect-5.2.2_linux.x86_64.tar.gz | tar zxf -
+            chmod +x sc
+            mkdir ~/workspace/bin
+            cp sc ~/workspace/bin
+            echo "Sauce Connect version info:"
+            ~/workspace/bin/sc version
+      - run:
+          name: Run tests
+          command: |
+            # Do everything in one step because Sauce Connect won't exit
+            # cleanly if we kill it from a different step than it started in.
+
+            export PATH=$PATH:$HOME/workspace/bin
+            export SAUCE_TUNNEL_NAME=$CIRCLE_WORKFLOW_JOB_ID
+            scripts/start-sauce-connect
+            set +o errexit
+            scripts/run-sauce-browsers
+            exitcode=$?
+            set -o errexit
+            scripts/stop-sauce-connect
+            exit $exitcode
+
+workflows:
+  version: 2
+
+  push:
+    jobs:
+      - build:
+          matrix:
+            parameters:
+              executor: [node20, node22, node24, node26]
+      - test_node:
+          matrix:
+            parameters:
+              executor: [node20, node22, node24, node26]
+          requires:
+            - build-<< matrix.executor >>
+      - test_parallel:
+          matrix:
+            parameters:
+              executor: [node20, node22, node24, node26]
+          requires:
+            - build-<< matrix.executor >>
+      - test_browsers:
+          requires:
+             - build-node20
+          context:
+            - saucelabs
+          filters:
+            branches:
+              ignore: /pull\/.*/ # Don't run on pull requests.
+      - test_win

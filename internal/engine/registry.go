@@ -4,11 +4,15 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/azurepipelines"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bitbucketpipelines"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/circleci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/droneci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitlabci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
@@ -28,6 +32,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/swift"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/woodpecker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
@@ -38,21 +43,22 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	ms := make([]manager.Manager, 0, 26+len(cs))
+	ms := make([]manager.Manager, 0, 34+len(cs))
 	ms = append(ms, actions.New(), gomod.New(), docker.New(), npm.New(), helm.New(),
 		kustomize.New(), precommit.New(), gitlabci.New(),
 		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise(), cargo.New(),
 		piprequirements.New(), pep621.New(), poetry.New(), pipenv.New(),
 		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt(),
 		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New(), bundler.New(), toolversions.NewRubyVersion(), gitsubmodules.New(),
-		rusttoolchain.New(), devcontainer.New())
+		rusttoolchain.New(), devcontainer.New(),
+		bitbucketpipelines.New(), woodpecker.New(), droneci.New(), circleci.New(), azurepipelines.New())
 	return append(ms, cs...), nil
 }
 
 // SkipDocs are the skip reasons the engine sets for every manager.
 var SkipDocs = []refdoc.Skip{
 	{Reason: "ignored by rule #<i>", When: "a pre-policy rule set `ignore: true`"},
-	{Reason: "ignored by default (<type>; enable with a rule setting ignore: false)", When: "dep types `indirect`, `go`, `peerDependencies`, `engines`, `submodule`"},
+	{Reason: "ignored by default (<type>; enable with a rule setting ignore: false)", When: "dep types `indirect`, `go`, `peerDependencies`, `engines`, `submodule`, `task`"},
 	{Reason: "non-version value \"<v>\"", When: "the current value is not valid in the dep's versioning scheme"},
 	{Reason: "non-version tag", When: "a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep`"},
 	{Reason: "current version <v> not found upstream (pin an existing version)", When: "a pinned or to-be-pinned dep whose current tag or image tag no longer exists (digest refresh and pin need it)"},
@@ -67,5 +73,6 @@ func ManagerDocs() []refdoc.Manager {
 		piprequirements.Doc, pep621.Doc, poetry.Doc, pipenv.Doc,
 		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc,
 		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, bundler.Doc, toolversions.DocRubyVersion, gitsubmodules.Doc,
-		rusttoolchain.Doc, devcontainer.Doc, custom.Doc}
+		rusttoolchain.Doc, devcontainer.Doc,
+		bitbucketpipelines.Doc, woodpecker.Doc, droneci.Doc, circleci.Doc, azurepipelines.Doc, custom.Doc}
 }

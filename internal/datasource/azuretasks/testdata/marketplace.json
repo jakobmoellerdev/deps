@@ -1,0 +1,19 @@
+{
+  "ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.terraforminstaller": [
+    "1.216.33",
+    "1.216.34",
+    "1.216.35",
+    "1.216.36"
+  ],
+  "replacetokens": [
+    "6.2.0",
+    "6.3.0",
+    "6.3.1",
+    "7.0.0"
+  ],
+  "gittools.gittools.setup-gitversion-task.gitversion/setup": [
+    "3.1.11",
+    "3.2.0",
+    "3.2.1"
+  ]
+}

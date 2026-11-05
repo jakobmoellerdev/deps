@@ -1,0 +1,109 @@
+trigger:
+  batch: true
+  branches:
+    include:
+      - master
+      - next
+      - refs/tags/*
+  paths:
+    exclude:
+      - '**/*.md'
+      - '.appveyor.yml'
+      - '.codecov.yml'
+      - 'GitVersion.yml'
+      - 'GitReleaseManager.yaml'
+      - .vscode/*
+      - .git*
+      - .editorconfig
+      - .nuke
+      - LICENSE
+
+pr:
+  autoCancel: true
+  branches:
+    include:
+      - master
+      - next
+
+resources:
+  repositories:
+    - repository: rsg
+      type: github
+      name: RocketSurgeonsGuild/AzureDevopsTemplates
+      ref: refs/tags/v0.13.1
+      endpoint: github
+
+variables:
+  - name: CONFIGURATION
+    value: Release
+  - name: VERBOSITY
+    value: Normal
+  - name: COVERAGE
+    value: '$(Agent.BuildDirectory)/c'
+  - name: ARTIFACTS
+    value: $(Build.ArtifactStagingDirectory)
+  - name: DOTNET_SKIP_FIRST_TIME_EXPERIENCE
+    value: 'true'
+  - name: CodeCovToken
+    value: 'd122bf99-4ca6-4a7c-a7ff-90468bcc7703'
+
+jobs:
+  - template: jobs/publish-release.yml@rsg
+    parameters:
+      GitHubPackages: false
+      MyGetPackages: true
+      PublishNuGetPackagesFromArtifact: 'NuGet - Windows'
+
+  - job: Build
+    strategy:
+      matrix:
+        Windows:
+          BuildName: 'Windows'
+          ImageName: 'windows-latest'
+        Linux:
+          BuildName: 'Linux'
+          ImageName: 'ubuntu-latest'
+        macOS:
+          BuildName: 'macOS'
+          ImageName: 'macOS-latest'
+    pool:
+      vmImage: $(ImageName)
+    steps:
+      - template: support/mono.yml@rsg
+      # - ${{ if startsWith(variables['Build.SourceBranch'], 'refs/tags/v') }}:
+      #   - template: support/download-release-notes.yml@rsg
+      - template: support/install-dotnet.yml@rsg
+        parameters:
+          DotNetSdk:
+            - '8.0.x'
+            - '9.0.x'
+            - '10.0.x'
+
+      - task: DotNetCoreCLI@2
+        displayName: 'dotnet tool restore'
+        inputs:
+          command: custom
+          custom: tool
+          arguments: 'restore'
+
+      - task: DotNetCoreCLI@2
+        displayName: 'dotnet restore'
+        inputs:
+          command: restore
+          feedsToUse: config
+          nugetConfigPath: NuGet.config
+          verbosityRestore: Minimal
+
+      - template: ./azure-pipelines.nuke.yml
+        parameters:
+          Artifacts: $(Artifacts)
+          Configuration: $(Configuration)
+          Coverage: $(Coverage)
+
+      - template: support/publish-artifacts.yml@rsg
+        parameters:
+          Artifacts: $(Artifacts)
+          Configuration: $(Configuration)
+          Coverage: $(Coverage)
+          Postfix: ' - $(BuildName)'
+          PublishVSTest: true

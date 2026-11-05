@@ -42,6 +42,11 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`git-submodules`](#git-submodules)
 - [`rust-toolchain`](#rust-toolchain)
 - [`devcontainer`](#devcontainer)
+- [`bitbucket-pipelines`](#bitbucket-pipelines)
+- [`woodpecker`](#woodpecker)
+- [`droneci`](#droneci)
+- [`circleci`](#circleci)
+- [`azure-pipelines`](#azure-pipelines)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -50,7 +55,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 | Reason | When |
 |---|---|
 | `ignored by rule #<i>` | a pre-policy rule set `ignore: true` |
-| `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `go`, `peerDependencies`, `engines`, `submodule` |
+| `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `go`, `peerDependencies`, `engines`, `submodule`, `task` |
 | `non-version value "<v>"` | the current value is not valid in the dep's versioning scheme |
 | `non-version tag` | a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep` |
 | `current version <v> not found upstream (pin an existing version)` | a pinned or to-be-pinned dep whose current tag or image tag no longer exists (digest refresh and pin need it) |
@@ -236,7 +241,7 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 | `compose` | `services.*.image` (also through `<<:` merges and aliases), `image` in mappings at any depth of top-level `x-*` extension fields, `services.*.build.additional_contexts` entries `docker-image://<ref>` | `docker` | `docker` | updated |
 | `workflow` | `jobs.*.container` (string or `.image`), `jobs.*.services.*.image`, `uses: docker://…` | `docker` | `docker` | updated |
 | `action` | `runs.image: docker://…` (with `runs.using: docker`), `uses: docker://…` in `runs.steps` | `docker` | `docker` | updated |
-| `kubernetes` | scalar `image` in `containers`, `initContainers` and `ephemeralContainers` items | `docker` | `docker` | updated |
+| `kubernetes` | scalar `image` in `containers`, `initContainers` and `ephemeralContainers` items (not items with a `container` key: Azure Pipelines container resources, see azure-pipelines) | `docker` | `docker` | updated |
 | `helm` | `*image` mappings with `repository` + `tag` (optional `registry`, digest in `tag: x@sha256:…` or sibling `digest:`) | `docker` | `docker` | updated |
 
 **Skips:**
@@ -1830,6 +1835,167 @@ Updates the image, the Dev Container Features and the node, go and ruby feature 
 - Feature version options are read like the [asdf](#asdf) tools of the same name: `20` and `20.11` keep their precision (node, ruby), `1.22` and `1.22.3` are go-toolchain versions.
 - `build.dockerfile` and `dockerComposeFile` are not read: the [docker](#docker) manager finds the Dockerfile (`Dockerfile`, `Dockerfile.<x>`, `<x>.Dockerfile`) and the Compose file on its own.
 
+## bitbucket-pipelines
+
+Updates container images and pipes in Bitbucket Pipelines configuration.
+
+**Files:**
+
+- `*-pipelines.yml` (`bitbucket-pipelines.yml`, shared pipeline configurations), except the files of the azure-pipelines manager
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | `image` (string or `name:`) at top level and in steps, wherever they nest (`pipelines.<kind>`, `parallel`, `stage`, `definitions.steps`) | `docker` | `docker` | updated |
+| `service` | `definitions.services.<name>.image` (string or `name:`) | `docker` | `docker` | updated |
+| `pipe` | `pipe: <account>/<repo>:<version>` (Source `https://bitbucket.org/<account>/<repo>`), `pipe: docker://<image>` as an image | `git-tags`; `docker` for `docker://` | `tag`; `docker` for `docker://` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `variable reference` | `$` in the image or pipe |
+| `no version` | a pipe without `:<version>` |
+| `invalid pipe` | a pipe that is not `<account>/<repo>[:<version>]` or `docker://<image>` |
+| `invalid reference` | the image reference does not parse |
+| `no tag` | an image without tag |
+| `digest without tag` | an image pinned by digest only |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- Pipes are Bitbucket repositories; their tags are listed with `git-tags` (Renovate's `bitbucket-tags`), and only the version after `:` is rewritten.
+- YAML anchors (`&step`) are extracted where they are written; aliases (`*step`, `<<: *step`) add nothing.
+
+## woodpecker
+
+Updates container images in Woodpecker CI workflows.
+
+**Files:**
+
+- `.woodpecker.y(a)ml`, `.woodpecker/<name>.y(a)ml` at the repository root
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | `image` of the `steps`, `clone` and legacy `pipeline` steps (a list, or a mapping of step names) | `docker` | `docker` | updated |
+| `service` | `image` of the `services` (list or mapping) | `docker` | `docker` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `variable reference` | `$` in the image (matrix or environment variables) |
+| `invalid reference` | the image reference does not parse |
+| `no tag` | an image without tag |
+| `digest without tag` | an image pinned by digest only |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- An image written once as an anchor (`variables: [&golang_image 'golang:1.27']`) and used as `image: *golang_image` is one dep, at the anchor.
+
+## droneci
+
+Updates container images in Drone CI pipelines.
+
+**Files:**
+
+- `.drone.yml`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | `image` of the `steps` (and the Drone 0.8 `pipeline` mapping) of every document | `docker` | `docker` | updated |
+| `service` | `image` of the `services` (list or mapping) of every document | `docker` | `docker` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `variable reference` | `$` in the image |
+| `invalid reference` | the image reference does not parse |
+| `no tag` | an image without tag |
+| `digest without tag` | an image pinned by digest only |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars, a double-quoted image continued over lines with `\`) |
+
+**Details.**
+
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- Every YAML document is scanned (`kind: pipeline` documents of any `type`); documents without `image` are not parsed.
+
+## circleci
+
+Updates orbs and container images in CircleCI configuration.
+
+**Files:**
+
+- `*.y(a)ml` below a `.circleci/` directory
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `orb` | `orbs: {<alias>: <namespace>/<name>@<version>}`, also in inline orb definitions; full (`5.1.0`) and partial (`5`, `5.1`) versions keep their precision | `orb` | `tag` | updated |
+| `image` | `docker[].image` of `executors` and `jobs` (also in inline orbs), and `image` of top-level `aliases[]` entries | `docker` | `docker` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `parameter reference` | `<< … >>` (pipeline or job parameters) or `$` in the orb or image |
+| `no version` | an orb without `@<version>` |
+| `invalid orb` | an orb name without `<namespace>/` |
+| `variable reference` | `$` in an image |
+| `invalid reference` | the image reference does not parse |
+| `no tag` | an image without tag |
+| `digest without tag` | an image pinned by digest only |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- `@volatile` and `@dev:<label>` orbs are skipped as non-version values. Renovate pins a partial orb version to the full one (its `rangeStrategy` `pin`); deps keeps the precision (`circleci/node@5` → `circleci/node@7`).
+- `machine.image` values are CircleCI VM images, not container images, and are not extracted (as in Renovate).
+- YAML anchors are extracted where they are written; aliases and merge keys (`<<: *defaults`) add nothing.
+
+## azure-pipelines
+
+Updates container resources, GitHub repository resources and task versions in Azure Pipelines YAML. Tasks are ignored by default.
+
+**Files:**
+
+- `*.y(a)ml` below `.azuredevops/`
+- paths matching `azure.*pipelines?.*\.ya?ml$` (`azure-pipelines.yml`, `.azure-pipelines/*.yml`, `azure-pipelines/**/*.yaml`)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `container` | `resources.containers[].image` | `docker` | `docker` | updated |
+| `repository` | `resources.repositories[]` of `type: github` with `ref: refs/tags/<tag>`; Source `https://github.com/<name>` | `git-tags` | `tag` | updated |
+| `task` | `task: <name>@<version>` of every step, wherever it nests (`steps`, `jobs`, `stages`, deployment strategies, templates, `extends` parameters, `${{ if }}` blocks); ignored by default | `azure-pipelines-tasks` | `tag` | ignored (opt in with a rule setting `ignore: false`) |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `variable reference` | `$` (`$(var)`, `${{ … }}`) in the image, repository, ref or task |
+| `unsupported repository type` | a repository resource of `type: git` (Azure Repos) or `bitbucket`, as in Renovate |
+| `no ref` | a GitHub repository resource without `ref` (default branch) |
+| `non-tag ref` | a ref other than `refs/tags/<tag>` (a branch) |
+| `no version` | a task without `@<version>` |
+| `invalid reference` | the image reference does not parse |
+| `no tag` | an image without tag |
+| `digest without tag` | an image pinned by digest only |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Tasks.**
+
+- Renovate disables this manager because a task version listed publicly may not be installed in an Azure DevOps organization or Server yet. deps ignores only DepType `task` by default; `{manager: azure-pipelines, depTypes: [task], ignore: false}` opts in. Containers and repositories are updated by default.
+- A major version (`Bash@3`) is updated to the next major (`Bash@4`), a full version (`Bash@3.231.0`) to the newest full version: the precision is kept (Renovate writes the full version unless an `extractVersion` rule cuts it).
+- With `DEPS_AZURE_DEVOPS_URL` and `DEPS_AZURE_DEVOPS_TOKEN`, the versions are the tasks installed in that organization or collection (see the `azure-pipelines-tasks` datasource).
+
+**Details.**
+
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned. The docker manager leaves `containers` entries with a `container` key to this manager.
+- Job-level `container:` values are not extracted: they can name a container resource instead of an image (as in Renovate).
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -1907,9 +2073,11 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `rubygems` | gem name (case-sensitive, as on the gem server); the dep's source is its whitespace-separated gem servers in lookup order ("" = rubygems.org) | rubygems.org (also when a Gemfile names `https://rubygems.org`): `GET <DEPS_RUBYGEMS_URL or https://rubygems.org>/api/v1/versions/<name>.json`; other gem servers: the compact index `GET <source>/info/<name>` (what Bundler reads), and on a 404 `GET <source>/api/v1/versions/<name>.json`; once per (server, gem); platform builds (`1.18.10-x86_64-linux-gnu`) count as their version; yanked versions are not listed by either API; the first server that has the gem answers, none → `gem <name> not found`. Source repository (release notes, rubygems.org only): `GET <base>/api/v1/gems/<name>.json` `source_code_uri`, else a forge `homepage_uri`, only for versions in a pull request | userinfo of the source URL (`https://user:pass@gems.example.com`) as basic auth, else Bundler's `BUNDLE_<HOST>` variable (`gems.example-corp.com` → `BUNDLE_GEMS__EXAMPLE___CORP__COM`) holding `user:password` or a token; redacted in errors and logs | rubygems.org `created_at` (the earliest of the version's platform builds); the compact index of other servers has none |
 | `ruby-version` | any (`ruby`) | `<DEPS_RUBY_RELEASES_URL or https://raw.githubusercontent.com/ruby/www.ruby-lang.org/master/_data/releases.yml>`, the list the ruby-lang.org release pages are built from, once per run; published versions plus a derived `X.Y` and `X` per stable line | none | `date` |
 | `rust-version` | any (`rust`) | `<DEPS_RUST_MANIFESTS_URL or https://static.rust-lang.org/manifests.txt>`, the index of every channel manifest rustup can install, once per run; stable `X.Y.Z` and numbered betas `X.Y.Z-beta.N` from the manifest names (channel manifests such as `channel-rust-stable.toml` and dated nightlies are not listed), plus a derived `X.Y` per stable line. Source repository (release notes): `rust-lang/rust` | none | the date directory of the version's first manifest (`dist/2024-10-17/channel-rust-1.82.0.toml`), day precision |
+| `orb` | orb name `<namespace>/<name>` (`circleci/node`) | `GET <DEPS_CIRCLECI_URL or https://circleci.com>/api/v3/orb/packages?filter[name]=<name>` (Renovate's endpoint), once per orb; the entry whose name matches exactly answers. After the listed versions a derived `X.Y` and `X` per release line, so partial versions (`@5`) are updated with their precision | `DEPS_CIRCLECI_TOKEN` (private orbs) as `Circle-Token` and bare `Authorization`, as Renovate's `Token-Only` host rule | `created_at` of the version; a derived `X.Y`/`X` has the time of the line's first release |
+| `azure-pipelines-tasks` | task name (`Bash`), task id, or `<publisher>.<extension>.<contribution>.<name\|id>`; case-insensitive | public lists (Renovate's): `GET <DEPS_AZURE_PIPELINES_TASKS_URL or https://raw.githubusercontent.com/renovatebot/azure-devops-marketplace/main>/azure-pipelines-builtin-tasks.json` once per run, and for tasks it lacks `…/azure-pipelines-marketplace-tasks.json` once (streamed; only the run's tasks are kept). With `DEPS_AZURE_DEVOPS_URL` and `DEPS_AZURE_DEVOPS_TOKEN`: `GET <DEPS_AZURE_DEVOPS_URL>/_apis/distributedtask/tasks/` once per run, the tasks installed in that organization or collection (Renovate's behavior on the Azure platform). After the versions a derived `X.Y` and `X` per release line, so major-only references (`Bash@3`) are updated with their precision | none for the public lists; Basic `deps:<DEPS_AZURE_DEVOPS_TOKEN>` (a personal access token) for the organization | none |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
-Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
+Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
 
 ### Go proxy environment
 

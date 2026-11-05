@@ -89,7 +89,9 @@ func hasKey(doc []byte, word string) bool {
 
 var containerKeys = map[string]bool{"containers": true, "initContainers": true, "ephemeralContainers": true}
 
-// walk visits every mapping below n.
+// walk visits every mapping below n. A `containers` item with a `container` key is an Azure
+// Pipelines container resource (`resources.containers`), which the azure-pipelines manager
+// extracts; Kubernetes containers have none.
 func (x *extractor) walk(n *yaml.Node) {
 	if n.Kind == yaml.MappingNode {
 		for i := 0; i+1 < len(n.Content); i += 2 {
@@ -97,7 +99,9 @@ func (x *extractor) walk(n *yaml.Node) {
 			switch {
 			case containerKeys[k] && v.Kind == yaml.SequenceNode:
 				for _, c := range v.Content {
-					x.scalar(TypeKubernetes, yamlspan.Get(c, "image"), "")
+					if yamlspan.Get(c, "container") == nil {
+						x.scalar(TypeKubernetes, yamlspan.Get(c, "image"), "")
+					}
 				}
 			case v.Kind == yaml.MappingNode && strings.HasSuffix(strings.ToLower(k), "image"):
 				x.helm(v)

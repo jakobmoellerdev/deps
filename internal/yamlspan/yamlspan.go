@@ -207,6 +207,24 @@ func Seq(n *yaml.Node) []*yaml.Node {
 	return n.Content
 }
 
+// Items returns the items of n if it is a sequence, the values of n if it is a mapping (CI
+// steps written as a list or keyed by name), else nil.
+func Items(n *yaml.Node) []*yaml.Node {
+	switch {
+	case n == nil:
+		return nil
+	case n.Kind == yaml.SequenceNode:
+		return n.Content
+	case n.Kind == yaml.MappingNode:
+		vs := make([]*yaml.Node, 0, len(n.Content)/2)
+		for i := 1; i < len(n.Content); i += 2 {
+			vs = append(vs, n.Content[i])
+		}
+		return vs
+	}
+	return nil
+}
+
 // Value returns the value of scalar n, or "" when n is not a scalar.
 func Value(n *yaml.Node) string {
 	if n = Str(n); n == nil {

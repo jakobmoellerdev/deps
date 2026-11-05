@@ -99,8 +99,9 @@ func production(d dep.Dep) bool {
 var mavenProduction = map[string]bool{"compile": true, "provided": true, "runtime": true, "system": true, "import": true, "parent": true}
 
 // defaultIgnored are the dep types ignored unless a rule sets `ignore: false`: git submodules
-// are disabled by default as in Renovate.
-var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "engines": true, "submodule": true}
+// are disabled by default as in Renovate, and so are Azure Pipelines tasks (Renovate disables
+// the azure-pipelines manager: a public task version may not be installed in the organization).
+var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "engines": true, "submodule": true, "task": true}
 
 // allUpdates allows every update type; policies share it until a rule sets updates.
 var allUpdates = updateSet(nil)
@@ -141,7 +142,8 @@ func UnversionedPin(d dep.Dep) bool {
 // user rules without updateTypes top-to-bottom; each set field of a matching rule overwrites
 // the policy (Updates is replaced, not merged). Indirect Go requirements and pip-compile pins, go
 // directives, npm peerDependencies and engines, actions pinned to a bare SHA
-// (UnversionedPin), and git submodules are ignored unless a rule sets `ignore: false`. Its Versioning
+// (UnversionedPin), git submodules and Azure Pipelines tasks are ignored unless a rule sets
+// `ignore: false`. Its Versioning
 // and ExtractVersion replace the dep's before resolution (only rules without updateTypes may
 // set them). The age of the current version is unknown, so no currentAge rule matches (see
 // PolicyAt).
