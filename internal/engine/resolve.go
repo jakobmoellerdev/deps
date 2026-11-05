@@ -51,6 +51,16 @@ func (e *DepError) Error() string {
 
 func (e *DepError) Unwrap() error { return e.Err }
 
+// FileError is the extraction error of one dependency file.
+type FileError struct {
+	File string
+	Err  error
+}
+
+func (e *FileError) Error() string { return e.File + ": " + e.Err.Error() }
+
+func (e *FileError) Unwrap() error { return e.Err }
+
 // Options configures Resolve.
 type Options struct {
 	Managers    []manager.Manager
@@ -193,7 +203,7 @@ func Extract(ctx context.Context, root string, cfg *config.Config, env manager.E
 	var deps []dep.Dep
 	for i, e := range t.ex {
 		if e.err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", t.jobs[i].file, e.err))
+			errs = append(errs, &FileError{File: t.jobs[i].file, Err: e.err})
 			continue
 		}
 		deps = append(deps, e.deps...)
@@ -223,7 +233,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	kindRules := cfg.HasUpdateTypeRules()
 	for i, e := range ex {
 		if e.err != nil {
-			res.Errors = append(res.Errors, fmt.Errorf("%s: %w", jobs[i].file, e.err))
+			res.Errors = append(res.Errors, &FileError{File: jobs[i].file, Err: e.err})
 			continue
 		}
 		slog.DebugContext(ctx, "file extracted", "file", jobs[i].file, "manager", jobs[i].m.Name(), "deps", len(e.deps))

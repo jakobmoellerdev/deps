@@ -82,12 +82,17 @@ func TestAnnotatorLimitAndEscaping(t *testing.T) {
 		t.Errorf("got %q, want %q", b.String(), want)
 	}
 	b.Reset()
+	a.error(fmt.Errorf("wrapped: %w", &engine.FileError{File: "go.mod", Err: errors.New("bad")}))
+	if want := "::error file=sub/go.mod,title=deps::bad\n"; b.String() != want {
+		t.Errorf("got %q, want %q", b.String(), want)
+	}
+	b.Reset()
 	for i := range maxAnnotations + 5 {
 		a.error(fmt.Errorf("e%d", i))
 		a.command("warning", "", 0, "w")
 	}
-	if n := strings.Count(b.String(), "::error "); n != maxAnnotations-1 {
-		t.Errorf("%d error annotations after the first, want %d", n, maxAnnotations-1)
+	if n := strings.Count(b.String(), "::error "); n != maxAnnotations-2 {
+		t.Errorf("%d error annotations after the first two, want %d", n, maxAnnotations-2)
 	}
 	if n := strings.Count(b.String(), "::warning "); n != maxAnnotations {
 		t.Errorf("%d warning annotations, want %d", n, maxAnnotations)

@@ -89,17 +89,20 @@ func (a *annotator) command(kind, file string, line int, msg string) {
 	fmt.Fprintf(a.w, "::%s %s::%s\n", kind, strings.Join(props, ","), escapeData(msg))
 }
 
-// error annotates err: a dependency error at its file and line, a config error at each
-// problem's line in the config file, anything else without a location.
+// error annotates err: a dependency error at its file and line, a file error at its file, a
+// config error at each problem's line in the config file, anything else without a location.
 func (a *annotator) error(err error) {
 	if a == nil || !a.on {
 		return
 	}
 	var de *engine.DepError
 	var ce *config.Error
+	var fe *engine.FileError
 	switch {
 	case errors.As(err, &de):
 		a.command("error", a.path(a.dir, de.File), de.Line, de.Name+": "+de.Err.Error())
+	case errors.As(err, &fe):
+		a.command("error", a.path(a.dir, fe.File), 0, fe.Err.Error())
 	case errors.As(err, &ce) && ce.File != "" && len(ce.Problems) > 0:
 		for _, p := range ce.Problems {
 			a.command("error", a.path(".", ce.File), p.Line, p.Msg)

@@ -156,6 +156,8 @@ func (s *summary) report() jsonReport {
 		je := jsonError{Message: e.Error()}
 		if de, ok := errors.AsType[*engine.DepError](e); ok {
 			je.File, je.Line = de.File, de.Line
+		} else if fe, ok := errors.AsType[*engine.FileError](e); ok {
+			je.File = fe.File
 		}
 		r.Errors = append(r.Errors, je)
 	}

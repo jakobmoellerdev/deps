@@ -353,6 +353,12 @@ func TestResolveErrors(t *testing.T) {
 			t.Errorf("error %d = %q, want prefix %q", i, res.Errors[i], w)
 		}
 	}
+	if fe, ok := errors.AsType[*FileError](res.Errors[0]); !ok || fe.File != ".github/workflows/bad.yml" {
+		t.Errorf("error 0 = %#v, want FileError for bad.yml", res.Errors[0])
+	}
+	if de, ok := errors.AsType[*DepError](res.Errors[4]); !ok || de.File != "go.mod" || de.Line != 5 || de.Name != "example.com/b" {
+		t.Errorf("error 4 = %#v, want DepError for go.mod:5 example.com/b", res.Errors[4])
+	}
 	// Updates are sorted by file, a dep's buckets by version; example.com/c is current and
 	// yields none.
 	if len(res.Updates) != 3 ||
