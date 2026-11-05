@@ -211,12 +211,16 @@ func TestMaintainRealNpm(t *testing.T) {
 	}
 }
 
-// realTool puts the package manager bin on PATH: the one there, else pkg installed from the
+// realTool puts the package manager bin on PATH: the one there when its major version is
+// pkg's (`name@major`; yarn classic and berry share the bin), else pkg installed from the
 // public npm registry. Without npm, in -short mode or offline the test is skipped.
 func realTool(t *testing.T, bin, pkg string) {
 	t.Helper()
-	if _, err := exec.LookPath(bin); err == nil {
-		return
+	major := pkg[strings.LastIndex(pkg, "@")+1:] + "."
+	if p, err := exec.LookPath(bin); err == nil {
+		if v, err := exec.CommandContext(t.Context(), p, "--version").Output(); err == nil && strings.HasPrefix(strings.TrimSpace(string(v)), major) {
+			return
+		}
 	}
 	if testing.Short() {
 		t.Skip(bin + " not in PATH; installing it needs the npm registry")
