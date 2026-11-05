@@ -55,12 +55,14 @@ Every command accepts these flags.
 Write the updates to the files, including go mod tidy, package-lock.json and Cargo.lock.
 
 ```
-deps apply
+deps apply [flags]
 ```
 
 Resolves every dependency, prints the same report as `deps plan` on stderr, and writes the changed files, including `go mod tidy` output (`go.mod`, `go.sum`), regenerated `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `uv.lock`, `poetry.lock` or `Pipfile.lock`, `Cargo.lock` updated with `cargo update`, and the `--hash` lines of requirements files (pip-compile/`uv pip compile` output is regenerated from its header command, other files get the new release's hashes from the index). An update of a pip-compile input (`requirements.in`) rewrites the input and regenerates every compiled file named after it. Post-processors run on temporary copies; a failed one drops that module's or lockfile root's changes and is reported as an error. An update a post-processor finds inapplicable (a compiled requirements file whose inputs do not admit the version, a Go module version that declares another path) is left out instead, and the other updates of its files are applied: it is reported as `skip    <file>:<line>  <name>  <from> -> <to>  (cannot be applied: <reason>)`, counts as skipped, and is no error.
 
 A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`, as is the lock file maintenance update (`lockFileMaintenance`), which only `deps run` makes.
+
+The `postUpgradeTasks` of the config run in `--dir` after the files are written, in the order `run` uses, when `--allow-tasks` (or `$DEPS_ALLOW_TASKS`) allows each of their commands. Otherwise nothing is written and the error names the first command not allowed. With `files` globs, every other file below `--dir` the commands changed is restored to its state before them (ignored files are left alone).
 
 The platform is only detected from CI environment variables. Locally, lookups run without a platform token unless one of the token variables is set (see `deps help environment`).
 
@@ -69,6 +71,12 @@ The platform is only detected from CI environment variables. Locally, lookups ru
 ```sh
 deps apply && git diff --stat
 ```
+
+### deps apply flags
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--allow-tasks` | strings | `[]` | postUpgradeTasks command allowed to run, `*` matching any text but ; & \| ` $( and line breaks, e.g. `go generate ./...`, `make *` or `*` (repeatable); they run repository code on this machine (default: $DEPS_ALLOW_TASKS, one per line) |
 
 ## deps completion
 
@@ -321,6 +329,8 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 **Platform commits** (config key `platformCommit`, overridden by `$DEPS_PLATFORM_COMMIT`; `auto`, `enabled` or `disabled`): on GitHub, deps uploads the changed files as blobs, creates tree and commit through the REST API on top of the base, and moves the branch with the GraphQL `updateRefs` mutation, compare-and-swap against the tip listed at the start of the run (`stale info` if it moved). GitHub signs commits created with a GitHub App installation token (`ghs_…`, including `GITHUB_TOKEN`), so they show as verified, authored by the App's bot; with other tokens they stay unsigned (warned). `auto` enables them for an App token without a signing key. `enabled` on Gitea/Forgejo, or together with a signing key, exits 2; without a token (`--dry-run`) it falls back to git. Logged at info as `platform commits author=<name> <email>`. A branch tip GitHub links to the token's account, or with the configured git author, counts as deps' own.
 
+**Post-upgrade tasks** (config key `rules[].postUpgradeTasks`) run only when a pattern of `--allow-tasks` (repeatable; `$DEPS_ALLOW_TASKS`, one per line) matches each command whole: `--allow-tasks 'go generate ./...'`, `--allow-tasks 'make *'`, `--allow-tasks '*'`. `*` matches any text except command chaining and substitution (`;`, `&`, `|`, backticks, `$(`, line breaks), so `make *` allows `make docs` but not `make docs; curl …` or `make $(id)`; operators written in the pattern match literally (`echo * >> deps.txt`), and the pattern `*` alone allows every command. Otherwise the group fails before anything runs, naming the command. After the post-processors, each group's commands (once per update with `executionMode: update`, then the branch-mode ones) run in a temporary copy of the work tree holding its changes, which is a throwaway git repository of the base (git works in it; nothing it writes reaches the checkout's repository), and every file below `--dir` they add, change or delete that `.gitignore` does not ignore (and the task's `files` globs match, if set) joins the commit. Submodule content never does, and moving a submodule's HEAD fails the group, as does a failing command. They run repository code; see `docs/ci.md`.
+
 **Commit signing:** with `--signing-key` (or `$DEPS_SIGNING_KEY`), every commit deps creates is signed. The value is the private key itself, as a CI secret holds it, or the path of a file holding it; the format is detected from the armor header:
 
 - `-----BEGIN OPENSSH PRIVATE KEY-----`: SSH signature (`gpg.format=ssh`) with a `0600` temporary copy of the key; needs `ssh-keygen`.
@@ -380,6 +390,7 @@ DEPS_TOKEN=$TOKEN deps run -v --log-level info
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--allow-tasks` | strings | `[]` | postUpgradeTasks command allowed to run, `*` matching any text but ; & \| ` $( and line breaks, e.g. `go generate ./...`, `make *` or `*` (repeatable); they run repository code on this machine (default: $DEPS_ALLOW_TASKS, one per line) |
 | `--api-url` | string | `""` | API base URL (default: detected) |
 | `--author-email` | string | `"deps-bot@noreply.invalid"` | commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default) |
 | `--author-name` | string | `"deps[bot]"` | commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default) |
@@ -473,6 +484,7 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `HOME`, `APPDATA` (Windows) | `terraform-provider`, `terraform-module` datasources | where the Terraform CLI config, `credentials.tfrc.json` and credentials helpers (`.terraform.d/plugins`) are found |
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor`; ignored for platform commits |
 | `DEPS_SIGNING_KEY` | `run` | default of `--signing-key`: a passphrase-less OpenSSH or armored OpenPGP private key, or the path of a file holding one; deps signs its commits with it |
+| `DEPS_ALLOW_TASKS` | `apply`, `run` | default of `--allow-tasks`: the `postUpgradeTasks` commands that may run (repository code), one pattern per line, `*` matching any text without `;`, `&`, `|`, backticks, `$(` or line breaks (`go generate ./...`, `make *`; `*` alone allows everything). Commands get the environment without `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`, and without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CEILING_DIRECTORIES`, so their git uses the repository they run in |
 | `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |

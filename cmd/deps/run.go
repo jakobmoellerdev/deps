@@ -61,6 +61,7 @@ func newRun(o *rootOpts) *cli.Command {
 			&cli.BoolFlag{Name: "dry-run", Destination: &r.dryRun, Usage: "report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token"},
 			&cli.StringFlag{Name: "trigger-schedule", Destination: &r.triggerSchedule, Usage: "act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE)"},
 			&cli.StringFlag{Name: "signing-key", Destination: &r.signingKey, Usage: "sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (default: $DEPS_SIGNING_KEY)"},
+			allowTasksFlag(o),
 		},
 	}
 }
@@ -218,6 +219,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	if err != nil {
 		return err
 	}
+	allowTasks := taskAllowlist(o)
 	signer, err := newSigner(ctx, r.signingKey, os.Getenv("DEPS_SIGNING_KEY"))
 	if err != nil {
 		return err
@@ -313,6 +315,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 		MaxNewPRs:          r.maxNewPRs,
 		Managers:           s.managers,
 		BranchPrefix:       s.cfg.Prefix(),
+		AllowTasks:         allowTasks,
 		Notes:              releasenotes.New(client, s.sem, s.auth, s.gh, s.sources),
 		Progress:           s.progress,
 		PRLog:              prLog(stderr),

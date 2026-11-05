@@ -2,4 +2,6 @@ Resolves every dependency, prints the same report as `deps plan` on stderr, and 
 
 A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`, as is the lock file maintenance update (`lockFileMaintenance`), which only `deps run` makes.
 
+The `postUpgradeTasks` of the config run in `--dir` after the files are written, in the order `run` uses, when `--allow-tasks` (or `$DEPS_ALLOW_TASKS`) allows each of their commands. Otherwise nothing is written and the error names the first command not allowed. With `files` globs, every other file below `--dir` the commands changed is restored to its state before them (ignored files are left alone).
+
 The platform is only detected from CI environment variables. Locally, lookups run without a platform token unless one of the token variables is set (see `deps help environment`).

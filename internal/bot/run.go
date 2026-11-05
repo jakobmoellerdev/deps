@@ -69,6 +69,9 @@ type Options struct {
 	IgnoredAuthors []string
 	Managers       []manager.Manager // edit the updates' files (engine.Build)
 	Now            time.Time         // reference time of prHourlyLimit; zero = time.Now()
+	// AllowTasks are the postUpgradeTasks commands that may run (engine.BuildWithTasks); a
+	// group with another command fails.
+	AllowTasks engine.TaskAllowlist
 	// Trigger is what started the run; groups are in schedule when it matches all their
 	// non-security updates' schedules (schedule.Set.Matches).
 	Trigger schedule.Trigger
@@ -280,7 +283,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			start := time.Now()
-			changes, errs := engine.Build(logs.ctx(i), root, o.Managers, groups[i].Updates, post)
+			changes, errs := build(logs.ctx(i), o, root, head, groups[i].Updates, post)
 			built[i], buildErrs[i] = changes, errs
 			logs.spent[i] += time.Since(start)
 		})
@@ -321,7 +324,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			b := groupBuild{changes: built[i], input: inputs[i]}
 			if skipped[i] {
 				b.build = func() ([]engine.FileChange, error) {
-					changes, errs := engine.Build(ctx, root, o.Managers, grp.Updates, post)
+					changes, errs := build(ctx, o, root, head, grp.Updates, post)
 					return changes, errors.Join(errs...)
 				}
 			}
@@ -973,6 +976,20 @@ func listDeps(ctx context.Context, pc platform.Client, state string, maxPages in
 		}
 	}
 	return out, nil
+}
+
+// build builds a group's updates (engine.Build) and runs their postUpgradeTasks on the
+// result; a task failure fails the group.
+func build(ctx context.Context, o Options, root, head string, ups []dep.Update, post map[string]engine.PostProcessor) ([]engine.FileChange, []error) {
+	changes, errs := engine.Build(ctx, root, o.Managers, ups, post)
+	if errs != nil {
+		return changes, errs
+	}
+	changes, err := engine.BuildWithTasks(ctx, root, head, ups, changes, o.AllowTasks)
+	if err != nil {
+		return nil, []error{err}
+	}
+	return changes, nil
 }
 
 // fingerprint hashes the resulting file contents; changes are sorted by path by engine.Build.

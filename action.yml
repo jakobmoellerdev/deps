@@ -18,6 +18,14 @@ inputs:
       job token) deps then creates its commits through the API, and GitHub signs them (config key
       platformCommit). A key turns that off, and conflicts with platformCommit: enabled.
     default: ""
+  allow-tasks:
+    description: >-
+      postUpgradeTasks commands of the repository's config that may run, one pattern per line,
+      `*` matching any text but `;`, `&`, `|`, backticks, `$(` and line breaks: `go generate ./...`,
+      `make *`, or `*` alone for every command. Exported as
+      DEPS_ALLOW_TASKS (an empty input keeps DEPS_ALLOW_TASKS of the job env). The commands run
+      repository code on the runner; a PR with a command no pattern allows fails. Default: none.
+    default: ""
   args:
     description: "Arguments for deps, e.g. `run -v --log-level info` or `plan`."
     default: "run"
@@ -242,6 +250,7 @@ runs:
         BIN: ${{ steps.preinstalled.outputs.bin || format('{0}/deps', steps.resolve.outputs.dir) }}
         DEPS_TOKEN: ${{ inputs.token }}
         DEPS_SIGNING_KEY: ${{ inputs.signing-key }}
+        DEPS_ALLOW_TASKS: ${{ inputs.allow-tasks || env.DEPS_ALLOW_TASKS }}
         # one file per action step (github.action is unique per step) in the job's temp dir
         DEPS_REPORT: ${{ runner.temp }}/deps-report-${{ github.action }}.json
       run: |

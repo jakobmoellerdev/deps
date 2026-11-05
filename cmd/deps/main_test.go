@@ -444,6 +444,52 @@ func TestApplyWritesFiles(t *testing.T) {
 	}
 }
 
+// apply runs postUpgradeTasks in --dir after writing the updates, without deps' tokens, and
+// only when --allow-tasks (or DEPS_ALLOW_TASKS, one pattern per line) allows every command;
+// executionMode update runs once per update, and files restores what else they change.
+func TestApplyPostUpgradeTasks(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{".github/workflows/ci.yml": workflow, ".deps.yaml": `rules:
+  - postUpgradeTasks:
+      executionMode: update
+      commands: ['cp .github/workflows/ci.yml copy.yml && echo "${DEPS_TOKEN:-unset}" > token', 'echo "$DEPS_DEP_NAME=$DEPS_NEW_VERSION" >> deps.txt', 'echo junk > junk.txt']
+      files: ["*", "!junk.txt"]
+`})
+	git(t, dir, "init", "-q")
+	git(t, dir, "add", "-A")
+	git(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgSign=false", "commit", "-qm", "init")
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{nil, `postUpgradeTasks command not allowed: "cp .github/workflows/ci.yml copy.yml && echo \"${DEPS_TOKEN:-unset}\" > token"; allow it with --allow-tasks 'cp .github/workflows/ci.yml copy.yml && echo "${DEPS_TOKEN:-unset}" > token'`},
+		{[]string{"--allow-tasks", "cp *"}, `allow it with --allow-tasks 'cp .github/workflows/ci.yml copy.yml && echo`}, // * does not cross &&
+		{[]string{"--allow-tasks", "cp * && echo * > token"}, `allow it with --allow-tasks 'echo "$DEPS_DEP_NAME=$DEPS_NEW_VERSION" >> deps.txt'`},
+	} {
+		_, stderr, code := execute(t, append([]string{"apply", "--dir", dir}, tc.args...)...)
+		if code == 0 || !strings.Contains(stderr, tc.want) {
+			t.Fatalf("%v: exit %d, want %q\n%s", tc.args, code, tc.want, stderr)
+		}
+		if got, _ := os.ReadFile(filepath.Join(dir, ".github", "workflows", "ci.yml")); string(got) != workflow {
+			t.Fatal("apply wrote the updates without their tasks")
+		}
+	}
+	t.Setenv("DEPS_TOKEN", "secret")
+	t.Setenv("DEPS_ALLOW_TASKS", "cp * && echo * > token\n\n  echo  *\n")
+	if _, stderr, code := execute(t, "apply", "--dir", dir); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "copy.yml"))
+	tok, _ := os.ReadFile(filepath.Join(dir, "token"))
+	runs, _ := os.ReadFile(filepath.Join(dir, "deps.txt"))
+	_, junk := os.Stat(filepath.Join(dir, "junk.txt"))
+	if !strings.Contains(string(got), "checkout@v7.0.1") || string(tok) != "unset\n" || string(runs) != "actions/checkout=v7.0.1\nactions/checkout=v7.0.1\n" || junk == nil {
+		t.Errorf("copy.yml:\n%s\ntoken: %q, deps.txt: %q, junk.txt kept: %v", got, tok, runs, junk == nil)
+	}
+}
+
 func TestUsageErrorsExitTwo(t *testing.T) {
 	cleanEnv(t)
 	newFakeNet(t)

@@ -37,6 +37,7 @@ func newApply(o *rootOpts) *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return local(ctx, cmd, o, true)
 		},
+		Flags: []cli.Flag{allowTasksFlag(o)},
 	}
 }
 

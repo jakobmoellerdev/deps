@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -812,6 +813,113 @@ func TestRunSkipsInapplicableUpdate(t *testing.T) {
 	post = map[string]engine.PostProcessor{"github-actions": inapplicable{fail: true}}
 	if _, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, post, pc, g); len(errs) != 1 || !strings.Contains(errs[0].Error(), branchB+": wf.yml: boom") || !slices.Equal(pc.closedNow, []int{9}) {
 		t.Errorf("errs = %v, closed = %v", errs, pc.closedNow)
+	}
+}
+
+// taskGit is a fakeGit whose head is the real commit of a checkout, recording commits.
+type taskGit struct {
+	fakeGit
+	head    string
+	commits [][]engine.FileChange
+}
+
+func (g *taskGit) RevParse(context.Context, string) (string, error) { return g.head, nil }
+func (g *taskGit) LsRemote(ctx context.Context, pattern string) (map[string]string, error) {
+	if pattern == "refs/heads/main" {
+		return map[string]string{pattern: g.head}, nil
+	}
+	return g.fakeGit.LsRemote(ctx, pattern)
+}
+func (g *taskGit) ObjectIDs(ctx context.Context, _ string, paths []string) ([]string, error) {
+	return g.fakeGit.ObjectIDs(ctx, head, paths)
+}
+func (g *taskGit) Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, name, email string) (string, error) {
+	g.commits = append(g.commits, changes)
+	return g.fakeGit.Commit(ctx, parent, changes, msg, name, email)
+}
+
+// gitCheckout makes root a git repository with one commit and returns its id.
+func gitCheckout(t *testing.T, root string) string {
+	t.Helper()
+	writeFile := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(".gitignore", "ignored.txt\n")
+	writeFile("old.txt", "old\n")
+	var out []byte
+	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgSign=false", "commit", "-qm", "init"},
+		{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "tag.gpgSign=false", "tag", "-a", "-m", "v1", "v1"}, {"rev-parse", "HEAD"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		var err error
+		if out, err = cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// repoState describes what a run must not change in the repository at dir: its objects,
+// refs, worktrees, status and index.
+func repoState(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	for _, args := range []string{"count-objects -v", "for-each-ref", "worktree list --porcelain", "status --porcelain"} {
+		cmd := exec.Command("git", strings.Fields(args)...)
+		cmd.Dir = dir
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("git %s: %v", args, err)
+		}
+		b.Write(out)
+	}
+	index, err := os.ReadFile(filepath.Join(dir, ".git", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Write(index)
+	return b.String()
+}
+
+// postUpgradeTasks run on a copy of the checkout that is a repository of its own: git sees
+// the base with the build's changes, and even commits stay in the copy. The files they add or
+// delete join the commit, .gitignored files do not, the checkout's repository stays
+// untouched, and a failing command fails its group only.
+func TestRunPostUpgradeTasks(t *testing.T) {
+	root, res := fixture(t)
+	base := gitCheckout(t, root)
+	before := repoState(t, root)
+	res.Updates[0].Tasks.Commands = []string{
+		`git status --porcelain | grep -qx ' M wf.yml' && test "$(git rev-parse HEAD)" = ` + base + ` && git describe --tags > described.txt`,
+		"echo generated > gen.txt && echo tmp > ignored.txt && rm old.txt",
+		"git -c user.name=t -c user.email=t@t -c commit.gpgSign=false commit -qam inside",
+	}
+	res.Updates[1].Tasks.Commands = []string{"echo broken >&2; exit 3"}
+	g := &taskGit{head: base}
+	pc := &fakePC{}
+	_, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers, AllowTasks: engine.TaskAllowlist{"*"}}, root, res, nil, pc, g)
+	if len(errs) != 1 || errs[0].Error() != branchB+": postUpgradeTasks: echo broken >&2; exit 3: exit status 3: broken" {
+		t.Errorf("errs = %v", errs)
+	}
+	if !slices.Equal(pc.created, []string{branchA}) || len(g.commits) != 1 {
+		t.Fatalf("created = %v, commits = %d", pc.created, len(g.commits))
+	}
+	if c := g.commits[0]; len(c) != 4 || c[0].Path != "described.txt" || string(c[0].New) != "v1\n" ||
+		c[1].Path != "gen.txt" || string(c[1].New) != "generated\n" || c[1].Old != nil ||
+		c[2].Path != "old.txt" || string(c[2].Old) != "old\n" || c[2].New != nil ||
+		c[3].Path != "wf.yml" || !strings.Contains(string(c[3].New), "a/x@v2") || !strings.Contains(string(c[3].Old), "a/x@v1") {
+		t.Errorf("commit = %+v", c)
+	}
+	if after := repoState(t, root); after != before {
+		t.Error("the run changed the checkout's repository")
+	}
+
+	g = &taskGit{head: g.head}
+	_, errs = Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, &fakePC{}, g)
+	if len(errs) != 2 || !errors.Is(errs[0], engine.ErrTasksNotAllowed) || len(g.commits) != 0 {
+		t.Errorf("without AllowTasks: errs = %v, commits = %d", errs, len(g.commits))
 	}
 }
 

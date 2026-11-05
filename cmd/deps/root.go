@@ -49,7 +49,27 @@ type rootOpts struct {
 	rawStderr   io.Writer    // the writer behind stderr (the terminal's file)
 	prof        profiler
 	concurrency int
-	report      string // --report: JSON result file of plan, apply and run
+	report      string   // --report: JSON result file of plan, apply and run
+	allowTasks  []string // --allow-tasks of apply and run
+}
+
+// allowTasksFlag is --allow-tasks of apply and run.
+func allowTasksFlag(o *rootOpts) cli.Flag {
+	return &cli.StringSliceFlag{Name: "allow-tasks", Destination: &o.allowTasks, Usage: "postUpgradeTasks command allowed to run, '*' matching any text but ; & | ` $( and line breaks, e.g. 'go generate ./...', 'make *' or '*' (repeatable); they run repository code on this machine (default: $DEPS_ALLOW_TASKS, one per line)"}
+}
+
+// taskAllowlist returns the --allow-tasks patterns, else those of DEPS_ALLOW_TASKS (one per line).
+func taskAllowlist(o *rootOpts) engine.TaskAllowlist {
+	if len(o.allowTasks) > 0 {
+		return o.allowTasks
+	}
+	var a engine.TaskAllowlist
+	for l := range strings.Lines(os.Getenv("DEPS_ALLOW_TASKS")) {
+		if l = strings.TrimSpace(l); l != "" {
+			a = append(a, l)
+		}
+	}
+	return a
 }
 
 func newRoot() *cli.Command {

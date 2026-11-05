@@ -426,6 +426,8 @@ type Rule struct {
 	PRTitle  *string `yaml:"prTitle" jsonschema_description:"Overrides the top-level prTitle for matching deps (with updateTypes: for updates of those types); empty string means the built-in titles. A group's PR uses its first update's templates."`
 	PRHeader *string `yaml:"prHeader" jsonschema_description:"Overrides the top-level prHeader for matching deps; empty string means none."`
 	PRFooter *string `yaml:"prFooter" jsonschema_description:"Overrides the top-level prFooter for matching deps; empty string means none."`
+	// PostUpgradeTasks of the last matching rule setting it run after the update is built.
+	PostUpgradeTasks *PostUpgradeTasks `yaml:"postUpgradeTasks" jsonschema_description:"Shell commands run in the repository after the update is built (apply, run with --allow-tasks), e.g. go generate ./...: a list (once per branch) or {commands, executionMode}. The files they change, apart from .gitignored ones, join the commit. The last matching rule setting it wins; [] clears."`
 
 	allow          *Allowed
 	updates        map[dep.UpdateType]bool // set of Updates; nil = not set
@@ -448,6 +450,42 @@ type Custom struct {
 
 // Checksum locates the sha256/sha512 checksum written next to a version. Its fields are
 // templates; {{version}} is the new version exactly as written into the file.
+// executionMode values of postUpgradeTasks (Renovate's names).
+const (
+	ExecutionBranch = "branch" // once per branch, the default
+	ExecutionUpdate = "update" // once per update of the branch, with DEPS_* variables
+)
+
+// ExecutionModes are the accepted postUpgradeTasks.executionMode values.
+var ExecutionModes = []string{ExecutionBranch, ExecutionUpdate}
+
+// PostUpgradeTasks is rules[].postUpgradeTasks: a list of commands (executionMode branch) or
+// the object form.
+type PostUpgradeTasks struct {
+	Commands      []string `yaml:"commands" jsonschema_description:"Shell commands, run in order with sh -c."`
+	ExecutionMode string   `yaml:"executionMode" jsonschema:"enum=branch,enum=update,default=branch" jsonschema_description:"branch runs the commands once per branch, update once per update of the branch, in the branch's order, with DEPS_* variables describing the update."`
+	Files         []string `yaml:"files" jsonschema_description:"Doublestar globs on slash paths relative to --dir (an entry starting with '!' excludes, as in rules[].paths): only the files the commands change that match join the commit (run). Default: every changed file that .gitignore does not ignore."`
+
+	list bool // written as a list
+}
+
+// UnmarshalYAML accepts a list of commands or a mapping with the PostUpgradeTasks keys.
+func (t *PostUpgradeTasks) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.SequenceNode {
+		t.list = true
+		return n.Decode(&t.Commands)
+	}
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 { // node.Decode does not reject unknown keys
+			if k := n.Content[i]; k.Value != "commands" && k.Value != "executionMode" && k.Value != "files" {
+				return fmt.Errorf("line %d: field %s not found in type config.PostUpgradeTasks", k.Line, k.Value)
+			}
+		}
+	}
+	type plain PostUpgradeTasks
+	return n.Decode((*plain)(t))
+}
+
 type Checksum struct {
 	Asset string `yaml:"asset" jsonschema_description:"github-releases only: release asset whose API digest is the checksum, e.g. 'gh_{{version}}_linux_amd64.tar.gz'. Exclusive with url."`
 	URL   string `yaml:"url" jsonschema_description:"URL of a checksum document (sha256sum style or a bare hex digest). Exclusive with asset."`
@@ -893,6 +931,21 @@ func (c *Config) validateRule(i int, add addFunc) {
 	}
 	validateAutomerge(f+".", r.AutomergeStrategy, r.AutomergeType, add)
 	validatePRMeta(f+".", r.Labels, r.AddLabels, r.Reviewers, r.Assignees, add)
+	if t := r.PostUpgradeTasks; t != nil {
+		key := f + ".postUpgradeTasks.commands"
+		if t.list {
+			key = f + ".postUpgradeTasks"
+		}
+		for j, c := range t.Commands {
+			if strings.TrimSpace(c) == "" {
+				add(fmt.Sprintf("%s[%d]", key, j), "must be a non-blank command")
+			}
+		}
+		validateMatchGlobs(f+".postUpgradeTasks.files", t.Files, add)
+		if t.ExecutionMode != "" && !slices.Contains(ExecutionModes, t.ExecutionMode) {
+			add(f+".postUpgradeTasks.executionMode", "must be one of %s, got %q", list(ExecutionModes), t.ExecutionMode)
+		}
+	}
 	r.schedule = parseSchedule(f+".schedule", r.Schedule, add)
 	r.minAge = nil
 	if r.MinimumReleaseAge != "" {

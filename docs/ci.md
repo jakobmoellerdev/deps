@@ -31,6 +31,7 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
 - [Automerge](#automerge)
 - [Dependency dashboard](#dependency-dashboard)
 - [Labels, reviewers and assignees](#labels-reviewers-and-assignees)
+- [Post-upgrade tasks](#post-upgrade-tasks)
 - [Rebasing or pausing a PR](#rebasing-or-pausing-a-pr)
 - [Overlapping runs](#overlapping-runs)
 - [Step summary](#step-summary)
@@ -56,7 +57,7 @@ The repository root has a composite [`action.yml`](../action.yml). The same file
 
 Go is not needed to run it; only go.mod updates need `go` for `go mod tidy`.
 
-The inputs (`token`, `signing-key`, `args`, `version`, `repository`, `use-preinstalled`, `cache`), the outputs (`version`, `cache-hit`), where the binary is downloaded from, and the supported runners (linux/amd64 and linux/arm64 only) are described in the generated [action reference](reference/action.md). This section covers how the steps behave.
+The inputs (`token`, `signing-key`, `allow-tasks`, `args`, `version`, `repository`, `use-preinstalled`, `cache`), the outputs (`version`, `cache-hit`), where the binary is downloaded from, and the supported runners (linux/amd64 and linux/arm64 only) are described in the generated [action reference](reference/action.md). This section covers how the steps behave.
 
 **Binary cache.** Once the version is known, the action looks for that binary in two places before downloading:
 
@@ -604,6 +605,22 @@ rules:
 ## Dependency dashboard
 
 With [`dependencyDashboard: true`](reference/configuration.md#dependencydashboard), `deps run` maintains one issue. It lists the updates waiting for their schedule, rate-limited and blocked updates, open PRs, errors, and the detected dependencies. Ticking a checkbox makes the next run create, recreate or rebase that PR. The token needs `issues: write`, and the repository must have issues enabled. The title, labels and the exact list are in the [configuration reference](reference/configuration.md#dependencydashboard).
+
+## Post-upgrade tasks
+
+[`rules[].postUpgradeTasks`](reference/configuration.md#rulespostupgradetasks) (e.g. `["go generate ./..."]`) run only when the workflow allows their commands with the `allow-tasks` input (`DEPS_ALLOW_TASKS`, `--allow-tasks`): one pattern per line, matched against the whole command. `*` matches any text except command chaining and substitution (`;`, `&`, `|`, backticks, `$(`, line breaks), so `make *` allows `make docs` but not `make docs; curl …` or `make $(id)`; operators written in the pattern match literally (`echo * >> deps.txt`), and the pattern `*` alone allows every command. A PR with a command no pattern allows fails instead of missing its generated files. Install the tools the commands need in a step before deps.
+
+```yaml
+      - uses: jakobmoellerdev/deps@v0.3.0
+        with:
+          allow-tasks: |
+            go generate ./...
+            make *
+```
+
+`*` alone allows every command. Prefer exact commands: the allowlist lives in the workflow, not in the repository's config, so a config change cannot add a command the workflow did not allow.
+
+**Security.** Opting in runs repository code on the runner: `make generate` runs the Makefile, `go generate` the `//go:generate` directives, and whoever can change the default branch's config or those files can run code in the deps job. The commands run in a temporary copy of the checkout that is a throwaway git repository (the checkout's objects shared read-only) and get deps' environment without its tokens, but that is no sandbox: they can still read the real checkout's `.git/config` by path (where `actions/checkout` keeps the push credentials unless `persist-credentials: false`), the file system and the network. Enable it only for repositories whose code you trust like their CI. Tasks run on the base branch plus the update, never on a PR's code.
 
 ## Labels, reviewers and assignees
 

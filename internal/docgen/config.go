@@ -97,6 +97,8 @@ func children(root, p *jsonschema.Schema) (*jsonschema.Schema, string, error) {
 		c, sep = p.Items, "[]."
 	case p.AdditionalProperties != nil && p.AdditionalProperties.Ref != "":
 		c, sep = p.AdditionalProperties, ".<name>."
+	case slices.ContainsFunc(p.AnyOf, func(a *jsonschema.Schema) bool { return a.Ref != "" }): // a list or an object
+		c = p.AnyOf[slices.IndexFunc(p.AnyOf, func(a *jsonschema.Schema) bool { return a.Ref != "" })]
 	default:
 		return nil, "", nil
 	}

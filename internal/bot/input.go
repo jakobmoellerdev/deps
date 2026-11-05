@@ -35,6 +35,7 @@ type buildInput struct {
 	NewChecksum   string
 	Lockfile      bool
 	RangeStrategy string
+	Tasks         dep.Tasks `json:",omitzero"`
 }
 
 // buildID identifies the deps binary, since another one may build other content: its module
@@ -77,14 +78,19 @@ var buildID = sync.OnceValue(func() string {
 // head is the base tip and the checkout, which Build reads, is head. One git call resolves
 // the paths of every group.
 //
+// A group whose updates have postUpgradeTasks also depends on the commands and the whole
+// checkout, which they may read: the commands are hashed with the updates and the root tree
+// counts as a path.
+//
 // A group gets "" (always built) when it has a lock file maintenance update, whose result
-// follows the registries rather than the repository, or when an input cannot be listed, is
-// outside the root or not in head (an untracked file); every group gets "" when git fails.
+// follows the registries rather than the repository, when it has postUpgradeTasks that are
+// not allowed (so that the build reports it), or when an input cannot be listed, is outside
+// the root or not in head (an untracked file); every group gets "" when git fails.
 func inputFingerprints(ctx context.Context, o Options, root, head string, groups []engine.Group, want []bool, post map[string]engine.PostProcessor, g Git) []string {
 	fps := make([]string, len(groups))
 	ups := make([][]dep.Update, len(groups))
 	for i, grp := range groups {
-		if want[i] && !slices.ContainsFunc(grp.Updates, dep.Update.Maintenance) {
+		if want[i] && !slices.ContainsFunc(grp.Updates, dep.Update.Maintenance) && o.AllowTasks.Check(engine.TaskRuns(grp.Updates)) == nil {
 			ups[i] = grp.Updates
 		}
 	}
@@ -96,6 +102,12 @@ func inputFingerprints(ctx context.Context, o Options, root, head string, groups
 			slog.DebugContext(ctx, "no input fingerprint", "branch", groups[i].Branch, "err", errs[i])
 			ups[i] = nil
 			continue
+		}
+		if engine.TaskRuns(ups[i]) != nil {
+			if j, found := slices.BinarySearch(in.Paths, "."); !found {
+				in.Paths = slices.Insert(in.Paths, j, ".")
+				inputs[i] = in
+			}
 		}
 		for _, q := range in.Paths {
 			if _, ok := index[q]; !ok {
@@ -130,7 +142,7 @@ func inputFingerprints(ctx context.Context, o Options, root, head string, groups
 func inputFingerprint(build string, ups []dep.Update, in engine.BuildInputs, oid func(string) string) string {
 	encoded := make([]string, len(ups))
 	for i, u := range ups {
-		b, err := json.Marshal(buildInput{u.Dep, u.Type, u.NewVersion, u.NewDigest, u.NewName, u.NewChecksum, u.Lockfile, u.RangeStrategy})
+		b, err := json.Marshal(buildInput{u.Dep, u.Type, u.NewVersion, u.NewDigest, u.NewName, u.NewChecksum, u.Lockfile, u.RangeStrategy, u.Tasks})
 		if err != nil {
 			return ""
 		}

@@ -163,6 +163,10 @@ customDatasources:
   - [`rules[].prTitle`](#rulesprtitle)
   - [`rules[].prHeader`](#rulesprheader)
   - [`rules[].prFooter`](#rulesprfooter)
+  - [`rules[].postUpgradeTasks`](#rulespostupgradetasks)
+    - [`rules[].postUpgradeTasks.commands`](#rulespostupgradetaskscommands)
+    - [`rules[].postUpgradeTasks.executionMode`](#rulespostupgradetasksexecutionmode)
+    - [`rules[].postUpgradeTasks.files`](#rulespostupgradetasksfiles)
 - [`custom`](#custom)
   - [`custom[].files`](#customfiles)
   - [`custom[].match`](#custommatch)
@@ -821,7 +825,7 @@ A rule **matches** a dep when every selector it sets matches. The selectors are 
 3. **Built-in monorepo groups** set `group: <name> monorepo` (unless [`monorepos: false`](#monorepos)).
 4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.
 5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
-6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge` and `automergeStrategy` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates and the automerge settings.
+6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.
 
 `updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules and the resulting policy of a dep.
 
@@ -1175,6 +1179,55 @@ Overrides the top-level prHeader for matching deps; empty string means none.
 Overrides the top-level prFooter for matching deps; empty string means none.
 
 - **Type:** string
+
+### `rules[].postUpgradeTasks`
+
+Shell commands run in the repository after the update is built (apply, run with --allow-tasks), e.g. go generate ./...: a list (once per branch) or {commands, executionMode}. The files they change, apart from .gitignored ones, join the commit. The last matching rule setting it wins; [] clears.
+
+- **Type:** list of strings or object
+
+Shell commands, Renovate's `postUpgradeTasks`, for generated code or formatting that must follow an update (`go generate ./...`, `make generate`): a list of commands, or `{commands, executionMode, files}`. The last matching rule that sets it decides; `[]` clears it. `plan` notes `postUpgradeTasks run in apply/run`.
+
+- **Allowlist.** `apply` and `run` run a command only when a pattern of `--allow-tasks` (repeatable; `DEPS_ALLOW_TASKS` or the action input `allow-tasks`, one per line) matches it whole, with runs of spaces and tabs compared as one space: `go generate ./...` (exactly that), `make *` (a make call), `*` (every command). `*` matches any text except command chaining and substitution (`;`, `&`, `|`, backticks, `$(`, line breaks), so `make *` allows `make docs` but not `make docs; curl …` or `make $(id)`; operators written in the pattern match literally (`echo * >> deps.txt`), and the pattern `*` alone allows every command. Before anything runs, a group with a command no pattern allows fails with `postUpgradeTasks command not allowed: "<command>"; allow it with --allow-tasks '<command>' (or DEPS_ALLOW_TASKS)`; with no patterns, every task fails that way.
+- **Files.** `files` (doublestar globs on paths relative to `--dir`; `!glob` excludes, as in [`paths`](#rulespaths)) limits the files the commands' changes are committed for; elsewhere the build's changes stay as they were. Without `files`, every change `.gitignore` does not ignore counts. In a group, a change is kept when any task entry keeps it (an entry without `files` keeps all). `apply` restores every other file below `--dir` the commands changed to its state before them (found with a temporary index of `HEAD`, so ignored files are left alone).
+
+- **Execution mode.** `branch`, the default (also of the list form), runs each distinct command once per branch. `update` runs the commands once per update of the branch, in the branch's order, each run seeing the files of the runs before it, with the update in `DEPS_MANAGER`, `DEPS_PACKAGE_FILE`, `DEPS_DEP_NAME`, `DEPS_DEP_TYPE`, `DEPS_DATASOURCE`, `DEPS_UPDATE_TYPE`, `DEPS_CURRENT_VERSION` (the locked version of a lockfile-only update), `DEPS_NEW_VERSION`, `DEPS_CURRENT_DIGEST`, `DEPS_NEW_DIGEST` and `DEPS_NEW_NAME` (a replacement's or Go major module path's new name). Commands are not templated; use the variables instead (`helm dependency update "charts/$DEPS_DEP_NAME"`). A group's branch-mode commands run after all its update-mode runs; a failing update-mode run names its dep (`postUpgradeTasks: <command> (<dep>): …`).
+- `run` copies the work tree of `--dir` (without `.git`) to a temporary directory and makes the copy a throwaway git repository of the base commit: HEAD detached at the base, the index read from it, the tags and the `origin` URL, and the checkout's objects shared read-only, so `git status`, `diff`, `log`, `describe` and even `commit` work and show exactly the group's changes. Commands run in `--dir` of the copy, in order with `sh -c`; then every file below `--dir` they add, change or delete that `.gitignore` does not ignore is committed. Whatever they write to git stays in the copy: the checkout's repository is only read. Initialized submodules get the same throwaway repository at their checked-out commit, uninitialized ones stay empty. Files inside submodules never join the commit, and a command that moves a submodule's HEAD fails the group (`postUpgradeTasks: <command> changed submodule <path>; submodule updates are not supported`). `apply` runs the commands in `--dir` after writing the updates.
+- Commands inherit deps' environment without its tokens (`DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`) and without `GIT_DIR`-like variables, and are not templated. Each may take 15 minutes; a failure fails the group like a post-processor: `postUpgradeTasks: <command>: <error>: <last 20 lines of output>`.
+- They run repository code: see the [security notes](../ci.md#post-upgrade-tasks).
+
+```yaml
+rules:
+  - manager: gomod
+    postUpgradeTasks: ["go generate ./..."]
+  - manager: helm
+    postUpgradeTasks:
+      commands: ['helm dependency update "$(dirname "$DEPS_PACKAGE_FILE")"']
+      executionMode: update
+      files: ["charts/**", "!**/*.bak"]
+```
+
+with `deps run --allow-tasks 'go generate ./...' --allow-tasks 'helm dependency update *'`.
+
+#### `rules[].postUpgradeTasks.commands`
+
+Shell commands, run in order with sh -c.
+
+- **Type:** list of strings
+
+#### `rules[].postUpgradeTasks.executionMode`
+
+branch runs the commands once per branch, update once per update of the branch, in the branch's order, with DEPS_\* variables describing the update.
+
+- **Type:** string
+- **Default:** `branch`
+- **Values:** `branch`, `update`
+
+#### `rules[].postUpgradeTasks.files`
+
+Doublestar globs on slash paths relative to --dir (an entry starting with `!` excludes, as in rules[].paths): only the files the commands change that match join the commit (run). Default: every changed file that .gitignore does not ignore.
+
+- **Type:** list of strings
 
 ## `custom`
 

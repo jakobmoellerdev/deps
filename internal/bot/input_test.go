@@ -253,6 +253,42 @@ func TestInputFingerprint(t *testing.T) {
 	}
 }
 
+// postUpgradeTasks count as build input (the commands and the root tree); without
+// AllowTasks a group with tasks is always built, so that the build reports it.
+func TestInputFingerprintsWithTasks(t *testing.T) {
+	root, res := fixture(t)
+	groups := engine.GroupUpdates(res.Updates, "")
+	withTasks := func(cmds ...string) []engine.Group {
+		out := slices.Clone(groups)
+		out[0].Updates = slices.Clone(out[0].Updates)
+		out[0].Updates[0].Tasks = dep.Tasks{Commands: cmds}
+		return out
+	}
+	want := slices.Repeat([]bool{true}, len(groups))
+	fp := func(o Options, gs []engine.Group, g *fakeGit) string {
+		return inputFingerprints(t.Context(), o, root, head, gs, want, nil, g)[0]
+	}
+	o := Options{Managers: managers, AllowTasks: engine.TaskAllowlist{"*"}}
+	plain, gen := fp(o, groups, &fakeGit{}), fp(o, withTasks("make gen"), &fakeGit{})
+	if plain == "" || gen == "" || gen == plain {
+		t.Fatalf("fingerprints: plain %q, tasks %q", plain, gen)
+	}
+	if got := fp(o, groups, &fakeGit{objects: map[string]string{".": "moved"}}); got != plain {
+		t.Error("the root tree changes the fingerprint of a group without tasks")
+	}
+	for name, got := range map[string]string{
+		"commands":  fp(o, withTasks("make docs"), &fakeGit{}),
+		"root tree": fp(o, withTasks("make gen"), &fakeGit{objects: map[string]string{".": "moved"}}),
+	} {
+		if got == gen || got == "" {
+			t.Errorf("%s: fingerprint %q, with make gen %q", name, got, gen)
+		}
+	}
+	if got := fp(Options{Managers: managers}, withTasks("make gen"), &fakeGit{}); got != "" {
+		t.Errorf("tasks not allowed: fingerprint %q, want none", got)
+	}
+}
+
 func TestInputFingerprintsSkipLockFileMaintenance(t *testing.T) {
 	root, res := fixture(t)
 	m := dep.Update{Dep: dep.Dep{Manager: "github-actions", File: "wf.yml", Name: "wf.yml"}, Type: dep.LockFileMaintenance}

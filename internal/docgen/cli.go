@@ -67,7 +67,7 @@ type FlagDoc struct {
 }
 
 // Flags describes the visible flags of fs, sorted by name: neither hidden, deprecated nor the
-// built-in help flag. Only string, int and bool flags are supported.
+// built-in help flag. Only string, string slice, int and bool flags are supported.
 func Flags(fs []cli.Flag) ([]FlagDoc, error) {
 	var out []FlagDoc
 	for _, f := range fs {
@@ -97,6 +97,9 @@ func Flags(fs []cli.Flag) ([]FlagDoc, error) {
 		case *cli.BoolFlag:
 			d.Type, d.Default, d.Usage = "bool", strconv.FormatBool(f.Value), f.Usage
 			d.Zero = !f.Value
+		case *cli.StringSliceFlag:
+			d.Type, d.Default, d.Usage = "strings", "["+strings.Join(f.Value, ", ")+"]", f.Usage
+			d.Zero = len(f.Value) == 0
 		default:
 			return nil, fmt.Errorf("flag --%s: unsupported type %T", d.Name, f)
 		}

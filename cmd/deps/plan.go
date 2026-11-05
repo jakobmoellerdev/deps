@@ -67,7 +67,14 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 		from, to := sk.Update.FromTo()
 		fmt.Fprintf(stderr, "skip    %s:%d  %s  %s -> %s  (cannot be applied: %s)\n", sk.Update.Dep.File, sk.Update.Dep.Line, sk.Update.Dep.Name, from, to, sk.Reason)
 	}
+	cmds := engine.TaskRuns(updates)
+	var denied error
 	if write {
+		if denied = taskAllowlist(o).Check(cmds); denied != nil {
+			buildErrs = append(buildErrs, denied) // no update is written without its tasks
+		}
+	}
+	if write && denied == nil {
 		for _, c := range changes {
 			var err error
 			if c.New == nil {
@@ -79,7 +86,10 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 				buildErrs = append(buildErrs, err)
 			}
 		}
-	} else {
+		if err := engine.ApplyTasks(ctx, s.root, updates); err != nil {
+			buildErrs = append(buildErrs, err)
+		}
+	} else if !write {
 		out := cmd.Root().Writer
 		for _, c := range changes {
 			if _, err := io.WriteString(out, diff.Unified("a/"+c.Path, "b/"+c.Path, string(c.Old), string(c.New))); err != nil {
@@ -91,6 +101,9 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	report(stderr, o.term, o.verbose, res, errs, separate)
 	if !write && hasManager(res, gomod.Name) {
 		fmt.Fprintln(stderr, "note    go.sum changes are computed by apply/run")
+	}
+	if !write && cmds != nil {
+		fmt.Fprintln(stderr, "note    postUpgradeTasks run in apply/run")
 	}
 	if !write && hasManager(res, npm.Name) {
 		fmt.Fprintln(stderr, "note    package-lock.json changes are computed by apply/run")

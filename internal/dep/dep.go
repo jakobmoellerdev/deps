@@ -199,6 +199,17 @@ type Update struct {
 	// Declined holds, for a replacement, the dep's usual updates: `run` proposes them instead
 	// once the replacement's PR was closed without merging. plan and apply ignore them.
 	Declined []Update
+	// Tasks are the postUpgradeTasks run after the update is built (apply, run).
+	Tasks Tasks
+}
+
+// Tasks are postUpgradeTasks: shell commands, run once per branch, or with Update once per
+// update of the branch (executionMode update) with DEPS_* variables describing it. Files
+// (config.MatchGlobs, relative to --dir) limit the changed files they contribute; none = all.
+type Tasks struct {
+	Commands []string
+	Update   bool
+	Files    []string
 }
 
 // Maintenance reports whether u is a lock file maintenance update.

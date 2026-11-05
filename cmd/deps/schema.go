@@ -66,6 +66,10 @@ func reflectConfig() (*jsonschema.Schema, error) {
 	}
 	s.Title = "deps configuration (.deps.yaml)"
 	allowCustomDatasources(s)
+	// postUpgradeTasks also takes a plain list of commands (config.PostUpgradeTasks.UnmarshalYAML).
+	tasks := s.Definitions["Rule"].Properties.Value("postUpgradeTasks")
+	tasks.AnyOf = []*jsonschema.Schema{{Items: &jsonschema.Schema{Type: "string"}, Type: "array"}, {Ref: tasks.Ref}}
+	tasks.Ref = ""
 	s.Properties.Value("ignorePaths").Default = config.DefaultIgnorePaths
 	docs, err := config.KeyDocs()
 	if err != nil {

@@ -65,6 +65,8 @@ type Policy struct {
 	AutomergeType string
 	// Labels, Reviewers and Assignees go on the update's new PR.
 	Labels, Reviewers, Assignees []string
+	// Tasks are the postUpgradeTasks of the last matching rule that sets them.
+	Tasks dep.Tasks
 	// PR buckets (separateMajorMinor, separateMultipleMajor, separateMinorPatch).
 	SeparateMajorMinor, SeparateMultipleMajor, SeparateMinorPatch bool
 }
@@ -186,9 +188,9 @@ func (c *Config) matches(r *Rule, d dep.Dep, kind dep.UpdateType, age time.Durat
 func (c *Config) matchesDep(r *Rule, d dep.Dep) bool {
 	switch {
 	case r.Manager != "" && r.Manager != d.Manager,
-		len(r.Names) > 0 && !matchGlobs(r.Names, d.Name),
+		len(r.Names) > 0 && !MatchGlobs(r.Names, d.Name),
 		len(r.DepTypes) > 0 && !slices.Contains(r.DepTypes, d.DepType),
-		len(r.Paths) > 0 && !matchGlobs(r.Paths, d.File),
+		len(r.Paths) > 0 && !MatchGlobs(r.Paths, d.File),
 		len(r.Datasources) > 0 && !slices.ContainsFunc(r.Datasources, func(ds string) bool { return CanonicalDatasource(ds) == d.Datasource }):
 		return false
 	}
@@ -362,14 +364,17 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		if r.Assignees != nil {
 			p.Assignees = r.Assignees
 		}
+		if r.PostUpgradeTasks != nil {
+			p.Tasks = dep.Tasks{Commands: r.PostUpgradeTasks.Commands, Update: r.PostUpgradeTasks.ExecutionMode == ExecutionUpdate, Files: r.PostUpgradeTasks.Files}
+		}
 	}
 	return p
 }
 
-// matchGlobs reports whether name matches globs as Renovate matches pattern lists: no entry
+// MatchGlobs reports whether name matches globs as Renovate matches pattern lists: no entry
 // starting with '!' matches it with the rest of the entry, and some other entry matches it,
 // unless every entry is such an exclusion.
-func matchGlobs(globs []string, name string) bool {
+func MatchGlobs(globs []string, name string) bool {
 	positive, hit := false, false
 	for _, g := range globs {
 		if pat, neg := strings.CutPrefix(g, "!"); neg {

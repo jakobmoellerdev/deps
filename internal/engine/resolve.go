@@ -1107,6 +1107,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 			up.CommitType, up.CommitScope, up.Templates = kp.CommitType, kp.CommitScope, kp.Templates
 			up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
 			up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
+			up.Tasks = kp.Tasks
 			if len(up.Advisories) == 0 {
 				up.Group, up.Schedule = kp.Group, kp.Schedule
 			} else {
