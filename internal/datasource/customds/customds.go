@@ -111,7 +111,7 @@ func (s *Source) Releases(ctx context.Context, _ dep.Dep, _ string) ([]datasourc
 
 // Digest is unsupported.
 func (s *Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
-	return "", fmt.Errorf("%s: digests are not supported for %s", s.name, d.Name)
+	return "", datasource.UnsupportedDigest(s.name, d)
 }
 
 func (s *Source) fetch(ctx context.Context) ([]datasource.Release, error) {

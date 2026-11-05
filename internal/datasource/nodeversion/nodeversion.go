@@ -69,7 +69,7 @@ func (s *Source) ReleaseTime(ctx context.Context, _ dep.Dep, version string) (ti
 
 // Digest is unsupported.
 func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
-	return "", fmt.Errorf("%s: digests are not supported for %s", Name, d.Name)
+	return "", datasource.UnsupportedDigest(Name, d)
 }
 
 func (s *Source) load(ctx context.Context) {

@@ -343,7 +343,7 @@ func (s *Source) OpenArtifact(ctx context.Context, d dep.Dep, u string) (io.Read
 
 // Digest is unsupported.
 func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
-	return "", fmt.Errorf("%s: digests are not supported for %s", Name, d.Name)
+	return "", datasource.UnsupportedDigest(Name, d)
 }
 
 // artifactPath maps `group:artifact` to `group/path/artifact/` and the artifact. A name

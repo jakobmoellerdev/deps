@@ -193,7 +193,7 @@ func (s *Source) apiOf(ctx context.Context, r *registry) (string, error) {
 
 // Digest is unsupported.
 func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
-	return "", fmt.Errorf("%s: digests are not supported for %s", Name, d.Name)
+	return "", datasource.UnsupportedDigest(Name, d)
 }
 
 func (s *Source) load(ctx context.Context, r *registry, name string) *entry {
