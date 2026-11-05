@@ -212,7 +212,7 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 		fmt.Fprintf(stderr, "removed %s  %s\n", p.Branch, p.Title)
 	}
 	for _, e := range headRes.Errors {
-		fmt.Fprintf(stderr, "%s   %v\n", o.term.errorLabel(), e)
+		reportError(stderr, o.term, e)
 	}
 	md := d.markdown(headRes.Errors)
 	if p := summaryPath(os.Getenv); p != "" {
