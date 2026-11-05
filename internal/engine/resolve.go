@@ -342,14 +342,27 @@ func extractAll(root string, jobs []job, env manager.Env) []extracted {
 	return ex
 }
 
-// linkAll lets each manager.Linker resolve the cross-file references of its deps. found holds
-// the files per manager; their jobs (and ex entries) are contiguous in manager order.
+// partition yields the index of each manager with its slice of ex. found holds the files per
+// manager; their jobs (and ex entries) are contiguous in manager order, so part[k] is the
+// extraction of found[i][k].
+func partition(found [][]string, ex []extracted) func(yield func(i int, part []extracted) bool) {
+	return func(yield func(int, []extracted) bool) {
+		off := 0
+		for i, files := range found {
+			part := ex[off : off+len(files)]
+			off += len(files)
+			if !yield(i, part) {
+				return
+			}
+		}
+	}
+}
+
+// linkAll lets each manager.Linker resolve the cross-file references of its deps (found and
+// ex as for partition).
 func linkAll(managers []manager.Manager, found [][]string, ex []extracted) {
-	off := 0
-	for i, m := range managers {
-		part := ex[off : off+len(found[i])]
-		off += len(found[i])
-		l, ok := m.(manager.Linker)
+	for i, part := range partition(found, ex) {
+		l, ok := managers[i].(manager.Linker)
 		if !ok {
 			continue
 		}
@@ -369,14 +382,11 @@ func linkAll(managers []manager.Manager, found [][]string, ex []extracted) {
 }
 
 // readLocks lets each manager.LockReader record the locked versions of its deps in place
-// (found and ex as for linkAll) and returns the lockfiles it could not read.
+// (found and ex as for partition) and returns the lockfiles it could not read.
 func readLocks(root string, managers []manager.Manager, found [][]string, ex []extracted) []error {
 	var errs []error
-	off := 0
-	for i, m := range managers {
-		part := ex[off : off+len(found[i])]
-		off += len(found[i])
-		lr, ok := m.(manager.LockReader)
+	for i, part := range partition(found, ex) {
+		lr, ok := managers[i].(manager.LockReader)
 		if !ok {
 			continue
 		}
@@ -396,10 +406,8 @@ func readLocks(root string, managers []manager.Manager, found [][]string, ex []e
 // the lockFileMaintenance schedule and the top-level automerge settings; rules do not apply.
 func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Manager, found [][]string, ex []extracted) []dep.Update {
 	var out []dep.Update
-	off := 0
-	for i, m := range managers {
-		part := ex[off : off+len(found[i])]
-		off += len(found[i])
+	for i, part := range partition(found, ex) {
+		m := managers[i]
 		lm, ok := m.(manager.LockMaintainer)
 		if !ok {
 			continue
