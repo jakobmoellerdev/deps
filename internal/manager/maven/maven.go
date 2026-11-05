@@ -868,6 +868,14 @@ func (n *node) text(name string) string {
 
 // parse builds the element tree of src; the returned node is the document (no name).
 func parse(src []byte) (*node, error) {
+	if doc, ok := scan(src); ok {
+		return doc, nil
+	}
+	return decode(src)
+}
+
+// decode is parse with encoding/xml, for the XML scan does not handle and for its errors.
+func decode(src []byte) (*node, error) {
 	dec := xml.NewDecoder(bytes.NewReader(src))
 	// Poms may declare ISO-8859-1; the values deps reads are ASCII.
 	dec.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
