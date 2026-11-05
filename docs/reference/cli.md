@@ -26,6 +26,7 @@ Hidden flags for profiling: `--cpuprofile <file>` writes a CPU profile, and `--m
 | [`deps completion zsh`](#deps-completion-zsh) | Generate the autocompletion script for zsh |
 | [`deps explain`](#deps-explain) | Explain the rules, candidates and decision for each matching dependency |
 | [`deps plan`](#deps-plan) | Print the updates as a unified diff without writing files |
+| [`deps preview`](#deps-preview) | Compare the PRs a pull request's checkout would get with those of the base branch |
 | [`deps run`](#deps-run) | Push one branch and open or update one pull request per dependency or group |
 | [`deps schema`](#deps-schema) | Print the JSON Schema (draft 2020-12) of .deps.yaml |
 | [`deps version`](#deps-version) | Print the deps version |
@@ -273,6 +274,46 @@ deps plan > deps.diff && git apply --check deps.diff
 deps plan -v --dir ../other-repo
 deps plan --config ci/deps.yaml --log-level info
 ```
+
+## deps preview
+
+Compare the PRs a pull request's checkout would get with those of the base branch.
+
+```
+deps preview [flags]
+```
+
+Resolves two checkouts of the repository, `--dir` (the pull request) and `--base-dir` (its base branch), each with its own `.deps.yaml`, and reports how the update PRs `deps run` would open differ: new PRs, changed PRs (other updates or another title) and PRs no longer opened (open ones would be closed as obsolete). Lookups are shared between the two checkouts, so each release list is fetched once. Nothing is written to the repository or the forge, except the check run below.
+
+Output lines (stderr):
+
+```
+new     <branch>  <title>
+changed <branch>  <title>
+removed <branch>  <title>
+error   <message>                    (lookup errors of --dir)
+check   <url>                        (the check run, GitHub)
+<n> new, <c> changed, <r> no longer opened, <s> the same (<duration>)
+```
+
+**Step summary.** The comparison is appended to `GITHUB_STEP_SUMMARY` (or `GITEA_STEP_SUMMARY`) as markdown, with an update table per new or changed PR.
+
+**Check run (GitHub).** In a `pull_request` or `pull_request_target` job on GitHub, deps also creates the completed check run `deps preview` on the pull request's head commit (from the event payload), with the same markdown as its output, so it shows on the PR's *Checks* tab. The conclusion is `success`, or `neutral` when lookups failed: the preview informs and never blocks. Only App installation tokens (`GITHUB_TOKEN` included) can create check runs, with `checks: write`; for a token that can't (a PAT, a fork PR's read-only token), deps prints a `note` and keeps the step summary.
+
+Exit codes: 0 with no lookup errors, 1 with lookup errors, 2 for an invalid config in either checkout.
+
+### deps preview examples
+
+```sh
+# in a pull_request job with the PR checked out in pr/ and the base branch in base/
+deps preview --dir pr --base-dir base
+```
+
+### deps preview flags
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--base-dir` | string | `""` | checkout of the base branch to compare with (required) |
 
 ## deps run
 

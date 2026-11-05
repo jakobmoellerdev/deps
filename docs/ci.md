@@ -703,10 +703,38 @@ The GitHub mirror of this repository runs `deps plan` the same way (`.github/wor
 
 ### Preview on pull requests
 
-Two kinds of PR checks are useful, and both only read:
+Three kinds of PR checks are useful, and all only read:
 
 - **Config changes (most repositories).** The `plan` job above, limited to `.deps.yaml` with `paths:`. It checks the PR's config and lists the updates it leads to in the job summary.
+- **What a config change does to the PRs.** `deps preview` compares the PR's checkout with the base branch's: which update PRs would be new, which would change and which would no longer be opened. See below.
 - **The PRs deps would open.** `run --dry-run` lists each PR as `would-create`, `would-update`, `would-rebase` or `would-automerge`, in the log and the job summary. It doesn't work on the PR's own checkout: `run` requires `HEAD` to be the tip of `origin/<base>` and otherwise fails with `checkout HEAD <sha> is not the tip of origin/<base>`. Check out the base branch for it. The job token with read access is enough.
+
+**`deps preview`.** It needs both checkouts. On GitHub it also creates the check run *deps preview* on the PR's head commit, with the comparison as its report, so it appears on the PR's *Checks* tab; that takes `checks: write` and an App installation token (`GITHUB_TOKEN` works, a PAT can't create check runs). Without it, and on Gitea and Forgejo, the comparison is in the job summary. The check concludes `success`, or `neutral` when lookups failed; it never blocks a merge.
+
+```yaml
+on:
+  pull_request:
+    paths: [".deps.yaml", ".deps.yml"]
+permissions:
+  contents: read
+  checks: write # GitHub: the deps preview check run
+jobs:
+  deps-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: pr
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: base
+      - uses: jakobmoellerdev/deps@v0.3.0 # full URL on Gitea/Forgejo
+        with:
+          args: preview --dir pr --base-dir base
+```
+
+On fork PRs `GITHUB_TOKEN` is read-only, so deps prints `note    no check run …` and only writes the job summary.
 
 deps itself previews code changes this way. The `dry-run` job in `.gitea/workflows/deps.yml` builds deps from the PR, runs `plan` on the PR checkout, and runs `run --dry-run` on a checkout of the base branch. So the PR's code runs against the real repository and its open PRs, with the base branch's config. The job has its own concurrency group per PR, so it doesn't queue behind a running deps job:
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -85,7 +86,7 @@ func newRoot() *cobra.Command {
 	pf.StringVar(&o.prof.mem, "memprofile", "", "write an allocation profile to this file on exit")
 	_ = pf.MarkHidden("cpuprofile")
 	_ = pf.MarkHidden("memprofile")
-	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newSchema(), newDocs())
+	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newPreview(o), newSchema(), newDocs())
 	root.AddCommand(newHelpTopics()...)
 	return root
 }
@@ -126,6 +127,8 @@ type session struct {
 	auth      *httpx.Auth
 	gh        *githubapi.Client // shared GitHub release lists (datasources and release notes)
 	sem       chan struct{}     // the default request pool (httpx.Limits.Default)
+	info      platform.Info
+	client    *http.Client // sibling sessions build their custom datasources on it
 }
 
 // newSession loads the config and wires the managers and datasources onto one HTTP client
@@ -148,11 +151,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, os.Getenv)
 	slog.Debug("gitlab url", "url", gitlabURL, "source", gitlabSource)
 	auth := httpx.NewAuth(info, token, os.Getenv, gitLabAuth(gitlabURL, os.Getenv)...)
-	host, source := cfg.Actions.DefaultHost, "config"
-	if host == "" {
-		host, source = platform.DefaultActionsHost(info, os.Getenv)
-	}
-	slog.Info("actions default host", "host", host, "source", source)
+	env := configEnv(cfg, info, gitlabURL)
 	slog.Debug("config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
 	var security engine.SecuritySource
 	if cfg.SecurityEnabled() {
@@ -179,12 +178,8 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		mavends.Name:            maven,
 		gradleversion.Name:      gradleversion.New(client, sem, os.Getenv),
 	}
-	for name, cd := range cfg.CustomDatasources {
-		ds, err := customds.New(client, sem, name, cd.Spec())
-		if err != nil {
-			return nil, &config.Error{Err: err}
-		}
-		sources[customds.Prefix+name] = ds
+	if err := addCustomSources(sources, client, sem, cfg); err != nil {
+		return nil, err
 	}
 	return &session{
 		root:      root,
@@ -193,11 +188,67 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		sources:   sources,
 		security:  security,
 		checksums: checksum.New(client, sem, releases, map[string]checksum.ArtifactOpener{mavends.Name: maven}),
-		env:       manager.Env{DefaultHost: host, GitLabURL: gitlabURL, TerraformRegistry: cfg.Terraform.DefaultRegistry},
+		env:       env,
+		client:    client,
 		auth:      auth,
 		gh:        gh,
 		sem:       sem,
+		info:      info,
 	}, nil
+}
+
+// configEnv is the manager environment of cfg: the actions default host (logged with its
+// source), the GitLab URL and the Terraform registry.
+func configEnv(cfg *config.Config, info platform.Info, gitlabURL string) manager.Env {
+	host, source := cfg.Actions.DefaultHost, "config"
+	if host == "" {
+		host, source = platform.DefaultActionsHost(info, os.Getenv)
+	}
+	slog.Info("actions default host", "host", host, "source", source)
+	return manager.Env{DefaultHost: host, GitLabURL: gitlabURL, TerraformRegistry: cfg.Terraform.DefaultRegistry}
+}
+
+// addCustomSources adds the custom datasources of cfg as custom.<name>.
+func addCustomSources(sources map[string]engine.Datasource, client *http.Client, sem chan struct{}, cfg *config.Config) error {
+	for name, cd := range cfg.CustomDatasources {
+		ds, err := customds.New(client, sem, name, cd.Spec())
+		if err != nil {
+			return &config.Error{Err: err}
+		}
+		sources[customds.Prefix+name] = ds
+	}
+	return nil
+}
+
+// sibling is a session for another checkout of the repository (preview's base branch) with
+// the config found there. It shares the datasources, so a release list fetched for one
+// checkout is reused for the other; only custom datasources are the sibling config's own.
+func (s *session) sibling(dir string) (*session, error) {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := config.Load(root, "")
+	if err != nil {
+		return nil, err
+	}
+	managers, err := engine.Managers(cfg)
+	if err != nil {
+		return nil, err
+	}
+	sources := maps.Clone(s.sources)
+	for name := range sources {
+		if strings.HasPrefix(name, customds.Prefix) {
+			delete(sources, name)
+		}
+	}
+	if err := addCustomSources(sources, s.client, s.sem, cfg); err != nil {
+		return nil, err
+	}
+	gitlabURL, _ := platform.GitLabURL(cfg.GitLabCI.URL, os.Getenv)
+	sib := *s
+	sib.root, sib.cfg, sib.managers, sib.sources, sib.env = root, cfg, managers, sources, configEnv(cfg, s.info, gitlabURL)
+	return &sib, nil
 }
 
 // gitLabAuth returns the credentials for the host of the GitLab instance at gitlabURL, in
