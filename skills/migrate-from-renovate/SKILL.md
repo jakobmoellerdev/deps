@@ -48,6 +48,7 @@ Work through the warnings one by one and record the decision for the user. Typic
 | `pin`/`rangeStrategy`/`versioning` dropped next to `matchUpdateTypes` | Move the field to a rule without `updateTypes` (deps decides these before the update type is known). |
 | `versioning` (or `extractVersion`) dropped next to `currentVersion`/`currentAge` | Move `versioning` to a rule that selects the same deps without `currentVersion`/`currentAge`, if the deps need that scheme. |
 | `prHeader`/`prFooter`: `unsupported Handlebars expression …` | Rewrite the text as a Go template over `.Type`, `.Scope`, `.Name`, `.Group`, `.From`, `.To`, `.UpdateType`, `.Count`, `.IsSecurity` (`{{if}}` and `{{with}}` work), or drop it. |
+| `…; deps keeps its built-in PR titles` (a `prTitle`/`commitMessage*` part with `{{#if}}`, `{{newMajor}}`, …) | Ask whether the title format matters. If it does, write `prTitle` (top level or per rule) as a Go template over the same fields; else accept deps' titles (`<type>(<scope>): update <name> to <version>`). |
 
 Warnings marked `(from a built-in preset)` are info-level: they come from Renovate's own presets, not from the repository.
 

@@ -320,6 +320,8 @@ type translator struct {
 	exclusionRules []item
 	own            map[string]any  // the repository's config before presets
 	remote         map[string]bool // top-level keys set by fetched presets
+	titleTop       map[string]any  // top-level title settings (titleKeys) the repository sets
+	semType        any             // top-level semanticCommitType, nil = unset
 }
 
 // builtinOrigin reports whether origin ("<preset> packageRules[i]") is a rule of one of
@@ -534,6 +536,19 @@ func (t *translator) translate(cfg map[string]any) omap {
 			emit(k, l)
 		}
 	}
+	// PR titles are composed only of the repository's settings (semanticCommits also from
+	// :semanticCommitsDisabled), not from Renovate's built-in defaults.
+	t.titleTop = map[string]any{}
+	for k := range titleKeys {
+		if v, ok := cfg[k]; ok && (k == "semanticCommits" || !t.builtinOnly(k)) {
+			done[k] = true
+			t.titleTop[k] = v
+		}
+	}
+	t.semType = cfg["semanticCommitType"]
+	if s, ok := t.title("", t.titleTop, nil); ok {
+		emit("prTitle", s)
+	}
 	for _, k := range []string{"prHeader", "prFooter"} {
 		if v, ok := get(k); ok {
 			if s, ok := t.prText(k, v); ok && s != "" {
@@ -576,11 +591,6 @@ func (t *translator) translate(cfg map[string]any) omap {
 	}
 	if v, _ := get("platformAutomerge"); v == false {
 		t.n.warn("platformAutomerge", "deps always uses platform auto-merge")
-	}
-	if v, ok := get("semanticCommits"); ok && v == "disabled" {
-		t.n.warn("semanticCommits", "deps always writes conventional commit messages")
-	} else if ok {
-		t.untranslated("semanticCommits", "semanticCommits")
 	}
 	if v, ok := get("postUpdateOptions"); ok {
 		l, _ := strs(v)

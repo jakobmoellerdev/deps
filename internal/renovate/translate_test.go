@@ -507,6 +507,83 @@ func TestLoadLabelsAndPRTexts(t *testing.T) {
 	}
 }
 
+// TestLoadTitles checks the prTitle composed of Renovate's title settings: every prTitle line
+// of the translation (top level, then rules) and the notes.
+func TestLoadTitles(t *testing.T) {
+	const (
+		pin     = `{{if eq .UpdateType "pin"}}pin{{else}}update{{end}}`
+		topic   = `{{if and .Group (gt .Count 1)}}{{.Group}}{{else}}{{if eq .UpdateType "digest"}}{{.Name}} digest{{else}}dependency {{.Name}}{{end}}{{end}}`
+		extra   = `{{if .To}}to {{.To}}{{end}}`
+		semPref = `{{.Type}}{{with .Scope}}({{.}}){{end}}:`
+	)
+	upper := strings.NewReplacer("pin{{else}}update", "Pin{{else}}Update")
+	for _, tt := range []struct {
+		name, src string
+		titles    []string
+		notes     []string
+	}{
+		{name: "unset", src: `{semanticCommitType: 'build', semanticCommitScope: null}`},
+		{name: "semanticCommits enabled alone", src: `{semanticCommits: 'enabled'}`,
+			notes: []string{"info semanticCommits: deps always writes conventional commit messages"}},
+		{name: "semanticCommits disabled drops the prefix and keeps the case", src: `{extends: [':semanticCommitsDisabled']}`,
+			titles: []string{`prTitle: '` + upper.Replace(pin) + ` ` + topic + ` ` + extra + `'`}},
+		{name: "topic and suffix, rules inherit them", src: `{commitMessageTopic: '{{depName}}', commitMessageSuffix: '[Skip CI]',
+			packageRules: [{matchManagers: ['gomod'], commitMessageAction: 'Bump'}, {matchPackageNames: ['x'], prTitle: '{{{commitMessagePrefix}}} {{depName}}!'}]}`,
+			titles: []string{
+				`prTitle: '` + semPref + ` ` + pin + ` ` + strings.Replace(topic, "dependency {{.Name}}", "{{.Name}}", 1) + ` ` + extra + ` [skip ci]'`,
+				`    prTitle: '` + semPref + ` bump ` + strings.Replace(topic, "dependency {{.Name}}", "{{.Name}}", 1) + ` ` + extra + ` [skip ci]'`,
+				`    prTitle: '` + semPref + ` {{.Name}}!'`,
+			}},
+		{name: "a prefix replaces the semantic one and keeps the case", src: `{commitMessagePrefix: 'deps:', commitMessageExtra: null}`,
+			titles: []string{`prTitle: 'deps: ` + upper.Replace(pin) + ` ` + topic + `'`}},
+		{name: "commitMessage is the title's first line", src: `{commitMessage: '{{{commitMessagePrefix}}} Bump {{depName}}\n\nbody'}`,
+			titles: []string{`prTitle: '` + semPref + ` bump {{.Name}}'`}},
+		{name: "prTitle over commitMessage", src: `{prTitle: '{{commitMessage}} ({{currentVersion}})', commitMessage: 'Bump {{depName}}'}`,
+			titles: []string{`prTitle: bump {{.Name}} ({{.From}})`}},
+		{name: "commitMessageLowerCase never and uppercase types keep the case", src: `{commitMessageLowerCase: 'never', commitMessageAction: 'Bump',
+			packageRules: [{matchPackageNames: ['a'], semanticCommitType: 'CI', commitMessageTopic: 'A'}]}`,
+			titles: []string{
+				`prTitle: '` + semPref + ` {{if eq .UpdateType "pin"}}Pin{{else}}Bump{{end}} ` + topic + ` ` + extra + `'`,
+				`    prTitle: '` + semPref + ` {{if eq .UpdateType "pin"}}Pin{{else}}Bump{{end}} {{if and .Group (gt .Count 1)}}{{.Group}}{{else}}A{{end}} ` + extra + `'`,
+			}},
+		{name: "rule semanticCommits disabled", src: `{packageRules: [{matchPackageNames: ['b'], semanticCommits: 'disabled', commitMessageSuffix: '(b)'}]}`,
+			titles: []string{`    prTitle: '` + upper.Replace(pin) + ` ` + topic + ` ` + extra + ` (b)'`}},
+		{name: "an unconvertible part keeps the built-in titles", src: `{commitMessageExtra: '{{#if isMajor}}v{{newMajor}}{{/if}}', semanticCommits: 'disabled',
+			packageRules: [{matchPackageNames: ['a'], commitMessageAction: 'Bump', groupName: 'a'}]}`,
+			notes: []string{
+				"warn commitMessageExtra: unsupported Handlebars expression {{#if isMajor}}; deps keeps its built-in PR titles",
+				"warn semanticCommits: deps always writes conventional commit messages",
+			}},
+		{name: "an unconvertible rule part", src: `{packageRules: [{matchPackageNames: ['a'], commitMessageTopic: '{{depNameSanitized}}', groupName: 'g'}]}`,
+			notes: []string{"warn packageRules[0].commitMessageTopic: unsupported Handlebars expression {{depNameSanitized}}; deps keeps its built-in PR titles"}},
+		{name: "a non-string part is ignored", src: `{commitMessageTopic: 1, commitMessageAction: 'Bump'}`,
+			titles: []string{`prTitle: '` + semPref + ` {{if eq .UpdateType "pin"}}pin{{else}}bump{{end}} ` + topic + ` ` + extra + `'`},
+			notes:  []string{"warn commitMessageTopic: must be a string; ignored"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := load(t, tt.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var titles []string
+			for l := range strings.SplitSeq(string(res.YAML), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(l), "prTitle:") {
+					titles = append(titles, l)
+				}
+			}
+			if !slices.Equal(titles, tt.titles) {
+				t.Errorf("titles:\n%s\nwant:\n%s", strings.Join(titles, "\n"), strings.Join(tt.titles, "\n"))
+			}
+			notes := noteLines(res)
+			for _, n := range tt.notes {
+				if !slices.Contains(notes, n) {
+					t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
+				}
+			}
+		})
+	}
+}
+
 func TestHandlebars(t *testing.T) {
 	vars := map[string]string{"commitMessageTopic": "T"}
 	for _, tt := range []struct {

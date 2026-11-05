@@ -24,7 +24,7 @@ var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versionin
 	"replacementVersion", "replacementPrefix", "separateMajorMinor",
 	"separateMultipleMajor", "separateMinorPatch", "group", "commitType", "commitScope", "schedule",
 	"minimumReleaseAge", "minimumReleaseAgeBehaviour", "automerge", "automergeStrategy", "automergeType",
-	"labels", "addLabels", "reviewers", "assignees", "prHeader", "prFooter"}
+	"labels", "addLabels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter"}
 
 // rulesFrom translates the rule sources in order: top-level semantic commit settings,
 // manager blocks, update-type blocks, packageRules and ignoreDeps.
@@ -543,9 +543,23 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			}
 			set("commitScope", v)
 		default:
+			if titleKeys[k] && !builtinOrigin(origin) {
+				continue // composed below
+			}
 			if !strings.HasPrefix(k, "match") && !strings.HasPrefix(k, "exclude") && k != "matchManagers" {
 				t.untranslated(p, k)
 			}
+		}
+	}
+	if !builtinOrigin(origin) {
+		own := map[string]any{}
+		for k, v := range r {
+			if titleKeys[k] {
+				own[k] = v
+			}
+		}
+		if s, ok := t.title(origin, own, r["semanticCommitType"]); ok {
+			eff["prTitle"] = effect{slices.Sorted(mapKeys(own))[0], s}
 		}
 	}
 	var repl omap
