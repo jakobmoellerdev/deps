@@ -84,6 +84,8 @@ func TestNormalize(t *testing.T) {
 	for in, want := range map[string]string{
 		"Django": "django", "zope.interface": "zope-interface", "typing_extensions": "typing-extensions",
 		"Foo__Bar..baz-_-qux": "foo-bar-baz-qux", "a": "a", "-a_": "a",
+		"": "", "a-b": "a-b", "A": "a", "a--b": "a-b", "-a": "a", "a-": "a", "a_b": "a-b",
+		"-": "", "a.b": "a-b", "requests2-x9": "requests2-x9", "café": "café",
 	} {
 		if got := Normalize(in); got != want {
 			t.Errorf("Normalize(%q) = %q, want %q", in, got, want)

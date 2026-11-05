@@ -270,6 +270,9 @@ func TOMLRequirement(m, depType, file string, v *tomlspan.Value) (dep.Dep, bool)
 // Normalize returns the PEP 503 normalized form of a project name: lowercase, with runs of
 // `-`, `_` and `.` replaced by one `-`.
 func Normalize(name string) string {
+	if isNormalized(name) {
+		return name
+	}
 	var b strings.Builder
 	b.Grow(len(name))
 	sep := false
@@ -289,4 +292,18 @@ func Normalize(name string) string {
 		b.WriteByte(c)
 	}
 	return b.String()
+}
+
+// isNormalized reports whether Normalize would return name unchanged: no uppercase, `_` or `.`,
+// and every `-` sits alone between two other bytes.
+func isNormalized(name string) bool {
+	for i := range len(name) {
+		switch c := name[i]; {
+		case c >= 'A' && c <= 'Z', c == '_', c == '.':
+			return false
+		case c == '-' && (i == 0 || i == len(name)-1 || name[i-1] == '-'):
+			return false
+		}
+	}
+	return true
 }
