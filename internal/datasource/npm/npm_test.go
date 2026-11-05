@@ -17,10 +17,10 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-const metadata = `{
+const metadataDoc = `{
   "name": "@scope/pkg",
-  "time": {"modified": "2026-11-01T00:00:00.000Z"},
-  "dist-tags": {"latest": "1.2.0"},
+  "modified": "2026-11-01T00:00:00.000Z",
+  "dist-tags": {"next": "2.0.0-rc.1", "latest": "1.2.0"},
   "versions": {
     "1.0.0": {"name": "@scope/pkg", "version": "1.0.0", "dependencies": {"a": "^1.0.0"}, "dist": {"tarball": "x"}},
     "1.1.0": {"name": "@scope/pkg", "version": "1.1.0", "deprecated": "use 1.2.0"},
@@ -55,7 +55,7 @@ func write(t *testing.T, root string, files map[string]string) string {
 	return root
 }
 
-// registry serves metadata for every package and records "<auth> <escaped path>" per request.
+// registry serves metadataDoc for every package and records "<auth> <escaped path>" per request.
 type registry struct {
 	srv  *httptest.Server
 	mu   sync.Mutex
@@ -66,7 +66,7 @@ func newRegistry(t *testing.T, h http.HandlerFunc) *registry {
 	t.Helper()
 	r := &registry{}
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Header.Get("Accept") != "application/json" || !strings.HasPrefix(req.Header.Get("User-Agent"), "deps/") {
+		if req.Header.Get("Accept") != abbreviated || !strings.HasPrefix(req.Header.Get("User-Agent"), "deps/") {
 			t.Errorf("unexpected headers %v", req.Header)
 		}
 		r.mu.Lock()
@@ -76,7 +76,7 @@ func newRegistry(t *testing.T, h http.HandlerFunc) *registry {
 			h(w, req)
 			return
 		}
-		_, _ = w.Write([]byte(metadata))
+		_, _ = w.Write([]byte(metadataDoc))
 	}))
 	t.Cleanup(r.srv.Close)
 	return r
@@ -109,27 +109,38 @@ func TestReleasesDeprecated(t *testing.T) {
 	}
 	bound := s.(datasource.ReleaseBound)
 	if got := bound.ReleasedBy(d); !got.Equal(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("ReleasedBy = %v, want `time.modified`", got)
+		t.Errorf("ReleasedBy = %v, want `modified`", got)
 	}
-	if got := bound.ReleasedBy(dep.Dep{Name: "@scope/pkg", File: "other/package.json"}); !got.IsZero() {
+	if got := s.(datasource.LatestSource).Latest(d); got != "1.2.0" {
+		t.Errorf("Latest = %q, want `dist-tags.latest`", got)
+	}
+	other := dep.Dep{Name: "@scope/pkg", File: "other/package.json"}
+	if got := bound.ReleasedBy(other); !got.IsZero() {
 		t.Errorf("ReleasedBy without a Releases lookup = %v, want zero", got)
+	}
+	if got := s.(datasource.LatestSource).Latest(other); got != "" {
+		t.Errorf("Latest without a Releases lookup = %q, want empty", got)
 	}
 }
 
-// TestReleasedByModified checks which `time.modified` values bound the release times: only an
-// RFC 3339 string; anything else, or a failed lookup, leaves the bound unknown.
-func TestReleasedByModified(t *testing.T) {
+// TestMetadataBoundAndLatest checks which `modified` values bound the release times (only an
+// RFC 3339 string; anything else, or a failed lookup, leaves the bound unknown) and which
+// `dist-tags` name the latest release.
+func TestMetadataBoundAndLatest(t *testing.T) {
 	tests := []struct {
 		name, body string
 		want       time.Time
+		latest     string
 	}{
-		{"rfc3339", `{"time":{"modified":"2026-10-30T14:12:27.179Z"},"versions":{}}`, time.Date(2026, 10, 30, 14, 12, 27, 179e6, time.UTC)},
-		{"after versions", `{"versions":{"1.0.0":{}},"time":{"modified":"2026-10-30T00:00:00Z"}}`, time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)},
-		{"absent", `{"versions":{},"time":{}}`, time.Time{}},
-		{"top-level", `{"modified":"2026-10-30T00:00:00Z","versions":{}}`, time.Time{}},
-		{"not a time", `{"time":{"modified":"yesterday"},"versions":{}}`, time.Time{}},
-		{"not a string", `{"time":{"modified":{"t":1}},"versions":{}}`, time.Time{}},
-		{"malformed document", `{"time":{"modified":"2026-10-30T00:00:00Z"},"versions":`, time.Time{}},
+		{"rfc3339", `{"modified":"2026-10-30T14:12:27.179Z","dist-tags":{"latest":"1.0.0"},"versions":{}}`, time.Date(2026, 10, 30, 14, 12, 27, 179e6, time.UTC), "1.0.0"},
+		{"after versions", `{"versions":{"1.0.0":{}},"modified":"2026-10-30T00:00:00Z","dist-tags":{"beta":{},"latest":"1.0.0","x":"y"}}`, time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC), "1.0.0"},
+		{"absent", `{"versions":{}}`, time.Time{}, ""},
+		{"time.modified", `{"time":{"modified":"2026-10-30T00:00:00Z"},"versions":{}}`, time.Time{}, ""},
+		{"not a time", `{"modified":"yesterday","versions":{}}`, time.Time{}, ""},
+		{"not strings", `{"modified":{"t":1},"dist-tags":{"latest":1},"versions":{}}`, time.Time{}, ""},
+		{"dist-tags not an object", `{"modified":"2026-10-30T00:00:00Z","dist-tags":"1.0.0","versions":{}}`, time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC), ""},
+		{"malformed document", `{"modified":"2026-10-30T00:00:00Z","dist-tags":{"latest":"1.0.0"},"versions":`, time.Time{}, ""},
+		{"malformed dist-tags", `{"dist-tags":{"latest":"1.0.0",}}`, time.Time{}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -139,6 +150,9 @@ func TestReleasedByModified(t *testing.T) {
 			_, _ = s.Releases(t.Context(), d, t.TempDir())
 			if got := s.(datasource.ReleaseBound).ReleasedBy(d); !got.Equal(tt.want) {
 				t.Errorf("ReleasedBy = %v, want %v", got, tt.want)
+			}
+			if got := s.(datasource.LatestSource).Latest(d); got != tt.latest {
+				t.Errorf("Latest = %q, want %q", got, tt.latest)
 			}
 		})
 	}

@@ -1132,7 +1132,8 @@ const (
 // each falling back to the bucket's next best candidate:
 //   - a major update whose release predates the current version is a legacy tag
 //     (k8s.io/client-go v1.5.2 from 2016 versus v0.37.1), not an upgrade; skipped for docker
-//     and git-tags deps, see movingTimes;
+//     and git-tags deps, see movingTimes. A datasource naming its latest release
+//     (datasource.LatestSource, npm) decides it without release times, see aboveLatest;
 //   - a candidate released less than the minimumReleaseAge of its update type ago is too new;
 //     under minimumReleaseAgeBehaviour timestamp-required, so is one whose release time is
 //     unknown;
@@ -1146,8 +1147,9 @@ const (
 func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) []dep.Update {
 	cur := r.cur
 	timer, _ := r.ds.(datasource.Timer)
+	above := r.aboveLatest(scheme)
 	single := r.pol.singleBucket()
-	if timer == nil && r.declared == nil && single && !(r.pol.pre.MinAge > 0 && r.pol.pre.TimestampRequired) {
+	if timer == nil && above == nil && r.declared == nil && single && !(r.pol.pre.MinAge > 0 && r.pol.pre.TimestampRequired) {
 		// No guard can apply and there is one bucket: one O(n) pass without ranking.
 		best, ok := scheme.Best(cur, names, accept, reject)
 		if !ok {
@@ -1175,6 +1177,13 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 	var out []dep.Update
 	for i := range ranked.Len() {
 		c := ranked.At(i)
+		if above != nil && c.Kind == dep.Major && above(c.Version) {
+			// Not a candidate at all, so it counts against no bucket bound.
+			if reject != nil {
+				reject(c.Version, reasonAboveLatest)
+			}
+			continue
+		}
 		key := r.pol.bucket(c)
 		j := slices.IndexFunc(states, func(s state) bool { return s.key == key })
 		if j < 0 {
@@ -1190,7 +1199,7 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 			continue
 		}
 		st.tries++
-		reason := r.guard(timer, c)
+		reason := r.guard(timer, above == nil, c)
 		if reason == "" {
 			if why := r.pathChange(r.d.Name, c.Version); why != "" {
 				if reject != nil {
@@ -1247,6 +1256,10 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 // reasonOlder rejects a major candidate released before the current version.
 const reasonOlder = "older than current"
 
+// reasonAboveLatest rejects a major candidate above the major of the datasource's latest
+// release (see aboveLatest).
+const reasonAboveLatest = "above latest"
+
 // reasonUnknown starts the reason of a candidate held back for its unknown release time.
 const reasonUnknown = "release time unknown"
 
@@ -1262,10 +1275,36 @@ const reasonUnknown = "release time unknown"
 // The minimum release age still applies to them.
 func movingTimes(ds string) bool { return ds == "docker" || ds == "git-tags" }
 
+// aboveLatest reports, for a datasource naming its latest release (datasource.LatestSource:
+// npm's `dist-tags.latest`), whether a version is in a major above latest's: a legacy or
+// abandoned line (@stoplight/types 9999.9999.9999) or one not released as latest yet. Majors
+// up to latest's are upgrades, so the older-than-current guard needs no release times, which
+// on npm only the full packument has (vite's is 4.6 MB gzipped). nil, leaving the decision to
+// the release times, when the datasource names no latest release valid under scheme or the
+// current version is above it (a prerelease or `next` line).
+func (r *resolver) aboveLatest(scheme versioning.Scheme) func(string) bool {
+	ls, ok := r.ds.(datasource.LatestSource)
+	if !ok {
+		return nil
+	}
+	latest := ls.Latest(r.d)
+	if latest == "" || !scheme.Valid(latest) || !scheme.Valid(r.cur) || scheme.Compare(r.cur, latest) > 0 {
+		return nil
+	}
+	return func(v string) bool {
+		if scheme.Compare(v, latest) <= 0 || scheme.Kind(latest, v) != dep.Major {
+			return false
+		}
+		slog.DebugContext(r.ctx, "major candidate above latest", "name", r.d.Name, "current", r.d.Version, "latest", latest, "candidate", v)
+		return true
+	}
+}
+
 // guard returns why candidate c fails a release-time guard, or "". timer is nil when the
-// datasource has no release times.
-func (r *resolver) guard(timer datasource.Timer, c versioning.Candidate) string {
-	if timer != nil && c.Kind == dep.Major && !movingTimes(r.d.Datasource) && r.olderThanCurrent(timer, c.Version) {
+// datasource has no release times; byTimes is false when aboveLatest already decided which
+// majors are legacy.
+func (r *resolver) guard(timer datasource.Timer, byTimes bool, c versioning.Candidate) string {
+	if byTimes && timer != nil && c.Kind == dep.Major && !movingTimes(r.d.Datasource) && r.olderThanCurrent(timer, c.Version) {
 		slog.DebugContext(r.ctx, "major candidate older than current", "name", r.d.Name, "current", r.d.Version, "candidate", c.Version)
 		return reasonOlder
 	}

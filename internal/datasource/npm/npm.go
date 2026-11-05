@@ -39,25 +39,38 @@ const Name = "npm"
 // DefaultRegistry is used when neither .npmrc nor NPM_CONFIG_REGISTRY sets a registry.
 const DefaultRegistry = "https://registry.npmjs.org/"
 
-// Source fetches each package's packument once per (registry, name) per run and parses each
-// directory's .npmrc once; concurrent callers share the results.
+// abbreviated selects the abbreviated ("corgi") metadata document: versions without readmes,
+// and no `time`.
+const abbreviated = "application/vnd.npm.install-v1+json"
+
+// Source fetches each package's abbreviated metadata once per (registry, name) per run, its
+// full packument at most once and only for release times and the source repository, and
+// parses each directory's .npmrc once; concurrent callers share the results.
 type Source struct {
 	client *http.Client
 	sem    chan struct{}
 	getenv func(string) string
 
 	mu       sync.Mutex
-	packages map[string]*entry   // registry + "\x00" + name
-	located  map[string]location // file + "\x00" + name -> registry of the last Releases lookup
-	rcs      map[string]*rcEntry // package.json directory -> effective .npmrc
-	wsDirs   map[string]*wsEntry // package.json directory -> names of its workspace's packages
-	wsRoots  map[string]*wsEntry // workspace root directory -> names of its packages
+	packages map[string]*entry    // registry + "\x00" + name: abbreviated metadata
+	docs     map[string]*docEntry // registry + "\x00" + name: full packument
+	located  map[string]location  // file + "\x00" + name -> registry of the last Releases lookup
+	rcs      map[string]*rcEntry  // package.json directory -> effective .npmrc
+	wsDirs   map[string]*wsEntry  // package.json directory -> names of its workspace's packages
+	wsRoots  map[string]*wsEntry  // workspace root directory -> names of its packages
 }
 
 // location is the registry (with trailing slash) and token a dependency resolved against.
 type location struct{ reg, token string }
 
-// packument is what deps keeps of a package's metadata document.
+// metadata is what deps keeps of a package's abbreviated metadata document.
+type metadata struct {
+	rels     []datasource.Release // versions that are not deprecated
+	latest   string               // `dist-tags.latest`; "" when absent
+	modified time.Time            // `modified`; zero when absent or not RFC 3339
+}
+
+// packument is what deps keeps of a package's full packument.
 type packument struct {
 	rels  []datasource.Release // versions that are not deprecated
 	times map[string]string    // `time`: version -> RFC 3339 publish time
@@ -66,9 +79,14 @@ type packument struct {
 
 type entry struct {
 	once sync.Once
+	metadata
+	err error
+}
+
+type docEntry struct {
+	once sync.Once
 	packument
-	modified time.Time // `time.modified`; zero when absent or not RFC 3339
-	err      error
+	err error
 }
 
 type rcEntry struct {
@@ -88,7 +106,7 @@ type wsEntry struct {
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) datasource.Datasource {
 	return &Source{
 		client: client, sem: sem, getenv: getenv,
-		packages: make(map[string]*entry), located: make(map[string]location),
+		packages: make(map[string]*entry), docs: make(map[string]*docEntry), located: make(map[string]location),
 		rcs: make(map[string]*rcEntry), wsDirs: make(map[string]*wsEntry), wsRoots: make(map[string]*wsEntry),
 	}
 }
@@ -121,8 +139,8 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 	return e.rels, e.err
 }
 
-// load returns the packument of name in loc's registry, fetched once per (registry, name):
-// Releases, ReleaseTime and SourceRepo share the one request.
+// load returns the abbreviated metadata of name in loc's registry, fetched once per
+// (registry, name).
 func (s *Source) load(ctx context.Context, loc location, name string) *entry {
 	key := loc.reg + "\x00" + name
 	s.mu.Lock()
@@ -132,11 +150,7 @@ func (s *Source) load(ctx context.Context, loc location, name string) *entry {
 		s.packages[key] = e
 	}
 	s.mu.Unlock()
-	e.once.Do(func() {
-		if e.packument, e.err = s.fetch(ctx, loc, name); e.err == nil {
-			e.modified, _ = time.Parse(time.RFC3339, e.times["modified"]) // unparsable = unknown bound
-		}
-	})
+	e.once.Do(func() { e.metadata, e.err = s.fetchMetadata(ctx, loc, name) })
 	return e
 }
 
@@ -156,8 +170,8 @@ func (s *Source) locate(rc *npmrc, name string) location {
 	return location{reg: reg, token: rc.tokenFor(reg)}
 }
 
-// ReleaseTime implements datasource.Timer from the packument's `time` object. The registry is
-// the one of d's earlier Releases lookup (else NPM_CONFIG_REGISTRY or the default).
+// ReleaseTime implements datasource.Timer from the full packument's `time` object. The
+// registry is the one of d's earlier Releases lookup (else NPM_CONFIG_REGISTRY or the default).
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
 	e := s.doc(ctx, d)
 	if e.err != nil {
@@ -174,40 +188,66 @@ func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 	return t, nil
 }
 
-// ReleasedBy implements datasource.ReleaseBound with the packument's `time.modified` from d's
-// earlier Releases lookup: every publish changes the document, so no version is newer. When it
-// is old enough the engine skips the per-version minimumReleaseAge lookups.
+// ReleasedBy implements datasource.ReleaseBound with the `modified` time of d's earlier
+// Releases lookup: every publish changes the document, so no version is newer. When it is old
+// enough the engine skips the per-version minimumReleaseAge lookups, and with them the full
+// packument.
 func (s *Source) ReleasedBy(d dep.Dep) time.Time {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	loc, ok := s.located[d.File+"\x00"+d.Name]
-	if !ok {
-		return time.Time{}
-	}
-	// Releases of d completed e.once before the engine asks, so e.modified is set.
-	if e := s.packages[loc.reg+"\x00"+d.Name]; e != nil && e.err == nil {
+	if e := s.loaded(d); e != nil {
 		return e.modified
 	}
 	return time.Time{}
 }
 
-// SourceRepo implements datasource.SourceRepo with the packument's top-level `repository`
-// (the latest version's).
+// Latest implements datasource.LatestSource with `dist-tags.latest` of d's earlier Releases
+// lookup; "" without one.
+func (s *Source) Latest(d dep.Dep) string {
+	if e := s.loaded(d); e != nil {
+		return e.latest
+	}
+	return ""
+}
+
+// loaded returns the metadata of d's earlier Releases lookup, or nil when there was none or it
+// failed. Releases of d completed e.once before the engine asks, so e is complete.
+func (s *Source) loaded(d dep.Dep) *entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	loc, ok := s.located[d.File+"\x00"+d.Name]
+	if !ok {
+		return nil
+	}
+	if e := s.packages[loc.reg+"\x00"+d.Name]; e != nil && e.err == nil {
+		return e
+	}
+	return nil
+}
+
+// SourceRepo implements datasource.SourceRepo with the full packument's top-level
+// `repository` (the latest version's).
 func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, error) {
 	e := s.doc(ctx, d)
 	return e.repo, e.err
 }
 
-// doc returns the packument of d, in the registry of d's earlier Releases lookup (else
-// NPM_CONFIG_REGISTRY or the default).
-func (s *Source) doc(ctx context.Context, d dep.Dep) *entry {
+// doc returns the full packument of d, fetched once per (registry, name), in the registry of
+// d's earlier Releases lookup (else NPM_CONFIG_REGISTRY or the default): ReleaseTime and
+// SourceRepo share the one request.
+func (s *Source) doc(ctx context.Context, d dep.Dep) *docEntry {
 	s.mu.Lock()
 	loc, ok := s.located[d.File+"\x00"+d.Name]
-	s.mu.Unlock()
 	if !ok {
 		loc = s.locate(&npmrc{}, d.Name)
 	}
-	return s.load(ctx, loc, d.Name)
+	key := loc.reg + "\x00" + d.Name
+	e := s.docs[key]
+	if e == nil {
+		e = &docEntry{}
+		s.docs[key] = e
+	}
+	s.mu.Unlock()
+	e.once.Do(func() { e.packument, e.err = s.fetch(ctx, loc, d.Name) })
+	return e
 }
 
 // Digest is unsupported: npm versions are not digest-pinned.
@@ -367,38 +407,61 @@ func escapeName(name string) string {
 	return url.PathEscape(name)
 }
 
-// fetch streams the packument of name from loc's registry.
+// fetchMetadata streams the abbreviated metadata of name from loc's registry.
+func (s *Source) fetchMetadata(ctx context.Context, loc location, name string) (m metadata, err error) {
+	start, deprecated := time.Now(), 0
+	defer func() {
+		slog.DebugContext(ctx, "npm metadata fetched", "name", name, "registry", loc.reg, "authenticated", loc.token != "",
+			"versions", len(m.rels), "deprecated", deprecated, "latest", m.latest, "modified", m.modified, "duration", time.Since(start), "err", err)
+	}()
+	err = s.stream(ctx, loc, name, abbreviated, func(body io.Reader) (err error) {
+		m, deprecated, err = decodeMetadata(body)
+		return err
+	})
+	return m, err
+}
+
+// fetch streams the full packument of name from loc's registry.
 func (s *Source) fetch(ctx context.Context, loc location, name string) (p packument, err error) {
 	start, deprecated := time.Now(), 0
 	defer func() {
 		slog.DebugContext(ctx, "npm packument fetched", "name", name, "registry", loc.reg, "authenticated", loc.token != "",
 			"versions", len(p.rels), "deprecated", deprecated, "times", len(p.times), "repository", p.repo, "duration", time.Since(start), "err", err)
 	}()
+	err = s.stream(ctx, loc, name, "application/json", func(body io.Reader) (err error) {
+		p, deprecated, err = decodePackument(body)
+		return err
+	})
+	return p, err
+}
+
+// stream GETs the document of package name from loc's registry as accept and hands its body
+// to decode, holding one of the datasource's request slots.
+func (s *Source) stream(ctx context.Context, loc location, name, accept string, decode func(io.Reader) error) error {
 	release, err := httpx.Acquire(ctx, s.sem)
 	if err != nil {
-		return packument{}, err
+		return err
 	}
 	defer release()
 	target := loc.reg + escapeName(name)
-	resp, err := s.get(ctx, target, name, loc.token)
+	resp, err := s.get(ctx, target, name, accept, loc.token)
 	if err != nil {
-		return packument{}, err
+		return err
 	}
 	defer closeBody(resp)
-	p, deprecated, err = decodePackument(resp.Body)
-	if err != nil {
-		return packument{}, fmt.Errorf("npm registry %s: malformed response: %w", target, err)
+	if err := decode(resp.Body); err != nil {
+		return fmt.Errorf("npm registry %s: malformed response: %w", target, err)
 	}
-	return p, nil
+	return nil
 }
 
-// get sends a GET for package name's packument target and fails on a non-2xx status.
-func (s *Source) get(ctx context.Context, target, name, token string) (*http.Response, error) {
+// get sends a GET for package name's document target and fails on a non-2xx status.
+func (s *Source) get(ctx context.Context, target, name, accept, token string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("npm registry %s: %w", target, err)
 	}
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -510,6 +573,69 @@ func decodePackument(r io.Reader) (p packument, deprecated int, err error) {
 		return packument{}, 0, err
 	}
 	return p, deprecated, nil
+}
+
+// decodeMetadata streams an abbreviated metadata document and keeps the versions that are not
+// deprecated, `dist-tags.latest` and the top-level `modified`; every other member is skipped
+// (see skipMembers). Duplicate-name checking is off, see decodePackument.
+func decodeMetadata(r io.Reader) (m metadata, deprecated int, err error) {
+	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true))
+	if err := expectObject(dec); err != nil {
+		return metadata{}, 0, err
+	}
+	for dec.PeekKind() != '}' {
+		key, err := dec.ReadToken()
+		if err != nil {
+			return metadata{}, 0, err
+		}
+		switch name := key.String(); {
+		case name == "versions":
+			m.rels, deprecated, err = decodeVersions(dec)
+		case name == "dist-tags" && dec.PeekKind() == '{':
+			m.latest, err = decodeLatest(dec)
+		case name == "modified" && dec.PeekKind() == '"':
+			var tok jsontext.Token
+			if tok, err = dec.ReadToken(); err == nil {
+				m.modified, _ = time.Parse(time.RFC3339, tok.String()) // unparsable = unknown bound
+			}
+		default:
+			err = skipMembers(dec)
+		}
+		if err != nil {
+			return metadata{}, 0, err
+		}
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return metadata{}, 0, err
+	}
+	return m, deprecated, nil
+}
+
+// decodeLatest reads the `dist-tags` object and returns its `latest`; "" when that is absent
+// or not a string.
+func decodeLatest(dec *jsontext.Decoder) (latest string, err error) {
+	if _, err := dec.ReadToken(); err != nil { // '{'
+		return "", err
+	}
+	for dec.PeekKind() != '}' {
+		k, err := dec.ReadToken()
+		if err != nil {
+			return "", err
+		}
+		if k.String() != "latest" || dec.PeekKind() != '"' {
+			if err := dec.SkipValue(); err != nil {
+				return "", err
+			}
+			continue
+		}
+		v, err := dec.ReadToken()
+		if err != nil {
+			return "", err
+		}
+		latest = v.String()
+	}
+	_, err = dec.ReadToken() // '}'
+	return latest, err
 }
 
 // decodeVersions reads the `versions` object and returns the versions that are not

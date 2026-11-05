@@ -56,8 +56,8 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	}
 	timer, repoer := s.(datasource.Timer), s.(datasource.SourceRepo)
 
-	// The registry and token of the earlier Releases lookup are reused, and Releases,
-	// ReleaseTime and SourceRepo share one packument request per package.
+	// The registry and token of the earlier Releases lookup (abbreviated metadata) are reused,
+	// and ReleaseTime and SourceRepo share one packument request per package.
 	var wg sync.WaitGroup
 	for range 3 {
 		wg.Go(func() {
@@ -94,6 +94,7 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	}
 
 	want := []string{
+		abbreviated + " Bearer tok /corp/@corp%2flib",
 		"application/json Bearer tok /corp/@corp%2flib",
 		"application/json /pub/eslint",
 		"application/json /pub/strrepo",

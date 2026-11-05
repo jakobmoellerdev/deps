@@ -47,13 +47,22 @@ type Timer interface {
 }
 
 // ReleaseBound is implemented by Timers that know, without per-version lookups, a time no
-// version of a dependency was published after (npm's `time.modified`). It is optional;
+// version of a dependency was published after (npm's `modified`). It is optional;
 // the engine skips a minimumReleaseAge lookup when the bound is already old enough, which
 // cannot change the outcome since every release time is at or before it.
 type ReleaseBound interface {
 	// ReleasedBy returns the bound for d from data already fetched by Releases, or the zero
 	// time when unknown.
 	ReleasedBy(d dep.Dep) time.Time
+}
+
+// LatestSource is implemented by datasources whose registry names the release it recommends
+// (npm's `dist-tags.latest`). It is optional; the engine decides which major line is the
+// legacy one from it instead of from release times (the `older than current` guard), so no
+// release time is asked for that.
+type LatestSource interface {
+	// Latest returns the latest release of d from data already fetched by Releases, or "".
+	Latest(d dep.Dep) string
 }
 
 // Planner is implemented by datasources that use the full set of deps they will be asked

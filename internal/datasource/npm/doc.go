@@ -8,15 +8,23 @@ import (
 var Doc = refdoc.Datasource{
 	Name:         Name,
 	NameForm:     "package name (`@scope/name` sent as `@scope%2fname`)",
-	Endpoints:    "`GET <registry>/<name>` (the packument, `Accept: application/json`) once per registry and package, stream-decoded; deprecated versions dropped; 404 → `package <name> not found`",
+	Endpoints:    "`GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata) once per registry and package, stream-decoded; deprecated versions dropped; 404 → `package <name> not found`. The full packument (`Accept: application/json`) is fetched at most once per registry and package, only for release times and the source repository",
 	Auth:         "`.npmrc` `//host/path/:_authToken=` (longest prefix), `${VAR}` expansion",
-	ReleaseTimes: "packument `time`; for `minimumReleaseAge` not looked up per version when `time.modified` is already older",
+	ReleaseTimes: "packument `time`; not fetched for `minimumReleaseAge` when the abbreviated `modified` is already older",
 	Notes: []refdoc.Section{{
 		Title: "npm registry selection",
 		Body:  "deps reads the nearest `.npmrc` per `package.json` directory, walking up to `--dir`.",
 		Items: []string{
 			"A scoped name uses `@scope:registry=` from that file; any other name uses `registry=`.",
 			"Without one, deps uses `NPM_CONFIG_REGISTRY` (or `npm_config_registry`), else `https://registry.npmjs.org/`.",
+		},
+	}, {
+		Title: "npm majors and `dist-tags.latest`",
+		Body:  "npm decides which major line is the legacy one from the abbreviated metadata's `dist-tags.latest` instead of release times, so a major update needs no full packument.",
+		Items: []string{
+			"A major candidate above the major of latest is rejected as `above latest` (a mistaken or abandoned line such as `9999.9999.9999`, or a major not released as latest yet); it counts against no retry bound.",
+			"A major up to latest's is an upgrade even when the current release of an older line is newer (node-fetch 2.7.0 versus latest 3.3.2).",
+			"When the current version is above latest (a prerelease or `next` line), or the registry names no latest, majors released before the current version are rejected as `older than current`, as for other datasources.",
 		},
 	}},
 }

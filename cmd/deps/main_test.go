@@ -113,8 +113,8 @@ func newFakeNet(t *testing.T) *fakeNet {
 		io.WriteString(w, "v1.0.0\nv1.1.0\nv1.2.0\n")
 	})
 	f.mux.HandleFunc("GET registry.npmjs.org/@s%2fpad", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Accept") != "application/json" {
-			http.Error(w, "want the packument", http.StatusNotAcceptable)
+		if r.Header.Get("Accept") != "application/vnd.npm.install-v1+json" {
+			http.Error(w, "want abbreviated metadata", http.StatusNotAcceptable)
 			return
 		}
 		io.WriteString(w, `{"versions":{"1.0.0":{},"1.3.0":{},"1.4.0":{"deprecated":"broken"}}}`)

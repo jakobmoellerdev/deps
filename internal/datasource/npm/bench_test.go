@@ -69,3 +69,14 @@ func BenchmarkDecodePackument(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkDecodeMetadata(b *testing.B) {
+	data := syntheticPackument(3000, false)
+	b.SetBytes(int64(len(data)))
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, _, err := decodeMetadata(bytes.NewReader(data)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
