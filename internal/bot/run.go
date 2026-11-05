@@ -200,16 +200,23 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	o.RebaseLabel = cmp.Or(o.RebaseLabel, config.DefaultRebaseLabel)
 	o.StopUpdatingLabel = cmp.Or(o.StopUpdatingLabel, config.DefaultStopUpdatingLabel)
 	prefix := cmp.Or(o.BranchPrefix, config.DefaultBranchPrefix)
-	branches, err := g.LsRemote(ctx, "refs/heads/"+prefix+"*")
-	if err != nil {
-		return nil, []error{err}
+	// The four reads below are independent round trips; run them concurrently
+	// and report their errors in the order they used to be issued.
+	var (
+		branches                map[string]string
+		open, closed            []platform.PR
+		loaded                  *dashboard
+		lsErr, oErr, cErr, dErr error
+		reads                   sync.WaitGroup
+	)
+	reads.Go(func() { branches, lsErr = g.LsRemote(ctx, "refs/heads/"+prefix+"*") })
+	reads.Go(func() { open, oErr = listDeps(ctx, pc, "open", 20, prefix) })
+	reads.Go(func() { closed, cErr = listDeps(ctx, pc, "closed", 4, prefix) })
+	if o.Dashboard != nil {
+		reads.Go(func() { loaded, dErr = loadDashboard(ctx, pc, o.Dashboard.Title) })
 	}
-	open, err := listDeps(ctx, pc, "open", 20, prefix)
-	if err != nil {
-		return nil, []error{err}
-	}
-	closed, err := listDeps(ctx, pc, "closed", 4, prefix)
-	if err != nil {
+	reads.Wait()
+	if err := cmp.Or(lsErr, oErr, cErr); err != nil {
 		return nil, []error{err}
 	}
 	slog.InfoContext(ctx, "bot state", "base", base, "head", short(head), "depsBranches", len(branches), "openPRs", len(open), "closedPRs", len(closed))
@@ -222,15 +229,14 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	var dash *dashboard
 	dashDisabled := false
 	if o.Dashboard != nil {
-		d, err := loadDashboard(ctx, pc, o.Dashboard.Title)
 		switch {
-		case errors.Is(err, platform.ErrIssuesDisabled):
-			slog.WarnContext(ctx, "dependency dashboard skipped", "err", err)
+		case errors.Is(dErr, platform.ErrIssuesDisabled):
+			slog.WarnContext(ctx, "dependency dashboard skipped", "err", dErr)
 			dashDisabled = true
-		case err != nil:
-			errs = append(errs, fmt.Errorf("dependency dashboard: %w", err))
+		case dErr != nil:
+			errs = append(errs, fmt.Errorf("dependency dashboard: %w", dErr))
 		default:
-			dash = d
+			dash = loaded
 		}
 	}
 	groups := engine.GroupUpdates(declineReplacements(res.Updates, open, closed, prefix, dash), prefix)

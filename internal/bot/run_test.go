@@ -55,12 +55,19 @@ type fakeGit struct {
 // newTree is the tree fakeGit.WriteTree writes.
 const newTree = "7777777777777777777777777777777777777777"
 
+// fakeListMu guards the fake fields Run's concurrent state reads write
+// (fakeGit.patterns, fakePC.issuePages); the fakes are copied by value in
+// test tables, so the lock cannot live in them.
+var fakeListMu sync.Mutex
+
 func (g *fakeGit) RevParse(context.Context, string) (string, error) {
 	return head, fail(g.fail, "RevParse", "")
 }
 func (g *fakeGit) RemoteURL(context.Context) (string, error) { return "", nil }
 func (g *fakeGit) LsRemote(_ context.Context, pattern string) (map[string]string, error) {
+	fakeListMu.Lock()
 	g.patterns = append(g.patterns, pattern)
+	fakeListMu.Unlock()
 	if err := fail(g.fail, "LsRemote", pattern); err != nil {
 		return nil, err
 	}
@@ -231,7 +238,9 @@ func (c *fakePC) MergePR(_ context.Context, pr platform.PR, strategy string) err
 	return nil
 }
 func (c *fakePC) ListIssues(_ context.Context, maxPages int) ([]platform.Issue, error) {
+	fakeListMu.Lock()
 	c.issuePages = maxPages
+	fakeListMu.Unlock()
 	return c.issues, fail(c.fail, "ListIssues", "")
 }
 func (c *fakePC) CreateIssue(_ context.Context, title, body string, labels []string) (platform.Issue, error) {
@@ -257,7 +266,7 @@ const (
 	email   = "bot@example.invalid"
 )
 
-func fixture(t *testing.T) (string, *engine.Result) {
+func fixture(t testing.TB) (string, *engine.Result) {
 	t.Helper()
 	root := t.TempDir()
 	src := "steps:\n  - uses: a/x@v1\n  - uses: b/y@v1\n"
@@ -825,6 +834,9 @@ func TestRunStateErrors(t *testing.T) {
 		{name: "deps branches", gitFail: map[string]error{"LsRemote:refs/heads/deps/*": errBoom}, want: "boom"},
 		{name: "open PRs", pcFail: map[string]error{"ListPRs:open": errBoom}, want: "list open PRs: boom"},
 		{name: "closed PRs", pcFail: map[string]error{"ListPRs:closed": errBoom}, want: "list closed PRs: boom"},
+		// The state reads run concurrently; the first failing one in this order wins.
+		{name: "deps branches before closed PRs", gitFail: map[string]error{"LsRemote:refs/heads/deps/*": errBoom}, pcFail: map[string]error{"ListPRs:closed": errors.New("late")}, want: "boom"},
+		{name: "open before closed PRs", pcFail: map[string]error{"ListPRs:open": errBoom, "ListPRs:closed": errors.New("late")}, want: "list open PRs: boom"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
