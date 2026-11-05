@@ -22,6 +22,10 @@ type summary struct {
 	Run     bool   // Actions are PR outcomes; plan/apply show what run would open
 	Res     *engine.Result
 	Groups  []engine.Group
+	// prs maps a branch to its first non-dashboard action in Actions, grouped holds the
+	// branches of Groups; index builds both on first use.
+	prs     map[string]int
+	grouped map[string]bool
 	Actions []bot.Action // run only
 	Errors  []error      // engine and build/bot errors
 	Elapsed time.Duration
@@ -95,10 +99,28 @@ func (s *summary) distinctUpdated() int {
 	return len(seen)
 }
 
+// index builds prs and grouped; Groups and Actions do not change once rendering starts.
+func (s *summary) index() {
+	if s.prs != nil {
+		return
+	}
+	s.prs = make(map[string]int, len(s.Actions))
+	for i, a := range s.Actions {
+		if _, ok := s.prs[a.Branch]; !ok && !a.Dashboard {
+			s.prs[a.Branch] = i
+		}
+	}
+	s.grouped = make(map[string]bool, len(s.Groups))
+	for _, g := range s.Groups {
+		s.grouped[g.Branch] = true
+	}
+}
+
 // action returns the bot outcome of group g.
 func (s *summary) action(g engine.Group) (bot.Action, bool) {
-	i := slices.IndexFunc(s.Actions, func(a bot.Action) bool { return !a.Dashboard && a.Branch == g.Branch })
-	if i < 0 {
+	s.index()
+	i, ok := s.prs[g.Branch]
+	if !ok {
 		return bot.Action{}, false
 	}
 	return s.Actions[i], true
@@ -106,9 +128,10 @@ func (s *summary) action(g engine.Group) (bot.Action, bool) {
 
 // others are the run outcomes without a group: closed obsolete PRs and the dashboard.
 func (s *summary) others() []bot.Action {
+	s.index()
 	var out []bot.Action
 	for _, a := range s.Actions {
-		if a.Dashboard || !slices.ContainsFunc(s.Groups, func(g engine.Group) bool { return g.Branch == a.Branch }) {
+		if a.Dashboard || !s.grouped[a.Branch] {
 			out = append(out, a)
 		}
 	}
