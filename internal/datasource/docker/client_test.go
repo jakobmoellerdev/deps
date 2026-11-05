@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // tokenServer is a registry (the fixture's repository img) that requires a Bearer token from its
@@ -27,6 +28,7 @@ type tokenServer struct {
 	mu     sync.Mutex
 	issue  func(r *http.Request) (status int, token string)
 	valid  map[string]bool // tokens the registry accepts
+	deny   bool            // reject an invalid token with 400 DENIED and no challenge (ECR Public)
 	tokens atomic.Int32    // token requests
 	denied atomic.Int32    // 401s of registry requests
 }
@@ -50,7 +52,12 @@ func newTokenServer(t *testing.T, issue func(r *http.Request) (int, string)) *to
 		}
 		ts.mu.Lock()
 		ok := ts.valid[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
+		deny := ts.deny
 		ts.mu.Unlock()
+		if !ok && deny && r.Header.Get("Authorization") != "" {
+			registryError(w, http.StatusBadRequest, "DENIED")
+			return
+		}
 		if !ok {
 			ts.denied.Add(1)
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="test-registry",scope="repository:img:pull"`, ts.srv.URL))
@@ -138,6 +145,60 @@ func TestBearerBasicCredentials(t *testing.T) {
 	}
 	if n := ts.f.count("GET /v2/img/manifests/latest"); n != 0 {
 		t.Errorf("GET fallback after token refusal: %d", n)
+	}
+}
+
+// A registry that rejects an expired token with 400 DENIED instead of a 401 challenge gets the
+// request again without it, and the challenge it then sends a fresh token.
+func TestBearerDeniedToken(t *testing.T) {
+	var n atomic.Int32
+	ts := newTokenServer(t, func(*http.Request) (int, string) { return http.StatusOK, fmt.Sprintf("t%d", n.Add(1)) })
+	s := newSource(ts.srv.Client(), nil, anon)
+	d := dep.Dep{Name: ts.host + "/img"}
+	if _, err := s.Digest(t.Context(), d, "1.0"); err != nil {
+		t.Fatal(err)
+	}
+	ts.revoke()
+	ts.mu.Lock()
+	ts.deny = true
+	ts.mu.Unlock()
+	if dg, err := s.Digest(t.Context(), d, "2.0"); err != nil || dg != ts.f.indexDigest {
+		t.Fatalf("Digest after denied token = %q, %v", dg, err)
+	}
+	if got := ts.tokens.Load(); got != 2 {
+		t.Errorf("token requests = %d, want 2", got)
+	}
+	ts.revoke() // a GET's 400 tells DENIED by its body
+	if _, err := s.ReleaseTime(t.Context(), d, "1.0"); err != nil {
+		t.Fatalf("ReleaseTime after denied token: %v", err)
+	}
+	if got := ts.tokens.Load(); got != 3 {
+		t.Errorf("token requests = %d, want 3", got)
+	}
+}
+
+// A realm host that passes validateRealm's lookup but resolves to a blocked address when the
+// token request connects (DNS rebinding) is refused at the connection.
+func TestTokenDialGuard(t *testing.T) {
+	ts := newTokenServer(t, func(*http.Request) (int, string) { return http.StatusOK, "t" })
+	_, port, _ := net.SplitHostPort(ts.host)
+	fakeLookup(t, map[string][]net.IPAddr{"localhost": {{IP: net.ParseIP("203.0.113.7")}}})
+	c := newClient(httpx.NewClient(), http.Header{}, anon, "deps")
+	reg, _ := url.Parse(ts.srv.URL + "/v2/img/tags/list")
+	realm := "http://localhost:" + port + "/token"
+	if err := validateRealm(t.Context(), realm, reg); err != nil {
+		t.Fatalf("validateRealm = %v; the lookup should pass", err)
+	}
+	_, err := c.distributionToken(t.Context(), reg, realm, "svc", []string{"repository:img:pull"}, credential{})
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Errorf("err = %v, want the connection refused", err)
+	}
+	if ts.tokens.Load() != 0 {
+		t.Error("token request reached the server")
+	}
+	// The registry's own host is not checked: local registries serve their own tokens.
+	if _, err := c.distributionToken(t.Context(), reg, ts.srv.URL+"/token", "svc", []string{"repository:img:pull"}, credential{}); err != nil {
+		t.Errorf("same-host realm: %v", err)
 	}
 }
 

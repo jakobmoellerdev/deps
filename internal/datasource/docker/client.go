@@ -1,6 +1,7 @@
 package dockerds
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/base64"
@@ -17,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // client sends registry requests with the authentication the registry asks for, as the
@@ -80,6 +83,13 @@ func (c *client) do(req *http.Request, r *repository) (*http.Response, error) {
 		req.Header.Set("Authorization", used.auth)
 	}
 	resp, err := c.http.Do(req)
+	if err == nil && used != nil && strings.HasPrefix(used.auth, "Bearer ") && invalidToken(resp) {
+		// The cached token was rejected without a challenge: ask for one.
+		resp.Body.Close()
+		anon := req.Clone(req.Context())
+		anon.Header.Del("Authorization")
+		resp, err = c.http.Do(anon)
+	}
 	if err != nil || resp.StatusCode != http.StatusUnauthorized {
 		return resp, err
 	}
@@ -111,6 +121,35 @@ func (c *client) do(req *http.Request, r *repository) (*http.Response, error) {
 
 // tokenKey is the cache key of registry's bearer token for scope.
 func (c *client) tokenKey(registry, scope string) string { return registry + " bearer " + scope }
+
+// invalidToken reports whether resp is a 400 with a DENIED error, which registries such as
+// Amazon ECR Public send instead of a 401 challenge for an expired or invalid bearer token (as
+// oras-go handles it). A HEAD response has no body to tell, so any 400 counts: asking once more
+// without the token costs a request, while trusting it would fail the lookup. The body read is
+// put back for the caller.
+func invalidToken(resp *http.Response) bool {
+	if resp.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	if resp.Request != nil && resp.Request.Method == http.MethodHead {
+		return true
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(b), resp.Body), resp.Body}
+	if err != nil {
+		return false
+	}
+	var body struct {
+		Errors errorDetails `json:"errors"`
+	}
+	if json.Unmarshal(b, &body) != nil {
+		return false
+	}
+	return slices.ContainsFunc(body.Errors, func(e errorDetail) bool { return e.Code == "DENIED" })
+}
 
 // basicKey is the cache key of r's Basic credential: per repository, since namespaced
 // credentials (`auths` key ghcr.io/org) may differ between repositories of a registry.
@@ -375,9 +414,11 @@ const maxTokenRedirects = 10
 
 // tokenRequest sends a token request and decodes the token (`access_token`, else `token`).
 // Every redirect hop must pass validateRealm against registry, so a validated realm cannot send
-// the credentials on to a blocked address or from https to http.
+// the credentials on to a blocked address or from https to http. A realm on another host than
+// the registry's, reached without a proxy, is also checked when connecting (see dialGuard).
 func (c *client) tokenRequest(req *http.Request, registry *url.URL) (string, error) {
 	maps.Copy(req.Header, c.header)
+	req = dialGuard(req, registry)
 	hc := *c.http
 	hc.CheckRedirect = func(next *http.Request, via []*http.Request) error {
 		if err := validateRealm(next.Context(), next.URL.String(), registry); err != nil {
@@ -407,6 +448,27 @@ func (c *client) tokenRequest(req *http.Request, registry *url.URL) (string, err
 		return token, nil
 	}
 	return "", fmt.Errorf("%s %q: empty token", req.Method, req.URL.Redacted())
+}
+
+// dialGuard returns req with a dial check (httpx.WithDialCheck) refusing connections to
+// blockedRealmPrefixes, when req goes to another host than registry's and not through a proxy.
+// validateRealm resolves the realm host beforehand; this check sees the address actually
+// connected to, which a name that resolves differently the second time (DNS rebinding) cannot
+// evade. Through a proxy the connection is the proxy's, which is not checked, as in oras-go.
+func dialGuard(req *http.Request, registry *url.URL) *http.Request {
+	if strings.EqualFold(req.URL.Hostname(), registry.Hostname()) {
+		return req
+	}
+	if proxy, err := http.ProxyFromEnvironment(req); err != nil || proxy != nil {
+		return req
+	}
+	host := req.URL.Host
+	return req.WithContext(httpx.WithDialCheck(req.Context(), func(addr netip.Addr) error {
+		if blockedRealmAddr(addr) {
+			return fmt.Errorf("token request to %s: address %s not allowed", host, unwrapAddr(addr))
+		}
+		return nil
+	}))
 }
 
 // parseChallenge parses a WWW-Authenticate header: its scheme and, for Bearer, its

@@ -31,8 +31,8 @@ type fixture struct {
 	indexDigest   string // of 2.0
 	mu            sync.Mutex
 	hits          map[string]int
-	stripDigest   bool // drop Docker-Content-Digest from HEAD responses
-	failManifestG bool // GET manifests fails with 404
+	stripHead     string // header dropped from manifest HEAD responses
+	failManifestG bool   // GET manifests fails with 404
 	onHead        func(r *http.Request)
 	user, pass    string // required basic auth, "" = anonymous
 }
@@ -43,7 +43,7 @@ func newFixture(t *testing.T) *fixture {
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.hits[r.Method+" "+r.URL.Path]++
-		strip, failGet, onHead, user, pass := f.stripDigest, f.failManifestG, f.onHead, f.user, f.pass
+		strip, failGet, onHead, user, pass := f.stripHead, f.failManifestG, f.onHead, f.user, f.pass
 		f.mu.Unlock()
 		if user != "" {
 			if u, p, ok := r.BasicAuth(); !ok || u != user || p != pass {
@@ -59,8 +59,8 @@ func newFixture(t *testing.T) *fixture {
 		case manifest && r.Method == http.MethodGet && failGet:
 			http.NotFound(w, r)
 			return
-		case manifest && r.Method == http.MethodHead && strip:
-			w = stripWriter{w}
+		case manifest && r.Method == http.MethodHead && strip != "":
+			w = stripWriter{w, strip}
 		}
 		f.reg.ServeHTTP(w, r)
 	}))
@@ -92,10 +92,13 @@ func (f *fixture) set(fn func()) {
 	fn()
 }
 
-type stripWriter struct{ http.ResponseWriter }
+type stripWriter struct {
+	http.ResponseWriter
+	header string
+}
 
 func (s stripWriter) WriteHeader(code int) {
-	s.Header().Del("Docker-Content-Digest")
+	s.Header().Del(s.header)
 	s.ResponseWriter.WriteHeader(code)
 }
 
@@ -292,20 +295,26 @@ func TestCredentials(t *testing.T) {
 	}
 }
 
+// A HEAD without the digest, a valid Content-Type or a Content-Length is not trusted: the
+// manifest is fetched and its digest computed.
 func TestDigestGetFallback(t *testing.T) {
-	f := newFixture(t)
-	f.set(func() { f.stripDigest = true })
-	s := newSource(f.srv.Client(), nil, anon)
-	d := dep.Dep{Name: f.host + "/img"}
-	if got, err := s.Digest(t.Context(), d, "2.0"); err != nil || got != f.indexDigest {
-		t.Errorf("Digest = %q, %v; want %q", got, err, f.indexDigest)
-	}
-	if f.count("GET /v2/img/manifests/2.0") != 1 {
-		t.Error("no GET fallback")
-	}
-	f.set(func() { f.failManifestG = true })
-	if _, err := s.Digest(t.Context(), d, "1.0"); err == nil || !strings.HasPrefix(err.Error(), "digest "+f.host+"/img:1.0: ") {
-		t.Errorf("failed GET err = %v", err)
+	for _, header := range []string{"Docker-Content-Digest", "Content-Type", "Content-Length"} {
+		t.Run(header, func(t *testing.T) {
+			f := newFixture(t)
+			f.set(func() { f.stripHead = header })
+			s := newSource(f.srv.Client(), nil, anon)
+			d := dep.Dep{Name: f.host + "/img"}
+			if got, err := s.Digest(t.Context(), d, "2.0"); err != nil || got != f.indexDigest {
+				t.Errorf("Digest = %q, %v; want %q", got, err, f.indexDigest)
+			}
+			if f.count("GET /v2/img/manifests/2.0") != 1 {
+				t.Error("no GET fallback")
+			}
+			f.set(func() { f.failManifestG = true })
+			if _, err := s.Digest(t.Context(), d, "1.0"); err == nil || !strings.HasPrefix(err.Error(), "digest "+f.host+"/img:1.0: ") {
+				t.Errorf("failed GET err = %v", err)
+			}
+		})
 	}
 }
 

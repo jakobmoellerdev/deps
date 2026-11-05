@@ -129,13 +129,21 @@ func (s *Source) manifestRequest(ctx context.Context, r *repository, method, ref
 }
 
 // resolve returns the digest of the manifest ref (tag or digest) points to from a HEAD; a
-// response without Docker-Content-Digest fails unless ref is the digest.
+// response without Docker-Content-Digest fails unless ref is the digest. As in oras-go, a
+// response without a valid Content-Type or a Content-Length fails too: it is not a manifest
+// response deps can trust (head then GETs the manifest and computes the digest).
 func (s *Source) resolve(ctx context.Context, r *repository, ref string) (string, error) {
 	resp, err := s.manifestRequest(ctx, r, http.MethodHead, ref)
 	if err != nil {
 		return "", err
 	}
 	resp.Body.Close()
+	if _, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err != nil {
+		return "", fmt.Errorf("HEAD %q: invalid Content-Type: %w", resp.Request.URL, err)
+	}
+	if resp.ContentLength < 0 {
+		return "", fmt.Errorf("HEAD %q: unknown Content-Length", resp.Request.URL)
+	}
 	dg := resp.Header.Get("Docker-Content-Digest")
 	if dg == "" {
 		if isDigest(ref) {
