@@ -254,11 +254,12 @@ func TestLimitsPulls(t *testing.T) {
 // TestLargeTagList checks a single tags/list page above oras-go's 4 MiB default is read whole,
 // as gcr.io returns one ~10 MB page for large repositories.
 func TestLargeTagList(t *testing.T) {
-	const n = 200000
+	const n = 40000 // ~130 bytes per tag: a ~5 MB page from few allocations
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		tags := make([]string, n)
+		pad := strings.Repeat("x", 120)
 		for i := range tags {
-			tags[i] = fmt.Sprintf("1.0.%d-%s", i, strings.Repeat("x", 20))
+			tags[i] = "1.0." + strconv.Itoa(i) + "-" + pad
 		}
 		_ = json.MarshalWrite(w, map[string]any{"name": "img", "tags": tags})
 	}))

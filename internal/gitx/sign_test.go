@@ -73,6 +73,11 @@ func pgpKey(t *testing.T, passphrase string) string {
 		_ = exec.Command("gpgconf", "--homedir", home, "--remove-socketdir").Run()
 		os.RemoveAll(home)
 	})
+	// The agent's calibrated S2K count makes protecting a key with a passphrase take seconds;
+	// the minimum keeps it a protected key.
+	if err := os.WriteFile(filepath.Join(home, "gpg-agent.conf"), []byte("s2k-count 65536\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	run(t, env, "", "gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", passphrase,
 		"--quick-gen-key", "Bot <bot@example.com>", "ed25519", "sign", "never")
 	args := []string{"--batch", "--armor", "--export-secret-keys"}

@@ -222,11 +222,13 @@ func argvs(log string) string {
 
 // TestProcessLockedReal moves a locked version inside the manifest's range with the real
 // tools (network; uvx for poetry, pipenv and pdm when not in PATH): the lockfile pins the new
-// version and the manifest is not touched.
+// version and the manifest is not touched. The tools share the user's uv cache, so uvx
+// installs them once rather than per run.
 func TestProcessLockedReal(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network")
 	}
+	t.Parallel()
 	pyproject := func(spec string) string {
 		return "[project]\nname = \"demo\"\nversion = \"1.0.0\"\nrequires-python = \">=3.9\"\ndependencies = [\"six" + spec + "\"]\n"
 	}
@@ -244,10 +246,10 @@ func TestProcessLockedReal(t *testing.T) {
 		{"pipenv", Pipfile, PipfileLock, `"version": "==VER"`, pipfile, pipenvCmd()},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if _, err := c.cmd.argv(); err != nil {
 				t.Skipf("neither %s nor uvx in PATH", c.cmd.tool)
 			}
-			t.Setenv("UV_CACHE_DIR", t.TempDir())
 			// Lock at 1.16.0 with a pin, then widen the manifest to a range admitting 1.17.0.
 			dir := t.TempDir()
 			write(t, dir, map[string]string{c.manifest: c.src("==1.16.0")})

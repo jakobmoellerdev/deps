@@ -342,13 +342,14 @@ func TestProcessRealUV(t *testing.T) {
 // realLock creates the first lockfile of files with the tool (from PATH, else uvx; network),
 // then checks that Process leaves it unchanged and, after the manifest's `==old` becomes
 // `==next`, rewrites it to pin next (lockPin with VER replaced); it is skipped without the
-// tool or uvx, or when the first lock fails.
+// tool or uvx, or when the first lock fails. It runs in parallel with the other network tests.
 func realLock(t *testing.T, manifest, lock string, files map[string]string, old, next, lockPin string, c cmdSpec) {
 	t.Helper()
 	pin := func(v string) string { return strings.ReplaceAll(lockPin, "VER", v) }
 	if testing.Short() {
 		t.Skip("network")
 	}
+	t.Parallel()
 	if _, err := c.argv(); err != nil {
 		t.Skipf("neither %s nor uvx in PATH", c.tool)
 	}

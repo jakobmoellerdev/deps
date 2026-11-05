@@ -12,10 +12,17 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-// goCorpus returns structured Go versions (shorthand, prereleases, builds, pseudo-versions,
-// leading zeros) plus random strings over the version alphabet.
-func goCorpus() []string {
-	var out []string
+// goCorpus returns distinct structured Go versions (shorthand, prereleases, builds,
+// pseudo-versions, leading zeros) and distinct random strings over the version alphabet that
+// are not structured ones.
+func goCorpus() (structured, random []string) {
+	seen := map[string]bool{}
+	add := func(out *[]string, v string) {
+		if !seen[v] {
+			seen[v] = true
+			*out = append(*out, v)
+		}
+	}
 	pres := []string{"", "-rc.1", "-rc.2", "-rc.10", "-alpha", "-alpha.1", "-alpha.beta", "-beta.11", "-0", "-1", "-1a", "-x-y", "-01", "-rc..1", "-",
 		"-0.20240101000000-abcdefabcdef", "-rc.1.0.20240101000000-abcdefabcdef", "-20240101000000-abcdefabcdef"}
 	builds := []string{"", "+incompatible", "+build.1", "+", "+a..b", "+x.incompatible"}
@@ -23,7 +30,7 @@ func goCorpus() []string {
 		"v1", "v1.2", "v01.2.3", "v1.02.3", "v1.2.03", "1.2.3", "v", "v1.", "v1.2.3.4"} {
 		for _, p := range pres {
 			for _, b := range builds {
-				out = append(out, core+p+b)
+				add(&structured, core+p+b)
 			}
 		}
 	}
@@ -37,17 +44,21 @@ func goCorpus() []string {
 		if r.IntN(2) == 0 {
 			b[0] = 'v'
 		}
-		out = append(out, string(b))
+		add(&random, string(b))
 	}
-	return out
+	return structured, random
 }
 
 // TestGoVersionMatchesXMod checks the parsed Go scheme against golang.org/x/mod: validity,
 // Compare, Kind, compatibility and the Masterminds conversion.
 func TestGoVersionMatchesXMod(t *testing.T) {
-	corpus := goCorpus()
-	var valid []goVersion
-	for _, v := range corpus {
+	structured, random := goCorpus()
+	type entry struct {
+		goVersion
+		random bool
+	}
+	var valid []entry
+	for i, v := range append(structured, random...) {
 		p, ok := parseGoSemver(v)
 		if ok != semver.IsValid(v) {
 			t.Fatalf("parse(%q) ok = %v, semver.IsValid = %v", v, ok, !ok)
@@ -69,20 +80,25 @@ func TestGoVersionMatchesXMod(t *testing.T) {
 		if got := p.semver(); (got == nil) != (want == nil) || got != nil && (got.String() != want.String() || got.Compare(want) != 0) {
 			t.Fatalf("semver(%q) = %v, want %v", v, got, want)
 		}
-		valid = append(valid, p)
+		valid = append(valid, entry{p, i >= len(structured)})
 	}
 	if len(valid) < 500 {
 		t.Fatalf("only %d valid versions in corpus", len(valid))
 	}
+	// Every pair with a structured version, in both orders; random pairs add little to the
+	// quadratic cost (race detector plus atomic coverage counters) beyond those.
 	for _, a := range valid {
 		for _, b := range valid {
-			if got, want := compareGo(a, b), semver.Compare(a.raw, b.raw); got != want {
+			if a.random && b.random {
+				continue
+			}
+			if got, want := compareGo(a.goVersion, b.goVersion), semver.Compare(a.raw, b.raw); got != want {
 				t.Fatalf("compareGo(%q, %q) = %d, semver.Compare = %d", a.raw, b.raw, got, want)
 			}
-			if got, want := goKind(a, b), refGoKind(a.raw, b.raw); got != want {
+			if got, want := goKind(a.goVersion, b.goVersion), refGoKind(a.raw, b.raw); got != want {
 				t.Fatalf("goKind(%q, %q) = %s, want %s", a.raw, b.raw, got, want)
 			}
-			if got, want := goCompat(a, b), refGoCompat(a.raw, b.raw); got != want {
+			if got, want := goCompat(a.goVersion, b.goVersion), refGoCompat(a.raw, b.raw); got != want {
 				t.Fatalf("goCompat(%q, %q) = %q, want %q", a.raw, b.raw, got, want)
 			}
 		}
