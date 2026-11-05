@@ -741,18 +741,12 @@ func decodeSimple(r io.Reader, name string) (p project, yanked int, err error) {
 			if err := expectDelim(dec, '['); err != nil {
 				return project{}, 0, err
 			}
+			var f simpleFile
 			for dec.PeekKind() != ']' {
-				var f struct {
-					Filename       string         `json:"filename"`
-					Yanked         jsontext.Value `json:"yanked"`
-					Upload         string         `json:"upload-time"`
-					RequiresPython string         `json:"requires-python"`
-				}
-				if err := json.UnmarshalDecode(dec, &f); err != nil {
+				if err := decodeSimpleFile(dec, &f); err != nil {
 					return project{}, 0, err
 				}
-				k := f.Yanked.Kind()
-				pg.add(simpleFile{Filename: f.Filename, Upload: f.Upload, RequiresPython: f.RequiresPython, Yanked: k == 't' || k == '"'})
+				pg.add(f)
 			}
 			if _, err := dec.ReadToken(); err != nil {
 				return project{}, 0, err
@@ -773,6 +767,46 @@ func decodeSimple(r io.Reader, name string) (p project, yanked int, err error) {
 	}
 	p, yanked = pg.project(versions)
 	return p, yanked, nil
+}
+
+// decodeSimpleFile reads one file object of a JSON simple API page into f, which it resets
+// first, like decodeFile: only filename, yanked (true or a reason), upload-time and
+// requires-python are kept, other members (url, hashes) are consumed with ReadValue.
+func decodeSimpleFile(dec *jsontext.Decoder, f *simpleFile) error {
+	*f = simpleFile{}
+	if dec.PeekKind() != '{' {
+		var v struct{}
+		return json.UnmarshalDecode(dec, &v) // null, or the unmarshal error
+	}
+	if _, err := dec.ReadToken(); err != nil {
+		return err
+	}
+	for dec.PeekKind() != '}' {
+		name, err := dec.ReadToken()
+		if err != nil {
+			return err
+		}
+		switch name.String() {
+		case "filename":
+			err = json.UnmarshalDecode(dec, &f.Filename)
+		case "upload-time":
+			err = json.UnmarshalDecode(dec, &f.Upload)
+		case "requires-python":
+			err = json.UnmarshalDecode(dec, &f.RequiresPython)
+		case "yanked":
+			var v jsontext.Value
+			v, err = dec.ReadValue()
+			k := v.Kind()
+			f.Yanked = k == 't' || k == '"'
+		default:
+			_, err = dec.ReadValue()
+		}
+		if err != nil {
+			return err
+		}
+	}
+	_, err := dec.ReadToken()
+	return err
 }
 
 // decodeHTML reads an HTML simple API page (PEP 503) of the project normalized name served at
