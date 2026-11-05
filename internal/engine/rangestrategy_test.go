@@ -361,9 +361,9 @@ func TestRangeStrategyGradleBump(t *testing.T) {
 // TestBuildRangeRewrites resolves and builds npm ranges end to end: auto widens a `||` range,
 // pin writes the exact version, and the rest of the range grammar is rewritten in its form.
 func TestBuildRangeRewrites(t *testing.T) {
-	pkg := `{"dependencies": {"o": "^1.0.0 || ^2.0.0", "w": "^1.0.0", "x": "1.x", "h": "1.0.0 - 2.0.0"}}`
-	releases := fakeGo{"o": {"1.0.0", "2.0.0", "3.0.0"}, "w": {"1.0.0", "1.3.0", "2.0.0"}, "x": {"1.0.0", "1.5.0", "2.1.0"}, "h": {"1.0.0", "3.0.0"}}
-	root, cfg := setup(t, "rules:\n  - names: [w]\n    rangeStrategy: pin\n", map[string]string{"package.json": pkg})
+	pkg := `{"dependencies": {"o": "^1.0.0 || ^2.0.0", "w": "^1.0.0", "x": "1.x", "h": "1.0.0 - 2.0.0"}, "peerDependencies": {"p": "^1.0.0"}}`
+	releases := fakeGo{"o": {"1.0.0", "2.0.0", "3.0.0"}, "w": {"1.0.0", "1.3.0", "2.0.0"}, "x": {"1.0.0", "1.5.0", "2.1.0"}, "h": {"1.0.0", "3.0.0"}, "p": {"1.0.0", "1.1.0", "2.0.0"}}
+	root, cfg := setup(t, peersOn+"  - names: [w]\n    rangeStrategy: pin\n", map[string]string{"package.json": pkg})
 	o := Options{Managers: []manager.Manager{npm.New()}, Datasources: map[string]Datasource{"npm": releases}}
 	res, err := Resolve(t.Context(), root, cfg, env, o)
 	if err != nil || len(res.Errors) > 0 {
@@ -375,6 +375,7 @@ func TestBuildRangeRewrites(t *testing.T) {
 		"w 1.0.0->2.0.0 major": `"w": "2.0.0"`,
 		"x 1.0.0->2.1.0 major": `"x": "2.x"`, // 1.5.0 cannot raise 1.x: not proposed without a lockfile
 		"h 1.0.0->3.0.0 major": `"h": "1.0.0 - 3.0.0"`,
+		"p 1.0.0->2.0.0 major": `"p": "^1.0.0 || ^2.0.0"`, // auto widens peers; 1.1.0 is left alone
 	}
 	if len(res.Updates) != len(want) {
 		t.Fatalf("updates =\n%s", renderUpdates(res.Updates))

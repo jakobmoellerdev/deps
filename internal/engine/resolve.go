@@ -850,7 +850,7 @@ type resolver struct {
 
 // autoRange is what rangeStrategy auto means per manager (Renovate's defaults): replace for
 // terraform and terragrunt, update-lockfile for npm, cargo and any other manager (widen for
-// npm `||` ranges, rangeStrategy).
+// npm peerDependencies and `||` ranges, rangeStrategy).
 var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace}
 
 // rangeStrategy is the effective rangeStrategy of the range dep: auto resolved per manager,
@@ -861,7 +861,7 @@ func (r *resolver) rangeStrategy() string {
 	s := r.pol.pre.RangeStrategy
 	if s == config.RangeAuto {
 		s = cmp.Or(autoRange[d.Manager], config.RangeUpdateLockfile)
-		if d.Manager == npmManager && strings.Contains(d.Range, "||") {
+		if d.Manager == npmManager && (d.DepType == "peerDependencies" || strings.Contains(d.Range, "||")) {
 			s = config.RangeWiden
 		}
 	}
