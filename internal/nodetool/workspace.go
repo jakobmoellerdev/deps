@@ -171,10 +171,57 @@ func (w workspaces) members(dir string) ([]string, error) {
 // its package.json `workspaces` or pnpm-workspace.yaml `packages` globs match the manifest's
 // directory; otherwise the manifest has no lockfile.
 func (Locker) Scope(root, manifest string) (string, bool) {
+	return lockScope(root, manifest, nil)
+}
+
+// scopeCache memoises the lockfile and workspace lookups of lockScope across the manifests of
+// one tree; the directory keys are absolute.
+type scopeCache struct {
+	lock map[string]string
+	ws   map[string]cachedWorkspaces
+}
+
+type cachedWorkspaces struct {
+	ws  workspaces
+	err error
+}
+
+func newScopeCache() *scopeCache {
+	return &scopeCache{lock: map[string]string{}, ws: map[string]cachedWorkspaces{}}
+}
+
+// lockIn is lockIn of dir, cached when c is not nil.
+func (c *scopeCache) lockIn(dir string) string {
+	if c == nil {
+		return lockIn(dir)
+	}
+	n, ok := c.lock[dir]
+	if !ok {
+		n = lockIn(dir)
+		c.lock[dir] = n
+	}
+	return n
+}
+
+// readWorkspaces is readWorkspaces of dir, cached when c is not nil.
+func (c *scopeCache) readWorkspaces(dir string) (workspaces, error) {
+	if c == nil {
+		return readWorkspaces(dir)
+	}
+	r, ok := c.ws[dir]
+	if !ok {
+		r.ws, r.err = readWorkspaces(dir)
+		c.ws[dir] = r
+	}
+	return r.ws, r.err
+}
+
+// lockScope is Scope with the lookups cached in c (nil = no caching).
+func lockScope(root, manifest string, c *scopeCache) (string, bool) {
 	member := path.Dir(manifest)
 	for dir := member; ; dir = path.Dir(dir) {
 		abs := filepath.Join(root, filepath.FromSlash(dir))
-		if lockIn(abs) != "" {
+		if c.lockIn(abs) != "" {
 			if dir == member {
 				return dir, true
 			}
@@ -182,7 +229,7 @@ func (Locker) Scope(root, manifest string) (string, bool) {
 			if dir != "." {
 				rel = strings.TrimPrefix(member, dir+"/")
 			}
-			ws, err := readWorkspaces(abs)
+			ws, err := c.readWorkspaces(abs)
 			if err != nil {
 				slog.Debug("workspace root unreadable", "dir", dir, "manifest", manifest, "err", err)
 				return "", false

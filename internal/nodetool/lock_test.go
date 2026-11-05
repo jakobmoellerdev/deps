@@ -2,6 +2,7 @@ package nodetool
 
 import (
 	"bufio"
+	"fmt"
 	"maps"
 	"os"
 	"os/exec"
@@ -85,6 +86,41 @@ func TestLockedVersionsErrors(t *testing.T) {
 	for _, src := range []string{"", "[]", `{"lockfileVersion": "x"}`, `{"packages": []}`, `{"packages": {"node_modules/a": []}}`} {
 		if _, _, err := lockedVersions(bufio.NewReader(strings.NewReader(src)), map[string]bool{"node_modules/a": true}); err == nil {
 			t.Errorf("%q: no error", src)
+		}
+	}
+}
+
+// BenchmarkReadLocked reads the locked versions of an npm workspace with 50 members, three
+// wants each.
+func BenchmarkReadLocked(b *testing.B) {
+	const members = 50
+	root := b.TempDir()
+	var lock strings.Builder
+	lock.WriteString(`{"lockfileVersion": 3, "packages": {"": {"name": "ws", "workspaces": ["packages/*"]}`)
+	files := map[string]string{"package.json": `{"name": "ws", "private": true, "workspaces": ["packages/*", "!packages/skip"],` +
+		` "devDependencies": {"eslint": "^9.0.0", "typescript": "^5.4.0", "vitest": "^1.6.0"}}`}
+	var wants []Want
+	for i := range members {
+		m := fmt.Sprintf("packages/m%d/package.json", i)
+		files[m] = fmt.Sprintf(`{"name": "m%d", "dependencies": {"a": "^1.0.0", "b": "^2.0.0", "c": "^3.0.0"}}`, i)
+		fmt.Fprintf(&lock, `, "packages/m%d": {"name": "m%d"}`, i, i)
+		wants = append(wants, Want{m, "a"}, Want{m, "b"}, Want{m, "c"})
+	}
+	lock.WriteString(`, "node_modules/a": {"version": "1.2.0"}, "node_modules/b": {"version": "2.1.0"}, "node_modules/c": {"version": "3.0.1"}}}`)
+	files["package-lock.json"] = lock.String()
+	for p, c := range files {
+		abs := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(c), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if got, errs := ReadLocked(root, wants); len(errs) != 0 || got[len(got)-1].Version != "3.0.1" {
+			b.Fatalf("ReadLocked = %v, %v", got, errs)
 		}
 	}
 }

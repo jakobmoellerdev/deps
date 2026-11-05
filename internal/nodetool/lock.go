@@ -47,10 +47,11 @@ func ReadLocked(root string, wants []Want) ([]LockState, []error) {
 	scopes := map[string]*scope{}
 	var order []string
 	scopeOf := map[string]string{} // manifest -> lock root ("" = none)
+	cache := newScopeCache()
 	for i, w := range wants {
 		dir, seen := scopeOf[w.Manifest]
 		if !seen {
-			if d, ok := (Locker{}).Scope(root, w.Manifest); ok {
+			if d, ok := lockScope(root, w.Manifest, cache); ok {
 				dir = d
 			}
 			scopeOf[w.Manifest] = dir
