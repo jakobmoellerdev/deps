@@ -6,6 +6,7 @@ package docker
 import (
 	"bytes"
 	"errors"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -70,7 +71,13 @@ func (dockerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep,
 		return x.deps, nil
 	case composeRe.MatchString(file):
 		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
-		return x.deps, x.yaml(x.compose)
+		if err := x.yaml(x.compose); err != nil {
+			// Not standalone YAML (e.g. an indented fragment concatenated by a script).
+			slog.Debug("skipping unparsable compose file", "file", file, "err", err)
+			return []dep.Dep{{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeCompose,
+				File: file, Line: 1, Skip: "unparsable compose file"}}, nil
+		}
+		return x.deps, nil
 	case actions.IsWorkflowFile(file):
 		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
 		return x.deps, x.yaml(x.workflow)
