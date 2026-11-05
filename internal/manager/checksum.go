@@ -2,16 +2,13 @@ package manager
 
 import (
 	"errors"
-	"regexp"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
-var sha256Re = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
-
 // IsSHA256 reports whether s is a hex-encoded SHA-256 sum.
-func IsSHA256(s string) bool { return sha256Re.MatchString(s) }
+func IsSHA256(s string) bool { return IsHex(s, 64) }
 
 // ChecksumEdits checks that the checksum of u changes together with its version and
 // appends the checksum edit, if the checksum changes, to edits. A dep pins a checksum
