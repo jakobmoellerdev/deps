@@ -2,6 +2,8 @@ package pytool
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,6 +88,42 @@ func TestReadLocksErrors(t *testing.T) {
 	}
 	if files[3][0].Locked != "" || files[3][1].Locked != "1.0" {
 		t.Errorf("forks: %+v", files[3])
+	}
+}
+
+// BenchmarkReadLocksPipfile reads the locks of a Pipfile with 100 deps in two categories.
+func BenchmarkReadLocksPipfile(b *testing.B) {
+	var pipfile strings.Builder
+	var deps []dep.Dep
+	lock := map[string]map[string]map[string]string{}
+	for _, sec := range [][2]string{{"packages", "default"}, {"dev-packages", "develop"}} {
+		fmt.Fprintf(&pipfile, "[%s]\n", sec[0])
+		lock[sec[1]] = map[string]map[string]string{}
+		for i := range 50 {
+			name, spec := fmt.Sprintf("%s-%d", sec[1], i), fmt.Sprintf(">=1.%d", i)
+			fmt.Fprintf(&pipfile, "%s = \"", name)
+			start := pipfile.Len()
+			fmt.Fprintf(&pipfile, "%s\"\n", spec)
+			deps = append(deps, dep.Dep{File: Pipfile, Name: name, Range: spec, RefSpan: dep.Span{Start: start, End: start + len(spec)}})
+			lock[sec[1]][name] = map[string]string{"version": fmt.Sprintf("==1.%d.0", i)}
+		}
+	}
+	lockSrc, err := json.Marshal(lock)
+	if err != nil {
+		b.Fatal(err)
+	}
+	root := b.TempDir()
+	if err := os.WriteFile(filepath.Join(root, Pipfile), []byte(pipfile.String()), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, PipfileLock), lockSrc, 0o600); err != nil {
+		b.Fatal(err)
+	}
+	if errs := ReadLocks(root, [][]dep.Dep{deps}); len(errs) != 0 || deps[0].Locked != "1.0.0" || deps[99].Locked != "1.49.0" {
+		b.Fatal(errs, deps[0], deps[99])
+	}
+	for b.Loop() {
+		ReadLocks(root, [][]dep.Dep{deps})
 	}
 }
 

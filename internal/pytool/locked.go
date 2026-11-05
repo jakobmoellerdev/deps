@@ -23,7 +23,7 @@ import (
 func ReadLocks(root string, files [][]dep.Dep) []error {
 	locks := map[string]map[string]map[string]string{} // by slash path, then as parseLock
 	lockOf := map[string]string{}                      // lockfile slash path by manifest, "" = none
-	pipfiles := map[string][]byte{}                    // Pipfile sources by slash path
+	pipfiles := map[string]func(off int) string{}      // Pipfile categories by slash path
 	var errs []error
 	for _, f := range files {
 		for j := range f {
@@ -57,12 +57,13 @@ func ReadLocks(root string, files [][]dep.Dep) []error {
 			}
 			section := ""
 			if name == PipfileLock {
-				src, ok := pipfiles[d.File]
+				category, ok := pipfiles[d.File]
 				if !ok {
-					src, _ = os.ReadFile(filepath.Join(root, filepath.FromSlash(d.File)))
-					pipfiles[d.File] = src
+					src, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(d.File)))
+					category = pipfileCategories(src)
+					pipfiles[d.File] = category
 				}
-				section = pipfileSection(pipfileCategory(src, d.RefSpan.Start))
+				section = pipfileSection(category(d.RefSpan.Start))
 			}
 			d.Locked = versions[section][pyreq.Normalize(d.Name)]
 		}

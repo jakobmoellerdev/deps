@@ -77,7 +77,8 @@ func (Locker) Scope(root, manifest string) (string, bool) {
 		if dir != "." {
 			rel = strings.TrimPrefix(member, dir+"/")
 		}
-		ok := matchAny(workspaceGlobs(src, "members"), rel) && !matchAny(workspaceGlobs(src, "exclude"), rel)
+		include, exclude := workspaceGlobs(src)
+		ok := matchAny(include, rel) && !matchAny(exclude, rel)
 		if !ok {
 			slog.Debug("not a uv workspace member", "dir", dir, "manifest", manifest)
 		}
@@ -91,17 +92,22 @@ func isFile(p string) bool {
 	return err == nil && st.Mode().IsRegular()
 }
 
-// workspaceGlobs returns the `[tool.uv.workspace]` globs under key of a pyproject.toml.
-func workspaceGlobs(src []byte, key string) []string {
+// workspaceGlobs returns the `[tool.uv.workspace]` members and exclude globs of a
+// pyproject.toml.
+func workspaceGlobs(src []byte) (include, exclude []string) {
 	doc, err := tomlspan.Parse(src)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	var out []string
-	for _, v := range doc.Get("tool", "uv", "workspace", key).Strings() {
-		out = append(out, path.Clean(v.Str))
+	globs := func(key string) []string {
+		vs := doc.Get("tool", "uv", "workspace", key).Strings()
+		out := make([]string, 0, len(vs))
+		for _, v := range vs {
+			out = append(out, path.Clean(v.Str))
+		}
+		return out
 	}
-	return out
+	return globs("members"), globs("exclude")
 }
 
 func matchAny(globs []string, rel string) bool {
@@ -207,8 +213,12 @@ func lockOnlyCmds(lockName string, lock, pipfile []byte, base cmdSpec, locks map
 	// Arguments by command (one per Pipfile category or pdm group, else one).
 	byCmd := map[string][]string{}
 	var groups map[string]string
-	if lockName == PDMLock {
+	var category func(off int) string
+	switch lockName {
+	case PDMLock:
 		groups = pdmGroups(lock)
+	case PipfileLock:
+		category = pipfileCategories(pipfile)
 	}
 	for _, m := range slices.Sorted(maps.Keys(locks)) {
 		for _, u := range locks[m] {
@@ -217,7 +227,7 @@ func lockOnlyCmds(lockName string, lock, pipfile []byte, base cmdSpec, locks map
 			case UVLock:
 				byCmd[""] = append(byCmd[""], "--upgrade-package", pin)
 			case PipfileLock:
-				cat := pipfileCategory(pipfile, u.Dep.RefSpan.Start)
+				cat := category(u.Dep.RefSpan.Start)
 				byCmd[cat] = append(byCmd[cat], pin)
 			default:
 				g := groups[pyreq.Normalize(u.Dep.Name)]
@@ -249,23 +259,25 @@ func lockOnlyCmds(lockName string, lock, pipfile []byte, base cmdSpec, locks map
 	return out
 }
 
-// pipfileCategory returns the Pipfile table whose entry holds byte offset off of src
-// (`packages`, `dev-packages` or a custom category), or "".
-func pipfileCategory(src []byte, off int) string {
+// pipfileCategories parses a Pipfile once and returns the Pipfile table whose entry holds
+// a byte offset of src (`packages`, `dev-packages` or a custom category), or "".
+func pipfileCategories(src []byte) func(off int) string {
 	doc, err := tomlspan.Parse(src)
 	if err != nil {
-		return ""
+		return func(int) string { return "" }
 	}
-	for _, k := range doc.Keys {
-		if t := doc.Fields[k]; t.Kind == tomlspan.Table {
-			for _, f := range t.Fields {
-				if f.Start <= off && off <= f.End {
-					return k
+	return func(off int) string {
+		for _, k := range doc.Keys {
+			if t := doc.Fields[k]; t.Kind == tomlspan.Table {
+				for _, f := range t.Fields {
+					if f.Start <= off && off <= f.End {
+						return k
+					}
 				}
 			}
 		}
+		return ""
 	}
-	return ""
 }
 
 // pdmGroups returns the lock group of each `[[package]]` of a pdm.lock by normalized name:
@@ -323,9 +335,9 @@ func members(dir string, write map[string][]byte) error {
 	if root == nil {
 		return nil
 	}
-	exclude := workspaceGlobs(root, "exclude")
+	include, exclude := workspaceGlobs(root)
 	fsys := os.DirFS(dir)
-	for _, g := range workspaceGlobs(root, "members") {
+	for _, g := range include {
 		matches, err := doublestar.Glob(fsys, g)
 		if err != nil {
 			return fmt.Errorf("workspace members %q: %w", g, err)
