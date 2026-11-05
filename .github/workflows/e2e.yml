@@ -1,0 +1,65 @@
+# Runs the GitHub end-to-end test (hack/e2e-github/e2e.sh, docs/ci.md "GitHub end-to-end test")
+# on the GitHub mirror: deps run against the real repository <token user>/deps-e2e, covering
+# PR creation, platform commits, GitHub auto-merge and the direct-merge fallback, the dashboard
+# and obsolete PRs. Nightly, on demand, and when the mirror receives changes to the code it
+# exercises.
+#
+# Needs the secret DEPS_E2E_TOKEN: a classic PAT with the repo and workflow scopes of the
+# account that owns deps-e2e (the script creates the repository on first use and also uses the
+# token for `gh`). Without the secret the job only prints a notice.
+name: e2e
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "internal/bot/**"
+      - "internal/platform/**"
+      - "internal/gitx/**"
+      - "cmd/deps/run.go"
+      - "hack/e2e-github/**"
+      - ".github/workflows/e2e.yml"
+permissions:
+  contents: read
+concurrency:
+  group: deps-e2e # every run resets and drives the same test repository
+  cancel-in-progress: false
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.DEPS_E2E_TOKEN }}
+    steps:
+      - name: Check the token
+        id: token
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::DEPS_E2E_TOKEN is not set; skipping the GitHub end-to-end test"
+          else
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7.0.1
+        if: steps.token.outputs.set
+      - uses: actions/setup-go@v7.0.0
+        if: steps.token.outputs.set
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: arduino/setup-task@v3.0.0
+        if: steps.token.outputs.set
+        with:
+          repo-token: ${{ github.token }}
+      - name: End-to-end test
+        if: steps.token.outputs.set
+        env:
+          DEPS_E2E_LOGS: ${{ runner.temp }}/e2e-logs
+        run: task e2e:github
+      - uses: actions/upload-artifact@v7.0.2
+        if: failure() && steps.token.outputs.set
+        with:
+          name: e2e-logs
+          path: ${{ runner.temp }}/e2e-logs
+          if-no-files-found: ignore

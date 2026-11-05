@@ -804,8 +804,9 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 
 `task e2e:github` builds `bin/deps` and runs `hack/e2e-github/e2e.sh`. The script drives `deps run` against the real repository `<gh user>/deps-e2e` (override with `DEPS_E2E_REPO=owner/name`).
 
-- **Requirements:** network, a `gh` login for github.com with the `repo` and `workflow` scopes, and `git`, `go` and `jq`. That is why it is not part of `task ci`.
+- **Requirements:** network, a `gh` login for github.com with the `repo` and `workflow` scopes (or `GH_TOKEN` set to such a token), and `git`, `go` and `jq`. That is why it is not part of `task ci`.
 - **Duration:** about 3 minutes, mostly waiting for the `check` workflow.
+- **In CI.** `.github/workflows/e2e.yml` runs it on the GitHub mirror nightly, on `workflow_dispatch`, and when a push to `main` changes the bot, platform or git code or the test itself. It needs the repository secret `DEPS_E2E_TOKEN` (a PAT of the account owning `deps-e2e`, with the scopes above); without it the job only prints a notice. Runs share one concurrency group, because each resets the same test repository. On failure the debug logs of every `deps run` are uploaded as the artifact `e2e-logs`.
 
 **Setup (idempotent, every run).** The repository is created if missing, as public so branch protection works on the free plan. Settings:
 
