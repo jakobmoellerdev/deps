@@ -910,10 +910,11 @@ type resolver struct {
 }
 
 // autoRange is what rangeStrategy auto means per manager (Renovate's defaults): replace for
-// terraform and terragrunt, update-lockfile for npm, cargo and any other manager (widen for
-// npm peerDependencies and `||` ranges, replace for the dependencies of a bundler gemspec,
+// terraform and terragrunt, widen for elm package constraints (Dependabot's; Renovate has no
+// Elm manager), update-lockfile for npm, cargo and any other manager (widen for npm
+// peerDependencies and `||` ranges, replace for the dependencies of a bundler gemspec,
 // rangeStrategy).
-var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace}
+var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace, "elm": config.RangeWiden}
 
 // rangeStrategy is the effective rangeStrategy of the range dep: auto resolved per manager,
 // widen and pin resolved to replace for managers that cannot write them (no

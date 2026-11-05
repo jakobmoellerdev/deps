@@ -48,6 +48,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`circleci`](#circleci)
 - [`azure-pipelines`](#azure-pipelines)
 - [`vcpkg`](#vcpkg)
+- [`elm`](#elm)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -56,7 +57,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 | Reason | When |
 |---|---|
 | `ignored by rule #<i>` | a pre-policy rule set `ignore: true` |
-| `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `go`, `peerDependencies`, `engines`, `submodule`, `task` |
+| `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `test-indirect`, `go`, `peerDependencies`, `engines`, `submodule`, `task` |
 | `non-version value "<v>"` | the current value is not valid in the dep's versioning scheme |
 | `non-version tag` | a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep` |
 | `current version <v> not found upstream (pin an existing version)` | a pinned or to-be-pinned dep whose current tag or image tag no longer exists (digest refresh and pin need it) |
@@ -2039,6 +2040,42 @@ Moves vcpkg registry baselines to the newest commit of the registry repository (
 - The versions of a port are read from the registry's versions database at the current baseline (`versions/<first letter>-/<port>.json`), so a proposed `version>=` is always installable with that baseline; a baseline update and the port updates it unlocks come in successive runs.
 - Baseline updates are `digest` updates of the registry repository's default branch (or `reference`); like git-submodules, they have no release notes.
 
+## elm
+
+Updates the package dependencies and the compiler version of Elm 0.19 projects (`elm.json`): the exact versions of an application and the constraints of a package. Only the version string is rewritten; the file keeps its formatting. No Elm toolchain is needed.
+
+**Files:**
+
+- `elm.json` at any depth; its `type` (`application` or `package`) decides how it is read, other files have no deps
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `direct` | application `dependencies.direct` (`"elm/json": "1.1.3"`) | `elm-package` | `semver` | updated |
+| `indirect` | application `dependencies.indirect`; ignored by default (`ignore: false` opts in) | `elm-package` | `semver` | ignored (opt in with a rule setting `ignore: false`) |
+| `test-direct` | application `test-dependencies.direct` | `elm-package` | `semver` | updated |
+| `test-indirect` | application `test-dependencies.indirect`; ignored by default (`ignore: false` opts in) | `elm-package` | `semver` | ignored (opt in with a rule setting `ignore: false`) |
+| `dependencies` | package `dependencies` constraints (`"elm/core": "1.0.0 <= v < 2.0.0"`) | `elm-package` | `semver`; the constraint is the dep's range, its lower bound the current version | updated |
+| `test-dependencies` | package `test-dependencies` constraints | `elm-package` | `semver`, as `dependencies` | updated |
+| `elm-version` | `elm-version`: the compiler version of an application (`0.19.1`), the compiler constraint of a package (`0.19.0 <= v < 0.20.0`); the name is `elm/compiler` | `github-releases` (`elm/compiler`) | `semver` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `invalid package name` | a dependency name that is not `author/project` |
+| `unsupported version` | an application version that is not `MAJOR.MINOR.PATCH`, or a value with JSON escapes |
+| `unsupported constraint` | a package constraint outside Elm's `<lower> <op> v <op> <upper>` grammar (`<` or `<=`, `MAJOR.MINOR.PATCH` bounds) |
+
+**Applications.**
+
+- Every version is exact and replaced by the new one. The `indirect` versions pin the dependencies of the `direct` ones, which `elm make` checks against their constraints: they are ignored by default, as Go's indirect requirements, and a direct update whose new version needs newer indirect dependencies fails `elm make` until they are raised (`elm install` does that).
+
+**Package constraints.**
+
+- `rangeStrategy` applies to package constraints (`dependencies`, `test-dependencies`, `elm-version`). Packages have no lockfile, so versions a constraint admits are not proposed except under `bump`.
+- `auto` (default) is `widen`, Dependabot's update of Elm packages: the lower bound stays and an upper bound the new version reaches moves past it (`1.0.0 <= v < 2.0.0` → `1.0.0 <= v < 3.0.0` for 2.1.0).
+- `replace` and `update-lockfile` also set the lower bound to the new version (`2.1.0 <= v < 3.0.0`); `bump` does so for admitted versions too (`1.0.0 <= v < 2.0.0` → `1.2.0 <= v < 2.0.0`). An exclusive upper bound moves to the next boundary of its precision above the new version (`< 2.0.0` → `< 3.0.0`, `< 1.5.0` → `< 1.8.0` for 1.7.2), an inclusive one to the new version. `pin` writes `2.1.0 <= v <= 2.1.0`.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -2119,6 +2156,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `orb` | orb name `<namespace>/<name>` (`circleci/node`) | `GET <DEPS_CIRCLECI_URL or https://circleci.com>/api/v3/orb/packages?filter[name]=<name>` (Renovate's endpoint), once per orb; the entry whose name matches exactly answers. After the listed versions a derived `X.Y` and `X` per release line, so partial versions (`@5`) are updated with their precision | `DEPS_CIRCLECI_TOKEN` (private orbs) as `Circle-Token` and bare `Authorization`, as Renovate's `Token-Only` host rule | `created_at` of the version; a derived `X.Y`/`X` has the time of the line's first release |
 | `azure-pipelines-tasks` | task name (`Bash`), task id, or `<publisher>.<extension>.<contribution>.<name\|id>`; case-insensitive | public lists (Renovate's): `GET <DEPS_AZURE_PIPELINES_TASKS_URL or https://raw.githubusercontent.com/renovatebot/azure-devops-marketplace/main>/azure-pipelines-builtin-tasks.json` once per run, and for tasks it lacks `…/azure-pipelines-marketplace-tasks.json` once (streamed; only the run's tasks are kept). With `DEPS_AZURE_DEVOPS_URL` and `DEPS_AZURE_DEVOPS_TOKEN`: `GET <DEPS_AZURE_DEVOPS_URL>/_apis/distributedtask/tasks/` once per run, the tasks installed in that organization or collection (Renovate's behavior on the Azure platform). After the versions a derived `X.Y` and `X` per release line, so major-only references (`Bash@3`) are updated with their precision | none for the public lists; Basic `deps:<DEPS_AZURE_DEVOPS_TOKEN>` (a personal access token) for the organization | none |
 | `vcpkg` | port name (`fmt`); the dep's source is the registry's file tree at its baseline commit (`https://raw.githubusercontent.com/microsoft/vcpkg/<baseline>`, `<repository>/raw/<baseline>` off github.com) | `GET <source>/versions/<first letter>-/<port>.json` once per (registry commit, port); each entry's `version`, `version-semver`, `version-date` or `version-string` is a release, only of the newest entry's scheme (relaxed and semver count as one; vcpkg does not order across schemes), `#<port-version>` appended when the port version is not 0 (`1.3.1#2`, as `version>=` writes it). A 404 fails the dep: the port is not in the registry at the baseline | none | none (the versions database records no dates) |
+| `elm-package` | `author/project` as in elm.json (`elm/json`) | `GET <DEPS_ELM_PACKAGE_URL or https://package.elm-lang.org>/packages/<author>/<project>/releases.json`, once per package; the registry answers an unknown package with HTTP 500. Source repository (release notes): `https://github.com/<author>/<project>`, the only place `elm publish` publishes from | none | the Unix time the registry lists for each version |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.

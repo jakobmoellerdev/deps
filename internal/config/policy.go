@@ -95,6 +95,8 @@ func production(d dep.Dep) bool {
 		return d.DepType == "project.dependencies"
 	case "pipenv":
 		return d.DepType == "packages"
+	case "elm":
+		return d.DepType == "direct" || d.DepType == "dependencies"
 	case "maven":
 		return mavenProduction[d.DepType]
 	}
@@ -107,8 +109,10 @@ var mavenProduction = map[string]bool{"compile": true, "provided": true, "runtim
 
 // defaultIgnored are the dep types ignored unless a rule sets `ignore: false`: git submodules
 // are disabled by default as in Renovate, and so are Azure Pipelines tasks (Renovate disables
-// the azure-pipelines manager: a public task version may not be installed in the organization).
-var defaultIgnored = map[string]bool{"indirect": true, "go": true, "peerDependencies": true, "engines": true, "submodule": true, "task": true}
+// the azure-pipelines manager: a public task version may not be installed in the organization);
+// indirect and test-indirect are the transitive pins of Go modules, compiled requirements and Elm
+// applications.
+var defaultIgnored = map[string]bool{"indirect": true, "test-indirect": true, "go": true, "peerDependencies": true, "engines": true, "submodule": true, "task": true}
 
 // allUpdates allows every update type; policies share it until a rule sets updates.
 var allUpdates = updateSet(nil)

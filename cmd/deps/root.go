@@ -20,6 +20,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
@@ -286,6 +287,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		orb.Name:                orb.New(client, sem, os.Getenv),
 		azuretasks.Name:         azuretasks.New(client, sem, os.Getenv),
 		vcpkgds.Name:            vcpkgds.New(client, sem),
+		elmpackage.Name:         elmpackage.New(client, sem, os.Getenv),
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err

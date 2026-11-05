@@ -454,7 +454,7 @@ func TestManagersRegistry(t *testing.T) {
 	builtin := []string{"github-actions", "gomod", "docker", "npm", "helm", "kustomize", "pre-commit", "gitlabci", "nvm", "nodenv", "asdf", "mise", "cargo",
 		"pip_requirements", "pep621", "poetry", "pipenv", "terraform", "terraform-version", "tflint-plugin", "terragrunt",
 		"maven", "gradle", "gradle-wrapper", "maven-wrapper", "swift", "bundler", "ruby-version", "git-submodules", "rust-toolchain", "devcontainer",
-		"bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "vcpkg"}
+		"bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "vcpkg", "elm"}
 	if err != nil || !slices.Equal(names(ms), builtin) {
 		t.Fatalf("default managers = %v, %v", names(ms), err)
 	}
