@@ -47,6 +47,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 | `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `go`, `peerDependencies`, `engines` |
 | `non-version value "<v>"` | the current value is not valid in the dep's versioning scheme |
 | `non-version tag` | a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep` |
+| `current version <v> not found upstream (pin an existing version)` | a pinned or to-be-pinned dep whose current tag or image tag no longer exists (digest refresh and pin need it) |
 
 ## github-actions
 

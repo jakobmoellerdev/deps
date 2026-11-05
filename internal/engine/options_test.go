@@ -385,6 +385,26 @@ func TestResolveUnparsableVersion(t *testing.T) {
 	}
 }
 
+// noDigests is a datasource without digest support (github-releases): Digest returns "".
+type noDigests struct{}
+
+func (noDigests) Releases(context.Context, dep.Dep, string) ([]Release, error) {
+	return []Release{{Version: "v1.0.0"}}, nil
+}
+
+func (noDigests) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }
+
+// A custom dep that captured a digest (Renovate's currentDigest of a github-release-attachments
+// marker) gets no digest update when its datasource resolves none: there is nothing to write.
+func TestResolveNoDigestNoUpdate(t *testing.T) {
+	m := stubManager{name: "custom", deps: []dep.Dep{{Datasource: "github-releases", Versioning: "semver", Name: "o/r", Version: "v1.0.0", Digest: strings.Repeat("a", 64), Line: 1}}}
+	root, cfg := setup(t, "", map[string]string{"stub.txt": "v1.0.0\n"})
+	res, err := Resolve(t.Context(), root, cfg, env, Options{Managers: []manager.Manager{m}, Datasources: map[string]Datasource{"github-releases": noDigests{}}})
+	if err != nil || len(res.Errors) != 0 || len(res.Updates) != 0 {
+		t.Fatalf("err = %v, errors = %v, updates = %+v", err, res.Errors, res.Updates)
+	}
+}
+
 func TestManagersRegistry(t *testing.T) {
 	names := func(ms []manager.Manager) []string {
 		var out []string

@@ -5,6 +5,7 @@ package datasource
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -37,6 +38,10 @@ type DeclaredPathSource interface {
 	// per module@version, so concurrent prefetches are answered once.
 	DeclaredPath(ctx context.Context, modPath, version string) (string, error)
 }
+
+// ErrVersionNotFound is wrapped by Digest errors for a version the upstream does not have
+// (a deleted tag). For the current version the engine skips the dep, as Renovate does.
+var ErrVersionNotFound = errors.New("not found upstream")
 
 // Timer is implemented by datasources that know when a version was published. It is optional
 // and called lazily, only for versions that end up in a pull request.

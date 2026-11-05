@@ -489,7 +489,7 @@ func (s *Source) head(ctx context.Context, name, tag string) (digest string, err
 		return desc.Digest.String(), nil
 	}
 	if errors.Is(err, errdef.ErrNotFound) {
-		return "", fmt.Errorf("tag %s not found upstream", tag)
+		return "", fmt.Errorf("tag %s %w", tag, datasource.ErrVersionNotFound)
 	}
 	if httpErr := (*errcode.ErrorResponse)(nil); errors.As(err, &httpErr) || errors.Is(err, auth.ErrBasicCredentialNotFound) ||
 		errors.Is(err, httpx.ErrRateLimited) || ctx.Err() != nil {

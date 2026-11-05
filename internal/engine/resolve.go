@@ -1113,26 +1113,39 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 
 // digestUpdate keeps the current version and refreshes its digest when pinned (Type digest,
 // none when unchanged), or pins it under pin: digest (Type pin). It has no new version, so
-// allow and minimumReleaseAge do not apply.
+// allow and minimumReleaseAge do not apply. A datasource that resolves no digest (github
+// releases) yields no update: there is nothing to write.
 func (r *resolver) digestUpdate() ([]dep.Update, error) {
 	d := r.d
 	switch {
 	case d.Digest != "" && r.pol.allows(dep.Digest):
-		c, err := r.digestOf(d.Version)
+		c, err := r.currentDigest()
 		if err != nil {
 			return nil, err
 		}
-		if !strings.EqualFold(c, d.Digest) {
+		if c != "" && !strings.EqualFold(c, d.Digest) {
 			return []dep.Update{{Dep: d, Type: dep.Digest, NewVersion: d.Version, NewDigest: c}}, nil
 		}
 	case d.Digest == "" && r.pol.pre.Pin == config.PinDigest && r.pol.allows(dep.Pin):
-		c, err := r.digestOf(d.Version)
+		c, err := r.currentDigest()
 		if err != nil {
 			return nil, err
 		}
-		return []dep.Update{{Dep: d, Type: dep.Pin, NewVersion: d.Version, NewDigest: c}}, nil
+		if c != "" {
+			return []dep.Update{{Dep: d, Type: dep.Pin, NewVersion: d.Version, NewDigest: c}}, nil
+		}
 	}
 	return nil, nil
+}
+
+// currentDigest is digestOf the current version; a version the upstream no longer has
+// (deleted tag) skips the dep instead of failing it, as Renovate does.
+func (r *resolver) currentDigest() (string, error) {
+	c, err := r.digestOf(r.d.Version)
+	if errors.Is(err, datasource.ErrVersionNotFound) {
+		return "", &dep.SkipError{Reason: "current version " + r.d.Version + " not found upstream (pin an existing version)"}
+	}
+	return c, err
 }
 
 // Bounds of the retries per PR bucket: stale major candidates skipped before giving up,

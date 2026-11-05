@@ -49,6 +49,7 @@ var SkipDocs = []refdoc.Skip{
 	{Reason: "ignored by default (<type>; enable with a rule setting ignore: false)", When: "dep types `indirect`, `go`, `peerDependencies`, `engines`"},
 	{Reason: "non-version value \"<v>\"", When: "the current value is not valid in the dep's versioning scheme"},
 	{Reason: "non-version tag", When: "a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep`"},
+	{Reason: "current version <v> not found upstream (pin an existing version)", When: "a pinned or to-be-pinned dep whose current tag or image tag no longer exists (digest refresh and pin need it)"},
 }
 
 // ManagerDocs returns the reference documentation of the built-in managers and the custom

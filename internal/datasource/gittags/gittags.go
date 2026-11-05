@@ -104,7 +104,7 @@ func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string,
 			}
 		}
 	}
-	return "", fmt.Errorf("tag %s not found upstream", version)
+	return "", fmt.Errorf("tag %s %w", version, datasource.ErrVersionNotFound)
 }
 
 // ReleaseTime implements datasource.Timer for tag version in d.Source, via the GitHub API for

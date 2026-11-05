@@ -9,10 +9,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
@@ -45,7 +47,7 @@ func (f fakeTags) Releases(_ context.Context, d dep.Dep, _ string) ([]Release, e
 }
 
 func (fakeTags) Digest(_ context.Context, _ dep.Dep, v string) (string, error) {
-	return "", fmt.Errorf("tag %s not found upstream", v)
+	return "", fmt.Errorf("tag %s %w", v, datasource.ErrVersionNotFound)
 }
 
 type fakeGo map[string][]string
@@ -320,7 +322,7 @@ func TestResolveErrors(t *testing.T) {
 		t.Skip("root can read mode 000 files")
 	}
 	// The pinned dep needs a digest refresh and the floating one a pin; neither current tag
-	// exists upstream.
+	// exists upstream, so both are skipped, as by Renovate.
 	root, cfg := setup(t, "pin: digest\n", map[string]string{
 		".github/workflows/bad.yml": "jobs: [\n",
 		".github/workflows/ci.yml": "jobs:\n  a:\n    steps:\n" +
@@ -341,8 +343,6 @@ func TestResolveErrors(t *testing.T) {
 	want := []string{
 		".github/workflows/bad.yml: ",
 		".github/workflows/locked.yml: open ",
-		".github/workflows/ci.yml:5: actions/cache: tag v9 not found upstream",
-		".github/workflows/pin.yml:4: actions/cache: tag v9 not found upstream",
 		"go.mod:5: example.com/b: no proxy has example.com/b",
 	}
 	if len(res.Errors) != len(want) {
@@ -356,8 +356,8 @@ func TestResolveErrors(t *testing.T) {
 	if fe, ok := errors.AsType[*FileError](res.Errors[0]); !ok || fe.File != ".github/workflows/bad.yml" {
 		t.Errorf("error 0 = %#v, want FileError for bad.yml", res.Errors[0])
 	}
-	if de, ok := errors.AsType[*DepError](res.Errors[4]); !ok || de.File != "go.mod" || de.Line != 5 || de.Name != "example.com/b" {
-		t.Errorf("error 4 = %#v, want DepError for go.mod:5 example.com/b", res.Errors[4])
+	if de, ok := errors.AsType[*DepError](res.Errors[2]); !ok || de.File != "go.mod" || de.Line != 5 || de.Name != "example.com/b" {
+		t.Errorf("error 2 = %#v, want DepError for go.mod:5 example.com/b", res.Errors[2])
 	}
 	// Updates are sorted by file, a dep's buckets by version; example.com/c is current and
 	// yields none.
@@ -367,8 +367,16 @@ func TestResolveErrors(t *testing.T) {
 		res.Updates[2].Dep.Name != "example.com/a" || res.Updates[2].NewVersion != "v1.0.1" || res.Updates[2].Type != dep.Patch {
 		t.Errorf("updates = %+v", res.Updates)
 	}
-	if len(res.Skipped) != 1 || res.Skipped[0].Skip != "local action" || res.Skipped[0].Line != 4 {
-		t.Errorf("skipped = %+v, want the local action", res.Skipped)
+	var skips []string
+	for _, s := range res.Skipped {
+		skips = append(skips, fmt.Sprintf("%s:%d %s", s.File, s.Line, s.Skip))
+	}
+	if want := []string{
+		".github/workflows/ci.yml:4 local action",
+		".github/workflows/ci.yml:5 current version v9 not found upstream (pin an existing version)",
+		".github/workflows/pin.yml:4 current version v9 not found upstream (pin an existing version)",
+	}; !slices.Equal(skips, want) {
+		t.Errorf("skipped = %q, want %q", skips, want)
 	}
 }
 
