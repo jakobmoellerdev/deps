@@ -53,15 +53,58 @@ func TestExtractOpenclaw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(deps) != 1 {
-		t.Fatalf("deps = %+v (the ruby directive is not a dep)", deps)
+	if len(deps) != 2 {
+		t.Fatalf("deps = %+v", deps)
 	}
-	d := deps[0]
+	r, d := deps[0], deps[1]
+	if got, want := describe(src, r), `3 ruby ruby range="4.0.7" version="4.0.7" ref=4.0.7 source=`; got != want {
+		t.Errorf("ruby = %s\nwant   %s", got, want)
+	}
+	if r.Manager != Name || r.Datasource != RubyDatasource || r.Versioning != "ruby" {
+		t.Errorf("ruby = %+v", r)
+	}
 	if got, want := describe(src, d), `5 fastlane dependencies range="2.241.2" version="2.241.2" ref=2.241.2 source=https://rubygems.org`; got != want {
 		t.Errorf("dep = %s\nwant  %s", got, want)
 	}
 	if d.Manager != Name || d.Datasource != "rubygems" || d.Versioning != "ruby" || d.File != "apps/ios/Gemfile" {
 		t.Errorf("dep = %+v", d)
+	}
+}
+
+func TestExtractRuby(t *testing.T) {
+	for src, want := range map[string]string{
+		"ruby \"3.4.7\"\n":                            `1 ruby ruby range="3.4.7" version="3.4.7" ref=3.4.7 source=`,
+		"ruby('~> 3.4.0')\n":                          `1 ruby ruby range="~> 3.4.0" version="3.4.0" ref=3.4.0 source=`,
+		"ruby \">= 3.2\", \"< 5\"\n":                  `1 ruby ruby range=">= 3.2, < 5" version="3.2" ref=- source= fixed`,
+		"ruby \"3.3.0\"\ngem \"a\"\nruby \"3.4.1\"\n": `2 a dependencies range=">= 0" version="" ref=- source= fixed` + "\n" + `3 ruby ruby range="3.4.1" version="3.4.1" ref=3.4.1 source=`,
+		"ruby \"3.4.7\", :engine => \"ruby\", :engine_version => \"3.4.7\"\n": `1 ruby ruby range="3.4.7" version="3.4.7" ref=3.4.7 source=`,
+		"ruby \"3.4.7\", engine: \"jruby\", engine_version: \"9.4.8.0\"\n":    `1 ruby ruby range="" version="" ref=- source= skip=` + skipRubyEngine,
+		"ruby \"3.3.6\", patchlevel: \"108\"\n":                               `1 ruby ruby range="" version="" ref=- source= skip=` + skipRubyPatchlevel,
+		"ruby file: \".tool-versions\"\n":                                     `1 ruby ruby range="" version="" ref=- source= skip=` + skipRubyFile,
+		"ruby File.read(\".ruby-version\").strip\n":                           `1 ruby ruby range="" version="" ref=- source= skip=` + skipNonLiteral,
+		"ruby RUBY_VERSION\n":                                                 `1 ruby ruby range="" version="" ref=- source= skip=` + skipNonLiteral,
+		"ruby \"< 4\"\n":                                                      `1 ruby ruby range="< 4" version="" ref=- source= fixed skip=` + skipRubyNoFloor,
+		"ruby\n":                                                              `1 ruby ruby range="" version="" ref=- source= skip=` + skipRubyNoFloor,
+		"platforms :ruby do\n  gem \"a\"\nend\n":                              `2 a dependencies range=">= 0" version="" ref=- source= fixed`,
+	} {
+		deps, err := New().Extract("Gemfile", []byte(src), manager.Env{})
+		var got []string
+		for _, d := range deps {
+			got = append(got, describe([]byte(src), d))
+		}
+		if err != nil || strings.Join(got, "\n") != want {
+			t.Errorf("%q:\n%s\nwant %s (%v)", src, strings.Join(got, "\n"), want, err)
+		}
+	}
+	// The directive's version is rewritten like a gem requirement.
+	src := []byte("source \"https://rubygems.org\"\nruby '~> 3.4.0' # comment\n")
+	deps, _ := New().Extract("Gemfile", src, manager.Env{})
+	edits, err := New().Edits(dep.Update{Dep: deps[0], NewVersion: "4.0.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := patch.Apply(src, edits); err != nil || string(out) != "source \"https://rubygems.org\"\nruby '~> 4.0.9' # comment\n" {
+		t.Errorf("edit = %q, %v", out, err)
 	}
 }
 
@@ -73,6 +116,7 @@ func TestExtractShapes(t *testing.T) {
 	}
 	const rg = "https://rubygems.org"
 	want := []string{
+		`6 ruby ruby range="" version="" ref=- source= skip=` + skipRubyFile,
 		`10 propshaft dependencies range=">= 0" version="" ref=- source=` + rg + ` fixed`,
 		`11 rails dependencies range="~> 8.1.0" version="8.1.0" ref=8.1.0 source=` + rg,
 		`12 haml-rails dependencies range="~>3.0" version="3.0" ref=3.0 source=` + rg,

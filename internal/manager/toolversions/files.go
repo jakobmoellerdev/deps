@@ -4,16 +4,17 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-// extractNode returns the Node.js version of an `.nvmrc` or `.node-version` file: the first
-// token of the first line that is neither blank nor a `#` comment.
-func extractNode(mgr, file string, src []byte) []dep.Dep {
+// extractFirst returns the version of a single-version file (`.nvmrc`, `.node-version`,
+// `.ruby-version`) as a dep of t: the first token of the first line that is neither blank nor
+// a `#` comment.
+func extractFirst(mgr, depType string, t tool, file string, src []byte) []dep.Dep {
 	var deps []dep.Dep
 	eachLine(src, func(l []byte, n, off int) bool {
 		f, k := fields(l)
 		if k == 0 {
 			return true
 		}
-		deps = append(deps, newDep(mgr, DepTypeNode, file, n, nodeTool, string(l[f[0][0]:f[0][1]]), off+f[0][0]))
+		deps = append(deps, newDep(mgr, depType, file, n, t, string(l[f[0][0]:f[0][1]]), off+f[0][0]))
 		return false
 	})
 	return deps

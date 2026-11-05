@@ -13,13 +13,14 @@ const (
 // Doc is the reference documentation of the bundler manager (docs/reference/managers.md).
 var Doc = refdoc.Manager{
 	Name: Name,
-	Summary: "Updates gem requirements in `Gemfile`s and moves `Gemfile.lock` with `bundle lock` (in-range updates only touch the lock, as Renovate's `update-lockfile`). " +
+	Summary: "Updates gem requirements and the `ruby` directive in `Gemfile`s and moves `Gemfile.lock` with `bundle lock` (in-range updates only touch the lock, as Renovate's `update-lockfile`). " +
 		"The Gemfile is read with a small Ruby lexer (strings, symbols, hash labels, `%i[]` literals, comments, heredocs, blocks); only the version bytes of a requirement are rewritten, so quotes, operators and formatting are kept. " +
-		"The `ruby` directive, `.ruby-version`, `gemspec` and `*.gemspec` dependencies are not extracted.",
+		"`gemspec` and `*.gemspec` dependencies are not extracted.",
 	Files: []string{"`Gemfile` (`gems.rb` is not matched)"},
 	DepTypes: []refdoc.DepType{
 		{Name: DepTypeDependencies, What: "`gem` statements outside `group` blocks and without a `group:`/`groups:` option: " + gemForms + " (updates use commit type `fix`)", Datasource: datasources, Versioning: versionings},
 		{Name: DepTypeGroup, What: "`gem` statements in a `group :development, :test do … end` block or with a `group:`/`groups:` option", Datasource: datasources, Versioning: versionings},
+		{Name: DepTypeRuby, What: "the `ruby` directive (name `ruby`): `ruby \"3.4.7\"`, `ruby \"~> 3.4.0\"`, `ruby(\">= 3.2\", \"< 5\")`, with `engine: \"ruby\"`", Datasource: "`ruby-version`", Versioning: versionings},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: skipGit, When: "`git:`, `github:`, `gitlab:`, `bitbucket:`, `gist:` or a `git_source(:name)` option, or a gem in a `git`/`github` block"},
@@ -28,6 +29,10 @@ var Doc = refdoc.Manager{
 		{Reason: skipNonLiteral, When: "a requirement that is not a literal string: a variable, a method call, an interpolated or escaped string"},
 		{Reason: skipUnsupported, When: "a requirement outside Gem::Requirement's grammar (`latest`, `~> v1`, `=> 1.0`)"},
 		{Reason: skipNoLock, When: "a gem without requirements, or with only upper bounds and exclusions (`< 2`, `!= 1.3`), that the Gemfile.lock next to it does not lock (or that has no Gemfile.lock)"},
+		{Reason: skipRubyFile, When: "`ruby file: \".ruby-version\"` (or `.tool-versions`, `mise.toml`): the file's own dep (ruby-version, asdf, mise) is updated, and Gemfile.lock's RUBY VERSION with it"},
+		{Reason: skipRubyEngine, When: "a `ruby` directive with another `engine:` (`jruby`, `truffleruby`)"},
+		{Reason: skipRubyPatchlevel, When: "a `ruby` directive with `patchlevel:`, which the new release would not have"},
+		{Reason: skipRubyNoFloor, When: "a `ruby` directive without a version, or with only upper bounds (`< 4`)"},
 	},
 	Sections: []refdoc.Section{
 		{Title: "Gemfile", Items: []string{
@@ -40,6 +45,11 @@ var Doc = refdoc.Manager{
 			"A single requirement with a lower bound (`2.241.2`, `= 1.2`, `~> 7.1`, `>= 1.2`, `> 1.2`) is rewritten: an exact version takes the new version as published (`2.241.2` → `2.242.0`, `7.0.8` → `7.0.8.4`), any other operator keeps its precision (`~> 7.1` → `~> 8.0` for 8.0.1, `~> 1.2.0` → `~> 2.0.0` for 2.0, `>= 1.2` → `>= 2.0`). Requirement lists (`\"~> 7.1\", \">= 7.1.2\"`) and requirements without a lower bound (`< 2`) are never rewritten: only Gemfile.lock moves within them.",
 			"`rangeStrategy` (top level or per rule, default `auto` = `update-lockfile`, as in Renovate): versions the requirements admit are lockfile-only updates from the version Gemfile.lock locks (`, lockfile` in the report; the Gemfile is unchanged), newer ones rewrite the requirement. A gem without requirements (`gem \"rake\"`, `>= 0`) only gets lockfile-only updates. With `bump` every newer version rewrites a rewritable requirement, with `in-range-only` only those it admits; `replace` leaves admitted versions alone; `widen` and `pin` act as `replace`. Without a Gemfile.lock, `update-lockfile` proposes only versions outside the requirements.",
 			"Versioning `ruby` orders versions as Gem::Version does: numeric segments compare numerically, a letter segment marks a prerelease below its release (`1.0.0.rc1` < `1.0.0`), trailing zeros do not count (`1.2` = `1.2.0`). Update types follow the first three segments (a fourth, as in `7.0.8.4`, is a patch). Prereleases are only proposed from a prerelease.",
+		}},
+		{Title: "Ruby version", Items: []string{
+			"The `ruby` directive is the dep `ruby` of the `ruby-version` datasource (the ruby-lang.org release list). Its requirement is read and rewritten like a gem's (`ruby \"3.4.7\"` → `ruby \"4.0.9\"`, `~> 3.4.0` → `~> 4.0.9`); a Gemfile.lock never locks it, so versions the requirement admits are not proposed under `update-lockfile`.",
+			"Every dep of the `ruby-version` datasource (this directive, [`.ruby-version`](#ruby-version), the [asdf](#asdf) and [mise](#mise) `ruby` tool) is in the built-in group `ruby` (see [monorepos](configuration.md#monorepos)), so one PR moves all files naming the Ruby version. A rule setting `group` overrides it; `ruby` Docker images (`FROM ruby:3.4-slim`, CI `image: ruby:3.4`) stay [docker](#docker) deps, and a rule such as `{manager: docker, names: [ruby], group: ruby}` adds them to that PR.",
+			"Gemfile.lock's `RUBY VERSION` moves with it in process (Bundler is not needed for a Ruby-only update): an update of the directive rewrites the version of the lock next to the Gemfile, an update of `.ruby-version`, `.tool-versions` or a mise config does so for the lock whose Gemfile reads it with `ruby file:` in the same directory. The version is written as current Bundlers record it (`ruby 4.0.9`; a patchlevel such as `p108` is dropped, a preview's `-` becomes `.`); a lock without `RUBY VERSION` and a partial version (`4.0`) leave the lock alone.",
 		}},
 		{Title: "Lockfile (`apply`, `run`)", Body: lockBody,
 			Items: []string{"`plan` does not run Bundler, and prints `note    Gemfile.lock changes are computed by apply/run`."}},

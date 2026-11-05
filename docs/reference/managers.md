@@ -38,6 +38,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`maven-wrapper`](#maven-wrapper)
 - [`swift`](#swift)
 - [`bundler`](#bundler)
+- [`ruby-version`](#ruby-version)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -639,9 +640,10 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 
 **Versions.**
 
-- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`.
-- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`) and go (`1.27`); other tools skip it.
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`).
+- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`) and ruby (`3.4`); other tools skip it.
 - `maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.
+- `ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -687,6 +689,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `packer` | `github-releases` | `hashicorp/packer` |  |
 | `pnpm` | `npm` | `pnpm` |  |
 | `ripgrep` | `github-releases` | `BurntSushi/ripgrep` |  |
+| `ruby` | `ruby-version` | `ruby` |  |
 | `shellcheck` | `github-releases` | `koalaman/shellcheck` |  |
 | `skaffold` | `github-releases` | `GoogleContainerTools/skaffold` |  |
 | `sops` | `github-releases` | `getsops/sops` |  |
@@ -736,9 +739,10 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 
 **Versions.**
 
-- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`.
-- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`) and go (`1.27`); other tools skip it.
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`).
+- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`) and ruby (`3.4`); other tools skip it.
 - `maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.
+- `ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -784,6 +788,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `packer` | `github-releases` | `hashicorp/packer` |  |
 | `pnpm` | `npm` | `pnpm` |  |
 | `ripgrep` | `github-releases` | `BurntSushi/ripgrep` |  |
+| `ruby` | `ruby-version` | `ruby` |  |
 | `shellcheck` | `github-releases` | `koalaman/shellcheck` |  |
 | `skaffold` | `github-releases` | `GoogleContainerTools/skaffold` |  |
 | `sops` | `github-releases` | `getsops/sops` |  |
@@ -1618,7 +1623,7 @@ Updates the package requirements of Swift Package Manager manifests and moves th
 
 ## bundler
 
-Updates gem requirements in `Gemfile`s and moves `Gemfile.lock` with `bundle lock` (in-range updates only touch the lock, as Renovate's `update-lockfile`). The Gemfile is read with a small Ruby lexer (strings, symbols, hash labels, `%i[]` literals, comments, heredocs, blocks); only the version bytes of a requirement are rewritten, so quotes, operators and formatting are kept. The `ruby` directive, `.ruby-version`, `gemspec` and `*.gemspec` dependencies are not extracted.
+Updates gem requirements and the `ruby` directive in `Gemfile`s and moves `Gemfile.lock` with `bundle lock` (in-range updates only touch the lock, as Renovate's `update-lockfile`). The Gemfile is read with a small Ruby lexer (strings, symbols, hash labels, `%i[]` literals, comments, heredocs, blocks); only the version bytes of a requirement are rewritten, so quotes, operators and formatting are kept. `gemspec` and `*.gemspec` dependencies are not extracted.
 
 **Files:**
 
@@ -1628,6 +1633,7 @@ Updates gem requirements in `Gemfile`s and moves `Gemfile.lock` with `bundle loc
 |---|---|---|---|---|
 | `dependencies` | `gem` statements outside `group` blocks and without a `group:`/`groups:` option: `gem "name"`, `gem "name", "2.241.2"`, `gem "name", "~> 7.1", ">= 7.1.2"` (also as an array), with options (`require:`, `platforms:`, `source:`, …), spread over lines, with parentheses or the `:key => value` hash syntax (updates use commit type `fix`) | `rubygems` (rubygems.org, or the gem's `source`) | `ruby` | updated |
 | `group` | `gem` statements in a `group :development, :test do … end` block or with a `group:`/`groups:` option | `rubygems` (rubygems.org, or the gem's `source`) | `ruby` | updated |
+| `ruby` | the `ruby` directive (name `ruby`): `ruby "3.4.7"`, `ruby "~> 3.4.0"`, `ruby(">= 3.2", "< 5")`, with `engine: "ruby"` | `ruby-version` | `ruby` | updated |
 
 **Skips:**
 
@@ -1639,6 +1645,10 @@ Updates gem requirements in `Gemfile`s and moves `Gemfile.lock` with `bundle loc
 | `non-literal requirement` | a requirement that is not a literal string: a variable, a method call, an interpolated or escaped string |
 | `unsupported requirement` | a requirement outside Gem::Requirement's grammar (`latest`, `~> v1`, `=> 1.0`) |
 | `no Gemfile.lock version for a requirement without a floor` | a gem without requirements, or with only upper bounds and exclusions (`< 2`, `!= 1.3`), that the Gemfile.lock next to it does not lock (or that has no Gemfile.lock) |
+| `version read from a file` | `ruby file: ".ruby-version"` (or `.tool-versions`, `mise.toml`): the file's own dep (ruby-version, asdf, mise) is updated, and Gemfile.lock's RUBY VERSION with it |
+| `non-MRI engine` | a `ruby` directive with another `engine:` (`jruby`, `truffleruby`) |
+| `pinned patchlevel` | a `ruby` directive with `patchlevel:`, which the new release would not have |
+| `ruby requirement without a lower bound` | a `ruby` directive without a version, or with only upper bounds (`< 4`) |
 
 **Gemfile.**
 
@@ -1652,6 +1662,12 @@ Updates gem requirements in `Gemfile`s and moves `Gemfile.lock` with `bundle loc
 - A single requirement with a lower bound (`2.241.2`, `= 1.2`, `~> 7.1`, `>= 1.2`, `> 1.2`) is rewritten: an exact version takes the new version as published (`2.241.2` → `2.242.0`, `7.0.8` → `7.0.8.4`), any other operator keeps its precision (`~> 7.1` → `~> 8.0` for 8.0.1, `~> 1.2.0` → `~> 2.0.0` for 2.0, `>= 1.2` → `>= 2.0`). Requirement lists (`"~> 7.1", ">= 7.1.2"`) and requirements without a lower bound (`< 2`) are never rewritten: only Gemfile.lock moves within them.
 - `rangeStrategy` (top level or per rule, default `auto` = `update-lockfile`, as in Renovate): versions the requirements admit are lockfile-only updates from the version Gemfile.lock locks (`, lockfile` in the report; the Gemfile is unchanged), newer ones rewrite the requirement. A gem without requirements (`gem "rake"`, `>= 0`) only gets lockfile-only updates. With `bump` every newer version rewrites a rewritable requirement, with `in-range-only` only those it admits; `replace` leaves admitted versions alone; `widen` and `pin` act as `replace`. Without a Gemfile.lock, `update-lockfile` proposes only versions outside the requirements.
 - Versioning `ruby` orders versions as Gem::Version does: numeric segments compare numerically, a letter segment marks a prerelease below its release (`1.0.0.rc1` < `1.0.0`), trailing zeros do not count (`1.2` = `1.2.0`). Update types follow the first three segments (a fourth, as in `7.0.8.4`, is a patch). Prereleases are only proposed from a prerelease.
+
+**Ruby version.**
+
+- The `ruby` directive is the dep `ruby` of the `ruby-version` datasource (the ruby-lang.org release list). Its requirement is read and rewritten like a gem's (`ruby "3.4.7"` → `ruby "4.0.9"`, `~> 3.4.0` → `~> 4.0.9`); a Gemfile.lock never locks it, so versions the requirement admits are not proposed under `update-lockfile`.
+- Every dep of the `ruby-version` datasource (this directive, [`.ruby-version`](#ruby-version), the [asdf](#asdf) and [mise](#mise) `ruby` tool) is in the built-in group `ruby` (see [monorepos](configuration.md#monorepos)), so one PR moves all files naming the Ruby version. A rule setting `group` overrides it; `ruby` Docker images (`FROM ruby:3.4-slim`, CI `image: ruby:3.4`) stay [docker](#docker) deps, and a rule such as `{manager: docker, names: [ruby], group: ruby}` adds them to that PR.
+- Gemfile.lock's `RUBY VERSION` moves with it in process (Bundler is not needed for a Ruby-only update): an update of the directive rewrites the version of the lock next to the Gemfile, an update of `.ruby-version`, `.tool-versions` or a mise config does so for the lock whose Gemfile reads it with `ruby file:` in the same directory. The version is written as current Bundlers record it (`ruby 4.0.9`; a patchlevel such as `p108` is dropped, a preview's `-` becomes `.`); a lock without `RUBY VERSION` and a partial version (`4.0`) leave the lock alone.
 
 **Lockfile (`apply`, `run`).**
 
@@ -1667,6 +1683,31 @@ Updates gem requirements in `Gemfile`s and moves `Gemfile.lock` with `bundle loc
 **Lock file maintenance (`run`).**
 
 With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `Gemfile.lock` next to a scanned `Gemfile` is refreshed with `bundle lock --update` in the temporary copy, which moves every locked gem, transitive ones included, to the newest version the requirements admit. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `Gemfile.lock` files; `minimumReleaseAge` does not apply to it.
+
+## ruby-version
+
+Updates the Ruby version in `.ruby-version` (rbenv, chruby, rvm, asdf, mise, Bundler's `ruby file: ".ruby-version"`): the first token of the first line that is neither blank nor a `#` comment. It shares the built-in `ruby` group with the Gemfile `ruby` directive and asdf/mise `ruby` (see [bundler](#bundler)), so a Ruby bump is one PR.
+
+**Files:**
+
+- any `.ruby-version`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `ruby` | the Ruby version (name `ruby`), optionally with the `ruby-` prefix (`ruby-3.4.7`) | `ruby-version` | `ruby`; partial versions `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-version value` | empty, another engine (`jruby-9.4.8.0`, `truffleruby-24.1.0`) or a word such as `system` |
+| `unsupported range` | anything else that is not `[ruby-]X[.Y[.Z[-pre]]]`, such as `3.4.7@gemset` |
+
+**Versions.**
+
+- A full `X.Y.Z[-pre]` uses `ruby` versioning (Gem::Version order); previews such as `3.5.0-preview1` are only proposed from a preview.
+- A partial `3` or `3.4` uses `tag` versioning and keeps its precision (`3.4` → `4.0`).
+- The `ruby-` prefix stays outside the replaced token; comments and the rest of the file are kept.
 
 ## custom
 
@@ -1742,6 +1783,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `maven` | `groupId:artifactId`, or a Gradle plugin id (no `:`), looked up as its marker artifact `<id>:<id>.gradle.plugin`; the repositories are the dep's `[<id>=]<url>/` list (Maven Central when empty) | `GET <repository>/<group/path>/<artifactId>/maven-metadata.xml` per repository, versions merged in repository order; a 404 contributes nothing; none found → `artifact <name> not found` | maven and maven-wrapper deps: `settings.xml` `<servers>` (Basic auth from `<username>`/`<password>`, encrypted passwords included, and `<configuration><httpHeaders>`) of the repository's id after mirroring; gradle deps: the `<name>Username`/`<name>Password` project properties of the named repository. Checksum downloads (`Artifact`) below a dep's repository use the same mirror and credentials | `HEAD …/<version>/<artifactId>-<version>.pom` `Last-Modified`, only for versions that end up in a PR |
 | `gradle-version` | any (`gradle`) | `<DEPS_GRADLE_VERSIONS_URL or https://services.gradle.org/versions/all>`, once per run; snapshots, nightlies and broken releases are dropped, release candidates and milestones kept | none | `buildTime` |
 | `rubygems` | gem name (case-sensitive, as on the gem server); the dep's source is its whitespace-separated gem servers in lookup order ("" = rubygems.org) | rubygems.org (also when a Gemfile names `https://rubygems.org`): `GET <DEPS_RUBYGEMS_URL or https://rubygems.org>/api/v1/versions/<name>.json`; other gem servers: the compact index `GET <source>/info/<name>` (what Bundler reads), and on a 404 `GET <source>/api/v1/versions/<name>.json`; once per (server, gem); platform builds (`1.18.10-x86_64-linux-gnu`) count as their version; yanked versions are not listed by either API; the first server that has the gem answers, none → `gem <name> not found`. Source repository (release notes, rubygems.org only): `GET <base>/api/v1/gems/<name>.json` `source_code_uri`, else a forge `homepage_uri`, only for versions in a pull request | userinfo of the source URL (`https://user:pass@gems.example.com`) as basic auth, else Bundler's `BUNDLE_<HOST>` variable (`gems.example-corp.com` → `BUNDLE_GEMS__EXAMPLE___CORP__COM`) holding `user:password` or a token; redacted in errors and logs | rubygems.org `created_at` (the earliest of the version's platform builds); the compact index of other servers has none |
+| `ruby-version` | any (`ruby`) | `<DEPS_RUBY_RELEASES_URL or https://raw.githubusercontent.com/ruby/www.ruby-lang.org/master/_data/releases.yml>`, the list the ruby-lang.org release pages are built from, once per run; published versions plus a derived `X.Y` and `X` per stable line | none | `date` |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.

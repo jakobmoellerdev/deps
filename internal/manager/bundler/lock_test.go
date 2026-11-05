@@ -11,6 +11,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
 func write(t *testing.T, root string, files map[string]string) {
@@ -230,6 +231,77 @@ func TestProcessExactOnly(t *testing.T) {
 	// Process (no updates passed) re-resolves once.
 	if out, err := (Locker{}).Process(t.Context(), dir, map[string][]byte{"Gemfile": []byte(patched)}, map[string][]byte{"Gemfile.lock": lock}); err != nil || !strings.HasSuffix(string(out["Gemfile.lock"]), "# lock\n") {
 		t.Errorf("Process = %q, %v", out["Gemfile.lock"], err)
+	}
+}
+
+func TestProcessRuby(t *testing.T) {
+	log := stub(t)
+	dir := appDir(t)
+	src := read(t, "testdata/openclaw/Gemfile")
+	lock := read(t, "testdata/openclaw/Gemfile.lock")
+	write(t, dir, map[string]string{"Gemfile": string(src), "Gemfile.lock": string(lock)})
+	patched := strings.Replace(string(src), `ruby "4.0.7"`, `ruby "4.0.9"`, 1)
+	deps, _ := New().Extract("Gemfile", src, manager.Env{})
+	rubyUp := dep.Update{Dep: deps[0], NewVersion: "4.0.9"}
+	// Only the directive moved: RUBY VERSION is rewritten in process, Bundler does not run.
+	out, err := Locker{}.ProcessUpdates(t.Context(), dir, map[string][]byte{"Gemfile": []byte(patched)}, map[string][]byte{"Gemfile.lock": lock}, map[string][]dep.Update{"Gemfile": {rubyUp}}, nil)
+	if want := strings.Replace(string(lock), "RUBY VERSION\n  ruby 4.0.7\n", "RUBY VERSION\n  ruby 4.0.9\n", 1); err != nil || string(out["Gemfile.lock"]) != want {
+		t.Errorf("Gemfile.lock = %q, %v", out["Gemfile.lock"], err)
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Error("bundle ran for a ruby-only update")
+	}
+	// With a gem update, Bundler sees the rewritten RUBY VERSION.
+	ups := map[string][]dep.Update{"Gemfile": {rubyUp, update("fastlane", "2.241.2", "2.242.0")}}
+	patched = strings.Replace(patched, "2.241.2", "2.242.0", 1)
+	out, err = Locker{}.ProcessUpdates(t.Context(), dir, map[string][]byte{"Gemfile": []byte(patched)}, map[string][]byte{"Gemfile.lock": lock}, ups, nil)
+	if err != nil || !strings.Contains(string(out["Gemfile.lock"]), "RUBY VERSION\n  ruby 4.0.9\n") || !strings.HasSuffix(string(out["Gemfile.lock"]), "# lock --update fastlane --conservative\n") {
+		t.Errorf("Gemfile.lock = %q, %v", out["Gemfile.lock"], err)
+	}
+}
+
+func TestLockedRuby(t *testing.T) {
+	for lock, want := range map[string]string{
+		"GEM\n\nRUBY VERSION\n   ruby 3.3.6p108\n\nBUNDLED WITH\n   2.5.0\n": "GEM\n\nRUBY VERSION\n   ruby 3.4.7\n\nBUNDLED WITH\n   2.5.0\n",
+		"RUBY VERSION\r\n   ruby 3.3.6\r\n":                                  "RUBY VERSION\r\n   ruby 3.4.7\r\n",
+		"RUBY VERSION\n   ruby 3.3.6 (jruby 9.4.8.0)\n":                      "RUBY VERSION\n   ruby 3.4.7 (jruby 9.4.8.0)\n",
+		"GEM\n  specs:\n\nDEPENDENCIES\n  x\n":                               "GEM\n  specs:\n\nDEPENDENCIES\n  x\n",
+		"RUBY VERSION\n   jruby\n":                                           "RUBY VERSION\n   jruby\n",
+	} {
+		if got := string(setLockedRuby([]byte(lock), "3.4.7")); got != want {
+			t.Errorf("setLockedRuby(%q) = %q, want %q", lock, got, want)
+		}
+	}
+	lock := "RUBY VERSION\n   ruby 3.3.6p108\n"
+	if got := string(setLockedRuby([]byte(lock), "3.5.0-preview1")); got != "RUBY VERSION\n   ruby 3.5.0.preview1\n" {
+		t.Errorf("prerelease = %q", got)
+	}
+	if got := string(setLockedRuby([]byte(lock), "3.5")); got != lock {
+		t.Errorf("partial version = %q", got)
+	}
+}
+
+func TestVersionFileEdits(t *testing.T) {
+	root := t.TempDir()
+	lock := lockOf("x (1.0)") + "\nRUBY VERSION\n   ruby 3.3.6p108\n"
+	write(t, root, map[string]string{
+		"a/Gemfile": "ruby file: \".ruby-version\"\ngem \"x\"\n", "a/Gemfile.lock": lock, "a/.ruby-version": "3.3.6\n",
+		"b/Gemfile": "ruby file: \"./.tool-versions\"\n", "b/Gemfile.lock": lock,
+		"c/Gemfile": "ruby \"3.3.6\"\n", "c/Gemfile.lock": lock,
+		"d/Gemfile": "ruby file: \".ruby-version\"\n",
+	})
+	edits, err := VersionFileEdits(root, "a/.ruby-version", "3.4.7")
+	start := strings.Index(lock, "3.3.6p108")
+	if want := map[string][]patch.Edit{"a/Gemfile.lock": {{Start: start, End: start + len("3.3.6p108"), Old: "3.3.6p108", New: "3.4.7"}}}; err != nil || !maps.EqualFunc(edits, want, slices.Equal) {
+		t.Errorf("a = %v, %v", edits, err)
+	}
+	if edits, err := VersionFileEdits(root, "b/.tool-versions", "3.4.7"); err != nil || len(edits["b/Gemfile.lock"]) != 1 {
+		t.Errorf("b = %v, %v", edits, err)
+	}
+	for _, file := range []string{"b/.ruby-version", "c/.ruby-version", "d/.ruby-version", "e/.ruby-version"} {
+		if edits, err := VersionFileEdits(root, file, "3.4.7"); err != nil || edits != nil {
+			t.Errorf("%s = %v, %v", file, edits, err)
+		}
 	}
 }
 

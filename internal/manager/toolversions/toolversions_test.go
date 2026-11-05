@@ -1,6 +1,8 @@
 package toolversions
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -74,6 +76,9 @@ func TestMatch(t *testing.T) {
 		{NewNodenv(), ".node-version", true},
 		{NewNodenv(), "a/b/.node-version", true},
 		{NewNodenv(), "node-version", false},
+		{NewRubyVersion(), ".ruby-version", true},
+		{NewRubyVersion(), "apps/web/.ruby-version", true},
+		{NewRubyVersion(), "ruby-version", false},
 		{NewAsdf(), ".tool-versions", true},
 		{NewAsdf(), "svc/.tool-versions", true},
 		{NewAsdf(), "tool-versions", false},
@@ -96,7 +101,7 @@ func TestMatch(t *testing.T) {
 }
 
 func TestNames(t *testing.T) {
-	for m, name := range map[manager.Manager]string{NewNvm(): NameNvm, NewNodenv(): NameNodenv, NewAsdf(): NameAsdf, NewMise(): NameMise} {
+	for m, name := range map[manager.Manager]string{NewNvm(): NameNvm, NewNodenv(): NameNodenv, NewRubyVersion(): NameRubyVersion, NewAsdf(): NameAsdf, NewMise(): NameMise} {
 		if m.Name() != name {
 			t.Errorf("Name() = %q, want %q", m.Name(), name)
 		}
@@ -143,6 +148,51 @@ func TestNodeFiles(t *testing.T) {
 	}
 }
 
+func TestRubyVersionFile(t *testing.T) {
+	for _, c := range []struct {
+		name, in string
+		w        want
+		new, out string // new version for w.ver, patched file
+	}{
+		{"full", "3.4.7\n", want{"ruby", dsRuby, "ruby", "3.4.7", "", 1}, "4.0.9", "4.0.9\n"},
+		{"engine prefix", "ruby-3.4.7\n", want{"ruby", dsRuby, "ruby", "3.4.7", "", 1}, "4.0.9", "ruby-4.0.9\n"},
+		{"minor", "# rbenv\n3.4\n", want{"ruby", dsRuby, "tag", "3.4", "", 2}, "4.0", "# rbenv\n4.0\n"},
+		{"preview", "3.5.0-preview1", want{"ruby", dsRuby, "ruby", "3.5.0-preview1", "", 1}, "4.0.0", "4.0.0"},
+		{"jruby", "jruby-9.4.8.0\n", want{"ruby", dsRuby, "", "jruby-9.4.8.0", "non-version value", 1}, "", "jruby-9.4.8.0\n"},
+		{"system", "system\n", want{"ruby", dsRuby, "", "system", "non-version value", 1}, "", "system\n"},
+		{"gemset", "3.4.7@app\n", want{"ruby", dsRuby, "", "3.4.7@app", "unsupported range", 1}, "", "3.4.7@app\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out := check(t, NewRubyVersion(), ".ruby-version", c.in, []want{c.w}, map[string]string{c.w.ver: c.new})
+			if out != c.out {
+				t.Errorf("patched = %q, want %q", out, c.out)
+			}
+		})
+	}
+	// asdf and mise name the same dep.
+	check(t, NewAsdf(), ".tool-versions", "ruby 3.4.7\n", []want{{"ruby", dsRuby, "ruby", "3.4.7", "", 1}}, nil)
+	check(t, NewMise(), "mise.toml", "[tools]\nruby = \"3.4\"\n", []want{{"ruby", dsRuby, "tag", "3.4", "", 2}}, nil)
+}
+
+func TestRubyFileEdits(t *testing.T) {
+	root := t.TempDir()
+	lock := "GEM\n  remote: https://rubygems.org/\n  specs:\n\nRUBY VERSION\n   ruby 3.4.7p58\n"
+	for name, content := range map[string]string{"Gemfile": "ruby file: \".tool-versions\"\n", "Gemfile.lock": lock} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deps, _ := NewAsdf().Extract(".tool-versions", []byte("nodejs 22.1.0\nruby 3.4.7\n"), manager.Env{})
+	fe := NewAsdf().(manager.FileEditor)
+	edits, err := fe.FileEdits(root, dep.Update{Dep: deps[1], NewVersion: "4.0.9"})
+	if err != nil || len(edits["Gemfile.lock"]) != 1 || edits["Gemfile.lock"][0].New != "4.0.9" || edits["Gemfile.lock"][0].Old != "3.4.7p58" {
+		t.Errorf("ruby edits = %v, %v", edits, err)
+	}
+	if edits, err := fe.FileEdits(root, dep.Update{Dep: deps[0], NewVersion: "24.0.0"}); edits != nil || err != nil {
+		t.Errorf("node edits = %v, %v", edits, err)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	gh := githubTool("helm/helm")
 	for _, c := range []struct {
@@ -153,6 +203,11 @@ func TestClassify(t *testing.T) {
 		{nodeTool, "20.11.1", "20.11.1", "semver", "", 0},
 		{nodeTool, "v20", "20", "tag", "", 1},
 		{nodeTool, "20.11", "20.11", "tag", "", 0},
+		{rubyTool, "3.4.7", "3.4.7", "ruby", "", 0},
+		{rubyTool, "ruby-3.4", "3.4", "tag", "", 5},
+		{rubyTool, "v3.4.7", "", "", "unsupported range", 0},
+		{rubyTool, "~> 3.4", "", "", "unsupported range", 0},
+		{rubyTool, "ref:v3_4_7", "", "", "git ref", 0},
 		{nodeTool, "lts", "", "", "non-version value", 0},
 		{nodeTool, "v", "", "", "non-version value", 0},
 		{nodeTool, "", "", "", "non-version value", 0},

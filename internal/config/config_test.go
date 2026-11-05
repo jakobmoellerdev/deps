@@ -165,7 +165,7 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{minimumReleaseAge: 3 fortnights}]\n", `rules[0].minimumReleaseAge: invalid age "3 fortnights"`},
 		{"minimumReleaseAgeBehaviour: timestamp-strict\n", `minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "timestamp-strict"`},
 		{"rules: [{minimumReleaseAgeBehaviour: required}]\n", `rules[0].minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "required"`},
-		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, github-releases, go, go-toolchain, docker, npm, node-version, helm, crate, pypi, terraform-provider, terraform-module, maven, gradle-version, rubygems, golang-version, github-tags, github-release-attachments, node or custom.<name> of customDatasources, got "custom.envtest"`},
+		{"rules: [{datasources: [custom.envtest]}]\n", `rules[0].datasources[0]: must be one of git-tags, github-releases, go, go-toolchain, docker, npm, node-version, helm, crate, pypi, terraform-provider, terraform-module, maven, gradle-version, rubygems, ruby-version, golang-version, github-tags, github-release-attachments, node or custom.<name> of customDatasources, got "custom.envtest"`},
 		{"custom: [{files: [x], datasource: custom.envtest}]\n", `custom[0].datasource: must be one of git-tags`},
 		{"customDatasources: {envtest: {}}\n", "customDatasources.envtest.url: required"},
 		{"customDatasources: {envtest: {url: 'ftp://x/y'}}\n", `customDatasources.envtest.url: must be an http(s) URL, got "ftp://x/y"`},
@@ -590,6 +590,34 @@ func TestMonorepos(t *testing.T) {
 		p := tc.cfg.Policy(tc.d)
 		if p.Group != tc.group || p.Monorepo != tc.mono || !slices.Equal(p.Rules, tc.wantUserRules) {
 			t.Errorf("%s %s: group %q monorepo %q rules %v, want %q %q %v", tc.d.Manager, tc.d.Name, p.Group, p.Monorepo, p.Rules, tc.group, tc.mono, tc.wantUserRules)
+		}
+	}
+}
+
+func TestRubyGroup(t *testing.T) {
+	c, err := load(t, ".deps.yaml", "rules: [{manager: asdf, names: [ruby], group: tools}]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	off, err := load(t, ".deps.yaml", "monorepos: false\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		cfg              *Config
+		d                dep.Dep
+		group, toolchain string
+	}{
+		{c, dep.Dep{Manager: "bundler", Datasource: "ruby-version", DepType: "ruby", Name: "ruby"}, RubyGroup, RubyGroup},
+		{c, dep.Dep{Manager: "ruby-version", Datasource: "ruby-version", Name: "ruby"}, RubyGroup, RubyGroup},
+		{c, dep.Dep{Manager: "mise", Datasource: "ruby-version", Name: "ruby"}, RubyGroup, RubyGroup},
+		{c, dep.Dep{Manager: "asdf", Datasource: "ruby-version", Name: "ruby"}, "tools", RubyGroup},
+		{c, dep.Dep{Manager: "bundler", Datasource: "rubygems", Name: "ruby"}, "", ""}, // a gem named ruby
+		{c, dep.Dep{Manager: "docker", Datasource: "docker", Name: "ruby"}, "", ""},
+		{off, dep.Dep{Manager: "ruby-version", Datasource: "ruby-version", Name: "ruby"}, "", ""},
+	} {
+		if p := tc.cfg.Policy(tc.d); p.Group != tc.group || p.Toolchain != tc.toolchain {
+			t.Errorf("%s %s: group %q toolchain %q, want %q %q", tc.d.Manager, tc.d.Datasource, p.Group, p.Toolchain, tc.group, tc.toolchain)
 		}
 	}
 }

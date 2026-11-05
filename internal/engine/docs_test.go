@@ -22,6 +22,7 @@ import (
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubygems"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubyversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/tfregistry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
@@ -113,7 +114,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 	// internal/gotool's module path skip, pip_requirements internal/pytool's conflict skip.
 	pkgDirs := map[string][]string{
 		actions.Name: {"actions"}, "pre-commit": {"precommit"},
-		"nvm": {"toolversions"}, "nodenv": {"toolversions"}, "asdf": {"toolversions"}, "mise": {"toolversions"},
+		"nvm": {"toolversions"}, "nodenv": {"toolversions"}, "ruby-version": {"toolversions"}, "asdf": {"toolversions"}, "mise": {"toolversions"},
 		"kustomize": {"kustomize", "docker"}, "gitlabci": {"gitlabci", "docker"},
 		"cargo":              {"cargo", filepath.Join("..", "datasource", "crate")},
 		"gomod":              {"gomod", filepath.Join("..", "engine"), filepath.Join("..", "gotool")},
@@ -154,7 +155,7 @@ func TestManagerDocsComplete(t *testing.T) {
 }
 
 func TestDatasourceDocsComplete(t *testing.T) {
-	docs := []refdoc.Datasource{gittags.Doc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, customds.Doc}
+	docs := []refdoc.Datasource{gittags.Doc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, customds.Doc}
 	var names []string
 	for _, d := range docs {
 		if d.Name == "" || d.NameForm == "" || d.Endpoints == "" || d.Auth == "" || d.ReleaseTimes == "" {

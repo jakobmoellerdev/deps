@@ -26,6 +26,7 @@
 | `PIP_INDEX_URL` | `pypi` datasource | index when the manifest names none (simple API, JSON or HTML) |
 | `PIP_EXTRA_INDEX_URL` | `pypi` datasource | space-separated extra indexes searched for every Python dep after the manifest's own; their releases are merged in |
 | `DEPS_PYPI_URL` | `pypi` datasource | base of the PyPI JSON API (default `https://pypi.org`) |
+| `DEPS_RUBY_RELEASES_URL` | `ruby-version` datasource | URL of the Ruby release list (YAML entries with `version` and `date`; default `https://raw.githubusercontent.com/ruby/www.ruby-lang.org/master/_data/releases.yml`) |
 | `DEPS_RUBYGEMS_URL` | `rubygems` datasource | base of the rubygems.org API, also for Gemfiles naming `https://rubygems.org` (default `https://rubygems.org`) |
 | `BUNDLE_<HOST>` | `rubygems` datasource | Bundler's credentials for a gem server (`gems.example-corp.com` → `BUNDLE_GEMS__EXAMPLE___CORP__COM`): `user:password`, or a token; sent as basic auth to that host only |
 | `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GOMODCACHE` | `go` datasource | read via `go env -json` (the process environment when `go` is not on `PATH`). `GOMODCACHE`'s `cache/download/**/@v/*.info` files provide release times without network. |

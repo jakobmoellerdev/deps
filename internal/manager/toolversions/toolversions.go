@@ -1,6 +1,7 @@
 // Package toolversions extracts tool versions from version-manager files: `.nvmrc` (nvm),
-// `.node-version` (nodenv), `.tool-versions` (asdf) and `mise.toml` (mise). Each file format
-// is its own manager; they share the tool table and the version classification.
+// `.node-version` (nodenv), `.ruby-version` (ruby-version), `.tool-versions` (asdf) and
+// `mise.toml` (mise). Each file format is its own manager; they share the tool table and the
+// version classification.
 package toolversions
 
 import (
@@ -11,28 +12,33 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
 // Manager names (Renovate's).
 const (
-	NameNvm    = "nvm"
-	NameNodenv = "nodenv"
-	NameAsdf   = "asdf"
-	NameMise   = "mise"
+	NameNvm         = "nvm"
+	NameNodenv      = "nodenv"
+	NameRubyVersion = "ruby-version"
+	NameAsdf        = "asdf"
+	NameMise        = "mise"
 )
 
-// Dep types: the Node.js version of an nvm/nodenv file, and one tool of asdf/mise.
+// Dep types: the Node.js version of an nvm/nodenv file, the Ruby version of a ruby-version
+// file, and one tool of asdf/mise.
 const (
 	DepTypeNode = "node"
+	DepTypeRuby = "ruby"
 	DepTypeTool = "tool"
 )
 
 var (
-	nvmRe    = regexp.MustCompile(`(^|/)\.nvmrc$`)
-	nodenvRe = regexp.MustCompile(`(^|/)\.node-version$`)
-	asdfRe   = regexp.MustCompile(`(^|/)\.tool-versions$`)
-	miseRe   = regexp.MustCompile(`(^|/)(\.?mise\.toml|\.?mise/config\.toml|\.config/mise\.toml|\.config/mise/config\.toml)$`)
+	nvmRe         = regexp.MustCompile(`(^|/)\.nvmrc$`)
+	nodenvRe      = regexp.MustCompile(`(^|/)\.node-version$`)
+	rubyVersionRe = regexp.MustCompile(`(^|/)\.ruby-version$`)
+	asdfRe        = regexp.MustCompile(`(^|/)\.tool-versions$`)
+	miseRe        = regexp.MustCompile(`(^|/)(\.?mise\.toml|\.?mise/config\.toml|\.config/mise\.toml|\.config/mise/config\.toml)$`)
 )
 
 // toolManager is one file format: its path pattern and extractor. Edits are shared: every
@@ -47,14 +53,22 @@ type toolManager struct {
 // NewNvm returns the nvm manager (`.nvmrc`).
 func NewNvm() manager.Manager {
 	return &toolManager{name: NameNvm, suffix: ".nvmrc", match: nvmRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
-		return extractNode(NameNvm, file, src), nil
+		return extractFirst(NameNvm, DepTypeNode, nodeTool, file, src), nil
 	}}
 }
 
 // NewNodenv returns the nodenv manager (`.node-version`).
 func NewNodenv() manager.Manager {
 	return &toolManager{name: NameNodenv, suffix: ".node-version", match: nodenvRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
-		return extractNode(NameNodenv, file, src), nil
+		return extractFirst(NameNodenv, DepTypeNode, nodeTool, file, src), nil
+	}}
+}
+
+// NewRubyVersion returns the ruby-version manager (`.ruby-version`, read by rbenv, chruby,
+// rvm, asdf, mise and Bundler's `ruby file:`).
+func NewRubyVersion() manager.Manager {
+	return &toolManager{name: NameRubyVersion, suffix: ".ruby-version", match: rubyVersionRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
+		return extractFirst(NameRubyVersion, DepTypeRuby, rubyTool, file, src), nil
 	}}
 }
 
@@ -88,6 +102,16 @@ func (*toolManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
 }
 
+// FileEdits implements manager.FileEditor: a Ruby update also moves the RUBY VERSION of the
+// Gemfile.lock whose Gemfile reads its Ruby version from this file (`ruby file:
+// ".ruby-version"`, bundler.VersionFileEdits).
+func (*toolManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error) {
+	if u.Dep.Datasource != dsRuby || u.NewVersion == u.Dep.Version {
+		return nil, nil
+	}
+	return bundler.VersionFileEdits(root, u.Dep.File, u.NewVersion)
+}
+
 // tool is the dep a tool name resolves to. extract is the extractVersion of repositories
 // whose release tags carry a prefix; skip, when set, is the reason a known tool is not
 // updatable.
@@ -96,6 +120,7 @@ type tool struct{ datasource, name, source, extract, skip string }
 const (
 	dsNode   = "node-version"
 	dsGo     = "go-toolchain"
+	dsRuby   = "ruby-version"
 	dsGitHub = "github-releases"
 	dsNpm    = "npm"
 	dsMaven  = "maven"
@@ -106,6 +131,7 @@ const (
 var (
 	nodeTool = tool{datasource: dsNode, name: "node"}
 	goTool   = tool{datasource: dsGo, name: "go"}
+	rubyTool = tool{datasource: dsRuby, name: "ruby"}
 	// The Maven distribution and Gradle use Maven's version order (3.9.9, 8.11, 8.11-rc-1).
 	mavenTool  = tool{datasource: dsMaven, name: "org.apache.maven:apache-maven"}
 	gradleTool = tool{datasource: dsGradle, name: "gradle"}
@@ -136,6 +162,7 @@ var tools = map[string]tool{
 	"pnpm":          npmTool("pnpm"),
 	"maven":         mavenTool,
 	"gradle":        gradleTool,
+	"ruby":          rubyTool,
 	"actionlint":    githubTool("rhysd/actionlint"),
 	"age":           githubTool("FiloSottile/age"),
 	"argocd":        githubTool("argoproj/argo-cd"),
@@ -196,6 +223,10 @@ var (
 	semverRe  = regexp.MustCompile(`^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$`)
 	partialRe = regexp.MustCompile(`^v?\d+(?:\.\d+)?$`)
 	goRe      = regexp.MustCompile(`^\d+\.\d+(?:\.\d+)?$`)
+	// rubyRe is a full Ruby X.Y.Z with an optional prerelease (`3.5.0-preview1`); rubyPartialRe
+	// is X or X.Y.
+	rubyRe        = regexp.MustCompile(`^\d+\.\d+\.\d+(?:[.-][0-9A-Za-z][0-9A-Za-z.-]*)?$`)
+	rubyPartialRe = regexp.MustCompile(`^\d+(?:\.\d+)?$`)
 	// mavenRe is a version of the maven versioning scheme (a digit, then [0-9A-Za-z._-]).
 	mavenRe = regexp.MustCompile(`^\d[0-9A-Za-z._-]*$`)
 	// wordRe is a letter-led value that is not a v-prefixed version (latest, system, lts/*).
@@ -204,8 +235,9 @@ var (
 
 // classify returns the version token of raw for t (ver at byte offset off in raw), its
 // versioning, or the reason raw is not updatable. Partial versions move at their precision
-// under tag versioning; the datasources of node and go list derived X.Y/X candidates without
-// "v", so a leading "v" stays outside the token.
+// under tag versioning; the datasources of node, go and ruby list derived X.Y/X candidates
+// without "v", so a leading "v" stays outside the token. A Ruby version may carry the
+// `ruby-` engine prefix of `.ruby-version` files (`ruby-3.4.7`), which stays outside too.
 func classify(t tool, raw string) (ver string, off int, versioning, skip string) {
 	switch {
 	case strings.HasPrefix(raw, "ref:"):
@@ -214,7 +246,21 @@ func classify(t tool, raw string) (ver string, off int, versioning, skip string)
 		return "", 0, "", "local path"
 	case strings.HasPrefix(raw, "prefix:"):
 		return "", 0, "", "unsupported range"
-	case raw == "" || wordRe.MatchString(raw):
+	}
+	if t.datasource == dsRuby {
+		bare := strings.TrimPrefix(raw, "ruby-")
+		off = len(raw) - len(bare)
+		switch {
+		case rubyRe.MatchString(bare):
+			return bare, off, "ruby", ""
+		case rubyPartialRe.MatchString(bare):
+			return bare, off, "tag", ""
+		case bare == "" || wordRe.MatchString(bare):
+			return "", 0, "", "non-version value" // jruby-9.4, truffleruby-24, system
+		}
+		return "", 0, "", "unsupported range"
+	}
+	if raw == "" || wordRe.MatchString(raw) {
 		return "", 0, "", "non-version value"
 	}
 	bare := strings.TrimPrefix(raw, "v")

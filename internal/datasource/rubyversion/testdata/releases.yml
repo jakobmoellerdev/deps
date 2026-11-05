@@ -1,0 +1,223 @@
+# This file provides details on the various Ruby releases.
+#
+# For a new release, add an entry of the following form:
+#
+# - version: Ruby version (MAJOR.MINOR.TEENY since 2.1.0)
+#   date: release date (YYYY-MM-DD)
+#   post: /en/news/YYYY/MM/DD/ruby-VERSION-released/
+#   url:
+#     bz2: download URL
+#     gz:  ...
+#     xz:  ...
+#     zip: ...
+#   sha256:
+#     bz2: checksum
+#     gz:  ...
+#     xz:  ...
+#     zip: ...
+#
+# In order to get the release listed on the downloads page,
+# you also need to add an entry to `_data/downloads.yml'.
+
+# 4.1 series
+
+- version: 4.1.0-preview1
+  date: 2026-10-12
+  post: /en/news/2026/10/12/ruby-4-1-0-preview1-released/
+  tag: v4.1.0-preview1
+  stats:
+    files_changed: 6116
+    insertions: 311387
+    deletions: 219997
+  url:
+    gz:  https://cache.ruby-lang.org/pub/ruby/4.1/ruby-4.1.0-preview1.tar.gz
+    zip: https://cache.ruby-lang.org/pub/ruby/4.1/ruby-4.1.0-preview1.zip
+    xz:  https://cache.ruby-lang.org/pub/ruby/4.1/ruby-4.1.0-preview1.tar.xz
+  size:
+    gz:  26550186
+    zip: 32429495
+    xz:  20218640
+  sha1:
+    gz:  4f04a63c2e65945a4f4f7a6d1372783b60e68c5a
+    zip: 199cf5247f7fc55ff225b3fe6928a39a522000d0
+    xz:  3e6c6919bbdb178fd7d6210e3e960889094fac3c
+  sha256:
+    gz:  fb530bb88e90de3ae91c1310a27ae090e6bd989b8726de50ef12a890a85b88ef
+    zip: 2f1ea85203801c24e64ddf02fc2600f582a2544ef8c84d198111e56b0873b125
+    xz:  b81f20bf2bc72aa360785eb77ffa0c9f15343ac7316637fbf347500fc3e2e3a8
+  sha512:
+    gz:  f5628830685d0ce4ffb26294089c31c452e2e5a0bdcc6a5e0c670f335e52fb33eaaea7df3b834778db1fdde89cd2656d94743f6efa672c3bff6e89d64d5b7539
+    zip: fd32a7b544ec73f0e642202531170bf8fa4454b2c7ff069748b2bf8e530fc8ae4124572e570c4c56606cc90aeeb723d35cab152978b28ee36b4bb06c798529df
+    xz:  b58bc71a8734ceb38c9c301e0201ecd28559c97a3b93caa1d49e07ff34d51565b0b6ed98f05be41868cc09513784bd3e8b5340574fec37116a4ffcb218d396e4
+
+# 4.0 series
+
+- version: 4.0.9
+  date: 2026-10-23
+  post: /en/news/2026/10/23/ruby-4-0-9-released/
+  url:
+    gz:  https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.9.tar.gz
+    zip: https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.9.zip
+    xz:  https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.9.tar.xz
+  size:
+    gz:  23946524
+    zip: 29263242
+    xz:  17996144
+  sha1:
+    gz:  39f31360bc0c03bde9eec4177e443f6298481e2e
+    zip: 9e2d496d0f3663918c3183b8671c7f4b78aa185e
+    xz:  630cf1e7a4c522f49a2fec383805627691500b54
+  sha256:
+    gz:  c35350682ff050b79702d57ade4516e7336063f510155d19fb2fb5b3f3909511
+    zip: 8242fbb2354cb71811cb2ff4d5e149b7a0ecb700e6c61a897710204ac36f866b
+    xz:  a8057adb39f51ad6dc3106237504c93dd792bb515837b4fe7817ae21ed7e51f4
+  sha512:
+    gz:  9adb0069a07ee1348a04b627d8af1c9f2b6537bdea5dce0b57423659626d9ae3cc04955eae7167014c56bd0f4c7c9d1aa0e4fcfc666eda738b1b0c35a3674114
+    zip: 29422739ea9b5189c24354f6c689f40485c4dc8945e735c38240094195a637dbc6807f4fe295a1579b27ca930e1eb6b2ad7fe1970dad38d0800e049863e8288b
+    xz:  7160b1c6fb61b0e369cddccb29eadae85390d86777c875efc18a56de390b1fe1ff47d6e37ccaf39d2ed477c9811f1224cbb3d2f54a0cbd5d5daf418b1cf2557e
+
+- version: 4.0.0
+  date: 2025-12-25
+  post: /en/news/2025/12/25/ruby-4-0-0-released/
+  tag: v4.0.0
+  stats:
+    files_changed: 3889
+    insertions: 230769
+    deletions: 297003
+  url:
+    gz:  https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.0.tar.gz
+    zip: https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.0.zip
+    xz:  https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.0.tar.xz
+  size:
+    gz:  23955109
+    zip: 29253204
+    xz:  18008368
+  sha1:
+    gz:  754e39e9ad122e1b6deaed860350bac133a35ed3
+    zip: 0b69f89d1d140157251c0d3a6032f6c45cdf81e8
+    xz:  05ec670e86f84325c5353ef2f2888e53b6adc602
+  sha256:
+    gz:  2e8389c8c072cb658c93a1372732d9eac84082c88b065750db1e52a5ac630271
+    zip: 70cb1bf89279b86ab9a975d504607c051fc05ee03e311d550a5541b65e373455
+    xz:  a72bacee9de07283ebc19baa4ac243b193129f21aa4e168c7186fb1fe7d07fe1
+  sha512:
+    gz:  688254e939b197d564e896fb951bc1abf07142f489e91c5ed0b11f68f52d6adb6b1f86616fe03f1f0bb434beeef7e75e158b9c616afb39bb34403b0b78d2ee19
+    zip: a72e076ef618c0aeb9d20cf22e6fb12fda36809c0064ef0f98153b95a0bac257ef606342444a38f992c4594bf376a4d264686cf597463aa6f111220798784302
+    xz:  2d5b2e566eaf70a5f3ea6ce6afc0611c0415de58a41336ef7a0b855c9a91eda9aa790a5f8b48e40a1eb9d50f8ea0f687216e617f16c8d040a08474f3116518a4
+
+- version: 4.0.0-preview3
+  date: 2025-12-18
+  post: /en/news/2025/12/18/ruby-4-0-0-preview3-released/
+  tag: v4.0.0-preview3
+  stats:
+    files_changed: 3776
+    insertions: 222800
+    deletions: 293617
+  url:
+    gz:  https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.0-preview3.tar.gz
+    zip: https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.0-preview3.zip
+    xz:  https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.0-preview3.tar.xz
+  size:
+    gz:  23865890
+    zip: 29403010
+    xz:  17915004
+  sha1:
+    gz:  a348f196e0314d8863ae5d5f0a588a37c52aa89c
+    zip: 689cb6c497afb96d26745708e772b63afca52e1a
+    xz:  b7b99831558b9cd6cf8fb148f07cd4e8e59d9e99
+  sha256:
+    gz:  43d0926e776fbd5599adcc7bccb4ccc804e109f402a2068607a2a86562c2cdc0
+    zip: c29147727a8eacf01b942012e3d6fa26010f98f43f6ab249c391f47c744f44cf
+    xz:  8d7a503b2c4abcfacf0fa54ac56d37f7dd6d643a3a717661729cabbe947610a6
+  sha512:
+    gz:  1c7f10405832646eceacb278ea7cc3445dc0e1778e9a9331062f2fb0164d45ba5af0b4244dc6ae46e36730d6cafb4c4196fbd4f4fb74029afde5ecf4fd433a6b
+    zip: c07d6069b391e38ec99725201d021998ccfb913423636f729eccd0cff17cb9ab7e8565f46d68eea96cf7f546cee647892ca3f37b720a202e8e5496cd10dd168b
+    xz:  b046c015a58daafb1640d8db62a36ebf64c7f83fbfb033fa327458afab6e9c31b1c2b194b347fd63f16e413e732d3e6ac20076282b433ef16923343c9ed84aa1
+
+- version: 3.4.7
+  date: 2025-10-07
+  post: /en/news/2025/10/07/ruby-3-4-7-released/
+  url:
+    gz:  https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.7.tar.gz
+    zip: https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.7.zip
+    xz:  https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.7.tar.xz
+  size:
+    gz:  23271433
+    zip: 28455721
+    xz:  17312044
+  sha1:
+    gz:  eabc902f52d1580e63108bf5f5fe3f646d855e74
+    zip: 4cad16704d1031cba7395619111f0291ece50605
+    xz:  a07f568bda581a4b4f23c6fe91e1cef44e71f8f8
+  sha256:
+    gz:  23815a6d095696f7919090fdc3e2f9459b2c83d57224b2e446ce1f5f7333ef36
+    zip: 0b250054d4330198bd98bcc30852e59a66d546d84ef1d347e05419bede537aef
+    xz:  db425a86f6e07546957578f4946cc700a91e7fd51115a86c56e096f30e0530c7
+  sha512:
+    gz:  7c9b807aa794a19377b0048da0e94869bf57905cf68d4f30b959aefb9f67834a51e06a23c9eee858e7f90938dbc38a5072bc946df502a6bcf86bf198ae061e22
+    zip: 3bf68557df908e51532f0b168c1d4cea335e20d38f7ad3b9fc80d747e0ce35391c78881df69b2f2eb0d4681a773d1c29cea717791a75e524793d6ed1ec7d2f8d
+    xz:  a6b99a2f1d0115d5e7efa710da440b9066c524c335928367c80852630f8db5da36c0a82d6e7ace90e8c40cb20c6097cbdca15a51c343254cadf5f0adf60f8505
+
+- version: 3.4.0
+  date: 2024-12-25
+  post: /en/news/2024/12/25/ruby-3-4-0-released/
+  tag: v3_4_0
+  stats:
+    files_changed: 4942
+    insertions: 202244
+    deletions: 255528
+  url:
+    gz:  https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.0.tar.gz
+    zip: https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.0.zip
+    xz:  https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.0.tar.xz
+  size:
+    gz:  23153022
+    zip: 28310193
+    xz:  17215572
+  sha1:
+    gz:  8ccb561848a7c460ae08e1a120a47c4a88a79335
+    zip: 26254ca5d3decc28a4e5faec255995265e5270b5
+    xz:  eb25447cc404e8d2e177c62550d0224ebd410e68
+  sha256:
+    gz:  068c8523442174bd3400e786f4a6952352c82b1b9f6210fd17fb4823086d3379
+    zip: c120228038af04554f6363e716b0a32cbf53cf63c6adf9f2c22a24f43dc8b555
+    xz:  0081930db22121eb997207f56c0e22720d4f5d21264b5907693f516c32f233ca
+  sha512:
+    gz:  bc70ecba27d1cdea00879f03487cad137a7d9ab2ad376cfb7a65780ad14da637fa3944eeeede2c04ab31eeafb970c64ccfeeb854c99c1093937ecc1165731562
+    zip: 4d535ed10db76a6aa74f8a025df319deb28483a7a781c24045906ee7663f1cff9d9f9e71dbc993c9e050113a34b37c7fa2143c355a0a6e1e1029bf2c92213ecc
+    xz:  776a2cf3e9ccc77c27500240f168aa3e996b0c7c1ee1ef5a7afc291a06c118444016fde38b5b139c0b800496b8eb1b5456562d833f0edc0658917164763b1af7
+
+- version: 3.4.0-rc1
+  date: 2024-12-12
+  post: /en/news/2024/12/12/ruby-3-4-0-rc1-released/
+  tag: v3_4_0_rc1
+  stats:
+    files_changed: 4820
+    insertions: 196907
+    deletions: 253488
+  url:
+    gz:  https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.0-rc1.tar.gz
+    zip: https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.0-rc1.zip
+    xz:  https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.0-rc1.tar.xz
+  size:
+    gz:  23055998
+    zip: 28323595
+    xz:  17116016
+  sha1:
+    gz:  216e3085ab8b886b9f74943ee5b62bd2e3d86671
+    zip: 4ae8ce4b15ccc3f0c6f42e408c44aa287a1ccc14
+    xz:  1424671cdc9c4bfe3778ac159d917c8bfe6107bd
+  sha256:
+    gz:  1f3187d3366e90af6d760994f8bfe1fe8999a8ba3553ea4dcfae63e548236e2a
+    zip: 653162a2db627e8e5feee22a00b20acf215509d88b06ffb281bc8788ed12c74c
+    xz:  9c54225747f7a786727aa6213503083d5d8ff7097505d4b7456ff60880ee4a17
+  sha512:
+    gz:  0b0420a39c0bf3b38600d4e28805a581c4b5a6cf2abe41be8c8164276a8044a19e676de74eea5dd5b4d7d667d821a6144119795fea510fd4ba6e34865a2ae172
+    zip: c6c6b9a0e61308e3f3303cd148613feabb2ee12d8e2fefc1f4aa1403237310f7c9be5e2031248ea89ff01cdc0bca1a66ff60f9f1f19ed9c9fccef3d7a3bbebb8
+    xz:  5b92a2b5829ab23735617945839e45df984b319b8932e790a8e0c6f681b9bd74249511a76345516cc216c002ed7887bdd27151501491d5ecedc20acd3fb57cc5
+
+- version: 2.0.0-p648
+  date: 2015-12-16
+  post: /en/news/2015/12/16/ruby-2-0-0-p648-released/
+  url:
+    gz:  https://cache.ruby-lang.org/pub/ruby/2.0/ruby-2.0.0-p648.tar.gz

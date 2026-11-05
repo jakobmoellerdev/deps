@@ -17,6 +17,15 @@ type Monorepo struct {
 // MonorepoGroup returns the policy group name of the built-in monorepo name.
 func MonorepoGroup(name string) string { return name + " monorepo" }
 
+// RubyGroup is the built-in group of the Ruby version deps (datasource ruby-version: the
+// Gemfile `ruby` directive, `.ruby-version`, asdf and mise `ruby`), so a Ruby bump moves every
+// file naming the version, Gemfile.lock's RUBY VERSION with them, in one PR. Like the
+// monorepo groups it applies unless monorepos is false, and a rule setting group overrides it.
+const RubyGroup = "ruby"
+
+// rubyDatasource is the datasource of the RubyGroup deps.
+const rubyDatasource = "ruby-version"
+
 var (
 	goMgr      = []string{"gomod"}
 	npmMgr     = []string{"npm"}

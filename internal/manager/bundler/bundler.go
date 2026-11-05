@@ -1,10 +1,12 @@
-// Package bundler extracts the gems of Ruby Gemfiles, reads the versions Gemfile.lock locks
-// them to, and updates Gemfile.lock after an update with `bundle lock` (see Locker).
+// Package bundler extracts the gems and the `ruby` directive of Ruby Gemfiles, reads the
+// versions Gemfile.lock locks them to, and updates Gemfile.lock after an update with `bundle
+// lock` (see Locker).
 package bundler
 
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -19,13 +21,21 @@ const Name = "bundler"
 // Datasource is the datasource of gems.
 const Datasource = "rubygems"
 
-// Versioning is the versioning scheme of gems.
+// RubyDatasource is the datasource of the `ruby` directive (Ruby releases).
+const RubyDatasource = "ruby-version"
+
+// RubyName is the dep name of the `ruby` directive, shared with `.ruby-version` and the asdf
+// and mise `ruby` tool.
+const RubyName = "ruby"
+
+// Versioning is the versioning scheme of gems and of the `ruby` directive.
 const Versioning = "ruby"
 
 // DepTypes.
 const (
 	DepTypeDependencies = "dependencies" // outside groups
 	DepTypeGroup        = "group"        // in a `group … do` block or with a `group:`/`groups:` option
+	DepTypeRuby         = "ruby"         // the `ruby` directive
 )
 
 // Skip reasons.
@@ -36,6 +46,10 @@ const (
 	skipNonLiteral       = "non-literal requirement"
 	skipUnsupported      = "unsupported requirement"
 	skipNoLock           = "no Gemfile.lock version for a requirement without a floor"
+	skipRubyFile         = "version read from a file"
+	skipRubyEngine       = "non-MRI engine"
+	skipRubyPatchlevel   = "pinned patchlevel"
+	skipRubyNoFloor      = "ruby requirement without a lower bound"
 )
 
 // anyVersion is the range of a gem without requirements (Gem::Requirement.default).
@@ -56,16 +70,17 @@ func (bundlerManager) Match(p string) bool {
 	return strings.HasSuffix(p, "Gemfile") && matchRe.MatchString(p)
 }
 
-// Extract returns one Dep per `gem` statement, in file order. Range is the gem's requirements
-// joined with ", " (`~> 7.1, >= 7.1.2`; `>= 0` without any); Version is the version of its
-// first lower bound, "" without one (ReadLocks takes the locked version then). A single
-// requirement with a lower bound (`2.241.2`, `= 1.2`, `~> 7.1`, `>= 1.2`, `> 1.2`) gets a
-// RefSpan on its version, so the version is rewritten; any other requirement list is never
-// rewritten (RangeFixed), only moved in Gemfile.lock.
+// Extract returns one Dep per `gem` statement and one for the `ruby` directive, in file order.
+// Range is the gem's requirements joined with ", " (`~> 7.1, >= 7.1.2`; `>= 0` without any);
+// Version is the version of its first lower bound, "" without one (ReadLocks takes the locked
+// version then). A single requirement with a lower bound (`2.241.2`, `= 1.2`, `~> 7.1`,
+// `>= 1.2`, `> 1.2`) gets a RefSpan on its version, so the version is rewritten; any other
+// requirement list is never rewritten (RangeFixed), only moved in Gemfile.lock. The `ruby`
+// directive is the dep RubyName of RubyDatasource with its requirements read the same way.
 func (bundlerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	f := parse(src)
 	global := strings.Join(f.sources, " ")
-	deps := make([]dep.Dep, 0, len(f.gems))
+	deps := make([]dep.Dep, 0, len(f.gems)+1)
 	for _, g := range f.gems {
 		d := dep.Dep{Manager: Name, Datasource: Datasource, Versioning: Versioning, DepType: DepTypeDependencies, File: file, Line: g.line, Name: g.name, Source: global}
 		if g.group {
@@ -84,7 +99,31 @@ func (bundlerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep
 		}
 		deps = append(deps, d)
 	}
+	if r := f.ruby; r != nil {
+		d := rubyDep(file, r)
+		i, _ := slices.BinarySearchFunc(deps, d.Line, func(g dep.Dep, line int) int { return g.Line - line })
+		deps = slices.Insert(deps, i, d)
+	}
 	return deps, nil
+}
+
+// rubyDep is the dep of the `ruby` directive r of file.
+func rubyDep(file string, r *rubyDecl) dep.Dep {
+	d := dep.Dep{Manager: Name, Datasource: RubyDatasource, Versioning: Versioning, DepType: DepTypeRuby, File: file, Line: r.line, Name: RubyName}
+	switch {
+	case r.skip != "":
+		d.Skip = r.skip
+	case r.nonLiteral:
+		d.Skip = skipNonLiteral
+	case len(r.reqs) == 0:
+		d.Skip = skipRubyNoFloor
+	default:
+		setRequirements(&d, r.reqs)
+		if d.Skip == "" && d.Version == "" {
+			d.Skip = skipRubyNoFloor
+		}
+	}
+	return d
 }
 
 // floorOps are the operators of requirements with a lower bound, whose version a bump raises.

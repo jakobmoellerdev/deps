@@ -42,6 +42,7 @@ type Policy struct {
 	Schedule      *schedule.Set // nil = always
 	Rules         []int         // indices of the matching user rules, in order
 	Monorepo      string        // built-in monorepo that set the initial Group, "" = none
+	Toolchain     string        // built-in toolchain group (RubyGroup) that set the initial Group, "" = none
 	CommitType    string        // conventional commit type: fix for production deps, chore otherwise
 	CommitScope   string        // conventional commit scope, "" = none
 	// Templates are the prTitle, prHeader and prFooter templates; nil members use the defaults.
@@ -131,9 +132,9 @@ func UnversionedPin(d dep.Dep) bool {
 }
 
 // Policy is the pre-policy of d: the policy before the type of an update is known. It
-// evaluates the built-in monorepo rule (unless monorepos is false), then the user rules
-// without updateTypes top-to-bottom; each set field of a matching rule overwrites the
-// policy (Updates is replaced, not merged). Indirect Go requirements and pip-compile pins, go
+// evaluates the built-in monorepo and Ruby group rules (unless monorepos is false), then the
+// user rules without updateTypes top-to-bottom; each set field of a matching rule overwrites
+// the policy (Updates is replaced, not merged). Indirect Go requirements and pip-compile pins, go
 // directives, npm peerDependencies and engines, and actions pinned to a bare SHA
 // (UnversionedPin) are ignored unless a rule sets `ignore: false`. Its Versioning
 // and ExtractVersion replace the dep's before resolution (only rules without updateTypes may
@@ -250,6 +251,8 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 	if c.MonoreposEnabled() {
 		if m := monorepoOf(d.Manager, d.Name); m != nil {
 			p.Monorepo, p.Group = m.Name, MonorepoGroup(m.Name)
+		} else if d.Datasource == rubyDatasource {
+			p.Toolchain, p.Group = RubyGroup, RubyGroup
 		}
 	}
 	if c.ReplacementsEnabled() {

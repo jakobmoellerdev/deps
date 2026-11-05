@@ -55,10 +55,34 @@ var DocNodenv = refdoc.Manager{
 	Sections: []refdoc.Section{{Title: "Versions", Items: nodeVersionItems}},
 }
 
+// DocRubyVersion is the reference documentation of the ruby-version manager
+// (docs/reference/managers.md).
+var DocRubyVersion = refdoc.Manager{
+	Name: NameRubyVersion,
+	Summary: "Updates the Ruby version in `.ruby-version` (rbenv, chruby, rvm, asdf, mise, Bundler's `ruby file: \".ruby-version\"`): the first token of the first line that is neither blank nor a `#` comment. " +
+		"It shares the built-in `ruby` group with the Gemfile `ruby` directive and asdf/mise `ruby` (see [bundler](#bundler)), so a Ruby bump is one PR.",
+	Files: []string{"any `.ruby-version`"},
+	DepTypes: []refdoc.DepType{
+		{Name: DepTypeRuby, What: "the Ruby version (name `ruby`), optionally with the `ruby-` prefix (`ruby-3.4.7`)", Datasource: "`ruby-version`", Versioning: "`ruby`; partial versions `tag`"},
+	},
+	Skips: []refdoc.Skip{
+		{Reason: "non-version value", When: "empty, another engine (`jruby-9.4.8.0`, `truffleruby-24.1.0`) or a word such as `system`"},
+		{Reason: "unsupported range", When: "anything else that is not `[ruby-]X[.Y[.Z[-pre]]]`, such as `3.4.7@gemset`"},
+	},
+	Sections: []refdoc.Section{{Title: "Versions", Items: rubyVersionItems}},
+}
+
+var rubyVersionItems = []string{
+	"A full `X.Y.Z[-pre]` uses `ruby` versioning (Gem::Version order); previews such as `3.5.0-preview1` are only proposed from a preview.",
+	"A partial `3` or `3.4` uses `tag` versioning and keeps its precision (`3.4` → `4.0`).",
+	"The `ruby-` prefix stays outside the replaced token; comments and the rest of the file are kept.",
+}
+
 var toolVersionItems = []string{
-	"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`.",
-	"A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`) and go (`1.27`); other tools skip it.",
+	"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`).",
+	"A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`) and ruby (`3.4`); other tools skip it.",
 	"`maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.",
+	"`ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).",
 	"Only the version token is replaced; quotes, comments and the rest of the file are kept.",
 }
 

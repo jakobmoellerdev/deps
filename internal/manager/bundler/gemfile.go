@@ -368,10 +368,20 @@ type gemDecl struct {
 	group            bool
 }
 
+// rubyDecl is the `ruby` directive: the Ruby version the Gemfile requires.
+type rubyDecl struct {
+	line       int
+	reqs       []token // the literal requirement strings
+	nonLiteral bool    // a requirement argument that is not a literal string
+	skip       string  // file, engine or patchlevel option
+	file       string  // the `file:` option: the version file, relative to the Gemfile's directory
+}
+
 // gemfile is what parse finds in a Gemfile.
 type gemfile struct {
 	gems    []gemDecl
-	sources []string // the global sources (`source "url"` outside blocks), in order
+	sources []string  // the global sources (`source "url"` outside blocks), in order
+	ruby    *rubyDecl // the last `ruby` directive (Bundler keeps the last); nil = none
 }
 
 // defaultSource is rubygems.org, as the legacy `source :rubygems` names it.
@@ -433,6 +443,12 @@ func parse(src []byte) gemfile {
 				gitSources[name] = true
 			}
 			continue
+		case "ruby":
+			if doAt < 0 {
+				r := parseRubyDirective(s)
+				f.ruby = &r
+				continue
+			}
 		}
 		if doAt < 0 {
 			if first.text == "source" {
@@ -505,14 +521,55 @@ func sourceArg(args []token) (string, bool) {
 	return "", false
 }
 
-// parseGem parses `gem "name", <requirements…>, <options…>` (s starts with `gem`). ok is false
-// when the name is not a literal string.
-func parseGem(s []token, gitSources map[string]bool) (gemDecl, bool) {
+// callArgs returns the argument tokens of the call statement s (after its method name) and
+// whether they are parenthesized (`gem("x")`, the parenthesis right after the name); the
+// opening parenthesis is dropped.
+func callArgs(s []token) ([]token, bool) {
 	args := s[1:]
 	paren := len(args) > 0 && args[0].kind == tPunct && args[0].text == "(" && args[0].start == s[0].end
 	if paren {
 		args = args[1:]
 	}
+	return args, paren
+}
+
+// parseRubyDirective parses `ruby <requirements…>, <options…>` (s starts with `ruby`). A
+// `file:` option, an engine other than `ruby` and a `patchlevel:` make it not updatable here.
+func parseRubyDirective(s []token) rubyDecl {
+	args, paren := callArgs(s)
+	r := rubyDecl{line: s[0].line}
+	for _, arg := range splitArgs(args, paren) {
+		if !isKeyword(arg) {
+			reqs, ok := literalStrings(arg)
+			r.reqs = append(r.reqs, reqs...)
+			r.nonLiteral = r.nonLiteral || !ok
+			continue
+		}
+		key, value := keyword(arg)
+		literal := len(value) == 1 && (value[0].kind == tString && value[0].literal || value[0].kind == tSymbol)
+		switch key {
+		case "file":
+			r.skip = skipRubyFile
+			if literal && value[0].kind == tString {
+				r.file = value[0].text
+			}
+		case "engine":
+			if (!literal || value[0].text != "ruby") && r.skip == "" {
+				r.skip = skipRubyEngine
+			}
+		case "patchlevel":
+			if r.skip == "" {
+				r.skip = skipRubyPatchlevel
+			}
+		}
+	}
+	return r
+}
+
+// parseGem parses `gem "name", <requirements…>, <options…>` (s starts with `gem`). ok is false
+// when the name is not a literal string.
+func parseGem(s []token, gitSources map[string]bool) (gemDecl, bool) {
+	args, paren := callArgs(s)
 	var g gemDecl
 	keywords := false
 	for i, arg := range splitArgs(args, paren) {

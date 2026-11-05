@@ -80,7 +80,7 @@ func (bundlerManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	for _, f := range files {
 		for j := range f {
 			d := &f[j]
-			if d.Skip != "" || d.Range == "" {
+			if d.Skip != "" || d.Range == "" || d.DepType == DepTypeRuby {
 				continue
 			}
 			file := path.Join(path.Dir(d.File), lockFile)
@@ -153,9 +153,11 @@ func (l Locker) Process(ctx context.Context, dir string, manifests, files map[st
 // each gem the lock already has is pinned for that run: its requirement is written as
 // `= <version>` in the temporary Gemfile. When any was, the patched Gemfile is put back and
 // `bundle lock` runs again, which keeps the versions and records the Gemfile's requirements
-// under DEPENDENCIES. It returns Gemfile.lock when it changed.
+// under DEPENDENCIES. An update of the `ruby` directive moves the lock's RUBY VERSION in
+// process (setLockedRuby) before Bundler runs, which keeps a locked Ruby version the Gemfile
+// admits; with only such updates Bundler does not run. It returns Gemfile.lock when it changed.
 func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error) {
-	lock, ok := files[lockFile]
+	orig, ok := files[lockFile]
 	if !ok {
 		if len(locks) > 0 {
 			return nil, fmt.Errorf("lockfile-only updates need %s in %s", lockFile, dir)
@@ -169,18 +171,31 @@ func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files m
 			return nil, err
 		}
 	}
-	locked, err := lockedGems(lock)
+	locked, err := lockedGems(orig)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", lockFile, err)
 	}
+	lock := orig
 	var names []string
 	pins := map[string]string{}
+	onlyRuby := len(ups) > 0 && len(locks) == 0
 	for _, u := range slices.Concat(flatten(ups), flatten(locks)) {
+		if u.Dep.DepType == DepTypeRuby {
+			lock = setLockedRuby(lock, u.NewVersion)
+			continue
+		}
+		onlyRuby = false
 		if _, ok := locked[u.Dep.Name]; !ok || slices.Contains(names, u.Dep.Name) {
 			continue // a gem the lock does not have yet is resolved anyway
 		}
 		names = append(names, u.Dep.Name)
 		pins[u.Dep.Name] = u.NewVersion
+	}
+	if onlyRuby {
+		if bytes.Equal(lock, orig) {
+			return nil, nil
+		}
+		return map[string][]byte{lockFile: lock}, nil
 	}
 	pinned, err := pin(src, pins)
 	if err != nil {
@@ -206,7 +221,85 @@ func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files m
 			return nil, err
 		}
 	}
-	return changedLock(base, lock)
+	return changedLock(base, orig)
+}
+
+// lockedRubySpan returns the byte span of the version in the RUBY VERSION section of a
+// Gemfile.lock (`   ruby 3.3.6p108`: `3.3.6p108`, the patchlevel older Bundlers write
+// included); ok is false without one.
+func lockedRubySpan(lock []byte) (start, end int, ok bool) {
+	off := 0
+	for line := range bytes.Lines(lock) {
+		off += len(line)
+		if string(bytes.TrimRight(line, "\r\n")) != "RUBY VERSION" {
+			continue
+		}
+		l, _, _ := bytes.Cut(lock[off:], []byte("\n"))
+		v, ok := bytes.CutPrefix(bytes.TrimLeft(l, " "), []byte("ruby "))
+		if !ok {
+			return 0, 0, false
+		}
+		start = off + len(l) - len(v)
+		n := bytes.IndexAny(v, " (\r")
+		if n < 0 {
+			n = len(v)
+		}
+		return start, start + n, n > 0
+	}
+	return 0, 0, false
+}
+
+// lockedRuby is v as Bundler records it under RUBY VERSION: a prerelease's "-" read as "."
+// (`3.5.0-preview1` → `3.5.0.preview1`), without a patchlevel (the new release's is not known;
+// current Bundlers write none). ok is false for a version Bundler cannot record there (fewer
+// than three segments).
+func lockedRuby(v string) (string, bool) {
+	v = strings.ReplaceAll(v, "-", ".")
+	return v, strings.Count(v, ".") >= 2
+}
+
+// setLockedRuby returns lock with the version of its RUBY VERSION section set to v (see
+// lockedRuby), or lock itself when it records none or v cannot be recorded.
+func setLockedRuby(lock []byte, v string) []byte {
+	start, end, ok := lockedRubySpan(lock)
+	nv, valid := lockedRuby(v)
+	if !ok || !valid || string(lock[start:end]) == nv {
+		return lock
+	}
+	return slices.Concat(lock[:start], []byte(nv), lock[end:])
+}
+
+// VersionFileEdits returns the Gemfile.lock side of an update of the Ruby version in file
+// (`.ruby-version`, `.tool-versions`, a mise config) to v: when the Gemfile next to file reads
+// its Ruby version from it (`ruby file: ".ruby-version"`) and its Gemfile.lock records one
+// (RUBY VERSION), the edit moving that to v, by the lock's slash path relative to root; nil
+// otherwise. The version managers return it as their manager.FileEditor edits.
+func VersionFileEdits(root, file, v string) (map[string][]patch.Edit, error) {
+	dir := path.Dir(file)
+	read := func(name string) ([]byte, error) {
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path.Join(dir, name))))
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return b, err
+	}
+	src, err := read(manifestFile)
+	if src == nil {
+		return nil, err
+	}
+	if r := parse(src).ruby; r == nil || r.file == "" || path.Join(dir, r.file) != file {
+		return nil, nil
+	}
+	lock, err := read(lockFile)
+	if lock == nil {
+		return nil, err
+	}
+	start, end, ok := lockedRubySpan(lock)
+	nv, valid := lockedRuby(v)
+	if !ok || !valid || string(lock[start:end]) == nv {
+		return nil, nil
+	}
+	return map[string][]patch.Edit{path.Join(dir, lockFile): {{Start: start, End: end, Old: string(lock[start:end]), New: nv}}}, nil
 }
 
 // Maintain implements engine.LockMaintainer (lockFileMaintenance): `bundle lock --update` in a
