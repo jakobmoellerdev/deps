@@ -30,48 +30,55 @@ const (
 
 var matchRe = regexp.MustCompile(`(^|/)pyproject\.toml$`)
 
-type poetryManager struct{}
+// poetryManager records the project names of its files for Link.
+type poetryManager struct{ projects pyreq.Projects }
 
 // New returns the poetry manager.
-func New() manager.Manager { return poetryManager{} }
+func New() manager.Manager { return &poetryManager{} }
 
-func (poetryManager) Name() string { return Name }
+func (*poetryManager) Name() string { return Name }
 
 // Match reports whether the slash path is a pyproject.toml file. The suffix check skips the
 // regexp for the paths that cannot match.
-func (poetryManager) Match(p string) bool {
+func (*poetryManager) Match(p string) bool {
 	return strings.HasSuffix(p, "pyproject.toml") && matchRe.MatchString(p)
 }
 
 // Edits rewrites the constraint (pyreq.Edits).
-func (poetryManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
+func (*poetryManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
 
 // InRange implements manager.RangeUpdater.
-func (poetryManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
+func (*poetryManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
 
 // NewRange implements manager.RangeUpdater.
-func (poetryManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+func (*poetryManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 	return pyreq.NewRange(d, v, strategy)
 }
 
 // ReadLocks records the versions poetry.lock locks the deps to (pytool.ReadLocks).
-func (poetryManager) ReadLocks(root string, files [][]dep.Dep) []error {
+func (*poetryManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	return pytool.ReadLocks(root, files)
 }
 
 // LockRoots implements manager.LockMaintainer: the poetry.lock of each file's lock directory
 // (pytool.LockRoots), also of Poetry 2 projects with only `[project]` dependencies.
-func (poetryManager) LockRoots(root string, files []string) []manager.LockRoot {
+func (*poetryManager) LockRoots(root string, files []string) []manager.LockRoot {
 	return pytool.LockRoots(root, files, pytool.PoetryLock)
 }
 
-// Extract returns one dep per entry of the dependency tables; the `python` constraint is not
-// a dependency and is not extracted.
-func (poetryManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+// Link implements manager.Linker: a dep named like the project of a scanned pyproject.toml
+// gets its DefinedIn (pyreq.Projects).
+func (m *poetryManager) Link(files [][]dep.Dep) { m.projects.Link(files) }
+
+// Extract returns one dep per entry of the dependency tables and records the project's name
+// (also of files without Poetry tables) for Link; the `python` constraint is not a dependency
+// and is not extracted.
+func (m *poetryManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	doc, err := tomlspan.Parse(src)
 	if err != nil {
 		return nil, err
 	}
+	m.projects.Add(file, doc)
 	p := doc.Get("tool", "poetry")
 	if p == nil {
 		return nil, nil

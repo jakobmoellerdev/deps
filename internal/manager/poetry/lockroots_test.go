@@ -10,7 +10,7 @@ import (
 )
 
 func TestLockRoots(t *testing.T) {
-	var _ manager.LockMaintainer = poetryManager{}
+	var _ manager.LockMaintainer = &poetryManager{}
 	root := t.TempDir()
 	for _, p := range []string{"pyproject.toml", "poetry.lock", "sub/pyproject.toml", "sub/poetry.lock", "uv/pyproject.toml",
 		"uv/uv.lock", "uv/poetry.lock", "none/pyproject.toml"} {

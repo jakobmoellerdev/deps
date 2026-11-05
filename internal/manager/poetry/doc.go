@@ -25,6 +25,7 @@ var Doc = refdoc.Manager{
 		{Reason: pyreq.SkipURL, When: "`{ url = … }`"},
 		{Reason: SkipMultiple, When: "an array of constraint tables (per-marker constraints)"},
 		{Reason: SkipUnknownSource + " <name>", When: "a `source` that no `[[tool.poetry.source]]` names"},
+		pyreq.InRepositorySkip,
 	}),
 	Sections: []refdoc.Section{
 		pyreq.PoetrySection,

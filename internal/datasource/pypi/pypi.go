@@ -107,12 +107,16 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 
 // Releases lists the versions of d.Name that have at least one file that is not yanked, as
 // published, across d's indexes (primary first, each version once), without those whose
-// requires-python excludes part of d.PythonConstraint. The slice is shared between callers
-// and must not be modified.
+// requires-python excludes part of d.PythonConstraint. A package no index has is a
+// *dep.SkipError (pyreq.InRepository) for a dep a scanned pyproject.toml defines
+// (d.DefinedIn). The slice is shared between callers and must not be modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
 	e, err := s.view(ctx, d)
 	if err != nil {
 		return nil, err
+	}
+	if d.DefinedIn != "" && errors.Is(e.err, errNotFound) {
+		return nil, &dep.SkipError{Reason: pyreq.InRepository(d.DefinedIn)}
 	}
 	return e.rels, e.err
 }

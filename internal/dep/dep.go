@@ -93,6 +93,7 @@ type Dep struct {
 	// Python managers only (datasource pypi).
 	ExtraSources     []string // extra simple index URLs searched besides Source (pip --extra-index-url, uv/Poetry/Pipenv/pdm secondary sources); releases are merged
 	PythonConstraint string   // the project's Python version constraint (requires-python, Poetry `python`, Pipfile [requires]); releases whose requires-python does not admit all of it are dropped
+	DefinedIn        string   // pep621, poetry: slash path of a scanned pyproject.toml whose project has the dep's (normalized) name; when no index has the package, the dep is skipped (pyreq.InRepository) instead of failing
 }
 
 // ChecksumSource locates the checksum of a version. Asset, URL/File and Artifact are templates

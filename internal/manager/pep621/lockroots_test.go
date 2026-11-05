@@ -13,7 +13,7 @@ import (
 // TestLockRoots checks the uv workspace root and that pep621 and poetry, which both extract
 // every pyproject.toml, claim disjoint lockfiles.
 func TestLockRoots(t *testing.T) {
-	var _ manager.LockMaintainer = pep621Manager{}
+	var _ manager.LockMaintainer = &pep621Manager{}
 	root := t.TempDir()
 	for p, c := range map[string]string{
 		"pyproject.toml":            "[project]\nname = \"root\"\n[tool.uv.workspace]\nmembers = [\"packages/*\"]\n",

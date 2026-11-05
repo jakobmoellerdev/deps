@@ -33,49 +33,56 @@ const (
 
 var matchRe = regexp.MustCompile(`(^|/)pyproject\.toml$`)
 
-type pep621Manager struct{}
+// pep621Manager records the project names of its files for Link.
+type pep621Manager struct{ projects pyreq.Projects }
 
 // New returns the pep621 manager.
-func New() manager.Manager { return pep621Manager{} }
+func New() manager.Manager { return &pep621Manager{} }
 
-func (pep621Manager) Name() string { return Name }
+func (*pep621Manager) Name() string { return Name }
 
 // Match reports whether the slash path is a pyproject.toml file. The suffix check skips the
 // regexp for the paths that cannot match.
-func (pep621Manager) Match(p string) bool {
+func (*pep621Manager) Match(p string) bool {
 	return strings.HasSuffix(p, "pyproject.toml") && matchRe.MatchString(p)
 }
 
 // Edits rewrites the range (pyreq.Edits).
-func (pep621Manager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
+func (*pep621Manager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
 
 // InRange implements manager.RangeUpdater.
-func (pep621Manager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
+func (*pep621Manager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
 
 // NewRange implements manager.RangeUpdater.
-func (pep621Manager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+func (*pep621Manager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 	return pyreq.NewRange(d, v, strategy)
 }
 
 // ReadLocks records the versions uv.lock, poetry.lock or pdm.lock locks the deps to
 // (pytool.ReadLocks).
-func (pep621Manager) ReadLocks(root string, files [][]dep.Dep) []error {
+func (*pep621Manager) ReadLocks(root string, files [][]dep.Dep) []error {
 	return pytool.ReadLocks(root, files)
 }
 
 // LockRoots implements manager.LockMaintainer: the uv.lock or pdm.lock of each file's lock
 // directory (pytool.LockRoots; a poetry.lock is the poetry manager's).
-func (pep621Manager) LockRoots(root string, files []string) []manager.LockRoot {
+func (*pep621Manager) LockRoots(root string, files []string) []manager.LockRoot {
 	return pytool.LockRoots(root, files, pytool.UVLock, pytool.PDMLock)
 }
 
-// Extract returns one dep per PEP 508 requirement string of the dependency arrays.
-// `include-group` entries of dependency groups and non-string items are ignored.
-func (pep621Manager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+// Link implements manager.Linker: a dep named like the project of a scanned pyproject.toml
+// gets its DefinedIn (pyreq.Projects).
+func (m *pep621Manager) Link(files [][]dep.Dep) { m.projects.Link(files) }
+
+// Extract returns one dep per PEP 508 requirement string of the dependency arrays and
+// records the project's name for Link. `include-group` entries of dependency groups and
+// non-string items are ignored.
+func (m *pep621Manager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	doc, err := tomlspan.Parse(src)
 	if err != nil {
 		return nil, err
 	}
+	m.projects.Add(file, doc)
 	x := extractor{file: file, uv: newUVSources(doc), pdm: newPDMSources(doc)}
 	if rp := doc.Get("project", "requires-python"); rp != nil && rp.Kind == tomlspan.String {
 		x.python = rp.Str

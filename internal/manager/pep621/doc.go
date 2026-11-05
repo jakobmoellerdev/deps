@@ -28,6 +28,7 @@ var Doc = refdoc.Manager{
 		{Reason: SkipWorkspace, When: "a `[tool.uv.sources]` entry with `workspace = true`"},
 		{Reason: SkipMultipleSources, When: "a `[tool.uv.sources]` entry that is an array (per-marker sources)"},
 		{Reason: SkipUnknownIndex + " <name>", When: "a `[tool.uv.sources]` `index` that no `[[tool.uv.index]]` names"},
+		pyreq.InRepositorySkip,
 	}),
 	Sections: []refdoc.Section{
 		pyreq.SpecifierSection,

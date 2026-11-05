@@ -5,6 +5,7 @@ package pyreq
 
 import (
 	"strings"
+	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
@@ -133,6 +134,60 @@ var ops = [...][]string{
 	Pipenv: {"===", "==", "~=", "!=", "<=", ">=", "<", ">"},
 	Poetry: {"===", "==", "~=", "!=", "<=", ">=", "^", "~", "=", "<", ">"},
 }
+
+// Projects records the project names the pyproject.toml files of a run define, for the Link
+// (manager.Linker) of the managers extracting them. The zero value is ready to use; Add is
+// safe for concurrent use.
+type Projects struct {
+	mu    sync.Mutex
+	files map[string]string // normalized name -> defining file (the smallest path)
+}
+
+// Add records the project name the parsed pyproject.toml doc at slash path file defines:
+// `[project] name`, else Poetry's `[tool.poetry] name`.
+func (p *Projects) Add(file string, doc *tomlspan.Value) {
+	n := doc.Get("project", "name")
+	if n == nil || n.Kind != tomlspan.String {
+		n = doc.Get("tool", "poetry", "name")
+	}
+	if n == nil || n.Kind != tomlspan.String || !ValidName(n.Str) {
+		return
+	}
+	name := Normalize(n.Str)
+	p.mu.Lock()
+	if p.files == nil {
+		p.files = map[string]string{}
+	}
+	if cur, ok := p.files[name]; !ok || file < cur {
+		p.files[name] = file
+	}
+	p.mu.Unlock()
+}
+
+// Link sets DefinedIn of each unskipped dep of files whose normalized name a recorded file
+// defines, then forgets the recorded names, so the next run starts empty. The pypi
+// datasource skips such a dep when no index has the package (an unpublished package of the
+// same repository, installed from a local build) and updates it as usual when one has.
+func (p *Projects) Link(files [][]dep.Dep) {
+	p.mu.Lock()
+	defs := p.files
+	p.files = nil
+	p.mu.Unlock()
+	if len(defs) == 0 {
+		return
+	}
+	for _, deps := range files {
+		for i := range deps {
+			if d := &deps[i]; d.Skip == "" {
+				d.DefinedIn = defs[Normalize(d.Name)]
+			}
+		}
+	}
+}
+
+// InRepository is the pypi datasource's skip reason of a dep no index has that the scanned
+// pyproject.toml file defines (dep.Dep.DefinedIn, Projects).
+func InRepository(file string) string { return "in-repository package (" + file + ")" }
 
 // NewDep returns a Python dep of manager m without version.
 func NewDep(m, depType, file, name string, line int) dep.Dep {

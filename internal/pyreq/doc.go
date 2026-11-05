@@ -20,6 +20,13 @@ var PoetrySkips = []refdoc.Skip{
 	{Reason: SkipLocate, When: "a TOML string with escapes"},
 }
 
+// InRepositorySkip documents the pypi datasource's skip of the deps Projects.Link marks.
+var InRepositorySkip = refdoc.Skip{
+	Reason: "in-repository package (<file>)",
+	When: "no index of the dep has the package (HTTP 404) but a scanned `pyproject.toml` defines it (`[project] name`, else `[tool.poetry] name`, PEP 503-normalized; `<file>` is the first such path), " +
+		"e.g. an unpublished package of the repository installed from a local build; a package an index has is updated as usual",
+}
+
 // anchorItem explains dep.Dep.Version of a range.
 const anchorItem = "The dep's version is the range's anchor: in its last `||` alternative the first clause that is not `<`, `<=` or `!=` (`>=1.2,<2` → `1.2`, `<1.0.0,>=0.114.2` → `0.114.2`), else its first upper bound (`<2` → `2`). The anchor's precision is kept: candidates with non-zero parts beyond it are skipped (`precision`), others are cut to it (`>=1.2,<2` sees 3.1.0 as `3.1`). With a lockfile, the locked version takes the anchor's place."
 
