@@ -92,6 +92,11 @@ func TestMatch(t *testing.T) {
 		"build-logic/convention/src/main/java/A.kt":                   false,
 		"app/src/main/kotlin/App.kt":                                  false,
 		"buildSrc/build.gradle.kts":                                   true,
+		"src/main/kotlin/Foo.kt":                                      false,
+		"buildSrc/src/main/kotlin/Foo.kt":                             true,
+		"build-logic/conv/src/main/kotlin/x.kt":                       true,
+		"buildSrc/build/x.kt":                                         false,
+		"feature/src/main/java/Foo.kt":                                false,
 	} {
 		if got := m.Match(path); got != ok {
 			t.Errorf("Match(%q) = %v", path, got)

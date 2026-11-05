@@ -123,13 +123,16 @@ func (*gradleManager) Name() string { return Name }
 // or buildSrc / convention-plugin source. The suffix check is the regexps' common tail, so
 // the regexps run only for the few paths that can match.
 func (*gradleManager) Match(p string) bool {
-	if !strings.HasSuffix(p, ".kt") && !strings.HasSuffix(p, ".groovy") &&
-		!strings.HasSuffix(p, ".versions.toml") && !strings.HasSuffix(p, ".gradle") &&
+	if strings.HasSuffix(p, ".kt") || strings.HasSuffix(p, ".groovy") {
+		// Only sourceRe can match these, and each of its alternatives needs one of the literals.
+		if !strings.Contains(p, "buildSrc/") && !strings.Contains(p, "src/main/kotlin/") {
+			return false
+		}
+		return sourceRe.MatchString(p) && !strings.Contains(p, "buildSrc/build/")
+	}
+	if !strings.HasSuffix(p, ".versions.toml") && !strings.HasSuffix(p, ".gradle") &&
 		!strings.HasSuffix(p, ".gradle.kts") && !strings.HasSuffix(p, "gradle.properties") {
 		return false
-	}
-	if sourceRe.MatchString(p) {
-		return !strings.Contains(p, "buildSrc/build/")
 	}
 	return catalogRe.MatchString(p) || scriptRe.MatchString(p) || propertiesRe.MatchString(p)
 }
