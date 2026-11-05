@@ -36,6 +36,7 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
 - [Step outputs and report](#step-outputs-and-report)
 - [Dry runs and config checks](#dry-runs-and-config-checks)
   - [Preview on pull requests](#preview-on-pull-requests)
+- [Dependency graph (GitHub)](#dependency-graph-github)
 - [Caching Go modules](#caching-go-modules)
 - [Platform detection](#platform-detection)
 - [Troubleshooting](#troubleshooting)
@@ -772,6 +773,28 @@ jobs:
 ```
 
 With the released action instead of a build, use the same two checkouts and `args: run --dry-run -v --dir base`.
+
+## Dependency graph (GitHub)
+
+GitHub's dependency graph reads go.mod, package.json, the Python manifests, Cargo.toml, pom.xml and workflows by itself, but not Gradle builds, Dockerfiles, Compose and Kubernetes files, or versions in custom places. `deps submit` sends the dependencies deps finds there to the graph, so they appear in *Insights → Dependency graph*, the SBOM export and dependency review, and get Dependabot alerts where GitHub's advisory database covers the ecosystem (Maven, Go, npm, PyPI, crates, Actions; container images are listed but get no alerts). It only extracts, so it takes a second or two. What is submitted and how, including `--all-managers`, is in `deps help submit`.
+
+```yaml
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write # the dependency submission API
+jobs:
+  dependency-graph:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: jakobmoellerdev/deps@v0.3.0
+        with:
+          args: submit
+```
+
+The dependency graph must be enabled for the repository (*Settings → Code security*); otherwise GitHub answers `404 … The Dependency graph is disabled for this repository`. Each workflow job keeps its latest snapshot; a new push replaces it.
 
 ## Caching Go modules
 

@@ -86,7 +86,7 @@ func newRoot() *cobra.Command {
 	pf.StringVar(&o.prof.mem, "memprofile", "", "write an allocation profile to this file on exit")
 	_ = pf.MarkHidden("cpuprofile")
 	_ = pf.MarkHidden("memprofile")
-	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newPreview(o), newSchema(), newDocs())
+	root.AddCommand(newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newPreview(o), newSubmit(o), newSchema(), newDocs())
 	root.AddCommand(newHelpTopics()...)
 	return root
 }

@@ -135,17 +135,24 @@ type extracted struct {
 	err  error
 }
 
-// Resolve discovers dependency files under root, extracts dependencies and looks up updates.
-// The returned error is non-nil only for walk failures or context cancellation;
-// per-file and per-dependency failures are collected in Result.Errors.
-func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.Env, o Options) (*Result, error) {
+// tree is the extraction of a repository: the files per manager and their deps.
+type tree struct {
+	jobs     []job
+	found    [][]string // per manager in Options.Managers order
+	ex       []extracted
+	lockErrs []error
+}
+
+// extractTree discovers the dependency files under root, extracts them, links the deps
+// across files, reads locked versions and drops deps a custom dep covers.
+func extractTree(ctx context.Context, root string, cfg *config.Config, env manager.Env, managers []manager.Manager) (*tree, error) {
 	start := time.Now()
-	found, err := discover(root, cfg.IgnorePaths, o.Managers)
+	found, err := discover(root, cfg.IgnorePaths, managers)
 	if err != nil {
 		return nil, fmt.Errorf("walk %s: %w", root, err)
 	}
 	var jobs []job
-	for i, m := range o.Managers {
+	for i, m := range managers {
 		slog.InfoContext(ctx, "files discovered", "manager", m.Name(), "files", len(found[i]), "duration", time.Since(start))
 		for _, f := range found[i] {
 			jobs = append(jobs, job{f, m})
@@ -163,14 +170,44 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			return err == nil
 		}
 	}
-
-	start = time.Now()
 	ex := extractAll(root, jobs, env)
-	linkAll(o.Managers, found, ex)
-	lockErrs := readLocks(root, o.Managers, found, ex)
+	linkAll(managers, found, ex)
+	lockErrs := readLocks(root, managers, found, ex)
 	dedupeCovered(ex)
+	return &tree{jobs: jobs, found: found, ex: ex, lockErrs: lockErrs}, nil
+}
 
-	res := &Result{Errors: lockErrs}
+// Extract returns every dependency under root as extracted (Skip set by the managers only;
+// no policy, no lookups), in discovery order, with the per-file errors.
+func Extract(ctx context.Context, root string, cfg *config.Config, env manager.Env, managers []manager.Manager) ([]dep.Dep, []error, error) {
+	t, err := extractTree(ctx, root, cfg, env, managers)
+	if err != nil {
+		return nil, nil, err
+	}
+	errs := t.lockErrs
+	var deps []dep.Dep
+	for i, e := range t.ex {
+		if e.err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", t.jobs[i].file, e.err))
+			continue
+		}
+		deps = append(deps, e.deps...)
+	}
+	return deps, errs, nil
+}
+
+// Resolve discovers dependency files under root, extracts dependencies and looks up updates.
+// The returned error is non-nil only for walk failures or context cancellation;
+// per-file and per-dependency failures are collected in Result.Errors.
+func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.Env, o Options) (*Result, error) {
+	start := time.Now()
+	t, err := extractTree(ctx, root, cfg, env, o.Managers)
+	if err != nil {
+		return nil, err
+	}
+	jobs, found, ex := t.jobs, t.found, t.ex
+
+	res := &Result{Errors: t.lockErrs}
 	if cfg.LockFileMaintenance.Enabled && o.Filter == nil {
 		res.Updates = maintenanceUpdates(cfg, root, o.Managers, found, ex)
 	}
