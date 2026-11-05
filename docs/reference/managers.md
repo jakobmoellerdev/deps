@@ -168,6 +168,15 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules. `go.
 - A failure drops that module's change: `go mod tidy in <dir>: <last 20 lines of stderr>`.
 - `plan` does not run tidy, and prints `note    go.sum changes are computed by apply/run`.
 
+**Lock file maintenance (`run`).**
+
+Go has no lockfile, and Renovate has no gomod lock file maintenance. With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, deps treats the `// indirect` requirements (which it does not update by default) as the locked versions of each scanned `go.mod` that has a `go.sum` and no `vendor/modules.txt`. In the module directory, on temporary copies of `go.mod` and `go.sum` and with the environment of `go mod tidy` above, deps runs `go get -modfile=<tmp>/go.mod <module>@upgrade …` for every indirect requirement without a `replace` directive, then `go mod tidy`. `@upgrade` is the newest non-retracted release of the same module path (a prerelease only when there is no release); a current version newer than that (a prerelease or pseudo-version) stays.
+
+- The `go` and `toolchain` directives and the direct requirements do not move. When the `go get` call would move them, or go reports a version conflict between the requested modules or a module that needs a newer go than the running one, the modules are split in halves and each half is tried on the result of the one before. Only a module whose upgrade conflicts on its own keeps its version; without conflicts this is one `go get` call.
+- The PR changes `go.mod` (indirect lines only) and `go.sum`, and shares `<branchPrefix>lock-file-maintenance` with the other lockfiles; `minimumReleaseAge` does not apply to it. A module with nothing to move gets no change.
+- Other `go get` failures drop that module's maintenance: `go get in <dir>: <last 20 lines of stderr>`.
+- With `GOTOOLCHAIN=auto`, a module that needs a newer go than the running one makes go download that toolchain before deps rejects the upgrade.
+
 ## docker
 
 Updates container image references in Dockerfiles, Compose files, workflows, actions, Kubernetes manifests and Helm values.
@@ -238,7 +247,7 @@ Non-version tags (`latest`, `bookworm`, commit hashes such as `3a22eba`) only ge
 
 ## npm
 
-Updates dependencies, tool versions and engines in `package.json`, and the lockfile along with them or on its own (lockfile-only updates). `package.json` is stream-parsed; each value's byte span must equal the quoted value in the file, otherwise (for example with `\u` escapes) the dep is skipped as `cannot locate value`. `overrides`, `resolutions` and `bundleDependencies` are not extracted.
+Updates dependencies, tool versions and engines in `package.json`, and the lockfile along with them or on its own (lockfile-only updates, lock file maintenance). `package.json` is stream-parsed; each value's byte span must equal the quoted value in the file, otherwise (for example with `\u` escapes) the dep is skipped as `cannot locate value`. `overrides`, `resolutions` and `bundleDependencies` are not extracted.
 
 **Files:**
 
@@ -309,6 +318,10 @@ Before resolving, deps reads the lock root's `package-lock.json` (`lockfileVersi
 7. **Failure.** A failed install reports `<tool> install in <dir>: <last 20 output lines>`, and the root's changes are dropped.
 
 - `plan` does not run installs, and prints `note    package-lock.json changes are computed by apply/run`; lockfile-only updates are listed as `(<type>, lockfile)` without a diff.
+
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the lockfile of every lock root of a scanned `package.json` (the one picked as above; a root without its own `package.json` is skipped) is regenerated from scratch in the temporary copy, as Renovate does: `package-lock.json` and `pnpm-lock.yaml` are left out and `yarn.lock` is copied empty (so yarn keeps the directory as its project root), then the install command above runs (npm twice, since its first lockfile can be out of sync with `package.json`). Every locked package, direct and transitive, of the root and all workspace members moves to the newest version its range admits; the `package.json` files are unchanged, and the lockfile's own root and workspace entries keep their ranges. The tool lookup (`packageManager` version, `npx`) is the same as above. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it.
 
 ## helm
 
@@ -902,6 +915,17 @@ Poetry and pdm cannot pin a version there: they move the dep to the newest versi
 
 - `plan` does not run lock commands, and prints `note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run`.
 
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the lockfile of each lock directory of a scanned `pyproject.toml` (a uv workspace's root, as above) that post-processing updates is maintained when it is `uv.lock` or `pdm.lock` (`uv.lock` comes first); a `poetry.lock` is maintained by the `poetry` manager. Each is refreshed in the temporary copy described above, with the same environment and `uvx` fallback, which moves every locked package (transitive ones too) to the newest version the manifests admit; the manifests are not changed:
+
+| Lockfile | Maintenance command |
+|---|---|
+| `uv.lock` | `uv lock --no-progress --upgrade` |
+| `pdm.lock` | `pdm update --no-sync --update-all` (the locked groups are kept) |
+
+All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it.
+
 ## poetry
 
 Updates the Poetry dependency tables of `pyproject.toml`, then refreshes `poetry.lock`. The file is parsed with byte spans; only the constraint's versions inside the TOML string are rewritten. The `python` entry (else `[project] requires-python`) is no dep but drops the releases that do not support all of it (see the `pypi` datasource); `[project]` dependencies of Poetry 2 projects belong to the `pep621` manager.
@@ -981,6 +1005,16 @@ Poetry and pdm cannot pin a version there: they move the dep to the newest versi
 
 - `plan` does not run lock commands, and prints `note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run`.
 
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the `poetry.lock` of each lock directory of a scanned `pyproject.toml` is maintained, also of Poetry 2 projects with only `[project]` dependencies; a directory that also holds `uv.lock` is the `pep621` manager's, whose `uv.lock` is maintained instead. Each is refreshed in the temporary copy described above, with the same environment and `uvx` fallback, which moves every locked package (transitive ones too) to the newest version the manifests admit; the manifests are not changed:
+
+| Lockfile | Maintenance command |
+|---|---|
+| `poetry.lock` | `poetry update --lock` (Poetry 1 and 2) |
+
+All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it.
+
 ## pipenv
 
 Updates the packages of a `Pipfile`, then refreshes `Pipfile.lock`. The file is parsed with byte spans; only the specifier's versions inside the TOML string are rewritten. `[requires]` is no dep: `python_full_version` (exactly) else `python_version` (`3.11` → `==3.11.*`) drops the releases that do not support it (see the `pypi` datasource).
@@ -1059,6 +1093,16 @@ Lockfile-only updates (`rangeStrategy` `update-lockfile`, see Ranges) run after 
 Poetry and pdm cannot pin a version there: they move the dep to the newest version its range admits, which can be newer than proposed.
 
 - `plan` does not run lock commands, and prints `note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run`.
+
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the `Pipfile.lock` next to each scanned `Pipfile` is maintained, unless the directory also holds a `pyproject.toml` with `uv.lock`, `poetry.lock` or `pdm.lock`: only that lockfile is maintained there (by the `pep621` or `poetry` manager). Each is refreshed in the temporary copy described above, with the same environment and `uvx` fallback, which moves every locked package (transitive ones too) to the newest version the manifests admit; the manifests are not changed:
+
+| Lockfile | Maintenance command |
+|---|---|
+| `Pipfile.lock` | `pipenv lock` (pipenv resolves every package anew) |
+
+All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it.
 
 ## terraform
 
@@ -1351,6 +1395,7 @@ Updates Maven dependencies and Gradle plugins in Gradle version catalogs, build 
 - Dynamic versions become ranges: `1.+`/`1.2.+` (prefix, prereleases included), `[1.0,2.0)`, `(1.0,2.0]`, `[1.0,)`, `(,2.0)`, `]1.0,2.0[`, `latest.release` (every release) and `latest.integration` (prereleases too). With dependency locking their locked version is read from `gradle.lockfile` (`group:artifact:version=configurations`) or the legacy `gradle/dependency-locks/*.lockfile` of the project (the build script's directory; `buildscript-gradle.lockfile` and `buildscript-classpath.lockfile` for buildscript classpath deps and plugins, `settings-gradle.lockfile` for settings plugins; plugins are locked as their marker `<id>:<id>.gradle.plugin`); catalog and `buildSrc` deps take the first project of the build, root project first, whose lockfile has the module. Several locked versions (per configuration) yield the highest.
 - `rangeStrategy` applies as for npm: under `auto`/`update-lockfile` an update the range admits only moves the lockfile; others rewrite the range keeping its form (`1.+` → `2.+` with the same number of components, an exclusive upper bound becomes the next value of the new version at the position where the bounds differ: `[1.0,2.0)` → `[1.0,3.0)`, an inclusive one the new version). A locked `latest.*` selector admits every version, so its updates only move the lockfile; it is never rewritten (under `bump` its manifest edit fails).
 - Lockfiles and `gradle/verification-metadata.xml` are regenerated by the gradle post-processor (`apply`/`run`, not `plan`) when the build root has one: it runs `./gradlew` (else `gradle`; Java is required) with `--write-locks`, or `--update-locks group:artifact` for lockfile-only updates, and fails the build's files when the tools are missing.
+- Lock file maintenance (`run`): each build root with a lockfile gets one `lockFileMaintenance` update (the root project's `gradle.lockfile`, else its first lockfile by path; builds with only `gradle/verification-metadata.xml` get none). It runs every locked project's `dependencies` (`buildEnvironment` for buildscript locks) with `--write-locks` and no `--update-locks`, so every configuration is re-resolved and dynamic versions move to the newest they admit; verification metadata present is regenerated as well. Build files are unchanged; only changed lockfiles and metadata are written.
 
 **Shared versions.**
 

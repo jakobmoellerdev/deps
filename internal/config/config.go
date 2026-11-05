@@ -195,7 +195,7 @@ type Config struct {
 	CustomDatasources map[string]CustomDatasource `yaml:"customDatasources" jsonschema_description:"User-defined datasources by name; deps (custom[] entries, annotations, Renovate markers) refer to them as datasource custom.<name>. The version list is fetched once per run."`
 	// LockFileMaintenance configures Renovate's lockFileMaintenance: one PR refreshing every
 	// lockfile.
-	LockFileMaintenance LockFileMaintenance `yaml:"lockFileMaintenance" jsonschema_description:"Lock file maintenance: one PR (branch <branchPrefix>lock-file-maintenance) that refreshes every Cargo.lock (cargo update) and .terraform.lock.hcl (terraform init -upgrade) to the newest versions the requirements admit, without changing manifests."`
+	LockFileMaintenance LockFileMaintenance `yaml:"lockFileMaintenance" jsonschema_description:"Lock file maintenance: one PR (branch <branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, package-lock.json, pnpm-lock.yaml, yarn.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gradle lockfiles, .terraform.lock.hcl, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests."`
 
 	path     string        // source path for error messages
 	schedule *schedule.Set // parsed Schedule

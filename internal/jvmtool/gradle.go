@@ -40,6 +40,7 @@ var verificationTypes = [...]struct{ name, elem string }{
 }
 
 // GradleLocker is the gradle post-processor (engine.PostProcessor, engine.LockfileUpdater,
+// engine.LockMaintainer,
 // engine.ScopeSiblingLister): it rewrites the dependency lockfiles and the dependency
 // verification metadata of a Gradle build after deps patched its build files, by running
 // the build's `dependencies` tasks on a temporary copy.
@@ -234,20 +235,58 @@ func (g GradleLocker) Process(ctx context.Context, dir string, manifests, files 
 // ProcessLocked is Process plus lockfile-only updates: without a manifest change only their
 // modules move (`--update-locks g:a,…`).
 func (GradleLocker) ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error) {
-	names := make([]string, 0, len(files))
+	lockfiles := lockfilesOf(files)
+	if len(files) == 0 {
+		return nil, nil
+	}
+	if len(locks) > 0 && len(lockfiles) == 0 {
+		return nil, fmt.Errorf("lockfile-only updates need a %s", Lockfile)
+	}
+	return runGradle(ctx, dir, manifests, files, lockfiles, toolrun.Changed(dir, manifests), locks)
+}
+
+// Maintain implements engine.LockMaintainer (lockFileMaintenance): `--write-locks` on every
+// locked project's `dependencies`/`buildEnvironment` tasks re-resolves all their
+// configurations, moving dynamic versions to the newest they admit, and regenerates the
+// verification metadata when the build has it; build files are unchanged. It returns the
+// changed lockfiles and metadata; without a lockfile it does nothing.
+func (GradleLocker) Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error) {
+	lockfiles := lockfilesOf(files)
+	if len(lockfiles) == 0 {
+		return nil, nil
+	}
+	out, err := runGradle(ctx, dir, nil, files, lockfiles, true, nil)
+	if len(out) == 0 {
+		return nil, err
+	}
+	return out, err
+}
+
+// GradleLockRoot returns the build root of manifest (slash paths relative to root) and the
+// lockfiles of its projects (relative to the build root, sorted).
+func GradleLockRoot(root, manifest string) (string, []string) {
+	dir := gradleRoot(root, manifest)
+	return dir, scanGradle(filepath.Join(root, filepath.FromSlash(dir)), false).lockfiles
+}
+
+// lockfilesOf returns the sorted lockfile names of files.
+func lockfilesOf(files map[string][]byte) []string {
 	var lockfiles []string
 	for n := range files {
-		names = append(names, n)
 		if isLockfile(n) {
 			lockfiles = append(lockfiles, n)
 		}
 	}
-	if len(names) == 0 {
-		return nil, nil
-	}
 	slices.Sort(lockfiles)
-	if len(locks) > 0 && len(lockfiles) == 0 {
-		return nil, fmt.Errorf("lockfile-only updates need a %s", Lockfile)
+	return lockfiles
+}
+
+// runGradle runs Gradle (gradleArgs) on a temporary copy of the build at dir with manifests
+// overlaid and returns the files that changed.
+func runGradle(ctx context.Context, dir string, manifests, files map[string][]byte, lockfiles []string, changed bool, locks map[string][]dep.Update) (map[string][]byte, error) {
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
 	}
 	target := VerificationMetadata
 	if len(lockfiles) > 0 {
@@ -266,7 +305,7 @@ func (GradleLocker) ProcessLocked(ctx context.Context, dir string, manifests, fi
 		return nil, fmt.Errorf("gradle not found (needed to update %s)", target)
 	}
 	keyring := files[KeysKeyring] != nil || files[GPGKeyring] != nil
-	argv := gradleArgs(tool, lockfiles, files[VerificationMetadata], keyring, toolrun.Changed(dir, manifests), locks)
+	argv := gradleArgs(tool, lockfiles, files[VerificationMetadata], keyring, changed, locks)
 	if err := run(ctx, tmp, argv); err != nil {
 		return nil, fmt.Errorf("gradle in %s: %w", dir, err)
 	}

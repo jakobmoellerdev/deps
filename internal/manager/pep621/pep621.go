@@ -61,6 +61,12 @@ func (pep621Manager) ReadLocks(root string, files [][]dep.Dep) []error {
 	return pytool.ReadLocks(root, files)
 }
 
+// LockRoots implements manager.LockMaintainer: the uv.lock or pdm.lock of each file's lock
+// directory (pytool.LockRoots; a poetry.lock is the poetry manager's).
+func (pep621Manager) LockRoots(root string, files []string) []manager.LockRoot {
+	return pytool.LockRoots(root, files, pytool.UVLock, pytool.PDMLock)
+}
+
 // Extract returns one dep per PEP 508 requirement string of the dependency arrays.
 // `include-group` entries of dependency groups and non-string items are ignored.
 func (pep621Manager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

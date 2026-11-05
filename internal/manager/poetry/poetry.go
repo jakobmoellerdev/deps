@@ -57,6 +57,12 @@ func (poetryManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	return pytool.ReadLocks(root, files)
 }
 
+// LockRoots implements manager.LockMaintainer: the poetry.lock of each file's lock directory
+// (pytool.LockRoots), also of Poetry 2 projects with only `[project]` dependencies.
+func (poetryManager) LockRoots(root string, files []string) []manager.LockRoot {
+	return pytool.LockRoots(root, files, pytool.PoetryLock)
+}
+
 // Extract returns one dep per entry of the dependency tables; the `python` constraint is not
 // a dependency and is not extracted.
 func (poetryManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

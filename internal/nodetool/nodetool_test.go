@@ -350,8 +350,9 @@ func TestMembers(t *testing.T) {
 }
 
 // stubs creates a PATH directory with shell scripts named tools; each records its name, argv,
-// the YARN_ env and the files of its working directory in log and appends "modified" to the
-// lockfile of its working directory unless STUB_KEEP is set; STUB_FAIL makes it fail.
+// the YARN_ env and the files of its working directory in log, creates the lockfile STUB_CREATE
+// (with "created") when it is missing and appends "modified" to the lockfile of its working
+// directory unless STUB_KEEP is set; STUB_FAIL makes it fail.
 func stubs(t *testing.T, tools ...string) (log string) {
 	t.Helper()
 	find, err := exec.LookPath("find")
@@ -372,6 +373,7 @@ func stubs(t *testing.T, tools ...string) (log string) {
   '` + find + `' . -type f | '` + sort + `' | while read -r f; do printf 'file: %s\n' "$f"; done
 } >> '` + log + `'
 if [ -n "$STUB_FAIL" ]; then echo "progress" >&2; echo "ERR something broke"; exit 3; fi
+[ -n "$STUB_CREATE" ] && [ ! -f "$STUB_CREATE" ] && echo created > "$STUB_CREATE"
 [ -n "$STUB_KEEP" ] && exit 0
 for f in package-lock.json pnpm-lock.yaml yarn.lock; do
   [ -f "$f" ] && echo modified >> "$f"
@@ -386,6 +388,7 @@ exit 0
 	t.Setenv("PATH", bin)
 	t.Setenv("STUB_KEEP", "")
 	t.Setenv("STUB_FAIL", "")
+	t.Setenv("STUB_CREATE", "")
 	return log
 }
 

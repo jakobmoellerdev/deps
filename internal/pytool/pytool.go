@@ -159,6 +159,13 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 	if len(locks) == 0 || toolrun.Changed(dir, manifests) {
 		runs = slices.Insert(runs, 0, c)
 	}
+	return lockIn(ctx, dir, lockName, manifests, files, runs)
+}
+
+// lockIn copies the scope's top-level files, for uv.lock every workspace member's
+// pyproject.toml, then files and manifests (replacing theirs) into a temporary directory,
+// runs cmds there and returns lockName when it changed from files[lockName].
+func lockIn(ctx context.Context, dir, lockName string, manifests, files map[string][]byte, cmds []cmdSpec) (map[string][]byte, error) {
 	write, err := topLevel(dir)
 	if err != nil {
 		return nil, err
@@ -178,7 +185,7 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 	if err := toolrun.WriteFiles(tmp, write); err != nil {
 		return nil, err
 	}
-	for _, c := range runs {
+	for _, c := range cmds {
 		if err := c.run(ctx, tmp); err != nil {
 			if errors.Is(err, exec.ErrNotFound) {
 				return nil, fmt.Errorf("%s not found (needed to update %s)", c.tool, lockName)
@@ -373,7 +380,7 @@ func uvCmd() cmdSpec {
 // poetryCmd keeps the locked versions: Poetry 1 needs --no-update, Poetry 2 removed the flag
 // and keeps them by default. A poetry found only through uvx is the latest, so Poetry 2.
 func poetryCmd(ctx context.Context) cmdSpec {
-	c := cmdSpec{tool: "poetry", args: []string{"lock"}, env: []string{"POETRY_NO_INTERACTION=1"}, uvx: true}
+	c := poetryTool()
 	if p, err := exec.LookPath("poetry"); err == nil {
 		out, err := exec.CommandContext(ctx, p, "--version").Output()
 		if err == nil && poetryV1(string(out)) {
@@ -381,6 +388,10 @@ func poetryCmd(ctx context.Context) cmdSpec {
 		}
 	}
 	return c
+}
+
+func poetryTool() cmdSpec {
+	return cmdSpec{tool: "poetry", args: []string{"lock"}, env: []string{"POETRY_NO_INTERACTION=1"}, uvx: true}
 }
 
 // poetryV1 reports whether `poetry --version` output names a 1.x version

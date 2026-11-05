@@ -1,7 +1,8 @@
 // Package nodetool runs the JavaScript package managers where deps cannot avoid it:
 // regenerating package-lock.json, pnpm-lock.yaml and yarn.lock for npm, pnpm and yarn
-// (classic and berry) projects and workspaces, and applying lockfile-only updates to
-// package-lock.json. It also reads the versions a package-lock.json locks (ReadLocked).
+// (classic and berry) projects and workspaces, refreshing them (lock file maintenance), and
+// applying lockfile-only updates to package-lock.json. It also reads the versions a
+// package-lock.json locks (ReadLocked).
 package nodetool
 
 import (
@@ -69,6 +70,22 @@ func (l Locker) Process(ctx context.Context, dir string, manifests, files map[st
 // `<name>@<version>` (per workspace member with --workspace) and the ranges it saves into the
 // lockfile's own package entries are restored to the manifests' unchanged ones.
 func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error) {
+	return install(ctx, dir, manifests, files, locks, false)
+}
+
+// Maintain implements engine.LockMaintainer (lockFileMaintenance): the lock root's lockfile is
+// regenerated from scratch in the temporary copy, as Renovate does: package-lock.json and
+// pnpm-lock.yaml are left out, yarn.lock is copied empty (so yarn keeps the directory as its
+// project root), and the plain install resolves every package, direct and transitive, of the
+// root and its workspace members to the newest version its range admits. npm installs twice:
+// its first lockfile can be out of sync with package.json (renovate#37531). The manifests are
+// unchanged. It returns the lockfile when it changed; without a lockfile it does nothing.
+func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error) {
+	return install(ctx, dir, nil, files, nil, true)
+}
+
+// install runs ProcessLocked, or Maintain when maintain is set.
+func install(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update, maintain bool) (map[string][]byte, error) {
 	rootPkg, ok := manifests["package.json"]
 	if !ok {
 		b, err := os.ReadFile(filepath.Join(dir, "package.json"))
@@ -90,6 +107,12 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 	}
 
 	write := map[string][]byte{"package.json": rootPkg, lockName: lock}
+	switch {
+	case maintain && lockName == YarnLock:
+		write[lockName] = nil
+	case maintain:
+		delete(write, lockName)
+	}
 	for _, n := range []string{npmrc, pnpmWorkspace, yarnrc} {
 		if b := files[n]; b != nil {
 			write[n] = b
@@ -140,7 +163,10 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 		version = pmVersion
 	}
 	runs := lockCommands(locks)
-	if len(locks) == 0 || toolrun.Changed(dir, manifests) {
+	switch {
+	case maintain && c.tool == "npm":
+		runs = [][]string{nil, nil}
+	case len(locks) == 0 || toolrun.Changed(dir, manifests):
 		runs = slices.Insert(runs, 0, nil) // the plain install first
 	}
 	for _, extra := range runs {

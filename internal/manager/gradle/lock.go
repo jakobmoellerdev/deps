@@ -8,9 +8,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jvmtool"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -173,4 +176,49 @@ func readLockfile(out locks, file string) error {
 		out[ga] = append(out[ga], string(v))
 	}
 	return nil
+}
+
+// LockRoots implements manager.LockMaintainer: one root per Gradle build with lockfiles,
+// the build root's settings script (else its build script, else the first of its files) as
+// the manifest and the root project's gradle.lockfile (else the build's first lockfile) as
+// the lockfile. Builds that only verify dependencies have none.
+func (*gradleManager) LockRoots(root string, files []string) []manager.LockRoot {
+	type build struct {
+		manifest string
+		rank     int
+		lockfile string
+	}
+	builds := map[string]*build{}
+	for _, f := range slices.Sorted(slices.Values(files)) {
+		dir, lockfiles := jvmtool.GradleLockRoot(root, f)
+		if len(lockfiles) == 0 {
+			continue
+		}
+		rank := 2
+		if path.Dir(f) == dir {
+			switch kindOf(f) {
+			case kindSettings:
+				rank = 0
+			case kindScript:
+				rank = 1
+			}
+		}
+		if b, ok := builds[dir]; ok {
+			if rank < b.rank {
+				b.manifest, b.rank = f, rank
+			}
+			continue
+		}
+		lf := lockfiles[0]
+		if slices.Contains(lockfiles, lockfileName) {
+			lf = lockfileName
+		}
+		builds[dir] = &build{manifest: f, rank: rank, lockfile: path.Join(dir, lf)}
+	}
+	out := make([]manager.LockRoot, 0, len(builds))
+	for _, b := range builds {
+		out = append(out, manager.LockRoot{Manifest: b.manifest, Lockfile: b.lockfile})
+	}
+	slices.SortFunc(out, func(a, b manager.LockRoot) int { return strings.Compare(a.Lockfile, b.Lockfile) })
+	return out
 }

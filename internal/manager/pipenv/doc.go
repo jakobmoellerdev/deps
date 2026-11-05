@@ -34,5 +34,7 @@ var Doc = refdoc.Manager{
 		}},
 		pyreq.LockedSection,
 		pyreq.LockSection("The lock directory of a `Pipfile` is its own directory when it holds `Pipfile.lock`."),
+		pyreq.MaintenanceSection("the `Pipfile.lock` next to each scanned `Pipfile` is maintained, unless the directory also holds a `pyproject.toml` with `uv.lock`, `poetry.lock` or `pdm.lock`: only that lockfile is maintained there (by the `pep621` or `poetry` manager).",
+			"Pipfile.lock"),
 	},
 }

@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -206,6 +207,26 @@ func importEdits(file string, src []byte, old, newPath string) ([]patch.Edit, er
 		edits = append(edits, patch.Edit{Start: start, End: start + len(lit), Old: lit, New: repl})
 	}
 	return edits, nil
+}
+
+// LockRoots implements manager.LockMaintainer: the go.sum next to each go.mod, unless the
+// module has none or vendors its modules (vendor/modules.txt). Lock file maintenance
+// (gotool.Tidier.Maintain) moves the `// indirect` requirements.
+func (gomodManager) LockRoots(root string, files []string) []manager.LockRoot {
+	var out []manager.LockRoot
+	for _, f := range files {
+		dir := path.Dir(f)
+		abs := filepath.Join(root, filepath.FromSlash(dir))
+		if _, err := os.Stat(filepath.Join(abs, "go.sum")); err != nil {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(abs, "vendor", "modules.txt")); err == nil {
+			continue
+		}
+		out = append(out, manager.LockRoot{Manifest: f, Lockfile: path.Join(dir, "go.sum")})
+	}
+	slices.SortFunc(out, func(a, b manager.LockRoot) int { return strings.Compare(a.Lockfile, b.Lockfile) })
+	return out
 }
 
 func replaced(f *modfile.File, p string) bool {

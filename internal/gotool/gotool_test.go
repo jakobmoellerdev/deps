@@ -132,14 +132,20 @@ func TestModuleTime(t *testing.T) {
 // writeModule writes module path@version (one package, file a.go) to a file:// proxy dir.
 func writeModule(t *testing.T, proxy, path, version string) {
 	t.Helper()
+	publish(t, proxy, path, version, "module "+path+"\n", map[string]string{"a.go": "package m\n\nconst V = 1\n"})
+}
+
+// publish adds module path@version with go.mod mod and the source files src to a file://
+// proxy dir.
+func publish(t *testing.T, proxy, path, version, mod string, src map[string]string) {
+	t.Helper()
 	v := filepath.Join(proxy, filepath.FromSlash(path), "@v")
 	if err := os.MkdirAll(v, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mod := "module " + path + "\n"
 	var zb bytes.Buffer
 	zw := zip.NewWriter(&zb)
-	for name, content := range map[string]string{"go.mod": mod, "a.go": "package m\n\nconst V = 1\n"} {
+	for name, content := range src {
 		w, err := zw.Create(path + "@" + version + "/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -148,11 +154,17 @@ func writeModule(t *testing.T, proxy, path, version string) {
 			t.Fatal(err)
 		}
 	}
+	w, err := zw.Create(path + "@" + version + "/go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(mod)); err != nil {
+		t.Fatal(err)
+	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		"list":            []byte(version + "\n"),
 		version + ".info": []byte(`{"Version":"` + version + `"}`),
 		version + ".mod":  []byte(mod),
 		version + ".zip":  zb.Bytes(),
@@ -161,6 +173,14 @@ func writeModule(t *testing.T, proxy, path, version string) {
 		if err := os.WriteFile(filepath.Join(v, name), content, 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+	list, err := os.OpenFile(filepath.Join(v, "list"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer list.Close()
+	if _, err := list.WriteString(version + "\n"); err != nil {
+		t.Fatal(err)
 	}
 }
 

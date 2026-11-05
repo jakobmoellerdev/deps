@@ -285,7 +285,7 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 - PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested. With `automergeType: branch` there is no PR: the branch is pushed, and once its checks pass the base branch is fast-forwarded to it (one branch per run); failed checks open the PR.
 - With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
-- With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every `Cargo.lock` (`cargo update`) and `.terraform.lock.hcl` (`terraform init -upgrade`); it is closed when the lockfiles are current.
+- With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every lockfile deps maintains (`Cargo.lock`, npm, pnpm and yarn locks, `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, Gradle lockfiles, `.terraform.lock.hcl`, and the `// indirect` requirements of `go.mod` with `go.sum`) with the ecosystem's tool; it is closed when the lockfiles are current.
 - Obsolete PRs under `branchPrefix` are closed and their branches deleted, and obsolete branches without any PR (branch automerge) are deleted, but only when the run had no errors.
 - The local `HEAD` must be the tip of `origin/<base>`.
 

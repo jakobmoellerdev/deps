@@ -1,5 +1,6 @@
 // Package npm extracts dependencies, the packageManager field and the engines/volta tool
-// versions from package.json files, and reads the versions package-lock.json locks them to.
+// versions from package.json files, reads the versions package-lock.json locks them to, and
+// lists the lock roots lock file maintenance refreshes.
 package npm
 
 import (
@@ -7,7 +8,12 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"io"
+	"log/slog"
+	"os"
+	"path"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -110,6 +116,34 @@ func (npmManager) ReadLocks(root string, files [][]dep.Dep) []error {
 		refs[i].Locked, refs[i].LockUnread = s.Version, s.Unread
 	}
 	return errs
+}
+
+// LockRoots implements manager.LockMaintainer: the lockfile the post-processor updates
+// (nodetool.Lockfile) in each file's lock root (nodetool.Locker.Scope), with the package.json
+// next to it; workspace members share their root's. A root without package.json (only
+// pnpm-workspace.yaml) is left out: the package managers need it.
+func (npmManager) LockRoots(root string, files []string) []manager.LockRoot {
+	var out []manager.LockRoot
+	seen := map[string]bool{}
+	for _, f := range files {
+		dir, ok := nodetool.Locker{}.Scope(root, f)
+		if !ok || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		abs := filepath.Join(root, filepath.FromSlash(dir))
+		if st, err := os.Stat(filepath.Join(abs, "package.json")); err != nil || !st.Mode().IsRegular() {
+			continue
+		}
+		name, err := nodetool.Lockfile(abs)
+		if err != nil || name == "" {
+			slog.Debug("lock root unreadable", "dir", dir, "err", err)
+			continue
+		}
+		out = append(out, manager.LockRoot{Manifest: path.Join(dir, "package.json"), Lockfile: path.Join(dir, name)})
+	}
+	slices.SortFunc(out, func(a, b manager.LockRoot) int { return strings.Compare(a.Lockfile, b.Lockfile) })
+	return out
 }
 
 type extractor struct {

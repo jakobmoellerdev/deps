@@ -7,7 +7,7 @@ import (
 // Doc is the reference documentation of the npm manager (docs/reference/managers.md).
 var Doc = refdoc.Manager{
 	Name: Name,
-	Summary: "Updates dependencies, tool versions and engines in `package.json`, and the lockfile along with them or on its own (lockfile-only updates). " +
+	Summary: "Updates dependencies, tool versions and engines in `package.json`, and the lockfile along with them or on its own (lockfile-only updates, lock file maintenance). " +
 		"`package.json` is stream-parsed; each value's byte span must equal the quoted value in the file, otherwise (for example with `\\u` escapes) the dep is skipped as `cannot locate value`. " +
 		"`overrides`, `resolutions` and `bundleDependencies` are not extracted.",
 	Files: []string{"`package.json`"},
@@ -46,6 +46,9 @@ var Doc = refdoc.Manager{
 			}},
 		{Title: "Lockfile post-processing (`apply`, `run`)", Body: lockfileBody,
 			Items: []string{"`plan` does not run installs, and prints `note    package-lock.json changes are computed by apply/run`; lockfile-only updates are listed as `(<type>, lockfile)` without a diff."}},
+		{Title: "Lock file maintenance (`run`)", Body: "With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the lockfile of every lock root of a scanned `package.json` (the one picked as above; a root without its own `package.json` is skipped) is regenerated from scratch in the temporary copy, as Renovate does: `package-lock.json` and `pnpm-lock.yaml` are left out and `yarn.lock` is copied empty (so yarn keeps the directory as its project root), then the install command above runs (npm twice, since its first lockfile can be out of sync with `package.json`). " +
+			"Every locked package, direct and transitive, of the root and all workspace members moves to the newest version its range admits; the `package.json` files are unchanged, and the lockfile's own root and workspace entries keep their ranges. The tool lookup (`packageManager` version, `npx`) is the same as above. " +
+			"All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it."},
 	},
 }
 

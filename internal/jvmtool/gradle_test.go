@@ -254,3 +254,74 @@ func TestGradleLockerErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestGradleLockerMaintain(t *testing.T) {
+	base := map[string]string{"settings.gradle": "include 'app'\n", "build.gradle": "old\n", "app/build.gradle": ""}
+	for _, tc := range []struct {
+		name    string
+		files   map[string]string
+		gradlew bool
+		stub    string
+		argv    string // empty when Gradle must not run
+		changed []string
+	}{
+		{
+			name: "gradlew", files: map[string]string{"gradle.lockfile": "a\n", "app/gradle.lockfile": "b\n", "app/buildscript-gradle.lockfile": "c\n"}, gradlew: true, stub: gradleStub,
+			argv:    "gradlew --console=plain --no-daemon -q :app:buildEnvironment :app:dependencies :dependencies --write-locks",
+			changed: []string{"app/gradle.lockfile", "gradle.lockfile"},
+		},
+		{
+			name: "gradle with verification", files: map[string]string{"gradle.lockfile": "a\n", VerificationMetadata: `<sha512 value="x"/>`}, stub: gradleStub,
+			argv:    "gradle --console=plain --no-daemon -q :dependencies --write-locks --write-verification-metadata sha512 --dependency-verification lenient",
+			changed: []string{"gradle.lockfile", VerificationMetadata},
+		},
+		{
+			name: "unchanged", files: map[string]string{"gradle.lockfile": "a\n"}, stub: "exit 0",
+			argv: "gradle --console=plain --no-daemon -q :dependencies --write-locks",
+		},
+		{name: "verification only", files: map[string]string{VerificationMetadata: "<x/>"}, stub: gradleStub},
+		{name: "no lockfile", stub: gradleStub},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin, log := toolEnv(t, false)
+			dir := t.TempDir()
+			write(t, dir, base)
+			write(t, dir, tc.files)
+			if tc.gradlew {
+				script(t, filepath.Join(dir, "gradlew"), log, tc.stub)
+			} else {
+				script(t, filepath.Join(bin, "gradle"), log, tc.stub)
+			}
+			p := GradleLocker{}
+			siblings := map[string][]byte{}
+			for _, n := range p.ScopeSiblings(dir) {
+				siblings[n] = []byte(tc.files[n])
+			}
+			out, err := p.Maintain(t.Context(), dir, siblings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.changed == nil && out != nil {
+				t.Errorf("out = %v, want nil", out)
+			}
+			var changed []string
+			for n, b := range out {
+				changed = append(changed, n)
+				if string(b) != tc.files[n]+"updated\n" {
+					t.Errorf("%s = %q", n, b)
+				}
+			}
+			slices.Sort(changed)
+			if !slices.Equal(changed, tc.changed) {
+				t.Errorf("changed = %v, want %v", changed, tc.changed)
+			}
+			argv, _ := logged(t, log)
+			if want := []string{tc.argv}; tc.argv == "" && len(argv) != 0 || tc.argv != "" && !slices.Equal(argv, want) {
+				t.Errorf("argv = %q\nwant %q", argv, tc.argv)
+			}
+			if b, _ := os.ReadFile(filepath.Join(dir, "build.gradle")); string(b) != "old\n" {
+				t.Error("working tree touched")
+			}
+		})
+	}
+}

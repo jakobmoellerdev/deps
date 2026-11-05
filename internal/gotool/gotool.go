@@ -1,4 +1,5 @@
-// Package gotool runs the go command where deps cannot avoid it: go env, go list and go mod tidy.
+// Package gotool runs the go command where deps cannot avoid it: go env, go list, go get and
+// go mod tidy.
 package gotool
 
 import (
@@ -11,8 +12,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/modfile"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
@@ -160,11 +165,7 @@ func Tidy(ctx context.Context, dir string, mod, sum []byte, overlay map[string][
 		args = append(args, arg)
 	}
 	if _, err := run(ctx, dir, []string{"GOWORK=off", "GOFLAGS="}, args...); err != nil {
-		var ce *cmdError
-		if errors.As(err, &ce) && ce.stderr != "" {
-			return nil, nil, fmt.Errorf("go mod tidy in %s: %s", dir, ce.stderr)
-		}
-		return nil, nil, fmt.Errorf("go mod tidy in %s: %w", dir, err)
+		return nil, nil, inDir("go mod tidy", dir, err)
 	}
 	if newMod, err = os.ReadFile(modPath); err != nil {
 		return nil, nil, err
@@ -256,6 +257,169 @@ func (Tidier) Process(ctx context.Context, dir string, manifests, files map[stri
 	return map[string][]byte{"go.mod": newMod, "go.sum": newSum}, nil
 }
 
+// Maintain implements engine.LockMaintainer (lockFileMaintenance): every `// indirect`
+// requirement of dir's go.mod without a replace directive moves to its newest release
+// (`go get -modfile=<tmp>/go.mod <module>@upgrade ...`, then Tidy), on temporary copies of
+// go.mod and go.sum with the environment of Tidy. The go and toolchain directives and the
+// direct requirements stay: an attempt that moves them, or that go rejects as a version
+// conflict, is split in halves and retried on the result of the first half, so only a module
+// whose upgrade conflicts on its own keeps its version. It returns go.mod and go.sum when
+// they changed; without go.sum or indirect requirements it does nothing.
+func (Tidier) Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error) {
+	sum, ok := files["go.sum"]
+	if !ok {
+		return nil, nil
+	}
+	mod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return nil, err
+	}
+	f, err := modfile.Parse(filepath.Join(dir, "go.mod"), mod, nil)
+	if err != nil {
+		return nil, err
+	}
+	var mods []string
+	for _, r := range f.Require {
+		if r.Indirect && !slices.ContainsFunc(f.Replace, func(rp *modfile.Replace) bool { return rp.Old.Path == r.Mod.Path }) {
+			mods = append(mods, r.Mod.Path)
+		}
+	}
+	if len(mods) == 0 {
+		return nil, nil
+	}
+	tmp, err := os.MkdirTemp("", "deps-maintain-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
+	u := upgrader{dir: dir, mod: filepath.Join(tmp, "go.mod"), sum: filepath.Join(tmp, "go.sum"), fixed: fixed(f)}
+	if err := u.write(mod, sum); err != nil {
+		return nil, err
+	}
+	if err := u.upgrade(ctx, mods); err != nil {
+		return nil, err
+	}
+	upMod, upSum, err := u.read()
+	if err != nil || bytes.Equal(upMod, mod) {
+		return nil, err
+	}
+	newMod, newSum, err := Tidy(ctx, dir, upMod, upSum, nil)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]byte{}
+	if !bytes.Equal(newMod, mod) {
+		out["go.mod"] = newMod
+	}
+	if !bytes.Equal(newSum, sum) {
+		out["go.sum"] = newSum
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// conflictRe matches the go get errors of a version conflict between requested modules
+// (`go: a@upgrade (v1.1.0) requires b@v1.5.0, not b@upgrade (v1.4.0)`) and of a requested
+// version needing a newer go than the running one (`go: a@upgrade: a@v1.1.0 requires go >= 1.30`).
+var conflictRe = regexp.MustCompile(`(?m)^go: \S+@.* requires (\S+, not |go >= )`)
+
+// upgrader runs the go get attempts of Maintain on the go.mod and go.sum copies mod and sum.
+type upgrader struct {
+	dir, mod, sum string
+	fixed         string // fixed of the original go.mod
+}
+
+// fixed renders what lock file maintenance must not move: the go and toolchain directives
+// and the direct requirements.
+func fixed(f *modfile.File) string {
+	var lines []string
+	if f.Go != nil {
+		lines = append(lines, "go "+f.Go.Version)
+	}
+	if f.Toolchain != nil {
+		lines = append(lines, "toolchain "+f.Toolchain.Name)
+	}
+	for _, r := range f.Require {
+		if !r.Indirect {
+			lines = append(lines, r.Mod.String())
+		}
+	}
+	slices.Sort(lines)
+	return strings.Join(lines, "\n")
+}
+
+// upgrade moves mods to @upgrade: all at once or, on a conflict, each half in turn. A single
+// conflicting module keeps its version.
+func (u *upgrader) upgrade(ctx context.Context, mods []string) error {
+	ok, err := u.try(ctx, mods)
+	if err != nil || ok {
+		return err
+	}
+	if len(mods) == 1 {
+		slog.DebugContext(ctx, "lock file maintenance keeps a conflicting module", "dir", u.dir, "module", mods[0])
+		return nil
+	}
+	h := len(mods) / 2
+	if err := u.upgrade(ctx, mods[:h]); err != nil {
+		return err
+	}
+	return u.upgrade(ctx, mods[h:])
+}
+
+// try runs `go get <mods>@upgrade` on the copies and reports whether it kept the fixed part of
+// go.mod; a conflict restores the copies. Other go failures are errors.
+func (u *upgrader) try(ctx context.Context, mods []string) (bool, error) {
+	mod, sum, err := u.read()
+	if err != nil {
+		return false, err
+	}
+	args := make([]string, 0, len(mods)+2)
+	args = append(args, "get", "-modfile="+u.mod)
+	for _, m := range mods {
+		args = append(args, m+"@upgrade")
+	}
+	var ok bool
+	if _, err := run(ctx, u.dir, []string{"GOWORK=off", "GOFLAGS="}, args...); err != nil {
+		var ce *cmdError
+		if !errors.As(err, &ce) || !conflictRe.MatchString(ce.stderr) {
+			return false, inDir("go get", u.dir, err)
+		}
+	} else {
+		b, err := os.ReadFile(u.mod)
+		if err != nil {
+			return false, err
+		}
+		f, err := modfile.Parse(u.mod, b, nil)
+		if err != nil {
+			return false, err
+		}
+		ok = fixed(f) == u.fixed
+	}
+	if !ok {
+		return false, u.write(mod, sum)
+	}
+	return true, nil
+}
+
+func (u *upgrader) read() (mod, sum []byte, err error) {
+	if mod, err = os.ReadFile(u.mod); err != nil {
+		return nil, nil, err
+	}
+	if sum, err = os.ReadFile(u.sum); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
+	return mod, sum, nil
+}
+
+func (u *upgrader) write(mod, sum []byte) error {
+	if err := os.WriteFile(u.mod, mod, 0o644); err != nil {
+		return err
+	}
+	return os.WriteFile(u.sum, sum, 0o644)
+}
+
 // cmdError is a failed go command with the tail of its stderr.
 type cmdError struct {
 	args   string
@@ -271,6 +435,15 @@ func (e *cmdError) Error() string {
 }
 
 func (e *cmdError) Unwrap() error { return e.err }
+
+// inDir wraps err of the go command what run in dir, with go's stderr when it wrote any.
+func inDir(what, dir string, err error) error {
+	var ce *cmdError
+	if errors.As(err, &ce) && ce.stderr != "" {
+		return fmt.Errorf("%s in %s: %s", what, dir, ce.stderr)
+	}
+	return fmt.Errorf("%s in %s: %w", what, dir, err)
+}
 
 // run executes go with args in dir, with env appended to the process environment, and returns stdout.
 func run(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {

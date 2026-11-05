@@ -204,6 +204,37 @@ func TestReadLocks(t *testing.T) {
 	}
 }
 
+func TestLockRoots(t *testing.T) {
+	root := t.TempDir()
+	for p, c := range map[string]string{
+		"package.json":            `{"private": true, "workspaces": ["packages/*"]}`,
+		"package-lock.json":       "{}",
+		"packages/a/package.json": `{"name": "a"}`,
+		"packages/b/package.json": `{"name": "b"}`,
+		"standalone/package.json": `{"name": "s"}`, // no lockfile of its own, not a member
+		"pn/package.json":         `{"packageManager": "pnpm@9.1.0"}`,
+		"pn/package-lock.json":    "{}",
+		"pn/pnpm-lock.yaml":       "", // the packageManager tool's lockfile wins
+		"y/package.json":          `{}`,
+		"y/yarn.lock":             "",
+		"ws/pnpm-workspace.yaml":  "packages: [m]\n", // no root package.json
+		"ws/pnpm-lock.yaml":       "",
+		"ws/m/package.json":       `{}`,
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, p), []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := []string{"y/package.json", "packages/b/package.json", "standalone/package.json", "pn/package.json", "ws/m/package.json", "packages/a/package.json", "package.json"}
+	got := New().(manager.LockMaintainer).LockRoots(root, files)
+	if fmt.Sprint(got) != "[{package.json package-lock.json} {pn/package.json pn/pnpm-lock.yaml} {y/package.json y/yarn.lock}]" {
+		t.Errorf("lock roots = %v", got)
+	}
+}
+
 func TestPackageManager(t *testing.T) {
 	for _, tt := range []struct{ value, name, version, skip string }{
 		{"pnpm@9.12.1", "pnpm", "9.12.1", ""},

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -812,7 +813,11 @@ func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp string) strin
 		b.WriteByte('\n')
 	}
 	if slices.ContainsFunc(ups, dep.Update.Maintenance) {
-		b.WriteString("\nLock file maintenance moves every locked dependency to the newest version its manifest admits; the manifests are unchanged.\n")
+		b.WriteString("\nLock file maintenance moves every locked dependency to the newest version its manifest admits; the manifests are unchanged")
+		if slices.ContainsFunc(ups, func(u dep.Update) bool { return u.Maintenance() && path.Base(u.Dep.File) == "go.mod" }) {
+			b.WriteString(" (in `go.mod`, only the `// indirect` requirements move)")
+		}
+		b.WriteString(".\n")
 	}
 	moved := map[string]bool{}
 	for _, u := range ups {

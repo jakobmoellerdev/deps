@@ -67,9 +67,10 @@ type UpdatePinner interface {
 
 // LockMaintainer is implemented by post-processors that refresh a whole lockfile for a lock
 // file maintenance update (dep.LockFileMaintenance): every locked dependency moves to the
-// newest version its manifest admits, the manifests stay unchanged. files is the current
-// content of every existing sibling by name, as for Process; the result holds the changed
-// siblings.
+// newest version its manifest admits, the manifest's constraints stay unchanged. files is the
+// current content of every existing sibling by name, as for Process; the result holds the
+// changed siblings, and may replace the manifest under its path relative to dir where it
+// records locked versions itself (the `// indirect` requirements of go.mod).
 type LockMaintainer interface {
 	Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error)
 }

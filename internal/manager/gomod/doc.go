@@ -47,5 +47,13 @@ var Doc = refdoc.Manager{
 			"A failure drops that module's change: `go mod tidy in <dir>: <last 20 lines of stderr>`.",
 			"`plan` does not run tidy, and prints `note    go.sum changes are computed by apply/run`.",
 		}},
+		{Title: "Lock file maintenance (`run`)", Body: "Go has no lockfile, and Renovate has no gomod lock file maintenance. With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, deps treats the `// indirect` requirements (which it does not update by default) as the locked versions of each scanned `go.mod` that has a `go.sum` and no `vendor/modules.txt`. " +
+			"In the module directory, on temporary copies of `go.mod` and `go.sum` and with the environment of `go mod tidy` above, deps runs `go get -modfile=<tmp>/go.mod <module>@upgrade …` for every indirect requirement without a `replace` directive, then `go mod tidy`. `@upgrade` is the newest non-retracted release of the same module path (a prerelease only when there is no release); a current version newer than that (a prerelease or pseudo-version) stays.",
+			Items: []string{
+				"The `go` and `toolchain` directives and the direct requirements do not move. When the `go get` call would move them, or go reports a version conflict between the requested modules or a module that needs a newer go than the running one, the modules are split in halves and each half is tried on the result of the one before. Only a module whose upgrade conflicts on its own keeps its version; without conflicts this is one `go get` call.",
+				"The PR changes `go.mod` (indirect lines only) and `go.sum`, and shares `<branchPrefix>lock-file-maintenance` with the other lockfiles; `minimumReleaseAge` does not apply to it. A module with nothing to move gets no change.",
+				"Other `go get` failures drop that module's maintenance: `go get in <dir>: <last 20 lines of stderr>`.",
+				"With `GOTOOLCHAIN=auto`, a module that needs a newer go than the running one makes go download that toolchain before deps rejects the upgrade.",
+			}},
 	},
 }

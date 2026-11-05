@@ -74,4 +74,13 @@ func TestPRBodyLockFileMaintenance(t *testing.T) {
 	if msg := commitMessage(grp); msg != "chore(deps): lock file maintenance\n\n- Cargo.lock: lock file maintenance\n" {
 		t.Errorf("commit message:\n%s", msg)
 	}
+
+	// go.mod maintenance moves its indirect requirements; the body says so.
+	g := dep.Update{Dep: dep.Dep{Manager: "gomod", File: "m/go.mod", Name: "m/go.sum"}, Type: dep.LockFileMaintenance}
+	if body := prBody(t.Context(), nil, []dep.Update{g}, "abc"); !strings.Contains(body, "the manifests are unchanged (in `go.mod`, only the `// indirect` requirements move).\n") {
+		t.Errorf("go.mod body:\n%s", body)
+	}
+	if body := prBody(t.Context(), nil, []dep.Update{m}, "abc"); !strings.Contains(body, "the manifests are unchanged.\n") {
+		t.Errorf("cargo body:\n%s", body)
+	}
 }

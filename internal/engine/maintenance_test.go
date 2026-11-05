@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 )
 
 // maintainPost is a cargo post-processor that maintains lockfiles.
@@ -132,5 +134,38 @@ func TestBuildLockFileMaintenance(t *testing.T) {
 	// plan (no post-processors): nothing to show.
 	if changes, errs := Build(t.Context(), root, managers, []dep.Update{m}, nil); len(changes) != 0 || len(errs) != 0 {
 		t.Errorf("plan: changes = %+v, %v", changes, errs)
+	}
+}
+
+// TestBuildLockFileMaintenanceManifest: a Maintain result under the manifest's path (go.mod
+// with moved `// indirect` requirements) replaces the manifest next to the lockfile.
+func TestBuildLockFileMaintenanceManifest(t *testing.T) {
+	oldMod := "module example.com/x\n\ngo 1.21\n\nrequire example.com/i v1.0.0 // indirect\n"
+	newMod := "module example.com/x\n\ngo 1.21\n\nrequire example.com/i v1.1.0 // indirect\n"
+	root, _ := setup(t, "", map[string]string{"m/go.mod": oldMod, "m/go.sum": "old sum\n"})
+	m := dep.Update{Dep: dep.Dep{Manager: gomod.Name, File: "m/go.mod", Name: "m/go.sum"}, Type: dep.LockFileMaintenance}
+	var gotDir string
+	post := map[string]PostProcessor{gomod.Name: maintainPost{
+		postFunc: postFunc{siblings: []string{"go.sum"}},
+		maintain: func(dir string, files map[string][]byte) (map[string][]byte, error) {
+			gotDir = dir
+			if string(files["go.sum"]) != "old sum\n" {
+				return nil, fmt.Errorf("files = %q", files)
+			}
+			return map[string][]byte{"go.mod": []byte(newMod), "go.sum": []byte("new sum\n")}, nil
+		},
+	}}
+	changes, errs := Build(t.Context(), root, []manager.Manager{gomod.New()}, []dep.Update{m}, post)
+	if len(errs) > 0 || len(changes) != 2 {
+		t.Fatalf("changes = %+v, %v", changes, errs)
+	}
+	if c := changes[0]; c.Path != "m/go.mod" || string(c.Old) != oldMod || string(c.New) != newMod {
+		t.Errorf("go.mod change = %+v", c)
+	}
+	if c := changes[1]; c.Path != "m/go.sum" || string(c.Old) != "old sum\n" || string(c.New) != "new sum\n" {
+		t.Errorf("go.sum change = %+v", c)
+	}
+	if gotDir != filepath.Join(root, "m") {
+		t.Errorf("dir = %s", gotDir)
 	}
 }

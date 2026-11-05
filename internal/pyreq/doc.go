@@ -1,6 +1,8 @@
 package pyreq
 
 import (
+	"strings"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
@@ -75,4 +77,27 @@ func LockSection(scope string) refdoc.Section {
 		"| `Pipfile.lock` | `pipenv upgrade --lock-only --categories <category> <name>==<version>…`, once per Pipfile category |\n\n" +
 		"Poetry and pdm cannot pin a version there: they move the dep to the newest version its range admits, which can be newer than proposed.",
 		Items: []string{"`plan` does not run lock commands, and prints `note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run`."}}
+}
+
+// maintainCmds are the lockFileMaintenance commands of pytool.Locker.Maintain by lockfile.
+var maintainCmds = map[string]string{
+	"uv.lock":      "`uv lock --no-progress --upgrade`",
+	"poetry.lock":  "`poetry update --lock` (Poetry 1 and 2)",
+	"pdm.lock":     "`pdm update --no-sync --update-all` (the locked groups are kept)",
+	"Pipfile.lock": "`pipenv lock` (pipenv resolves every package anew)",
+}
+
+// MaintenanceSection documents lockFileMaintenance of the pep621, poetry and pipenv managers
+// (pytool.Locker.Maintain) for the manager's lockfiles; scope is the sentence naming which
+// lockfiles the manager maintains.
+func MaintenanceSection(scope string, lockfiles ...string) refdoc.Section {
+	var b strings.Builder
+	b.WriteString("With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, " + scope +
+		" Each is refreshed in the temporary copy described above, with the same environment and `uvx` fallback, which moves every locked package (transitive ones too) to the newest version the manifests admit; the manifests are not changed:\n\n" +
+		"| Lockfile | Maintenance command |\n|---|---|\n")
+	for _, l := range lockfiles {
+		b.WriteString("| `" + l + "` | " + maintainCmds[l] + " |\n")
+	}
+	b.WriteString("\nAll lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it.")
+	return refdoc.Section{Title: "Lock file maintenance (`run`)", Body: b.String()}
 }

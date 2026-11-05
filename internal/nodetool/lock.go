@@ -120,20 +120,9 @@ func memberDir(dir, manifest string) string {
 // is false when the root's lockfile is not a package-lock.json of version 2 or later, or does
 // not parse.
 func readScope(dir string, keys map[string]bool) (versions map[string]string, readable bool, err error) {
-	pkg, err := os.ReadFile(filepath.Join(dir, "package.json"))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	name, err := Lockfile(dir)
+	if err != nil || name != PackageLock {
 		return nil, false, err
-	}
-	m, _ := parseRoot(pkg) // a broken package.json is left to the package manager
-	tool, _ := m.tool()
-	present := map[string][]byte{}
-	for _, n := range lockfiles {
-		if st, err := os.Stat(filepath.Join(dir, n)); err == nil && st.Mode().IsRegular() {
-			present[n] = []byte{}
-		}
-	}
-	if pickLock(present, tool) != PackageLock {
-		return nil, false, nil
 	}
 	f, err := os.Open(filepath.Join(dir, PackageLock))
 	if err != nil {
@@ -145,6 +134,24 @@ func readScope(dir string, keys map[string]bool) (versions map[string]string, re
 		return nil, false, err
 	}
 	return versions, true, nil
+}
+
+// Lockfile returns the name of the lockfile Locker updates in the lock root at the absolute
+// dir (pickLock with the root package.json's packageManager tool), or "" without one.
+func Lockfile(dir string) (string, error) {
+	pkg, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	m, _ := parseRoot(pkg) // a broken package.json is left to the package manager
+	tool, _ := m.tool()
+	present := map[string][]byte{}
+	for _, n := range lockfiles {
+		if st, err := os.Stat(filepath.Join(dir, n)); err == nil && st.Mode().IsRegular() {
+			present[n] = []byte{}
+		}
+	}
+	return pickLock(present, tool), nil
 }
 
 // lockedVersions stream-decodes a package-lock.json and returns its lockfileVersion and the

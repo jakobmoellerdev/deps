@@ -55,6 +55,12 @@ func (pipenvManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	return pytool.ReadLocks(root, files)
 }
 
+// LockRoots implements manager.LockMaintainer: the Pipfile.lock next to each Pipfile
+// (pytool.LockRoots).
+func (pipenvManager) LockRoots(root string, files []string) []manager.LockRoot {
+	return pytool.LockRoots(root, files, pytool.PipfileLock)
+}
+
 // Extract returns one dep per entry of [packages], [dev-packages] and the custom
 // categories: every other top-level table except [source], [requires], [pipenv] and [scripts].
 func (pipenvManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

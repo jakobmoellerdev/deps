@@ -39,5 +39,7 @@ var Doc = refdoc.Manager{
 		}},
 		pyreq.LockedSection,
 		pyreq.LockSection("The lock directory of a `pyproject.toml` is its own directory when it holds `uv.lock` (uv), `poetry.lock` (Poetry) or `pdm.lock` (pdm)."),
+		pyreq.MaintenanceSection("the lockfile of each lock directory of a scanned `pyproject.toml` (a uv workspace's root, as above) that post-processing updates is maintained when it is `uv.lock` or `pdm.lock` (`uv.lock` comes first); a `poetry.lock` is maintained by the `poetry` manager.",
+			"uv.lock", "pdm.lock"),
 	},
 }

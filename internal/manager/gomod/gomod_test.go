@@ -3,6 +3,7 @@ package gomod
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -266,5 +267,23 @@ func TestFileEdits(t *testing.T) {
 	}
 	if _, err := fe.FileEdits(filepath.Join(root, "missing"), u); err == nil {
 		t.Error("want walk error")
+	}
+}
+
+func TestLockRoots(t *testing.T) {
+	root := t.TempDir()
+	for _, p := range []string{"go.mod", "go.sum", "b/go.mod", "b/go.sum", "nosum/go.mod", "vend/go.mod", "vend/go.sum", "vend/vendor/modules.txt"} {
+		abs := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := New().(manager.LockMaintainer).LockRoots(root, []string{"vend/go.mod", "nosum/go.mod", "go.mod", "b/go.mod"})
+	want := []manager.LockRoot{{Manifest: "b/go.mod", Lockfile: "b/go.sum"}, {Manifest: "go.mod", Lockfile: "go.sum"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("LockRoots = %+v, want %+v", got, want)
 	}
 }
