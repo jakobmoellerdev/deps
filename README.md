@@ -30,15 +30,87 @@
 
 deps finds the dependencies in a repository, looks up newer versions, and opens one branch and pull request per dependency or group. It rewrites only the version bytes, so formatting and comments stay as they are.
 
+<details open>
+<summary><img src="https://cdn.simpleicons.org/linux/_/white" height="16" alt=""> <img src="https://cdn.simpleicons.org/apple/_/white" height="16" alt=""> <b>Linux / macOS</b> (binary, amd64 and arm64)</summary>
+
 ```sh
-# Linux and macOS, amd64 and arm64
 mkdir -p ~/.local/bin && curl -fsSL -o ~/.local/bin/deps "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_$(uname -s | tr A-Z a-z)_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && chmod +x ~/.local/bin/deps
-deps plan                                  # preview every update as a diff, no config needed
 ```
 
-On Windows (PowerShell): `iwr https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_windows_amd64.exe -OutFile deps.exe` (`deps_windows_arm64.exe` on ARM).
+</details>
 
-Also packaged for <img src="https://cdn.simpleicons.org/debian" height="16" alt=""> <img src="https://cdn.simpleicons.org/ubuntu" height="16" alt=""> [Debian/Ubuntu (`apt`)](docs/install.md#packages), <img src="https://cdn.simpleicons.org/fedora" height="16" alt=""> <img src="https://cdn.simpleicons.org/redhat" height="16" alt=""> [Fedora/RHEL (`dnf`)](docs/install.md#packages), <img src="https://cdn.simpleicons.org/archlinux" height="16" alt=""> [Arch Linux (`pacman`)](docs/install.md#packages) and <img src="https://cdn.simpleicons.org/alpinelinux" height="16" alt=""> [Alpine (`apk`)](docs/install.md#packages); checksums and Sigstore verification: [install](docs/install.md).
+<details>
+<summary><img src="https://cdn.simpleicons.org/debian" height="16" alt=""> <img src="https://cdn.simpleicons.org/ubuntu" height="16" alt=""> <b>Debian / Ubuntu</b> (apt)</summary>
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSL https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/debian/repository.key -o /etc/apt/keyrings/deps.asc
+echo "deb [signed-by=/etc/apt/keyrings/deps.asc] https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/debian stable main" | sudo tee /etc/apt/sources.list.d/deps.list
+sudo apt-get update && sudo apt-get install deps
+```
+
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/fedora" height="16" alt=""> <img src="https://cdn.simpleicons.org/redhat" height="16" alt=""> <b>Fedora / RHEL</b> (dnf)</summary>
+
+```sh
+printf '[deps]\nname=deps\nbaseurl=https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/rpm\nenabled=1\ngpgcheck=0\nrepo_gpgcheck=1\ngpgkey=https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/rpm/repository.key\n' | sudo tee /etc/yum.repos.d/deps.repo
+sudo dnf install deps
+```
+
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/archlinux" height="16" alt=""> <b>Arch Linux</b> (pacman)</summary>
+
+```sh
+curl -fsSL https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/arch/repository.key -o /tmp/deps.key
+sudo pacman-key --add /tmp/deps.key
+sudo pacman-key --lsign-key "$(gpg --show-keys --with-colons /tmp/deps.key | awk -F: '$1 == "fpr" { print $10; exit }')"
+printf '\n[jakobmoellerdev]\nSigLevel = Required\nServer = https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/arch/$repo/$arch\n' | sudo tee -a /etc/pacman.conf
+sudo pacman -Syu deps
+```
+
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/alpinelinux" height="16" alt=""> <b>Alpine</b> (apk, as root)</summary>
+
+```sh
+wget -qO /etc/apk/keys/jakobmoellerdev@406384923acbad2a78f7a8f09acbfa3ae0bd4acf33360d688568adaa4cd205a3.rsa.pub https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/alpine/key
+echo https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/alpine/stable/main >> /etc/apk/repositories
+apk add deps
+```
+
+</details>
+
+<details>
+<summary>🪟 <b>Windows</b> (PowerShell)</summary>
+
+```powershell
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+iwr "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_windows_$arch.exe" -OutFile deps.exe
+```
+
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/go" height="16" alt=""> <b>From source</b> (Go)</summary>
+
+```sh
+go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest
+```
+
+</details>
+
+Then, in any repository:
+
+```sh
+deps plan   # preview every update as a diff, no config needed
+```
+
+Packages install `/usr/bin/deps` with shell completions. Checksums and Sigstore verification: [install](docs/install.md).
 
 **Coming from Renovate?** Disable Renovate, add `branchPrefix: renovate/` to `.deps.yaml`, then `deps run --dry-run` to see which PRs deps would open. Once a real run completes without errors, deps closes Renovate's old PRs under that prefix. Option mapping: [migrating from Renovate](docs/migrating-from-renovate.md).
 
