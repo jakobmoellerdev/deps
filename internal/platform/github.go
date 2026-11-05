@@ -18,19 +18,21 @@ import (
 
 // NewClient returns the pull request client for info.Kind (gitea and forgejo share one).
 func NewClient(info Info, token string, c *http.Client) Client {
-	switch info.Kind {
-	case GitHub:
-		return &githubClient{api: info.APIURL, repo: info.Repo, token: token, c: c}
-	case Forgejo:
-		return &giteaClient{api: info.APIURL, repo: info.Repo, token: token, c: c, forgejo: true}
+	if info.Kind == GitHub {
+		return newGitHub(info, token, c)
 	}
-	return &giteaClient{api: info.APIURL, repo: info.Repo, token: token, c: c}
+	return &giteaClient{
+		api: info.APIURL, repo: info.Repo, c: c, headers: giteaHeaders(token), toPR: giteaPR,
+		forgejo: info.Kind == Forgejo,
+	}
 }
 
-// rest is the shared JSON-over-HTTP core of both clients.
+// rest is the shared JSON-over-HTTP core of both clients; headers and toPR are the forge's.
 type rest struct {
-	api, repo, token string
-	c                *http.Client
+	api, repo string
+	c         *http.Client
+	headers   func(http.Header)
+	toPR      func(*apiPR) PR
 
 	mu   sync.Mutex
 	info *apiRepo // GET /repos/{repo}, cached after the first success
@@ -146,6 +148,9 @@ type apiPR struct {
 	} `json:"head"`
 }
 
+// present reports whether a raw JSON value is set and not null.
+func present(v jsontext.Value) bool { return len(v) > 0 && string(v) != "null" }
+
 func (p *apiPR) pr() PR {
 	return PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, HeadSHA: p.Head.SHA, State: p.State, URL: p.HTMLURL, CreatedAt: p.CreatedAt}
 }
@@ -177,29 +182,64 @@ func (i *apiIssue) issue() Issue {
 }
 
 // isPR reports whether an issue list entry is a pull request.
-func (i *apiIssue) isPR() bool { return len(i.PullRequest) > 0 && string(i.PullRequest) != "null" }
+func (i *apiIssue) isPR() bool { return present(i.PullRequest) }
+
+func (r *rest) DefaultBranch(ctx context.Context) (string, error) {
+	return defaultBranch(ctx, r, r.headers)
+}
+
+func (r *rest) GetPR(ctx context.Context, n int) (PR, error) {
+	var p apiPR
+	if err := r.do(ctx, http.MethodGet, prPath(r.repo, n), nil, &p, r.headers); err != nil {
+		return PR{}, err
+	}
+	return r.toPR(&p), nil
+}
+
+func (r *rest) CreatePR(ctx context.Context, head, base, title, body string) (PR, error) {
+	var p apiPR
+	in := prCreate{Title: title, Head: head, Base: base, Body: body}
+	if err := r.do(ctx, http.MethodPost, "/repos/"+r.repo+"/pulls", in, &p, r.headers); err != nil {
+		return PR{}, err
+	}
+	return r.toPR(&p), nil
+}
+
+func (r *rest) UpdatePR(ctx context.Context, n int, title, body string) error {
+	return r.do(ctx, http.MethodPatch, prPath(r.repo, n), prEdit{Title: title, Body: body}, nil, r.headers)
+}
+
+func (r *rest) ClosePR(ctx context.Context, n int) error {
+	return r.do(ctx, http.MethodPatch, prPath(r.repo, n), prEdit{State: "closed"}, nil, r.headers)
+}
+
+func (r *rest) UpdateIssue(ctx context.Context, n int, body string) error {
+	return r.do(ctx, http.MethodPatch, issuePath(r.repo, n), map[string]string{"body": body}, nil, r.headers)
+}
 
 type githubClient struct{ rest }
 
-func (g *githubClient) headers(h http.Header) {
-	if g.token != "" {
-		h.Set("Authorization", "Bearer "+g.token)
-	}
-	h.Set("Accept", "application/vnd.github+json")
-	h.Set("X-GitHub-Api-Version", "2022-11-28")
+func newGitHub(info Info, token string, c *http.Client) *githubClient {
+	return &githubClient{api: info.APIURL, repo: info.Repo, c: c, headers: githubHeaders(token), toPR: githubPR}
 }
 
-func (g *githubClient) toPR(p *apiPR) PR {
+func githubHeaders(token string) func(http.Header) {
+	return func(h http.Header) {
+		if token != "" {
+			h.Set("Authorization", "Bearer "+token)
+		}
+		h.Set("Accept", "application/vnd.github+json")
+		h.Set("X-GitHub-Api-Version", "2022-11-28")
+	}
+}
+
+func githubPR(p *apiPR) PR {
 	pr := p.pr()
 	pr.Merged = p.MergedAt != nil
 	pr.Mergeable = p.Mergeable
 	pr.NodeID = p.NodeID
-	pr.AutoMerge = len(p.AutoMerge) > 0 && string(p.AutoMerge) != "null"
+	pr.AutoMerge = present(p.AutoMerge)
 	return pr
-}
-
-func (g *githubClient) DefaultBranch(ctx context.Context) (string, error) {
-	return defaultBranch(ctx, &g.rest, g.headers)
 }
 
 func (g *githubClient) ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) {
@@ -207,31 +247,6 @@ func (g *githubClient) ListPRs(ctx context.Context, state string, maxPages int) 
 	return listPRs(ctx, &g.rest, g.headers, g.toPR, per, maxPages, func(page int) string {
 		return "/repos/" + g.repo + "/pulls?state=" + state + "&sort=updated&direction=desc&per_page=100&page=" + strconv.Itoa(page)
 	})
-}
-
-func (g *githubClient) GetPR(ctx context.Context, n int) (PR, error) {
-	var p apiPR
-	if err := g.do(ctx, http.MethodGet, prPath(g.repo, n), nil, &p, g.headers); err != nil {
-		return PR{}, err
-	}
-	return g.toPR(&p), nil
-}
-
-func (g *githubClient) CreatePR(ctx context.Context, head, base, title, body string) (PR, error) {
-	var p apiPR
-	in := prCreate{Title: title, Head: head, Base: base, Body: body}
-	if err := g.do(ctx, http.MethodPost, "/repos/"+g.repo+"/pulls", in, &p, g.headers); err != nil {
-		return PR{}, err
-	}
-	return g.toPR(&p), nil
-}
-
-func (g *githubClient) UpdatePR(ctx context.Context, n int, title, body string) error {
-	return g.do(ctx, http.MethodPatch, prPath(g.repo, n), prEdit{Title: title, Body: body}, nil, g.headers)
-}
-
-func (g *githubClient) ClosePR(ctx context.Context, n int) error {
-	return g.do(ctx, http.MethodPatch, prPath(g.repo, n), prEdit{State: "closed"}, nil, g.headers)
 }
 
 // githubUnavailableRe matches enablePullRequestAutoMerge errors after which GitHub will not
@@ -425,10 +440,6 @@ func (g *githubClient) CreateIssue(ctx context.Context, title, body string, labe
 		return Issue{}, err
 	}
 	return out.issue(), nil
-}
-
-func (g *githubClient) UpdateIssue(ctx context.Context, n int, body string) error {
-	return g.do(ctx, http.MethodPatch, issuePath(g.repo, n), map[string]string{"body": body}, nil, g.headers)
 }
 
 func prPath(repo string, n int) string    { return "/repos/" + repo + "/pulls/" + strconv.Itoa(n) }

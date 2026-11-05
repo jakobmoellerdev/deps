@@ -15,14 +15,16 @@ type giteaClient struct {
 	forgejo bool // the merge form field is "Do" on Forgejo, "do" on Gitea
 }
 
-func (g *giteaClient) headers(h http.Header) {
-	if g.token != "" {
-		h.Set("Authorization", "token "+g.token)
+func giteaHeaders(token string) func(http.Header) {
+	return func(h http.Header) {
+		if token != "" {
+			h.Set("Authorization", "token "+token)
+		}
+		h.Set("Accept", "application/json")
 	}
-	h.Set("Accept", "application/json")
 }
 
-func (g *giteaClient) toPR(p *apiPR) PR {
+func giteaPR(p *apiPR) PR {
 	pr := p.pr()
 	pr.Merged = p.Merged
 	m := p.Mergeable != nil && *p.Mergeable
@@ -30,39 +32,10 @@ func (g *giteaClient) toPR(p *apiPR) PR {
 	return pr
 }
 
-func (g *giteaClient) DefaultBranch(ctx context.Context) (string, error) {
-	return defaultBranch(ctx, &g.rest, g.headers)
-}
-
 func (g *giteaClient) ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) {
 	return listPRs(ctx, &g.rest, g.headers, g.toPR, 50, maxPages, func(page int) string {
 		return "/repos/" + g.repo + "/pulls?state=" + state + "&sort=recentupdate&limit=50&page=" + strconv.Itoa(page)
 	})
-}
-
-func (g *giteaClient) GetPR(ctx context.Context, n int) (PR, error) {
-	var p apiPR
-	if err := g.do(ctx, http.MethodGet, prPath(g.repo, n), nil, &p, g.headers); err != nil {
-		return PR{}, err
-	}
-	return g.toPR(&p), nil
-}
-
-func (g *giteaClient) CreatePR(ctx context.Context, head, base, title, body string) (PR, error) {
-	var p apiPR
-	in := prCreate{Title: title, Head: head, Base: base, Body: body}
-	if err := g.do(ctx, http.MethodPost, "/repos/"+g.repo+"/pulls", in, &p, g.headers); err != nil {
-		return PR{}, err
-	}
-	return g.toPR(&p), nil
-}
-
-func (g *giteaClient) UpdatePR(ctx context.Context, n int, title, body string) error {
-	return g.do(ctx, http.MethodPatch, prPath(g.repo, n), prEdit{Title: title, Body: body}, nil, g.headers)
-}
-
-func (g *giteaClient) ClosePR(ctx context.Context, n int) error {
-	return g.do(ctx, http.MethodPatch, prPath(g.repo, n), prEdit{State: "closed"}, nil, g.headers)
 }
 
 // EnableAutoMerge schedules the merge with POST /pulls/{n}/merge and
@@ -155,7 +128,7 @@ func (g *giteaClient) ListIssues(ctx context.Context, maxPages int) ([]Issue, er
 	})
 	if hasStatus(err, http.StatusNotFound, "") {
 		if repo, rerr := g.repository(ctx, g.headers); rerr == nil &&
-			(repo.HasIssues != nil && !*repo.HasIssues || len(repo.ExternalTracker) > 0 && string(repo.ExternalTracker) != "null") {
+			(repo.HasIssues != nil && !*repo.HasIssues || present(repo.ExternalTracker)) {
 			return nil, fmt.Errorf("%w: %w", ErrIssuesDisabled, err)
 		}
 	}
@@ -179,10 +152,6 @@ func (g *giteaClient) CreateIssue(ctx context.Context, title, body string, label
 		return Issue{}, err
 	}
 	return out.issue(), nil
-}
-
-func (g *giteaClient) UpdateIssue(ctx context.Context, n int, body string) error {
-	return g.do(ctx, http.MethodPatch, issuePath(g.repo, n), map[string]string{"body": body}, nil, g.headers)
 }
 
 // labelIDs resolves label names (case-insensitive) to ids.

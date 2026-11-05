@@ -52,7 +52,7 @@ type GitHubCommits struct {
 // other tokens. Change paths are relative to prefix, the repository path of the directory
 // deps runs in (gitx.Repo.Prefix).
 func NewGitHubCommits(ctx context.Context, info Info, token string, c *http.Client, prefix string) (*GitHubCommits, error) {
-	g := &GitHubCommits{gh: &githubClient{api: info.APIURL, repo: info.Repo, token: token, c: c}, prefix: prefix}
+	g := &GitHubCommits{gh: newGitHub(info, token, c), prefix: prefix}
 	var login string
 	if IsAppToken(token) {
 		var v struct {
