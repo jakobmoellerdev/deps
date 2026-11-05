@@ -1,6 +1,7 @@
 package versioning
 
 import (
+	"slices"
 	"strconv"
 
 	msemver "github.com/Masterminds/semver/v3"
@@ -9,10 +10,13 @@ import (
 )
 
 // cargoVersion is a Cargo requirement version: MAJOR[.MINOR[.PATCH[-pre][+build]]] without
-// a "v" prefix. n is the number of parts written; v pads the missing ones with 0.
+// a "v" prefix. n is the number of parts written; parts pads the missing ones with 0. v is
+// the parsed version of one with a prerelease or build suffix and nil for a plain release,
+// which parses without allocating.
 type cargoVersion struct {
-	v *msemver.Version
-	n int
+	parts [3]uint64
+	n     int
+	v     *msemver.Version
 }
 
 // parseCargo accepts 1–3 numeric parts; a prerelease or build suffix only after 3 parts.
@@ -33,7 +37,7 @@ func parseCargo(s string) (cargoVersion, bool) {
 		}
 		parts[n], n, i = p, n+1, j
 		if i == len(s) {
-			return cargoVersion{v: msemver.New(parts[0], parts[1], parts[2], "", ""), n: n}, true
+			return cargoVersion{parts: parts, n: n}, true
 		}
 		if s[i] != '.' {
 			break
@@ -47,7 +51,15 @@ func parseCargo(s string) (cargoVersion, bool) {
 	if err != nil {
 		return cargoVersion{}, false
 	}
-	return cargoVersion{v: v, n: 3}, true
+	return cargoVersion{parts: parts, n: 3, v: v}, true
+}
+
+// pre is the prerelease without "-"; "" = release.
+func (c cargoVersion) pre() string {
+	if c.v == nil {
+		return ""
+	}
+	return c.v.Prerelease()
 }
 
 // cargoCompat requires the same precision (a partial requirement gets candidates of its own
@@ -56,13 +68,28 @@ func cargoCompat(cur, next cargoVersion) string {
 	switch {
 	case next.n != cur.n:
 		return "precision"
-	case next.v.Prerelease() != "" && cur.v.Prerelease() == "":
+	case next.pre() != "" && cur.pre() == "":
 		return "prerelease"
 	}
 	return ""
 }
 
-func compareCargo(a, b cargoVersion) int { return a.v.Compare(b.v) }
+// compareCargo orders like Masterminds' Compare: by the parts, then a release above its
+// prereleases, which compare by semver precedence; build metadata is ignored.
+func compareCargo(a, b cargoVersion) int {
+	if c := slices.Compare(a.parts[:], b.parts[:]); c != 0 {
+		return c
+	}
+	switch ap, bp := a.pre(), b.pre(); {
+	case ap == "" && bp == "":
+		return 0
+	case ap == "":
+		return 1
+	case bp == "":
+		return -1
+	}
+	return a.v.Compare(b.v)
+}
 
 // cargoKind follows Cargo's compatibility rules: leaving the range of the leftmost non-zero
 // part (1.x, 0.4.x, 0.0.3) is major, so 0.4 → 0.5 and 0.0.3 → 0.0.4 are breaking. Within it,
@@ -71,7 +98,7 @@ func cargoKind(cur, next cargoVersion) dep.UpdateType {
 	if cargoMajor(cur) != cargoMajor(next) {
 		return dep.Major
 	}
-	if cur.v.Major() > 0 && cur.v.Minor() != next.v.Minor() {
+	if cur.parts[0] > 0 && cur.parts[1] != next.parts[1] {
 		return dep.Minor
 	}
 	return dep.Patch
@@ -80,14 +107,18 @@ func cargoKind(cur, next cargoVersion) dep.UpdateType {
 // cargoMajor is the compatibility range: "1" for 1.x, "0.4" for 0.4.x, "0.0.3" for 0.0.3.
 // It names separateMultipleMajor buckets (v1, v0.4).
 func cargoMajor(c cargoVersion) string {
-	v := c.v
 	switch {
-	case v.Major() > 0:
-		return strconv.FormatUint(v.Major(), 10)
-	case v.Minor() > 0:
-		return "0." + strconv.FormatUint(v.Minor(), 10)
+	case c.parts[0] > 0:
+		return strconv.FormatUint(c.parts[0], 10)
+	case c.parts[1] > 0:
+		return "0." + strconv.FormatUint(c.parts[1], 10)
 	}
-	return "0.0." + strconv.FormatUint(v.Patch(), 10)
+	return "0.0." + strconv.FormatUint(c.parts[2], 10)
 }
 
-func (c cargoVersion) semver() *msemver.Version { return c.v }
+func (c cargoVersion) semver() *msemver.Version {
+	if c.v != nil {
+		return c.v
+	}
+	return msemver.New(c.parts[0], c.parts[1], c.parts[2], "", "")
+}
