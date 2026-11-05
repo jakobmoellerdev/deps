@@ -712,6 +712,21 @@ func TestLoadCustom(t *testing.T) {
 	}
 }
 
+// A managerFilePatterns entry with slashes but no regex end is a glob that matches nothing.
+func TestLoadRootedGlob(t *testing.T) {
+	res, err := load(t, `{customManagers: [{customType: 'regex', managerFilePatterns: ['/.github/workflows/**/*.yml'], matchStrings: ['V=(?<currentValue>\\S+)'], datasourceTemplate: 'docker', depNameTemplate: 'x'}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := section(t, res, "custom"); !strings.Contains(got, "files: [/.github/workflows/**/*.yml]") {
+		t.Errorf("custom:\n%s", got)
+	}
+	want := `warn customManagers[0]: managerFilePatterns "/.github/workflows/**/*.yml" is a glob starting with / (not /regex/): it matches no repository path, in Renovate neither`
+	if !slices.Contains(noteLines(res), want) {
+		t.Errorf("notes = %q", noteLines(res))
+	}
+}
+
 // fileMatch entries are regexes; the translation keeps them as /re/ patterns.
 func TestLoadFileMatch(t *testing.T) {
 	res, err := load(t, `{regexManagers: [{fileMatch: ['^Dockerfile$'], matchStrings: ['V=(?<currentValue>\\S+)'], datasourceTemplate: 'docker', depNameTemplate: 'x'}]}`)

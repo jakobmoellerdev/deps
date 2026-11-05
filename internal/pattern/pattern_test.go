@@ -24,6 +24,8 @@ func TestMatch(t *testing.T) {
 		{"mixed no positive match", []string{`/^k8s\.io\//`, "!k8s.io/kube-openapi"}, "golang.org/x/net", false},
 		{"negated regex", []string{"**", `!/openapi/`}, "k8s.io/kube-openapi", false},
 		{"slash alone is a glob", []string{"/"}, "/", true},
+		{"slashes without a regex end are a glob", []string{"/.github/workflows/**/*.yml"}, "/.github/workflows/a/b.yml", true},
+		{"other flags make a glob", []string{"/a/g"}, "/a/g", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -49,9 +51,8 @@ func TestCompileErrors(t *testing.T) {
 	tests := []struct{ pattern, want string }{
 		{"a[", `invalid glob "a[": syntax error in pattern`},
 		{"/a(/", "invalid regex \"/a(/\": error parsing regexp: missing closing ): `a(`"},
-		{"/a/g", `invalid regex "/a/g": unknown flags "g" (only i)`},
 		{"!", `invalid glob "!": missing pattern after !`},
-		{"!/a/x", `invalid regex "!/a/x": unknown flags "x" (only i)`},
+		{"!/a(/i", "invalid regex \"!/a(/i\": error parsing regexp: missing closing ): `(?i)a(`"},
 	}
 	for _, tt := range tests {
 		_, err := Compile([]string{tt.pattern})

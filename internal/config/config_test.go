@@ -112,7 +112,7 @@ func TestLoadErrors(t *testing.T) {
 		{"custom: [{files: ['[']}]\n", "custom[0].files[0]: invalid glob"},
 		{"custom: [{files: ['/(/']}]\n", `custom[0].files[0]: invalid regex "/(/"`},
 		{"ignorePaths: ['!x']\n", `ignorePaths[0]: negation is not supported in ignorePaths, got "!x"`},
-		{"rules: [{names: ['/a/g']}]\n", `rules[0].names[0]: invalid regex "/a/g": unknown flags "g" (only i)`},
+		{"rules: [{names: ['/a(/']}]\n", `rules[0].names[0]: invalid regex "/a(/"`},
 		{"custom: [{files: [x], datasource: pip}]\n", "custom[0].datasource: must be one of git-tags"},
 		{"custom: [{files: [x], versioning: calver}]\n", "custom[0].versioning: must be one of tag"},
 		{"custom: [{files: [x], match: '('}]\n", "custom[0].match: invalid RE2"},

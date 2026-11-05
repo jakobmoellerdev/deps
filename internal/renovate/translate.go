@@ -917,6 +917,12 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 		case "customType":
 		case "managerFilePatterns":
 			l, _ := strs(v)
+			for _, f := range l {
+				body := strings.TrimPrefix(f, "!")
+				if _, flags, re := pattern.Regex(body); strings.HasPrefix(body, "/") && (!re || (flags != "" && flags != "i")) {
+					t.n.warn(origin, "managerFilePatterns %q is a glob starting with / (not /regex/): it matches no repository path, in Renovate neither", f)
+				}
+			}
 			files = append(files, l...)
 		case "fileMatch":
 			l, _ := strs(v)

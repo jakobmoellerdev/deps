@@ -56,13 +56,11 @@ func Compile(patterns []string) (*List, error) {
 
 // compile compiles p; errors name the entry as written (with its "!").
 func compile(p, entry string) (matcher, error) {
-	if expr, flags, ok := Regex(p); ok {
-		switch flags {
-		case "":
-		case "i":
+	// As in Renovate (isRegexMatch), only "/expr/" and "/expr/i" are regexes: "/.github/**/*.yml"
+	// is a glob.
+	if expr, flags, ok := Regex(p); ok && (flags == "" || flags == "i") {
+		if flags == "i" {
 			expr = "(?i)" + expr
-		default:
-			return matcher{}, fmt.Errorf("invalid regex %q: unknown flags %q (only i)", entry, flags)
 		}
 		re, err := regexp.Compile(expr)
 		if err != nil {
