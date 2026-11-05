@@ -44,6 +44,7 @@ Every command accepts these flags.
 | `--dir` | string | `"."` | repository directory to scan |
 | `--log-format` | string | `"text"` | log format: text, json; $DEPS_LOG_FORMAT replaces the default |
 | `--log-level` | string | `"warn"` | log level: debug, info, warn, error; $DEPS_LOG_LEVEL replaces the default |
+| `--report` | string | `""` | plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT) |
 | `-v, --verbose` | bool | `false` | also print skipped dependencies (skip lines) |
 
 ## deps apply
@@ -413,6 +414,7 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `DEPS_LOG_LEVEL`, `DEPS_LOG_FORMAT` | all | defaults of `--log-level`, `--log-format` |
+| `DEPS_REPORT` | `plan`, `apply`, `run` | default of `--report` (JSON report file, see `deps help output`) |
 | `NPM_CONFIG_REGISTRY`, `npm_config_registry` | `npm` datasource | registry when no `.npmrc` sets one (default `https://registry.npmjs.org/`) |
 | `DOCKER_CONFIG` | `docker` datasource | directory of the Docker `config.json` with registry credentials and credential helpers (default `~/.docker`) |
 | `DEPS_CRATES_INDEX_URL`, `DEPS_CRATES_API_URL` | `crate` datasource | base URLs of a crates.io sparse index mirror (default `https://index.crates.io`) and of the crates.io API used for source repositories (default `https://crates.io`) |
@@ -423,6 +425,8 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GOMODCACHE` | `go` datasource | read via `go env -json` (the process environment when `go` is not on `PATH`). `GOMODCACHE`'s `cache/download/**/@v/*.info` files provide release times without network. |
 | `GITHUB_ACTIONS`, `GITEA_ACTIONS`, `FORGEJO_ACTIONS`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_REPOSITORY`, `FORGEJO_SERVER_URL`, `FORGEJO_API_URL`, `FORGEJO_REPOSITORY` | all | platform detection: `FORGEJO_ACTIONS=true` → forgejo, `GITEA_ACTIONS=true` → gitea, `GITHUB_ACTIONS=true` → github; the `FORGEJO_*` variables fall back to the `GITHUB_*` ones. `run` also detects from the `origin` remote; `plan`, `apply` and `explain` only from these variables. |
 | `GITHUB_STEP_SUMMARY`, `GITEA_STEP_SUMMARY` | all | step summary file (see `deps help output`) |
+| `GITHUB_OUTPUT` | `plan`, `apply`, `run` | step outputs file: the counts are appended (see `deps help output`) |
+| `GITHUB_WORKSPACE` | all | on GitHub Actions, annotation paths are made relative to it |
 
 On a 401 without a static token, git tag lookups call `git credential fill` once per host, with `GIT_TERMINAL_PROMPT=0` and a 10s timeout. Every `git` process deps runs has `GIT_TERMINAL_PROMPT=0`, so deps never prompts. npm lookups use `.npmrc` `_authToken` entries, PyPI index lookups the index URL's userinfo (`https://user:token@host/simple`), and docker lookups the Docker credential chain (`~/.docker/config.json` and credential helpers).
 
@@ -497,3 +501,13 @@ The PRs are the ones `run` opens: plan and apply group their updates the same wa
 **Step summary.** If `GITHUB_STEP_SUMMARY` (or else `GITEA_STEP_SUMMARY`) is set, the same summary is appended to that file as markdown, under `## deps <command>`: the headline, one section per PR with its branch, status and link (run), automerge and schedule, and a `| Dependency | File | From | To | Type |` table; other PR actions (closed PRs, the dashboard); held-back releases; skip reasons with counts and how to update, with the skipped dependencies in a collapsible `<details>`; and the errors in full. The file stays within GitHub's 1 MiB per step, counting what is already in it: when the summary does not fit, the list of skipped dependencies is left out first, then the held-back releases, then the PRs' update tables; if it still does not fit, it is cut and ends with a note pointing at the job log.
 
 **GitHub Actions annotations.** On GitHub Actions (`GITHUB_ACTIONS=true`, but not on Gitea or Forgejo runners, which don't render them) deps also prints workflow commands: each `error` line and a fatal error as an `::error` annotation, located at the dependency's file and line, or for config errors at the line of the offending key in `.deps.yaml`; `warn` and `error` logs as `::warning`/`::error`; and the `-v` skip lines inside a collapsible `::group::`. GitHub shows 10 error and 10 warning annotations per step, so deps prints no more than that; the result lines are complete.
+
+**JSON report.** `--report <file>` (or `$DEPS_REPORT`) makes `plan`, `apply` and `run` also write the summary as one JSON object, replacing the file. It is not written when deps fails before it has a result (usage or config errors, exit 2). Fields:
+
+- `command` (`plan`, `apply`, `run`, `run --dry-run`), `dependencies`, `durationMs`;
+- `prs[]`: `branch`, `title`, `updates[]` (`name`, `manager`, `file`, `line`, `from`, `to`, `type`, `lockfile`, `advisories` as IDs; a lock file maintenance has type `lockFileMaintenance` and no versions); for `run` also `status`, `automerge`, `number`, `url` and `waitsFor` (crons);
+- `otherActions[]`: closed obsolete PRs and the dashboard (`branch`, `title`, `status`, `number`, `url`, `dashboard`);
+- `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `skipped[]` (`reason`, `count`), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error);
+- `counts`: the step outputs below, by camelCase name.
+
+**Step outputs.** If `GITHUB_OUTPUT` is set (GitHub, Gitea and Forgejo runners), deps appends `updates`, `prs`, `held-back`, `skipped` and `errors`, and for `run` also `created`, `updated` (including rebased), `closed` (including deleted branches), `up-to-date`, `automerged` (auto-merge requests and direct merges) and `prs-skipped` (any `skipped: …` status), each as `<name>=<count>`. The dashboard is not counted.

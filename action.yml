@@ -59,6 +59,32 @@ outputs:
       `preinstalled` if a matching `deps` on PATH was used, `true` if the binary came from the tool
       cache or the Actions cache, `false` if it was downloaded.
     value: ${{ steps.preinstalled.outputs.bin && 'preinstalled' || steps.install.outputs.cache-hit }}
+  report:
+    description: >-
+      Path of the JSON report of the run (`--report`, see `deps help output`), in the runner's
+      temp directory. Not written when deps fails before it has a result (an invalid config).
+    value: ${{ steps.run.outputs.report }}
+  updates:
+    description: Number of updates found.
+    value: ${{ steps.run.outputs.updates }}
+  prs:
+    description: Number of PRs the updates are grouped into.
+    value: ${{ steps.run.outputs.prs }}
+  created:
+    description: "`run`: PRs (or branches) created."
+    value: ${{ steps.run.outputs.created }}
+  updated:
+    description: "`run`: PRs updated or rebased."
+    value: ${{ steps.run.outputs.updated }}
+  closed:
+    description: "`run`: obsolete PRs closed or branches deleted."
+    value: ${{ steps.run.outputs.closed }}
+  automerged:
+    description: "`run`: auto-merge requests and direct merges."
+    value: ${{ steps.run.outputs.automerged }}
+  errors:
+    description: Number of errors; deps exits 1 when it is not 0.
+    value: ${{ steps.run.outputs.errors }}
 runs:
   using: composite
   steps:
@@ -210,9 +236,14 @@ runs:
         path: ${{ steps.resolve.outputs.dir }}
         key: ${{ steps.resolve.outputs.key }}
     - name: Run deps
+      id: run
       shell: bash
       env:
         BIN: ${{ steps.preinstalled.outputs.bin || format('{0}/deps', steps.resolve.outputs.dir) }}
         DEPS_TOKEN: ${{ inputs.token }}
         DEPS_SIGNING_KEY: ${{ inputs.signing-key }}
-      run: '"$BIN" ${{ inputs.args }}'
+        # one file per action step (github.action is unique per step) in the job's temp dir
+        DEPS_REPORT: ${{ runner.temp }}/deps-report-${{ github.action }}.json
+      run: |
+        echo "report=$DEPS_REPORT" >> "$GITHUB_OUTPUT"
+        "$BIN" ${{ inputs.args }}

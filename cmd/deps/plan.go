@@ -104,7 +104,7 @@ func local(cmd *cobra.Command, o *rootOpts, write bool) error {
 	if write {
 		cmdName = "apply"
 	}
-	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, Elapsed: time.Since(start), Verbose: o.verbose}
+	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, Elapsed: time.Since(start), Verbose: o.verbose, Report: o.report}
 	sum.write(stderr)
 	files := map[string]bool{}
 	for _, u := range res.Updates {

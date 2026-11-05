@@ -32,6 +32,14 @@ Runs as `composite` with the steps "Resolve deps version", "Check for a preinsta
 |---|---|
 | `version` | The deps release that ran, e.g. v0.1.0. |
 | `cache-hit` | `preinstalled` if a matching `deps` on PATH was used, `true` if the binary came from the tool cache or the Actions cache, `false` if it was downloaded. |
+| `report` | Path of the JSON report of the run (`--report`, see `deps help output`), in the runner's temp directory. Not written when deps fails before it has a result (an invalid config). |
+| `updates` | Number of updates found. |
+| `prs` | Number of PRs the updates are grouped into. |
+| `created` | `run`: PRs (or branches) created. |
+| `updated` | `run`: PRs updated or rebased. |
+| `closed` | `run`: obsolete PRs closed or branches deleted. |
+| `automerged` | `run`: auto-merge requests and direct merges. |
+| `errors` | Number of errors; deps exits 1 when it is not 0. |
 
 ## Usage
 

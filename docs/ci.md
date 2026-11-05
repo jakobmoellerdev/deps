@@ -33,6 +33,7 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
 - [Labels, reviewers and assignees](#labels-reviewers-and-assignees)
 - [Overlapping runs](#overlapping-runs)
 - [Step summary](#step-summary)
+- [Step outputs and report](#step-outputs-and-report)
 - [Dry runs and config checks](#dry-runs-and-config-checks)
   - [Preview on pull requests](#preview-on-pull-requests)
 - [Caching Go modules](#caching-go-modules)
@@ -647,6 +648,24 @@ GitHub shows it on the run page. On Gitea and Forgejo it shows where the instanc
 GitHub rejects a step summary larger than 1 MiB as a whole, so deps keeps the file within that size, counting what earlier commands of the step wrote. A summary that doesn't fit drops, in this order, the list of skipped dependencies, the held-back releases and the PRs' update tables (the counts stay); a summary still too large is cut at a line and ends with `Step summary truncated to its size limit; the job log has everything.` For scale: `plan -v` on external-secrets (677 updates, 5306 skipped dependencies) writes about 450 KB.
 
 **Annotations (GitHub).** On GitHub, errors also become annotations: a failed lookup at its dependency's file and line, a config error at the line of the key in `.deps.yaml`, so a [config check on a pull request](#dry-runs-and-config-checks) marks the changed line in *Files changed*. Warnings (for example obsolete PRs left open because of errors) are warning annotations, and `-v` puts the skip lines into a collapsible group of the log. At most 10 error and 10 warning annotations are printed per step, as many as GitHub shows. Gitea and Forgejo don't render annotations, so deps prints none there.
+
+## Step outputs and report
+
+The action has outputs with the counts of the run (`updates`, `prs`, `created`, `updated`, `closed`, `automerged`, `errors`) and `report`, the path of a JSON file with the whole result: every PR with its updates, status and link, the held-back releases, the skip reasons and the errors with their file and line. The fields are listed in `deps help output`. Later steps can use them, for example to notify on new PRs or on errors:
+
+```yaml
+      - uses: jakobmoellerdev/deps@v0.3.0
+        id: deps
+        continue-on-error: true # keep going on lookup errors; the next step decides
+        with:
+          args: run -v
+      - if: steps.deps.outputs.created != '0' || steps.deps.outputs.errors != '0'
+        env:
+          REPORT: ${{ steps.deps.outputs.report }}
+        run: jq -r '.prs[] | select(.status == "created") | "\(.title) \(.url)"' "$REPORT"
+```
+
+Outside the action, `--report <file>` (or `DEPS_REPORT`) writes the same file, and the counts go to `GITHUB_OUTPUT` whenever it is set. No report is written when deps stops before it has a result (an invalid config, exit code 2); the outputs are empty then. An explicit `--report` in `args` takes the place of the action's file, so the `report` output then names a file that wasn't written.
 
 ## Dry runs and config checks
 

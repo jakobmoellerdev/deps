@@ -29,7 +29,8 @@ type summary struct {
 	Actions []bot.Action // run only
 	Errors  []error      // engine and build/bot errors
 	Elapsed time.Duration
-	Verbose bool // text lists the held-back releases, not only their count
+	Verbose bool   // text lists the held-back releases, not only their count
+	Report  string // --report file; "" = none
 }
 
 // skipReason is one aggregated skip reason.
@@ -423,6 +424,7 @@ func summaryPath(getenv func(string) string) string {
 // step wrote counts against stepSummaryLimit.
 func (s *summary) write(stderr io.Writer) {
 	s.writeText(stderr)
+	s.writeMachine(stderr, s.Report)
 	p := summaryPath(os.Getenv)
 	if p == "" {
 		return

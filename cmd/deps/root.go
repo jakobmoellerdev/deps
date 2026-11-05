@@ -44,6 +44,7 @@ type rootOpts struct {
 	log         logOpts
 	prof        profiler
 	concurrency int
+	report      string // --report: JSON result file of plan, apply and run
 }
 
 func newRoot() *cobra.Command {
@@ -59,6 +60,7 @@ func newRoot() *cobra.Command {
 			// reference show the same defaults everywhere.
 			envDefault(cmd, "log-level", "DEPS_LOG_LEVEL", &o.log.level)
 			envDefault(cmd, "log-format", "DEPS_LOG_FORMAT", &o.log.format)
+			envDefault(cmd, "report", "DEPS_REPORT", &o.report)
 			actionsLog = newAnnotator(os.Getenv, cmd.ErrOrStderr(), o.dir)
 			if err := setupLogger(o.log, cmd.ErrOrStderr()); err != nil {
 				return err
@@ -78,6 +80,7 @@ func newRoot() *cobra.Command {
 	pf.StringVar(&o.log.level, "log-level", "warn", "log level: debug, info, warn, error; $DEPS_LOG_LEVEL replaces the default")
 	pf.StringVar(&o.log.format, "log-format", "text", "log format: text, json; $DEPS_LOG_FORMAT replaces the default")
 	pf.IntVar(&o.concurrency, "concurrency", 32, "maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1")
+	pf.StringVar(&o.report, "report", "", "plan, apply, run: also write the result as JSON to this file (see deps help output; default: $DEPS_REPORT)")
 	pf.StringVar(&o.prof.cpu, "cpuprofile", "", "write a CPU profile to this file")
 	pf.StringVar(&o.prof.mem, "memprofile", "", "write an allocation profile to this file on exit")
 	_ = pf.MarkHidden("cpuprofile")
