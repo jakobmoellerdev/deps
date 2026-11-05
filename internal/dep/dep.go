@@ -25,6 +25,13 @@ const (
 // UpdateTypes lists every update type rules can select, in a stable order.
 var UpdateTypes = []UpdateType{Major, Minor, Patch, Digest, Pin}
 
+// The rangeStrategy values (config.RangeStrategies) that change how a manager rewrites a range
+// (Update.RangeStrategy).
+const (
+	RangeWiden = "widen"
+	RangePin   = "pin"
+)
+
 // Span is a byte range in a file; End is exclusive.
 type Span struct{ Start, End int }
 
@@ -141,6 +148,11 @@ type Update struct {
 	// Lockfile marks a lockfile-only update (rangeStrategy update-lockfile): the range admits
 	// NewVersion, so the manifest stays unchanged and only the lockfile moves from Dep.Locked.
 	Lockfile bool
+	// RangeStrategy is the rangeStrategy the range (Dep.Range) is rewritten under (a
+	// config.RangeStrategies value other than auto, see manager.RangeRewriter); "" = the
+	// manager's default rewrite, and for deps without a range. Managers tell RangeWiden and
+	// RangePin apart; every other value is their default rewrite.
+	RangeStrategy string
 	// Labels, Reviewers and Assignees go on the PR when it is created; a group's PR gets the
 	// union over its updates.
 	Labels, Reviewers, Assignees []string
@@ -152,11 +164,14 @@ func (u Update) Maintenance() bool { return u.Type == LockFileMaintenance }
 // FromTo renders the old and new version; digest-pinned sides are `<version>@<digest7>`
 // (except gomod: its only digests are those of pseudo-versions, which end in their commit),
 // and a new module path is rendered `<path>@<version>`. A lockfile-only update starts at the
-// locked version.
+// locked version, the pin of a range (rangeStrategy pin) at the range.
 func (u Update) FromTo() (from, to string) {
 	from, to = u.Dep.Version, u.NewVersion
-	if u.Lockfile {
+	switch {
+	case u.Lockfile:
 		from = u.Dep.Locked
+	case u.Type == Pin && u.NewDigest == "" && u.Dep.Range != "":
+		from = u.Dep.Range
 	}
 	if u.Dep.Digest != "" {
 		from += "@" + ShortDigest(u.Dep.Digest)

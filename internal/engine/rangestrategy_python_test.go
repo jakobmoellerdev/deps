@@ -107,6 +107,42 @@ func TestPythonRangeStrategy(t *testing.T) {
 				"fastapi 0.141.1->1.1.0 major", "flask 3->4 major", "numpy 1.26->2.0 major", "pygments 2.13.0->3.0.0 major", "typing-extensions 4.0.0->5.1.0 major",
 			},
 		},
+		{
+			name: "widen", cfg: "rangeStrategy: widen\n", locks: true,
+			want: []string{ // in-range versions are left alone (see TestPythonRangeEdits)
+				"fastapi 0.141.1->1.1.0 major", "flask 3->4 major", "numpy 1.26->2.0 major", "pygments 2.13.0->3.0.0 major", "typing-extensions 4.0.0->5.1.0 major",
+			},
+		},
+		{
+			name: "in-range-only", cfg: "rangeStrategy: in-range-only\n", locks: true,
+			want: []string{ // bump without the versions outside the ranges
+				"fastapi 0.141.1->0.142.0 minor",
+				"pygments 2.13.0->2.20.0 minor",
+				"python-multipart 0.0.27->0.0.40 patch",
+				"requests 2.32.0->2.34.0 minor",
+				"typing-extensions 4.0.0->4.15.0 minor",
+				"urllib3 2.0.0->2.5.0 minor",
+			},
+		},
+		{
+			name: "pin", cfg: "rangeStrategy: pin\n", locks: true,
+			want: []string{
+				"fastapi 0.141.1->0.142.0 minor", // pins the range: no separate pin update
+				"fastapi 0.141.1->1.1.0 major",
+				"flask 3->4.0.0 major", // ranked against the pinned 2.3.3
+				"flask <3->2.3.3 pin",  // no lockfile: the newest version the range admits
+				"numpy 1.26->2.3.1 major",
+				"numpy >=1.26,<2->1.26.4 pin",
+				"pygments 2.13.0->2.20.0 minor",
+				"pygments 2.13.0->3.0.0 major",
+				"python-multipart 0.0.27->0.0.40 patch",
+				"requests 2.32.0->2.34.0 minor",
+				"typing-extensions 4.0.0->4.15.0 minor",
+				"typing-extensions 4.0.0->5.1.0 major",
+				"urllib3 >=2.0.0->2.5.0 pin",
+				"urllib3 >=2.8.0->2.8.0 pin", // Pipfile: the locked version
+			},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root, cfg := setup(t, tt.cfg, pyFiles(t, tt.locks))
@@ -123,42 +159,66 @@ func TestPythonRangeStrategy(t *testing.T) {
 	}
 }
 
-// TestPythonRangeEdits builds the range rewrites of the auto run: clause by clause, keeping
-// the bytes around them.
+// TestPythonRangeEdits builds the range rewrites of a run's manifest updates: clause by
+// clause, keeping the bytes around them.
 func TestPythonRangeEdits(t *testing.T) {
-	root, cfg := setup(t, "", pyFiles(t, true))
-	o := pyOptions()
-	res, err := Resolve(t.Context(), root, cfg, env, o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest []dep.Update
-	for _, u := range res.Updates {
-		if !u.Lockfile {
-			manifest = append(manifest, u)
-		}
-	}
-	changes, errs := Build(t.Context(), root, o.Managers, manifest, nil)
-	if len(errs) > 0 {
-		t.Fatal(errs)
-	}
-	got := map[string]string{}
-	for _, c := range changes {
-		got[c.Path] = string(c.New)
-	}
-	for path, want := range map[string][]string{
-		"fastapi-template/backend/pyproject.toml": {`"fastapi[standard]>=1.1.0,<1.2.0",`},
-		"rich/pyproject.toml":                     {`pygments = "^3.0.0"`, `typing-extensions = ">=5.1, <5.2"`},
-		"req/requirements.txt":                    {"numpy>=2,<3\nflask<5\nurllib3>=2.0.0\n"},
+	for _, tt := range []struct {
+		name, cfg string
+		want      map[string][]string
+	}{
+		{name: "auto", want: map[string][]string{
+			"fastapi-template/backend/pyproject.toml": {`"fastapi[standard]>=1.1.0,<1.2.0",`},
+			"rich/pyproject.toml":                     {`pygments = "^3.0.0"`, `typing-extensions = ">=5.1, <5.2"`},
+			"req/requirements.txt":                    {"numpy>=2,<3\nflask<5\nurllib3>=2.0.0\n"},
+		}},
+		{name: "widen", cfg: "rangeStrategy: widen\n", want: map[string][]string{
+			"fastapi-template/backend/pyproject.toml": {`"fastapi[standard]>=0.141.1,<1.2.0",`},
+			"rich/pyproject.toml":                     {`pygments = "^2.13.0 || ^3.0.0"`, `typing-extensions = ">=4.0.0, <5.2"`},
+			"req/requirements.txt":                    {"numpy>=1.26,<3\nflask<5\nurllib3>=2.0.0\n"},
+		}},
+		{name: "pin", cfg: "rangeStrategy: pin\n", want: map[string][]string{
+			"fastapi-template/backend/pyproject.toml": {`"fastapi[standard]==0.142.0",`},
+			"rich/pyproject.toml":                     {`pygments = "==2.20.0"`, `typing-extensions = "==4.15.0"`},
+			"req/requirements.txt":                    {"numpy==1.26.4\nflask==2.3.3\nurllib3==2.5.0\n"},
+			"pipenv-examples/Pipfile":                 {`"==2.34.0"`},
+		}},
 	} {
-		for _, w := range want {
-			if !strings.Contains(got[path], w) {
-				t.Errorf("%s lacks %q:\n%s", path, w, got[path])
+		t.Run(tt.name, func(t *testing.T) {
+			root, cfg := setup(t, tt.cfg, pyFiles(t, true))
+			o := pyOptions()
+			res, err := Resolve(t.Context(), root, cfg, env, o)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-	}
-	if len(changes) != 3 {
-		t.Errorf("changed %d files", len(changes))
+			var manifest []dep.Update
+			for _, u := range res.Updates {
+				if !u.Lockfile {
+					manifest = append(manifest, u)
+				}
+			}
+			local, _ := Local(manifest) // one version per occurrence, as plan writes them
+			changes, errs := Build(t.Context(), root, o.Managers, local, nil)
+			if len(errs) > 0 {
+				t.Fatal(errs)
+			}
+			got := map[string]string{}
+			for _, c := range changes {
+				got[c.Path] = string(c.New)
+			}
+			for path, want := range tt.want {
+				for _, w := range want {
+					if !strings.Contains(got[path], w) {
+						t.Errorf("%s lacks %q:\n%s", path, w, got[path])
+					}
+				}
+			}
+			if len(changes) != len(tt.want) {
+				t.Errorf("changed %d files", len(changes))
+				for _, c := range changes {
+					t.Logf("%s:\n%s", c.Path, c.New)
+				}
+			}
+		})
 	}
 }
 

@@ -53,7 +53,9 @@ func (pep621Manager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Ed
 func (pep621Manager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
 
 // NewRange implements manager.RangeUpdater.
-func (pep621Manager) NewRange(d dep.Dep, v string) (string, bool) { return pyreq.NewRange(d, v) }
+func (pep621Manager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	return pyreq.NewRange(d, v, strategy)
+}
 
 // ReadLocks records the versions uv.lock, poetry.lock or pdm.lock locks the deps to
 // (pytool.ReadLocks).

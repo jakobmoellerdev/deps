@@ -33,16 +33,20 @@ const (
 )
 
 // Range strategies of rangeStrategy (Renovate's names), for npm, cargo and Python dependency ranges,
-// terraform constraints and Gradle dynamic versions.
+// terraform constraints and Gradle dynamic versions. Widen and pin need a manager that rewrites
+// whole ranges (npm, cargo, Python); the others resolve them to replace.
 const (
 	RangeAuto           = "auto"
 	RangeBump           = "bump"
 	RangeReplace        = "replace"
 	RangeUpdateLockfile = "update-lockfile"
+	RangeWiden          = dep.RangeWiden
+	RangePin            = dep.RangePin
+	RangeInRangeOnly    = "in-range-only"
 )
 
 // RangeStrategies are the accepted rangeStrategy values.
-var RangeStrategies = []string{RangeAuto, RangeBump, RangeReplace, RangeUpdateLockfile}
+var RangeStrategies = []string{RangeAuto, RangeBump, RangeReplace, RangeUpdateLockfile, RangeWiden, RangePin, RangeInRangeOnly}
 
 // Rebase modes of rebaseWhen.
 const (
@@ -153,7 +157,7 @@ var DefaultIgnorePaths = []string{
 type Config struct {
 	Version       int      `yaml:"version" jsonschema:"enum=1,default=1" jsonschema_description:"Config format version; must be 1 if set."`
 	Pin           string   `yaml:"pin" jsonschema:"enum=keep,enum=digest,default=keep" jsonschema_description:"Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment."`
-	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=replace,enum=update-lockfile,default=auto" jsonschema_description:"How npm, cargo and Python dependency ranges, terraform version constraints and Gradle dynamic versions (1.+, [1.0,2.0)) are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, .terraform.lock.hcl, gradle.lockfile) while the range admits the new version (rewriting the range otherwise, 1.+ -> 2.+), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,<2 -> >=1.5.0,<2, ~> 5.0 -> ~> 5.46; Gradle dynamic versions and ranges without a floor keep update-lockfile); auto is Renovate's default per manager: update-lockfile, replace for terraform and terragrunt."`
+	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=replace,enum=update-lockfile,enum=widen,enum=pin,enum=in-range-only,default=auto" jsonschema_description:"How npm, cargo and Python dependency ranges, terraform version constraints and Gradle dynamic versions (1.+, [1.0,2.0)) are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, .terraform.lock.hcl, gradle.lockfile) while the range admits the new version (rewriting the range otherwise, 1.+ -> 2.+), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,<2 -> >=1.5.0,<2, ~> 5.0 -> ~> 5.46; Gradle dynamic versions and ranges without a floor keep update-lockfile), in-range-only raises the range like bump but only to versions it admits, widen leaves admitted versions alone and widens the range to admit others (^1.2.3 -> ^1.2.3 || ^2.0.0, >=1.2,<2 -> >=1.2,<3, cargo 1.2 -> >=1.2, <3), pin writes the exact version (^1.2.3 -> 1.4.0, cargo =1.4.0, Python ==1.4.0): a pin update to the locked or newest admitted version, then each newer one (widen and pin are replace for terraform, terragrunt and Gradle); auto is Renovate's default per manager: update-lockfile, widen for npm || ranges, replace for terraform and terragrunt."`
 	Schedule      []string `yaml:"schedule" jsonschema_description:"Cron expressions (5 fields) equal to cron triggers of the workflow running deps: new update PRs are created only in runs triggered by one of them (non-schedule triggers such as workflow_dispatch, push or a local run act immediately); empty means every run."`
 	Security      *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, updates and schedule."`
 	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
@@ -365,7 +369,7 @@ type Rule struct {
 	Ignore         *bool    `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types."`
 	Pin            string   `yaml:"pin" jsonschema:"enum=keep,enum=digest" jsonschema_description:"Pin mode for matching deps."`
 	Allow          string   `yaml:"allow" jsonschema_description:"New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written."`
-	RangeStrategy  string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=replace,enum=update-lockfile" jsonschema_description:"Range strategy for matching npm, cargo, Python and terraform deps and Gradle dynamic versions (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
+	RangeStrategy  string   `yaml:"rangeStrategy" jsonschema:"enum=auto,enum=bump,enum=replace,enum=update-lockfile,enum=widen,enum=pin,enum=in-range-only" jsonschema_description:"Range strategy for matching npm, cargo, Python and terraform deps and Gradle dynamic versions (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
 	Updates        []string `yaml:"updates" jsonschema:"enum=major,enum=minor,enum=patch,enum=digest,enum=pin" jsonschema_description:"Allowed update types; replaces the earlier list."`
 	// Versioning overrides the dep's scheme before resolution, so it is a pre-policy field.
 	Versioning string `yaml:"versioning" jsonschema:"pattern=^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|regex:.+)$" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`

@@ -200,8 +200,8 @@ func gitDep(d *dep.Dep, raw string, tag *tomlspan.Value) {
 	d.Version, d.RefSpan, d.Line = tag.Str, dep.Span{Start: tag.Start, End: tag.End}, tag.Line
 }
 
-// Edits replaces the git tag, or rewrites the requirement with its versions moved to the new
-// version (requirement.render): the operators, wildcards and precision are kept.
+// Edits replaces the git tag, or rewrites the requirement for the new version under the
+// update's rangeStrategy (rewrite): the operators, wildcards and precision are kept.
 func (cargoManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	if d.Range == "" {
@@ -211,5 +211,21 @@ func (cargoManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	if !ok {
 		return nil, fmt.Errorf("unsupported requirement %q", d.Range)
 	}
-	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: req.render(u.NewVersion)}}, nil
+	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: req.rewrite(u.NewVersion, u.RangeStrategy)}}, nil
+}
+
+// NewRange implements manager.RangeRewriter (requirement.rewrite).
+func (cargoManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	req, ok := parseRequirement(d.Range)
+	if !ok {
+		return "", false
+	}
+	out := req.rewrite(v, strategy)
+	if out == d.Range {
+		return "", false
+	}
+	if n, ok := parseRequirement(out); !ok || !n.admits(v) {
+		return "", false
+	}
+	return out, true
 }

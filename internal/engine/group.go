@@ -172,7 +172,7 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 // definition that write the same bytes.
 func sameSharedEdit(u, c dep.Update) bool {
 	return u.Dep.VersionRef != "" && !sameDep(u.Dep, c.Dep) && u.NewVersion == c.NewVersion && u.NewDigest == c.NewDigest &&
-		u.NewName == c.NewName && u.NewChecksum == c.NewChecksum && u.Lockfile == c.Lockfile
+		u.NewName == c.NewName && u.NewChecksum == c.NewChecksum && u.Lockfile == c.Lockfile && u.RangeStrategy == c.RangeStrategy
 }
 
 // commitPrefix renders the conventional-commit header of a title ("chore(deps): ").
@@ -252,6 +252,10 @@ func title(name string, ups []dep.Update) string {
 	first := ups[0]
 	pre := commitPrefix(ups, false)
 	switch {
+	case same(func(u dep.Update) bool {
+		return u.Type == dep.Pin && u.NewDigest == "" && u.NewVersion == first.NewVersion
+	}):
+		return pre + "pin " + name + " to " + first.NewVersion
 	case same(func(u dep.Update) bool { return u.Type == dep.Pin && u.NewDigest == first.NewDigest }):
 		return pre + "pin " + name + " to " + short(first.NewDigest)
 	case same(func(u dep.Update) bool { return u.Type == dep.Digest && u.NewDigest == first.NewDigest }):

@@ -50,7 +50,7 @@ var Doc = refdoc.Manager{
 			"Every constraint of the Terraform grammar (`=`, `!=`, `>`, `>=`, `<`, `<=`, `~>`, comma-separated) is the dep's range; its first version is the current version. Only the version bytes are replaced, so operator and spacing are kept, and a new version is written at the precision and `v` style of the old one.",
 			"[`rangeStrategy`](configuration.md#rangestrategy) decides what happens (top level or per rule). `auto`, the default, is `replace`, Renovate's default for terraform: a version the constraint admits is left alone; otherwise the constraint is replaced (`~> 5.0` → `~> 6.2`, `3.2.1` → `3.3.0`).",
 			"`update-lockfile`: an admitted version moves only the provider's `.terraform.lock.hcl` entry (a lockfile-only update, `(<type>, lockfile)` in reports), starting from the locked version; versions outside the constraint replace it as under `replace`. Modules and `required_version` have no lock, so for them it is `replace`.",
-			"`bump` always raises the version: `~> 5.0` → `~> 5.46`, `>= 1.5.7` → `>= 1.9.5`, `= 1.2.3` → `= 1.3.0`.",
+			"`bump` always raises the version: `~> 5.0` → `~> 5.46`, `>= 1.5.7` → `>= 1.9.5`, `= 1.2.3` → `= 1.3.0`; `in-range-only` does so only for versions the constraint admits. `widen` and `pin` act as `replace`.",
 			"Constraints with an upper bound, an exclusion or several clauses (`< 2.0`, `!= 1.3`, `>= 4.0, < 6.0`) are never rewritten: under `update-lockfile` and `bump` their locked version moves within them, otherwise they are left alone (`outside range <r> (not rewritten)` in `deps explain`).",
 			"Under `replace` and `update-lockfile`, candidates are ranked against the version the lock file locks, when there is one.",
 		}},

@@ -61,7 +61,9 @@ func (*pipManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edit
 func (*pipManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
 
 // NewRange implements manager.RangeUpdater.
-func (*pipManager) NewRange(d dep.Dep, v string) (string, bool) { return pyreq.NewRange(d, v) }
+func (*pipManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	return pyreq.NewRange(d, v, strategy)
+}
 
 // Extract returns one dep per requirement line. Backslash continuations are joined, comments
 // dropped; option lines (`-r`, `-c`, `-e`, `--extra-index-url`, …) yield no deps, an

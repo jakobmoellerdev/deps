@@ -102,6 +102,54 @@ func TestRangeStrategy(t *testing.T) {
 				"p 1.0.0->2.0.0 major", // peers still keep in-range versions
 			},
 		},
+		{
+			name: "widen", cfg: "rangeStrategy: widen\n" + peersOn,
+			files: map[string]string{"web/package-lock.json": rangeLock},
+			want: []string{
+				"a 1.0.0->2.0.0 major", // in-range versions are left alone
+				"b 2.0.0->2.1.0 minor",
+				"c 1.0.0->1.0.1 patch",
+				"p 1.0.0->2.0.0 major",
+			},
+		},
+		{
+			name: "in-range-only", cfg: "rangeStrategy: in-range-only\n" + peersOn,
+			files: map[string]string{"web/package-lock.json": rangeLock},
+			want: []string{
+				"a 1.0.0->1.2.0 minor", // 2.0.0 is outside ^1.0.0
+				"b 2.0.0->2.0.1 patch",
+				"p 1.0.0->1.1.0 minor",
+			},
+		},
+		{
+			name: "pin", cfg: "rangeStrategy: pin\n" + peersOn,
+			files: map[string]string{"web/package-lock.json": rangeLock},
+			want: []string{
+				"a 1.0.0->1.2.0 minor", // ranked against the locked 1.1.0; it pins the range itself
+				"a 1.0.0->2.0.0 major",
+				"b 2.0.0->2.1.0 minor",
+				"c 1.0.0->1.0.1 patch",
+				"p 1.0.0->1.1.0 minor",
+				"p 1.0.0->2.0.0 major",
+			},
+		},
+		{
+			name: "pin update", cfg: "rangeStrategy: pin\nrules:\n  - updates: [major, pin]\n",
+			files: map[string]string{"web/package-lock.json": rangeLock},
+			want: []string{
+				"a ^1.0.0->1.1.0 pin", // the locked version; the major gets its own PR
+				"a 1.0.0->2.0.0 major",
+				"b ~2.0.0->2.0.1 pin",
+			},
+		},
+		{
+			name: "pin without a lockfile", cfg: "rangeStrategy: pin\nrules:\n  - updates: [major, pin]\n",
+			want: []string{
+				"a ^1.0.0->1.2.0 pin", // the newest version the range admits
+				"a 1.0.0->2.0.0 major",
+				"b ~2.0.0->2.0.1 pin",
+			},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			files := map[string]string{"web/package.json": rangePkg}
@@ -306,6 +354,36 @@ func TestRangeStrategyGradleBump(t *testing.T) {
 		want := "org.example:lib 1.1.0->1.2.0 minor lockfile\norg.example:lib 1.1.0->2.0.0 major"
 		if got := renderUpdates(res.Updates); got != want {
 			t.Errorf("%q: updates =\n%s\nwant\n%s", cfgText, got, want)
+		}
+	}
+}
+
+// TestBuildRangeRewrites resolves and builds npm ranges end to end: auto widens a `||` range,
+// pin writes the exact version, and the rest of the range grammar is rewritten in its form.
+func TestBuildRangeRewrites(t *testing.T) {
+	pkg := `{"dependencies": {"o": "^1.0.0 || ^2.0.0", "w": "^1.0.0", "x": "1.x", "h": "1.0.0 - 2.0.0"}}`
+	releases := fakeGo{"o": {"1.0.0", "2.0.0", "3.0.0"}, "w": {"1.0.0", "1.3.0", "2.0.0"}, "x": {"1.0.0", "1.5.0", "2.1.0"}, "h": {"1.0.0", "3.0.0"}}
+	root, cfg := setup(t, "rules:\n  - names: [w]\n    rangeStrategy: pin\n", map[string]string{"package.json": pkg})
+	o := Options{Managers: []manager.Manager{npm.New()}, Datasources: map[string]Datasource{"npm": releases}}
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil || len(res.Errors) > 0 {
+		t.Fatal(err, res.Errors)
+	}
+	want := map[string]string{
+		"o 2.0.0->3.0.0 major": `"o": "^1.0.0 || ^2.0.0 || ^3.0.0"`,
+		"w ^1.0.0->1.3.0 pin":  `"w": "1.3.0"`,
+		"w 1.0.0->2.0.0 major": `"w": "2.0.0"`,
+		"x 1.0.0->2.1.0 major": `"x": "2.x"`, // 1.5.0 cannot raise 1.x: not proposed without a lockfile
+		"h 1.0.0->3.0.0 major": `"h": "1.0.0 - 3.0.0"`,
+	}
+	if len(res.Updates) != len(want) {
+		t.Fatalf("updates =\n%s", renderUpdates(res.Updates))
+	}
+	for _, u := range res.Updates {
+		line := renderUpdates([]dep.Update{u})
+		changes, errs := Build(t.Context(), root, o.Managers, []dep.Update{u}, nil)
+		if len(errs) > 0 || len(changes) != 1 || !strings.Contains(string(changes[0].New), want[line]) || want[line] == "" {
+			t.Errorf("%s: changes = %+v, %v; want %s", line, changes, errs, want[line])
 		}
 	}
 }

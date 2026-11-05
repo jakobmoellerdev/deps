@@ -293,8 +293,12 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	ups := make([][]dep.Update, len(todo))
 	pend := make([]Pending, len(todo))
 	var wg sync.WaitGroup
+	rewriters := map[string]manager.RangeRewriter{}
 	rangers := map[string]manager.RangeUpdater{}
 	for _, m := range o.Managers {
+		if rw, ok := m.(manager.RangeRewriter); ok {
+			rewriters[m.Name()] = rw
+		}
 		if ru, ok := m.(manager.RangeUpdater); ok {
 			rangers[m.Name()] = ru
 		}
@@ -307,7 +311,8 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 				outs[i] = Trace{Dep: d, Rules: pols[i].pre.Rules, Policy: pols[i].pre}
 				return
 			}
-			r := resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now, ranger: rangers[d.Manager]}
+			r := resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now,
+				rewriter: rewriters[d.Manager], ranger: rangers[d.Manager]}
 			t, u := r.run(func() []Vuln { return sec.of(secIdx[i]) })
 			if pols[i].securityOnly && t.Err == nil && u == nil {
 				t.Dep.Skip = pols[i].pre.IgnoreReason // no fix for its advisories
@@ -827,87 +832,172 @@ type resolver struct {
 	declared datasource.DeclaredPathSource
 	renamed  string
 
-	// rangeStrategy of a range dep (setRange): inRange reports whether a version is one the
-	// manifest keeps (d.Range admits it; under bump only when a manager.RangeUpdater cannot
-	// raise the range for it); nil means every candidate replaces the range (bump). In-range
-	// candidates are lockfile-only updates when lockOnly, else they are not proposed.
+	// rangeStrategy of a range dep (setRange): strategy is the effective rangeStrategy (""
+	// for deps without a range); inRange reports whether a version is one the manifest keeps
+	// (d.Range admits it; under bump and in-range-only only when the range cannot be raised
+	// for it); nil means every candidate rewrites the range. In-range candidates are
+	// lockfile-only updates when lockOnly, else they are not proposed. within (in-range-only)
+	// reports the versions the range admits: no others are proposed; nil = no limit.
+	strategy string
 	inRange  func(string) bool
+	within   func(string) bool
 	lockOnly bool
-	ranger   manager.RangeUpdater // the dep's manager rewrites its range; nil = by version token
+	rewriter manager.RangeRewriter // the dep's manager rewrites its whole range; nil = by version token
+	ranger   manager.RangeUpdater  // the rewriter also matches the range (Python specifiers)
 }
 
 // autoRange is what rangeStrategy auto means per manager (Renovate's defaults): replace for
-// terraform and terragrunt, update-lockfile for npm, cargo and any other manager.
+// terraform and terragrunt, update-lockfile for npm, cargo and any other manager (widen for
+// npm `||` ranges, rangeStrategy).
 var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace}
+
+// rangeStrategy is the effective rangeStrategy of the range dep: auto resolved per manager,
+// widen and pin resolved to replace for managers that cannot write them (no
+// manager.RangeRewriter: terraform, Gradle) and for ranges that are never rewritten.
+func (r *resolver) rangeStrategy() string {
+	d := r.d
+	s := r.pol.pre.RangeStrategy
+	if s == config.RangeAuto {
+		s = cmp.Or(autoRange[d.Manager], config.RangeUpdateLockfile)
+		if d.Manager == npmManager && strings.Contains(d.Range, "||") {
+			s = config.RangeWiden
+		}
+	}
+	if (s == config.RangeWiden || s == config.RangePin) && (r.rewriter == nil || d.RangeFixed) {
+		s = config.RangeReplace
+	}
+	return s
+}
 
 // setRange applies the rangeStrategy of a range dep (dep.Dep.Range, read as Constraint when
 // set: npm and cargo dependencies, terraform constraints, Gradle dynamic versions); other deps
-// always replace their version. Under update-lockfile and replace candidates are ranked against
-// the locked version (dep.Dep.Locked) when there is one; update-lockfile moves only the lockfile
-// for in-range candidates, replace leaves them alone. A lock root whose lockfile deps does not
-// read (LockUnread) turns update-lockfile into bump, except for peerDependencies, which never get
-// lockfile-only updates: their in-range versions are left alone. A range without a floor (it
-// admits 0.0.0: `*`, `<2`) has nothing to bump, a range that is never rewritten (RangeFixed)
-// only moves in the lock, and a Gradle dynamic version (`1.+`, `[1.0,2.0)`) keeps its floor in
-// its edit, so an in-range bump would change nothing: bump is update-lockfile for all three. Deps of a
-// manager.RangeUpdater go to setRewritten.
-func (r *resolver) setRange(s versioning.Scheme) {
+// always replace their version. Under update-lockfile, replace and widen candidates are ranked
+// against the locked version (dep.Dep.Locked) when there is one; update-lockfile moves only the
+// lockfile for in-range candidates, replace and widen leave them alone. A lock root whose
+// lockfile deps does not read (LockUnread) turns update-lockfile into bump, except for
+// peerDependencies, which never get lockfile-only updates: their in-range versions are left
+// alone. A range without a floor (it admits 0.0.0: `*`, `<2`) has nothing to bump, a range that
+// is never rewritten (RangeFixed) only moves in the lock, and a Gradle dynamic version (`1.+`,
+// `[1.0,2.0)`) keeps its floor in its edit, so an in-range bump would change nothing: bump is
+// update-lockfile for all three. Under bump an in-range version a manager.RangeRewriter cannot
+// raise the range for (`1.x` with 1.5.0) is left alone. in-range-only is bump limited to the
+// versions the range admits; pin goes to setPin. Deps of a manager.RangeUpdater go to
+// setRewritten.
+func (r *resolver) setRange(s versioning.Scheme, names []string) {
 	d := r.d
 	if d.Range == "" {
 		return
 	}
+	r.strategy = r.rangeStrategy()
 	if r.ranger != nil {
-		r.setRewritten(s)
+		r.setRewritten(s, names)
 		return
 	}
 	peer := d.DepType == "peerDependencies"
-	strategy := r.pol.pre.RangeStrategy
-	if strategy == config.RangeAuto {
-		strategy = cmp.Or(autoRange[d.Manager], config.RangeUpdateLockfile)
-	}
-	if !d.RangeFixed && d.LockUnread && !peer && strategy != config.RangeReplace {
-		return
-	}
+	strategy := r.strategy
 	match, err := rangeMatcher(s, cmp.Or(d.Constraint, d.Range))
 	if err != nil {
 		slog.DebugContext(r.ctx, "range not understood", "name", d.Name, "range", d.Range, "err", err)
-		if d.RangeFixed {
+		if d.RangeFixed || strategy == config.RangeInRangeOnly {
 			r.inRange = func(string) bool { return false }
+			r.within = r.inRange
 		}
 		return
 	}
-	if strategy == config.RangeBump && !d.RangeFixed && d.Manager != gradleManager && !match("0.0.0") {
+	keeps := strategy == config.RangeReplace || strategy == config.RangeWiden // in-range versions are left alone
+	bump := strategy == config.RangeBump || strategy == config.RangeInRangeOnly
+	if strategy == config.RangeInRangeOnly {
+		r.within = match
+	}
+	switch {
+	case strategy == config.RangePin:
+		r.setPin(s, names, match)
+		return
+	case !d.RangeFixed && d.LockUnread && !peer && !keeps:
+		return
+	case bump && !d.RangeFixed && d.Manager != gradleManager && !match("0.0.0"):
+		if r.rewriter != nil {
+			r.inRange = func(v string) bool {
+				_, raised := r.rewriter.NewRange(d, v, strategy)
+				return match(v) && !raised
+			}
+		}
 		return
 	}
 	r.inRange = match
 	if d.Locked != "" && s.Valid(d.Locked) {
 		r.cur = d.Locked
-		r.lockOnly = !peer && strategy != config.RangeReplace
+		r.lockOnly = !peer && !keeps
 	}
 }
 
 // setRewritten is setRange for the deps of a manager.RangeUpdater (Python specifiers): under
-// update-lockfile (auto) and replace every admitted version keeps the range, under bump only
-// those the range cannot be raised for (`<2`, `>1`, `==1.*`). Admitted versions are
-// lockfile-only updates except under replace. Candidates are ranked against the locked
-// version under every strategy.
-func (r *resolver) setRewritten(s versioning.Scheme) {
+// update-lockfile (auto), replace and widen every admitted version keeps the range, under bump
+// and in-range-only only those the range cannot be raised for (`<2`, `>1`, `==1.*`). Admitted
+// versions are lockfile-only updates except under replace and widen. Candidates are ranked
+// against the locked version under every strategy; pin goes to setPin.
+func (r *resolver) setRewritten(s versioning.Scheme, names []string) {
 	d := r.d
-	bump := r.pol.pre.RangeStrategy == config.RangeBump
+	strategy := r.strategy
+	match := func(v string) bool { return r.ranger.InRange(d, v) }
+	switch strategy {
+	case config.RangePin:
+		r.setPin(s, names, match)
+		return
+	case config.RangeInRangeOnly:
+		r.within = match
+	}
+	bump := strategy == config.RangeBump || strategy == config.RangeInRangeOnly
 	r.inRange = func(v string) bool {
-		if !r.ranger.InRange(d, v) {
+		if !match(v) {
 			return false
 		}
 		if !bump {
 			return true
 		}
-		_, raised := r.ranger.NewRange(d, v)
+		_, raised := r.ranger.NewRange(d, v, strategy)
 		return !raised
 	}
 	if d.Locked != "" && s.Valid(d.Locked) {
 		r.cur = d.Locked
-		r.lockOnly = r.pol.pre.RangeStrategy != config.RangeReplace
+		r.lockOnly = strategy != config.RangeReplace && strategy != config.RangeWiden
 	}
+}
+
+// setPin applies rangeStrategy pin: every candidate writes its exact version, ranked against
+// the version the range is pinned to (pinUpdate): the locked one, else the newest stable
+// release the range admits, else the dep's version.
+func (r *resolver) setPin(s versioning.Scheme, names []string, match func(string) bool) {
+	if l := r.d.Locked; l != "" && s.Valid(l) {
+		r.cur = l
+		return
+	}
+	best := ""
+	for _, v := range names {
+		if sv := s.Semver(v); sv == nil || sv.Prerelease() != "" || !s.Valid(v) || !match(v) {
+			continue
+		}
+		if best == "" || s.Compare(v, best) > 0 {
+			best = v
+		}
+	}
+	if best != "" {
+		r.cur = best
+	}
+}
+
+// pinUpdate adds the pin of a range to the version candidates are ranked against (setPin)
+// under rangeStrategy pin, unless the range is already that exact version, pin updates are not
+// enabled, or another update shares the pin's PR bucket: that update pins the range itself.
+func (r *resolver) pinUpdate(ups []dep.Update) []dep.Update {
+	if _, ok := r.rewriter.NewRange(r.d, r.cur, config.RangePin); !ok || !r.pol.allows(dep.Pin) {
+		return ups
+	}
+	b := r.pol.bucket(versioning.Candidate{Kind: dep.Pin}).label()
+	if slices.ContainsFunc(ups, func(u dep.Update) bool { return u.Bucket == b }) {
+		return ups
+	}
+	return slices.Insert(ups, 0, dep.Update{Dep: r.d, Type: dep.Pin, NewVersion: r.cur, Bucket: b})
 }
 
 // rangeMatcher returns whether a version satisfies rng: the scheme's own range grammar
@@ -926,8 +1016,12 @@ func rangeMatcher(s versioning.Scheme, rng string) (func(string) bool, error) {
 	}, nil
 }
 
-// gradleManager is the name of the gradle manager, whose dynamic versions keep their floor.
-const gradleManager = "gradle"
+// gradleManager is the name of the gradle manager, whose dynamic versions keep their floor;
+// npmManager that of the npm manager, whose `||` ranges auto widens.
+const (
+	gradleManager = "gradle"
+	npmManager    = "npm"
+)
 
 // installed is the version an npm range dep's installs get: the locked one when known, else
 // the version in the range. It is the baseline of security updates.
@@ -1057,17 +1151,19 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	if pseudo {
 		r.cur, names = pseudoCandidates(d.Version, names, reject)
 	}
-	r.setRange(scheme)
+	r.setRange(scheme, names)
 	semverOf := scheme.Semver
 	accept := func(v string, kind dep.UpdateType) (bool, string) {
 		in := r.inRange != nil && r.inRange(v)
 		switch {
+		case r.within != nil && !r.within(v):
+			return false, "outside range " + d.Range + " (in-range-only)"
 		case in && !r.lockOnly:
 			return false, "admitted by range " + d.Range + " (no lockfile update)"
 		case !in && d.RangeFixed:
 			return false, "outside range " + d.Range + " (not rewritten)"
-		case !in && r.inRange != nil && r.ranger != nil:
-			if _, ok := r.ranger.NewRange(d, v); !ok {
+		case !in && r.inRange != nil && r.rewriter != nil:
+			if _, ok := r.rewriter.NewRange(d, v, r.strategy); !ok {
 				return false, "range " + d.Range + " cannot be rewritten to admit it"
 			}
 		}
@@ -1078,6 +1174,9 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	wantDigest := digests && (d.Digest != "" || r.pol.pre.Pin == config.PinDigest)
 
 	ups := r.picks(scheme, names, accept, reject)
+	if r.strategy == config.RangePin {
+		ups = r.pinUpdate(ups)
+	}
 	switch {
 	case len(ups) == 0 && pseudo:
 		if ups, err = r.headUpdate(dir, reject); err != nil {
@@ -1102,15 +1201,24 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		}
 	}
 	switch {
-	case r.ranger != nil:
-		// Security updates skip accept: drop those neither the lockfile nor the range can take.
+	case r.rewriter != nil && d.Range != "":
+		// Security updates skip accept: drop those neither the lockfile nor the range can take,
+		// and under in-range-only those outside the range.
 		ups = slices.DeleteFunc(ups, func(u dep.Update) bool {
-			_, ok := r.ranger.NewRange(d, u.NewVersion)
+			if r.within != nil && !r.within(u.NewVersion) {
+				return true
+			}
+			_, ok := r.rewriter.NewRange(d, u.NewVersion, r.strategy)
 			return !u.Lockfile && !ok
 		})
 	case d.RangeFixed:
 		// Security fixes outside the range cannot be written either.
 		ups = slices.DeleteFunc(ups, func(u dep.Update) bool { return !u.Lockfile })
+	case r.within != nil:
+		ups = slices.DeleteFunc(ups, func(u dep.Update) bool { return !r.within(u.NewVersion) })
+	}
+	for i := range ups {
+		ups[i].RangeStrategy = r.strategy
 	}
 	if ups, err = r.majorPathUpdates(t, ups, scheme, dir, accept, reject); err != nil {
 		return nil, err

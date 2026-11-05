@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -32,6 +33,10 @@ const (
 	DepTypeEngines        = "engines"
 	DepTypeVolta          = "volta"
 )
+
+// skipRange is the skip reason of a value outside npm's range grammar (and of the tool and
+// packageManager versions, which are not ranges).
+const skipRange = "unsupported range"
 
 var (
 	matchRe = regexp.MustCompile(`(^|/)package\.json$`)
@@ -75,9 +80,12 @@ func (npmManager) Match(p string) bool {
 }
 
 // Extract streams src with encoding/json/jsontext and returns one Dep per entry of the
-// dependency sections plus the packageManager field. RefSpan covers only the version, so an
-// operator (^1.2.3) is preserved. Values the range grammar does not cover are skipped with a
-// reason. Duplicate names are accepted, as npm's JSON.parse does.
+// dependency sections plus the packageManager field. A dependency-section range is the dep's
+// Range and RefSpan covers all of it; Version is its bare version (`^1.2.3` → 1.2.3) or, for
+// the rest of npm's range grammar (`||`, x-ranges, partial versions, `<`, hyphen ranges), its
+// anchor (npmRange.anchor). For the packageManager field and the engines/volta tools RefSpan
+// covers only the version, so an operator (^1.2.3) is preserved. Values the grammar does not
+// cover are skipped with a reason. Duplicate names are accepted, as npm's JSON.parse does.
 func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	dec := jsontext.NewDecoder(bytes.NewReader(src), jsontext.AllowDuplicateNames(true))
 	x := extractor{file: file, src: src, dec: dec, line: 1}
@@ -90,10 +98,31 @@ func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 	return x.deps, nil
 }
 
-// Edits replaces the version token.
+// Edits rewrites a dependency-section range for the new version under the update's
+// rangeStrategy (npmRange.newRange), and replaces the version token of the other deps.
 func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
-	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+	if d.Range == "" {
+		return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+	}
+	r, ok := parseRange(d.Range)
+	if !ok {
+		return nil, fmt.Errorf("unsupported range %q", d.Range)
+	}
+	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: r.newRange(u.NewVersion, u.RangeStrategy)}}, nil
+}
+
+// NewRange implements manager.RangeRewriter (npmRange.newRange).
+func (npmManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	r, ok := parseRange(d.Range)
+	if !ok {
+		return "", false
+	}
+	out := r.newRange(v, strategy)
+	if out == d.Range || !admits(out, v) {
+		return "", false
+	}
+	return out, true
 }
 
 // ReadLocks records the version package-lock.json locks each dependency-section dep to
@@ -254,9 +283,14 @@ func (x *extractor) section(depType string) error {
 		}
 		d := x.newDep(depType, name, raw, span)
 		ver, off, skip := classify(raw)
+		if r, ok := parseRange(raw); ok && skip == skipRange {
+			if a := r.anchor(); a != "" {
+				ver, off, skip = a, 0, ""
+			}
+		}
 		x.finish(&d, span, ver, off, skip)
 		if d.Skip == "" {
-			d.Range = raw
+			d.Version, d.Range, d.RefSpan = ver, raw, span
 		}
 		x.deps = append(x.deps, d)
 	}
@@ -322,7 +356,7 @@ func (x *extractor) packageManager() error {
 	case strings.Contains(ver, "+"):
 		skip = "packageManager with hash"
 	case !versionRe.MatchString(ver):
-		skip = "unsupported range"
+		skip = skipRange
 	}
 	x.finish(&d, span, ver, len(tool)+1, skip)
 	x.deps = append(x.deps, d)
@@ -360,7 +394,7 @@ func classify(v string) (ver string, off int, skip string) {
 	case tagRe.MatchString(v) && !isRangeLike(v):
 		return "", 0, "tag"
 	}
-	return "", 0, "unsupported range"
+	return "", 0, skipRange
 }
 
 // isRangeLike reports whether a letter-led value is a range rather than a dist-tag: x/X

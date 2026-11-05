@@ -1,6 +1,7 @@
 package npm
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"os"
@@ -62,9 +63,12 @@ const src = `{
 }
 `
 
+// want is an expected dep; rng is the Range of a dependency-section dep, the text RefSpan
+// covers ("" = the version).
 type want struct {
 	name, depType, version, skip string
 	line                         int
+	rng                          string
 }
 
 func lineOf(s, needle string) int {
@@ -81,40 +85,41 @@ func TestExtract(t *testing.T) {
 	// engines/volta are covered by TestEnginesVolta.
 	deps = slices.DeleteFunc(deps, func(d dep.Dep) bool { return d.DepType == DepTypeEngines || d.DepType == DepTypeVolta })
 	ws := []want{
-		{"caret", "dependencies", "1.2.3", "", 0},
-		{"tilde", "dependencies", "2.0.0", "", 0},
-		{"gte", "dependencies", "3.1.4", "", 0},
-		{"eq", "dependencies", "4.0.0", "", 0},
-		{"exact", "dependencies", "5.6.7", "", 0},
-		{"pre", "dependencies", "1.0.0-beta.2", "", 0},
-		{"@scope/pkg", "dependencies", "0.4.6", "", 0},
-		{"alias", "dependencies", "npm:other@^1.0.0", "npm alias", 0},
-		{"file", "dependencies", "file:../lib", "local dependency", 0},
-		{"link", "dependencies", "link:../lib", "local dependency", 0},
-		{"ws", "dependencies", "workspace:*", "local dependency", 0},
-		{"rel", "dependencies", "./vendor/x", "local dependency", 0},
-		{"gh", "dependencies", "github:owner/repo", "git dependency", 0},
-		{"gitplus", "dependencies", "git+https://example.com/x.git", "git dependency", 0},
-		{"git", "dependencies", "git://example.com/x.git", "git dependency", 0},
-		{"short", "dependencies", "owner/repo#v1", "git dependency", 0},
-		{"tarball", "dependencies", "https://example.com/x.tgz", "url dependency", 0},
-		{"latest", "dependencies", "latest", "tag", 0},
-		{"next", "dependencies", "next", "tag", 0},
-		{"or", "dependencies", "^1.0.0 || ^2.0.0", "unsupported range", 0},
-		{"space", "dependencies", ">= 1.0.0", "unsupported range", 0},
-		{"x", "dependencies", "1.x", "unsupported range", 0},
-		{"xx", "dependencies", "x", "unsupported range", 0},
-		{"star", "dependencies", "*", "unsupported range", 0},
-		{"partial", "dependencies", "^1.2", "unsupported range", 0},
-		{"lt", "dependencies", "<2.0.0", "unsupported range", 0},
-		{"hyphen", "dependencies", "1.0.0 - 2.0.0", "unsupported range", 0},
-		{"vprefix", "dependencies", "v1.2.3", "unsupported range", 0},
-		{"empty", "dependencies", "", "unsupported range", 0},
-		{"escaped", "dependencies", "^1.0.0", "cannot locate value", 0},
-		{"dev", "devDependencies", "9.0.0", "", 0},
-		{"opt", "optionalDependencies", "1.1.1", "", 0},
-		{"peer", "peerDependencies", "18.0.0", "", 0},
-		{"npm", "packageManager", "12.2.0", "", 0},
+		{"caret", "dependencies", "1.2.3", "", 0, "^1.2.3"},
+		{"tilde", "dependencies", "2.0.0", "", 0, "~2.0.0"},
+		{"gte", "dependencies", "3.1.4", "", 0, ">=3.1.4"},
+		{"eq", "dependencies", "4.0.0", "", 0, "=4.0.0"},
+		{"exact", "dependencies", "5.6.7", "", 0, "5.6.7"},
+		{"pre", "dependencies", "1.0.0-beta.2", "", 0, "^1.0.0-beta.2"},
+		{"@scope/pkg", "dependencies", "0.4.6", "", 0, "^0.4.6"},
+		{"alias", "dependencies", "npm:other@^1.0.0", "npm alias", 0, ""},
+		{"file", "dependencies", "file:../lib", "local dependency", 0, ""},
+		{"link", "dependencies", "link:../lib", "local dependency", 0, ""},
+		{"ws", "dependencies", "workspace:*", "local dependency", 0, ""},
+		{"rel", "dependencies", "./vendor/x", "local dependency", 0, ""},
+		{"gh", "dependencies", "github:owner/repo", "git dependency", 0, ""},
+		{"gitplus", "dependencies", "git+https://example.com/x.git", "git dependency", 0, ""},
+		{"git", "dependencies", "git://example.com/x.git", "git dependency", 0, ""},
+		{"short", "dependencies", "owner/repo#v1", "git dependency", 0, ""},
+		{"tarball", "dependencies", "https://example.com/x.tgz", "url dependency", 0, ""},
+		{"latest", "dependencies", "latest", "tag", 0, ""},
+		{"next", "dependencies", "next", "tag", 0, ""},
+		// The rest of the range grammar: Version is the anchor.
+		{"or", "dependencies", "2.0.0", "", 0, "^1.0.0 || ^2.0.0"},
+		{"space", "dependencies", "1.0.0", "", 0, ">= 1.0.0"},
+		{"x", "dependencies", "1.0.0", "", 0, "1.x"},
+		{"xx", "dependencies", "x", "unsupported range", 0, ""},
+		{"star", "dependencies", "*", "unsupported range", 0, ""},
+		{"partial", "dependencies", "1.2.0", "", 0, "^1.2"},
+		{"lt", "dependencies", "2.0.0", "", 0, "<2.0.0"},
+		{"hyphen", "dependencies", "1.0.0", "", 0, "1.0.0 - 2.0.0"},
+		{"vprefix", "dependencies", "1.2.3", "", 0, "v1.2.3"},
+		{"empty", "dependencies", "", "unsupported range", 0, ""},
+		{"escaped", "dependencies", "^1.0.0", "cannot locate value", 0, ""},
+		{"dev", "devDependencies", "9.0.0", "", 0, "^9.0.0"},
+		{"opt", "optionalDependencies", "1.1.1", "", 0, "~1.1.1"},
+		{"peer", "peerDependencies", "18.0.0", "", 0, ">=18.0.0"},
+		{"npm", "packageManager", "12.2.0", "", 0, ""},
 	}
 	if len(deps) != len(ws) {
 		for _, d := range deps {
@@ -132,19 +137,16 @@ func TestExtract(t *testing.T) {
 			d.Name != w.name || d.DepType != w.depType || d.Version != w.version || d.Skip != w.skip || d.Line != lineOf(src, needle) {
 			t.Errorf("%d: %+v, want %+v line %d", i, d, w, lineOf(src, needle))
 		}
-		if w.skip == "" {
-			if got := string(b[d.RefSpan.Start:d.RefSpan.End]); got != w.version {
-				t.Errorf("%s: span %q, want %q", w.name, got, w.version)
+		switch {
+		case w.skip != "":
+			if d.RefSpan != (dep.Span{}) {
+				t.Errorf("%s: skipped dep has span %+v", w.name, d.RefSpan)
 			}
-		} else if d.RefSpan != (dep.Span{}) {
-			t.Errorf("%s: skipped dep has span %+v", w.name, d.RefSpan)
+		case string(b[d.RefSpan.Start:d.RefSpan.End]) != cmp.Or(w.rng, w.version):
+			t.Errorf("%s: span %q, want %q", w.name, b[d.RefSpan.Start:d.RefSpan.End], cmp.Or(w.rng, w.version))
 		}
-		wantRange := "" // the whole quoted value: its opening quote precedes the version
-		if w.skip == "" && sections[w.depType] {
-			wantRange = src[strings.LastIndexByte(src[:d.RefSpan.Start], '"')+1 : d.RefSpan.End]
-		}
-		if d.Range != wantRange {
-			t.Errorf("%s: Range %q, want %q", w.name, d.Range, wantRange)
+		if d.Range != w.rng {
+			t.Errorf("%s: Range %q, want %q", w.name, d.Range, w.rng)
 		}
 	}
 }

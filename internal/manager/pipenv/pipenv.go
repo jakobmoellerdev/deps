@@ -47,7 +47,9 @@ func (pipenvManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Ed
 func (pipenvManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
 
 // NewRange implements manager.RangeUpdater.
-func (pipenvManager) NewRange(d dep.Dep, v string) (string, bool) { return pyreq.NewRange(d, v) }
+func (pipenvManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	return pyreq.NewRange(d, v, strategy)
+}
 
 // ReadLocks records the versions Pipfile.lock locks the deps to, by category
 // (pytool.ReadLocks).

@@ -129,10 +129,14 @@ func InRange(d dep.Dep, v string) bool {
 	return ok && err == nil
 }
 
-// NewRange returns the range of d rewritten for v (see rangeEdits), or false when the rewrite
-// leaves it unchanged or does not admit v.
-func NewRange(d dep.Dep, v string) (string, bool) {
-	edits, ok := rangeEdits(d.Range, v)
+// poetryManager is the name of the poetry manager, whose constraints may have `||`
+// alternatives.
+const poetryManager = "poetry"
+
+// NewRange returns the range of d rewritten for v under strategy (see rangeEdits), or false
+// when the rewrite leaves it unchanged or does not admit v.
+func NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	edits, ok := rangeEdits(d.Range, v, strategy, d.Manager == poetryManager)
 	if !ok {
 		return "", false
 	}
@@ -143,13 +147,14 @@ func NewRange(d dep.Dep, v string) (string, bool) {
 	return string(out), true
 }
 
-// Edits rewrites the range of u's dep for the new version (NewRange), clause by clause.
+// Edits rewrites the range of u's dep for the new version under u.RangeStrategy (NewRange),
+// clause by clause.
 func Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
-	if _, ok := NewRange(d, u.NewVersion); !ok {
+	if _, ok := NewRange(d, u.NewVersion, u.RangeStrategy); !ok {
 		return nil, fmt.Errorf("range %q cannot be updated to admit %s", d.Range, u.NewVersion)
 	}
-	edits, _ := rangeEdits(d.Range, u.NewVersion)
+	edits, _ := rangeEdits(d.Range, u.NewVersion, u.RangeStrategy, d.Manager == poetryManager)
 	for i := range edits {
 		edits[i].Start += d.RefSpan.Start
 		edits[i].End += d.RefSpan.Start
@@ -158,29 +163,44 @@ func Edits(u dep.Update) ([]patch.Edit, error) {
 }
 
 // rangeEdits returns the edits of the specifier s for version v, after Renovate's pep440
-// getNewValue (lib/modules/versioning/pep440/range.ts): a range admitting v is bumped
-// (handleBumpStrategy) in the first alternative admitting it, otherwise it is replaced
-// (handleReplaceStrategy); a Poetry constraint with several alternatives gets the replaced
-// last alternative appended (Renovate's npm widen of `||` ranges) instead.
-func rangeEdits(s, v string) ([]patch.Edit, bool) {
+// getNewValue (lib/modules/versioning/pep440/range.ts): under pin s becomes `==v` (an exact
+// clause keeps its operator); otherwise a range admitting v is bumped (handleBumpStrategy) in
+// the first alternative admitting it, one that does not is replaced (handleReplaceStrategy),
+// under widen only its upper bounds when that admits v (handleWidenStrategy). A Poetry
+// constraint (poetry) with several alternatives, or under widen one that is not exact, gets the
+// replaced last alternative appended instead (Renovate's npm widen of `||` ranges, which its
+// poetry versioning uses).
+func rangeEdits(s, v, strategy string, poetry bool) ([]patch.Edit, bool) {
 	alts, ok := parseRange(s, Poetry) // a superset of every grammar
 	if !ok || !pep440.Valid(v) {
 		return nil, false
+	}
+	if strategy == dep.RangePin {
+		return pinEdits(s, alts, v), true
 	}
 	nv := release(v)
 	if InRange(dep.Dep{Range: s}, v) {
 		for _, a := range alts {
 			if InRange(dep.Dep{Range: s[a.start:a.end]}, v) {
-				return renderAlt(s, a, v, nv, true), true
+				return renderAlt(s, a, v, nv, modeBump), true
 			}
 		}
 		return nil, false
 	}
+	widen := strategy == dep.RangeWiden && !exact(alts)
 	if len(alts) == 1 {
-		return renderAlt(s, alts[0], v, nv, false), true
+		if widen {
+			edits := renderAlt(s, alts[0], v, nv, modeWiden)
+			if out, err := patch.Apply([]byte(s), edits); err == nil && InRange(dep.Dep{Range: string(out)}, v) {
+				return edits, true
+			}
+		}
+		if !widen || !poetry {
+			return renderAlt(s, alts[0], v, nv, modeReplace), true
+		}
 	}
 	last := alts[len(alts)-1]
-	edits := renderAlt(s, last, v, nv, false)
+	edits := renderAlt(s, last, v, nv, modeReplace)
 	for i := range edits {
 		edits[i].Start -= last.start
 		edits[i].End -= last.start
@@ -189,12 +209,44 @@ func rangeEdits(s, v string) ([]patch.Edit, bool) {
 	if err != nil {
 		return nil, false
 	}
-	sep := s[alts[len(alts)-2].end:last.start]
+	sep := " || "
+	if len(alts) > 1 {
+		sep = s[alts[len(alts)-2].end:last.start]
+	}
 	return []patch.Edit{{Start: last.end, End: last.end, New: sep + string(text)}}, true
 }
 
-// renderAlt rewrites the clauses of a for v (release nv): bump or replace.
-func renderAlt(s string, a alt, v string, nv []int, bump bool) []patch.Edit {
+// exact reports whether the specifier is one exact clause (`==1.2.3`, `===1.2.3`, a bare Poetry
+// or Pipenv version).
+func exact(alts []alt) bool {
+	if len(alts) != 1 || len(alts[0].cls) != 1 {
+		return false
+	}
+	c := alts[0].cls[0]
+	return !c.wild && (c.op == "==" || c.op == "===" || c.op == "")
+}
+
+// pinEdits pins s to v: an exact specifier takes v as its version, anything else becomes `==v`.
+func pinEdits(s string, alts []alt, v string) []patch.Edit {
+	if !exact(alts) {
+		return []patch.Edit{{Start: 0, End: len(s), Old: s, New: "==" + v}}
+	}
+	c := alts[0].cls[0]
+	if c.ver == v {
+		return nil
+	}
+	return []patch.Edit{{Start: c.verStart, End: c.end, Old: s[c.verStart:c.end], New: v}}
+}
+
+// Rewrite modes of renderAlt.
+const (
+	modeReplace = iota // v is outside the range: every clause follows it
+	modeBump           // v is admitted: the floors are raised to it
+	modeWiden          // v is outside the range: only the upper bounds follow it
+)
+
+// renderAlt rewrites the clauses of a for v (release nv) in mode.
+func renderAlt(s string, a alt, v string, nv []int, mode int) []patch.Edit {
 	trim := false // Renovate's hasZeroSpecifier
 	for _, c := range a.cls {
 		trim = trim || len(release(c.ver)) < 3
@@ -215,9 +267,10 @@ func renderAlt(s string, a alt, v string, nv []int, bump bool) []patch.Edit {
 	for _, c := range a.cls {
 		base := release(c.ver)
 		switch {
-		case bump && c.op == ">=":
+		case mode == modeWiden && c.op != "<" && c.op != "<=":
+		case mode == modeBump && c.op == ">=":
 			set(c, c.op, v)
-		case bump:
+		case mode == modeBump:
 			updateValue(c, v, nv, set)
 		case c.op == "<" && pep440.Compare(v, c.ver) >= 0:
 			f := future(rangePrecision(a.cls), nv, base)

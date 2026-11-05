@@ -27,13 +27,14 @@ var inputRe = regexp.MustCompile(`<!-- deps:input=([0-9a-f]+) -->`)
 // buildInput is what engine.Build reads of an update; the rest (schedule, labels, automerge,
 // advisories) only shapes the PR around the content.
 type buildInput struct {
-	Dep         dep.Dep
-	Type        dep.UpdateType
-	NewVersion  string
-	NewDigest   string
-	NewName     string
-	NewChecksum string
-	Lockfile    bool
+	Dep           dep.Dep
+	Type          dep.UpdateType
+	NewVersion    string
+	NewDigest     string
+	NewName       string
+	NewChecksum   string
+	Lockfile      bool
+	RangeStrategy string
 }
 
 // buildID identifies the deps binary, since another one may build other content: its module
@@ -129,7 +130,7 @@ func inputFingerprints(ctx context.Context, o Options, root, head string, groups
 func inputFingerprint(build string, ups []dep.Update, in engine.BuildInputs, oid func(string) string) string {
 	encoded := make([]string, len(ups))
 	for i, u := range ups {
-		b, err := json.Marshal(buildInput{u.Dep, u.Type, u.NewVersion, u.NewDigest, u.NewName, u.NewChecksum, u.Lockfile})
+		b, err := json.Marshal(buildInput{u.Dep, u.Type, u.NewVersion, u.NewDigest, u.NewName, u.NewChecksum, u.Lockfile, u.RangeStrategy})
 		if err != nil {
 			return ""
 		}

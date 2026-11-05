@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 // comparatorRe is one comparator of a Cargo requirement: an optional operator and a
@@ -89,11 +91,55 @@ func (r requirement) constraint() string {
 	return strings.Join(parts, ", ")
 }
 
+// rewrite writes r for v under rangeStrategy strategy (dep.Update.RangeStrategy): pin writes
+// `=v` (an exact requirement keeps its spacing), widen of a requirement that does not admit v
+// and is not exact moves only its upper bounds (`>=1.2, <2` → `>=1.2, <3`) and, when that is
+// not enough, turns it into `>=<floor>, <boundary above v>` (`1.2` → `>=1.2, <3` for 2.0.1);
+// anything else is render.
+func (r requirement) rewrite(v, strategy string) string {
+	switch {
+	case strategy == dep.RangePin && r.exact():
+		c := r.cmps[0]
+		return r.raw[:c.off] + v + r.raw[c.off+len(c.ver):]
+	case strategy == dep.RangePin:
+		return "=" + v
+	case strategy == dep.RangeWiden && !r.exact() && !r.admits(v):
+		if w := r.renderWith(v, true); w != r.raw {
+			if n, ok := parseRequirement(w); ok && n.admits(v) {
+				return w
+			}
+		}
+		nv, err := semver.NewVersion(v)
+		if floor := r.version(); err == nil && floor != "" {
+			return ">=" + floor + ", <" + boundary(nv, 1)
+		}
+	}
+	return r.render(v)
+}
+
+// exact reports whether r is one `=MAJOR.MINOR.PATCH` comparator.
+func (r requirement) exact() bool {
+	return len(r.cmps) == 1 && r.cmps[0].op == "=" && r.cmps[0].wild == "" && partsOf(r.cmps[0].ver) == 3
+}
+
+// admits reports whether r admits v (its Masterminds constraint).
+func (r requirement) admits(v string) bool {
+	c, err := semver.NewConstraint(r.constraint())
+	if err != nil {
+		return false
+	}
+	sv, err := semver.NewVersion(v)
+	return err == nil && c.Check(sv)
+}
+
 // render writes r with its versions moved to v, keeping every operator, wildcard, spacing and
 // the precision each version was written with: floor comparators take v (`1.2` → `2.0` for
 // 2.0.1), upper bounds that v reaches move to the next compatibility boundary above v
 // (`<2` → `<3`, `<0.5` → `<0.6`), `<=` bounds below v to v.
-func (r requirement) render(v string) string {
+func (r requirement) render(v string) string { return r.renderWith(v, false) }
+
+// renderWith is render, keeping the floor comparators when keepFloors.
+func (r requirement) renderWith(v string, keepFloors bool) string {
 	nv, err := semver.NewVersion(v)
 	if err != nil {
 		nv = nil
@@ -106,6 +152,7 @@ func (r requirement) render(v string) string {
 		}
 		repl := c.ver
 		switch {
+		case c.floor() && keepFloors:
 		case c.floor():
 			repl = truncate(v, c.ver)
 		case nv == nil:

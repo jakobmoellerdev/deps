@@ -62,14 +62,24 @@ type LockMaintainer interface {
 	LockRoots(root string, files []string) []LockRoot
 }
 
-// RangeUpdater is implemented by managers whose deps carry a range (dep.Dep.Range) that Edits
-// rewrites as a whole rather than by its version token (PEP 440 specifier sets). InRange
-// reports whether d's range admits v; NewRange returns the range Edits writes for v, or false
-// when that leaves the range unchanged or does not admit v. The engine proposes such a v only
-// as a lockfile-only update, and only when the range admits it.
+// RangeRewriter is implemented by managers whose Edits rewrite a dep's range (dep.Dep.Range) as a
+// whole per rangeStrategy (dep.Update.RangeStrategy): npm and cargo ranges, Python specifiers.
+// NewRange returns the range Edits writes for v under strategy (a config.RangeStrategies value
+// other than auto; "" is the manager's default rewrite), or false when that leaves the range
+// unchanged or does not admit v. A version the range admits is bumped (its floor raised to v)
+// under every strategy but pin; one outside it is written per strategy: widen widens the range,
+// pin writes v exactly, any other replaces the range. The engine needs it for widen and pin; a
+// v it cannot write is not proposed.
+type RangeRewriter interface {
+	NewRange(d dep.Dep, v, strategy string) (string, bool)
+}
+
+// RangeUpdater is a RangeRewriter whose range the engine matches through the manager
+// (PEP 440 specifier sets) rather than as a Masterminds constraint: InRange reports whether d's
+// range admits v. An admitted v NewRange cannot raise is proposed only as a lockfile-only update.
 type RangeUpdater interface {
+	RangeRewriter
 	InRange(d dep.Dep, v string) bool
-	NewRange(d dep.Dep, v string) (string, bool)
 }
 
 // FileEditor is implemented by managers whose updates also edit files other than the dep's

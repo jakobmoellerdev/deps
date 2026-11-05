@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/Masterminds/semver/v3"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 func TestRequirement(t *testing.T) {
@@ -77,4 +79,31 @@ func TestRequirement(t *testing.T) {
 func normalizeSpaces(raw string) string {
 	r, _ := parseRequirement(raw)
 	return r.constraint()
+}
+
+// TestNewRange checks the widen and pin rewrites (render covers the default); want "" = not
+// rewritten.
+func TestNewRange(t *testing.T) {
+	for _, c := range []struct{ raw, v, strategy, want string }{
+		{"1.2", "2.0.1", "widen", ">=1.2, <3"},
+		{"~1.2.3", "1.4.0", "widen", ">=1.2.3, <2"},
+		{"0.5", "0.7.1", "widen", ">=0.5, <0.8"},
+		{">=1.2, <2", "3.1.0", "widen", ">=1.2, <4"},
+		{">=1.2, <=2.0.0", "2.3.0", "widen", ">=1.2, <=2.3.0"},
+		{"=1.2.3", "1.3.0", "widen", "=1.3.0"}, // an exact version is replaced
+		{"1.2", "1.4.0", "widen", "1.4"},       // admitted: bumped
+		{"1.2", "1.4.0", "pin", "=1.4.0"},
+		{"= 1.2.3", "1.4.0", "pin", "= 1.4.0"},
+		{"=1.4.0", "1.4.0", "pin", ""},
+		{"1.2", "2.0.1", "", "2.0"},
+		{"1.2", "1.2.0", "", ""},
+	} {
+		got, ok := cargoManager{}.NewRange(dep.Dep{Range: c.raw}, c.v, c.strategy)
+		if !ok {
+			got = ""
+		}
+		if got != c.want {
+			t.Errorf("NewRange(%q, %s, %q) = %q, want %q", c.raw, c.v, c.strategy, got, c.want)
+		}
+	}
 }
