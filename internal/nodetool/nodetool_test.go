@@ -468,6 +468,48 @@ func TestProcessCommands(t *testing.T) {
 			wantEnv:   "scripts= immutable=",
 			wantFiles: []string{YarnLock},
 		},
+		{
+			name: "yarn berry local files", tools: []string{"yarn"},
+			files: map[string][]byte{yarnrc: []byte("nodeLinker: node-modules\n"), YarnLock: []byte(`__metadata:
+  version: 8
+
+"tiny@patch:tiny@npm%3A1.0.0#./patches/b.patch::locator=b%40workspace%3Apackages%2Fb":
+  resolution: "tiny@patch:tiny@npm%3A1.0.0#./patches/b.patch::version=1.0.0&hash=abc&locator=b%40workspace%3Apackages%2Fb"
+"dep@patch:dep@npm%3A1.0.0#./x.patch::locator=other%40npm%3A1.0.0":
+"ts@patch:typescript@npm%3A5.0.0#optional!builtin<compat/typescript>":
+  dependencies:
+    yaml-diff-patch: "npm:^2.0.0#x.patch"
+`)},
+			rootPkg: `{"name":"ws","private":true,"workspaces":["packages/*"],` +
+				`"resolutions":{"a@npm:^1":"patch:a@npm%3A1.0.0#~/.yarn/patches/a.patch&optional!./.yarn/patches/a%2B2.patch","e@1":"patch:e@npm%3A1#~/../escape.patch"},` +
+				`"devDependencies":{"l":"portal:./tools/l","m":"link:./missing"}}`,
+			disk: map[string]string{
+				".yarn/patches/a.patch": "", ".yarn/patches/a+2.patch": "", ".yarn/patches/unused.patch": "",
+				"packages/b/patches/b.patch": "", "x.patch": "",
+				"tools/l/package.json": `{"dependencies":{"t":"file:./t.tgz"}}`, "tools/l/t.tgz": "", "tools/l/index.js": "",
+			},
+			lock:     YarnLock,
+			wantArgv: "yarn install --mode=update-lockfile",
+			wantEnv:  "scripts=0 immutable=0",
+			wantFiles: []string{".yarn/patches/a.patch", ".yarn/patches/a+2.patch", "packages/b/patches/b.patch",
+				"tools/l/package.json", "tools/l/t.tgz", yarnrc, YarnLock},
+		},
+		{
+			name: "pnpm local files", tools: []string{"pnpm"},
+			files: map[string][]byte{PnpmLock: []byte("lockfileVersion: '9.0'\n"), pnpmWorkspace: []byte(
+				"packages: [packages/*]\npatchedDependencies:\n  a@1.0.0: patches/a.patch\noverrides:\n  o: file:./vendor/o.tgz\n  p: 1.0.0\n")},
+			rootPkg: `{"name":"ws","private":true,"dependencies":{"r":"file:../outside"},` +
+				`"pnpm":{"patchedDependencies":{"b@1.0.0":"patches/b.patch"},"overrides":{"q":"link:./vendor/q"}}}`,
+			disk: map[string]string{
+				"patches/a.patch": "", "patches/b.patch": "", "patches/unused.patch": "", "vendor/o.tgz": "",
+				"vendor/q/package.json": "{}", "vendor/q/index.js": "", ".pnpmfile.cjs": "",
+			},
+			lock:     PnpmLock,
+			wantArgv: "pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile",
+			wantEnv:  "scripts= immutable=",
+			wantFiles: []string{".pnpmfile.cjs", "patches/a.patch", "patches/b.patch", "vendor/o.tgz", "vendor/q/package.json",
+				PnpmLock, pnpmWorkspace},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			log := stubs(t, tt.tools...)

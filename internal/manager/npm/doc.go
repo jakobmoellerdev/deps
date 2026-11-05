@@ -55,7 +55,9 @@ var Doc = refdoc.Manager{
 const lockfileBody = "1. **Lock root.** The lock root is the nearest directory at or above the `package.json` (within `--dir`) that holds `package-lock.json`, `pnpm-lock.yaml` or `yarn.lock`. " +
 	"It is accepted if it is the manifest's own directory, or if its `package.json` `workspaces` (an array or `{packages}`) or `pnpm-workspace.yaml` `packages` globs match the manifest directory (`!glob` excludes). " +
 	"Otherwise the manifest is only patched; no lockfile is created.\n" +
-	"2. **Temporary copy.** The root and all member `package.json` files (patched where changed), the lockfile, `.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`, and the files referenced by `yarnPath`/`plugins` are copied to a temp dir.\n" +
+	"2. **Temporary copy.** The root and all member `package.json` files (patched where changed), the lockfile, `.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`, and the files referenced by `yarnPath`/`plugins` are copied to a temp dir. " +
+	"So are the local files the install resolves: yarn `patch:` files (from `package.json` and `yarn.lock`), pnpm `patchedDependencies` files (`package.json` `pnpm` and `pnpm-workspace.yaml`), the pnpmfile (`.pnpmfile.cjs`, or the `pnpmfile` setting), and the targets of `file:`, `link:` and `portal:` dependencies, resolutions and overrides (a tarball itself, a directory's `package.json` only). " +
+	"Paths outside the lock root are not copied.\n" +
 	"3. **Install.**\n" +
 	"\n" +
 	"   | Tool | Command |\n" +

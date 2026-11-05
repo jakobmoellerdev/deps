@@ -57,9 +57,10 @@ func (Locker) Siblings() []string {
 }
 
 // Process copies the lock root's package.json, every workspace member's package.json (the
-// patched content for manifests), the lockfile and the package manager configuration into a
-// temporary directory, updates the lockfile there without running scripts and returns it when
-// it changed. Without a lockfile it does nothing.
+// patched content for manifests), the lockfile, the package manager configuration and the
+// local files they reference (addLocalFiles) into a temporary directory, updates the lockfile
+// there without running scripts and returns it when it changed. Without a lockfile it does
+// nothing.
 func (l Locker) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
 	return l.ProcessLocked(ctx, dir, manifests, files, nil)
 }
@@ -143,6 +144,9 @@ func install(ctx context.Context, dir string, manifests, files map[string][]byte
 				return nil, err
 			}
 		}
+	}
+	if err := addLocalFiles(dir, write, files, lockName); err != nil {
+		return nil, err
 	}
 
 	// npm names an unnamed root package after its directory (package-lock.json "name"), so the
