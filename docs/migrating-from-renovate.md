@@ -42,6 +42,8 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `platformCommit` (`RENOVATE_PLATFORM_COMMIT`) | `platformCommit` (`DEPS_PLATFORM_COMMIT`): same values and default (`auto`). GitHub only; `auto` also needs no signing key, and `enabled` with a signing key or on Gitea/Forgejo is a usage error |
 | `prConcurrentLimit`, `prHourlyLimit` | same names; **default 0 (unlimited)** in deps, 10/2 in Renovate; `run --max-new-prs` (default 10) caps each run |
 | `rebaseWhen`, `:rebaseStalePrs` | `rebaseWhen` (`conflicted` default, `behind-base-branch`, `never`) |
+| `rebaseLabel`, PR body rebase/retry checkbox | `rebaseLabel` (default `rebase`) and the same checkbox in every PR body: either requests a rebuild on the next run (bypassing the schedule, discarding commits by others); the label is removed and the box unticked afterwards |
+| `stopUpdatingLabel` | `stopUpdatingLabel` (default `stop-updating`): the PR is not pushed, rebased or closed as obsolete (`skipped: stop-updating label`) |
 | `ignorePaths`, `:ignoreModulesAndTests` | `ignorePaths` (Renovate's list is the default when absent) |
 | `vulnerabilityAlerts`, `osvVulnerabilityAlerts` | `security` (OSV, default on): Go modules and go.mod `toolchain`/`go` directives (OSV `stdlib`/`toolchain`), npm, crates.io, PyPI, Maven, GitHub Actions; no advisories for images, Terraform or Helm (no OSV ecosystem) |
 | `customManagers` (`customType: regex`) | `custom[]` with `match` (Renovate group names accepted) |

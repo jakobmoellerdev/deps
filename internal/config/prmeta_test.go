@@ -65,3 +65,33 @@ func TestValidatePRMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestPRLabelKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml           string
+		rebase, stopUpdating string
+		err                  string
+	}{
+		{name: "defaults", rebase: "rebase", stopUpdating: "stop-updating"},
+		{name: "set", yaml: "rebaseLabel: deps-rebase\nstopUpdatingLabel: hands off\n", rebase: "deps-rebase", stopUpdating: "hands off"},
+		{name: "blank", yaml: "rebaseLabel: ' '\n", err: `rebaseLabel: must be a non-blank label name without ',', got " "`},
+		{name: "comma", yaml: "stopUpdatingLabel: a,b\n", err: `stopUpdatingLabel: must be a non-blank label name without ',', got "a,b"`},
+		{name: "same label", yaml: "stopUpdatingLabel: Rebase\n", err: `stopUpdatingLabel: must differ from rebaseLabel, got "Rebase"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := load(t, ".deps.yaml", tc.yaml)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("err = %v, want %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.RebaseLabelName() != tc.rebase || c.StopUpdatingLabelName() != tc.stopUpdating {
+				t.Errorf("labels %q %q", c.RebaseLabelName(), c.StopUpdatingLabelName())
+			}
+		})
+	}
+}

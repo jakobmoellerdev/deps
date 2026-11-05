@@ -129,7 +129,7 @@ func TestSchema(t *testing.T) {
 		}
 	}
 	if want := []string{"version", "pin", "rangeStrategy", "schedule", "security", "branchPrefix", "rebaseWhen", "gitAuthor", "platformCommit", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "actions", "gitlabci", "terraform", "gomodUpdateImportPaths", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "ignorePaths",
-		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "labels", "reviewers", "assignees",
+		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "labels", "reviewers", "assignees", "rebaseLabel", "stopUpdatingLabel",
 		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "rules", "custom", "customDatasources", "lockFileMaintenance"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {

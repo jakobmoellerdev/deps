@@ -187,16 +187,21 @@ func withInput(body, input string) string {
 
 // recordInput records input, the group's input fingerprint, in the body of the open PR pr
 // whose content is current, when the body records another one or none (a PR from before
-// input fingerprints, or base changed an input without changing the content). Only the marker
-// changes; nothing is pushed. Runs on the same inputs then skip the group's build. Dry runs
+// input fingerprints, or base changed an input without changing the content), and unticks
+// its rebase checkbox (after the rebase it requested). Only the marker and the checkbox
+// change; nothing is pushed. Runs on the same inputs then skip the group's build. Dry runs
 // write nothing, and a failed write only warns: the next run builds again.
 func recordInput(ctx context.Context, o Options, pc platform.Client, grp engine.Group, pr *platform.PR, input string) {
-	if o.DryRun || input == "" || bodyInput(pr.Body) == input {
+	body := untickRebase(pr.Body)
+	if input != "" {
+		body = withInput(body, input)
+	}
+	if o.DryRun || body == pr.Body {
 		return
 	}
-	if err := pc.UpdatePR(ctx, pr.Number, cmp.Or(pr.Title, grp.Title), withInput(pr.Body, input)); err != nil {
+	if err := pc.UpdatePR(ctx, pr.Number, cmp.Or(pr.Title, grp.Title), body); err != nil {
 		slog.WarnContext(ctx, "recording the input fingerprint", "branch", grp.Branch, "number", pr.Number, "err", err)
 		return
 	}
-	slog.DebugContext(ctx, "input fingerprint recorded", "branch", grp.Branch, "number", pr.Number, "input", input)
+	slog.DebugContext(ctx, "PR body markers recorded", "branch", grp.Branch, "number", pr.Number, "input", input)
 }

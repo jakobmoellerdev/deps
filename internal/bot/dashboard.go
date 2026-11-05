@@ -143,6 +143,8 @@ func renderDashboard(actions []Action, errs []error, deps []dep.Dep) string {
 			limited = append(limited, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
 		case a.Status == StatusSkipApply:
 			blocked = append(blocked, fmt.Sprintf("- %s (cannot be applied: %s)", a.Title, a.Reason))
+		case a.Status == StatusSkipStopped:
+			blocked = append(blocked, fmt.Sprintf("- %s (%s has the %#q label; deps leaves it alone until the label is removed)", a.Title, prLink(a), a.Reason))
 		case a.Status == StatusSkipSchedule && a.Number == 0:
 			schedule = append(schedule, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s (%s)", a.Branch, a.Title, waits(a.Waits)))
 		case a.Number == 0 && (a.Automerge == AutomergeBranchWaiting || a.Automerge == AutomergeBranchNextRun):

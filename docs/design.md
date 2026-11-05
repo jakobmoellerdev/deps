@@ -502,6 +502,7 @@ type PR struct {
     CreatedAt time.Time // zero when omitted
     NodeID    string    // GitHub GraphQL id; "" on Gitea/Forgejo
     AutoMerge bool      // GitHub auto_merge non-null; always false on Gitea/Forgejo (not reported)
+    Labels    []string  // label names (labels[].name); PR.HasLabel compares case-insensitively
 }
 type Issue struct{ Number int; Title, Body, URL string }
 var ErrAutoMergePending, ErrAutoMergeUnavailable, ErrIssuesDisabled error
@@ -512,6 +513,7 @@ type Client interface {
     CreatePR(ctx context.Context, head, base, title, body string) (PR, error)
     UpdatePR(ctx context.Context, number int, title, body string) error
     ClosePR(ctx context.Context, number int) error
+    RemovePRLabel(ctx context.Context, number int, label string) error // a label the PR lacks is no error
     EnableAutoMerge(ctx context.Context, pr PR, strategy string) error // ErrAutoMergePending, ErrAutoMergeUnavailable
     Checks(ctx context.Context, sha string) (CheckState, error)       // none, pending, success, failure over statuses and check runs
     MergePR(ctx context.Context, pr PR, strategy string) error         // pinned to pr.HeadSHA
@@ -552,6 +554,7 @@ type Options struct {
     BranchPrefix                  string // ending in '/'; "" = config.DefaultBranchPrefix
     DryRun                        bool
     RebaseWhen                    string // config.RebaseWhens; "" = conflicted
+    RebaseLabel, StopUpdatingLabel string // rebaseLabel, stopUpdatingLabel; "" = rebase, stop-updating
     UpdateNotScheduled            bool   // update and rebase open PRs outside their schedule (config updateNotScheduled)
     MaxNewPRs                     int    // PRs created per run (--max-new-prs); 0 = unlimited
     ConcurrentLimit, HourlyLimit  int    // prConcurrentLimit, prHourlyLimit; 0 = unlimited
@@ -632,6 +635,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 | CreatePR | `POST .../pulls {title,head,base,body}` |
 | UpdatePR | `PATCH .../pulls/{n} {title,body}` |
 | ClosePR | `PATCH .../pulls/{n} {state:"closed"}` |
+| RemovePRLabel | `DELETE .../issues/{n}/labels/{name}` (path-escaped); 404 (the PR lacks it) is success |
 | EnableAutoMerge | `POST {graphql}` mutation `enablePullRequestAutoMerge(input:{pullRequestId:<node_id>, mergeMethod:MERGE\|SQUASH\|REBASE})`; not sent when `allow_auto_merge` is `false` |
 | Checks | `GET .../commits/{sha}/status` (`state`, `total_count`) and `GET .../commits/{sha}/check-runs?per_page=100&page=N` (`status`, `conclusion`); a failed status or check run wins over an unfinished one |
 | MergePR | `PUT .../pulls/{n}/merge {merge_method, sha}` |
@@ -648,6 +652,7 @@ On GitHub, `Merged` is `merged_at != null` and `AutoMerge` is `auto_merge != nul
 | DefaultBranch | `GET {api}/repos/{repo}` (also `default_merge_style`, `has_issues`, `external_tracker`) |
 | ListPRs | `GET {api}/repos/{repo}/pulls?state=<s>&sort=recentupdate&limit=50&page=N` |
 | GetPR / CreatePR / UpdatePR / ClosePR | same paths and bodies as GitHub |
+| RemovePRLabel | `DELETE .../issues/{n}/labels/{id}`, the id resolved like CreateIssue's; an unknown name or a 404 is success |
 | EnableAutoMerge | `POST .../pulls/{n}/merge {do, merge_when_checks_succeed: true, delete_branch_after_merge: true, head_commit_id}`; the style field is `do` on Gitea 28 and `Do` on Forgejo (both `swagger.v1.json`). 409 `already scheduled` is success; 405 `Please try again later` is pending. |
 | Checks | `GET .../commits/{sha}/status` (Actions report commit statuses); `total_count` 0 → none, `success`, `pending`, anything else (`failure`, `error`, `warning`) → failure |
 | MergePR | `POST .../pulls/{n}/merge {do, delete_branch_after_merge: true, head_commit_id}` |
@@ -711,10 +716,10 @@ Both clients share these rules:
      - terraform, the Gradle lockfiles and the Gradle and Maven wrappers run their tool on a copy of the whole directory: the tree of the scope directory counts.
 
      The listings come from the checkout, so a file whose presence changes what is read (a new workspace member, a `setup.py` beside a header without inputs, a missing pip-compile input added) changes the listing itself. One `git cat-file --batch-check` resolves the paths of all groups. The freshness check (step 2) makes the base commit the checkout `Build` reads, which must be clean; an untracked `.go` file counts by its imports like a tracked one. A group has no input fingerprint, and is always built, when it has a lock file maintenance update (its result follows the registries, not the repository), when its inputs cannot be listed or one is outside `--dir` or not in the base commit (untracked), or when git fails. Equal inputs build equal content, except for what the post-processors take from the network (transitive versions a registry resolves) or from the tools installed (`go`, `npm`); a skipped PR picks such drift up once its inputs change.
-   - The PR body is a `| File | From | To | Type |` table (with an *Age* column when release notes are enabled), a `### Security` section listing the advisories (if any), the release notes section, then `<!-- deps:fingerprint=<fp> -->`, for a major bucket (`major`, `v<N>`) `<!-- deps:versions=<name>=<version> ... -->` (each dependency's target version, both query-escaped; rule 1 reads it), and `<!-- deps:input=<input> -->`.
+   - The PR body is a `| File | From | To | Type |` table (with an *Age* column when release notes are enabled), a `### Security` section listing the advisories (if any), the release notes section, a rule and the rebase checkbox `- [ ] <!-- deps:rebase --> If you want to rebase/retry this PR, check this box`, then `<!-- deps:fingerprint=<fp> -->`, for a major bucket (`major`, `v<N>`) `<!-- deps:versions=<name>=<version> ... -->` (each dependency's target version, both query-escaped; rule 1 reads it), and `<!-- deps:input=<input> -->`. The fingerprints do not cover the body, so ticking the checkbox (or any body edit) is never a content change.
    - The commit message is the title, a blank line, then one line per update: `- <file>:<line> <from> -> <to>`.
 6. **Per-group decision**, first match wins:
-   Dashboard requests for a branch apply first: `create` and `recreate` bypass the schedule (the group is built) and the new-PR limit, `recreate` also bypasses rule 1, and `rebase` bypasses the schedule, the limit and rule 5 and turns an unchanged open PR into a rebuild (`rebased`).
+   An open PR with the `stopUpdatingLabel` (default `stop-updating`, case-insensitive) is not built and gets `skipped: stop-updating label` before anything else (`Action.Reason` = the label; the dashboard lists it under *Ignored or blocked*); its checkbox, `rebaseLabel` and dashboard requests are ignored. Dashboard requests for a branch apply next: `create` and `recreate` bypass the schedule (the group is built) and the new-PR limit, `recreate` also bypasses rule 1, and `rebase` bypasses the schedule, the limit and rule 5 and turns an unchanged open PR into a rebuild (`rebased`). A ticked rebase checkbox in the open PR's body, or its `rebaseLabel` (default `rebase`), is the same `rebase` request. After the push (`rebased` or `updated`), the rewritten body has the checkbox unticked (a rebase edits the body for that, as for the input fingerprint), and the label is removed with `RemovePRLabel`; a failed removal is a group error, and the next run rebases again.
    1. No open PR exists, and a closed PR has the same branch and was not merged (Renovate's closed-PR ignore; the first match in the listed order, an exact one before others):
       - Outside major buckets (minor and patch updates, digests, pins), the closed PR has the same title, which names the version or the digest → `skipped: closed PR for this version`. The next version or digest gets a PR.
       - In a major bucket (`major`, or `v<N>` with `separateMultipleMajor`), every dependency of the group targets the major the closed PR recorded for it in its `deps:versions` marker (the scheme's `Kind` from the lower to the higher version is not `major`; an unknown scheme or unparsable version is a major apart) → `skipped: closed PR for this version` when they are the recorded versions, else `skipped: closed PR for this major`. Closing a major PR thus ignores that major, as in Renovate; the next major gets a PR, and so does a group one of whose dependencies moved to another major. A closed PR without the marker (deps before it) matches by title: the same title, or the same title up to the version after its last ` to ` with that version in the same major. A group with advisories is suppressed only by a closed security PR (title ending in ` [security]`).
@@ -734,7 +739,7 @@ Both clients share these rules:
 
    A build, git or API error in one group is recorded, and the next group is processed. A group whose every build error is a `*dep.SkipError` (section 2, Post-processors) is no error: it gets the action `skipped: update cannot be applied` with the reason (`Action.Reason`; the dashboard lists it under *Ignored or blocked* as `<title> (cannot be applied: <reason>)`), its deps are added to `Result.Skipped` and marked in `Result.Deps` with the reason, nothing is pushed, and an open PR of its branch stays open.
 8. **Automerge:** for a group whose updates all automerge, after `created`, `updated`, `rebased` or `up-to-date` (see [Automerge](#automerge)). An automerge error is recorded; the PR's action is kept.
-9. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open PR under `branchPrefix` whose branch matches no current group is closed and its branch deleted (`closed`). Then every branch under `branchPrefix` that matches no current group and has no PR in the open or closed lists is deleted (`deleted`, counted as closed in the run summary line) if its tip is the bot's: branch automerge branches whose update is gone, or merged ones whose deletion failed. Groups that are outside their schedule still count as current, so their PRs and branches are never removed as obsolete. This guard ensures that a failed upstream lookup never closes a valid PR. Skips (a dep's, or a group's `skipped: update cannot be applied`) are not errors: an update that can never be applied (a renamed upstream module) must not block the cleanup forever.
+9. **Cleanup:** runs only when the whole run (engine and bot) produced zero errors and is not a dry run. Every open PR under `branchPrefix` whose branch matches no current group is closed and its branch deleted (`closed`), unless it has the `stopUpdatingLabel`: it stays open with its branch (`skipped: stop-updating label`). Then every branch under `branchPrefix` that matches no current group and has no PR in the open or closed lists is deleted (`deleted`, counted as closed in the run summary line) if its tip is the bot's: branch automerge branches whose update is gone, or merged ones whose deletion failed. Groups that are outside their schedule still count as current, so their PRs and branches are never removed as obsolete. This guard ensures that a failed upstream lookup never closes a valid PR. Skips (a dep's, or a group's `skipped: update cannot be applied`) are not errors: an update that can never be applied (a renamed upstream module) must not block the cleanup forever.
 10. **Dashboard:** with `dependencyDashboard`, the body is rendered from the actions, the engine and bot errors and `Result.Deps`, then the issue is created (with `dependencyDashboardLabels`), edited when the body changed, or left alone (`up-to-date`). A dry run reports `would-create`/`would-update`.
 
 ### Automerge

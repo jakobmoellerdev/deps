@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -146,13 +147,20 @@ type apiPR struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
 	} `json:"head"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
 }
 
 // present reports whether a raw JSON value is set and not null.
 func present(v jsontext.Value) bool { return len(v) > 0 && string(v) != "null" }
 
 func (p *apiPR) pr() PR {
-	return PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, HeadSHA: p.Head.SHA, State: p.State, URL: p.HTMLURL, CreatedAt: p.CreatedAt}
+	pr := PR{Number: p.Number, Title: p.Title, Body: p.Body, Head: p.Head.Ref, HeadSHA: p.Head.SHA, State: p.State, URL: p.HTMLURL, CreatedAt: p.CreatedAt}
+	for _, l := range p.Labels {
+		pr.Labels = append(pr.Labels, l.Name)
+	}
+	return pr
 }
 
 type prEdit struct {
@@ -255,6 +263,15 @@ func (g *githubClient) SetPRMetadata(ctx context.Context, n int, m PRMetadata) e
 		labels = m.Labels
 	}
 	return setPRMetadata(ctx, &g.rest, g.headers, g.repo, n, labels, m)
+}
+
+// RemovePRLabel deletes the label by name; GitHub answers 404 when the PR does not have it.
+func (g *githubClient) RemovePRLabel(ctx context.Context, n int, label string) error {
+	err := g.do(ctx, http.MethodDelete, issuePath(g.repo, n)+"/labels/"+neturl.PathEscape(label), nil, nil, g.headers)
+	if hasStatus(err, http.StatusNotFound, "") {
+		return nil
+	}
+	return err
 }
 
 // setPRMetadata is SetPRMetadata over the REST paths GitHub, Gitea and Forgejo share; labels

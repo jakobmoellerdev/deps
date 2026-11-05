@@ -135,7 +135,8 @@ func (s *summary) action(g engine.Group) (bot.Action, bool) {
 	return s.Actions[i], true
 }
 
-// others are the run outcomes without a group: closed obsolete PRs and the dashboard.
+// others are the run outcomes without a group: closed obsolete PRs, obsolete PRs kept open by
+// the stopUpdatingLabel, and the dashboard.
 func (s *summary) others() []bot.Action {
 	s.index()
 	var out []bot.Action

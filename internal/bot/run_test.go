@@ -132,6 +132,8 @@ type fakePC struct {
 	updated      []int
 	recorded     []int // UpdatePR calls that only set the input fingerprint of the listed body
 	closedNow    []int
+	prBodies     map[int]string // last UpdatePR body by PR number
+	unlabeled    []string       // RemovePRLabel "<number>:<label>"
 
 	checks    platform.CheckState
 	automerge []string // EnableAutoMerge "<number>:<strategy>@<head sha>"
@@ -176,6 +178,10 @@ func (c *fakePC) UpdatePR(_ context.Context, n int, _, body string) error {
 	if err := fail(c.fail, "UpdatePR", ""); err != nil {
 		return err
 	}
+	if c.prBodies == nil {
+		c.prBodies = map[int]string{}
+	}
+	c.prBodies[n] = body
 	for _, p := range c.open {
 		if p.Number == n && body != p.Body && withInput(p.Body, bodyInput(body)) == body {
 			c.recorded = append(c.recorded, n)
@@ -198,6 +204,13 @@ func (c *fakePC) SetPRMetadata(_ context.Context, n int, m platform.PRMetadata) 
 	}
 	c.metadata[n] = m
 	return fail(c.fail, "SetPRMetadata", strconv.Itoa(n))
+}
+func (c *fakePC) RemovePRLabel(_ context.Context, n int, label string) error {
+	if err := fail(c.fail, "RemovePRLabel", ""); err != nil {
+		return err
+	}
+	c.unlabeled = append(c.unlabeled, fmt.Sprintf("%d:%s", n, label))
+	return nil
 }
 func (c *fakePC) EnableAutoMerge(_ context.Context, pr platform.PR, strategy string) error {
 	c.automerge = append(c.automerge, fmt.Sprintf("%d:%s@%s", pr.Number, strategy, pr.HeadSHA))

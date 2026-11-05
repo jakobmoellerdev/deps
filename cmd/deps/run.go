@@ -307,6 +307,8 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		HourlyLimit:        s.cfg.PRHourlyLimit,
 		DryRun:             r.dryRun,
 		RebaseWhen:         s.cfg.RebaseWhen,
+		RebaseLabel:        s.cfg.RebaseLabelName(),
+		StopUpdatingLabel:  s.cfg.StopUpdatingLabelName(),
 		UpdateNotScheduled: s.cfg.UpdateNotScheduledEnabled(),
 		Trigger:            trigger,
 		MaxNewPRs:          r.maxNewPRs,

@@ -63,8 +63,8 @@ The PRs are the ones `run` opens: plan and apply group their updates the same wa
 **JSON report.** `--report <file>` (or `$DEPS_REPORT`) makes `plan`, `apply` and `run` also write the summary as one JSON object, replacing the file. It is not written when deps fails before it has a result (usage or config errors, exit 2). Fields:
 
 - `command` (`plan`, `apply`, `run`, `run --dry-run`), `dependencies`, `durationMs`;
-- `prs[]`: `branch`, `title`, `updates[]` (`name`, `manager`, `file`, `line`, `from`, `to`, `type`, `lockfile`, `advisories` as IDs; a lock file maintenance has type `lockFileMaintenance` and no versions); for `run` also `status`, `automerge`, `number`, `url`, `waitsFor` (crons) and `reason` (why a `skipped: update cannot be applied` update cannot be applied);
-- `otherActions[]`: closed obsolete PRs and the dashboard (`branch`, `title`, `status`, `number`, `url`, `dashboard`);
+- `prs[]`: `branch`, `title`, `updates[]` (`name`, `manager`, `file`, `line`, `from`, `to`, `type`, `lockfile`, `advisories` as IDs; a lock file maintenance has type `lockFileMaintenance` and no versions); for `run` also `status`, `automerge`, `number`, `url`, `waitsFor` (crons) and `reason` (why a `skipped: update cannot be applied` update cannot be applied; the label of a `skipped: stop-updating label` PR);
+- `otherActions[]`: closed obsolete PRs, obsolete PRs kept open by the `stopUpdatingLabel`, and the dashboard (`branch`, `title`, `status`, `number`, `url`, `dashboard`);
 - `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `skipped[]` (`reason`, `count`), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error, `file` for a file that cannot be read or parsed);
 - `counts`: the step outputs below, by camelCase name.
 

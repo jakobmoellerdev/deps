@@ -31,6 +31,7 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
 - [Automerge](#automerge)
 - [Dependency dashboard](#dependency-dashboard)
 - [Labels, reviewers and assignees](#labels-reviewers-and-assignees)
+- [Rebasing or pausing a PR](#rebasing-or-pausing-a-pr)
 - [Overlapping runs](#overlapping-runs)
 - [Step summary](#step-summary)
 - [Step outputs and report](#step-outputs-and-report)
@@ -620,6 +621,16 @@ rules:
 - **Failures.** If a part fails (an unknown user, a team without access), the PR is still created and the run reports the error, e.g. `deps/gomod/x: request reviewers of #12: 422 …`.
 - **GitHub.** Labels that don't exist are created by GitHub. Teams are `team:<slug>` of the repository's organization. The token needs `pull-requests: write`.
 - **Gitea and Forgejo.** Labels must exist in the repository or its organization; missing ones are left out with a warning. Reviewers and assignees need write access to the repository.
+
+## Rebasing or pausing a PR
+
+Each PR can be steered from the PR itself, without the dashboard:
+
+- **Rebase checkbox.** Every PR body ends with `- [ ] If you want to rebase/retry this PR, check this box`. Tick it, and the next run rebuilds the branch on the current base, even outside its schedule and even when someone else pushed to it (those commits are discarded), like the dashboard's rebase checkbox. The run reports `rebased` (or `updated` when the content changed) and unticks the box. Ticking it changes nothing else: the PR's fingerprint covers the file contents, not the body.
+- **[`rebaseLabel`](reference/configuration.md#rebaselabel)** (default `rebase`) does the same as a label; deps removes it after the push.
+- **[`stopUpdatingLabel`](reference/configuration.md#stopupdatinglabel)** (default `stop-updating`) pauses the PR: deps no longer pushes or rebases it and doesn't close it as obsolete, so commits you push to the branch stay. The run reports `skipped: stop-updating label`; the dashboard lists the PR under *Ignored or blocked*. Remove the label to hand it back.
+
+The request acts on the next run. To act right away, also run deps on `pull_request` events (`types: [edited, labeled]`) of `deps/` branches; `run` needs the base branch checked out (`actions/checkout` with `ref: ${{ github.event.repository.default_branch }}`), not the PR's merge commit. As with the [dashboard trigger](#run-when-the-dashboard-is-ticked), skip events whose `sender.type` is `Bot`, so deps' own body edits don't start runs. A label must exist before it can be added to a PR; create `rebase` and `stop-updating` (or your names) once.
 
 ## Overlapping runs
 

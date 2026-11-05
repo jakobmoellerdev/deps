@@ -4,6 +4,7 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 - With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
 - With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every lockfile deps maintains (`Cargo.lock`, npm, pnpm and yarn locks, `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, Gradle lockfiles, `.terraform.lock.hcl`, and the `// indirect` requirements of `go.mod` with `go.sum`) with the ecosystem's tool; it is closed when the lockfiles are current.
 - Obsolete PRs under `branchPrefix` are closed and their branches deleted, and obsolete branches without any PR (branch automerge) are deleted, but only when the run had no errors.
+- On an open PR, its ticked rebase checkbox or the `rebaseLabel` (default `rebase`) requests a rebuild like the dashboard's rebase checkbox; deps unticks the box and removes the label afterwards. The `stopUpdatingLabel` (default `stop-updating`) makes deps leave the PR alone.
 - The local `HEAD` must be the tip of `origin/<base>`.
 
 **Token:** `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`, which uses the API anonymously. Git pushes use the checkout's credentials.
@@ -29,7 +30,7 @@ Only keys without a passphrase are supported; a protected key fails before any w
 |---|---|
 | `created` | new PR, or new branch (branch automerge) |
 | `updated` | content changed or the PR was unmergeable; force-pushed and PR edited. A branch automerge branch is also rebuilt when the base moved |
-| `rebased` | unchanged content rebuilt on a moved base (`rebaseWhen: behind-base-branch`), or on request from the dashboard |
+| `rebased` | unchanged content rebuilt on a moved base (`rebaseWhen: behind-base-branch`), or on request (the PR's rebase checkbox or `rebaseLabel`, or the dashboard) |
 | `up-to-date` | nothing to do |
 | `closed` | obsolete PR closed and branch deleted |
 | `deleted` | obsolete branch without a PR deleted (branch automerge) |
@@ -38,7 +39,8 @@ Only keys without a passphrase are supported; a protected key fails before any w
 | `skipped: closed PR for this major` | an unmerged closed PR of the same major branch (`-major`, `-v<N>`) targeted the same majors: closing a major PR ignores that major until the next one (the dashboard's recreate checkbox overrides it) |
 | `skipped: outside schedule` | the run was triggered by a cron that is not in the group's `schedule` (the dashboard's create checkbox overrides it) |
 | `skipped: new PR limit reached` | a PR limit is exhausted (dashboard checkboxes override it) |
-| `skipped: branch modified by someone else` | the branch tip's author is neither the bot nor in `gitIgnoredAuthors` (the dashboard's rebase checkbox discards those commits) |
+| `skipped: branch modified by someone else` | the branch tip's author is neither the bot nor in `gitIgnoredAuthors` (a rebase request discards those commits) |
+| `skipped: stop-updating label` | the open PR has the `stopUpdatingLabel`: not pushed, rebased or closed as obsolete |
 
 **Automerge outcomes** (appended to the PR status, e.g. `created, automerge`):
 

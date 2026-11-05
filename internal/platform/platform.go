@@ -4,6 +4,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
@@ -42,6 +43,13 @@ type PR struct {
 	// AutoMerge reports auto-merge as already enabled (GitHub auto_merge non-null). Gitea and
 	// Forgejo do not report it, so it is always false there and requests are idempotent.
 	AutoMerge bool
+	Labels    []string // label names; nil when it has none
+}
+
+// HasLabel reports whether p has the label name (case-insensitive, as forges compare label
+// names).
+func (p PR) HasLabel(name string) bool {
+	return slices.ContainsFunc(p.Labels, func(l string) bool { return strings.EqualFold(l, name) })
 }
 
 // Issue is the subset of issue fields deps uses.
@@ -108,6 +116,9 @@ type Client interface {
 	// and adds assignees on PR number; empty lists are skipped. Each part is attempted; the
 	// failures are joined.
 	SetPRMetadata(ctx context.Context, number int, m PRMetadata) error
+	// RemovePRLabel removes the label named label (case-insensitive on Gitea and Forgejo)
+	// from PR number; a label the PR does not have is no error.
+	RemovePRLabel(ctx context.Context, number int, label string) error
 	// EnableAutoMerge asks the forge to merge pr with strategy (config.AutomergeStrategies;
 	// auto = the repository default) once its required checks pass. It returns
 	// ErrAutoMergePending or ErrAutoMergeUnavailable (wrapped) when that is not possible now;

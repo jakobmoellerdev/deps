@@ -176,6 +176,22 @@ func (g *giteaClient) SetPRMetadata(ctx context.Context, n int, m PRMetadata) er
 	return errors.Join(append(errs, setPRMetadata(ctx, &g.rest, g.headers, g.repo, n, labels, m))...)
 }
 
+// RemovePRLabel deletes the label by id (the name resolved like CreateIssue's); a name the
+// repository and its organization do not know, or a 404, means the PR does not have it.
+func (g *giteaClient) RemovePRLabel(ctx context.Context, n int, label string) error {
+	ids, err := g.labelIDs(ctx, []string{label})
+	if err != nil {
+		return fmt.Errorf("labels of #%d: %w", n, err)
+	}
+	for _, id := range ids {
+		err := g.do(ctx, http.MethodDelete, issuePath(g.repo, n)+"/labels/"+strconv.FormatInt(id, 10), nil, nil, g.headers)
+		if err != nil && !hasStatus(err, http.StatusNotFound, "") {
+			return err
+		}
+	}
+	return nil
+}
+
 // labelIDs resolves label names (case-insensitive) to ids: the repository's labels, then its
 // organization's, each listed at most once per client and only while names are missing.
 func (g *giteaClient) labelIDs(ctx context.Context, names []string) ([]int64, error) {

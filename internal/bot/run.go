@@ -52,6 +52,10 @@ type Options struct {
 	BranchPrefix                  string // managed branch prefix, ending in '/'; "" = config.DefaultBranchPrefix
 	DryRun                        bool
 	RebaseWhen                    string // config.RebaseWhens; "" = config.RebaseConflicted
+	// RebaseLabel on an open PR requests a rebase like the PR's rebase checkbox and is removed
+	// once the branch is pushed; StopUpdatingLabel makes Run leave the PR alone. "" = the
+	// config defaults (config.DefaultRebaseLabel, config.DefaultStopUpdatingLabel).
+	RebaseLabel, StopUpdatingLabel string
 	// UpdateNotScheduled keeps updating and rebasing open PRs outside their schedule; only
 	// new PRs wait for a run triggered by one of their crons (Renovate's
 	// updateNotScheduled). false skips such groups.
@@ -109,6 +113,8 @@ const (
 	// StatusSkipApply: a post-processor found the update inapplicable (*dep.SkipError, e.g.
 	// the new version of a Go module declares another module path); Action.Reason says why.
 	StatusSkipApply = "skipped: update cannot be applied"
+	// StatusSkipStopped: the open PR has the StopUpdatingLabel; Action.Reason is the label.
+	StatusSkipStopped = "skipped: stop-updating label"
 )
 
 // Automerge outcomes (Action.Automerge).
@@ -136,7 +142,7 @@ type Action struct {
 	Automerge                  string   // automerge outcome; "" = not an automerge PR
 	Waits                      []string // StatusSkipSchedule: the crons that would put the group in schedule
 	Dashboard                  bool
-	Reason                     string // StatusSkipApply: why
+	Reason                     string // StatusSkipApply: why; StatusSkipStopped: the label
 }
 
 // Display is Status with the automerge outcome appended ("created, automerge").
@@ -148,6 +154,20 @@ func (a Action) Display() string {
 }
 
 var fingerprintRe = regexp.MustCompile(`<!-- deps:fingerprint=([0-9a-f]+) -->`)
+
+// rebaseCheckbox ends every PR body above the markers; ticking it makes the next run rebase
+// the PR like the dashboard's rebase checkbox. The content fingerprint does not cover the
+// body, so ticking it changes nothing else.
+const rebaseCheckbox = "- [ ] <!-- deps:rebase --> If you want to rebase/retry this PR, check this box"
+
+// rebaseTickedRe finds a ticked rebaseCheckbox: "- [x] <!-- deps:rebase -->".
+var rebaseTickedRe = regexp.MustCompile(`(?m)^(\s*[-*] )\[[xX]\]( <!-- deps:rebase -->)`)
+
+// rebaseTicked reports whether body has its rebase checkbox ticked.
+func rebaseTicked(body string) bool { return rebaseTickedRe.MatchString(body) }
+
+// untickRebase returns body with its rebase checkbox unticked.
+func untickRebase(body string) string { return rebaseTickedRe.ReplaceAllString(body, "${1}[ ]${2}") }
 
 // Run creates, updates and closes dependency PRs for res; post regenerates lockfiles per
 // manager (engine.Build). Obsolete PRs are only closed when neither the engine nor the bot
@@ -177,6 +197,8 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		return nil, []error{fmt.Errorf("checkout HEAD %s is not the tip of origin/%s (%s); check out the latest %s", short(head), base, short(tip), base)}
 	}
 
+	o.RebaseLabel = cmp.Or(o.RebaseLabel, config.DefaultRebaseLabel)
+	o.StopUpdatingLabel = cmp.Or(o.StopUpdatingLabel, config.DefaultStopUpdatingLabel)
 	prefix := cmp.Or(o.BranchPrefix, config.DefaultBranchPrefix)
 	branches, err := g.LsRemote(ctx, "refs/heads/"+prefix+"*")
 	if err != nil {
@@ -220,9 +242,17 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	forced := make([]force, len(groups))
 	for i := range groups {
 		forced[i] = dash.force(groups[i].Branch)
+		pr := prOf(open, groups[i].Branch)
+		if pr != nil && pr.HasLabel(o.StopUpdatingLabel) {
+			continue // left alone: not built, and handled as StatusSkipStopped
+		}
+		if pr != nil && (rebaseTicked(pr.Body) || pr.HasLabel(o.RebaseLabel)) {
+			slog.DebugContext(ctx, "rebase requested on the PR", "branch", groups[i].Branch, "number", pr.Number, "label", pr.HasLabel(o.RebaseLabel))
+			forced[i].rebase = true
+		}
 		inSchedule[i] = forced[i].any() || scheduled(groups[i].Updates, o.Trigger)
 		_, branchExists := branches["refs/heads/"+groups[i].Branch]
-		existing := prOf(open, groups[i].Branch) != nil || groups[i].AutomergeBranch && branchExists
+		existing := pr != nil || groups[i].AutomergeBranch && branchExists
 		// Nothing is pushed for the others, so they are not built.
 		ran[i] = inSchedule[i] || o.UpdateNotScheduled && existing
 	}
@@ -260,6 +290,11 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		func() {
 			ctx := logs.ctx(i)
 			wanted[grp.Branch] = true // out-of-schedule branches are still wanted: keep their PRs open
+			if pr := prOf(open, grp.Branch); pr != nil && pr.HasLabel(o.StopUpdatingLabel) {
+				slog.InfoContext(ctx, "PR has the stop-updating label, leaving it alone", "branch", grp.Branch, "number", pr.Number, "label", o.StopUpdatingLabel)
+				actions = append(actions, Action{Branch: grp.Branch, Title: grp.Title, Status: StatusSkipStopped, URL: pr.URL, Number: pr.Number, Reason: o.StopUpdatingLabel})
+				return
+			}
 			if buildErrs[i] != nil {
 				if reason, ok := skipReason(buildErrs[i]); ok {
 					slog.InfoContext(ctx, "update cannot be applied", "branch", grp.Branch, "reason", reason)
@@ -301,6 +336,12 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 					}
 				}
 			}
+			if pr := prOf(open, grp.Branch); pr != nil && (a.Status == StatusRebased || a.Status == StatusUpdated) && pr.HasLabel(o.RebaseLabel) {
+				// The rebase the label requested is done.
+				if err := pc.RemovePRLabel(ctx, pr.Number, o.RebaseLabel); err != nil {
+					errs = append(errs, fmt.Errorf("%s: remove label %q from #%d: %w", grp.Branch, o.RebaseLabel, pr.Number, err))
+				}
+			}
 			if grp.Automerge && target != nil {
 				if err := automerge(ctx, o, grp, &a, *target, pc); err != nil {
 					errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
@@ -328,6 +369,11 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	default:
 		for _, pr := range open {
 			if wanted[pr.Head] {
+				continue
+			}
+			if pr.HasLabel(o.StopUpdatingLabel) {
+				slog.InfoContext(ctx, "obsolete PR has the stop-updating label, leaving it open", "branch", pr.Head, "number", pr.Number, "label", o.StopUpdatingLabel)
+				actions = append(actions, Action{Branch: pr.Head, Title: pr.Title, Status: StatusSkipStopped, URL: pr.URL, Number: pr.Number, Reason: o.StopUpdatingLabel})
 				continue
 			}
 			if err := pc.ClosePR(ctx, pr.Number); err != nil {
@@ -449,7 +495,8 @@ func deleteObsoleteBranches(ctx context.Context, o Options, s *runState, wanted 
 	return actions, errs
 }
 
-// force is what the dependency dashboard checkboxes request for one branch.
+// force is what the dependency dashboard checkboxes request for one branch; rebase is also
+// requested by the PR's rebase checkbox (rebaseCheckbox) and Options.RebaseLabel.
 type force struct {
 	create   bool // create the PR (or automerge branch) now: bypass schedule and PR limits
 	recreate bool // create a PR again although one for this version or major was closed
@@ -600,7 +647,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	}
 	switch {
 	case matched && f.rebase:
-		slog.DebugContext(ctx, "rebase requested on the dependency dashboard", "branch", grp.Branch, "number", pr.Number)
+		slog.DebugContext(ctx, "rebase requested", "branch", grp.Branch, "number", pr.Number)
 		rebase = true
 	case matched:
 		if o.RebaseWhen == config.RebaseNever {
@@ -948,7 +995,7 @@ func bodyFingerprint(body string) string {
 }
 
 // prBody renders the body of a PR with content fingerprint fp and input fingerprint input
-// ("" = none).
+// ("" = none); it ends with the unticked rebaseCheckbox and the markers.
 func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp, input string) string {
 	var b strings.Builder
 	var ages []string
@@ -1019,6 +1066,7 @@ func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp, input string
 			b.WriteString(s)
 		}
 	}
+	b.WriteString("\n---\n\n" + rebaseCheckbox + "\n")
 	fmt.Fprintf(&b, "\n<!-- deps:fingerprint=%s -->\n", fp)
 	if m := versionsMarker(ups); m != "" {
 		b.WriteString(m + "\n")

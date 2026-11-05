@@ -99,6 +99,12 @@ var AutomergeTypes = []string{AutomergeTypePR, AutomergeTypeBranch}
 // DefaultDashboardTitle is the dependency dashboard issue title when none is configured.
 const DefaultDashboardTitle = "Dependency Dashboard"
 
+// Default PR labels of rebaseLabel and stopUpdatingLabel (Renovate's defaults).
+const (
+	DefaultRebaseLabel       = "rebase"
+	DefaultStopUpdatingLabel = "stop-updating"
+)
+
 // Known values for validation.
 var (
 	Managers = []string{"github-actions", "gomod", "docker", "npm", "helm", "kustomize", "pre-commit", "gitlabci", "nvm", "nodenv", "asdf", "mise", "cargo", "pip_requirements", "pep621", "poetry", "pipenv", "terraform", "terraform-version", "tflint-plugin", "terragrunt", "maven", "gradle", "gradle-wrapper", "maven-wrapper", "custom"}
@@ -185,6 +191,10 @@ type Config struct {
 	Labels    []string `yaml:"labels" jsonschema_description:"Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels)."`
 	Reviewers []string `yaml:"reviewers" jsonschema_description:"Reviewers requested on new update PRs: user names, or team:<slug> for a team of the repository's organization. Rules replace them."`
 	Assignees []string `yaml:"assignees" jsonschema_description:"Users assigned to new update PRs. Rules replace them."`
+	// RebaseLabel and StopUpdatingLabel are PR labels people set (Renovate's options of the
+	// same names).
+	RebaseLabel       string `yaml:"rebaseLabel" jsonschema:"default=rebase" jsonschema_description:"Label that makes the next run rebuild an update PR's branch on the current base, like ticking its rebase checkbox (bypassing the schedule and discarding commits by others); deps removes the label afterwards."`
+	StopUpdatingLabel string `yaml:"stopUpdatingLabel" jsonschema:"default=stop-updating" jsonschema_description:"Label that makes deps leave an update PR alone: its branch is no longer pushed or rebased, and the PR is not closed as obsolete. Remove the label to hand the PR back to deps."`
 	// DependencyDashboard* configure the dashboard issue (Renovate's :dependencyDashboard).
 	DependencyDashboard       bool     `yaml:"dependencyDashboard" jsonschema:"default=false" jsonschema_description:"Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched."`
 	DependencyDashboardTitle  string   `yaml:"dependencyDashboardTitle" jsonschema:"default=Dependency Dashboard" jsonschema_description:"Title of the dependency dashboard issue; the issue is found by this exact title."`
@@ -225,6 +235,14 @@ func (c *Config) UpdateNotScheduledEnabled() bool {
 // DashboardTitle returns DependencyDashboardTitle, or DefaultDashboardTitle when unset.
 func (c *Config) DashboardTitle() string {
 	return cmp.Or(c.DependencyDashboardTitle, DefaultDashboardTitle)
+}
+
+// RebaseLabelName returns RebaseLabel, or DefaultRebaseLabel when unset.
+func (c *Config) RebaseLabelName() string { return cmp.Or(c.RebaseLabel, DefaultRebaseLabel) }
+
+// StopUpdatingLabelName returns StopUpdatingLabel, or DefaultStopUpdatingLabel when unset.
+func (c *Config) StopUpdatingLabelName() string {
+	return cmp.Or(c.StopUpdatingLabel, DefaultStopUpdatingLabel)
 }
 
 // validateAutomerge checks automergeStrategy and automergeType of the top level (f "") or
@@ -662,6 +680,14 @@ func (c *Config) Validate() error {
 		if strings.TrimSpace(l) == "" || strings.Contains(l, ",") {
 			add(fmt.Sprintf("dependencyDashboardLabels[%d]", i), "must be a non-blank label name without ',', got %q", l)
 		}
+	}
+	for _, l := range []struct{ key, v string }{{"rebaseLabel", c.RebaseLabel}, {"stopUpdatingLabel", c.StopUpdatingLabel}} {
+		if l.v != "" && (strings.TrimSpace(l.v) == "" || strings.Contains(l.v, ",")) {
+			add(l.key, "must be a non-blank label name without ',', got %q", l.v)
+		}
+	}
+	if strings.EqualFold(c.RebaseLabelName(), c.StopUpdatingLabelName()) {
+		add("stopUpdatingLabel", "must differ from rebaseLabel, got %q", c.StopUpdatingLabelName())
 	}
 	c.minAge = 0
 	if c.MinimumReleaseAge != "" {
