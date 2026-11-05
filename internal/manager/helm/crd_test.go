@@ -487,3 +487,74 @@ func TestLinkResets(t *testing.T) {
 	check(t, linked(t, m, map[string]string{"a.yaml": cfg, "b.yaml": chart}), []string{"b.yaml:5 k0s c https://r.example.com 1.0.0 "})
 	check(t, linked(t, m, map[string]string{"b.yaml": chart}), []string{"b.yaml:5 k0s c  1.0.0 unknown chart repository r"})
 }
+
+func TestSveltos(t *testing.T) {
+	files := map[string]string{
+		"sveltos/profiles.yaml": `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+spec:
+  group: config.projectsveltos.io
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+spec:
+  helmCharts:
+    - repositoryURL: https://kyverno.github.io/kyverno/
+      repositoryName: kyverno
+      chartName: kyverno/kyverno
+      chartVersion: v3.0.1
+    - repositoryURL: oci://registry-1.docker.io/bitnamicharts/vault
+      repositoryName: oci-vault
+      chartName: oci://registry-1.docker.io/bitnamicharts/vault
+      chartVersion: 0.7.2
+    - repositoryURL: https://charts.example.com
+      repositoryName: ex
+      chartName: '{{ .chart }}'
+      chartVersion: 1.0.0
+    - repositoryName: none
+      chartName: none/app
+      chartVersion: 1.0.0
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: Profile
+spec:
+  helmCharts:
+  - {repositoryURL: "https://prometheus-community.github.io/helm-charts", repositoryName: prom, chartName: prometheus, chartVersion: "25.8.0"}
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterPromotion
+spec:
+  profileSpec:
+    helmCharts:
+    - repositoryURL: https://charts.jetstack.io
+      repositoryName: jetstack
+      chartName: jetstack/cert-manager
+      chartVersion: v1.14.0
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: EventTrigger
+spec:
+  helmCharts:
+  - repositoryURL: https://grafana.github.io/helm-charts
+    repositoryName: grafana
+    chartName: grafana/loki
+    chartVersion: 6.0.0
+`,
+	}
+	check(t, linked(t, New(), files), []string{
+		"sveltos/profiles.yaml:13 sveltos kyverno https://kyverno.github.io/kyverno v3.0.1 ",
+		"sveltos/profiles.yaml:17 sveltos vault oci://registry-1.docker.io/bitnamicharts 0.7.2 ",
+		"sveltos/profiles.yaml:21 sveltos {{ .chart }} https://charts.example.com 1.0.0 template value",
+		"sveltos/profiles.yaml:24 sveltos app  1.0.0 no repositoryURL",
+		"sveltos/profiles.yaml:30 sveltos prometheus https://prometheus-community.github.io/helm-charts 25.8.0 ",
+		"sveltos/profiles.yaml:40 sveltos cert-manager https://charts.jetstack.io v1.14.0 ",
+		"sveltos/profiles.yaml:49 sveltos loki https://grafana.github.io/helm-charts 6.0.0 ",
+	})
+	ds := linkedDeps(t, New(), files)[0]
+	if n := len(ds[0].NameParts); n != 2 {
+		t.Errorf("kyverno: %d name parts, want chart and repository", n)
+	}
+	if ds[1].NameParts != nil {
+		t.Errorf("OCI chart: name parts %+v, want none", ds[1].NameParts)
+	}
+}

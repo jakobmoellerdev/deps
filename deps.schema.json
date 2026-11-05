@@ -282,6 +282,7 @@
               "k0s",
               "flux",
               "argocd",
+              "sveltos",
               "image",
               "helmChart",
               "resource",

@@ -31,6 +31,7 @@ const (
 	TypeK0s      = "k0s"
 	TypeFlux     = "flux"
 	TypeArgoCD   = "argocd"
+	TypeSveltos  = "sveltos"
 )
 
 var helmfileRe = regexp.MustCompile(`(^|/)(helmfile\.ya?ml|helmfile\.d/[^/]+\.ya?ml)(\.gotmpl)?$`)

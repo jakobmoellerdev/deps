@@ -396,7 +396,7 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 
 - `Chart.yaml` (DepType `chart`)
 - `helmfile.y(a)ml`, `helmfile.d/*.y(a)ml`, each optionally `.gotmpl` (DepType `helmfile`)
-- other `*.y(a)ml` containing a `k0sproject.io/`, `fluxcd.io/` or `argoproj.io/` API group, parsed document by document (DepTypes `k0s`, `flux`, `argocd`)
+- other `*.y(a)ml` containing the API group of a k0s, Flux, Argo CD or Sveltos resource below, parsed document by document (DepTypes `k0s`, `flux`, `argocd`, `sveltos`)
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
@@ -405,6 +405,7 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 | `k0s` | k0s `Chart` (`helm.k0sproject.io`) `spec.chartName` + `spec.version`, and ClusterConfig (`k0s.k0sproject.io`, also embedded in a k0sctl `Cluster` as `spec.k0s.config`) `spec.extensions.helm.charts[].chartname` + `version`; the repository is `spec.repository.url`, the `<alias>` of `<alias>/<chart>` from a ClusterConfig's `spec.extensions.helm.repositories[]` in any file, or `oci://host/path/<chart>` | `helm` | `semver` | updated |
 | `flux` | `HelmRelease` (`helm.toolkit.fluxcd.io/v2*`) `spec.chart.spec.chart` + `version` from its `sourceRef` `HelmRepository` (`source.toolkit.fluxcd.io`, any file; `spec.type: oci` → `oci://`), and the `OCIRepository` chart (`spec.url` + `spec.ref.tag`) a `spec.chartRef` names or whose `spec.layerSelector.mediaType` is the Helm chart type | `helm` | `semver` | updated |
 | `argocd` | `Application` `spec.source` / `spec.sources[]` and `ApplicationSet` `spec.template.spec.source(s)` with a `chart`: `repoURL` + `chart` + `targetRevision`; a `repoURL` without scheme is an OCI registry | `helm` | `semver` | updated |
+| `sveltos` | `ClusterProfile` and `Profile` (`config.projectsveltos.io`) `spec.helmCharts[]`, `ClusterPromotion` `spec.profileSpec.helmCharts[]` and `EventTrigger` (`lib.projectsveltos.io`) `spec.helmCharts[]`: `chartVersion` of `chartName` (without its `<repositoryName>/` prefix) in `repositoryURL`; an `oci://` `repositoryURL` is the chart reference itself | `helm` | `semver` | updated |
 
 **Skips:**
 
@@ -412,7 +413,7 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 |---|---|
 | `version range` | anything but a full `MAJOR.MINOR.PATCH[-pre][+build]` (optionally `v`-prefixed): `~1.2.0`, `^1`, `>=1.0.0`, `1.2.x`, `1.2` |
 | `no version` | the version is missing or empty |
-| `template value` | the version (or a resource's chart name or `repoURL`) contains `{{` |
+| `template value` | the version (or a resource's chart name, `repoURL` or `repositoryURL`) contains `{{` |
 | `local chart` | Chart.yaml: empty or `file://` repository; helmfile: a chart path (`./x`, `../x`, `/x`, no `/`); k0s: a chart path (`/x`, `./x`, `*.tgz`) |
 | `repository alias` | Chart.yaml: `@name` or `alias:name` repositories (resolved by the user's Helm repository config) |
 | `unknown chart repository <repo>` | Chart.yaml: a repository that is no URL; helmfile: a `<repo>/` prefix not in `repositories[]`; k0s: an alias no scanned ClusterConfig declares |
@@ -424,6 +425,7 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 | `no sourceRef` | flux: the HelmRelease chart has no `sourceRef` kind |
 | `pinned by digest` | flux: the OCIRepository selects `spec.ref.digest` |
 | `no repoURL` | argocd: a Helm source without `repoURL` |
+| `no repositoryURL` | sveltos: a `helmCharts[]` entry without `repositoryURL` |
 | `cannot locate value` | the version's bytes could not be found (escapes, block scalars) |
 
 **Versioning.**
@@ -445,7 +447,7 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 
 **Replacements.**
 
-A chart is [replaced](configuration.md#rulesreplacementname) by a chart name (same repository), or `<http(s):// or oci:// URL>/<chart>` (or `host/path/<chart>` for OCI) to move it, where the repository is written next to the chart (Chart.yaml `repository`, Argo CD `repoURL`, Flux OCIRepository `url`, k0s `url`, `oci://` references); alias and `sourceRef` repositories only allow a new chart name. `Chart.lock` entries follow the renamed or moved chart.
+A chart is [replaced](configuration.md#rulesreplacementname) by a chart name (same repository), or `<http(s):// or oci:// URL>/<chart>` (or `host/path/<chart>` for OCI) to move it, where the repository is written next to the chart (Chart.yaml `repository`, Argo CD `repoURL`, Sveltos `repositoryURL`, Flux OCIRepository `url`, k0s `url`, `oci://` references); alias and `sourceRef` repositories only allow a new chart name, and Sveltos `oci://` charts, named in both `repositoryURL` and `chartName`, none. `Chart.lock` entries follow the renamed or moved chart.
 
 **Edits.**
 

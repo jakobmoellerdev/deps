@@ -29,6 +29,12 @@ var crdResources = map[string]func(x *crdExtractor, n, spec *yaml.Node){
 	"argoproj.io ApplicationSet": func(x *crdExtractor, _, spec *yaml.Node) {
 		x.argoSpec(yamlspan.Get(yamlspan.Get(spec, "template"), "spec"))
 	},
+	"config.projectsveltos.io ClusterProfile": func(x *crdExtractor, _, spec *yaml.Node) { x.sveltosCharts(spec) },
+	"config.projectsveltos.io Profile":        func(x *crdExtractor, _, spec *yaml.Node) { x.sveltosCharts(spec) },
+	"config.projectsveltos.io ClusterPromotion": func(x *crdExtractor, _, spec *yaml.Node) {
+		x.sveltosCharts(yamlspan.Get(spec, "profileSpec"))
+	},
+	"lib.projectsveltos.io EventTrigger": func(x *crdExtractor, _, spec *yaml.Node) { x.sveltosCharts(spec) },
 }
 
 // crdGroups are the distinct API groups of crdResources.

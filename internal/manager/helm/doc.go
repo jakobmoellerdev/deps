@@ -11,7 +11,7 @@ var Doc = refdoc.Manager{
 	Files: []string{
 		"`Chart.yaml` (DepType `chart`)",
 		"`helmfile.y(a)ml`, `helmfile.d/*.y(a)ml`, each optionally `.gotmpl` (DepType `helmfile`)",
-		"other `*.y(a)ml` containing a `k0sproject.io/`, `fluxcd.io/` or `argoproj.io/` API group, parsed document by document (DepTypes `k0s`, `flux`, `argocd`)",
+		"other `*.y(a)ml` containing the API group of a k0s, Flux, Argo CD or Sveltos resource below, parsed document by document (DepTypes `k0s`, `flux`, `argocd`, `sveltos`)",
 	},
 	DepTypes: []refdoc.DepType{
 		{Name: "chart", What: "`dependencies[].version` with `name` and `repository`", Datasource: "`helm`", Versioning: "`semver`"},
@@ -19,11 +19,12 @@ var Doc = refdoc.Manager{
 		{Name: "k0s", What: "k0s `Chart` (`helm.k0sproject.io`) `spec.chartName` + `spec.version`, and ClusterConfig (`k0s.k0sproject.io`, also embedded in a k0sctl `Cluster` as `spec.k0s.config`) `spec.extensions.helm.charts[].chartname` + `version`; the repository is `spec.repository.url`, the `<alias>` of `<alias>/<chart>` from a ClusterConfig's `spec.extensions.helm.repositories[]` in any file, or `oci://host/path/<chart>`", Datasource: "`helm`", Versioning: "`semver`"},
 		{Name: "flux", What: "`HelmRelease` (`helm.toolkit.fluxcd.io/v2*`) `spec.chart.spec.chart` + `version` from its `sourceRef` `HelmRepository` (`source.toolkit.fluxcd.io`, any file; `spec.type: oci` → `oci://`), and the `OCIRepository` chart (`spec.url` + `spec.ref.tag`) a `spec.chartRef` names or whose `spec.layerSelector.mediaType` is the Helm chart type", Datasource: "`helm`", Versioning: "`semver`"},
 		{Name: "argocd", What: "`Application` `spec.source` / `spec.sources[]` and `ApplicationSet` `spec.template.spec.source(s)` with a `chart`: `repoURL` + `chart` + `targetRevision`; a `repoURL` without scheme is an OCI registry", Datasource: "`helm`", Versioning: "`semver`"},
+		{Name: "sveltos", What: "`ClusterProfile` and `Profile` (`config.projectsveltos.io`) `spec.helmCharts[]`, `ClusterPromotion` `spec.profileSpec.helmCharts[]` and `EventTrigger` (`lib.projectsveltos.io`) `spec.helmCharts[]`: `chartVersion` of `chartName` (without its `<repositoryName>/` prefix) in `repositoryURL`; an `oci://` `repositoryURL` is the chart reference itself", Datasource: "`helm`", Versioning: "`semver`"},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "version range", When: "anything but a full `MAJOR.MINOR.PATCH[-pre][+build]` (optionally `v`-prefixed): `~1.2.0`, `^1`, `>=1.0.0`, `1.2.x`, `1.2`"},
 		{Reason: "no version", When: "the version is missing or empty"},
-		{Reason: "template value", When: "the version (or a resource's chart name or `repoURL`) contains `{{`"},
+		{Reason: "template value", When: "the version (or a resource's chart name, `repoURL` or `repositoryURL`) contains `{{`"},
 		{Reason: "local chart", When: "Chart.yaml: empty or `file://` repository; helmfile: a chart path (`./x`, `../x`, `/x`, no `/`); k0s: a chart path (`/x`, `./x`, `*.tgz`)"},
 		{Reason: "repository alias", When: "Chart.yaml: `@name` or `alias:name` repositories (resolved by the user's Helm repository config)"},
 		{Reason: "unknown chart repository <repo>", When: "Chart.yaml: a repository that is no URL; helmfile: a `<repo>/` prefix not in `repositories[]`; k0s: an alias no scanned ClusterConfig declares"},
@@ -35,6 +36,7 @@ var Doc = refdoc.Manager{
 		{Reason: "no sourceRef", When: "flux: the HelmRelease chart has no `sourceRef` kind"},
 		{Reason: "pinned by digest", When: "flux: the OCIRepository selects `spec.ref.digest`"},
 		{Reason: "no repoURL", When: "argocd: a Helm source without `repoURL`"},
+		{Reason: "no repositoryURL", When: "sveltos: a `helmCharts[]` entry without `repositoryURL`"},
 		{Reason: "cannot locate value", When: "the version's bytes could not be found (escapes, block scalars)"},
 	},
 	Sections: []refdoc.Section{
@@ -50,7 +52,7 @@ var Doc = refdoc.Manager{
 			"A Flux `OCIRepository` (`spec.ref.semver` skips as `version range`) that neither a HelmRelease `chartRef` names nor declares the Helm chart media type is a Kustomization artifact, not a dep.",
 			"HelmReleases with a `chartRef` carry no version; the OCIRepository does. Container images in the same files (values) are found by the docker manager.",
 		}},
-		{Title: "Replacements", Body: "A chart is [replaced](configuration.md#rulesreplacementname) by a chart name (same repository), or `<http(s):// or oci:// URL>/<chart>` (or `host/path/<chart>` for OCI) to move it, where the repository is written next to the chart (Chart.yaml `repository`, Argo CD `repoURL`, Flux OCIRepository `url`, k0s `url`, `oci://` references); alias and `sourceRef` repositories only allow a new chart name. `Chart.lock` entries follow the renamed or moved chart."},
+		{Title: "Replacements", Body: "A chart is [replaced](configuration.md#rulesreplacementname) by a chart name (same repository), or `<http(s):// or oci:// URL>/<chart>` (or `host/path/<chart>` for OCI) to move it, where the repository is written next to the chart (Chart.yaml `repository`, Argo CD `repoURL`, Sveltos `repositoryURL`, Flux OCIRepository `url`, k0s `url`, `oci://` references); alias and `sourceRef` repositories only allow a new chart name, and Sveltos `oci://` charts, named in both `repositoryURL` and `chartName`, none. `Chart.lock` entries follow the renamed or moved chart."},
 		{Title: "Edits", Body: "The version is replaced in place."},
 	},
 }
