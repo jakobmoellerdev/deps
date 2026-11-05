@@ -85,41 +85,13 @@ func pathDeps(src []byte) []string {
 		return nil
 	}
 	var out []string
-	add := func(t *tomlspan.Value) {
-		if t == nil || t.Kind != tomlspan.Table {
-			return
-		}
+	for _, t := range depTables(doc) {
 		for _, k := range t.Keys {
 			if v := t.Fields[k]; v.Kind == tomlspan.Table {
 				if p := v.Fields["path"]; p != nil && p.Kind == tomlspan.String {
 					out = append(out, p.Str)
 				}
 			}
-		}
-	}
-	for _, k := range doc.Keys {
-		v := doc.Fields[k]
-		switch {
-		case sections[k] != "":
-			add(v)
-		case k == "target" && v.Kind == tomlspan.Table:
-			for _, spec := range v.Keys {
-				if t := v.Fields[spec]; t.Kind == tomlspan.Table {
-					for _, s := range t.Keys {
-						if sections[s] != "" {
-							add(t.Fields[s])
-						}
-					}
-				}
-			}
-		case k == "workspace":
-			add(doc.Get("workspace", "dependencies"))
-		case k == "patch" && v.Kind == tomlspan.Table:
-			for _, source := range v.Keys {
-				add(v.Fields[source])
-			}
-		case k == "replace":
-			add(v)
 		}
 	}
 	return out

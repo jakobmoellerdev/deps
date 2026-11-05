@@ -5,6 +5,7 @@ package cargo
 import (
 	"cmp"
 	"fmt"
+	"iter"
 	"net/url"
 	"regexp"
 	"slices"
@@ -71,43 +72,58 @@ func (cargoManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, 
 		return nil, err
 	}
 	var deps []dep.Dep
-	add := func(depType string, t *tomlspan.Value) {
-		if t == nil || t.Kind != tomlspan.Table {
-			return
-		}
+	for depType, t := range depTables(root) {
 		for _, k := range t.Keys {
 			deps = append(deps, entryDep(file, depType, k, t.Fields[k]))
 		}
 	}
-	for _, k := range root.Keys {
-		v := root.Fields[k]
-		switch {
-		case sections[k] != "":
-			add(sections[k], v)
-		case k == "target" && v.Kind == tomlspan.Table:
-			for _, spec := range v.Keys {
-				t := v.Fields[spec]
-				if t.Kind != tomlspan.Table {
-					continue
-				}
-				for _, s := range t.Keys {
-					if sections[s] != "" {
-						add(sections[s], t.Fields[s])
-					}
-				}
-			}
-		case k == "workspace":
-			add(DepTypeWorkspace, root.Get("workspace", "dependencies"))
-		case k == "patch" && v.Kind == tomlspan.Table:
-			for _, source := range v.Keys {
-				add(DepTypePatch, v.Fields[source])
-			}
-		case k == "replace":
-			add(DepTypeReplace, v)
-		}
-	}
 	slices.SortStableFunc(deps, func(a, b dep.Dep) int { return cmp.Compare(a.Line, b.Line) })
 	return deps, nil
+}
+
+// depTables yields, in document order, the dependency tables of the manifest root with the
+// DepType of their entries: the sections tables (also below [target.<spec>]),
+// [workspace.dependencies], every [patch.<source>] table and [replace]. Values that are not
+// tables are skipped.
+func depTables(root *tomlspan.Value) iter.Seq2[string, *tomlspan.Value] {
+	return func(yield func(string, *tomlspan.Value) bool) {
+		emit := func(depType string, t *tomlspan.Value) bool {
+			return t == nil || t.Kind != tomlspan.Table || yield(depType, t)
+		}
+		for _, k := range root.Keys {
+			v := root.Fields[k]
+			ok := true
+			switch {
+			case sections[k] != "":
+				ok = emit(sections[k], v)
+			case k == "target" && v.Kind == tomlspan.Table:
+				for _, spec := range v.Keys {
+					t := v.Fields[spec]
+					if t.Kind != tomlspan.Table {
+						continue
+					}
+					for _, s := range t.Keys {
+						if sections[s] != "" && !emit(sections[s], t.Fields[s]) {
+							return
+						}
+					}
+				}
+			case k == "workspace":
+				ok = emit(DepTypeWorkspace, root.Get("workspace", "dependencies"))
+			case k == "patch" && v.Kind == tomlspan.Table:
+				for _, source := range v.Keys {
+					if !emit(DepTypePatch, v.Fields[source]) {
+						return
+					}
+				}
+			case k == "replace":
+				ok = emit(DepTypeReplace, v)
+			}
+			if !ok {
+				return
+			}
+		}
+	}
 }
 
 // entryDep makes the Dep of the entry key = v in a table of depType.
