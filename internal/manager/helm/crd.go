@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
@@ -13,9 +12,26 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-// crdMarkers prefilter Kubernetes YAML: a file containing none of these API groups is not
-// parsed.
-var crdMarkers = [][]byte{[]byte("k0sproject.io/"), []byte("fluxcd.io/"), []byte("argoproj.io/")}
+// crdGroups prefilter Kubernetes YAML: a file containing none of these API groups followed by
+// ".io/" is not parsed.
+var crdGroups = [][]byte{[]byte("k0sproject"), []byte("fluxcd"), []byte("argoproj")}
+
+// hasCRDGroup reports whether src contains "<group>.io/" for one of crdGroups. One scan for
+// ".io/" replaces one scan of src per group.
+func hasCRDGroup(src []byte) bool {
+	for {
+		i := bytes.Index(src, []byte(".io/"))
+		if i < 0 {
+			return false
+		}
+		for _, g := range crdGroups {
+			if bytes.HasSuffix(src[:i], g) {
+				return true
+			}
+		}
+		src = src[i+len(".io/"):]
+	}
+}
 
 // crdExtractor extracts the chart deps of one multi-document Kubernetes YAML file. It records
 // the definitions (repository aliases, HelmRepositories) and the references to resolve in
@@ -31,7 +47,7 @@ type crdExtractor struct {
 // manifests extracts chart deps from the k0s, Flux and Argo CD resources of a Kubernetes YAML
 // file. Unparsable files (templates) yield no deps.
 func (m *helmManager) manifests(file string, src []byte) []dep.Dep {
-	if !slices.ContainsFunc(crdMarkers, func(b []byte) bool { return bytes.Contains(src, b) }) {
+	if !hasCRDGroup(src) {
 		return nil
 	}
 	x := crdExtractor{file: file, src: src, lines: lineStarts(src)}
