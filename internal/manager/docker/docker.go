@@ -69,7 +69,7 @@ func (dockerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep,
 		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
 		x.dockerfile()
 		return x.deps, nil
-	case composeRe.MatchString(file):
+	case strings.Contains(file, "compose") && composeRe.MatchString(file):
 		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
 		if err := x.yaml(x.compose); err != nil {
 			// Not standalone YAML (e.g. an indented fragment concatenated by a script).
