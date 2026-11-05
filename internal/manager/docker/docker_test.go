@@ -423,8 +423,13 @@ func TestExtractAction(t *testing.T) {
 }
 
 func TestExtractParseError(t *testing.T) {
-	if _, err := New().Extract(".github/workflows/x.yml", []byte("a: [\n"), manager.Env{}); err == nil {
+	if _, err := New().Extract(".github/workflows/x.yml", []byte("jobs:\n  a:\n    container: [\n"), manager.Env{}); err == nil {
 		t.Error("workflow: want parse error")
+	}
+	// Without a container or image key or a docker:// step the workflow is not parsed: the
+	// github-actions manager reports its error once.
+	if deps, err := New().Extract(".github/workflows/x.yml", []byte("jobs:\n  a: [\n"), manager.Env{}); err != nil || deps != nil {
+		t.Errorf("workflow without images: got %+v, %v; want no deps, no error", deps, err)
 	}
 	// An indented fragment concatenated by a script (grafana devenv blocks) is a skip, not an error.
 	for _, src := range []string{"a: [\n", "  sensu:\n    image: sensu/sensu:6\nvolumes:\n  data: {}\n"} {

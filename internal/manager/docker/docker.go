@@ -79,6 +79,13 @@ func (dockerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep,
 		}
 		return x.deps, nil
 	case actions.IsWorkflowFile(file):
+		// Every reference workflow reads is under a container or image key or starts with
+		// docker://; without them there is nothing to parse for (the github-actions manager
+		// parses, and reports errors of, every workflow).
+		if !bytes.Contains(src, []byte("container")) && !bytes.Contains(src, []byte("image")) &&
+			!bytes.Contains(src, []byte("docker://")) {
+			return nil, nil
+		}
 		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
 		return x.deps, x.yaml(x.workflow)
 	}
