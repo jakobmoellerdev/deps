@@ -6,7 +6,8 @@
 // each tag's digest and times along with it, which then answer Digest and ReleaseTime without
 // further requests. Credentials come from the Docker config and credential helpers. One auth
 // client with a shared token cache serves every repository, so each token exchange happens once
-// per run and scope.
+// per run and scope; on Docker Hub and ghcr.io the first request to a repository is answered
+// with the registry's last challenge instead of a 401 round trip (see challenger).
 package dockerds
 
 import (
@@ -46,6 +47,9 @@ type Source struct {
 	// pullLimited is the registry that counts manifest GETs, but not HEADs, against a pull
 	// limit per IP address or account: Docker Hub.
 	pullLimited string
+	// challenger answers the first request to each repository of Docker Hub and ghcr.io with
+	// the registry's bearer challenge.
+	challenger *challenger
 
 	mu      sync.Mutex
 	tags    map[string]*tagsEntry   // canonical repository
@@ -155,8 +159,9 @@ func newSource(client *http.Client, sem chan struct{}, cred credentials.Credenti
 	}
 	// The client has no retry layer of its own: the shared httpx transport already retries, and
 	// nesting both would multiply attempts.
+	ch := newChallenger(linkFixer{tr})
 	c := &auth.Client{
-		Client:         &http.Client{Transport: linkFixer{tr}},
+		Client:         &http.Client{Transport: ch},
 		CredentialFunc: cred,
 		Cache:          auth.NewCache(),
 	}
@@ -169,6 +174,7 @@ func newSource(client *http.Client, sem chan struct{}, cred credentials.Credenti
 		client:      c,
 		sem:         sem,
 		pullLimited: hubRegistry,
+		challenger:  ch,
 		tags:        map[string]*tagsEntry{},
 		digests:     map[string]*digestEntry{},
 		configs:     map[string]*configEntry{},
