@@ -16,14 +16,11 @@ import (
 // the body of a 200 response to read, so large indexes are decoded as they arrive. Another
 // status is a "GET <url>: HTTP <code>" error; errors of read get the "GET <url>: " prefix.
 func GetStream(ctx context.Context, client *http.Client, sem chan struct{}, url string, read func(io.Reader) error) error {
-	if sem != nil {
-		select {
-		case sem <- struct{}{}:
-			defer func() { <-sem }()
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	release, err := httpx.Acquire(ctx, sem)
+	if err != nil {
+		return err
 	}
+	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return err
