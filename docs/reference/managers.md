@@ -28,6 +28,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`pep621`](#pep621)
 - [`poetry`](#poetry)
 - [`pipenv`](#pipenv)
+- [`conda`](#conda)
 - [`terraform`](#terraform)
 - [`terraform-version`](#terraform-version)
 - [`tflint-plugin`](#tflint-plugin)
@@ -1215,6 +1216,59 @@ With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the `P
 
 All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it.
 
+## conda
+
+Updates the packages of conda environment files: the match specs of `dependencies`, looked up on the file's anaconda.org `channels`, and the requirements of the nested `pip:` list, looked up on PyPI (Dependabot's `conda` ecosystem; Renovate has no conda manager). The file is parsed as YAML with byte spans; only the version spec of an entry is rewritten. There is no lockfile (`conda-lock.yml` is not maintained).
+
+**Files:**
+
+- `environment.yml`, `environment.yaml` (any directory)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `dependencies` | `dependencies` match specs: `numpy=1.26` (fuzzy: any 1.26.x), `numpy==1.26.4`, `numpy>=1.26,<2`, `numpy 1.26.*`, `numpy >=1.26`, with a channel prefix `conda-forge::numpy=1.26` | `conda` | `conda` | updated |
+| `pip` | the PEP 508 requirements of a `- pip:` list in `dependencies` (`requests>=2.31`, `black==24.4.2`) | `pypi` (the list's `--index-url`, `--extra-index-url`) | `pep440` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unconstrained` | a package without version spec (`numpy`, `numpy *`) or with only exclusions (`numpy!=1.26.0`) |
+| `build string` | a match spec with a build string (`numpy=1.26.4=py312h8753938_0`, `numpy 1.26.4 py312_0`): it pins a build of one version (as Dependabot, deps does not update it) |
+| `unsupported match spec` | the bracket form (`numpy[version='>=1.26']`) or `\|` alternatives (`numpy=1.25\|1.26`) |
+| `unsupported range` | a version spec conda's VersionSpec does not read (`numpy>=1.26.*`, `numpy=latest`), or a pip requirement that is no PEP 508 requirement |
+| `unsupported channel <channel>` | a `<channel>::` prefix, or a `channels` list without any entry, that the anaconda.org API does not serve: a URL of another host (`https://prefix.dev/conda-forge`), a local or `file://` channel |
+| `cannot locate value` | a value whose YAML bytes differ from its text (escapes, block scalars) |
+| `git dependency` | a pip requirement that is a VCS URL (`git+https://…`), also as `name @ git+https://…` |
+| `local dependency` | a pip requirement that is a path (`./pkg`, `file:…`) |
+| `url dependency` | a pip requirement that is another URL (`https://…/pkg.whl`, `name @ https://…`) |
+
+**Channels.**
+
+- A package is looked up on the `channels` of the file in order; the first channel that has it answers, as with conda's strict channel priority. Without `channels`, on `conda-forge` (Dependabot's and Renovate's default).
+- A `<channel>::` prefix (`pytorch::pytorch`, `conda-forge/linux-64::numpy`) looks the package up on that channel only.
+- Channel names keep their name (`/label/<x>` and `/<subdir>` suffixes dropped); `defaults` is the anaconda.org `anaconda` channel (a mirror of Anaconda's main repository), and so is `https://repo.anaconda.com/pkgs/main`; `https://conda.anaconda.org/<channel>` URLs name `<channel>`. `nodefaults`, URLs of other hosts and local channels are not looked up.
+
+**Versions (`conda` versioning).**
+
+- Versions are compared with conda's VersionOrder: `[<epoch>!]<version>[+<local>]`, segments separated by `.` or `_`, each a run of numbers and words; a word sorts below a number (`1.1.1w` < `1.1.1`, `1.0rc1` < `1.0`), `dev` below every other word, `post` above every number. Dependabot and Renovate both use conda's ordering for conda packages (Renovate's `conda` versioning, Dependabot's Conda::Version), not PEP 440, which rejects versions such as `1.1.1w`, `2024a` or `9e`.
+- A version with a `dev`, `rc`, `alpha`, `beta`, `pre` or `preview` word, or an `a`, `b` or `c` followed by a number (`2.0b1`), is a prerelease, proposed only from a prerelease. Other words are part of the release (`1.1.1w`, `2024a`, `9e`).
+- The first segment decides major updates, the second minor ones, anything after patch ones.
+- As for pep440, a candidate with non-zero segments beyond the spec's precision is skipped (`precision`) and others are cut to it: `=1.26` sees 2.3.0 as `2.3`, not 2.3.4.
+
+**Version specs (`rangeStrategy`).**
+
+- The dep's version is the spec's anchor: the first clause that is not `<`, `<=` or `!=`, else the first upper bound.
+- Matching follows conda's VersionSpec: clauses joined by `,` must all hold; `=1.26`, `1.26.*` and `1.26*` match the versions whose segments start with 1.26 (1.26, 1.26.0, 1.26.4, not 1.260); a bare version or `==` matches exactly (`1.26` = `1.26.0`); `~=1.4.5` is `>=1.4.5,1.4.*`.
+- There is no lockfile, so under `auto` (`update-lockfile`) and `replace` versions the spec admits are not proposed: `numpy>=1.26` never gets an update, `numpy=1.26` only once 1.27 is out.
+- Rewrites: an exact spec (`==1.26.4`, `1.26.4`) or a fuzzy one (`=1.26`, `1.26.*`) takes the new version, a fuzzy one at its own precision (`=1.26` → `=2.3`); any other spec is rewritten with the pep440 rules of the Python managers (`>=1.26,<2` → `>=2.3,<3`), as Renovate's conda versioning delegates to pep440, when its versions are PEP 440 versions, else the update is not proposed. `pin` writes `==<version>`.
+
+**pip requirements.**
+
+- The `pip:` list holds requirements as a requirements file does: they are updated like `pip_requirements` deps (PyPI, `pep440`, the specifier rules of the Python managers) and get PyPI security updates from OSV.
+- `--index-url`/`-i` and `--extra-index-url` entries of the list set the index of its requirements; other options (`-r requirements.txt`, `-e .`, `-c`) are no deps.
+- The `python` spec of `dependencies` (`python=3.11` → `==3.11.*`) is the requirements' Python constraint: releases that do not support it are dropped (see the `pypi` datasource).
+
 ## terraform
 
 Updates provider, module and Terraform version constraints in Terraform and OpenTofu configurations, then refreshes `.terraform.lock.hcl`. HCL files are read with a small scanner that understands the whole syntax (strings, templates, heredocs, comments, nested expressions) but only interprets literal strings and object constructors; JSON configuration ([JSON syntax](https://developer.hashicorp.com/terraform/language/syntax/json), e.g. CDK for Terraform's `cdk.tf.json`) is read into the same structure, so it gives the same deps.
@@ -2146,6 +2200,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `helm` | chart name; the repository URL (`https://…` or `oci://host/path`) is the dep's source | classic: `GET <repo>/index.yaml`, once per repository, stream-scanned so only the asked-for charts are decoded; versions without `urls` dropped. OCI: registry `tags/list` of `<host>/<path>/<chart>` via the docker datasource, tag `_` read as `+` | classic: the forge token (Basic `x-access-token`) on the forge's host, else anonymous; OCI: as `docker` | classic: index `created`; OCI: manifest annotation `org.opencontainers.image.created` |
 | `crate` | crate name (case-insensitive); the dep's source is its registry name or index URL ("" = crates.io) | `GET <index>/<prefix>/<name>` of the sparse index (crates.io: `DEPS_CRATES_INDEX_URL` or `https://index.crates.io`; prefixes `1/<n>`, `2/<n>`, `3/<first char>/<n>`, `<n[0:2]>/<n[2:4]>/<n>`), or the same path of a git index (shallow blob-less clone, `git cat-file`); newline-delimited JSON, yanked versions dropped (a yanked installed version is listed under the dashboard's deprecated dependencies); not found → `crate <name> not found` (`… in registry <name>`). Partial requirements also get a derived `X.Y` and `X` per stable release line. Source repository (release notes): `GET <api>/api/v1/crates/<name>/<version>` `repository` (crates.io: `DEPS_CRATES_API_URL` or `https://crates.io`; other registries: `api` of their `config.json`), only for versions in a pull request | alternative registries: `CARGO_REGISTRIES_<NAME>_TOKEN`, `$CARGO_HOME/credentials.toml` or `.cargo/config.toml` `[registries.<name>] token` as `Authorization`, only to the index host; without a token, the platform token (Basic) for its host, and the git credential helper after a 401; git indexes: git credential helpers | index `pubtime` (crates.io writes it for every version); a release line has the time of its first release |
 | `pypi` | package name; PEP 503-normalized for lookups (`zope.interface` → `zope-interface`) | PyPI: `GET <DEPS_PYPI_URL or https://pypi.org>/pypi/<name>/json`; other indexes: `GET <index>/<name>/` with `Accept: application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.2, text/html;q=0.01` (simple API: JSON, PEP 691/700, else HTML, PEP 503; an HTTP 406 is retried with `Accept: text/html`); once per (index, name); versions without files or with every file yanked dropped (an installed version whose files are all yanked, and a JSON API project classified `Development Status :: 7 - Inactive`, are listed under the dashboard's deprecated dependencies); 404 → `package <name> not found`, or the skip `in-repository package (<file>)` for a pep621 or poetry dep named like the project of a scanned `pyproject.toml` | userinfo of the index URL (`https://user:pass@host/simple`) sent as basic auth, redacted in errors and logs | earliest file upload time of the version on any of the dep's indexes (`upload_time_iso_8601`, `upload-time`, HTML `data-upload-time`) |
+| `conda` | package name as on the channel (`numpy`, `r-base`); the dep's source is its whitespace-separated anaconda.org channels in lookup order ("" = `conda-forge`). A custom dep may name its channel as Renovate's packageName does: `conda-forge/numpy` | `GET <DEPS_CONDA_URL or https://api.anaconda.org>/package/<channel>/<name>`, once per (channel, package); a version is a release when one of its files is under the `main` label and not marked `broken` (files only under `rc`, `dev` or migration labels are not installed by default), the builds of every platform merged; the first channel that has the package answers (conda's strict channel priority), none → `conda package <name> not found in <channels>`. Source repository (release notes): the package's `dev_url`, an http(s) URL, from the same response | none: public anaconda.org channels only | earliest `upload_time` of the version's main files; a version cut to a lower precision (`2.3` for 2.3.0) gets the time of the release it equals |
 | `terraform-provider` | `namespace/type`; the dep's source is the registry (`https://registry.terraform.io` when empty) | service discovery `GET https://<host>/.well-known/terraform.json` once per registry (relative and absolute service URLs), then `GET <providers.v1>/<namespace>/<type>/versions`, once per provider; 404 → `provider <name> not found in <registry>` | `Authorization: Bearer <token>`, resolved once per host as the Terraform CLI does: `$TF_TOKEN_<host>` (dots as `_`, hyphens as is or `__`, e.g. `TF_TOKEN_app_terraform_io`; punycode hosts verbatim), then `credentials "<host>" { token = ... }` of the CLI config (`$TF_CLI_CONFIG_FILE`, else `~/.terraformrc` plus the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` such as `credentials.tfrc.json`; `%APPDATA%/terraform.rc` and `%APPDATA%/terraform.d` on Windows), then the `credentials_helper` (`terraform-credentials-<name> <args...> get <host>` from `~/.terraform.d/plugins[/<os>_<arch>]`, else PATH; missing → `terraform-credentials-<name> not found (needed for <host> credentials)`); else anonymous. | `published_at` of the version document (`<service><name>/<version>`; registry.terraform.io serves it, other registries are unknown). A partial version (`5.31` of `~> 5.31`) has the time of its line's first release. |
 | `terraform-module` | `namespace/name/provider`; the dep's source is the registry (`https://registry.terraform.io` when empty) | service discovery `GET https://<host>/.well-known/terraform.json` once per registry (relative and absolute service URLs), then `GET <modules.v1>/<namespace>/<name>/<provider>/versions`, once per module; 404 → `module <name> not found in <registry>` | `Authorization: Bearer <token>`, resolved once per host as the Terraform CLI does: `$TF_TOKEN_<host>` (dots as `_`, hyphens as is or `__`, e.g. `TF_TOKEN_app_terraform_io`; punycode hosts verbatim), then `credentials "<host>" { token = ... }` of the CLI config (`$TF_CLI_CONFIG_FILE`, else `~/.terraformrc` plus the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` such as `credentials.tfrc.json`; `%APPDATA%/terraform.rc` and `%APPDATA%/terraform.d` on Windows), then the `credentials_helper` (`terraform-credentials-<name> <args...> get <host>` from `~/.terraform.d/plugins[/<os>_<arch>]`, else PATH; missing → `terraform-credentials-<name> not found (needed for <host> credentials)`); else anonymous. | `published_at` of the version document (`<service><name>/<version>`; registry.terraform.io serves it, other registries are unknown). A partial version (`5.31` of `~> 5.31`) has the time of its line's first release. |
 | `maven` | `groupId:artifactId`, or a Gradle plugin id (no `:`), looked up as its marker artifact `<id>:<id>.gradle.plugin`; the repositories are the dep's `[<id>=]<url>/` list (Maven Central when empty) | `GET <repository>/<group/path>/<artifactId>/maven-metadata.xml` per repository, versions merged in repository order; a 404 contributes nothing; none found → `artifact <name> not found` | maven and maven-wrapper deps: `settings.xml` `<servers>` (Basic auth from `<username>`/`<password>`, encrypted passwords included, and `<configuration><httpHeaders>`) of the repository's id after mirroring; gradle deps: the `<name>Username`/`<name>Password` project properties of the named repository. Checksum downloads (`Artifact`) below a dep's repository use the same mirror and credentials | `HEAD …/<version>/<artifactId>-<version>.pom` `Last-Modified`, only for versions that end up in a PR |

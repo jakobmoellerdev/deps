@@ -1,0 +1,1266 @@
+{
+ "name": "six",
+ "full_name": "conda-forge/six",
+ "versions": [
+  "1.10.0",
+  "1.11.0",
+  "1.12.0",
+  "1.13.0",
+  "1.14.0",
+  "1.15.0",
+  "1.16.0",
+  "1.17.0"
+ ],
+ "latest_version": "1.17.0",
+ "dev_url": "https://github.com/benjaminp/six",
+ "html_url": "http://anaconda.org/conda-forge/six",
+ "files": [
+  {
+   "basename": "win-64/six-1.10.0-py34_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-05-10 08:00:42.429000+00:00"
+  },
+  {
+   "basename": "win-32/six-1.10.0-py34_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 08:44:49.061000+00:00"
+  },
+  {
+   "basename": "win-32/six-1.10.0-py27_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-05-10 07:58:06.052000+00:00"
+  },
+  {
+   "basename": "win-32/six-1.10.0-py34_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-05-10 08:00:23.715000+00:00"
+  },
+  {
+   "basename": "win-32/six-1.10.0-py35_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-05-10 08:02:15.345000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.12.0-py37_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-02-21 04:56:03.018000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.12.0-py27_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-02-21 04:56:48.923000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.10.0-py34_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-06-04 20:01:14.237000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.10.0-py34_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-05-10 07:24:51.322000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.12.0-py37_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-02-21 04:56:12.676000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.12.0-py36_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-02-21 04:56:18.424000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.12.0-py36_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-02-21 04:56:19.832000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.10.0-py35_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-06-04 20:01:35.508000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.10.0-py27_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-06-04 20:00:41.385000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.10.0-py35_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-05-10 07:25:26.477000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.10.0-py34_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 05:18:55.982000+00:00"
+  },
+  {
+   "basename": "win-32/six-1.10.0-py36_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-12-29 21:15:45.874000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.10.0-py35_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-05-10 08:03:04.271000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.10.0-py35_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 05:19:10.419000+00:00"
+  },
+  {
+   "basename": "win-32/six-1.10.0-py27_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 08:42:05.720000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.10.0-py27_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 05:18:13.551000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.10.0-py35_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 08:49:42.954000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.10.0-py27_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-05-10 07:26:50.124000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.10.0-py36_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-12-29 21:15:41.822000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.10.0-py27_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 07:45:53.261000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.10.0-py35_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-12-29 20:20:00.906000+00:00"
+  },
+  {
+   "basename": "win-32/six-1.10.0-py35_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 08:47:15.293000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.10.0-py36_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-12-29 20:14:41.806000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.10.0-py36_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-12-29 20:22:39.324000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.10.0-py27_0.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-05-10 07:58:06.258000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.10.0-py27_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 08:44:33.778000+00:00"
+  },
+  {
+   "basename": "noarch/six-1.11.0-py_0.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "broken"
+   ],
+   "upload_time": "2017-09-20 20:34:36.825000+00:00"
+  },
+  {
+   "basename": "win-32/six-1.11.0-py27_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:28:26.042000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.11.0-py37_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-08-05 02:57:32.784000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.11.0-py37_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-08-04 23:12:05.531000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.11.0-py27_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:30:02.851000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.11.0-py35_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:06:08.930000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.11.0-py36_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:07:02.914000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.11.0-py27_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:51:49.247000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.10.0-py34_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 07:45:51.796000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.11.0-py35_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:51:54.654000+00:00"
+  },
+  {
+   "basename": "win-32/six-1.11.0-py35_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:31:18.182000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.11.0-py37_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-08-04 23:05:42.712000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.11.0-py27_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:07:30.159000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.11.0-py36_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:35:15.744000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.10.0-py34_1.tar.bz2",
+   "version": "1.10.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2016-10-18 08:47:06.629000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.11.0-py27_1001.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-10-03 01:11:42.666000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.11.0-py36_1001.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-10-03 01:07:19.239000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.11.0-py37_1001.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-10-03 01:13:03.985000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.11.0-py37_1001.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-10-03 08:56:46.309000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.11.0-py37_1001.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-10-03 01:07:22.196000+00:00"
+  },
+  {
+   "basename": "win-32/six-1.11.0-py36_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:33:49.541000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.11.0-py27_1001.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-10-03 08:48:52.299000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.11.0-py36_1001.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-10-03 08:53:17.896000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.11.0-py36_1001.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-10-03 01:13:00.882000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.11.0-py27_1001.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-10-03 01:07:13.014000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.11.0-py35_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 14:32:51.277000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.12.0-py27_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-12-10 12:00:22.825000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.12.0-py37_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-12-10 12:09:34.796000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.12.0-py37_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-12-10 12:00:28.872000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.12.0-py36_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-12-10 12:00:21.590000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.12.0-py27_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-12-10 12:07:01.788000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.12.0-py37_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-12-10 11:57:21.002000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.11.0-py36_1.tar.bz2",
+   "version": "1.11.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2017-09-21 15:17:57.426000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.12.0-py36_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-12-10 12:03:27.539000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.12.0-py36_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-12-10 11:58:05.389000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.12.0-py27_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf201901",
+    "cf202003"
+   ],
+   "upload_time": "2018-12-10 11:59:29.157000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.12.0-py38_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "pre-3.8"
+   ],
+   "upload_time": "2019-04-27 02:39:18.654000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.12.0-py38_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "pre-3.8"
+   ],
+   "upload_time": "2019-04-27 02:39:40.823000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.12.0-py38_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "pre-3.8"
+   ],
+   "upload_time": "2019-04-27 02:43:18.981000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.12.0-py38_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "pre-3.8"
+   ],
+   "upload_time": "2019-04-27 02:43:41.359000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.12.0-py27_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-04-27 02:43:47.139000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.12.0-py38_1000.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "pre-3.8"
+   ],
+   "upload_time": "2019-04-27 02:47:33.707000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.12.0-py36_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:28:16.976000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.12.0-py27_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:28:30.095000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.12.0-py27_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:30:14.234000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.12.0-py37_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:30:14.819000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.12.0-py38_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:30:15.568000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.12.0-py36_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:30:23.451000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.12.0-py36_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:30:38.840000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.12.0-py37_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:30:57.864000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.12.0-py38_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:31:16.360000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.12.0-py27_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:31:18.408000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.12.0-py37_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:32:34.523000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.12.0-py38_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:33:24.452000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.12.0-py38_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:33:27.739000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.12.0-py37_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:33:42.675000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.12.0-py37_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:33:50.956000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.12.0-py36_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:34:14.441000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.12.0-py36_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:34:27.694000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.12.0-py38_1001.tar.bz2",
+   "version": "1.12.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-02 14:35:09.048000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.13.0-py27_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 18:59:06.136000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.13.0-py36_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 18:59:06.660000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.13.0-py36_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:00:37.008000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.13.0-py37_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:00:55.947000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.13.0-py38_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:01:49.731000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.13.0-py27_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:01:51.967000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.13.0-py37_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:02:28.491000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.13.0-py38_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:03:00.270000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.13.0-py37_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:03:17.004000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.13.0-py27_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:03:19.228000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.13.0-py36_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:03:27.845000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.13.0-py38_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:03:35.986000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.13.0-py37_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:04:18.591000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.13.0-py36_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:05:07.094000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.13.0-py38_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:05:16.219000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.13.0-py38_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:05:20.544000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.13.0-py36_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:05:31.057000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.13.0-py37_0.tar.bz2",
+   "version": "1.13.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2019-11-05 19:05:51.323000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.14.0-py27_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:43:47.343000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.14.0-py37_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:43:52.095000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.14.0-py36_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:44:00.276000+00:00"
+  },
+  {
+   "basename": "linux-64/six-1.14.0-py38_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:44:25.997000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.14.0-py37_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:45:44.839000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.14.0-py27_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:45:45.615000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.14.0-py38_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:46:02.945000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.14.0-py36_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:46:13.815000+00:00"
+  },
+  {
+   "basename": "osx-64/six-1.14.0-py36_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:46:17.760000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.14.0-py38_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:46:19.996000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.14.0-py37_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:46:32.004000+00:00"
+  },
+  {
+   "basename": "win-64/six-1.14.0-py27_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:46:58.072000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.14.0-py36_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:50:18.282000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.14.0-py37_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:50:29.601000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.14.0-py36_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:50:47.785000+00:00"
+  },
+  {
+   "basename": "linux-aarch64/six-1.14.0-py38_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:50:50.820000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.14.0-py37_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:53:48.635000+00:00"
+  },
+  {
+   "basename": "linux-ppc64le/six-1.14.0-py38_0.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-01-15 18:54:32.729000+00:00"
+  },
+  {
+   "basename": "noarch/six-1.14.0-py_1.tar.bz2",
+   "version": "1.14.0",
+   "labels": [
+    "main",
+    "cf202003"
+   ],
+   "upload_time": "2020-03-11 10:15:49.283000+00:00"
+  },
+  {
+   "basename": "noarch/six-1.15.0-pyh9f0ad1d_0.tar.bz2",
+   "version": "1.15.0",
+   "labels": [
+    "main"
+   ],
+   "upload_time": "2020-05-21 17:15:12.057000+00:00"
+  },
+  {
+   "basename": "noarch/six-1.16.0-pyh6c4a22f_0.tar.bz2",
+   "version": "1.16.0",
+   "labels": [
+    "main"
+   ],
+   "upload_time": "2021-05-05 18:46:12.632000+00:00"
+  },
+  {
+   "basename": "noarch/six-1.16.0-pyhd8ed1ab_1.conda",
+   "version": "1.16.0",
+   "labels": [
+    "main"
+   ],
+   "upload_time": "2024-12-03 09:08:44.878000+00:00"
+  },
+  {
+   "basename": "noarch/six-1.17.0-pyhd8ed1ab_0.conda",
+   "version": "1.17.0",
+   "labels": [
+    "main"
+   ],
+   "upload_time": "2024-12-05 06:44:15.700000+00:00"
+  },
+  {
+   "basename": "noarch/six-1.17.0-pyhe01879c_1.conda",
+   "version": "1.17.0",
+   "labels": [
+    "main"
+   ],
+   "upload_time": "2025-07-22 15:47:08.890000+00:00"
+  }
+ ]
+}

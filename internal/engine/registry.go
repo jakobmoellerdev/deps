@@ -9,6 +9,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/circleci"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
@@ -49,7 +50,7 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 	ms = append(ms, actions.New(), gomod.New(), docker.New(), npm.New(), helm.New(),
 		kustomize.New(), precommit.New(), gitlabci.New(),
 		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise(), cargo.New(),
-		piprequirements.New(), pep621.New(), poetry.New(), pipenv.New(),
+		piprequirements.New(), pep621.New(), poetry.New(), pipenv.New(), conda.New(),
 		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt(),
 		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New(), bundler.New(), toolversions.NewRubyVersion(), gitsubmodules.New(),
 		rusttoolchain.New(), devcontainer.New(),
@@ -72,7 +73,7 @@ func ManagerDocs() []refdoc.Manager {
 	return []refdoc.Manager{actions.Doc, gomod.Doc, docker.Doc, npm.Doc, helm.Doc,
 		kustomize.Doc, precommit.Doc, gitlabci.Doc,
 		toolversions.DocNvm, toolversions.DocNodenv, toolversions.DocAsdf, toolversions.DocMise, cargo.Doc,
-		piprequirements.Doc, pep621.Doc, poetry.Doc, pipenv.Doc,
+		piprequirements.Doc, pep621.Doc, poetry.Doc, pipenv.Doc, conda.Doc,
 		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc,
 		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, bundler.Doc, toolversions.DocRubyVersion, gitsubmodules.Doc,
 		rusttoolchain.Doc, devcontainer.Doc,

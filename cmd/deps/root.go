@@ -17,6 +17,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/azuretasks"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
+	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
@@ -277,6 +278,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		helmds.Name:             helmds.New(client, sem, auth, docker),
 		crate.Name:              crate.New(client, limits.Crates, auth, os.Getenv),
 		pypi.Name:               pypi.New(client, sem, os.Getenv),
+		condads.Name:            condads.New(client, sem, os.Getenv),
 		tfregistry.ProviderName: registry.Providers(),
 		tfregistry.ModuleName:   registry.Modules(),
 		mavends.Name:            maven,

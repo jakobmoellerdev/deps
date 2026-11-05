@@ -522,6 +522,7 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `PIP_EXTRA_INDEX_URL` | `pypi` datasource | space-separated extra indexes searched for every Python dep after the manifest's own; their releases are merged in |
 | `DEPS_PYPI_URL` | `pypi` datasource | base of the PyPI JSON API (default `https://pypi.org`) |
 | `DEPS_RUBY_RELEASES_URL` | `ruby-version` datasource | URL of the Ruby release list (YAML entries with `version` and `date`; default `https://raw.githubusercontent.com/ruby/www.ruby-lang.org/master/_data/releases.yml`) |
+| `DEPS_CONDA_URL` | `conda` datasource | base of the anaconda.org API (default `https://api.anaconda.org`) |
 | `DEPS_RUBYGEMS_URL` | `rubygems` datasource | base of the rubygems.org API, also for Gemfiles naming `https://rubygems.org` (default `https://rubygems.org`) |
 | `DEPS_RUST_MANIFESTS_URL` | `rust-version` datasource | URL of the Rust manifest index (one `…/dist/<date>/channel-rust-<version>.toml` URL per line; default `https://static.rust-lang.org/manifests.txt`) |
 | `DEPS_ELM_PACKAGE_URL` | `elm-package` datasource | base of the Elm package registry API (default `https://package.elm-lang.org`) |

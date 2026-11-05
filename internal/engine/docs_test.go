@@ -9,6 +9,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/azuretasks"
+	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
@@ -124,7 +125,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"cargo":              {"cargo", filepath.Join("..", "datasource", "crate")},
 		"gomod":              {"gomod", filepath.Join("..", "engine"), filepath.Join("..", "gotool")},
 		piprequirements.Name: {"piprequirements", "../pyreq", "../pytool"}, pep621.Name: {"pep621", "../pyreq"},
-		poetry.Name: {"poetry", "../pyreq"}, pipenv.Name: {"pipenv", "../pyreq"},
+		poetry.Name: {"poetry", "../pyreq"}, pipenv.Name: {"pipenv", "../pyreq"}, "conda": {"conda", "../pyreq"},
 		terraform.Name: {"terraform", "docker"}, terraform.VersionName: {"terraform"}, terraform.TFLintName: {"terraform"},
 		terraform.TerragruntName: {"terraform"},
 		gradlewrapper.Name:       {"gradlewrapper"}, mavenwrapper.Name: {"mavenwrapper"}, "git-submodules": {"gitsubmodules"},
@@ -164,7 +165,7 @@ func TestManagerDocsComplete(t *testing.T) {
 }
 
 func TestDatasourceDocsComplete(t *testing.T) {
-	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, customds.Doc}
+	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, customds.Doc}
 	var names []string
 	for _, d := range docs {
 		if d.Name == "" || d.NameForm == "" || d.Endpoints == "" || d.Auth == "" || d.ReleaseTimes == "" {
