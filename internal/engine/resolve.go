@@ -1207,8 +1207,11 @@ func (r *resolver) applySecurity(ups []dep.Update, s versioning.Scheme, names []
 	d := r.d
 	cur := r.installed(s)
 	var fix string
-	for _, v := range vulns {
-		if m := minFix(s, cur, v); m != "" && (fix == "" || s.Compare(m, fix) > 0) {
+	mins := make([]string, len(vulns))
+	for i, v := range vulns {
+		m := minFix(s, cur, v)
+		mins[i] = m
+		if m != "" && (fix == "" || s.Compare(m, fix) > 0) {
 			fix = m
 		}
 	}
@@ -1239,8 +1242,8 @@ func (r *resolver) applySecurity(ups []dep.Update, s versioning.Scheme, names []
 		ups = slices.Insert(ups, sec, dep.Update{Dep: d, Type: c.Kind, NewVersion: c.Version, Bucket: bucket})
 	}
 	up := &ups[sec]
-	for _, v := range vulns {
-		if m := minFix(s, cur, v); m != "" && s.Compare(up.NewVersion, m) >= 0 {
+	for i, v := range vulns {
+		if m := mins[i]; m != "" && s.Compare(up.NewVersion, m) >= 0 {
 			up.Advisories = append(up.Advisories, v.Advisory)
 		}
 	}
