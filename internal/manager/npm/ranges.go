@@ -3,6 +3,7 @@ package npm
 import (
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -245,14 +246,49 @@ func (r npmRange) anchor() string {
 	return ""
 }
 
-// admits reports whether the range admits v (as a Masterminds constraint).
-func admits(rng, v string) bool {
+// compiledRange is a parsed range with the Masterminds constraints of the whole range and of
+// each alternative (each[i] for alts[i]), nil where Masterminds rejects one.
+type compiledRange struct {
+	npmRange
+	whole *semver.Constraints
+	each  []*semver.Constraints
+}
+
+// compiled caches compileRange by range string (nil for a range parseRange rejects): the
+// engine asks for a dependency's range once per candidate version. Only input ranges are
+// cached, never the generated ones, so it holds one entry per distinct range in the run.
+var compiled sync.Map
+
+// compileRange parses s and compiles its constraints once per s; ok as parseRange.
+func compileRange(s string) (*compiledRange, bool) {
+	if c, hit := compiled.Load(s); hit {
+		cr := c.(*compiledRange)
+		return cr, cr != nil
+	}
+	var cr *compiledRange
+	if r, ok := parseRange(s); ok {
+		cr = &compiledRange{npmRange: r, whole: constraint(s), each: make([]*semver.Constraints, len(r.alts))}
+		for i, a := range r.alts {
+			cr.each[i] = constraint(s[a.start:a.end])
+		}
+	}
+	compiled.Store(s, cr)
+	return cr, cr != nil
+}
+
+// constraint compiles rng as a Masterminds constraint, nil if it is rejected.
+func constraint(rng string) *semver.Constraints {
 	c, err := semver.NewConstraint(rng)
 	if err != nil {
-		return false
+		return nil
 	}
-	sv, err := semver.NewVersion(v)
-	return err == nil && c.Check(sv)
+	return c
+}
+
+// admits reports whether the range admits v (as a Masterminds constraint).
+func admits(rng string, v *semver.Version) bool {
+	c := constraint(rng)
+	return c != nil && c.Check(v)
 }
 
 // newRange writes the range for v under rangeStrategy strategy (dep.Update.RangeStrategy),
@@ -264,35 +300,34 @@ func admits(rng, v string) bool {
 // other strategy, and for an exact version, the last alternative is replaced and becomes the
 // whole range: floors take v, upper bounds move past it, a hyphen range moves its high end.
 // Versions keep their precision, wildcards and `v` prefix (`1.x` → `2.x`, `^1.2` → `^2.0`);
-// `>` becomes `>=` when it takes v.
-func (r npmRange) newRange(v, strategy string) string {
-	nv, err := semver.NewVersion(v)
-	if err != nil {
+// `>` becomes `>=` when it takes v. A nil v (not a version) leaves the range as it is.
+func (r *compiledRange) newRange(v *semver.Version, strategy string) string {
+	if v == nil {
 		return r.raw
 	}
 	if strategy == dep.RangePin {
-		return v
+		return v.Original()
 	}
-	if admits(r.raw, v) {
-		for _, a := range r.alts {
-			if admits(r.raw[a.start:a.end], v) {
-				return r.raw[:a.start] + r.render(a, nv, modeBump) + r.raw[a.end:]
+	if r.whole != nil && r.whole.Check(v) {
+		for i, a := range r.alts {
+			if c := r.each[i]; c != nil && c.Check(v) {
+				return r.raw[:a.start] + r.render(a, v, modeBump) + r.raw[a.end:]
 			}
 		}
 		return r.raw
 	}
 	last := r.alts[len(r.alts)-1]
 	if strategy == dep.RangeWiden && !r.exact() {
-		if w := r.raw[:last.start] + r.render(last, nv, modeWiden) + r.raw[last.end:]; w != r.raw && admits(w, v) {
+		if w := r.raw[:last.start] + r.render(last, v, modeWiden) + r.raw[last.end:]; w != r.raw && admits(w, v) {
 			return w
 		}
 		sep := " || "
 		if len(r.alts) > 1 {
 			sep = r.raw[r.alts[len(r.alts)-2].end:last.start]
 		}
-		return r.raw[:last.end] + sep + r.render(last, nv, modeReplace) + r.raw[last.end:]
+		return r.raw[:last.end] + sep + r.render(last, v, modeReplace) + r.raw[last.end:]
 	}
-	return r.render(last, nv, modeReplace)
+	return r.render(last, v, modeReplace)
 }
 
 // exact reports whether the range is one exact version (`1.2.3`, `=1.2.3`).
@@ -356,7 +391,7 @@ func below(v *semver.Version, c comparator, hyphen bool) bool {
 	case c.op == "<":
 		return v.LessThan(bound)
 	case hyphen && len(c.ver.nums()) < 3:
-		return admits("<"+boundaryOf(bound, len(c.ver.nums())), v.String())
+		return admits("<"+boundaryOf(bound, len(c.ver.nums())), v)
 	}
 	return !v.GreaterThan(bound)
 }

@@ -18,6 +18,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/nodetool"
@@ -99,7 +101,7 @@ func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 }
 
 // Edits rewrites a dependency-section range for the new version under the update's
-// rangeStrategy (npmRange.newRange), and replaces the version token of the other deps. A
+// rangeStrategy (compiledRange.newRange), and replaces the version token of the other deps. A
 // replacement (u.NewName) also rewrites the package name.
 func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
@@ -107,11 +109,12 @@ func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	if d.Range == "" {
 		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}
 	} else {
-		r, ok := parseRange(d.Range)
+		r, ok := compileRange(d.Range)
 		if !ok {
 			return nil, fmt.Errorf("unsupported range %q", d.Range)
 		}
-		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: r.newRange(u.NewVersion, u.RangeStrategy)}}
+		nv, _ := semver.NewVersion(u.NewVersion) // nil when it is not a version: newRange keeps the range
+		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: r.newRange(nv, u.RangeStrategy)}}
 	}
 	if u.NewName != "" {
 		ne, err := manager.NameEdits(d, u.NewName)
@@ -123,14 +126,18 @@ func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	return edits, nil
 }
 
-// NewRange implements manager.RangeRewriter (npmRange.newRange).
+// NewRange implements manager.RangeRewriter (compiledRange.newRange).
 func (npmManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	r, ok := parseRange(d.Range)
+	r, ok := compileRange(d.Range)
 	if !ok {
 		return "", false
 	}
-	out := r.newRange(v, strategy)
-	if out == d.Range || !admits(out, v) {
+	nv, err := semver.NewVersion(v)
+	if err != nil {
+		return "", false
+	}
+	out := r.newRange(nv, strategy)
+	if out == d.Range || !admits(out, nv) {
 		return "", false
 	}
 	return out, true
