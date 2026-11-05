@@ -34,7 +34,7 @@ const LockFile = ".terraform.lock.hcl"
 type Locker struct{}
 
 // Scope returns the directory of a configuration file that has a lock file next to it.
-func (Locker) Scope(root, manifest string) (string, bool) {
+func (Locker) Scope(_ context.Context, root, manifest string) (string, bool) {
 	dir := path.Dir(manifest)
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(dir), LockFile)); err != nil {
 		return "", false
@@ -177,7 +177,7 @@ func (tfManager) LockRoots(root string, files []string) []manager.LockRoot {
 	var out []manager.LockRoot
 	seen := map[string]bool{}
 	for _, f := range files {
-		dir, ok := Locker{}.Scope(root, f)
+		dir, ok := Locker{}.Scope(context.Background(), root, f)
 		if !ok || seen[dir] {
 			continue
 		}

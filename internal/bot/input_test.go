@@ -27,8 +27,8 @@ import (
 // root, counts its runs and changes nothing: the go mod tidy of the fixture.
 type countPost struct{ runs *atomic.Int32 }
 
-func (countPost) Scope(string, string) (string, bool) { return ".", true }
-func (countPost) Siblings() []string                  { return nil }
+func (countPost) Scope(context.Context, string, string) (string, bool) { return ".", true }
+func (countPost) Siblings() []string                                   { return nil }
 func (p countPost) Process(context.Context, string, map[string][]byte, map[string][]byte) (map[string][]byte, error) {
 	p.runs.Add(1)
 	return nil, nil

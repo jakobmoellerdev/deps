@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -184,7 +185,7 @@ func hashedUpdate(root string, res *engine.Result) bool {
 		if u.Dep.Manager != piprequirements.Name {
 			continue
 		}
-		if _, ok := (pytool.Compiler{}).Scope(root, u.Dep.File); ok {
+		if _, ok := (pytool.Compiler{}).Scope(context.Background(), root, u.Dep.File); ok {
 			return true
 		}
 	}

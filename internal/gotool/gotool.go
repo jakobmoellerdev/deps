@@ -238,7 +238,7 @@ type Tidier struct{ Imports *ImportCache }
 
 // Scope is the module directory: every go.mod is post-processed on its own, together with
 // the patched .go files of its module (the nearest go.mod at or above their directory).
-func (Tidier) Scope(root, manifest string) (string, bool) {
+func (Tidier) Scope(_ context.Context, root, manifest string) (string, bool) {
 	dir, name, ok := strings.CutLast(manifest, "/")
 	if !ok {
 		dir, name = ".", manifest
@@ -269,7 +269,7 @@ func (Tidier) Siblings() []string { return []string{"go.sum"} }
 // manifest: every scope patches it. A replacement that leaves root, or is absolute, is an
 // error, since it cannot be named relative to root, and so is a missing one; one without
 // go.mod is listed, so the group is always built until the base commit has it.
-func (t Tidier) ScopeInputs(root, dir string, _ []string) (paths, digests []string, err error) {
+func (t Tidier) ScopeInputs(_ context.Context, root, dir string, _ []string) (paths, digests []string, err error) {
 	file := filepath.Join(root, filepath.FromSlash(dir), "go.mod")
 	b, err := os.ReadFile(file)
 	if err != nil {

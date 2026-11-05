@@ -5,6 +5,7 @@ package npm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/jsontext"
 	"errors"
 	"io"
@@ -126,7 +127,7 @@ func (npmManager) LockRoots(root string, files []string) []manager.LockRoot {
 	var out []manager.LockRoot
 	seen := map[string]bool{}
 	for _, f := range files {
-		dir, ok := nodetool.Locker{}.Scope(root, f)
+		dir, ok := nodetool.Locker{}.Scope(context.Background(), root, f)
 		if !ok || seen[dir] {
 			continue
 		}

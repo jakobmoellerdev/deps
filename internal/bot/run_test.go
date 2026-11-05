@@ -682,8 +682,10 @@ func TestRunBranchPrefixAndUnlimitedPRs(t *testing.T) {
 // (*dep.SkipError) and fails b/y when fail is set.
 type inapplicable struct{ fail bool }
 
-func (inapplicable) Scope(_, manifest string) (string, bool) { return filepath.Dir(manifest), true }
-func (inapplicable) Siblings() []string                      { return nil }
+func (inapplicable) Scope(_ context.Context, _, manifest string) (string, bool) {
+	return filepath.Dir(manifest), true
+}
+func (inapplicable) Siblings() []string { return nil }
 
 func (p inapplicable) Process(_ context.Context, _ string, manifests, _ map[string][]byte) (map[string][]byte, error) {
 	switch src := string(manifests["wf.yml"]); {
@@ -813,5 +815,61 @@ func TestRunProgress(t *testing.T) {
 	}
 	if p.starts != 1 || p.total != 2 || p.ends != 1 || p.done != 2 || p.errs != 1 {
 		t.Errorf("starts=%d total=%d ends=%d done=%d errs=%d", p.starts, p.total, p.ends, p.done, p.errs)
+	}
+}
+
+type branchKey struct{}
+
+// ctxPost records which PR's context each Process call got, by the action it updates.
+type ctxPost struct {
+	mu  *sync.Mutex
+	got map[string]any
+}
+
+func (ctxPost) Scope(_ context.Context, _, manifest string) (string, bool) {
+	return filepath.Dir(manifest), true
+}
+func (ctxPost) Siblings() []string { return nil }
+
+func (p ctxPost) Process(ctx context.Context, _ string, manifests, _ map[string][]byte) (map[string][]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, name := range []string{"a/x", "b/y"} {
+		if strings.Contains(string(manifests["wf.yml"]), name+"@v2") {
+			p.got[name] = ctx.Value(branchKey{})
+		}
+	}
+	return nil, nil
+}
+
+// Each PR's build and handling run with the context of its PRLog, which is done once with
+// the PR's status.
+func TestRunPRLog(t *testing.T) {
+	root, res := fixture(t)
+	var mu sync.Mutex
+	post := ctxPost{mu: &mu, got: map[string]any{}}
+	begun, done := map[string]int{}, map[string]string{}
+	o := Options{AuthorEmail: email, Managers: managers, PRLog: func(ctx context.Context, branch string) (context.Context, func(string, time.Duration)) {
+		mu.Lock()
+		defer mu.Unlock()
+		begun[branch]++
+		return context.WithValue(ctx, branchKey{}, branch), func(status string, d time.Duration) {
+			mu.Lock()
+			defer mu.Unlock()
+			if d <= 0 {
+				t.Errorf("%s: duration %v", branch, d)
+			}
+			done[branch] = status
+		}
+	}}
+	g := &fakeGit{fail: map[string]error{"Push:" + branchB: errBoom}}
+	if _, errs := Run(t.Context(), o, root, res, map[string]engine.PostProcessor{"github-actions": post}, &fakePC{}, g); len(errs) != 1 {
+		t.Fatalf("errs = %v", errs)
+	}
+	if post.got["a/x"] != branchA || post.got["b/y"] != branchB {
+		t.Errorf("Process contexts = %v", post.got)
+	}
+	if begun[branchA] != 1 || begun[branchB] != 1 || done[branchA] != StatusCreated || done[branchB] != "error" {
+		t.Errorf("begun = %v, done = %v", begun, done)
 	}
 }

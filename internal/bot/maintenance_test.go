@@ -18,8 +18,10 @@ import (
 // maintainer is a cargo post-processor whose Maintain returns lock (nil = unchanged).
 type maintainer struct{ lock []byte }
 
-func (maintainer) Scope(_, manifest string) (string, bool) { return filepath.Dir(manifest), true }
-func (maintainer) Siblings() []string                      { return []string{"Cargo.lock"} }
+func (maintainer) Scope(_ context.Context, _, manifest string) (string, bool) {
+	return filepath.Dir(manifest), true
+}
+func (maintainer) Siblings() []string { return []string{"Cargo.lock"} }
 func (maintainer) Process(context.Context, string, map[string][]byte, map[string][]byte) (map[string][]byte, error) {
 	return nil, nil
 }

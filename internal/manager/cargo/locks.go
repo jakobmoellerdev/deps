@@ -2,6 +2,7 @@ package cargo
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -40,7 +41,7 @@ func (cargoManager) ReadLocks(root string, files [][]dep.Dep) []error {
 			}
 			sc, seen := scopes[d.File]
 			if !seen {
-				sc.dir, sc.ok = Locker{}.Scope(root, d.File)
+				sc.dir, sc.ok = Locker{}.Scope(context.Background(), root, d.File)
 				scopes[d.File] = sc
 			}
 			dir, ok := sc.dir, sc.ok
@@ -105,7 +106,7 @@ func (cargoManager) LockRoots(root string, files []string) []manager.LockRoot {
 	var out []manager.LockRoot
 	seen := map[string]bool{}
 	for _, f := range files {
-		dir, ok := Locker{}.Scope(root, f)
+		dir, ok := Locker{}.Scope(context.Background(), root, f)
 		if !ok || seen[dir] {
 			continue
 		}

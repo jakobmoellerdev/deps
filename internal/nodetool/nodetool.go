@@ -92,7 +92,7 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 // the local files the configuration references (patches, the pnpmfile, `file:` and `link:`
 // targets, the yarnPath and plugins), also above the lock root. They are derived from the
 // unpatched manifests, since updates move versions, not local references.
-func (l Locker) ScopeInputs(root, dir string, _ []string) (paths, digests []string, err error) {
+func (l Locker) ScopeInputs(ctx context.Context, root, dir string, _ []string) (paths, digests []string, err error) {
 	abs := filepath.Join(root, filepath.FromSlash(dir))
 	files := map[string][]byte{}
 	for _, n := range l.Siblings() {
@@ -103,7 +103,7 @@ func (l Locker) ScopeInputs(root, dir string, _ []string) (paths, digests []stri
 			return nil, nil, err
 		}
 	}
-	s, err := stage(abs, nil, files, false)
+	s, err := stage(ctx, abs, nil, files, false)
 	if err != nil || s == nil {
 		return nil, nil, err
 	}
@@ -130,7 +130,7 @@ type staged struct {
 // the package manager configuration, every workspace member's package.json, the yarn berry
 // yarnPath and plugins, and the local files they reference (addLocalFiles); manifests
 // replace their files. It is nil without a lockfile.
-func stage(dir string, manifests, files map[string][]byte, maintain bool) (*staged, error) {
+func stage(ctx context.Context, dir string, manifests, files map[string][]byte, maintain bool) (*staged, error) {
 	rootPkg, ok := manifests["package.json"]
 	if !ok {
 		b, err := os.ReadFile(filepath.Join(dir, "package.json"))
@@ -195,13 +195,13 @@ func stage(dir string, manifests, files map[string][]byte, maintain bool) (*stag
 			}
 		}
 	}
-	addLocalFiles(s.t, s.write, files, s.lockName)
+	addLocalFiles(ctx, s.t, s.write, files, s.lockName)
 	return s, nil
 }
 
 // install runs ProcessLocked, or Maintain when maintain is set.
 func install(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update, maintain bool) (map[string][]byte, error) {
-	s, err := stage(dir, manifests, files, maintain)
+	s, err := stage(ctx, dir, manifests, files, maintain)
 	if err != nil || s == nil {
 		return nil, err
 	}

@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -122,5 +124,54 @@ func TestTextLogRoundsDurations(t *testing.T) {
 		if !strings.Contains(b.String(), tc.want) {
 			t.Errorf("%s %v: %q lacks %q", tc.format, tc.d, b.String(), tc.want)
 		}
+	}
+}
+
+// A PR's records come out as one block when it is done: plain, or with the actions format
+// inside a group titled with branch, status and duration; when the context ends first, at
+// once.
+func TestPRLog(t *testing.T) {
+	defer slog.SetDefault(slog.Default())
+	t.Cleanup(func() { actionsLog = &annotator{} })
+	for _, tc := range []struct {
+		actions bool
+		want    string
+	}{
+		{false, "level=INFO msg=free\nlevel=INFO msg=a\nlevel=INFO msg=b\n"},
+		{true, "level=INFO msg=free\n::group::deps/x: created (1.5s)\nlevel=INFO msg=a\nlevel=INFO msg=b\n::endgroup::\n"},
+	} {
+		var b bytes.Buffer
+		w := logx.NewWriter(&b)
+		actionsLog = &annotator{}
+		format := "text"
+		if tc.actions {
+			format = "actions"
+		}
+		if _, err := setupLogger(logOpts{level: "info", format: format, color: "never"}, w, false, func(string) string { return "" }); err != nil {
+			t.Fatal(err)
+		}
+		ctx, done := prLog(w)(t.Context(), "deps/x")
+		slog.InfoContext(ctx, "a")
+		slog.Info("free")
+		slog.InfoContext(ctx, "b")
+		done("created", 1500*time.Millisecond)
+		if got := regexp.MustCompile(`time=\S+ `).ReplaceAllString(b.String(), ""); got != tc.want {
+			t.Errorf("actions=%v:\n%q\nwant\n%q", tc.actions, got, tc.want)
+		}
+	}
+	var b syncBuffer
+	w := logx.NewWriter(&b)
+	actionsLog = &annotator{on: true, w: w}
+	parent, cancel := context.WithCancel(t.Context())
+	ctx, done := prLog(w)(parent, "deps/y")
+	slog.InfoContext(ctx, "c")
+	cancel()
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(b.String(), "::endgroup::") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	done("error", time.Second)
+	if got := regexp.MustCompile(`time=\S+ `).ReplaceAllString(b.String(), ""); got != "::group::deps/y: canceled\nlevel=INFO msg=c\n::endgroup::\n" {
+		t.Errorf("canceled: %q", got)
 	}
 }

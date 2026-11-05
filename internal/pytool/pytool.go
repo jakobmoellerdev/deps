@@ -52,7 +52,7 @@ func (Locker) Siblings() []string { return []string{UVLock, PoetryLock, PDMLock,
 // Pipfile.lock; a pyproject.toml's own directory when it holds uv.lock, poetry.lock or
 // pdm.lock, else the nearest directory above (within root) with uv.lock whose
 // `[tool.uv.workspace]` members match the manifest's directory.
-func (Locker) Scope(root, manifest string) (string, bool) {
+func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
 	member := path.Dir(manifest)
 	abs := func(dir, name string) string { return filepath.Join(root, filepath.FromSlash(dir), name) }
 	switch path.Base(manifest) {
@@ -81,7 +81,7 @@ func (Locker) Scope(root, manifest string) (string, bool) {
 		include, exclude := workspaceGlobs(src)
 		ok := matchAny(include, rel) && !matchAny(exclude, rel)
 		if !ok {
-			slog.Debug("not a uv workspace member", "dir", dir, "manifest", manifest)
+			slog.DebugContext(ctx, "not a uv workspace member", "dir", dir, "manifest", manifest)
 		}
 		return dir, ok
 	}
@@ -351,7 +351,7 @@ func topLevelNames(dir string) ([]string, error) {
 // ScopeInputs implements engine.ScopeInputLister: the files lockIn copies besides the
 // manifests and lockfiles, the top-level files of dir (up to 4 MiB each) and, with uv.lock,
 // every workspace member's pyproject.toml.
-func (Locker) ScopeInputs(root, dir string, _ []string) (paths, digests []string, err error) {
+func (Locker) ScopeInputs(_ context.Context, root, dir string, _ []string) (paths, digests []string, err error) {
 	abs := filepath.Join(root, filepath.FromSlash(dir))
 	names, err := topLevelNames(abs)
 	if err != nil {

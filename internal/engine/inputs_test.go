@@ -21,7 +21,7 @@ type listingPost struct {
 	calls *[][]string
 }
 
-func (p listingPost) ScopeInputs(_, dir string, manifests []string) ([]string, []string, error) {
+func (p listingPost) ScopeInputs(_ context.Context, _, dir string, manifests []string) ([]string, []string, error) {
 	if p.calls != nil {
 		*p.calls = append(*p.calls, manifests)
 	}
@@ -53,7 +53,7 @@ func TestInputs(t *testing.T) {
 	post := (&recorder{}).post()
 	post[gomod.Name] = listingPost{siblings: []string{"go.sum", "go.work"}, extra: []string{"../shared"}, calls: &calls}
 
-	got, errs := Inputs(root, managers, post, [][]dep.Update{ups, nil, {major}})
+	got, errs := Inputs(t.Context(), root, managers, post, [][]dep.Update{ups, nil, {major}})
 	if errs[0] != nil || errs[1] != nil || errs[2] != nil {
 		t.Fatal(errs)
 	}
@@ -79,19 +79,19 @@ func TestInputs(t *testing.T) {
 	}
 
 	// Without post-processors only the edited files count.
-	if got, errs := Inputs(root, managers, nil, [][]dep.Update{{major}}); errs[0] != nil || !slices.Equal(got[0].Paths, []string{"mod/a.go", "mod/go.mod"}) || got[0].Digests != nil {
+	if got, errs := Inputs(t.Context(), root, managers, nil, [][]dep.Update{{major}}); errs[0] != nil || !slices.Equal(got[0].Paths, []string{"mod/a.go", "mod/go.mod"}) || got[0].Digests != nil {
 		t.Errorf("Inputs without post = %q, %v", got[0], errs[0])
 	}
 
 	// A scope input outside root cannot be fingerprinted.
 	post[gomod.Name] = listingPost{scope: func(string, string) (string, bool) { return ".", true }, extra: []string{"../outside"}}
-	if _, errs := Inputs(root, managers, post, [][]dep.Update{{major}}); errs[0] == nil || !strings.Contains(errs[0].Error(), "outside the root") {
+	if _, errs := Inputs(t.Context(), root, managers, post, [][]dep.Update{{major}}); errs[0] == nil || !strings.Contains(errs[0].Error(), "outside the root") {
 		t.Errorf("Inputs outside root err = %v", errs[0])
 	}
 
 	// FileEdits failures are errors of their group only.
 	writeFile(t, root, "mod/broken.go", "package\nimport \"github.com/google/go-github/v92\"\n")
-	got, errs = Inputs(root, managers, nil, [][]dep.Update{{major}, {ups[1]}})
+	got, errs = Inputs(t.Context(), root, managers, nil, [][]dep.Update{{major}, {ups[1]}})
 	if errs[0] == nil || errs[1] != nil || !slices.Equal(got[1].Paths, []string{"ws/package.json"}) {
 		t.Errorf("Inputs with a FileEdits failure = %q, %v", got, errs)
 	}
@@ -100,14 +100,14 @@ func TestInputs(t *testing.T) {
 // failingLister fails ScopeInputs.
 type failingLister struct{ postFunc }
 
-func (failingLister) ScopeInputs(string, string, []string) ([]string, []string, error) {
+func (failingLister) ScopeInputs(context.Context, string, string, []string) ([]string, []string, error) {
 	return nil, nil, context.Canceled
 }
 
 func TestInputsScopeInputsError(t *testing.T) {
 	root := t.TempDir()
 	up := pkgUpdate(t, root, "a/package.json")
-	_, errs := Inputs(root, nil, map[string]PostProcessor{npm.Name: failingLister{}}, [][]dep.Update{{up}})
+	_, errs := Inputs(t.Context(), root, nil, map[string]PostProcessor{npm.Name: failingLister{}}, [][]dep.Update{{up}})
 	if errs[0] == nil || !strings.HasPrefix(errs[0].Error(), "a/package.json: ") {
 		t.Errorf("err = %v", errs[0])
 	}

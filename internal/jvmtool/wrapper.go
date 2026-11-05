@@ -49,7 +49,7 @@ func wrapperScope(manifest, props string) (string, bool) {
 type GradleWrapper struct{}
 
 // Scope is the project directory, two levels above gradle/wrapper/gradle-wrapper.properties.
-func (GradleWrapper) Scope(_, manifest string) (string, bool) {
+func (GradleWrapper) Scope(_ context.Context, _, manifest string) (string, bool) {
 	return wrapperScope(manifest, GradleWrapperProperties)
 }
 
@@ -108,7 +108,7 @@ func (GradleWrapper) Process(ctx context.Context, dir string, manifests, files m
 type MavenWrapper struct{}
 
 // Scope is the project directory, two levels above .mvn/wrapper/maven-wrapper.properties.
-func (MavenWrapper) Scope(_, manifest string) (string, bool) {
+func (MavenWrapper) Scope(_ context.Context, _, manifest string) (string, bool) {
 	return wrapperScope(manifest, MavenWrapperProperties)
 }
 

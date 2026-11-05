@@ -150,19 +150,19 @@ func TestLockerErrors(t *testing.T) {
 
 func TestLockerScope(t *testing.T) {
 	l := Locker{}
-	if dir, ok := l.Scope("/root", "charts/app/Chart.yaml"); !ok || dir != "charts/app" {
+	if dir, ok := l.Scope(t.Context(), "/root", "charts/app/Chart.yaml"); !ok || dir != "charts/app" {
 		t.Errorf("Scope(Chart.yaml) = %q, %v", dir, ok)
 	}
-	if dir, ok := l.Scope("/root", "Chart.yaml"); !ok || dir != "." {
+	if dir, ok := l.Scope(t.Context(), "/root", "Chart.yaml"); !ok || dir != "." {
 		t.Errorf("Scope(root Chart.yaml) = %q, %v", dir, ok)
 	}
-	if _, ok := l.Scope("/root", "helmfile.yaml"); ok {
+	if _, ok := l.Scope(t.Context(), "/root", "helmfile.yaml"); ok {
 		t.Error("helmfile has a scope")
 	}
 	if s := l.Siblings(); len(s) != 1 || s[0] != lockFile {
 		t.Errorf("Siblings = %v", s)
 	}
-	if p, d, err := l.ScopeInputs("/root", "charts/app", []string{"Chart.yaml"}); err != nil || len(p) != 1 || p[0] != "charts/app/Chart.yaml" || d != nil {
+	if p, d, err := l.ScopeInputs(t.Context(), "/root", "charts/app", []string{"Chart.yaml"}); err != nil || len(p) != 1 || p[0] != "charts/app/Chart.yaml" || d != nil {
 		t.Errorf("ScopeInputs = %q, %q, %v", p, d, err)
 	}
 	if got := lockStyle("v1.0.0", "1.1.0"); got != "v1.1.0" {

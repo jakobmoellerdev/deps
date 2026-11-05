@@ -223,8 +223,8 @@ func TestBuildRejectsTwoPostProcessorsPerFile(t *testing.T) {
 // same value share it.
 type sharedPost struct{ runs *atomic.Int32 }
 
-func (sharedPost) Scope(_, _ string) (string, bool) { return ".", true }
-func (sharedPost) Siblings() []string               { return []string{"uv.lock"} }
+func (sharedPost) Scope(_ context.Context, _, _ string) (string, bool) { return ".", true }
+func (sharedPost) Siblings() []string                                  { return []string{"uv.lock"} }
 func (p sharedPost) Process(_ context.Context, _ string, manifests, _ map[string][]byte) (map[string][]byte, error) {
 	p.runs.Add(1)
 	return map[string][]byte{"uv.lock": manifests["pyproject.toml"]}, nil

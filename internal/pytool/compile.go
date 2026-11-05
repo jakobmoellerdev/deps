@@ -36,7 +36,7 @@ type Hasher interface {
 type Compiler struct{ Hashes Hasher }
 
 // Scope returns the directory of a requirements file with `--hash` options.
-func (Compiler) Scope(root, manifest string) (string, bool) {
+func (Compiler) Scope(_ context.Context, root, manifest string) (string, bool) {
 	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(manifest)))
 	if err != nil || !bytes.Contains(b, []byte("--hash")) {
 		return "", false
@@ -51,7 +51,7 @@ func (Compiler) Siblings() []string { return nil }
 // header whose command can be re-run, the files regenerate copies (collect: its inputs, the
 // files they reference, constraint files, local projects' top-level files, uv.toml and
 // pyproject.toml). The others are rehashed from the index alone and read nothing else.
-func (Compiler) ScopeInputs(root, dir string, manifests []string) (paths, digests []string, err error) {
+func (Compiler) ScopeInputs(_ context.Context, root, dir string, manifests []string) (paths, digests []string, err error) {
 	abs := filepath.Join(root, filepath.FromSlash(dir))
 	for _, name := range manifests {
 		src, err := os.ReadFile(filepath.Join(abs, filepath.FromSlash(name)))

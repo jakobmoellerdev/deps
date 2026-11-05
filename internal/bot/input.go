@@ -87,7 +87,7 @@ func inputFingerprints(ctx context.Context, o Options, root, head string, groups
 			ups[i] = grp.Updates
 		}
 	}
-	inputs, errs := engine.Inputs(root, o.Managers, post, ups)
+	inputs, errs := engine.Inputs(ctx, root, o.Managers, post, ups)
 	index := map[string]int{}
 	var all []string
 	for i, in := range inputs {

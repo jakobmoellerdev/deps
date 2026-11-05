@@ -74,6 +74,12 @@ type Options struct {
 	// Progress observes the PR phase (engine.PhasePRs, one item per group, done once the
 	// group is handled) and rate-limit waits; nil = off.
 	Progress engine.Progress
+	// PRLog collects the log records of one PR while it is built and handled: it returns the
+	// context for the PR's work and done, which writes the records out with the PR's outcome
+	// (its status, "error" or "no changes") and the time spent on it (build and handling, not
+	// the wait for other PRs). nil = records go out as they come. PRLog and done may be called
+	// from several goroutines.
+	PRLog func(ctx context.Context, branch string) (prCtx context.Context, done func(status string, d time.Duration))
 }
 
 // Notes renders release information for PR bodies (implemented by releasenotes.Notes). Age
@@ -221,6 +227,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	}
 	inputs := inputFingerprints(ctx, o, root, head, groups, ran, post, g)
 	skipped := make([]bool, len(groups))
+	logs := newPRLogs(ctx, o.PRLog, groups)
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
 	for i := range groups {
@@ -228,15 +235,17 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			continue
 		}
 		if pr := prOf(open, groups[i].Branch); pr != nil && reusable(o, *pr, inputs[i], forced[i]) {
-			slog.DebugContext(ctx, "input fingerprint matches the open PR, not building", "branch", groups[i].Branch, "number", pr.Number, "input", inputs[i])
+			slog.DebugContext(logs.ctx(i), "input fingerprint matches the open PR, not building", "branch", groups[i].Branch, "number", pr.Number, "input", inputs[i])
 			skipped[i] = true
 			continue
 		}
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			changes, errs := engine.Build(ctx, root, o.Managers, groups[i].Updates, post)
+			start := time.Now()
+			changes, errs := engine.Build(logs.ctx(i), root, o.Managers, groups[i].Updates, post)
 			built[i], buildErrs[i] = changes, errs
+			logs.spent[i] += time.Since(start)
 		})
 	}
 	wg.Wait()
@@ -246,8 +255,9 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 	slog.DebugContext(ctx, "new PR limit", "limit", s.limit, "maxNewPRs", o.MaxNewPRs, "prConcurrentLimit", o.ConcurrentLimit, "prHourlyLimit", o.HourlyLimit)
 	wanted := map[string]bool{}
 	for i, grp := range groups {
-		nErrs := len(errs)
+		nErrs, nActions, start := len(errs), len(actions), time.Now()
 		func() {
+			ctx := logs.ctx(i)
 			wanted[grp.Branch] = true // out-of-schedule branches are still wanted: keep their PRs open
 			if buildErrs[i] != nil {
 				if reason, ok := skipReason(buildErrs[i]); ok {
@@ -298,9 +308,14 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 			actions = append(actions, a)
 		}()
 		var err error
-		if len(errs) > nErrs {
-			err = errors.Join(errs[nErrs:]...)
+		status := "no changes"
+		switch {
+		case len(errs) > nErrs:
+			err, status = errors.Join(errs[nErrs:]...), "error"
+		case len(actions) > nActions:
+			status = actions[len(actions)-1].Display()
 		}
+		logs.done(i, status, time.Since(start))
 		prog.Done(engine.PhasePRs, err)
 	}
 	prog.End(engine.PhasePRs)
@@ -339,6 +354,39 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 		}
 	}
 	return actions, errs
+}
+
+// prLogs are the per-PR log contexts of a run (Options.PRLog), begun on first use.
+type prLogs struct {
+	parent context.Context
+	begin  func(ctx context.Context, branch string) (context.Context, func(string, time.Duration))
+	groups []engine.Group
+	ctxs   []context.Context
+	dones  []func(string, time.Duration)
+	spent  []time.Duration // build time per group
+}
+
+func newPRLogs(ctx context.Context, begin func(context.Context, string) (context.Context, func(string, time.Duration)), groups []engine.Group) *prLogs {
+	return &prLogs{parent: ctx, begin: begin, groups: groups, ctxs: make([]context.Context, len(groups)), dones: make([]func(string, time.Duration), len(groups)), spent: make([]time.Duration, len(groups))}
+}
+
+// ctx returns the context of group i's records. Only one goroutine at a time uses a group.
+func (l *prLogs) ctx(i int) context.Context {
+	if l.begin == nil {
+		return l.parent
+	}
+	if l.ctxs[i] == nil {
+		l.ctxs[i], l.dones[i] = l.begin(l.parent, l.groups[i].Branch)
+	}
+	return l.ctxs[i]
+}
+
+// done writes out group i's records with its status; d is the handling time, to which the
+// build time is added.
+func (l *prLogs) done(i int, status string, d time.Duration) {
+	if l.dones[i] != nil {
+		l.dones[i](status, l.spent[i]+d)
+	}
 }
 
 // skipReason returns the reasons of a group's build errors, deduplicated and joined by "; ",

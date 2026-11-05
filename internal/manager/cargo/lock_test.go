@@ -60,15 +60,15 @@ func TestScope(t *testing.T) {
 		"other/Cargo.toml":       "",
 		"badws/m/Cargo.toml":     "",
 	} {
-		dir, ok := Locker{}.Scope(root, manifest)
+		dir, ok := Locker{}.Scope(t.Context(), root, manifest)
 		if dir != want || ok != (want != "") {
 			t.Errorf("Scope(%s) = %q, %v, want %q", manifest, dir, ok, want)
 		}
 	}
-	if dir, ok := (Locker{}).Scope(outside, "sub/Cargo.toml"); ok {
+	if dir, ok := (Locker{}).Scope(t.Context(), outside, "sub/Cargo.toml"); ok {
 		t.Errorf("Scope without any Cargo.lock = %q", dir)
 	}
-	if dir, ok := (Locker{}).Scope(filepath.Join(root, "nolock"), "Cargo.toml"); ok {
+	if dir, ok := (Locker{}).Scope(t.Context(), filepath.Join(root, "nolock"), "Cargo.toml"); ok {
 		t.Errorf("Scope stops at the root: %q", dir)
 	}
 	if names := (Locker{}).Siblings(); len(names) != 1 || names[0] != "Cargo.lock" {

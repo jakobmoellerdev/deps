@@ -90,7 +90,7 @@ type postFunc struct {
 	scope    func(root, manifest string) (string, bool)
 }
 
-func (p postFunc) Scope(root, manifest string) (string, bool) {
+func (p postFunc) Scope(_ context.Context, root, manifest string) (string, bool) {
 	if p.scope == nil {
 		return path.Dir(manifest), true
 	}

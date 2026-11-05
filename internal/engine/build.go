@@ -36,7 +36,7 @@ type PostProcessor interface {
 	// to root ("." for root itself) that contains manifest, e.g. the module directory of a
 	// go.mod or the workspace root of a package.json. ok is false when the manifest has no
 	// derived files. root is absolute; Scope may read files below it.
-	Scope(root, manifest string) (dir string, ok bool)
+	Scope(_ context.Context, root, manifest string) (dir string, ok bool)
 	// Siblings lists the names of the files in the scope directory that Process reads or
 	// regenerates.
 	Siblings() []string
@@ -337,7 +337,7 @@ func groupScopes(ctx context.Context, root string, files []string, builds []file
 		if b.err != nil || b.dropped || b.post == "" {
 			continue
 		}
-		dir, ok := post[b.post].Scope(root, files[i])
+		dir, ok := post[b.post].Scope(ctx, root, files[i])
 		if !ok {
 			switch {
 			case b.maintain:

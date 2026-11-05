@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -26,7 +27,7 @@ type ScopeInputLister interface {
 	// it exists. digests are opaque strings over inputs that no path names whole (the import
 	// paths of a Go module's .go files), computed from the files below root. An input that
 	// cannot be named either way is an error: the group is then always built.
-	ScopeInputs(root, dir string, manifests []string) (paths, digests []string, err error)
+	ScopeInputs(_ context.Context, root, dir string, manifests []string) (paths, digests []string, err error)
 }
 
 // BuildInputs is what Build reads of the repository for one group: Paths are slash paths
@@ -45,7 +46,7 @@ type BuildInputs struct {
 // cannot be listed, or include a path outside root, gets an error instead. The bot hashes
 // the inputs, with the objects at the paths in the base commit, into the input fingerprint
 // of a PR.
-func Inputs(root string, managers []manager.Manager, post map[string]PostProcessor, groups [][]dep.Update) ([]BuildInputs, []error) {
+func Inputs(ctx context.Context, root string, managers []manager.Manager, post map[string]PostProcessor, groups [][]dep.Update) ([]BuildInputs, []error) {
 	out := make([]BuildInputs, len(groups))
 	errs := make([]error, len(groups))
 	type scopeInputs struct {
@@ -72,7 +73,7 @@ func Inputs(root string, managers []manager.Manager, post map[string]PostProcess
 			if p == nil {
 				continue
 			}
-			dir, ok := p.Scope(root, f.path)
+			dir, ok := p.Scope(ctx, root, f.path)
 			if !ok {
 				continue
 			}
@@ -96,7 +97,7 @@ func Inputs(root string, managers []manager.Manager, post map[string]PostProcess
 			key := k.mgr + "\x00" + k.dir + "\x00" + strings.Join(manifests, "\x00")
 			in, ok := listed[key]
 			if !ok {
-				in.paths, in.digests, in.err = scopeInputsOf(root, k.dir, manifests, post[k.mgr])
+				in.paths, in.digests, in.err = scopeInputsOf(ctx, root, k.dir, manifests, post[k.mgr])
 				listed[key] = in
 			}
 			if in.err != nil {
@@ -155,7 +156,7 @@ func groupFiles(root string, managers []manager.Manager, ups []dep.Update) ([]ma
 // scopeInputsOf lists the inputs of one post-processing scope besides its manifests: the
 // siblings Build reads that exist and the ScopeInputs of p, or the scope directory when p
 // names none.
-func scopeInputsOf(root, dir string, manifests []string, p PostProcessor) (paths, digests []string, err error) {
+func scopeInputsOf(ctx context.Context, root, dir string, manifests []string, p PostProcessor) (paths, digests []string, err error) {
 	l, ok := p.(ScopeInputLister)
 	if !ok {
 		return []string{dir}, nil, nil
@@ -173,7 +174,7 @@ func scopeInputsOf(root, dir string, manifests []string, p PostProcessor) (paths
 			return nil, nil, err
 		}
 	}
-	extra, digests, err := l.ScopeInputs(root, dir, manifests)
+	extra, digests, err := l.ScopeInputs(ctx, root, dir, manifests)
 	if err != nil {
 		return nil, nil, err
 	}

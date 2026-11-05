@@ -1,6 +1,7 @@
 package jvmtool
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"os"
@@ -10,7 +11,7 @@ import (
 )
 
 type scoper interface {
-	Scope(root, manifest string) (string, bool)
+	Scope(_ context.Context, root, manifest string) (string, bool)
 }
 
 func TestWrapperScope(t *testing.T) {
@@ -27,8 +28,8 @@ func TestWrapperScope(t *testing.T) {
 		{MavenWrapper{}, "svc/.mvn/wrapper/maven-wrapper.properties", "svc", true},
 		{MavenWrapper{}, "gradle/wrapper/gradle-wrapper.properties", "", false},
 	} {
-		if dir, ok := tc.p.Scope("/root", tc.manifest); dir != tc.dir || ok != tc.ok {
-			t.Errorf("%T.Scope(%q) = %q, %v", tc.p, tc.manifest, dir, ok)
+		if dir, ok := tc.p.Scope(t.Context(), "/root", tc.manifest); dir != tc.dir || ok != tc.ok {
+			t.Errorf("%T.Scope(t.Context(), %q) = %q, %v", tc.p, tc.manifest, dir, ok)
 		}
 	}
 }

@@ -50,7 +50,7 @@ type GradleLocker struct{}
 // script (else the manifest's directory, or the parent of a gradle/ directory); sources under
 // buildSrc/ (shared versions) belong to the build above buildSrc, whose scripts use them. ok
 // only when the build locks dependencies or verifies them.
-func (GradleLocker) Scope(root, manifest string) (string, bool) {
+func (GradleLocker) Scope(_ context.Context, root, manifest string) (string, bool) {
 	dir := gradleRoot(root, manifest)
 	l := scanGradle(filepath.Join(root, filepath.FromSlash(dir)), true)
 	return dir, len(l.lockfiles) > 0 || l.verification

@@ -252,7 +252,7 @@ func TestScope(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
 			write(t, root, tt.files)
-			got, ok := Locker{}.Scope(root, tt.manifest)
+			got, ok := Locker{}.Scope(t.Context(), root, tt.manifest)
 			if ok != (tt.want != "") || got != tt.want {
 				t.Errorf("Scope(%s) = %q, %v, want %q", tt.manifest, got, ok, tt.want)
 			}

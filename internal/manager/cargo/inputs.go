@@ -1,6 +1,7 @@
 package cargo
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -23,7 +24,7 @@ import (
 //   - of the other files below dir only their paths, as one digest: cargo needs their
 //     existence (auto-discovered targets, `path` and `build` entries) but not their content,
 //     so a source edit keeps the inputs and an added, removed or renamed file changes them.
-func (Locker) ScopeInputs(root, dir string, _ []string) (paths, digests []string, err error) {
+func (Locker) ScopeInputs(_ context.Context, root, dir string, _ []string) (paths, digests []string, err error) {
 	abs := filepath.Join(root, filepath.FromSlash(dir))
 	h := sha256.New()
 	err = filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {

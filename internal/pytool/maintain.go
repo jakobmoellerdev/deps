@@ -66,7 +66,7 @@ func maintainedLock(dir string) string {
 func LockRoots(root string, files []string, names ...string) []manager.LockRoot {
 	var out []manager.LockRoot
 	for _, f := range files {
-		dir, ok := Locker{}.Scope(root, f)
+		dir, ok := Locker{}.Scope(context.Background(), root, f)
 		if !ok {
 			continue
 		}

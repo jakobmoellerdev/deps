@@ -59,13 +59,13 @@ func TestScope(t *testing.T) {
 		{"badws/m/pyproject.toml", "", false},
 		{"requirements.txt", "", false},
 	} {
-		dir, ok := Locker{}.Scope(root, c.manifest)
+		dir, ok := Locker{}.Scope(t.Context(), root, c.manifest)
 		if ok != c.ok || ok && dir != c.dir {
 			t.Errorf("Scope(%s) = %q, %v; want %q, %v", c.manifest, dir, ok, c.dir, c.ok)
 		}
 	}
 	// Outside any lock.
-	if _, ok := (Locker{}).Scope(t.TempDir(), "a/pyproject.toml"); ok {
+	if _, ok := (Locker{}).Scope(t.Context(), t.TempDir(), "a/pyproject.toml"); ok {
 		t.Error("scope without lockfile")
 	}
 }

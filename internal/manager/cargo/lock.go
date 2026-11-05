@@ -43,7 +43,7 @@ func (Locker) Siblings() []string { return []string{lockFile} }
 // accepted when it is the manifest's own directory or when its Cargo.toml `[workspace]`
 // `members` globs include the manifest's directory and `exclude` does not; otherwise the
 // manifest has no lockfile.
-func (Locker) Scope(root, manifest string) (string, bool) {
+func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
 	member := path.Dir(manifest)
 	for dir := member; ; dir = path.Dir(dir) {
 		abs := filepath.Join(root, filepath.FromSlash(dir))
@@ -55,10 +55,10 @@ func (Locker) Scope(root, manifest string) (string, bool) {
 			if dir != "." {
 				rel = strings.TrimPrefix(member, dir+"/")
 			}
-			if isMember(filepath.Join(abs, manifestFile), rel) {
+			if isMember(ctx, filepath.Join(abs, manifestFile), rel) {
 				return dir, true
 			}
-			slog.Debug("not a cargo workspace member", "dir", dir, "manifest", manifest)
+			slog.DebugContext(ctx, "not a cargo workspace member", "dir", dir, "manifest", manifest)
 			return "", false
 		}
 		if dir == "." {
@@ -68,14 +68,14 @@ func (Locker) Scope(root, manifest string) (string, bool) {
 }
 
 // isMember reports whether the workspace manifest at file includes the member directory rel.
-func isMember(file, rel string) bool {
+func isMember(ctx context.Context, file, rel string) bool {
 	src, err := os.ReadFile(file)
 	if err != nil {
 		return false
 	}
 	root, err := tomlspan.Parse(src)
 	if err != nil {
-		slog.Debug("cargo workspace manifest unreadable", "file", file, "err", err)
+		slog.DebugContext(ctx, "cargo workspace manifest unreadable", "file", file, "err", err)
 		return false
 	}
 	strs := func(k string) []string {

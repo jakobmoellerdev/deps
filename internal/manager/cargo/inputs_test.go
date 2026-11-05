@@ -37,7 +37,7 @@ func TestLockerScopeInputs(t *testing.T) {
 	})
 	inputs := func() ([]string, []string) {
 		t.Helper()
-		paths, digests, err := Locker{}.ScopeInputs(root, "ws", nil)
+		paths, digests, err := Locker{}.ScopeInputs(t.Context(), root, "ws", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +64,7 @@ func TestLockerScopeInputs(t *testing.T) {
 	}
 
 	write(map[string]string{"ws/crates/a/Cargo.toml": "[dependencies]\nx = { path = \"/abs/x\" }\n"})
-	if _, _, err := (Locker{}).ScopeInputs(root, "ws", nil); err == nil {
+	if _, _, err := (Locker{}).ScopeInputs(t.Context(), root, "ws", nil); err == nil {
 		t.Error("an absolute path dependency was accepted")
 	}
 }

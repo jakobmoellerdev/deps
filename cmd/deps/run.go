@@ -314,6 +314,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 		BranchPrefix:       s.cfg.Prefix(),
 		Notes:              releasenotes.New(client, s.sem, s.auth, s.gh, s.sources),
 		Progress:           s.progress,
+		PRLog:              prLog(stderr),
 	}
 	if s.cfg.DependencyDashboard {
 		bo.Dashboard = &bot.DashboardOptions{Title: s.cfg.DashboardTitle(), Labels: s.cfg.DependencyDashboardLabels}

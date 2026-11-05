@@ -2,6 +2,7 @@ package nodetool
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -170,8 +171,8 @@ func (w workspaces) members(dir string) ([]string, error) {
 // pnpm-lock.yaml or yarn.lock. It is accepted when it is the manifest's own directory or when
 // its package.json `workspaces` or pnpm-workspace.yaml `packages` globs match the manifest's
 // directory; otherwise the manifest has no lockfile.
-func (Locker) Scope(root, manifest string) (string, bool) {
-	return lockScope(root, manifest, nil)
+func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
+	return lockScope(ctx, root, manifest, nil)
 }
 
 // scopeCache memoises the lockfile and workspace lookups of lockScope across the manifests of
@@ -217,7 +218,7 @@ func (c *scopeCache) readWorkspaces(dir string) (workspaces, error) {
 }
 
 // lockScope is Scope with the lookups cached in c (nil = no caching).
-func lockScope(root, manifest string, c *scopeCache) (string, bool) {
+func lockScope(ctx context.Context, root, manifest string, c *scopeCache) (string, bool) {
 	member := path.Dir(manifest)
 	for dir := member; ; dir = path.Dir(dir) {
 		abs := filepath.Join(root, filepath.FromSlash(dir))
@@ -231,13 +232,13 @@ func lockScope(root, manifest string, c *scopeCache) (string, bool) {
 			}
 			ws, err := c.readWorkspaces(abs)
 			if err != nil {
-				slog.Debug("workspace root unreadable", "dir", dir, "manifest", manifest, "err", err)
+				slog.DebugContext(ctx, "workspace root unreadable", "dir", dir, "manifest", manifest, "err", err)
 				return "", false
 			}
 			if ws.match(rel) {
 				return dir, true
 			}
-			slog.Debug("not a workspace member", "dir", dir, "manifest", manifest)
+			slog.DebugContext(ctx, "not a workspace member", "dir", dir, "manifest", manifest)
 			return "", false
 		}
 		if dir == "." {

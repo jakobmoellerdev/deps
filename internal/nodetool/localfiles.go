@@ -3,6 +3,7 @@ package nodetool
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"log/slog"
@@ -85,7 +86,7 @@ func (t *tree) read(p string) ([]byte, error) {
 // patch-package patches need no copy: they are applied by a postinstall script, which the
 // installs never run. Paths that leave the repository top (also through symlinks) and files
 // that cannot be read are left out; the package manager reports what it misses.
-func addLocalFiles(t *tree, write, files map[string][]byte, lockName string) {
+func addLocalFiles(ctx context.Context, t *tree, write, files map[string][]byte, lockName string) {
 	var queue []string // package.json paths to scan
 	for p := range write {
 		if p == "package.json" || strings.HasSuffix(p, "/package.json") {
@@ -101,7 +102,7 @@ func addLocalFiles(t *tree, write, files map[string][]byte, lockName string) {
 		seen[p] = true
 		b, err := t.read(p)
 		if err != nil {
-			slog.Debug("local file skipped", "top", t.top, "lockRoot", t.prefix, "path", p, "err", err)
+			slog.DebugContext(ctx, "local file skipped", "top", t.top, "lockRoot", t.prefix, "path", p, "err", err)
 			return
 		}
 		write[p] = b

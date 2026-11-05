@@ -35,8 +35,8 @@ var phaseLabels = map[engine.Phase]string{
 // progress is the engine.Progress of the command's stderr. On a terminal (line) it is the
 // live status line: the logx.Writer overlay, below every record, redrawn every tick until the
 // phase ends and then removed. With the actions format (groups) every phase gets a
-// collapsible ::group:: (discover and extract share one) that ends with the phase's final
-// counts, and off a terminal a heartbeat line every heartbeat shows that a long phase still
+// collapsible ::group:: (discover and extract share one; PRs are groups of their own) that
+// ends with the phase's final counts, and off a terminal a heartbeat line every heartbeat shows that a long phase still
 // moves. Only the phase goroutine calls Start and End; Done and RateLimited may come from
 // any goroutine.
 type progress struct {
@@ -89,7 +89,9 @@ func (p *progress) Start(ph engine.Phase, total int) {
 	p.mu.Unlock()
 	p.done.Store(0)
 	p.errs.Store(0)
-	if p.groups != nil && (ph != engine.PhaseExtract || !p.grouped) {
+	// The PR phase has no group of its own: each PR's records are a group (prLog), and
+	// workflow command groups do not nest.
+	if p.groups != nil && ph != engine.PhasePRs && (ph != engine.PhaseExtract || !p.grouped) {
 		p.endGroup()
 		p.groups.group(groupTitle(ph, total))
 		p.grouped = true
@@ -174,15 +176,12 @@ func (p *progress) RateLimited(host string, until time.Time) {
 	}
 }
 
-// groupTitle is the log group title of a phase.
+// groupTitle is the log group title of the discover, extract or resolve phase.
 func groupTitle(ph engine.Phase, total int) string {
-	switch ph {
-	case engine.PhaseDiscover, engine.PhaseExtract:
-		return "Discovering and extracting dependency files"
-	case engine.PhaseResolve:
+	if ph == engine.PhaseResolve {
 		return "Resolving " + plural(total, "dependency", "dependencies")
 	}
-	return "Building and pushing " + plural(total, "PR", "PRs")
+	return "Discovering and extracting dependency files"
 }
 
 // Clear erases the status line; the cursor is at its start afterwards.

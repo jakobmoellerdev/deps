@@ -3,6 +3,7 @@ package nodetool
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -51,7 +52,7 @@ func ReadLocked(root string, wants []Want) ([]LockState, []error) {
 	for i, w := range wants {
 		dir, seen := scopeOf[w.Manifest]
 		if !seen {
-			if d, ok := lockScope(root, w.Manifest, cache); ok {
+			if d, ok := lockScope(context.Background(), root, w.Manifest, cache); ok {
 				dir = d
 			}
 			scopeOf[w.Manifest] = dir

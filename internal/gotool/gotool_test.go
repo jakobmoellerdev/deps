@@ -39,7 +39,7 @@ func TestTidierScopeInputs(t *testing.T) {
 		"staging/apiserver/third_party/x/x.go": "package x\n",
 	})
 	tidier := Tidier{Imports: NewImportCache()}
-	paths, digests, err := tidier.ScopeInputs(root, "staging/apiserver", []string{"go.mod"})
+	paths, digests, err := tidier.ScopeInputs(t.Context(), root, "staging/apiserver", []string{"go.mod"})
 	if want := []string{"staging/apiserver/go.mod", "staging/api/go.mod", "staging/apiserver/third_party/x/go.mod"}; err != nil || !slices.Equal(paths, want) {
 		t.Errorf("ScopeInputs paths = %q, %v; want %q", paths, err, want)
 	}
@@ -60,14 +60,14 @@ func TestTidierScopeInputs(t *testing.T) {
 	}
 
 	writeTree(t, root, map[string]string{"go.mod": "module m\n\nreplace k8s.io/api => /abs/api\n"})
-	if _, _, err := (Tidier{}).ScopeInputs(root, ".", nil); err == nil {
+	if _, _, err := (Tidier{}).ScopeInputs(t.Context(), root, ".", nil); err == nil {
 		t.Error("ScopeInputs accepted an absolute replacement")
 	}
 	writeTree(t, root, map[string]string{"go.mod": "module m\n\nreplace k8s.io/api => ../api\n"})
-	if _, _, err := (Tidier{}).ScopeInputs(root, ".", nil); err == nil {
+	if _, _, err := (Tidier{}).ScopeInputs(t.Context(), root, ".", nil); err == nil {
 		t.Error("ScopeInputs accepted a replacement outside the root")
 	}
-	if _, _, err := (Tidier{}).ScopeInputs(root, "missing", nil); err == nil {
+	if _, _, err := (Tidier{}).ScopeInputs(t.Context(), root, "missing", nil); err == nil {
 		t.Error("ScopeInputs without go.mod succeeded")
 	}
 }
@@ -190,7 +190,7 @@ func TestTidyOffline(t *testing.T) {
 		t.Errorf("Siblings = %v", names)
 	}
 	for manifest, want := range map[string]string{"a/b/go.mod": "a/b", "go.mod": "."} {
-		if scope, ok := (Tidier{}).Scope(dir, manifest); scope != want || !ok {
+		if scope, ok := (Tidier{}).Scope(t.Context(), dir, manifest); scope != want || !ok {
 			t.Errorf("Scope(%s) = %q, %v, want %q", manifest, scope, ok, want)
 		}
 	}
@@ -389,11 +389,11 @@ func TestTidyOverlay(t *testing.T) {
 	}
 
 	for manifest, want := range map[string]string{"cmd/main.go": ".", "cmd/sub/x.go": "."} {
-		if scope, ok := (Tidier{}).Scope(dir, manifest); scope != want || !ok {
+		if scope, ok := (Tidier{}).Scope(t.Context(), dir, manifest); scope != want || !ok {
 			t.Errorf("Scope(%s) = %q, %v, want %q", manifest, scope, ok, want)
 		}
 	}
-	if scope, ok := (Tidier{}).Scope(t.TempDir(), "a/b.go"); ok {
+	if scope, ok := (Tidier{}).Scope(t.Context(), t.TempDir(), "a/b.go"); ok {
 		t.Errorf("Scope without go.mod = %q, true", scope)
 	}
 }

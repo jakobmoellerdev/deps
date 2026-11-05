@@ -76,10 +76,10 @@ func workspace(t *testing.T, lockHost string) (dir string, patched, lock []byte)
 func TestLockerScope(t *testing.T) {
 	dir, _, _ := workspace(t, "")
 	root := filepath.Dir(filepath.Dir(dir))
-	if got, ok := (Locker{}).Scope(root, "env/prod/versions.tf"); !ok || got != "env/prod" {
+	if got, ok := (Locker{}).Scope(t.Context(), root, "env/prod/versions.tf"); !ok || got != "env/prod" {
 		t.Errorf("Scope = %q, %v", got, ok)
 	}
-	if _, ok := (Locker{}).Scope(root, "env/shared/mod/main.tf"); ok {
+	if _, ok := (Locker{}).Scope(t.Context(), root, "env/shared/mod/main.tf"); ok {
 		t.Error("scope without a lock file")
 	}
 	if s := (Locker{}).Siblings(); len(s) != 1 || s[0] != LockFile {

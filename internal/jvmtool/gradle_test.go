@@ -55,7 +55,7 @@ func TestGradleScope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			write(t, root, tc.files)
-			dir, ok := GradleLocker{}.Scope(root, tc.manifest)
+			dir, ok := GradleLocker{}.Scope(t.Context(), root, tc.manifest)
 			if dir != tc.dir || ok != tc.ok {
 				t.Errorf("Scope = %q, %v; want %q, %v", dir, ok, tc.dir, tc.ok)
 			}

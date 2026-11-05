@@ -1,6 +1,7 @@
 package pytool
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -33,7 +34,7 @@ func ReadLocks(root string, files [][]dep.Dep) []error {
 			}
 			p, seen := lockOf[d.File]
 			if !seen {
-				if dir, ok := (Locker{}).Scope(root, d.File); ok {
+				if dir, ok := (Locker{}).Scope(context.Background(), root, d.File); ok {
 					if name := lockName(root, dir, d.File); name != "" {
 						p = path.Join(dir, name)
 					}

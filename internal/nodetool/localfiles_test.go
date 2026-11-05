@@ -92,7 +92,7 @@ func TestAddLocalFilesSymlinkEscape(t *testing.T) {
 	defer tr.root.Close()
 	files := map[string][]byte{pnpmWorkspace: []byte("patchedDependencies:\n  a@1: patches/evil.patch\n  b@1: patches/ok.patch\n  c@1: ../" + filepath.Base(filepath.Dir(outside)) + "/secret.patch\n")}
 	w := map[string][]byte{"package.json": []byte("{}")}
-	addLocalFiles(tr, w, files, PnpmLock)
+	addLocalFiles(t.Context(), tr, w, files, PnpmLock)
 	if len(w) != 2 || string(w["patches/ok.patch"]) != "ok" {
 		t.Errorf("write = %q", w)
 	}
@@ -193,14 +193,14 @@ func TestLockerScopeInputs(t *testing.T) {
 		"ws/ui/local/index.js":          "",
 		"ws/ui/src/index.js":            "",
 	})
-	paths, digests, err := Locker{}.ScopeInputs(top, "ws/ui", []string{"package.json"})
+	paths, digests, err := Locker{}.ScopeInputs(t.Context(), top, "ws/ui", []string{"package.json"})
 	slices.Sort(paths)
 	want := []string{".yarn/releases/y.cjs", "ws/ui/.yarnrc.yml", "ws/ui/local/package.json", "ws/ui/package.json", "ws/ui/packages/b/package.json", "ws/ui/patches/a.patch", "ws/ui/vendor/t.tgz", "ws/ui/yarn.lock"}
 	if err != nil || digests != nil || !slices.Equal(paths, want) {
 		t.Errorf("ScopeInputs = %q, %q, %v; want %q", paths, digests, err, want)
 	}
 	write(t, top, map[string]string{"plain/package.json": "{}"})
-	if paths, _, err := (Locker{}).ScopeInputs(top, "plain", nil); err != nil || paths != nil {
+	if paths, _, err := (Locker{}).ScopeInputs(t.Context(), top, "plain", nil); err != nil || paths != nil {
 		t.Errorf("without lockfile: %q, %v", paths, err)
 	}
 }

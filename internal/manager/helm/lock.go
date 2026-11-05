@@ -28,7 +28,7 @@ type Locker struct{}
 
 // Scope returns the chart directory of a Chart.yaml; other helm files (helmfiles, resources)
 // have no derived files.
-func (Locker) Scope(_, manifest string) (string, bool) {
+func (Locker) Scope(_ context.Context, _, manifest string) (string, bool) {
 	if !isChart(manifest) {
 		return "", false
 	}
@@ -40,7 +40,7 @@ func (Locker) Siblings() []string { return []string{lockFile} }
 
 // ScopeInputs implements engine.ScopeInputLister: Process reads nothing of the chart
 // directory but Chart.yaml, which it patches, and the Chart.lock sibling.
-func (Locker) ScopeInputs(_, dir string, _ []string) (paths, digests []string, err error) {
+func (Locker) ScopeInputs(_ context.Context, _, dir string, _ []string) (paths, digests []string, err error) {
 	return []string{path.Join(dir, chartFile)}, nil, nil
 }
 
