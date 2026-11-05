@@ -225,9 +225,12 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 			next = end + 1
 		}
 		line := bytes.TrimSuffix(src[pos:end], []byte{'\r'})
-		ann := annotationRe.FindSubmatchIndex(line)
-		var ren []int
-		if ann == nil {
+		// Both regexps need a case-sensitive literal marker; skip them on lines without it.
+		var ann, ren []int
+		if bytes.Contains(line, []byte("deps:")) {
+			ann = annotationRe.FindSubmatchIndex(line)
+		}
+		if ann == nil && bytes.Contains(line, []byte("renovate:")) {
 			ren = renovateRe.FindSubmatchIndex(line)
 		}
 

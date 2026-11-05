@@ -529,3 +529,24 @@ func TestRegexRenovateGroups(t *testing.T) {
 		{1, "go", "n", "", "bogus", "1.0", "", `unknown versioning "bogus"`},
 	})
 }
+
+func BenchmarkAnnotations(b *testing.B) {
+	var sb strings.Builder
+	for i := range 5000 {
+		if i%500 == 0 {
+			sb.WriteString("# deps: docker nginx\nimage: nginx:1.27.3\n")
+			continue
+		}
+		sb.WriteString("    some_key: some fairly ordinary value # with a comment\n")
+	}
+	src := []byte(sb.String())
+	ms, err := New(&config.Config{Custom: []config.Custom{{Files: []string{"**/x.yaml"}}}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	m := ms[0].(*customManager)
+	b.ReportAllocs()
+	for b.Loop() {
+		m.annotations("x.yaml", src)
+	}
+}
