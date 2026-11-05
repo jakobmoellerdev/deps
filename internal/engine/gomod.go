@@ -78,9 +78,7 @@ func (r *resolver) headUpdate(dir string, reject func(v, reason string)) ([]dep.
 		if reject != nil {
 			reject(v, reason)
 		}
-		if r.pending.Version == "" {
-			r.pending = Pending{Dep: d, Version: v, Reason: reason}
-		}
+		r.holdBack(d, v, reason)
 		return nil, nil
 	}
 	return []dep.Update{{Dep: d, Type: dep.Digest, NewVersion: v, NewDigest: rev.Digest}}, nil
@@ -154,11 +152,7 @@ func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme
 		}
 		var tb time.Time
 		if timer != nil {
-			var err error
-			if tb, err = timer.ReleaseTime(r.ctx, nd, v); err != nil {
-				slog.DebugContext(r.ctx, "release time lookup failed", "name", mp.Name, "version", v, "err", err)
-				tb = time.Time{}
-			}
+			tb = r.lookupTime(timer, nd, v)
 		}
 		reason := r.ageReason(p, mp.Name+"@"+v, tb)
 		if reason == "" {
@@ -167,9 +161,7 @@ func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme
 		if reject != nil {
 			reject(mp.Name+"@"+v, reason)
 		}
-		if r.pending.Version == "" {
-			r.pending = Pending{Dep: r.d, Version: mp.Name + "@" + v, Reason: reason}
-		}
+		r.holdBack(r.d, mp.Name+"@"+v, reason)
 		if tb.IsZero() {
 			unknown++
 			if unknown == maxUnknownTimes {

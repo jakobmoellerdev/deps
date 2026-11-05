@@ -1000,8 +1000,8 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 		if reject != nil {
 			reject(c.Version, reason)
 		}
-		if reason != reasonOlder && r.pending.Version == "" {
-			r.pending = Pending{Dep: r.d, Version: c.Version, Reason: reason}
+		if reason != reasonOlder {
+			r.holdBack(r.d, c.Version, reason)
 		}
 		switch {
 		case reason == reasonOlder:
@@ -1104,12 +1104,7 @@ func (r *resolver) prefetchTimes(timer datasource.Timer, versions []string) {
 			continue
 		}
 		wg.Go(func() {
-			t, err := timer.ReleaseTime(r.ctx, r.d, v)
-			if err != nil {
-				slog.DebugContext(r.ctx, "release time lookup failed", "name", r.d.Name, "version", v, "err", err)
-				t = time.Time{}
-			}
-			times[i] = t
+			times[i] = r.lookupTime(timer, r.d, v)
 		})
 	}
 	wg.Wait()
@@ -1151,16 +1146,30 @@ func (r *resolver) releaseTime(timer datasource.Timer, version string) time.Time
 	if t, ok := r.times[version]; ok {
 		return t
 	}
-	t, err := timer.ReleaseTime(r.ctx, r.d, version)
-	if err != nil {
-		slog.DebugContext(r.ctx, "release time lookup failed", "name", r.d.Name, "version", version, "err", err)
-		t = time.Time{}
-	}
+	t := r.lookupTime(timer, r.d, version)
 	if r.times == nil {
 		r.times = make(map[string]time.Time, 2)
 	}
 	r.times[version] = t
 	return t
+}
+
+// lookupTime asks timer for the release time of d at version; a failed lookup is logged
+// and reported as zero (unknown).
+func (r *resolver) lookupTime(timer datasource.Timer, d dep.Dep, version string) time.Time {
+	t, err := timer.ReleaseTime(r.ctx, d, version)
+	if err != nil {
+		slog.DebugContext(r.ctx, "release time lookup failed", "name", d.Name, "version", version, "err", err)
+		return time.Time{}
+	}
+	return t
+}
+
+// holdBack records d at version as the held-back candidate unless one is recorded already.
+func (r *resolver) holdBack(d dep.Dep, version, reason string) {
+	if r.pending.Version == "" {
+		r.pending = Pending{Dep: d, Version: version, Reason: reason}
+	}
 }
 
 // digestOf returns the digest of version from the releases, asking the datasource when the
