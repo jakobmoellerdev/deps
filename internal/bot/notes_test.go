@@ -2,8 +2,10 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -34,6 +36,25 @@ func TestPRBodyNotes(t *testing.T) {
 	}
 	if strings.Index(body, "notes for m") > strings.Index(body, "deps:fingerprint") {
 		t.Error("fingerprint marker must stay last")
+	}
+}
+
+// slowNotes answers Age after a registry-like delay.
+type slowNotes struct{ fakeNotes }
+
+func (*slowNotes) Age(_ context.Context, u dep.Update) string {
+	time.Sleep(5 * time.Millisecond)
+	return "age of " + u.NewVersion
+}
+
+func BenchmarkPRBodyAges(b *testing.B) {
+	ups := make([]dep.Update, 10)
+	for i := range ups {
+		ups[i] = dep.Update{Dep: dep.Dep{File: "go.mod", Line: i + 3, Name: fmt.Sprintf("m%d", i), Version: "v1.0.0"}, Type: dep.Minor, NewVersion: "v1.1.0"}
+	}
+	n := &slowNotes{}
+	for b.Loop() {
+		prBody(b.Context(), n, ups, "fp")
 	}
 }
 

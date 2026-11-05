@@ -69,7 +69,8 @@ type Options struct {
 	Dashboard *DashboardOptions
 }
 
-// Notes renders release information for PR bodies (implemented by releasenotes.Notes).
+// Notes renders release information for PR bodies (implemented by releasenotes.Notes). Age
+// must be safe for concurrent use: prBody looks up the ages of a PR's updates concurrently.
 type Notes interface {
 	Section(ctx context.Context, ups []dep.Update) string
 	Age(ctx context.Context, u dep.Update) string
@@ -774,12 +775,20 @@ func bodyFingerprint(body string) string {
 
 func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp string) string {
 	var b strings.Builder
+	var ages []string
 	if notes == nil {
 		b.WriteString("| File | From | To | Type |\n|---|---|---|---|\n")
 	} else {
 		b.WriteString("| File | From | To | Type | Age |\n|---|---|---|---|---|\n")
+		// Each Age may be a registry request; look them up concurrently.
+		ages = make([]string, len(ups))
+		var wg sync.WaitGroup
+		for i, u := range ups {
+			wg.Go(func() { ages[i] = notes.Age(ctx, u) })
+		}
+		wg.Wait()
 	}
-	for _, u := range ups {
+	for i, u := range ups {
 		if u.Maintenance() {
 			fmt.Fprintf(&b, "| `%s` | | | lock file maintenance |", u.Dep.Name)
 		} else {
@@ -791,7 +800,7 @@ func prBody(ctx context.Context, notes Notes, ups []dep.Update, fp string) strin
 			fmt.Fprintf(&b, "| `%s:%d` | `%s` | `%s` | %s |", u.Dep.File, u.Dep.Line, from, to, typ)
 		}
 		if notes != nil {
-			fmt.Fprintf(&b, " %s |", notes.Age(ctx, u))
+			fmt.Fprintf(&b, " %s |", ages[i])
 		}
 		b.WriteByte('\n')
 	}
