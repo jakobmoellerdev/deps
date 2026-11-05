@@ -101,30 +101,47 @@ func (s *summary) counts() map[string]int {
 	if !s.Run {
 		return c
 	}
-	for _, k := range []string{"created", "updated", "closed", "upToDate", "automerged", "prsSkipped"} {
-		c[k] = 0
-	}
-	for _, a := range s.Actions {
+	n := countActions(s.Actions)
+	c["created"], c["updated"], c["closed"], c["upToDate"] = n.created, n.updated, n.closed, n.upToDate
+	c["automerged"], c["prsSkipped"] = n.automerged, n.skipped
+	return c
+}
+
+// outcomes tally the PR actions of a run by outcome; dashboard actions are not counted.
+type outcomes struct {
+	created, updated, closed, upToDate, skipped, automerged int
+	// would and wouldAutomerge count dry-run actions; they stay out of the report.
+	would, wouldAutomerge int
+}
+
+func countActions(actions []bot.Action) outcomes {
+	var n outcomes
+	for _, a := range actions {
 		if a.Dashboard {
 			continue
 		}
+		switch a.Automerge {
+		case bot.AutomergeRequested, bot.AutomergeMerged:
+			n.automerged++
+		case bot.AutomergeWould:
+			n.wouldAutomerge++
+		}
 		switch {
 		case a.Status == bot.StatusCreated:
-			c["created"]++
+			n.created++
 		case a.Status == bot.StatusUpdated || a.Status == bot.StatusRebased:
-			c["updated"]++
+			n.updated++
 		case a.Status == bot.StatusClosed || a.Status == bot.StatusDeleted:
-			c["closed"]++
+			n.closed++
 		case a.Status == bot.StatusUpToDate:
-			c["upToDate"]++
+			n.upToDate++
 		case strings.HasPrefix(a.Status, "skipped"):
-			c["prsSkipped"]++
-		}
-		if a.Automerge == bot.AutomergeRequested || a.Automerge == bot.AutomergeMerged {
-			c["automerged"]++
+			n.skipped++
+		default:
+			n.would++
 		}
 	}
-	return c
+	return n
 }
 
 func (s *summary) report() jsonReport {

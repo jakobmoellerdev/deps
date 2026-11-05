@@ -322,34 +322,14 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	}
 	actions, botErrs := bot.Run(ctx, bo, s.root, res, postProcessors(s), platform.NewClient(info, token, client), g)
 
-	var created, updated, closed, upToDate, skipped, would, automerged, wouldAutomerge int
 	for _, a := range actions {
 		if a.Dashboard {
 			fmt.Fprintf(stderr, "dashboard %s  %s  %s\n", a.Status, a.Title, a.URL)
 			continue
 		}
 		fmt.Fprintf(stderr, "pr      %s  %s  %s  %s\n", a.Display(), a.Branch, a.Title, a.URL)
-		switch a.Automerge {
-		case bot.AutomergeRequested, bot.AutomergeMerged:
-			automerged++
-		case bot.AutomergeWould:
-			wouldAutomerge++
-		}
-		switch {
-		case a.Status == bot.StatusCreated:
-			created++
-		case a.Status == bot.StatusUpdated || a.Status == bot.StatusRebased:
-			updated++
-		case a.Status == bot.StatusClosed || a.Status == bot.StatusDeleted:
-			closed++
-		case a.Status == bot.StatusUpToDate:
-			upToDate++
-		case strings.HasPrefix(a.Status, "skipped"):
-			skipped++
-		default:
-			would++
-		}
 	}
+	n := countActions(actions)
 	for _, e := range botErrs {
 		reportError(stderr, o.term, e)
 	}
@@ -360,9 +340,9 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 		sum.Command = "run --dry-run"
 	}
 	sum.write(stderr)
-	fmt.Fprintf(stderr, "%d created, %d updated, %d closed, %d up-to-date, %d skipped, %d automerge, %d errors", created, updated, closed, upToDate, skipped, automerged, nErr)
+	fmt.Fprintf(stderr, "%d created, %d updated, %d closed, %d up-to-date, %d skipped, %d automerge, %d errors", n.created, n.updated, n.closed, n.upToDate, n.skipped, n.automerged, nErr)
 	if r.dryRun {
-		fmt.Fprintf(stderr, " (dry run: %d would change, %d would automerge)", would, wouldAutomerge)
+		fmt.Fprintf(stderr, " (dry run: %d would change, %d would automerge)", n.would, n.wouldAutomerge)
 	}
 	fmt.Fprintln(stderr)
 	if nErr > 0 {
