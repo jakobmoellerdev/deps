@@ -6,6 +6,7 @@
 package terraform
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 	"strings"
@@ -98,6 +99,20 @@ type extractor struct {
 	registry string // registry host of hostless addresses
 	tofu     bool   // an OpenTofu-only file (*.tofu)
 	deps     []dep.Dep
+	pos      int // offset up to which nl newlines were counted
+	nl       int
+}
+
+// lineAt returns the 1-based line of offset off in x.src, counting
+// newlines from the previous call's offset instead of from byte 0.
+func (x *extractor) lineAt(off int) int {
+	if off >= x.pos {
+		x.nl += bytes.Count(x.src[x.pos:off], []byte{'\n'})
+	} else {
+		x.nl -= bytes.Count(x.src[off:x.pos], []byte{'\n'})
+	}
+	x.pos = off
+	return x.nl + 1
 }
 
 // walk extracts the deps of the top-level blocks of a configuration.
@@ -231,7 +246,7 @@ func newExtractor(file string, src []byte, env manager.Env) *extractor {
 }
 
 func (x *extractor) newDep(mgr, depType string, off int) dep.Dep {
-	return dep.Dep{Manager: mgr, DepType: depType, File: x.file, Line: lineAt(x.src, off)}
+	return dep.Dep{Manager: mgr, DepType: depType, File: x.file, Line: x.lineAt(off)}
 }
 
 // cli returns the CLI repository whose releases required_version constrains.
@@ -393,7 +408,7 @@ func (x *extractor) module(blk block) {
 		if ver == nil {
 			d.Skip = "no version constraint"
 		} else {
-			d.Line = lineAt(x.src, ver.off)
+			d.Line = x.lineAt(ver.off)
 			setConstraint(&d, ver.val)
 		}
 	default:

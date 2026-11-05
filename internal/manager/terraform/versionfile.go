@@ -131,7 +131,7 @@ func (x *extractor) plugin(d dep.Dep, label string, source, version *attr) dep.D
 		d.Skip = "no version"
 		return d
 	}
-	d.Line = lineAt(x.src, version.off)
+	d.Line = x.lineAt(version.off)
 	switch {
 	case version.val.kind != kindString:
 		d.Skip = "non-literal value"

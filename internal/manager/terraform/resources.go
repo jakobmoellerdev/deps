@@ -231,10 +231,10 @@ func (x *extractor) chartVersion(d *dep.Dep, ver *attr) {
 		d.Skip = "no version"
 		return
 	case ver.val.kind != kindString:
-		d.Line, d.Skip = lineAt(x.src, ver.off), "non-literal value"
+		d.Line, d.Skip = x.lineAt(ver.off), "non-literal value"
 		return
 	}
-	d.Line, d.Version = lineAt(x.src, ver.off), ver.val.str
+	d.Line, d.Version = x.lineAt(ver.off), ver.val.str
 	switch {
 	case ver.val.str == "":
 		d.Skip = "no version"

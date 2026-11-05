@@ -136,7 +136,7 @@ func (x *extractor) tfrModule(d *dep.Dep, t tfrSource, v value, ver *attr) {
 		start := span.Start + t.versionOff
 		setConstraint(d, value{kind: kindString, str: t.version, span: dep.Span{Start: start, End: start + len(t.version)}})
 	case ver != nil:
-		d.Line = lineAt(x.src, ver.off)
+		d.Line = x.lineAt(ver.off)
 		setConstraint(d, ver.val)
 	default:
 		d.Skip = "no version constraint"
