@@ -68,7 +68,7 @@ func submit(ctx context.Context, cmd *cli.Command, o *rootOpts, dryRun, all bool
 		AllManagers: all,
 	})
 	for _, e := range errs {
-		fmt.Fprintf(stderr, "%s   %v\n", o.term.errorLabel(), e)
+		reportError(stderr, o.term, e)
 	}
 	files := snap.Files()
 	for _, f := range files {
