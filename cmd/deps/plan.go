@@ -143,13 +143,16 @@ func report(w io.Writer, verbose bool, res *engine.Result, errs []error, separat
 		}
 		fmt.Fprintf(w, "update  %s:%d  %s  %s -> %s  (%s%s)%s\n", u.Dep.File, u.Dep.Line, u.Dep.Name, from, to, u.Type, hint, sec)
 	}
-	if verbose {
+	if verbose && len(res.Skipped) > 0 {
+		actionsLog.group(plural(len(res.Skipped), "skipped dependency", "skipped dependencies"))
 		for _, d := range res.Skipped {
 			fmt.Fprintf(w, "skip    %s:%d  %s  %s\n", d.File, d.Line, d.Name, d.Skip)
 		}
+		actionsLog.endGroup()
 	}
 	for _, e := range errs {
 		fmt.Fprintf(w, "error   %v\n", e)
+		actionsLog.error(e)
 	}
 }
 

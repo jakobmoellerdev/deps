@@ -349,6 +349,7 @@ func runBot(cmd *cobra.Command, o *rootOpts, r *runOpts) error {
 	}
 	for _, e := range botErrs {
 		fmt.Fprintf(stderr, "error   %v\n", e)
+		actionsLog.error(e)
 	}
 	nErr := len(res.Errors) + len(botErrs)
 	sum := summary{Command: "run", Run: true, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Actions: actions,

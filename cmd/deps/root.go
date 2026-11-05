@@ -59,6 +59,7 @@ func newRoot() *cobra.Command {
 			// reference show the same defaults everywhere.
 			envDefault(cmd, "log-level", "DEPS_LOG_LEVEL", &o.log.level)
 			envDefault(cmd, "log-format", "DEPS_LOG_FORMAT", &o.log.format)
+			actionsLog = newAnnotator(os.Getenv, cmd.ErrOrStderr(), o.dir)
 			if err := setupLogger(o.log, cmd.ErrOrStderr()); err != nil {
 				return err
 			}

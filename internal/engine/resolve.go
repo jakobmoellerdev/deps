@@ -37,6 +37,20 @@ type (
 	ChecksumSource = datasource.ChecksumSource
 )
 
+// DepError is the lookup error of one dependency, located at its file and line.
+type DepError struct {
+	File string
+	Line int
+	Name string
+	Err  error
+}
+
+func (e *DepError) Error() string {
+	return e.File + ":" + strconv.Itoa(e.Line) + ": " + e.Name + ": " + e.Err.Error()
+}
+
+func (e *DepError) Unwrap() error { return e.Err }
+
 // Options configures Resolve.
 type Options struct {
 	Managers    []manager.Manager
@@ -233,7 +247,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			case errors.As(t.Err, &skip):
 				t.Err, t.Dep.Skip = nil, skip.Reason
 			case t.Err != nil:
-				t.Err = fmt.Errorf("%s:%d: %s: %w", d.File, d.Line, d.Name, t.Err)
+				t.Err = &DepError{File: d.File, Line: d.Line, Name: d.Name, Err: t.Err}
 			case u == nil:
 				slog.DebugContext(ctx, "dependency up to date", "file", d.File, "line", d.Line, "name", d.Name, "version", d.Version)
 			default:

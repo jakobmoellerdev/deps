@@ -30,6 +30,9 @@ func setupLogger(o logOpts, w io.Writer) error {
 	default:
 		return &usageError{fmt.Errorf("--log-format: invalid value %q (text, json)", o.format)}
 	}
+	if actionsLog.on {
+		h = &annotatingHandler{Handler: h, a: actionsLog}
+	}
 	slog.SetDefault(slog.New(h))
 	return nil
 }

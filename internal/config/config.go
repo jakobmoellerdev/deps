@@ -455,10 +455,30 @@ func (ch *Checksum) validate(f, datasource string, add addFunc) {
 // Error marks an invalid configuration (parse, unknown key or validation
 // failure, or an unreadable config file). Callers use errors.As to map it to
 // a usage exit code.
-type Error struct{ Err error }
+type Error struct {
+	Err error
+	// File is the config file the problems are in; "" when none was read.
+	File string
+	// Problems locate each problem in File, in the order of Err's messages; empty when the
+	// file could not be read.
+	Problems []Problem
+}
+
+// Problem is one located configuration problem.
+type Problem struct {
+	Line int // 1-based line in Error.File; 0 = unknown
+	Msg  string
+}
 
 func (e *Error) Error() string { return e.Err.Error() }
 func (e *Error) Unwrap() error { return e.Err }
+
+// FieldError is one validation problem of a field: "<path>: <field>: <msg>".
+type FieldError struct {
+	Path, Field, Msg string
+}
+
+func (e *FieldError) Error() string { return e.Path + ": " + e.Field + ": " + e.Msg }
 
 // Default returns the configuration used when no file exists.
 func Default() *Config {
@@ -474,7 +494,7 @@ func Load(dir, explicitPath string) (*Config, error) {
 		p = explicitPath
 		var err error
 		if f, err = os.Open(p); err != nil {
-			return nil, &Error{err}
+			return nil, &Error{Err: err}
 		}
 	} else {
 		for _, n := range []string{".deps.yaml", ".deps.yml"} {
@@ -485,7 +505,7 @@ func Load(dir, explicitPath string) (*Config, error) {
 				break
 			}
 			if !errors.Is(err, fs.ErrNotExist) {
-				return nil, &Error{err}
+				return nil, &Error{Err: err}
 			}
 		}
 		if f == nil {
@@ -496,13 +516,13 @@ func Load(dir, explicitPath string) (*Config, error) {
 
 	src, err := io.ReadAll(f)
 	if err != nil {
-		return nil, &Error{fmt.Errorf("%s: %w", p, err)}
+		return nil, &Error{Err: fmt.Errorf("%s: %w", p, err), File: p}
 	}
 	c := &Config{}
 	dec := yaml.NewDecoder(bytes.NewReader(src))
 	dec.KnownFields(true)
 	if err := dec.Decode(c); err != nil && !errors.Is(err, io.EOF) {
-		return nil, &Error{fmt.Errorf("%s: %w", p, err)}
+		return nil, &Error{Err: fmt.Errorf("%s: %w", p, err), File: p, Problems: decodeProblems(err)}
 	}
 	if c.IgnorePaths == nil && !hasTopLevelKey(src, "ignorePaths") {
 		c.IgnorePaths = slices.Clone(DefaultIgnorePaths)
@@ -520,7 +540,7 @@ func Load(dir, explicitPath string) (*Config, error) {
 		}
 	}
 	if err := c.Validate(); err != nil {
-		return nil, &Error{err}
+		return nil, &Error{Err: err, File: p, Problems: fieldProblems(src, err)}
 	}
 	return c, nil
 }
@@ -550,7 +570,7 @@ func (c *Config) Validate() error {
 	}
 	var errs []error
 	add := func(field, format string, a ...any) {
-		errs = append(errs, fmt.Errorf("%s: %s: %s", p, field, fmt.Sprintf(format, a...)))
+		errs = append(errs, &FieldError{Path: p, Field: field, Msg: fmt.Sprintf(format, a...)})
 	}
 	if c.Version != 0 && c.Version != 1 {
 		add("version", "must be 1, got %d", c.Version)

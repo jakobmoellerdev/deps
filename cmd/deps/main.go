@@ -50,6 +50,7 @@ func exitCode(err error, w io.Writer) int {
 	}
 	if !errors.Is(err, errReported) {
 		fmt.Fprintf(w, "deps: %v\n", err)
+		actionsLog.error(err)
 	}
 	var ue *usageError
 	var ce *config.Error
