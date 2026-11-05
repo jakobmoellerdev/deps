@@ -271,14 +271,14 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	// Security updates bypass per-kind rules but not a pre-policy ignore: deps resolved only
 	// because an updateTypes rule opted some update types in are not looked up. Deps whose
 	// pre-policy waits for currentAge are (applySecurity drops them if it ignores them).
-	// Non-version tags have no version to look up. Deps ignored by default whose
-	// security updates still apply (securityByDefault) are looked up; they are resolved only
-	// when affected.
+	// Non-version tags have no version to look up, nor do bare commit pins before resolution.
+	// Deps ignored by default whose security updates still apply (securityByDefault) are
+	// looked up; they are resolved only when affected.
 	var secDeps []dep.Dep
 	secIdx := make([]int, len(todo))
 	for i, d := range todo {
 		secIdx[i] = -1
-		if (!pols[i].pre.Ignore || pols[i].aged || pols[i].securityOnly) && !tagOnly(d) {
+		if (!pols[i].pre.Ignore || pols[i].aged || pols[i].securityOnly) && !tagOnly(d) && !config.UnversionedPin(d) {
 			secIdx[i] = len(secDeps)
 			secDeps = append(secDeps, d)
 		}
@@ -395,8 +395,10 @@ func classify(cfg *config.Config, d dep.Dep, kindRules, timed, security bool) (d
 	}
 	pol.aged = timed && cfg.WantsCurrentAge(pol.d)
 	switch s, ok := versioning.Get(d.Versioning); {
-	case ok && !s.Valid(d.Version) && !tagOnly(d) && !goPseudo(d):
+	case ok && !s.Valid(d.Version) && !tagOnly(d) && !goPseudo(d) && !config.UnversionedPin(d):
 		d.Skip = "non-version value " + strconv.Quote(d.Version)
+	case config.UnversionedPin(d) && pol.pre.IgnoredByDefault:
+		// Looked up: a tag at the commit versions it, which is not ignored (commitUpdates).
 	case !pol.aged && pol.pre.Ignore && !pol.anyKind() && security && securityByDefault(d, pol.pre):
 		pol.securityOnly = true
 	case !pol.aged:
@@ -833,6 +835,8 @@ type resolver struct {
 	cs    ChecksumSource
 	trace bool
 	now   time.Time
+	// base is ds before extractVersion wrapping: the head of a commit pin (commitUpdates).
+	base Datasource
 
 	rels    []Release
 	times   map[string]time.Time // release times asked so far; zero = unknown
@@ -1070,6 +1074,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 	}
 	// An action in a monorepo subdirectory without an extractVersion of its own is versioned
 	// by its per-action tags (`get-vault-secrets/v1.3.1`) when the repository has any.
+	r.base = r.ds
 	var prefixed *extracting
 	var prefixExpr string
 	switch {
@@ -1124,6 +1129,8 @@ func (r *resolver) usual(t *Trace, scheme versioning.Scheme, vulns func() []Vuln
 	switch {
 	case goPseudo(r.d):
 		return r.versionUpdates(t, scheme, vulns)
+	case config.UnversionedPin(r.d):
+		return r.commitUpdates(t, scheme, vulns)
 	case !scheme.Valid(r.d.Version):
 		// Resolve only lets non-version docker tags through (tagOnly): their digest is kept
 		// current; there are no releases to compare and no advisories to look up.

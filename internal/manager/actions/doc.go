@@ -27,7 +27,7 @@ var Doc = refdoc.Manager{
 		{Reason: "docker reference (docker manager)", When: "`docker://…`, handled by the docker manager"},
 		{Reason: "unrecognized uses", When: "no `@`, missing owner/repo/ref, unparsable URL"},
 		{Reason: "non-version ref", When: "a branch or other ref that is not a tag (`@main`)"},
-		{Reason: "pinned without version comment", When: "a SHA without a parsable `# vX` comment"},
+		{Reason: "pinned without version comment", When: "a SHA followed by a comment that is no version (`# main`)"},
 		{Reason: "cannot locate value", When: "the value's bytes could not be found on its line"},
 		{Reason: "expression", When: "setup input: `${{ … }}`"},
 		{Reason: "non-version value", When: "setup input: empty or a word such as `lts/*`, `stable`"},
@@ -42,8 +42,15 @@ var Doc = refdoc.Manager{
 		{Title: "Ref forms", Items: []string{
 			"Tag: `@v4`, `@v4.2.0`.",
 			"Pinned: `@<40/64-hex sha> # v4.2.0`, or `# ratchet:owner/repo@v4`.",
+			"Commit pin: a bare `@<40/64-hex sha>` without a comment (see Commit pins).",
 			"An action in a subdirectory (`owner/repo/<path>`) may carry a per-action tag prefix, `<path>/` or `<last path element>/`, in the tag or the comment: `@get-vault-secrets/v1.3.1`, `@<sha> # get-vault-secrets/v1.3.1`.",
 			"Anything else is skipped.",
+		}},
+		{Title: "Commit pins", Items: []string{
+			"A bare SHA that a tag points at is that tag's version (the newest one: `v4.2.0` rather than a floating `v4` on the same commit). It is updated like a pinned ref, and the new version is written as a comment: `@<sha>` → `@<new sha> # v4.3.0`. Rules match it with that version.",
+			"A bare SHA no tag points at is ignored by default (`ignored by default (commit pin without version; …)`), as Renovate disables such unversioned references. A rule setting `ignore: false` (e.g. `manager: github-actions`, `names: [owner/repo]`) enables a `digest` update to the commit of the repository's default branch (its `HEAD`, listed with the tags in the same request), without a comment. The `digest` update type's `updates`, schedule and `minimumReleaseAge` (against the commit date, looked up only when a minimum applies) apply.",
+			"Actions of the repository itself are not special-cased: once enabled, each new commit on its default branch is a new digest.",
+			"Security advisories are not looked up for bare SHAs.",
 		}},
 		{Title: "Monorepo tags", Items: []string{
 			"An action in a subdirectory of a repository that tags each action (`grafana/shared-workflows/actions/get-vault-secrets` with tags `get-vault-secrets/v1.3.1`) is versioned by the tags prefixed `<path>/` or `<last path element>/`; the version after the prefix is compared and written, digests and release times are looked up by the prefixed tag.",

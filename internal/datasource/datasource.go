@@ -86,19 +86,30 @@ type SourceRepo interface {
 	SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error)
 }
 
-// Revision is the newest commit of a dependency that tracks one (a Go pseudo-version).
+// Revision is the newest commit of a dependency that tracks one (a Go pseudo-version, an
+// action pinned to a commit without a version).
 type Revision struct {
-	Version string    // as written into the file (the Go pseudo-version, or a release)
+	Version string    // as written into the file (the Go pseudo-version, or a release); "" for git-tags
 	Digest  string    // commit hash
 	Time    time.Time // commit time; zero = unknown
 }
 
 // HeadSource is implemented by datasources whose deps can track a commit instead of a release
-// (Go pseudo-versions). It is optional.
+// (Go pseudo-versions, git-tags commit pins). It is optional.
 type HeadSource interface {
 	// Head returns the newest revision of d (Go: the module's `@latest`, a pseudo-version of
-	// the default branch's tip when the module has no newer release). dir is as for Releases.
+	// the default branch's tip when the module has no newer release; git-tags: the commit of
+	// the repository's HEAD). dir is as for Releases.
 	Head(ctx context.Context, d dep.Dep, dir string) (Revision, error)
+}
+
+// CommitTimer is implemented by HeadSources whose Revision.Time is unknown because the commit
+// time costs a request of its own (git-tags). It is optional; the engine asks only when a
+// minimum release age applies.
+type CommitTimer interface {
+	// CommitTime returns when commit of d was made; the zero time with a nil error means
+	// unknown.
+	CommitTime(ctx context.Context, d dep.Dep, commit string) (time.Time, error)
 }
 
 // ModulePath is a successor module path of a dependency and its releases.

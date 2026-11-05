@@ -52,12 +52,12 @@ func TestTagsV2(t *testing.T) {
 			name: "agent and object-format advertised",
 			caps: []string{"agent=git/2.45.0\n", "ls-refs=unborn\n", "fetch=shallow\n", "object-format=sha1\n"},
 			wantBody: pkts("command=ls-refs\n", "agent=deps/dev\n", "object-format=sha1\n", "0001",
-				"peel\n", "ref-prefix refs/tags/\n", "0000"),
+				"peel\n", "ref-prefix refs/tags/\n", "ref-prefix HEAD\n", "0000"),
 		},
 		{
 			name:     "minimal capabilities",
 			caps:     []string{"ls-refs\n"},
-			wantBody: pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix refs/tags/\n", "0000"),
+			wantBody: pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix refs/tags/\n", "ref-prefix HEAD\n", "0000"),
 		},
 	}
 	for _, tt := range tests {
@@ -89,6 +89,7 @@ func TestTagsV2(t *testing.T) {
 						t.Errorf("ls-refs body:\n got %q\nwant %q", body, tt.wantBody)
 					}
 					io.WriteString(w, pkts(
+						"5555555555555555555555555555555555555555 HEAD\n",
 						"1111111111111111111111111111111111111111 refs/tags/v1.0.0\n",
 						"2222222222222222222222222222222222222222 refs/tags/v2 peeled:3333333333333333333333333333333333333333\n",
 						"4444444444444444444444444444444444444444 refs/tags/v3",
@@ -123,6 +124,13 @@ func TestTagsV2(t *testing.T) {
 			if n := gets.Load(); n != 1 {
 				t.Fatalf("info/refs requests = %d, want 1 (deduped)", n)
 			}
+			rev, err := l.Head(context.Background(), dep.Dep{Source: srv.URL + "/org/repo"}, "")
+			if err != nil || rev != (datasource.Revision{Digest: "5555555555555555555555555555555555555555"}) {
+				t.Fatalf("Head = %+v, %v", rev, err)
+			}
+			if n := gets.Load(); n != 1 {
+				t.Fatalf("info/refs requests = %d after Head, want 1 (same listing)", n)
+			}
 		})
 	}
 }
@@ -143,7 +151,8 @@ func TestTagsV0Peel(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := newLister(t, srv, nil).Tags(context.Background(), srv.URL+"/org/repo")
+	l := newLister(t, srv, nil)
+	got, err := l.Tags(context.Background(), srv.URL+"/org/repo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,6 +162,26 @@ func TestTagsV0Peel(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Tags = %+v, want %+v", got, want)
+	}
+	rev, err := l.Head(context.Background(), dep.Dep{Source: srv.URL + "/org/repo"}, "")
+	if err != nil || rev.Digest != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("Head = %+v, %v", rev, err)
+	}
+}
+
+// An empty repository advertises no HEAD: no head, no error.
+func TestHeadEmptyRepository(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			io.WriteString(w, pkts(serviceHeader, "0000", "version 2\n", "ls-refs\n", "0000"))
+			return
+		}
+		io.WriteString(w, pkts("0000"))
+	}))
+	defer srv.Close()
+	rev, err := newLister(t, srv, nil).Head(context.Background(), dep.Dep{Source: srv.URL + "/org/empty"}, "")
+	if err != nil || rev != (datasource.Revision{}) {
+		t.Fatalf("Head = %+v, %v", rev, err)
 	}
 }
 

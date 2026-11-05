@@ -60,7 +60,7 @@ func TestExtract(t *testing.T) {
 				{"actions/cache", "https://github.com/actions/cache", "v4.1", "", "v4.1", "", "", ""},
 				{"actions/checkout", "https://github.com/actions/checkout", "v7.0.1", sha, sha, "v7.0.1", "", " # v7.0.1"},
 				{"actions/checkout", "https://github.com/actions/checkout", "v4", sha, sha, "v4", "", " # ratchet"},
-				{"actions/checkout", "https://github.com/actions/checkout", "", sha, sha, "", "pinned without version comment", ""},
+				{"actions/checkout", "https://github.com/actions/checkout", "", sha, sha, "", "", ""},
 				{"./local", "", "", "", "", "", "local action", ""},
 				{"$/x/y@v1", "", "", "", "", "", "local action", ""},
 				{"docker://alpine:3", "", "", "", "", "", "docker reference (docker manager)", ""},
@@ -80,7 +80,7 @@ func TestExtract(t *testing.T) {
 					d.Datasource != "git-tags" || d.Versioning != "tag" || d.DepType != "action" {
 					t.Errorf("%d: got %+v, want %+v", i, d, w)
 				}
-				if w.skip == "" || w.skip == "non-version ref" || w.skip == "pinned without version comment" {
+				if w.skip == "" || w.skip == "non-version ref" {
 					if got := string(b[d.RefSpan.Start:d.RefSpan.End]); got != w.ref {
 						t.Errorf("%d: ref span %q, want %q", i, got, w.ref)
 					}
@@ -200,6 +200,58 @@ func TestEdits(t *testing.T) {
 	}
 	if New().Name() != Name {
 		t.Error("Name")
+	}
+}
+
+// Bare commit pins (openclaw's `useblacksmith/begin-testbox@<sha>`): the engine either resolves
+// the commit to a tag's version, which is then written as a comment, or moves it to the
+// default branch head without a version.
+func TestEditsCommitPin(t *testing.T) {
+	const pin = "233448af4bfdc6fca509a7f0974411ac6d8a8043"
+	src := "jobs:\n" +
+		"  testbox:\n" +
+		"    steps:\n" +
+		"      - name: Begin Testbox\n" +
+		"        uses: useblacksmith/begin-testbox@" + pin + "\n" +
+		"      - uses: 'actions/create-github-app-token@" + pin + "'\n" +
+		"  e2e:\n" +
+		"    uses: openclaw/openclaw-windows-node/.github/workflows/release-candidate-e2e.yml@" + pin + "\n"
+	deps, err := New().Extract(".github/workflows/ci.yml", []byte(src), env)
+	if err != nil || len(deps) != 3 {
+		t.Fatalf("deps = %+v, err = %v", deps, err)
+	}
+	for i, d := range deps {
+		if d.Skip != "" || d.Version != "" || d.Digest != pin || d.VersionSpan != (dep.Span{}) || d.InputSpan != (dep.Span{}) {
+			t.Fatalf("%d: %+v", i, d)
+		}
+	}
+	sha2 := strings.Repeat("b", 40)
+	tagged := deps[0]
+	tagged.Version = "v0.4.1" // resolved by the engine from the tag at the commit
+	quoted := deps[1]
+	quoted.Version = "v2.1.0"
+	tests := []struct {
+		u    dep.Update
+		want string
+	}{
+		{dep.Update{Dep: tagged, Type: dep.Minor, NewVersion: "v0.5.0", NewDigest: sha2}, "        uses: useblacksmith/begin-testbox@" + sha2 + " # v0.5.0\n"},
+		{dep.Update{Dep: tagged, Type: dep.Digest, NewVersion: "v0.4.1", NewDigest: sha2}, "        uses: useblacksmith/begin-testbox@" + sha2 + " # v0.4.1\n"},
+		{dep.Update{Dep: quoted, Type: dep.Major, NewVersion: "v3.0.0", NewDigest: sha2}, "      - uses: 'actions/create-github-app-token@" + sha2 + "' # v3.0.0\n"},
+		{dep.Update{Dep: deps[0], Type: dep.Digest, NewDigest: sha2}, "        uses: useblacksmith/begin-testbox@" + sha2 + "\n"},
+		{dep.Update{Dep: deps[2], Type: dep.Digest, NewDigest: sha2}, "    uses: openclaw/openclaw-windows-node/.github/workflows/release-candidate-e2e.yml@" + sha2 + "\n"},
+	}
+	for i, tt := range tests {
+		edits, err := New().Edits(tt.u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := patch.Apply([]byte(src), edits)
+		if err != nil {
+			t.Fatalf("%d: %v", i, err)
+		}
+		if got := strings.SplitAfter(string(out), "\n")[tt.u.Dep.Line-1]; got != tt.want {
+			t.Errorf("%d: got %q, want %q", i, got, tt.want)
+		}
 	}
 }
 

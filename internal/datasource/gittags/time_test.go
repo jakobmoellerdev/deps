@@ -205,3 +205,87 @@ func TestReleaseTime(t *testing.T) {
 		t.Errorf("requests =\n%q\nwant\n%q", reqs, want)
 	}
 }
+
+// CommitTime dates the default branch head of a commit pin: GitHub over GraphQL with a token,
+// else REST; Gitea/Forgejo via git/commits. Deduped per repository and commit.
+func TestCommitTime(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		reqs []string
+	)
+	head, gone := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := strings.TrimSpace(r.Header.Get("Authorization") + " " + r.URL.RequestURI())
+		switch r.URL.Path {
+		case "/graphql":
+			var q struct {
+				Query     string         `json:"query"`
+				Variables map[string]any `json:"variables"`
+			}
+			_ = json.UnmarshalRead(r.Body, &q)
+			if !strings.Contains(q.Query, "object(oid:$oid)") {
+				t.Errorf("query = %s", q.Query)
+			}
+			rec += " " + q.Variables["owner"].(string) + "/" + q.Variables["name"].(string) + " " + q.Variables["oid"].(string)
+			if q.Variables["oid"] == head {
+				io.WriteString(w, `{"data":{"repository":{"object":{"committedDate":"2026-11-01T10:00:00Z"}}}}`)
+			} else {
+				io.WriteString(w, `{"data":{"repository":{"object":null}}}`)
+			}
+		case "/repos/steipete/run-testbox/git/commits/" + head:
+			io.WriteString(w, `{"sha":"`+head+`","committer":{"date":"2026-11-02T10:00:00Z"}}`)
+		case "/api/v1/repos/o/r/git/commits/" + head:
+			if q := r.URL.RawQuery; q != "stat=false&verification=false&files=false" {
+				t.Errorf("gitea query = %q", q)
+			}
+			io.WriteString(w, `{"sha":"`+head+`","created":"2026-11-03T12:00:00+02:00"}`)
+		default:
+			http.NotFound(w, r)
+		}
+		mu.Lock()
+		reqs = append(reqs, rec)
+		mu.Unlock()
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	lister := func(ghToken string) *Lister {
+		auth := httpx.NewAuth(platform.Info{Host: u.Hostname()}, "gitea-tok", func(k string) string {
+			return map[string]string{"DEPS_GITHUB_COM_TOKEN": ghToken}[k]
+		})
+		gh := githubapi.New(srv.Client(), auth, nil, githubapi.WithAPI(srv.URL, srv.URL+"/graphql"))
+		return New(srv.Client(), auth, make(chan struct{}, 1), gh)
+	}
+	withToken, anonymous := lister("gh-tok"), lister("")
+	tests := []struct {
+		l              *Lister
+		source, commit string
+		want           time.Time
+	}{
+		{withToken, "https://github.com/useblacksmith/begin-testbox", head, time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)},
+		{withToken, "https://github.com/useblacksmith/begin-testbox", gone, time.Time{}}, // unknown commit
+		{anonymous, "https://github.com/steipete/run-testbox/", head, time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)},
+		{anonymous, "https://github.com/steipete/run-testbox", gone, time.Time{}}, // 404
+		{withToken, srv.URL + "/o/r", head, time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)},
+		{withToken, srv.URL + "/o/r", gone, time.Time{}},
+	}
+	for _, tt := range tests {
+		var ct datasource.CommitTimer = tt.l
+		for range 2 {
+			got, err := ct.CommitTime(t.Context(), dep.Dep{Source: tt.source}, tt.commit)
+			if err != nil || !got.Equal(tt.want) {
+				t.Fatalf("%s@%s = %v, %v; want %v", tt.source, tt.commit, got, err, tt.want)
+			}
+		}
+	}
+	want := []string{
+		"Bearer gh-tok /graphql useblacksmith/begin-testbox " + head,
+		"Bearer gh-tok /graphql useblacksmith/begin-testbox " + gone,
+		"/repos/steipete/run-testbox/git/commits/" + head,
+		"/repos/steipete/run-testbox/git/commits/" + gone,
+		"token gitea-tok /api/v1/repos/o/r/git/commits/" + head + "?stat=false&verification=false&files=false",
+		"token gitea-tok /api/v1/repos/o/r/git/commits/" + gone + "?stat=false&verification=false&files=false",
+	}
+	if !slices.Equal(reqs, want) {
+		t.Errorf("requests =\n%q\nwant\n%q", reqs, want)
+	}
+}

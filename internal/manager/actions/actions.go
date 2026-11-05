@@ -63,7 +63,8 @@ func (actionsManager) Extract(file string, src []byte, env manager.Env) ([]dep.D
 // Edits rewrites the ref: tag → tag, pinned → new digest plus comment version, or
 // tag → digest with " # <version>" inserted after the value. A per-action tag prefix
 // (`@get-vault-secrets/v1.3.1`) is kept; with u.NewName it becomes the new name's prefix
-// (see newPrefix).
+// (see newPrefix). A commit pin without a version comment gets the new digest, and
+// " # <version>" inserted when the engine resolved its commit to a tag.
 func (actionsManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	var edits []patch.Edit
@@ -79,7 +80,10 @@ func (actionsManager) Edits(u dep.Update) ([]patch.Edit, error) {
 		edits = []patch.Edit{{Start: sp.Start, End: sp.End, Old: d.Version, New: u.NewVersion}}
 	case d.Digest != "":
 		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Digest, New: u.NewDigest}}
-		if u.NewVersion != d.Version {
+		switch {
+		case d.VersionSpan == (dep.Span{}) && u.NewVersion != "":
+			edits = append(edits, patch.Edit{Start: d.InsertAt, End: d.InsertAt, New: " # " + u.NewVersion})
+		case u.NewVersion != d.Version:
 			edits = append(edits, patch.Edit{Start: d.VersionSpan.Start, End: d.VersionSpan.End, Old: d.Version, New: u.NewVersion})
 		}
 	default:
@@ -270,13 +274,16 @@ func (x *extractor) add(v *yaml.Node) {
 
 	switch {
 	case manager.IsHex(u.Ref, 40, 64):
+		// A bare SHA keeps Version "": the engine resolves the commit to the tag pointing at
+		// it, or tracks the default branch (see Doc). A comment that is no version (`# main`)
+		// may name what the SHA tracks, so that pin is left alone.
 		d.Digest = u.Ref
 		if sp, ver, p, ok := x.commentVersion(u.Name, d.InsertAt, le); ok {
 			d.Version, d.VersionSpan = ver, sp
 			if s := sp.Start - p; p > 0 && d.NameParts != nil {
 				d.NameParts = append(d.NameParts, dep.NamePart{Span: dep.Span{Start: s, End: sp.Start}, Text: string(x.src[s:sp.Start]), Role: roleTagPrefix})
 			}
-		} else {
+		} else if bytes.IndexByte(x.src[d.InsertAt:le], '#') >= 0 {
 			d.Skip = "pinned without version comment"
 		}
 	default:

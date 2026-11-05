@@ -924,7 +924,7 @@ Must not be empty. A rule with `updateTypes` is skipped in the pre-policy pass a
 
 ### `rules[].ignore`
 
-Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types.
+Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines, and actions pinned to a bare SHA no tag points at (digest updates to the default branch) in. With updateTypes: reject updates of these types.
 
 - **Type:** boolean
 

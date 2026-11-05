@@ -10,8 +10,11 @@ import (
 	"time"
 )
 
-const tagQuery = `query($owner:String!,$name:String!,$ref:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{` +
-	`... on Commit{committedDate} ... on Tag{tagger{date} target{... on Commit{committedDate}}}}}}}`
+const (
+	tagQuery = `query($owner:String!,$name:String!,$ref:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{` +
+		`... on Commit{committedDate} ... on Tag{tagger{date} target{... on Commit{committedDate}}}}}}}`
+	commitQuery = `query($owner:String!,$name:String!,$oid:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$oid){... on Commit{committedDate}}}}`
+)
 
 // TagTime returns when tag was made, for tags without a release of their own. Over GraphQL it
 // is the tagger date of an annotated tag, else the committer date of the tagged commit (as
@@ -64,6 +67,44 @@ func (c *Client) tagTime(ctx context.Context, r Repo, tag, commit string) (time.
 		}
 		return time.Time{}, nil
 	}
+	return c.commitTimeREST(ctx, r, commit)
+}
+
+// CommitTime returns the committer date of commit, over GraphQL when available, else over REST
+// (`/git/commits/<sha>`). A missing repository or commit is zero. Callers dedupe.
+func (c *Client) CommitTime(ctx context.Context, r Repo, commit string) (time.Time, error) {
+	t, err := c.commitTime(ctx, r, commit)
+	if errors.Is(err, ErrNotFound) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("commit %s of %s: %w", commit, r.Path(), err)
+	}
+	return t, nil
+}
+
+func (c *Client) commitTime(ctx context.Context, r Repo, commit string) (time.Time, error) {
+	if !c.GraphQL(r) {
+		return c.commitTimeREST(ctx, r, commit)
+	}
+	var data struct {
+		Repository *struct {
+			Object *struct {
+				CommittedDate *time.Time `json:"committedDate"`
+			} `json:"object"`
+		} `json:"repository"`
+	}
+	if err := graphql(ctx, c, r, commitQuery, map[string]any{"owner": r.Owner, "name": r.Name, "oid": commit}, &data); err != nil {
+		return time.Time{}, err
+	}
+	if data.Repository == nil || data.Repository.Object == nil || data.Repository.Object.CommittedDate == nil {
+		return time.Time{}, nil
+	}
+	return *data.Repository.Object.CommittedDate, nil
+}
+
+// commitTimeREST is the committer date of commit over REST; zero for an empty commit.
+func (c *Client) commitTimeREST(ctx context.Context, r Repo, commit string) (time.Time, error) {
 	if commit == "" {
 		return time.Time{}, nil
 	}

@@ -387,8 +387,8 @@
         },
         "ignore": {
           "type": "boolean",
-          "description": "Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types.",
-          "markdownDescription": "Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines in. With updateTypes: reject updates of these types.\n\n- `true`: do not update; skipped as `ignored by rule #<i>`.\n- `false`: opt in a default-ignored dep type.\n- With `updateTypes`: reject (or allow) updates of those types only."
+          "description": "Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines, and actions pinned to a bare SHA no tag points at (digest updates to the default branch) in. With updateTypes: reject updates of these types.",
+          "markdownDescription": "Do not update matching deps; false opts indirect Go requirements and pip-compile pins, go directives, npm peerDependencies and engines, and actions pinned to a bare SHA no tag points at (digest updates to the default branch) in. With updateTypes: reject updates of these types.\n\n- `true`: do not update; skipped as `ignored by rule #<i>`.\n- `false`: opt in a default-ignored dep type.\n- With `updateTypes`: reject (or allow) updates of those types only."
         },
         "pin": {
           "type": "string",

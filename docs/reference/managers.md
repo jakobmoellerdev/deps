@@ -71,7 +71,7 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 | `docker reference (docker manager)` | `docker://…`, handled by the docker manager |
 | `unrecognized uses` | no `@`, missing owner/repo/ref, unparsable URL |
 | `non-version ref` | a branch or other ref that is not a tag (`@main`) |
-| `pinned without version comment` | a SHA without a parsable `# vX` comment |
+| `pinned without version comment` | a SHA followed by a comment that is no version (`# main`) |
 | `cannot locate value` | the value's bytes could not be found on its line |
 | `expression` | setup input: `${{ … }}` |
 | `non-version value` | setup input: empty or a word such as `lts/*`, `stable` |
@@ -87,8 +87,16 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 
 - Tag: `@v4`, `@v4.2.0`.
 - Pinned: `@<40/64-hex sha> # v4.2.0`, or `# ratchet:owner/repo@v4`.
+- Commit pin: a bare `@<40/64-hex sha>` without a comment (see Commit pins).
 - An action in a subdirectory (`owner/repo/<path>`) may carry a per-action tag prefix, `<path>/` or `<last path element>/`, in the tag or the comment: `@get-vault-secrets/v1.3.1`, `@<sha> # get-vault-secrets/v1.3.1`.
 - Anything else is skipped.
+
+**Commit pins.**
+
+- A bare SHA that a tag points at is that tag's version (the newest one: `v4.2.0` rather than a floating `v4` on the same commit). It is updated like a pinned ref, and the new version is written as a comment: `@<sha>` → `@<new sha> # v4.3.0`. Rules match it with that version.
+- A bare SHA no tag points at is ignored by default (`ignored by default (commit pin without version; …)`), as Renovate disables such unversioned references. A rule setting `ignore: false` (e.g. `manager: github-actions`, `names: [owner/repo]`) enables a `digest` update to the commit of the repository's default branch (its `HEAD`, listed with the tags in the same request), without a comment. The `digest` update type's `updates`, schedule and `minimumReleaseAge` (against the commit date, looked up only when a minimum applies) apply.
+- Actions of the repository itself are not special-cased: once enabled, each new commit on its default branch is a new digest.
+- Security advisories are not looked up for bare SHAs.
 
 **Monorepo tags.**
 
@@ -1628,7 +1636,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 
 | Datasource | Dep name | Endpoints | Auth | Release times |
 |---|---|---|---|---|
-| `git-tags` | repository URL (`https://host/path` or `host/path`) | `GET <url>/info/refs?service=git-upload-pack`, then `POST <url>/git-upload-pack` (protocol v2 `ls-refs`, `ref-prefix refs/tags/`, `peel`); v0 servers via the advertisement | Basic `x-access-token:<token>` for the platform host; `DEPS_GITHUB_COM_TOKEN` for github.com; on 401, `git credential fill` once per host | the tag's release (github.com: the release list; Gitea/Forgejo: their releases API); a tag without one (a floating `v25`) takes the earliest listed release of the same commit, else the tag date (GitHub GraphQL: tagger date of an annotated tag, else committer date; GitHub REST: committer date; Gitea/Forgejo: `GET /repos/{repo}/tags/{tag}` `commit.created`) |
+| `git-tags` | repository URL (`https://host/path` or `host/path`) | `GET <url>/info/refs?service=git-upload-pack`, then `POST <url>/git-upload-pack` (protocol v2 `ls-refs`, `ref-prefix refs/tags/`, `ref-prefix HEAD`, `peel`); v0 servers via the advertisement. `HEAD` is the default branch commit that github-actions commit pins track | Basic `x-access-token:<token>` for the platform host; `DEPS_GITHUB_COM_TOKEN` for github.com; on 401, `git credential fill` once per host | the tag's release (github.com: the release list; Gitea/Forgejo: their releases API); a tag without one (a floating `v25`) takes the earliest listed release of the same commit, else the tag date (GitHub GraphQL: tagger date of an annotated tag, else committer date; GitHub REST: committer date; Gitea/Forgejo: `GET /repos/{repo}/tags/{tag}` `commit.created`). The default branch head is dated by its committer date (GitHub GraphQL `object(oid)` or REST `/git/commits/{sha}`; Gitea/Forgejo `GET /repos/{repo}/git/commits/{sha}` `created`), asked only when a `digest` minimumReleaseAge applies |
 | `github-releases` | `owner/repo` (github.com) or `https://host/owner/repo` (GHES) | with a token: GraphQL `releases` (`https://api.github.com/graphql`, GHES `<host>/api/graphql`); without: `GET /repos/{repo}/releases?per_page=100`. At most 5 pages, and only until the current release is listed. Drafts and prereleases are dropped. | token for the host | `publishedAt` |
 | `go` | module path | GOPROXY `<proxy>/<escaped path>/@v/list`, following `,` / `\|` fallback semantics (`direct` → `go list -m -versions -json`); GONOPROXY/GOPRIVATE modules via `go list`. Pseudo-version deps also ask `<proxy>/<escaped path>/@latest` (`go list -m -json <path>@latest`); major module path probes list `<path>/v<N+1>/@v/list`, … from the GOPROXY URLs only, reusing the proxy's list of a successor path that is a dependency itself | none for proxy requests; `go list` uses the go command's own auth (git credentials, `.netrc`) | `@v/<v>.info`, read from `$GOMODCACHE/cache/download` first, then the proxy (`go list -m -json` for private modules) |
 | `go-toolchain` | `go` / `toolchain` | `https://go.dev/dl/?mode=json&include=all`, once per run; a derived `X.Y` per minor. Release dates: `https://raw.githubusercontent.com/golang/website/HEAD/internal/history/release.go` (as Renovate's golang-version), once per run when a release time is needed | none | release date from Go's release history (midnight UTC); a derived `X.Y` has the date of `X.Y.0` |
