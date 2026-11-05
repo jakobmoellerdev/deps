@@ -81,3 +81,30 @@ spec:
 		t.Errorf("updatable native deps = %q, want %q", native, want)
 	}
 }
+
+// Two custom regex entries matching the same version (OCM's envtest-specific and generic .env
+// managers): the first entry's dep is resolved, the later one is skipped.
+func TestResolveFirstCustomMatchWins(t *testing.T) {
+	root, cfg := setup(t, `custom:
+  - files: [.env]
+    match: 'E=(?P<version>\S+)'
+    datasource: go
+    name: example.com/a
+  - files: [.env]
+    match: '(?P<name>\w+)=(?P<version>\S+)'
+    datasource: go
+`, map[string]string{".env": "E=v1.0.0\n"})
+	ms, err := Managers(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := sources(nil, fakeGo{"example.com/a": {"v1.0.0", "v1.1.0"}, "E": {"v1.0.0", "v9.0.0"}})
+	o.Managers = ms
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil || len(res.Errors) != 0 {
+		t.Fatalf("err = %v, %v", err, res.Errors)
+	}
+	if len(res.Updates) != 1 || res.Updates[0].Dep.Name != "example.com/a" || len(res.Skipped) != 1 || res.Skipped[0].Skip != "covered by custom match on line 1" {
+		t.Errorf("updates = %+v, skipped = %+v", res.Updates, res.Skipped)
+	}
+}

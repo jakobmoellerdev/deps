@@ -1529,7 +1529,7 @@ The version is replaced. A captured digest (`@sha256:` for docker markers, or a 
 
 **Precedence over native managers.**
 
-When a custom dep and a native manager's dep (docker, helm, …) cover the same version bytes of a file, the custom dep wins: the native dep is skipped as `covered by annotation on line <n>` (regex mode: `covered by custom regex match on line <n>`), so the bytes are edited once and only one PR is opened.
+When a custom dep and a native manager's dep (docker, helm, …) cover the same version bytes of a file, the custom dep wins: the native dep is skipped as `covered by annotation on line <n>` (regex mode: `covered by custom regex match on line <n>`), so the bytes are edited once and only one PR is opened. Between custom entries the first one in `custom` wins; a later entry matching the same version is skipped as `covered by custom match on line <n>`.
 
 ## Datasources
 

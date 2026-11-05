@@ -39,6 +39,6 @@ var Doc = refdoc.Manager{
 			"A Renovate marker's `extractVersion=<RE2>` (or a rule's `extractVersion`, which overrides it) maps release names to versions: `# renovate: datasource=github-releases depName=jqlang/jq extractVersion=^jq-(?<version>.+)$`.",
 			"Release names the expression does not match are ignored; the extracted version is compared and written. Digests, release times and checksum assets are looked up by the original release name.",
 		}},
-		{Title: "Precedence over native managers", Body: "When a custom dep and a native manager's dep (docker, helm, …) cover the same version bytes of a file, the custom dep wins: the native dep is skipped as `covered by annotation on line <n>` (regex mode: `covered by custom regex match on line <n>`), so the bytes are edited once and only one PR is opened."},
+		{Title: "Precedence over native managers", Body: "When a custom dep and a native manager's dep (docker, helm, …) cover the same version bytes of a file, the custom dep wins: the native dep is skipped as `covered by annotation on line <n>` (regex mode: `covered by custom regex match on line <n>`), so the bytes are edited once and only one PR is opened. Between custom entries the first one in `custom` wins; a later entry matching the same version is skipped as `covered by custom match on line <n>`."},
 	},
 }

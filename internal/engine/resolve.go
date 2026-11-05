@@ -550,9 +550,36 @@ func extractOne(root string, j job, env manager.Env) extracted {
 }
 
 // dedupeCovered skips deps whose bytes are also claimed by a custom dep in the same file: an
-// explicit annotation (or regex match) wins over native extraction, so the same version is
-// never patched twice nor proposed in two PRs.
+// explicit annotation (or regex match) wins over native extraction, and the first custom
+// manager (in config order) over later ones whose match claims the same version (Renovate
+// configs often add a generic regex next to a specific one), so the same version is never
+// patched twice nor proposed in two PRs.
 func dedupeCovered(ex []extracted) {
+	type seen struct {
+		span dep.Span
+		line int
+		at   int // index in ex
+	}
+	first := map[string][]seen{}
+	for i := range ex {
+		for j := range ex[i].deps {
+			d := &ex[i].deps[j]
+			if d.Manager != custom.Name || d.Skip != "" || d.RefSpan.End <= d.RefSpan.Start {
+				continue
+			}
+			dup := false
+			for _, s := range first[d.File] {
+				if s.at != i && d.RefSpan.Start < s.span.End && s.span.Start < d.RefSpan.End {
+					d.Skip = fmt.Sprintf("covered by custom match on line %d", s.line)
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				first[d.File] = append(first[d.File], seen{d.RefSpan, d.Line, i})
+			}
+		}
+	}
 	type claim struct {
 		spans [3]dep.Span
 		line  int
