@@ -6,6 +6,7 @@ package poetry
 
 import (
 	"regexp"
+	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -36,8 +37,11 @@ func New() manager.Manager { return poetryManager{} }
 
 func (poetryManager) Name() string { return Name }
 
-// Match reports whether the slash path is a pyproject.toml file.
-func (poetryManager) Match(p string) bool { return matchRe.MatchString(p) }
+// Match reports whether the slash path is a pyproject.toml file. The suffix check skips the
+// regexp for the paths that cannot match.
+func (poetryManager) Match(p string) bool {
+	return strings.HasSuffix(p, "pyproject.toml") && matchRe.MatchString(p)
+}
 
 // Edits rewrites the constraint (pyreq.Edits).
 func (poetryManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }

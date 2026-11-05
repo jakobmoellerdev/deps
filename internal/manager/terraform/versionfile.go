@@ -26,8 +26,11 @@ func NewVersion() manager.Manager { return versionManager{} }
 
 func (versionManager) Name() string { return VersionName }
 
-// Match reports whether the slash path is a .terraform-version or .opentofu-version file.
-func (versionManager) Match(p string) bool { return versionFileRe.MatchString(p) }
+// Match reports whether the slash path is a .terraform-version or .opentofu-version file. The
+// suffix check skips the regexp for the paths that cannot match.
+func (versionManager) Match(p string) bool {
+	return strings.HasSuffix(p, "-version") && versionFileRe.MatchString(p)
+}
 
 // Extract returns the version on the first non-empty line: a Terraform release, or an OpenTofu
 // release for .opentofu-version. tfenv/tofuenv keywords (`latest`, `latest:<regex>`,
@@ -72,8 +75,11 @@ func NewTFLint() manager.Manager { return tflintManager{} }
 
 func (tflintManager) Name() string { return TFLintName }
 
-// Match reports whether the slash path is a .tflint.hcl file.
-func (tflintManager) Match(p string) bool { return tflintRe.MatchString(p) }
+// Match reports whether the slash path is a .tflint.hcl file. The suffix check skips the regexp
+// for the paths that cannot match.
+func (tflintManager) Match(p string) bool {
+	return strings.HasSuffix(p, ".tflint.hcl") && tflintRe.MatchString(p)
+}
 
 // Extract returns the plugin blocks with a `source` (plugins without one are bundled with
 // tflint): `github.com/<owner>/<repo>` release versions.

@@ -61,8 +61,11 @@ func New() manager.Manager { return npmManager{} }
 
 func (npmManager) Name() string { return Name }
 
-// Match reports whether the slash path is a package.json file.
-func (npmManager) Match(p string) bool { return matchRe.MatchString(p) }
+// Match reports whether the slash path is a package.json file. The suffix check skips the
+// regexp for the paths that cannot match.
+func (npmManager) Match(p string) bool {
+	return strings.HasSuffix(p, "package.json") && matchRe.MatchString(p)
+}
 
 // Extract streams src with encoding/json/jsontext and returns one Dep per entry of the
 // dependency sections plus the packageManager field. RefSpan covers only the version, so an

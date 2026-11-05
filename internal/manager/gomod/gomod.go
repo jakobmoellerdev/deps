@@ -34,8 +34,11 @@ func New() manager.Manager { return gomodManager{} }
 
 func (gomodManager) Name() string { return Name }
 
-// Match reports whether the slash path is a go.mod file.
-func (gomodManager) Match(p string) bool { return matchRe.MatchString(p) }
+// Match reports whether the slash path is a go.mod file. The suffix check skips the regexp for
+// the paths that cannot match.
+func (gomodManager) Match(p string) bool {
+	return strings.HasSuffix(p, "go.mod") && matchRe.MatchString(p)
+}
 
 // Extract returns one Dep per require entry; RefSpan covers the version token, NameSpan the
 // module path. env.Vendored is consulted with the go.mod's directory. Pseudo-versions are

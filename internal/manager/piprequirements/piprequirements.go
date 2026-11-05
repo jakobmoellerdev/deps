@@ -32,8 +32,11 @@ func New() manager.Manager { return pipManager{} }
 func (pipManager) Name() string { return Name }
 
 // Match reports whether the slash path is a requirements file (`requirements.txt`,
-// `requirements-dev.txt`, `dev-requirements.txt`, `requirements.pip`, …).
-func (pipManager) Match(p string) bool { return matchRe.MatchString(p) }
+// `requirements-dev.txt`, `dev-requirements.txt`, `requirements.pip`, …). The name check skips
+// the regexp for the paths that cannot match.
+func (pipManager) Match(p string) bool {
+	return strings.Contains(p, "requirements") && matchRe.MatchString(p)
+}
 
 // Edits rewrites the specifier (pyreq.Edits).
 func (pipManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }

@@ -54,8 +54,11 @@ func New() manager.Manager { return cargoManager{} }
 
 func (cargoManager) Name() string { return Name }
 
-// Match reports whether the slash path is a Cargo.toml file.
-func (cargoManager) Match(p string) bool { return matchRe.MatchString(p) }
+// Match reports whether the slash path is a Cargo.toml file. The suffix check skips the regexp
+// for the paths that cannot match.
+func (cargoManager) Match(p string) bool {
+	return strings.HasSuffix(p, "Cargo.toml") && matchRe.MatchString(p)
+}
 
 // Extract returns one Dep per entry of the [dependencies], [dev-dependencies] and
 // [build-dependencies] tables (also below [target.<spec>]), of [workspace.dependencies], of

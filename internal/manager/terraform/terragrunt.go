@@ -30,9 +30,11 @@ func NewTerragrunt() manager.Manager { return terragruntManager{} }
 func (terragruntManager) Name() string { return TerragruntName }
 
 // Match reports whether the slash path is a terragrunt.hcl outside a .terragrunt-cache
-// directory (downloaded sources).
+// directory (downloaded sources). The suffix check skips the regexp for the paths that cannot
+// match.
 func (terragruntManager) Match(p string) bool {
-	return terragruntRe.MatchString(p) && !strings.HasPrefix(p, ".terragrunt-cache/") && !strings.Contains(p, "/.terragrunt-cache/")
+	return strings.HasSuffix(p, "terragrunt.hcl") && terragruntRe.MatchString(p) &&
+		!strings.HasPrefix(p, ".terragrunt-cache/") && !strings.Contains(p, "/.terragrunt-cache/")
 }
 
 // Extract parses src and returns the source of each top-level terraform block.

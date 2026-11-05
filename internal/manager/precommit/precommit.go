@@ -29,8 +29,11 @@ func New() manager.Manager { return precommitManager{} }
 
 func (precommitManager) Name() string { return Name }
 
-// Match reports whether the slash path is a pre-commit configuration.
-func (precommitManager) Match(path string) bool { return fileRe.MatchString(path) }
+// Match reports whether the slash path is a pre-commit configuration. The name check skips the
+// regexp for the paths that cannot match.
+func (precommitManager) Match(path string) bool {
+	return strings.Contains(path, ".pre-commit-config.") && fileRe.MatchString(path)
+}
 
 // Extract returns one dep per `repos[]` entry with byte spans into src.
 func (precommitManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

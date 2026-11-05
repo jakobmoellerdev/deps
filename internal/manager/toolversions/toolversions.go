@@ -39,40 +39,43 @@ var (
 // dep is a single version token.
 type toolManager struct {
 	name    string
+	suffix  string // every path match ends in it; skips the regexp for other paths
 	match   *regexp.Regexp
 	extract func(file string, src []byte) ([]dep.Dep, error)
 }
 
 // NewNvm returns the nvm manager (`.nvmrc`).
 func NewNvm() manager.Manager {
-	return &toolManager{name: NameNvm, match: nvmRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
+	return &toolManager{name: NameNvm, suffix: ".nvmrc", match: nvmRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
 		return extractNode(NameNvm, file, src), nil
 	}}
 }
 
 // NewNodenv returns the nodenv manager (`.node-version`).
 func NewNodenv() manager.Manager {
-	return &toolManager{name: NameNodenv, match: nodenvRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
+	return &toolManager{name: NameNodenv, suffix: ".node-version", match: nodenvRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
 		return extractNode(NameNodenv, file, src), nil
 	}}
 }
 
 // NewAsdf returns the asdf manager (`.tool-versions`).
 func NewAsdf() manager.Manager {
-	return &toolManager{name: NameAsdf, match: asdfRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
+	return &toolManager{name: NameAsdf, suffix: ".tool-versions", match: asdfRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
 		return extractAsdf(file, src), nil
 	}}
 }
 
 // NewMise returns the mise manager (`mise.toml` and its alternative locations).
 func NewMise() manager.Manager {
-	return &toolManager{name: NameMise, match: miseRe, extract: extractMise}
+	return &toolManager{name: NameMise, suffix: ".toml", match: miseRe, extract: extractMise}
 }
 
 func (m *toolManager) Name() string { return m.name }
 
 // Match reports whether the slash path is a file of this manager.
-func (m *toolManager) Match(path string) bool { return m.match.MatchString(path) }
+func (m *toolManager) Match(path string) bool {
+	return strings.HasSuffix(path, m.suffix) && m.match.MatchString(path)
+}
 
 // Extract returns the tool versions of src with byte spans into src.
 func (m *toolManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

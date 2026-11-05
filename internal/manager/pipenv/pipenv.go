@@ -34,8 +34,11 @@ func New() manager.Manager { return pipenvManager{} }
 
 func (pipenvManager) Name() string { return Name }
 
-// Match reports whether the slash path is a Pipfile.
-func (pipenvManager) Match(p string) bool { return matchRe.MatchString(p) }
+// Match reports whether the slash path is a Pipfile. The suffix check skips the regexp for the
+// paths that cannot match.
+func (pipenvManager) Match(p string) bool {
+	return strings.HasSuffix(p, "Pipfile") && matchRe.MatchString(p)
+}
 
 // Edits rewrites the specifier (pyreq.Edits).
 func (pipenvManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
