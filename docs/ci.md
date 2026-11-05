@@ -952,7 +952,7 @@ GitHub runners download from the mirror because the Gitea instance's edge blocks
 - pull requests and issues are disabled on the mirror;
 - the push mirror prunes foreign branches.
 
-Pushing a `v*` tag runs `.gitea/workflows/ci.yml`. Its `check` job (`task check`) and `test` job (`task cover`) run in parallel, each with Go from `actions/setup-go@v7.0.0` (`go-version-file: go.mod`, i.e. `toolchain go1.27.3`) and a build cache from `actions/cache` that pushes refresh. Then the `release` job runs (`needs: [check, test]`, `contents: write`):
+Pushing a `v*` tag runs `.gitea/workflows/ci.yml`. Its `check` job (`task check`) and `test` job (`task cover`) run in parallel, each with Go from `actions/setup-go@v7.0.0` (`go-version-file: go.mod`, i.e. `toolchain go1.27.3`, and `cache: true`); `check` also restores the pinned golangci-lint binary from `actions/cache`. Then the `release` job runs (`needs: [check, test]`, `contents: write`):
 
 1. `task release:build VERSION=<tag>` builds `dist/deps_linux_amd64` and `dist/deps_linux_arm64` with `CGO_ENABLED=0`, `-trimpath` and `-ldflags "-s -w -buildid= -X main.version=<tag>"`. It writes `dist/checksums.txt` (`sha256sum`).
 2. Each binary is checked to be static: `readelf -l` must not show `Requesting program interpreter`, because the action runs it on arbitrary runner images.

@@ -5,10 +5,7 @@ on:
     tags: ["v*"]
   pull_request:
 jobs:
-  # check and test run as parallel jobs. Each restores the newest build cache of its kind
-  # (restore-keys) instead of setup-go's, whose key is go.sum and thus never refreshes: stale
-  # entries meant recompiling every changed package and rerunning every test. Only pushes (main,
-  # tags) save a cache, so pull requests pay no upload.
+  # check and test run as parallel jobs.
   check:
     runs-on: ubuntu-latest
     steps:
@@ -16,30 +13,17 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
-      - id: cache
-        uses: actions/cache/restore@v6.1.0
+          cache: true
+      # The pinned golangci-lint binary (task lint:install), so it is not downloaded from GitHub
+      # on every run. One cache entry per version.
+      - id: lint
+        run: |
+          echo "version=$(sed -n 's/^  GOLANGCI_LINT_VERSION: //p' Taskfile.yml)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6.1.0
         with:
-          # golangci-lint: its binary (lint:install) and analysis cache.
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-            ~/.cache/golangci-lint
-            /tmp/deps-tools
-          key: go-check-${{ hashFiles('go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            go-check-${{ hashFiles('go.sum') }}-
-            go-check-
+          path: /tmp/deps-tools/golangci-lint-${{ steps.lint.outputs.version }}
+          key: golangci-lint-${{ steps.lint.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
       - run: task check
-      - if: github.event_name == 'push'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-            ~/.cache/golangci-lint
-            /tmp/deps-tools
-          key: ${{ steps.cache.outputs.cache-primary-key }}
   test:
     runs-on: ubuntu-latest
     steps:
@@ -47,26 +31,8 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
-      - id: cache
-        uses: actions/cache/restore@v6.1.0
-        with:
-          # Race and coverage builds plus the test cache: unchanged packages report (cached).
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-test-${{ hashFiles('go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            go-test-${{ hashFiles('go.sum') }}-
-            go-test-
+          cache: true
       - run: task cover
-      - if: github.event_name == 'push'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ steps.cache.outputs.cache-primary-key }}
   # Release tags reuse the check and test results instead of running task ci again.
   release:
     needs: [check, test]
