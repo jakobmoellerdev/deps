@@ -601,7 +601,6 @@ func (r pyReq) get() (string, bool) { return r.spec, r.seen && !r.mixed }
 // RequiresPython and Upload; decodeHTMLFiles all fields it finds.
 type simpleFile struct {
 	Filename       string
-	URL            string // absolute, without fragment
 	SHA256         string // from the URL's `#sha256=` fragment
 	RequiresPython string
 	Upload         string // RFC 3339
@@ -747,8 +746,8 @@ func decodeHTML(r io.Reader, base *url.URL, name string) (p project, yanked int,
 }
 
 // decodeHTMLFiles calls fn for each anchor of an HTML simple API page served at base (nil:
-// URLs are left relative): the filename is the anchor text (else the last path segment of
-// href), URL and SHA256 come from href, Yanked from the presence of `data-yanked`,
+// href is left relative): the filename is the anchor text (else the last path segment of
+// href resolved against base), SHA256 comes from href, Yanked from the presence of `data-yanked`,
 // RequiresPython from `data-requires-python` and Upload from the non-standard
 // `data-upload-time` (download.pytorch.org). Entities are decoded.
 func decodeHTMLFiles(r io.Reader, base *url.URL, fn func(simpleFile)) error {
@@ -790,12 +789,10 @@ func decodeHTMLFiles(r io.Reader, base *url.URL, fn func(simpleFile)) error {
 			if v, ok := strings.CutPrefix(u.Fragment, "sha256="); ok {
 				f.SHA256 = v
 			}
-			u.Fragment, u.RawFragment = "", ""
-			if base != nil {
-				u = base.ResolveReference(u)
-			}
-			f.URL = u.String()
 			if f.Filename == "" {
+				if base != nil {
+					u = base.ResolveReference(u)
+				}
 				f.Filename = path.Base(u.Path)
 			}
 		}

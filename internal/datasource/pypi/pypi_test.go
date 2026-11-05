@@ -642,10 +642,10 @@ func TestDecodeHTMLFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []simpleFile{
-		{Filename: "pkg-1.0.tar.gz", URL: "https://idx.example/packages/pkg-1.0.tar.gz", SHA256: "abc", RequiresPython: ">=3.8,<4", Yanked: true},
-		{Filename: "pkg-1.1-py3-none-any.whl", URL: "https://idx.example/simple/pkg/pkg-1.1-py3-none-any.whl", Yanked: true},
-		{Filename: "pkg-1.2.tar.gz", URL: "https://files.example/pkg-1.2.tar.gz", SHA256: "def", Upload: "2024-01-01T00:00:00Z"},
-		{Filename: "pkg-1.3.tar.gz", URL: "https://idx.example/simple/pkg/pkg-1.3.tar.gz"},
+		{Filename: "pkg-1.0.tar.gz", SHA256: "abc", RequiresPython: ">=3.8,<4", Yanked: true},
+		{Filename: "pkg-1.1-py3-none-any.whl", Yanked: true},
+		{Filename: "pkg-1.2.tar.gz", SHA256: "def", Upload: "2024-01-01T00:00:00Z"},
+		{Filename: "pkg-1.3.tar.gz"},
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("files =\n%+v\nwant\n%+v", got, want)
