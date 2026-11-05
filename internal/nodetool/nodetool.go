@@ -278,7 +278,7 @@ func (c cmdSpec) run(ctx context.Context, dir, version string) error {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "npm_config_update_notifier=false", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0")
 	cmd.Env = append(cmd.Env, c.env...)
-	out := &tailBuffer{max: 32 << 10}
+	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()
 	err = cmd.Run()
@@ -289,44 +289,8 @@ func (c cmdSpec) run(ctx context.Context, dir, version string) error {
 	case errors.Is(err, exec.ErrNotFound):
 		return err
 	}
-	if t := tail(out.b, 20); t != "" {
+	if t := toolrun.Tail(out.Bytes(), 20); t != "" {
 		return errors.New(t)
 	}
 	return err
-}
-
-// tailBuffer keeps the last max bytes written to it.
-type tailBuffer struct {
-	b   []byte
-	max int
-}
-
-func (t *tailBuffer) Write(p []byte) (int, error) {
-	n := len(p)
-	if len(p) >= t.max {
-		t.b = append(t.b[:0], p[len(p)-t.max:]...)
-		return n, nil
-	}
-	if over := len(t.b) + len(p) - t.max; over > 0 {
-		t.b = append(t.b[:0], t.b[over:]...)
-	}
-	t.b = append(t.b, p...)
-	return n, nil
-}
-
-// tail returns the last n lines of b, trimmed.
-func tail(b []byte, n int) string {
-	b = bytes.TrimSpace(b)
-	i := len(b)
-	for ; n > 0 && i > 0; n-- {
-		i = bytes.LastIndexByte(b[:i], '\n')
-		if i < 0 {
-			i = 0
-			break
-		}
-	}
-	if i > 0 {
-		i++ // skip the newline
-	}
-	return string(b[i:])
 }

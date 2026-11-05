@@ -141,29 +141,3 @@ func TestCopyBuild(t *testing.T) {
 		t.Error("working tree touched")
 	}
 }
-
-func TestTail(t *testing.T) {
-	for _, tc := range []struct {
-		in   string
-		n    int
-		want string
-	}{
-		{"a\nb\nc\n", 2, "b\nc"},
-		{"a\nb", 5, "a\nb"},
-		{"\n\nonly\n\n", 1, "only"},
-		{"", 3, ""},
-	} {
-		if got := tail([]byte(tc.in), tc.n); got != tc.want {
-			t.Errorf("tail(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
-		}
-	}
-	b := &tailBuffer{max: 4}
-	for _, s := range []string{"ab", "cd", "efg", "0123456789"} {
-		if _, err := b.Write([]byte(s)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if string(b.b) != "6789" {
-		t.Errorf("tailBuffer = %q", b.b)
-	}
-}

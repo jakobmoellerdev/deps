@@ -18,6 +18,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // LockFile is the dependency lock file of a Terraform working directory.
@@ -580,25 +581,16 @@ func runInit(ctx context.Context, bin, work string, args ...string) error {
 	cmd := exec.CommandContext(ctx, bin, append([]string{"init", "-backend=false", "-input=false", "-no-color"}, args...)...)
 	cmd.Dir = work
 	cmd.Env = append(os.Environ(), "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1", "TF_DATA_DIR="+filepath.Join(work, ".terraform"))
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
+	out := &toolrun.TailBuffer{Max: 32 << 10}
+	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()
 	err := cmd.Run()
 	slog.DebugContext(ctx, "terraform init", "bin", bin, "dir", work, "duration", time.Since(start), "err", err)
 	if err != nil {
-		if t := tail(out.Bytes(), 20); t != "" {
+		if t := toolrun.Tail(out.Bytes(), 20); t != "" {
 			return errors.New(t)
 		}
 		return err
 	}
 	return nil
-}
-
-// tail returns the last n lines of b, trimmed.
-func tail(b []byte, n int) string {
-	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }

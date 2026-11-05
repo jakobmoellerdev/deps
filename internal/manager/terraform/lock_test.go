@@ -185,9 +185,3 @@ func TestLockerErrors(t *testing.T) {
 		t.Error("broken original: no error")
 	}
 }
-
-func TestTail(t *testing.T) {
-	if got := tail([]byte("a\nb\nc\n"), 2); got != "b\nc" {
-		t.Errorf("tail = %q", got)
-	}
-}

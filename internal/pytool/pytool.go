@@ -424,22 +424,16 @@ func (c cmdSpec) run(ctx context.Context, dir string) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), c.env...)
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
+	out := &toolrun.TailBuffer{Max: 32 << 10}
+	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()
 	err = cmd.Run()
 	slog.DebugContext(ctx, "python tool command", "argv", argv, "dir", dir, "duration", time.Since(start), "err", err)
 	if err == nil {
 		return nil
 	}
-	if t := tail(out.Bytes(), 20); t != "" {
+	if t := toolrun.Tail(out.Bytes(), 20); t != "" {
 		return errors.New(t)
 	}
 	return err
-}
-
-// tail returns the last n lines of b, trimmed.
-func tail(b []byte, n int) string {
-	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	return strings.Join(lines[max(0, len(lines)-n):], "\n")
 }

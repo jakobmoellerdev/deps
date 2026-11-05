@@ -634,34 +634,3 @@ func TestYarnFiles(t *testing.T) {
 		t.Errorf("no .yarnrc.yml: %v, %v", got, err)
 	}
 }
-
-func TestTailBuffer(t *testing.T) {
-	b := &tailBuffer{max: 8}
-	for _, s := range []string{"abc", "defg", "hij"} {
-		if n, err := b.Write([]byte(s)); n != len(s) || err != nil {
-			t.Fatalf("Write = %d, %v", n, err)
-		}
-	}
-	if string(b.b) != "cdefghij" {
-		t.Errorf("after small writes = %q", b.b)
-	}
-	if _, err := b.Write([]byte("0123456789")); err != nil || string(b.b) != "23456789" {
-		t.Errorf("after a large write = %q", b.b)
-	}
-}
-
-func TestTail(t *testing.T) {
-	for _, tt := range []struct {
-		in   string
-		n    int
-		want string
-	}{
-		{"a\nb\nc\n", 2, "b\nc"},
-		{"a\nb\nc", 5, "a\nb\nc"},
-		{"", 3, ""},
-	} {
-		if got := tail([]byte(tt.in), tt.n); got != tt.want {
-			t.Errorf("tail(%q, %d) = %q, want %q", tt.in, tt.n, got, tt.want)
-		}
-	}
-}

@@ -22,6 +22,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 const (
@@ -562,23 +563,17 @@ func cargo(ctx context.Context, dir, scope string, args ...string) error {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "CARGO_TERM_COLOR=never", "CARGO_TERM_PROGRESS_WHEN=never")
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
+	out := &toolrun.TailBuffer{Max: 32 << 10}
+	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()
 	err = cmd.Run()
 	slog.DebugContext(ctx, "cargo command", "args", args, "dir", scope, "duration", time.Since(start), "err", err)
 	if err == nil {
 		return nil
 	}
-	msg := strings.ReplaceAll(tail(out.Bytes(), 20), dir, scope)
+	msg := strings.ReplaceAll(toolrun.Tail(out.Bytes(), 20), dir, scope)
 	if msg == "" {
 		msg = err.Error()
 	}
 	return fmt.Errorf("cargo %s in %s: %s", args[0], scope, msg)
-}
-
-// tail returns the last n lines of b, trimmed.
-func tail(b []byte, n int) string {
-	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	return strings.Join(lines[max(0, len(lines)-n):], "\n")
 }

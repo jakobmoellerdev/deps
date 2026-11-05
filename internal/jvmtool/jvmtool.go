@@ -158,7 +158,7 @@ func run(ctx context.Context, dir string, argv []string) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.WaitDelay = waitDelay
-	out := &tailBuffer{max: 32 << 10}
+	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()
 	err := cmd.Run()
@@ -169,44 +169,8 @@ func run(ctx context.Context, dir string, argv []string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if t := tail(out.b, 20); t != "" {
+	if t := toolrun.Tail(out.Bytes(), 20); t != "" {
 		return errors.New(t)
 	}
 	return err
-}
-
-// tailBuffer keeps the last max bytes written to it.
-type tailBuffer struct {
-	b   []byte
-	max int
-}
-
-func (t *tailBuffer) Write(p []byte) (int, error) {
-	n := len(p)
-	if len(p) >= t.max {
-		t.b = append(t.b[:0], p[len(p)-t.max:]...)
-		return n, nil
-	}
-	if over := len(t.b) + len(p) - t.max; over > 0 {
-		t.b = append(t.b[:0], t.b[over:]...)
-	}
-	t.b = append(t.b, p...)
-	return n, nil
-}
-
-// tail returns the last n lines of b, trimmed.
-func tail(b []byte, n int) string {
-	b = bytes.TrimSpace(b)
-	i := len(b)
-	for ; n > 0 && i > 0; n-- {
-		i = bytes.LastIndexByte(b[:i], '\n')
-		if i < 0 {
-			i = 0
-			break
-		}
-	}
-	if i > 0 {
-		i++ // skip the newline
-	}
-	return string(b[i:])
 }

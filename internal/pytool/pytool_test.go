@@ -295,17 +295,11 @@ func TestProcessEdgeCases(t *testing.T) {
 	})
 }
 
-func TestPoetryV1AndTail(t *testing.T) {
+func TestPoetryV1(t *testing.T) {
 	for out, want := range map[string]bool{"Poetry (version 1.8.3)\n": true, "Poetry (version 2.1.3)": false, "garbage": false} {
 		if got := poetryV1(out); got != want {
 			t.Errorf("poetryV1(%q) = %v", out, got)
 		}
-	}
-	if got := tail([]byte("a\nb\nc\n"), 2); got != "b\nc" {
-		t.Errorf("tail = %q", got)
-	}
-	if got := tail([]byte("a"), 5); got != "a" {
-		t.Errorf("tail = %q", got)
 	}
 }
 

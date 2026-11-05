@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // DefaultProxy is the GOPROXY used when the go command is unavailable and GOPROXY is unset.
@@ -277,8 +279,9 @@ func run(ctx context.Context, dir string, env []string, args ...string) ([]byte,
 	if env != nil {
 		cmd.Env = append(os.Environ(), env...)
 	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	var stdout bytes.Buffer
+	stderr := &toolrun.TailBuffer{Max: 32 << 10}
+	cmd.Stdout, cmd.Stderr = &stdout, stderr
 	start := time.Now()
 	err := cmd.Run()
 	slog.DebugContext(ctx, "go command", "args", args, "dir", dir, "duration", time.Since(start), "err", err)
@@ -286,24 +289,7 @@ func run(ctx context.Context, dir string, env []string, args ...string) ([]byte,
 		if errors.Is(err, exec.ErrNotFound) {
 			return nil, err
 		}
-		return nil, &cmdError{args: strings.Join(args, " "), stderr: tail(stderr.Bytes(), 20), err: err}
+		return nil, &cmdError{args: strings.Join(args, " "), stderr: toolrun.Tail(stderr.Bytes(), 20), err: err}
 	}
 	return stdout.Bytes(), nil
-}
-
-// tail returns the last n lines of b, trimmed.
-func tail(b []byte, n int) string {
-	b = bytes.TrimSpace(b)
-	i := len(b)
-	for ; n > 0 && i > 0; n-- {
-		i = bytes.LastIndexByte(b[:i], '\n')
-		if i < 0 {
-			i = 0
-			break
-		}
-	}
-	if i > 0 {
-		i++ // skip the newline
-	}
-	return string(b[i:])
 }

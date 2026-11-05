@@ -12,24 +12,6 @@ import (
 	"time"
 )
 
-func TestTail(t *testing.T) {
-	tests := []struct {
-		in   string
-		n    int
-		want string
-	}{
-		{"a\nb\nc\n", 2, "b\nc"},
-		{"a\nb\nc", 5, "a\nb\nc"},
-		{"one", 1, "one"},
-		{"", 3, ""},
-	}
-	for _, tt := range tests {
-		if got := tail([]byte(tt.in), tt.n); got != tt.want {
-			t.Errorf("tail(%q, %d) = %q, want %q", tt.in, tt.n, got, tt.want)
-		}
-	}
-}
-
 // TestTidyOffline tidies a module without requirements, which needs no network.
 func TestTidyOffline(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
