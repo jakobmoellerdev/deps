@@ -6,7 +6,7 @@ import (
 )
 
 // linkFixer repairs pagination Link headers that omit the RFC 8288 angle brackets
-// (docker.gitea.com sends `Link: https://…/tags/list?n=50&last=x; rel=next`), which oras-go
+// (docker.gitea.com sends `Link: https://…/tags/list?n=50&last=x; rel=next`), which nextLink
 // rejects. Well-formed and absent headers pass through without allocation.
 type linkFixer struct{ next http.RoundTripper }
 

@@ -17,11 +17,11 @@ var challengeHosts = map[string]bool{
 
 // challenger answers the first request to each repository of a challengeHosts registry with
 // the bearer challenge the registry gave for another repository, instead of sending it.
-// oras-go caches tokens per repository, so it sends the first request to a repository without
-// one; the registry's 401 then costs a round trip per repository (library/python: 362 ms) for a
-// challenge that differs from the last only in the repository of its scope. The answer is the
-// registry's own challenge with that repository replaced, so oras-go validates the realm and
-// fetches the token exactly as it does after a real 401.
+// The registry client caches tokens per repository, so it sends the first request to a
+// repository without one; the registry's 401 then costs a round trip per repository
+// (library/python: 362 ms) for a challenge that differs from the last only in the repository of
+// its scope. The answer is the registry's own challenge with that repository replaced, so the
+// client validates the realm and fetches the token exactly as it does after a real 401.
 //
 // Lookups start together, so the first unauthenticated request of a registry is sent alone:
 // the others wait for its challenge, which they would otherwise each have waited a round trip

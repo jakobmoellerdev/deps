@@ -1,0 +1,198 @@
+package dockerds
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+)
+
+// credential is what the Docker config holds for a registry: a username and password, an
+// identity token (an OAuth2 refresh token, `identitytoken`) or a registry token (a bearer token
+// used as is, `registrytoken`). The zero value is anonymous access.
+type credential struct {
+	Username, Password string
+	RefreshToken       string
+	AccessToken        string
+}
+
+// credentialFunc returns the credential of registry (host[:port], docker.io for Docker Hub).
+type credentialFunc func(ctx context.Context, registry string) (credential, error)
+
+// hubServerAddress is the key of Docker Hub credentials in the Docker config and credential
+// helpers, as the Docker CLI stores them.
+const hubServerAddress = "https://index.docker.io/v1/"
+
+// dockerConfig is the part of the Docker config deps reads.
+type dockerConfig struct {
+	Auths       map[string]authConfig `json:"auths"`
+	CredsStore  string                `json:"credsStore"`
+	CredHelpers map[string]string     `json:"credHelpers"`
+}
+
+type authConfig struct {
+	Auth          string `json:"auth"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	IdentityToken string `json:"identitytoken"`
+	RegistryToken string `json:"registrytoken"`
+}
+
+// dockerCredentials reads credentials from the Docker config ($DOCKER_CONFIG or ~/.docker) and
+// its credential helpers, as the Docker CLI does: a credential helper named for the registry in
+// `credHelpers`, else the `credsStore` helper when the config names one, else `auths`. An
+// unreadable config fails every authenticated lookup with its error.
+func dockerCredentials() credentialFunc {
+	cfg, err := loadDockerConfig()
+	if err != nil {
+		return func(context.Context, string) (credential, error) {
+			return credential{}, fmt.Errorf("docker config: %w", err)
+		}
+	}
+	return cfg.credential
+}
+
+// loadDockerConfig reads the Docker config; a missing or empty one has no credentials.
+func loadDockerConfig() (*dockerConfig, error) {
+	dir := os.Getenv("DOCKER_CONFIG")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("home directory: %w", err)
+		}
+		dir = filepath.Join(home, ".docker")
+	}
+	path := filepath.Join(dir, "config.json")
+	b, err := os.ReadFile(path)
+	cfg := &dockerConfig{}
+	if errors.Is(err, os.ErrNotExist) || (err == nil && len(bytes.TrimSpace(b)) == 0) {
+		return cfg, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(b, cfg); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// credential looks up registry: Docker Hub (docker.io) under its server address
+// https://index.docker.io/v1/ (or, failing that, one of its hosts), other registries by host.
+// Keys match regardless of an http(s):// prefix, a trailing slash and the host's case.
+func (c *dockerConfig) credential(ctx context.Context, registry string) (credential, error) {
+	addr, keys := registry, []string{normalizeServerAddress(registry)}
+	if isHub(registry) {
+		addr, keys = hubServerAddress, hubKeys
+	}
+	for _, k := range keys {
+		if helper, ok := lookup(c.CredHelpers, k); ok && helper != "" {
+			return helperCredential(ctx, helper, addr)
+		}
+	}
+	if c.CredsStore != "" {
+		return helperCredential(ctx, c.CredsStore, addr)
+	}
+	if a, ok := c.Auths[addr]; ok {
+		return a.credential()
+	}
+	for _, k := range keys {
+		if a, ok := lookup(c.Auths, k); ok {
+			return a.credential()
+		}
+	}
+	return credential{}, nil
+}
+
+// hubKeys are the normalized config keys of Docker Hub, the Docker CLI's first.
+var hubKeys = []string{"index.docker.io/v1", hubRegistry, "registry-1.docker.io", "index.docker.io"}
+
+// isHub reports whether registry is one of Docker Hub's hosts.
+func isHub(registry string) bool {
+	return slices.Contains(hubKeys[1:], strings.ToLower(registry))
+}
+
+// normalizeServerAddress strips a server address of its scheme and trailing slash and lower-cases
+// its host: https://Index.Docker.io/v1/ → index.docker.io/v1.
+func normalizeServerAddress(addr string) string {
+	addr = strings.TrimPrefix(addr, "https://")
+	addr = strings.TrimPrefix(addr, "http://")
+	addr = strings.TrimSuffix(addr, "/")
+	host, path, ok := strings.Cut(addr, "/")
+	if host = strings.ToLower(host); ok {
+		return host + "/" + path
+	}
+	return host
+}
+
+// lookup returns the value of the first key (in sorted order) of m whose normalized form is
+// key, and whether there is one.
+func lookup[V any](m map[string]V, key string) (V, bool) {
+	var match string
+	found := false
+	for k := range m {
+		if normalizeServerAddress(k) == key && (!found || k < match) {
+			match, found = k, true
+		}
+	}
+	return m[match], found
+}
+
+func (a authConfig) credential() (credential, error) {
+	c := credential{Username: a.Username, Password: a.Password, RefreshToken: a.IdentityToken, AccessToken: a.RegistryToken}
+	if a.Auth == "" {
+		return c, nil
+	}
+	b, err := base64.StdEncoding.DecodeString(a.Auth)
+	if err != nil {
+		return credential{}, fmt.Errorf("docker config: decode auth: %w", err)
+	}
+	var ok bool
+	if c.Username, c.Password, ok = strings.Cut(string(b), ":"); !ok {
+		return credential{}, errors.New("docker config: auth is not base64(username:password)")
+	}
+	return c, nil
+}
+
+// helperTokenUser is the username a credential helper returns for an identity token.
+const helperTokenUser = "<token>"
+
+// errHelperNotFound is the message of a credential helper that has no credential for the server.
+const errHelperNotFound = "credentials not found in native keychain"
+
+// helperCredential runs `docker-credential-<helper> get` with the server address on stdin.
+func helperCredential(ctx context.Context, helper, addr string) (credential, error) {
+	name := "docker-credential-" + helper
+	cmd := exec.CommandContext(ctx, name, "get")
+	cmd.Stdin = strings.NewReader(addr)
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		msg := string(bytes.TrimSpace(out))
+		if msg == errHelperNotFound {
+			return credential{}, nil
+		}
+		if exitErr := (*exec.ExitError)(nil); errors.As(err, &exitErr) && msg != "" {
+			err = errors.New(msg)
+		}
+		return credential{}, fmt.Errorf("%s get %s: %w", name, addr, err)
+	}
+	var resp struct {
+		Username string `json:"Username"`
+		Secret   string `json:"Secret"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return credential{}, fmt.Errorf("%s get %s: %w", name, addr, err)
+	}
+	if resp.Username == helperTokenUser {
+		return credential{RefreshToken: resp.Secret}, nil
+	}
+	return credential{Username: resp.Username, Password: resp.Secret}, nil
+}

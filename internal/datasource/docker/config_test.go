@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
@@ -22,15 +20,15 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	f.reg.tag("img", "5.0", f.reg.index(t, att))
 	// A Helm chart: no image config, so the manifest annotations answer without a config GET.
 	chartCfg := f.reg.put(t, "application/vnd.cncf.helm.config.v1+json", map[string]string{"name": "img", "version": "6.0"})
-	f.reg.tag("img", "6.0", f.reg.put(t, ocispec.MediaTypeImageManifest, ocispec.Manifest{
-		SchemaVersion: 2, MediaType: ocispec.MediaTypeImageManifest, Config: chartCfg, Layers: []ocispec.Descriptor{},
-		Annotations: map[string]string{ocispec.AnnotationCreated: imgTime.Add(2 * time.Hour).Format(time.RFC3339), sourceLabel: "https://github.com/o/chart"},
+	f.reg.tag("img", "6.0", f.reg.put(t, mediaTypeOCIManifest, manifest{
+		SchemaVersion: 2, MediaType: mediaTypeOCIManifest, Config: chartCfg, Layers: []descriptor{},
+		Annotations: map[string]string{annotationCreated: imgTime.Add(2 * time.Hour).Format(time.RFC3339), sourceLabel: "https://github.com/o/chart"},
 	}))
 	// An image config without created falls back to the manifest annotation.
-	noCreated := f.reg.put(t, ocispec.MediaTypeImageConfig, ocispec.Image{OS: "linux", Architecture: "amd64", RootFS: ocispec.RootFS{Type: "layers"}})
-	f.reg.tag("img", "7.0", f.reg.put(t, ocispec.MediaTypeImageManifest, ocispec.Manifest{
-		SchemaVersion: 2, MediaType: ocispec.MediaTypeImageManifest, Config: noCreated, Layers: []ocispec.Descriptor{},
-		Annotations: map[string]string{ocispec.AnnotationCreated: imgTime.Add(3 * time.Hour).Format(time.RFC3339)},
+	noCreated := f.reg.put(t, mediaTypeOCIConfig, imageConfig{})
+	f.reg.tag("img", "7.0", f.reg.put(t, mediaTypeOCIManifest, manifest{
+		SchemaVersion: 2, MediaType: mediaTypeOCIManifest, Config: noCreated, Layers: []descriptor{},
+		Annotations: map[string]string{annotationCreated: imgTime.Add(3 * time.Hour).Format(time.RFC3339)},
 	}))
 
 	s := newSource(f.srv.Client(), make(chan struct{}, 1), anon)
@@ -68,7 +66,7 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	if n := f.count("GET /v2/img/manifests/3.0"); n != 1 {
 		t.Errorf("manifest GETs for 3.0 = %d, want 1", n)
 	}
-	if n := f.count("GET /v2/img/blobs/" + chartCfg.Digest.String()); n != 0 {
+	if n := f.count("GET /v2/img/blobs/" + chartCfg.Digest); n != 0 {
 		t.Errorf("chart config GETs = %d, want 0", n)
 	}
 	if _, err := timer.ReleaseTime(t.Context(), dep.Dep{Name: "Bad Name"}, "1"); err == nil {
@@ -106,19 +104,19 @@ func TestConfigPullLimited(t *testing.T) {
 			t.Errorf("%s: = %v, %v, %q, %v; want %v, %q", tt.version, got, err, src, srcErr, tt.want, tt.source)
 		}
 	}
-	if dg, err := s.Digest(t.Context(), d, "18"); err != nil || dg != idx.Digest.String() {
+	if dg, err := s.Digest(t.Context(), d, "18"); err != nil || dg != idx.Digest {
 		t.Errorf("Digest(18) = %q, %v", dg, err)
 	}
 	for key, want := range map[string]int{
-		"HEAD /v2/img/manifests/18":                       1, // shared by config and Digest
-		"HEAD /v2/img/manifests/18.6":                     1,
-		"HEAD /v2/img/manifests/17":                       1,
-		"GET /v2/img/manifests/18":                        0,
-		"GET /v2/img/manifests/18.6":                      0,
-		"GET /v2/img/manifests/17":                        0,
-		"GET /v2/img/manifests/" + idx.Digest.String():    1, // 18 and 18.6 share one pull
-		"GET /v2/img/manifests/" + amd.Digest.String():    1,
-		"GET /v2/img/manifests/" + single.Digest.String(): 1,
+		"HEAD /v2/img/manifests/18":              1, // shared by config and Digest
+		"HEAD /v2/img/manifests/18.6":            1,
+		"HEAD /v2/img/manifests/17":              1,
+		"GET /v2/img/manifests/18":               0,
+		"GET /v2/img/manifests/18.6":             0,
+		"GET /v2/img/manifests/17":               0,
+		"GET /v2/img/manifests/" + idx.Digest:    1, // 18 and 18.6 share one pull
+		"GET /v2/img/manifests/" + amd.Digest:    1,
+		"GET /v2/img/manifests/" + single.Digest: 1,
 	} {
 		if n := f.count(key); n != want {
 			t.Errorf("%s: %d requests, want %d", key, n, want)

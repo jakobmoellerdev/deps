@@ -17,9 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oras-project/oras-go/v3/registry/remote/credentials"
-	"github.com/oras-project/oras-go/v3/registry/remote/properties"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
@@ -78,8 +75,8 @@ func newFixture(t *testing.T) *fixture {
 		withPlatform(f.reg.image(t, created.Add(time.Hour), nil), "linux", "amd64"),
 		withPlatform(f.reg.image(t, created.Add(2*time.Hour), nil), "linux", "arm64"))
 	f.reg.tag("img", "2.0", idx)
-	f.imageDigest = img.Digest.String()
-	f.indexDigest = idx.Digest.String()
+	f.imageDigest = img.Digest
+	f.indexDigest = idx.Digest
 	return f
 }
 
@@ -103,8 +100,18 @@ func (s stripWriter) WriteHeader(code int) {
 }
 
 // anon resolves every registry to anonymous access.
-func anon(context.Context, properties.Resource) (credentials.Credential, error) {
-	return credentials.EmptyCredential, nil
+func anon(context.Context, string) (credential, error) {
+	return credential{}, nil
+}
+
+// static returns cred for registry and anonymous access for others.
+func static(registry string, cred credential) credentialFunc {
+	return func(_ context.Context, r string) (credential, error) {
+		if r == registry {
+			return cred, nil
+		}
+		return credential{}, nil
+	}
 }
 
 func TestReleasesAndDigest(t *testing.T) {
@@ -251,7 +258,7 @@ func TestLimitsPulls(t *testing.T) {
 	}
 }
 
-// TestLargeTagList checks a single tags/list page above oras-go's 4 MiB default is read whole,
+// TestLargeTagList checks a single tags/list page above 4 MiB is read whole,
 // as gcr.io returns one ~10 MB page for large repositories.
 func TestLargeTagList(t *testing.T) {
 	const n = 40000 // ~130 bytes per tag: a ~5 MB page from few allocations
@@ -274,7 +281,7 @@ func TestLargeTagList(t *testing.T) {
 func TestCredentials(t *testing.T) {
 	f := newFixture(t)
 	f.set(func() { f.user, f.pass = "u", "p" })
-	cred := credentials.StaticCredentialFunc(f.host, credentials.Credential{Username: "u", Password: "p"})
+	cred := static(f.host, credential{Username: "u", Password: "p"})
 	s := newSource(f.srv.Client(), nil, cred)
 	rels, err := s.Releases(t.Context(), dep.Dep{Name: f.host + "/img"}, "")
 	if err != nil || len(rels) != 3 {
@@ -391,12 +398,9 @@ func TestRepository(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		repo, err := s.repository(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if repo.TagListPageSize != want.pageSize || repo.TagListMaxPages != want.maxPages || repo.Registry.PlainHTTP != want.plain {
-			t.Errorf("%s: page size %d, max pages %d, plain HTTP %v; want %d, %d, %v", ref, repo.TagListPageSize, repo.TagListMaxPages, repo.Registry.PlainHTTP, want.pageSize, want.maxPages, want.plain)
+		repo := s.repository(name)
+		if repo.pageSize != want.pageSize || repo.maxPages != want.maxPages || repo.plainHTTP != want.plain {
+			t.Errorf("%s: page size %d, max pages %d, plain HTTP %v; want %d, %d, %v", ref, repo.pageSize, repo.maxPages, repo.plainHTTP, want.pageSize, want.maxPages, want.plain)
 		}
 	}
 }

@@ -14,9 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -229,7 +226,7 @@ func (r *ociRegistry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		sum := sha256.Sum256(b)
-		w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
+		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
 		w.Header().Set("Docker-Content-Digest", "sha256:"+hex.EncodeToString(sum[:]))
 		w.Header().Set("Content-Length", fmt.Sprint(len(b)))
 		_, _ = w.Write(b)
@@ -241,11 +238,11 @@ func (r *ociRegistry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func TestOCIRepository(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	created := time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
-	manifest, err := json.Marshal(ocispec.Manifest{
-		SchemaVersion: 2, MediaType: ocispec.MediaTypeImageManifest,
-		Config:      ocispec.Descriptor{MediaType: "application/vnd.cncf.helm.config.v1+json", Digest: digest.Digest("sha256:" + strings.Repeat("0", 64)), Size: 2},
-		Layers:      []ocispec.Descriptor{},
-		Annotations: map[string]string{ocispec.AnnotationCreated: created.Format(time.RFC3339)},
+	manifest, err := json.Marshal(map[string]any{
+		"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+		"config":      map[string]any{"mediaType": "application/vnd.cncf.helm.config.v1+json", "digest": "sha256:" + strings.Repeat("0", 64), "size": 2},
+		"layers":      []any{},
+		"annotations": map[string]string{"org.opencontainers.image.created": created.Format(time.RFC3339)},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -4,17 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/oras-project/oras-go/v3/errdef"
-	"github.com/oras-project/oras-go/v3/registry/remote"
-	"github.com/oras-project/oras-go/v3/registry/remote/errcode"
 )
 
 // tagMeta is what a tags/list `manifest` map says about a tag: the digest of the manifest it
@@ -31,21 +26,14 @@ type tagMeta struct {
 // meta, which is nil when no page had one. Pages are decoded as they stream in, never buffered
 // whole, and the map's untagged entries (most of a large gcr.io repository) are skipped.
 //
-// This replaces oras-go's Repository.Tags, which decodes only `tags`. Like it, the request
-// carries the repository's pull scope (with the registry's, see pullContext), n is
-// repo.TagListPageSize, a page is limited to maxMetadataBytes, next links must stay on the
-// origin of the page that sent them, and a next page beyond repo.TagListMaxPages (0 = no
-// limit) fails with errdef.ErrTooManyPages; the tags and meta read until then are kept.
-func (s *Source) listTags(ctx context.Context, repo *remote.Repository, fn func(tag string)) (map[string]tagMeta, error) {
-	ref := repo.Reference()
-	ctx = s.pullContext(ctx, repo)
-	scheme := "https"
-	if repo.Registry.PlainHTTP {
-		scheme = "http"
-	}
-	next := scheme + "://" + ref.Host() + "/v2/" + ref.Repository + "/tags/list"
-	if repo.TagListPageSize > 0 {
-		next += "?n=" + strconv.Itoa(repo.TagListPageSize)
+// Requests carry the repository's pull scope, n is repo.pageSize, a page is limited to
+// maxMetadataBytes, next links must stay on the origin of the page that sent them, and a next
+// page beyond repo.maxPages (0 = no limit) fails with errTooManyPages; the tags and meta read
+// until then are kept.
+func (s *Source) listTags(ctx context.Context, repo *repository, fn func(tag string)) (map[string]tagMeta, error) {
+	next := repo.url("tags/list")
+	if repo.pageSize > 0 {
+		next += "?n=" + strconv.Itoa(repo.pageSize)
 	}
 	var meta map[string]tagMeta
 	listed := func(tag string, m tagMeta) {
@@ -55,11 +43,11 @@ func (s *Source) listTags(ctx context.Context, repo *remote.Repository, fn func(
 		meta[tag] = m
 	}
 	for page := 0; next != ""; page++ {
-		if limit := repo.TagListMaxPages; limit > 0 && page >= limit {
-			return meta, fmt.Errorf("tag listing exceeded %d pages: %w", limit, errdef.ErrTooManyPages)
+		if limit := repo.maxPages; limit > 0 && page >= limit {
+			return meta, fmt.Errorf("tag listing exceeded %d pages: %w", limit, errTooManyPages)
 		}
 		var err error
-		if next, err = s.tagPage(ctx, next, fn, listed); err != nil {
+		if next, err = s.tagPage(ctx, repo, next, fn, listed); err != nil {
 			return nil, err
 		}
 	}
@@ -68,12 +56,12 @@ func (s *Source) listTags(ctx context.Context, repo *remote.Repository, fn func(
 
 // tagPage GETs the tags/list page at url, decodes it into fn and listed, and returns the URL of
 // the next page, "" on the last one.
-func (s *Source) tagPage(ctx context.Context, url string, fn func(string), listed func(string, tagMeta)) (string, error) {
+func (s *Source) tagPage(ctx context.Context, repo *repository, url string, fn func(string), listed func(string, tagMeta)) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return "", err
 	}
-	resp, err := s.client.Do(req)
+	resp, err := s.client.do(req, repo)
 	if err != nil {
 		return "", err
 	}
@@ -257,8 +245,8 @@ func readDelim(dec *jsontext.Decoder, d jsontext.Kind) error {
 }
 
 // nextLink returns the next page URL from the Link header of resp ("" without one), resolved
-// against the page's URL. As in oras-go, it must have the page's origin, so a registry cannot
-// point pagination at another host.
+// against the page's URL. It must have the page's origin, so a registry cannot point pagination
+// at another host.
 func nextLink(resp *http.Response) (string, error) {
 	link := resp.Header.Get("Link")
 	if link == "" {
@@ -276,20 +264,4 @@ func nextLink(resp *http.Response) (string, error) {
 		return "", fmt.Errorf("invalid next link %q: not the same origin as %q", link, base)
 	}
 	return u.String(), nil
-}
-
-// maxErrorBytes bounds the error body read from a failed tags/list request.
-const maxErrorBytes = 8 << 10
-
-// responseError is the error for a non-200 response, as oras-go reports it: method, URL,
-// status and the `errors` of the body.
-func responseError(resp *http.Response) error {
-	e := &errcode.ErrorResponse{Method: resp.Request.Method, URL: resp.Request.URL, StatusCode: resp.StatusCode}
-	var body struct {
-		Errors errcode.Errors `json:"errors"`
-	}
-	if err := json.UnmarshalRead(io.LimitReader(resp.Body, maxErrorBytes), &body); err == nil {
-		e.Errors = body.Errors
-	}
-	return e
 }

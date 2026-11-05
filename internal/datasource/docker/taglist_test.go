@@ -12,9 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oras-project/oras-go/v3/errdef"
-	"github.com/oras-project/oras-go/v3/registry/remote/errcode"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
@@ -175,7 +172,7 @@ func TestTagTime(t *testing.T) {
 	}
 }
 
-// TestTagListErrors checks error responses keep oras-go's errcode.ErrorResponse and that next
+// TestTagListErrors checks error responses keep the registry's status and error codes and that next
 // links to another origin are refused.
 func TestTagListErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +193,7 @@ func TestTagListErrors(t *testing.T) {
 	s := newSource(srv.Client(), nil, anon)
 
 	_, err := s.Releases(t.Context(), dep.Dep{Name: host + "/missing"}, "")
-	var resp *errcode.ErrorResponse
+	var resp *errorResponse
 	if !errors.As(err, &resp) || resp.StatusCode != http.StatusNotFound || len(resp.Errors) != 1 || resp.Errors[0].Code != "NAME_UNKNOWN" {
 		t.Errorf("missing repo err = %v", err)
 	}
@@ -208,8 +205,8 @@ func TestTagListErrors(t *testing.T) {
 	}
 }
 
-// TestTagListMaxPages checks a next page beyond repo.TagListMaxPages fails with
-// errdef.ErrTooManyPages as with oras-go's Repository.Tags, keeping what was read.
+// TestTagListMaxPages checks a next page beyond repo.maxPages fails with errTooManyPages,
+// keeping what was read.
 func TestTagListMaxPages(t *testing.T) {
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -219,14 +216,11 @@ func TestTagListMaxPages(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	s := newSource(srv.Client(), nil, anon)
-	repo, err := s.repository(strings.TrimPrefix(srv.URL, "http://") + "/img")
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo.TagListMaxPages = 2
+	repo := s.repository(strings.TrimPrefix(srv.URL, "http://") + "/img")
+	repo.maxPages = 2
 	var tags []string
 	meta, err := s.listTags(t.Context(), repo, func(tag string) { tags = append(tags, tag) })
-	if !errors.Is(err, errdef.ErrTooManyPages) || strings.Join(tags, ",") != "1,11" || len(meta) != 2 {
+	if !errors.Is(err, errTooManyPages) || strings.Join(tags, ",") != "1,11" || len(meta) != 2 {
 		t.Errorf("tags = %v, meta = %v, err = %v", tags, meta, err)
 	}
 }

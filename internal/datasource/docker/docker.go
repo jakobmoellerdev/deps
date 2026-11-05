@@ -4,7 +4,7 @@
 // digests from a HEAD of the tag's manifest; for multi-platform images that is the index digest,
 // which is what a pinned `image:tag@sha256:…` reference needs. gcr.io and Artifact Registry list
 // each tag's digest and times along with it, which then answer Digest and ReleaseTime without
-// further requests. Credentials come from the Docker config and credential helpers. One auth
+// further requests. Credentials come from the Docker config and credential helpers. One registry
 // client with a shared token cache serves every repository, so each token exchange happens once
 // per run and scope; on Docker Hub and ghcr.io the first request to a repository is answered
 // with the registry's last challenge instead of a 401 round trip (see challenger).
@@ -24,15 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/oras-project/oras-go/v3/content"
-	"github.com/oras-project/oras-go/v3/errdef"
-	"github.com/oras-project/oras-go/v3/registry/remote"
-	"github.com/oras-project/oras-go/v3/registry/remote/auth"
-	"github.com/oras-project/oras-go/v3/registry/remote/credentials"
-	"github.com/oras-project/oras-go/v3/registry/remote/errcode"
-	"github.com/oras-project/oras-go/v3/registry/remote/properties"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
@@ -42,7 +33,7 @@ import (
 // Source resolves image tags and digests. Every lookup runs once per run per key; concurrent
 // callers share the result.
 type Source struct {
-	client *auth.Client
+	client *client
 	sem    chan struct{}
 	// pullLimited is the registry that counts manifest GETs, but not HEADs, against a pull
 	// limit per IP address or account: Docker Hub.
@@ -50,9 +41,6 @@ type Source struct {
 	// challenger answers the first request to each repository of Docker Hub and ghcr.io with
 	// the registry's bearer challenge.
 	challenger *challenger
-	// scopes are the bearer scopes per registry that its challenges ask for besides the
-	// repository's pull scope (registryScopes).
-	scopes map[string][]auth.Scope
 
 	mu      sync.Mutex
 	tags    map[string]*tagsEntry   // canonical repository
@@ -89,19 +77,6 @@ const sourceLabel = "org.opencontainers.image.source"
 // concurrent registry operations and is shared with other datasources (nil = unbounded).
 func New(client *http.Client, sem chan struct{}) datasource.Datasource {
 	return newSource(client, sem, dockerCredentials())
-}
-
-// dockerCredentials reads credentials from the Docker config ($DOCKER_CONFIG or ~/.docker) and
-// its credential helpers, as the Docker CLI does: a platform credential store is used only when
-// the config names it. An unreadable config fails every authenticated lookup with its error.
-func dockerCredentials() credentials.CredentialFunc {
-	store, err := credentials.NewStoreFromDocker(credentials.StoreOptions{IgnoreDefaultNativeStore: true})
-	if err != nil {
-		return func(context.Context, properties.Resource) (credentials.Credential, error) {
-			return credentials.EmptyCredential, fmt.Errorf("docker config: %w", err)
-		}
-	}
-	return remote.NewCredentialFunc(store)
 }
 
 // hubPageSize is the tags/list page size for Docker Hub, which pages at 1000 by default but
@@ -149,78 +124,56 @@ func tagPageCap(registry string) int {
 // hubRegistry is the registry of normalized Docker Hub references.
 const hubRegistry = "docker.io"
 
-// maxMetadataBytes bounds a tags/list page or manifest. oras-go's 4 MiB default is too small for
-// gcr.io, which ignores n and returns every tag with a digest map in one page
+// maxMetadataBytes bounds a tags/list page, manifest or image config. It is well above 4 MiB
+// for gcr.io, which ignores n and returns every tag with a digest map in one page
 // (gcr.io/distroless/static: 29769 tags, 9.9 MB). Pages are stream-decoded, so the bound is on
 // the bytes read, not on memory held.
 const maxMetadataBytes = 64 << 20
 
-// registryScopes are the bearer scopes a registry's challenges ask for besides the repository
-// pull scope that deps hints: public.ecr.aws challenges with `aws` alone. oras-go caches a token
-// under the challenged scopes merged with the hinted ones but looks it up under the hinted ones,
-// so without the hint each request is first sent without its token and answered with a 401:
-// every tags/list page, HEAD and manifest or blob GET after the first
-// (public.ecr.aws/lambda/python: 16 pages, 15 extra round trips).
-var registryScopes = map[string][]auth.Scope{
-	"public.ecr.aws": {{ResourceType: "aws"}},
-}
+// oauth2ClientID is the client_id of OAuth2 token requests.
+const oauth2ClientID = "deps"
 
-func newSource(client *http.Client, sem chan struct{}, cred credentials.CredentialFunc) *Source {
+func newSource(client *http.Client, sem chan struct{}, cred credentialFunc) *Source {
 	tr := http.DefaultTransport
 	if client != nil && client.Transport != nil {
 		tr = client.Transport
 	}
 	// The client has no retry layer of its own: the shared httpx transport already retries, and
-	// nesting both would multiply attempts.
+	// nesting both would multiply attempts. Bearer tokens come from the distribution-spec token
+	// flow (GET with basic credentials), as with the Docker CLI, not from an OAuth2 password
+	// grant, which costs registries without an OAuth2 endpoint a rejected request per realm.
 	ch := newChallenger(linkFixer{tr})
-	c := &auth.Client{
-		Client:         &http.Client{Transport: ch},
-		CredentialFunc: cred,
-		Cache:          auth.NewCache(),
-	}
-	c.SetUserAgent(httpx.UserAgent())
-	// Bearer tokens come from the distribution-spec token flow (GET with basic credentials), as
-	// with the Docker CLI, instead of oras-go's default OAuth2 password grant with fallback, which
-	// costs registries without an OAuth2 endpoint a rejected request per realm.
-	c.TokenFetcher = auth.NewCompositeTokenFetcher(c.Client, c.Header, c.ClientID, true)
+	c := newClient(&http.Client{Transport: ch}, http.Header{"User-Agent": {httpx.UserAgent()}}, cred, oauth2ClientID)
 	return &Source{
 		client:      c,
 		sem:         sem,
 		pullLimited: hubRegistry,
 		challenger:  ch,
-		scopes:      registryScopes,
 		tags:        map[string]*tagsEntry{},
 		digests:     map[string]*digestEntry{},
 		configs:     map[string]*configEntry{},
 	}
 }
 
-// repository returns the registry client for the canonical repository name (as returned by
+// repository returns the registry repository of the canonical repository name (as returned by
 // repoName). Tags are listed with hubPageSize on Docker Hub and pageSize elsewhere, up to
 // tagPageCap pages; registries on loopback, private addresses and localhost are reached over
 // plain HTTP.
-func (s *Source) repository(name string) (*remote.Repository, error) {
-	r, err := remote.NewRepository(name)
-	if err != nil {
-		return nil, err
+func (s *Source) repository(name string) *repository {
+	registry, path, _ := strings.Cut(name, "/")
+	r := &repository{
+		registry:  registry,
+		path:      path,
+		host:      registry,
+		plainHTTP: plainHTTP(registry),
+		pageSize:  pageSize,
+		maxPages:  tagPageCap(registry),
 	}
-	r.Registry.Client = s.client
-	r.Registry.PlainHTTP = plainHTTP(r.Registry.Reference.Registry)
-	r.Registry.MaxMetadataBytes = maxMetadataBytes
-	r.TagListPageSize = pageSize
-	if r.Registry.Reference.Registry == hubRegistry {
-		r.TagListPageSize = hubPageSize
+	if registry == hubRegistry {
+		r.host = "registry-1.docker.io"
+		r.pageSize = hubPageSize
 	}
-	r.TagListMaxPages = tagPageCap(r.Registry.Reference.Registry)
-	return r, nil
-}
-
-// pullContext returns ctx with the bearer scope hints of a pull from repo: the repository's pull
-// scope and its registry's registryScopes.
-func (s *Source) pullContext(ctx context.Context, repo *remote.Repository) context.Context {
-	ref := repo.Reference()
-	ctx = auth.AppendRepositoryScope(ctx, ref, auth.ActionPull)
-	return auth.AppendScopesForResource(ctx, ref.Resource(), s.scopes[ref.Registry]...)
+	return r
 }
 
 // plainHTTP reports whether registry (host[:port]) is local: localhost, a loopback or a private
@@ -382,12 +335,8 @@ func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, 
 		return time.Time{}, "", err
 	}
 	defer release()
-	repo, err := s.repository(name)
-	if err != nil {
-		return time.Time{}, "", err
-	}
-	ctx = s.pullContext(ctx, repo)
-	desc, b, err := fetchManifest(ctx, repo, ref)
+	repo := s.repository(name)
+	desc, b, err := s.fetchManifest(ctx, repo, ref)
 	if err != nil {
 		return time.Time{}, "", err
 	}
@@ -395,23 +344,23 @@ func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, 
 		if desc, err = firstImage(b); err != nil {
 			return time.Time{}, "", err
 		}
-		if b, err = content.FetchAll(ctx, repo, desc); err != nil {
+		if b, err = s.fetch(ctx, repo, desc); err != nil {
 			return time.Time{}, "", err
 		}
 	}
-	var m ocispec.Manifest
+	var m manifest
 	if err := json.Unmarshal(b, &m); err != nil {
 		return time.Time{}, "", fmt.Errorf("manifest %s: %w", desc.Digest, err)
 	}
-	created, _ := time.Parse(time.RFC3339, m.Annotations[ocispec.AnnotationCreated])
+	created, _ := time.Parse(time.RFC3339, m.Annotations[annotationCreated])
 	source := m.Annotations[sourceLabel]
-	if m.Config.MediaType != ocispec.MediaTypeImageConfig && m.Config.MediaType != mediaTypeDockerConfig {
+	if m.Config.MediaType != mediaTypeOCIConfig && m.Config.MediaType != mediaTypeDockerConfig {
 		return created, source, nil
 	}
-	if b, err = content.FetchAll(ctx, repo, m.Config); err != nil {
+	if b, err = s.fetch(ctx, repo, m.Config); err != nil {
 		return time.Time{}, "", err
 	}
-	var img ocispec.Image
+	var img imageConfig
 	if err := json.Unmarshal(b, &img); err != nil {
 		return time.Time{}, "", fmt.Errorf("config %s: %w", m.Config.Digest, err)
 	}
@@ -421,43 +370,25 @@ func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, 
 	return created, cmp.Or(img.Config.Labels[sourceLabel], source), nil
 }
 
-// fetchManifest GETs the manifest of ref (tag or digest); the descriptor's digest is the
-// registry's, or computed from the body when the registry sends none.
-func fetchManifest(ctx context.Context, repo *remote.Repository, ref string) (ocispec.Descriptor, []byte, error) {
-	desc, rc, err := repo.FetchReference(ctx, ref)
-	if err != nil {
-		return ocispec.Descriptor{}, nil, err
-	}
-	defer rc.Close()
-	b, err := content.ReadAll(rc, desc)
-	return desc, b, err
-}
-
 // isIndex reports whether mediaType is a multi-platform index (OCI or Docker manifest list).
 func isIndex(mediaType string) bool {
-	return mediaType == ocispec.MediaTypeImageIndex || mediaType == mediaTypeDockerManifestList
+	return mediaType == mediaTypeOCIIndex || mediaType == mediaTypeDockerManifestList
 }
-
-const (
-	mediaTypeDockerManifestList = "application/vnd.docker.distribution.manifest.list.v2+json"
-	mediaTypeDockerManifest     = "application/vnd.docker.distribution.manifest.v2+json"
-	mediaTypeDockerConfig       = "application/vnd.docker.container.image.v1+json"
-)
 
 // firstImage returns the first platform image manifest of index b, skipping attestation
 // manifests (platform unknown/unknown).
-func firstImage(b []byte) (ocispec.Descriptor, error) {
-	var idx ocispec.Index
+func firstImage(b []byte) (descriptor, error) {
+	var idx index
 	if err := json.Unmarshal(b, &idx); err != nil {
-		return ocispec.Descriptor{}, fmt.Errorf("index: %w", err)
+		return descriptor{}, fmt.Errorf("index: %w", err)
 	}
 	for _, m := range idx.Manifests {
-		image := m.MediaType == ocispec.MediaTypeImageManifest || m.MediaType == mediaTypeDockerManifest
+		image := m.MediaType == mediaTypeOCIManifest || m.MediaType == mediaTypeDockerManifest
 		if image && (m.Platform == nil || m.Platform.OS != "unknown") {
 			return m, nil
 		}
 	}
-	return ocispec.Descriptor{}, errors.New("index has no platform image")
+	return descriptor{}, errors.New("index has no platform image")
 }
 
 func (s *Source) list(ctx context.Context, name string) (rels []datasource.Release, meta map[string]tagMeta, err error) {
@@ -470,15 +401,12 @@ func (s *Source) list(ctx context.Context, name string) (rels []datasource.Relea
 		return nil, nil, err
 	}
 	defer release()
-	repo, err := s.repository(name)
-	if err != nil {
-		return nil, nil, fmt.Errorf("list tags %s: %w", name, err)
-	}
+	repo := s.repository(name)
 	meta, err = s.listTags(ctx, repo, func(t string) {
 		rels = append(rels, datasource.Release{Version: t})
 	})
-	if errors.Is(err, errdef.ErrTooManyPages) {
-		slog.WarnContext(ctx, "image tag listing truncated", "repo", name, "pages", repo.TagListMaxPages, "tags", len(rels))
+	if errors.Is(err, errTooManyPages) {
+		slog.WarnContext(ctx, "image tag listing truncated", "repo", name, "pages", repo.maxPages, "tags", len(rels))
 		err = nil
 	}
 	if err != nil {
@@ -503,29 +431,24 @@ func (s *Source) head(ctx context.Context, name, tag string) (digest string, err
 		return "", err
 	}
 	defer release()
-	repo, err := s.repository(name)
-	if err != nil {
-		return "", fmt.Errorf("digest %s:%s: %w", name, tag, err)
-	}
-	ctx = s.pullContext(ctx, repo)
-	desc, err := repo.Resolve(ctx, tag)
+	repo := s.repository(name)
+	digest, err = s.resolve(ctx, repo, tag)
 	if err == nil {
-		return desc.Digest.String(), nil
+		return digest, nil
 	}
-	if errors.Is(err, errdef.ErrNotFound) {
+	if errors.Is(err, errNotFound) {
 		return "", fmt.Errorf("tag %s %w", tag, datasource.ErrVersionNotFound)
 	}
-	if httpErr := (*errcode.ErrorResponse)(nil); errors.As(err, &httpErr) || errors.Is(err, auth.ErrBasicCredentialNotFound) ||
+	if httpErr := (*errorResponse)(nil); errors.As(err, &httpErr) || errors.Is(err, errBasicCredentialNotFound) ||
 		errors.Is(err, httpx.ErrRateLimited) || ctx.Err() != nil {
 		return "", s.pullLimitHint(name, fmt.Errorf("digest %s:%s: %w", name, tag, err))
 	}
 	method = http.MethodGet
-	desc, rc, err := repo.FetchReference(ctx, tag)
+	desc, _, err := s.fetchManifest(ctx, repo, tag)
 	if err != nil {
 		return "", fmt.Errorf("digest %s:%s: %w", name, tag, err)
 	}
-	rc.Close()
-	return desc.Digest.String(), nil
+	return desc.Digest, nil
 }
 
 // repoName returns the canonical repository of d: d.Source, or d.Name normalized
