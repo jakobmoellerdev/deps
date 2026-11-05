@@ -224,7 +224,14 @@ func (s impl[T]) rank(cur string, cands []string, accept func(string, dep.Update
 		}
 		r.kept = append(r.kept, rankedVersion[T]{v: n, i: i})
 	}
-	slices.SortStableFunc(r.kept, func(a, b rankedVersion[T]) int { return s.cmp(b.v, a.v) })
+	// Ties keep cands order, as a stable sort would; pdqsort moves far fewer of the
+	// (often large) parsed versions than SortStableFunc's insertion sort and merges.
+	slices.SortFunc(r.kept, func(a, b rankedVersion[T]) int {
+		if c := s.cmp(b.v, a.v); c != 0 {
+			return c
+		}
+		return a.i - b.i // indices are small and distinct
+	})
 	return r
 }
 
