@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -328,17 +327,4 @@ func isExternal(raw string) bool {
 	}
 	h := u.Hostname()
 	return h != "localhost" && h != "127.0.0.1"
-}
-
-// rootOf returns the scanned root: dir without the directory part of the slash path file.
-func rootOf(file, dir string) string {
-	rel := path.Dir(file)
-	if rel == "." {
-		return dir
-	}
-	suffix := string(filepath.Separator) + filepath.FromSlash(rel)
-	if strings.HasSuffix(dir, suffix) {
-		return dir[:len(dir)-len(suffix)]
-	}
-	return dir
 }

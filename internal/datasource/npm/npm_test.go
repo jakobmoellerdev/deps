@@ -254,9 +254,6 @@ func TestReleasesTransportErrors(t *testing.T) {
 		}
 	})
 	t.Run("default registry", func(t *testing.T) {
-		if got := rootOf("a/b/package.json", "/x/y"); got != "/x/y" {
-			t.Errorf("rootOf outside = %q", got)
-		}
 		rc := &npmrc{}
 		if rc.registryFor("@s/x") != "" || rc.tokenFor("no-scheme") != "" {
 			t.Error("empty npmrc resolved something")

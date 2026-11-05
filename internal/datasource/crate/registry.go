@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -130,7 +129,7 @@ func (s *Source) loadConfig(dir, root string) (*cargoConfig, error) {
 // CARGO_REGISTRIES_<NAME>_INDEX or [registries.<name>] index). A name without an index is a
 // *datasource.SkipError, as Cargo cannot resolve it either.
 func (s *Source) registryOf(d dep.Dep, dir string) (*registry, error) {
-	cfg, err := s.config(dir, rootOf(d.File, dir))
+	cfg, err := s.config(dir, datasource.RootOf(d.File, dir))
 	if err != nil {
 		return nil, err
 	}
@@ -213,19 +212,6 @@ type configEntry struct {
 	once sync.Once
 	cfg  *cargoConfig
 	err  error
-}
-
-// rootOf derives the scanned root from the manifest's absolute directory and slash path.
-func rootOf(file, dir string) string {
-	rel := path.Dir(file)
-	if rel == "." {
-		return dir
-	}
-	suffix := string(filepath.Separator) + filepath.FromSlash(rel)
-	if strings.HasSuffix(dir, suffix) {
-		return dir[:len(dir)-len(suffix)]
-	}
-	return dir
 }
 
 // open returns the index file at p (IndexPath, or "config.json").

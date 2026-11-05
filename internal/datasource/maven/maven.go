@@ -149,7 +149,7 @@ func (s *Source) repositories(d dep.Dep, dir string) ([]repository, error) {
 	repos := s.parseSource(d.Source)
 	switch d.Manager {
 	case "maven", "maven-wrapper":
-		st, err := s.settingsFor(dir, rootOf(d.File, dir))
+		st, err := s.settingsFor(dir, datasource.RootOf(d.File, dir))
 		if err != nil {
 			return nil, err
 		}

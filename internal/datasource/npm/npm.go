@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -105,7 +104,7 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) dat
 // manifest's own workspace (linked locally whatever its range) has no releases. The slice is
 // shared between callers and must not be modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
-	root := rootOf(d.File, dir)
+	root := datasource.RootOf(d.File, dir)
 	if d.DepType != npm.DepTypePackageManager {
 		names, err := s.workspacePackages(dir, root)
 		if err != nil {
@@ -251,19 +250,6 @@ func (s *Source) wsEntry(m map[string]*wsEntry, key string) *wsEntry {
 		m[key] = e
 	}
 	return e
-}
-
-// rootOf returns the scanned root: dir without the directory part of the slash path file.
-func rootOf(file, dir string) string {
-	rel := path.Dir(file)
-	if rel == "." {
-		return dir
-	}
-	suffix := string(filepath.Separator) + filepath.FromSlash(rel)
-	if strings.HasSuffix(dir, suffix) {
-		return dir[:len(dir)-len(suffix)]
-	}
-	return dir
 }
 
 // config returns the nearest .npmrc of dir, looking no higher than root; an empty config when
