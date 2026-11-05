@@ -35,6 +35,7 @@ type Policy struct {
 	Allow         *Allowed
 	Updates       map[dep.UpdateType]bool
 	Group         string         // "" = own PR
+	SecurityGroup string         // group of the dep's security updates, "" = own PR each
 	Schedule      *schedule.Set  // nil = always
 	Rules         []int          // indices of the matching user rules, in order
 	Monorepo      string         // built-in monorepo that set the initial Group, "" = none
@@ -238,6 +239,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		}
 		if r.Group != "" {
 			p.Group = r.Group
+		}
+		if r.SecurityGroup != "" {
+			p.SecurityGroup = r.SecurityGroup
 		}
 		if r.Schedule != nil {
 			p.Schedule = r.schedule

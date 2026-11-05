@@ -692,6 +692,60 @@ func TestRunBranchPrefixAndUnlimitedPRs(t *testing.T) {
 	}
 }
 
+// Security updates of one securityGroup share a PR listing every advisory; a non-security
+// update of the policy group with the same name gets its own PR.
+func TestRunSecurityGroup(t *testing.T) {
+	root := t.TempDir()
+	src := "steps:\n  - uses: a/x@v1\n  - uses: b/y@v1\n  - uses: c/z@v1\n"
+	if err := os.WriteFile(filepath.Join(root, "wf.yml"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(name string, line, start int, adv ...dep.Advisory) dep.Update {
+		u := dep.Update{
+			Dep:  dep.Dep{Manager: "github-actions", File: "wf.yml", Line: line, Name: name, Version: "v1", RefSpan: dep.Span{Start: start, End: start + 2}},
+			Type: dep.Major, NewVersion: "v2", Advisories: adv,
+		}
+		if len(adv) == 0 {
+			u.Group = "actions"
+		} else {
+			u.SecurityGroup = "actions"
+		}
+		return u
+	}
+	res := &engine.Result{Updates: []dep.Update{
+		mk("a/x", 2, 21, dep.Advisory{ID: "GHSA-a", Summary: "rce"}),
+		mk("b/y", 3, 38, dep.Advisory{ID: "GHSA-b", Summary: "dos"}),
+		mk("c/z", 4, 55),
+	}}
+	pc := &fakePC{}
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, root, res, nil, pc, &fakeGit{})
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if want := []string{"deps/group/actions", "deps/group/actions-security"}; !slices.Equal(pc.created, want) {
+		t.Fatalf("created = %v, want %v", pc.created, want)
+	}
+	titles := map[string]string{}
+	for _, a := range acts {
+		titles[a.Branch] = a.Title
+	}
+	if got := titles["deps/group/actions-security"]; got != "fix(deps): update actions to v2 [security]" {
+		t.Errorf("security title = %q", got)
+	}
+	if got := titles["deps/group/actions"]; got != "chore(deps): update c/z to v2" {
+		t.Errorf("group title = %q", got)
+	}
+	plain, sec := pc.bodies[0], pc.bodies[1]
+	for _, want := range []string{"### Security", "- GHSA-a: rce\n", "- GHSA-b: dos\n", "`wf.yml:2`", "`wf.yml:3`"} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("security body missing %q:\n%s", want, sec)
+		}
+	}
+	if strings.Contains(sec, "`wf.yml:4`") || strings.Contains(plain, "### Security") || !strings.Contains(plain, "`wf.yml:4`") {
+		t.Errorf("non-security update mixed in:\nsecurity:\n%s\ngroup:\n%s", sec, plain)
+	}
+}
+
 // inapplicable is a github-actions post-processor that finds the a/x update inapplicable
 // (*dep.SkipError) and fails b/y when fail is set.
 type inapplicable struct{ fail bool }

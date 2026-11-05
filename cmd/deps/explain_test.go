@@ -23,6 +23,7 @@ func TestExplain(t *testing.T) {
     allow: "< 7"
   - manager: gomod
     updates: [patch]
+    securityGroup: go security
   - manager: github-actions
     pin: digest
     group: ci
@@ -81,16 +82,16 @@ actions/checkout  .github/workflows/ci.yml:7  (github-actions, action, git-tags,
 
 example.com/a  go.mod:5  (gomod, direct, go, go)
   current   v1.0.0
-  rules     #1 manager=gomod updates=[patch]
-  policy    pin=keep allow=- updates=patch group=- schedule=always minAge=-
+  rules     #1 manager=gomod updates=[patch] securityGroup=go security
+  policy    pin=keep allow=- updates=patch group=- schedule=always minAge=- securityGroup=go security
   candidates 3
   rejected  major: 1 (v2.0.0)  not newer: 1 (v1.0.0)  update type minor not allowed: 1 (v1.1.0)
   result    up to date
 
 example.com/i  go.mod:6  (gomod, indirect, go, go)
   current   v1.0.0
-  rules     #1 manager=gomod updates=[patch]
-  policy    pin=keep allow=- updates=patch group=- schedule=always minAge=-
+  rules     #1 manager=gomod updates=[patch] securityGroup=go security
+  policy    pin=keep allow=- updates=patch group=- schedule=always minAge=- securityGroup=go security
   result    skipped: ignored by default (indirect; enable with a rule setting ignore: false)
 `,
 		},

@@ -13,8 +13,9 @@ import (
 
 // Group is the updates that become one branch and one pull request: all updates of one
 // dependency in one PR bucket, or all non-security updates sharing a policy group and bucket
-// (Manager "group"), or all updates of a shared version definition and bucket (Manager
-// "group", named after the dep.Dep.VersionRef unless a policy group applies).
+// (Manager "group"), or all security updates sharing a security group and bucket (Manager
+// "group", branch suffix "-security"), or all updates of a shared version definition and
+// bucket (Manager "group", named after the dep.Dep.VersionRef unless a policy group applies).
 type Group struct {
 	Manager, Name, Branch, Title string
 	Updates                      []dep.Update
@@ -37,25 +38,31 @@ const MaintenanceBranch = "lock-file-maintenance"
 
 // GroupUpdates groups updates by policy group name, or by (Manager, Name) for ungrouped and
 // security updates (security updates are never batched into a policy group), and by PR
-// bucket (dep.Update.Bucket). Updates of a shared version definition carry the group Resolve
-// gave them (unifyShared), security updates included: they edit the same bytes. Branches are
-// <branchPrefix><manager>/<slug> and <branchPrefix>group/<slug>, with "-<bucket>" appended
-// for a non-empty bucket; "" means config.DefaultBranchPrefix. Lock file maintenance updates
-// share one group (Manager and Name MaintenanceBranch) on <branchPrefix>lock-file-maintenance.
-// Sorted by Manager, Name, then
-// Branch.
+// bucket (dep.Update.Bucket). Security updates with a dep.Update.SecurityGroup share a group
+// of that name apart from the policy group of the same name. Updates of a shared version
+// definition carry the group Resolve gave them (unifyShared), security updates included: they
+// edit the same bytes. Branches are <branchPrefix><manager>/<slug> and
+// <branchPrefix>group/<slug>, with "-<bucket>" appended for a non-empty bucket, then
+// "-security" for a security group; "" means config.DefaultBranchPrefix. Lock file
+// maintenance updates share one group (Manager and Name MaintenanceBranch) on
+// <branchPrefix>lock-file-maintenance. Sorted by Manager, Name, then Branch.
 func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 	branchPrefix = cmp.Or(branchPrefix, config.DefaultBranchPrefix)
-	type key struct{ manager, name, bucket string }
+	type key struct {
+		manager, name, bucket string
+		security              bool
+	}
 	idx := map[key]int{}
 	var groups []Group
 	for _, u := range updates {
-		k := key{u.Dep.Manager, u.Dep.Name, u.Bucket}
+		k := key{manager: u.Dep.Manager, name: u.Dep.Name, bucket: u.Bucket}
 		switch {
 		case u.Maintenance():
-			k = key{MaintenanceBranch, MaintenanceBranch, ""}
+			k = key{manager: MaintenanceBranch, name: MaintenanceBranch}
 		case u.Group != "" && (len(u.Advisories) == 0 || u.Dep.VersionRef != ""):
-			k = key{GroupManager, u.Group, u.Bucket}
+			k = key{manager: GroupManager, name: u.Group, bucket: u.Bucket}
+		case u.SecurityGroup != "" && len(u.Advisories) > 0:
+			k = key{GroupManager, u.SecurityGroup, u.Bucket, true}
 		}
 		i, ok := idx[k]
 		if !ok {
@@ -67,6 +74,9 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 			}
 			if k.bucket != "" {
 				branch += "-" + k.bucket
+			}
+			if k.security {
+				branch += "-security"
 			}
 			groups = append(groups, Group{Manager: k.manager, Name: k.name, Branch: branch})
 		}
@@ -183,8 +193,9 @@ func commitPrefix(ups []dep.Update, security bool) string {
 	return typ + "(" + scope + "): "
 }
 
-// groupTitle renders the PR title of g. A group with security updates (only shared version
-// definitions put them into a group) gets the security prefix and " [security]".
+// groupTitle renders the PR title of g. A group with security updates (a security group, or a
+// shared version definition with a security member) gets the security prefix and
+// " [security]".
 func groupTitle(g Group) string {
 	if g.Manager == MaintenanceBranch {
 		return commitPrefix(g.Updates, false) + "lock file maintenance"
@@ -196,16 +207,17 @@ func groupTitle(g Group) string {
 		for _, u := range g.Updates {
 			names[u.Dep.Name] = true
 		}
-		switch {
-		case len(names) == 1:
-			name = g.Updates[0].Dep.Name
-		case !security:
-			pre := commitPrefix(g.Updates, false)
-			if v, ok := sameVersion(g.Updates); ok {
-				return pre + "update " + g.Name + " to " + v
+		if len(names) > 1 {
+			pre, suffix := commitPrefix(g.Updates, security), ""
+			if security {
+				suffix = " [security]"
 			}
-			return fmt.Sprintf("%supdate %s (%d dependencies)", pre, g.Name, len(names))
+			if v, ok := sameVersion(g.Updates); ok {
+				return pre + "update " + g.Name + " to " + v + suffix
+			}
+			return fmt.Sprintf("%supdate %s (%d dependencies)%s", pre, g.Name, len(names), suffix)
 		}
+		name = g.Updates[0].Dep.Name
 	}
 	if security {
 		pre := commitPrefix(g.Updates, true)

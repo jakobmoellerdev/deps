@@ -1010,7 +1010,8 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 	}
 	for i := range ups {
 		// Commit, grouping and automerge settings come from the policy of the update's type;
-		// security updates follow it too, apart from group and schedule.
+		// security updates follow it too, apart from schedule and group: they take the
+		// security group instead.
 		up := &ups[i]
 		if prefixed != nil && len(prefixed.names) > 0 {
 			up.Dep.ExtractVersion = prefixExpr // release notes look up the per-action tags
@@ -1021,6 +1022,8 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 		up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
 		if len(up.Advisories) == 0 {
 			up.Group, up.Schedule = kp.Group, kp.Schedule
+		} else {
+			up.SecurityGroup = kp.SecurityGroup
 		}
 	}
 	return ups, nil

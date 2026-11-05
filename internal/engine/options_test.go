@@ -66,6 +66,7 @@ func TestSecurityUpdates(t *testing.T) {
 		wantType   dep.UpdateType
 		wantIDs    []string
 		wantGroup  string
+		wantSec    string // dep.Update.SecurityGroup
 		wantSkip   string
 		wantNoAsks bool
 	}{
@@ -93,6 +94,12 @@ func TestSecurityUpdates(t *testing.T) {
 			vulns: []Vuln{vuln("A", "v9.0.0")}, want: "v1.2.0", wantType: dep.Minor, wantGroup: "minors"},
 		{name: "pre-policy ignore wins over kind opt-in", cfg: "rules: [{ignore: true}, {updateTypes: [patch], ignore: false}]\n",
 			vulns: []Vuln{vuln("A", "v1.1.0")}, want: "v1.0.1", wantType: dep.Patch, wantNoAsks: true},
+		{name: "security group opt-in", cfg: "rules: [{group: g, securityGroup: sec}]\n",
+			vulns: []Vuln{vuln("A", "v1.1.0")}, want: "v1.2.0", wantType: dep.Minor, wantIDs: []string{"A"}, wantSec: "sec"},
+		{name: "security group not on a normal update", cfg: "rules: [{group: g, securityGroup: sec}]\n",
+			vulns: []Vuln{vuln("A", "v2.0.0")}, want: "v1.2.0", wantType: dep.Minor, wantGroup: "g"},
+		{name: "kind security group", cfg: "rules: [{securityGroup: all}, {updateTypes: [minor], securityGroup: minors}]\n",
+			vulns: []Vuln{vuln("A", "v1.1.0")}, want: "v1.2.0", wantType: dep.Minor, wantIDs: []string{"A"}, wantSec: "minors"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,8 +127,8 @@ func TestSecurityUpdates(t *testing.T) {
 				t.Fatalf("updates = %+v", res.Updates)
 			}
 			u := &res.Updates[0]
-			if u.NewVersion != tt.want || u.Type != tt.wantType || !slices.Equal(ids(u), tt.wantIDs) || u.Group != tt.wantGroup {
-				t.Errorf("update = %s %s ids=%v group=%q, want %s %s ids=%v group=%q", u.NewVersion, u.Type, ids(u), u.Group, tt.want, tt.wantType, tt.wantIDs, tt.wantGroup)
+			if u.NewVersion != tt.want || u.Type != tt.wantType || !slices.Equal(ids(u), tt.wantIDs) || u.Group != tt.wantGroup || u.SecurityGroup != tt.wantSec {
+				t.Errorf("update = %s %s ids=%v group=%q securityGroup=%q, want %s %s ids=%v group=%q securityGroup=%q", u.NewVersion, u.Type, ids(u), u.Group, u.SecurityGroup, tt.want, tt.wantType, tt.wantIDs, tt.wantGroup, tt.wantSec)
 			}
 			if len(u.Advisories) > 0 && (u.Schedule != nil || u.Advisories[0].URL == "") {
 				t.Errorf("security update: schedule %v, advisories %+v", u.Schedule, u.Advisories)

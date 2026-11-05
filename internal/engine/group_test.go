@@ -61,6 +61,40 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 			counts: []int{2},
 		},
 		{
+			name: "security group apart from the policy group of the same name",
+			updates: []dep.Update{
+				{Dep: gomod("example.com/a"), NewVersion: "v1.2.1", SecurityGroup: "go", Advisories: adv},
+				{Dep: gomod("example.com/b"), NewVersion: "v1.3.1", SecurityGroup: "go", Advisories: []dep.Advisory{{ID: "GHSA-2"}}},
+				{Dep: gomod("example.com/c"), NewVersion: "v1.4.0", Group: "go"},
+				{Dep: gomod("example.com/d"), NewVersion: "v1.5.0", Group: "go", SecurityGroup: "go"},
+				{Dep: gomod("example.com/e"), NewVersion: "v2.0.1", Bucket: "major", SecurityGroup: "go", Advisories: adv},
+				{Dep: gha("actions/x"), NewVersion: "v2.0.1", Bucket: "major", SecurityGroup: "go", Advisories: adv},
+			},
+			want: []Group{
+				{Manager: "group", Name: "go", Branch: "deps/group/go", Title: "chore(deps): update go (2 dependencies)"},
+				{Manager: "group", Name: "go", Branch: "deps/group/go-major-security", Title: "fix(deps): update go to v2.0.1 [security]"},
+				{Manager: "group", Name: "go", Branch: "deps/group/go-security", Title: "fix(deps): update go (2 dependencies) [security]"},
+			},
+			counts: []int{2, 2, 2},
+		},
+		{
+			name: "single-dep security group",
+			updates: []dep.Update{
+				{Dep: gomod("example.com/a"), NewVersion: "v1.2.1", SecurityGroup: "Go Security", Advisories: adv},
+			},
+			want:   []Group{{Manager: "group", Name: "Go Security", Branch: "deps/group/go-security-security", Title: "fix(deps): update example.com/a to v1.2.1 [security]"}},
+			counts: []int{1},
+		},
+		{
+			name: "shared version keeps its group",
+			updates: []dep.Update{
+				{Dep: dep.Dep{Manager: "maven", Name: "core", VersionRef: "jackson.version"}, NewVersion: "2.17.0", Group: "jackson.version", SecurityGroup: "sec", Advisories: adv},
+				{Dep: dep.Dep{Manager: "maven", Name: "databind", VersionRef: "jackson.version"}, NewVersion: "2.17.0", Group: "jackson.version"},
+			},
+			want:   []Group{{Manager: "group", Name: "jackson.version", Branch: "deps/group/jackson.version", Title: "fix(deps): update jackson.version to 2.17.0 [security]"}},
+			counts: []int{2},
+		},
+		{
 			name:   "branch prefix",
 			prefix: "renovate/",
 			updates: []dep.Update{

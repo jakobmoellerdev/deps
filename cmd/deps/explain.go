@@ -261,6 +261,9 @@ func describeRule(r config.Rule) string {
 	if r.Group != "" {
 		add("group", r.Group)
 	}
+	if r.SecurityGroup != "" {
+		add("securityGroup", r.SecurityGroup)
+	}
 	if r.Schedule != nil {
 		add("schedule", "["+strings.Join(r.Schedule, "; ")+"]")
 	}
@@ -319,6 +322,9 @@ func describePolicy(p config.Policy) string {
 	}
 	s := fmt.Sprintf("pin=%s allow=%s updates=%s group=%s schedule=%s minAge=%s",
 		p.Pin, allow, orDash(strings.Join(updates, ",")), orDash(p.Group), p.Schedule.String(), minAge)
+	if p.SecurityGroup != "" {
+		s += " securityGroup=" + p.SecurityGroup
+	}
 	if p.Versioning != "" {
 		s += " versioning=" + p.Versioning
 	}

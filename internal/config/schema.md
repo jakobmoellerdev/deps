@@ -181,7 +181,7 @@ deps queries [OSV](https://osv.dev) for Go modules, npm packages, crates.io crat
 - The go.mod `toolchain` directive is checked against the Go standard library (`stdlib`) and the go command (`toolchain`), so `toolchain go1.22.0` gets a security update to the smallest Go release of its line that fixes its advisories (`1.22.2` for GO-2024-2687). The `go` directive is checked too once a rule un-ignores it (it is ignored by default); a 2-part `go 1.22` admits every 1.22.x toolchain, so only an advisory without a fix in 1.22 moves it.
 - Container images, Terraform providers and modules, and Helm charts get no security updates: OSV has no ecosystem for them. The queries per ecosystem are listed under [Security advisories (OSV)](managers.md#security-advisories-osv).
 - Security updates bypass `allow`, `updates`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`, except the default ignore of pip_requirements `indirect` pins (the transitive pins of pip-compile/`uv pip compile` output, which Renovate's vulnerability alerts enable too): those get security updates, and only those, unless a rule ignores them.
-- They always use commit type `fix`, get a `[security]` title suffix, and are never put into a group.
+- They always use commit type `fix`, get a `[security]` title suffix, and are not put into a `group`. A rule's [`securityGroup`](#rulessecuritygroup) opts in to batching them into a PR of their own.
 - A failed OSV lookup is reported as an error (`security advisories: <err>`).
 
 ```yaml
@@ -190,7 +190,7 @@ security: false
 
 ## Config.branchPrefix
 
-Branches are `<prefix><manager>/<slug(name)>[-<bucket>]` and `<prefix>group/<slug(group)>[-<bucket>]`. deps never touches branches and PRs outside the prefix.
+Branches are `<prefix><manager>/<slug(name)>[-<bucket>]`, `<prefix>group/<slug(group)>[-<bucket>]` and, for [security groups](#rulessecuritygroup), `<prefix>group/<slug(securityGroup)>[-<bucket>]-security`. deps never touches branches and PRs outside the prefix.
 
 - It must end with `/`.
 - It must not contain spaces, control characters, any of `~^:?*[\`, `..` or `@{`.
@@ -460,7 +460,7 @@ A rule **matches** a dep when every selector it sets matches. The selectors are 
 3. **Built-in monorepo groups** set `group: <name> monorepo` (unless [`monorepos: false`](#monorepos)).
 4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.
 5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `updates`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
-6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `automerge` and `automergeStrategy` from the policy of its type. Security updates take only the commit scope and the automerge settings.
+6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `automerge` and `automergeStrategy` from the policy of its type. Security updates take only `securityGroup`, the commit scope and the automerge settings.
 
 `updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules and the resulting policy of a dep.
 
@@ -576,6 +576,24 @@ rules:
 - `slug` lowercases the name, maps bytes outside `[a-z0-9._-]` to `-`, and collapses and trims `-`.
 - **Commit type in groups.** A group uses `fix` if any member's type is `fix`, else the first member's type. It always uses the first member's scope.
 - Built-in [monorepo groups](#monorepos) are overridden by any rule that sets `group`.
+- Security updates are not members (except of a shared version definition, which cannot be split); [`securityGroup`](#rulessecuritygroup) groups them apart.
+
+## Rule.securityGroup
+
+Dependabot's `groups.<name>.applies-to: security-updates`, Renovate's `vulnerabilityAlerts` with `groupName`. Security updates are never put into a [`group`](#rulesgroup); with `securityGroup`, the security updates of matching deps whose policy has the same `securityGroup` share one PR instead of one each.
+
+- **Branch** `<prefix>group/<slug(securityGroup)>[-<bucket>]-security`, so it never collides with the non-security group of the same name: `group: go` and `securityGroup: go` give `deps/group/go` and `deps/group/go-security`.
+- **Title** `fix(<scope>): update <securityGroup> (<n> dependencies) [security]`, or `update <securityGroup> to <v> [security]` when every member moves to one version; a single dep keeps its own title (`fix(deps): update <name> to <v> [security]`). The type is always `fix`; the scope is the first member's.
+- **Members** are only security updates. Non-security updates of the same deps stay in their `group` or their own PR. The body's Security section lists the advisories of every member.
+- Like the commit scope it comes from the policy of the update's type, so a rule with `updateTypes` can set it. Schedules still do not apply. Updates of a shared version definition (Maven property, Gradle version entry) stay in the definition's group.
+
+```yaml
+rules:
+  - securityGroup: all           # security updates share deps/group/all-security (majors: all-major-security)...
+  - manager: gomod               # ...except Go's: later rules win
+    group: go
+    securityGroup: go            # deps/group/go-security, apart from deps/group/go
+```
 
 ## Rule.commitScope
 

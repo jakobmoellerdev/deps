@@ -113,17 +113,20 @@ type Advisory struct{ ID, Summary, URL string }
 
 // Update is a proposed change to one Dep.
 type Update struct {
-	Dep         Dep
-	Type        UpdateType
-	NewVersion  string
-	NewDigest   string        // "" unless the result is digest-pinned; gomod pseudo-versions: the new commit
-	NewName     string        // gomod major module path update: the new module path (`<path>/v<N>`); "" = unchanged
-	Group       string        // policy group name, "" = own PR
-	Schedule    *schedule.Set // nil = always in schedule
-	Advisories  []Advisory    // non-empty = security update
-	NewChecksum string        // "" unless Dep.ChecksumSource is set and the version changes
-	CommitType  string        // policy conventional-commit type; "" = unset (titles use chore(deps))
-	CommitScope string        // policy commit scope, "" = no scope; only used when CommitType is set
+	Dep        Dep
+	Type       UpdateType
+	NewVersion string
+	NewDigest  string // "" unless the result is digest-pinned; gomod pseudo-versions: the new commit
+	NewName    string // gomod major module path update: the new module path (`<path>/v<N>`); "" = unchanged
+	Group      string // policy group name, "" = own PR
+	// SecurityGroup is the policy security group of a security update (rules[].securityGroup),
+	// "" = own PR; a security update never joins Group (unless it edits a shared version).
+	SecurityGroup string
+	Schedule      *schedule.Set // nil = always in schedule
+	Advisories    []Advisory    // non-empty = security update
+	NewChecksum   string        // "" unless Dep.ChecksumSource is set and the version changes
+	CommitType    string        // policy conventional-commit type; "" = unset (titles use chore(deps))
+	CommitScope   string        // policy commit scope, "" = no scope; only used when CommitType is set
 	// Bucket is the PR bucket of the update among the dep's updates (separateMajorMinor and
 	// friends): "" for the only bucket or the non-major one, "major", "v<N>" (one per major
 	// with separateMultipleMajor), "minor" or "patch" (separateMinorPatch). A non-empty bucket
