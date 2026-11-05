@@ -2,6 +2,7 @@ package gradle
 
 import (
 	"bytes"
+	"iter"
 	"regexp"
 	"sort"
 )
@@ -263,4 +264,100 @@ func (s *source) skipBlank(i int) int {
 		i++
 	}
 	return i
+}
+
+// inLines yields re.FindAllSubmatchIndex(code, -1) for a regexp whose matches lie within
+// one line, all of them on the lines starting at the ascending offsets starts. Regexps
+// without a literal prefix try every offset of their input, so scanning only the candidate
+// lines instead of all of code is most of the time saved.
+func inLines(re *regexp.Regexp, code []byte, starts []int) iter.Seq[[]int] {
+	return func(yield func([]int) bool) {
+		for _, ls := range starts {
+			for _, m := range re.FindAllSubmatchIndex(code[ls:lineEnd(code, ls)], -1) {
+				for k, v := range m {
+					if v >= 0 {
+						m[k] = v + ls
+					}
+				}
+				if !yield(m) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// valueLines returns the starts of the lines of code holding an '=' followed, after spaces
+// and tabs, by one of prefixes.
+func valueLines(code []byte, prefixes []string) []int {
+	var out []int
+	for i := 0; ; {
+		j := bytes.IndexByte(code[i:], '=')
+		if j < 0 {
+			return out
+		}
+		i += j + 1
+		v := i
+		for v < len(code) && (code[v] == ' ' || code[v] == '\t') {
+			v++
+		}
+		for _, p := range prefixes {
+			if len(code)-v >= len(p) && string(code[v:v+len(p)]) == p {
+				out = append(out, bytes.LastIndexByte(code[:i], '\n')+1)
+				i = lineEnd(code, i)
+				break
+			}
+		}
+	}
+}
+
+// litLines returns the starts of the lines of code containing lit as a word: not preceded
+// by an isIdent byte, nor followed by one when lit ends in one (\b around lit).
+func litLines(code []byte, lit string) []int {
+	var out []int
+	tail := isIdent(lit[len(lit)-1])
+	for i := 0; ; {
+		j := bytes.Index(code[i:], []byte(lit))
+		if j < 0 {
+			return out
+		}
+		j += i
+		if e := j + len(lit); (j > 0 && isIdent(code[j-1])) || (tail && e < len(code) && isIdent(code[e])) {
+			i = j + 1
+			continue
+		}
+		out = append(out, bytes.LastIndexByte(code[:j], '\n')+1)
+		i = lineEnd(code, j)
+	}
+}
+
+// wordLines returns the starts of the lines of code holding one of words as a whole word: a
+// maximal run of isIdent bytes, which are \w's.
+func wordLines(code []byte, words map[string]bool) []int {
+	var out []int
+	for i := 0; i < len(code); {
+		if !isIdent(code[i]) {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(code) && isIdent(code[j]) {
+			j++
+		}
+		if words[string(code[i:j])] {
+			out = append(out, bytes.LastIndexByte(code[:i], '\n')+1)
+			j = lineEnd(code, j)
+		}
+		i = j
+	}
+	return out
+}
+
+// lineEnd returns the offset of the newline ending the line holding i, len(code) for the
+// last line.
+func lineEnd(code []byte, i int) int {
+	if j := bytes.IndexByte(code[i:], '\n'); j >= 0 {
+		return i + j
+	}
+	return len(code)
 }

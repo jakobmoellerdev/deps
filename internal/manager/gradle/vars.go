@@ -108,7 +108,8 @@ func literalDef(s string) bool {
 }
 
 // Definition forms; each match ends at the opening quote of the value, except mapDeclRe,
-// which ends at the '['.
+// which ends at the '['. No form matches a newline, so each runs only on the lines that can
+// hold a match (see inLines).
 var (
 	// declRe: def x = '1', val x = "1", const val x = "1", val x: String = "1", String x = '1'.
 	declRe = regexp.MustCompile(`\b(?:def|val|var|String)[ \t]+([A-Za-z_]\w*)(?:[ \t]*:[ \t]*String\??)?[ \t]*=[ \t]*["']`)
@@ -144,6 +145,13 @@ type assignment struct {
 	lit  strLit
 }
 
+// Necessary conditions of the definition forms on the lines holding a match.
+var (
+	quotedValue = []string{`"`, `'`}                                            // `= "…"`
+	listValue   = []string{`[`}                                                 // mapDeclRe
+	mapOfValue  = []string{"mutableMapOf", "mapOf", "hashMapOf", "linkedMapOf"} // kotlinMapRe
+)
+
 // assignments returns the definition-form literals of s in no particular order.
 func (s *source) assignments() []assignment {
 	var out []assignment
@@ -152,24 +160,25 @@ func (s *source) assignments() []assignment {
 			out = append(out, assignment{keys: keys, lit: lit})
 		}
 	}
-	for _, m := range declRe.FindAllSubmatchIndex(s.code, -1) {
+	quoted := valueLines(s.code, quotedValue)
+	for m := range inLines(declRe, s.code, quoted) {
 		lit, ok := s.lit(m[1])
 		add(lit, ok, s.qualified(m[0], string(s.src[m[2]:m[3]]))...)
 	}
-	for _, m := range extAssignRe.FindAllSubmatchIndex(s.code, -1) {
+	for m := range inLines(extAssignRe, s.code, quoted) {
 		lit, ok := s.lit(m[1])
 		add(lit, ok, string(s.src[m[2]:m[3]]))
 	}
-	for _, m := range byExtraRe.FindAllSubmatchIndex(s.code, -1) {
+	for m := range inLines(byExtraRe, s.code, litLines(s.code, "extra(")) {
 		lit, ok := s.lit(m[1])
 		add(lit, ok, string(s.src[m[2]:m[3]]))
 	}
-	for _, m := range extIndexRe.FindAllSubmatchIndex(s.code, -1) {
+	for m := range inLines(extIndexRe, s.code, quoted) {
 		key, kok := s.lit(m[2] + 1)
 		lit, ok := s.lit(m[1])
 		add(lit, ok && kok, s.text(key))
 	}
-	for _, m := range extSetRe.FindAllSubmatchIndex(s.code, -1) {
+	for m := range inLines(extSetRe, s.code, litLines(s.code, "set(")) {
 		if m[2] < 0 { // bare set(): only inside an ext block
 			if b := s.enclosing(m[0]); b < 0 || !extBlocks[s.blocks[b].label] {
 				continue
@@ -179,7 +188,7 @@ func (s *source) assignments() []assignment {
 		lit, ok := s.lit(m[1])
 		add(lit, ok && kok, s.text(key))
 	}
-	for _, m := range blockAssignRe.FindAllSubmatchIndex(s.code, -1) {
+	for m := range inLines(blockAssignRe, s.code, quoted) {
 		if b := s.enclosing(m[2]); b < 0 || !extBlocks[s.blocks[b].label] {
 			continue
 		}
@@ -187,7 +196,7 @@ func (s *source) assignments() []assignment {
 		add(lit, ok, string(s.src[m[2]:m[3]]))
 	}
 	maps := map[string]bool{}
-	for _, m := range mapDeclRe.FindAllSubmatchIndex(s.code, -1) {
+	for m := range inLines(mapDeclRe, s.code, valueLines(s.code, listValue)) {
 		name := string(s.src[m[2]:m[3]])
 		if m[4] >= 0 {
 			key, ok := s.lit(m[4] + 1)
@@ -199,11 +208,11 @@ func (s *source) assignments() []assignment {
 		maps[name] = true
 		out = s.mapEntries(out, name, m[1]-1, 0, false)
 	}
-	for _, m := range kotlinMapRe.FindAllSubmatchIndex(s.code, -1) {
+	for m := range inLines(kotlinMapRe, s.code, valueLines(s.code, mapOfValue)) {
 		out = s.mapEntries(out, string(s.src[m[2]:m[3]]), m[1]-1, 0, true)
 	}
 	if len(maps) > 0 {
-		for _, m := range mapAssignRe.FindAllSubmatchIndex(s.code, -1) {
+		for m := range inLines(mapAssignRe, s.code, quoted) {
 			name := string(s.src[m[2]:m[3]])
 			if !maps[name] {
 				continue

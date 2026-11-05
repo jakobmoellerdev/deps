@@ -18,6 +18,8 @@ var configurations = []string{
 	"detektPlugins", "lintChecks", "checkstyle", "platform", "enforcedPlatform",
 }
 
+// coordRe, mapRe and pluginRe do not match a newline; each runs only on the lines that can
+// hold a match (see inLines).
 var (
 	configs = `\b(` + strings.Join(configurations, "|") + `)[ \t]*\(?[ \t]*`
 	// coordRe: `implementation("g:n:v")`, `api 'g:n:v'`, `implementation(platform("g:n:v"))`.
@@ -30,6 +32,19 @@ var (
 	// gaRe is a group or artifact id of a coordinate found outside a dependency declaration.
 	gaRe = regexp.MustCompile(`^[A-Za-z0-9_.\-]+$`)
 )
+
+// configWords are the words coordRe and mapRe matches start with: a configuration, which
+// mapRe's key can also follow directly (`implementationgroup:`).
+var configWords = func() map[string]bool {
+	m := make(map[string]bool, 4*len(configurations))
+	for _, c := range configurations {
+		m[c] = true
+		for _, k := range []string{"group", "name", "version"} {
+			m[c+k] = true
+		}
+	}
+	return m
+}()
 
 // found is an extracted dep with the offset it is ordered by.
 type found struct {
@@ -52,15 +67,16 @@ func extractScript(file string, src []byte, kind fileKind) ([]dep.Dep, []depMeta
 	x := &extractor{file: file, s: scan(src, groovy), taken: map[int]bool{}}
 	s := x.s
 	if kind != kindSource {
-		for _, m := range coordRe.FindAllSubmatchIndex(s.code, -1) {
+		configLines := wordLines(s.code, configWords)
+		for m := range inLines(coordRe, s.code, configLines) {
 			if l, ok := s.lit(m[1]); ok {
 				x.coordinate(l, x.class(m[0], string(s.code[m[2]:m[3]])), false)
 			}
 		}
-		for _, m := range mapRe.FindAllSubmatchIndex(s.code, -1) {
+		for m := range inLines(mapRe, s.code, configLines) {
 			x.mapNotation(m[4], x.class(m[0], string(s.code[m[2]:m[3]])))
 		}
-		for _, m := range pluginRe.FindAllSubmatchIndex(s.code, -1) {
+		for m := range inLines(pluginRe, s.code, litLines(s.code, "version")) {
 			x.plugin(m)
 		}
 		if kind == kindSettings {
