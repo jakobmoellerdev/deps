@@ -36,6 +36,13 @@ func FromEnv(getenv func(string) string) (Info, bool) {
 		info = envInfo(Gitea, getenv)
 	case getenv("GITHUB_ACTIONS") == "true":
 		info = envInfo(GitHub, getenv)
+	case getenv("GITLAB_CI") == "true":
+		info = Info{
+			Kind:      GitLab,
+			ServerURL: getenv("CI_SERVER_URL"),
+			APIURL:    getenv("CI_API_V4_URL"),
+			Repo:      getenv("CI_PROJECT_PATH"),
+		}
 	default:
 		return Info{}, false
 	}
@@ -67,12 +74,15 @@ func apiURL(k Kind, serverURL, host string) string {
 			return "https://api.github.com"
 		}
 		return serverURL + "/api/v3"
+	case GitLab:
+		return serverURL + "/api/v4"
 	default:
 		return serverURL + "/api/v1"
 	}
 }
 
-// parseRemote splits a git remote URL into host (with port for http(s)), hostname and owner/repo.
+// parseRemote splits a git remote URL into host (with port for http(s)), hostname and the
+// repository path: owner/repo, or group/subgroup/repo (GitLab).
 func parseRemote(remote string) (hostport, hostname, repo string, err error) {
 	remote = strings.TrimSpace(remote)
 	var p string
@@ -101,7 +111,7 @@ func parseRemote(remote string) (hostport, hostname, repo string, err error) {
 		p = remote[colon+1:]
 	}
 	p = strings.TrimSuffix(strings.Trim(p, "/"), ".git")
-	if hostname == "" || strings.Count(p, "/") != 1 || strings.HasPrefix(p, "/") || strings.HasSuffix(p, "/") {
+	if hostname == "" || !strings.Contains(p, "/") || strings.HasPrefix(p, "/") || strings.HasSuffix(p, "/") || strings.Contains(p, "//") {
 		return "", "", "", fmt.Errorf("unsupported remote %q", remote)
 	}
 	return hostport, hostname, p, nil
@@ -123,6 +133,8 @@ func Detect(ctx context.Context, getenv func(string) string, remoteURL string, o
 			via = "--platform"
 		case hostname == "github.com":
 			info.Kind, via = GitHub, "remote host"
+		case hostname == "gitlab.com":
+			info.Kind, via = GitLab, "remote host"
 		default:
 			k, err := probe(ctx, c, hostport)
 			if err != nil {
@@ -146,12 +158,22 @@ func Detect(ctx context.Context, getenv func(string) string, remoteURL string, o
 	if o.Repo != "" {
 		info.Repo = o.Repo
 	}
+	if info.Kind != GitLab && info.Kind != "" && strings.Count(info.Repo, "/") > 1 {
+		return Info{}, fmt.Errorf("repository %q: %s repositories are owner/name; nested group paths exist only on GitLab", info.Repo, info.Kind)
+	}
 	slog.InfoContext(ctx, "platform detected", "kind", info.Kind, "via", via, "api", info.APIURL, "repo", info.Repo)
 	return info, nil
 }
 
+// probe asks the host's version endpoints. GitLab goes first: GitLab redirects unknown paths
+// to its sign-in page, which would pass the Forgejo probe after the redirect, while Gitea,
+// Forgejo and GitHub have no /api/v4.
 func probe(ctx context.Context, c *http.Client, hostport string) (Kind, error) {
 	base := probeScheme + "://" + hostport
+	// GitLab answers /api/v4/version 401 {"message":"401 Unauthorized"} without a token.
+	if probeOK(ctx, c, base+"/api/v4/version", true, true) {
+		return GitLab, nil
+	}
 	if probeOK(ctx, c, base+"/api/forgejo/v1/version", false, true) {
 		return Forgejo, nil
 	}
@@ -165,8 +187,9 @@ func probe(ctx context.Context, c *http.Client, hostport string) (Kind, error) {
 }
 
 // probeOK reports whether u answers 200 (with a JSON "version" field if needVersion).
-// With signInJSON, a 401/403 JSON {"message": ...} also counts: Gitea/Forgejo instances
-// with REQUIRE_SIGNIN_VIEW reject anonymous API calls that way, while unknown routes give 404.
+// With signInJSON, a 401/403 JSON {"message": ...} also counts: GitLab without a token and
+// Gitea/Forgejo instances with REQUIRE_SIGNIN_VIEW reject anonymous API calls that way, while
+// unknown routes give 404.
 func probeOK(ctx context.Context, c *http.Client, u string, needVersion, signInJSON bool) bool {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -210,18 +233,23 @@ func DefaultActionsHost(info Info, getenv func(string) string) (host, source str
 	return "github.com", "platform default"
 }
 
-// DefaultGitLabURL is the GitLab instance used when neither config nor CI env name one.
+// DefaultGitLabURL is the GitLab instance used when neither config, CI env nor the platform
+// name one.
 const DefaultGitLabURL = "https://gitlab.com"
 
 // GitLabURL returns the base URL of the GitLab instance the gitlabci manager resolves against
 // and where it came from: configured ("config"), else CI_SERVER_URL as set by GitLab CI
-// ("env"), else https://gitlab.com ("default"). The result has no trailing slash.
-func GitLabURL(configured string, getenv func(string) string) (u, source string) {
+// ("env"), else the server of a GitLab platform ("platform"), else https://gitlab.com
+// ("default"). The result has no trailing slash.
+func GitLabURL(configured string, info Info, getenv func(string) string) (u, source string) {
 	if configured != "" {
 		return strings.TrimRight(configured, "/"), "config"
 	}
 	if v := getenv("CI_SERVER_URL"); v != "" {
 		return strings.TrimRight(v, "/"), "env"
+	}
+	if info.Kind == GitLab && info.ServerURL != "" {
+		return strings.TrimRight(info.ServerURL, "/"), "platform"
 	}
 	return DefaultGitLabURL, "default"
 }

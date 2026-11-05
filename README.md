@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">deps</h1>
 <p align="center">
-  Dependency updates for GitHub, Gitea and Forgejo: one static Go binary, one strict config file, one pull request per update.
+  Dependency updates for GitHub, Gitea, Forgejo and GitLab: one static Go binary, one strict config file, one pull request per update.
 </p>
 <p align="center">
   <a href="https://git.jakob-moeller.cloud/jakobmoellerdev/deps/actions?workflow=ci.yml"><img src="https://git.jakob-moeller.cloud/jakobmoellerdev/deps/actions/workflows/ci.yml/badge.svg?branch=main" alt="ci"></a>
@@ -50,6 +50,8 @@ jobs:
 `uses:` needs the full URL, because a short `owner/repo@ref` is looked up on the instance's default actions host (github.com). CI doesn't run on PRs opened with the job token; to get CI (and automerge), pass a personal access token to both steps ([Gitea](docs/ci.md#gitea)).
 
 **Forgejo.** Use the same file as `.forgejo/workflows/deps.yml`, with two changes: drop the `permissions:` block (Forgejo's automatic token can already write), and set `runs-on:` to one of your runner's labels, e.g. `docker`. The runner image needs `bash`, `curl`, `git` and `sha256sum` ([Forgejo](docs/ci.md#forgejo)).
+
+**GitLab.** Add a `deps` job to `.gitlab-ci.yml` that downloads the release binary and runs `deps run` on a pipeline schedule, with a project access token (scopes `api`, `write_repository`) in the CI/CD variable `DEPS_TOKEN`. deps opens merge requests, uses `merge_when_pipeline_succeeds` for automerge and pipelines as checks ([GitLab CI](docs/ci.md#gitlab-ci)).
 
 **GitHub.** Add `.github/workflows/deps.yml`. It uses a GitHub App token, because `GITHUB_TOKEN` can't push changes to workflow files and its PRs don't run CI:
 

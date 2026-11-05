@@ -9,7 +9,7 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 **Base branches:** `--base`, else the config key `baseBranches`, else the repository's default branch. `baseBranches` lists names, `$default` and `/<RE2>/` regexes over the branches on origin (names origin lacks are skipped with a warning). Each base is resolved from its own tip, with the checkout's config, its `rules[].baseBranches` matching that base: the checkout serves the base it is the tip of, every other base gets a temporary linked work tree of its fetched tip. With more than one entry, or a regex one, branches carry the base (`<branchPrefix><base>/<manager>/<name>`), the log prints `base    <base>` before each base's updates, and the dashboard has a section per base; the PR limits count all bases together. `--base` overrides `baseBranches` with one base and the plain branch names.
 
-**Token:** `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`, which uses the API anonymously. Git pushes use the checkout's credentials.
+**Token:** `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`, which uses the API anonymously. Git pushes use the checkout's credentials. On GitLab, PRs are merge requests and `--repo` takes the project path (`group/subgroup/name`).
 
 **Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then the config key `gitAuthor`, then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2. Platform commits ignore it: GitHub authors them as the token's account.
 
@@ -55,7 +55,7 @@ Only keys without a passphrase are supported; a protected key fails before any w
 |---|---|
 | `automerge` | platform auto-merge requested (or already scheduled); the forge merges once required checks pass |
 | `automerge enabled` | GitHub reports auto-merge enabled already; not requested again |
-| `automerge pending` | Gitea/Forgejo cannot schedule it yet (mergeability check of a fresh push still running); the next run asks again |
+| `automerge pending` | Gitea/Forgejo cannot schedule it yet (mergeability check of a fresh push still running), or GitLab refused it for now (draft, conflicts, failed or missing required pipeline, approvals, head moved); the next run asks again |
 | `automerge waiting for checks` | GitHub will not auto-merge (auto-merge disallowed, or nothing to wait for) and the PR is not mergeable yet or its statuses/check runs are not all green; the next run checks again |
 | `merged` | merged directly: the GitHub fallback (mergeable with all statuses and check runs green), or a branch automerge branch fast-forwarded into the base and deleted |
 | `branch automerge waiting for checks` | branch automerge: the branch has no PR and its checks have not finished or none are reported; the next run checks again |

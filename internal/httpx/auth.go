@@ -16,6 +16,9 @@ import (
 // staticUser is the Basic auth user sent with platform tokens; GitHub, Gitea and Forgejo accept it.
 const staticUser = "x-access-token"
 
+// gitlabUser is the Basic auth user GitLab documents for access tokens.
+const gitlabUser = "oauth2"
+
 // HelperFunc returns credentials for host, or ok=false if there are none.
 type HelperFunc func(ctx context.Context, host string) (user, pass string, ok bool)
 
@@ -55,11 +58,16 @@ type cred struct {
 	ok         bool
 }
 
-// NewAuth registers platformToken for info.Host and DEPS_GITHUB_COM_TOKEN for github.com
-// (when the platform host is not github.com itself), then applies opts.
+// NewAuth registers platformToken for info.Host (user oauth2 on GitLab, else x-access-token)
+// and DEPS_GITHUB_COM_TOKEN for github.com (when the platform host is not github.com itself),
+// then applies opts.
 func NewAuth(info platform.Info, platformToken string, getenv func(string) string, opts ...AuthOption) *Auth {
 	a := &Auth{tokens: make(map[string]static, 2), fill: gitCredentialFill, helper: make(map[string]*cred)}
-	a.add(info.Host, staticUser, platformToken)
+	user := staticUser
+	if info.Kind == platform.GitLab {
+		user = gitlabUser
+	}
+	a.add(info.Host, user, platformToken)
 	if info.Host != "github.com" {
 		a.add("github.com", staticUser, getenv("DEPS_GITHUB_COM_TOKEN"))
 	}
@@ -80,8 +88,9 @@ func (a *Auth) add(host, user, token string) {
 	}
 }
 
-// Static returns the configured Basic credentials for host: ("x-access-token", token) for the
-// platform and github.com tokens, the registered user for WithToken ones.
+// Static returns the configured Basic credentials for host: (x-access-token or oauth2, token)
+// for the platform token, (x-access-token, token) for github.com, the registered user for
+// WithToken ones.
 func (a *Auth) Static(host string) (user, pass string, ok bool) {
 	if a == nil {
 		return "", "", false

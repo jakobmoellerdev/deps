@@ -19,8 +19,11 @@ import (
 
 // NewClient returns the pull request client for info.Kind (gitea and forgejo share one).
 func NewClient(info Info, token string, c *http.Client) Client {
-	if info.Kind == GitHub {
+	switch info.Kind {
+	case GitHub:
 		return newGitHub(info, token, c)
+	case GitLab:
+		return newGitLab(info, token, c)
 	}
 	return &giteaClient{
 		api: info.APIURL, repo: info.Repo, c: c, headers: giteaHeaders(token), toPR: giteaPR,

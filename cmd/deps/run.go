@@ -52,10 +52,10 @@ func newRun(o *rootOpts) *cli.Command {
 			return runBot(ctx, cmd, o, r)
 		},
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "platform", Value: "auto", Destination: &r.platform, Usage: "forge type: auto|github|gitea|forgejo (auto: from the CI environment, else the origin remote)"},
+			&cli.StringFlag{Name: "platform", Value: "auto", Destination: &r.platform, Usage: "forge type: auto|github|gitea|forgejo|gitlab (auto: from the CI environment, else the origin remote)"},
 			&cli.StringFlag{Name: "api-url", Destination: &r.apiURL, Usage: "API base URL (default: detected)"},
-			&cli.StringFlag{Name: "repo", Destination: &r.repo, Usage: "repository owner/name (default: detected)"},
-			&cli.StringFlag{Name: "token", Destination: &r.token, Usage: "platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, git credential helper)"},
+			&cli.StringFlag{Name: "repo", Destination: &r.repo, Usage: "repository owner/name, or the GitLab project path (default: detected)"},
+			&cli.StringFlag{Name: "token", Destination: &r.token, Usage: "platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, $GITLAB_TOKEN, git credential helper)"},
 			&cli.StringFlag{Name: "base", Destination: &r.base, Usage: "base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch)"},
 			&cli.StringFlag{Name: "author-name", Value: defaultAuthorName, Destination: &r.authorName, Usage: "commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)"},
 			&cli.StringFlag{Name: "author-email", Value: defaultAuthorEmail, Destination: &r.authorEmail, Usage: "commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then the default)"},
@@ -226,7 +226,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	start := time.Now()
 	stderr := cmd.Root().ErrWriter
 	switch r.platform {
-	case "auto", "github", "gitea", "forgejo":
+	case "auto", "github", "gitea", "forgejo", "gitlab":
 	default:
 		return &usageError{fmt.Errorf("--platform: invalid value %q", r.platform)}
 	}

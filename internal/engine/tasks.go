@@ -88,7 +88,7 @@ const taskTimeout = 15 * time.Minute
 // the git variables that would point the commands' git elsewhere than the repository they
 // run in.
 var droppedEnv = []string{
-	"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN",
+	"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", "GITLAB_TOKEN",
 	"DEPS_GITHUB_COM_TOKEN", "DEPS_GITLAB_TOKEN", "CI_JOB_TOKEN", "DEPS_SIGNING_KEY",
 	"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
 	"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CEILING_DIRECTORIES",

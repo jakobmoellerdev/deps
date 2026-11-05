@@ -456,7 +456,7 @@ rules:
 
 ## Config.automergeStrategy
 
-`auto` uses the repository's default: Gitea/Forgejo `default_merge_style`, and on GitHub the first method the repository allows (merge commit, then squash, then rebase). Branch automerge (`automergeType: branch`) always fast-forwards and ignores it.
+`auto` uses the repository's default: Gitea/Forgejo `default_merge_style`, on GitHub the first method the repository allows (merge commit, then squash, then rebase), and on GitLab the project's squash default. GitLab's merge method (merge commit, semi-linear, fast-forward) is a project setting, so there `squash` squashes and `merge` and `rebase` merge without squashing. Branch automerge (`automergeType: branch`) always fast-forwards and ignores it.
 
 ## Config.automergeType
 
@@ -471,7 +471,7 @@ rules:
 4. Only one branch is merged per run, because merging moves the base. Other green branches report `branch automerge next run`; the next run rebases and merges them one by one.
 5. If the base branch declines the push (branch protection, a required PR, a pre-receive hook), deps opens the PR instead, as for failed checks.
 
-- CI must run on pushes to the update branches (`deps/**`), and the token must be allowed to push to the base branch. On GitHub a protected base branch needs the token's App or user on the bypass list; on Gitea and Forgejo it needs push access in the branch protection (*Enable push*, with the user allowlisted if restricted).
+- CI must run on pushes to the update branches (`deps/**`), and the token must be allowed to push to the base branch. On GitHub a protected base branch needs the token's App or user on the bypass list; on Gitea and Forgejo it needs push access in the branch protection (*Enable push*, with the user allowlisted if restricted); on GitLab the token's role must be *Allowed to push* on a protected branch.
 - A repository without any checks never merges: the branch waits. Tick it under **Pending branch automerge** on the [dashboard](#dependencydashboard) to open its PR instead.
 - Once a PR exists for the branch, it stays a PR and is automerged as such; the strategy then applies again.
 - New branches count toward the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`) of the run that pushes them, as does raising a PR for a failed branch.
@@ -530,7 +530,7 @@ Shell commands, Renovate's `postUpgradeTasks`, for generated code or formatting 
 
 - **Execution mode.** `branch`, the default (also of the list form), runs each distinct command once per branch. `update` runs the commands once per update of the branch, in the branch's order, each run seeing the files of the runs before it, with the update in `DEPS_MANAGER`, `DEPS_PACKAGE_FILE`, `DEPS_DEP_NAME`, `DEPS_DEP_TYPE`, `DEPS_DATASOURCE`, `DEPS_UPDATE_TYPE`, `DEPS_CURRENT_VERSION` (the locked version of a lockfile-only update), `DEPS_NEW_VERSION`, `DEPS_CURRENT_DIGEST`, `DEPS_NEW_DIGEST` and `DEPS_NEW_NAME` (a replacement's or Go major module path's new name). Commands are not templated; use the variables instead (`helm dependency update "charts/$DEPS_DEP_NAME"`). A group's branch-mode commands run after all its update-mode runs; a failing update-mode run names its dep (`postUpgradeTasks: <command> (<dep>): …`).
 - `run` copies the work tree of `--dir` (without `.git`) to a temporary directory and makes the copy a throwaway git repository of the base commit: HEAD detached at the base, the index read from it, the tags and the `origin` URL, and the checkout's objects shared read-only, so `git status`, `diff`, `log`, `describe` and even `commit` work and show exactly the group's changes. Commands run in `--dir` of the copy, in order with `sh -c`; then every file below `--dir` they add, change or delete that `.gitignore` does not ignore is committed. Whatever they write to git stays in the copy: the checkout's repository is only read. Initialized submodules get the same throwaway repository at their checked-out commit, uninitialized ones stay empty. Files inside submodules never join the commit, and a command that moves a submodule's HEAD fails the group (`postUpgradeTasks: <command> changed submodule <path>; submodule updates are not supported`). `apply` runs the commands in `--dir` after writing the updates.
-- Commands inherit deps' environment without its tokens (`DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`) and without `GIT_DIR`-like variables, and are not templated. Each may take 15 minutes; a failure fails the group like a post-processor: `postUpgradeTasks: <command>: <error>: <last 20 lines of output>`.
+- Commands inherit deps' environment without its tokens (`DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`) and without `GIT_DIR`-like variables, and are not templated. Each may take 15 minutes; a failure fails the group like a post-processor: `postUpgradeTasks: <command>: <error>: <last 20 lines of output>`.
 - They run repository code: see the [security notes](../ci.md#post-upgrade-tasks).
 
 ```yaml
@@ -578,7 +578,7 @@ An open update PR with this label is left alone: deps does not build, push or re
 - With several [base branches](#basebranches), items 1 to 5 are listed per base under ``## Base branch `<base>` `` (a base with nothing to list is left out), errors of a base's resolution start with `<base>: `, and the detected dependencies have one ``### `<base>` `` block per base.
 - The body is capped at 60 000 bytes (GitHub allows 65 536 characters). Lists that do not fit end with a `… not listed` note.
 - The body is deterministic: the issue is only edited when its content changes. Every run regenerates it, so ticked checkboxes are unticked again once handled.
-- The issue is found by its exact title and the `<!-- deps:dashboard -->` marker in its body, among the first 1 000 (GitHub) or 500 (Gitea/Forgejo) open issues.
+- The issue is found by its exact title and the `<!-- deps:dashboard -->` marker in its body, among the first 1 000 (GitHub, GitLab) or 500 (Gitea/Forgejo) open issues.
 - deps never closes the dashboard. `dependencyDashboard: false` leaves an existing dashboard untouched.
 - A repository without issues (disabled, or an external tracker on Gitea/Forgejo) reports `dashboard skipped: issues disabled` and is not an error.
 - The token needs issues:write.
@@ -589,7 +589,7 @@ It must be non-blank and one line.
 
 ## Config.dependencyDashboardLabels
 
-Each label must be non-blank and must not contain `,`. GitHub creates missing labels; Gitea and Forgejo look the names up in the repository's and its organization's labels and leave out unknown ones (with a warning).
+Each label must be non-blank and must not contain `,`. GitHub and GitLab create missing labels; Gitea and Forgejo look the names up in the repository's and its organization's labels and leave out unknown ones (with a warning).
 
 ## Config.dashboardApproval
 

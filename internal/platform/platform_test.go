@@ -43,6 +43,13 @@ func TestFromEnv(t *testing.T) {
 		{"ghes without api url", map[string]string{
 			"GITHUB_ACTIONS": "true", "GITHUB_SERVER_URL": "https://ghe.example/", "GITHUB_REPOSITORY": "o/r",
 		}, Info{GitHub, "https://ghe.example", "https://ghe.example/api/v3", "ghe.example", "o/r"}, true},
+		{"gitlab", map[string]string{
+			"GITLAB_CI": "true", "CI_SERVER_URL": "https://gl.example:8443/", "CI_API_V4_URL": "https://gl.example:8443/api/v4",
+			"CI_PROJECT_PATH": "grp/sub/r",
+		}, Info{GitLab, "https://gl.example:8443", "https://gl.example:8443/api/v4", "gl.example", "grp/sub/r"}, true},
+		{"gitlab without api url", map[string]string{
+			"GITLAB_CI": "true", "CI_SERVER_URL": "https://gitlab.com", "CI_PROJECT_PATH": "o/r",
+		}, Info{GitLab, "https://gitlab.com", "https://gitlab.com/api/v4", "gitlab.com", "o/r"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -60,6 +67,8 @@ func TestParseRemote(t *testing.T) {
 		{"https://git.example.com:8443/o/r", "git.example.com:8443", "git.example.com", "o/r"},
 		{"git@github.com:o/r.git", "github.com", "github.com", "o/r"},
 		{"ssh://git@git.example.com:2222/o/r.git", "git.example.com", "git.example.com", "o/r"},
+		{"https://gitlab-ci-token:x@gl.example/grp/sub/r.git", "gl.example", "gl.example", "grp/sub/r"},
+		{"git@gitlab.com:grp/sub/r.git", "gitlab.com", "gitlab.com", "grp/sub/r"},
 	}
 	for _, tt := range tests {
 		hp, h, r, err := parseRemote(tt.in)
@@ -67,7 +76,7 @@ func TestParseRemote(t *testing.T) {
 			t.Errorf("%s: got %q %q %q %v", tt.in, hp, h, r, err)
 		}
 	}
-	for _, bad := range []string{"", "/local/path", "https://h/onlyowner", "file:///x/o/r", "https://h/%zz/r"} {
+	for _, bad := range []string{"", "/local/path", "https://h/onlyowner", "file:///x/o/r", "https://h/%zz/r", "https://h/o//r"} {
 		if _, _, _, err := parseRemote(bad); err == nil {
 			t.Errorf("%q: want error", bad)
 		}
@@ -112,6 +121,10 @@ func TestDetectProbes(t *testing.T) {
 		{"forgejo sign-in required", map[string]string{"/api/forgejo/v1/version": `403:{"message":"x"}`}, Forgejo, "/api/v1"},
 		{"403 without json is not gitea", map[string]string{"/api/v1/version": `403:forbidden`, "/api/v3/meta": `{}`}, GitHub, "/api/v3"},
 		{"ghes", map[string]string{"/api/v3/meta": `{}`}, GitHub, "/api/v3"},
+		{"gitlab", map[string]string{"/api/v4/version": `{"version":"18.5.1","revision":"x"}`}, GitLab, "/api/v4"},
+		// Anonymous GitLab; its sign-in redirect would answer the forgejo probe with 200.
+		{"gitlab sign-in required", map[string]string{"/api/v4/version": `401:{"message":"401 Unauthorized"}`, "/api/forgejo/v1/version": `<html>`}, GitLab, "/api/v4"},
+		{"401 without json is not gitlab", map[string]string{"/api/v4/version": `401:nope`, "/api/v3/meta": `{}`}, GitHub, "/api/v3"},
 		{"none", map[string]string{}, "", ""},
 	}
 	for _, tt := range tests {
@@ -126,6 +139,9 @@ func TestDetectProbes(t *testing.T) {
 					if rest, ok := strings.CutPrefix(b, "403:"); ok {
 						w.WriteHeader(http.StatusForbidden)
 						b = rest
+					} else if rest, ok := strings.CutPrefix(b, "401:"); ok {
+						w.WriteHeader(http.StatusUnauthorized)
+						b = rest
 					}
 					io.WriteString(w, b)
 					return
@@ -139,7 +155,7 @@ func TestDetectProbes(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "cannot detect platform") {
 					t.Fatalf("err = %v", err)
 				}
-				want := []string{"/api/forgejo/v1/version", "/api/v1/version", "/api/v3/meta"}
+				want := []string{"/api/v4/version", "/api/forgejo/v1/version", "/api/v1/version", "/api/v3/meta"}
 				if fmt.Sprint(seen) != fmt.Sprint(want) {
 					t.Fatalf("probe order %v", seen)
 				}
@@ -173,6 +189,18 @@ func TestDetectNoProbe(t *testing.T) {
 	if err != nil || info.Kind != Gitea || info.APIURL != "https://other/api" {
 		t.Fatalf("env+api override: %+v %v", info, err)
 	}
+	info, err = Detect(context.Background(), envFunc(nil), "git@gitlab.com:grp/sub/r.git", Overrides{}, c)
+	if err != nil || info.Kind != GitLab || info.APIURL != "https://gitlab.com/api/v4" || info.Repo != "grp/sub/r" {
+		t.Fatalf("gitlab.com: %+v %v", info, err)
+	}
+	info, err = Detect(context.Background(), envFunc(nil), "https://h.example/grp/sub/r", Overrides{Kind: "gitlab"}, c)
+	if err != nil || info.Kind != GitLab || info.APIURL != "https://h.example/api/v4" || info.Repo != "grp/sub/r" {
+		t.Fatalf("gitlab override: %+v %v", info, err)
+	}
+	_, err = Detect(context.Background(), envFunc(nil), "https://h.example/grp/sub/r", Overrides{Kind: "gitea"}, c)
+	if err == nil || !strings.Contains(err.Error(), `repository "grp/sub/r": gitea repositories are owner/name`) {
+		t.Fatalf("nested path on gitea: %v", err)
+	}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -200,19 +228,23 @@ func TestDefaultActionsHost(t *testing.T) {
 }
 
 func TestGitLabURL(t *testing.T) {
+	gl := Info{Kind: GitLab, ServerURL: "https://gl.example/"}
 	tests := []struct {
 		configured, env string
+		info            Info
 		url, src        string
 	}{
-		{"", "", "https://gitlab.com", "default"},
-		{"", "https://gitlab.example.com/", "https://gitlab.example.com", "env"},
-		{"https://example.com/gitlab", "https://gitlab.example.com", "https://example.com/gitlab", "config"},
-		{"http://git.example:8080/", "", "http://git.example:8080", "config"},
+		{"", "", Info{}, "https://gitlab.com", "default"},
+		{"", "", Info{Kind: Gitea, ServerURL: "https://g.example"}, "https://gitlab.com", "default"},
+		{"", "", gl, "https://gl.example", "platform"},
+		{"", "https://gitlab.example.com/", gl, "https://gitlab.example.com", "env"},
+		{"https://example.com/gitlab", "https://gitlab.example.com", gl, "https://example.com/gitlab", "config"},
+		{"http://git.example:8080/", "", Info{}, "http://git.example:8080", "config"},
 	}
 	for _, tt := range tests {
-		u, s := GitLabURL(tt.configured, envFunc(map[string]string{"CI_SERVER_URL": tt.env}))
+		u, s := GitLabURL(tt.configured, tt.info, envFunc(map[string]string{"CI_SERVER_URL": tt.env}))
 		if u != tt.url || s != tt.src {
-			t.Errorf("%q %q: got %q %q", tt.configured, tt.env, u, s)
+			t.Errorf("%q %q %+v: got %q %q", tt.configured, tt.env, tt.info, u, s)
 		}
 	}
 }

@@ -4,7 +4,7 @@
 
 ## 1. Goals
 
-- **One static Go binary.** GitHub, Gitea and Forgejo are first-class platforms and are detected automatically.
+- **One static Go binary.** GitHub, Gitea, Forgejo and GitLab are first-class platforms and are detected automatically.
 - **A small, strict config (`.deps.yaml`).** Unknown keys are errors. Rules are evaluated top-to-bottom; each later matching rule overrides only the fields it sets.
 - **Files are never reformatted.** Managers extract byte spans and deps replaces only those bytes. The only exceptions are generated files: `go mod tidy` output (go.mod, go.sum), the `package-lock.json` npm writes the `Cargo.lock` cargo writes, the regenerated `uv.lock`, `poetry.lock` and `Pipfile.lock`, and pip-compile/`uv pip compile` output regenerated from its header command.
 - **Same behavior locally and in CI.** `deps plan`, `deps apply` and `deps run` behave identically on a laptop and as an Action.
@@ -545,13 +545,13 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) // the on
 
 ```go
 // internal/platform
-type Kind string // "github" | "gitea" | "forgejo"
-type Info struct{ Kind Kind; ServerURL, APIURL, Host, Repo string } // Repo = "owner/name"
+type Kind string // "github" | "gitea" | "forgejo" | "gitlab"
+type Info struct{ Kind Kind; ServerURL, APIURL, Host, Repo string } // Repo = "owner/name", or a GitLab project path "group/sub/name"
 type PR struct {
-    Number int; Title, Body, Head, HeadSHA, State, URL string; Merged bool; Mergeable *bool
+    Number int; Title, Body, Head, HeadSHA, State, URL string; Merged bool; Mergeable *bool // Number: the MR iid on GitLab
     CreatedAt time.Time // zero when omitted
-    NodeID    string    // GitHub GraphQL id; "" on Gitea/Forgejo
-    AutoMerge bool      // GitHub auto_merge non-null; always false on Gitea/Forgejo (not reported)
+    NodeID    string    // GitHub GraphQL id; "" elsewhere
+    AutoMerge bool      // GitHub auto_merge non-null; always false on Gitea/Forgejo (not reported) and GitLab (pushes cancel it)
     Labels    []string  // label names (labels[].name); PR.HasLabel compares case-insensitively
 }
 type Issue struct{ Number int; Title, Body, URL string }
@@ -655,15 +655,17 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
    1. `FORGEJO_ACTIONS=true` → forgejo. Reads `FORGEJO_SERVER_URL`, `FORGEJO_API_URL` and `FORGEJO_REPOSITORY`, each falling back to the `GITHUB_*` name.
    2. `GITEA_ACTIONS=true` → gitea, from the `GITHUB_*` variables.
    3. `GITHUB_ACTIONS=true` → github, from the `GITHUB_*` variables (covers GHES).
-2. **The `origin` remote URL.** Accepted forms: `https://host/owner/repo(.git)`, `git@host:owner/repo(.git)` and `ssh://git@host[:port]/owner/repo(.git)`.
-   - Host `github.com` → github, API `https://api.github.com`.
+   4. `GITLAB_CI=true` → gitlab, from `CI_SERVER_URL`, `CI_API_V4_URL` (else `<server>/api/v4`) and `CI_PROJECT_PATH`.
+2. **The `origin` remote URL.** Accepted forms: `https://host/owner/repo(.git)`, `git@host:owner/repo(.git)` and `ssh://git@host[:port]/owner/repo(.git)`; GitLab project paths may have more segments (`group/subgroup/repo`), other kinds reject them.
+   - Host `github.com` → github, API `https://api.github.com`; host `gitlab.com` → gitlab, API `https://gitlab.com/api/v4`.
    - Any other host is probed unauthenticated, with a 10s timeout each, in this order:
-     1. `/api/forgejo/v1/version` returns 200 → forgejo.
-     2. `/api/v1/version` returns 200 with JSON `version` → gitea. Both use API `https://host/api/v1`.
-     3. `/api/v3/meta` returns 200 → GHES, API `https://host/api/v3`.
-     4. Nothing matches → error `cannot detect platform for <host>; pass --platform and --api-url`.
+     1. `/api/v4/version` returns 200 with JSON `version`, or 401/403 with a JSON `message` (GitLab without a token) → gitlab, API `https://host/api/v4`. GitLab goes first because it redirects unknown paths to its sign-in page, which answers probe 2 with 200 after the redirect.
+     2. `/api/forgejo/v1/version` returns 200 → forgejo.
+     3. `/api/v1/version` returns 200 with JSON `version` → gitea. Both use API `https://host/api/v1`.
+     4. `/api/v3/meta` returns 200 → GHES, API `https://host/api/v3`.
+     5. Nothing matches → error `cannot detect platform for <host>; pass --platform and --api-url`.
 
-     Instances that require sign-in for the whole API answer probes 1 and 2 with 401/403 and a JSON `message` body; that also counts as a match. Missing paths return 404, so other servers are not misdetected.
+     Instances that require sign-in for the whole API answer probes 2 and 3 with 401/403 and a JSON `message` body; that also counts as a match. Missing paths return 404, so other servers are not misdetected.
 3. **Flags.** `--platform`, `--api-url` and `--repo` override the detected values. If only the kind is overridden, the API URL is derived with the per-kind rule above.
 
 **Default host for `owner/repo@ref`**, first match wins:
@@ -712,20 +714,40 @@ On GitHub, `Merged` is `merged_at != null` and `AutoMerge` is `auto_merge != nul
 
 On Gitea and Forgejo, `Merged` is the `merged` field and `Mergeable` is the `mergeable` field. Their PR JSON does not report a scheduled auto-merge, so `AutoMerge` is always false and the request is repeated (idempotently) on later runs.
 
-Both clients share these rules:
-- `Head` = `head.ref`; `URL` = `html_url`.
+**GitLab.** Header: `Authorization: Bearer <t>` (personal, project and group access tokens, and OAuth tokens). `{project}` is `{api}/projects/<url-encoded path>`. PR numbers are merge request iids.
+
+| Method | Endpoint |
+|---|---|
+| DefaultBranch | `GET {project}` → `.default_branch` (fetched once per run; also `issues_enabled`) |
+| ListPRs | `GET {project}/merge_requests?state=<opened\|all>&order_by=updated_at&sort=desc&per_page=100&page=N`; `closed` lists `state=all` and keeps `closed` and `merged` ones |
+| GetPR | `GET {project}/merge_requests/{iid}` |
+| CreatePR | `POST {project}/merge_requests {source_branch, target_branch, title, description, remove_source_branch: true}` |
+| UpdatePR / ClosePR | `PUT {project}/merge_requests/{iid} {title, description}` / `{state_event: "close"}` |
+| SetPRMetadata | `PUT .../merge_requests/{iid}` with `add_labels` (comma-separated names; GitLab creates missing labels), `reviewer_ids`, `assignee_ids` (ids from `GET {api}/users?username=<u>`, cached per run); `team:` reviewers are an error (GitLab has no team reviewers) |
+| RemovePRLabel | `GET .../merge_requests/{iid}`, then `PUT {remove_labels}` with the labels equal to the name case-insensitively; none is success |
+| EnableAutoMerge | `PUT .../merge_requests/{iid}/merge {merge_when_pipeline_succeeds: true, auto_merge: true, should_remove_source_branch: true, sha, squash}`; 405, 406, 409 and 422 are pending |
+| Checks | `GET {project}/pipelines?sha=<sha>&order_by=id&sort=desc&per_page=100`, the latest pipeline per ref (branch and merge request pipelines; external commit statuses get an `external` pipeline): none → none, `failed`/`canceled` → failure, all `success`/`skipped` → success, else pending |
+| MergePR | `PUT .../merge_requests/{iid}/merge {should_remove_source_branch: true, sha, squash}` |
+| ListIssues | `issues_enabled: false` → issues disabled (GitLab then lists none and refuses creation with 403); else `GET {project}/issues?state=opened&per_page=100&page=N` |
+| CreateIssue | `POST {project}/issues {title, description, labels: "a,b"}` |
+| UpdateIssue | `PUT {project}/issues/{iid} {description}` |
+
+On GitLab, `Head` = `source_branch`, `HeadSHA` = `sha`, `URL` = `web_url`, `Merged` is state `merged`. `AutoMerge` is always false: a push to the source branch cancels auto-merge (verified on GitLab 19.5), and the bot keeps the listed PR's flag after its own push, so the idempotent request (200 when already set) is repeated on every run, as on Gitea. `Mergeable` is false for `has_conflicts` or `detailed_merge_status` `conflict`/`need_rebase` (deps rebuilds the branch), true for `mergeable`, and unknown (nil) while GitLab checks or the MR waits for a pipeline or approval. `automergeStrategy` only sets `squash` (`squash` true, `merge`/`rebase` false, `auto` the project's default): merge commit, semi-linear or fast-forward is the project's merge method.
+
+All clients share these rules:
+- `Head` = `head.ref`; `URL` = `html_url` (GitHub, Gitea, Forgejo).
 - Paging stops at a short page or at `maxPages`.
 - Errors have the form `<METHOD> <path>: <status>: <first 200 bytes of body>`.
 
 **Git (all platforms).**
 - Tags are fetched from `<source>/info/refs?service=git-upload-pack`, then `POST <source>/git-upload-pack` (`ls-refs`). Servers that only speak protocol v0 are handled by parsing the advertisement and using the `^{}` peeled lines.
-- Auth uses HTTP Basic with user `x-access-token`.
+- Auth uses HTTP Basic with user `x-access-token` (`oauth2` for the platform token on GitLab).
 
 **GitHub releases (datasources and notes).** With a token for the host: `POST {api}/graphql` (github.com `https://api.github.com/graphql`, GHES `https://<host>/api/graphql`) with `Authorization: Bearer <t>`. Without one: REST `GET {api}/repos/{repo}/releases?per_page=100&page=N` and `/releases/tags/{tag}`. GraphQL answers failed queries with 200 and an `errors` array: `NOT_FOUND` is treated as a 404, `RATE_LIMITED` fails with the rate-limit reset time.
 
 ### Token sources
 
-1. **Platform API:** `--token`, then the first non-empty of `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host.
+1. **Platform API:** `--token`, then the first non-empty of `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, then the password from `git credential fill` for the platform host.
    - If no token is found, `run` fails with `no token for <host>`.
    - With `--dry-run`, the API is used anonymously instead.
 2. **Tag lookups:** the platform token is used for the platform host. `DEPS_GITHUB_COM_TOKEN` is used for github.com when the platform is not github.com.
@@ -806,8 +828,9 @@ A group automerges when every update in it has `Automerge` from the policy of it
 - **Already enabled** (GitHub `auto_merge` non-null) → `automerge enabled`, no request.
 - **Dry run** → `would-automerge`, no request.
 - **Gitea / Forgejo:** `POST /pulls/{n}/merge` with `merge_when_checks_succeed: true` schedules the merge; the forge merges once the required status checks succeed (right away when they already did) and deletes the branch. 201/200 and 409 `already scheduled` → `automerge`. 405 `Please try again later` (the mergeability check of a fresh push is still running, or the PR conflicts) → `automerge pending`, retried next run without an error. `head_commit_id` pins the head deps pushed or saw.
+- **GitLab:** `PUT /merge_requests/{iid}/merge` with `merge_when_pipeline_succeeds` and `auto_merge` (the name since GitLab 17.11) sets auto-merge; GitLab merges when the head pipeline succeeds, and right away when the head has no pipeline and the project does not require one (*Pipelines must succeed*; observed on GitLab 19.5). A push to the branch cancels it, so the request is repeated on every run (200 also when already set) → `automerge`. 405/406/409/422 (draft, conflicts, the head moved, a required pipeline failed or is missing, approvals missing) → `automerge pending`. `sha` pins the head, `should_remove_source_branch` deletes the branch.
 - **GitHub:** `enablePullRequestAutoMerge` → `automerge`. GitHub refuses it when auto-merge is disallowed in the repository (also known up front from `allow_auto_merge: false`) or when the PR has nothing left to wait for (`Pull request is in clean status`, also `unstable`/`has_hooks`). Then deps falls back to merging directly, but only when a fresh `GetPR` reports `mergeable: true` and `Checks(head.sha)` is `success`: at least one commit status or check run exists, the combined status is `success` (when there are statuses) and every check run is `completed` with `success`, `neutral` or `skipped`. Then `PUT /pulls/{n}/merge` with `sha` = the checked head → `merged`. Otherwise → `automerge waiting for checks`, and the next run checks again. A repository without any checks therefore never merges through the fallback.
-- `auto` maps to the repository default: Gitea/Forgejo `default_merge_style` (else `merge`); GitHub the first allowed of merge commit, squash, rebase (else `MERGE`).
+- `auto` maps to the repository default: Gitea/Forgejo `default_merge_style` (else `merge`); GitHub the first allowed of merge commit, squash, rebase (else `MERGE`); GitLab the project's squash default (the merge method is a project setting; `squash` squashes, `merge` and `rebase` don't).
 - Security updates follow the same policy.
 
 ### Branch automerge

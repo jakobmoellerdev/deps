@@ -565,7 +565,7 @@ Updates container images, project includes and CI/CD components in GitLab CI con
 
 - Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
 - String includes and `local`, `remote` and `template` includes are not deps.
-- The instance URL is `gitlabci.url` from the config, else `CI_SERVER_URL` (set by GitLab CI), else `https://gitlab.com`; a path prefix such as `https://example.com/gitlab` is kept.
+- The instance URL is `gitlabci.url` from the config, else `CI_SERVER_URL` (set by GitLab CI), else the GitLab platform `deps run` detected from the remote, else `https://gitlab.com`; a path prefix such as `https://example.com/gitlab` is kept.
 - A leading `$CI_SERVER_FQDN`, `${CI_SERVER_FQDN}`, `$CI_SERVER_HOST` or `${CI_SERVER_HOST}` in a component path is the instance host; the dep name keeps the variable as written.
 - Private instances authenticate with `DEPS_GITLAB_TOKEN`, or `CI_JOB_TOKEN` when running in GitLab CI against the same instance.
 - Every YAML document is scanned, so component templates with a `spec:` header work.

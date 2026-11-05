@@ -325,7 +325,7 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 **Base branches:** `--base`, else the config key `baseBranches`, else the repository's default branch. `baseBranches` lists names, `$default` and `/<RE2>/` regexes over the branches on origin (names origin lacks are skipped with a warning). Each base is resolved from its own tip, with the checkout's config, its `rules[].baseBranches` matching that base: the checkout serves the base it is the tip of, every other base gets a temporary linked work tree of its fetched tip. With more than one entry, or a regex one, branches carry the base (`<branchPrefix><base>/<manager>/<name>`), the log prints `base    <base>` before each base's updates, and the dashboard has a section per base; the PR limits count all bases together. `--base` overrides `baseBranches` with one base and the plain branch names.
 
-**Token:** `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`, which uses the API anonymously. Git pushes use the checkout's credentials.
+**Token:** `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`, which uses the API anonymously. Git pushes use the checkout's credentials. On GitLab, PRs are merge requests and `--repo` takes the project path (`group/subgroup/name`).
 
 **Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then the config key `gitAuthor`, then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2. Platform commits ignore it: GitHub authors them as the token's account.
 
@@ -371,7 +371,7 @@ Only keys without a passphrase are supported; a protected key fails before any w
 |---|---|
 | `automerge` | platform auto-merge requested (or already scheduled); the forge merges once required checks pass |
 | `automerge enabled` | GitHub reports auto-merge enabled already; not requested again |
-| `automerge pending` | Gitea/Forgejo cannot schedule it yet (mergeability check of a fresh push still running); the next run asks again |
+| `automerge pending` | Gitea/Forgejo cannot schedule it yet (mergeability check of a fresh push still running), or GitLab refused it for now (draft, conflicts, failed or missing required pipeline, approvals, head moved); the next run asks again |
 | `automerge waiting for checks` | GitHub will not auto-merge (auto-merge disallowed, or nothing to wait for) and the PR is not mergeable yet or its statuses/check runs are not all green; the next run checks again |
 | `merged` | merged directly: the GitHub fallback (mergeable with all statuses and check runs green), or a branch automerge branch fast-forwarded into the base and deleted |
 | `branch automerge waiting for checks` | branch automerge: the branch has no PR and its checks have not finished or none are reported; the next run checks again |
@@ -404,11 +404,11 @@ DEPS_TOKEN=$TOKEN deps run -v --log-level info
 | `--base` | string | `""` | base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch) |
 | `--dry-run` | bool | `false` | report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token |
 | `--max-new-prs` | int | `10` | maximum number of pull requests to create per run (0 = unlimited) |
-| `--platform` | string | `"auto"` | forge type: auto\|github\|gitea\|forgejo (auto: from the CI environment, else the origin remote) |
-| `--repo` | string | `""` | repository owner/name (default: detected) |
+| `--platform` | string | `"auto"` | forge type: auto\|github\|gitea\|forgejo\|gitlab (auto: from the CI environment, else the origin remote) |
+| `--repo` | string | `""` | repository owner/name, or the GitLab project path (default: detected) |
 | `--schedule-time` | string | `""` | evaluate schedule time windows at this RFC 3339 time instead of now, e.g. 2026-11-09T05:30:00+01:00 (default: $DEPS_SCHEDULE_TIME) |
 | `--signing-key` | string | `""` | sign deps' commits with this passphrase-less private key (OpenSSH or armored OpenPGP), given as the key itself or a file path (default: $DEPS_SIGNING_KEY) |
-| `--token` | string | `""` | platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, git credential helper) |
+| `--token` | string | `""` | platform API token; git pushes use the checkout's credentials (default: $DEPS_TOKEN, $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, $GITLAB_TOKEN, git credential helper) |
 | `--trigger-schedule` | string | `""` | act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH (default: $DEPS_TRIGGER_SCHEDULE) |
 
 ## deps schema
@@ -481,18 +481,19 @@ Environment variables deps reads. Also shown by `deps help environment`.
 
 | Variable | Used by | Meaning |
 |---|---|---|
-| `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN` | all | platform token, first non-empty wins; `run --token` takes precedence. `run` falls back to `git credential fill` for the platform host, and without any token fails with `no token for <host>` (except `--dry-run`). Sent to the platform host's lookups as Basic `x-access-token:<token>`. |
+| `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN` | all | platform token, first non-empty wins; `run --token` takes precedence. `run` falls back to `git credential fill` for the platform host, and without any token fails with `no token for <host>` (except `--dry-run`). Sent to the platform host's lookups as Basic `x-access-token:<token>` (`oauth2:<token>` on GitLab). |
 | `DEPS_GITHUB_COM_TOKEN` | all | token for github.com lookups when the platform is not github.com (avoids anonymous rate limits for actions and releases hosted on GitHub) |
 | `DEPS_DEFAULT_ACTIONS_URL` | all | default host of `owner/repo@ref` actions (hostname, or a URL whose host is used); overridden by the config key `actions.defaultHost` |
 | `DEPS_GITLAB_TOKEN` | `gitlabci` manager, `git-tags` datasource | token for the GitLab instance's host (see `CI_SERVER_URL`), sent as Basic `oauth2:<token>`; a platform token for the same host takes precedence |
-| `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_JOB_TOKEN` | `gitlabci` manager, `git-tags` datasource | set by GitLab CI. `CI_SERVER_URL` is the GitLab instance URL unless the config key `gitlabci.url` sets one (default `https://gitlab.com`). Without `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN` is sent as Basic `gitlab-ci-token:<token>` when `CI_SERVER_HOST` (else `CI_SERVER_URL`'s host) is the instance's host. |
+| `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_JOB_TOKEN` | `gitlabci` manager, `git-tags` datasource | set by GitLab CI. `CI_SERVER_URL` is the GitLab instance URL unless the config key `gitlabci.url` sets one (else the server of a GitLab platform `run` detected from the remote, else `https://gitlab.com`). Without `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN` is sent as Basic `gitlab-ci-token:<token>` when `CI_SERVER_HOST` (else `CI_SERVER_URL`'s host) is the instance's host. |
+| `GITLAB_CI`, `CI_API_V4_URL`, `CI_PROJECT_PATH` | all | set by GitLab CI: `GITLAB_CI=true` makes GitLab the platform, with `CI_SERVER_URL` as server, `CI_API_V4_URL` as API (default `<server>/api/v4`) and `CI_PROJECT_PATH` as repository |
 | `DEPS_NODE_DIST_URL` | `node-version` datasource | base URL of a nodejs.org `dist` mirror (default `https://nodejs.org/dist`) |
 | `TF_TOKEN_<host>` | `terraform-provider`, `terraform-module` datasources | registry token sent as `Authorization: Bearer` to `<host>` (dots as `_`, hyphens as `__`, e.g. `TF_TOKEN_app_terraform_io`), as the Terraform CLI reads it; takes precedence over the CLI config |
 | `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG` | `terraform-provider`, `terraform-module` datasources | Terraform CLI config read for registry `credentials` blocks and the `credentials_helper`, replacing `~/.terraformrc` (`%APPDATA%/terraform.rc`); when set, the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` (`credentials.tfrc.json`) are not read. `TERRAFORM_CONFIG` is the legacy name |
 | `HOME`, `APPDATA` (Windows) | `terraform-provider`, `terraform-module` datasources | where the Terraform CLI config, `credentials.tfrc.json` and credentials helpers (`.terraform.d/plugins`) are found |
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor`; ignored for platform commits |
 | `DEPS_SIGNING_KEY` | `run` | default of `--signing-key`: a passphrase-less OpenSSH or armored OpenPGP private key, or the path of a file holding one; deps signs its commits with it |
-| `DEPS_ALLOW_TASKS` | `apply`, `run` | default of `--allow-tasks`: the `postUpgradeTasks` commands that may run (repository code), one pattern per line, `*` matching any text without `;`, `&`, `|`, backticks, `$(` or line breaks (`go generate ./...`, `make *`; `*` alone allows everything). Commands get the environment without `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`, and without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CEILING_DIRECTORIES`, so their git uses the repository they run in |
+| `DEPS_ALLOW_TASKS` | `apply`, `run` | default of `--allow-tasks`: the `postUpgradeTasks` commands that may run (repository code), one pattern per line, `*` matching any text without `;`, `&`, `|`, backticks, `$(` or line breaks (`go generate ./...`, `make *`; `*` alone allows everything). Commands get the environment without `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`, and without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CEILING_DIRECTORIES`, so their git uses the repository they run in |
 | `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
 | `DEPS_TRIGGER_SCHEDULE` | `run` | default of `--trigger-schedule` |
 | `DEPS_SCHEDULE_TIME` | `run` | default of `--schedule-time`: the RFC 3339 time schedule time windows are evaluated at instead of now |

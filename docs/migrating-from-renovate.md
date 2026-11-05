@@ -49,7 +49,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `prBodyTemplate`, `prBodyColumns`, `prBodyDefinitions`, `prBodyNotes` | not supported: `prHeader` and `prFooter` frame deps' fixed body |
 | `gitAuthor` | `gitAuthor` (or `DEPS_GIT_AUTHOR`, `--author-name/--author-email`); ignored for platform commits, as in Renovate |
 | `gitIgnoredAuthors` | `gitIgnoredAuthors` |
-| `platformCommit` (`RENOVATE_PLATFORM_COMMIT`) | `platformCommit` (`DEPS_PLATFORM_COMMIT`): same values and default (`auto`). GitHub only; `auto` also needs no signing key, and `enabled` with a signing key or on Gitea/Forgejo is a usage error |
+| `platformCommit` (`RENOVATE_PLATFORM_COMMIT`) | `platformCommit` (`DEPS_PLATFORM_COMMIT`): same values and default (`auto`). GitHub only; `auto` also needs no signing key, and `enabled` with a signing key or on Gitea/Forgejo/GitLab is a usage error |
 | `prConcurrentLimit`, `prHourlyLimit` | same names; **default 0 (unlimited)** in deps, 10/2 in Renovate; `run --max-new-prs` (default 10) caps each run |
 | `rebaseWhen`, `:rebaseStalePrs` | `rebaseWhen` (`conflicted` default, `behind-base-branch`, `never`) |
 | `rebaseLabel`, PR body rebase/retry checkbox | `rebaseLabel` (default `rebase`) and the same checkbox in every PR body: either requests a rebuild on the next run (bypassing the schedule, discarding commits by others); the label is removed and the box unticked afterwards |
@@ -63,6 +63,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `customDatasources` (`defaultRegistryUrlTemplate`, `format`, `transformTemplates`) | `customDatasources` (`url`, `format`, `versions` selector + `versionRegex` instead of JSONata) |
 | `github-release-attachments` digests | a regex `currentDigest` group with datasource `github-release-attachments` is kept current like Renovate: the asset of the current release with that sha256 is found and the same asset of the new release is used; `custom[].checksum.asset` / `checksum.url` name the asset explicitly |
 | `hostRules` (tokens) | env tokens, `.npmrc`, Docker credentials, git credential helper; retries are built in |
+| `platform`, `endpoint`, `token` (`RENOVATE_PLATFORM`, `RENOVATE_ENDPOINT`, `RENOVATE_TOKEN`) | detected from the CI environment (`GITLAB_CI`, `GITHUB_ACTIONS`, …) or the `origin` remote (`github.com`, `gitlab.com`, else API probes); override with `run --platform github\|gitea\|forgejo\|gitlab --api-url <endpoint> --token`, or set `DEPS_TOKEN` (`GITLAB_TOKEN` on GitLab). GitLab merge requests use `merge_when_pipeline_succeeds` for `automerge`, pipelines as checks and issues for the dashboard (see [GitLab CI](ci.md#gitlab-ci)); Bitbucket, Azure DevOps and Gerrit are not supported |
 | `automerge` | `automerge` / `rules[].automerge` (platform auto-merge once required checks pass; a PR automerges when all its updates do) |
 | `automergeType: pr`, `automergeType: branch` | `automergeType: pr` or `branch` (top level and per rule). `branch` pushes the branch without a PR and fast-forwards the base to it once its checks pass; failed checks or a refused push open the PR. `pr-comment` is not offered |
 | `automergeStrategy` | `automergeStrategy`: `auto`, `merge`, `squash`, `rebase` (Renovate's `merge-commit` = `merge`; `fast-forward` and `rebase-merge` are not offered) |

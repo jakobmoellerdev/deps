@@ -1,4 +1,5 @@
-// Package platform detects the code forge (GitHub, Gitea, Forgejo) and talks to its pull request API.
+// Package platform detects the code forge (GitHub, Gitea, Forgejo, GitLab) and talks to its
+// pull (merge) request API.
 package platform
 
 import (
@@ -16,6 +17,7 @@ const (
 	GitHub  Kind = "github"
 	Gitea   Kind = "gitea"
 	Forgejo Kind = "forgejo"
+	GitLab  Kind = "gitlab"
 )
 
 // Info describes the repository's forge.
@@ -24,7 +26,7 @@ type Info struct {
 	ServerURL string
 	APIURL    string
 	Host      string
-	Repo      string // "owner/name"
+	Repo      string // "owner/name"; on GitLab the project path, which may be "group/subgroup/name"
 }
 
 // PR is the subset of pull request fields deps uses.

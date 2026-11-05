@@ -171,9 +171,9 @@ func cleanEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
 		"GITHUB_ACTIONS", "GITEA_ACTIONS", "FORGEJO_ACTIONS", "GITHUB_WORKSPACE", "GITHUB_STEP_SUMMARY", "GITEA_STEP_SUMMARY", "GITHUB_OUTPUT", "DEPS_REPORT", "GITHUB_WORKFLOW", "GITHUB_JOB", "GITHUB_RUN_ID", "GITHUB_SHA", "GITHUB_REF",
-		"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", "DEPS_GITHUB_COM_TOKEN",
+		"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", "GITLAB_TOKEN", "DEPS_GITHUB_COM_TOKEN",
 		"DEPS_DEFAULT_ACTIONS_URL", "DEPS_GIT_AUTHOR", "DEPS_SIGNING_KEY", "DEPS_PLATFORM_COMMIT", "DEPS_LOG_LEVEL", "DEPS_LOG_FORMAT", "DEPS_SCHEDULE_TIME", "GONOPROXY", "GOPRIVATE",
-		"DEPS_GITLAB_TOKEN", "CI_SERVER_URL", "CI_SERVER_HOST", "CI_JOB_TOKEN",
+		"DEPS_GITLAB_TOKEN", "GITLAB_CI", "CI_SERVER_URL", "CI_SERVER_HOST", "CI_API_V4_URL", "CI_PROJECT_PATH", "CI_JOB_TOKEN",
 		"NPM_CONFIG_REGISTRY", "npm_config_registry", "DEPS_CRATES_INDEX_URL", "DEPS_CRATES_API_URL",
 		"NO_COLOR", "CLICOLOR_FORCE", "FORCE_COLOR", "RUNNER_DEBUG",
 	} {
@@ -509,7 +509,7 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 		{"concurrency", []string{"plan", "--dir", dir, "--concurrency", "0"}, "--concurrency: must be at least 1, got 0"},
 		{"config", []string{"plan", "--dir", bad}, "line 1: field pinn not found"},
 		{"missing explicit config", []string{"plan", "--dir", dir, "--config", filepath.Join(dir, "nope.yaml")}, "nope.yaml"},
-		{"platform", []string{"run", "--dir", dir, "--platform", "gitlab"}, `--platform: invalid value "gitlab"`},
+		{"platform", []string{"run", "--dir", dir, "--platform", "bitbucket"}, `--platform: invalid value "bitbucket"`},
 		{"signing key", []string{"run", "--dir", dir, "--signing-key", "not-a-key"}, "--signing-key: signing key: want an OpenSSH private key"},
 	}
 	for _, tt := range tests {

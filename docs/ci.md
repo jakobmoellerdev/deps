@@ -1,11 +1,11 @@
 # Running deps in CI
 
-deps behaves the same locally and in CI. In CI it detects the forge from the job environment, reads the cron that triggered the run, and uses the job token unless you pass another. This guide covers GitHub Actions, Gitea Actions and Forgejo Actions. Every input, flag and config key is listed in the generated references: [action inputs](reference/action.md), [CLI flags and environment](reference/cli.md), [configuration keys](reference/configuration.md).
+deps behaves the same locally and in CI. In CI it detects the forge from the job environment, reads the cron that triggered the run, and uses the job token unless you pass another. This guide covers GitHub Actions, Gitea Actions, Forgejo Actions and GitLab CI. Every input, flag and config key is listed in the generated references: [action inputs](reference/action.md), [CLI flags and environment](reference/cli.md), [configuration keys](reference/configuration.md).
 
 ## Getting started
 
-1. **Add the workflow.** Copy the example for your forge: [GitHub](#github), [Gitea](#gitea) or [Forgejo](#forgejo). Each one is a job with `actions/checkout` and the deps action. The first run opens one PR per outdated dependency or group.
-2. **Choose the token.** On Gitea and Forgejo the job token works, but CI doesn't run on PRs it opens. On GitHub use an App token or a PAT, because `GITHUB_TOKEN` can't push changes to workflow files. Details: [Tokens and permissions](#tokens-and-permissions).
+1. **Add the workflow.** Copy the example for your forge: [GitHub](#github), [Gitea](#gitea), [Forgejo](#forgejo) or [GitLab](#gitlab-ci). Each one is a job with a checkout and deps. The first run opens one PR (merge request on GitLab) per outdated dependency or group.
+2. **Choose the token.** On Gitea and Forgejo the job token works, but CI doesn't run on PRs it opens. On GitHub use an App token or a PAT, because `GITHUB_TOKEN` can't push changes to workflow files. On GitLab use a project or personal access token: the CI job token can't open merge requests. Details: [Tokens and permissions](#tokens-and-permissions).
 3. **Set the schedule.** The workflow's `on.schedule` cron decides when deps runs. The examples also run [on push to the default branch](#run-on-push-to-the-default-branch), so open PRs are rebased right after a merge. To open some PRs only on certain crons, see [Schedules](#schedules).
 4. **Optional: add a `.deps.yaml`.** Without one, every direct dependency is updated. Rules, groups and limits are in the [configuration reference](reference/configuration.md). To check the config on pull requests, see [Preview on pull requests](#preview-on-pull-requests).
 
@@ -18,6 +18,7 @@ Then, as needed: [automerge](#automerge), the [dependency dashboard](#dependency
 - [GitHub](#github)
 - [Gitea](#gitea)
 - [Forgejo](#forgejo)
+- [GitLab CI](#gitlab-ci)
 - [Tokens and permissions](#tokens-and-permissions)
 - [Signed commits](#signed-commits)
   - [Platform commits (GitHub)](#platform-commits-github)
@@ -290,6 +291,40 @@ jobs:
 - **Default actions host.** Short `owner/repo@ref` actions resolve against `data.forgejo.org`, the default `DEFAULT_ACTIONS_URL` of Forgejo, and deps looks them up there too. `actions/checkout@v7.0.1` exists there. If your instance uses another `DEFAULT_ACTIONS_URL`, see [Self-hosted runners and actions hosts](#self-hosted-runners-and-actions-hosts).
 - **Runner image.** The download step needs `bash`, `curl`, `git` and `sha256sum`. Debian-based images such as `node:<version>-bookworm`, a common image for Forgejo's `docker` label, have them; Alpine images need `apk add bash curl git`.
 
+## GitLab CI
+
+GitLab has no actions, so the job downloads the release binary and runs it:
+
+```yaml
+# .gitlab-ci.yml
+deps:
+  image: golang:1.27 # has git, curl and sha256sum; go is only needed for go.mod updates
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # see "Run on push to the default branch"
+  resource_group: deps # one run at a time, like a concurrency group
+  variables:
+    DEPS_VERSION: v0.3.0
+  script:
+    - |
+      base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/$DEPS_VERSION
+      (cd /tmp && curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt" &&
+        grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 /usr/local/bin/deps)
+    # The job token can't push: push with the deps token instead.
+    - git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${DEPS_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
+    - deps run -v --log-level info
+```
+
+Add a pipeline schedule (*Build → Pipeline schedules*) on the default branch, e.g. `0 5 * * *`.
+
+- **Detection.** deps detects GitLab from `GITLAB_CI=true` and reads `CI_SERVER_URL`, `CI_API_V4_URL` and `CI_PROJECT_PATH`; nested groups (`group/subgroup/project`) work. Outside CI, the remote host `gitlab.com`, or an instance answering `/api/v4/version`, is GitLab ([Platform detection](#platform-detection)).
+- **The token.** The CI job token (`CI_JOB_TOKEN`) can't create merge requests or issues, so create a project access token (*Settings → Access tokens*) or a personal access token of a bot user with the scopes `api` and `write_repository` and at least the Developer role. Store it as a masked CI/CD variable `DEPS_TOKEN` (`GITLAB_TOKEN` works too). Mark it protected only if the default branch is protected, or the job won't see it. Merge requests and pushes made with it start pipelines as usual.
+- **Pushing.** deps pushes with the checkout's git credentials, and GitLab checks out with the job token, which may not push. The `git remote set-url` line makes git push with `DEPS_TOKEN`. The token then sits in the job's `.git/config`; see the security note of [post-upgrade tasks](#post-upgrade-tasks).
+- **Merging.** For [automerge](#automerge) the token's role must be allowed to merge into the target branch (Maintainer on a default protected branch); for [branch automerge](#branch-automerge) it must be allowed to push to it.
+- **Schedules.** GitLab doesn't tell the job which cron started it. If your `.deps.yaml` has [`schedule`](#schedules) entries, give each pipeline schedule the variable `DEPS_TRIGGER_SCHEDULE` with its cron (`0 5 * * 1`). Without it, a scheduled run acts on every group.
+- **Lookups.** Lookups on the instance's host (git tags, [gitlabci](#self-managed-gitlab) includes) send the token as Basic `oauth2:<token>`; includes resolve against `CI_SERVER_URL`.
+- **Not on GitLab:** the composite action, the step summary and step outputs, `::` workflow commands, [`deps preview`](#preview-on-pull-requests) check runs, [platform commits](#platform-commits-github) and the [dependency graph](#dependency-graph-github) are GitHub or Actions features. To check the config in merge request pipelines, run `deps plan`.
+
 ## Tokens and permissions
 
 | | GitHub | Gitea | Forgejo |
@@ -308,12 +343,12 @@ jobs:
 
 **Token sources:**
 
-1. **Platform API.** deps takes `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`.
-   - GitHub requests send `Authorization: Bearer <t>`.
+1. **Platform API.** deps takes `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`.
+   - GitHub and GitLab requests send `Authorization: Bearer <t>`.
    - Gitea and Forgejo requests send `Authorization: token <t>`.
 2. **Git push.** deps uses the checkout's git credentials (`actions/checkout` stores its `token:`), not the API token. With [platform commits](#platform-commits-github), commits and branch updates use the API token, and git only lists and deletes branches.
 3. **Lookups:**
-   - The platform token is sent to the platform host as Basic `x-access-token:<t>`.
+   - The platform token is sent to the platform host as Basic `x-access-token:<t>` (`oauth2:<t>` on GitLab).
    - `DEPS_GITHUB_COM_TOKEN` is used for github.com when the platform is elsewhere.
    - On a 401 without a static token, deps runs `git credential fill` once per host and retries. deps never prompts (`GIT_TERMINAL_PROMPT=0`).
 4. **npm, PyPI and Docker.** npm uses the `.npmrc` `_authToken` entries; PyPI indexes use the index URL's userinfo (`https://user:token@host/simple` in the manifest or `PIP_INDEX_URL`); docker uses the Docker credential chain (`~/.docker/config.json` or credential helpers, e.g. after `docker login`).
@@ -446,9 +481,10 @@ The [`gitlabci`](reference/managers.md#gitlabci) manager resolves `include: {pro
 
 1. [`gitlabci.url`](reference/configuration.md#gitlabciurl) in `.deps.yaml`, an absolute http(s) URL without query or fragment. A path prefix is kept, e.g. `https://example.com/gitlab`;
 2. `CI_SERVER_URL`, set by GitLab CI;
-3. `https://gitlab.com`.
+3. the server of the platform, when `run` detected GitLab from the remote (`https://<host>`);
+4. `https://gitlab.com`.
 
-With `--log-level info`, deps logs it as `gitlab url url=<u> source=<config|env|default>`.
+With `--log-level info`, deps logs it as `gitlab url url=<u> source=<config|env|platform|default>`.
 
 ```yaml
 # yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
@@ -621,6 +657,13 @@ jobs:
 3. Since the job token doesn't start CI on deps PRs, use a PAT and configure required status checks on the base branch.
 4. A fresh push whose mergeability check is still running is reported as `automerge pending` and requested again on the next run.
 
+**GitLab:**
+
+1. deps calls `PUT /merge_requests/{iid}/merge` with `merge_when_pipeline_succeeds` (and `auto_merge`, its name since GitLab 17.11). GitLab merges once the head pipeline succeeds and deletes the branch; the MR shows *Set to auto-merge*. A push to the branch cancels auto-merge, so deps requests it again on every run (`automerge`).
+2. If the head commit has no pipeline, GitLab merges **immediately**, unless *Settings → Merge requests → Pipelines must succeed* is on. Turn it on, and make CI run on the deps branches or their merge requests.
+3. Refusals (draft, conflicts, a failed or missing required pipeline, missing approvals, a head that moved) are reported as `automerge pending` and requested again on the next run.
+4. `automergeStrategy` only chooses squashing: `squash` squashes, `merge` and `rebase` don't, `auto` keeps the project's squash default. Merge commit, semi-linear history or fast-forward is the project's merge method.
+
 ### Branch automerge
 
 With [`automergeType: branch`](reference/configuration.md#automergetype) (Renovate's branch automerge) updates reach the base branch without a PR: deps pushes the branch, and a later run fast-forwards the base branch to it once the branch's commit statuses and check runs are all green, then deletes the branch. Failed checks, or a base branch that refuses the push, open the PR instead.
@@ -691,6 +734,7 @@ rules:
 - **Failures.** If a part fails (an unknown user, a team without access), the PR is still created and the run reports the error, e.g. `deps/gomod/x: request reviewers of #12: 422 …`.
 - **GitHub.** Labels that don't exist are created by GitHub. Teams are `team:<slug>` of the repository's organization. The token needs `pull-requests: write`.
 - **Gitea and Forgejo.** Labels must exist in the repository or its organization; missing ones are left out with a warning. Reviewers and assignees need write access to the repository.
+- **GitLab.** Labels that don't exist are created in the project. Reviewers and assignees are usernames; GitLab has no team reviewers, so `team:<slug>` fails that part. GitLab Free keeps only one assignee and one reviewer per merge request.
 
 ## Rebasing or pausing a PR
 
@@ -910,17 +954,19 @@ Gitea and Forgejo serve the same cache actions through their runner's cache serv
    1. `FORGEJO_ACTIONS=true` → forgejo, from `FORGEJO_SERVER_URL`, `FORGEJO_API_URL` and `FORGEJO_REPOSITORY`, each falling back to the `GITHUB_*` name.
    2. `GITEA_ACTIONS=true` → gitea, from `GITHUB_SERVER_URL`, `GITHUB_API_URL` and `GITHUB_REPOSITORY`.
    3. `GITHUB_ACTIONS=true` → github (including GHES), from the same variables.
-2. **The `origin` remote**, in the forms `https://host/owner/repo(.git)`, `git@host:owner/repo(.git)` and `ssh://git@host[:port]/owner/repo(.git)`:
-   - `github.com` → github, API `https://api.github.com`.
+   4. `GITLAB_CI=true` → gitlab, from `CI_SERVER_URL`, `CI_API_V4_URL` and `CI_PROJECT_PATH`.
+2. **The `origin` remote**, in the forms `https://host/owner/repo(.git)`, `git@host:owner/repo(.git)` and `ssh://git@host[:port]/owner/repo(.git)`; on GitLab also with nested groups (`host/group/subgroup/repo`):
+   - `github.com` → github, API `https://api.github.com`; `gitlab.com` → gitlab, API `https://gitlab.com/api/v4`.
    - Any other host is probed unauthenticated, with a 10s timeout each:
-     1. `/api/forgejo/v1/version` → forgejo;
-     2. `/api/v1/version` → gitea (both use API `https://host/api/v1`);
-     3. `/api/v3/meta` → GHES (`https://host/api/v3`).
+     1. `/api/v4/version` → gitlab (`https://host/api/v4`), also when it answers 401 with a JSON `message`, as GitLab does without a token;
+     2. `/api/forgejo/v1/version` → forgejo;
+     3. `/api/v1/version` → gitea (both use API `https://host/api/v1`);
+     4. `/api/v3/meta` → GHES (`https://host/api/v3`).
 
      If none matches, deps fails with `cannot detect platform for <host>; pass --platform and --api-url`.
 3. **Overrides:** `--platform`, `--api-url` and `--repo` replace the detected values. If only the kind is given, the API URL is derived per kind.
 
-`plan`, `apply` and `explain` only use step 1. With `--log-level info`, `run` logs the result as `platform detected kind=<kind> via=<source> api=<url> repo=<owner/name>`.
+`plan`, `apply` and `explain` only use step 1. With `--log-level info`, `run` logs the result as `platform detected kind=<kind> via=<source> api=<url> repo=<owner/name>`. A self-managed GitLab served over plain http is not probed (probes use https): pass `--platform gitlab --api-url http://host/api/v4`.
 
 ## Troubleshooting
 

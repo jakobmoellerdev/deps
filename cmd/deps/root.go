@@ -179,7 +179,7 @@ func noArgs(_ context.Context, cmd *cli.Command) error {
 
 // envToken returns the first token set in the environment.
 func envToken() string {
-	for _, k := range []string{"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN"} {
+	for _, k := range []string{"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", "GITLAB_TOKEN"} {
 		if v := os.Getenv(k); v != "" {
 			return v
 		}
@@ -221,7 +221,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 	}
 	limits := httpx.NewLimits(o.concurrency)
 	sem := limits.Default
-	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, os.Getenv)
+	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, info, os.Getenv)
 	slog.Debug("gitlab url", "url", gitlabURL, "source", gitlabSource)
 	auth := httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(gitlabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask))...)
 	env := configEnv(cfg, info, gitlabURL)
@@ -324,7 +324,7 @@ func (s *session) sibling(dir string) (*session, error) {
 	if err := addCustomSources(sources, s.client, s.sem, cfg); err != nil {
 		return nil, err
 	}
-	gitlabURL, _ := platform.GitLabURL(cfg.GitLabCI.URL, os.Getenv)
+	gitlabURL, _ := platform.GitLabURL(cfg.GitLabCI.URL, s.info, os.Getenv)
 	sib := *s
 	sib.root, sib.cfg, sib.managers, sib.sources, sib.env = root, cfg, managers, sources, configEnv(cfg, s.info, gitlabURL)
 	return &sib, nil

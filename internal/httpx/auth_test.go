@@ -44,6 +44,12 @@ func TestNewAuthStatic(t *testing.T) {
 			}
 		})
 	}
+	t.Run("gitlab platform token", func(t *testing.T) {
+		a := NewAuth(platform.Info{Kind: platform.GitLab, Host: "gl.example"}, "t1", env(nil))
+		if user, pass, ok := a.Static("gl.example"); !ok || user != "oauth2" || pass != "t1" {
+			t.Fatalf("Static = %q, %q, %v; want oauth2 t1", user, pass, ok)
+		}
+	})
 }
 
 func TestWithTokenPrecedence(t *testing.T) {
