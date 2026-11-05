@@ -49,6 +49,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -426,7 +427,10 @@ type affected struct {
 		Type   string  `json:"type"`
 		Events []event `json:"events"`
 	} `json:"ranges"`
-	Versions []string `json:"versions"`
+	// Versions is the raw "versions" array, decoded only for GitHub Actions deps with a full
+	// tag (affectedBy): other ecosystems are matched server-side and never read it, and
+	// PYSEC-style records list every release ever published.
+	Versions jsontext.Value `json:"versions"`
 }
 
 type vuln struct {
@@ -673,7 +677,13 @@ func (t *target) actionsFixed(entries []affected) []string {
 func (t *target) affectedBy(entries []affected) bool {
 	for _, a := range entries {
 		if len(t.tag.Parts) == 3 {
-			for _, v := range a.Versions {
+			var versions []string
+			if len(a.Versions) > 0 {
+				// The value was already validated as JSON by the advisory decode; a non-string
+				// array decodes partially or not at all, which leaves nothing to match.
+				_ = json.Unmarshal(a.Versions, &versions)
+			}
+			for _, v := range versions {
 				if p, ok := parts(v); ok && p == t.cmp {
 					return true
 				}
