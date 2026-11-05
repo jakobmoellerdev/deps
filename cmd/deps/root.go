@@ -28,6 +28,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gradleversion"
 	helmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/helm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/juliaregistry"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
@@ -292,6 +293,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		vcpkgds.Name:            vcpkgds.New(client, sem),
 		elmpackage.Name:         elmpackage.New(client, sem, os.Getenv),
 		packagist.Name:          packagist.New(client, sem, os.Getenv),
+		juliaregistry.Name:      juliaregistry.New(client, sem, os.Getenv),
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err

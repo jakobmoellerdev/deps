@@ -29,6 +29,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
@@ -913,8 +914,9 @@ type resolver struct {
 // autoRange is what rangeStrategy auto means per manager (Renovate's defaults): replace for
 // terraform and terragrunt, widen for elm package constraints (Dependabot's; Renovate has no
 // Elm manager), update-lockfile for npm, cargo and any other manager (widen for npm
-// peerDependencies and `||` ranges and for composer constraints with alternatives, replace for
-// the dependencies of a bundler gemspec, rangeStrategy).
+// peerDependencies and `||` ranges, for composer constraints with alternatives and for julia
+// compat entries without a locked version, replace for the dependencies of a bundler gemspec,
+// rangeStrategy).
 var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace, "elm": config.RangeWiden}
 
 // rangeStrategy is the effective rangeStrategy of the range dep: auto resolved per manager
@@ -935,6 +937,10 @@ func (r *resolver) rangeStrategy() string {
 			// exclude it.
 			s = config.RangeReplace
 		case d.Manager == composer.Name && strings.Contains(d.Range, "|"):
+			s = config.RangeWiden
+		case d.Manager == julia.Name && d.Locked == "" && !d.LockUnread:
+			// A Julia package commits no manifest: its compat entries are what it supports,
+			// and the Julia convention (CompatHelper) adds new majors rather than drop old ones.
 			s = config.RangeWiden
 		}
 	}

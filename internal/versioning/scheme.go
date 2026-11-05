@@ -50,13 +50,13 @@ type Candidate struct {
 }
 
 // Names are the versioning scheme names; "regex:<RE2>" schemes come on top (RegexPrefix).
-var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven", "ruby", "conda", "composer"}
+var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia"}
 
 // RegexPrefix starts a regex scheme name: "regex:" followed by an RE2 regexp with named groups.
 const RegexPrefix = "regex:"
 
 // Get returns the scheme registered under name ("tag", "go", "docker", "semver", "loose", "cargo",
-// "pep440", "hashicorp", "maven", "ruby", "conda", "composer"), or the regex scheme of a valid "regex:<RE2>" name.
+// "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia"), or the regex scheme of a valid "regex:<RE2>" name.
 func Get(name string) (Scheme, bool) {
 	s, err := Parse(name)
 	return s, err == nil
@@ -106,6 +106,7 @@ var schemes = map[string]Scheme{
 	"ruby":      rubyScheme{impl[rubyVersion]{parse: parseRuby, compat: rubyCompat, cmp: compareRuby, kind: rubyKind, semver: rubyVersion.semver, major: rubyVersion.major}},
 	"conda":     condaScheme{impl[condaVersion]{parse: parseConda, compat: condaCompat, cmp: compareConda, kind: condaKind, semver: condaVersion.semver, major: condaVersion.major}},
 	"composer":  composerScheme{impl[composerVersion]{parse: parseComposer, compat: composerCompat, cmp: compareComposer, kind: composerKind, semver: composerVersion.semver, major: composerVersion.major}},
+	"julia":     juliaScheme{impl[cargoVersion]{parse: parseCargo, compat: juliaCompat, cmp: compareJulia, kind: juliaKind, semver: cargoVersion.semver, major: cargoMajor}},
 }
 
 // impl implements Scheme over a parsed version type T so every candidate is parsed once.

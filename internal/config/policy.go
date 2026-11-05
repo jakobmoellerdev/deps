@@ -93,6 +93,8 @@ func production(d dep.Dep) bool {
 		return d.DepType == "dependencies" || d.DepType == "runtime"
 	case "composer":
 		return d.DepType == "require"
+	case "julia":
+		return d.DepType == "deps"
 	case "pep621":
 		return d.DepType == "project.dependencies"
 	case "pipenv":

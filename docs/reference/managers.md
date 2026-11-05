@@ -51,6 +51,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`vcpkg`](#vcpkg)
 - [`elm`](#elm)
 - [`composer`](#composer)
+- [`julia`](#julia)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -2185,6 +2186,60 @@ Updates the version constraints of PHP packages in `composer.json` and moves `co
 
 With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `composer.lock` next to a scanned `composer.json` is refreshed with `composer update` (same options as below) in the temporary copy, which moves every locked package, transitive ones included, to the newest version the constraints admit. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `composer.lock` files; `minimumReleaseAge` does not apply to it.
 
+## julia
+
+Updates the `[compat]` entries of Julia projects (`Project.toml`, `JuliaProject.toml`) from the General registry, and moves their `Manifest.toml` with Pkg (in-range updates only touch the manifest, as `update-lockfile`). Dependabot's `julia` ecosystem; Renovate has no Julia manager. Only the compat string is rewritten, so the file's layout and comments are kept.
+
+**Files:**
+
+- `Project.toml`, `JuliaProject.toml` (Pkg prefers the latter where both exist; both are read)
+- `Manifest.toml`, `JuliaManifest.toml`, `Manifest-v<major>.<minor>.toml` (the locked versions, see below)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `deps` | `[compat]` entries of packages in `[deps]` (`JSON = "0.21, 1"`), and `[deps]` packages without a compat entry, which only the manifest moves (updates use commit type `fix`) | `julia-registry` (the General registry) | `julia` | updated |
+| `weakdeps` | `[compat]` entries of `[weakdeps]` packages (package extension triggers) | `julia-registry` (the General registry) | `julia` | updated |
+| `extras` | `[compat]` entries of `[extras]` packages (test dependencies of `[targets]`) | `julia-registry` (the General registry) | `julia` | updated |
+| `julia` | the `julia` compat entry (skipped) | none | `julia` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `julia compat is the project's supported Julia versions` | the `julia` compat entry: which Julia releases a project supports is its authors' decision, not an update |
+| `julia standard library` | a standard library (`LinearAlgebra`, `Test`, `Pkg`, the bundled `_jll`s, by UUID): its version is Julia's. Registered former stdlibs (`Statistics`, `DelimitedFiles`) are looked up like any package; stdlibs in `[deps]` without a compat entry are not listed at all |
+| `not in [deps], [weakdeps] or [extras]` | a compat entry naming a package the project does not list (Pkg rejects such a project) |
+| `compat entry is not a string` | a compat value that is not a string |
+| `compat entry with escapes` | a compat string with escapes, whose bytes deps would not rewrite faithfully |
+| `unsupported compat entry` | a compat entry outside Pkg's grammar (`> 1`, `<= 2`, `1.x`, `*`, an empty string) |
+| `path source` | a package that `[sources]` installs from a `path` |
+| `url source` | a package that `[sources]` installs from a git `url` |
+| `no Manifest.toml version for a package without a lower bound` | a compat entry with only upper bounds (`< 2`), or a `[deps]` package without a compat entry, that the manifest does not lock (or that has no manifest) |
+
+**Compat entries.**
+
+- Pkg's grammar (`semver_spec`): comma-separated terms, any of which admits a version. A bare or `^` version is a caret range (`1.2.3` = [1.2.3, 2), `0.2.3` = [0.2.3, 0.3), `0.0.3` only 0.0.3, `1` = [1, 2), `0` = [0, 1), `0.0` = [0, 0.1)); `~1.2.3` and `~1.2` are [1.2.x, 1.3), `~1` is [1, 2); `=1.2` is exactly 1.2.0; `>= 1.2` (or `≥`) has no upper bound, `< 1.2` no lower one; `1.2 - 2` is [1.2, 3). A `v` prefix is allowed. Prereleases and builds count as their release.
+- Versioning `julia` orders versions as Julia's VersionNumber does (1–3 parts, `-pre` and `+build` after three; JLL rebuilds `1.2.11+1` > `1.2.11+0`). Update types follow the caret: the leftmost non-zero part is the major (`0.21` → `0.22` is major, `1.2` → `1.3` minor). Prereleases are only proposed from a prerelease.
+- Rewrites per [rangeStrategy](configuration.md#rangestrategy): `widen` appends a term for the new version in the style of the term with the highest upper bound, the new version's caret prefix for caret terms (`0.21, 1` → `0.21, 1, 2` for 2.3.4, `0.21` → `0.21, 0.22` for 0.22.1), as CompatHelper does; `~` terms take the version at their precision, `=` terms the version itself (`=1.2` is exactly 1.2.0), and `< 2` or the upper half of `1.2 - 1.5` is raised in place. `replace` (and an out-of-range version under `update-lockfile` and `bump`) writes that one term with the version at its precision (`0.21, 1` → `2`, `4.2` → `5.1`, `~1.2` → `~1.5`, `=0.3.1` → `=0.4.2`). `bump` and `in-range-only` drop the terms entirely below an admitted version and raise the floor of the term admitting it (`0.21, 1` → `1` for 1.4.5, `1.2` → `1.4`); `pin` writes `=<version>`.
+- `auto` is `update-lockfile` for a project with a manifest (an application, or a workspace committing its manifest): versions the compat entry admits are manifest-only updates from the locked version (`, lockfile` in the report), others replace the entry. A project without one (a package: registered packages do not commit manifests) gets `widen`, the Julia convention of keeping older majors supported; versions the entry admits are not proposed then.
+- A `[deps]` package without a compat entry admits any version (`>= 0` in reports): it is never written into the project, only moved in the manifest (`update-lockfile`, `bump`, `in-range-only`).
+- Each compat entry is looked up by its name and the UUID its `[deps]`, `[weakdeps]` or `[extras]` entry gives; a package the General registry does not have (a private registry's) is skipped with the datasource's reason.
+
+**Manifest (`apply`, `run`).**
+
+1. **Manifest.** A project's manifest is `JuliaManifest.toml` or `Manifest.toml` next to it, else the `Manifest-v<major>.<minor>.toml` of the newest Julia release there (other versioned manifests are neither read nor updated). A project listed in the `[workspace] projects` of a project in a directory above (Julia 1.12 workspaces, nested ones too) uses the manifest of the workspace root; without a manifest the project is only patched.
+2. **Locked versions.** Before resolution each manifest (format 1 or 2) is read: a package gets the `version` of its entry with the package's UUID; entries tracking a `path` or a git `repo-url` are not registry versions and are left out. An unreadable manifest is reported once and its packages are bumped.
+3. **Temporary copy.** The manifest's directory is mirrored to a temp dir: project files are copied (patched ones with their new compat entries), the manifest is written as `Manifest.toml` (so Pkg reads it whatever its Julia version), other files are symlinked; the directories above it up to the repository top are recreated with their entries symlinked, so `[sources]` paths resolve as in the checkout.
+4. **Update.** For each project of the scope with updates, `julia` runs `Pkg.activate(<project>)` and `Pkg.add([Pkg.PackageSpec(name=…, uuid=…, version="<new version>"), …])` for its updated `[deps]` packages the manifest locks, which moves exactly those to the update's version (a build suffix dropped) and keeps every other locked version Pkg can keep. A project whose updates move no locked package (compat entries of `[weakdeps]` and `[extras]`) runs `Pkg.resolve()` instead, which records the new compat entries in the manifest's `project_hash` and moves what they exclude. Lockfile-only updates are added the same way, with the project unchanged. Only the manifest is taken back.
+5. **Tool.** `julia` must be on `PATH` (e.g. `julia-actions/setup-julia`); it runs with `JULIA_PKG_PRECOMPILE_AUTO=0` and the runner's depot, installing the General registry first when the depot has none. Pkg installs the packages of the manifest as it resolves (into the depot, not the repository). Without `julia`, the projects fail with `julia not found (needed to update Manifest.toml)`.
+6. **Failure.** A failed run reports `julia Pkg in <dir>: <last 20 output lines>`, and the scope's changes are dropped.
+
+- `plan` does not run Julia, and prints `note    Manifest.toml changes are computed by apply/run`.
+
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every manifest of a scanned project (a workspace's once) is refreshed with `Pkg.update()` in the temporary copy, which moves every locked package, transitive ones included, to the newest version the compat entries admit. All manifests share the PR on `<branchPrefix>lock-file-maintenance`, which changes only manifests; `minimumReleaseAge` does not apply to it.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -2268,6 +2323,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `vcpkg` | port name (`fmt`); the dep's source is the registry's file tree at its baseline commit (`https://raw.githubusercontent.com/microsoft/vcpkg/<baseline>`, `<repository>/raw/<baseline>` off github.com) | `GET <source>/versions/<first letter>-/<port>.json` once per (registry commit, port); each entry's `version`, `version-semver`, `version-date` or `version-string` is a release, only of the newest entry's scheme (relaxed and semver count as one; vcpkg does not order across schemes), `#<port-version>` appended when the port version is not 0 (`1.3.1#2`, as `version>=` writes it). A 404 fails the dep: the port is not in the registry at the baseline | none | none (the versions database records no dates) |
 | `elm-package` | `author/project` as in elm.json (`elm/json`) | `GET <DEPS_ELM_PACKAGE_URL or https://package.elm-lang.org>/packages/<author>/<project>/releases.json`, once per package; the registry answers an unknown package with HTTP 500. Source repository (release notes): `https://github.com/<author>/<project>`, the only place `elm publish` publishes from | none | the Unix time the registry lists for each version |
 | `packagist` | Composer package name `vendor/package` (case-insensitive, looked up lower-cased); the dep's source is its whitespace-separated Composer repositories in lookup order ("" = Packagist) | Packagist (also when composer.json names `https://packagist.org` or `https://repo.packagist.org`): `GET <DEPS_PACKAGIST_URL or https://repo.packagist.org>/p2/<name>.json` (Composer 2 metadata, minified entries expanded); other Composer repositories: `GET <url>/packages.json` once per repository (the URL itself when it ends in `.json`), then its `metadata-url` with `%package%` replaced (packages.drupal.org, Private Packagist, Satis), or else the packages it lists inline and in its `includes` (older Satis); packages its `available-packages`/`available-package-patterns` do not name are not looked up there; a repository serving only the Composer 1 `providers-url` is an error. Branches (`dev-main`, `2.x-dev`) are not versions. The first repository that has the package answers (Composer's canonical repositories), none → `package <name> not found`. Source repository (release notes): the newest version's http(s) `source.url` | userinfo of the repository URL as basic auth, else Composer's `COMPOSER_AUTH` variable (auth.json as JSON): `http-basic` (`{"repo.example.com": {"username": …, "password": …}}`) and `bearer` (`{"repo.example.com": "<token>"}`) by host; redacted in errors and logs | the version's `time` (the tag's commit date as the repository records it); packages.drupal.org records none |
+| `julia-registry` | Julia package name (`JSON`, `CUDA_jll`); the dep's source is the package UUID of the project's `[deps]`, `[weakdeps]` or `[extras]`, which the registry entry must have | the General registry's files on its default branch: `GET <DEPS_JULIA_REGISTRY_URL or https://raw.githubusercontent.com/JuliaRegistries/General/HEAD>/<L>/<Name>/Package.toml` and `…/Versions.toml` (`<L>` the name's first letter upper-cased; `jll/<L>/<Name>` for `_jll` packages, as the registry files them), concurrently, once per package; no 1.4 MB Registry.toml download. Yanked versions (`yanked = true`) are not listed. A package the registry does not have (a 404: a package of a private registry) or has under another UUID skips the dep with `package <name> is not in the registry <url>` or `… has UUID <x>, not <y>`. Source repository (release notes): Package.toml's `repo` | userinfo of `DEPS_JULIA_REGISTRY_URL` (`https://user:token@host/…`) as basic auth, for a private mirror; redacted in errors and logs | none: registry entries carry no publication time, so `minimumReleaseAge` treats versions as of unknown age (see `minimumReleaseAgeBehaviour`) |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.

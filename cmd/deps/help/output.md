@@ -13,6 +13,7 @@ note    pip-compile output and --hash lines of requirements files are computed b
 note    .terraform.lock.hcl changes are computed by apply/run (plan, when a terraform update exists)
 note    Gemfile.lock changes are computed by apply/run        (plan, when a bundler update exists)
 note    composer.lock changes are computed by apply/run       (plan, when a composer update exists)
+note    Manifest.toml changes are computed by apply/run       (plan, when a julia update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```

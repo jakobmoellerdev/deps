@@ -22,6 +22,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradle"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
@@ -55,7 +56,7 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt(),
 		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New(), bundler.New(), toolversions.NewRubyVersion(), gitsubmodules.New(),
 		rusttoolchain.New(), devcontainer.New(),
-		bitbucketpipelines.New(), woodpecker.New(), droneci.New(), circleci.New(), azurepipelines.New(), vcpkg.New(), elm.New(), composer.New())
+		bitbucketpipelines.New(), woodpecker.New(), droneci.New(), circleci.New(), azurepipelines.New(), vcpkg.New(), elm.New(), composer.New(), julia.New())
 	return append(ms, cs...), nil
 }
 
@@ -78,5 +79,5 @@ func ManagerDocs() []refdoc.Manager {
 		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc,
 		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, bundler.Doc, toolversions.DocRubyVersion, gitsubmodules.Doc,
 		rusttoolchain.Doc, devcontainer.Doc,
-		bitbucketpipelines.Doc, woodpecker.Doc, droneci.Doc, circleci.Doc, azurepipelines.Doc, vcpkg.Doc, elm.Doc, composer.Doc, custom.Doc}
+		bitbucketpipelines.Doc, woodpecker.Doc, droneci.Doc, circleci.Doc, azurepipelines.Doc, vcpkg.Doc, elm.Doc, composer.Doc, julia.Doc, custom.Doc}
 }

@@ -11,6 +11,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
@@ -45,6 +46,7 @@ var matchCases = []struct {
 	{"cargo", cargo.New(), regexpOnly(`(^|/)Cargo\.toml$`)},
 	{"devcontainer", devcontainer.New(), regexpOnly(`(^|/)(\.devcontainer\.json|\.devcontainer/([^/]+/)?devcontainer\.json)$`)},
 	{"gomod", gomod.New(), regexpOnly(`(^|/)go\.mod$`)},
+	{"julia", julia.New(), regexpOnly(`(^|/)(Julia)?Project\.toml$`)},
 	{"npm", npm.New(), regexpOnly(`(^|/)package\.json$`)},
 	{"pep621", pep621.New(), regexpOnly(`(^|/)pyproject\.toml$`)},
 	{"pipenv", pipenv.New(), regexpOnly(`(^|/)Pipfile$`)},
@@ -72,7 +74,8 @@ var matchSeeds = []string{
 	".mise/config.toml", ".config/mise.toml", ".config/mise/config.toml", "a/config.toml", "Package.swift",
 	"a/Package.swift", "aPackage.swift", "Package@swift-5.9.swift", ".devcontainer.json",
 	".devcontainer/devcontainer.json", "a/.devcontainer/go/devcontainer.json", ".devcontainer/a/b/devcontainer.json", "xdevcontainer.json",
-	"vcpkg.json", "a/vcpkg-configuration.json", "avcpkg.json", "",
+	"vcpkg.json", "a/vcpkg-configuration.json", "avcpkg.json", "Project.toml",
+	"a/JuliaProject.toml", "aProject.toml", "a/xJuliaProject.toml", "",
 }
 
 // repoPaths returns the slash path of every file of this repository, the mix discovery sees.

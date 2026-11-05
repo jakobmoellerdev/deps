@@ -23,6 +23,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gradleversion"
 	helmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/helm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/juliaregistry"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
@@ -154,7 +155,7 @@ const managersIntro = "A **manager** finds dependencies in files and edits them.
 // datasourceDocs documents the datasources newSession registers, in table order.
 func datasourceDocs() []refdoc.Datasource {
 	return []refdoc.Datasource{
-		gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, packagist.Doc, customds.Doc,
+		gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, packagist.Doc, juliaregistry.Doc, customds.Doc,
 	}
 }
 

@@ -36,6 +36,7 @@
 | `DEPS_RUBYGEMS_URL` | `rubygems` datasource | base of the rubygems.org API, also for Gemfiles naming `https://rubygems.org` (default `https://rubygems.org`) |
 | `DEPS_RUST_MANIFESTS_URL` | `rust-version` datasource | URL of the Rust manifest index (one `…/dist/<date>/channel-rust-<version>.toml` URL per line; default `https://static.rust-lang.org/manifests.txt`) |
 | `DEPS_ELM_PACKAGE_URL` | `elm-package` datasource | base of the Elm package registry API (default `https://package.elm-lang.org`) |
+| `DEPS_JULIA_REGISTRY_URL` | `julia-registry` datasource | raw file base of the Julia registry (default `https://raw.githubusercontent.com/JuliaRegistries/General/HEAD`; a mirror or another registry with General's layout, userinfo sent as basic auth) |
 | `BUNDLE_<HOST>` | `rubygems` datasource | Bundler's credentials for a gem server (`gems.example-corp.com` → `BUNDLE_GEMS__EXAMPLE___CORP__COM`): `user:password`, or a token; sent as basic auth to that host only |
 | `DEPS_CIRCLECI_URL`, `DEPS_CIRCLECI_TOKEN` | `orb` datasource | CircleCI host of the orb registry (default `https://circleci.com`; CircleCI server), and an API token for private orbs, sent as `Circle-Token` and bare `Authorization` to that host |
 | `DEPS_AZURE_PIPELINES_TASKS_URL` | `azure-pipelines-tasks` datasource | base of the public task lists `azure-pipelines-builtin-tasks.json` and `azure-pipelines-marketplace-tasks.json` (default `https://raw.githubusercontent.com/renovatebot/azure-devops-marketplace/main`) |
