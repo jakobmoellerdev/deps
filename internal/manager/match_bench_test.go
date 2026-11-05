@@ -20,6 +20,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/swift"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 )
 
 // regexpOnly is a Match that only runs the manager's path regexp (plus its non-regexp
@@ -51,6 +52,7 @@ var matchCases = []struct {
 	{"poetry", poetry.New(), regexpOnly(`(^|/)pyproject\.toml$`)},
 	{"precommit", precommit.New(), regexpOnly(`(^|/)\.pre-commit-config\.ya?ml$`)},
 	{"swift", swift.New(), regexpOnly(`(^|/)Package\.swift$`)},
+	{"vcpkg", vcpkg.New(), regexpOnly(`(^|/)vcpkg(-configuration)?\.json$`)},
 	{"terragrunt", terraform.NewTerragrunt(), regexpOnly(`(^|/)terragrunt\.hcl$`, ".terragrunt-cache")},
 	{"terraform-version", terraform.NewVersion(), regexpOnly(`(^|/)\.(terraform|opentofu)-version$`)},
 	{"tflint", terraform.NewTFLint(), regexpOnly(`(^|/)\.tflint\.hcl$`)},
@@ -69,7 +71,8 @@ var matchSeeds = []string{
 	".tflint.hcl", ".nvmrc", "a/.node-version", ".tool-versions", "mise.toml", ".mise.toml",
 	".mise/config.toml", ".config/mise.toml", ".config/mise/config.toml", "a/config.toml", "Package.swift",
 	"a/Package.swift", "aPackage.swift", "Package@swift-5.9.swift", ".devcontainer.json",
-	".devcontainer/devcontainer.json", "a/.devcontainer/go/devcontainer.json", ".devcontainer/a/b/devcontainer.json", "xdevcontainer.json", "",
+	".devcontainer/devcontainer.json", "a/.devcontainer/go/devcontainer.json", ".devcontainer/a/b/devcontainer.json", "xdevcontainer.json",
+	"vcpkg.json", "a/vcpkg-configuration.json", "avcpkg.json", "",
 }
 
 // repoPaths returns the slash path of every file of this repository, the mix discovery sees.

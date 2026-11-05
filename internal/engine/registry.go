@@ -32,6 +32,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/swift"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/woodpecker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
@@ -51,7 +52,7 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt(),
 		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New(), bundler.New(), toolversions.NewRubyVersion(), gitsubmodules.New(),
 		rusttoolchain.New(), devcontainer.New(),
-		bitbucketpipelines.New(), woodpecker.New(), droneci.New(), circleci.New(), azurepipelines.New())
+		bitbucketpipelines.New(), woodpecker.New(), droneci.New(), circleci.New(), azurepipelines.New(), vcpkg.New())
 	return append(ms, cs...), nil
 }
 
@@ -74,5 +75,5 @@ func ManagerDocs() []refdoc.Manager {
 		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc,
 		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, bundler.Doc, toolversions.DocRubyVersion, gitsubmodules.Doc,
 		rusttoolchain.Doc, devcontainer.Doc,
-		bitbucketpipelines.Doc, woodpecker.Doc, droneci.Doc, circleci.Doc, azurepipelines.Doc, custom.Doc}
+		bitbucketpipelines.Doc, woodpecker.Doc, droneci.Doc, circleci.Doc, azurepipelines.Doc, vcpkg.Doc, custom.Doc}
 }

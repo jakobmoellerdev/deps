@@ -47,6 +47,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`droneci`](#droneci)
 - [`circleci`](#circleci)
 - [`azure-pipelines`](#azure-pipelines)
+- [`vcpkg`](#vcpkg)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -1996,6 +1997,48 @@ Updates container resources, GitHub repository resources and task versions in Az
 - Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned. The docker manager leaves `containers` entries with a `container` key to this manager.
 - Job-level `container:` values are not extracted: they can name a container resource instead of an image (as in Renovate).
 
+## vcpkg
+
+Moves vcpkg registry baselines to the newest commit of the registry repository (as Dependabot's vcpkg ecosystem does) and port version constraints (`version>=`, `overrides`) to the newest version in the registry's versions database at the baseline.
+
+**Files:**
+
+- `vcpkg.json` at any depth
+- `vcpkg-configuration.json` at any depth (it configures the `vcpkg.json` in the same directory)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `builtin-baseline` | `vcpkg.json` `builtin-baseline`: a commit of `microsoft/vcpkg` (name `microsoft/vcpkg`, digest the commit) | `git-refs` (`HEAD`) | `tag` | updated |
+| `default-registry` | `default-registry.baseline` of `vcpkg-configuration.json` or the manifest's embedded `vcpkg-configuration`, of a `builtin` (`microsoft/vcpkg`) or `git` registry (`repository`, tracking `reference` or `HEAD`) | `git-refs` | `tag` | updated |
+| `registry` | `registries[].baseline` of a `builtin` or `git` registry, as `default-registry`; `artifact` registries are ignored | `git-refs` | `tag` | updated |
+| `dependencies` | `dependencies[]` objects with `version>=` (name the port; `1.3.1`, `1.3.1#2` with a port version); ports without a constraint are not deps | `vcpkg` | `regex` of up to four numeric parts separated by `.` or `-` and an optional `#<port-version>` | updated |
+| `overrides` | `overrides[]` `version`, `version-semver` or `version-date` (`21.0.0#2` with a port version) | `vcpkg` | as `dependencies` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unrecognized repository` | a `git` registry `repository` is not an https/http/ssh/git or `git@host:path` URL with an owner/repo path |
+| `baseline is not a commit` | a baseline is not a 40-hex commit |
+| `cannot locate value` | the value is written with escapes |
+| `reference is a tag` | a `git` registry's `reference` is a version tag: its baseline does not move with a branch |
+| `no name` | a `dependencies` or `overrides` entry has no `name` |
+| `version is not a string` | `version>=` or the override version is not a string |
+| `port-version field` | an override sets a separate `port-version`, which an update would have to rewrite too |
+| `version-string` | an override with a `version-string` (no ordering) |
+| `overlay port` | an `overlay-ports` directory of the configuration has the port (`<overlay>/<port>/portfile.cmake`, or the overlay is the port's directory): vcpkg takes it from there, not from a registry |
+| `no builtin-baseline` | a port resolves to the builtin registry but the manifest has no `builtin-baseline` (or the default registry is `builtin` without `baseline`) |
+| `no registry for the port` | `default-registry` is `null` and no `registries[].packages` pattern matches the port |
+| `git registry without baseline` | the port's `git` registry has no `baseline` |
+| `unrecognized registry repository` | the port's `git` registry repository is not an https URL (its versions database cannot be read) |
+| `unsupported registry kind <kind>` | the port's registry is a `filesystem` (or other non-`builtin`, non-`git`) registry |
+
+**Registries.**
+
+- A port resolves to the registry whose `packages` match it (an exact name beats a `prefix*` pattern, the longest pattern wins), else to `default-registry`, else to the builtin registry at `builtin-baseline`, as vcpkg resolves it. A manifest's embedded `vcpkg-configuration` takes precedence over the `vcpkg-configuration.json` next to it.
+- The versions of a port are read from the registry's versions database at the current baseline (`versions/<first letter>-/<port>.json`), so a proposed `version>=` is always installable with that baseline; a baseline update and the port updates it unlocks come in successive runs.
+- Baseline updates are `digest` updates of the registry repository's default branch (or `reference`); like git-submodules, they have no release notes.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -2075,6 +2118,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `rust-version` | any (`rust`) | `<DEPS_RUST_MANIFESTS_URL or https://static.rust-lang.org/manifests.txt>`, the index of every channel manifest rustup can install, once per run; stable `X.Y.Z` and numbered betas `X.Y.Z-beta.N` from the manifest names (channel manifests such as `channel-rust-stable.toml` and dated nightlies are not listed), plus a derived `X.Y` per stable line. Source repository (release notes): `rust-lang/rust` | none | the date directory of the version's first manifest (`dist/2024-10-17/channel-rust-1.82.0.toml`), day precision |
 | `orb` | orb name `<namespace>/<name>` (`circleci/node`) | `GET <DEPS_CIRCLECI_URL or https://circleci.com>/api/v3/orb/packages?filter[name]=<name>` (Renovate's endpoint), once per orb; the entry whose name matches exactly answers. After the listed versions a derived `X.Y` and `X` per release line, so partial versions (`@5`) are updated with their precision | `DEPS_CIRCLECI_TOKEN` (private orbs) as `Circle-Token` and bare `Authorization`, as Renovate's `Token-Only` host rule | `created_at` of the version; a derived `X.Y`/`X` has the time of the line's first release |
 | `azure-pipelines-tasks` | task name (`Bash`), task id, or `<publisher>.<extension>.<contribution>.<name\|id>`; case-insensitive | public lists (Renovate's): `GET <DEPS_AZURE_PIPELINES_TASKS_URL or https://raw.githubusercontent.com/renovatebot/azure-devops-marketplace/main>/azure-pipelines-builtin-tasks.json` once per run, and for tasks it lacks `…/azure-pipelines-marketplace-tasks.json` once (streamed; only the run's tasks are kept). With `DEPS_AZURE_DEVOPS_URL` and `DEPS_AZURE_DEVOPS_TOKEN`: `GET <DEPS_AZURE_DEVOPS_URL>/_apis/distributedtask/tasks/` once per run, the tasks installed in that organization or collection (Renovate's behavior on the Azure platform). After the versions a derived `X.Y` and `X` per release line, so major-only references (`Bash@3`) are updated with their precision | none for the public lists; Basic `deps:<DEPS_AZURE_DEVOPS_TOKEN>` (a personal access token) for the organization | none |
+| `vcpkg` | port name (`fmt`); the dep's source is the registry's file tree at its baseline commit (`https://raw.githubusercontent.com/microsoft/vcpkg/<baseline>`, `<repository>/raw/<baseline>` off github.com) | `GET <source>/versions/<first letter>-/<port>.json` once per (registry commit, port); each entry's `version`, `version-semver`, `version-date` or `version-string` is a release, only of the newest entry's scheme (relaxed and semver count as one; vcpkg does not order across schemes), `#<port-version>` appended when the port version is not 0 (`1.3.1#2`, as `version>=` writes it). A 404 fails the dep: the port is not in the registry at the baseline | none | none (the versions database records no dates) |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.

@@ -70,8 +70,8 @@ func (e *SkipError) Error() string { return e.Reason }
 
 // Dep is a single dependency occurrence extracted from a file.
 type Dep struct {
-	Manager    string // "github-actions" | "gomod" | "docker" | "npm" | "pip_requirements" | "pep621" | "poetry" | "pipenv" | "helm" | "cargo" | "maven" | "gradle" | "gradle-wrapper" | "maven-wrapper" | "git-submodules" | "devcontainer" | "bitbucket-pipelines" | "woodpecker" | "droneci" | "circleci" | "azure-pipelines" | "custom"
-	Datasource string // "git-tags" | "git-refs" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "pypi" | "helm" | "crate" | "maven" | "gradle-version" | "orb" | "azure-pipelines-tasks" | "custom.<name>"
+	Manager    string // "github-actions" | "gomod" | "docker" | "npm" | "pip_requirements" | "pep621" | "poetry" | "pipenv" | "helm" | "cargo" | "maven" | "gradle" | "gradle-wrapper" | "maven-wrapper" | "git-submodules" | "devcontainer" | "bitbucket-pipelines" | "woodpecker" | "droneci" | "circleci" | "azure-pipelines" | "vcpkg" | "custom"
+	Datasource string // "git-tags" | "git-refs" | "go" | "go-toolchain" | "docker" | "github-releases" | "npm" | "node-version" | "pypi" | "helm" | "crate" | "maven" | "gradle-version" | "orb" | "azure-pipelines-tasks" | "vcpkg" | "custom.<name>"
 	Versioning string // "tag" | "go" | "docker" | "semver" | "pep440" | "loose" | "cargo" | "maven" | "regex:<RE2>" (rules[].versioning overrides the manager's)
 	// ExtractVersion is an RE2 regexp with a `version` group mapping release names of the
 	// datasource to versions as written (`^jq-(?<version>.+)$`); "" = release names are

@@ -475,7 +475,7 @@ For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back
 **Network.** The runner needs HTTPS access to:
 
 - the forge;
-- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), pypi.org, rubygems.org (and the Gemfiles' `source`s), raw.githubusercontent.com (Ruby and Go release lists), static.rust-lang.org (Rust releases), api.osv.dev for security updates;
+- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), pypi.org, rubygems.org (and the Gemfiles' `source`s), raw.githubusercontent.com (Ruby and Go release lists, vcpkg versions databases), static.rust-lang.org (Rust releases), api.osv.dev for security updates;
 - the release download host.
 
 deps honors `HTTPS_PROXY`/`NO_PROXY`.

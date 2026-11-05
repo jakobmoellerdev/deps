@@ -36,6 +36,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubyversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rustversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/tfregistry"
+	vcpkgds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
@@ -284,6 +285,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		rustversion.Name:        rustversion.New(client, sem, os.Getenv),
 		orb.Name:                orb.New(client, sem, os.Getenv),
 		azuretasks.Name:         azuretasks.New(client, sem, os.Getenv),
+		vcpkgds.Name:            vcpkgds.New(client, sem),
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err

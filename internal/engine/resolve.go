@@ -29,6 +29,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
@@ -122,11 +123,12 @@ type Pending struct {
 }
 
 // digestManagers support digest pinning (pin: digest, digest refresh).
-var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pre-commit": true, gitsubmodules.Name: true}
+var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pre-commit": true, gitsubmodules.Name: true, vcpkg.Name: true}
 
 // digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
 // github-actions, docker, pre-commit and git-submodules deps whatever their versioning (a rule
-// may override it), except setup-action version inputs, which are plain values; images of
+// may override it), except setup-action version inputs, which are plain values; vcpkg registry
+// baselines (git-refs); images of
 // gitlabci, terraform (docker and kubernetes resources) and the CI pipeline managers, which are
 // edited like docker refs, and the devcontainer image. Custom and kustomize deps and
 // devcontainer features (never pinned, as Renovate's pinDigests: false) can only refresh a
@@ -140,16 +142,19 @@ func digestCapable(d dep.Dep) bool {
 		return d.Datasource == "docker"
 	case devcontainer.Name:
 		return d.DepType == devcontainer.DepTypeImage || d.DepType == devcontainer.DepTypeFeature && d.Digest != ""
+	case vcpkg.Name:
+		return d.Datasource == "git-refs"
 	}
 	return digestManagers[d.Manager] && d.DepType != actions.DepTypeSetup
 }
 
 // tagOnly reports whether d's version is not a version but a ref whose digest can be
-// maintained: a docker tag (latest, bookworm), or the branch a git submodule tracks. Such deps
+// maintained: a docker tag (latest, bookworm), or the branch a git submodule or a vcpkg
+// registry baseline tracks. Such deps
 // get digest-only resolution.
 func tagOnly(d dep.Dep) bool {
 	s, ok := versioning.Get(d.Versioning)
-	return ok && (d.Datasource == "docker" || d.Manager == gitsubmodules.Name) && digestCapable(d) && !s.Valid(d.Version)
+	return ok && (d.Datasource == "docker" || d.Manager == gitsubmodules.Name || d.Manager == vcpkg.Name) && digestCapable(d) && !s.Valid(d.Version)
 }
 
 type job struct {
