@@ -98,14 +98,22 @@ func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, oci datasourc
 }
 
 // Plan records the charts of the classic repositories the run will ask for, so one index scan
-// keeps all of them (datasource.Planner).
+// keeps all of them, and hands the OCI charts to the OCI datasource when it plans too
+// (datasource.Planner).
 func (s *Source) Plan(deps []dep.Dep) {
+	var oci []dep.Dep
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, d := range deps {
-		if d.Source != "" && !strings.HasPrefix(d.Source, ociScheme) {
+		switch {
+		case strings.HasPrefix(d.Source, ociScheme):
+			oci = append(oci, ociDep(d.Source, d.Name))
+		case d.Source != "":
 			s.want(d.Source, d.Name)
 		}
+	}
+	s.mu.Unlock()
+	if p, ok := s.oci.(datasource.Planner); ok && len(oci) > 0 {
+		p.Plan(oci)
 	}
 }
 

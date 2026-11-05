@@ -306,3 +306,34 @@ func TestOCIDep(t *testing.T) {
 		}
 	}
 }
+
+// planningTags is an OCI datasource that records what it is planned for.
+type planningTags struct {
+	staticTags
+	planned []dep.Dep
+}
+
+func (p *planningTags) Plan(deps []dep.Dep) { p.planned = append(p.planned, deps...) }
+
+// TestPlanOCI checks Plan hands the OCI charts, as docker-datasource deps, to an OCI datasource
+// that plans (the docker datasource batches Docker Hub tokens), and nothing when there are none.
+func TestPlanOCI(t *testing.T) {
+	oci := &planningTags{}
+	s := New(nil, nil, nil, oci)
+	s.Plan([]dep.Dep{{Name: "cert-manager", Source: "https://example.com/charts"}, {Name: "no-source"}})
+	if oci.planned != nil {
+		t.Errorf("planned without OCI charts: %+v", oci.planned)
+	}
+	s.Plan([]dep.Dep{
+		{Datasource: Name, Name: "redis", Source: "oci://registry-1.docker.io/bitnamicharts"},
+		{Datasource: Name, Name: "cert-manager", Source: "https://example.com/charts"},
+		{Datasource: Name, Name: "app", Source: "oci://ghcr.io/o/charts"},
+	})
+	want := []dep.Dep{ociDep("oci://registry-1.docker.io/bitnamicharts", "redis"), ociDep("oci://ghcr.io/o/charts", "app")}
+	same := func(a, b dep.Dep) bool {
+		return a.Datasource == b.Datasource && a.Name == b.Name && a.Source == b.Source
+	}
+	if !slices.EqualFunc(oci.planned, want, same) {
+		t.Errorf("planned = %+v, want %+v", oci.planned, want)
+	}
+}

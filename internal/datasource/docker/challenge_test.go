@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,31 +14,44 @@ import (
 )
 
 // tokenRegistry is a memRegistry behind the distribution token flow, as on Docker Hub: every
-// request without the token for its repository's pull scope gets a bearer challenge.
+// request without a token for its repository's pull scope gets a bearer challenge. A token is
+// issued for every scope asked for, as Docker Hub does.
 type tokenRegistry struct {
 	*memRegistry
 	srv  *httptest.Server
 	host string
 
-	mu   sync.Mutex
-	hits map[string]int // "401", "token" or "METHOD path" of an authorized request
+	mu          sync.Mutex
+	hits        map[string]int // "401", "token" or "METHOD path" of an authorized request
+	scopes      [][]string     // the scopes of each token request
+	refuseBatch bool           // refuse token requests for more than one scope
+	singleScope bool           // reject tokens issued for more than one scope (expired)
 }
 
 func newTokenRegistry(t *testing.T) *tokenRegistry {
 	t.Helper()
 	r := &tokenRegistry{memRegistry: newMemRegistry(), hits: map[string]int{}}
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		r.mu.Lock()
+		refuseBatch, singleScope := r.refuseBatch, r.singleScope
+		r.mu.Unlock()
 		if req.URL.Path == "/token" {
 			r.hit("token")
-			if req.URL.Query().Get("service") != "test" {
-				http.Error(w, "bad service", http.StatusBadRequest)
+			scopes := req.URL.Query()["scope"]
+			r.mu.Lock()
+			r.scopes = append(r.scopes, scopes)
+			r.mu.Unlock()
+			if req.URL.Query().Get("service") != "test" || (refuseBatch && len(scopes) > 1) {
+				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			_ = json.MarshalWrite(w, map[string]string{"token": "t " + req.URL.Query().Get("scope")})
+			_ = json.MarshalWrite(w, map[string]string{"token": "t " + strings.Join(scopes, " ")})
 			return
 		}
 		repo, _ := apiRepository(req.URL.Path)
-		if req.Header.Get("Authorization") != "Bearer t "+"repository:"+repo+":pull" {
+		granted, ok := strings.CutPrefix(req.Header.Get("Authorization"), "Bearer t ")
+		scopes := strings.Fields(granted)
+		if !ok || !slices.Contains(scopes, "repository:"+repo+":pull") || (singleScope && len(scopes) > 1) {
 			r.hit("401")
 			w.Header().Set("Www-Authenticate", `Bearer realm="`+r.srv.URL+`/token",service="test",`+pullScope(repo))
 			registryError(w, http.StatusUnauthorized, "UNAUTHORIZED")
@@ -248,5 +262,91 @@ func TestRegistryScopes(t *testing.T) {
 	}
 	if got := hits["GET /v2/lambda/python/tags/list"]; got != 2 {
 		t.Errorf("tags/list pages = %d; want 2", got)
+	}
+}
+
+// TestPlanBatchesTokens: the planned repositories of a batched registry (Docker Hub) get one
+// token for all of them, fetched when the first needs one, so they pay neither a 401 nor a token
+// request of their own; an unplanned repository gets its own. A failed batch request leaves each
+// repository to fetch its own, and a batched token the registry rejects is replaced by the
+// repository's own.
+func TestPlanBatchesTokens(t *testing.T) {
+	planned := []string{"library/alpine", "org/one", "org/two", "org/three"}
+	for _, tc := range []struct {
+		name        string
+		refuseBatch bool
+		wantTokens  int
+	}{
+		{"batched", false, 2},                         // the batch, the unplanned repository
+		{"batch refused", true, 1 + len(planned) + 1}, // the failed batch, each repository
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newTokenRegistry(t)
+			r.mu.Lock()
+			r.refuseBatch = tc.refuseBatch
+			r.mu.Unlock()
+			img := r.image(t, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), nil)
+			repos := append(slices.Clone(planned), "org/unplanned")
+			for _, repo := range repos {
+				r.tag(repo, "1.0", img)
+				r.tag(repo, "latest", img)
+			}
+			s := newSource(r.srv.Client(), nil, anon)
+			s.challenger.hosts = map[string]bool{r.host: true}
+			s.batched = map[string]bool{r.host: true}
+			dp := func(repo string) dep.Dep { return dep.Dep{Name: r.host + "/" + repo + ":1.0"} }
+			var deps []dep.Dep
+			for _, repo := range planned {
+				deps = append(deps, dp(repo))
+			}
+			// Duplicates, other registries and invalid references are left out.
+			s.Plan(append(deps, dp(planned[0]), dep.Dep{Name: "ghcr.io/org/app"}, dep.Dep{Name: "Not A Reference"}))
+
+			var wg sync.WaitGroup
+			for _, repo := range repos {
+				wg.Go(func() {
+					if rels, err := s.Releases(t.Context(), dp(repo), ""); err != nil || len(rels) != 2 {
+						t.Errorf("Releases %s = %v, %v", repo, rels, err)
+					}
+				})
+			}
+			wg.Wait()
+			r.mu.Lock()
+			scopes := slices.Clone(r.scopes)
+			r.mu.Unlock()
+			if got := r.count("token"); got != tc.wantTokens {
+				t.Errorf("token requests = %d; want %d (scopes %v)", got, tc.wantTokens, scopes)
+			}
+			if got := r.count("401"); got != 1 {
+				t.Errorf("401 challenges = %d; want 1", got)
+			}
+			wantScopes := make([]string, len(planned))
+			for i, repo := range slices.Sorted(slices.Values(planned)) {
+				wantScopes[i] = "repository:" + repo + ":pull"
+			}
+			if !slices.ContainsFunc(scopes, func(s []string) bool { return slices.Equal(s, wantScopes) }) {
+				t.Errorf("token request scopes = %v; want one with %v", scopes, wantScopes)
+			}
+
+			// The registry stops accepting the batched token: org/one fetches its own, once, for
+			// the manifest and config GETs and the HEAD that follow.
+			r.mu.Lock()
+			r.singleScope = true
+			r.mu.Unlock()
+			tokens := r.count("token")
+			if got, err := s.ReleaseTime(t.Context(), dp("org/one"), "1.0"); err != nil || got.IsZero() {
+				t.Errorf("ReleaseTime = %v, %v", got, err)
+			}
+			if got, err := s.Digest(t.Context(), dp("org/one"), "latest"); err != nil || got != img.Digest {
+				t.Errorf("Digest = %q, %v; want %s", got, err, img.Digest)
+			}
+			want := tokens + 1
+			if tc.refuseBatch {
+				want = tokens // its token already was its own
+			}
+			if got := r.count("token"); got != want {
+				t.Errorf("token requests after expiry = %d; want %d", got, want)
+			}
+		})
 	}
 }

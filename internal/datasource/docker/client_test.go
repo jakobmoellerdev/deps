@@ -612,3 +612,40 @@ func TestDockerCredentials(t *testing.T) {
 		})
 	}
 }
+
+// TestPlanBatchSize checks planned scopes are batched within maxBatchQuery bytes of token
+// request query, each scope in one batch, and that scopes planned again or alone get no batch.
+func TestPlanBatchSize(t *testing.T) {
+	c := newClient(nil, nil, anon, "")
+	var paths []string
+	for i := range 500 {
+		paths = append(paths, fmt.Sprintf("org/a-repository-with-a-long-name-%03d", i))
+	}
+	c.plan(hubRegistry, paths)
+	first := c.batches[c.tokenKey(hubRegistry, "repository:"+paths[0]+":pull")]
+	c.plan(hubRegistry, paths[:10])
+	c.plan("other.example", paths[:1])
+
+	batches := map[*string][]string{}
+	for _, p := range paths {
+		scope := "repository:" + p + ":pull"
+		b := c.batches[c.tokenKey(hubRegistry, scope)]
+		if !slices.Contains(b, scope) {
+			t.Fatalf("batch of %s = %v", scope, b)
+		}
+		batches[&b[0]] = b
+	}
+	if len(c.batches) != len(paths) || !slices.Equal(c.batches[c.tokenKey(hubRegistry, "repository:"+paths[0]+":pull")], first) {
+		t.Errorf("planning again or alone changed the batches: %d keys", len(c.batches))
+	}
+	total := 0
+	for _, b := range batches {
+		if q := (url.Values{"scope": b}).Encode(); len(q) > maxBatchQuery {
+			t.Errorf("batch query of %d scopes = %d bytes; want at most %d", len(b), len(q), maxBatchQuery)
+		}
+		total += len(b)
+	}
+	if len(batches) < 2 || total != len(paths) {
+		t.Errorf("%d batches of %d scopes; want several of %d", len(batches), total, len(paths))
+	}
+}

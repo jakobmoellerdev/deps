@@ -33,7 +33,8 @@ import (
 // Tokens are cached per registry and scope for the whole run, so one exchange serves every
 // request of a repository and concurrent callers share it: once the registry's challenge scheme
 // is known, a request whose credential is being fetched waits for it instead of paying a 401 of
-// its own. A cached token the registry rejects (expired) is fetched anew once.
+// its own. A cached token the registry rejects (expired) is fetched anew once. The repositories
+// a run plans to look up (see plan) get one token for all of them.
 type client struct {
 	http     *http.Client
 	header   http.Header // added to every request (User-Agent)
@@ -43,6 +44,7 @@ type client struct {
 	mu      sync.Mutex
 	schemes map[string]authScheme // registry → scheme of its last challenge
 	tokens  map[string]*tokenEntry
+	batches map[string][]string // bearer cache key of a planned scope → the scopes of its batch
 }
 
 type authScheme int
@@ -55,9 +57,10 @@ const (
 
 // tokenEntry is a cached Authorization value; done closes once it is fetched.
 type tokenEntry struct {
-	done chan struct{}
-	auth string // "Basic …" or "Bearer …"
-	err  error
+	done  chan struct{}
+	auth  string // "Basic …" or "Bearer …"
+	err   error
+	batch bool // fetched for the scopes of a planned batch together (fetchBatch)
 }
 
 // errBasicCredentialNotFound is the error of a Basic challenge without a credential.
@@ -66,11 +69,17 @@ var errBasicCredentialNotFound = errors.New("basic credential not found")
 // maxTokenBytes bounds a token response.
 const maxTokenBytes = 128 << 10
 
+// maxBatchQuery bounds the scope parameters of a batched token request (about 150 repositories
+// of Docker Hub), keeping its URL well below the 8 KB request line limit of common servers and
+// proxies.
+const maxBatchQuery = 6000
+
 func newClient(hc *http.Client, header http.Header, cred credentialFunc, clientID string) *client {
 	return &client{
 		http: hc, header: header, cred: cred, clientID: clientID,
 		schemes: map[string]authScheme{},
 		tokens:  map[string]*tokenEntry{},
+		batches: map[string][]string{},
 	}
 }
 
@@ -113,7 +122,15 @@ func (c *client) do(req *http.Request, r *repository) (*http.Response, error) {
 	if scheme == schemeBasic {
 		e = c.fetch(ctx, c.basicKey(r), used, func() (string, error) { return c.basic(ctx, r) })
 	} else {
-		e = c.fetch(ctx, key, used, func() (string, error) { return c.bearer(ctx, r, req.URL, params, scope) })
+		if used == nil {
+			c.fetchBatch(ctx, r, req.URL, params, key)
+		}
+		get := func() (string, error) { return c.bearer(ctx, r, req.URL, params, []string{scope}) }
+		e = c.fetch(ctx, key, used, get)
+		if e.err != nil && e.batch {
+			// The batched token request failed: fetch the repository's own.
+			e = c.fetch(ctx, key, e, get)
+		}
 	}
 	if e.err != nil {
 		return nil, fmt.Errorf("%s %q: %w", req.Method, req.URL, e.err)
@@ -219,6 +236,76 @@ func (c *client) fetch(ctx context.Context, key string, stale *tokenEntry, get f
 	}
 }
 
+// plan records the pull scopes of registry's repositories paths, which the run is going to look
+// up, so that the first of them to need a token fetches one for all (fetchBatch): a single token
+// request instead of one per repository. Scopes are batched up to maxBatchQuery bytes of token
+// request query; scopes already planned or cached are left out. The batch is fetched with the
+// credential of the repository that needs it first, so registry's credentials must not depend on
+// the repository (Docker Hub has no namespaced credentials).
+func (c *client) plan(registry string, paths []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var batch []string
+	size := 0
+	flush := func() {
+		if len(batch) > 1 {
+			for _, s := range batch {
+				c.batches[c.tokenKey(registry, s)] = batch
+			}
+		}
+		batch, size = nil, 0
+	}
+	for _, p := range paths {
+		scope := "repository:" + p + ":pull"
+		key := c.tokenKey(registry, scope)
+		if c.batches[key] != nil || c.tokens[key] != nil {
+			continue
+		}
+		n := len("&scope=") + len(url.QueryEscape(scope))
+		if size+n > maxBatchQuery {
+			flush()
+		}
+		batch = append(batch, scope)
+		size += n
+	}
+	flush()
+}
+
+// fetchBatch fetches one token for the scopes of the planned batch of key that have none cached,
+// with r's credential and the challenge params r got, and caches it under each of them. A batch
+// is fetched once: when that fails, each scope's token is fetched on its own (do). A cached batch
+// token the registry rejects is replaced by the repository's own, as any stale token is.
+func (c *client) fetchBatch(ctx context.Context, r *repository, reqURL *url.URL, params map[string]string, key string) {
+	c.mu.Lock()
+	batch := c.batches[key]
+	if batch == nil || c.tokens[key] != nil {
+		c.mu.Unlock()
+		return
+	}
+	e := &tokenEntry{done: make(chan struct{}), batch: true}
+	var scopes, keys []string
+	for _, s := range batch {
+		k := c.tokenKey(r.registry, s)
+		delete(c.batches, k)
+		if c.tokens[k] == nil {
+			c.tokens[k] = e
+			scopes, keys = append(scopes, s), append(keys, k)
+		}
+	}
+	c.mu.Unlock()
+	e.auth, e.err = c.bearer(ctx, r, reqURL, params, scopes)
+	if e.err != nil {
+		c.mu.Lock()
+		for _, k := range keys {
+			if c.tokens[k] == e {
+				delete(c.tokens, k)
+			}
+		}
+		c.mu.Unlock()
+	}
+	close(e.done)
+}
+
 // basic returns the Basic Authorization value of r's credential.
 func (c *client) basic(ctx context.Context, r *repository) (string, error) {
 	cred, err := c.cred(ctx, r.registry, r.path)
@@ -234,14 +321,14 @@ func (c *client) basic(ctx context.Context, r *repository) (string, error) {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(cred.Username+":"+cred.Password)), nil
 }
 
-// bearer returns the Bearer Authorization value for scope and the scopes the challenge adds
+// bearer returns the Bearer Authorization value for scopes and the scopes the challenge adds
 // (sorted, as the Docker CLI and oras-go send them) from the challenge's realm.
-func (c *client) bearer(ctx context.Context, r *repository, reqURL *url.URL, params map[string]string, scope string) (string, error) {
+func (c *client) bearer(ctx context.Context, r *repository, reqURL *url.URL, params map[string]string, scopes []string) (string, error) {
 	realm, service := params["realm"], params["service"]
 	if err := validateRealm(ctx, realm, reqURL); err != nil {
 		return "", err
 	}
-	scopes := []string{scope}
+	scopes = slices.Clone(scopes)
 	for s := range strings.FieldsSeq(params["scope"]) {
 		if !slices.Contains(scopes, s) {
 			scopes = append(scopes, s)

@@ -7,7 +7,8 @@
 // further requests. Credentials come from the Docker config and credential helpers. One registry
 // client with a shared token cache serves every repository, so each token exchange happens once
 // per run and scope; on Docker Hub and ghcr.io the first request to a repository is answered
-// with the registry's last challenge instead of a 401 round trip (see challenger).
+// with the registry's last challenge instead of a 401 round trip (see challenger), and on Docker
+// Hub one token serves every repository the run plans to look up (see Plan).
 package dockerds
 
 import (
@@ -19,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +43,9 @@ type Source struct {
 	// challenger answers the first request to each repository of Docker Hub and ghcr.io with
 	// the registry's bearer challenge.
 	challenger *challenger
+	// batched are the registries whose planned repositories get one token for all (Plan):
+	// Docker Hub, whose credentials do not depend on the repository.
+	batched map[string]bool
 
 	mu      sync.Mutex
 	tags    map[string]*tagsEntry   // canonical repository
@@ -149,9 +154,31 @@ func newSource(client *http.Client, sem chan struct{}, cred credentialFunc) *Sou
 		sem:         sem,
 		pullLimited: hubRegistry,
 		challenger:  ch,
+		batched:     map[string]bool{hubRegistry: true},
 		tags:        map[string]*tagsEntry{},
 		digests:     map[string]*digestEntry{},
 		configs:     map[string]*configEntry{},
+	}
+}
+
+// Plan implements datasource.Planner: the repositories of deps on Docker Hub get their pull
+// token from one token request for all of them (up to about 150 per request), instead of one
+// per repository, when the first of them needs one. A repository not planned gets its own, and
+// a batched token the registry rejects is replaced by the repository's own.
+func (s *Source) Plan(deps []dep.Dep) {
+	paths := map[string][]string{}
+	for _, d := range deps {
+		name, err := repoName(d)
+		if err != nil {
+			continue // Releases reports it
+		}
+		if registry, path, _ := strings.Cut(name, "/"); s.batched[registry] {
+			paths[registry] = append(paths[registry], path)
+		}
+	}
+	for registry, p := range paths {
+		slices.Sort(p)
+		s.client.plan(registry, slices.Compact(p))
 	}
 }
 
