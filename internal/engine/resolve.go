@@ -179,12 +179,6 @@ func extractTree(ctx context.Context, root string, cfg *config.Config, env manag
 			jobs = append(jobs, job{f, m})
 		}
 	}
-	if env.Vendored == nil {
-		env.Vendored = func(dir string) bool {
-			_, err := os.Stat(filepath.Join(root, filepath.FromSlash(dir), "vendor", "modules.txt"))
-			return err == nil
-		}
-	}
 	if env.Exists == nil {
 		env.Exists = func(p string) bool {
 			_, err := os.Stat(filepath.Join(root, filepath.FromSlash(p)))

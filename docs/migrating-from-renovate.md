@@ -34,6 +34,7 @@ deps reads `.deps.yaml`, not `renovate.json(5)`. Most options translate one to o
 | `rangeStrategy` | `rangeStrategy` / `rules[].rangeStrategy` for npm, cargo and Python (PEP 440, Poetry) ranges: `auto` (default, = `update-lockfile`), `bump`, `update-lockfile`; `widen`, `pin`, `replace` and `in-range-only` are not supported. Other managers replace the exact version |
 | `postUpdateOptions: [gomodTidy]` | always on |
 | `postUpdateOptions: [gomodUpdateImportPaths]` | `gomodUpdateImportPaths`, **default true**: major module path updates (`/v92` → `/v93`) rewrite the imports in the module's `.go` files; `false` turns module path updates off |
+| `postUpdateOptions: [gomodVendor]` | always on: a module with `vendor/modules.txt` is vendored again after tidy (`go mod vendor`), a workspace with `vendor/modules.txt` next to its `go.work` with `go work vendor`; only changed vendor files are committed. `go.work` `go`/`toolchain` directives are updated; `go work sync` is not run |
 | `lockFileMaintenance` | `lockFileMaintenance: {enabled, schedule}` for `Cargo.lock` (`cargo update`, one PR on `<branchPrefix>lock-file-maintenance`); npm and Go lockfiles are regenerated only with an update |
 | `branchPrefix` | `branchPrefix` |
 | `semanticCommits`, `:semanticPrefixFixDepsChoreOthers` | always on; `rules[].commitType`, `rules[].commitScope` |

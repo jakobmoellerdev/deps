@@ -125,25 +125,25 @@ For these actions, the version input in `with:` is also a dep (DepType `setup`):
 
 ## gomod
 
-Updates the requirements and the `go`/`toolchain` directives of Go modules. `go.mod` is parsed with `golang.org/x/mod/modfile`.
+Updates the requirements and the `go`/`toolchain` directives of Go modules, and the `go`/`toolchain` directives of Go workspaces. `go.mod` and `go.work` are parsed with `golang.org/x/mod/modfile`.
 
 **Files:**
 
 - `go.mod`
+- `go.work`
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
 | `direct` | `require` without `// indirect` | `go` | `go` | updated |
 | `indirect` | `require … // indirect` | `go` | `go` | ignored (opt in with a rule setting `ignore: false`) |
-| `go` | `go 1.x` directive | `go-toolchain` | `tag` | ignored (opt in with a rule setting `ignore: false`) |
-| `toolchain` | `toolchain go1.x.y`; the span covers the version after `go` | `go-toolchain` | `tag` | updated |
+| `go` | `go 1.x` directive of `go.mod` or `go.work` | `go-toolchain` | `tag` | ignored (opt in with a rule setting `ignore: false`) |
+| `toolchain` | `toolchain go1.x.y` of `go.mod` or `go.work`; the span covers the version after `go` | `go-toolchain` | `tag` | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
 | `replaced` | a `replace` directive targets the module |
-| `vendored module (not supported)` | `vendor/modules.txt` exists next to `go.mod` |
 | `prerelease toolchain` | `go1.27rc1` style directive |
 | `cannot locate value` | the version bytes were not found |
 | `module path changed to <path> (<module>@<version>)` | every newer candidate's `go.mod` declares another module path (a renamed module, or a fork that kept its origin's path); go refuses such a version |
@@ -179,16 +179,20 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules. `go.
 
 - After any gomod change, deps runs `go mod tidy -modfile=<tmp>/go.mod` in the module directory, on temporary copies of `go.mod` and `go.sum`, with `GOWORK=off` and `GOFLAGS` cleared; source files rewritten by a major module path update are passed with `-overlay`.
 - The tidied `go.mod` and `go.sum` replace the patched files. The real files are only written by `apply`.
+- A module with `vendor/modules.txt` is vendored again after tidy: `go mod vendor -modfile=<tmp>/go.mod -o <tmp>/vendor` (same environment and overlay). Only the vendor files whose content changed, appeared or disappeared become part of the change (`vendor/modules.txt` and the vendored packages); the rest of the vendor tree is compared, never rewritten.
+- Go workspaces: a module listed in the `use` directives of the nearest `go.work` at or above it is still tidied on its own with `GOWORK=off`, since `go mod tidy` ignores the workspace. deps does not run `go work sync`: it would raise the requirements of the other workspace modules to the workspace's build list, a change to modules the update does not touch; the updated module's own `go.sum` gets the new checksums, so `go.work.sum` needs none.
+- When `vendor/modules.txt` exists next to that `go.work`, the workspace vendors its modules: the patched modules of one workspace are post-processed together (one PR group's changes in one run), each tidied as above, then `go work vendor -o <tmp>/vendor` runs in the workspace directory with `GOWORK` set to its `go.work` and the tidied `go.mod`/`go.sum` files and rewritten sources as `-overlay`. Changed workspace vendor files are part of the change as above.
+- A `go.work` change (its `go`/`toolchain` directive) runs no go command.
 - At most 4 post-processors (tidy and npm installs together) run concurrently.
-- A failure drops that module's change: `go mod tidy in <dir>: <last 20 lines of stderr>` (except a module path change, above).
+- A failure drops that module's change: `go mod tidy in <dir>: <last 20 lines of stderr>`, `go mod vendor in <dir>: …` or `go work vendor in <dir>: …` (except a module path change, below). In a vendoring workspace this drops the changes of all its modules in the group.
 - `plan` does not run tidy, and prints `note    go.sum changes are computed by apply/run`.
 
 **Lock file maintenance (`run`).**
 
-Go has no lockfile, and Renovate has no gomod lock file maintenance. With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, deps treats the `// indirect` requirements (which it does not update by default) as the locked versions of each scanned `go.mod` that has a `go.sum` and no `vendor/modules.txt`. In the module directory, on temporary copies of `go.mod` and `go.sum` and with the environment of `go mod tidy` above, deps runs `go get -modfile=<tmp>/go.mod <module>@upgrade …` for every indirect requirement without a `replace` directive, then `go mod tidy`. `@upgrade` is the newest non-retracted release of the same module path (a prerelease only when there is no release); a current version newer than that (a prerelease or pseudo-version) stays.
+Go has no lockfile, and Renovate has no gomod lock file maintenance. With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, deps treats the `// indirect` requirements (which it does not update by default) as the locked versions of each scanned `go.mod` that has a `go.sum` and is not a module of a vendoring workspace. In the module directory, on temporary copies of `go.mod` and `go.sum` and with the environment of `go mod tidy` above, deps runs `go get -modfile=<tmp>/go.mod <module>@upgrade …` for every indirect requirement without a `replace` directive, then `go mod tidy`. `@upgrade` is the newest non-retracted release of the same module path (a prerelease only when there is no release); a current version newer than that (a prerelease or pseudo-version) stays.
 
 - The `go` and `toolchain` directives and the direct requirements do not move. When the `go get` call would move them, or go reports a version conflict between the requested modules or a module that needs a newer go than the running one, the modules are split in halves and each half is tried on the result of the one before. Only a module whose upgrade conflicts on its own keeps its version; without conflicts this is one `go get` call.
-- The PR changes `go.mod` (indirect lines only) and `go.sum`, and shares `<branchPrefix>lock-file-maintenance` with the other lockfiles; `minimumReleaseAge` does not apply to it. A module with nothing to move gets no change.
+- The PR changes `go.mod` (indirect lines only), `go.sum` and, for a module with `vendor/modules.txt`, the changed vendor files (`go mod vendor` as above), and shares `<branchPrefix>lock-file-maintenance` with the other lockfiles; `minimumReleaseAge` does not apply to it. A module with nothing to move gets no change.
 - Other `go get` failures drop that module's maintenance: `go get in <dir>: <last 20 lines of stderr>`.
 - With `GOTOOLCHAIN=auto`, a module that needs a newer go than the running one makes go download that toolchain before deps rejects the upgrade.
 

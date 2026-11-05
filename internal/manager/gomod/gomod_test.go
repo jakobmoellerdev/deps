@@ -68,15 +68,32 @@ func TestExtract(t *testing.T) {
 		}
 	}
 
-	var asked string
-	deps, _ = m.Extract("sub/go.mod", b, manager.Env{Vendored: func(dir string) bool { asked = dir; return true }})
-	if deps[1].Skip != "vendored module (not supported)" || deps[3].Skip != "vendored module (not supported)" || asked != "sub" {
-		t.Errorf("vendored (asked %q): %+v", asked, deps)
+	deps, _ = m.Extract("sub/go.mod", b, manager.Env{})
+	if deps[1].Skip != "" || deps[3].Skip != "" {
+		t.Errorf("skips: %+v", deps)
+	}
+
+	work := []byte("go 1.25.0\n\ntoolchain go1.26.1\n\nuse (\n\t./a\n\t./b\n)\n")
+	wdeps, err := m.Extract("ws/go.work", work, manager.Env{})
+	if err != nil || len(wdeps) != 2 {
+		t.Fatalf("go.work: %+v, %v", wdeps, err)
+	}
+	for i, w := range []struct{ name, ver string }{{"go", "1.25.0"}, {"toolchain", "1.26.1"}} {
+		d := wdeps[i]
+		if d.Name != w.name || d.DepType != w.name || d.Version != w.ver || d.File != "ws/go.work" || string(work[d.RefSpan.Start:d.RefSpan.End]) != w.ver {
+			t.Errorf("go.work %d: %+v", i, d)
+		}
+	}
+	if wdeps, err := m.Extract("go.work", []byte("use ./a\n"), manager.Env{}); err != nil || len(wdeps) != 0 {
+		t.Errorf("go.work without directives: %+v, %v", wdeps, err)
+	}
+	if _, err := m.Extract("go.work", []byte("usee ./a\n"), manager.Env{}); err == nil {
+		t.Error("want go.work parse error")
 	}
 	if _, err := m.Extract("go.mod", []byte("modul x\n"), manager.Env{}); err == nil {
 		t.Error("want parse error")
 	}
-	if !m.Match("go.mod") || !m.Match("a/go.mod") || m.Match("a/xgo.mod") || m.Match("go.sum") || m.Name() != Name {
+	if !m.Match("go.mod") || !m.Match("a/go.mod") || !m.Match("a/go.work") || m.Match("a/xgo.mod") || m.Match("go.work.sum") || m.Match("go.sum") || m.Name() != Name {
 		t.Error("Match/Name")
 	}
 }
@@ -272,18 +289,63 @@ func TestFileEdits(t *testing.T) {
 
 func TestLockRoots(t *testing.T) {
 	root := t.TempDir()
-	for _, p := range []string{"go.mod", "go.sum", "b/go.mod", "b/go.sum", "nosum/go.mod", "vend/go.mod", "vend/go.sum", "vend/vendor/modules.txt"} {
+	files := map[string]string{
+		"go.mod": "", "go.sum": "", "b/go.mod": "", "b/go.sum": "", "nosum/go.mod": "",
+		"vend/go.mod": "", "vend/go.sum": "", "vend/vendor/modules.txt": "",
+		// A vendoring workspace: its vendor directory derives from all modules.
+		"ws/go.work": "go 1.22\n\nuse ./m\n", "ws/vendor/modules.txt": "", "ws/m/go.mod": "", "ws/m/go.sum": "",
+		"ws2/go.work": "go 1.22\n\nuse ./m\n", "ws2/m/go.mod": "", "ws2/m/go.sum": "",
+	}
+	for p, content := range files {
 		abs := filepath.Join(root, filepath.FromSlash(p))
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(abs, nil, 0o644); err != nil {
+		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got := New().(manager.LockMaintainer).LockRoots(root, []string{"vend/go.mod", "nosum/go.mod", "go.mod", "b/go.mod"})
-	want := []manager.LockRoot{{Manifest: "b/go.mod", Lockfile: "b/go.sum"}, {Manifest: "go.mod", Lockfile: "go.sum"}}
+	got := New().(manager.LockMaintainer).LockRoots(root, []string{"vend/go.mod", "nosum/go.mod", "go.mod", "b/go.mod", "ws/m/go.mod", "ws/go.work", "ws2/m/go.mod"})
+	want := []manager.LockRoot{
+		{Manifest: "b/go.mod", Lockfile: "b/go.sum"}, {Manifest: "go.mod", Lockfile: "go.sum"},
+		{Manifest: "vend/go.mod", Lockfile: "vend/go.sum"}, {Manifest: "ws2/m/go.mod", Lockfile: "ws2/m/go.sum"},
+	}
 	if !slices.Equal(got, want) {
 		t.Errorf("LockRoots = %+v, want %+v", got, want)
+	}
+}
+
+func TestWorkspace(t *testing.T) {
+	root := t.TempDir()
+	for p, content := range map[string]string{
+		"go.work":     "go 1.22\n\nuse (\n\t.\n\t./a\n\t../out\n\t/abs\n)\n",
+		"a/go.mod":    "module a\n",
+		"a/b/go.mod":  "module b\n",
+		"bad/go.work": "usee x\n",
+	} {
+		abs := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		dir, ws string
+		ok      bool
+	}{{".", ".", true}, {"a", ".", true}, {"a/b", ".", false}, {"bad/m", "bad", false}} {
+		if ws, ok := Workspace(root, c.dir); ws != c.ws || ok != c.ok {
+			t.Errorf("Workspace(%s) = %q, %v; want %q, %v", c.dir, ws, ok, c.ws, c.ok)
+		}
+	}
+	if mods, err := WorkspaceModules(root); err != nil || !slices.Equal(mods, []string{".", "a"}) {
+		t.Errorf("WorkspaceModules = %q, %v", mods, err)
+	}
+	if _, ok := Workspace(t.TempDir(), "a"); ok {
+		t.Error("Workspace without go.work")
+	}
+	if Vendors(root) {
+		t.Error("Vendors without vendor/modules.txt")
 	}
 }

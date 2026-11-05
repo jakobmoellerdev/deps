@@ -90,6 +90,15 @@ type ScopeSiblingLister interface {
 	ScopeSiblings(dir string) []string
 }
 
+// TreeRegenerator is implemented by post-processors that also regenerate whole directories
+// of a scope, too large to pass in as siblings (the vendor directory of a Go module). Trees
+// lists them as slash paths relative to dir, the absolute scope directory. The result of
+// Process or Maintain may hold a file below one of them under its slash path relative to dir:
+// its new content, or nil when the file is deleted; only changed files need to be listed.
+type TreeRegenerator interface {
+	Trees(dir string) []string
+}
+
 // postSem bounds concurrent post-processor runs (go mod tidy, npm install) across all Build
 // calls.
 var postSem = make(chan struct{}, 4)
@@ -494,7 +503,49 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 		changed = append(changed, n)
 		changes = append(changes, FileChange{Path: sb.path, Mode: sb.mode, Old: sb.content, New: b})
 	}
+	tree, err := treeChanges(root, s.dir, abs, p, out, rels, names)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range tree {
+		changed = append(changed, c.Path)
+	}
+	changes = append(changes, tree...)
 	slog.DebugContext(ctx, "post-processed", "scope", s.dir, "manager", s.manager, "manifests", rels, "changed", changed, "duration", time.Since(start))
+	return changes, nil
+}
+
+// treeChanges turns the results of p below its TreeRegenerator trees into changes against
+// the files in root; the old content is read for those files only. Results that are neither
+// a manifest (rels), a sibling (names) nor below a tree are ignored.
+func treeChanges(root, dir, abs string, p PostProcessor, out map[string][]byte, rels, names []string) ([]FileChange, error) {
+	var trees []string
+	if tr, ok := p.(TreeRegenerator); ok {
+		trees = tr.Trees(abs)
+	}
+	var changes []FileChange
+	for rel, b := range out {
+		if slices.Contains(rels, rel) || slices.Contains(names, rel) ||
+			!slices.ContainsFunc(trees, func(t string) bool { return strings.HasPrefix(rel, t+"/") }) {
+			continue
+		}
+		c := FileChange{Path: path.Join(dir, rel), Mode: 0o644, New: b}
+		file := filepath.Join(root, filepath.FromSlash(c.Path))
+		switch st, err := os.Stat(file); {
+		case err == nil:
+			c.Mode = st.Mode().Perm()
+			if c.Old, err = os.ReadFile(file); err != nil {
+				return nil, err
+			}
+		case !errors.Is(err, fs.ErrNotExist):
+			return nil, err
+		}
+		if c.Old == nil && c.New == nil || c.Old != nil && c.New != nil && bytes.Equal(c.Old, c.New) {
+			continue
+		}
+		changes = append(changes, c)
+	}
+	slices.SortFunc(changes, func(a, b FileChange) int { return strings.Compare(a.Path, b.Path) })
 	return changes, nil
 }
 

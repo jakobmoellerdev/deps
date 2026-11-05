@@ -1,4 +1,5 @@
-// Package gomod extracts requirements and go/toolchain directives from go.mod files.
+// Package gomod extracts requirements and go/toolchain directives from go.mod files and the
+// go/toolchain directives from go.work files.
 package gomod
 
 import (
@@ -26,7 +27,7 @@ import (
 // Name is the manager name.
 const Name = "gomod"
 
-var matchRe = regexp.MustCompile(`(^|/)go\.mod$`)
+var matchRe = regexp.MustCompile(`(^|/)go\.(mod|work)$`)
 
 type gomodManager struct{}
 
@@ -35,21 +36,34 @@ func New() manager.Manager { return gomodManager{} }
 
 func (gomodManager) Name() string { return Name }
 
-// Match reports whether the slash path is a go.mod file. The suffix check skips the regexp for
-// the paths that cannot match.
+// Match reports whether the slash path is a go.mod or go.work file. The suffix check skips the
+// regexp for the paths that cannot match.
 func (gomodManager) Match(p string) bool {
-	return strings.HasSuffix(p, "go.mod") && matchRe.MatchString(p)
+	return (strings.HasSuffix(p, "go.mod") || strings.HasSuffix(p, "go.work")) && matchRe.MatchString(p)
 }
 
 // Extract returns one Dep per require entry; RefSpan covers the version token, NameSpan the
-// module path. env.Vendored is consulted with the go.mod's directory. Pseudo-versions are
-// deps too: the engine proposes newer pseudo-versions (digest updates) or releases for them.
-func (gomodManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
+// module path. Pseudo-versions are deps too: the engine proposes newer pseudo-versions (digest
+// updates) or releases for them. A go.work gives its go and toolchain directives.
+func (gomodManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+	if path.Base(file) == "go.work" {
+		w, err := modfile.ParseWork(file, src, nil)
+		if err != nil {
+			return nil, err
+		}
+		var deps []dep.Dep
+		if w.Go != nil {
+			deps = append(deps, directive(file, src, "go", w.Go.Version, w.Go.Syntax))
+		}
+		if w.Toolchain != nil {
+			deps = append(deps, directive(file, src, "toolchain", w.Toolchain.Name, w.Toolchain.Syntax))
+		}
+		return deps, nil
+	}
 	f, err := modfile.Parse(file, src, nil)
 	if err != nil {
 		return nil, err
 	}
-	vendored := env.Vendored != nil && env.Vendored(path.Dir(file))
 	deps := make([]dep.Dep, 0, len(f.Require)+2)
 	if f.Go != nil {
 		deps = append(deps, directive(file, src, "go", f.Go.Version, f.Go.Syntax))
@@ -73,11 +87,8 @@ func (gomodManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep
 		if i := bytes.Index(src[s:e], []byte(r.Mod.Path)); i >= 0 {
 			d.NameSpan = dep.Span{Start: s + i, End: s + i + len(r.Mod.Path)}
 		}
-		switch {
-		case replaced(f, r.Mod.Path):
+		if replaced(f, r.Mod.Path) {
 			d.Skip = "replaced"
-		case vendored:
-			d.Skip = "vendored module (not supported)"
 		}
 		deps = append(deps, d)
 	}
@@ -210,23 +221,82 @@ func importEdits(file string, src []byte, old, newPath string) ([]patch.Edit, er
 }
 
 // LockRoots implements manager.LockMaintainer: the go.sum next to each go.mod, unless the
-// module has none or vendors its modules (vendor/modules.txt). Lock file maintenance
-// (gotool.Tidier.Maintain) moves the `// indirect` requirements.
+// module has none or is a module of a workspace that vendors its modules (Workspace, with a
+// vendor/modules.txt next to the go.work). Lock file maintenance (gotool.Tidier.Maintain)
+// moves the `// indirect` requirements.
 func (gomodManager) LockRoots(root string, files []string) []manager.LockRoot {
 	var out []manager.LockRoot
 	for _, f := range files {
+		if path.Base(f) != "go.mod" {
+			continue
+		}
 		dir := path.Dir(f)
 		abs := filepath.Join(root, filepath.FromSlash(dir))
 		if _, err := os.Stat(filepath.Join(abs, "go.sum")); err != nil {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(abs, "vendor", "modules.txt")); err == nil {
+		if ws, ok := Workspace(root, dir); ok && Vendors(filepath.Join(root, filepath.FromSlash(ws))) {
 			continue
 		}
 		out = append(out, manager.LockRoot{Manifest: f, Lockfile: path.Join(dir, "go.sum")})
 	}
 	slices.SortFunc(out, func(a, b manager.LockRoot) int { return strings.Compare(a.Lockfile, b.Lockfile) })
 	return out
+}
+
+// Vendors reports whether the absolute directory dir has a vendor directory the go command
+// uses (vendor/modules.txt).
+func Vendors(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "vendor", "modules.txt"))
+	return err == nil
+}
+
+// Workspace returns the workspace of the module directory dir (a slash path relative to
+// root): the directory of the nearest go.work at or above dir, up to root, when that go.work
+// uses dir. ok is false otherwise; GOWORK is not consulted.
+func Workspace(root, dir string) (ws string, ok bool) {
+	for d := dir; ; d = path.Dir(d) {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(d), "go.work")); err == nil {
+			mods, err := WorkspaceModules(filepath.Join(root, filepath.FromSlash(d)))
+			return d, err == nil && slices.Contains(mods, relTo(d, dir))
+		}
+		if d == "." {
+			return "", false
+		}
+	}
+}
+
+// WorkspaceModules returns the module directories the go.work in the absolute directory ws
+// uses, as cleaned slash paths relative to ws ("." for ws itself). Directories outside ws
+// are left out.
+func WorkspaceModules(ws string) ([]string, error) {
+	file := filepath.Join(ws, "go.work")
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	w, err := modfile.ParseWork(file, b, nil)
+	if err != nil {
+		return nil, err
+	}
+	var mods []string
+	for _, u := range w.Use {
+		if p := path.Clean(filepath.ToSlash(u.Path)); !path.IsAbs(p) && filepath.IsLocal(filepath.FromSlash(p)) || p == "." {
+			mods = append(mods, p)
+		}
+	}
+	return mods, nil
+}
+
+// relTo returns the slash path p relative to its ancestor directory base.
+func relTo(base, p string) string {
+	if base == "." {
+		return p
+	}
+	if p == base {
+		return "."
+	}
+	return strings.TrimPrefix(p, base+"/")
 }
 
 func replaced(f *modfile.File, p string) bool {

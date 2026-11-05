@@ -290,3 +290,50 @@ func TestBuildScopeSiblings(t *testing.T) {
 		t.Errorf("p/sub/lock = %q -> %q", c.Old, c.New)
 	}
 }
+
+// treePost is a postFunc that regenerates the directory trees listed by trees.
+type treePost struct {
+	postFunc
+	trees []string
+}
+
+func (p treePost) Trees(string) []string { return p.trees }
+
+// TestBuildTrees regenerates part of a vendor tree: changed, new and deleted files become
+// changes with the old content read from root; unchanged ones and results outside the
+// trees do not.
+func TestBuildTrees(t *testing.T) {
+	root := t.TempDir()
+	up := pkgUpdate(t, root, "p/package.json")
+	writeFile(t, root, "p/vendor/same", "same\n")
+	writeFile(t, root, "p/vendor/changed", "old\n")
+	writeFile(t, root, "p/vendor/gone", "gone\n")
+	if err := os.Chmod(filepath.Join(root, "p", "vendor", "changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	post := map[string]PostProcessor{npm.Name: treePost{
+		postFunc: postFunc{f: func(context.Context, string, map[string][]byte, map[string][]byte) (map[string][]byte, error) {
+			return map[string][]byte{
+				"vendor/same": []byte("same\n"), "vendor/changed": []byte("new\n"), "vendor/added": []byte("added\n"),
+				"vendor/gone": nil, "vendor/never": nil, "outside": []byte("x"),
+			}, nil
+		}},
+		trees: []string{"vendor"},
+	}}
+	changes, errs := Build(t.Context(), root, []manager.Manager{npm.New()}, []dep.Update{up}, post)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if got := paths(changes); !slices.Equal(got, []string{"p/package.json", "p/vendor/added", "p/vendor/changed", "p/vendor/gone"}) {
+		t.Fatalf("changes = %v", got)
+	}
+	if c := changes[1]; c.Old != nil || string(c.New) != "added\n" || c.Mode != 0o644 {
+		t.Errorf("added: %+v", c)
+	}
+	if c := changes[2]; string(c.Old) != "old\n" || string(c.New) != "new\n" || c.Mode != 0o600 {
+		t.Errorf("changed: %+v", c)
+	}
+	if c := changes[3]; string(c.Old) != "gone\n" || c.New != nil {
+		t.Errorf("gone: %+v", c)
+	}
+}

@@ -13,9 +13,6 @@ type Env struct {
 	// TerraformRegistry is the registry host of hostless provider and module addresses
 	// (config terraform.defaultRegistry); "" = the default of the file type.
 	TerraformRegistry string
-	// Vendored reports whether the slash directory dir (relative to the scanned root)
-	// vendors its modules. engine.Resolve supplies a filesystem check when nil.
-	Vendored func(dir string) bool
 	// Exists reports whether the slash path (relative to the scanned root) exists, for
 	// file-based conditions such as Maven profile `<activation><file>`. engine.Resolve
 	// supplies a filesystem check when nil.
