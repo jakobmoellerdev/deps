@@ -57,7 +57,12 @@ func (t *translator) rulesFrom(cfg map[string]any, done map[string]bool) {
 		r := map[string]any{}
 		for bk, bv := range block {
 			switch bk {
-			case "enabled": // exclusions
+			case "enabled":
+				// Renovate and deps both skip git submodules by default: opting in needs a rule.
+				// Every other manager's enabled is handled by exclusions.
+				if k == "git-submodules" && bv == true {
+					r[bk] = bv
+				}
 			case "fileMatch", "managerFilePatterns":
 				t.n.warn(k+"."+bk, "extra files for built-in managers are not supported")
 			default:

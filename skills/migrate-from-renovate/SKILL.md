@@ -38,7 +38,7 @@ Work through the warnings one by one and record the decision for the user. Typic
 | Warning | What to do |
 |---|---|
 | `branchPrefix: deps run closes open PRs under renovate/ …` | Expected. Decide the cutover mode in step 5; do not ignore it. |
-| a manager deps lacks (`git-submodules`, `composer`, `devcontainer`, …) | Check whether the repository has such files (`git ls-files`). None: say so and move on. Some: tell the user these deps will no longer be updated. |
+| a manager deps lacks (`composer`, `devcontainer`, `nuget`, …) | Check whether the repository has such files (`git ls-files`). None: say so and move on. Some: tell the user these deps will no longer be updated. |
 | `rule dropped` (`matchCurrentValue` glob or together with `matchCurrentVersion`, `matchJsonata`, `matchSourceUrls`, package and dep names together, …) | Read the original rule's intent. Rewrite it in `.deps.yaml` with `names`, `paths`, `datasources`, `depTypes`, `currentVersion` (a constraint or `/regex/`) or `currentAge`, or split it into two rules. |
 | custom datasource dropped (templated URL, `html`, JSONata) | Write `customDatasources.<name>` by hand: `url`, `format`, `versions` (jq-subset selector such as `.releases \| keys` or `.items[].tag_name`) and `versionRegex`. The custom managers that used it were dropped too; re-add them once it exists. |
 | custom manager dropped (templates, `combination` strategy, non-regex `customType`) | Rewrite as a `custom[]` entry: regex mode with literal `datasource`/`name`/`versioning`, or annotation mode if the files carry `# renovate: datasource=… depName=…` markers (annotation mode reads those unchanged). |

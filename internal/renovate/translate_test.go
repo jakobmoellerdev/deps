@@ -409,6 +409,13 @@ func TestLoadRules(t *testing.T) {
 			rules: strings.TrimPrefix(preCommitExclusion, "\n"),
 			notes: []string{"warn vulnerabilityAlerts.groupName: must be a string; ignored"},
 		},
+		{
+			name: "git-submodules opt-in un-ignores the deps manager",
+			src:  `{'git-submodules': {enabled: true}}`,
+			rules: `  - # git-submodules
+    manager: git-submodules
+    ignore: false` + preCommitExclusion,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -435,7 +442,7 @@ func TestLoadTopLevel(t *testing.T) {
 		ignorePaths: ['foo', '**/bar/**', '!keep', '/^x/'], automergeStrategy: 'merge-commit', automergeType: 'branch',
 		minimumReleaseAge: '7 days', vulnerabilityAlerts: {enabled: false}, schedule: ['before 6am on monday', 'every 2 weeks'],
 		timezone: 'Europe/Berlin', lockFileMaintenance: {enabled: true, automerge: true}, labels: ['deps'],
-		pinDigests: true, rangeStrategy: 'pin', 'git-submodules': {enabled: true},
+		pinDigests: true, rangeStrategy: 'pin', composer: {enabled: true},
 	}`)
 	if err != nil {
 		t.Fatal(err)
@@ -475,7 +482,7 @@ rules:` + preCommitExclusion + "\n"
 		"warn schedule: unsupported schedule \"every 2 weeks\"; entry dropped",
 		"warn timezone: timezone \"Europe/Berlin\" ignored: deps compares schedules with workflow crons, which are UTC",
 		"info lockFileMaintenance.automerge: no deps equivalent; ignored",
-		"warn git-submodules: not supported; ignored",
+		"warn composer: not supported; ignored",
 	} {
 		if !slices.Contains(notes, n) {
 			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
@@ -760,7 +767,7 @@ func TestIsConfigName(t *testing.T) {
 // Settings only Renovate's built-in presets set are reported as info, the repository's own as
 // warnings.
 func TestLoadBuiltinPresetNotes(t *testing.T) {
-	res, err := load(t, `{extends: [':pinDevDependencies', ':ignoreModulesAndTests'], packageRules: [{matchDepTypes: ['dev'], enabled: false}], 'git-submodules': {enabled: true}}`)
+	res, err := load(t, `{extends: [':pinDevDependencies', ':ignoreModulesAndTests'], packageRules: [{matchDepTypes: ['dev'], enabled: false}], composer: {enabled: true}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -769,7 +776,7 @@ func TestLoadBuiltinPresetNotes(t *testing.T) {
 		"info :pinDevDependencies packageRules[0]: depType dev has no deps equivalent; dropped (from a built-in preset)",
 		"info nuget: not supported; ignored (from a built-in preset)",
 		"warn packageRules[0]: depType dev has no deps equivalent; dropped",
-		"warn git-submodules: not supported; ignored",
+		"warn composer: not supported; ignored",
 	} {
 		if !slices.Contains(notes, n) {
 			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))

@@ -46,7 +46,7 @@ Each of these is reported when it occurs; the rest of the config still applies.
 | built-in `workarounds:*`, `mergeConfidence:*`, `abandonments:*`, `helpers:*` (except `pinGitHubActionDigests`), `security:openssf-scorecard` | skipped (info) |
 | `matchCurrentValue` globs (`1.*`), `matchCurrentValue` together with `matchCurrentVersion`, `matchJsonata`, `matchSourceUrls`, `matchRepositories`, `matchBaseBranches`, other unknown `match*`/`exclude*` keys | the rule is dropped |
 | `matchPackageNames` together with `matchDepNames` in one rule | the rule is dropped (deps has one `names` list) |
-| managers deps lacks (`devcontainer`, `pyenv`, `nuget`, `git-submodules`, `composer`, …), unknown categories and dep types | dropped from the rule; a rule left without any is dropped |
+| managers deps lacks (`devcontainer`, `pyenv`, `nuget`, `composer`, …), unknown categories and dep types | dropped from the rule; a rule left without any is dropped |
 | update types `lockFileMaintenance`, `rollback`, `bump`, `lockfileUpdate` in `matchUpdateTypes` | dropped; a rule left without update types is dropped |
 | `pin`, `rangeStrategy`, `versioning`, `extractVersion`, `replacementName`/`replacementVersion` in a rule with `matchUpdateTypes` | the field is dropped (deps decides them before the update type is known) |
 | `versioning` in a rule with `matchCurrentVersion`/`matchCurrentValue`/`matchCurrentAge`, `extractVersion` with `matchCurrentAge` | the field is dropped (deps compares the current version under the versioning other rules decide) |
@@ -151,7 +151,6 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `:dependencyDashboard`, `dependencyDashboardTitle`, `dependencyDashboardLabels` | `dependencyDashboard: true`, `dependencyDashboardTitle`, `dependencyDashboardLabels` |
 | `dependencyDashboardApproval` (top level or in `packageRules`) | `dashboardApproval: true` at the top level or in `rules` (needs `dependencyDashboard: true`): no PR until the *Pending approval* checkbox is ticked; security updates need no approval, as with Renovate's `vulnerabilityAlerts` default |
 | Mend badges, `security:openssf-scorecard` | not supported (release age as text in PR bodies) |
-| `git-submodules` | not supported |
 | repository cache | not applicable (no persistent cache) |
 
 ## Marker compatibility

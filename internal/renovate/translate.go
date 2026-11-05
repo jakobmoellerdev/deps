@@ -250,7 +250,7 @@ var managerMap = func() map[string][]expansion {
 		"regex":            {{"custom", nil}},
 		"custom.regex":     {{"custom", nil}},
 	}
-	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 poetry pipenv terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version") {
+	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 poetry pipenv terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules") {
 		m[n] = []expansion{{n, nil}}
 	}
 	return m
