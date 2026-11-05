@@ -94,7 +94,7 @@ func readJSON(dec *jsontext.Decoder) (jsonNode, error) {
 					return jsonNode{}, err
 				}
 				off = int(dec.InputOffset()) - len(v)
-				if name, err = decodeString(v); err != nil {
+				if name, err = decodeString(v, string(v[1:len(v)-1])); err != nil {
 					return jsonNode{}, err
 				}
 			}
@@ -121,22 +121,26 @@ func readJSON(dec *jsontext.Decoder) (jsonNode, error) {
 		n := jsonNode{kind: v.Kind(), end: int(dec.InputOffset())}
 		n.start = n.end - len(v)
 		if n.kind == '"' {
-			if n.str, err = decodeString(v); err != nil {
+			n.raw = string(v[1 : len(v)-1]) // v is only valid until the next read
+			if n.str, err = decodeString(v, n.raw); err != nil {
 				return jsonNode{}, err
 			}
-			n.raw = string(v[1 : len(v)-1]) // v is only valid until the next read
 		}
 		return n, nil
 	}
 }
 
-func decodeString(v jsontext.Value) (string, error) {
-	dec := jsontext.NewDecoder(bytes.NewReader(v))
-	tok, err := dec.ReadToken()
+// decodeString decodes the string value v, which the decoder has validated, given the raw
+// bytes between its quotes: they are the string unless they contain an escape.
+func decodeString(v jsontext.Value, raw string) (string, error) {
+	if !strings.Contains(raw, `\`) {
+		return raw, nil
+	}
+	b, err := jsontext.AppendUnquote(nil, v)
 	if err != nil {
 		return "", err
 	}
-	return tok.String(), nil
+	return string(b), nil
 }
 
 // jsonBlocks appends the blocks of type typ that v (after the key at off) defines, given the
