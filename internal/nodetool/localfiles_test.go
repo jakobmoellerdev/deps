@@ -2,7 +2,6 @@ package nodetool
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -160,9 +159,6 @@ func TestProcessRealPnpmPatch(t *testing.T) {
 func TestProcessRealYarnBerryPatch(t *testing.T) {
 	isolate(t)
 	realTool(t, "yarn", "@yarnpkg/cli-dist@4")
-	if v, err := exec.CommandContext(t.Context(), "yarn", "--version").Output(); err != nil || strings.HasPrefix(string(v), "1.") {
-		t.Skip("yarn on PATH is not yarn berry")
-	}
 	srv := registry(t)
 	dir := t.TempDir()
 	write(t, dir, map[string]string{".yarn/patches/tiny.patch": tinyPatch})
