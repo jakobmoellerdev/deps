@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 )
 
 // logOpts select the diagnostics logger. Results (update/skip/pr lines, diffs) are not logs and
@@ -24,7 +25,7 @@ func setupLogger(o logOpts, w io.Writer) error {
 	var h slog.Handler
 	switch strings.ToLower(o.format) {
 	case "text":
-		h = slog.NewTextHandler(w, ho)
+		h = slog.NewTextHandler(w, &slog.HandlerOptions{Level: lvl, ReplaceAttr: roundDuration})
 	case "json":
 		h = slog.NewJSONHandler(w, ho)
 	default:
@@ -35,4 +36,19 @@ func setupLogger(o logOpts, w io.Writer) error {
 	}
 	slog.SetDefault(slog.New(h))
 	return nil
+}
+
+// roundDuration shortens duration attrs in text logs to a readable precision: 0.1ms below a
+// second, 1ms above (12.3ms, 1.234s instead of 12.345678ms). JSON keeps nanoseconds.
+func roundDuration(_ []string, a slog.Attr) slog.Attr {
+	if a.Value.Kind() != slog.KindDuration {
+		return a
+	}
+	d := a.Value.Duration()
+	if d < time.Second && d > -time.Second {
+		d = d.Round(100 * time.Microsecond)
+	} else {
+		d = d.Round(time.Millisecond)
+	}
+	return slog.Duration(a.Key, d)
 }

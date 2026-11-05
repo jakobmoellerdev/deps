@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -113,5 +114,22 @@ func TestRelPathMatchesRel(t *testing.T) {
 				t.Errorf("relPath(%q, %q) = %q, %v; filepath.Rel = %q, %v", root, p, got, err, want, wantErr)
 			}
 		}
+	}
+}
+
+type namedManager struct {
+	manager.Manager
+	name string
+}
+
+func (m namedManager) Name() string { return m.name }
+
+func TestDiscoveryAttrs(t *testing.T) {
+	ms := []manager.Manager{namedManager{name: "gomod"}, namedManager{name: "helm"}, namedManager{name: "docker"}}
+	found := [][]string{{"a"}, nil, {"b", "c", "d"}}
+	got := discoveryAttrs(ms, found, 5)
+	want := []any{"files", 4, "duration", time.Duration(5), "managers", "docker 3, gomod 1"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }

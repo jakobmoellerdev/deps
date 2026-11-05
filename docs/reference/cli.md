@@ -558,8 +558,10 @@ dashboard <status>  <title>  <url>                            (run, with depende
 **Diagnostics** are written with `log/slog` to stderr, filtered by `--log-level` and formatted by `--log-format`:
 
 - `debug`: every HTTP request (credential-free URL), every `git`/`go`/`npm`/`cargo` process, credential-helper outcomes (never secrets), and per-dependency and per-PR decisions.
-- `info`: the run trigger (`run`), the detected platform and how it was detected, the actions default host and its source (`actions default host host=<h> source=<s>`), phase counts and durations, and the bot's view of the repository.
+- `info`: the run trigger (`run`), the detected platform and how it was detected, the actions default host and its source (`actions default host host=<h> source=<s>`), phase counts and durations (one `files discovered files=<n> duration=<d> managers="docker 137, helm 134"` line for the walk, listing managers that matched files by count), and the bot's view of the repository.
 - `warn` (the default): obsolete PRs left open because the run had errors, a schedule event whose cron cannot be read (every schedule matches), a dashboard skipped because issues are disabled, and dashboard labels that do not exist (Gitea/Forgejo).
+
+Text logs round durations to 0.1ms below a second and to 1ms above (`duration=23ms`, `duration=11.003s`); JSON logs keep them in nanoseconds.
 
 **Summary block.** Before the summary line, a block starting with an empty line and `Summary: ` gives the overview:
 

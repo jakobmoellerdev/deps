@@ -151,9 +151,9 @@ func extractTree(ctx context.Context, root string, cfg *config.Config, env manag
 	if err != nil {
 		return nil, fmt.Errorf("walk %s: %w", root, err)
 	}
+	slog.InfoContext(ctx, "files discovered", discoveryAttrs(managers, found, time.Since(start))...)
 	var jobs []job
 	for i, m := range managers {
-		slog.InfoContext(ctx, "files discovered", "manager", m.Name(), "files", len(found[i]), "duration", time.Since(start))
 		for _, f := range found[i] {
 			jobs = append(jobs, job{f, m})
 		}
@@ -355,6 +355,29 @@ func classify(cfg *config.Config, d dep.Dep, kindRules bool) (dep.Dep, *policies
 		d.Skip = "non-version tag"
 	}
 	return d, pol
+}
+
+// discoveryAttrs summarizes one discovery walk: the total file count, the walk duration and
+// the managers that matched files, by count descending ("docker 137, helm 134").
+func discoveryAttrs(managers []manager.Manager, found [][]string, d time.Duration) []any {
+	type count struct {
+		name string
+		n    int
+	}
+	var counts []count
+	total := 0
+	for i, m := range managers {
+		if n := len(found[i]); n > 0 {
+			counts = append(counts, count{m.Name(), n})
+			total += n
+		}
+	}
+	slices.SortStableFunc(counts, func(a, b count) int { return cmp.Compare(b.n, a.n) })
+	parts := make([]string, len(counts))
+	for i, c := range counts {
+		parts[i] = c.name + " " + strconv.Itoa(c.n)
+	}
+	return []any{"files", total, "duration", d, "managers", strings.Join(parts, ", ")}
 }
 
 // planAll hands every datasource implementing datasource.Planner its share of the updatable
