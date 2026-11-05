@@ -4,6 +4,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
@@ -40,7 +41,7 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 		toolversions.NewNvm(), toolversions.NewNodenv(), toolversions.NewAsdf(), toolversions.NewMise(), cargo.New(),
 		piprequirements.New(), pep621.New(), poetry.New(), pipenv.New(),
 		terraform.New(), terraform.NewVersion(), terraform.NewTFLint(), terraform.NewTerragrunt(),
-		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New())
+		maven.New(), gradle.New(), gradlewrapper.New(), mavenwrapper.New(), swift.New(), bundler.New())
 	return append(ms, cs...), nil
 }
 
@@ -61,5 +62,5 @@ func ManagerDocs() []refdoc.Manager {
 		toolversions.DocNvm, toolversions.DocNodenv, toolversions.DocAsdf, toolversions.DocMise, cargo.Doc,
 		piprequirements.Doc, pep621.Doc, poetry.Doc, pipenv.Doc,
 		terraform.Doc, terraform.VersionDoc, terraform.TFLintDoc, terraform.TerragruntDoc,
-		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, custom.Doc}
+		maven.Doc, gradle.Doc, gradlewrapper.Doc, mavenwrapper.Doc, swift.Doc, bundler.Doc, custom.Doc}
 }

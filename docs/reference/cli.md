@@ -58,7 +58,7 @@ Write the updates to the files, including go mod tidy, package-lock.json and Car
 deps apply [flags]
 ```
 
-Resolves every dependency, prints the same report as `deps plan` on stderr, and writes the changed files, including `go mod tidy` output (`go.mod`, `go.sum`), regenerated `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `uv.lock`, `poetry.lock` or `Pipfile.lock`, `Cargo.lock` updated with `cargo update`, and the `--hash` lines of requirements files (pip-compile/`uv pip compile` output is regenerated from its header command, other files get the new release's hashes from the index). An update of a pip-compile input (`requirements.in`) rewrites the input and regenerates every compiled file named after it. Post-processors run on temporary copies; a failed one drops that module's or lockfile root's changes and is reported as an error. An update a post-processor finds inapplicable (a compiled requirements file whose inputs do not admit the version, a Go module version that declares another path) is left out instead, and the other updates of its files are applied: it is reported as `skip    <file>:<line>  <name>  <from> -> <to>  (cannot be applied: <reason>)`, counts as skipped, and is no error.
+Resolves every dependency, prints the same report as `deps plan` on stderr, and writes the changed files, including `go mod tidy` output (`go.mod`, `go.sum`), regenerated `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `uv.lock`, `poetry.lock` or `Pipfile.lock`, `Cargo.lock` updated with `cargo update`, `Gemfile.lock` updated with `bundle lock`, and the `--hash` lines of requirements files (pip-compile/`uv pip compile` output is regenerated from its header command, other files get the new release's hashes from the index). An update of a pip-compile input (`requirements.in`) rewrites the input and regenerates every compiled file named after it. Post-processors run on temporary copies; a failed one drops that module's or lockfile root's changes and is reported as an error. An update a post-processor finds inapplicable (a compiled requirements file whose inputs do not admit the version, a Go module version that declares another path) is left out instead, and the other updates of its files are applied: it is reported as `skip    <file>:<line>  <name>  <from> -> <to>  (cannot be applied: <reason>)`, counts as skipped, and is no error.
 
 A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`, as is the lock file maintenance update (`lockFileMaintenance`), which only `deps run` makes.
 
@@ -252,7 +252,7 @@ deps plan
 
 Resolves every dependency and prints the report on stderr (see `deps help output`). Then writes a unified diff per changed file to stdout (`a/<path>` → `b/<path>`); `git apply` accepts it. Nothing is written to the repository.
 
-Post-processors do not run, so `go.sum` and lockfile changes are missing from the diff; `plan` notes this with `note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run`, `note    Cargo.lock changes are computed by apply/run` and `note    .terraform.lock.hcl changes are computed by apply/run`. Use `deps apply` to get them.
+Post-processors do not run, so `go.sum` and lockfile changes are missing from the diff; `plan` notes this with `note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run`, `note    Cargo.lock changes are computed by apply/run`, `note    Gemfile.lock changes are computed by apply/run` and `note    .terraform.lock.hcl changes are computed by apply/run`. Use `deps apply` to get them.
 
 A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`, as is the lock file maintenance update (`lockFileMaintenance`), which only `deps run` makes.
 
@@ -318,7 +318,7 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 - PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested. With `automergeType: branch` there is no PR: the branch is pushed, and once its checks pass the base branch is fast-forwarded to it (one branch per run); failed checks open the PR.
 - With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
-- With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every lockfile deps maintains (`Cargo.lock`, npm, pnpm, yarn and bun locks, `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, Gradle lockfiles, `.terraform.lock.hcl`, and the `// indirect` requirements of `go.mod` with `go.sum`) with the ecosystem's tool; it is closed when the lockfiles are current.
+- With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every lockfile deps maintains (`Cargo.lock`, npm, pnpm, yarn and bun locks, `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `Gemfile.lock`, Gradle lockfiles, `.terraform.lock.hcl`, and the `// indirect` requirements of `go.mod` with `go.sum`) with the ecosystem's tool; it is closed when the lockfiles are current.
 - Obsolete PRs under `branchPrefix` are closed and their branches deleted, and obsolete branches without any PR (branch automerge) are deleted, but only when the run had no errors.
 - On an open PR, its ticked rebase checkbox or the `rebaseLabel` (default `rebase`) requests a rebuild like the dashboard's rebase checkbox; deps unticks the box and removes the label afterwards. The `stopUpdatingLabel` (default `stop-updating`) makes deps leave the PR alone.
 - The local `HEAD` must be the tip of `origin/<base>`.
@@ -499,6 +499,8 @@ Environment variables deps reads. Also shown by `deps help environment`.
 | `PIP_INDEX_URL` | `pypi` datasource | index when the manifest names none (simple API, JSON or HTML) |
 | `PIP_EXTRA_INDEX_URL` | `pypi` datasource | space-separated extra indexes searched for every Python dep after the manifest's own; their releases are merged in |
 | `DEPS_PYPI_URL` | `pypi` datasource | base of the PyPI JSON API (default `https://pypi.org`) |
+| `DEPS_RUBYGEMS_URL` | `rubygems` datasource | base of the rubygems.org API, also for Gemfiles naming `https://rubygems.org` (default `https://rubygems.org`) |
+| `BUNDLE_<HOST>` | `rubygems` datasource | Bundler's credentials for a gem server (`gems.example-corp.com` → `BUNDLE_GEMS__EXAMPLE___CORP__COM`): `user:password`, or a token; sent as basic auth to that host only |
 | `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GOMODCACHE` | `go` datasource | read via `go env -json` (the process environment when `go` is not on `PATH`). `GOMODCACHE`'s `cache/download/**/@v/*.info` files provide release times without network. |
 | `GITHUB_ACTIONS`, `GITEA_ACTIONS`, `FORGEJO_ACTIONS`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_REPOSITORY`, `FORGEJO_SERVER_URL`, `FORGEJO_API_URL`, `FORGEJO_REPOSITORY` | all | platform detection: `FORGEJO_ACTIONS=true` → forgejo, `GITEA_ACTIONS=true` → gitea, `GITHUB_ACTIONS=true` → github; the `FORGEJO_*` variables fall back to the `GITHUB_*` ones. `GITHUB_ACTIONS` or `GITEA_ACTIONS` without `FORGEJO_ACTIONS` also makes `--log-format auto` the `actions` format (workflow commands). `run` also detects from the `origin` remote; `plan`, `apply` and `explain` only from these variables. |
 | `GITHUB_STEP_SUMMARY`, `GITEA_STEP_SUMMARY` | all | step summary file (see `deps help output`) |
@@ -536,6 +538,7 @@ note    Cargo.lock changes are computed by apply/run          (plan, when a carg
 note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run   (plan, when a Python update exists)
 note    pip-compile output and --hash lines of requirements files are computed by apply/run   (plan, when a compiled requirements file, an input of one or a requirements file with --hash has an update)
 note    .terraform.lock.hcl changes are computed by apply/run (plan, when a terraform update exists)
+note    Gemfile.lock changes are computed by apply/run        (plan, when a bundler update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```

@@ -16,6 +16,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 func write(t testing.TB, dir string, files map[string]string) {
@@ -450,7 +451,7 @@ func TestProcessNestedRoot(t *testing.T) {
 	if b, _ := os.ReadFile(log); !strings.Contains(string(b), "sibling visible\n") {
 		t.Errorf("log:\n%s", b)
 	}
-	if base, err := mirrorAncestors(dir, filepath.Join(t.TempDir(), "missing")); err == nil {
+	if base, err := toolrun.MirrorAncestors(dir, filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Errorf("mirror into a missing dir = %s", base)
 	}
 }

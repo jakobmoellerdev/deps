@@ -26,6 +26,8 @@
 | `PIP_INDEX_URL` | `pypi` datasource | index when the manifest names none (simple API, JSON or HTML) |
 | `PIP_EXTRA_INDEX_URL` | `pypi` datasource | space-separated extra indexes searched for every Python dep after the manifest's own; their releases are merged in |
 | `DEPS_PYPI_URL` | `pypi` datasource | base of the PyPI JSON API (default `https://pypi.org`) |
+| `DEPS_RUBYGEMS_URL` | `rubygems` datasource | base of the rubygems.org API, also for Gemfiles naming `https://rubygems.org` (default `https://rubygems.org`) |
+| `BUNDLE_<HOST>` | `rubygems` datasource | Bundler's credentials for a gem server (`gems.example-corp.com` → `BUNDLE_GEMS__EXAMPLE___CORP__COM`): `user:password`, or a token; sent as basic auth to that host only |
 | `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GOMODCACHE` | `go` datasource | read via `go env -json` (the process environment when `go` is not on `PATH`). `GOMODCACHE`'s `cache/download/**/@v/*.info` files provide release times without network. |
 | `GITHUB_ACTIONS`, `GITEA_ACTIONS`, `FORGEJO_ACTIONS`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_REPOSITORY`, `FORGEJO_SERVER_URL`, `FORGEJO_API_URL`, `FORGEJO_REPOSITORY` | all | platform detection: `FORGEJO_ACTIONS=true` → forgejo, `GITEA_ACTIONS=true` → gitea, `GITHUB_ACTIONS=true` → github; the `FORGEJO_*` variables fall back to the `GITHUB_*` ones. `GITHUB_ACTIONS` or `GITEA_ACTIONS` without `FORGEJO_ACTIONS` also makes `--log-format auto` the `actions` format (workflow commands). `run` also detects from the `origin` remote; `plan`, `apply` and `explain` only from these variables. |
 | `GITHUB_STEP_SUMMARY`, `GITEA_STEP_SUMMARY` | all | step summary file (see `deps help output`) |

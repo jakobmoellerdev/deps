@@ -11,6 +11,7 @@ note    Cargo.lock changes are computed by apply/run          (plan, when a carg
 note    uv.lock, poetry.lock, pdm.lock and Pipfile.lock changes are computed by apply/run   (plan, when a Python update exists)
 note    pip-compile output and --hash lines of requirements files are computed by apply/run   (plan, when a compiled requirements file, an input of one or a requirements file with --hash has an update)
 note    .terraform.lock.hcl changes are computed by apply/run (plan, when a terraform update exists)
+note    Gemfile.lock changes are computed by apply/run        (plan, when a bundler update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```

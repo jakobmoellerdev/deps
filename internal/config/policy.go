@@ -77,7 +77,7 @@ func production(d dep.Dep) bool {
 	switch d.Manager {
 	case "gomod":
 		return d.DepType == "direct"
-	case "npm", "cargo", "poetry":
+	case "npm", "cargo", "poetry", "bundler":
 		return d.DepType == "dependencies"
 	case "pep621":
 		return d.DepType == "project.dependencies"

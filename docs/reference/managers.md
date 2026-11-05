@@ -37,6 +37,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`gradle-wrapper`](#gradle-wrapper)
 - [`maven-wrapper`](#maven-wrapper)
 - [`swift`](#swift)
+- [`bundler`](#bundler)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -1615,6 +1616,58 @@ Updates the package requirements of Swift Package Manager manifests and moves th
 4. **Origin hash.** SwiftPM 5.10+ (`Package.resolved` v3) stores `originHash`, the SHA-256 of the root manifest. When the root's own `Package.swift` changes and the stored hash matched it before, the hash of the new manifest is written, so `-only-use-versions-from-resolved-file` / `-disableAutomaticPackageResolution` builds accept the file. A hash that did not match (a version-specific manifest, an already stale file) is left alone.
 5. **Failure.** A commit that cannot be looked up fails the update, and the other Swift updates built with it, with `<dir>/Package.resolved: commit of <name> <version>: <error>`. Lock file maintenance is not supported.
 
+## bundler
+
+Updates gem requirements in `Gemfile`s and moves `Gemfile.lock` with `bundle lock` (in-range updates only touch the lock, as Renovate's `update-lockfile`). The Gemfile is read with a small Ruby lexer (strings, symbols, hash labels, `%i[]` literals, comments, heredocs, blocks); only the version bytes of a requirement are rewritten, so quotes, operators and formatting are kept. The `ruby` directive, `.ruby-version`, `gemspec` and `*.gemspec` dependencies are not extracted.
+
+**Files:**
+
+- `Gemfile` (`gems.rb` is not matched)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `dependencies` | `gem` statements outside `group` blocks and without a `group:`/`groups:` option: `gem "name"`, `gem "name", "2.241.2"`, `gem "name", "~> 7.1", ">= 7.1.2"` (also as an array), with options (`require:`, `platforms:`, `source:`, …), spread over lines, with parentheses or the `:key => value` hash syntax (updates use commit type `fix`) | `rubygems` (rubygems.org, or the gem's `source`) | `ruby` | updated |
+| `group` | `gem` statements in a `group :development, :test do … end` block or with a `group:`/`groups:` option | `rubygems` (rubygems.org, or the gem's `source`) | `ruby` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `git dependency` | `git:`, `github:`, `gitlab:`, `bitbucket:`, `gist:` or a `git_source(:name)` option, or a gem in a `git`/`github` block |
+| `path dependency` | `path:`, or a gem in a `path` block |
+| `non-literal source` | `source:` or an enclosing `source … do` block that is not a literal string (`source: ENV["GEMS"]`) |
+| `non-literal requirement` | a requirement that is not a literal string: a variable, a method call, an interpolated or escaped string |
+| `unsupported requirement` | a requirement outside Gem::Requirement's grammar (`latest`, `~> v1`, `=> 1.0`) |
+| `no Gemfile.lock version for a requirement without a floor` | a gem without requirements, or with only upper bounds and exclusions (`< 2`, `!= 1.3`), that the Gemfile.lock next to it does not lock (or that has no Gemfile.lock) |
+
+**Gemfile.**
+
+- Statements are `gem`, `source`, `group`, `git_source` and blocks (`… do … end`, `if`/`unless`/`case`/`begin`/`def` … `end`). Gems inside `if`, `platforms`, `install_if` and `env` blocks are extracted as any other.
+- `source "<url>"` statements outside blocks are the global sources of every gem, looked up in order (the first that has the gem answers; none = rubygems.org). A `source "<url>" do … end` block or a `source: "<url>"` option is the only source of its gems. The legacy `source :rubygems` is rubygems.org.
+- Gem names are case-sensitive, as on the gem server.
+
+**Requirements.**
+
+- Gem::Requirement's grammar: `=`, `!=`, `>`, `<`, `>=`, `<=` and the pessimistic `~>` (`~> 7.1` is `>= 7.1, < 8`; `~> 7.1.2` is `>= 7.1.2, < 7.2`), none meaning `=`, on a Ruby version (`2.241.2`, `7.0.8.4`, `1.0.0.rc1`, `1.0.0-beta` = `1.0.0.pre.beta`). Several requirements must all hold; a prerelease only satisfies requirements naming one, as Bundler resolves.
+- A single requirement with a lower bound (`2.241.2`, `= 1.2`, `~> 7.1`, `>= 1.2`, `> 1.2`) is rewritten: an exact version takes the new version as published (`2.241.2` → `2.242.0`, `7.0.8` → `7.0.8.4`), any other operator keeps its precision (`~> 7.1` → `~> 8.0` for 8.0.1, `~> 1.2.0` → `~> 2.0.0` for 2.0, `>= 1.2` → `>= 2.0`). Requirement lists (`"~> 7.1", ">= 7.1.2"`) and requirements without a lower bound (`< 2`) are never rewritten: only Gemfile.lock moves within them.
+- `rangeStrategy` (top level or per rule, default `auto` = `update-lockfile`, as in Renovate): versions the requirements admit are lockfile-only updates from the version Gemfile.lock locks (`, lockfile` in the report; the Gemfile is unchanged), newer ones rewrite the requirement. A gem without requirements (`gem "rake"`, `>= 0`) only gets lockfile-only updates. With `bump` every newer version rewrites a rewritable requirement, with `in-range-only` only those it admits; `replace` leaves admitted versions alone; `widen` and `pin` act as `replace`. Without a Gemfile.lock, `update-lockfile` proposes only versions outside the requirements.
+- Versioning `ruby` orders versions as Gem::Version does: numeric segments compare numerically, a letter segment marks a prerelease below its release (`1.0.0.rc1` < `1.0.0`), trailing zeros do not count (`1.2` = `1.2.0`). Update types follow the first three segments (a fourth, as in `7.0.8.4`, is a patch). Prereleases are only proposed from a prerelease.
+
+**Lockfile (`apply`, `run`).**
+
+1. **Lockfile.** The lockfile of a `Gemfile` is the `Gemfile.lock` next to it; without one the Gemfile is only patched.
+2. **Locked versions.** Before resolution each Gemfile.lock is read: a gem gets the version of its entry in a `GEM` section (platform suffixes such as `-x86_64-linux-gnu` dropped); `GIT` and `PATH` gems are skipped anyway. An unreadable lock is reported once and its gems are bumped.
+3. **Temporary copy.** The Gemfile's directory is mirrored to a temp dir: `Gemfile` (patched) and `Gemfile.lock` are copied, every other entry (`.bundle`, `*.gemspec`, `eval_gemfile` files) is symlinked; the directories above it up to the repository top are recreated with their entries symlinked, so `path:` gems outside resolve as in the checkout.
+4. **Update.** Every updated gem that the lock has is pinned for one run: its requirement is written as `= <new version>` into the copied Gemfile (a gem without requirements gets one), and `bundle lock --update <gems…> --conservative` moves exactly those gems, and their dependencies only where the new versions need it. When a requirement was pinned, the patched Gemfile is put back and `bundle lock` runs again: Bundler keeps the locked versions and writes the Gemfile's requirements into the lock's `DEPENDENCIES`. So the lock holds the version the pull request names, also when `minimumReleaseAge` held back a newer one the rewritten requirement admits. Lockfile-only updates are pinned the same way, with the Gemfile unchanged.
+5. **Tool.** `bundle` must be on `PATH`; it runs with `BUNDLE_GEMFILE` set to the copy and the repository's `.bundle/config` in effect. Bundler records its own version under `BUNDLED WITH` (and in `CHECKSUMS`): provide the version the lock names to keep those lines unchanged. Without `bundle`, the Gemfiles fail with `bundle not found (needed to update Gemfile.lock)`.
+6. **Failure.** A failed command reports `bundle lock in <dir>: <last 20 output lines>`, and the Gemfile's changes are dropped.
+
+- `plan` does not run Bundler, and prints `note    Gemfile.lock changes are computed by apply/run`.
+
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `Gemfile.lock` next to a scanned `Gemfile` is refreshed with `bundle lock --update` in the temporary copy, which moves every locked gem, transitive ones included, to the newest version the requirements admit. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `Gemfile.lock` files; `minimumReleaseAge` does not apply to it.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -1688,6 +1741,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `terraform-module` | `namespace/name/provider`; the dep's source is the registry (`https://registry.terraform.io` when empty) | service discovery `GET https://<host>/.well-known/terraform.json` once per registry (relative and absolute service URLs), then `GET <modules.v1>/<namespace>/<name>/<provider>/versions`, once per module; 404 → `module <name> not found in <registry>` | `Authorization: Bearer <token>`, resolved once per host as the Terraform CLI does: `$TF_TOKEN_<host>` (dots as `_`, hyphens as is or `__`, e.g. `TF_TOKEN_app_terraform_io`; punycode hosts verbatim), then `credentials "<host>" { token = ... }` of the CLI config (`$TF_CLI_CONFIG_FILE`, else `~/.terraformrc` plus the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` such as `credentials.tfrc.json`; `%APPDATA%/terraform.rc` and `%APPDATA%/terraform.d` on Windows), then the `credentials_helper` (`terraform-credentials-<name> <args...> get <host>` from `~/.terraform.d/plugins[/<os>_<arch>]`, else PATH; missing → `terraform-credentials-<name> not found (needed for <host> credentials)`); else anonymous. | `published_at` of the version document (`<service><name>/<version>`; registry.terraform.io serves it, other registries are unknown). A partial version (`5.31` of `~> 5.31`) has the time of its line's first release. |
 | `maven` | `groupId:artifactId`, or a Gradle plugin id (no `:`), looked up as its marker artifact `<id>:<id>.gradle.plugin`; the repositories are the dep's `[<id>=]<url>/` list (Maven Central when empty) | `GET <repository>/<group/path>/<artifactId>/maven-metadata.xml` per repository, versions merged in repository order; a 404 contributes nothing; none found → `artifact <name> not found` | maven and maven-wrapper deps: `settings.xml` `<servers>` (Basic auth from `<username>`/`<password>`, encrypted passwords included, and `<configuration><httpHeaders>`) of the repository's id after mirroring; gradle deps: the `<name>Username`/`<name>Password` project properties of the named repository. Checksum downloads (`Artifact`) below a dep's repository use the same mirror and credentials | `HEAD …/<version>/<artifactId>-<version>.pom` `Last-Modified`, only for versions that end up in a PR |
 | `gradle-version` | any (`gradle`) | `<DEPS_GRADLE_VERSIONS_URL or https://services.gradle.org/versions/all>`, once per run; snapshots, nightlies and broken releases are dropped, release candidates and milestones kept | none | `buildTime` |
+| `rubygems` | gem name (case-sensitive, as on the gem server); the dep's source is its whitespace-separated gem servers in lookup order ("" = rubygems.org) | rubygems.org (also when a Gemfile names `https://rubygems.org`): `GET <DEPS_RUBYGEMS_URL or https://rubygems.org>/api/v1/versions/<name>.json`; other gem servers: the compact index `GET <source>/info/<name>` (what Bundler reads), and on a 404 `GET <source>/api/v1/versions/<name>.json`; once per (server, gem); platform builds (`1.18.10-x86_64-linux-gnu`) count as their version; yanked versions are not listed by either API; the first server that has the gem answers, none → `gem <name> not found`. Source repository (release notes, rubygems.org only): `GET <base>/api/v1/gems/<name>.json` `source_code_uri`, else a forge `homepage_uri`, only for versions in a pull request | userinfo of the source URL (`https://user:pass@gems.example.com`) as basic auth, else Bundler's `BUNDLE_<HOST>` variable (`gems.example-corp.com` → `BUNDLE_GEMS__EXAMPLE___CORP__COM`) holding `user:password` or a token; redacted in errors and logs | rubygems.org `created_at` (the earliest of the version's platform builds); the compact index of other servers has none |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.

@@ -257,14 +257,14 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 	return map[string][]byte{lockFile: out}, nil
 }
 
-// mirrorRoot mirrors the workspace root dir (mirrorAncestors, mirror) with the patched
+// mirrorRoot mirrors the workspace root dir (toolrun.MirrorAncestors, mirror) with the patched
 // manifests and lock into a new temporary directory tmp, which the caller removes; base is
 // the mirror of dir.
 func mirrorRoot(dir string, manifests map[string][]byte, lock []byte) (tmp, base string, err error) {
 	if tmp, err = os.MkdirTemp("", "deps-cargo-*"); err != nil {
 		return "", "", err
 	}
-	if base, err = mirrorAncestors(dir, tmp); err == nil {
+	if base, err = toolrun.MirrorAncestors(dir, tmp); err == nil {
 		if err = mirror(dir, base, manifests); err == nil {
 			err = os.WriteFile(filepath.Join(base, lockFile), lock, 0o644)
 		}
@@ -274,47 +274,6 @@ func mirrorRoot(dir string, manifests map[string][]byte, lock []byte) (tmp, base
 		return "", "", err
 	}
 	return tmp, base, nil
-}
-
-// mirrorAncestors recreates the directories from the repository top (the nearest ancestor of
-// dir holding .git) down to dir below tmp, with every other entry of each one symlinked, so
-// path dependencies outside the workspace root (`path = "../crates/x"`) resolve as in the
-// checkout. It returns the directory for dir's mirror: tmp itself outside a repository.
-func mirrorAncestors(dir, tmp string) (string, error) {
-	top := ""
-	for d := filepath.Dir(dir); d != filepath.Dir(d); d = filepath.Dir(d) {
-		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
-			top = d
-			break
-		}
-	}
-	if top == "" {
-		return tmp, nil
-	}
-	rel, err := filepath.Rel(top, dir)
-	if err != nil {
-		return "", err
-	}
-	cur, base := top, tmp
-	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
-		entries, err := os.ReadDir(cur)
-		if err != nil {
-			return "", err
-		}
-		for _, e := range entries {
-			if e.Name() == part || e.Name() == ".git" {
-				continue
-			}
-			if err := os.Symlink(filepath.Join(cur, e.Name()), filepath.Join(base, e.Name())); err != nil {
-				return "", err
-			}
-		}
-		cur, base = filepath.Join(cur, part), filepath.Join(base, part)
-		if err := os.Mkdir(base, 0o755); err != nil {
-			return "", err
-		}
-	}
-	return base, nil
 }
 
 // crateUpdate is a crates.io dependency whose requirement deps changed.

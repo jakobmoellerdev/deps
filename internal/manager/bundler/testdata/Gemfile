@@ -1,0 +1,86 @@
+# frozen_string_literal: true
+
+# Lines from mastodon/mastodon and discourse/discourse Gemfiles (2026-11), plus the forms
+# Bundler's DSL documents.
+source 'https://rubygems.org'
+ruby file: '.ruby-version'
+
+git_source(:corp) { |repo| "https://git.example.com/#{repo}.git" }
+
+gem 'propshaft'
+gem 'rails', '~> 8.1.0'
+gem 'haml-rails', '~>3.0'
+gem 'aws-sdk-s3', '~> 1.123', require: false
+gem 'fog-core', '<= 2.6.0'
+gem 'omniauth-cas', '~> 3.0.0.beta.1'
+gem "bootsnap", require: false, platform: :mri
+gem "fastlane", "2.241.2"
+gem "rack", ">= 2.2.8", "< 4"
+gem "nokogiri", [">= 1.16", "< 2"]
+gem("puma", "= 6.4.2")
+gem 'sidekiq', '>= 7.0' # comment with "quotes" and gem "fake", "1.0"
+gem 'webpush',
+    '~> 1.1',
+    require: false
+gem :sym
+gem "pg", PG_VERSION
+gem "redis", "~> #{REDIS}"
+gem "foo", ENV.fetch("FOO", "1.0")
+gem "x", "latest"
+gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
+gem 'rubocop', :require => false, :group => :development
+gem "raindrops", git: "https://github.com/discourse/raindrops", require: false, platform: :ruby
+gem "rails-html", github: "rails/rails-html-sanitizer", branch: "main"
+gem "mine", corp: "team/mine"
+gem "migrations-core", path: "migrations/core"
+gem "private-gem", "~> 2.0", source: "https://gems.example.com"
+gem "env-source", source: ENV["GEMS"]
+gem "lt", "< 2"
+
+=begin
+gem "commented", "1.0"
+=end
+
+group :pam_authentication, optional: true do
+  gem 'devise_pam_authenticatable2', '~> 9.2'
+end
+
+group :test, :development do
+  gem "rspec-rails", "~> 7.0"
+  platforms :mri do
+    gem "byebug"
+  end
+end
+
+source "https://gems.contribsys.com/" do
+  gem "sidekiq-pro", "~> 7.3"
+end
+
+git "https://github.com/rails/rails.git", branch: "main" do
+  gem "activesupport"
+end
+
+path "vendor/engines" do
+  gem "engine"
+end
+
+if ENV["ALLOW_DEV_POPULATE"] == "1"
+  gem "discourse_dev_assets"
+else
+  group :development, :test do
+    gem "faker", "~> 2.16"
+  end
+end
+
+install_if -> { RUBY_PLATFORM =~ /darwin/ } do
+  gem "rb-fsevent"
+end
+
+gem "heredoc", <<~DESC.strip if false
+  gem "inside-heredoc", "1.0"
+DESC
+
+gem "last", '1.0.0'; gem "same-line", "2.0"
+
+__END__
+gem "after-end", "1.0"

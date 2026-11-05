@@ -416,6 +416,7 @@ Actions with a full URL (`uses: https://host/owner/repo@ref`) are looked up on t
 | `go` | only for `go mod tidy` after go.mod updates, and `go list` for `GOPRIVATE`/direct modules. `go env` falls back to the environment without it. `GOTOOLCHAIN=auto` fetches a newer toolchain when go.mod requires one. |
 | `npm`, `pnpm`, `yarn` | regenerating lockfiles; see the note below the table |
 | `cargo` | updating `Cargo.lock` (requirement changes and lockfile-only updates), e.g. from `dtolnay/rust-toolchain`; without it those manifests fail with `cargo not found (needed to update Cargo.lock)` |
+| `bundle` (Ruby with Bundler, e.g. `ruby/setup-ruby`) | updating `Gemfile.lock` (requirement changes and lockfile-only updates) with `bundle lock`; without it those Gemfiles fail with `bundle not found (needed to update Gemfile.lock)`. Bundler records its own version under `BUNDLED WITH`, so use the version the lock names |
 | `uv`, `poetry`, `pipenv` | regenerating `uv.lock`, `poetry.lock`, `Pipfile.lock`; poetry and pipenv fall back to `uvx --from <tool>`, so `uv` (e.g. `astral-sh/setup-uv`) is enough |
 | `uv` or `pip-compile` | regenerating `requirements*.txt` written by `uv pip compile` or pip-compile (the tool its header names) after an update of it or of its `.in` inputs; pip-compile falls back to `uvx --from pip-tools pip-compile`. Other hashed requirements files need no tool. |
 | `terraform`, `tofu` | refreshing `.terraform.lock.hcl`; see the note below the table |
@@ -432,7 +433,7 @@ For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back
 **Network.** The runner needs HTTPS access to:
 
 - the forge;
-- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), pypi.org, api.osv.dev for security updates;
+- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), pypi.org, rubygems.org (and the Gemfiles' `source`s), api.osv.dev for security updates;
 - the release download host.
 
 deps honors `HTTPS_PROXY`/`NO_PROXY`.
@@ -913,6 +914,8 @@ Run with `args: run -v --log-level debug` to see every HTTP request, rate-limit 
 | `<tool> not found (needed to update <lock>)` | Install Node.js (`actions/setup-node`) so `npm`/`npx` is available. For Python locks install uv (e.g. `astral-sh/setup-uv`); for `.terraform.lock.hcl` install Terraform (`hashicorp/setup-terraform`) or OpenTofu. |
 | `cargo not found (needed to update Cargo.lock)` | Install Rust (`dtolnay/rust-toolchain`) so `cargo` is on `PATH`, or the root's Cargo.toml changes are dropped. |
 | `cargo update in <dir>: …` | cargo could not resolve the patched workspace: a private registry or git dependency without credentials, a conflicting requirement (for example a feature the new version dropped), or a path dependency outside the repository. The root's change is dropped; other updates proceed. |
+| `bundle not found (needed to update Gemfile.lock)` | Install Ruby with Bundler (`ruby/setup-ruby`) so `bundle` is on `PATH`, or the Gemfile changes are dropped. |
+| `bundle lock in <dir>: …` | Bundler could not resolve the patched Gemfile: a private gem server without credentials (set `BUNDLE_<HOST>`), a git or path gem it cannot reach, or a requirement the new version conflicts with. The Gemfile's changes are dropped. |
 | `GET <index>/…: HTTP 401` for a crate | The Cargo registry needs credentials: set `CARGO_REGISTRIES_<NAME>_TOKEN` (the `[registries]` name of the index), add the token to `$CARGO_HOME/credentials.toml`, or provide git credentials for the index host. |
 | `terraform init in <dir>: …` | Terraform could not install the providers or modules of that directory (a private registry without `TF_TOKEN_<host>`, an unreachable module source, a `required_version` the runner's CLI does not satisfy). The directory's change is dropped; other updates proceed. |
 | `java not found (needed to …)` | A Gradle lockfile, verification metadata or a Gradle/Maven wrapper needs Java to regenerate. Add `actions/setup-java` with the JDK the build requires (Gradle toolchains included). |

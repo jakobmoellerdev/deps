@@ -30,6 +30,7 @@ import (
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubygems"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/tfregistry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
@@ -247,6 +248,7 @@ func newSession(o *rootOpts, info platform.Info, token string, client *http.Clie
 		tfregistry.ModuleName:   registry.Modules(),
 		mavends.Name:            maven,
 		gradleversion.Name:      gradleversion.New(client, sem, os.Getenv),
+		rubygems.Name:           rubygems.New(client, sem, os.Getenv),
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err
