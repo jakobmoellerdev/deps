@@ -8,11 +8,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -466,32 +466,31 @@ func TestTagsCanceledWaitingForSlot(t *testing.T) {
 		}
 	})
 	t.Run("ls-refs", func(t *testing.T) {
-		sem := make(chan struct{}, 2)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		var posts atomic.Int32
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				posts.Add(1)
-				return
+		synctest.Test(t, func(t *testing.T) {
+			sem := make(chan struct{}, 1)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			rt := func(r *http.Request) (*http.Response, error) {
+				if r.Method != http.MethodGet {
+					t.Error("ls-refs was sent without a slot")
+					return nil, errors.ErrUnsupported
+				}
+				// The client holds the only slot. Queue another taker and wait until it blocks:
+				// releasing a slot of a full channel hands it to the blocked sender, so the pool
+				// is still full when ls-refs asks. Cancel once ls-refs waits for a slot.
+				go func() { sem <- struct{}{} }()
+				synctest.Wait()
+				go func() {
+					synctest.Wait()
+					cancel()
+				}()
+				adv := pkts(serviceHeader, "0000", "version 2\n", "0000")
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(adv))}, nil
 			}
-			adv := pkts(serviceHeader, "0000", "version 2\n", "0000")
-			w.Header().Set("Content-Length", strconv.Itoa(len(adv)))
-			io.WriteString(w, adv)
-			w.(http.Flusher).Flush()
-			// Take every slot once the client releases the info/refs slot, then cancel, so the
-			// ls-refs request can only give up.
-			sem <- struct{}{}
-			sem <- struct{}{}
-			cancel()
-		}))
-		defer srv.Close()
-		_, err := New(srv.Client(), nil, sem, nil).Tags(ctx, srv.URL+"/a/b")
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("err = %v, want context.Canceled", err)
-		}
-		if posts.Load() != 0 {
-			t.Errorf("ls-refs was sent without a slot")
-		}
+			_, err := New(&http.Client{Transport: roundTripFunc(rt)}, nil, sem, nil).Tags(ctx, "https://h/a/b")
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("err = %v, want context.Canceled", err)
+			}
+		})
 	})
 }
