@@ -448,7 +448,7 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 			d.Skip = "empty name"
 		case d.Datasource == "":
 			d.Skip = "empty datasource"
-		case m.gChecksum >= 0 && !isChecksum(d.Checksum):
+		case m.gChecksum >= 0 && !manager.IsHex(d.Checksum, 64, 128):
 			d.Skip = "checksum is not 64 or 128 hex digits"
 		default:
 			d.Version = string(src[vs:ve])
@@ -461,19 +461,6 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 		deps = append(deps, d)
 	}
 	return deps
-}
-
-// isChecksum reports whether s is a sha256 or sha512 hex digest.
-func isChecksum(s string) bool {
-	if len(s) != 64 && len(s) != 128 {
-		return false
-	}
-	for i := range len(s) {
-		if c := s[i]; !('0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F') {
-			return false
-		}
-	}
-	return true
 }
 
 // classify maps Renovate datasource aliases, checks the datasource and derives Source from

@@ -199,7 +199,7 @@ func (x *extractor) resource(v *yaml.Node) {
 		d.Name, d.Skip = v.Value, "invalid repository URL"
 	case r.ref == "":
 		d.Skip = "no ref"
-	case isCommit(r.ref):
+	case manager.IsHex(r.ref, 40, 64):
 		d.Version, d.Digest, d.Skip = "", r.ref, "commit ref"
 	default:
 		if _, ok := versioning.ParseTag(r.ref); !ok {
@@ -214,19 +214,6 @@ func (x *extractor) resource(v *yaml.Node) {
 		d.RefSpan = dep.Span{Start: off + r.refOff, End: off + r.refOff + len(r.ref)}
 	}
 	x.deps = append(x.deps, d)
-}
-
-// isCommit reports whether ref is a full SHA-1 or SHA-256 commit hash.
-func isCommit(ref string) bool {
-	if len(ref) != 40 && len(ref) != 64 {
-		return false
-	}
-	for i := range len(ref) {
-		if c := ref[i]; !('0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F') {
-			return false
-		}
-	}
-	return true
 }
 
 // items returns the elements of sequence n (nil if n is not a sequence).

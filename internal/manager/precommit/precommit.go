@@ -138,11 +138,11 @@ func extract(file string, src []byte, e *yaml.Node) (dep.Dep, bool) {
 	end := start + len(rev.Value)
 	d.RefSpan = dep.Span{Start: start, End: end}
 	d.InsertAt = end
-	if q := quoteChar(rev.Style); q != 0 && end < le && src[end] == q {
+	if q := manager.QuoteChar(rev.Style); q != 0 && end < le && src[end] == q {
 		d.InsertAt++
 	}
 	switch {
-	case isSHA(rev.Value):
+	case manager.IsHex(rev.Value, 40):
 		d.Digest = rev.Value
 		if sp, ver, ok := commentVersion(src, d.InsertAt, le); ok {
 			d.Version, d.VersionSpan = ver, sp
@@ -237,27 +237,4 @@ func skipBlank(src []byte, i, le int) int {
 		i++
 	}
 	return i
-}
-
-func quoteChar(s yaml.Style) byte {
-	switch {
-	case s&yaml.SingleQuotedStyle != 0:
-		return '\''
-	case s&yaml.DoubleQuotedStyle != 0:
-		return '"'
-	}
-	return 0
-}
-
-func isSHA(s string) bool {
-	if len(s) != 40 {
-		return false
-	}
-	for i := range len(s) {
-		c := s[i]
-		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F') {
-			return false
-		}
-	}
-	return true
 }

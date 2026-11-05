@@ -177,12 +177,12 @@ func (x *extractor) add(v *yaml.Node) {
 	end := start + len(v.Value)
 	d.RefSpan = dep.Span{Start: end - len(u.Ref), End: end}
 	d.InsertAt = end
-	if q := quoteChar(v.Style); q != 0 && end < le && x.src[end] == q {
+	if q := manager.QuoteChar(v.Style); q != 0 && end < le && x.src[end] == q {
 		d.InsertAt++
 	}
 
 	switch {
-	case isDigest(u.Ref):
+	case manager.IsHex(u.Ref, 40, 64):
 		d.Digest = u.Ref
 		if sp, ver, ok := x.commentVersion(d.InsertAt, le); ok {
 			d.Version, d.VersionSpan = ver, sp
@@ -226,27 +226,4 @@ func (x *extractor) commentVersion(from, le int) (dep.Span, string, bool) {
 		return dep.Span{}, "", false
 	}
 	return dep.Span{Start: s, End: e}, tok, true
-}
-
-func quoteChar(s yaml.Style) byte {
-	switch {
-	case s&yaml.SingleQuotedStyle != 0:
-		return '\''
-	case s&yaml.DoubleQuotedStyle != 0:
-		return '"'
-	}
-	return 0
-}
-
-func isDigest(s string) bool {
-	if len(s) != 40 && len(s) != 64 {
-		return false
-	}
-	for i := range len(s) {
-		c := s[i]
-		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F') {
-			return false
-		}
-	}
-	return true
 }
