@@ -417,22 +417,29 @@ func TestParseScheme(t *testing.T) {
 	}
 }
 
-// TestParseSemverStrictFirstEquivalent guards the strict-first fast path in
-// parseSemver: for every input it must return exactly what NewVersion alone
+// semverCorpus covers strict versions, prereleases, metadata and what only NewVersion's
+// coercion accepts or nothing does.
+var semverCorpus = []string{
+	"1.2.3", "v1.2.3", "V1.2.3", "1.2", "v1", "1", "0.0.0",
+	"1.2.3-beta.1", "1.2.3-rc.1+build.5", "1.2.3+meta", "v2.0.0-alpha",
+	"01.2.3", "1.02.3", "1.2.03", "1.2.3-01", "1.2.3-0a", "1.2.3.4",
+	"1.2.3-", "1.2.3+", "latest", "", "v", "1.2.3-beta..1", "=1.2.3",
+	"5.0.0-dev.20240101", "1.2.3-x.7.z.92", "99999999999999999999.0.0",
+	"1.2.3+a-b", "1.2.3-a+b-c", "1.2.3-a-b.c", "1.2+x.3", "1-a.2.3", "1.2.3-+", "1.2.3-a.",
+	"1.2.3-alpha", "1.2.3-alpha.1", "1.2.3-alpha.beta", "1.2.3-beta.2", "1.2.3-beta.11",
+	"1.2.3-rc.1", "1.2.3-1", "1.2.3-2", "1.2.3-10", "1.2.3-a.1.2", "1.2.3-a.1", "1.2.3-99999999999999999999",
+	"1.2.3-B", "1.2.3-b", "1.2.3-é", "1.2.3-0", "18446744073709551615.0.0", "18446744073709551616.0.0",
+}
+
+// TestParseMastermindsStrictFirstEquivalent guards the strict-first fast path in
+// parseMasterminds: for every input it must return exactly what NewVersion alone
 // would, including Original, so tag styling and ordering are unchanged.
-func TestParseSemverStrictFirstEquivalent(t *testing.T) {
-	corpus := []string{
-		"1.2.3", "v1.2.3", "V1.2.3", "1.2", "v1", "1", "0.0.0",
-		"1.2.3-beta.1", "1.2.3-rc.1+build.5", "1.2.3+meta", "v2.0.0-alpha",
-		"01.2.3", "1.02.3", "1.2.03", "1.2.3-01", "1.2.3-0a", "1.2.3.4",
-		"1.2.3-", "1.2.3+", "latest", "", "v", "1.2.3-beta..1", "=1.2.3",
-		"5.0.0-dev.20240101", "1.2.3-x.7.z.92", "99999999999999999999.0.0",
-	}
-	for _, s := range corpus {
+func TestParseMastermindsStrictFirstEquivalent(t *testing.T) {
+	for _, s := range semverCorpus {
 		want, wantErr := msemver.NewVersion(s)
-		got, ok := parseSemver(s)
+		got, ok := parseMasterminds(s)
 		if ok != (wantErr == nil) {
-			t.Errorf("parseSemver(%q) ok = %v, NewVersion err = %v", s, ok, wantErr)
+			t.Errorf("parseMasterminds(%q) ok = %v, NewVersion err = %v", s, ok, wantErr)
 			continue
 		}
 		if !ok {
@@ -440,9 +447,57 @@ func TestParseSemverStrictFirstEquivalent(t *testing.T) {
 		}
 		if !got.Equal(want) || got.Original() != want.Original() || got.Prerelease() != want.Prerelease() ||
 			got.Metadata() != want.Metadata() || got.String() != want.String() {
-			t.Errorf("parseSemver(%q) = %#v, NewVersion = %#v", s, got, want)
+			t.Errorf("parseMasterminds(%q) = %#v, NewVersion = %#v", s, got, want)
 		}
 	}
+}
+
+// checkSemverEquivalent fails unless the allocation-free semverVersion of a and b agrees with
+// Masterminds: strict parsing exactly where StrictNewVersion succeeds, validity, fields and
+// Compare as NewVersion's.
+func checkSemverEquivalent(t testing.TB, a, b string) {
+	t.Helper()
+	for _, s := range []string{a, b} {
+		strict, strictErr := msemver.StrictNewVersion(s)
+		got, ok := parseStrictSemver(s)
+		if ok != (strictErr == nil) {
+			t.Fatalf("parseStrictSemver(%q) ok = %v, StrictNewVersion err = %v", s, ok, strictErr)
+		}
+		if ok && (got.major != strict.Major() || got.minor != strict.Minor() || got.patch != strict.Patch() || got.pre != strict.Prerelease()) {
+			t.Fatalf("parseStrictSemver(%q) = %+v, StrictNewVersion = %#v", s, got, strict)
+		}
+	}
+	va, okA := parseSemver(a)
+	vb, okB := parseSemver(b)
+	ma, errA := msemver.NewVersion(a)
+	mb, errB := msemver.NewVersion(b)
+	if okA != (errA == nil) || okB != (errB == nil) {
+		t.Fatalf("parseSemver(%q, %q) ok = %v %v, NewVersion err = %v %v", a, b, okA, okB, errA, errB)
+	}
+	if !okA || !okB {
+		return
+	}
+	if got, want := compareSemver(va, vb), ma.Compare(mb); got != want {
+		t.Fatalf("compareSemver(%q, %q) = %d, Masterminds Compare = %d", a, b, got, want)
+	}
+	if sv := va.semver(); sv.Original() != ma.Original() || !sv.Equal(ma) || sv.Metadata() != ma.Metadata() {
+		t.Fatalf("semver(%q) = %#v, NewVersion = %#v", a, sv, ma)
+	}
+}
+
+func TestSemverVersionMatchesMasterminds(t *testing.T) {
+	for _, a := range semverCorpus {
+		for _, b := range semverCorpus {
+			checkSemverEquivalent(t, a, b)
+		}
+	}
+}
+
+func FuzzSemverVersionMatchesMasterminds(f *testing.F) {
+	for i, a := range semverCorpus {
+		f.Add(a, semverCorpus[(i+1)%len(semverCorpus)])
+	}
+	f.Fuzz(func(t *testing.T, a, b string) { checkSemverEquivalent(t, a, b) })
 }
 
 // benchSemverCorpus mimics a large npm packument: mostly strict versions
