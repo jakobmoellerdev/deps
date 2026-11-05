@@ -250,13 +250,13 @@ func hashSpans(l line, at int, opts string) []dep.Span {
 			i++
 			continue
 		}
-		end := i + strings.IndexAny(opts[i:]+" ", " \t")
+		end := tokEnd(opts, i)
 		tok := opts[i:end]
 		if tok == "--hash" { // value in the next field
 			for end < len(opts) && (opts[end] == ' ' || opts[end] == '\t') {
 				end++
 			}
-			end += strings.IndexAny(opts[end:]+" ", " \t")
+			end = tokEnd(opts, end)
 			tok = opts[i:end]
 		}
 		if v, ok := strings.CutPrefix(tok, "--hash"); ok && len(v) > 1 && strings.IndexByte("= \t", v[0]) >= 0 {
@@ -265,6 +265,14 @@ func hashSpans(l line, at int, opts string) []dep.Span {
 		i = end
 	}
 	return spans
+}
+
+// tokEnd returns the index of the first space or tab in s at or after from, or len(s).
+func tokEnd(s string, from int) int {
+	if k := strings.IndexAny(s[from:], " \t"); k >= 0 {
+		return from + k
+	}
+	return len(s)
 }
 
 // HashEdit replaces the `--hash` options of r with one `--hash=sha256:<hex>` option per
