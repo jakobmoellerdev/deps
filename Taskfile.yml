@@ -62,11 +62,15 @@ tasks:
       - task: ci
 
   ci:
-    desc: Everything CI runs (vet, lint, race tests, coverage gate, formatting, tidy check, generated docs check)
+    desc: Everything CI runs (check, then race tests with the coverage gate)
     cmds:
-      - task: vet
-      - task: lint
+      - task: check
       - task: cover
+
+  check:
+    desc: Static checks (golangci-lint, whose govet covers go vet, gofmt, tidy check, generated docs check); CI runs them beside cover
+    cmds:
+      - task: lint
       - task: fmt:check
       - task: tidy:check
       - task: docs:check

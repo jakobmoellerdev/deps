@@ -121,7 +121,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 ## Development
 
 ```sh
-task ci           # vet, golangci-lint, race tests with coverage gate, gofmt, go mod tidy, generated docs check
+task ci           # task check (golangci-lint incl. govet, gofmt, go mod tidy, generated docs check), then race tests with coverage gate
 task docs         # regenerate docs/reference/* and deps.schema.json
 task changelog    # regenerate CHANGELOG.md with git-cliff (cliff.toml)
 ```

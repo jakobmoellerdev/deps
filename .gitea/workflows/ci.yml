@@ -5,6 +5,41 @@ on:
     tags: ["v*"]
   pull_request:
 jobs:
+  # check and test run as parallel jobs. Each restores the newest build cache of its kind
+  # (restore-keys) instead of setup-go's, whose key is go.sum and thus never refreshes: stale
+  # entries meant recompiling every changed package and rerunning every test. Only pushes (main,
+  # tags) save a cache, so pull requests pay no upload.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - id: cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          # golangci-lint: its binary (lint:install) and analysis cache.
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+            /tmp/deps-tools
+          key: go-check-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-check-${{ hashFiles('go.sum') }}-
+            go-check-
+      - run: task check
+      - if: github.event_name == 'push'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+            /tmp/deps-tools
+          key: ${{ steps.cache.outputs.cache-primary-key }}
   test:
     runs-on: ubuntu-latest
     steps:
@@ -12,11 +47,29 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-      - run: task ci
-  # Release tags reuse the test job's result instead of running task ci again.
+          cache: false
+      - id: cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          # Race and coverage builds plus the test cache: unchanged packages report (cached).
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-test-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-test-${{ hashFiles('go.sum') }}-
+            go-test-
+      - run: task cover
+      - if: github.event_name == 'push'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+  # Release tags reuse the check and test results instead of running task ci again.
   release:
-    needs: test
+    needs: [check, test]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
