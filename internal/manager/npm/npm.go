@@ -42,9 +42,6 @@ const skipRange = "unsupported range"
 
 var (
 	matchRe = regexp.MustCompile(`(^|/)package\.json$`)
-	// rangeRe is the supported range grammar: an optional ^, ~, >= or = operator and a full
-	// MAJOR.MINOR.PATCH[-prerelease] version (group 2).
-	rangeRe = regexp.MustCompile(`^(\^|~|>=|=)?(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$`)
 	// partialRe is an optional operator and a MAJOR[.MINOR] version (group 2), matched with
 	// the precision-keeping tag versioning (^26 -> ^27).
 	partialRe = regexp.MustCompile(`^(\^|~|>=|=)?(\d+(?:\.\d+)?)$`)
@@ -419,8 +416,8 @@ func (*extractor) finish(d *dep.Dep, span dep.Span, ver string, off int, skip st
 // classify returns the bare version of a supported range and its offset in v, or the skip
 // reason.
 func classify(v string) (ver string, off int, skip string) {
-	if m := rangeRe.FindStringSubmatchIndex(v); m != nil {
-		return v[m[4]:m[5]], m[4], ""
+	if off, ok := scanRange(v); ok {
+		return v[off:], off, ""
 	}
 	switch {
 	case strings.HasPrefix(v, "npm:"):
@@ -435,6 +432,55 @@ func classify(v string) (ver string, off int, skip string) {
 		return "", 0, "tag"
 	}
 	return "", 0, skipRange
+}
+
+// scanRange matches the supported range grammar: an optional ^, ~, >= or = operator and a
+// full MAJOR.MINOR.PATCH[-prerelease] version running to the end of v. It returns the
+// version's offset.
+func scanRange(v string) (off int, ok bool) {
+	switch {
+	case strings.HasPrefix(v, ">="):
+		off = 2
+	case v != "" && (v[0] == '^' || v[0] == '~' || v[0] == '='):
+		off = 1
+	}
+	i := off
+	for part := range 3 {
+		if part > 0 {
+			if i >= len(v) || v[i] != '.' {
+				return 0, false
+			}
+			i++
+		}
+		start := i
+		for i < len(v) && v[i] >= '0' && v[i] <= '9' {
+			i++
+		}
+		if i == start {
+			return 0, false
+		}
+	}
+	if i == len(v) {
+		return off, true
+	}
+	if v[i] != '-' {
+		return 0, false
+	}
+	for i < len(v) { // at '-' or '.', followed by a non-empty identifier
+		i++
+		start := i
+		for i < len(v) && isIdentByte(v[i]) {
+			i++
+		}
+		if i == start || (i < len(v) && v[i] != '.') {
+			return 0, false
+		}
+	}
+	return off, true
+}
+
+func isIdentByte(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '-'
 }
 
 // isRangeLike reports whether a letter-led value is a range rather than a dist-tag: x/X
