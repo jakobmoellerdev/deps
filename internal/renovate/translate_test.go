@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/recolabs/gnata"
+	"go.yaml.in/yaml/v4"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 )
 
@@ -836,9 +839,8 @@ func TestLoadCustom(t *testing.T) {
 	}
 }
 
-// Renovate's documented package.json JSONata manager: one entry per query; a literal
-// extractVersionTemplate is merged into the query's results, a literal registryUrlTemplate
-// becomes the entry's registryUrl.
+// Renovate's documented package.json JSONata manager: one entry per query; the literal
+// templates are merged into the query's results, as they override the query's fields.
 func TestLoadCustomJSONata(t *testing.T) {
 	res, err := load(t, `{
 		customManagers: [
@@ -872,19 +874,15 @@ func TestLoadCustomJSONata(t *testing.T) {
 	if got, want := section(t, res, "custom"), `  - # customManagers[0].matchStrings[0]
     files: [/package.json/]
     fileFormat: json
-    jsonata: '$each(dependencies, function($v, $k) { {"depName":$k, "currentValue": $v, "depType": "dependencies"}})'
-    datasource: npm
+    jsonata: '($each(dependencies, function($v, $k) { {"depName":$k, "currentValue": $v, "depType": "dependencies"}})) ~> $map(function($d) { $merge([$d, {"datasource": "npm"}]) })'
   - # customManagers[0].matchStrings[1]
     files: [/package.json/]
     fileFormat: json
-    jsonata: '{ "depName": "pnpm", "currentValue": $substring(packageManager, 5),  "depType": "packageManager"}'
-    datasource: npm
+    jsonata: '({ "depName": "pnpm", "currentValue": $substring(packageManager, 5),  "depType": "packageManager"}) ~> $map(function($d) { $merge([$d, {"datasource": "npm"}]) })'
   - # customManagers[1]
     files: [tools.yaml]
     fileFormat: yaml
-    jsonata: '(tools.{"depName": repo, "currentValue": version}) ~> $map(function($d) { $merge([$d, {"extractVersion": "^v(?<version>.+)$"}]) })'
-    datasource: github-tags
-    registryUrl: https://github.com
+    jsonata: '(tools.{"depName": repo, "currentValue": version}) ~> $map(function($d) { $merge([$d, {"datasource": "github-tags", "registryUrl": "https://github.com", "extractVersion": "^v(?<version>.+)$"}]) })'
   - # customManagers[6]
     files: [x]
     match: (?<currentValue>.)
@@ -913,6 +911,39 @@ func TestLoadCustomJSONata(t *testing.T) {
 	}
 	if got := section(t, res, "rules"); strings.Count(got, "managers: [custom]") != 2 {
 		t.Errorf("rules:\n%s", got)
+	}
+}
+
+// Renovate's literal templates override the query's fields (createDependency compiles the
+// template instead of reading the field), while deps' entry fields are defaults.
+func TestLoadCustomJSONataTemplatesOverride(t *testing.T) {
+	res, err := load(t, `{customManagers: [{
+		customType: 'jsonata', fileFormat: 'json', managerFilePatterns: ['x.json'],
+		matchStrings: ['{"depName": n, "packageName": n, "currentValue": v, "datasource": "docker", "versioning": "loose", "registryUrl": "https://a.example.com"}'],
+		datasourceTemplate: 'helm', packageNameTemplate: 'chart', versioningTemplate: 'semver', registryUrlTemplate: 'https://charts.example.com',
+	}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Custom []config.Custom `yaml:"custom"`
+	}
+	if err := yaml.Unmarshal(res.YAML, &doc); err != nil || len(doc.Custom) != 1 {
+		t.Fatalf("custom = %+v, %v:\n%s", doc.Custom, err, res.YAML)
+	}
+	q, err := gnata.Compile(doc.Custom[0].JSONata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := q.EvalBytes(t.Context(), []byte(`{"n": "x", "v": "1.0.0"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := gnata.NormalizeValue(r).(map[string]any)
+	for k, want := range map[string]string{"depName": "x", "packageName": "chart", "datasource": "helm", "versioning": "semver", "registryUrl": "https://charts.example.com"} {
+		if got[k] != want {
+			t.Errorf("%s = %v, want %q (query %s)", k, got[k], want, doc.Custom[0].JSONata)
+		}
 	}
 }
 

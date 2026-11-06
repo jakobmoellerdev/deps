@@ -1,6 +1,7 @@
 package renovate
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -950,8 +951,9 @@ func (t *translator) customDatasources(v any) {
 
 // customManager translates one customManagers (or regexManagers) element. A regex manager
 // becomes one regex entry per matchStrings element, a jsonata manager one JSONata entry per
-// query. A literal (non-template) extractVersionTemplate of a jsonata manager, which has no
-// entry field, is merged into each query's results.
+// query. A jsonata manager's literal (non-template) templates override the query's fields in
+// Renovate, while deps' entry fields are defaults the query overrides, so they are merged into
+// each query's results instead.
 func (t *translator) customManager(m map[string]any, legacy bool, origin string) {
 	t.n.builtin = builtinOrigin(origin)
 	defer func() { t.n.builtin = false }()
@@ -962,9 +964,8 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 		return
 	}
 	var files, matches []string
-	var datasource, name, versioning, registry, fileFormat string
-	var merge omap // jsonata: literal templates without an entry field
-	nameKey := ""
+	var datasource, depName, pkgName, versioning, registry, fileFormat string
+	var extractVersion omap // jsonata: the literal extractVersionTemplate
 	for _, k := range slices.Sorted(mapKeys(m)) {
 		v := m[k]
 		s, _ := v.(string)
@@ -1005,18 +1006,16 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 			case "versioningTemplate":
 				versioning = s
 			case "packageNameTemplate":
-				name, nameKey = s, k
+				pkgName = s
 			case "depNameTemplate":
-				if nameKey == "" {
-					name = s
-				}
+				depName = s
 			}
 		case "extractVersionTemplate":
 			if !jsonata || strings.Contains(s, "{{") {
 				t.n.warn(origin, "%s has no deps equivalent; dropped", k)
 				return
 			}
-			merge.set("extractVersion", s)
+			extractVersion.set("extractVersion", s)
 		case "currentValueTemplate", "autoReplaceStringTemplate":
 			t.n.warn(origin, "%s has no deps equivalent; dropped", k)
 			return
@@ -1040,28 +1039,24 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 			t.untranslated(origin+"."+k, k)
 		}
 	}
+	nonEmpty := func(fs omap) omap { return slices.DeleteFunc(fs, func(f field) bool { return f.v == "" }) }
+	fields := nonEmpty(omap{{"datasource", datasource}, {"name", cmp.Or(pkgName, depName)}, {"versioning", versioning}, {"registryUrl", registry}})
+	var merge omap
+	if jsonata {
+		merge = append(nonEmpty(omap{{"datasource", datasource}, {"depName", depName}, {"packageName", pkgName}, {"versioning", versioning}, {"registryUrl", registry}}), extractVersion...)
+	}
 	for i, match := range matches {
-		c := omap{{"files", files}, {"match", match}}
+		c := append(omap{{"files", files}, {"match", match}}, fields...)
+		checked := c
 		if jsonata {
 			c = omap{{"files", files}, {"fileFormat", fileFormat}, {"jsonata", jsonataMerge(match, merge)}}
-		}
-		if datasource != "" {
-			c.set("datasource", datasource)
-		}
-		if name != "" {
-			c.set("name", name)
-		}
-		if versioning != "" {
-			c.set("versioning", versioning)
-		}
-		if registry != "" {
-			c.set("registryUrl", registry)
+			checked = append(slices.Clip(c), fields...) // validate the merged values like entry fields
 		}
 		o := origin
 		if len(matches) > 1 {
 			o = fmt.Sprintf("%s.matchStrings[%d]", origin, i)
 		}
-		if msg := check(omap{{"customDatasources", t.cds}, {"custom", []item{{body: c}}}}); msg != "" {
+		if msg := check(omap{{"customDatasources", t.cds}, {"custom", []item{{body: checked}}}}); msg != "" {
 			t.n.warn(o, "dropped: %s", msg)
 			continue
 		}
