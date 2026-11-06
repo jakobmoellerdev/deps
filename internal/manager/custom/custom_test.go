@@ -779,6 +779,10 @@ func TestFirstDebVersion(t *testing.T) {
 		"abc1.0 1.0.":                   "1.0",
 		"x=1.0~rc1 ":                    "1.0~rc1",
 		"bad 1.0-a_b":                   "",
+		"RUN apt-get install -y postgresql-15=15.5-0+deb12u1": "15.5-0+deb12u1",
+		"openjdk-17-jre-headless=17.0.9+9-1~deb12u1":          "17.0.9+9-1~deb12u1",
+		"ARG V=1.0-1": "1.0-1",
+		"x -1.0-1":    "1.0-1",
 	} {
 		s, e, ok := firstDebVersion([]byte(line))
 		if got := line[s:e]; ok != (want != "") || got != want {

@@ -443,12 +443,14 @@ func firstVersion(line []byte) (int, int, bool) {
 // firstDebVersion returns the span of the first Debian version in line (`8.14.1-2`,
 // `1:2.39.5-0+deb12u2`, `3.0.15-1~deb12u1`, `20250419`, with epoch and `~`/`+` suffixes the
 // generic version token would cut): a run of version characters starting with a digit that is
-// not glued to word characters, without a trailing ".", "-" or ":", that is a valid deb version.
+// not glued to word characters (nor a package-name suffix like `postgresql-15`), without a
+// trailing ".", "-" or ":", that is a valid deb version.
 func firstDebVersion(line []byte) (int, int, bool) {
 	scheme, _ := versioning.Get(debds.Versioning)
 	for _, loc := range debVersionRe.FindAllIndex(line, -1) {
 		s, e := loc[0], loc[1]
-		if s > 0 && (isWord(line[s-1]) || strings.IndexByte(".+~", line[s-1]) >= 0) || e < len(line) && isWord(line[e]) {
+		if s > 0 && (isWord(line[s-1]) || strings.IndexByte(".+~", line[s-1]) >= 0) || e < len(line) && isWord(line[e]) ||
+			s > 1 && line[s-1] == '-' && isWord(line[s-2]) {
 			continue
 		}
 		for e > s && strings.IndexByte(".-:", line[e-1]) >= 0 {
