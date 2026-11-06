@@ -1,15 +1,18 @@
 package dockerds
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +23,7 @@ import (
 	"github.com/oras-project/oras-go/v3/registry/remote/credentials"
 	"github.com/oras-project/oras-go/v3/registry/remote/properties"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
@@ -438,5 +442,53 @@ func TestTagPageCap(t *testing.T) {
 				t.Errorf("tags/list requests = %d, want %d", n, want)
 			}
 		})
+	}
+}
+
+// TestTagPageCapOldestFirst checks a registry that lists oldest first (as ghcr.io and quay.io
+// do) is read past maxTagPages, so the newest tag on the last page is found, and that a capped
+// listing is reported with a warning naming the repository.
+func TestTagPageCapOldestFirst(t *testing.T) {
+	const pages = 3 * maxTagPages
+	var lists atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" {
+			return
+		}
+		page := int(lists.Add(1))
+		if page < pages {
+			w.Header().Set("Link", fmt.Sprintf(`</v2/img/tags/list?last=1.0.%d&n=%d>; rel="next"`, page, pageSize))
+		}
+		_ = json.MarshalWrite(w, map[string]any{"name": "img", "tags": []string{fmt.Sprintf("1.0.%d", page)}})
+	}))
+	t.Cleanup(srv.Close)
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	rels, err := newSource(srv.Client(), nil, anon).Releases(t.Context(), dep.Dep{Name: host + "/img"}, "")
+	if err != nil || len(rels) != maxTagPages {
+		t.Fatalf("capped Releases = %d tags, %v; want %d", len(rels), err, maxTagPages)
+	}
+	if !strings.Contains(logs.String(), "image tag listing truncated") || !strings.Contains(logs.String(), host+"/img") {
+		t.Errorf("capped listing logged %q, want a truncation warning for %s/img", logs.String(), host)
+	}
+
+	oldestFirst[host] = true
+	t.Cleanup(func() { delete(oldestFirst, host) })
+	lists.Store(0)
+	logs.Reset()
+	rels, err = newSource(srv.Client(), nil, anon).Releases(t.Context(), dep.Dep{Name: host + "/img"}, "")
+	if err != nil || len(rels) != pages || !slices.ContainsFunc(rels, func(r datasource.Release) bool { return r.Version == fmt.Sprintf("1.0.%d", pages) }) {
+		t.Errorf("oldest-first Releases = %d tags, %v; want all %d incl. the newest", len(rels), err, pages)
+	}
+	if n := int(lists.Load()); n != pages {
+		t.Errorf("tags/list requests = %d, want %d", n, pages)
+	}
+	if strings.Contains(logs.String(), "truncated") {
+		t.Errorf("whole listing logged %q", logs.String())
 	}
 }
