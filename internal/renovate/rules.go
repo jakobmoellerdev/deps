@@ -114,14 +114,20 @@ func (t *translator) rulesFrom(cfg map[string]any, done map[string]bool) {
 	if v, ok := cfg["ignoreDeps"]; ok {
 		done["ignoreDeps"] = true
 		if l, ok := strs(v); ok && len(l) > 0 {
-			t.rule("ignoreDeps", map[string]any{"matchDepNames": toAny(l), "enabled": false})
+			t.rule("ignoreDeps", map[string]any{"matchDepNames": exactEntries(l), "enabled": false})
 		}
 	}
 }
 
-func toAny(l []string) []any {
+// exactEntries converts ignoreDeps names, which Renovate compares
+// verbatim, into matcher entries; anything deps would read as a
+// negation, regex or glob is anchored and quoted.
+func exactEntries(l []string) []any {
 	out := make([]any, len(l))
 	for i, s := range l {
+		if strings.HasPrefix(s, "!") || strings.HasPrefix(s, "/") || strings.ContainsAny(s, "*?[]{}") {
+			s = "/^" + regexp.QuoteMeta(s) + "$/"
+		}
 		out[i] = s
 	}
 	return out

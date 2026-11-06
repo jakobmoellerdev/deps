@@ -446,6 +446,13 @@ func TestLoadRules(t *testing.T) {
     ignore: true` + otherExclusions,
 		},
 		{
+			name: "ignoreDeps entries are exact names",
+			src:  `{ignoreDeps: ['[a]', '/x/y', 'a*', '!b', 'github.com/c/d']}`,
+			rules: `  - # ignoreDeps
+    names: ['/^\[a\]$/', /^/x/y$/, /^a\*$/, /^!b$/, github.com/c/d]
+    ignore: true` + defaultExclusions,
+		},
+		{
 			name: "enabledManagers excludes every other manager",
 			src:  `{enabledManagers: ['npm', 'dockerfile', 'helmv3']}`,
 			rules: `  - # enabledManagers
