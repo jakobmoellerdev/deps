@@ -169,7 +169,8 @@ func PURL(d dep.Dep) (string, bool) {
 		}
 		return "pkg:npm/" + name + "@" + esc(v), true
 	case "pypi":
-		return "pkg:pypi/" + esc(strings.ToLower(d.Name)) + "@" + esc(v), true
+		// purl-spec pypi: lowercase and replace "_" with "-".
+		return "pkg:pypi/" + esc(strings.ReplaceAll(strings.ToLower(d.Name), "_", "-")) + "@" + esc(v), true
 	case "crate":
 		return "pkg:cargo/" + esc(d.Name) + "@" + esc(v), true
 	case "maven":
@@ -182,7 +183,8 @@ func PURL(d dep.Dep) (string, bool) {
 		if strings.Contains(d.Name, "://") || strings.Count(d.Name, "/") != 1 {
 			return "", false // GHES and other hosts have no purl type
 		}
-		return "pkg:github/" + esc(d.Name) + "@" + esc(v), true
+		// purl-spec github: namespace and name are case-insensitive and lowercased.
+		return "pkg:github/" + esc(strings.ToLower(d.Name)) + "@" + esc(v), true
 	case "docker":
 		r, err := imageref.Parse(d.Name)
 		if err != nil {
