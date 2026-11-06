@@ -64,6 +64,8 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`nuget`](#nuget)
 - [`ansible-galaxy`](#ansible-galaxy)
 - [`ansible`](#ansible)
+- [`sbt`](#sbt)
+- [`scalafmt`](#scalafmt)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -2701,6 +2703,64 @@ Updates container images in Ansible task files.
 - Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
 - Files without `image` are not parsed.
 
+## sbt
+
+Updates sbt builds as Renovate's sbt manager: library and plugin ModuleIDs of `*.sbt` and `project/*.scala` files, `scalaVersion`, and `sbt.version` of `project/build.properties`. Files are read with a small Scala lexer (strings, comments, objects, `val`s); versions are rewritten where they are written, also when a `val` in another file of the build defines them.
+
+**Files:**
+
+- `*.sbt` at any depth
+- `project/*.scala`
+- `project/build.properties`
+- `repositories` at the root (sbt's proxy repositories file)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `compile` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is absent or not one below (`Compile`, `"compile"`, custom configurations) | `sbt-package` | `maven` | updated |
+| `test` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Test`/`"test"` (the first configuration of `"test->test"`, `"test;provided"`) | `sbt-package` | `maven` | updated |
+| `provided` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Provided`/`"provided"` | `sbt-package` | `maven` | updated |
+| `runtime` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Runtime`/`"runtime"` | `sbt-package` | `maven` | updated |
+| `optional` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Optional`/`"optional"` | `sbt-package` | `maven` | updated |
+| `it` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `IntegrationTest`/`"it"` | `sbt-package` | `maven` | updated |
+| `plugin` | `addSbtPlugin("group" % "artifact" % "version")` (named `group:artifact`, looked up for the build's sbt version), and compiler plugins `addCompilerPlugin(…)`/`compilerPlugin(…)` (cross-versioned as libraries) | `sbt-plugin` (addSbtPlugin), `sbt-package` (compiler plugins) | `maven` | updated |
+| `scala` | `scalaVersion := "2.13.16"` (also `ThisBuild / scalaVersion`, `scalaVersion in ThisBuild`, a `val`, `<seq>.head`): `org.scala-lang:scala-library`, `org.scala-lang:scala3-library_3` for Scala 3 | `maven` | `maven` | updated |
+| `sbt` | `sbt.version` of `project/build.properties` (name `sbt/sbt`) | `github-releases` (`sbt/sbt`) | `semver` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-literal version` | a version that is an expression (`sys.props.getOrElse(…)`, `(v + ".0")`), an interpolated or escaped string |
+| `unresolved version <ref>` | a version reference no `val` of the build defines as a string literal (`scalaVersion.value`, a setting key) |
+| `dynamic version` | an Ivy dynamic revision: `latest.integration`, `1.+`, `[1.0,2.0)` |
+| `unresolved Scala version` | a `%%`/`%%%` (or `CrossVersion.full`) ModuleID of a build whose `scalaVersion` and `crossScalaVersions` settings do not resolve to a literal |
+| `unresolved group or artifact` | only when a file is extracted alone: a ModuleID whose group or artifact refers to a `val` of another file; with the whole build, ModuleIDs whose group or artifact is not a string are not deps |
+
+**Builds and definitions.**
+
+- A build is a directory with a `project/` directory (else the directory of a `*.sbt` file): its `*.sbt` files and those of subdirectories, `project/*.scala`, `project/*.sbt` and `project/build.properties`.
+- Versions, groups and artifacts may be `val`/`lazy val`/`var`/parameterless `def` references, also qualified by objects (`Dependencies.Versions.cats`, `V.cats` for an anonymous `val V = new { val cats = … }`) and across the files of a build; `val a = b` chains, `<module>.revision` (the version of another ModuleID `val`) and `<seq>.head` are followed. The update edits the definition; deps sharing it are grouped into one PR.
+- The Scala binary version of `%%` is that of the first `scalaVersion` that resolves to a literal (`*.sbt` at the build root first, then `project/*.scala`, then other `*.sbt`), else of the first element of `crossScalaVersions`; without either setting sbt's default (Scala 2.12 for sbt 1.x, Scala 3 for sbt 2.x). `.cross(CrossVersion.full)` appends the full Scala version, `for3Use2_13` and `for2_13Use3` swap 3 and 2.13, `disabled` none. Deps of `project/*.sbt` (the meta-build) use sbt's own Scala version.
+- Scala releases are compared with the `maven` versioning; Scala 3.8+ is also published as `scala-library`, so a Scala 2 project sees it as a major update (as in Renovate); a rule `{names: [org.scala-lang:scala-library], updates: [minor, patch]}` keeps Scala 2.
+
+**Repositories.**
+
+- Libraries are looked up in Maven Central, then the `resolvers += "name" at "url"` (also `++= Seq(…)`) of the build's files; `project/*.sbt` resolvers apply to the meta-build's deps.
+- Plugins are looked up in the sbt plugin releases repository (Ivy layout) and Maven Central, then the meta-build's resolvers. A root `repositories` file (sbt's `[repositories]` proxies: `maven-central`, `name: url[, ivy pattern]`) replaces these defaults for every build; entries with an `[organization]` pattern are Ivy repositories.
+- `scalaVersion` deps use the library repositories with the `maven` datasource.
+
+## scalafmt
+
+Updates the scalafmt version of `.scalafmt.conf` (the top-level `version = 3.8.3` key, quoted or not), as Renovate's scalafmt manager.
+
+**Files:**
+
+- `.scalafmt.conf` at any depth
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `scalafmt` | the `version` key (name `scalameta/scalafmt`) | `github-releases` (`scalameta/scalafmt`) | `semver` | updated |
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -2838,6 +2898,8 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `deb` | binary package name (`curl`); the dep's source is one or more whitespace-separated registry URLs `<repository>?suite=<suite>&components=<c1,c2>&binaryArch=<arch>` (Renovate's; `release` is an alias of `suite`), default `https://deb.debian.org/debian?suite=stable&components=main,contrib,non-free&binaryArch=amd64`. Versioning `deb` (dpkg ordering) | `GET <repository>/dists/<suite>/<component>/binary-<arch>/Packages.gz` (a 404 tries `Packages.xz`, then `Packages`), once per component index and run, stream-scanned so only the asked-for packages are kept; every paragraph's `Version` is a release. Versions of all components and registry URLs are merged; a failing component is skipped when another lists the package | userinfo of the registry URL, else the forge token (Basic) on the forge's host, else anonymous | none (package indexes record no dates) |
 | `artifactory` | the folder path below the registry URL (custom `registryUrl`, regex group `registryUrl` or Renovate marker `registryUrl=`; whitespace-separated URLs are all listed and merged), or the full `https://` folder URL without one; every link of the listing but `../` is a version (a folder name without its trailing `/`, or a file name for `extractVersion`) | `GET <registryUrl>/<name>/`, the HTML directory listing, once per folder; at most 32 MiB | the platform token on its host (Basic `x-access-token`), else anonymous; after HTTP 401 `git credential fill` for the host | the date in the column after each link (`21-Jul-2021 20:08`), as UTC |
 | `endoflife-date` | an endoflife.date product (`nodejs`, `ubuntu`, `python`); custom managers only; the dep's `registryUrl` (an API base URL) replaces the default | `GET <registryUrl, DEPS_ENDOFLIFE_DATE_URL or https://endoflife.date/api>/<product>.json`, once per product; each cycle's `latest` (else the cycle) is a version; cycles whose `eol` or `discontinued` is `true` or a past date are dropped and reported as deprecated when installed; an unknown product (HTTP 404) is skipped | none | the cycle's `latestReleaseDate` (its `releaseDate` for a cycle without `latest`) |
+| `sbt-package` | `groupId:artifactId` with the artifact's Scala suffix (`org.typelevel:cats-core_2.13`); the repositories are the dep's `[ivy=]<url>/` list (Maven Central when empty), `ivy=` marking an Ivy-layout repository | Maven repositories: as the `maven` datasource (`GET <repository>/<group/path>/<artifactId>/maven-metadata.xml`, `DEPS_MAVEN_CENTRAL_URL` applies); Ivy repositories: the directory listing `GET <repository>/<groupId>/<artifactId>/`; versions merged, a 404 contributes nothing. A Scala artifact no repository has (a `%%%` library published only for Scala.js or Scala Native) is looked up as `<artifact>_sjs1_<scala>`, then `_native0.5_`, `_native0.4_` | none | as the `maven` datasource (POM `Last-Modified`) for versions a Maven repository lists; none for Ivy-only versions |
+| `sbt-plugin` | `groupId:artifactId` of an sbt plugin, looked up as the artifact published for the build's sbt version (`project/build.properties`): `<artifactId>_2.12_1.0` for sbt 1.x, `<artifactId>_sbt2_3` for sbt 2.x, `<artifactId>_2.10_0.13` for sbt 0.13; repositories as for `sbt-package` | Maven repositories: as the `maven` datasource with the cross-versioned artifact; Ivy repositories (by default `https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/`, which redirects to scala.jfrog.io): the directory listing `GET <repository>/<groupId>/<artifactId>/scala_2.12/sbt_1.0/` (sbt 2.x plugins are only published to Maven repositories); versions merged | none | as the `maven` datasource for versions a Maven repository lists; none for Ivy-only versions |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
@@ -2913,7 +2975,7 @@ Release notes use the POM of the new version: `<scm><url>`, else `<scm><connecti
 ### Security advisories (OSV)
 
 - deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.
-- Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), `Packagist` (`packagist` datasource: composer packages, lower-cased, with the version composer.lock locks without its `v`, else the constraint's anchor), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
+- Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks, and sbt-package deps with their Scala suffix, `cats-core_2.13`), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), `Packagist` (`packagist` datasource: composer packages, lower-cased, with the version composer.lock locks without its `v`, else the constraint's anchor), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
 - Not queried, because OSV has no ecosystem for them (checked 2026-11-05): container images (OSV covers the distribution packages inside an image, such as `Debian` or `Alpine`, not the image or its tag), Terraform providers and modules, and Helm charts.
 - Withdrawn advisories are skipped, and aliases are reported once.
 

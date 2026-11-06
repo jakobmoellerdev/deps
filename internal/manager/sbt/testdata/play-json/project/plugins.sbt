@@ -1,0 +1,27 @@
+/*
+ * Copyright (C) from 2022 The Play Framework Contributors <https://github.com/playframework>, 2011-2021 Lightbend Inc. <https://www.lightbend.com>
+ */
+
+resolvers += Resolver.sonatypeCentralSnapshots
+
+addSbtPlugin(
+  "org.playframework" % "play-docs-sbt-plugin" % sys.props.getOrElse("play.version", "3.1.0-M10-6c6ea95b-SNAPSHOT")
+)
+
+addSbtPlugin("pl.project13.scala" % "sbt-jmh" % "0.4.8")
+
+addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.2.1")
+
+addSbtPlugin("com.github.sbt" % "sbt-header" % "5.11.0")
+
+addSbtPlugin("org.scala-js" % "sbt-scalajs" % "1.22.0")
+
+addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject" % "1.4.0")
+
+addSbtPlugin("org.scala-native" % "sbt-scala-native" % "0.5.12")
+
+addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.4.0")
+
+addSbtPlugin("org.scalameta" % "sbt-scalafmt" % "2.6.2")
+
+addSbtPlugin("com.github.sbt" % "sbt-ci-release" % "1.12.1")

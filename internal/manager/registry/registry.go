@@ -44,6 +44,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/precommit"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/rusttoolchain"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/sbt"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/setupcfg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/swift"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
@@ -116,6 +117,8 @@ var Builtin = []Entry{
 	{nuget.Doc, nuget.New},
 	{ansible.GalaxyDoc, ansible.NewGalaxy},
 	{ansible.Doc, ansible.New},
+	{sbt.Doc, sbt.New},
+	{sbt.ScalafmtDoc, sbt.NewScalafmt},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,

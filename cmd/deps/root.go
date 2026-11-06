@@ -53,6 +53,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubygems"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubyversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rustversion"
+	sbtds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/sbt"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/tfregistry"
 	vcpkgds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
@@ -390,6 +391,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	registry := tfregistry.New(client, sem, os.Getenv)
 	maven := mavends.New(client, limits.Maven, os.Getenv)
 	tags := gittags.New(client, auth, sem, gh)
+	sbtPackages, sbtPlugins := sbtds.New(maven, client, limits.Maven)
 	sources := map[string]engine.Datasource{
 		"git-tags":              tags,
 		gittags.RefsName:        tags.Refs(),
@@ -429,6 +431,8 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		endoflife.Name:          endoflife.New(client, sem, os.Getenv),
 		galaxy.Name:             galaxy.New(client, sem, os.Getenv),
 		galaxy.CollectionName:   galaxy.NewCollections(client, sem, os.Getenv),
+		sbtds.PackageName:       sbtPackages,
+		sbtds.PluginName:        sbtPlugins,
 	}
 	for _, name := range forgeds.Names {
 		sources[name] = forgeds.New(name, client, sem, auth)

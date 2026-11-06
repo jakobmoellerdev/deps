@@ -703,16 +703,15 @@ func TestAdvisoriesMaven(t *testing.T) {
 		{Manager: "maven", Datasource: "maven", DepType: "compile", Name: name, Version: "2.9.10"},
 		{Manager: "gradle", Datasource: "maven", DepType: "plugin", Name: "org.jetbrains.kotlin.jvm", Version: "2.0.0"},
 		{Manager: "maven", Datasource: "maven", Name: "g:unversioned"},
+		{Manager: "sbt", Datasource: "sbt-package", DepType: "compile", Name: name, Version: "2.9.10"},
+		{Manager: "sbt", Datasource: "sbt-plugin", DepType: "plugin", Name: "com.github.sbt:sbt-git", Version: "2.0.0"},
 	}
 	got, err := s.Advisories(t.Context(), deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := [][]datasource.Vuln{
-		{{Advisory: dep.Advisory{ID: "GHSA-57j2-w4cx-62h2", Summary: "Deeply nested json in jackson-databind", URL: "https://osv.dev/vulnerability/GHSA-57j2-w4cx-62h2"}, Fixed: []string{"2.12.7.1", "2.13.4.1"}}},
-		nil,
-		nil,
-	}
+	jackson := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-57j2-w4cx-62h2", Summary: "Deeply nested json in jackson-databind", URL: "https://osv.dev/vulnerability/GHSA-57j2-w4cx-62h2"}, Fixed: []string{"2.12.7.1", "2.13.4.1"}}}
+	want := [][]datasource.Vuln{jackson, nil, nil, jackson, nil}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}

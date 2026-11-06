@@ -1,0 +1,222 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * license agreements; and to You under the Apache License, version 2.0:
+ *
+ *   https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * This file is part of the Apache Pekko project, which was derived from Akka.
+ */
+
+/*
+ * Copyright (C) 2009-2020 Lightbend Inc. <https://www.lightbend.com>
+ */
+
+import sbt._
+import sbt.Keys._
+import com.github.sbt.junit.jupiter.sbt.Import.JupiterKeys
+import scala.language.implicitConversions
+
+object Dependencies {
+  import DependencyHelpers._
+
+  val jacksonDatabindVersion = "2.22.4"
+  val jacksonDatabind3Version = "3.2.4"
+  val jacksonXmlVersion = jacksonDatabindVersion
+  val junit4Version = "4.13.2"
+  val h2specVersion = "2.6.0"
+  val h2specName = s"h2spec_${DependencyHelpers.osName}_amd64"
+  val h2specExe = "h2spec" + DependencyHelpers.exeIfWindows
+  val h2specArtifactExtension = if (h2specExe.endsWith("exe")) "zip" else "tar.gz"
+  val h2specUrl =
+    s"https://github.com/summerwind/h2spec/releases/download/v$h2specVersion/$h2specName.$h2specArtifactExtension"
+  val classGraphVersion = "5.0.1"
+
+  val scalaTestVersion = "3.2.20"
+  val scalaCheckVersion = "1.19.0"
+
+  val scalafixVersion = _root_.scalafix.sbt.BuildInfo.scalafixVersion // grab from plugin
+
+  val scala213Version = "2.13.18"
+  val scala3Version = "3.3.9"
+  val scala3NextVersion = "3.9.0"
+  val publishedScalaVersions = Seq(scala213Version, scala3Version)
+
+  val Versions = Seq(
+    crossScalaVersions := publishedScalaVersions,
+    scalaVersion := publishedScalaVersions.head)
+
+  object Provided {
+    val jsr305 = "com.google.code.findbugs" % "jsr305" % "3.0.2" % "provided"
+
+    val scalaReflect = ScalaVersionDependentModuleID.fromPF {
+      case v if v.startsWith("2.") => "org.scala-lang" % "scala-reflect" % v % "provided"
+    }
+  }
+
+  object Compile {
+    val scalaXml = "org.scala-lang.modules" %% "scala-xml" % "2.5.0"
+
+    // For pekko-http spray-json support
+    val sprayJson = "io.spray" %% "spray-json" % "1.3.6"
+
+    // For pekko-http-jackson support
+    val jacksonDatabind = "com.fasterxml.jackson.core" % "jackson-databind" % jacksonDatabindVersion
+
+    // For pekko-http-jackson3 support
+    val jacksonDatabind3 = "tools.jackson.core" % "jackson-databind" % jacksonDatabind3Version
+
+    val caffeine = "com.github.ben-manes.caffeine" % "caffeine" % "3.3.1"
+
+    val scalafix = ("ch.epfl.scala" %% "scalafix-core" % Dependencies.scalafixVersion).cross(CrossVersion.for3Use2_13)
+
+    val parboiled = "org.parboiled" %% "parboiled" % "2.5.1"
+
+    object Docs {
+      val sprayJson = Compile.sprayJson % "test"
+      val gson = "com.google.code.gson" % "gson" % "2.15.0" % "test"
+      val jacksonXml = "com.fasterxml.jackson.dataformat" % "jackson-dataformat-xml" % jacksonXmlVersion % "test"
+      val classGraph = "io.github.classgraph" % "classgraph" % classGraphVersion % "test"
+    }
+
+    object Test {
+      val sprayJson = Compile.sprayJson % "test"
+
+      // For pekko-http-testkit-java (JUnit 4 support for library users) -- deprecated since 2.0.0
+      val junit4 = "junit" % "junit" % junit4Version
+      val specs2 = "org.specs2" %% "specs2-core" % "4.23.0"
+      val munit = "org.scalameta" %% "munit" % "1.3.6"
+
+      val scalacheck = "org.scalacheck" %% "scalacheck" % scalaCheckVersion % "test"
+
+      val scalatest = "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
+      val scalatestplusScalacheck = "org.scalatestplus" %% "scalacheck-1-19" % (scalaTestVersion + ".0") % "test"
+      val scalatestplusJUnit = "org.scalatestplus" %% "junit-4-13" % (scalaTestVersion + ".0") % "test"
+      val classGraph = "io.github.classgraph" % "classgraph" % classGraphVersion % "test"
+
+      // HTTP/2
+
+      val h2spec = ("io.github.summerwind" % h2specName % h2specVersion % "test").from(h2specUrl)
+    }
+
+  }
+
+  import Compile._
+
+  lazy val l = libraryDependencies
+
+  // JUnit Jupiter dependencies — versions derived from the sbt-jupiter-interface plugin settings
+  lazy val junitJupiterTestDeps: Def.Initialize[Seq[ModuleID]] = Def.setting {
+    Seq(
+      "com.github.sbt.junit" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % "test",
+      "org.junit.jupiter" % "junit-jupiter-api" % JupiterKeys.junitJupiterVersion.value % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % JupiterKeys.junitJupiterVersion.value % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % JupiterKeys.junitJupiterVersion.value % "test",
+      "org.junit.platform" % "junit-platform-launcher" % JupiterKeys.junitPlatformVersion.value % "test"
+    )
+  }
+
+  lazy val parsing = Seq(
+    DependencyHelpers.versionDependentDeps(
+      Dependencies.Provided.scalaReflect))
+
+  lazy val httpCore = Seq(
+    l ++= Seq(
+      parboiled,
+      Test.sprayJson, // for WS Autobahn test metadata
+      Test.scalatest,
+      Test.scalatestplusScalacheck,
+      Test.scalatestplusJUnit) ++ junitJupiterTestDeps.value)
+
+  lazy val httpCaching = l ++= Seq(
+    caffeine,
+    Provided.jsr305,
+    Test.scalatest)
+
+  lazy val httpCors = l ++= Seq(Test.scalatest)
+
+  lazy val http = Seq()
+
+  lazy val http2Tests = Seq(
+    l ++= Seq(Test.h2spec) ++ junitJupiterTestDeps.value)
+
+  lazy val httpTestkit = Seq(
+    versionDependentDeps(
+      Test.junit4,
+      Test.specs2 % "provided; test"),
+    l ++= Seq(
+      "org.junit.jupiter" % "junit-jupiter-api" % JupiterKeys.junitJupiterVersion.value % "provided",
+      Test.scalatest.withConfigurations(Some("provided; test"))) ++ junitJupiterTestDeps.value)
+
+  lazy val httpTestkitMunit =
+    l ++= Seq(Test.munit % "provided; test")
+
+  lazy val httpTests = Seq(
+    l ++= junitJupiterTestDeps.value ++ Seq(Test.scalatest, Test.classGraph))
+
+  lazy val httpXml = Seq(
+    versionDependentDeps(scalaXml),
+    libraryDependencies += Test.scalatest)
+
+  lazy val httpSprayJson = Seq(
+    versionDependentDeps(sprayJson),
+    libraryDependencies += Test.scalatest)
+
+  lazy val httpJackson = Seq(
+    l ++= Seq(jacksonDatabind, Test.scalatestplusJUnit) ++ junitJupiterTestDeps.value)
+
+  lazy val httpJackson3 = Seq(
+    l ++= Seq(jacksonDatabind3, Test.scalatestplusJUnit) ++ junitJupiterTestDeps.value)
+
+  lazy val docs = Seq(
+    l ++= Seq(
+      Docs.sprayJson,
+      Docs.gson,
+      Docs.jacksonXml,
+      Docs.classGraph) ++ junitJupiterTestDeps.value)
+}
+
+object DependencyHelpers {
+  case class ScalaVersionDependentModuleID(modules: String => Seq[ModuleID]) {
+    def %(config: String): ScalaVersionDependentModuleID =
+      ScalaVersionDependentModuleID(version => modules(version).map(_ % config))
+  }
+  object ScalaVersionDependentModuleID {
+    implicit def liftConstantModule(mod: ModuleID): ScalaVersionDependentModuleID = versioned(_ => mod)
+
+    def versioned(f: String => ModuleID): ScalaVersionDependentModuleID = ScalaVersionDependentModuleID(v => Seq(f(v)))
+    def fromPF(f: PartialFunction[String, ModuleID]): ScalaVersionDependentModuleID =
+      ScalaVersionDependentModuleID(version => if (f.isDefinedAt(version)) Seq(f(version)) else Nil)
+  }
+
+  /**
+   * Use this as a dependency setting if the dependencies contain both static and Scala-version
+   * dependent entries.
+   */
+  def versionDependentDeps(modules: ScalaVersionDependentModuleID*): Def.Setting[Seq[ModuleID]] =
+    libraryDependencies ++= scalaVersion(version => modules.flatMap(m => m.modules(version))).value
+
+  val ScalaVersion = """\d\.\d+\.\d+(?:-(?:M|RC)\d+)?""".r
+  val nominalScalaVersion: String => String = {
+    // matches:
+    // 2.12.0-M1
+    // 2.12.0-RC1
+    // 2.12.0
+    case version @ ScalaVersion() => version
+    // transforms 2.12.0-custom-version to 2.12.0
+    case version => version.takeWhile(_ != '-')
+  }
+
+  // OS name for Go binaries
+  def osName: String = {
+    val os = System.getProperty("os.name").toLowerCase()
+    if (os.startsWith("mac")) "darwin"
+    else if (os.startsWith("win")) "windows"
+    else "linux"
+  }
+
+  def exeIfWindows: String = {
+    if (osName.startsWith("win")) ".exe"
+    else ""
+  }
+
+}

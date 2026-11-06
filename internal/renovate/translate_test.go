@@ -234,6 +234,11 @@ func TestLoadRules(t *testing.T) {
 			rules: "  - # packageRules[0]\n    managers: [devcontainer]\n    ignore: true" + defaultExclusions,
 		},
 		{
+			name:  "sbt and scalafmt managers, java category, sbt datasources",
+			src:   `{packageRules: [{matchManagers: ['sbt', 'scalafmt'], matchDatasources: ['sbt-package', 'sbt-plugin'], groupName: 'scala'}, {matchCategories: ['java'], enabled: false}]}`,
+			rules: "  - # packageRules[0]\n    managers: [sbt, scalafmt]\n    datasources: [sbt-package, sbt-plugin]\n    group: scala\n  - # packageRules[1]\n    managers: [maven, gradle, gradle-wrapper, maven-wrapper, sbt, scalafmt]\n    ignore: true" + defaultExclusions,
+		},
+		{
 			name: "php, bazel and ci categories; julia datasource; draftPR, prCreation and abandonmentThreshold per rule; azure-pipelines opt-in",
 			src: `{'azure-pipelines': {enabled: true}, packageRules: [{matchCategories: ['php', 'bazel'], groupName: 'g'},
 				{matchManagers: ['nuget', 'julia'], matchDatasources: ['julia-general-metadata'], draftPR: true, prCreation: 'status-success', abandonmentThreshold: null},

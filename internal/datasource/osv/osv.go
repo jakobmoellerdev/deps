@@ -36,9 +36,10 @@
 //     locked version (dep.Dep.Locked), else the range's anchor version; OSV matches
 //     server-side. Affected entries are matched by normalized name.
 //     Fixed versions are bare, as OSV lists them ("2.32.0").
-//   - maven-datasource deps (maven and gradle managers, custom entries) named
-//     `group:artifact` are queried as ecosystem "Maven" with that name and the locked version
-//     (dep.Dep.Locked), else the version; OSV matches server-side. Gradle plugin ids (no ":")
+//   - maven-datasource deps (maven and gradle managers, custom entries) and sbt-package deps
+//     (the sbt manager's libraries, named with their Scala suffix) named `group:artifact` are
+//     queried as ecosystem "Maven" with that name and the locked version (dep.Dep.Locked),
+//     else the version; OSV matches server-side. Gradle plugin ids (no ":") and sbt plugins
 //     are not queried. Fixed versions are returned as published.
 //   - rubygems-datasource deps (the bundler manager's gems of Gemfiles, gems.rb and gemspecs,
 //     custom entries) are queried as ecosystem "RubyGems" with the gem name (case-sensitive)
@@ -221,7 +222,7 @@ func targetOf(d dep.Dep) *target {
 		}
 		return newTarget(query{Package: pkg{Name: pyreq.Normalize(d.Name), Ecosystem: ecoPyPI}, Version: v})
 	}
-	if d.Datasource == "maven" {
+	if d.Datasource == "maven" || d.Datasource == "sbt-package" {
 		v := cmp.Or(d.Locked, d.Version) // gradle.lockfile pins the resolved version
 		if !strings.Contains(d.Name, ":") || v == "" {
 			return nil

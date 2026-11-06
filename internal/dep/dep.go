@@ -130,6 +130,12 @@ type Dep struct {
 	// (swift-tools-version 5.6 or later, no `name:` argument), which rangeStrategy pin writes;
 	// otherwise it writes `.exact(…)`.
 	ExactLabel bool
+
+	// sbt manager only (sbt-plugin datasource). SbtVersion: the sbt version of the build's
+	// project/build.properties, which selects the cross-version a plugin is published for
+	// (sbt 1.x: Scala 2.12 / sbt 1.0; sbt 2.x: sbt2 / Scala 3; sbt 0.13: Scala 2.10 / sbt
+	// 0.13); "" = sbt 1.x.
+	SbtVersion string
 }
 
 // Renamable reports whether d's name can be rewritten in its file (NameParts are set).
