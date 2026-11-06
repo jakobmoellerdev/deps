@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -29,11 +30,15 @@ import (
 // Name is the manager name.
 const Name = "npm"
 
-// DepTypes of the packageManager field and of the engines and volta tool versions.
+// DepTypes of the packageManager field, the engines and volta tool versions, and the
+// overrides of npm (`overrides`), yarn (`resolutions`) and pnpm (`pnpm.overrides`).
 const (
 	DepTypePackageManager = "packageManager"
 	DepTypeEngines        = "engines"
 	DepTypeVolta          = "volta"
+	DepTypeOverrides      = "overrides"
+	DepTypeResolutions    = "resolutions"
+	DepTypePnpmOverrides  = "pnpm.overrides"
 )
 
 // skipRange is the skip reason of a value outside npm's range grammar (and of a packageManager
@@ -59,11 +64,11 @@ var sections = map[string]bool{
 	"peerDependencies":     true,
 }
 
-// tools maps the engines/volta tool keys to their datasource.
-var tools = map[string]string{"node": "node-version", "npm": "npm", "pnpm": "npm", "yarn": "npm"}
+// tools maps the engines/volta tool keys to their datasource (volta has no bun).
+var tools = map[string]string{"node": "node-version", "npm": "npm", "pnpm": "npm", "yarn": "npm", "bun": "npm"}
 
 // packageManagers are the tools a packageManager field may name.
-var packageManagers = map[string]bool{"npm": true, "pnpm": true, "yarn": true}
+var packageManagers = map[string]bool{"npm": true, "pnpm": true, "yarn": true, "bun": true}
 
 type npmManager struct{}
 
@@ -100,19 +105,38 @@ func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 
 // Edits rewrites a range (dependency sections, engines/volta ranges) for the new version
 // under the update's rangeStrategy (compiledRange.newRange), and replaces the version token of
-// the other deps. A replacement (u.NewName) also rewrites the package name.
+// the other deps (a git tag), the commit of a git dependency (abbreviated to its length) and the
+// Corepack hash of the packageManager field. A replacement (u.NewName) also rewrites the package
+// name.
 func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	var edits []patch.Edit
-	if d.Range == "" {
-		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}
-	} else {
+	switch {
+	case d.Range != "":
 		r, ok := compileRange(d.Range)
 		if !ok {
 			return nil, fmt.Errorf("unsupported range %q", d.Range)
 		}
 		nv, _ := semver.NewVersion(u.NewVersion) // nil when it is not a version: newRange keeps the range
 		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: r.newRange(nv, u.RangeStrategy)}}
+	case u.NewVersion != d.Version:
+		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}
+	}
+	if u.NewDigest != "" {
+		if d.Digest == "" {
+			return nil, fmt.Errorf("cannot pin %s: no commit to update", d.Name)
+		}
+		nd := u.NewDigest
+		if len(d.Digest) < len(nd) {
+			nd = nd[:len(d.Digest)]
+		}
+		if !strings.EqualFold(nd, d.Digest) {
+			edits = append(edits, patch.Edit{Start: d.DigestSpan.Start, End: d.DigestSpan.End, Old: d.Digest, New: nd})
+		}
+	}
+	edits, err := manager.ChecksumEdits(edits, u)
+	if err != nil {
+		return nil, err
 	}
 	if u.NewName != "" {
 		ne, err := manager.NameEdits(d, u.NewName)
@@ -154,13 +178,15 @@ func (npmManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
 }
 
 // ReadLocks records the version the lock root's lockfile locks each dependency-section dep to
-// (nodetool.ReadLocked), or LockUnread when it cannot be read.
+// (nodetool.ReadLocked), or LockUnread when it cannot be read. npm: aliases, git
+// dependencies and overrides are not looked up: the lockfile does not key them by the name.
 func (npmManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	var wants []nodetool.Want
 	var refs []*dep.Dep
 	for _, f := range files {
 		for j := range f {
-			if d := &f[j]; d.Range != "" && d.Skip == "" && sections[d.DepType] { // engines/volta ranges lock nothing
+			// engines/volta ranges, git dependencies and aliases lock nothing
+			if d := &f[j]; d.Range != "" && d.Skip == "" && sections[d.DepType] && d.Datasource == "npm" && !isAlias(*d) {
 				wants = append(wants, nodetool.Want{Manifest: d.File, Name: d.Name, Range: d.Range})
 				refs = append(refs, d)
 			}
@@ -235,6 +261,12 @@ func (x *extractor) run() error {
 			err = x.packageManager()
 		case key == DepTypeEngines || key == DepTypeVolta:
 			err = x.tools(key)
+		case key == DepTypeOverrides:
+			err = x.overrides("")
+		case key == DepTypeResolutions:
+			err = x.flatOverrides(DepTypeResolutions, resolutionName)
+		case key == "pnpm":
+			err = x.pnpm()
 		default:
 			err = x.dec.SkipValue()
 		}
@@ -320,16 +352,7 @@ func (x *extractor) section(depType string) error {
 		if nameSpan != (dep.Span{}) {
 			d.NameParts = []dep.NamePart{{Span: nameSpan, Text: name}}
 		}
-		ver, off, skip := classify(raw)
-		if r, ok := parseRange(raw); ok && skip == skipRange {
-			if a := r.anchor(); a != "" {
-				ver, off, skip = a, 0, ""
-			}
-		}
-		x.finish(&d, span, ver, off, skip)
-		if d.Skip == "" {
-			d.Version, d.Range, d.RefSpan = ver, raw, span
-		}
+		x.setValue(&d, raw, span)
 		x.deps = append(x.deps, d)
 	}
 	_, err := x.dec.ReadToken()
@@ -388,7 +411,9 @@ func (x *extractor) tools(depType string) error {
 	return err
 }
 
-// packageManager extracts `<tool>@<version>`; Name is the tool.
+// packageManager extracts `<tool>@<version>[+<algo>.<hex>]`; Name is the tool. A Corepack
+// hash is the dep's Checksum, which an update replaces with the hash of the new version's
+// artifact (corepackArtifact) in the same algorithm.
 func (x *extractor) packageManager() error {
 	raw, span, ok, err := x.value()
 	if err != nil || !ok {
@@ -400,18 +425,57 @@ func (x *extractor) packageManager() error {
 		name = raw
 	}
 	d := x.newDep(DepTypePackageManager, name, raw, span)
+	ver, hash, hashed := strings.Cut(ver, "+")
 	var skip string
 	switch {
 	case !found || !packageManagers[tool]:
 		skip = "unsupported packageManager"
-	case strings.Contains(ver, "+"):
-		skip = "packageManager with hash"
 	case !versionRe.MatchString(ver):
 		skip = skipRange
+	case hashed && !setHash(&d, tool, ver, hash, span, len(tool)+1+len(ver)+1):
+		skip = "packageManager with hash"
 	}
 	x.finish(&d, span, ver, len(tool)+1, skip)
 	x.deps = append(x.deps, d)
 	return nil
+}
+
+// hashLens are the hex lengths of the Corepack hash algorithms deps computes (not sha1).
+var hashLens = map[string]int{"sha224": 56, "sha256": 64, "sha512": 128}
+
+// setHash sets the Corepack hash `<algo>.<hex>` at off within the value at span as d's
+// Checksum; false when it is not one deps can compute (an unknown algorithm, a bun hash:
+// Corepack does not install bun).
+func setHash(d *dep.Dep, tool, ver, hash string, span dep.Span, off int) bool {
+	algo, hx, _ := strings.Cut(hash, ".")
+	if n, ok := hashLens[algo]; !ok || !manager.IsHex(hx, n) || tool == "bun" {
+		return false
+	}
+	off += len(algo) + 1
+	d.Checksum, d.ChecksumSpan = hx, dep.Span{Start: span.Start + off, End: span.Start + off + len(hx)}
+	d.ChecksumSource = &dep.ChecksumSource{Artifact: corepackArtifact(tool, ver)}
+	return true
+}
+
+// corepackArtifact is the URL template of the file Corepack hashes for tool: yarn berry's
+// yarn.js bundle, else the npm registry tarball.
+func corepackArtifact(tool, ver string) string {
+	if tool == "yarn" && YarnBerry(ver) {
+		return "https://repo.yarnpkg.com/{{version}}/packages/yarnpkg-cli/bin/yarn.js"
+	}
+	return "https://registry.npmjs.org/" + tool + "/-/" + tool + "-{{version}}.tgz"
+}
+
+// YarnBerry reports whether the yarn version (or range) v is yarn 2 or later, which is
+// published as @yarnpkg/cli-dist rather than yarn.
+func YarnBerry(v string) bool {
+	v = strings.TrimLeft(v, "^~>=v ")
+	end := 0
+	for end < len(v) && '0' <= v[end] && v[end] <= '9' {
+		end++
+	}
+	major, err := strconv.Atoi(v[:end])
+	return err == nil && major >= 2
 }
 
 // finish sets the version and its span (at off within the value) or the skip reason.
@@ -436,7 +500,7 @@ func classify(v string) (ver string, off int, skip string) {
 	switch {
 	case strings.HasPrefix(v, "npm:"):
 		return "", 0, "npm alias"
-	case hasAnyPrefix(v, "file:", "link:", "workspace:", "./", "../", "/", "~/"):
+	case hasAnyPrefix(v, localPrefixes...):
 		return "", 0, "local dependency"
 	case hasAnyPrefix(v, "github:", "gitlab:", "bitbucket:", "gist:", "git+", "git://", "git@"), shorthandRe.MatchString(v):
 		return "", 0, "git dependency"
@@ -447,6 +511,9 @@ func classify(v string) (ver string, off int, skip string) {
 	}
 	return "", 0, skipRange
 }
+
+// localPrefixes start the values of local dependencies.
+var localPrefixes = []string{"file:", "link:", "workspace:", "./", "../", "/", "~/"}
 
 // scanRange matches the supported range grammar: an optional ^, ~, >= or = operator and a
 // full MAJOR.MINOR.PATCH[-prerelease] version running to the end of v. It returns the

@@ -101,7 +101,7 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) dat
 	}
 }
 
-// Releases lists the non-deprecated versions of d.Name. dir is the absolute directory of
+// Releases lists the non-deprecated versions of d's package (packageName). dir is the absolute directory of
 // d.File; the scanned root is derived from it and d.File. A dependency on a package of the
 // manifest's own workspace (linked locally whatever its range) has no releases. The slice is
 // shared between callers and must not be modified.
@@ -121,15 +121,31 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 	if err != nil {
 		return nil, err
 	}
-	loc := s.locate(rc, d.Name)
+	name := packageName(d)
+	loc := s.locate(rc, name)
 	s.mu.Lock()
-	s.located[d.File+"\x00"+d.Name] = loc
+	s.located[d.File+"\x00"+name] = loc
 	s.mu.Unlock()
-	m, err := s.load(ctx, loc, d.Name)
+	m, err := s.load(ctx, loc, name)
 	if err != nil {
 		return nil, err
 	}
 	return m.rels, nil
+}
+
+// berryPackage is the npm package of yarn 2 and later; the yarn package stops at 1.x.
+const berryPackage = "@yarnpkg/cli-dist"
+
+// packageName is the npm package d looks up: its name, except for yarn 2 and later as the
+// packageManager, engines or volta tool (Renovate's packageName), which is berryPackage.
+func packageName(d dep.Dep) string {
+	switch d.DepType {
+	case npm.DepTypePackageManager, npm.DepTypeEngines, npm.DepTypeVolta:
+		if d.Manager == npm.Name && d.Name == "yarn" && npm.YarnBerry(d.Version) {
+			return berryPackage
+		}
+	}
+	return d.Name
 }
 
 // load returns the abbreviated metadata of name in loc's registry, fetched once per
@@ -227,12 +243,13 @@ func message(msg string) string {
 // failed. Releases of d returned before the engine asks, so its result is shared by then.
 func (s *Source) loaded(d dep.Dep) *metadata {
 	s.mu.Lock()
-	loc, ok := s.located[d.File+"\x00"+d.Name]
+	name := packageName(d)
+	loc, ok := s.located[d.File+"\x00"+name]
 	s.mu.Unlock()
 	if !ok {
 		return nil
 	}
-	m, _ := s.packages.Peek(loc.reg + "\x00" + d.Name)
+	m, _ := s.packages.Peek(loc.reg + "\x00" + name)
 	return m
 }
 
@@ -247,13 +264,14 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, e
 // d's earlier Releases lookup (else NPM_CONFIG_REGISTRY or the default): ReleaseTime and
 // SourceRepo share the one request.
 func (s *Source) doc(ctx context.Context, d dep.Dep) (packument, error) {
+	name := packageName(d)
 	s.mu.Lock()
-	loc, ok := s.located[d.File+"\x00"+d.Name]
+	loc, ok := s.located[d.File+"\x00"+name]
 	s.mu.Unlock()
 	if !ok {
-		loc = s.locate(&npmrc{}, d.Name)
+		loc = s.locate(&npmrc{}, name)
 	}
-	return s.docs.Do(ctx, loc.reg+"\x00"+d.Name, func() (packument, error) { return s.fetch(ctx, loc, d.Name) })
+	return s.docs.Do(ctx, loc.reg+"\x00"+name, func() (packument, error) { return s.fetch(ctx, loc, name) })
 }
 
 // Digest is unsupported: npm versions are not digest-pinned.

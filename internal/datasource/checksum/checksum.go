@@ -117,18 +117,20 @@ func (s *Source) Checksum(ctx context.Context, d dep.Dep, version, release strin
 	return "", fmt.Errorf("no checksum for %s in %s", file, u)
 }
 
-// artifactDigest returns the hex digest of the artifact at u: sha256 for a 64-hex pinned
-// checksum, sha512 for a 128-hex one.
+// artifactDigest returns the hex digest of the artifact at u: sha224 for a 56-hex pinned
+// checksum (a Corepack packageManager hash), sha256 for a 64-hex one, sha512 for a 128-hex one.
 func (s *Source) artifactDigest(ctx context.Context, d dep.Dep, u string) (string, error) {
 	var algo string
 	var newHash func() hash.Hash
 	switch len(d.Checksum) {
+	case 56:
+		algo, newHash = "sha224", sha256.New224
 	case 64:
 		algo, newHash = "sha256", sha256.New
 	case 128:
 		algo, newHash = "sha512", sha512.New
 	default:
-		return "", fmt.Errorf("artifact %s: pinned checksum is neither sha256 nor sha512 hex", u)
+		return "", fmt.Errorf("artifact %s: pinned checksum is neither sha224, sha256 nor sha512 hex", u)
 	}
 	e, err := s.docs.Do(ctx, algo+" "+u, func() (doc, error) {
 		sum, err := s.hash(ctx, d, u, newHash())

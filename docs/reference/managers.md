@@ -331,7 +331,7 @@ Image references written as one token (Dockerfiles, compose, workflows, Kubernet
 
 ## npm
 
-Updates dependencies, tool versions and engines in `package.json`, and the lockfile along with them or on its own (lockfile-only updates, lock file maintenance). `package.json` is stream-parsed; each value's byte span must equal the quoted value in the file, otherwise (for example with `\u` escapes) the dep is skipped as `cannot locate value`. `overrides`, `resolutions` and `bundleDependencies` are not extracted.
+Updates dependencies, overrides, tool versions and engines in `package.json`, and the lockfile along with them or on its own (lockfile-only updates, lock file maintenance). `package.json` is stream-parsed; each value's byte span must equal the quoted value in the file, otherwise (for example with `\u` escapes) the dep is skipped as `cannot locate value`. `bundleDependencies` is not extracted.
 
 **Files:**
 
@@ -339,26 +339,32 @@ Updates dependencies, tool versions and engines in `package.json`, and the lockf
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `dependencies` | `dependencies` (updates use commit type `fix`) | `npm` | `semver` | updated |
-| `devDependencies` | `devDependencies` | `npm` | `semver` | updated |
-| `optionalDependencies` | `optionalDependencies` | `npm` | `semver` | updated |
-| `peerDependencies` | `peerDependencies` | `npm` | `semver` | ignored (opt in with a rule setting `ignore: false`) |
-| `packageManager` | `"packageManager": "npm@x"`, `pnpm@x`, `yarn@x`; the name is the tool | `npm` | `semver` | updated |
-| `engines` | `engines.{node,npm,pnpm,yarn}` | node: `node-version`; others: `npm` | `semver`; partial versions `tag` | ignored (opt in with a rule setting `ignore: false`) |
-| `volta` | `volta.{node,npm,pnpm,yarn}` | node: `node-version`; others: `npm` | `semver`; partial versions `tag` | updated |
+| `dependencies` | `dependencies` (updates use commit type `fix`); ranges, `npm:` aliases and git dependencies (below) | `npm`; git dependencies: `git-tags` (a tag, a `semver:` range), `git-refs` (a commit) | `semver`; git tags: `semver`, partial `tag` | updated |
+| `devDependencies` | `devDependencies`, as `dependencies` | `npm`; git dependencies: `git-tags` (a tag, a `semver:` range), `git-refs` (a commit) | as `dependencies` | updated |
+| `optionalDependencies` | `optionalDependencies`, as `dependencies` | `npm`; git dependencies: `git-tags` (a tag, a `semver:` range), `git-refs` (a commit) | as `dependencies` | updated |
+| `peerDependencies` | `peerDependencies`, as `dependencies` | `npm`; git dependencies: `git-tags` (a tag, a `semver:` range), `git-refs` (a commit) | as `dependencies` | ignored (opt in with a rule setting `ignore: false`) |
+| `overrides` | npm `overrides`: `"name": "<value>"` and `"name@range": …`, nested objects (`"parent": {"child": …}`, `"."` the parent's own version) at any depth; the name is the overridden package | `npm`; git dependencies: `git-tags` (a tag, a `semver:` range), `git-refs` (a commit) | as `dependencies` | updated |
+| `resolutions` | yarn `resolutions`: `name`, `**/name`, `parent/name`, `name@range` selectors; the name is the last package of the selector | `npm`; git dependencies: `git-tags` (a tag, a `semver:` range), `git-refs` (a commit) | as `dependencies` | updated |
+| `pnpm.overrides` | `pnpm.overrides`: `name`, `name@range`, `parent>name` selectors; the name is the package after the last `>` | `npm`; git dependencies: `git-tags` (a tag, a `semver:` range), `git-refs` (a commit) | as `dependencies` | updated |
+| `packageManager` | `"packageManager": "npm@x"`, `pnpm@x`, `yarn@x`, `bun@x`; the name is the tool. A Corepack hash (`pnpm@9.0.0+sha512.<hex>`; `sha224` and `sha256` too) is replaced with the hash of the new version in the same algorithm: of the npm registry tarball, for yarn 2 and later of `https://repo.yarnpkg.com/<version>/packages/yarnpkg-cli/bin/yarn.js` (as Renovate and Corepack) | `npm` (yarn 2 and later: `@yarnpkg/cli-dist`) | `semver` | updated |
+| `engines` | `engines.{node,npm,pnpm,yarn,bun}` | node: `node-version`; others: `npm` (yarn 2 and later: `@yarnpkg/cli-dist`) | `semver`; partial versions `tag` | ignored (opt in with a rule setting `ignore: false`) |
+| `volta` | `volta.{node,npm,pnpm,yarn}` | node: `node-version`; others: `npm` (yarn 2 and later: `@yarnpkg/cli-dist`) | `semver`; partial versions `tag` | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
-| `npm alias` | `npm:` |
+| `invalid npm alias` | `npm:<name>@…` whose name is no npm package name |
 | `local dependency` | `file:`, `link:`, `workspace:`, `./`, `../`, `/`, `~/` |
-| `git dependency` | `github:`, `gitlab:`, `bitbucket:`, `gist:`, `git+…`, `git://`, `git@`, `owner/repo[#ref]` |
-| `url dependency` | `http(s)://` tarballs |
+| `git dependency` | a git dependency deps cannot look up: `gist:`, `git+file://`, an unparsable URL |
+| `git dependency without ref` | a git dependency without `#<committish>` (it follows the default branch) |
+| `unversioned git ref` | a committish that is neither a version tag, a commit nor a `semver:` range of npm's grammar (a branch such as `#main`) |
+| `url dependency` | `http(s)://` tarballs (as Renovate: a tarball URL has no version deps could look up) |
+| `override reference` | an override value `$name` (the version of the direct dependency `name`) |
 | `tag` | dist-tags such as `latest`, `next` |
 | `unsupported range` | anything outside npm's range grammar (below), a range without a version (`*`, `x`), empty; for packageManager anything but a full version |
-| `packageManager with hash` | `pnpm@9.0.0+sha512…` |
-| `unsupported packageManager` | a tool other than npm, pnpm or yarn |
+| `packageManager with hash` | a hash deps cannot compute: `sha1` or another algorithm, a hex digest of the wrong length, a `bun@…` hash (Corepack does not install bun) |
+| `unsupported packageManager` | a tool other than npm, pnpm, yarn or bun |
 | `cannot locate value` | escaped value |
 
 **Ranges.**
@@ -372,6 +378,23 @@ Updates dependencies, tool versions and engines in `package.json`, and the lockf
 **Workspaces.**
 
 A dep naming a member of the manifest's own workspace is never updated.
+
+**Aliases.**
+
+`"alias": "npm:<name>@<range>"` is the dep `<name>` (Renovate's package alias): the range after `@` is read and rewritten as any range, and a replacement rewrites `<name>`, keeping the alias the code imports. `npm:<range>` without a name (yarn berry resolutions) is the key's own package. The lockfile keys aliases by the alias, so they count as not locked: a version the range admits is proposed only under `bump`.
+
+**Git dependencies.**
+
+The values npm installs from a git repository are looked up by their repository (the dep's source; its name stays the key): `github:`, `gitlab:` and `bitbucket:` shorthands, GitHub's `owner/repo`, `git+https://`, `git+ssh://` (also `git+ssh://git@host:owner/repo`), `git://`, `git@host:owner/repo`, and `https://` URLs ending in `.git` or naming a github.com, gitlab.com or bitbucket.org repository, on any git host (Renovate: GitHub only). The committish after `#` decides:
+
+- a version tag (`#v1.2.3`, `#1.2`) is a `git-tags` dep: the tag is replaced by a newer one (`semver` versioning; partial tags `tag`), never digest-pinned (Renovate's `pinDigests: false`);
+- `#semver:<range>` is a `git-tags` range, rewritten under `rangeStrategy` as any range (not locked: a version the range admits is proposed only under `bump`);
+- a commit (7 to 40 hex digits) tracks the default branch head (`git-refs` `HEAD`): digest updates write the new commit abbreviated to the length written (`#1a2b3c4` → `#5d6e7f8`);
+- after any of them the lockfile is regenerated as for other manifest changes.
+
+**Overrides.**
+
+`overrides`, `resolutions` and `pnpm.overrides` values are read as dependency values (ranges, aliases, git dependencies) and default to updated, as in Renovate. A selector other than the bare name (`name@range`, `**/name`, `parent>name`) is not renamed by a replacement. Overrides are not locked under their name: a version the range admits is proposed only under `bump` (an exact version, the common override, moves with every update).
 
 **Replacements.**
 
@@ -3118,7 +3141,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `go` | module path | GOPROXY `<proxy>/<escaped path>/@v/list`, following `,` / `\|` fallback semantics (`direct` → `go list -m -versions -json`); GONOPROXY/GOPRIVATE modules via `go list`. Pseudo-version deps also ask `<proxy>/<escaped path>/@latest` (`go list -m -json <path>@latest`); major module path probes list `<path>/v<N+1>/@v/list`, … from the GOPROXY URLs only, reusing the proxy's list of a successor path that is a dependency itself | none for proxy requests; `go list` uses the go command's own auth (git credentials, `.netrc`) | `@v/<v>.info`, read from `$GOMODCACHE/cache/download` first, then the proxy (`go list -m -json` for private modules) |
 | `go-toolchain` | `go` / `toolchain` | `https://go.dev/dl/?mode=json&include=all`, once per run; a derived `X.Y` per minor. Release dates: `https://raw.githubusercontent.com/golang/website/HEAD/internal/history/release.go` (as Renovate's golang-version), once per run when a release time is needed | none | release date from Go's release history (midnight UTC); a derived `X.Y` has the date of `X.Y.0` |
 | `docker` | image reference | registry `tags/list` (Docker Hub with page size 10000, others 1000; at most 20 pages, 1000 for ghcr.io, quay.io, cgr.dev and the Red Hat registries, which list oldest first or per build), manifest HEAD for digests (index digest for multi-platform images); gcr.io and Artifact Registry (also behind registry.k8s.io) list each tag's digest with it, so their digests need no HEAD; elsewhere, for release times, a manifest GET by tag (Docker Hub: by the HEAD's digest, once per digest) | Docker config and credential helpers (`authn.DefaultKeychain`) | on gcr.io and Artifact Registry the `tags/list` times (`timeCreatedMs`, else `timeUploadedMs`, as for indexes); elsewhere the image config `created`; else, and for non-image artifacts (Helm charts), the manifest annotation `org.opencontainers.image.created`; a Helm chart without it is dated by the modification time of its chart archive's first entry (the packaging time; stamps before 1980 count as unknown) |
-| `npm` | package name (`@scope/name` sent as `@scope%2fname`) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata) once per registry and package, stream-decoded; deprecated versions dropped, their messages kept for the dashboard's deprecated dependencies (a deprecated `dist-tags.latest` deprecates the package, else the installed version's own message counts); 404 → `package <name> not found`. The full packument (`Accept: application/json`) is fetched at most once per registry and package, only for release times and the source repository | `.npmrc` `//host/path/:_authToken=` (longest prefix), `${VAR}` expansion | packument `time`; not fetched for `minimumReleaseAge` when the abbreviated `modified` is already older |
+| `npm` | package name (`@scope/name` sent as `@scope%2fname`); yarn 2 and later as the npm manager's `packageManager`, `engines` or `volta` tool is `@yarnpkg/cli-dist` (the `yarn` package stops at 1.x) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata) once per registry and package, stream-decoded; deprecated versions dropped, their messages kept for the dashboard's deprecated dependencies (a deprecated `dist-tags.latest` deprecates the package, else the installed version's own message counts); 404 → `package <name> not found`. The full packument (`Accept: application/json`) is fetched at most once per registry and package, only for release times and the source repository | `.npmrc` `//host/path/:_authToken=` (longest prefix), `${VAR}` expansion | packument `time`; not fetched for `minimumReleaseAge` when the abbreviated `modified` is already older |
 | `node-version` | any (`node`) | `<DEPS_NODE_DIST_URL or https://nodejs.org/dist>/index.json`, once per run; published versions plus a derived `X.Y` and `X` per stable line | none | `date` |
 | `helm` | chart name; the repository URL (`https://…` or `oci://host/path`) is the dep's source | classic: `GET <repo>/index.yaml`, once per repository, stream-scanned so only the asked-for charts are decoded; versions without `urls` dropped (Helm cannot download them: `has no downloadable URLs`). OCI: registry `tags/list` of `<host>/<path>/<chart>` via the docker datasource, tag `_` read as `+` | classic: the forge token (Basic `x-access-token`) on the forge's host, else anonymous; OCI: as `docker` | classic: index `created`; OCI: manifest annotation `org.opencontainers.image.created`, else (charts pushed without it, such as bitnamicharts) the modification time of the chart archive's first entry, which `helm package` stamps (one blob GET, only the first block read) |
 | `crate` | crate name (case-insensitive); the dep's source is its registry name or index URL ("" = crates.io) | `GET <index>/<prefix>/<name>` of the sparse index (crates.io: `DEPS_CRATES_INDEX_URL` or `https://index.crates.io`; prefixes `1/<n>`, `2/<n>`, `3/<first char>/<n>`, `<n[0:2]>/<n[2:4]>/<n>`), or the same path of a git index (shallow blob-less clone, `git cat-file`); newline-delimited JSON, yanked versions dropped (a yanked installed version is listed under the dashboard's deprecated dependencies); not found → `crate <name> not found` (`… in registry <name>`). Partial requirements also get a derived `X.Y` and `X` per stable release line. Source repository (release notes): `GET <api>/api/v1/crates/<name>/<version>` `repository` (crates.io: `DEPS_CRATES_API_URL` or `https://crates.io`; other registries: `api` of their `config.json`), only for versions in a pull request | alternative registries: `CARGO_REGISTRIES_<NAME>_TOKEN`, `$CARGO_HOME/credentials.toml` or `.cargo/config.toml` `[registries.<name>] token` as `Authorization`, only to the index host; without a token, the platform token (Basic) for its host, and the git credential helper after a 401; git indexes: git credential helpers | index `pubtime` (crates.io writes it for every version); a release line has the time of its first release |

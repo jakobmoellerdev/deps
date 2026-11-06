@@ -134,7 +134,7 @@ var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pr
 // digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
 // github-actions, docker, pre-commit and git-submodules deps whatever their versioning (a rule
 // may override it), except setup-action version inputs and runner labels, which are plain values; vcpkg registry
-// baselines (git-refs); images of
+// baselines (git-refs); npm git dependencies pinned to a commit (git-refs); images of
 // gitlabci, terraform (docker and kubernetes resources), ansible tasks and the CI pipeline managers, which are
 // edited like docker refs, the devcontainer image, and kustomize images with a newTag (pinned
 // as `newTag: 1.2@sha256:…`); gitlabci includes, remote includes and
@@ -155,7 +155,7 @@ func digestCapable(d dep.Dep) bool {
 		return d.Datasource == "docker"
 	case devcontainer.Name:
 		return d.DepType == devcontainer.DepTypeImage || d.DepType == devcontainer.DepTypeFeature && d.Digest != ""
-	case vcpkg.Name:
+	case vcpkg.Name, npmManager:
 		return d.Datasource == "git-refs"
 	}
 	return digestManagers[d.Manager] && d.DepType != actions.DepTypeSetup && d.DepType != actions.DepTypeRunner
@@ -1412,7 +1412,7 @@ func (r *resolver) digestUpdate() ([]dep.Update, error) {
 		if err != nil {
 			return nil, err
 		}
-		if c != "" && !strings.EqualFold(c, d.Digest) {
+		if c != "" && !sameCommit(c, d.Digest) {
 			return []dep.Update{{Dep: d, Type: dep.Digest, NewVersion: d.Version, NewDigest: c}}, nil
 		}
 	case d.Digest == "" && r.pol.pre.Pin == config.PinDigest && r.pol.allows(dep.Pin):
@@ -1425,6 +1425,15 @@ func (r *resolver) digestUpdate() ([]dep.Update, error) {
 		}
 	}
 	return nil, nil
+}
+
+// sameCommit reports whether the digest c is cur, or starts with cur when cur is an
+// abbreviated commit (an npm git dependency's `#1a2b3c4`).
+func sameCommit(c, cur string) bool {
+	if len(cur) >= 7 && len(cur) < len(c) {
+		c = c[:len(cur)]
+	}
+	return strings.EqualFold(c, cur)
 }
 
 // currentDigest is digestOf the current version; a version the upstream no longer has

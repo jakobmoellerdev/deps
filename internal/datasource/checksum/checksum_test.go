@@ -158,6 +158,7 @@ func TestChecksumArtifact(t *testing.T) {
 	const body = "artifact 1.2.0\n"
 	s256 := sha256.Sum256([]byte(body))
 	s512 := sha512.Sum512([]byte(body))
+	s224 := sha256.Sum224([]byte(body))
 	var reqs atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqs.Add(1)
@@ -189,7 +190,8 @@ func TestChecksumArtifact(t *testing.T) {
 		{"sha256", art("/a/{{version}}/a-{{version}}.zip", h1), hex.EncodeToString(s256[:]), ""},
 		{"sha256 cached", art("/a/{{version}}/a-{{version}}.zip", h2), hex.EncodeToString(s256[:]), ""},
 		{"sha512", art("/a/{{version}}/a-{{version}}.zip", h5), hex.EncodeToString(s512[:]), ""},
-		{"unknown length", art("/a/{{version}}/a-{{version}}.zip", "abc"), "", "artifact " + srv.URL + "/a/1.2.0/a-1.2.0.zip: pinned checksum is neither sha256 nor sha512 hex"},
+		{"sha224", art("/a/{{version}}/a-{{version}}.zip", strings.Repeat("c", 56)), hex.EncodeToString(s224[:]), ""},
+		{"unknown length", art("/a/{{version}}/a-{{version}}.zip", "abc"), "", "artifact " + srv.URL + "/a/1.2.0/a-1.2.0.zip: pinned checksum is neither sha224, sha256 nor sha512 hex"},
 		{"404", art("/missing", h1), "", "artifact " + srv.URL + "/missing: HTTP 404"},
 		{"too large", art("/big", h1), "", "artifact " + srv.URL + "/big: larger than 268435456 bytes"},
 	} {
@@ -200,8 +202,8 @@ func TestChecksumArtifact(t *testing.T) {
 			}
 		})
 	}
-	if n := reqs.Load(); n != 4 {
-		t.Errorf("requests = %d, want 4 (each artifact once per algorithm)", n)
+	if n := reqs.Load(); n != 5 {
+		t.Errorf("requests = %d, want 5 (each artifact once per algorithm)", n)
 	}
 }
 

@@ -4,31 +4,42 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
+// depSource and depSources are the datasources of dependency-section and override values.
+const depSource = "`npm`; git dependencies: `git-tags` (a tag, a `semver:` range), `git-refs` (a commit)"
+
+var depSources = []string{"npm", "git-tags", "git-refs"}
+
 // Doc is the reference documentation of the npm manager (docs/reference/managers.md).
 var Doc = refdoc.Manager{
 	Name: Name,
-	Summary: "Updates dependencies, tool versions and engines in `package.json`, and the lockfile along with them or on its own (lockfile-only updates, lock file maintenance). " +
+	Summary: "Updates dependencies, overrides, tool versions and engines in `package.json`, and the lockfile along with them or on its own (lockfile-only updates, lock file maintenance). " +
 		"`package.json` is stream-parsed; each value's byte span must equal the quoted value in the file, otherwise (for example with `\\u` escapes) the dep is skipped as `cannot locate value`. " +
-		"`overrides`, `resolutions` and `bundleDependencies` are not extracted.",
+		"`bundleDependencies` is not extracted.",
 	Files: []string{"`package.json`"},
 	DepTypes: []refdoc.DepType{
-		{Name: "dependencies", What: "`dependencies` (updates use commit type `fix`)", Versioning: "`semver`", Datasources: []string{"npm"}},
-		{Name: "devDependencies", What: "`devDependencies`", Versioning: "`semver`", Datasources: []string{"npm"}},
-		{Name: "optionalDependencies", What: "`optionalDependencies`", Versioning: "`semver`", Datasources: []string{"npm"}},
-		{Name: "peerDependencies", What: "`peerDependencies`", Versioning: "`semver`", Datasources: []string{"npm"}},
-		{Name: "packageManager", What: "`\"packageManager\": \"npm@x\"`, `pnpm@x`, `yarn@x`; the name is the tool", Versioning: "`semver`", Datasources: []string{"npm"}},
-		{Name: "engines", What: "`engines.{node,npm,pnpm,yarn}`", Datasource: "node: `node-version`; others: `npm`", Versioning: "`semver`; partial versions `tag`", Datasources: []string{"node-version", "npm"}},
-		{Name: "volta", What: "`volta.{node,npm,pnpm,yarn}`", Datasource: "node: `node-version`; others: `npm`", Versioning: "`semver`; partial versions `tag`", Datasources: []string{"node-version", "npm"}},
+		{Name: "dependencies", What: "`dependencies` (updates use commit type `fix`); ranges, `npm:` aliases and git dependencies (below)", Datasource: depSource, Versioning: "`semver`; git tags: `semver`, partial `tag`", Datasources: depSources},
+		{Name: "devDependencies", What: "`devDependencies`, as `dependencies`", Datasource: depSource, Versioning: "as `dependencies`", Datasources: depSources},
+		{Name: "optionalDependencies", What: "`optionalDependencies`, as `dependencies`", Datasource: depSource, Versioning: "as `dependencies`", Datasources: depSources},
+		{Name: "peerDependencies", What: "`peerDependencies`, as `dependencies`", Datasource: depSource, Versioning: "as `dependencies`", Datasources: depSources},
+		{Name: DepTypeOverrides, What: "npm `overrides`: `\"name\": \"<value>\"` and `\"name@range\": …`, nested objects (`\"parent\": {\"child\": …}`, `\".\"` the parent's own version) at any depth; the name is the overridden package", Datasource: depSource, Versioning: "as `dependencies`", Datasources: depSources},
+		{Name: DepTypeResolutions, What: "yarn `resolutions`: `name`, `**/name`, `parent/name`, `name@range` selectors; the name is the last package of the selector", Datasource: depSource, Versioning: "as `dependencies`", Datasources: depSources},
+		{Name: DepTypePnpmOverrides, What: "`pnpm.overrides`: `name`, `name@range`, `parent>name` selectors; the name is the package after the last `>`", Datasource: depSource, Versioning: "as `dependencies`", Datasources: depSources},
+		{Name: "packageManager", What: "`\"packageManager\": \"npm@x\"`, `pnpm@x`, `yarn@x`, `bun@x`; the name is the tool. A Corepack hash (`pnpm@9.0.0+sha512.<hex>`; `sha224` and `sha256` too) is replaced with the hash of the new version in the same algorithm: of the npm registry tarball, for yarn 2 and later of `https://repo.yarnpkg.com/<version>/packages/yarnpkg-cli/bin/yarn.js` (as Renovate and Corepack)", Datasource: "`npm` (yarn 2 and later: `@yarnpkg/cli-dist`)", Versioning: "`semver`", Datasources: []string{"npm"}},
+		{Name: "engines", What: "`engines.{node,npm,pnpm,yarn,bun}`", Datasource: "node: `node-version`; others: `npm` (yarn 2 and later: `@yarnpkg/cli-dist`)", Versioning: "`semver`; partial versions `tag`", Datasources: []string{"node-version", "npm"}},
+		{Name: "volta", What: "`volta.{node,npm,pnpm,yarn}`", Datasource: "node: `node-version`; others: `npm` (yarn 2 and later: `@yarnpkg/cli-dist`)", Versioning: "`semver`; partial versions `tag`", Datasources: []string{"node-version", "npm"}},
 	},
 	Skips: []refdoc.Skip{
-		{Reason: "npm alias", When: "`npm:`"},
+		{Reason: skipAlias, When: "`npm:<name>@…` whose name is no npm package name"},
 		{Reason: "local dependency", When: "`file:`, `link:`, `workspace:`, `./`, `../`, `/`, `~/`"},
-		{Reason: "git dependency", When: "`github:`, `gitlab:`, `bitbucket:`, `gist:`, `git+…`, `git://`, `git@`, `owner/repo[#ref]`"},
-		{Reason: "url dependency", When: "`http(s)://` tarballs"},
+		{Reason: skipGit, When: "a git dependency deps cannot look up: `gist:`, `git+file://`, an unparsable URL"},
+		{Reason: skipGitNoRef, When: "a git dependency without `#<committish>` (it follows the default branch)"},
+		{Reason: skipGitUnversion, When: "a committish that is neither a version tag, a commit nor a `semver:` range of npm's grammar (a branch such as `#main`)"},
+		{Reason: "url dependency", When: "`http(s)://` tarballs (as Renovate: a tarball URL has no version deps could look up)"},
+		{Reason: skipReference, When: "an override value `$name` (the version of the direct dependency `name`)"},
 		{Reason: "tag", When: "dist-tags such as `latest`, `next`"},
 		{Reason: "unsupported range", When: "anything outside npm's range grammar (below), a range without a version (`*`, `x`), empty; for packageManager anything but a full version"},
-		{Reason: "packageManager with hash", When: "`pnpm@9.0.0+sha512…`"},
-		{Reason: "unsupported packageManager", When: "a tool other than npm, pnpm or yarn"},
+		{Reason: "packageManager with hash", When: "a hash deps cannot compute: `sha1` or another algorithm, a hex digest of the wrong length, a `bun@…` hash (Corepack does not install bun)"},
+		{Reason: "unsupported packageManager", When: "a tool other than npm, pnpm, yarn or bun"},
 		{Reason: "cannot locate value", When: "escaped value"},
 	},
 	Sections: []refdoc.Section{
@@ -40,6 +51,15 @@ var Doc = refdoc.Manager{
 			"Versioning is `semver`. Prerelease candidates are only considered from a prerelease, and deprecated versions are dropped.",
 		}},
 		{Title: "Workspaces", Body: "A dep naming a member of the manifest's own workspace is never updated."},
+		{Title: "Aliases", Body: "`\"alias\": \"npm:<name>@<range>\"` is the dep `<name>` (Renovate's package alias): the range after `@` is read and rewritten as any range, and a replacement rewrites `<name>`, keeping the alias the code imports. `npm:<range>` without a name (yarn berry resolutions) is the key's own package. The lockfile keys aliases by the alias, so they count as not locked: a version the range admits is proposed only under `bump`."},
+		{Title: "Git dependencies", Body: "The values npm installs from a git repository are looked up by their repository (the dep's source; its name stays the key): `github:`, `gitlab:` and `bitbucket:` shorthands, GitHub's `owner/repo`, `git+https://`, `git+ssh://` (also `git+ssh://git@host:owner/repo`), `git://`, `git@host:owner/repo`, and `https://` URLs ending in `.git` or naming a github.com, gitlab.com or bitbucket.org repository, on any git host (Renovate: GitHub only). The committish after `#` decides:",
+			Items: []string{
+				"a version tag (`#v1.2.3`, `#1.2`) is a `git-tags` dep: the tag is replaced by a newer one (`semver` versioning; partial tags `tag`), never digest-pinned (Renovate's `pinDigests: false`);",
+				"`#semver:<range>` is a `git-tags` range, rewritten under `rangeStrategy` as any range (not locked: a version the range admits is proposed only under `bump`);",
+				"a commit (7 to 40 hex digits) tracks the default branch head (`git-refs` `HEAD`): digest updates write the new commit abbreviated to the length written (`#1a2b3c4` → `#5d6e7f8`);",
+				"after any of them the lockfile is regenerated as for other manifest changes.",
+			}},
+		{Title: "Overrides", Body: "`overrides`, `resolutions` and `pnpm.overrides` values are read as dependency values (ranges, aliases, git dependencies) and default to updated, as in Renovate. A selector other than the bare name (`name@range`, `**/name`, `parent>name`) is not renamed by a replacement. Overrides are not locked under their name: a version the range admits is proposed only under `bump` (an exact version, the common override, moves with every update)."},
 		{Title: "Replacements", Body: "Dependency-section entries can be [replaced](configuration.md#rulesreplacementname) by another package: the key is renamed and the range keeps its operator for the new version; the lockfile is regenerated as for other manifest changes."},
 		{Title: "Locked versions", Body: "Before resolving, deps reads the lock root's lockfile (the one the post-processor would update, see below) once per run and keeps only the entries of the extracted deps:",
 			Items: []string{
