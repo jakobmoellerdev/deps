@@ -39,7 +39,8 @@ func tool(ctx context.Context, name, lock, dir, scope string, args []string, env
 	if err != nil {
 		return fmt.Errorf("%s not found (needed to update %s)", name, lock)
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd, cancel := toolrun.Command(ctx, bin, args...)
+	defer cancel()
 	cmd.Dir = dir
 	cmd.Env = append(toolrun.Env("NO_COLOR=1"), env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}

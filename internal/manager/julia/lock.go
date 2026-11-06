@@ -430,7 +430,8 @@ func julia(ctx context.Context, dir, scope, lock, script string, args []string) 
 	if err != nil {
 		return fmt.Errorf("julia not found (needed to update %s)", lock)
 	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"--startup-file=no", "--history-file=no", "--color=no", "-e", script}, args...)...)
+	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"--startup-file=no", "--history-file=no", "--color=no", "-e", script}, args...)...)
+	defer cancel()
 	cmd.Dir = dir
 	cmd.Env = toolrun.Env("JULIA_PKG_PRECOMPILE_AUTO=0")
 	out := &toolrun.TailBuffer{Max: 32 << 10}

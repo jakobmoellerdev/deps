@@ -519,7 +519,8 @@ func cargo(ctx context.Context, dir, scope string, args ...string) error {
 	if err != nil {
 		return fmt.Errorf("cargo not found (needed to update %s)", lockFile)
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd, cancel := toolrun.Command(ctx, bin, args...)
+	defer cancel()
 	cmd.Dir = dir
 	cmd.Env = toolrun.Env("CARGO_TERM_COLOR=never", "CARGO_TERM_PROGRESS_WHEN=never")
 	out := &toolrun.TailBuffer{Max: 32 << 10}

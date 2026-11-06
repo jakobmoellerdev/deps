@@ -579,7 +579,8 @@ func linkEntries(dir, mirrored, skip string) error {
 
 // runInit runs `<bin> init -backend=false [args]` in work, non-interactively.
 func runInit(ctx context.Context, bin, work string, args ...string) error {
-	cmd := exec.CommandContext(ctx, bin, append([]string{"init", "-backend=false", "-input=false", "-no-color"}, args...)...)
+	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"init", "-backend=false", "-input=false", "-no-color"}, args...)...)
+	defer cancel()
 	cmd.Dir = work
 	cmd.Env = toolrun.Env("TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1", "TF_DATA_DIR="+filepath.Join(work, ".terraform"))
 	out := &toolrun.TailBuffer{Max: 32 << 10}

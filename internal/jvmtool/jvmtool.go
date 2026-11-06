@@ -19,10 +19,6 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
-// waitDelay bounds the wait for a killed tool's children (Gradle daemons, forked JVMs) to
-// release its output pipes.
-const waitDelay = 5 * time.Second
-
 // errNoJava is returned by checkJava when neither PATH nor JAVA_HOME has java.
 var errNoJava = errors.New("java not found")
 
@@ -108,10 +104,10 @@ func readBack(tmp string, old map[string][]byte, names ...string) (map[string][]
 // run executes argv in dir; a failure carries the last 20 lines of its output (Gradle and
 // Maven report errors on stdout as well as stderr).
 func run(ctx context.Context, dir string, argv []string) error {
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd, cancel := toolrun.Command(ctx, argv[0], argv[1:]...)
+	defer cancel()
 	cmd.Dir = dir
 	cmd.Env = toolrun.Env()
-	cmd.WaitDelay = waitDelay
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

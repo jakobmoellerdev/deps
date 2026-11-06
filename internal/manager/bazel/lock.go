@@ -204,7 +204,8 @@ func runBazel(ctx context.Context, dir, scope, outBase string, args ...string) e
 			return errors.New("bazel not found (needed to update " + lockFile + ")")
 		}
 	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"--output_base=" + outBase}, args...)...)
+	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"--output_base=" + outBase}, args...)...)
+	defer cancel()
 	cmd.Dir = dir
 	cmd.Env = toolrun.Env()
 	out := &toolrun.TailBuffer{Max: 32 << 10}

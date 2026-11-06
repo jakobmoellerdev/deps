@@ -260,7 +260,8 @@ func composer(ctx context.Context, dir, scope string, args ...string) error {
 	if err != nil {
 		return fmt.Errorf("composer not found (needed to update %s)", lockFile)
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd, cancel := toolrun.Command(ctx, bin, args...)
+	defer cancel()
 	cmd.Dir = dir
 	cmd.Env = toolrun.Env("COMPOSER="+filepath.Join(dir, manifest), "COMPOSER_NO_INTERACTION=1", "NO_COLOR=1")
 	out := &toolrun.TailBuffer{Max: 32 << 10}

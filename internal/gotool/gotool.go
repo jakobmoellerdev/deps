@@ -809,7 +809,8 @@ func inDir(what, dir string, err error) error {
 
 // run executes go with args in dir, with env appended to the process environment, and returns stdout.
 func run(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd, cancel := toolrun.Command(ctx, "go", args...)
+	defer cancel()
 	cmd.Dir = dir
 	if env != nil {
 		cmd.Env = toolrun.Env(env...)

@@ -497,7 +497,8 @@ func (c cmdSpec) run(ctx context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd, cancel := toolrun.Command(ctx, argv[0], argv[1:]...)
+	defer cancel()
 	cmd.Dir = dir
 	cmd.Env = toolrun.Env(c.env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}

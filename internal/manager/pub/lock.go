@@ -368,7 +368,8 @@ func runPub(ctx context.Context, dir, scope string, flutter bool, args ...string
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"--suppress-analytics", "pub"}, args...)...)
+	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"--suppress-analytics", "pub"}, args...)...)
+	defer cancel()
 	cmd.Dir = dir
 	cmd.Env = toolrun.Env(env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}

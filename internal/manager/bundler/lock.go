@@ -445,7 +445,8 @@ func bundle(ctx context.Context, dir, scope, gemfile string, args ...string) err
 	if err != nil {
 		return fmt.Errorf("bundle not found (needed to update %s)", lockName(gemfile))
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd, cancel := toolrun.Command(ctx, bin, args...)
+	defer cancel()
 	cmd.Dir = dir
 	cmd.Env = toolrun.Env("BUNDLE_GEMFILE="+filepath.Join(dir, gemfile), "NO_COLOR=1")
 	out := &toolrun.TailBuffer{Max: 32 << 10}

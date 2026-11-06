@@ -329,7 +329,8 @@ func (l Locker) nix(ctx context.Context, dir, scope string, args ...string) erro
 	if err != nil {
 		return fmt.Errorf("nix not found (needed to update %s)", lockFile)
 	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"--extra-experimental-features", "nix-command flakes"}, args...)...)
+	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"--extra-experimental-features", "nix-command flakes"}, args...)...)
+	defer cancel()
 	cmd.Dir = dir
 	cmd.Env = toolrun.Env()
 	if l.GitHubToken != "" {
