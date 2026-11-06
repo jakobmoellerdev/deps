@@ -68,6 +68,10 @@ func Parse(s string) (r Requirement, ok bool) {
 		}
 		return r, true
 	}
+	if t := strings.TrimSpace(body); t != "" && !strings.ContainsRune("(<>=!~", rune(t[0])) {
+		// Not a specifier: a URL (`git+https://…`, `https://…`) or junk after the name.
+		return Requirement{}, false
+	}
 	start, end := i, i+len(body)
 	if t := strings.TrimSpace(body); strings.HasPrefix(t, "(") {
 		if !strings.HasSuffix(t, ")") {

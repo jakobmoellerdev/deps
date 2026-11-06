@@ -215,7 +215,7 @@ func TestExtractEdgeCases(t *testing.T) {
 		{29, "pip", "git+https://github.com/o/r.git@main#egg=r", "", "", pyreq.SkipGit, "https://pypi.example/simple"},
 		{30, "pip", "./local-pkg", "", "", pyreq.SkipLocal, "https://pypi.example/simple"},
 		{31, "pip", "mylib", "", "", pyreq.SkipURL, "https://pypi.example/simple"},
-		{32, "pip", "not", "a requirement!", "", pyreq.SkipRange, "https://pypi.example/simple"},
+		{32, "pip", "not a requirement!", "", "", pyreq.SkipRange, "https://pypi.example/simple"},
 	})
 	for _, d := range deps[13:] {
 		if d.PythonConstraint != ">=3.10,<3.13" || len(d.ExtraSources) != 1 || d.ExtraSources[0] != "https://extra.example/simple" {

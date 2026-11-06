@@ -28,6 +28,11 @@ func TestParse(t *testing.T) {
 		{"bad_[x", false, "", "", "", "", ""},
 		{"pkg[x", false, "", "", "", "", ""},
 		{"pkg (>=1", false, "", "", "", "", ""},
+		{"git+https://github.com/x/y.git#pkg==1", false, "", "", "", "", ""},
+		{"https://host/p.zip", false, "", "", "", "", ""},
+		{"pkg foo", false, "", "", "", "", ""},
+		{"pkg==1 ; python_version<'3'", true, "pkg", "", "==1", "", "python_version<'3'"},
+		{"pkg[x]>=1", true, "pkg", "x", ">=1", "", ""},
 	} {
 		r, ok := Parse(c.in)
 		if ok != c.ok || r.Name != c.name || r.Extras != c.extras || r.Spec != c.spec || r.URL != c.url || r.Marker != c.marker {
