@@ -336,13 +336,16 @@ func targetOf(d dep.Dep) *target {
 // lookup runs querybatch over queries and fetches every distinct advisory found. A fetch starts
 // as soon as the batch naming its advisory returns, while other batches and later pages are
 // still running. Fetchers are bounded by the capacity of sem (maxFetchers without one).
+// Advisories that cannot be fetched are logged and left out; it fails when querybatch fails,
+// ctx ends, or no advisory found could be fetched.
 func (s *Source) lookup(ctx context.Context, queries []query) ([][]string, map[string]*vuln, error) {
 	work := make(chan string)
 	var (
-		mu   sync.Mutex
-		docs = make(map[string]*vuln)
-		errs []error
-		wg   sync.WaitGroup
+		mu     sync.Mutex
+		docs   = make(map[string]*vuln)
+		errs   []error
+		failed []string
+		wg     sync.WaitGroup
 	)
 	n := maxFetchers
 	if s.sem != nil {
@@ -355,6 +358,7 @@ func (s *Source) lookup(ctx context.Context, queries []query) ([][]string, map[s
 				mu.Lock()
 				if err != nil {
 					errs = append(errs, err)
+					failed = append(failed, id)
 				} else {
 					docs[id] = v
 				}
@@ -368,10 +372,15 @@ func (s *Source) lookup(ctx context.Context, queries []query) ([][]string, map[s
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(errs) > 0 {
-		slices.SortFunc(errs, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
+	if len(errs) == 0 {
+		return ids, docs, nil
+	}
+	slices.SortFunc(errs, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
+	if len(docs) == 0 || ctx.Err() != nil {
 		return nil, nil, errors.Join(errs...)
 	}
+	slices.Sort(failed)
+	slog.WarnContext(ctx, "osv: advisories not fetched, left out", "ids", failed, "err", errors.Join(errs...))
 	return ids, docs, nil
 }
 

@@ -256,7 +256,7 @@ deps queries [OSV](https://osv.dev) for Go modules, npm packages, crates.io crat
 - Container images, Terraform providers and modules, and Helm charts get no security updates: OSV has no ecosystem for them. The queries per ecosystem are listed under [Security advisories (OSV)](managers.md#security-advisories-osv).
 - Security updates bypass `allow`, `allowedUpdateTypes`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`, except the default ignore of pip_requirements `indirect` pins (the transitive pins of pip-compile/`uv pip compile` output, which Renovate's vulnerability alerts enable too): those get security updates, and only those, unless a rule ignores them.
 - They always use commit type `fix`, get a `[security]` title suffix, and are not put into a `group`. A rule's [`securityGroup`](#rulessecuritygroup) opts in to batching them into a PR of their own.
-- A failed OSV lookup is reported as an error (`security advisories: <err>`).
+- A failed OSV lookup is reported as an error (`security advisories: <err>`). Advisories that cannot be fetched while others can are logged as a warning and left out.
 
 ```yaml
 security: false

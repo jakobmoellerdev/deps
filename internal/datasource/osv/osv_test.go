@@ -456,6 +456,27 @@ func TestAdvisoriesErrors(t *testing.T) {
 	}
 }
 
+// TestAdvisoriesPartialFetchFailure checks that one advisory that cannot be fetched only
+// drops that advisory: the deps affected by the others still get theirs.
+func TestAdvisoriesPartialFetchFailure(t *testing.T) {
+	f := newFake(t)
+	f.results["Go|example.com/a|v1.0.0|"] = result{ids: []string{"GO-A"}}
+	f.results["Go|example.com/b|v1.0.0|"] = result{ids: []string{"GO-B"}}
+	f.results["Go|example.com/c|v1.0.0|"] = result{ids: []string{"GO-B", "GO-C"}}
+	f.vulns["GO-A"] = goVuln("GO-A", nil, "example.com/a", "1.0.1")
+	f.vulns["GO-B"] = goVuln("GO-B", nil, "example.com/b", "1.0.1")
+	f.vulns["GO-C"] = goVuln("GO-C", nil, "example.com/c", "1.0.1")
+	f.status["/v1/vulns/GO-B"] = http.StatusInternalServerError
+	deps := []dep.Dep{goDep("example.com/a", "v1.0.0"), goDep("example.com/b", "v1.0.0"), goDep("example.com/c", "v1.0.0")}
+	got, err := f.start(nil).Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || !slices.Equal(ids(got[0]), []string{"GO-A"}) || got[1] != nil || !slices.Equal(ids(got[2]), []string{"GO-C"}) {
+		t.Errorf("got %+v", got)
+	}
+}
+
 func TestAdvisoriesResultMismatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"results":[]}`))
