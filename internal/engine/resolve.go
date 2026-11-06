@@ -910,9 +910,12 @@ type resolver struct {
 	// for it); nil means every candidate rewrites the range. In-range candidates are
 	// lockfile-only updates when lockOnly, else they are not proposed. within (in-range-only)
 	// reports the versions the range admits: no others are proposed; nil = no limit.
+	// rewrites reports whether rewriter writes a new range for a version under strategy (set
+	// for range deps with a rewriter, nil otherwise).
 	strategy string
 	inRange  func(string) bool
 	within   func(string) bool
+	rewrites func(string) bool
 	lockOnly bool
 	rewriter manager.RangeRewriter // the dep's manager rewrites its whole range; nil = by version token
 	ranger   manager.RangeUpdater  // the rewriter also matches the range (Python specifiers)
@@ -988,6 +991,12 @@ func (r *resolver) setRange(s versioning.Scheme, names []string) {
 		return
 	}
 	r.strategy = r.rangeStrategy()
+	if r.rewriter != nil {
+		r.rewrites = lastOf(func(v string) bool {
+			_, ok := r.rewriter.NewRange(d, v, r.strategy)
+			return ok
+		})
+	}
 	if r.ranger != nil {
 		r.setRewritten(s, names)
 		return
@@ -1006,6 +1015,7 @@ func (r *resolver) setRange(s versioning.Scheme, names []string) {
 	keeps := strategy == config.RangeReplace || strategy == config.RangeWiden // in-range versions are left alone
 	bump := strategy == config.RangeBump || strategy == config.RangeInRangeOnly
 	if strategy == config.RangeInRangeOnly {
+		match = lastOf(match) // accept asks within, then inRange, for each candidate
 		r.within = match
 	}
 	switch {
@@ -1015,11 +1025,8 @@ func (r *resolver) setRange(s versioning.Scheme, names []string) {
 	case !d.RangeFixed && d.LockUnread && !peer && !keeps:
 		return
 	case bump && !d.RangeFixed && d.Manager != gradleManager && !match("0.0.0"):
-		if r.rewriter != nil {
-			r.inRange = func(v string) bool {
-				_, raised := r.rewriter.NewRange(d, v, strategy)
-				return match(v) && !raised
-			}
+		if r.rewrites != nil {
+			r.inRange = func(v string) bool { return match(v) && !r.rewrites(v) }
 		}
 		return
 	}
@@ -1044,18 +1051,12 @@ func (r *resolver) setRewritten(s versioning.Scheme, names []string) {
 		r.setPin(s, names, match)
 		return
 	case config.RangeInRangeOnly:
+		match = lastOf(match) // accept asks within, then inRange, for each candidate
 		r.within = match
 	}
 	bump := strategy == config.RangeBump || strategy == config.RangeInRangeOnly
 	r.inRange = func(v string) bool {
-		if !match(v) {
-			return false
-		}
-		if !bump {
-			return true
-		}
-		_, raised := r.ranger.NewRange(d, v, strategy)
-		return !raised
+		return match(v) && (!bump || !r.rewrites(v)) // the ranger is the rewriter
 	}
 	if d.Locked != "" && s.Valid(d.Locked) {
 		r.cur = d.Locked
@@ -1113,6 +1114,21 @@ func rangeMatcher(s versioning.Scheme, rng string) (func(string) bool, error) {
 		sv := s.Semver(v)
 		return sv != nil && c.Check(sv)
 	}, nil
+}
+
+// lastOf wraps f, a check that depends only on its version, to answer a repeated ask for the
+// last version without calling f again: accept and the range checks it calls ask the same
+// candidate in turn (within and inRange share a match; inRange under bump and accept ask
+// whether the range can be rewritten).
+func lastOf(f func(string) bool) func(string) bool {
+	var last string
+	var asked, ok bool
+	return func(v string) bool {
+		if !asked || v != last {
+			last, ok, asked = v, f(v), true
+		}
+		return ok
+	}
 }
 
 // gradleManager is the name of the gradle manager, whose dynamic versions keep their floor;
@@ -1268,18 +1284,24 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	r.setRange(scheme, names)
 	semverOf := scheme.Semver
 	accept := func(v string, kind dep.UpdateType) (bool, string) {
+		if r.within != nil && !r.within(v) {
+			return false, "outside range " + d.Range + " (in-range-only)"
+		}
 		in := r.inRange != nil && r.inRange(v)
 		switch {
-		case r.within != nil && !r.within(v):
-			return false, "outside range " + d.Range + " (in-range-only)"
 		case in && !r.lockOnly:
 			return false, "admitted by range " + d.Range + " (no lockfile update)"
 		case !in && d.RangeFixed:
 			return false, "outside range " + d.Range + " (not rewritten)"
-		case !in && r.inRange != nil && r.rewriter != nil:
-			if _, ok := r.rewriter.NewRange(d, v, r.strategy); !ok {
+		case !in && r.inRange != nil && r.rewrites != nil:
+			// The policy is cheaper than a range rewrite (npm parses the range it writes):
+			// the rewrite is only tried when the policy accepts, or a trace wants its reason,
+			// which comes first.
+			ok, why := r.pol.check(kind, v, semverOf)
+			if (ok || r.trace) && !r.rewrites(v) {
 				return false, "range " + d.Range + " cannot be rewritten to admit it"
 			}
+			return ok, why
 		}
 		return r.pol.check(kind, v, semverOf)
 	}
@@ -1315,15 +1337,14 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		}
 	}
 	switch {
-	case r.rewriter != nil && d.Range != "":
+	case r.rewrites != nil:
 		// Security updates skip accept: drop those neither the lockfile nor the range can take,
 		// and under in-range-only those outside the range.
 		ups = slices.DeleteFunc(ups, func(u dep.Update) bool {
 			if r.within != nil && !r.within(u.NewVersion) {
 				return true
 			}
-			_, ok := r.rewriter.NewRange(d, u.NewVersion, r.strategy)
-			return !u.Lockfile && !ok
+			return !u.Lockfile && !r.rewrites(u.NewVersion)
 		})
 	case d.RangeFixed:
 		// Security fixes outside the range cannot be written either.
