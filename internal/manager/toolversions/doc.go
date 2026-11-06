@@ -88,11 +88,55 @@ var rubyVersionItems = []string{
 	"The `ruby-` prefix stays outside the replaced token; comments and the rest of the file are kept.",
 }
 
+// pythonSkips are the skip reasons of a Python version (pyenv, runtime-version).
+var pythonSkips = []refdoc.Skip{
+	{Reason: "non-version value", When: "empty, another implementation or distribution (`pypy3.10-7.3.17`, `miniconda3-latest`, `graalpy-24.1.0`) or a word such as `system`"},
+	{Reason: "unsupported range", When: "anything else that is not `X[.Y[.Z[{a,b,rc}N]]][t]`, such as `3.14-dev` or `>=3.12`"},
+}
+
+var pythonVersionItems = []string{
+	"A full `X.Y.Z` uses `pep440` versioning; pre-releases such as `3.15.0rc1` are only proposed from a pre-release.",
+	"A partial `3` or `3.13` uses `tag` versioning and keeps its precision (`3.13` → `3.14`), as pyenv and uv resolve it to the newest patch.",
+	"The free-threaded build's `t` (`3.13t`, `3.13.1t`) stays outside the replaced token; comments and the rest of the file are kept.",
+	"Renovate uses the `docker` datasource (the `python` image tags) for these files; deps uses the python.org release list ([python-version](#datasources)), which asdf, mise and the devcontainer Python feature share.",
+}
+
+// DocPyenv is the reference documentation of the pyenv manager (docs/reference/managers.md).
+var DocPyenv = refdoc.Manager{
+	Name: NamePyenv,
+	Summary: "Updates the Python version in `.python-version` (pyenv, uv, asdf and mise read it): the first token of the first line that is neither blank nor a `#` comment. " +
+		"Further versions (`pyenv local 3.13 3.12` writes one per line) are kept.",
+	Files: []string{"any `.python-version`"},
+	DepTypes: []refdoc.DepType{
+		{Name: DepTypePython, What: "the Python version (name `python`)", Versioning: "`pep440`; partial versions `tag`", Datasources: []string{dsPython}},
+	},
+	Skips:    pythonSkips,
+	Sections: []refdoc.Section{{Title: "Versions", Items: pythonVersionItems}},
+}
+
+// DocRuntimeVersion is the reference documentation of the runtime-version manager
+// (docs/reference/managers.md).
+var DocRuntimeVersion = refdoc.Manager{
+	Name: NameRuntimeVersion,
+	Summary: "Updates the Python version in `runtime.txt` (Heroku, Scalingo, Binder): `python-<version>` as the first token of the first line that is neither blank nor a `#` comment. " +
+		"A runtime.txt naming another runtime (Binder's `r-4.4-2024-10-01`) has no dep.",
+	Files: []string{"any `runtime.txt`"},
+	DepTypes: []refdoc.DepType{
+		{Name: DepTypePython, What: "the Python version after `python-` (name `python`)", Versioning: "`pep440`; partial versions `tag`", Datasources: []string{dsPython}},
+	},
+	Skips: pythonSkips,
+	Sections: []refdoc.Section{{Title: "Versions", Items: []string{
+		"`python-3.13.1` uses `pep440` versioning, `python-3.13` `tag` versioning at its precision; the `python-` prefix stays outside the replaced token.",
+		pythonVersionItems[3],
+	}}},
+}
+
 var toolVersionItems = []string{
-	"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`).",
-	"A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`) and ruby (`3.4`); other tools skip it.",
+	"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`).",
+	"A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`), ruby (`3.4`) and python (`3.13`); other tools skip it.",
 	"`maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.",
 	"`ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).",
+	"`python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.",
 	"Only the version token is replaced; quotes, comments and the rest of the file are kept.",
 }
 

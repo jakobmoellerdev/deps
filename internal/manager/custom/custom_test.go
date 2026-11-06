@@ -493,6 +493,8 @@ func TestRenovateMarkers(t *testing.T) {
 		"UBUNTU=24.04", // 43
 		"# renovate: datasource=endoflife-date depName=nodejs registryUrl=https://eol.example.com/api", // 44
 		"NODE=24.11.0", // 45
+		"# renovate: datasource=python-version depName=python", // 46
+		"ARG PYTHON_VERSION=3.13.1",                            // 47
 	}, "\n")
 	m := oneWith(t, &config.Config{Custom: []config.Custom{{Files: []string{"**/.env"}}},
 		CustomDatasources: map[string]config.CustomDatasource{"envtest": {URL: "https://x/envtest.yaml"}}})
@@ -520,6 +522,7 @@ func TestRenovateMarkers(t *testing.T) {
 		{41, "pypi", "Django", "", "semver", "4.2.11", "", ""},
 		{43, "endoflife-date", "ubuntu", "", "loose", "24.04", "", ""},
 		{45, "endoflife-date", "nodejs", "https://eol.example.com/api", "semver", "24.11.0", "", ""},
+		{47, "python-version", "python", "", "pep440", "3.13.1", "", ""},
 	})
 }
 

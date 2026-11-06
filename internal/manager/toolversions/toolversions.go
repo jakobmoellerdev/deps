@@ -1,7 +1,7 @@
 // Package toolversions extracts tool versions from version-manager files: `.nvmrc` (nvm),
-// `.node-version` (nodenv), `.ruby-version` (ruby-version), `.tool-versions` (asdf) and
-// `mise.toml` (mise). Each file format is its own manager; they share the tool table and the
-// version classification.
+// `.node-version` (nodenv), `.ruby-version` (ruby-version), `.python-version` (pyenv),
+// `runtime.txt` (runtime-version), `.tool-versions` (asdf) and `mise.toml` (mise). Each file
+// format is its own manager; they share the tool table and the version classification.
 package toolversions
 
 import (
@@ -18,25 +18,30 @@ import (
 
 // Manager names (Renovate's).
 const (
-	NameNvm         = "nvm"
-	NameNodenv      = "nodenv"
-	NameRubyVersion = "ruby-version"
-	NameAsdf        = "asdf"
-	NameMise        = "mise"
+	NameNvm            = "nvm"
+	NameNodenv         = "nodenv"
+	NameRubyVersion    = "ruby-version"
+	NamePyenv          = "pyenv"
+	NameRuntimeVersion = "runtime-version"
+	NameAsdf           = "asdf"
+	NameMise           = "mise"
 )
 
 // Dep types: the Node.js version of an nvm/nodenv file, the Ruby version of a ruby-version
-// file, and one tool of asdf/mise.
+// file, the Python version of a pyenv/runtime-version file, and one tool of asdf/mise.
 const (
-	DepTypeNode = "node"
-	DepTypeRuby = "ruby"
-	DepTypeTool = "tool"
+	DepTypeNode   = "node"
+	DepTypeRuby   = "ruby"
+	DepTypePython = "python"
+	DepTypeTool   = "tool"
 )
 
 var (
 	nvmRe         = regexp.MustCompile(`(^|/)\.nvmrc$`)
 	nodenvRe      = regexp.MustCompile(`(^|/)\.node-version$`)
 	rubyVersionRe = regexp.MustCompile(`(^|/)\.ruby-version$`)
+	pyenvRe       = regexp.MustCompile(`(^|/)\.python-version$`)
+	runtimeRe     = regexp.MustCompile(`(^|/)runtime\.txt$`)
 	asdfRe        = regexp.MustCompile(`(^|/)\.tool-versions$`)
 	miseRe        = regexp.MustCompile(`(^|/)(\.?mise\.toml|\.?mise/config\.toml|\.config/mise\.toml|\.config/mise/config\.toml)$`)
 )
@@ -69,6 +74,21 @@ func NewNodenv() manager.Manager {
 func NewRubyVersion() manager.Manager {
 	return &toolManager{name: NameRubyVersion, suffix: ".ruby-version", match: rubyVersionRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
 		return extractFirst(NameRubyVersion, DepTypeRuby, rubyTool, file, src), nil
+	}}
+}
+
+// NewPyenv returns the pyenv manager (`.python-version`, read by pyenv, uv, asdf and mise).
+func NewPyenv() manager.Manager {
+	return &toolManager{name: NamePyenv, suffix: ".python-version", match: pyenvRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
+		return extractFirst(NamePyenv, DepTypePython, pythonTool, file, src), nil
+	}}
+}
+
+// NewRuntimeVersion returns the runtime-version manager (`runtime.txt` of Heroku, Scalingo and
+// Binder: `python-3.13.1`).
+func NewRuntimeVersion() manager.Manager {
+	return &toolManager{name: NameRuntimeVersion, suffix: "runtime.txt", match: runtimeRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
+		return extractRuntime(file, src), nil
 	}}
 }
 
@@ -121,6 +141,7 @@ const (
 	dsNode   = "node-version"
 	dsGo     = "go-toolchain"
 	dsRuby   = "ruby-version"
+	dsPython = "python-version"
 	dsGitHub = "github-releases"
 	dsNpm    = "npm"
 	dsMaven  = "maven"
@@ -129,9 +150,10 @@ const (
 )
 
 var (
-	nodeTool = tool{datasource: dsNode, name: "node"}
-	goTool   = tool{datasource: dsGo, name: "go"}
-	rubyTool = tool{datasource: dsRuby, name: "ruby"}
+	nodeTool   = tool{datasource: dsNode, name: "node"}
+	goTool     = tool{datasource: dsGo, name: "go"}
+	rubyTool   = tool{datasource: dsRuby, name: "ruby"}
+	pythonTool = tool{datasource: dsPython, name: "python"}
 	// The Maven distribution and Gradle use Maven's version order (3.9.9, 8.11, 8.11-rc-1).
 	mavenTool  = tool{datasource: dsMaven, name: "org.apache.maven:apache-maven"}
 	gradleTool = tool{datasource: dsGradle, name: "gradle"}
@@ -163,6 +185,7 @@ var tools = map[string]tool{
 	"maven":         mavenTool,
 	"gradle":        gradleTool,
 	"ruby":          rubyTool,
+	"python":        pythonTool,
 	"actionlint":    githubTool("rhysd/actionlint"),
 	"age":           githubTool("FiloSottile/age"),
 	"argocd":        githubTool("argoproj/argo-cd"),
@@ -235,6 +258,11 @@ var (
 	// is X or X.Y.
 	rubyRe        = regexp.MustCompile(`^\d+\.\d+\.\d+(?:[.-][0-9A-Za-z][0-9A-Za-z.-]*)?$`)
 	rubyPartialRe = regexp.MustCompile(`^\d+(?:\.\d+)?$`)
+	// pythonRe is a CPython X.Y.Z with an optional PEP 440 pre-release (`3.15.0rc1`) and
+	// pythonPartialRe X or X.Y; both may carry the free-threaded build's `t` (`3.13t`), which
+	// stays outside the token.
+	pythonRe        = regexp.MustCompile(`^(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)t?$`)
+	pythonPartialRe = regexp.MustCompile(`^(\d+(?:\.\d+)?)t?$`)
 	// mavenRe is a version of the maven versioning scheme (a digit, then [0-9A-Za-z._-]).
 	mavenRe = regexp.MustCompile(`^\d[0-9A-Za-z._-]*$`)
 	// wordRe is a letter-led value that is not a v-prefixed version (latest, system, lts/*).
@@ -243,9 +271,10 @@ var (
 
 // classify returns the version token of raw for t (ver at byte offset off in raw), its
 // versioning, or the reason raw is not updatable. Partial versions move at their precision
-// under tag versioning; the datasources of node, go and ruby list derived X.Y/X candidates
-// without "v", so a leading "v" stays outside the token. A Ruby version may carry the
-// `ruby-` engine prefix of `.ruby-version` files (`ruby-3.4.7`), which stays outside too.
+// under tag versioning; the datasources of node, go, ruby and python list derived X.Y/X
+// candidates without "v", so a leading "v" stays outside the token. A Ruby version may carry
+// the `ruby-` engine prefix of `.ruby-version` files (`ruby-3.4.7`), which stays outside too.
+// A Python version may end in the free-threaded `t` (`3.13t`), which stays outside as well.
 func classify(t tool, raw string) (ver string, off int, versioning, skip string) {
 	switch {
 	case strings.HasPrefix(raw, "ref:"):
@@ -267,6 +296,18 @@ func classify(t tool, raw string) (ver string, off int, versioning, skip string)
 			return "", 0, "", "non-version value" // jruby-9.4, truffleruby-24, system
 		}
 		return "", 0, "", "unsupported range"
+	}
+	if t.datasource == dsPython {
+		if m := pythonRe.FindStringSubmatch(raw); m != nil {
+			return m[1], 0, "pep440", ""
+		}
+		if m := pythonPartialRe.FindStringSubmatch(raw); m != nil {
+			return m[1], 0, "tag", ""
+		}
+		if raw == "" || wordRe.MatchString(raw) {
+			return "", 0, "", "non-version value" // pypy3.10-7.3.17, miniconda3-latest, system
+		}
+		return "", 0, "", "unsupported range" // 3.14-dev, >=3.12
 	}
 	if raw == "" || wordRe.MatchString(raw) {
 		return "", 0, "", "non-version value"

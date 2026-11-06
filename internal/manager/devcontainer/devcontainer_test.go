@@ -108,7 +108,7 @@ func TestExtract(t *testing.T) {
 				"10 feature ghcr.io/devcontainers/features/ruby docker docker 1 ref=1",
 				"10 feature-version ruby skip=no version",
 				"11 feature ghcr.io/devcontainers/features/python docker docker 1 ref=1",
-				"11 feature-version python skip=unsupported tool",
+				"11 feature-version python python-version tag 3.12 ref=3.12",
 				"12 feature ghcr.io/devcontainers/features/node docker docker 2 ref=2",
 				"12 feature-version node skip=non-version value",
 				"13 feature ghcr.io/devcontainers/features/go skip=no tag",

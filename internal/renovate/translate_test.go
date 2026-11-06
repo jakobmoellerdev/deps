@@ -297,6 +297,18 @@ func TestLoadRules(t *testing.T) {
 			},
 		},
 		{
+			name: "Python category, pyenv and runtime-version managers, python-version datasource",
+			src: `{packageRules: [{matchCategories: ['python'], automerge: true},
+				{matchManagers: ['pyenv', 'runtime-version'], matchDatasources: ['python-version'], enabled: false}]}`,
+			rules: `  - # packageRules[0]
+    managers: [pip_requirements, pep621, pep723, setup-cfg, pip_setup, poetry, pipenv, pyenv, runtime-version, homeassistant-manifest]
+    automerge: true
+  - # packageRules[1]
+    managers: [pyenv, runtime-version]
+    datasources: [python-version]
+    ignore: true` + defaultExclusions,
+		},
+		{
 			name: "matchCurrentValue regexes and exact strings are currentVersion",
 			src: `{packageRules: [{matchCurrentValue: '/^1/', matchPackageNames: ['a'], enabled: false},
 				{matchCurrentValue: '!/-rc/i', matchPackageNames: ['b'], enabled: false},

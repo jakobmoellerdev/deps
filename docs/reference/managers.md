@@ -45,6 +45,8 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`swift`](#swift)
 - [`bundler`](#bundler)
 - [`ruby-version`](#ruby-version)
+- [`pyenv`](#pyenv)
+- [`runtime-version`](#runtime-version)
 - [`git-submodules`](#git-submodules)
 - [`rust-toolchain`](#rust-toolchain)
 - [`devcontainer`](#devcontainer)
@@ -675,10 +677,11 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 
 **Versions.**
 
-- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`).
-- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`) and ruby (`3.4`); other tools skip it.
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`).
+- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`), ruby (`3.4`) and python (`3.13`); other tools skip it.
 - `maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.
 - `ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).
+- `python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -723,6 +726,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `opentofu` | `github-releases` | `opentofu/opentofu` |  |
 | `packer` | `github-releases` | `hashicorp/packer` |  |
 | `pnpm` | `npm` | `pnpm` |  |
+| `python` | `python-version` | `python` |  |
 | `ripgrep` | `github-releases` | `BurntSushi/ripgrep` |  |
 | `ruby` | `ruby-version` | `ruby` |  |
 | `shellcheck` | `github-releases` | `koalaman/shellcheck` |  |
@@ -774,10 +778,11 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 
 **Versions.**
 
-- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`).
-- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`) and ruby (`3.4`); other tools skip it.
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`).
+- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`), ruby (`3.4`) and python (`3.13`); other tools skip it.
 - `maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.
 - `ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).
+- `python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -822,6 +827,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `opentofu` | `github-releases` | `opentofu/opentofu` |  |
 | `packer` | `github-releases` | `hashicorp/packer` |  |
 | `pnpm` | `npm` | `pnpm` |  |
+| `python` | `python-version` | `python` |  |
 | `ripgrep` | `github-releases` | `BurntSushi/ripgrep` |  |
 | `ruby` | `ruby-version` | `ruby` |  |
 | `shellcheck` | `github-releases` | `koalaman/shellcheck` |  |
@@ -2002,6 +2008,56 @@ Updates the Ruby version in `.ruby-version` (rbenv, chruby, rvm, asdf, mise, Bun
 - A partial `3` or `3.4` uses `tag` versioning and keeps its precision (`3.4` → `4.0`).
 - The `ruby-` prefix stays outside the replaced token; comments and the rest of the file are kept.
 
+## pyenv
+
+Updates the Python version in `.python-version` (pyenv, uv, asdf and mise read it): the first token of the first line that is neither blank nor a `#` comment. Further versions (`pyenv local 3.13 3.12` writes one per line) are kept.
+
+**Files:**
+
+- any `.python-version`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `python` | the Python version (name `python`) | `python-version` | `pep440`; partial versions `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-version value` | empty, another implementation or distribution (`pypy3.10-7.3.17`, `miniconda3-latest`, `graalpy-24.1.0`) or a word such as `system` |
+| `unsupported range` | anything else that is not `X[.Y[.Z[{a,b,rc}N]]][t]`, such as `3.14-dev` or `>=3.12` |
+
+**Versions.**
+
+- A full `X.Y.Z` uses `pep440` versioning; pre-releases such as `3.15.0rc1` are only proposed from a pre-release.
+- A partial `3` or `3.13` uses `tag` versioning and keeps its precision (`3.13` → `3.14`), as pyenv and uv resolve it to the newest patch.
+- The free-threaded build's `t` (`3.13t`, `3.13.1t`) stays outside the replaced token; comments and the rest of the file are kept.
+- Renovate uses the `docker` datasource (the `python` image tags) for these files; deps uses the python.org release list ([python-version](#datasources)), which asdf, mise and the devcontainer Python feature share.
+
+## runtime-version
+
+Updates the Python version in `runtime.txt` (Heroku, Scalingo, Binder): `python-<version>` as the first token of the first line that is neither blank nor a `#` comment. A runtime.txt naming another runtime (Binder's `r-4.4-2024-10-01`) has no dep.
+
+**Files:**
+
+- any `runtime.txt`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `python` | the Python version after `python-` (name `python`) | `python-version` | `pep440`; partial versions `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-version value` | empty, another implementation or distribution (`pypy3.10-7.3.17`, `miniconda3-latest`, `graalpy-24.1.0`) or a word such as `system` |
+| `unsupported range` | anything else that is not `X[.Y[.Z[{a,b,rc}N]]][t]`, such as `3.14-dev` or `>=3.12` |
+
+**Versions.**
+
+- `python-3.13.1` uses `pep440` versioning, `python-3.13` `tag` versioning at its precision; the `python-` prefix stays outside the replaced token.
+- Renovate uses the `docker` datasource (the `python` image tags) for these files; deps uses the python.org release list ([python-version](#datasources)), which asdf, mise and the devcontainer Python feature share.
+
 ## git-submodules
 
 Moves git submodules to the newest commit of the branch they track, or to the newest version tag when `branch` is one. The current commit is the submodule's gitlink in the git index (`git ls-files --stage`). Disabled by default, as in Renovate: enable it with a rule `{managers: [git-submodules], ignore: false}`.
@@ -2068,7 +2124,7 @@ Updates the Rust toolchain rustup selects for a directory: `channel` of the `[to
 
 ## devcontainer
 
-Updates the image, the Dev Container Features and the node, go and ruby feature versions of devcontainer.json files.
+Updates the image, the Dev Container Features and the node, go, python and ruby feature versions of devcontainer.json files.
 
 **Files:**
 
@@ -2078,7 +2134,7 @@ Updates the image, the Dev Container Features and the node, go and ruby feature 
 |---|---|---|---|---|
 | `image` | the top-level `image` | `docker` | `docker` | updated |
 | `feature` | the keys of `features` that are OCI references (`ghcr.io/devcontainers/features/node:1`) | `docker` | `docker` | updated |
-| `feature-version` | the `version` option (or a string option value) of the features `ghcr.io/devcontainers/features/node` (name `node`), `…/go` (`go`), `…/ruby` (`ruby`) and `…/python` (`python`, skipped) | `node-version`, `go-toolchain`, `ruby-version` | as [asdf](#asdf): `semver`/`tag` (node), `tag` (go), `ruby`/`tag` (ruby) | updated |
+| `feature-version` | the `version` option (or a string option value) of the features `ghcr.io/devcontainers/features/node` (name `node`), `…/go` (`go`), `…/python` (`python`) and `…/ruby` (`ruby`) | `node-version`, `go-toolchain`, `python-version`, `ruby-version` | as [asdf](#asdf): `semver`/`tag` (node), `tag` (go), `pep440`/`tag` (python), `ruby`/`tag` (ruby) | updated |
 
 **Skips:**
 
@@ -2095,7 +2151,6 @@ Updates the image, the Dev Container Features and the node, go and ruby feature 
 | `non-version value` | a version option that is a word: `lts`, `latest`, `none`, `os-provided` |
 | `partial version` | a go version with one part (`1`) |
 | `unsupported range` | a version option that is no version (`>=18`) |
-| `unsupported tool` | the python feature's version: deps has no python-version datasource |
 | `cannot locate value` | the string is written with JSON escapes |
 
 **Details.**
@@ -2103,7 +2158,7 @@ Updates the image, the Dev Container Features and the node, go and ruby feature 
 - The file is JSON with comments (`//`, `/* */`) and trailing commas; edits replace the version bytes only, so comments and formatting stay.
 - The image and the features are parsed and edited like the [docker](#docker) manager's references: the tag is updated, an image digest is refreshed or, with `pin: digest`, pinned. Features are never pinned (as Renovate's `pinDigests: false`); a digest already written after a feature tag is refreshed.
 - Feature tags are usually a major (`:1`): docker versioning keeps the precision, so `:1` moves to `:2`.
-- Feature version options are read like the [asdf](#asdf) tools of the same name: `20` and `20.11` keep their precision (node, ruby), `1.22` and `1.22.3` are go-toolchain versions.
+- Feature version options are read like the [asdf](#asdf) tools of the same name: `20` and `20.11` keep their precision (node, python, ruby), `1.22` and `1.22.3` are go-toolchain versions.
 - `build.dockerfile` and `dockerComposeFile` are not read: the [docker](#docker) manager finds the Dockerfile (`Dockerfile`, `Dockerfile.<x>`, `<x>.Dockerfile`) and the Compose file on its own.
 
 ## bitbucket-pipelines
@@ -2694,6 +2749,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `helm` | chart name; the repository URL (`https://…` or `oci://host/path`) is the dep's source | classic: `GET <repo>/index.yaml`, once per repository, stream-scanned so only the asked-for charts are decoded; versions without `urls` dropped. OCI: registry `tags/list` of `<host>/<path>/<chart>` via the docker datasource, tag `_` read as `+` | classic: the forge token (Basic `x-access-token`) on the forge's host, else anonymous; OCI: as `docker` | classic: index `created`; OCI: manifest annotation `org.opencontainers.image.created` |
 | `crate` | crate name (case-insensitive); the dep's source is its registry name or index URL ("" = crates.io) | `GET <index>/<prefix>/<name>` of the sparse index (crates.io: `DEPS_CRATES_INDEX_URL` or `https://index.crates.io`; prefixes `1/<n>`, `2/<n>`, `3/<first char>/<n>`, `<n[0:2]>/<n[2:4]>/<n>`), or the same path of a git index (shallow blob-less clone, `git cat-file`); newline-delimited JSON, yanked versions dropped (a yanked installed version is listed under the dashboard's deprecated dependencies); not found → `crate <name> not found` (`… in registry <name>`). Partial requirements also get a derived `X.Y` and `X` per stable release line. Source repository (release notes): `GET <api>/api/v1/crates/<name>/<version>` `repository` (crates.io: `DEPS_CRATES_API_URL` or `https://crates.io`; other registries: `api` of their `config.json`), only for versions in a pull request | alternative registries: `CARGO_REGISTRIES_<NAME>_TOKEN`, `$CARGO_HOME/credentials.toml` or `.cargo/config.toml` `[registries.<name>] token` as `Authorization`, only to the index host; without a token, the platform token (Basic) for its host, and the git credential helper after a 401; git indexes: git credential helpers | index `pubtime` (crates.io writes it for every version); a release line has the time of its first release |
 | `pypi` | package name; PEP 503-normalized for lookups (`zope.interface` → `zope-interface`) | PyPI: `GET <DEPS_PYPI_URL or https://pypi.org>/pypi/<name>/json`; other indexes: `GET <index>/<name>/` with `Accept: application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.2, text/html;q=0.01` (simple API: JSON, PEP 691/700, else HTML, PEP 503; an HTTP 406 is retried with `Accept: text/html`); once per (index, name); versions without files or with every file yanked dropped (an installed version whose files are all yanked, and a JSON API project classified `Development Status :: 7 - Inactive`, are listed under the dashboard's deprecated dependencies); 404 → `package <name> not found`, or the skip `in-repository package (<file>)` for a pep621 or poetry dep named like the project of a scanned `pyproject.toml` | userinfo of the index URL (`https://user:pass@host/simple`) sent as basic auth, redacted in errors and logs | earliest file upload time of the version on any of the dep's indexes (`upload_time_iso_8601`, `upload-time`, HTML `data-upload-time`) |
+| `python-version` | any (`python`) | `GET <DEPS_PYTHON_RELEASES_URL or https://www.python.org/api/v2/downloads/release/>` once per run (Renovate's source): the published CPython releases (`Python X.Y.Z[{a,b,rc}N]`; other entries such as the install manager are ignored), plus a derived `X.Y` and `X` per stable line | none | `release_date` |
 | `conda` | package name as on the channel (`numpy`, `r-base`); the dep's source is its whitespace-separated anaconda.org channels in lookup order ("" = `conda-forge`). A custom dep may name its channel as Renovate's packageName does: `conda-forge/numpy` | `GET <DEPS_CONDA_URL or https://api.anaconda.org>/package/<channel>/<name>`, once per (channel, package); a version is a release when one of its files is under the `main` label and not marked `broken` (files only under `rc`, `dev` or migration labels are not installed by default), the builds of every platform merged; the first channel that has the package answers (conda's strict channel priority), none → `conda package <name> not found in <channels>`. Source repository (release notes): the package's `dev_url`, an http(s) URL, from the same response | none: public anaconda.org channels only | earliest `upload_time` of the version's main files; a version cut to a lower precision (`2.3` for 2.3.0) gets the time of the release it equals |
 | `terraform-provider` | `namespace/type`; the dep's source is the registry (`https://registry.terraform.io` when empty) | service discovery `GET https://<host>/.well-known/terraform.json` once per registry (relative and absolute service URLs), then `GET <providers.v1>/<namespace>/<type>/versions`, once per provider; 404 → `provider <name> not found in <registry>` | `Authorization: Bearer <token>`, resolved once per host as the Terraform CLI does: `$TF_TOKEN_<host>` (dots as `_`, hyphens as is or `__`, e.g. `TF_TOKEN_app_terraform_io`; punycode hosts verbatim), then `credentials "<host>" { token = ... }` of the CLI config (`$TF_CLI_CONFIG_FILE`, else `~/.terraformrc` plus the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` such as `credentials.tfrc.json`; `%APPDATA%/terraform.rc` and `%APPDATA%/terraform.d` on Windows), then the `credentials_helper` (`terraform-credentials-<name> <args...> get <host>` from `~/.terraform.d/plugins[/<os>_<arch>]`, else PATH; missing → `terraform-credentials-<name> not found (needed for <host> credentials)`); else anonymous. | `published_at` of the version document (`<service><name>/<version>`; registry.terraform.io serves it, other registries are unknown). A partial version (`5.31` of `~> 5.31`) has the time of its line's first release. |
 | `terraform-module` | `namespace/name/provider`; the dep's source is the registry (`https://registry.terraform.io` when empty) | service discovery `GET https://<host>/.well-known/terraform.json` once per registry (relative and absolute service URLs), then `GET <modules.v1>/<namespace>/<name>/<provider>/versions`, once per module; 404 → `module <name> not found in <registry>` | `Authorization: Bearer <token>`, resolved once per host as the Terraform CLI does: `$TF_TOKEN_<host>` (dots as `_`, hyphens as is or `__`, e.g. `TF_TOKEN_app_terraform_io`; punycode hosts verbatim), then `credentials "<host>" { token = ... }` of the CLI config (`$TF_CLI_CONFIG_FILE`, else `~/.terraformrc` plus the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` such as `credentials.tfrc.json`; `%APPDATA%/terraform.rc` and `%APPDATA%/terraform.d` on Windows), then the `credentials_helper` (`terraform-credentials-<name> <args...> get <host>` from `~/.terraform.d/plugins[/<os>_<arch>]`, else PATH; missing → `terraform-credentials-<name> not found (needed for <host> credentials)`); else anonymous. | `published_at` of the version document (`<service><name>/<version>`; registry.terraform.io serves it, other registries are unknown). A partial version (`5.31` of `~> 5.31`) has the time of its line's first release. |

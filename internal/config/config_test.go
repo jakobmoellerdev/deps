@@ -488,7 +488,7 @@ custom:
 	if len(c.Custom) != 3 || c.Custom[0].Versioning != "" || c.Custom[1].Versioning != "go" || c.Custom[1].Datasource != "go" ||
 		c.Custom[2].Versioning != "" || !strings.HasSuffix(c.Custom[2].RegistryURL, "/repodata/") ||
 		DefaultCustomVersioning(c.Custom[0].Datasource) != "semver" || DefaultCustomVersioning(c.Custom[2].Datasource) != "rpm" || DefaultCustomVersioning("apk") != "apk" ||
-		DefaultCustomVersioning("deb") != "deb" {
+		DefaultCustomVersioning("deb") != "deb" || DefaultCustomVersioning("python-version") != "pep440" {
 		t.Errorf("custom = %+v", c.Custom)
 	}
 	daily := schedule.Trigger{Event: schedule.EventSchedule, Cron: "0 5 * * *"}

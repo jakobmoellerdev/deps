@@ -104,6 +104,7 @@
                 "orb",
                 "packagist",
                 "pypi",
+                "python-version",
                 "rpm",
                 "ruby-version",
                 "rubygems",
@@ -134,9 +135,9 @@
         "versioning": {
           "type": "string",
           "pattern": "^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|composer|julia|bazel-module|nuget|rpm|apk|deb|regex:.+)$",
-          "description": "Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb), else semver.",
+          "description": "Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version), else semver.",
           "default": "semver",
-          "markdownDescription": "Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb or regex:\\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb), else semver.\n\nAccepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, else `semver`. A marker's `versioning=`, a `versioning` group or a JSONata result's `versioning` overrides the entry's."
+          "markdownDescription": "Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb or regex:\\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version), else semver.\n\nAccepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, else `semver`. A marker's `versioning=`, a `versioning` group or a JSONata result's `versioning` overrides the entry's."
         },
         "checksum": {
           "$ref": "#/$defs/Checksum",
@@ -1302,6 +1303,62 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "pyenv"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "python"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
+                    "runtime-version"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "python"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "git-submodules"
                   ]
                 },
@@ -1822,6 +1879,8 @@
               "swift",
               "bundler",
               "ruby-version",
+              "pyenv",
+              "runtime-version",
               "git-submodules",
               "rust-toolchain",
               "devcontainer",
@@ -1952,6 +2011,7 @@
               "formula",
               "ruby",
               "development",
+              "python",
               "submodule",
               "feature",
               "feature-version",
@@ -2046,6 +2106,7 @@
                   "orb",
                   "packagist",
                   "pypi",
+                  "python-version",
                   "rpm",
                   "ruby-version",
                   "rubygems",

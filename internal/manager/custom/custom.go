@@ -544,8 +544,8 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //     Renovate alias github-tags takes `owner/repo` on github.com.
 //   - github-releases: Name is `owner/repo` (github.com) or `https://host/owner/repo` (GHES);
 //     Source is the repository URL.
-//   - go, go-toolchain, docker, npm, node-version, pypi: Name is the module path, image or package;
-//     Source is empty.
+//   - go, go-toolchain, docker, npm, node-version, pypi, python-version: Name is the module
+//     path, image or package; Source is empty.
 //   - helm: Name is `<repository>/<chart>`, or the chart when Source already holds the
 //     repository (annotation `deps: helm <repository> <chart>`, Renovate `registryUrl=`); the
 //     repository is an `https://`, `http://` or `oci://` URL and becomes Source, Name the chart.
@@ -611,7 +611,7 @@ func (m *customManager) classify(d *dep.Dep) {
 		if _, err := forge.ParseRepo(d.Datasource, d.Name, d.Source); err != nil {
 			d.Skip = err.Error()
 		}
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "gitlab-packages", "rpm", "apk", "endoflife-date":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "endoflife-date":
 	case debds.Name:
 		if d.Name == "" || strings.ContainsAny(d.Name, " \t/") {
 			d.Skip = fmt.Sprintf("invalid deb name %q", d.Name)

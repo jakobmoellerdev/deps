@@ -41,6 +41,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/packagist"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pythonversion"
 	rpmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rpm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubygems"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubyversion"
@@ -168,7 +169,7 @@ const managersIntro = "A **manager** finds dependencies in files and edits them.
 // datasourceDocs documents the datasources newSession registers, in table order.
 func datasourceDocs() []refdoc.Datasource {
 	return []refdoc.Datasource{
-		gittags.Doc, gittags.RefsDoc, githubreleases.Doc, githubrunners.Doc, forgeds.GitLabReleasesDoc, forgeds.GitLabTagsDoc, forgeds.GiteaReleasesDoc, forgeds.GiteaTagsDoc, forgeds.ForgejoReleasesDoc, forgeds.ForgejoTagsDoc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, rpmds.Doc, apkds.Doc, debds.Doc, artifactory.Doc, endoflife.Doc, customds.Doc,
+		gittags.Doc, gittags.RefsDoc, githubreleases.Doc, githubrunners.Doc, forgeds.GitLabReleasesDoc, forgeds.GitLabTagsDoc, forgeds.GiteaReleasesDoc, forgeds.GiteaTagsDoc, forgeds.ForgejoReleasesDoc, forgeds.ForgejoTagsDoc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, pythonversion.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, rpmds.Doc, apkds.Doc, debds.Doc, artifactory.Doc, endoflife.Doc, customds.Doc,
 	}
 }
 

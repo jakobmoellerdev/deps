@@ -96,6 +96,8 @@ var Builtin = []Entry{
 	{swift.Doc, swift.New},
 	{bundler.Doc, bundler.New},
 	{toolversions.DocRubyVersion, toolversions.NewRubyVersion},
+	{toolversions.DocPyenv, toolversions.NewPyenv},
+	{toolversions.DocRuntimeVersion, toolversions.NewRuntimeVersion},
 	{gitsubmodules.Doc, gitsubmodules.New},
 	{rusttoolchain.Doc, rusttoolchain.New},
 	{devcontainer.Doc, devcontainer.New},

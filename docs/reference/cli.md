@@ -761,6 +761,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `PIP_INDEX_URL` | `pypi` datasource | index when the manifest names none (simple API, JSON or HTML) |
 | `PIP_EXTRA_INDEX_URL` | `pypi` datasource | space-separated extra indexes searched for every Python dep after the manifest's own; their releases are merged in |
 | `DEPS_PYPI_URL` | `pypi` datasource | base of the PyPI JSON API (default `https://pypi.org`) |
+| `DEPS_PYTHON_RELEASES_URL` | `python-version` datasource | URL of the CPython release list (python.org's JSON array of releases with `name`, `is_published`, `pre_release`, `release_date`; default `https://www.python.org/api/v2/downloads/release/`) |
 | `DEPS_RUBY_RELEASES_URL` | `ruby-version` datasource | URL of the Ruby release list (YAML entries with `version` and `date`; default `https://raw.githubusercontent.com/ruby/www.ruby-lang.org/master/_data/releases.yml`) |
 | `DEPS_CONDA_URL` | `conda` datasource | base of the anaconda.org API (default `https://api.anaconda.org`) |
 | `DEPS_PACKAGIST_URL` | `packagist` datasource | base of Packagist's metadata API (`/p2/<name>.json`), also for composer.json repositories naming `https://packagist.org` or `https://repo.packagist.org` (default `https://repo.packagist.org`) |

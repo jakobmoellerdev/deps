@@ -47,6 +47,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/packagist"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pythonversion"
 	rpmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rpm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubygems"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubyversion"
@@ -401,6 +402,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		helmds.Name:             helmds.New(client, sem, auth, docker),
 		crate.Name:              crate.New(client, limits.Crates, auth, os.Getenv),
 		pypi.Name:               pypi.New(client, sem, os.Getenv),
+		pythonversion.Name:      pythonversion.New(client, sem, os.Getenv),
 		condads.Name:            condads.New(client, sem, os.Getenv),
 		tfregistry.ProviderName: registry.Providers(),
 		tfregistry.ModuleName:   registry.Modules(),

@@ -79,6 +79,14 @@ func TestMatch(t *testing.T) {
 		{NewRubyVersion(), ".ruby-version", true},
 		{NewRubyVersion(), "apps/web/.ruby-version", true},
 		{NewRubyVersion(), "ruby-version", false},
+		{NewPyenv(), ".python-version", true},
+		{NewPyenv(), "services/api/.python-version", true},
+		{NewPyenv(), "python-version", false},
+		{NewPyenv(), ".python-versions", false},
+		{NewRuntimeVersion(), "runtime.txt", true},
+		{NewRuntimeVersion(), "app/runtime.txt", true},
+		{NewRuntimeVersion(), "my-runtime.txt", false},
+		{NewRuntimeVersion(), "runtimeatxt", false},
 		{NewAsdf(), ".tool-versions", true},
 		{NewAsdf(), "svc/.tool-versions", true},
 		{NewAsdf(), "tool-versions", false},
@@ -101,7 +109,10 @@ func TestMatch(t *testing.T) {
 }
 
 func TestNames(t *testing.T) {
-	for m, name := range map[manager.Manager]string{NewNvm(): NameNvm, NewNodenv(): NameNodenv, NewRubyVersion(): NameRubyVersion, NewAsdf(): NameAsdf, NewMise(): NameMise} {
+	for m, name := range map[manager.Manager]string{
+		NewNvm(): NameNvm, NewNodenv(): NameNodenv, NewRubyVersion(): NameRubyVersion, NewPyenv(): NamePyenv,
+		NewRuntimeVersion(): NameRuntimeVersion, NewAsdf(): NameAsdf, NewMise(): NameMise,
+	} {
 		if m.Name() != name {
 			t.Errorf("Name() = %q, want %q", m.Name(), name)
 		}
@@ -193,6 +204,61 @@ func TestRubyFileEdits(t *testing.T) {
 	}
 }
 
+func TestPythonVersionFile(t *testing.T) {
+	for _, c := range []struct {
+		name, in string
+		w        want
+		new, out string // new version for w.ver, patched file
+	}{
+		{"full", "3.13.1\n", want{"python", dsPython, "pep440", "3.13.1", "", 1}, "3.14.10", "3.14.10\n"},
+		{"minor", "3.13\n", want{"python", dsPython, "tag", "3.13", "", 1}, "3.14", "3.14\n"},
+		{"major", "3", want{"python", dsPython, "tag", "3", "", 1}, "4", "4"},
+		{"several versions", "# pyenv local 3.12 3.11\n3.12\n3.11\n", want{"python", dsPython, "tag", "3.12", "", 2}, "3.14", "# pyenv local 3.12 3.11\n3.14\n3.11\n"},
+		{"pre-release", "3.15.0rc1\n", want{"python", dsPython, "pep440", "3.15.0rc1", "", 1}, "3.15.0", "3.15.0\n"},
+		{"free-threaded", "3.13t\n", want{"python", dsPython, "tag", "3.13", "", 1}, "3.14", "3.14t\n"},
+		{"free-threaded full crlf", "3.13.1t\r\n", want{"python", dsPython, "pep440", "3.13.1", "", 1}, "3.14.10", "3.14.10t\r\n"},
+		{"pypy", "pypy3.10-7.3.17\n", want{"python", dsPython, "", "pypy3.10-7.3.17", "non-version value", 1}, "", "pypy3.10-7.3.17\n"},
+		{"miniconda", "miniconda3-latest\n", want{"python", dsPython, "", "miniconda3-latest", "non-version value", 1}, "", "miniconda3-latest\n"},
+		{"system", "system\n", want{"python", dsPython, "", "system", "non-version value", 1}, "", "system\n"},
+		{"dev", "3.14-dev\n", want{"python", dsPython, "", "3.14-dev", "unsupported range", 1}, "", "3.14-dev\n"},
+		{"range", ">=3.12\n", want{"python", dsPython, "", ">=3.12", "unsupported range", 1}, "", ">=3.12\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out := check(t, NewPyenv(), ".python-version", c.in, []want{c.w}, map[string]string{c.w.ver: c.new})
+			if out != c.out {
+				t.Errorf("patched = %q, want %q", out, c.out)
+			}
+		})
+	}
+}
+
+func TestRuntimeTxt(t *testing.T) {
+	for _, c := range []struct {
+		name, in string
+		w        []want
+		new, out string // new version for w[0].ver, patched file
+	}{
+		{"heroku", "python-3.13.1\n", []want{{"python", dsPython, "pep440", "3.13.1", "", 1}}, "3.14.10", "python-3.14.10\n"},
+		{"minor", "\ufeff# Heroku\npython-3.13\r\n", []want{{"python", dsPython, "tag", "3.13", "", 2}}, "3.14", "\ufeff# Heroku\npython-3.14\r\n"},
+		{"pypy", "pypy3.10-7.3.17\n", nil, "", "pypy3.10-7.3.17\n"},
+		{"binder r", "r-4.4-2024-10-01\n", nil, "", "r-4.4-2024-10-01\n"},
+		{"bare version", "3.13.1\n", nil, "", "3.13.1\n"},
+		{"empty", "\n\n", nil, "", "\n\n"},
+		{"prefix only", "python-\n", []want{{"python", dsPython, "", "", "non-version value", 1}}, "", "python-\n"},
+		{"range", "python-3.13.x\n", []want{{"python", dsPython, "", "3.13.x", "unsupported range", 1}}, "", "python-3.13.x\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var news map[string]string
+			if len(c.w) > 0 {
+				news = map[string]string{c.w[0].ver: c.new}
+			}
+			if out := check(t, NewRuntimeVersion(), "runtime.txt", c.in, c.w, news); out != c.out {
+				t.Errorf("patched = %q, want %q", out, c.out)
+			}
+		})
+	}
+}
+
 func TestClassify(t *testing.T) {
 	gh := githubTool("helm/helm")
 	for _, c := range []struct {
@@ -201,6 +267,12 @@ func TestClassify(t *testing.T) {
 		off                       int
 	}{
 		{nodeTool, "20.11.1", "20.11.1", "semver", "", 0},
+		{pythonTool, "3.13.1", "3.13.1", "pep440", "", 0},
+		{pythonTool, "3.13t", "3.13", "tag", "", 0},
+		{pythonTool, "v3.13.1", "", "", "unsupported range", 0},
+		{pythonTool, "graalpy-24.1.0", "", "", "non-version value", 0},
+		{pythonTool, "prefix:3.13", "", "", "unsupported range", 0},
+		{pythonTool, "", "", "", "non-version value", 0},
 		{nodeTool, "v20", "20", "tag", "", 1},
 		{nodeTool, "20.11", "20.11", "tag", "", 0},
 		{rubyTool, "3.4.7", "3.4.7", "ruby", "", 0},
@@ -269,7 +341,7 @@ func TestAsdf(t *testing.T) {
 		{"hashicorp/terraform", dsGitHub, "semver", "v1.13.4", "", 4},
 		{"helm/helm", dsGitHub, "semver", "3.16.0", "", 5},
 		{"kubernetes/kubernetes", dsGitHub, "semver", "v1.34.1", "", 6},
-		{"python", "", "", "3.13.1", "unsupported tool", 7},
+		{"python", dsPython, "pep440", "3.13.1", "", 7},
 		{"kubernetes-sigs/kustomize", dsGitHub, "semver", "5.4.3", "", 8},
 		{"jqlang/jq", dsGitHub, "semver", "1.7.1", "", 9},
 		{"mikefarah/yq", dsGitHub, "", "system", "non-version value", 10},
@@ -282,7 +354,7 @@ func TestAsdf(t *testing.T) {
 	}
 	news := map[string]string{
 		"20.11.1": "20.12.0", "1.27": "1.28", "v1.13.4": "v1.14.0", "3.16.0": "3.17.1",
-		"v1.34.1": "v1.35.0", "20": "22", "2.5.0": "2.6.0",
+		"v1.34.1": "v1.35.0", "20": "22", "2.5.0": "2.6.0", "3.13.1": "3.14.10",
 	}
 	got := check(t, NewAsdf(), ".tool-versions", in, wants, news)
 	want := "# runtime versions\n" +
@@ -291,7 +363,7 @@ func TestAsdf(t *testing.T) {
 		"\tterraform\tv1.14.0\n" +
 		"helm 3.17.1\r\n" +
 		"kubectl v1.35.0 system\n" +
-		"python 3.13.1\n" +
+		"python 3.14.10\n" +
 		"kustomize 5.4.3\n" +
 		"jq 1.7.1\n" +
 		"yq system\n" +
@@ -387,7 +459,7 @@ experimental = true
 		{"@biomejs/biome", dsNpm, "semver", "1.9.4", "", 21},
 		{"aqua:helm/helm", "", "", "3.16.0", "unsupported tool", 22},
 		{"github:gitlab.com/x", "", "", "1.0.0", "unsupported tool", 23},
-		{"python", "", "", "3.13", "unsupported tool", 24},
+		{"python", dsPython, "tag", "3.13", "", 24},
 		{"mikefarah/yq", dsGitHub, "", "latest", "non-version value", 25},
 		{"kubernetes-sigs/kind", dsGitHub, "", "ref:v0.25.0", "git ref", 26},
 		{"go-task/task", dsGitHub, "", "prefix:3", "unsupported range", 27},
@@ -400,7 +472,7 @@ experimental = true
 	}
 	news := map[string]string{
 		"20.11.1": "20.12.0", "1.27": "1.28", "v1.13.4": "v1.14.0", "3.16.0": "3.17.1", "1.34.1": "1.35.0",
-		"22": "24", "2.60.0": "2.61.0", "14.1.1": "14.2.0", "1.9.4": "2.0.0", "9.12.0": "10.0.0", "1.36.0": "1.37.0",
+		"22": "24", "2.60.0": "2.61.0", "14.1.1": "14.2.0", "1.9.4": "2.0.0", "9.12.0": "10.0.0", "1.36.0": "1.37.0", "3.13": "3.14",
 	}
 	got := check(t, NewMise(), "mise.toml", in, wants, news)
 	for _, r := range [][2]string{
@@ -413,6 +485,7 @@ experimental = true
 		{`"github:cli/cli" = "2.60.0"`, `"github:cli/cli" = "2.61.0"`},
 		{`exe=rg]" = "14.1.1"`, `exe=rg]" = "14.2.0"`},
 		{`"npm:@biomejs/biome" = "1.9.4"`, `"npm:@biomejs/biome" = "2.0.0"`},
+		{`python = "3.13"`, `python = "3.14"`},
 		{`pnpm.version = "9.12.0"`, `pnpm.version = "10.0.0"`},
 		{`version = "1.36.0"`, `version = "1.37.0"`},
 	} {
