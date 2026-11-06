@@ -3,6 +3,7 @@ package renovate
 import (
 	"math"
 	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -84,5 +85,26 @@ func TestParseJSON5Depth(t *testing.T) {
 	}
 	if _, err := parseJSON5(src); err == nil || err.Error() != "1:1002: nesting too deep" {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func BenchmarkParseJSON5BlockComments(b *testing.B) {
+	var src []byte
+	src = append(src, '{')
+	for i := range 1000 {
+		if i > 0 {
+			src = append(src, ',')
+		}
+		src = append(src, "/* comment describing the next key */ \"k"...)
+		src = strconv.AppendInt(src, int64(i), 10)
+		src = append(src, "\": \"\\u00e9 value\""...)
+	}
+	src = append(src, '}')
+	b.SetBytes(int64(len(src)))
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := parseJSON5(src); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

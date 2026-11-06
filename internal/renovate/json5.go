@@ -2,6 +2,7 @@
 package renovate
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math"
@@ -97,7 +98,7 @@ func (p *json5Parser) skipSpace() error {
 			}
 		case r == '/' && p.pos+1 < len(p.src) && p.src[p.pos+1] == '*':
 			start := p.pos
-			end := strings.Index(string(p.src[p.pos+2:]), "*/")
+			end := bytes.Index(p.src[p.pos+2:], []byte("*/"))
 			if end < 0 {
 				return p.errAt(start, "unterminated block comment")
 			}
@@ -329,8 +330,9 @@ func (p *json5Parser) hex(n int) (rune, bool) {
 	if p.pos+n > len(p.src) {
 		return 0, false
 	}
-	v, err := strconv.ParseUint(string(p.src[p.pos:p.pos+n]), 16, 32)
-	if err != nil || strings.ContainsAny(string(p.src[p.pos:p.pos+n]), "+-") {
+	s := string(p.src[p.pos : p.pos+n])
+	v, err := strconv.ParseUint(s, 16, 32)
+	if err != nil || strings.ContainsAny(s, "+-") {
 		return 0, false
 	}
 	p.pos += n
