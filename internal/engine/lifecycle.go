@@ -34,7 +34,12 @@ type Warning struct {
 // of the newest version (one lookup, shared with minimumReleaseAge).
 func (r *resolver) checkLifecycle(scheme versioning.Scheme) {
 	if ds, ok := r.base.(datasource.DeprecationSource); ok {
-		if why := ds.Deprecation(r.d, r.upstream(cmp.Or(r.d.Locked, r.d.Version))); why != "" {
+		// The base datasource knows release names, not versions extracted from them.
+		installed := r.upstream(cmp.Or(r.d.Locked, r.d.Version))
+		if e, ok := r.ds.(releaseNamer); ok {
+			installed = e.name(installed)
+		}
+		if why := ds.Deprecation(r.d, installed); why != "" {
 			r.warnings = append(r.warnings, Warning{Dep: r.d, Kind: WarnDeprecated, Reason: why})
 		}
 	}

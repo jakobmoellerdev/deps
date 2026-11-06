@@ -113,3 +113,15 @@ func keys(m map[string]int) []string {
 	slices.Sort(out)
 	return out
 }
+
+// TestLifecycleDeprecationExtractVersion: with extractVersion the datasource is asked about
+// the release name it knows ("jq-1.0.0"), not the extracted version.
+func TestLifecycleDeprecationExtractVersion(t *testing.T) {
+	d := []dep.Dep{{Datasource: "github-tags", Versioning: "semver", Name: "jqlang/jq", Version: "1.0.0", Line: 1}}
+	ds := deprecatedReleases{&timedReleases{versions: []string{"jq-1.0.0", "jq-1.1.0"}},
+		map[string]string{"jq-1.0.0": "version jq-1.0.0 yanked"}}
+	res, _ := resolveStub(t, "rules: [{names: [jqlang/jq], extractVersion: '^jq-(?<version>.+)$'}]\n", "custom", d, ds, nil)
+	if len(res.Warnings) != 1 || res.Warnings[0].Reason != "version jq-1.0.0 yanked" {
+		t.Errorf("warnings = %+v, want the yanked warning", res.Warnings)
+	}
+}
