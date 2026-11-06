@@ -18,6 +18,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -138,7 +139,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*product, error) {
 		start := time.Now()
 		p, err := s.fetch(ctx, u)
 		slog.DebugContext(ctx, "endoflife.date cycles", "url", u, "releases", len(p.rels), "duration", time.Since(start), "err", err)
-		if err != nil && strings.HasSuffix(err.Error(), ": HTTP 404") {
+		if err != nil && errors.Is(err, httpx.ErrNotFound) {
 			return nil, &dep.SkipError{Reason: fmt.Sprintf("unknown endoflife.date product %q", d.Name)}
 		}
 		if err != nil {

@@ -50,6 +50,10 @@ func TestGetStream(t *testing.T) {
 	if want := "GET " + srv.URL + ": boom"; err == nil || err.Error() != want || !errors.Is(err, fail) {
 		t.Errorf("read error = %v, want %q wrapping it", err, want)
 	}
+	err = GetStream(t.Context(), srv.Client(), nil, srv.URL, func(io.Reader) error { return errors.New("mirror: HTTP 404") })
+	if errors.Is(err, httpx.ErrNotFound) {
+		t.Errorf("read error %v is httpx.ErrNotFound", err)
+	}
 
 	noRead := func(io.Reader) error {
 		t.Error("read called")
@@ -58,6 +62,9 @@ func TestGetStream(t *testing.T) {
 	err = GetStream(t.Context(), srv.Client(), nil, srv.URL+"/missing", noRead)
 	if want := "GET " + srv.URL + "/missing: HTTP 404"; err == nil || err.Error() != want {
 		t.Errorf("status error = %v, want %q", err, want)
+	}
+	if se, ok := errors.AsType[*httpx.StatusError](err); !ok || se.Code != http.StatusNotFound || !errors.Is(err, httpx.ErrNotFound) {
+		t.Errorf("status error = %#v, want a 404 *httpx.StatusError matching httpx.ErrNotFound", err)
 	}
 	if err := GetStream(t.Context(), srv.Client(), nil, "http://[::1]:namedport", noRead); err == nil {
 		t.Error("bad URL: want error")

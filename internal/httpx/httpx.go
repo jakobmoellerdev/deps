@@ -2,11 +2,13 @@
 package httpx
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -76,4 +78,19 @@ func Redact(raw string) string {
 // pool. Callers close the body themselves, in their own package, so bodyclose sees it.
 func DrainBody(resp *http.Response) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+}
+
+// ErrNotFound matches (errors.Is) a *StatusError for HTTP 404.
+var ErrNotFound = errors.New("not found")
+
+// StatusError is a GET answered with an unexpected status; it reads "GET <URL>: HTTP <Code>".
+type StatusError struct {
+	URL  string // redacted (Redact)
+	Code int
+}
+
+func (e *StatusError) Error() string { return "GET " + e.URL + ": HTTP " + strconv.Itoa(e.Code) }
+
+func (e *StatusError) Is(target error) bool {
+	return target == ErrNotFound && e.Code == http.StatusNotFound
 }

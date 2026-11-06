@@ -162,3 +162,19 @@ func TestErrors(t *testing.T) {
 		t.Error("Digest: no error")
 	}
 }
+
+// Only a 404 of the API marks an unknown product: another error that merely ends like one
+// (here a proxy's, from the transport) is a lookup failure, not a skip.
+func TestNotFoundIsStatusOnly(t *testing.T) {
+	s := New(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("proxy: HTTP 404")
+	})}, nil, func(string) string { return "" })
+	_, err := s.Releases(context.Background(), dep.Dep{Name: "python"}, "")
+	if _, ok := errors.AsType[*dep.SkipError](err); ok || err == nil || !strings.HasSuffix(err.Error(), "proxy: HTTP 404") {
+		t.Errorf("transport error = %v, want it unchanged, not a skip", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

@@ -14,7 +14,7 @@ import (
 
 // GetStream GETs url with client while holding a slot of sem (nil = unbounded) and passes
 // the body of a 200 response to read, so large indexes are decoded as they arrive. Another
-// status is a "GET <url>: HTTP <code>" error; errors of read get the "GET <url>: " prefix.
+// status is a *httpx.StatusError; errors of read get the "GET <url>: " prefix.
 func GetStream(ctx context.Context, client *http.Client, sem chan struct{}, url string, read func(io.Reader) error) error {
 	release, err := httpx.Acquire(ctx, sem)
 	if err != nil {
@@ -32,7 +32,7 @@ func GetStream(ctx context.Context, client *http.Client, sem chan struct{}, url 
 	}
 	defer closeBody(resp)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: HTTP %d", req.URL.Redacted(), resp.StatusCode)
+		return &httpx.StatusError{URL: httpx.Redact(url), Code: resp.StatusCode}
 	}
 	if err := read(resp.Body); err != nil {
 		return fmt.Errorf("GET %s: %w", req.URL.Redacted(), err)
