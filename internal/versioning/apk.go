@@ -16,11 +16,20 @@ import (
 // `6.5_p20250503-r0`, `1.1.1w-r1`. Suffixes are alpha, beta, pre and rc (below the plain
 // version) and cvs, svn, git, hg and p (above it).
 type apkVersion struct {
-	nums     []uint64
+	nums     []apkPart
 	letter   byte // 0 = none
 	suffixes []apkSuffix
 	rev      uint64
 	hasRev   bool
+}
+
+// apkPart is one dotted number. apk-tools does not read a component after the first that
+// starts with `0` as a plain integer: zeros counts its leading zeros, and such a component
+// sorts below every component without them, below one with fewer leading zeros, then by
+// its value (`1.005` < `1.05` < `1.5`, `1.02` < `1.1`).
+type apkPart struct {
+	n     uint64
+	zeros int
 }
 
 // apkSuffix is one `_<name>[N]` suffix: rank orders the names, negative for pre-release ones.
@@ -58,7 +67,11 @@ func parseApk(s string) (apkVersion, bool) {
 		if !ok {
 			return apkVersion{}, false
 		}
-		v.nums = append(v.nums, n)
+		part := apkPart{n: n}
+		if len(v.nums) > 0 {
+			part.zeros = len(p) - len(strings.TrimLeft(p, "0"))
+		}
+		v.nums = append(v.nums, part)
 	}
 	if sufs != "" || strings.HasSuffix(rest, "_") {
 		for suf := range strings.SplitSeq(sufs, "_") {
@@ -104,11 +117,18 @@ func apkHex(s string) bool {
 	return true
 }
 
+// compareApkPart orders two dotted numbers as apk-tools' version.c does: it reads the
+// leading zeros of a component after the first as a token worth minus their count less
+// one, which sorts below any plain number, followed by the component's value.
+func compareApkPart(x, y apkPart) int {
+	return cmp.Or(cmp.Compare(y.zeros, x.zeros), cmp.Compare(x.n, y.n))
+}
+
 // compareApk orders by the numbers (a shorter list first when it is a prefix), the letter,
 // the suffixes (a missing suffix ranks between pre-release and post-release ones), then the
 // revision; the commit hash does not count.
 func compareApk(a, b apkVersion) int {
-	if c := slices.Compare(a.nums, b.nums); c != 0 {
+	if c := slices.CompareFunc(a.nums, b.nums, compareApkPart); c != 0 {
 		return c
 	}
 	if c := cmp.Compare(a.letter, b.letter); c != 0 {
@@ -149,7 +169,7 @@ func apkCompat(cur, next apkVersion) string {
 // num is the i-th number of v, 0 when absent.
 func (v apkVersion) num(i int) uint64 {
 	if i < len(v.nums) {
-		return v.nums[i]
+		return v.nums[i].n
 	}
 	return 0
 }

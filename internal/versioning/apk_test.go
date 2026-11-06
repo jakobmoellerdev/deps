@@ -35,6 +35,11 @@ func TestCompareApk(t *testing.T) {
 		{"6.5_p1", "6.5.1", -1}, {"1.1.1v-r0", "1.1.1w-r0", -1}, {"1.1.1-r9", "1.1.1a-r0", -1},
 		{"1.0_git1", "1.0_p1", -1}, {"1.0~abc-r1", "1.0~def-r1", 0}, {"1.0", "1.0-r0", 0},
 		{"3.2.1-r0", "3.2.1-r0", 0},
+		// A component after the first that starts with 0 sorts below plain numbers, then by its
+		// leading zeros (more first), then by value; checked against apk-tools 2.14.4 `apk version -t`.
+		{"4.5.14", "4.09-r1", 1}, {"1.02", "1.1", -1}, {"1.05", "1.5", -1}, {"1.005", "1.05", -1},
+		{"1.00", "1.0", -1}, {"1.05", "1.0.5", 1}, {"1.05a", "1.5", -1}, {"1.010", "1.01", 1},
+		{"1.02", "1.03-r1", -1}, {"1.2.12.04", "1.2.12.05", -1}, {"1.07.5", "1.07", 1}, {"1.06-r6", "006", -1},
 	} {
 		if got := s.Compare(tt.a, tt.b); got != tt.want {
 			t.Errorf("Compare(%s, %s) = %d, want %d", tt.a, tt.b, got, tt.want)
@@ -77,7 +82,7 @@ func TestApkKindAndSemver(t *testing.T) {
 	if s.Semver("bad") != nil {
 		t.Error("Semver(bad) != nil")
 	}
-	if got := (apkVersion{nums: []uint64{3}}).major(); got != "3" {
+	if got := (apkVersion{nums: []apkPart{{n: 3}}}).major(); got != "3" {
 		t.Errorf("major = %s", got)
 	}
 }
