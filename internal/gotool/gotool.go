@@ -4,6 +4,7 @@ package gotool
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -525,6 +526,21 @@ func processModule(ctx context.Context, dir, prefix string, mod, sum []byte, ove
 	return vendorModule(ctx, tmp, dir, arg, prefix, out)
 }
 
+// compareModuleDirs orders workspace module dirs so that a source file belongs to its
+// innermost patched module: "." last, then longest first, then lexically.
+func compareModuleDirs(a, b string) int {
+	if (a == ".") != (b == ".") {
+		if a == "." {
+			return 1
+		}
+		return -1
+	}
+	if c := cmp.Compare(len(b), len(a)); c != 0 {
+		return c
+	}
+	return strings.Compare(a, b)
+}
+
 // processWorkspace is Process in the vendoring workspace dir: manifests are the patched
 // go.mod files of its modules and the .go files of those, by slash path relative to dir;
 // files holds the modules' go.sum files. Each patched module is tidied (and vendored when it
@@ -540,8 +556,7 @@ func processWorkspace(ctx context.Context, dir string, manifests, files map[stri
 	if len(mods) == 0 {
 		return nil, errors.New("no go.mod of the workspace was patched")
 	}
-	// Longest first, so that a source file belongs to its innermost patched module.
-	slices.SortFunc(mods, func(a, b string) int { return len(b) - len(a) })
+	slices.SortFunc(mods, compareModuleDirs)
 	overlays := make(map[string]map[string][]byte, len(mods))
 	for rel, b := range manifests {
 		if path.Base(rel) == "go.mod" {
