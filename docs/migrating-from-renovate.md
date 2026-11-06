@@ -47,7 +47,8 @@ Each of these is reported when it occurs; the rest of the config still applies.
 | `extends` from npm packages, URLs, relative files | skipped (warning) |
 | `replacements:<name>` presets deps' built-in list lacks (`spectre-cli-to-spectre-console-cli`, nuget; `material-ui-to-mui`, `messageFormat-to-scoped`, defined in Renovate's code), `replacementNameTemplate` other than `{{{replace '<prefix>' '<new prefix>' packageName}}}`, `replacementVersionTemplate` | skipped / the field is dropped (warning) |
 | built-in `workarounds:*`, `mergeConfidence:*`, `helpers:*` (except `pinGitHubActionDigests`), `security:openssf-scorecard` | skipped (info) |
-| `matchCurrentValue` globs (`1.*`), `matchCurrentValue` together with `matchCurrentVersion`, `matchJsonata`, `matchSourceUrls`, `matchRepositories`, `matchBaseBranches`, other unknown `match*`/`exclude*` keys | the rule is dropped |
+| `matchCurrentValue` globs (`1.*`), `matchCurrentValue` together with `matchCurrentVersion`, `matchJsonata`, `matchSourceUrls`, `matchRepositories`, `matchBaseBranches` with only globs, other unknown `match*`/`exclude*` keys | the rule is dropped |
+| glob entries of `matchBaseBranches` and `baseBranchPatterns` | the entry is dropped (warning) |
 | `matchPackageNames` together with `matchDepNames` in one rule | the rule is dropped (deps has one `names` list) |
 | managers deps lacks (`pyenv`, `cocoapods`, `bazel`, …), unknown categories and dep types | dropped from the rule; a rule left without any is dropped |
 | `prCreation: approval` | dropped (warning); `not-pending` is translated with a warning, as deps has no `prNotPendingHours` fallback |

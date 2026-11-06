@@ -430,6 +430,19 @@ func (t *translator) translate(cfg map[string]any) omap {
 	}
 	emit("branchPrefix", prefix)
 	t.n.warn("branchPrefix", "deps run closes open PRs under %s that it does not manage; disable Renovate before the first deps run", prefix)
+	for _, k := range []string{"baseBranchPatterns", "baseBranches"} {
+		if v, ok := get(k); ok {
+			l, ok := strs(v)
+			if !ok {
+				t.n.warn(k, "must be a list of strings; ignored")
+				continue
+			}
+			if l = t.baseBranches(k, l); len(l) > 0 {
+				emit("baseBranches", l)
+			}
+			break
+		}
+	}
 	if v, ok := get("gitAuthor"); ok {
 		emit("gitAuthor", v)
 	}

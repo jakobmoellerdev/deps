@@ -1050,6 +1050,38 @@ func TestLoadDashboardApproval(t *testing.T) {
 	}
 }
 
+// baseBranchPatterns becomes baseBranches and matchBaseBranches rules[].baseBranches; globs,
+// which deps does not support, are dropped with a note.
+func TestLoadBaseBranches(t *testing.T) {
+	res, err := load(t, `{baseBranchPatterns: ['main', '/^release\\//', 'dev-*'], packageRules: [
+		{matchBaseBranches: ['main'], automerge: true},
+		{matchBaseBranches: ['rel-*'], enabled: false}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y := string(res.YAML)
+	for _, want := range []string{
+		"\nbaseBranches: [main, /^release\\//]\n",
+		"\n  - # packageRules[0]\n    baseBranches: [main]\n    automerge: true\n",
+	} {
+		if !strings.Contains(y, want) {
+			t.Errorf("YAML lacks %q:\n%s", want, y)
+		}
+	}
+	if _, body, _ := strings.Cut(y, "\nbranchPrefix:"); strings.Contains(body, "rel-*") || strings.Contains(body, "dev-*") {
+		t.Errorf("glob rule kept:\n%s", y)
+	}
+	notes := noteLines(res)
+	for _, want := range []string{
+		`warn baseBranchPatterns: glob "dev-*" has no deps equivalent (names and /regex/ only); dropped`,
+		"warn packageRules[1]: matches no base branch deps supports; rule dropped",
+	} {
+		if !slices.Contains(notes, want) {
+			t.Errorf("notes %q lack %q", notes, want)
+		}
+	}
+}
+
 // draftPR, prCreation and abandonmentThreshold keep their meaning; prCreation approval and a
 // null abandonmentThreshold (Renovate's default) have no deps setting.
 func TestLoadPRCreation(t *testing.T) {

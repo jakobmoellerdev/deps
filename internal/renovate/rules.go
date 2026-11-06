@@ -190,7 +190,7 @@ var listMatchers = func() map[string]bool {
 	for k := range strings.FieldsSeq(`matchPackageNames matchDepNames matchPackagePatterns matchDepPatterns
 		matchPackagePrefixes matchDepPrefixes excludePackageNames excludePackagePatterns excludePackagePrefixes
 		excludeDepNames excludeDepPatterns excludeDepPrefixes matchFileNames matchPaths matchDepTypes
-		matchDatasources matchUpdateTypes matchManagers matchCategories`) {
+		matchDatasources matchUpdateTypes matchManagers matchCategories matchBaseBranches`) {
 		m[k] = true
 	}
 	return m
@@ -202,13 +202,28 @@ func isBlock(k string) bool {
 	return manager || slices.ContainsFunc(updateTypeBlocks, func(b struct{ key, typ string }) bool { return b.key == k })
 }
 
+// baseBranches keeps the base branch entries deps supports (names, $default and
+// /regex/); Renovate's globs are dropped with a note.
+func (t *translator) baseBranches(path string, l []string) []string {
+	var out []string
+	for _, b := range l {
+		name := strings.TrimPrefix(b, "!")
+		if !(len(name) > 1 && name[0] == '/' && strings.LastIndexByte(name, '/') > 0) && strings.ContainsAny(name, "*?[]{}") {
+			t.n.warn(path, "glob %q has no deps equivalent (names and /regex/ only); dropped", b)
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
 // rule translates one Renovate rule (a packageRules element or a block) into rules.
 func (t *translator) rule(origin string, r map[string]any) {
 	// A manager or update-type block only built-in presets set (nuget of
 	// :ignoreModulesAndTests) is reported like their packageRules.
 	t.n.builtin = builtinOrigin(origin) || (isBlock(origin) && t.builtinOnly(origin))
 	defer func() { t.n.builtin = false }()
-	var pkg, dep, paths, depTypes, datasources, updateTypes, managers, cats []string
+	var pkg, dep, paths, depTypes, datasources, updateTypes, managers, cats, bases []string
 	var current omap // currentVersion, currentAge
 	hasManagers, hasCats := false, false
 	keys := slices.Sorted(mapKeys(r))
@@ -332,6 +347,11 @@ func (t *translator) rule(origin string, r map[string]any) {
 			hasManagers, managers = true, l
 		case "matchCategories":
 			hasCats, cats = true, l
+		case "matchBaseBranches":
+			if bases = t.baseBranches(origin+".matchBaseBranches", l); len(bases) == 0 {
+				t.n.warn(origin, "matches no base branch deps supports; rule dropped")
+				return
+			}
 		case "stabilityDays":
 		default:
 			if strings.HasPrefix(k, "match") || strings.HasPrefix(k, "exclude") {
@@ -396,7 +416,7 @@ func (t *translator) rule(origin string, r map[string]any) {
 		for _, m := range []struct {
 			k string
 			l []string
-		}{{"names", names}, {"depTypes", depTypes}, {"paths", paths}, {"datasources", datasources}} {
+		}{{"names", names}, {"depTypes", depTypes}, {"paths", paths}, {"datasources", datasources}, {"baseBranches", bases}} {
 			if len(m.l) > 0 {
 				b.set(m.k, m.l)
 			}
