@@ -288,10 +288,12 @@ func (c *Client) releaseTime(ctx context.Context, r Repo, tag string) (time.Time
 	return *rel.PublishedAt, nil
 }
 
-// assetEntry is one deduped GraphQL asset digest lookup.
+// assetEntry is one deduped GraphQL asset lookup: a single asset's digest, or the
+// release's asset list for AssetByDigest.
 type assetEntry struct {
 	once   sync.Once
 	digest string
+	list   []Asset
 	err    error
 }
 
@@ -360,46 +362,77 @@ const assetsQuery = `query($owner:String!,$name:String!,$tag:String!){repository
 
 // AssetByDigest returns the name of the asset of the release of tag whose API digest is
 // digest ("sha256:<hex>", compared case-insensitively), or "" when none has it (first 100
-// assets over GraphQL). Renovate's github-release-attachments digests name no asset; this
-// finds it.
+// assets over GraphQL, fetched once per (repository, tag)). Renovate's
+// github-release-attachments digests name no asset; this finds it.
 func (c *Client) AssetByDigest(ctx context.Context, r Repo, tag, digest string) (string, error) {
+	var assets []Asset
 	if !c.GraphQL(r) {
-		var name string
 		err := c.Releases(ctx, r, func(l *List) bool { _, ok := l.Find(tag); return ok }, func(l *List) {
 			rel, _ := l.Find(tag)
-			for _, a := range rel.assets {
-				if strings.EqualFold(a.Digest, digest) {
-					name = a.Name
-					return
-				}
-			}
+			assets = rel.assets
 		})
-		return name, err
+		if err != nil {
+			return "", err
+		}
+	} else {
+		var err error
+		if assets, err = c.releaseAssets(ctx, r, tag); err != nil {
+			return "", err
+		}
 	}
-	var data struct {
-		Repository *struct {
-			Release *struct {
-				ReleaseAssets struct {
-					Nodes []struct {
-						Name   string  `json:"name"`
-						Digest *string `json:"digest"`
-					} `json:"nodes"`
-				} `json:"releaseAssets"`
-			} `json:"release"`
-		} `json:"repository"`
-	}
-	if err := graphql(ctx, c, r, assetsQuery, map[string]any{"owner": r.Owner, "name": r.Name, "tag": tag}, &data); err != nil {
-		return "", fmt.Errorf("release %s of %s: assets: %w", tag, r.Path(), err)
-	}
-	if data.Repository == nil || data.Repository.Release == nil {
-		return "", nil
-	}
-	for _, a := range data.Repository.Release.ReleaseAssets.Nodes {
-		if a.Digest != nil && strings.EqualFold(*a.Digest, digest) {
+	for _, a := range assets {
+		if a.Digest != "" && strings.EqualFold(a.Digest, digest) {
 			return a.Name, nil
 		}
 	}
 	return "", nil
+}
+
+// releaseAssets fetches the first 100 assets of the release of tag over GraphQL once per
+// (repository, tag). A failure caused by ctx ending is not cached.
+func (c *Client) releaseAssets(ctx context.Context, r Repo, tag string) ([]Asset, error) {
+	key := strings.ToLower(c.rest(r)+"/repos/"+r.Path()) + "@" + tag + "\x00assets"
+	c.mu.Lock()
+	e := c.assets[key]
+	if e == nil {
+		e = &assetEntry{}
+		c.assets[key] = e
+	}
+	c.mu.Unlock()
+	e.once.Do(func() {
+		var data struct {
+			Repository *struct {
+				Release *struct {
+					ReleaseAssets struct {
+						Nodes []struct {
+							Name   string  `json:"name"`
+							Digest *string `json:"digest"`
+						} `json:"nodes"`
+					} `json:"releaseAssets"`
+				} `json:"release"`
+			} `json:"repository"`
+		}
+		if err := graphql(ctx, c, r, assetsQuery, map[string]any{"owner": r.Owner, "name": r.Name, "tag": tag}, &data); err != nil {
+			e.err = fmt.Errorf("release %s of %s: assets: %w", tag, r.Path(), err)
+			if ctx.Err() != nil {
+				c.mu.Lock()
+				if c.assets[key] == e {
+					delete(c.assets, key)
+				}
+				c.mu.Unlock()
+			}
+			return
+		}
+		if data.Repository == nil || data.Repository.Release == nil {
+			return
+		}
+		for _, a := range data.Repository.Release.ReleaseAssets.Nodes {
+			if a.Digest != nil {
+				e.list = append(e.list, Asset{Name: a.Name, Digest: *a.Digest})
+			}
+		}
+	})
+	return e.list, e.err
 }
 
 // Note is a release with its notes, for pull request bodies.

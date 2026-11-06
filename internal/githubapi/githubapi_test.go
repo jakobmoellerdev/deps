@@ -340,10 +340,16 @@ func TestReleaseTimeAndAssetsGraphQL(t *testing.T) {
 	if q.Variables["tag"] != "v1" || q.Variables["asset"] != "a.tgz" || !strings.Contains(q.Query, "releaseAssets(first:1,name:$asset){nodes{name digest}}") {
 		t.Errorf("asset query = %+v", q)
 	}
-	for digest, want := range map[string]string{"sha256:FF": "c.txt", "sha256:00": ""} {
-		if got, err := c.AssetByDigest(ctx, oR, "v1", digest); err != nil || got != want {
-			t.Errorf("AssetByDigest(%s) = %q, %v", digest, got, err)
+	n = len(s.reqs)
+	for range 2 {
+		for digest, want := range map[string]string{"sha256:FF": "c.txt", "sha256:00": ""} {
+			if got, err := c.AssetByDigest(ctx, oR, "v1", digest); err != nil || got != want {
+				t.Errorf("AssetByDigest(%s) = %q, %v", digest, got, err)
+			}
 		}
+	}
+	if got := len(s.reqs) - n; got != 1 {
+		t.Errorf("asset list requests = %d, want 1 (memoized per release)", got)
 	}
 }
 
