@@ -1803,7 +1803,7 @@ RE2 regexp the selected values must match; its (?P\<version>) group, else the wh
 
 ## `lockFileMaintenance`
 
-Lock file maintenance: one PR (branch \<branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, package-lock.json, pnpm-lock.yaml, yarn.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, MODULE.bazel.lock, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests.
+Lock file maintenance: one PR (branch \<branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, npm-shrinkwrap.json, package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Julia manifests, mix.lock, Gleam manifest.toml, pubspec.lock, MODULE.bazel.lock, flake.lock, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests.
 
 - **Type:** object
 
@@ -1820,6 +1820,8 @@ Renovate's `lockFileMaintenance`. With `enabled: true`, `run` keeps one PR on th
   - julia: every manifest of a scanned `Project.toml` (a workspace's once, through its root): `Pkg.update()`.
   - mix: every mix.lock of a scanned `mix.exs` (an umbrella's once): `mix deps.update --all`.
   - gleam: every `manifest.toml` next to a scanned `gleam.toml`: `gleam deps update`.
+  - pub: every `pubspec.lock` of a scanned package or workspace root: `dart pub upgrade`.
+  - nix: every `flake.lock` next to a scanned `flake.nix`: `nix flake update`, as Renovate does.
   - bazel-module: every `MODULE.bazel.lock` next to a scanned `MODULE.bazel`: deleted and regenerated with `bazel mod deps --lockfile_mode=update`, as Renovate does.
   - pip_requirements: every pip-compile or `uv pip compile` output whose header command can be re-run (its inputs exist): the command runs again with `--upgrade`. The compiled file is its own lockfile; the inputs are unchanged.
   - gomod: Go has no lockfile, so the `// indirect` requirements of every `go.mod` with a `go.sum` count as its locked versions: `go get <module>@upgrade` for each (except replaced modules), then `go mod tidy`. The `go`/`toolchain` directives and the direct requirements stay; a module whose upgrade would move them keeps its version.

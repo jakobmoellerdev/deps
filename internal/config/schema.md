@@ -1091,6 +1091,8 @@ Renovate's `lockFileMaintenance`. With `enabled: true`, `run` keeps one PR on th
   - julia: every manifest of a scanned `Project.toml` (a workspace's once, through its root): `Pkg.update()`.
   - mix: every mix.lock of a scanned `mix.exs` (an umbrella's once): `mix deps.update --all`.
   - gleam: every `manifest.toml` next to a scanned `gleam.toml`: `gleam deps update`.
+  - pub: every `pubspec.lock` of a scanned package or workspace root: `dart pub upgrade`.
+  - nix: every `flake.lock` next to a scanned `flake.nix`: `nix flake update`, as Renovate does.
   - bazel-module: every `MODULE.bazel.lock` next to a scanned `MODULE.bazel`: deleted and regenerated with `bazel mod deps --lockfile_mode=update`, as Renovate does.
   - pip_requirements: every pip-compile or `uv pip compile` output whose header command can be re-run (its inputs exist): the command runs again with `--upgrade`. The compiled file is its own lockfile; the inputs are unchanged.
   - gomod: Go has no lockfile, so the `// indirect` requirements of every `go.mod` with a `go.sum` count as its locked versions: `go get <module>@upgrade` for each (except replaced modules), then `go mod tidy`. The `go`/`toolchain` directives and the direct requirements stay; a module whose upgrade would move them keeps its version.
