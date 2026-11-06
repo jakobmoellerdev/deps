@@ -21,7 +21,7 @@ import (
 var hexScheme, _ = versioning.Get(Versioning)
 
 // mirror builds a temporary tree for running a tool on dir: the directories below dir are
-// recreated (those named in skip left out, so the tool fetches and builds into fresh ones),
+// recreated (top-level ones named in skip left out, so the tool fetches and builds into fresh ones),
 // copies (slash paths relative to dir) written as copies and every other file symlinked, below
 // the mirrored repository ancestors (toolrun.MirrorAncestors), so path dependencies outside dir
 // resolve as in the checkout. The caller removes tmp; base is the mirror of dir.
@@ -49,7 +49,7 @@ func mirror(dir, pattern string, copies map[string][]byte, skip []string) (tmp, 
 		switch {
 		case rel == ".":
 			return nil
-		case d.IsDir() && slices.Contains(skip, d.Name()):
+		case d.IsDir() && rel == d.Name() && slices.Contains(skip, rel):
 			return filepath.SkipDir
 		case d.IsDir():
 			return os.MkdirAll(target, 0o755)

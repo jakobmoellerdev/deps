@@ -265,3 +265,28 @@ func TestMixProcessOutcomes(t *testing.T) {
 		t.Error("mirror of a missing dir")
 	}
 }
+
+func TestMirrorSkipsOnlyAtRoot(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{"mix.exs", "deps/a/mix.exs", "lib/x/deps/file", "src/build/file"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, f)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, f), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tmp, base, err := mirror(dir, "x-*", nil, []string{"deps", "build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	for _, f := range []string{"mix.exs", "lib/x/deps/file", "src/build/file"} {
+		if _, err := os.Stat(filepath.Join(base, f)); err != nil {
+			t.Errorf("%s missing from mirror: %v", f, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(base, "deps")); !os.IsNotExist(err) {
+		t.Errorf("root deps mirrored: %v", err)
+	}
+}
