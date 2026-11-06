@@ -140,6 +140,31 @@ if x in "o>=1": pass
 	})
 }
 
+// TestExtractKeywordScope checks that a keyword's dep type ends with its statement or argument:
+// a module-level `tests_require = [...]` does not type the statements after it, nor does a
+// keyword whose value ends without a comma before another `name=`.
+func TestExtractKeywordScope(t *testing.T) {
+	src := `tests_require = ["pytest>=6"]
+EXTRA = ["sphinx>=3"]
+install_requires = \
+    ["requests>=2"]; OTHER = ["six>=1"]
+setup(name="x", docs=["wheel>=0.3"], tests_require=[
+    "mock>=4",
+], extras_require={"a": ["b>=1"]} if X else {}
+, py=["c>=1"])
+`
+	check(t, extract(t, src), []want{
+		{1, DepTypeTest, "pytest", ">=6", ""},
+		{2, DepTypeOther, "sphinx", ">=3", ""},
+		{4, DepTypeInstall, "requests", ">=2", ""},
+		{4, DepTypeOther, "six", ">=1", ""},
+		{5, DepTypeOther, "wheel", ">=0.3", ""},
+		{6, DepTypeTest, "mock", ">=4", ""},
+		{7, DepTypeExtra, "b", ">=1", ""},
+		{8, DepTypeOther, "c", ">=1", ""},
+	})
+}
+
 func TestManager(t *testing.T) {
 	m := New()
 	if !m.Match("pkg/setup.py") || m.Match("mysetup.py") || m.Name() != Name {

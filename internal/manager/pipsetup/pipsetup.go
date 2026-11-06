@@ -79,6 +79,9 @@ func (pipSetupManager) Extract(file string, src []byte, _ manager.Env) ([]dep.De
 		c := lx.src[lx.i]
 		switch {
 		case c == '\n':
+			if depth == 0 && kwDepth == 0 && !strings.HasSuffix(strings.TrimSuffix(lx.src[:lx.i], "\r"), `\`) {
+				kwType, kwDepth = "", -1 // a module-level `tests_require = [...]` statement ends
+			}
 			lx.line++
 			lx.i++
 		case c == '#':
@@ -97,10 +100,12 @@ func (pipSetupManager) Extract(file string, src []byte, _ manager.Env) ([]dep.De
 		case c == '=' && !strings.HasPrefix(lx.src[lx.i:], "=="):
 			if t, ok := keywords[ident]; ok {
 				kwType, kwDepth = t, depth
+			} else if ident != "" && depth == kwDepth {
+				kwType, kwDepth = "", -1 // another `name=` ends the keyword's value
 			}
 			lx.i++
 			ident = ""
-		case c == ',' && depth == kwDepth:
+		case (c == ',' || c == ';') && depth == kwDepth:
 			kwType, kwDepth = "", -1
 			lx.i++
 		case c == '"' || c == '\'':
