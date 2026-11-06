@@ -167,7 +167,7 @@ func (s *Source) fetch(ctx context.Context, u string) (*folder, error) {
 	user, pass, ok := s.auth.Static(parsed.Hostname())
 	resp, err := s.get(ctx, u, user, pass, ok)
 	if err == nil && resp.StatusCode == http.StatusUnauthorized {
-		if user, pass, ok = s.auth.Helper(ctx, parsed.Hostname()); ok {
+		if user, pass, ok = s.auth.Helper(ctx, parsed.Host); ok {
 			resp.Body.Close()
 			resp, err = s.get(ctx, u, user, pass, ok)
 		}

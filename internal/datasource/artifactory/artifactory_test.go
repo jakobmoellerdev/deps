@@ -164,9 +164,14 @@ func TestAuth(t *testing.T) {
 		_, _ = w.Write([]byte(`<a href="1.0.0/">1.0.0/</a>  21-Jul-2021 20:08    -`))
 	}))
 	defer srv.Close()
-	host, _, _ := strings.Cut(strings.TrimPrefix(srv.URL, "http://"), ":")
+	hostPort := strings.TrimPrefix(srv.URL, "http://")
+	host, _, _ := strings.Cut(hostPort, ":")
+	var helperHost string
 	auth := httpx.NewAuth(platform.Info{Host: host}, "tok", func(string) string { return "" },
-		httpx.WithHelper(func(_ context.Context, h string) (string, string, bool) { return "u", "helper", h == host }))
+		httpx.WithHelper(func(_ context.Context, h string) (string, string, bool) {
+			helperHost = h
+			return "u", "helper", h == hostPort
+		}))
 	s := New(srv.Client(), nil, auth)
 	rels, err := s.Releases(t.Context(), dep.Dep{Name: srv.URL + "/p"}, "")
 	if err != nil || len(rels) != 1 {
@@ -174,6 +179,10 @@ func TestAuth(t *testing.T) {
 	}
 	if want := []string{"x-access-token:tok", "u:helper"}; !slices.Equal(gotAuth, want) {
 		t.Fatalf("auth = %v, want %v", gotAuth, want)
+	}
+	// The git credential protocol keys hosts with their port.
+	if helperHost != hostPort {
+		t.Fatalf("helper host = %q, want %q", helperHost, hostPort)
 	}
 	// Without helper credentials a 401 is an error.
 	gotAuth = nil
