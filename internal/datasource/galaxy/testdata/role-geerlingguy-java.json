@@ -1,0 +1,92 @@
+{
+ "count": 1,
+ "next": null,
+ "previous": null,
+ "results": [
+  {
+   "id": 10948,
+   "upstream_id": null,
+   "created": "2023-05-08T20:49:50.899135Z",
+   "modified": "2026-03-20T19:05:14.561232Z",
+   "imported": "2026-03-20T19:05:13.453089",
+   "github_user": "geerlingguy",
+   "username": "geerlingguy",
+   "github_repo": "ansible-role-java",
+   "github_branch": "master",
+   "commit": "8477f288afcce7d4b230ebdf250bf337d0c4ffcd",
+   "commit_message": "Merge pull request #156 from Diegiwg/add-ubuntu-26-04-support\n\nAdd Ubuntu 26.04 (Resolute) support",
+   "name": "java",
+   "description": "Java for Linux",
+   "summary_fields": {
+    "versions": [
+     {
+      "id": "566fc4dc-6d07-4f60-ad93-558ff7aaeeae",
+      "name": "2.6.1",
+      "release_date": "2026-03-20T14:04:12-05:00"
+     },
+     {
+      "id": "795c779b-66d8-42d8-bb08-37343ff47e57",
+      "name": "2.6.0",
+      "release_date": "2025-11-27T22:12:11-06:00"
+     },
+     {
+      "id": "efe795e8-cefa-4c7c-9998-20ca0637b2ec",
+      "name": "2.5.2",
+      "release_date": "2025-09-09T11:15:33-04:00"
+     },
+     {
+      "id": "a6471595-28fc-48dd-a8cc-77ddd1a0ee02",
+      "name": "2.5.1",
+      "release_date": "2025-08-29T09:22:10-04:00"
+     },
+     {
+      "id": "c8be6ccd-5d11-41c8-ad0e-5c6e286425d0",
+      "name": "2.5.0",
+      "release_date": "2024-04-25T13:01:22-05:00"
+     },
+     {
+      "id": "08441af7-3492-4d66-9cf5-44600f5f68d3",
+      "name": "2.4.0",
+      "release_date": "2024-04-24T12:49:57-05:00"
+     },
+     {
+      "id": "e954f2f1-1fa2-4d2a-a427-82e48fd1d71b",
+      "name": "2.3.3",
+      "release_date": "2024-02-05T10:16:15-06:00"
+     },
+     {
+      "id": "384e5d70-92a8-44da-bd71-15f521483f6b",
+      "name": "2.3.2",
+      "release_date": "2023-10-27T19:23:15-05:00"
+     },
+     {
+      "id": "e4464118-7dc6-4c87-ac94-4b8e044ee5e1",
+      "name": "2.3.1",
+      "release_date": "2023-07-12T12:54:32-04:00"
+     },
+     {
+      "id": "4827921a-2661-4415-94bf-ff2cf74074cc",
+      "name": "2.3.0",
+      "release_date": "2023-02-14T11:14:37-05:00"
+     },
+     {
+      "id": "8628eda7-f208-4f77-9cb0-ef457c17c2aa",
+      "name": "2.2.0",
+      "release_date": "2022-08-30T10:55:17-04:00"
+     }
+    ],
+    "namespace": {
+     "id": 2492,
+     "name": "geerlingguy",
+     "avatar_url": "https://galaxy.ansible.com/api/pulp/api/v3/content/ansible/namespaces/018d1a01-d1d5-7a2c-9d61-04c690efd88d/avatar/"
+    },
+    "provider_namespace": {
+     "id": 103,
+     "name": "geerlingguy",
+     "pulp_href": "/api/pulp/api/v3/pulp_ansible/namespaces/103/"
+    }
+   },
+   "download_count": 23406427
+  }
+ ]
+}

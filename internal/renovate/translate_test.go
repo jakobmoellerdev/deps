@@ -274,6 +274,11 @@ func TestLoadRules(t *testing.T) {
 			notes: []string{"warn packageRules[2].prCreation: approval is not supported (deps' dashboardApproval also holds back the branch); dropped"},
 		},
 		{
+			name:  "ansible category; galaxy datasources",
+			src:   `{packageRules: [{matchCategories: ['ansible'], matchDatasources: ['galaxy', 'galaxy-collection'], groupName: 'ansible'}]}`,
+			rules: "  - # packageRules[0]\n    managers: [ansible, ansible-galaxy]\n    datasources: [galaxy, galaxy-collection]\n    group: ansible" + defaultExclusions,
+		},
+		{
 			name: "postUpgradeTasks top level and per rule, Ruby and Swift managers, rangeStrategy widen",
 			src: `{postUpgradeTasks: {commands: ['make generate'], fileFilters: ['**/*.go'], executionMode: 'branch'},
 				packageRules: [{matchCategories: ['ruby'], rangeStrategy: 'widen', postUpgradeTasks: {commands: ['bundle exec rake']}},

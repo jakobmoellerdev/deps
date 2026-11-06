@@ -132,7 +132,7 @@ var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pr
 // github-actions, docker, pre-commit and git-submodules deps whatever their versioning (a rule
 // may override it), except setup-action version inputs and runner labels, which are plain values; vcpkg registry
 // baselines (git-refs); images of
-// gitlabci, terraform (docker and kubernetes resources) and the CI pipeline managers, which are
+// gitlabci, terraform (docker and kubernetes resources), ansible tasks and the CI pipeline managers, which are
 // edited like docker refs, and the devcontainer image. Custom, kustomize and bazel-module deps
 // and devcontainer features (never pinned, as Renovate's pinDigests: false) can only refresh a
 // digest they already carry (regex `digest` group, an annotated `@sha256:`, a kustomize
@@ -142,7 +142,7 @@ func digestCapable(d dep.Dep) bool {
 	switch d.Manager {
 	case "custom", "kustomize", bazel.Name:
 		return d.Digest != ""
-	case "gitlabci", "terraform", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines":
+	case "gitlabci", "terraform", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "ansible":
 		return d.Datasource == "docker"
 	case devcontainer.Name:
 		return d.DepType == devcontainer.DepTypeImage || d.DepType == devcontainer.DepTypeFeature && d.Digest != ""

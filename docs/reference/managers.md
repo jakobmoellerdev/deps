@@ -62,6 +62,8 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`bazel-module`](#bazel-module)
 - [`bazelisk`](#bazelisk)
 - [`nuget`](#nuget)
+- [`ansible-galaxy`](#ansible-galaxy)
+- [`ansible`](#ansible)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -2638,6 +2640,67 @@ Updates NuGet package references, MSBuild project SDKs and .NET tools in MSBuild
 - global.json's `sdk.version` is the .NET SDK (`dotnet-sdk`, datasource `dotnet-version`): updates move it to a newer SDK, feature bands included (`8.0.100` → `8.0.404`, a patch), and to newer majors as major updates; previews only from a preview. Its `msbuild-sdks` (`"Microsoft.Build.Traversal": "4.1.0"`) are NuGet packages of dep type `msbuild-sdk`.
 - dotnet-tools.json `tools.<id>.version` entries are NuGet packages of dep type `nuget` (`dotnet-ef`, `csharpier`); the `commands` are kept.
 
+## ansible-galaxy
+
+Updates the roles and collections of Ansible Galaxy requirements files and the collection dependencies of `galaxy.yml`.
+
+**Files:**
+
+- `requirements.yml`, `requirements.yaml`, `requirements.ansible.yml` (`.yaml`) at any depth: `roles` and `collections` lists, or a top-level list of roles (the old format)
+- `galaxy.yml`, `galaxy.yaml`, `galaxy.ansible.yml` (`.yaml`) at any depth: the collection's `dependencies` mapping
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `role` | `roles[]` entry: `src` (else `name`) and `version`, or a `src,version` string. A Galaxy role `namespace.name`, or an SCM URL (`git+https://…`, `https://…`, `git@host:owner/repo`; `scm: git`) | `galaxy` (`namespace.name`), `git-tags` (SCM URLs: the name is the URL path `owner/repo`, the source its `https://` URL) | `tag` | updated |
+| `galaxy-collection` | `collections[]` entry: `name` and `version` (a bare version, `==`, or a range such as `>=1.0.0,<2.0.0`), the Galaxy server of `source`, or `type: git` with the repository URL as name (`git+https://…/repo.git,v1.0.0`); galaxy.yml `dependencies` (`community.general: ">=8.0.0"`, or an SCM URL key with a git version: `'git+https://github.com/o/r': v1.0.0`) | `galaxy-collection` (`namespace.name`, the source the entry's `source`), `git-tags` (`type: git` and SCM URL names) | `pep440` (Galaxy), `tag` (git) | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `no version` | an entry without `version` (or `,version`), an empty or non-string specifier |
+| `unconstrained` | a collection specifier `*` or only `!=` exclusions |
+| `unsupported range` | a collection specifier that is not a PEP 440 specifier set |
+| `non-version ref` | a role or git version that is not a version tag (a branch, a commit) |
+| `no name` | a collection entry without `name`, a name or galaxy.yml key that is neither `namespace.name` nor an SCM URL |
+| `local source` | a local path, `type: file`, `dir` or `subdirs` |
+| `unsupported source` | a tarball URL (`type: url`), `scm: hg`, a role name that is not `namespace.name`, or an SCM URL without an `owner/repo` path |
+| `cannot locate value` | the version bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- The role and git versions are replaced in place, keeping quotes and comments; versions cannot be pinned to digests.
+- Collection specifiers are PEP 440 specifier sets in which a bare version means `==` (ansible-galaxy's syntax): their version is the range's anchor and they are rewritten per `rangeStrategy` like Python specifiers (`auto` = `update-lockfile`: a bare or `==` version is replaced by the new version, an open range such as `>=8.0.0` only moves for a version outside it).
+- `include:` entries of requirements files are not followed (the included file is extracted on its own when its name matches). List entries with keys other than `src`, `name`, `role`, `version` and `scm` are not roles (a task file named `requirements.yml`).
+
+## ansible
+
+Updates container images in Ansible task files.
+
+**Files:**
+
+- `tasks/*.yml` / `tasks/*.yaml` at any depth (a role's `tasks/main.yml`)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | every scalar `image` value of the task file, at any depth (`community.docker.docker_container`, `containers.podman.podman_container`, …) | `docker` | `docker` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `template` | a Jinja2 expression (`{{`) in the image |
+| `variable reference` | `$` in the image |
+| `invalid reference` | the image reference does not parse |
+| `no tag` | an image without tag |
+| `digest without tag` | an image pinned by digest only |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- Files without `image` are not parsed.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -2768,6 +2831,8 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `bazel` | Bazel module name (`rules_go`); the dep's source is the registry of its `single_version_override` ("" = the workspace's registries) | `GET <registry>/modules/<name>/metadata.json`, once per (registry, module); yanked versions (`yanked_versions`) are dropped. The registries are the dep's source, else the `--registry` flags of the workspace's `.bazelrc` (the one next to the nearest `MODULE.bazel`; lines without a `:config`, except `startup`; `import`/`try-import` of files in the repository are followed; `%workspace%` is expanded), else the Bazel Central Registry (`DEPS_BAZEL_REGISTRY_URL` or `https://bcr.bazel.build`, also where `.bazelrc` names `https://bcr.bazel.build`). As in Bazel, the first registry that has the module answers; none → `bazel module <name> not found in <registries>`. `file://` registries inside the repository (`file://%workspace%/registry`) are read from disk. Source repository (release notes): the first `repository` entry (`github:<owner>/<repo>`, `gitlab:…`, a URL), else a forge `homepage` | userinfo of the registry URL as basic auth; registries other than the default get the platform token of their host (Basic `x-access-token`), as `git-tags` | none: registries publish no release times, so `minimumReleaseAge` treats every version as of unknown age (`minimumReleaseAgeBehaviour`) |
 | `nuget` | package id (case-insensitive, `Newtonsoft.Json`); the dep's source is its whitespace-separated package sources `<key>=<service index URL>` in nuget.config order (the key query-escaped; "" = nuget.org) | the feed's v3 service index (`<DEPS_NUGET_URL or https://api.nuget.org/v3/index.json>` for nuget.org), once per feed, for its `RegistrationsBaseUrl` (the SemVer 2.0 `3.6.0` one first) and `PackageBaseAddress/3.0.0`; then `GET <registration>/<id lower-case>/index.json`, pages that are not inlined fetched concurrently, once per (feed, package); unlisted versions (`listed: false`, nuget.org's publish year 1900) are left out and `+metadata` dropped. A feed without registration is read through its flat container `GET <base>/<id>/index.json` (every version, unlisted ones included). The versions of all of a dep's feeds are merged, as NuGet restores from all of them; none has the package → `package <id> not found`. v2 feeds (a URL not ending in `.json`, such as `https://www.powershellgallery.com/api/v2`) are not read; a dep with only v2 feeds is skipped. Source repository (release notes): the `<repository url>` of `GET <flat container>/<id>/<version>/<id>.nuspec`, else the registration's forge `projectUrl`, only for versions in a pull request | userinfo of the feed URL as basic auth, else NuGet's `NuGetPackageSourceCredentials_<key>` variable of the nuget.config source (`Username=<user>;Password=<token>`), sent to the feed's host only; redacted in errors and logs. nuget.config `packageSourceCredentials` are not read | the registration's `published`; none from a flat container |
 | `dotnet-version` | `dotnet-sdk` (the .NET SDK, every feature band) or `dotnet-runtime` | `<DEPS_DOTNET_RELEASES_URL or https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json>` once per run for the channels (`8.0`, `9.0`, …), then each channel's `releases.json` at most once, only the channels at or above the dep's major.minor (older ones cannot hold an update); previews and release candidates are listed (versioning drops them for stable current versions) | none | `release-date` of the release that shipped the version |
+| `galaxy` | role `namespace.name` (`geerlingguy.java`) | `GET <DEPS_GALAXY_URL or https://galaxy.ansible.com>/api/v1/roles/?owner__username=<namespace>&name=<name>`, once per role; with several results the one whose `github_user` (or `username`) is the namespace. The versions are `summary_fields.versions[].name` that are version tags; no result skips the dep (`role not found on <server>`). Source repository: `https://github.com/<github_user>/<github_repo>` | none | each version's `release_date` (else `created`) |
+| `galaxy-collection` | collection `namespace.name` (`community.general`); the dep's source is the Galaxy server of its requirements entry (`source`), "" = `DEPS_GALAXY_URL` or https://galaxy.ansible.com | the server's API root once per server, as `ansible-galaxy` discovers it: `GET <server>/api/` (unless the server URL already has an `/api/` path, e.g. Automation Hub's `…/api/automation-hub/content/published/`), else `GET <server>/`, whose `available_versions.v3` is the v3 API; then once per (server, collection) `GET <v3>collections/<namespace>/<name>/` (`deprecated`; a 404 skips the dep) and `GET <v3>collections/<namespace>/<name>/versions/?limit=100`, following `links.next`. Source repository (release notes): `metadata.repository` of `GET <v3>collections/<namespace>/<name>/versions/<version>/`, only for versions that end up in a PR | none | each version's `created_at` |
 | `rpm` | RPM package name as in the repository (`kernel`, `docker-ce`, `golang`); the dep's source is the repository URL from `registryUrl` (custom[] entry field, `registryUrl` regex group or Renovate marker field): its `repodata/` directory, as Renovate takes it, or the repository root (dnf's `baseurl`). Several whitespace-separated URLs are merged, as Renovate's `merge` registry strategy does (a distribution's release and updates repositories). A version is `<ver>-<rel>` (`<ver>` for a package without a release), without the epoch, as Renovate writes it; use the `rpm` versioning, the default of rpm deps | `GET <repository>/repodata/repomd.xml`, then the primary metadata it names (`<location href>`, against its `xml:base` when set), gzip, zstd, xz, bzip2 or plain, detected by content; once per repository and run, streamed into a name index shared by every dep of that repository. Every `<package type="rpm">` counts, the builds of every architecture merged. A package no repository lists fails the dep with `rpm package <name> not found in <repositories>` | userinfo of the repository URL (`https://user:token@host/…`) as basic auth; redacted in errors and logs | earliest `<time file>` of the version's builds: when the build was added to the repository |
 | `apk` | the package name (`P:` in APKINDEX, `bash`); custom managers only, with `registryUrl` | `GET <index URL>` of every repository index the dep's `registryUrl` names, once per index and run: Renovate's form `<base>?arch=<arch>[&branch=<branch>][&components=<c1>,<c2>]` expands to `<base>[/<branch>]/<component>/<arch>/APKINDEX.tar.gz` per component (`https://dl-cdn.alpinelinux.org/alpine?branch=v3.22&components=main,community&arch=x86_64`, `https://packages.wolfi.dev/os?arch=x86_64`); a URL without query is the index or its directory. Other query parameters are errors; the versions of every index are merged. No registry URL is an error (there is no default repository) | none | the build time (`t:`) of the version in the index |
 | `deb` | binary package name (`curl`); the dep's source is one or more whitespace-separated registry URLs `<repository>?suite=<suite>&components=<c1,c2>&binaryArch=<arch>` (Renovate's; `release` is an alias of `suite`), default `https://deb.debian.org/debian?suite=stable&components=main,contrib,non-free&binaryArch=amd64`. Versioning `deb` (dpkg ordering) | `GET <repository>/dists/<suite>/<component>/binary-<arch>/Packages.gz` (a 404 tries `Packages.xz`, then `Packages`), once per component index and run, stream-scanned so only the asked-for packages are kept; every paragraph's `Version` is a release. Versions of all components and registry URLs are merged; a failing component is skipped when another lists the package | userinfo of the registry URL, else the forge token (Basic) on the forge's host, else anonymous | none (package indexes record no dates) |

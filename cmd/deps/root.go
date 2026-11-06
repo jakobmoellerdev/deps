@@ -30,6 +30,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/endoflife"
 	forgeds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/galaxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubrunners"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gitlabpackages"
@@ -426,6 +427,8 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		debds.Name:              debds.New(client, sem, auth),
 		artifactory.Name:        artifactory.New(client, sem, auth),
 		endoflife.Name:          endoflife.New(client, sem, os.Getenv),
+		galaxy.Name:             galaxy.New(client, sem, os.Getenv),
+		galaxy.CollectionName:   galaxy.NewCollections(client, sem, os.Getenv),
 	}
 	for _, name := range forgeds.Names {
 		sources[name] = forgeds.New(name, client, sem, auth)

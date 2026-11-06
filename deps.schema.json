@@ -83,6 +83,8 @@
                 "endoflife-date",
                 "forgejo-releases",
                 "forgejo-tags",
+                "galaxy",
+                "galaxy-collection",
                 "git-refs",
                 "git-tags",
                 "gitea-releases",
@@ -1815,6 +1817,63 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "ansible-galaxy"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "role",
+                    "galaxy-collection"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
+                    "ansible"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "image"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "custom"
                   ]
                 },
@@ -1896,6 +1955,8 @@
               "bazel-module",
               "bazelisk",
               "nuget",
+              "ansible-galaxy",
+              "ansible",
               "custom"
             ]
           },
@@ -2049,6 +2110,8 @@
               "nuget",
               "msbuild-sdk",
               "dotnet-sdk",
+              "role",
+              "galaxy-collection",
               "annotation",
               "regex",
               "jsonata"
@@ -2085,6 +2148,8 @@
                   "endoflife-date",
                   "forgejo-releases",
                   "forgejo-tags",
+                  "galaxy",
+                  "galaxy-collection",
                   "git-refs",
                   "git-tags",
                   "gitea-releases",

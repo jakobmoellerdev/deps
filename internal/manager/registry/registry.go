@@ -8,6 +8,7 @@ package registry
 import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/ansible"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/azurepipelines"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bitbucketpipelines"
@@ -113,6 +114,8 @@ var Builtin = []Entry{
 	{bazel.Doc, bazel.New},
 	{bazel.BazeliskDoc, bazel.NewBazelisk},
 	{nuget.Doc, nuget.New},
+	{ansible.GalaxyDoc, ansible.NewGalaxy},
+	{ansible.Doc, ansible.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,
