@@ -309,20 +309,21 @@ func TestPinForms(t *testing.T) {
 	}
 }
 
-func TestParseRepo(t *testing.T) {
+func TestExtractURL(t *testing.T) {
 	for in, want := range map[string][2]string{
-		"https://github.com/apple/swift-log.git": {"apple/swift-log", "https://github.com/apple/swift-log"},
-		"https://github.com/apple/swift-log/":    {"apple/swift-log", "https://github.com/apple/swift-log"},
-		"git@github.com:apple/swift-nio.git":     {"apple/swift-nio", "https://github.com/apple/swift-nio"},
-		"ssh://git@gitlab.com/g/sub/proj.git":    {"g/sub/proj", "https://gitlab.com/g/sub/proj"},
-		"http://git.example:8080/o/r":            {"o/r", "http://git.example:8080/o/r"},
-		"ssh://git@git.example:2222/o/r":         {"o/r", "https://git.example/o/r"},
-		"file:///tmp/x":                          {"", ""},
-		"https://github.com/single":              {"", ""},
-		"../relative/path":                       {"", ""},
+		"git@github.com:apple/swift-nio.git": {"apple/swift-nio", "https://github.com/apple/swift-nio"},
+		"http://git.example:8080/o/r":        {"o/r", "http://git.example:8080/o/r"},
+		"ssh://git@git.example:2222/o/r":     {"o/r", "https://git.example/o/r"},
+		"github.com:apple/swift-nio":         {"github.com:apple/swift-nio", ""},
+		"https://github.com/single":          {"https://github.com/single", ""},
 	} {
-		if n, s := parseRepo(in); n != want[0] || s != want[1] {
-			t.Errorf("parseRepo(%q) = %q, %q; want %q, %q", in, n, s, want[0], want[1])
+		src := "let package = Package(dependencies: [.package(url: \"" + in + "\", from: \"1.0.0\")])\n"
+		deps, err := New().Extract("Package.swift", []byte(src), manager.Env{})
+		if err != nil || len(deps) != 1 {
+			t.Fatalf("%s: %+v, %v", in, deps, err)
+		}
+		if d := deps[0]; d.Name != want[0] || d.Source != want[1] || (d.Source == "") != (d.Skip == skipURL) {
+			t.Errorf("%s: name %q source %q skip %q; want %q, %q", in, d.Name, d.Source, d.Skip, want[0], want[1])
 		}
 	}
 }

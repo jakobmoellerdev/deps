@@ -179,6 +179,23 @@ func TestExtractSuperproject(t *testing.T) {
 	}
 }
 
+func TestExtractPortURL(t *testing.T) {
+	src := "[submodule \"a\"]\n\tpath = a\n\turl = https://git.corp.example:8443/team/lib.git\n" +
+		"[submodule \"b\"]\n\tpath = b\n\turl = ../rel.git\n"
+	links := func([]string) (map[string]string, error) { return map[string]string{"a": c1, "b": c1}, nil }
+	deps, err := New().Extract(".gitmodules", []byte(src), manager.Env{Gitlinks: links, Superproject: func() (string, string, error) {
+		return "http://gitea.local:3000/team/app.git", "main", nil
+	}})
+	if err != nil || len(deps) != 2 {
+		t.Fatalf("Extract = %+v, %v", deps, err)
+	}
+	for i, want := range []string{"https://git.corp.example:8443/team/lib", "http://gitea.local:3000/team/rel"} {
+		if deps[i].Source != want || deps[i].Skip != "" {
+			t.Errorf("dep %d source = %q skip %q, want %q", i, deps[i].Source, deps[i].Skip, want)
+		}
+	}
+}
+
 func TestGitSuperproject(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not in PATH")

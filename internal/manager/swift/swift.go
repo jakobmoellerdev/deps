@@ -6,7 +6,6 @@ package swift
 import (
 	"bytes"
 	"fmt"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -133,7 +132,10 @@ func callDep(file string, src []byte, lines []int, c call, exactLabel bool) dep.
 		}
 		return d
 	}
-	d.Name, d.Source = parseRepo(u.toks[0].text)
+	// An scp-style URL counts only with its `user@` (`git@host:owner/repo`).
+	if text := u.toks[0].text; strings.Contains(text, "://") || strings.Contains(text, "@") {
+		d.Name, d.Source = manager.GitRepo(text)
+	}
 	if d.Source == "" {
 		d.Name, d.Skip = u.toks[0].text, skipURL
 		return d
@@ -275,43 +277,6 @@ func (swiftManager) ReadLocks(top string, files [][]dep.Dep) []error {
 func compare(a, b string) int {
 	s, _ := versioning.Get(Versioning)
 	return s.Compare(a, b)
-}
-
-// parseRepo turns an https/http/ssh/git or scp-style (`git@host:owner/repo`) URL into the
-// repository path (`owner/repo`) and the source git-tags reads: the http(s) URL as written
-// (host and port kept), https for the others, without `.git`; source is "" when the URL is not
-// recognized (a file:// or relative URL).
-func parseRepo(s string) (name, source string) {
-	scheme := "https"
-	var host, p string
-	switch {
-	case strings.Contains(s, "://"):
-		u, err := url.Parse(s)
-		if err != nil || u.Host == "" {
-			return "", ""
-		}
-		switch u.Scheme {
-		case "https", "http": // as written, with the port
-			scheme, host = u.Scheme, u.Host
-		case "ssh", "git": // the port is git's, not HTTP's
-			host = u.Hostname()
-		default:
-			return "", ""
-		}
-		p = u.Path
-	default:
-		at := strings.IndexByte(s, '@')
-		c := strings.IndexByte(s, ':')
-		if c < 0 || at > c || at < 0 {
-			return "", ""
-		}
-		host, p = s[at+1:c], s[c+1:]
-	}
-	p = strings.TrimSuffix(strings.Trim(p, "/"), ".git")
-	if host == "" || !strings.Contains(p, "/") {
-		return "", ""
-	}
-	return p, scheme + "://" + host + "/" + p
 }
 
 // lineStarts returns the offsets at which the lines of src start.

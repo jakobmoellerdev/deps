@@ -39,9 +39,10 @@ type Env struct {
 }
 
 // GitRepo turns an https/http/ssh/git or scp-style (`git@host:owner/repo`) git URL into the
-// owner/repo path and the https source git-tags expects; source is "" when the URL is not
-// recognized.
+// owner/repo path and the source git-tags reads: the http(s) URL as written (scheme and port
+// kept), https for the others, without `.git`; source is "" when the URL is not recognized.
 func GitRepo(s string) (name, source string) {
+	scheme := "https"
 	var host, p string
 	switch {
 	case strings.Contains(s, "://"):
@@ -50,11 +51,14 @@ func GitRepo(s string) (name, source string) {
 			return "", ""
 		}
 		switch u.Scheme {
-		case "https", "http", "ssh", "git":
+		case "https", "http": // as written, with the port
+			scheme, host = u.Scheme, u.Host
+		case "ssh", "git": // the port is git's, not HTTP's
+			host = u.Hostname()
 		default:
 			return "", ""
 		}
-		host, p = u.Hostname(), u.Path
+		p = u.Path
 	default: // git@host:owner/repo
 		at := strings.IndexByte(s, '@')
 		c := strings.IndexByte(s, ':')
@@ -67,7 +71,7 @@ func GitRepo(s string) (name, source string) {
 	if host == "" || !strings.Contains(p, "/") {
 		return "", ""
 	}
-	return p, "https://" + host + "/" + p
+	return p, scheme + "://" + host + "/" + p
 }
 
 // Manager extracts dependencies from the files it matches and edits them.
