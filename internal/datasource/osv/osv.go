@@ -56,6 +56,10 @@
 //     queried); OSV matches server-side.
 //     Affected entries are matched by id case-insensitively, as NuGet ids are. Fixed versions
 //     are returned as published.
+//   - dart-datasource deps (the pub manager's hosted packages, custom entries) are queried as
+//     ecosystem "Pub" with the package name and the locked version (dep.Dep.Locked), else the
+//     constraint's lower bound; OSV matches server-side. Fixed versions are returned as
+//     published ("0.13.3").
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -100,6 +104,7 @@ const (
 	ecoRuby    = "RubyGems"
 	ecoPHP     = "Packagist"
 	ecoNuGet   = "NuGet"
+	ecoPub     = "Pub"
 )
 
 // Source queries OSV. Advisory documents are fetched once per ID per run.
@@ -242,6 +247,13 @@ func targetOf(d dep.Dep) *target {
 			return nil
 		}
 		return newTarget(query{Package: pkg{Name: strings.ToLower(d.Name), Ecosystem: ecoPHP}, Version: v})
+	}
+	if d.Datasource == "dart" { // pub packages, and custom deps of the datasource
+		v := cmp.Or(d.Locked, d.Version)
+		if d.Name == "" || v == "" {
+			return nil
+		}
+		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoPub}, Version: v})
 	}
 	if d.Datasource == "nuget" {
 		if d.Name == "" || d.Version == "" || strings.Contains(d.Range, "*") {
@@ -582,7 +594,7 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			if len(t.tag.Parts) > 0 {
 				fixed = t.actionsFixed(entries) // partial requirement: at its precision
 			}
-		case ecoMaven, ecoRuby, ecoPHP, ecoNuGet:
+		case ecoMaven, ecoRuby, ecoPHP, ecoNuGet, ecoPub:
 			fixed = mavenFixed(entries)
 		case ecoGo:
 			if len(t.tag.Parts) > 0 {

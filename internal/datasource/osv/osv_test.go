@@ -779,6 +779,31 @@ func TestAdvisoriesPackagist(t *testing.T) {
 	}
 }
 
+// GHSA-4rgh-jx4f-qfcq as api.osv.dev serves it (2026-11-06).
+func TestAdvisoriesPub(t *testing.T) {
+	f := newFake(t)
+	f.results["Pub|http|0.12.2|"] = result{ids: []string{"GHSA-4rgh-jx4f-qfcq"}}
+	f.vulns["GHSA-4rgh-jx4f-qfcq"] = `{"id":"GHSA-4rgh-jx4f-qfcq","summary":"http before 0.13.3 vulnerable to header injection","aliases":["CVE-2020-35669"],
+		"affected":[{"package":{"name":"http","ecosystem":"Pub"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"0.13.3"}]}]}]}`
+	s := f.start(nil)
+	deps := []dep.Dep{
+		{Manager: "pub", Datasource: "dart", DepType: "dependencies", Name: "http", Version: "0.12.0", Range: "^0.12.0", Locked: "0.12.2"},
+		{Manager: "pub", Datasource: "dart", DepType: "dependencies", Name: "http", Version: "0.12.2", Range: "0.12.2"},
+		{Manager: "pub", Datasource: "dart", Name: "unlocked", Range: "<2.0.0"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vuln := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-4rgh-jx4f-qfcq", Summary: "http before 0.13.3 vulnerable to header injection", URL: "https://osv.dev/vulnerability/GHSA-4rgh-jx4f-qfcq"}, Fixed: []string{"0.13.3"}}}
+	if want := [][]datasource.Vuln{vuln, vuln, nil}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if len(f.batches) != 1 || len(f.batches[0]) != 1 || f.batches[0][0].Package != (pkg{Name: "http", Ecosystem: "Pub"}) {
+		t.Errorf("batches = %+v", f.batches)
+	}
+}
+
 // GHSA-5crp-9r3c-p9vr as api.osv.dev serves it (2026-11-05), affected list cut to the package;
 // OSV matches NuGet ids case-insensitively, so a lower-case query returns it too.
 func TestAdvisoriesNuGet(t *testing.T) {

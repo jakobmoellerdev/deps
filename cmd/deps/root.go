@@ -24,11 +24,14 @@ import (
 	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dart"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dartversion"
 	debds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deb"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/endoflife"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/flutterversion"
 	forgeds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/galaxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
@@ -433,6 +436,9 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		galaxy.CollectionName:   galaxy.NewCollections(client, sem, os.Getenv),
 		sbtds.PackageName:       sbtPackages,
 		sbtds.PluginName:        sbtPlugins,
+		dart.Name:               dart.New(client, sem, os.Getenv),
+		dartversion.Name:        dartversion.New(client, sem, os.Getenv),
+		flutterversion.Name:     flutterversion.New(client, sem, os.Getenv),
 	}
 	for _, name := range forgeds.Names {
 		sources[name] = forgeds.New(name, client, sem, auth)

@@ -27,6 +27,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pub"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pytool"
@@ -141,6 +142,9 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	}
 	if !write && hasManager(res, julia.Name) {
 		fmt.Fprintln(stderr, "note    Manifest.toml changes are computed by apply/run")
+	}
+	if !write && hasManager(res, pub.Name) {
+		fmt.Fprintln(stderr, "note    pubspec.lock changes are computed by apply/run")
 	}
 	if !write && hasManager(res, bazel.Name) {
 		fmt.Fprintln(stderr, "note    MODULE.bazel.lock changes are computed by apply/run")

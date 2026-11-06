@@ -22,6 +22,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/droneci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/elm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/fvm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitlabci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
@@ -43,6 +44,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipsetup"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/precommit"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pub"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/rusttoolchain"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/sbt"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/setupcfg"
@@ -119,6 +121,8 @@ var Builtin = []Entry{
 	{ansible.Doc, ansible.New},
 	{sbt.Doc, sbt.New},
 	{sbt.ScalafmtDoc, sbt.NewScalafmt},
+	{pub.Doc, pub.New},
+	{fvm.Doc, fvm.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,

@@ -66,6 +66,8 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`ansible`](#ansible)
 - [`sbt`](#sbt)
 - [`scalafmt`](#scalafmt)
+- [`pub`](#pub)
+- [`fvm`](#fvm)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -2761,6 +2763,87 @@ Updates the scalafmt version of `.scalafmt.conf` (the top-level `version = 3.8.3
 |---|---|---|---|---|
 | `scalafmt` | the `version` key (name `scalameta/scalafmt`) | `github-releases` (`scalameta/scalafmt`) | `semver` | updated |
 
+## pub
+
+Updates the version constraints of Dart and Flutter packages and the Dart and Flutter SDK constraints in `pubspec.yaml`, and moves `pubspec.lock` with `dart pub upgrade`. pubspec.yaml is read as YAML; only the constraint strings that change are rewritten, so formatting, comments and key order are kept.
+
+**Files:**
+
+- `pubspec.yaml`, `pubspec.yml` (its lock: the `pubspec.lock` next to it, or the workspace root's for a `resolution: workspace` member)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `dependencies` | entries of `dependencies`: `name: <constraint>`, `name: {version: <constraint>, hosted: <url>}` (also the `hosted: {name, url}` form), `name: {git: {url, ref}}` (updates use commit type `fix`) | `dart` (pub.dev, or the `hosted` repository), `git-tags` for a `git` package pinned to a tag | `pub`; `tag` for git packages | updated |
+| `dev_dependencies` | entries of `dev_dependencies`, in the same forms | `dart` (pub.dev, or the `hosted` repository), `git-tags` for a `git` package pinned to a tag | `pub`; `tag` for git packages | updated |
+| `environment` | `environment.sdk` (name `dart`) and `environment.flutter` (name `flutter`) | `dart-version` for `dart`, `flutter-version` for `flutter` | `pub` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `sdk package` | a package of an SDK: `flutter: {sdk: flutter}`, `flutter_test`, `flutter_localizations`, … |
+| `path dependency` | a `path` package |
+| `git dependency without ref` | a `git` package without `ref` (it tracks the default branch) |
+| `git commit` | a `git` package whose `ref` is a full commit hash |
+| `unsupported git URL` | a `git` URL that is not an http(s), ssh or scp-style git URL |
+| `no version constraint` | no constraint: `name:`, `name: any`, or a detailed dependency without `version` |
+| `unsupported constraint` | a constraint outside pub's grammar (`~1.2.3`, `^1.2`, `1.x`) |
+| `cannot locate value` | a constraint written with YAML escapes or as a block scalar |
+| `pinned by the Flutter SDK` | `meta` in a Flutter package: the Flutter SDK pins it exactly, as Renovate does |
+| `no locked version` | a package constraint without a lower bound (`<2.0.0`) that its pubspec.lock does not lock (or without pubspec.lock) |
+| `no lower bound` | an SDK constraint without a lower bound (`<4.0.0`) |
+
+**Constraints.**
+
+- pub's constraint grammar (pub_semver): `^1.2.3` (`>=1.2.3 <2.0.0`; `^0.4.1` is `>=0.4.1 <0.5.0` and `^0.0.3` is `>=0.0.3 <0.1.0`), comparisons `>=`, `>`, `<=`, `<` combined with blanks or written back to back (`>=1.2.3 <2.0.0`, `>=1.2.3<2.0.0`), and exact versions (`1.2.3`). As in pub, an exclusive upper bound that is a release leaves out its prereleases (`<2.0.0` excludes `2.0.0-dev.1`).
+- Versioning `pub` orders strict semantic versions as pub does: build metadata sorts after its release (`1.2.3+1` > `1.2.3`, pub's hotfix builds). Update types follow pub's caret: a new major, or a new minor of a 0.x version, is `major`; versions below stable are only proposed from one.
+- Constraints are rewritten per [rangeStrategy](configuration.md#rangestrategy) (top level or per rule): an exact version takes the new version; a version the constraint admits raises its lower bound (`^1.2.3` → `^1.4.0`, `>=1.2.3 <2.0.0` → `>=1.4.0 <2.0.0`; `>` becomes `>=`); `replace` replaces it (`^1.2.3` → `^2.1.0`, `>=1.0.0 <2.0.0` → `>=2.1.0 <3.0.0`), `widen` keeps the lower bound and moves the upper ones (`^1.2.3` → `>=1.2.3 <3.0.0` for 2.1.0, `<=2.0.0` → `<=2.1.0`), `pin` writes the exact version. An exclusive upper bound moves to the first version `^<new>` excludes. A plain YAML value that would not stay one (`>=…`) is written single-quoted.
+- `auto` is `replace`, as in Renovate (its pub manager has no lockfile-only updates): versions the constraint admits are not proposed, so `^1.2.3` gets an update for 2.0.0, not 1.4.0. `update-lockfile` proposes them as lockfile-only updates from the version pubspec.lock locks (`, lockfile` in the report; pubspec.yaml is unchanged), `bump` and `in-range-only` raise the lower bound.
+- The SDK constraints `environment.sdk` and `environment.flutter` are deps `dart` and `flutter` of the same grammar, rewritten the same way; nothing locks them, so `^3.5.0` only changes for Dart 4 under `replace`.
+- `git` packages with a `ref` that is a tag are `git-tags` deps of the `url` (any `path` inside the repository is kept); the ref is replaced by the new tag. Other refs (branches) are reported as non-versions.
+- `dependency_overrides` are not updated.
+
+**Lockfile (`apply`, `run`).**
+
+1. **Lockfile.** The lockfile of a pubspec is the `pubspec.lock` next to it; for a workspace member (`resolution: workspace`), the one of the nearest ancestor whose pubspec.yaml lists a `workspace`. Without one the file is only patched.
+2. **Locked versions.** Before resolution each pubspec.lock is read: a hosted package gets the version of its `packages` entry. An unreadable lock is reported once and its packages are bumped.
+3. **Temporary copy.** The package (or workspace root) directory is mirrored to a temp dir: the pubspecs of the root and every workspace member and pubspec.lock are copied, the directories leading to them recreated, and every other entry but `.dart_tool` and `build` symlinked; the directories above it up to the repository top are recreated with their entries symlinked, so path dependencies outside resolve as in the checkout.
+4. **Update.** In the copy, the constraint of every updated hosted package, lockfile-only updates included, is set to exactly the update's version, and `dart pub upgrade <name>… --no-precompile --no-example` moves those packages (and git packages with a new tag), and their dependencies only where the new versions need it; the exact constraint keeps pub from locking a newer version the rewritten constraint admits (e.g. when `minimumReleaseAge` held it back). Updates of only the SDK constraints run `dart pub get`. Only pubspec.lock is taken back.
+5. **Tool.** `dart` must be on `PATH` (e.g. from `dart-lang/setup-dart`). A Flutter scope (its lock has `sdks: flutter`, or a pubspec depends on `sdk: flutter` or constrains `environment.flutter`) needs `flutter` on `PATH` (e.g. `subosito/flutter-action`): deps runs the Dart SDK bundled with it with `FLUTTER_ROOT` set, which resolves the Flutter SDK packages as `flutter pub` does without regenerating platform files. The SDK must satisfy the pubspecs' SDK constraints, new ones included. `PUB_HOSTED_URL` and `PUB_CACHE` are in effect. Without the tool, the pubspecs fail with `dart not found (needed to update pubspec.lock)` or `flutter not found (…)`.
+6. **Failure.** A failed command reports `dart pub <command> in <dir>: <last 20 output lines>`, and the pubspec's changes are dropped.
+
+- `plan` does not run pub, and prints `note    pubspec.lock changes are computed by apply/run`.
+
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `pubspec.lock` of a scanned package or workspace root is refreshed with `dart pub upgrade` (same tool and options as below) in the temporary copy, which moves every locked package, transitive ones included, to the newest version the constraints admit. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `pubspec.lock` files; `minimumReleaseAge` does not apply to it.
+
+## fvm
+
+Updates the Flutter SDK version [FVM](https://fvm.app) pins for a project: the top-level `flutter` of `.fvmrc`, or `flutterSdkVersion` of the legacy `.fvm/fvm_config.json` (the first one present, as FVM and Renovate read it). Only the version string is replaced; flavors and other settings are kept.
+
+**Files:**
+
+- any `.fvmrc`
+- any `.fvm/fvm_config.json`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `toolchain` | the pinned Flutter version (name `flutter`): `3.24.3`, or a beta such as `3.26.0-0.1.pre` | `flutter-version` | `semver` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unpinned channel` | a release channel instead of a version: `stable`, `beta`, `dev`, `master`, `main` |
+| `unsupported version` | any other value: a version with a channel (`3.24.3@beta`), a commit, a fork (`myfork/3.24.3`) |
+| `cannot locate value` | the version is written with JSON escapes |
+
+**Versions.**
+
+- Stable versions get stable updates; a beta (`-x.y.pre`) also gets newer betas.
+- Nothing else is run: `fvm use` installs the new version on the next run.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -2900,6 +2983,9 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `endoflife-date` | an endoflife.date product (`nodejs`, `ubuntu`, `python`); custom managers only; the dep's `registryUrl` (an API base URL) replaces the default | `GET <registryUrl, DEPS_ENDOFLIFE_DATE_URL or https://endoflife.date/api>/<product>.json`, once per product; each cycle's `latest` (else the cycle) is a version; cycles whose `eol` or `discontinued` is `true` or a past date are dropped and reported as deprecated when installed; an unknown product (HTTP 404) is skipped | none | the cycle's `latestReleaseDate` (its `releaseDate` for a cycle without `latest`) |
 | `sbt-package` | `groupId:artifactId` with the artifact's Scala suffix (`org.typelevel:cats-core_2.13`); the repositories are the dep's `[ivy=]<url>/` list (Maven Central when empty), `ivy=` marking an Ivy-layout repository | Maven repositories: as the `maven` datasource (`GET <repository>/<group/path>/<artifactId>/maven-metadata.xml`, `DEPS_MAVEN_CENTRAL_URL` applies); Ivy repositories: the directory listing `GET <repository>/<groupId>/<artifactId>/`; versions merged, a 404 contributes nothing. A Scala artifact no repository has (a `%%%` library published only for Scala.js or Scala Native) is looked up as `<artifact>_sjs1_<scala>`, then `_native0.5_`, `_native0.4_` | none | as the `maven` datasource (POM `Last-Modified`) for versions a Maven repository lists; none for Ivy-only versions |
 | `sbt-plugin` | `groupId:artifactId` of an sbt plugin, looked up as the artifact published for the build's sbt version (`project/build.properties`): `<artifactId>_2.12_1.0` for sbt 1.x, `<artifactId>_sbt2_3` for sbt 2.x, `<artifactId>_2.10_0.13` for sbt 0.13; repositories as for `sbt-package` | Maven repositories: as the `maven` datasource with the cross-versioned artifact; Ivy repositories (by default `https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/`, which redirects to scala.jfrog.io): the directory listing `GET <repository>/<groupId>/<artifactId>/scala_2.12/sbt_1.0/` (sbt 2.x plugins are only published to Maven repositories); versions merged | none | as the `maven` datasource for versions a Maven repository lists; none for Ivy-only versions |
+| `dart` | the package name as in pubspec.yaml (`http`); the pub manager sets the repository of a `hosted` dependency | `GET <repository>/api/packages/<name>` once per repository and package: the `hosted` URL of the dependency, else `PUB_HOSTED_URL` (as for the pub client), else `https://pub.dev`; retracted versions are dropped. Source repository (release notes): the `repository` of the newest version's pubspec, else its `homepage` | none | the `published` time of each version |
+| `dart-version` | any (`dart`) | `GET <DEPS_DART_ARCHIVE_URL or https://storage.googleapis.com>/storage/v1/b/dart-archive/o?delimiter=/&prefix=channels/<channel>/release/` for the channels `stable`, `beta` and `dev` (all pages), once per run, as Renovate does: one release directory per version (`3.5.4`, `3.6.0-216.1.beta`, `3.7.0-1.0.dev`); `latest`, old Subversion revision numbers and stable versions listed in another channel are skipped. Source repository (release notes): `dart-lang/sdk` | none | none |
+| `flutter-version` | any (`flutter`) | `GET <FLUTTER_STORAGE_BASE_URL or https://storage.googleapis.com>/flutter_infra_release/releases/releases_linux.json` once per run (the variable is the flutter tool's mirror setting): stable releases and betas (`3.26.0-0.1.pre`); a stable version listed in the beta or dev channel is skipped, as in Renovate. Source repository (release notes): `flutter/flutter` | none | the `release_date` of each version (the earliest, for a version listed more than once) |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
@@ -2975,7 +3061,7 @@ Release notes use the POM of the new version: `<scm><url>`, else `<scm><connecti
 ### Security advisories (OSV)
 
 - deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.
-- Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks, and sbt-package deps with their Scala suffix, `cats-core_2.13`), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), `Packagist` (`packagist` datasource: composer packages, lower-cased, with the version composer.lock locks without its `v`, else the constraint's anchor), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
+- Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks, and sbt-package deps with their Scala suffix, `cats-core_2.13`), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), `Packagist` (`packagist` datasource: composer packages, lower-cased, with the version composer.lock locks without its `v`, else the constraint's anchor), `Pub` (`dart` datasource: hosted pub packages, with the version pubspec.lock locks, else the constraint's lower bound), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
 - Not queried, because OSV has no ecosystem for them (checked 2026-11-05): container images (OSV covers the distribution packages inside an image, such as `Debian` or `Alpine`, not the image or its tag), Terraform providers and modules, and Helm charts.
 - Withdrawn advisories are skipped, and aliases are reported once.
 

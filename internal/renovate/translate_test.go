@@ -229,6 +229,11 @@ func TestLoadRules(t *testing.T) {
     dashboardApproval: true` + defaultExclusions,
 		},
 		{
+			name:  "dart category; pub datasources",
+			src:   `{packageRules: [{matchCategories: ['dart'], matchDatasources: ['dart', 'flutter-version'], groupName: 'dart'}, {matchManagers: ['fvm'], enabled: false}]}`,
+			rules: "  - # packageRules[0]\n    managers: [pub, fvm]\n    datasources: [dart, flutter-version]\n    group: dart\n  - # packageRules[1]\n    managers: [fvm]\n    ignore: true" + defaultExclusions,
+		},
+		{
 			name:  "devcontainer manager",
 			src:   `{packageRules: [{matchManagers: ['devcontainer'], enabled: false}]}`,
 			rules: "  - # packageRules[0]\n    managers: [devcontainer]\n    ignore: true" + defaultExclusions,
