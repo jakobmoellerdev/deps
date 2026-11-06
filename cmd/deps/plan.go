@@ -23,6 +23,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
@@ -155,6 +156,9 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	}
 	if !write && hasManager(res, beam.NameGleam) {
 		fmt.Fprintln(stderr, "note    manifest.toml changes are computed by apply/run")
+	}
+	if !write && hasManager(res, nix.Name) {
+		fmt.Fprintln(stderr, "note    flake.lock changes are computed by apply/run")
 	}
 	if write && slices.ContainsFunc(changes, func(c engine.FileChange) bool { return c.Gitlink }) {
 		fmt.Fprintln(stderr, "note    submodule commits are staged in the git index; run git submodule update to check them out")

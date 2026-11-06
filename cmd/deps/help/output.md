@@ -19,6 +19,7 @@ note    pubspec.lock changes are computed by apply/run        (plan, when a pub 
 note    MODULE.bazel.lock changes are computed by apply/run   (plan, when a bazel-module update exists)
 note    mix.lock changes are computed by apply/run            (plan, when a mix update exists)
 note    manifest.toml changes are computed by apply/run       (plan, when a gleam update exists)
+note    flake.lock changes are computed by apply/run          (plan, when a nix update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```

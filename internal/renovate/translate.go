@@ -262,7 +262,7 @@ var managerMap = func() map[string][]expansion {
 		"custom.regex":      {{"custom", nil}},
 		"custom.jsonata":    {{"custom", nil}},
 	}
-	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker droneci circleci azure-pipelines composer julia bazel-module bazelisk nuget homebrew ansible ansible-galaxy sbt scalafmt pub fvm mix gleam") {
+	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker droneci circleci azure-pipelines composer julia bazel-module bazelisk nuget homebrew ansible ansible-galaxy sbt scalafmt pub fvm mix gleam nix") {
 		m[n] = []expansion{{n, nil}}
 	}
 	return m

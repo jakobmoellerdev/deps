@@ -32,6 +32,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
@@ -134,14 +135,14 @@ var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pr
 // may override it), except setup-action version inputs and runner labels, which are plain values; vcpkg registry
 // baselines (git-refs); images of
 // gitlabci, terraform (docker and kubernetes resources), ansible tasks and the CI pipeline managers, which are
-// edited like docker refs, and the devcontainer image. Custom, kustomize and bazel-module deps
-// and devcontainer features (never pinned, as Renovate's pinDigests: false) can only refresh a
-// digest they already carry (regex `digest` group, an annotated `@sha256:`, a kustomize
-// `digest` field, an `oci.pull` digest, a git override commit, `feature:1@sha256:…`); they have
-// no place to insert a new one.
+// edited like docker refs, and the devcontainer image. Custom, kustomize, bazel-module and nix
+// deps and devcontainer features (never pinned, as Renovate's pinDigests: false) can only
+// refresh a digest they already carry (regex `digest` group, an annotated `@sha256:`, a
+// kustomize `digest` field, an `oci.pull` digest, a git override commit, the commit a flake
+// input is locked or pinned to, `feature:1@sha256:…`); they have no place to insert a new one.
 func digestCapable(d dep.Dep) bool {
 	switch d.Manager {
-	case "custom", "kustomize", bazel.Name:
+	case "custom", "kustomize", bazel.Name, nix.Name:
 		return d.Digest != ""
 	case "gitlabci", "terraform", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "ansible":
 		return d.Datasource == "docker"

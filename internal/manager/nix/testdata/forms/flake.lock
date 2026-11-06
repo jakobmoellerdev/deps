@@ -1,0 +1,95 @@
+{
+  "nodes": {
+    "attrs": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "acme", "repo": "attrs", "rev": "4444444444444444444444444444444444444444", "type": "github" },
+      "original": { "owner": "acme", "ref": "v0.1.0", "repo": "attrs", "type": "github" }
+    },
+    "channel": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "rev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "type": "tarball", "url": "https://releases.nixos.org/nixos/24.05/nixos-24.05.7376.bbbbbbbbbbbb/nixexprs.tar.xz" },
+      "original": { "type": "tarball", "url": "https://nixos.org/channels/nixos-24.05/nixexprs.tar.xz" }
+    },
+    "escaped": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "acme", "repo": "escaped", "rev": "6666666666666666666666666666666666666666", "type": "github" },
+      "original": { "owner": "acme", "ref": "v1.0", "repo": "escaped", "type": "github" }
+    },
+    "gh-archive": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "type": "tarball", "url": "https://github.com/acme/archive/archive/main.tar.gz" },
+      "original": { "type": "tarball", "url": "https://github.com/acme/archive/archive/main.tar.gz" }
+    },
+    "hg": {
+      "locked": { "narHash": "sha256-AAAA", "rev": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "type": "hg", "url": "https://hg.example.com/acme/hg" },
+      "original": { "type": "hg", "url": "https://hg.example.com/acme/hg" }
+    },
+    "hub": {
+      "locked": { "narHash": "sha256-AAAA", "rev": "9999999999999999999999999999999999999999", "revCount": 1, "type": "tarball", "url": "https://api.flakehub.com/f/pinned/NixOS/nixpkgs/0.1.1/abc/source.tar.gz" },
+      "original": { "type": "tarball", "url": "https://flakehub.com/f/NixOS/nixpkgs/0.1.%2A.tar.gz" }
+    },
+    "hut": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "~user", "repo": "hut", "rev": "3333333333333333333333333333333333333333", "type": "sourcehut" },
+      "original": { "owner": "~user", "repo": "hut", "type": "sourcehut" }
+    },
+    "lix": {
+      "locked": { "narHash": "sha256-AAAA", "rev": "8888888888888888888888888888888888888888", "type": "tarball", "url": "https://git.lix.systems/api/v1/repos/lix-project/lix/archive/8888888888888888888888888888888888888888.tar.gz?rev=8888888888888888888888888888888888888888" },
+      "original": { "type": "tarball", "url": "https://git.lix.systems/lix-project/lix/archive/2.93.3.tar.gz" }
+    },
+    "local": {
+      "locked": { "path": "./local", "type": "path" },
+      "original": { "path": "./local", "type": "path" },
+      "parent": []
+    },
+    "local-git": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "rev": "cccccccccccccccccccccccccccccccccccccccc", "revCount": 1, "type": "git", "url": "file:///srv/repo" },
+      "original": { "type": "git", "url": "file:///srv/repo" }
+    },
+    "nixpkgs": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "NixOS", "repo": "nixpkgs", "rev": "dddddddddddddddddddddddddddddddddddddddd", "type": "github" },
+      "original": { "id": "nixpkgs", "type": "indirect" }
+    },
+    "pinned-tag": {
+      "flake": false,
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "ref": "refs/tags/v2.0.0", "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "revCount": 1, "type": "git", "url": "https://git.example.com/acme/pinned-tag" },
+      "original": { "ref": "refs/tags/v2.0.0", "rev": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "type": "git", "url": "https://git.example.com/acme/pinned-tag" }
+    },
+    "root": {
+      "inputs": {
+        "alias": [ "tagged" ],
+        "attrs": "attrs",
+        "channel": "channel",
+        "escaped": "escaped",
+        "followed": [ "tagged" ],
+        "gh-archive": "gh-archive",
+        "hg": "hg",
+        "hub": "hub",
+        "hut": "hut",
+        "lix": "lix",
+        "local": "local",
+        "local-git": "local-git",
+        "pinned-tag": "pinned-tag",
+        "registry": "nixpkgs",
+        "ssh": "ssh",
+        "sub": "sub",
+        "tagged": "tagged",
+        "uri": "uri"
+      }
+    },
+    "ssh": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "ref": "refs/heads/develop", "rev": "7777777777777777777777777777777777777777", "revCount": 1, "type": "git", "url": "ssh://git@github.com/acme/ssh" },
+      "original": { "ref": "refs/heads/develop", "type": "git", "url": "ssh://git@github.com/acme/ssh" }
+    },
+    "sub": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "group%2Fsub", "repo": "project", "rev": "2222222222222222222222222222222222222222", "type": "gitlab" },
+      "original": { "owner": "group%2Fsub", "ref": "main", "repo": "project", "type": "gitlab" }
+    },
+    "tagged": {
+      "inputs": { "nixpkgs": [] },
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "acme", "repo": "tagged", "rev": "1111111111111111111111111111111111111111", "type": "github" },
+      "original": { "owner": "acme", "ref": "v1.2.3", "repo": "tagged", "type": "github" }
+    },
+    "uri": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "acme", "repo": "uri", "rev": "5555555555555555555555555555555555555555", "type": "github" },
+      "original": { "owner": "acme", "ref": "v3.0.0", "repo": "uri", "type": "github" }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

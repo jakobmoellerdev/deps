@@ -36,6 +36,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nuget"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
@@ -126,6 +127,7 @@ var Builtin = []Entry{
 	{fvm.Doc, fvm.New},
 	{beam.DocMix, beam.NewMix},
 	{beam.DocGleam, beam.NewGleam},
+	{nix.Doc, nix.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,

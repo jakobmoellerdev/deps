@@ -2061,6 +2061,34 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "nix"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "input"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "custom"
                   ]
                 },
@@ -2150,6 +2178,7 @@
               "fvm",
               "mix",
               "gleam",
+              "nix",
               "custom"
             ]
           },
@@ -2314,6 +2343,7 @@
               "environment",
               "prod",
               "dev",
+              "input",
               "annotation",
               "regex",
               "jsonata"

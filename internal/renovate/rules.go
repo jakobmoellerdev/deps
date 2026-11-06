@@ -667,7 +667,7 @@ func appendNew(l []string, s string) []string {
 }
 
 // exclusions computes the rules for managers Renovate does not run (enabledManagers,
-// enabled: false blocks, pre-commit and azure-pipelines off by default, deps managers
+// enabled: false blocks, pre-commit, azure-pipelines and nix off by default, deps managers
 // without a Renovate counterpart) into t.exclusionRules and returns the fully excluded deps
 // managers.
 func (t *translator) exclusions(cfg map[string]any, done map[string]bool) map[string]bool {
@@ -693,7 +693,7 @@ func (t *translator) exclusions(cfg map[string]any, done map[string]bool) map[st
 			return rm + ".enabled: false"
 		case enabledSet != nil && !enabledSet[rm]:
 			return "enabledManagers"
-		case (rm == "pre-commit" || rm == "azure-pipelines") && !(hasBE && be) && !enabledSet[rm]:
+		case (rm == "pre-commit" || rm == "azure-pipelines" || rm == "nix") && !(hasBE && be) && !enabledSet[rm]:
 			return rm + " is disabled by default in Renovate"
 		}
 		return ""

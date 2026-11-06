@@ -48,7 +48,7 @@ func TestMigrate(t *testing.T) {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	out := filepath.Join(dir, ".deps.yaml")
-	if !strings.Contains(stderr, "wrote "+out+" from "+filepath.Join(dir, ".github", "renovate.json5")+": 6 rules, 0 custom managers, 0 custom datasources; 1 warnings, 1 notes\n") ||
+	if !strings.Contains(stderr, "wrote "+out+" from "+filepath.Join(dir, ".github", "renovate.json5")+": 7 rules, 0 custom managers, 0 custom datasources; 1 warnings, 1 notes\n") ||
 		!strings.Contains(stderr, "warn    branchPrefix: deps run closes open PRs under renovate/") {
 		t.Errorf("stderr:\n%s", stderr)
 	}

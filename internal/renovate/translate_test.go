@@ -67,6 +67,12 @@ const otherExclusions = `
     ignore: true
   - # Renovate has no elm manager
     managers: [elm]
+    ignore: true` + nixExclusion
+
+// nixExclusion is the rule for nix, an opt-in beta in Renovate.
+const nixExclusion = `
+  - # nix is disabled by default in Renovate
+    managers: [nix]
     ignore: true`
 
 func TestLoadDefaults(t *testing.T) {
@@ -280,6 +286,9 @@ func TestLoadRules(t *testing.T) {
     ignore: true
   - # Renovate has no elm manager
     managers: [elm]
+    ignore: true
+  - # nix is disabled by default in Renovate
+    managers: [nix]
     ignore: true`,
 			notes: []string{"warn packageRules[2].prCreation: approval is not supported (deps' dashboardApproval also holds back the branch); dropped"},
 		},
@@ -518,6 +527,11 @@ func TestLoadRules(t *testing.T) {
 			rules: `  - # git-submodules
     managers: [git-submodules]
     ignore: false` + defaultExclusions,
+		},
+		{
+			name:  "nix opt-in drops its exclusion",
+			src:   `{nix: {enabled: true}}`,
+			rules: strings.TrimPrefix(strings.TrimSuffix(defaultExclusions, nixExclusion), "\n"),
 		},
 	}
 	for _, tt := range tests {
