@@ -219,11 +219,20 @@ func parse(file string, src []byte) []Hashed {
 		switch skip := pathSkip(req); {
 		case ok && r.URL != "":
 			d = pyreq.NewDep(Name, DepType, file, r.Name, lineAt(l.offset(r.NameStart)))
-			d.Skip = pyreq.URLSkip(r.URL)
+			at := l.offset(r.URLStart)
+			pyreq.SetGitURL(&d, r.URL, at, exactAt(src, at, r.URL))
+		case skip == pyreq.SkipGit:
+			d = pyreq.NewDep(Name, DepType, file, pyreq.GitName(req), lineAt(l.offset(0)))
+			at := l.offset(0)
+			pyreq.SetGitURL(&d, req, at, exactAt(src, at, req))
 		case skip != "":
 			d = pyreq.NewDep(Name, DepType, file, req, lineAt(l.offset(0)))
 			d.Skip = skip
 		case !ok:
+			continue
+		}
+		if d.Datasource == pyreq.GitTags {
+			reqs = append(reqs, Hashed{Dep: d})
 			continue
 		}
 		if d.Skip != "" {
@@ -445,4 +454,9 @@ func pathSkip(req string) string {
 		return pyreq.SkipLocal
 	}
 	return ""
+}
+
+// exactAt reports whether s is src[at:at+len(s)].
+func exactAt(src []byte, at int, s string) bool {
+	return at >= 0 && at+len(s) <= len(src) && string(src[at:at+len(s)]) == s
 }

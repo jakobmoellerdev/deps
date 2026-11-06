@@ -79,7 +79,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 | Reason | When |
 |---|---|
 | `ignored by rule #<i>` | a pre-policy rule set `ignore: true` |
-| `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `test-indirect`, `go`, `peerDependencies`, `engines`, `submodule`, `task` |
+| `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `test-indirect`, `go`, `peerDependencies`, `engines`, `submodule`, `task`, `tool.uv.constraint-dependencies`, `tool.uv.override-dependencies`, `tool.uv.build-constraint-dependencies` |
 | `non-version value "<v>"` | the current value is not valid in the dep's versioning scheme |
 | `non-version tag` | a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep` |
 | `branch ref` | a github-actions branch ref (`@main`, git-refs) without a digest, and `pin: keep` |
@@ -1270,7 +1270,7 @@ Updates the PEP 508 requirements of pip requirements files, and of the input fil
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `requirements` | every requirement line (`name[extras] specifier ; marker`) of a requirements file or a compiled file's input; a compiled file whose inputs deps does not read keeps its pins as `requirements` | `pypi` | `pep440` | updated |
+| `requirements` | every requirement line (`name[extras] specifier ; marker`) of a requirements file or a compiled file's input; a compiled file whose inputs deps does not read keeps its pins as `requirements` | `pypi`; `git-tags` for git tags (see Git) | `pep440`; `tag` for git tags | updated |
 | `indirect` | a pin of a compiled file that none of its inputs names (a transitive dependency, Renovate's pip-compile `indirect`); ignored by default, but security updates still apply (rules can ignore them) | `pypi` | `pep440` | ignored (opt in with a rule setting `ignore: false`) |
 
 **Skips:**
@@ -1280,10 +1280,15 @@ Updates the PEP 508 requirements of pip requirements files, and of the input fil
 | `unconstrained` | no specifier, `*`, or only `!=` exclusions |
 | `unsupported range` | a specifier that does not parse: a version that is not PEP 440 (`>=1.0-SNAPSHOT`, `===foobar`), a wildcard other than a trailing `.*` of `==` or `!=` (`~=1.*`, `>=1.*`), Poetry syntax (`^1.2`, `>=1 <2`, `\|\|`), or a bare version outside Pipfiles |
 | `cannot locate value` | a TOML string with escapes |
-| `git dependency` | `git+…`, `hg+…`, `svn+…`, `bzr+…` lines or `name @ git+…` |
+| `git dependency` | `hg+…`, `svn+…`, `bzr+…` lines, or `git+…` lines and `name @ git+…` not pinned to a version tag of an http(s) repository (see Git) |
 | `url dependency` | a URL line or `name @ https://…` |
 | `local dependency` | a local path, archive or wheel (`./pkg`, `/abs`, `x.whl`, `x.tar.gz`, `file:`) |
 | `conflicts with the inputs of <file> (<name>==<version>, …)` | `apply`/`run`: regenerating a compiled file fails with a resolution conflict (a pin of the inputs, or another requirement's constraint, does not admit the version); `run` reports the PR group as `skipped: update cannot be applied`, `apply` leaves the update out |
+
+**Git.**
+
+- A VCS reference that pins an http(s) git repository to a version tag (`name @ git+https://github.com/org/repo@v1.2.0`, optionally `.git` and a `#subdirectory=…` fragment) is a `git-tags` dep of `https://github.com/org/repo` (versioning `tag`) whose tag is replaced; a branch, a commit, no ref or an ssh URL is skipped as a `git dependency`.
+- A bare `git+https://…@<tag>#egg=<name>` line is named after its `egg` fragment, else the repository.
 
 **Compiled files.**
 
@@ -1317,7 +1322,7 @@ Updates the PEP 508 requirements of pip requirements files, and of the input fil
 
 ## pep621
 
-Updates the PEP 508 requirement strings of `pyproject.toml` (PEP 621 project metadata, PEP 735 dependency groups, uv's and pdm's dev dependencies), then refreshes `uv.lock`, `poetry.lock` or `pdm.lock`. The file is parsed with byte spans; only the specifier's versions inside the TOML string are rewritten. `include-group` entries, `[build-system] requires` and uv's `constraint-dependencies`/`override-dependencies` are not extracted; `[project] requires-python` is no dep but drops the releases that do not support all of it (see the `pypi` datasource).
+Updates the PEP 508 requirement strings of `pyproject.toml` (PEP 621 project metadata, PEP 735 dependency groups, uv's and pdm's dev dependencies), then refreshes `uv.lock`, `poetry.lock` or `pdm.lock`. The file is parsed with byte spans; only the specifier's versions inside the TOML string are rewritten. `include-group` entries of dependency groups name another group, whose requirements are extracted there; `[project] requires-python` is no dep but drops the releases that do not support all of it (see the `pypi` datasource).
 
 **Files:**
 
@@ -1325,11 +1330,15 @@ Updates the PEP 508 requirement strings of `pyproject.toml` (PEP 621 project met
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `project.dependencies` | `[project] dependencies` (updates use commit type `fix`) | `pypi` | `pep440` | updated |
-| `project.optional-dependencies` | every array of `[project.optional-dependencies]` | `pypi` | `pep440` | updated |
-| `dependency-groups` | every array of `[dependency-groups]` (PEP 735) | `pypi` | `pep440` | updated |
-| `tool.uv.dev-dependencies` | `[tool.uv] dev-dependencies` | `pypi` | `pep440` | updated |
-| `tool.pdm.dev-dependencies` | every array of `[tool.pdm.dev-dependencies]` (editable `-e …` entries are ignored) | `pypi` | `pep440` | updated |
+| `project.dependencies` | `[project] dependencies` (updates use commit type `fix`) | `pypi`; `git-tags` for git tags (see Git) | `pep440`; `tag` for git tags | updated |
+| `project.optional-dependencies` | every array of `[project.optional-dependencies]` | `pypi`; `git-tags` for git tags | `pep440`; `tag` for git tags | updated |
+| `dependency-groups` | every array of `[dependency-groups]` (PEP 735) | `pypi`; `git-tags` for git tags | `pep440`; `tag` for git tags | updated |
+| `tool.uv.dev-dependencies` | `[tool.uv] dev-dependencies` | `pypi`; `git-tags` for git tags | `pep440`; `tag` for git tags | updated |
+| `tool.pdm.dev-dependencies` | every array of `[tool.pdm.dev-dependencies]` (editable `-e …` entries are ignored) | `pypi`; `git-tags` for git tags | `pep440`; `tag` for git tags | updated |
+| `build-system.requires` | `[build-system] requires`: the build backend and its plugins (`hatchling>=1.18`, `setuptools-scm>=8`) | `pypi`; `git-tags` for git tags | `pep440`; `tag` for git tags | updated |
+| `tool.uv.constraint-dependencies` | `[tool.uv] constraint-dependencies` (not in Renovate; ignored by default, as these lists usually cap versions on purpose: a rule with `ignore: false` enables them) | `pypi`; `git-tags` for git tags | `pep440`; `tag` for git tags | ignored (opt in with a rule setting `ignore: false`) |
+| `tool.uv.override-dependencies` | `[tool.uv] override-dependencies` (not in Renovate; ignored by default, as these lists usually cap versions on purpose: a rule with `ignore: false` enables them) | `pypi`; `git-tags` for git tags | `pep440`; `tag` for git tags | ignored (opt in with a rule setting `ignore: false`) |
+| `tool.uv.build-constraint-dependencies` | `[tool.uv] build-constraint-dependencies`, string entries (not in Renovate; ignored by default, as these lists usually cap versions on purpose: a rule with `ignore: false` enables them) | `pypi`; `git-tags` for git tags | `pep440`; `tag` for git tags | ignored (opt in with a rule setting `ignore: false`) |
 
 **Skips:**
 
@@ -1339,7 +1348,7 @@ Updates the PEP 508 requirement strings of `pyproject.toml` (PEP 621 project met
 | `unsupported range` | a specifier that does not parse: a version that is not PEP 440 (`>=1.0-SNAPSHOT`, `===foobar`), a wildcard other than a trailing `.*` of `==` or `!=` (`~=1.*`, `>=1.*`), Poetry syntax (`^1.2`, `>=1 <2`, `\|\|`), or a bare version outside Pipfiles |
 | `cannot locate value` | a TOML string with escapes |
 | `url dependency` | `name @ https://…`, or a `[tool.uv.sources]` entry with `url` |
-| `git dependency` | `name @ git+…`, or a `[tool.uv.sources]` entry with `git` |
+| `git dependency` | `name @ git+…`, or a `[tool.uv.sources]` entry with `git`, that is not pinned to a version tag of an http(s) repository (see Git) |
 | `local dependency` | `name @ file://…`, or a `[tool.uv.sources]` entry with `path` |
 | `workspace member` | a `[tool.uv.sources]` entry with `workspace = true` |
 | `multiple sources` | a `[tool.uv.sources]` entry that is an array (per-marker sources) |
@@ -1367,6 +1376,11 @@ Updates the PEP 508 requirement strings of `pyproject.toml` (PEP 621 project met
 - A `[tool.uv.sources]` entry `{ index = "<name>" }` looks the dep up on that `[[tool.uv.index]]` URL only; otherwise the first index with `default = true` is used, else `PIP_INDEX_URL` or PyPI (see the `pypi` datasource), and the releases of every `[[tool.uv.index]]` that is neither `default` nor `explicit = true` are merged in.
 - `[[tool.pdm.source]]` indexes are searched like pdm does: the source named `pypi` replaces PyPI, the other sources are extra indexes whose releases are merged in; a source whose `include_packages` match the (normalized) name is the only one searched for that dep, and one whose `exclude_packages` match is not searched for it. `type = "find_links"` sources are ignored, and so are URLs with `${VAR}` (a `pypi` one falls back to `PIP_INDEX_URL` or PyPI). A `[tool.uv.sources]` index takes precedence.
 - Poetry 2 projects declare `[project] dependencies` too: they are extracted here, while `[tool.poetry.*]` tables belong to the `poetry` manager; both lock through `poetry.lock`.
+
+**Git.**
+
+- A VCS reference that pins an http(s) git repository to a version tag (`name @ git+https://github.com/org/repo@v1.2.0`, optionally `.git` and a `#subdirectory=…` fragment) is a `git-tags` dep of `https://github.com/org/repo` (versioning `tag`) whose tag is replaced; a branch, a commit, no ref or an ssh URL is skipped as a `git dependency`.
+- A `[tool.uv.sources]` entry `{ git = "https://…", tag = "v1.2.0" }` makes the dep (also an unconstrained one) a `git-tags` dep whose `tag` in the source table is replaced; `branch` and `rev` are not updated.
 
 **Locked versions.**
 
@@ -1546,9 +1560,9 @@ Updates the Poetry dependency tables of `pyproject.toml`, then refreshes `poetry
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `dependencies` | `[tool.poetry.dependencies]` (updates use commit type `fix`) | `pypi` | `pep440` | updated |
-| `dev-dependencies` | `[tool.poetry.dev-dependencies]` (Poetry 1.0/1.1) | `pypi` | `pep440` | updated |
-| `group` | `[tool.poetry.group.<name>.dependencies]` | `pypi` | `pep440` | updated |
+| `dependencies` | `[tool.poetry.dependencies]` (updates use commit type `fix`) | `pypi`; `git-tags` for `{ git = …, tag = … }` | `pep440`; `tag` for git tags | updated |
+| `dev-dependencies` | `[tool.poetry.dev-dependencies]` (Poetry 1.0/1.1) | `pypi`; `git-tags` for git tags | `pep440`; `tag` for git tags | updated |
+| `group` | `[tool.poetry.group.<name>.dependencies]` | `pypi`; `git-tags` for git tags | `pep440`; `tag` for git tags | updated |
 
 **Skips:**
 
@@ -1557,10 +1571,9 @@ Updates the Poetry dependency tables of `pyproject.toml`, then refreshes `poetry
 | `unconstrained` | `*`, empty, only `!=` exclusions, or a table without `version` |
 | `unsupported range` | a constraint that does not parse: a version that is not PEP 440, a wildcard other than a trailing `.*` of `==`, `!=` or a bare version (`^1.*`), non-string values |
 | `cannot locate value` | a TOML string with escapes |
-| `git dependency` | `{ git = … }` |
+| `git dependency` | `{ git = … }` without a `tag`, with a `tag` that is no version or a commit, or on a repository that is not http(s) |
 | `local dependency` | `{ path = … }` |
 | `url dependency` | `{ url = … }` |
-| `multiple constraints` | an array of constraint tables (per-marker constraints) |
 | `unknown source <name>` | a `source` that no `[[tool.poetry.source]]` names |
 | `in-repository package (<file>)` | no index of the dep has the package (HTTP 404) but a scanned `pyproject.toml` defines it (`[project] name`, else `[tool.poetry] name`, PEP 503-normalized; `<file>` is the first such path), e.g. an unpublished package of the repository installed from a local build; a package an index has is updated as usual |
 
@@ -1582,6 +1595,8 @@ Updates the Poetry dependency tables of `pyproject.toml`, then refreshes `poetry
 **Sources.**
 
 - Values are a constraint string or a table with `version` (`{ version = "^2.0", extras = ["socks"] }`).
+- Multiple constraints (an array of tables, `numpy = [{ version = "<1.25", python = "<3.9" }, { version = ">=1.25", python = ">=3.9" }]`) are one dep per table, each proposed only releases supporting all of its `python` (else the project's).
+- A `{ git = "https://…", tag = "v1.2.0" }` table is a `git-tags` dep of the repository whose tag is replaced; a `branch` or `rev` is not updated.
 - A table's `source = "<name>"` looks the dep up on that `[[tool.poetry.source]]` URL only; otherwise the first source with `priority = "primary"` or `"default"` (or the legacy `default = true`) is used, else `PIP_INDEX_URL` or PyPI (see the `pypi` datasource), and the releases of every `priority = "supplemental"` source are merged in. `explicit` sources serve only deps that name them.
 
 **Locked versions.**
@@ -1637,9 +1652,9 @@ Updates the packages of a `Pipfile`, then refreshes `Pipfile.lock`. The file is 
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `packages` | `[packages]` (updates use commit type `fix`) | `pypi` | `pep440` | updated |
-| `dev-packages` | `[dev-packages]` | `pypi` | `pep440` | updated |
-| `category` | every custom package category (pipenv ≥ 2022.10): any other top-level table except `[source]`, `[requires]`, `[pipenv]` and `[scripts]`, e.g. `[docs]`. Match them in rules with `depTypes: [category]` (plus `paths`/`names`); Renovate uses the category name as dep type | `pypi` | `pep440` | updated |
+| `packages` | `[packages]` (updates use commit type `fix`) | `pypi`; `git-tags` for `{ git = …, ref = <tag> }` | `pep440`; `tag` for git tags | updated |
+| `dev-packages` | `[dev-packages]` | `pypi`; `git-tags` for `{ git = …, ref = <tag> }` | `pep440`; `tag` for git tags | updated |
+| `category` | every custom package category (pipenv ≥ 2022.10): any other top-level table except `[source]`, `[requires]`, `[pipenv]` and `[scripts]`, e.g. `[docs]`. Match them in rules with `depTypes: [category]` (plus `paths`/`names`); Renovate uses the category name as dep type | `pypi`; `git-tags` for `{ git = …, ref = <tag> }` | `pep440`; `tag` for git tags | updated |
 
 **Skips:**
 
@@ -1648,7 +1663,7 @@ Updates the packages of a `Pipfile`, then refreshes `Pipfile.lock`. The file is 
 | `unconstrained` | no specifier, `*`, or only `!=` exclusions |
 | `unsupported range` | a specifier that does not parse: a version that is not PEP 440 (`>=1.0-SNAPSHOT`, `===foobar`), a wildcard other than a trailing `.*` of `==` or `!=` (`~=1.*`, `>=1.*`), Poetry syntax (`^1.2`, `>=1 <2`, `\|\|`), or a bare version outside Pipfiles |
 | `cannot locate value` | a TOML string with escapes |
-| `git dependency` | `{ git = … }` |
+| `git dependency` | `{ git = … }` without a `ref`, with a `ref` that is a branch or commit, or on a repository that is not http(s) |
 | `local dependency` | `{ path = … }` |
 | `url dependency` | `{ file = … }` |
 | `unknown index <name>` | an `index` that no `[[source]]` names |
@@ -1672,6 +1687,7 @@ Updates the packages of a `Pipfile`, then refreshes `Pipfile.lock`. The file is 
 **Indexes.**
 
 - Values are a specifier string or a table with `version` (`{ version = "==2.0", extras = ["socks"] }`).
+- A `{ git = "https://…", ref = "v1.2.0" }` table whose `ref` is a version tag is a `git-tags` dep of the repository whose tag is replaced.
 - A table's `index = "<name>"` looks the dep up on that `[[source]]` URL; any other dep uses the first `[[source]]`, and with `[pipenv] install_search_all_sources = true` also merges in the releases of the other sources (pipenv ≥ 2022.3 otherwise resolves it on the first only). A source URL with `${VAR}` is not expanded and falls back to `PIP_INDEX_URL` or PyPI (see the `pypi` datasource).
 
 **Locked versions.**
@@ -1768,7 +1784,7 @@ Updates the packages of conda environment files: the match specs of `dependencie
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
 | `dependencies` | `dependencies` match specs: `numpy=1.26` (fuzzy: any 1.26.x), `numpy==1.26.4`, `numpy>=1.26,<2`, `numpy 1.26.*`, `numpy >=1.26`, with a channel prefix `conda-forge::numpy=1.26` | `conda` | `conda` | updated |
-| `pip` | the PEP 508 requirements of a `- pip:` list in `dependencies` (`requests>=2.31`, `black==24.4.2`) | `pypi` (the list's `--index-url`, `--extra-index-url`) | `pep440` | updated |
+| `pip` | the PEP 508 requirements of a `- pip:` list in `dependencies` (`requests>=2.31`, `black==24.4.2`) | `pypi` (the list's `--index-url`, `--extra-index-url`); `git-tags` for `git+https://…@<tag>` | `pep440`; `tag` for git tags | updated |
 
 **Skips:**
 
@@ -1780,7 +1796,7 @@ Updates the packages of conda environment files: the match specs of `dependencie
 | `unsupported range` | a version spec conda's VersionSpec does not read (`numpy>=1.26.*`, `numpy=latest`), or a pip requirement that is no PEP 508 requirement |
 | `unsupported channel <channel>` | a `<channel>::` prefix, or a `channels` list without any entry, that the anaconda.org API does not serve: a URL of another host (`https://prefix.dev/conda-forge`), a local or `file://` channel |
 | `cannot locate value` | a value whose YAML bytes differ from its text (escapes, block scalars) |
-| `git dependency` | a pip requirement that is a VCS URL (`git+https://…`), also as `name @ git+https://…` |
+| `git dependency` | a pip requirement that is a VCS URL (`git+https://…`, also as `name @ git+https://…`) not pinned to a version tag of an http(s) repository |
 | `local dependency` | a pip requirement that is a path (`./pkg`, `file:…`) |
 | `url dependency` | a pip requirement that is another URL (`https://…/pkg.whl`, `name @ https://…`) |
 
@@ -1807,6 +1823,7 @@ Updates the packages of conda environment files: the match specs of `dependencie
 **pip requirements.**
 
 - The `pip:` list holds requirements as a requirements file does: they are updated like `pip_requirements` deps (PyPI, `pep440`, the specifier rules of the Python managers) and get PyPI security updates from OSV.
+- A VCS reference that pins an http(s) git repository to a version tag (`name @ git+https://github.com/org/repo@v1.2.0`, optionally `.git` and a `#subdirectory=…` fragment) is a `git-tags` dep of `https://github.com/org/repo` (versioning `tag`) whose tag is replaced; a branch, a commit, no ref or an ssh URL is skipped as a `git dependency`.
 - `--index-url`/`-i` and `--extra-index-url` entries of the list set the index of its requirements; other options (`-r requirements.txt`, `-e .`, `-c`) are no deps.
 - The `python` spec of `dependencies` (`python=3.11` → `==3.11.*`) is the requirements' Python constraint: releases that do not support it are dropped (see the `pypi` datasource).
 

@@ -39,7 +39,7 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 	default:
 		c = pipenvCmd()
 	}
-	return lockIn(ctx, dir, name, nil, files, []cmdSpec{c})
+	return lockIn(ctx, dir, name, nil, files, []lockStep{{cmd: c}})
 }
 
 // maintainedLock is the lockfile Maintain refreshes in the absolute lock directory dir: next

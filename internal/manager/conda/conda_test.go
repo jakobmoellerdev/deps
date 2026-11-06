@@ -28,10 +28,13 @@ func extract(t *testing.T, file string, src []byte) []dep.Dep {
 		if d.DepType == DepTypePip {
 			ds, vs = "pypi", "pep440"
 		}
+		if d.Datasource == pyreq.GitTags {
+			ds, vs = pyreq.GitTags, "tag"
+		}
 		if d.Manager != Name || d.Datasource != ds || d.Versioning != vs || d.File != file {
 			t.Errorf("%s: %+v", d.Name, d)
 		}
-		if d.Skip == "" && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Range {
+		if d.Skip == "" && d.Range != "" && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Range {
 			t.Errorf("%s: span %q != range %q", d.Name, src[d.RefSpan.Start:d.RefSpan.End], d.Range)
 		}
 	}
@@ -189,6 +192,7 @@ dependencies:
       - ./local-pkg
       - mylib @ https://example.com/mylib-1.0.whl
       - not a requirement!
+      - tool @ git+https://github.com/org/tool@v1.4.0
   - pip:
   - 7
 `
@@ -212,12 +216,18 @@ func TestExtractEdgeCases(t *testing.T) {
 		{21, "dependencies", "mpi4py", "", "", pyreq.SkipLocate, chans},
 		{27, "pip", "requests", "2.31", ">=2.31", "", "https://pypi.example/simple"},
 		{28, "pip", "black", "24.4.2", "==24.4.2", "", "https://pypi.example/simple"},
-		{29, "pip", "git+https://github.com/o/r.git@main#egg=r", "", "", pyreq.SkipGit, "https://pypi.example/simple"},
+		{29, "pip", "r", "", "", pyreq.SkipGit, "https://pypi.example/simple"},
 		{30, "pip", "./local-pkg", "", "", pyreq.SkipLocal, "https://pypi.example/simple"},
 		{31, "pip", "mylib", "", "", pyreq.SkipURL, "https://pypi.example/simple"},
 		{32, "pip", "not a requirement!", "", "", pyreq.SkipRange, "https://pypi.example/simple"},
+		{33, "pip", "tool", "v1.4.0", "", "", "https://github.com/org/tool"},
 	})
-	for _, d := range deps[13:] {
+	if d := deps[len(deps)-1]; d.Datasource != pyreq.GitTags || edge[d.RefSpan.Start:d.RefSpan.End] != "v1.4.0" {
+		t.Errorf("git dep = %+v", d)
+	} else if edits, err := New().Edits(dep.Update{Dep: d, NewVersion: "v1.5.0"}); err != nil || len(edits) != 1 || edits[0].New != "v1.5.0" {
+		t.Errorf("edits = %+v, %v", edits, err)
+	}
+	for _, d := range deps[13 : len(deps)-1] {
 		if d.PythonConstraint != ">=3.10,<3.13" || len(d.ExtraSources) != 1 || d.ExtraSources[0] != "https://extra.example/simple" {
 			t.Errorf("%s: python %q, extra %v", d.Name, d.PythonConstraint, d.ExtraSources)
 		}

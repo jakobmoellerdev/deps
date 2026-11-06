@@ -13,7 +13,7 @@ var Doc = refdoc.Manager{
 	Files: []string{"`environment.yml`, `environment.yaml` (any directory)"},
 	DepTypes: []refdoc.DepType{
 		{Name: DepTypeDependencies, What: "`dependencies` match specs: `numpy=1.26` (fuzzy: any 1.26.x), `numpy==1.26.4`, `numpy>=1.26,<2`, `numpy 1.26.*`, `numpy >=1.26`, with a channel prefix `conda-forge::numpy=1.26`", Versioning: "`conda`", Datasources: []string{"conda"}},
-		{Name: DepTypePip, What: "the PEP 508 requirements of a `- pip:` list in `dependencies` (`requests>=2.31`, `black==24.4.2`)", Datasource: "`pypi` (the list's `--index-url`, `--extra-index-url`)", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypePip, What: "the PEP 508 requirements of a `- pip:` list in `dependencies` (`requests>=2.31`, `black==24.4.2`)", Datasource: "`pypi` (the list's `--index-url`, `--extra-index-url`); `git-tags` for `git+https://…@<tag>`", Versioning: "`pep440`; `tag` for git tags", Datasources: []string{"pypi", "git-tags"}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: pyreq.SkipUnconstrained, When: "a package without version spec (`numpy`, `numpy *`) or with only exclusions (`numpy!=1.26.0`)"},
@@ -22,7 +22,7 @@ var Doc = refdoc.Manager{
 		{Reason: pyreq.SkipRange, When: "a version spec conda's VersionSpec does not read (`numpy>=1.26.*`, `numpy=latest`), or a pip requirement that is no PEP 508 requirement"},
 		{Reason: SkipChannel + " <channel>", When: "a `<channel>::` prefix, or a `channels` list without any entry, that the anaconda.org API does not serve: a URL of another host (`https://prefix.dev/conda-forge`), a local or `file://` channel"},
 		{Reason: pyreq.SkipLocate, When: "a value whose YAML bytes differ from its text (escapes, block scalars)"},
-		{Reason: pyreq.SkipGit, When: "a pip requirement that is a VCS URL (`git+https://…`), also as `name @ git+https://…`"},
+		{Reason: pyreq.SkipGit, When: "a pip requirement that is a VCS URL (`git+https://…`, also as `name @ git+https://…`) not pinned to a version tag of an http(s) repository"},
 		{Reason: pyreq.SkipLocal, When: "a pip requirement that is a path (`./pkg`, `file:…`)"},
 		{Reason: pyreq.SkipURL, When: "a pip requirement that is another URL (`https://…/pkg.whl`, `name @ https://…`)"},
 	},
@@ -46,6 +46,7 @@ var Doc = refdoc.Manager{
 		}},
 		{Title: "pip requirements", Items: []string{
 			"The `pip:` list holds requirements as a requirements file does: they are updated like `pip_requirements` deps (PyPI, `pep440`, the specifier rules of the Python managers) and get PyPI security updates from OSV.",
+			pyreq.GitURLItem,
 			"`--index-url`/`-i` and `--extra-index-url` entries of the list set the index of its requirements; other options (`-r requirements.txt`, `-e .`, `-c`) are no deps.",
 			"The `python` spec of `dependencies` (`python=3.11` → `==3.11.*`) is the requirements' Python constraint: releases that do not support it are dropped (see the `pypi` datasource).",
 		}},

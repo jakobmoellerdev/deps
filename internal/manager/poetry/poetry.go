@@ -24,7 +24,6 @@ const (
 	DepTypeDependencies    = "dependencies"
 	DepTypeDevDependencies = "dev-dependencies"
 	DepTypeGroup           = "group"
-	SkipMultiple           = "multiple constraints"
 	SkipUnknownSource      = "unknown source"
 )
 
@@ -143,27 +142,48 @@ func (x *extractor) table(depType string, t *tomlspan.Value) {
 			continue
 		}
 		v := t.Fields[name]
-		d := pyreq.NewDep(Name, depType, x.file, name, v.Line)
-		d.Source, d.ExtraSources, d.PythonConstraint = x.primary, x.supplemental, x.python
-		switch v.Kind {
-		case tomlspan.String:
-			pyreq.SetVersion(&d, v.Str, v.Start, v.Exact, pyreq.Poetry)
-		case tomlspan.Table:
-			spec, skip := pyreq.TableSpec(v)
-			if skip != "" {
-				d.Skip = skip
-				break
-			}
-			d.Line = spec.Line
-			pyreq.SetVersion(&d, spec.Str, spec.Start, spec.Exact, pyreq.Poetry)
-			x.source(&d, v.Get("source"))
-		case tomlspan.Array:
-			d.Skip = SkipMultiple
-		default:
-			d.Skip = pyreq.SkipRange
+		if v.Kind != tomlspan.Array {
+			x.entry(depType, name, v, x.python)
+			continue
 		}
-		x.deps = append(x.deps, d)
+		// Multiple constraints: one dep per constraint, its releases limited to the Python
+		// versions of the entry's `python` (else the project's).
+		for _, it := range v.Items {
+			py := x.python
+			if it.Kind == tomlspan.Table {
+				if p := it.Get("python"); p != nil && p.Kind == tomlspan.String {
+					py = p.Str
+				}
+			}
+			x.entry(depType, name, it, py)
+		}
 	}
+}
+
+// entry adds the dep of one constraint v of name: a string, or a table with `version` (and
+// `source`) or `git` and `tag` (a git-tags dep).
+func (x *extractor) entry(depType, name string, v *tomlspan.Value, python string) {
+	d := pyreq.NewDep(Name, depType, x.file, name, v.Line)
+	d.Source, d.ExtraSources, d.PythonConstraint = x.primary, x.supplemental, python
+	switch v.Kind {
+	case tomlspan.String:
+		pyreq.SetVersion(&d, v.Str, v.Start, v.Exact, pyreq.Poetry)
+	case tomlspan.Table:
+		if pyreq.GitTable(&d, v, "tag") {
+			break
+		}
+		spec, skip := pyreq.TableSpec(v)
+		if skip != "" {
+			d.Skip = skip
+			break
+		}
+		d.Line = spec.Line
+		pyreq.SetVersion(&d, spec.Str, spec.Start, spec.Exact, pyreq.Poetry)
+		x.source(&d, v.Get("source"))
+	default:
+		d.Skip = pyreq.SkipRange
+	}
+	x.deps = append(x.deps, d)
 }
 
 // source points d at its explicit `source`.

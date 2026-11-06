@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -150,16 +151,6 @@ func TestProcessLockedCommands(t *testing.T) {
 	}{
 		{"uv", "uv", Pyproject, UVLock, lockUp(Pyproject, "httpx", "0.28.1", dep.Span{}),
 			[]string{"uv lock --no-progress --upgrade-package httpx==0.28.1"}},
-		{"poetry", "poetry", Pyproject, PoetryLock, lockUp(Pyproject, "requests", "2.34.2", dep.Span{}),
-			[]string{"poetry update --lock requests"}},
-		{"pdm", "pdm", Pyproject, PDMLock, map[string][]dep.Update{Pyproject: {
-			{Dep: dep.Dep{Name: "six", DepType: "project.dependencies"}, NewVersion: "1.17.0", Lockfile: true},
-			{Dep: dep.Dep{Name: "IDNA", DepType: "tool.pdm.dev-dependencies"}, NewVersion: "3.20", Lockfile: true},
-			{Dep: dep.Dep{Name: "unlocked", DepType: "project.dependencies"}, NewVersion: "1.0", Lockfile: true},
-		}}, []string{
-			"pdm update --update-reuse --no-sync -G default six unlocked",
-			"pdm update --update-reuse --no-sync -G dev IDNA",
-		}},
 		{"pipenv", "pipenv", Pipfile, PipfileLock, map[string][]dep.Update{Pipfile: {
 			{Dep: dep.Dep{Name: "requests", RefSpan: span(testPipfile, `>=2.32`)}, NewVersion: "2.34.0", Lockfile: true},
 			{Dep: dep.Dep{Name: "pytest", RefSpan: span(testPipfile, `>=9`)}, NewVersion: "9.1.1", Lockfile: true},
@@ -175,9 +166,6 @@ func TestProcessLockedCommands(t *testing.T) {
 			log := stubs(t, c.tool)
 			dir := t.TempDir()
 			lock := "v1\n"
-			if c.lock == PDMLock {
-				lock = "[[package]]\nname = \"six\"\ngroups = [\"dev\", \"default\"]\n\n[[package]]\nname = \"idna\"\ngroups = [\"dev\"]\n"
-			}
 			old := "old"
 			if c.manifest == Pipfile {
 				old = testPipfile
@@ -209,6 +197,56 @@ func TestProcessLockedCommands(t *testing.T) {
 	}
 }
 
+// TestProcessLockedPins moves the lockfile-only updates of poetry.lock and pdm.lock to exactly
+// their versions: the lock command runs with the constraints pinned, then with the manifest
+// restored.
+func TestProcessLockedPins(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not in PATH")
+	}
+	grep, err := exec.LookPath("grep")
+	if err != nil {
+		t.Skip("grep not in PATH")
+	}
+	const src = "[project]\nname = \"demo\"\ndependencies = [\"requests>=2.32\", \"six\"]\n\n[tool.poetry.dependencies]\nidna = \"^3.4\"\n"
+	locks := map[string][]dep.Update{Pyproject: {
+		{Dep: dep.Dep{Name: "requests", Range: ">=2.32", RefSpan: span(src, ">=2.32")}, NewVersion: "2.33.0", Lockfile: true},
+		{Dep: dep.Dep{Name: "idna", Range: "^3.4", RefSpan: span(src, "^3.4")}, NewVersion: "3.7", Lockfile: true},
+	}}
+	for _, c := range []struct{ tool, lock, argv string }{
+		{"poetry", PoetryLock, "poetry lock"},
+		{"pdm", PDMLock, "pdm lock --update-reuse"},
+	} {
+		t.Run(c.tool, func(t *testing.T) {
+			bin, log := t.TempDir(), filepath.Join(t.TempDir(), "log")
+			script := "#!" + sh + "\n[ \"$1\" = --version ] && { echo 'Poetry (version 2.1.3)'; exit 0; }\n" +
+				"{ echo \"argv: ${0##*/} $*\"; '" + grep + "' -h '\"requests\\|^idna' pyproject.toml; } >> '" + log + "'\necho locked >> " + c.lock + "\n"
+			if err := os.WriteFile(filepath.Join(bin, c.tool), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin)
+			dir := t.TempDir()
+			write(t, dir, map[string]string{Pyproject: src, c.lock: "v1\n"})
+			out, err := Locker{}.ProcessLocked(t.Context(), dir, nil, map[string][]byte{c.lock: []byte("v1\n")}, locks)
+			if err != nil || string(out[c.lock]) != "v1\nlocked\nlocked\n" {
+				t.Fatalf("out = %q, err = %v", out, err)
+			}
+			want := "argv: " + c.argv + "\n" + `dependencies = ["requests==2.33.0", "six"]` + "\nidna = \"==3.7\"\n" +
+				"argv: " + c.argv + "\n" + `dependencies = ["requests>=2.32", "six"]` + "\nidna = \"^3.4\"\n"
+			if got := readLog(t, log); got != want {
+				t.Errorf("log =\n%s\nwant\n%s", got, want)
+			}
+			if b, _ := os.ReadFile(filepath.Join(dir, Pyproject)); string(b) != src {
+				t.Errorf("working tree touched: %s", b)
+			}
+		})
+	}
+	if _, err := (Locker{}).ProcessLocked(t.Context(), t.TempDir(), map[string][]byte{Pyproject: []byte(src)}, map[string][]byte{PoetryLock: []byte("v1\n")}, lockUp(Pyproject, "x", "1", dep.Span{})); err == nil {
+		t.Error("no constraint: no error")
+	}
+}
+
 // argvs returns the argv lines of a stub log, without the "argv: " prefix.
 func argvs(log string) string {
 	var out []string
@@ -221,8 +259,9 @@ func argvs(log string) string {
 }
 
 // TestProcessLockedReal moves a locked version inside the manifest's range with the real
-// tools (network; uvx for poetry, pipenv and pdm when not in PATH): the lockfile pins the new
-// version and the manifest is not touched. The tools share the user's uv cache, so uvx
+// tools (network; uvx for poetry, pipenv and pdm when not in PATH): the lockfile pins exactly
+// the new version (uv, Poetry, pdm: 1.16.0, not the newest 1.17.0 the range admits) and the
+// manifest is not touched. The tools share the user's uv cache, so uvx
 // installs them once rather than per run.
 func TestProcessLockedReal(t *testing.T) {
 	if testing.Short() {
@@ -239,28 +278,30 @@ func TestProcessLockedReal(t *testing.T) {
 		name, manifest, lock, pin string
 		src                       func(string) string
 		cmd                       cmdSpec
+		to                        string
 	}{
-		{"uv", Pyproject, UVLock, `name = "six"` + "\nversion = \"VER\"", pyproject, uvCmd()},
-		{"poetry", Pyproject, PoetryLock, `name = "six"` + "\nversion = \"VER\"", pyproject, poetryCmd(t.Context())},
-		{"pdm", Pyproject, PDMLock, `name = "six"` + "\nversion = \"VER\"", func(s string) string { return pyproject(s) + "\n[tool.pdm]\ndistribution = false\n" }, pdmCmd()},
-		{"pipenv", Pipfile, PipfileLock, `"version": "==VER"`, pipfile, pipenvCmd()},
+		{"uv", Pyproject, UVLock, `name = "six"` + "\nversion = \"VER\"", pyproject, uvCmd(), "1.16.0"},
+		{"poetry", Pyproject, PoetryLock, `name = "six"` + "\nversion = \"VER\"", pyproject, poetryCmd(t.Context()), "1.16.0"},
+		{"pdm", Pyproject, PDMLock, `name = "six"` + "\nversion = \"VER\"", func(s string) string { return pyproject(s) + "\n[tool.pdm]\ndistribution = false\n" }, pdmCmd(), "1.16.0"},
+		// pipenv upgrade resolves to the newest version the Pipfile admits despite the pin.
+		{"pipenv", Pipfile, PipfileLock, `"version": "==VER"`, pipfile, pipenvCmd(), "1.17.0"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			if _, err := c.cmd.argv(); err != nil {
 				t.Skipf("neither %s nor uvx in PATH", c.cmd.tool)
 			}
-			// Lock at 1.16.0 with a pin, then widen the manifest to a range admitting 1.17.0.
+			// Lock at 1.15.0 with a pin, then widen the manifest to a range admitting 1.16.0.
 			dir := t.TempDir()
-			write(t, dir, map[string]string{c.manifest: c.src("==1.16.0")})
+			write(t, dir, map[string]string{c.manifest: c.src("==1.15.0")})
 			if err := c.cmd.run(t.Context(), dir); err != nil {
 				t.Skipf("%s unavailable here: %v", c.cmd.tool, err)
 			}
-			src := c.src(">=1.16,<2")
+			src := c.src(">=1.15,<2")
 			write(t, dir, map[string]string{c.manifest: src})
 			lock, err := os.ReadFile(filepath.Join(dir, c.lock))
 			pin := func(v string) string { return strings.ReplaceAll(c.pin, "VER", v) }
-			if err != nil || !strings.Contains(string(lock), pin("1.16.0")) {
+			if err != nil || !strings.Contains(string(lock), pin("1.15.0")) {
 				t.Fatalf("lock = %s, %v", lock, err)
 			}
 			if c.lock != PipfileLock {
@@ -268,13 +309,13 @@ func TestProcessLockedReal(t *testing.T) {
 				if err := c.cmd.run(t.Context(), dir); err != nil {
 					t.Fatal(err)
 				}
-				if lock, err = os.ReadFile(filepath.Join(dir, c.lock)); err != nil || !strings.Contains(string(lock), pin("1.16.0")) {
+				if lock, err = os.ReadFile(filepath.Join(dir, c.lock)); err != nil || !strings.Contains(string(lock), pin("1.15.0")) {
 					t.Fatalf("relocked = %s, %v", lock, err)
 				}
 			}
 			out, err := Locker{}.ProcessLocked(t.Context(), dir, map[string][]byte{c.manifest: []byte(src)}, map[string][]byte{c.lock: lock},
-				lockUp(c.manifest, "six", "1.17.0", span(src, ">=1.16,<2")))
-			if err != nil || !strings.Contains(string(out[c.lock]), pin("1.17.0")) {
+				lockUp(c.manifest, "six", c.to, span(src, ">=1.15,<2")))
+			if err != nil || !strings.Contains(string(out[c.lock]), pin(c.to)) {
 				t.Errorf("out = %s, err = %v", out[c.lock], err)
 			}
 			if b, _ := os.ReadFile(filepath.Join(dir, c.manifest)); string(b) != src {

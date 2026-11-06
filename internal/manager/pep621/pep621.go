@@ -21,14 +21,18 @@ const Name = "pep621"
 
 // DepTypes.
 const (
-	DepTypeDependencies = "project.dependencies"
-	DepTypeOptional     = "project.optional-dependencies"
-	DepTypeGroups       = "dependency-groups"
-	DepTypeUVDev        = "tool.uv.dev-dependencies"
-	DepTypePDMDev       = "tool.pdm.dev-dependencies"
-	SkipWorkspace       = "workspace member"
-	SkipMultipleSources = "multiple sources"
-	SkipUnknownIndex    = "unknown index"
+	DepTypeDependencies      = "project.dependencies"
+	DepTypeOptional          = "project.optional-dependencies"
+	DepTypeGroups            = "dependency-groups"
+	DepTypeUVDev             = "tool.uv.dev-dependencies"
+	DepTypePDMDev            = "tool.pdm.dev-dependencies"
+	DepTypeBuildSystem       = "build-system.requires"
+	DepTypeUVConstraint      = "tool.uv.constraint-dependencies"
+	DepTypeUVOverride        = "tool.uv.override-dependencies"
+	DepTypeUVBuildConstraint = "tool.uv.build-constraint-dependencies"
+	SkipWorkspace            = "workspace member"
+	SkipMultipleSources      = "multiple sources"
+	SkipUnknownIndex         = "unknown index"
 )
 
 var matchRe = regexp.MustCompile(`(^|/)pyproject\.toml$`)
@@ -74,9 +78,11 @@ func (*pep621Manager) LockRoots(root string, files []string) []manager.LockRoot 
 // gets its DefinedIn (pyreq.Projects).
 func (m *pep621Manager) Link(files [][]dep.Dep) { m.projects.Link(files) }
 
-// Extract returns one dep per PEP 508 requirement string of the dependency arrays and
-// records the project's name for Link. `include-group` entries of dependency groups and
-// non-string items are ignored.
+// Extract returns one dep per PEP 508 requirement string of the dependency arrays (also
+// `[build-system] requires` and uv's constraint, override and build constraint lists) and
+// records the project's name for Link. `include-group` entries of dependency groups are
+// references to another group, whose deps are extracted there; other non-string items are
+// ignored.
 func (m *pep621Manager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	doc, err := tomlspan.Parse(src)
 	if err != nil {
@@ -92,6 +98,10 @@ func (m *pep621Manager) Extract(file string, src []byte, _ manager.Env) ([]dep.D
 	x.tables(DepTypeGroups, doc.Get("dependency-groups"))
 	x.list(DepTypeUVDev, doc.Get("tool", "uv", "dev-dependencies"))
 	x.tables(DepTypePDMDev, doc.Get("tool", "pdm", "dev-dependencies"))
+	x.list(DepTypeBuildSystem, doc.Get("build-system", "requires"))
+	x.list(DepTypeUVConstraint, doc.Get("tool", "uv", "constraint-dependencies"))
+	x.list(DepTypeUVOverride, doc.Get("tool", "uv", "override-dependencies"))
+	x.list(DepTypeUVBuildConstraint, doc.Get("tool", "uv", "build-constraint-dependencies"))
 	return x.deps, nil
 }
 
@@ -168,12 +178,19 @@ func newUVSources(doc *tomlspan.Value) uvSources {
 }
 
 // apply sets d's Source (and ExtraSources) from its uv source (or the default and extra
-// indexes) or skips it when the source is not an index.
+// indexes) or skips it when the source is not an index. A git source with a version `tag`
+// makes d (also an unconstrained one) a git-tags dep.
 func (s uvSources) apply(d *dep.Dep) {
-	if d.Skip != "" {
+	if d.Datasource == pyreq.GitTags || d.Skip != "" && d.Skip != pyreq.SkipUnconstrained {
 		return
 	}
 	src := s.sources[pyreq.Normalize(d.Name)]
+	if src != nil && src.Kind == tomlspan.Table && pyreq.GitTable(d, src, "tag") {
+		return
+	}
+	if d.Skip != "" {
+		return
+	}
 	switch {
 	case src == nil:
 		d.Source, d.ExtraSources = s.defaultIndex, s.extra
@@ -189,7 +206,7 @@ func (s uvSources) apply(d *dep.Dep) {
 		return
 	}
 	if _, skip := pyreq.TableSpec(src); skip != pyreq.SkipUnconstrained {
-		d.Skip = skip // git, path or url
+		d.Skip = skip // path or url
 		return
 	}
 	idx := src.Get("index")

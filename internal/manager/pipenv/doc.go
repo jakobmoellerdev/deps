@@ -15,12 +15,12 @@ var Doc = refdoc.Manager{
 		"`[requires]` is no dep: `python_full_version` (exactly) else `python_version` (`3.11` → `==3.11.*`) drops the releases that do not support it (see the `pypi` datasource).",
 	Files: []string{"`Pipfile`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypePackages, What: "`[packages]` (updates use commit type `fix`)", Versioning: "`pep440`", Datasources: []string{"pypi"}},
-		{Name: DepTypeDevPackages, What: "`[dev-packages]`", Versioning: "`pep440`", Datasources: []string{"pypi"}},
-		{Name: DepTypeCategory, What: "every custom package category (pipenv ≥ 2022.10): any other top-level table except `[source]`, `[requires]`, `[pipenv]` and `[scripts]`, e.g. `[docs]`. Match them in rules with `depTypes: [category]` (plus `paths`/`names`); Renovate uses the category name as dep type", Versioning: "`pep440`", Datasources: []string{"pypi"}},
+		{Name: DepTypePackages, What: "`[packages]` (updates use commit type `fix`)", Datasource: "`pypi`; `git-tags` for `{ git = …, ref = <tag> }`", Versioning: "`pep440`; `tag` for git tags", Datasources: []string{"pypi", "git-tags"}},
+		{Name: DepTypeDevPackages, What: "`[dev-packages]`", Datasource: "`pypi`; `git-tags` for `{ git = …, ref = <tag> }`", Versioning: "`pep440`; `tag` for git tags", Datasources: []string{"pypi", "git-tags"}},
+		{Name: DepTypeCategory, What: "every custom package category (pipenv ≥ 2022.10): any other top-level table except `[source]`, `[requires]`, `[pipenv]` and `[scripts]`, e.g. `[docs]`. Match them in rules with `depTypes: [category]` (plus `paths`/`names`); Renovate uses the category name as dep type", Datasource: "`pypi`; `git-tags` for `{ git = …, ref = <tag> }`", Versioning: "`pep440`; `tag` for git tags", Datasources: []string{"pypi", "git-tags"}},
 	},
 	Skips: slices.Concat(pyreq.SpecifierSkips, []refdoc.Skip{
-		{Reason: pyreq.SkipGit, When: "`{ git = … }`"},
+		{Reason: pyreq.SkipGit, When: "`{ git = … }` without a `ref`, with a `ref` that is a branch or commit, or on a repository that is not http(s)"},
 		{Reason: pyreq.SkipLocal, When: "`{ path = … }`"},
 		{Reason: pyreq.SkipURL, When: "`{ file = … }`"},
 		{Reason: SkipUnknownIndex + " <name>", When: "an `index` that no `[[source]]` names"},
@@ -30,6 +30,7 @@ var Doc = refdoc.Manager{
 		pyreq.RangeSection,
 		{Title: "Indexes", Items: []string{
 			"Values are a specifier string or a table with `version` (`{ version = \"==2.0\", extras = [\"socks\"] }`).",
+			"A `{ git = \"https://…\", ref = \"v1.2.0\" }` table whose `ref` is a version tag is a `git-tags` dep of the repository whose tag is replaced.",
 			"A table's `index = \"<name>\"` looks the dep up on that `[[source]]` URL; any other dep uses the first `[[source]]`, and with `[pipenv] install_search_all_sources = true` also merges in the releases of the other sources (pipenv ≥ 2022.3 otherwise resolves it on the first only). A source URL with `${VAR}` is not expanded and falls back to `PIP_INDEX_URL` or PyPI (see the `pypi` datasource).",
 		}},
 		pyreq.LockedSection,

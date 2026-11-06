@@ -60,7 +60,8 @@ func TestKeyDocs(t *testing.T) {
 
 func TestIgnoredByDefault(t *testing.T) {
 	for _, d := range DepTypes {
-		want := d == "indirect" || d == "test-indirect" || d == "go" || d == "peerDependencies" || d == "engines" || d == "submodule" || d == "task"
+		want := d == "indirect" || d == "test-indirect" || d == "go" || d == "peerDependencies" || d == "engines" || d == "submodule" || d == "task" ||
+			d == "tool.uv.constraint-dependencies" || d == "tool.uv.override-dependencies" || d == "tool.uv.build-constraint-dependencies"
 		if IgnoredByDefault(d) != want {
 			t.Errorf("IgnoredByDefault(%q) = %v", d, !want)
 		}

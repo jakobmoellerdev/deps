@@ -109,3 +109,6 @@ func MaintenanceSection(scope string, lockfiles ...string) refdoc.Section {
 	b.WriteString("\nAll lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it.")
 	return refdoc.Section{Title: "Lock file maintenance (`run`)", Body: b.String()}
 }
+
+// GitURLItem documents the git-tags deps of PEP 508 direct references (SetGitURL).
+const GitURLItem = "A VCS reference that pins an http(s) git repository to a version tag (`name @ git+https://github.com/org/repo@v1.2.0`, optionally `.git` and a `#subdirectory=…` fragment) is a `git-tags` dep of `https://github.com/org/repo` (versioning `tag`) whose tag is replaced; a branch, a commit, no ref or an ssh URL is skipped as a `" + SkipGit + "`."

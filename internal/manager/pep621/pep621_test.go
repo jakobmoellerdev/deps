@@ -3,6 +3,7 @@ package pep621
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -23,6 +24,12 @@ func extract(t *testing.T, src string) []dep.Dep {
 		t.Fatal(err)
 	}
 	for _, d := range deps {
+		if d.Datasource == pyreq.GitTags {
+			if d.Manager != Name || d.Versioning != "tag" || d.Skip != "" || src[d.RefSpan.Start:d.RefSpan.End] != d.Version {
+				t.Errorf("%s: %+v", d.Name, d)
+			}
+			continue
+		}
 		if d.Manager != Name || d.Datasource != "pypi" || d.Versioning != "pep440" {
 			t.Errorf("%s: %+v", d.Name, d)
 		}
@@ -188,11 +195,11 @@ func TestFixtures(t *testing.T) {
 		want          want
 	}{
 		// pydantic: uv workspace member pydantic-core, unconstrained dependency groups.
-		{"pydantic.toml", 54, 44, 2, want{53, DepTypeDependencies, "pydantic-core", "2.50.0", SkipWorkspace, ""}},
+		{"pydantic.toml", 56, 45, 2, want{53, DepTypeDependencies, "pydantic-core", "2.50.0", SkipWorkspace, ""}},
 		// fastapi: extras with a space before the specifier, ranges with upper bounds.
-		{"fastapi.toml", 97, 0, 10, want{69, DepTypeOptional, "fastapi-cli", "0.0.32", "", ""}},
+		{"fastapi.toml", 98, 1, 10, want{69, DepTypeOptional, "fastapi-cli", "0.0.32", "", ""}},
 		// chaostoolkit: pdm dev-dependencies, PyPI only.
-		{"chaostoolkit.toml", 10, 0, 9, want{59, DepTypePDMDev, "semver", "3.0.2", "", ""}},
+		{"chaostoolkit.toml", 11, 1, 9, want{59, DepTypePDMDev, "semver", "3.0.2", "", ""}},
 		// greybook: pdm dev-dependencies and a `pypi` source overriding PyPI.
 		{"greybook.toml", 18, 0, 17, want{36, DepTypePDMDev, "pytest", "8.2.2", "", "https://pypi.org/simple"}},
 	} {
@@ -214,6 +221,75 @@ func TestFixtures(t *testing.T) {
 			check(t, deps[c.pick:c.pick+1], []want{c.want})
 		})
 	}
+}
+
+// TestExtractMore covers `[build-system] requires`, uv's constraint lists, `include-group`
+// references and git dependencies pinned to tags (shapes from airflow, ruff and uv's docs).
+func TestExtractMore(t *testing.T) {
+	const in = `[build-system]
+requires = ["hatchling==1.27.0", "hatch-vcs"]
+
+[project]
+name = "demo"
+dependencies = [
+    "lib @ git+https://github.com/org/lib.git@v1.2.0#subdirectory=py",
+    "branch @ git+https://github.com/org/branch@main",
+    "sha @ git+https://github.com/org/sha@0123456789abcdef0123456789abcdef01234567",
+    "ssh @ git+ssh://git@github.com/org/ssh@v1.0.0",
+    "uvgit",
+    "uvgit2>=1",
+]
+
+[dependency-groups]
+typing = ["mypy==1.13.0"]
+dev = [{include-group = "typing"}, "pytest>=8"]
+
+[tool.uv]
+override-dependencies = ["openai>=2.47.0,<3"]
+constraint-dependencies = ["azure-ai-projects<2.5"]
+build-constraint-dependencies = ["setuptools==75.0.0", { requirement = "flit-core==4.0.2", hashes = [] }]
+
+[tool.uv.sources]
+uvgit = { git = "https://gitlab.com/org/uvgit", tag = "2.0.1" }
+uvgit2 = { git = "https://gitlab.com/org/uvgit2", branch = "main" }
+`
+	deps := extract(t, in)
+	check(t, deps, []want{
+		{7, DepTypeDependencies, "lib", "v1.2.0", "", "https://github.com/org/lib"},
+		{8, DepTypeDependencies, "branch", "", pyreq.SkipGit, ""},
+		{9, DepTypeDependencies, "sha", "", pyreq.SkipGit, ""},
+		{10, DepTypeDependencies, "ssh", "", pyreq.SkipGit, ""},
+		{25, DepTypeDependencies, "uvgit", "2.0.1", "", "https://gitlab.com/org/uvgit"},
+		{12, DepTypeDependencies, "uvgit2", "1", pyreq.SkipGit, ""},
+		{16, DepTypeGroups, "mypy", "1.13.0", "", ""},
+		{17, DepTypeGroups, "pytest", "8", "", ""},
+		{2, DepTypeBuildSystem, "hatchling", "1.27.0", "", ""},
+		{2, DepTypeBuildSystem, "hatch-vcs", "", pyreq.SkipUnconstrained, ""},
+		{21, DepTypeUVConstraint, "azure-ai-projects", "2.5", "", ""},
+		{20, DepTypeUVOverride, "openai", "2.47.0", "", ""},
+		{22, DepTypeUVBuildConstraint, "setuptools", "75.0.0", "", ""},
+	})
+	m := New()
+	edits, err := m.Edits(dep.Update{Dep: deps[0], NewVersion: "v1.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := patch.Apply([]byte(in), edits)
+	if err != nil || !slices.Contains(splitLines(string(out)), `    "lib @ git+https://github.com/org/lib.git@v1.3.0#subdirectory=py",`) {
+		t.Errorf("tag edit = %s, %v", out, err)
+	}
+	edits, err = m.Edits(dep.Update{Dep: deps[4], NewVersion: "2.1.0"})
+	if out, aerr := patch.Apply([]byte(in), edits); err != nil || aerr != nil || !slices.Contains(splitLines(string(out)), `uvgit = { git = "https://gitlab.com/org/uvgit", tag = "2.1.0" }`) {
+		t.Errorf("source tag edit = %s, %v %v", out, err, aerr)
+	}
+}
+
+func splitLines(s string) []string {
+	var out []string
+	for l := range strings.SplitSeq(s, "\n") {
+		out = append(out, l)
+	}
+	return out
 }
 
 func TestExtractError(t *testing.T) {

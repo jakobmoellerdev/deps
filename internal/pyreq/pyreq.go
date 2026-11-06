@@ -35,6 +35,7 @@ type Requirement struct {
 	Spec               string // version specifier without parentheses, trimmed; "" when absent
 	SpecStart, SpecEnd int
 	URL                string // `name @ <url>`
+	URLStart           int
 	Marker             string // environment marker after `;`, trimmed
 }
 
@@ -66,6 +67,7 @@ func Parse(s string) (r Requirement, ok bool) {
 		if r.URL = strings.TrimSpace(u); r.URL == "" {
 			return Requirement{}, false
 		}
+		r.URLStart = i + 1 + strings.Index(u, r.URL)
 		return r, true
 	}
 	if t := strings.TrimSpace(body); t != "" && !strings.ContainsRune("(<>=!~", rune(t[0])) {
@@ -264,7 +266,7 @@ func TOMLRequirement(m, depType, file string, v *tomlspan.Value) (dep.Dep, bool)
 	}
 	d := NewDep(m, depType, file, r.Name, v.Line)
 	if r.URL != "" {
-		d.Skip = URLSkip(r.URL)
+		SetGitURL(&d, r.URL, v.Start+r.URLStart, v.Exact)
 		return d, true
 	}
 	SetVersion(&d, r.Spec, v.Start+r.SpecStart, v.Exact, PEP440)

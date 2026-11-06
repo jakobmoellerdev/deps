@@ -3,6 +3,7 @@ package pipenv
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -201,5 +202,25 @@ torch = {version = "==2.4.0", index = "torch"}
 		if d := deps[1]; d.Source != "https://download.pytorch.org/whl/cpu" || d.ExtraSources != nil || d.PythonConstraint != c.python {
 			t.Errorf("%s: %s: source %q, extra %q, python %q", c.name, d.Name, d.Source, d.ExtraSources, d.PythonConstraint)
 		}
+	}
+}
+
+// TestGitRef makes a `ref` that is a version tag a git-tags dep (pipenv's documented shape).
+func TestGitRef(t *testing.T) {
+	const in = "[packages]\nrequests = {git = \"https://github.com/psf/requests.git\", ref = \"v2.32.3\", editable = true}\n"
+	deps, err := New().Extract("Pipfile", []byte(in), manager.Env{})
+	if err != nil || len(deps) != 1 {
+		t.Fatal(deps, err)
+	}
+	d := deps[0]
+	if d.Datasource != pyreq.GitTags || d.Versioning != "tag" || d.Source != "https://github.com/psf/requests" || d.Version != "v2.32.3" || d.Skip != "" {
+		t.Fatalf("dep = %+v", d)
+	}
+	edits, err := New().Edits(dep.Update{Dep: d, NewVersion: "v2.33.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := patch.Apply([]byte(in), edits); err != nil || string(out) != strings.Replace(in, "v2.32.3", "v2.33.0", 1) {
+		t.Errorf("out = %s, %v", out, err)
 	}
 }

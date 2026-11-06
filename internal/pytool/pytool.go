@@ -23,7 +23,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
@@ -38,7 +38,8 @@ const (
 	PDMLock     = "pdm.lock"
 )
 
-// maxCopy is the largest top-level file of a scope copied into the temporary directory.
+// maxCopy is the largest top-level file of a directory copied for pip-compile (compile.go)
+// and listed as a lock input (ScopeInputs).
 const maxCopy = 4 << 20
 
 // Locker is the post-processor (engine.PostProcessor) of the pep621, poetry and pipenv
@@ -120,18 +121,21 @@ func matchAny(globs []string, rel string) bool {
 	return false
 }
 
-// Process copies the scope's top-level files (up to 4 MiB each, the patched content for
-// manifests) and, for a uv workspace, every member's pyproject.toml into a temporary
-// directory, runs the lock command of the lockfile there and returns the lockfile when it
-// changed. Without a lockfile it does nothing.
+// Process runs the lock command of the scope's lockfile in a mirror of dir (lockIn) with the
+// patched manifests and returns the lockfile when it changed. Without a lockfile it does
+// nothing.
 func (l Locker) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
 	return l.ProcessLocked(ctx, dir, manifests, files, nil)
 }
 
 // ProcessLocked is Process plus the lockfile-only updates of the lock root (dep.Update.Lockfile,
-// by manifest path relative to dir): after the plain lock command (only when a manifest
-// changed or there are no lockfile-only updates), the lockfile's tool moves them
-// (lockOnlyCmds).
+// by manifest path relative to dir), each moved to exactly its new version:
+//   - uv.lock and Pipfile.lock: after the plain lock command (only when a manifest changed or
+//     there are no lockfile-only updates), the tool pins them (lockOnlyCmds);
+//   - poetry.lock and pdm.lock, whose update commands only move to the newest version the
+//     constraints admit: the lock command runs with every updated dep's constraint replaced
+//     by `==<version>` (pinManifests), then again with the manifests restored, which keeps
+//     those versions (they are in range) and recomputes the lockfile's content hash.
 func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files map[string][]byte, locks map[string][]dep.Update) (map[string][]byte, error) {
 	var lockName string
 	var c cmdSpec
@@ -149,6 +153,13 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 	default:
 		return nil, nil
 	}
+	if len(locks) > 0 && (lockName == PoetryLock || lockName == PDMLock) {
+		pinned, restore, err := pinManifests(dir, manifests, locks)
+		if err != nil {
+			return nil, err
+		}
+		return lockIn(ctx, dir, lockName, manifests, files, []lockStep{{cmd: c, write: pinned}, {cmd: c, write: restore}})
+	}
 	var pipfile []byte
 	if lockName == PipfileLock && len(locks) > 0 {
 		var err error
@@ -156,45 +167,87 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 			return nil, err
 		}
 	}
-	runs := lockOnlyCmds(lockName, files[lockName], pipfile, c, locks)
+	runs := lockOnlyCmds(lockName, pipfile, c, locks)
 	if len(locks) == 0 || toolrun.Changed(dir, manifests) {
 		runs = slices.Insert(runs, 0, c)
 	}
-	return lockIn(ctx, dir, lockName, manifests, files, runs)
+	steps := make([]lockStep, len(runs))
+	for i, r := range runs {
+		steps[i].cmd = r
+	}
+	return lockIn(ctx, dir, lockName, manifests, files, steps)
 }
 
-// lockIn copies the scope's top-level files, for uv.lock every workspace member's
-// pyproject.toml, then files and manifests (replacing theirs) into a temporary directory,
-// runs cmds there and returns lockName when it changed from files[lockName].
-func lockIn(ctx context.Context, dir, lockName string, manifests, files map[string][]byte, cmds []cmdSpec) (map[string][]byte, error) {
-	write, err := topLevel(dir)
-	if err != nil {
-		return nil, err
+// pinManifests returns the manifests holding lockfile-only updates (by path relative to dir)
+// with each updated dep's constraint replaced by `==<version>`, and their content without
+// the pins (the patched manifest, else the file in dir).
+func pinManifests(dir string, manifests map[string][]byte, locks map[string][]dep.Update) (pinned, restore map[string][]byte, err error) {
+	pinned, restore = map[string][]byte{}, map[string][]byte{}
+	for m, ups := range locks {
+		src := manifests[m]
+		if src == nil {
+			if src, err = os.ReadFile(filepath.Join(dir, filepath.FromSlash(m))); err != nil {
+				return nil, nil, err
+			}
+		}
+		edits := make([]patch.Edit, 0, len(ups))
+		for _, u := range ups {
+			sp := u.Dep.RefSpan
+			if sp.Start >= sp.End || sp.End > len(src) {
+				return nil, nil, fmt.Errorf("%s: cannot pin %s to %s: no constraint", m, u.Dep.Name, u.NewVersion)
+			}
+			edits = append(edits, patch.Edit{Start: sp.Start, End: sp.End, Old: string(src[sp.Start:sp.End]), New: "==" + u.NewVersion})
+		}
+		out, err := patch.Apply(slices.Clone(src), edits)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", m, err)
+		}
+		pinned[m], restore[m] = out, src
 	}
-	if lockName == UVLock {
-		if err := members(dir, write); err != nil {
-			return nil, err
+	return pinned, restore, nil
+}
+
+// lockStep is one command lockIn runs and the files (slash paths relative to dir) it writes
+// into the mirror before.
+type lockStep struct {
+	cmd   cmdSpec
+	write map[string][]byte
+}
+
+// lockIn runs steps in a mirror of dir (mirrorScope) holding files, manifests and the files
+// the steps write, and returns lockName when it changed from files[lockName].
+func lockIn(ctx context.Context, dir, lockName string, manifests, files map[string][]byte, steps []lockStep) (map[string][]byte, error) {
+	write := maps.Clone(files)
+	maps.Copy(write, manifests)
+	for _, s := range steps {
+		for p, b := range s.write {
+			if _, ok := write[p]; !ok {
+				write[p] = b // a real file in the mirror, not a link into dir
+			}
 		}
 	}
-	maps.Copy(write, files)
-	maps.Copy(write, manifests)
 	tmp, err := os.MkdirTemp("", "deps-python-*")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	if err := toolrun.WriteFiles(tmp, write); err != nil {
+	base, err := mirrorScope(dir, tmp, write)
+	if err != nil {
 		return nil, err
 	}
-	for _, c := range cmds {
-		if err := c.run(ctx, tmp); err != nil {
+	for _, s := range steps {
+		if err := toolrun.WriteFiles(base, s.write); err != nil {
+			return nil, err
+		}
+		c := s.cmd
+		if err := c.run(ctx, base); err != nil {
 			if errors.Is(err, exec.ErrNotFound) {
 				return nil, fmt.Errorf("%s not found (needed to update %s)", c.tool, lockName)
 			}
 			return nil, fmt.Errorf("%s %s in %s: %w", c.tool, strings.Join(c.args, " "), dir, err)
 		}
 	}
-	out, err := os.ReadFile(filepath.Join(tmp, lockName))
+	out, err := os.ReadFile(filepath.Join(base, lockName))
 	if err != nil {
 		return nil, err
 	}
@@ -204,62 +257,113 @@ func lockIn(ctx context.Context, dir, lockName string, manifests, files map[stri
 	return map[string][]byte{lockName: out}, nil
 }
 
-// lockOnlyCmds returns the commands that move the lockfile-only updates in lockName (whose
-// content is lock; pipfile is the unpatched Pipfile of a Pipfile.lock), with base's tool,
-// environment and uvx fallback:
+// mirrorScope builds the tree the lock commands run in below tmp and returns the mirror of
+// dir: the repository ancestors are mirrored (toolrun.MirrorAncestors), so path dependencies
+// outside dir resolve; every entry of dir is symlinked (linkTree) except the files of write,
+// which are written, and `.venv`; the repository's `.git` is linked at the mirrored top, so
+// build backends that derive the version from git (setuptools-scm, hatch-vcs, …) can build
+// the project's metadata. Build backends then see the checkout's sources, local backends
+// (`backend-path`) and workspace members as they are.
+func mirrorScope(dir, tmp string, write map[string][]byte) (string, error) {
+	base, err := toolrun.MirrorAncestors(dir, tmp)
+	if err != nil {
+		return "", err
+	}
+	// The nearest repository of dir (dir's own, else the top MirrorAncestors mirrored at tmp).
+	for top, at := dir, base; ; top, at = filepath.Dir(top), filepath.Dir(at) {
+		if _, err := os.Lstat(filepath.Join(top, ".git")); err == nil {
+			if err := os.Symlink(filepath.Join(top, ".git"), filepath.Join(at, ".git")); err != nil {
+				return "", err
+			}
+			break
+		}
+		if at == tmp {
+			break
+		}
+	}
+	if err := linkTree(dir, base, write); err != nil {
+		return "", err
+	}
+	return base, toolrun.WriteFiles(base, write)
+}
+
+// linkTree symlinks every entry of src into dst except `.git`, `.venv` and the paths of
+// write (slash paths relative to src): a written file is left out, a directory holding
+// written files is created and linked the same way, so no write reaches the checkout.
+func linkTree(src, dst string, write map[string][]byte) error {
+	written := map[string]bool{}
+	nested := map[string]map[string][]byte{}
+	for p, b := range write {
+		first, rest, ok := strings.Cut(p, "/")
+		if !ok {
+			written[first] = true
+			continue
+		}
+		if nested[first] == nil {
+			nested[first] = map[string][]byte{}
+		}
+		nested[first][rest] = b
+	}
+	ents, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range ents {
+		name := e.Name()
+		switch sub := nested[name]; {
+		case name == ".git" || name == ".venv" || written[name]:
+		case sub != nil:
+			if err := os.Mkdir(filepath.Join(dst, name), 0o755); err != nil {
+				return err
+			}
+			if e.IsDir() {
+				if err := linkTree(filepath.Join(src, name), filepath.Join(dst, name), sub); err != nil {
+					return err
+				}
+			}
+		default:
+			if err := os.Symlink(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// lockOnlyCmds returns the commands that move the lockfile-only updates of a uv.lock or
+// Pipfile.lock (pipfile is the unpatched Pipfile of a Pipfile.lock) to exactly their new
+// versions, with base's tool, environment and uvx fallback:
 //   - uv.lock: `uv lock --no-progress --upgrade-package <name>==<version>…`
-//   - poetry.lock: `poetry update --lock <name>…` (Poetry 1 and 2; Poetry picks the newest
-//     version the constraints admit)
-//   - pdm.lock: `pdm update --update-reuse --no-sync -G <group> <name>…` per lock group of
-//     the names (pdm rejects several groups with names; newest admitted version, too)
 //   - Pipfile.lock: `pipenv upgrade --lock-only --categories <category> <name>==<version>…`
 //     per Pipfile category
-func lockOnlyCmds(lockName string, lock, pipfile []byte, base cmdSpec, locks map[string][]dep.Update) []cmdSpec {
+func lockOnlyCmds(lockName string, pipfile []byte, base cmdSpec, locks map[string][]dep.Update) []cmdSpec {
 	if len(locks) == 0 {
 		return nil
 	}
-	// Arguments by command (one per Pipfile category or pdm group, else one).
+	// Arguments by command (one per Pipfile category, else one).
 	byCmd := map[string][]string{}
-	var groups map[string]string
 	var category func(off int) string
-	switch lockName {
-	case PDMLock:
-		groups = pdmGroups(lock)
-	case PipfileLock:
+	if lockName == PipfileLock {
 		category = pipfileCategories(pipfile)
 	}
 	for _, m := range slices.Sorted(maps.Keys(locks)) {
 		for _, u := range locks[m] {
 			pin := u.Dep.Name + "==" + u.NewVersion
-			switch lockName {
-			case UVLock:
+			if lockName == UVLock {
 				byCmd[""] = append(byCmd[""], "--upgrade-package", pin)
-			case PipfileLock:
-				cat := category(u.Dep.RefSpan.Start)
-				byCmd[cat] = append(byCmd[cat], pin)
-			default:
-				g := groups[pyreq.Normalize(u.Dep.Name)]
-				if lockName == PDMLock {
-					g = cmp.Or(g, "default")
-				}
-				if !slices.Contains(byCmd[g], u.Dep.Name) {
-					byCmd[g] = append(byCmd[g], u.Dep.Name)
-				}
+				continue
 			}
+			cat := category(u.Dep.RefSpan.Start)
+			byCmd[cat] = append(byCmd[cat], pin)
 		}
 	}
 	var out []cmdSpec
 	for _, k := range slices.Sorted(maps.Keys(byCmd)) {
 		c := base
-		switch lockName {
-		case UVLock:
+		if lockName == UVLock {
 			c.args = []string{"lock", "--no-progress"}
-		case PipfileLock:
+		} else {
 			c.args = []string{"upgrade", "--lock-only", "--categories", k}
-		case PDMLock:
-			c.args = []string{"update", "--update-reuse", "--no-sync", "-G", k}
-		default:
-			c.args = []string{"update", "--lock"}
 		}
 		c.args = append(c.args, byCmd[k]...)
 		out = append(out, c)
@@ -286,35 +390,6 @@ func pipfileCategories(src []byte) func(off int) string {
 		}
 		return ""
 	}
-}
-
-// pdmGroups returns the lock group of each `[[package]]` of a pdm.lock by normalized name:
-// "default" when it is one of its groups, else its first.
-func pdmGroups(lock []byte) map[string]string {
-	doc, err := tomlspan.Parse(lock)
-	if err != nil {
-		return nil
-	}
-	out := map[string]string{}
-	if a := doc.Get("package"); a != nil && a.Kind == tomlspan.Array {
-		for _, p := range a.Items {
-			n, gs := p.Get("name"), p.Get("groups").Strings()
-			if n == nil || n.Kind != tomlspan.String || len(gs) == 0 {
-				continue
-			}
-			k := pyreq.Normalize(n.Str)
-			if out[k] == "default" {
-				continue
-			}
-			out[k] = gs[0].Str
-			for _, g := range gs {
-				if g.Str == "default" {
-					out[k] = "default"
-				}
-			}
-		}
-	}
-	return out
 }
 
 // topLevel reads the regular files directly in dir (README, LICENSE, … that project metadata
@@ -348,9 +423,11 @@ func topLevelNames(dir string) ([]string, error) {
 	return out, nil
 }
 
-// ScopeInputs implements engine.ScopeInputLister: the files lockIn copies besides the
-// manifests and lockfiles, the top-level files of dir (up to 4 MiB each) and, with uv.lock,
-// every workspace member's pyproject.toml.
+// ScopeInputs implements engine.ScopeInputLister: what decides the lockfile besides the
+// manifests and lockfiles, the top-level files of dir (up to 4 MiB each; project metadata
+// such as a readme) and, with uv.lock, every workspace member's pyproject.toml. lockIn
+// mirrors all of dir, but the other files (sources, a local build backend, git) only let
+// a backend build the project's metadata and do not change the locked versions.
 func (Locker) ScopeInputs(_ context.Context, root, dir string, _ []string) (paths, digests []string, err error) {
 	abs := filepath.Join(root, filepath.FromSlash(dir))
 	names, err := topLevelNames(abs)

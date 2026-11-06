@@ -121,8 +121,10 @@ var mavenProduction = map[string]bool{"compile": true, "provided": true, "runtim
 // are disabled by default as in Renovate, and so are Azure Pipelines tasks (Renovate disables
 // the azure-pipelines manager: a public task version may not be installed in the organization);
 // indirect and test-indirect are the transitive pins of Go modules, compiled requirements and Elm
-// applications.
-var defaultIgnored = map[string]bool{"indirect": true, "test-indirect": true, "go": true, "peerDependencies": true, "engines": true, "submodule": true, "task": true}
+// applications; uv's constraint, override and build constraint lists usually cap versions on
+// purpose (Renovate does not extract them).
+var defaultIgnored = map[string]bool{"indirect": true, "test-indirect": true, "go": true, "peerDependencies": true, "engines": true, "submodule": true, "task": true,
+	"tool.uv.constraint-dependencies": true, "tool.uv.override-dependencies": true, "tool.uv.build-constraint-dependencies": true}
 
 // allUpdates allows every update type; policies share it until a rule sets allowedUpdateTypes.
 var allUpdates = updateSet(nil)

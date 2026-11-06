@@ -25,7 +25,7 @@ func Managers(cfg *config.Config) ([]manager.Manager, error) {
 // SkipDocs are the skip reasons the engine sets for every manager.
 var SkipDocs = []refdoc.Skip{
 	{Reason: "ignored by rule #<i>", When: "a pre-policy rule set `ignore: true`"},
-	{Reason: "ignored by default (<type>; enable with a rule setting ignore: false)", When: "dep types `indirect`, `test-indirect`, `go`, `peerDependencies`, `engines`, `submodule`, `task`"},
+	{Reason: "ignored by default (<type>; enable with a rule setting ignore: false)", When: "dep types `indirect`, `test-indirect`, `go`, `peerDependencies`, `engines`, `submodule`, `task`, `tool.uv.constraint-dependencies`, `tool.uv.override-dependencies`, `tool.uv.build-constraint-dependencies`"},
 	{Reason: "non-version value \"<v>\"", When: "the current value is not valid in the dep's versioning scheme"},
 	{Reason: "non-version tag", When: "a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep`"},
 	{Reason: "branch ref", When: "a github-actions branch ref (`@main`, git-refs) without a digest, and `pin: keep`"},

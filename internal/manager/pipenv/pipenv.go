@@ -138,6 +138,9 @@ func (x *extractor) table(depType string, t *tomlspan.Value) {
 		case tomlspan.String:
 			pyreq.SetVersion(&d, v.Str, v.Start, v.Exact, pyreq.Pipenv)
 		case tomlspan.Table:
+			if pyreq.GitTable(&d, v, "ref") {
+				break
+			}
 			spec, skip := pyreq.TableSpec(v)
 			if skip != "" {
 				d.Skip = skip

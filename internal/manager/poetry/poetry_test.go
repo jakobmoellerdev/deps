@@ -3,6 +3,7 @@ package poetry
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -23,6 +24,12 @@ func extract(t *testing.T, src string) []dep.Dep {
 		t.Fatal(err)
 	}
 	for _, d := range deps {
+		if d.Datasource == pyreq.GitTags {
+			if d.Manager != Name || d.Versioning != "tag" || src[d.RefSpan.Start:d.RefSpan.End] != d.Version {
+				t.Errorf("%s: %+v", d.Name, d)
+			}
+			continue
+		}
 		if d.Manager != Name || d.Datasource != "pypi" || d.Versioning != "pep440" {
 			t.Errorf("%s: %+v", d.Name, d)
 		}
@@ -113,10 +120,11 @@ func TestExtract(t *testing.T) {
 		{11, DepTypeDependencies, "table", "1.0", "", mirror},
 		{12, DepTypeDependencies, "private", "2.0", "", "https://pypi.corp.example/simple"},
 		{13, DepTypeDependencies, "unknown", "2.0", SkipUnknownSource + " nope", mirror},
-		{14, DepTypeDependencies, "gitdep", "", pyreq.SkipGit, mirror},
+		{14, DepTypeDependencies, "gitdep", "v1", "", "https://github.com/o/r"},
 		{15, DepTypeDependencies, "pathdep", "", pyreq.SkipLocal, mirror},
 		{16, DepTypeDependencies, "urldep", "", pyreq.SkipURL, mirror},
-		{17, DepTypeDependencies, "multi", "", SkipMultiple, mirror},
+		{18, DepTypeDependencies, "multi", "2", "", mirror},
+		{19, DepTypeDependencies, "multi", "2", "", mirror},
 		{21, DepTypeDependencies, "number", "", pyreq.SkipRange, mirror},
 		{22, DepTypeDependencies, "escaped", "", pyreq.SkipLocate, mirror},
 		{23, DepTypeDependencies, "wild", "2", "", mirror},
@@ -124,6 +132,46 @@ func TestExtract(t *testing.T) {
 		{26, DepTypeDevDependencies, "pytest", "7.0", "", mirror},
 		{29, DepTypeGroup, "ruff", "0.6.0", "", mirror},
 	})
+}
+
+// TestMultipleConstraints extracts one dep per constraint of an array, limited to the
+// constraint's Python versions (numpy's shape from Poetry's docs), and git tags of tables.
+func TestMultipleConstraints(t *testing.T) {
+	const in = `[tool.poetry.dependencies]
+python = "^3.8"
+numpy = [
+    { version = "<1.25", python = "<3.9" },
+    { version = "^1.26", python = ">=3.9", source = "corp" },
+    { git = "https://github.com/numpy/numpy.git", tag = "v2.0.0", markers = "sys_platform == 'linux'" },
+    { git = "https://github.com/numpy/numpy.git", branch = "main" },
+    "1.24.4",
+]
+
+[[tool.poetry.source]]
+name = "corp"
+url = "https://corp.example/simple"
+`
+	deps := extract(t, in)
+	check(t, deps, []want{
+		{4, DepTypeDependencies, "numpy", "1.25", "", ""},
+		{5, DepTypeDependencies, "numpy", "1.26", "", "https://corp.example/simple"},
+		{6, DepTypeDependencies, "numpy", "v2.0.0", "", "https://github.com/numpy/numpy"},
+		{7, DepTypeDependencies, "numpy", "", pyreq.SkipGit, ""},
+		{8, DepTypeDependencies, "numpy", "1.24.4", "", ""},
+	})
+	for i, py := range []string{"<3.9", ">=3.9", ">=3.9", "^3.8", "^3.8", "^3.8"} {
+		if i < len(deps) && i != 2 && deps[i].PythonConstraint != py {
+			t.Errorf("dep %d python = %q, want %q", i, deps[i].PythonConstraint, py)
+		}
+	}
+	edits, err := New().Edits(dep.Update{Dep: deps[2], NewVersion: "v2.1.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := patch.Apply([]byte(in), edits)
+	if err != nil || !strings.Contains(string(out), `tag = "v2.1.0", markers`) {
+		t.Errorf("out = %s, %v", out, err)
+	}
 }
 
 func TestNoPoetry(t *testing.T) {

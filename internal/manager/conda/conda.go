@@ -184,8 +184,13 @@ func (x *extractor) pip(items []*yaml.Node) {
 		switch {
 		case ok && r.URL != "":
 			d = pyreq.NewDep(Name, DepTypePip, x.file, r.Name, n.Line)
-			d.Skip = pyreq.URLSkip(r.URL)
-		case strings.Contains(req, "://") || pyreq.HasAnyPrefix(req, ".", "/", "~/", "git+", "hg+", "svn+", "bzr+"):
+			off := yamlspan.Locate(x.src, x.lines, n)
+			pyreq.SetGitURL(&d, r.URL, off+r.URLStart, off >= 0)
+		case strings.HasPrefix(req, "git+"):
+			d = pyreq.NewDep(Name, DepTypePip, x.file, pyreq.GitName(req), n.Line)
+			off := yamlspan.Locate(x.src, x.lines, n)
+			pyreq.SetGitURL(&d, req, off, off >= 0)
+		case strings.Contains(req, "://") || pyreq.HasAnyPrefix(req, ".", "/", "~/", "hg+", "svn+", "bzr+"):
 			d = pyreq.NewDep(Name, DepTypePip, x.file, req, n.Line)
 			d.Skip = pyreq.URLSkip(req)
 		case !ok:
@@ -197,7 +202,9 @@ func (x *extractor) pip(items []*yaml.Node) {
 			at := off + r.SpecStart
 			pyreq.SetVersion(&d, r.Spec, at, off >= 0, pyreq.PEP440)
 		}
-		d.Source, d.ExtraSources, d.PythonConstraint = index, extras, x.python
+		if d.Datasource != pyreq.GitTags {
+			d.Source, d.ExtraSources, d.PythonConstraint = index, extras, x.python
+		}
 		x.deps = append(x.deps, d)
 	}
 }
@@ -356,7 +363,7 @@ func (condaManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 // Edits rewrites the version spec (newRange) or the pip requirement's specifier (pyreq.Edits).
 func (m condaManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
-	if d.Datasource == pyreq.Datasource {
+	if d.Datasource == pyreq.Datasource || d.Datasource == pyreq.GitTags {
 		return pyreq.Edits(u)
 	}
 	out, ok := newRange(d.Range, u.NewVersion, u.RangeStrategy)

@@ -168,9 +168,12 @@ func NewRange(d dep.Dep, v, strategy string) (string, bool) {
 }
 
 // Edits rewrites the range of u's dep for the new version under u.RangeStrategy (NewRange),
-// clause by clause.
+// clause by clause, or replaces the tag of a git-tags dep.
 func Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
+	if d.Datasource == GitTags {
+		return tagEdits(u), nil
+	}
 	if _, ok := NewRange(d, u.NewVersion, u.RangeStrategy); !ok {
 		return nil, fmt.Errorf("range %q cannot be updated to admit %s", d.Range, u.NewVersion)
 	}

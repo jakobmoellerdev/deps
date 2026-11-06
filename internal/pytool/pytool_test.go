@@ -95,7 +95,7 @@ func stubs(t *testing.T, tools ...string) (log string) {
   printf 'argv:'
   printf ' %s' "${0##*/}" "$@"
   printf '\nenv: %s %s\n' "$POETRY_NO_INTERACTION" "$PIPENV_VENV_IN_PROJECT"
-  '` + find + `' . -type f | LC_ALL=C '` + sort + `' | while read -r f; do printf 'file: %s\n' "$f"; done
+  '` + find + `' -L . -type f | LC_ALL=C '` + sort + `' | while read -r f; do printf 'file: %s\n' "$f"; done
 } >> '` + log + `'
 if [ -n "$STUB_FAIL" ]; then echo "progress" >&2; echo "${STUB_FAIL_MSG:-ERR something broke}"; exit 3; fi
 [ -n "$STUB_KEEP" ] && exit 0
@@ -145,7 +145,7 @@ func TestProcess(t *testing.T) {
 			disk: map[string]string{"pyproject.toml": workspace, "README.md": "readme", "packages/one/pyproject.toml": "old", "packages/two/pyproject.toml": "two",
 				"packages/skip/pyproject.toml": "skip", "packages/nopy/x.py": "", "libs/a/pyproject.toml": "a", "src/x.py": ""},
 			lock: UVLock, argv: "uv lock --no-progress",
-			wantFiles: []string{"./README.md", "./libs/a/pyproject.toml", "./packages/one/pyproject.toml", "./packages/two/pyproject.toml", "./pyproject.toml", "./uv.lock"},
+			wantFiles: []string{"./README.md", "./libs/a/pyproject.toml", "./packages/nopy/x.py", "./packages/one/pyproject.toml", "./packages/skip/pyproject.toml", "./packages/two/pyproject.toml", "./pyproject.toml", "./src/x.py", "./uv.lock"},
 		},
 		{
 			name: "poetry 2", tools: []string{"poetry"},
@@ -287,10 +287,9 @@ func TestProcessEdgeCases(t *testing.T) {
 		}
 	})
 	t.Run("bad member glob", func(t *testing.T) {
-		stubs(t, "uv")
 		d := t.TempDir()
-		write(t, d, map[string]string{"pyproject.toml": "[tool.uv.workspace]\nmembers = [\"[\"]\n"})
-		if _, err := (Locker{}).Process(t.Context(), d, nil, bytesOf(map[string]string{UVLock: "v1"})); err == nil {
+		write(t, d, map[string]string{"pyproject.toml": "[tool.uv.workspace]\nmembers = [\"[\"]\n", UVLock: "v1"})
+		if _, _, err := (Locker{}).ScopeInputs(t.Context(), d, ".", nil); err == nil {
 			t.Error("invalid glob accepted")
 		}
 	})
@@ -389,4 +388,58 @@ func TestProcessRealPipenv(t *testing.T) {
 func TestProcessRealPDM(t *testing.T) {
 	pyproject := "[project]\nname = \"demo\"\nversion = \"1.0.0\"\nrequires-python = \">=3.9\"\ndependencies = [\"six==1.16.0\"]\n\n[tool.pdm]\ndistribution = false\n\n[tool.pdm.dev-dependencies]\ndev = [\"idna==3.7\"]\n"
 	realLock(t, Pyproject, PDMLock, map[string]string{Pyproject: pyproject}, "1.16.0", "1.17.0", `version = "VER"`, pdmCmd())
+}
+
+// TestProcessMirror locks with the real uv (network) a project the old top-level copy could
+// not: its version comes from git (hatch-vcs) and its build backend's helper lives in a
+// subdirectory. The checkout stays untouched.
+func TestProcessMirror(t *testing.T) {
+	if testing.Short() {
+		t.Skip("network")
+	}
+	if _, err := uvCmd().argv(); err != nil {
+		t.Skip("uv not in PATH")
+	}
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not in PATH")
+	}
+	pyproject := func(six string) string {
+		return "[project]\nname = \"vcsdemo\"\ndynamic = [\"version\"]\nrequires-python = \">=3.9\"\ndependencies = [\"six" + six + "\"]\n\n" +
+			"[build-system]\nrequires = [\"hatchling\", \"hatch-vcs\"]\nbuild-backend = \"hatchling.build\"\n\n" +
+			"[tool.hatch.version]\nsource = \"vcs\"\nraw-options = { search_parent_directories = true }\n\n[tool.hatch.build.targets.wheel]\npackages = [\"src/vcsdemo\"]\n"
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "py")
+	write(t, dir, map[string]string{Pyproject: pyproject("==1.16.0"), "src/vcsdemo/__init__.py": ""})
+	for _, args := range [][]string{
+		{"init", "-q"}, {"add", "-A"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgSign=false", "commit", "-qm", "init"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "-c", "tag.gpgSign=false", "tag", "-a", "v1.0.0", "-m", "v1"},
+	} {
+		cmd := exec.CommandContext(t.Context(), gitBin, args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	if err := uvCmd().run(t.Context(), dir); err != nil {
+		t.Skipf("uv unavailable here: %v", err)
+	}
+	lock, err := os.ReadFile(filepath.Join(dir, UVLock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Locker{}.Process(t.Context(), dir, map[string][]byte{Pyproject: []byte(pyproject("==1.17.0"))}, map[string][]byte{UVLock: lock})
+	if err != nil || !strings.Contains(string(out[UVLock]), "name = \"six\"\nversion = \"1.17.0\"") {
+		t.Fatalf("out = %s, err = %v", out[UVLock], err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, Pyproject)); string(b) != pyproject("==1.16.0") {
+		t.Errorf("working tree touched: %s", b)
+	}
+	cmd := exec.CommandContext(t.Context(), gitBin, "status", "--porcelain", "--untracked-files=all")
+	cmd.Dir = root
+	if st, err := cmd.Output(); err != nil || string(st) != "?? py/uv.lock\n" {
+		t.Errorf("git status = %q, %v", st, err)
+	}
 }

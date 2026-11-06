@@ -25,6 +25,9 @@ func extract(t *testing.T, src string) []dep.Dep {
 		t.Fatal(err)
 	}
 	for _, d := range deps {
+		if d.Datasource == pyreq.GitTags && d.Versioning == "tag" {
+			continue
+		}
 		if d.Manager != Name || d.DepType != DepType || d.Datasource != "pypi" || d.Versioning != "pep440" || d.File != "requirements.txt" {
 			t.Errorf("%s: %+v", d.Name, d)
 		}
@@ -61,31 +64,35 @@ func TestMatch(t *testing.T) {
 
 func TestExtract(t *testing.T) {
 	src := strings.Join([]string{
-		"# comment",                               // 1
-		"--index-url https://example.com/simple",  // 2
-		"-r base-requirements.txt",                // 3
-		"requests==2.31.0  # pinned",              // 4
-		"uvicorn[standard] >= 0.12.0",             // 5
-		"Django~=4.2 ; python_version >= '3.10'",  // 6
-		"black \\",                                // 7
-		"  ==24.3.0",                              // 8
-		"pkg==1.0 --hash=sha256:abc \\",           // 9
-		"    --hash=sha256:def",                   // 10
-		"x==1.0 \\",                               // 11
-		"    --hash=sha256:abc",                   // 12
-		"-e git+https://github.com/o/r.git#egg=r", // 13
-		"git+https://github.com/o/r.git#egg=r",    // 14
-		"https://example.com/pkg-1.0.tar.gz",      // 15
-		"./local/pkg",                             // 16
-		"dist/pkg-1.0-py3-none-any.whl",           // 17
-		"name @ https://example.com/name.whl",     // 18
-		"flask",                                   // 19
-		"numpy>=1.26,<2",                          // 20
-		"setuptools==69.*",                        // 21
-		"${VAR}",                                  // 22
-		"  # indented comment",                    // 23
-		"pytest==8.0#not-a-comment",               // 24
-		"trailing==1.0 \\",                        // 25
+		"# comment",                                   // 1
+		"--index-url https://example.com/simple",      // 2
+		"-r base-requirements.txt",                    // 3
+		"requests==2.31.0  # pinned",                  // 4
+		"uvicorn[standard] >= 0.12.0",                 // 5
+		"Django~=4.2 ; python_version >= '3.10'",      // 6
+		"black \\",                                    // 7
+		"  ==24.3.0",                                  // 8
+		"pkg==1.0 --hash=sha256:abc \\",               // 9
+		"    --hash=sha256:def",                       // 10
+		"x==1.0 \\",                                   // 11
+		"    --hash=sha256:abc",                       // 12
+		"-e git+https://github.com/o/r.git#egg=r",     // 13
+		"git+https://github.com/o/r.git#egg=r",        // 14
+		"https://example.com/pkg-1.0.tar.gz",          // 15
+		"./local/pkg",                                 // 16
+		"dist/pkg-1.0-py3-none-any.whl",               // 17
+		"name @ https://example.com/name.whl",         // 18
+		"flask",                                       // 19
+		"numpy>=1.26,<2",                              // 20
+		"setuptools==69.*",                            // 21
+		"${VAR}",                                      // 22
+		"  # indented comment",                        // 23
+		"pytest==8.0#not-a-comment",                   // 24
+		"trailing==1.0 \\",                            // 25
+		"",                                            // 26
+		"lib @ git+https://github.com/org/lib@v2.0.0", // 27
+		"git+https://github.com/org/tool.git@1.4.0#egg=tool&subdirectory=py", // 28
+		"git+https://user@github.com/org/plain@main",                         // 29
 	}, "\n")
 	deps := extract(t, src)
 	check(t, deps, []want{
@@ -95,7 +102,7 @@ func TestExtract(t *testing.T) {
 		{7, "black", "24.3.0", ""},
 		{9, "pkg", "1.0", ""},
 		{11, "x", "1.0", ""},
-		{14, "git+https://github.com/o/r.git#egg=r", "", pyreq.SkipGit},
+		{14, "r", "", pyreq.SkipGit},
 		{15, "https://example.com/pkg-1.0.tar.gz", "", pyreq.SkipURL},
 		{16, "./local/pkg", "", pyreq.SkipLocal},
 		{17, "dist/pkg-1.0-py3-none-any.whl", "", pyreq.SkipLocal},
@@ -105,8 +112,17 @@ func TestExtract(t *testing.T) {
 		{21, "setuptools", "69", ""},
 		{24, "pytest", "==8.0#not-a-comment", pyreq.SkipRange},
 		{25, "trailing", "1.0", ""},
+		{27, "lib", "v2.0.0", ""},
+		{28, "tool", "1.4.0", ""},
+		{29, "plain", "", pyreq.SkipGit},
 	})
 	for _, d := range deps {
+		if d.Datasource == pyreq.GitTags {
+			if !strings.HasPrefix(d.Source, "https://github.com/org/") || src[d.RefSpan.Start:d.RefSpan.End] != d.Version {
+				t.Errorf("%s: %+v", d.Name, d)
+			}
+			continue
+		}
 		if d.Source != "https://example.com/simple" {
 			t.Errorf("%s: source %q", d.Name, d.Source)
 		}
