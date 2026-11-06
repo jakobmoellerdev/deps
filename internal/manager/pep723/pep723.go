@@ -74,36 +74,37 @@ func (pep723Manager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep,
 
 // block returns the TOML of the first `# /// script` block as a buffer as long as src: the
 // block's content lines without their `#`/`# ` prefix at their own offsets, everything else
-// blanked (newlines kept), so spans and lines of the parse are those of src. Per PEP 723 the
-// block is the consecutive comment lines after the opening line up to the last `# ///` line
-// among them; ok is false without an opening line or a closing one.
+// blanked (newlines kept), so spans and lines of the parse are those of src. Per PEP 723's
+// reference regex the block is the consecutive comment lines after an opening line up to the
+// last `# ///` line among them; an opening line without such a closing line is no block, and
+// the search continues after it. ok is false when no opening line has a closing one.
 func block(src []byte) ([]byte, bool) {
-	i := 0
-	for {
+	start, end := -1, -1 // first content line, offset of the closing line
+	for i := 0; end < 0; {
 		j := bytes.Index(src[i:], openLine)
 		if j < 0 {
 			return nil, false
 		}
 		i += j
-		if (i == 0 || src[i-1] == '\n') && strings.TrimRight(lineAt(src, i), "\r") == string(openLine) {
-			break
+		if (i > 0 && src[i-1] != '\n') || strings.TrimRight(lineAt(src, i), "\r") != string(openLine) {
+			i += len(openLine)
+			continue
 		}
-		i += len(openLine)
-	}
-	start := i + len(lineAt(src, i)) + 1 // first content line
-	end := -1                            // offset of the closing line
-	for p := start; p < len(src); {
-		l := strings.TrimRight(lineAt(src, p), "\r")
-		if l != "#" && !strings.HasPrefix(l, "# ") {
-			break
+		start = i + len(lineAt(src, i)) + 1
+		if start >= len(src) {
+			return nil, false
 		}
-		if l == closeLine {
-			end = p
+		for p := start; p < len(src); {
+			l := strings.TrimRight(lineAt(src, p), "\r")
+			if l != "#" && !strings.HasPrefix(l, "# ") {
+				break
+			}
+			if l == closeLine {
+				end = p
+			}
+			p += len(lineAt(src, p)) + 1
 		}
-		p += len(lineAt(src, p)) + 1
-	}
-	if end < 0 {
-		return nil, false
+		i = start
 	}
 	out := bytes.Repeat([]byte{' '}, len(src))
 	for k, c := range src {

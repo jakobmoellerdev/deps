@@ -94,6 +94,14 @@ func TestExtractCRLFFirstBlock(t *testing.T) {
 	}
 }
 
+func TestExtractSkipsUnclosedOpener(t *testing.T) {
+	src := "# /// script\n# not closed\nimport os\n# /// script\n# dependencies = [\"a>=1\"]\n# ///\n"
+	deps := extract(t, src)
+	if len(deps) != 1 || deps[0].Name != "a" || deps[0].Line != 5 {
+		t.Fatalf("%+v", deps)
+	}
+}
+
 func TestExtractInvalidTOML(t *testing.T) {
 	if _, err := New().Extract("x.py", []byte("# /// script\n# dependencies = [\n# ///\n"), manager.Env{}); err == nil {
 		t.Error("want error")
