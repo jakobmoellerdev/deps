@@ -336,6 +336,9 @@ func (c compileCmd) collect(dir, name string, patched []byte, overlay map[string
 	}
 	in := inputSet{base: base, files: files, seen: map[string]bool{}, overlay: over}
 	for _, f := range slices.Concat(inputs, c.Files) {
+		if strings.Contains(f, "://") {
+			continue // remote input: pip-compile fetches it itself
+		}
 		if err := in.add(path.Clean(filepath.ToSlash(f))); err != nil {
 			return "", "", nil, err
 		}
@@ -355,7 +358,7 @@ type inputSet struct {
 // add reads the input rel (relative to base) into files, and for a requirements file the
 // files and local projects its lines reference, relative to its directory.
 func (s inputSet) add(rel string) error {
-	if s.seen[rel] || strings.Contains(rel, "://") {
+	if s.seen[rel] {
 		return nil
 	}
 	s.seen[rel] = true
@@ -389,6 +392,9 @@ func (s inputSet) add(rel string) error {
 	}
 	s.files[rel] = b
 	for _, ref := range piprequirements.References(b) {
+		if strings.Contains(ref.Path, "://") {
+			continue
+		}
 		if err := s.add(path.Join(path.Dir(rel), ref.Path)); err != nil {
 			return err
 		}
