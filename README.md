@@ -307,21 +307,21 @@ Renovate covers more platforms and managers; deps trades that breadth for a sing
 
 | Repository | Ecosystems | Tracked files | Updates found | Wall time | CPU time | Peak memory |
 |---|---|--:|--:|--:|--:|--:|
-| openclaw/openclaw 🦞 | pnpm, Swift, Ruby, Actions | 64,398 | 475 | 3.0 s | 1.9 s | 164 MB |
-| vercel/next.js | pnpm, Rust, Actions | 35,236 | 1,591 | 1.9 s | 2.7 s | 208 MB |
-| kubernetes/kubernetes | Go, containers | 31,705 | 112 | 1.9 s | 0.7 s | 52 MB |
-| grafana/grafana | Go, Yarn, containers, Actions | 24,678 | 1,178 | 12.1 s | 2.6 s | 144 MB |
-| apache/airflow | Python, uv, containers | 15,376 | 590 | ~6 min¹ | 3.0 s | 160 MB |
-| backstage/backstage | Yarn workspaces | 12,453 | 1,217 | 2.3 s | 1.9 s | 190 MB |
-| spring-projects/spring-boot | Gradle, Maven | 11,978 | 39 | 0.8 s | 0.3 s | 35 MB |
-| astral-sh/ruff | Cargo, Python, npm | 11,298 | 254 | 1.2 s | 0.8 s | 64 MB |
-| can1357/oh-my-pi | Bun, Rust, Python | 10,283 | 154 | 1.8 s | 0.4 s | 51 MB |
-| istio/istio | Go, containers, Helm | 6,775 | 117 | 5.0 s | 0.8 s | 53 MB |
-| argoproj/argo-cd | Go, Yarn, containers | 6,220 | 152 | 11.0 s | 1.0 s | 73 MB |
-| open-component-model | Go, containers, Helm | 3,046 | 87 | 2.2 s | 0.4 s | 46 MB |
-| kubernetes-sigs/cluster-api | Go, containers | 2,404 | 31 | 0.9 s | 0.4 s | 56 MB |
+| openclaw/openclaw 🦞 | pnpm, Swift, Ruby, Actions | 64,994 | 628 | 2.5 s | 2.1 s | 187 MB |
+| vercel/next.js | pnpm, Rust, Actions | 35,403 | 1,620 | 2.5 s | 3.1 s | 226 MB |
+| kubernetes/kubernetes | Go, containers | 31,737 | 125 | 1.6 s | 0.7 s | 61 MB |
+| grafana/grafana | Go, Yarn, containers, Actions | 24,717 | 1,186 | 12.1 s | 3.0 s | 165 MB |
+| apache/airflow | Python, uv, containers | 15,404 | 771 | 50 s¹ | 3.1 s | 219 MB |
+| backstage/backstage | Yarn workspaces | 12,456 | 1,215 | 2.4 s | 2.0 s | 212 MB |
+| spring-projects/spring-boot | Gradle, Maven | 11,982 | 36 | 0.8 s | 0.4 s | 42 MB |
+| astral-sh/ruff | Cargo, Python, npm | 11,304 | 259 | 2.2 s | 1.1 s | 72 MB |
+| can1357/oh-my-pi | Bun, Rust, Python | 10,303 | 181 | 1.4 s | 0.7 s | 60 MB |
+| istio/istio | Go, containers, Helm | 6,776 | 121 | 7.8 s | 1.3 s | 58 MB |
+| argoproj/argo-cd | Go, Yarn, containers | 6,228 | 187 | 11.1 s | 1.1 s | 81 MB |
+| open-component-model | Go, containers, Helm | 3,051 | 92 | 1.5 s | 0.7 s | 57 MB |
+| kubernetes-sigs/cluster-api | Go, containers | 2,404 | 33 | 0.8 s | 0.4 s | 60 MB |
 
-CPU time is deps itself; the rest of the wall time is registry latency, mostly container registries paging through tag lists. ¹ airflow waits on `public.ecr.aws/lambda/python`'s tag list (16 pages of about 3 s each) and on `docker.elastic.co`, whose tag list takes minutes to answer; when it times out instead, the run takes about 1 min and reports 2 errors.
+CPU time is deps itself; the rest of the wall time is registry latency, mostly container registries paging through tag lists. ¹ airflow waits on `public.ecr.aws/lambda/python`'s tag list (16 pages of about 3 s each) and on `docker.elastic.co`, whose tag list either answers after minutes (the run then takes about 6 min) or times out, as in these runs, which report its 2 images as errors.
 
 `deps run` adds the lockfile tools (`go mod tidy`, npm/pnpm/yarn, uv, cargo …) for the PRs it updates; PRs whose content didn't change are not pushed again.
 
