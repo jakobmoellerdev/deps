@@ -49,8 +49,6 @@ const (
 	DepTypeRegex      = customdoc.DepTypeRegex
 )
 
-const defaultVersioning = "semver"
-
 var (
 	// annotationRe finds `deps: <datasource> <name>` right after a comment marker, with an
 	// optional `versioning=<scheme>` field.
@@ -72,7 +70,7 @@ type customManager struct {
 	re         *regexp.Regexp // nil = annotation mode
 	datasource string
 	name       string
-	versioning string
+	versioning string              // the entry's; "" = per dep, config.DefaultCustomVersioning
 	registry   string              // registryUrl of the entry; "" = none
 	checksum   *dep.ChecksumSource // nil = no checksum group
 	// submatch group numbers in re; -1 = absent
@@ -82,7 +80,7 @@ type customManager struct {
 // registryURLDatasources are the datasources whose deps take a registryUrl (entry field,
 // regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
 // datasources keep an empty Source.
-var registryURLDatasources = []string{"helm", "gitlab-packages"}
+var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm"}
 
 // setRegistry sets d.Source to registry when d's datasource takes a registry URL.
 func setRegistry(d *dep.Dep, registry string) {
@@ -121,11 +119,10 @@ func newManager(c config.Custom, known func(string) bool) (*customManager, error
 	m := &customManager{known: known, files: files, datasource: c.Datasource, name: c.Name, versioning: c.Versioning,
 		registry: c.RegistryURL,
 		gVersion: -1, gName: -1, gDepName: -1, gPackageName: -1, gDatasource: -1, gVersioning: -1, gDigest: -1, gChecksum: -1, gRegistryURL: -1}
-	if m.versioning == "" {
-		m.versioning = defaultVersioning
-	}
-	if _, err := versioning.Parse(m.versioning); err != nil {
-		return nil, fmt.Errorf("versioning: %w", err)
+	if m.versioning != "" {
+		if _, err := versioning.Parse(m.versioning); err != nil {
+			return nil, fmt.Errorf("versioning: %w", err)
+		}
 	}
 	if m.datasource != "" && !known(m.datasource) {
 		return nil, fmt.Errorf("datasource: unknown %q", m.datasource)
@@ -260,10 +257,11 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 		}
 		switch {
 		case ann != nil:
+			ds := string(line[ann[2]:ann[3]])
 			d := dep.Dep{Manager: Name, DepType: DepTypeAnnotation, File: file, Line: lineNo,
-				Datasource: string(line[ann[2]:ann[3]]),
+				Datasource: ds,
 				Name:       strings.TrimSuffix(string(line[ann[4]:ann[5]]), "-->"),
-				Versioning: m.versioning}
+				Versioning: m.depVersioning(ds)}
 			if ann[6] >= 0 {
 				d.Versioning = string(line[ann[6]:ann[7]])
 			}
@@ -294,7 +292,7 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 // renovateMarker builds the pending dep of a Renovate marker's key=value fields. Name is
 // packageName, else depName; registryUrl is the Source of registryURLDatasources deps and
 // ignored otherwise, as are unknown keys. Without a versioning field docker deps use docker
-// versioning, others the entry's versioning.
+// versioning, others the entry's versioning, else their datasource's (depVersioning).
 func (m *customManager) renovateMarker(file string, lineNo int, fields string) dep.Dep {
 	d := dep.Dep{Manager: Name, DepType: DepTypeAnnotation, File: file, Line: lineNo}
 	var depName, pkgName, scheme, registry string
@@ -332,7 +330,7 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 	case d.Datasource == "docker":
 		d.Versioning = "docker"
 	default:
-		d.Versioning = m.versioning
+		d.Versioning = m.depVersioning(d.Datasource)
 	}
 	if d.Skip == "" && !m.knownVersioning(d.Versioning) {
 		d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
@@ -341,6 +339,15 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 		d.Skip = "invalid extractVersion: " + err.Error()
 	}
 	return d
+}
+
+// depVersioning is the versioning of a dep of datasource ds that sets none: the entry's, else
+// the datasource's default (config.DefaultCustomVersioning: rpm for rpm, else semver).
+func (m *customManager) depVersioning(ds string) string {
+	if m.versioning != "" {
+		return m.versioning
+	}
+	return config.DefaultCustomVersioning(config.CanonicalDatasource(ds))
 }
 
 // knownVersioning reports whether a dep may use versioning v: the entry's own (validated by
@@ -419,7 +426,7 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 		return loc[2*g], loc[2*g+1], true
 	}
 	for _, loc := range locs {
-		d := dep.Dep{Manager: Name, DepType: DepTypeRegex, File: file, Datasource: m.datasource, Name: m.name, Versioning: m.versioning}
+		d := dep.Dep{Manager: Name, DepType: DepTypeRegex, File: file, Datasource: m.datasource, Name: m.name}
 		vs, ve, ok := group(loc, m.gVersion)
 		off := loc[0]
 		if ok {
@@ -440,6 +447,7 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 		if s, e, ok := group(loc, m.gDatasource); ok && e > s {
 			d.Datasource = string(src[s:e])
 		}
+		d.Versioning = m.depVersioning(d.Datasource)
 		if s, e, ok := group(loc, m.gVersioning); ok && e > s {
 			d.Versioning = string(src[s:e])
 		}
@@ -491,6 +499,8 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //     repository (annotation `deps: helm <repository> <chart>`, Renovate `registryUrl=`); the
 //     repository is an `https://`, `http://` or `oci://` URL and becomes Source, Name the chart.
 //   - gitlab-packages: Name is `<project>:<package>`; Source is the registryUrl, if any.
+//   - rpm: Name is the package; Source is the registryUrl (empty: the datasource reports the
+//     missing repository).
 //   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
 func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
@@ -536,7 +546,7 @@ func (m *customManager) classify(d *dep.Dep) {
 			return
 		}
 		d.Source, d.Name = repo, chart
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "gitlab-packages":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "gitlab-packages", "rpm":
 	default:
 		if !strings.HasPrefix(d.Datasource, config.CustomDatasourcePrefix) || !m.known(d.Datasource) {
 			d.Skip = fmt.Sprintf("unknown datasource %q", ds)

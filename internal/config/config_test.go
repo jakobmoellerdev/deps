@@ -170,8 +170,8 @@ func TestLoadErrors(t *testing.T) {
 		{"minimumReleaseAge: soon\n", `minimumReleaseAge: invalid age "soon"`},
 		{"minimumReleaseAge: -1h\n", `minimumReleaseAge: invalid age "-1h"`},
 		{"minimumReleaseAge: 99999999999999999 weeks\n", "minimumReleaseAge: age \"99999999999999999 weeks\" out of range"},
-		{"rules: [{versioning: calver}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget or regex:<RE2>, got "calver"`},
-		{"rules: [{versioning: semvr}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget or regex:<RE2>, got "semvr" (did you mean semver?)`},
+		{"rules: [{versioning: calver}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm or regex:<RE2>, got "calver"`},
+		{"rules: [{versioning: semvr}]\n", `rules[0].versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm or regex:<RE2>, got "semvr" (did you mean semver?)`},
 		{"rules: [{versioning: 'regex:('}]\n", "rules[0].versioning: regex: invalid RE2 regexp"},
 		{"rules: [{versioning: 'regex:^(?<minor>\\d+)$'}]\n", "rules[0].versioning: regex: must have a (?<major>...) group"},
 		{"rules: [{versioning: 'regex:^(?<major>\\d+)(?P<mjor>x)$'}]\n", `rules[0].versioning: regex: unknown group "mjor" (allowed: major, minor, patch, build, revision, prerelease, compatibility)`},
@@ -467,6 +467,10 @@ custom:
     match: 'TOOL_(?P<name>\w+) = (?P<version>\S+)'
     datasource: go
     versioning: go
+  - files: [packages.txt]
+    match: '(?P<name>\S+)=(?P<version>\S+)'
+    datasource: rpm
+    registryUrl: https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/repodata/
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -474,7 +478,10 @@ custom:
 	if c.SecurityEnabled() || !Default().SecurityEnabled() {
 		t.Error("SecurityEnabled")
 	}
-	if len(c.Custom) != 2 || c.Custom[0].Versioning != "semver" || c.Custom[1].Versioning != "go" || c.Custom[1].Datasource != "go" {
+	// An entry without versioning keeps it empty: each dep defaults to DefaultCustomVersioning.
+	if len(c.Custom) != 3 || c.Custom[0].Versioning != "" || c.Custom[1].Versioning != "go" || c.Custom[1].Datasource != "go" ||
+		c.Custom[2].Versioning != "" || !strings.HasSuffix(c.Custom[2].RegistryURL, "/repodata/") ||
+		DefaultCustomVersioning(c.Custom[0].Datasource) != "semver" || DefaultCustomVersioning(c.Custom[2].Datasource) != "rpm" {
 		t.Errorf("custom = %+v", c.Custom)
 	}
 	daily := schedule.Trigger{Event: schedule.EventSchedule, Cron: "0 5 * * *"}

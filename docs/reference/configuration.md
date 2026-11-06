@@ -1108,7 +1108,7 @@ Only match deps whose file (slash path relative to --dir) matches any of these d
 Only match deps looked up with these datasources, or custom.\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) match their deps datasource.
 
 - **Type:** list of strings
-- **Values:** `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `gitlab-packages`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `gitlab-packages`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `rpm`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`, `bitbucket-tags` = `git-tags` (Bitbucket pipes). `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
 
@@ -1211,10 +1211,10 @@ Range strategy for matching npm, cargo, Python, Swift, bundler, Elm, composer, j
 
 ### `rules[].versioning`
 
-Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, or regex:\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\<name>) and (?P\<name>) syntax both work. Cannot be combined with updateTypes.
+Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, or regex:\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\<name>) and (?P\<name>) syntax both work. Cannot be combined with updateTypes.
 
 - **Type:** string
-- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|composer|julia|bazel-module|nuget|regex:.+)$`
+- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|composer|julia|bazel-module|nuget|rpm|regex:.+)$`
 
 The scheme validates the current value, ranks candidates, classifies update kinds, converts versions for `allow`, and computes security fixes. A current value that the new scheme cannot parse is skipped as `non-version value "<v>"`.
 
@@ -1234,6 +1234,7 @@ The scheme validates the current value, ranks candidates, classifies update kind
 | `julia` | Julia `VersionNumber`: 1–3 numeric parts, `-<prerelease>` and `+<build>` after three | ordered as Julia does, builds too (`1.2.11+1` > `1.2.11+0` > `1.2.11`, the JLL rebuilds); update types follow Pkg's caret: the leftmost non-zero part is the major (`0.21` → `0.22` is major). Prereleases only from a prerelease. Ranges are Pkg compat entries (`0.21, 1`, `~1.2`, `=0.3.1`, `>= 1`, `< 2`, `1.2 - 2`). The default of the julia manager |
 | `bazel-module` | Bazel module versions: `RELEASE[-PRERELEASE][+BUILD]`, dot-separated `[0-9A-Za-z]` identifiers (`-` also allowed after the first `-`) | ordered as Bazel's bzlmod `Version`: digit-only identifiers numerically and before the others (`1.2.3` < `1.2.3.1` < `1.2.3.bcr.1` < `1.2.4`), a shorter release first, a prerelease below its release, build metadata ignored. Update types follow the first three release identifiers (`.bcr.N` registry patches are patch updates); prereleases only from a prerelease. No ranges. The default of the bazel-module manager's `bazel_dep`s |
 | `nuget` | NuGetVersion: 1–4 numeric parts, optional `-<prerelease>` labels, optional `+metadata` | missing parts are 0 (`1.2` = `1.2.0.0`); prereleases compare as SemVer 2.0, case-insensitively; metadata does not count. Update types follow the first two parts; prereleases only from a prerelease. Ranges are NuGet version ranges (`[1.0,2.0)`, `(,2.0]`, `[1.2.3]`) and floating versions (`1.*`, `1.0.0-rc*`). The default of the nuget manager |
+| `rpm` | RPM EVR: `[<epoch>:]<version>[-<release>]`, version and release of `[0-9A-Za-z._+~^]`, the version starting with a digit | ordered as RPM's `rpmvercmp`: epoch, then version, then release; runs of digits compare numerically and above letters, `~` sorts below everything (`1.0~rc1` < `1.0`), `^` above the end but below more parts (`1.0` < `1.0^git1` < `1.0.1`); a version without a release sorts below the same version with one. A `~` marks a prerelease, proposed only from a prerelease. The first number of the version (and the epoch) is major, the second minor, anything else (the release: `1-1.azl3` → `1-2.azl3`) patch. No ranges. The default of rpm deps (Renovate's `rpm` versioning) |
 | `regex:<RE2>` | the expression's named groups | `major` (required), `minor`, `patch`, `build`, `revision` (numeric, absent = 0), `prerelease`, `compatibility`; other names are errors. `(?<name>)` and `(?P<name>)` both work. Candidates must share `compatibility`. |
 
 Errors: `rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group "x" (allowed: ...)`, `regex: invalid RE2 regexp: ...`, and `cannot be combined with updateTypes: ...`.
@@ -1504,14 +1505,14 @@ Custom managers: `# deps: <datasource> <name>` annotations, or RE2 regex manager
 - **Type:** list of objects
 - **Required keys:** `files`
 
-Each entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
+Each entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
 
 **Annotation mode (no `match`).** A comment marker annotates the **next line**, and that line's first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Comment starters are `#`, `//`, `--`, `;` and `<!--`.
 
 - `deps: <datasource> <name> [versioning=<scheme>]`
-- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`, and `registryUrl` and unknown keys are ignored.
+- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`; `registryUrl` is the registry of `helm`, `gitlab-packages` and `rpm` deps (see [`custom[].registryUrl`](#customregistryurl)) and ignored for other datasources, as are unknown keys.
 - With the docker datasource, the next line's first tagged image reference is used: the tag is the version, and an adjacent `@sha256:` digest is rewritten with it.
-- A marker's `versioning=` takes a scheme name (not `regex:`). Without it, the entry's `versioning` applies.
+- A marker's `versioning=` takes a scheme name (not `regex:`). Without it, docker deps use `docker` versioning, others the entry's `versioning`, else their datasource's default (see [`custom[].versioning`](#customversioning)).
 - Skips: `no version on next line`, `renovate marker without datasource`, `renovate marker without depName`.
 
 ```yaml
@@ -1551,6 +1552,7 @@ RE2 regexp with a (?P\<version>) or (?P\<currentValue>) group and optional name 
 | `name` | `depName`, `packageName` (wins over `depName`) | overrides `name` |
 | `datasource` | | overrides `datasource` |
 | `versioning` | | scheme name |
+| `registryUrl` | | overrides `registryUrl` |
 | `digest` | `currentDigest` | replaced together with the version |
 | `checksum` | | requires `checksum:` (and vice versa) |
 
@@ -1569,7 +1571,7 @@ custom:
 Datasource of the matched deps, or custom.\<name> of customDatasources; required in regex mode unless match has a (?P\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases.
 
 - **Type:** string
-- **Values:** `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `gitlab-packages`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `gitlab-packages`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `rpm`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 ### `custom[].name`
 
@@ -1579,13 +1581,13 @@ Dependency name; required in regex mode unless match has a (?P\<name>), (?P\<dep
 
 ### `custom[].versioning`
 
-Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names.
+Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm), else semver.
 
 - **Type:** string
 - **Default:** `semver`
-- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|composer|julia|bazel-module|nuget|regex:.+)$`
+- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|composer|julia|bazel-module|nuget|rpm|regex:.+)$`
 
-Accepts the schemes of [`rules[].versioning`](#rulesversioning).
+Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, else `semver`. A marker's `versioning=` or a `versioning` group overrides the entry's.
 
 ### `custom[].checksum`
 
@@ -1631,9 +1633,21 @@ Entry name inside the url document (`<hex>  <name>` or `<hex> *<name>`); empty m
 
 ### `custom[].registryUrl`
 
-Registry URLs (whitespace-separated) of the matched deps, for the helm and gitlab-packages datasources; a (?P\<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources.
+Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages and rpm datasources; a (?P\<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources.
 
 - **Type:** string
+
+Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages` and `rpm` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group or a marker's `registryUrl=` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
+
+```yaml
+custom:
+  - files: ['images/**/packages.txt']
+    match: '(?m)^(?P<name>[a-z0-9._+-]+)=(?P<version>\S+)$'
+    datasource: rpm   # versioning defaults to rpm
+    registryUrl: >-
+      https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/repodata/
+      https://packages.microsoft.com/azurelinux/3.0/prod/ms-oss/x86_64/repodata/
+```
 
 ## `customDatasources`
 

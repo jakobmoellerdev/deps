@@ -254,7 +254,7 @@ func TestNewErrors(t *testing.T) {
 	}{
 		{config.Custom{}, "custom[1]: files: must not be empty"},
 		{config.Custom{Files: []string{"a/[b"}}, `files: invalid glob "a/[b"`},
-		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget or regex:<RE2>, got "nope"`},
+		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm or regex:<RE2>, got "nope"`},
 		{config.Custom{Files: []string{"x"}, Versioning: "regex:(?<minor>1)"}, `versioning: regex: must have a (?<major>...) group`},
 		{config.Custom{Files: []string{"x"}, Datasource: "cpan"}, `datasource: unknown "cpan"`},
 		{config.Custom{Files: []string{"x"}, Datasource: "custom.envtest"}, `datasource: unknown "custom.envtest"`},
@@ -289,6 +289,44 @@ func TestRegexCustomDatasource(t *testing.T) {
 	src := "# renovate: datasource=custom.envtest depName=envtest\nENVTEST_K8S_VERSION=1.36.0\n"
 	check(t, src, extract(t, m, src), DepTypeRegex, []want{
 		{2, "custom.envtest", "envtest", "", "semver", "1.36.0", "", ""},
+	})
+}
+
+// rpm deps take their repository from registryUrl (marker field, regex group, else the
+// entry's) and default to rpm versioning unless the marker, group or entry sets one.
+func TestRPM(t *testing.T) {
+	const repo = "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/repodata/"
+	m := one(t, config.Custom{Files: []string{"f"}, RegistryURL: repo})
+	src := strings.Join([]string{
+		"# renovate: datasource=rpm depName=golang", // 1
+		"GO=1.25.3-1.azl3",                          // 2
+		"# renovate: datasource=rpm depName=kernel registryUrl=https://x/repodata versioning=loose", // 3
+		"KERNEL=6.6.104.2-4.azl3",                              // 4
+		"# deps: rpm moby-engine",                              // 5
+		"MOBY=25.0.3-15.azl3",                                  // 6
+		"# renovate: datasource=go depName=golang.org/x/tools", // 7
+		"v0.38.0", // 8
+	}, "\n")
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "rpm", "golang", repo, "rpm", "1.25.3-1.azl3", "", ""},
+		{4, "rpm", "kernel", "https://x/repodata", "loose", "6.6.104.2-4.azl3", "", ""},
+		{6, "rpm", "moby-engine", repo, "rpm", "25.0.3-15.azl3", "", ""},
+		{8, "go", "golang.org/x/tools", "", "semver", "v0.38.0", "", ""},
+	})
+
+	// Regex mode: datasource rpm makes rpm the default versioning; the entry's versioning wins.
+	m = one(t, config.Custom{Files: []string{"f"}, Datasource: "rpm", RegistryURL: repo,
+		Match: `(?m)^(?P<name>[a-z-]+)(?: (?P<registryUrl>\S+))?=(?P<version>\S+)$`})
+	src = "golang=1.25.3-1.azl3\nkernel https://y/repodata/=6.6.104.2-4.azl3\n"
+	check(t, src, extract(t, m, src), DepTypeRegex, []want{
+		{1, "rpm", "golang", repo, "rpm", "1.25.3-1.azl3", "", ""},
+		{2, "rpm", "kernel", "https://y/repodata/", "rpm", "6.6.104.2-4.azl3", "", ""},
+	})
+	m = one(t, config.Custom{Files: []string{"f"}, Datasource: "rpm", RegistryURL: repo, Versioning: "loose",
+		Match: `(?m)^(?P<name>[a-z-]+)=(?P<version>\S+)$`})
+	src = "golang=1.25.3-1.azl3\n"
+	check(t, src, extract(t, m, src), DepTypeRegex, []want{
+		{1, "rpm", "golang", repo, "loose", "1.25.3-1.azl3", "", ""},
 	})
 }
 

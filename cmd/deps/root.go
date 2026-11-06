@@ -41,6 +41,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/packagist"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
+	rpmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rpm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubygems"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubyversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rustversion"
@@ -400,6 +401,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		gradleversion.Name:      gradleversion.New(client, sem, os.Getenv),
 		rubygems.Name:           rubygems.New(client, sem, os.Getenv),
 		rubyversion.Name:        rubyversion.New(client, sem, os.Getenv),
+		rpmds.Name:              rpmds.New(client, sem),
 		rustversion.Name:        rustversion.New(client, sem, os.Getenv),
 		orb.Name:                orb.New(client, sem, os.Getenv),
 		azuretasks.Name:         azuretasks.New(client, sem, os.Getenv),

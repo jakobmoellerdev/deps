@@ -243,6 +243,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 | <img src="https://cdn.simpleicons.org/precommit" width="20" alt=""> | **pre-commit** | hook `rev`s, including frozen SHAs | |
 | <img src="https://cdn.simpleicons.org/git" width="20" alt=""> | **Git submodules** | `.gitmodules` (tracked branch or version tag; opt-in, as in Renovate) | |
 | 🧰 | **Tool versions** | asdf `.tool-versions`, mise `[tools]` | |
+| <img src="https://cdn.simpleicons.org/redhat" width="20" alt=""> | **RPM packages**<br>dnf, yum | package versions pinned in any file (markers or regex managers), looked up in the yum/dnf repositories you name | |
 | ✏️ | **Anything else** | `# deps:` and `# renovate:` markers, regex managers | |
 
 File patterns, dep types and skip reasons for every manager: [managers and datasources](docs/reference/managers.md).
