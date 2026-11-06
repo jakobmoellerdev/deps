@@ -17,7 +17,7 @@ Every release is published to the Debian, RPM, Arch Linux and Alpine package reg
 ```sh
 sudo install -d -m 0755 /etc/apt/keyrings
 sudo curl -fsSL https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/debian/repository.key -o /etc/apt/keyrings/deps.asc
-echo "deb [signed-by=/etc/apt/keyrings/deps.asc] https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/debian stable main" | sudo tee /etc/apt/sources.list.d/deps.list
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/deps.asc] https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/debian stable main" | sudo tee /etc/apt/sources.list.d/deps.list
 sudo apt-get update && sudo apt-get install deps
 ```
 
