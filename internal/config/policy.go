@@ -149,23 +149,26 @@ func updateSet(types []string) map[dep.UpdateType]bool {
 // `ignore: false`.
 func IgnoredByDefault(depType string) bool { return defaultIgnored[depType] }
 
-// UnversionedReason is the ignore reason of an action pinned to a commit no tag points at
-// (UnversionedPin).
+// UnversionedReason is the ignore reason of an action or pre-commit hook repository pinned to a
+// commit no tag points at (UnversionedPin).
 const UnversionedReason = "ignored by default (commit pin without version; enable with a rule setting ignore: false)"
 
-// UnversionedPin reports whether d is an action pinned to a bare commit SHA without a version
-// (Renovate's unversioned-reference): ignored unless a rule sets `ignore: false`. The engine
-// resolves a commit a tag points at to that tag's version first, which is not ignored.
+// UnversionedPin reports whether d is an action or a pre-commit hook repository pinned to a
+// bare commit SHA without a version (Renovate's unversioned-reference): ignored unless a rule
+// sets `ignore: false`. The engine resolves a commit a tag points at to that tag's version
+// first, which is not ignored.
 func UnversionedPin(d dep.Dep) bool {
-	return d.Manager == "github-actions" && d.DepType == "action" && d.Digest != "" && d.Version == ""
+	return (d.Manager == "github-actions" && d.DepType == "action" || d.Manager == "pre-commit" && d.DepType == "repository") &&
+		d.Digest != "" && d.Version == ""
 }
 
 // Policy is the pre-policy of d: the policy before the type of an update is known. It
 // evaluates the built-in monorepo and Ruby group rules (unless monorepos is false), then the
 // user rules without updateTypes top-to-bottom; each set apply field of a matching rule
 // overwrites the policy (allowedUpdateTypes is replaced, not merged). Indirect Go requirements
-// and pip-compile pins, go directives, npm peerDependencies and engines, actions pinned to a
-// bare SHA (UnversionedPin), git submodules and Azure Pipelines tasks are ignored unless a
+// and pip-compile pins, go directives, npm peerDependencies and engines, actions and pre-commit
+// hook repositories pinned to a bare SHA (UnversionedPin), git submodules and Azure Pipelines
+// tasks are ignored unless a
 // rule sets `ignore: false`. Its Versioning and ExtractVersion replace the dep's before
 // resolution (only rules without updateTypes may set them). The age of the current version is
 // unknown, so no currentAge rule matches (see PolicyAt).

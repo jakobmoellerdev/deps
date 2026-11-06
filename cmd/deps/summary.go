@@ -60,7 +60,7 @@ var skipHints = []struct{ prefix, hint string }{
 	{"non-version ref", "a branch or other ref; pin a version tag to get updates"},
 	{"non-version tag", "a tag without a version; set `pin: digest` to pin it"},
 	{"branch ref", "an action on a branch (`@main`); set `pin: digest` to pin it to the branch's commit"},
-	{"pinned without version comment", "add a `# vX.Y.Z` comment after the SHA"},
+	{"pinned without version comment", "the comment after the SHA is no version; make it `# vX.Y.Z` (pre-commit: `# frozen: vX.Y.Z`) or drop it"},
 	{"pseudo-version", "a commit pseudo-version; require a tagged version to get updates"},
 	{"module path changed", "the new version's go.mod declares another module path; require that path to update"},
 	{"conflicts with the inputs", "the compile inputs (requirements.in, constraints) do not admit the new version; relax them to update"},

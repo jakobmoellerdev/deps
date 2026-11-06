@@ -483,7 +483,10 @@
               "depTypes": {
                 "items": {
                   "enum": [
-                    "repository"
+                    "repository",
+                    "pre-commit-node",
+                    "pre-commit-python",
+                    "pre-commit-golang"
                   ]
                 }
               }
@@ -2242,6 +2245,9 @@
               "helmChart",
               "resource",
               "repository",
+              "pre-commit-node",
+              "pre-commit-python",
+              "pre-commit-golang",
               "service",
               "include",
               "remote",

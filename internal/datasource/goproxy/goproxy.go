@@ -75,8 +75,9 @@ func (s *Source) Versions(ctx context.Context, modPath, dir string) ([]string, e
 
 // Releases implements datasource.Datasource for module d.Name; releases carry no digest.
 // The slice is shared between callers and must not be modified. A dep outside go.mod (a mise
-// `go:` tool, a custom manager) may name a package, as `go install` does: it resolves to
-// the longest prefix of d.Name that lists versions (see module).
+// `go:` tool, a pre-commit golang hook's additional dependency, a custom manager) may name a
+// package, as `go install` does: it resolves to the longest prefix of d.Name that lists
+// versions (see module).
 func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
 	e, err := s.get(ctx, s.module(ctx, d, dir), dir)
 	return e.rels, err

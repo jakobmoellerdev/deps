@@ -230,11 +230,12 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 	// pkgDirs maps managers to their package directories when the name differs; kustomize,
 	// gitlabci and terraform report docker.ParseRef's skips (kustomize and terraform also the
 	// helm manager's chart version skips), cargo the crate datasource's
-	// registry skip, the Python managers internal/pyreq's, gomod the engine's and
+	// registry skip, the Python managers (and pre-commit, with the npm manager's) internal/pyreq's,
+	// gomod the engine's and
 	// internal/gotool's module path skip, pip_requirements internal/pytool's conflict skip,
 	// custom the deb datasource's registry URL skip.
 	pkgDirs := map[string][]string{
-		actions.Name: {"actions"}, "pre-commit": {"precommit"},
+		actions.Name: {"actions"}, "pre-commit": {"precommit", "../pyreq", "npm"},
 		"nvm": {"toolversions"}, "nodenv": {"toolversions"}, "ruby-version": {"toolversions"}, "pyenv": {"toolversions"}, "runtime-version": {"toolversions"},
 		"asdf": {"toolversions"}, "mise": {"toolversions"},
 		"kustomize": {"kustomize", "docker", "helm"}, "gitlabci": {"gitlabci", "docker"},

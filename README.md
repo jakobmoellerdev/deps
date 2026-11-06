@@ -246,7 +246,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 | <img src="https://cdn.simpleicons.org/gitlab" width="20" alt=""> | **GitLab CI** | images, project includes, CI/CD components | |
 | <img src="https://cdn.simpleicons.org/circleci/_/white" width="20" alt=""> | **Other CI pipelines**<br>Bitbucket, Woodpecker, Drone, CircleCI, Azure | Bitbucket Pipelines images and pipes, Woodpecker and Drone images, CircleCI images and orbs, Azure Pipelines containers, repositories and tasks | |
 | <img src="https://cdn.simpleicons.org/ansible/_/white" width="20" alt=""> | **Ansible** | Galaxy roles and collections in `requirements.yml` and `galaxy.yml` (Galaxy, Galaxy NG/Automation Hub servers, git sources), container images in task files | |
-| <img src="https://cdn.simpleicons.org/precommit" width="20" alt=""> | **pre-commit** | hook `rev`s, including frozen SHAs | |
+| <img src="https://cdn.simpleicons.org/precommit" width="20" alt=""> | **pre-commit** | hook `rev`s on any git host, including frozen and bare SHAs; `additional_dependencies` of node, python and golang hooks | |
 | <img src="https://cdn.simpleicons.org/git" width="20" alt=""> | **Git submodules** | `.gitmodules` (tracked branch or version tag; opt-in, as in Renovate) | |
 | 🧰 | **Tool versions** | asdf `.tool-versions`, mise `[tools]` | |
 | <img src="https://cdn.simpleicons.org/redhat" width="20" alt=""> | **RPM packages**<br>dnf, yum | package versions pinned in any file (markers or regex managers), looked up in the yum/dnf repositories you name | |

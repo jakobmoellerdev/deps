@@ -35,6 +35,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/precommit"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
@@ -130,11 +131,12 @@ type Pending struct {
 }
 
 // digestManagers support digest pinning (pin: digest, digest refresh).
-var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pre-commit": true, gitsubmodules.Name: true, vcpkg.Name: true}
+var digestManagers = map[string]bool{"github-actions": true, "docker": true, precommit.Name: true, gitsubmodules.Name: true, vcpkg.Name: true}
 
 // digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
-// github-actions, docker, pre-commit and git-submodules deps whatever their versioning (a rule
-// may override it), except setup-action version inputs and runner labels, which are plain values; vcpkg registry
+// github-actions, docker, pre-commit hook repositories and git-submodules deps whatever their
+// versioning (a rule may override it), except setup-action version inputs and runner labels,
+// which are plain values, and pre-commit additional_dependencies (npm, PyPI, Go); vcpkg registry
 // baselines (git-refs); npm git dependencies pinned to a commit (git-refs); images of
 // gitlabci, terraform (docker and kubernetes resources), ansible tasks and the CI pipeline managers, which are
 // edited like docker refs, the devcontainer image, and kustomize images with a newTag (pinned
@@ -165,18 +167,22 @@ func digestCapable(d dep.Dep) bool {
 		return d.DepType == devcontainer.DepTypeImage || d.DepType == devcontainer.DepTypeFeature && d.Digest != ""
 	case vcpkg.Name, npmManager:
 		return d.Datasource == "git-refs"
+	case precommit.Name:
+		return d.DepType == precommit.DepTypeRepository
 	}
 	return digestManagers[d.Manager] && d.DepType != actions.DepTypeSetup && d.DepType != actions.DepTypeRunner
 }
 
 // tagOnly reports whether d's version is not a version but a ref whose digest can be
-// maintained: a docker tag (latest, bookworm), or the branch a git submodule, a vcpkg
-// registry baseline or a git-refs dep (a Bazel git override commit) tracks. Such deps
-// get digest-only resolution. A kustomize image without newTag is one even without a digest:
-// it can still be replaced.
+// maintained: a docker tag (latest, bookworm), the branch a git submodule, a vcpkg registry
+// baseline or a git-refs dep (a Bazel git override commit) tracks, or the tag a frozen
+// pre-commit rev names (`# frozen: nightly`). Such deps get digest-only resolution. A kustomize
+// image without newTag is one even without a digest: it can still be replaced.
 func tagOnly(d dep.Dep) bool {
 	s, ok := versioning.Get(d.Versioning)
-	return ok && (d.Datasource == "docker" || d.Datasource == "git-refs" || d.Manager == gitsubmodules.Name || d.Manager == vcpkg.Name) && (digestCapable(d) || kustomize.Untagged(d)) && !s.Valid(d.Version)
+	frozenTag := d.Manager == precommit.Name && d.Digest != "" && d.Version != ""
+	return ok && (d.Datasource == "docker" || d.Datasource == "git-refs" || d.Manager == gitsubmodules.Name || d.Manager == vcpkg.Name || frozenTag) &&
+		(digestCapable(d) || kustomize.Untagged(d)) && !s.Valid(d.Version)
 }
 
 type job struct {

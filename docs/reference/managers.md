@@ -603,7 +603,7 @@ The tag, chart version or ref is replaced in place; a digest-pinned image or com
 
 ## pre-commit
 
-Updates the `rev` of the hook repositories in pre-commit configurations, plain tags and SHAs frozen by `pre-commit autoupdate --freeze`.
+Updates the `rev` of the hook repositories in pre-commit configurations (tags, SHAs frozen by `pre-commit autoupdate --freeze` and bare SHAs), and the `additional_dependencies` of hooks that declare `language: node`, `python` or `golang`.
 
 **Files:**
 
@@ -611,25 +611,79 @@ Updates the `rev` of the hook repositories in pre-commit configurations, plain t
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `repository` | `repos[]` entry with `repo` and `rev`; the name is the URL path (`owner/repo`), the source its `https://` URL without `.git` | `git-tags` | `tag` | updated |
+| `repository` | `repos[]` entry with `repo` and `rev`; the name is the URL path (`owner/repo`), the source its `https://` URL without `.git` on any git host (see Repositories) | `git-tags` | `tag` | updated |
+| `pre-commit-node` | `additional_dependencies` item `<name>@<range>` (`prettier@^3.6.2`, `@scope/plugin@1.2.0`) of a hook with `language: node` | `npm` | `semver` | updated |
+| `pre-commit-python` | `additional_dependencies` item, a PEP 508 requirement (`black==26.1.0`, `rich>=13.6.0`), of a hook with `language: python` | `pypi` | `pep440` | updated |
+| `pre-commit-golang` | `additional_dependencies` item `<package or module path>@<version>` (`github.com/wasilibs/go-shellcheck/cmd/shellcheck@v0.11.1`) of a hook with `language: golang` | `go` | `go` | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
-| `local repository` | `repo: local` |
+| `local repository` | `repo: local` (its hooks' additional_dependencies are extracted) |
 | `meta repository` | `repo: meta` |
-| `unrecognized repo` | `repo` is not an https/http/ssh/git or `git@host:path` URL with an owner/repo path |
+| `unrecognized repo` | `repo` is not an https/http/ssh/git or `git@host:path` URL (a local path, `file://`) |
 | `no rev` | the entry has no `rev` |
-| `pinned without version comment` | `rev` is a 40-hex SHA without a `# frozen: <version>` (or `# <version>`) comment |
-| `non-version ref` | `rev` is neither a SHA nor a version tag |
-| `cannot locate value` | the rev bytes were not found (block scalars) |
+| `pinned without version comment` | `rev` is a 40-hex SHA followed by a comment that is no version (`# fix for #651`) |
+| `non-version ref` | `rev` is neither a SHA nor a version (a branch such as `main`) |
+| `cannot locate value` | the rev or additional dependency bytes were not found (block scalars, escapes) |
+| `no version` | a node or golang additional dependency without `@<version>` |
+| `invalid module path` | a golang additional dependency whose path is no import path (`./tools@v1`) |
+| `unconstrained` | a python additional dependency without specifier (`pyyaml`) |
+| `unsupported range` | a python specifier that does not parse; a node range outside npm's range grammar |
+| `url dependency` | `name @ https://…`; a node `http(s)://` tarball |
+| `git dependency` | `name @ git+…`; a node git dependency |
+| `local dependency` | `name @ file://…`; a node `file:`/`link:` dependency |
+| `npm alias` | a node `<name>@npm:<other>@<range>` |
+| `tag` | a node dist-tag (`prettier@latest`) |
+| `invalid dependency specification` | a python additional dependency that does not start with a valid project name |
+
+**Revs.**
+
+- A tag (`v4.5.0`) is updated to newer tags. A branch (`main`) and a suffixed version (`v4.0.0-alpha.8`) are skipped (`non-version ref`), as for github-actions refs: `tag` versioning has no suffix order that is safe on hook mirrors (semver sorts mirrors-prettier's `v4.0.0-alpha.3-1` above its `v4.0.0-alpha.8`). Renovate skips branches too.
+- A SHA with `# frozen: <version>` (written by `pre-commit autoupdate --freeze`) or `# <version>` is at that version: it is updated like a tag, writing the new SHA and version.
+- A SHA with `# frozen: <tag>` where the tag is no tag version (lychee's `nightly`, `v4.0.0-alpha.8`) follows that tag: when the tag moves, a `digest` update writes its new commit. A tag that no longer exists skips the dep.
+- A bare SHA without a comment is a commit pin, resolved as a github-actions one: a SHA a tag points at is that tag's version (the newest one) and is updated like a frozen SHA, writing ` # frozen: <version>` after the new SHA. A SHA no tag points at is ignored by default (`ignored by default (commit pin without version; …)`), as Renovate disables such unversioned references; a rule setting `ignore: false` enables a `digest` update to the commit of the repository's default branch, without a comment.
+- A SHA with any other comment is skipped: the comment may say why that commit is pinned.
+
+**Repositories.**
+
+- Every git host is looked up the same way (`git-tags`, the smart HTTP protocol): GitHub, GitLab (with subgroups), Codeberg/Forgejo/Gitea, Bitbucket, sourcehut (`https://git.sr.ht/~user/repo`) and self-hosted servers need no host rule, unlike Renovate, which skips (`unknown-registry`) a host it does not detect as GitHub, GitLab or Forgejo unless a host rule names it.
+- An `http(s)://` URL keeps its scheme and port (`https://git.example.com:8443/team/hooks`); `ssh://` and `git@host:path` URLs are looked up over https on the default port.
+- A repository at the top level of its host (`https://pagure.io/<project>`) is named by its one path element.
+
+**Additional dependencies.**
+
+- As in Renovate, only hooks that declare `language: node`, `python` or `golang` in the configuration are read: other languages and hooks whose language the hook repository's `.pre-commit-hooks.yaml` defines are not. Hooks of `repo: meta` are not read; those of `repo: local` are.
+- `node`: `<name>@<range>` is an npm dependency-section range (see the npm manager's Ranges): its versions, skips and rewrites are the npm manager's, without a lockfile.
+- `python`: a PEP 508 requirement as in requirements files (see Specifiers and Ranges below); markers and extras are kept.
+- `golang`: `<path>@<version>` as `go install` takes it. The path may name a package rather than a module: the `go` datasource resolves it as the go command does, to its longest prefix whose lookup lists versions (`github.com/wasilibs/go-shellcheck/cmd/shellcheck` → module `github.com/wasilibs/go-shellcheck`). The version is rewritten in place; major module path updates are not made.
+- Security advisories (`security`) are looked up for python additional dependencies (OSV queries PyPI deps of every manager), not for node and golang ones.
+- There is no lockfile: under the default `rangeStrategy` (`auto` = `update-lockfile`) a version a range admits is not proposed, and one outside it rewrites the range (`black==26.1.0` → `black==26.3.1`, `prettier@^3.6.2` → `prettier@^4.0.0`); see [`rangeStrategy`](configuration.md#rangestrategy).
+- `pin: digest` pins hook repositories only: npm, PyPI and Go packages have no digest.
+
+**Specifiers.**
+
+- Every PEP 440 specifier set is accepted: `==`, `===`, `~=`, `!=`, `<`, `<=`, `>` and `>=` clauses separated by commas, with a trailing `.*` after `==` or `!=` (in a Pipfile also a bare version, meaning `==`). How a range is updated is described under Ranges.
+- The dep's version is the range's anchor: in its last `||` alternative the first clause that is not `<`, `<=` or `!=` (`>=1.2,<2` → `1.2`, `<1.0.0,>=0.114.2` → `0.114.2`), else its first upper bound (`<2` → `2`). The anchor's precision is kept: candidates with non-zero parts beyond it are skipped (`precision`), others are cut to it (`>=1.2,<2` sees 3.1.0 as `3.1`). With a lockfile, the locked version takes the anchor's place.
+- Versioning is `pep440`: pre and dev releases are only considered from a pre or dev release.
+- Names are kept as written; the datasource looks them up PEP 503-normalized.
+
+**Ranges (`rangeStrategy`).**
+
+- `auto` (the default) is `update-lockfile`: a new version the range admits only moves the lockfile from the locked version (see Locked versions), and is not proposed without a lockfile deps reads; a version outside the range rewrites the range. Renovate's `auto` is `update-lockfile` for poetry and `replace` for pep621, pipenv and pip_requirements, which only differs where deps reads a lockfile.
+- `bump` rewrites the range for every newer version, raising its lower bound (`>=1.2,<2` with 1.5.0 → `>=1.5.0,<2`, `^2.31` with 2.32.3 → `^2.32`, `>=2.31.0` → `>=2.32.3`). An admitted version a range has no bound to raise for (`<2`, `<=2`, `>1`, `==1.*`) is handled as under `update-lockfile`. `in-range-only` is `bump` without the versions outside the range.
+- `replace` leaves admitted versions alone. `widen` does too, and for a version outside the range moves only its upper bounds (`>=1.2,<2` with 3.1.0 → `>=1.2,<4`); when that is not enough a Poetry constraint gets a new `||` alternative (`^2.13.0` → `^2.13.0 || ^3.0.0`) and any other range, like an exact version, is replaced. `pin` writes `==<version>` (an exact clause keeps its operator: `===1.4` → `===1.5.0`, Poetry `1.0` → `1.1`): a `pin` update to the locked version (else the newest version the range admits) unless another update shares its PR bucket, then every newer version.
+- Rewrites follow Renovate's pep440 `getNewValue` (`lib/modules/versioning/pep440/range.ts`): an admitted version gets its `bump` rules, any other its `replace` rules (`widen` and `pin` aside, above), under every strategy (Renovate's `bump` would write the full new version as lower bound there too). Clause by clause: `!=` exclusions are kept verbatim; `<V` moves past the new version at the range's precision (`>=1.2,<2` with 3.1.0 → `>=3.1,<4`; with two clauses the precision is the first part in which the bounds differ, one finer for a major followed by `0`: `>=1.2.0,<2.0.0` with 3.1.4 → `>=3.1.4,<3.2.0`); `>=` and `>` take the new version at their own precision (`>=1.2` → `>=3.1`, a new version at or below them `>=<new>`); trailing zeros are trimmed when a clause has fewer than three parts; `~=`, `^` and `~` take the new version cut or zero-padded to their precision (`~=7.2` with 8.0.1 → `~=8.0`); `==`, `===`, `=`, a bare version and `<=` become the new version; wildcards keep `.*` at their precision (`==1.0.*` → `==1.2.*`).
+- A Poetry constraint with `||` alternatives gets a new alternative for a version outside all of them (`^1 || ^2` with 3.0.0 → `^1 || ^2 || ^3`, as Renovate widens npm `||` ranges); `bump` raises the alternative that admits the version.
+- Only the changed versions (and operators, `>` → `>=`) are rewritten; the bytes between clauses are kept. A rewrite that would not admit the new version (it is excluded by `!=`) is not proposed. Renovate's removal of a `>=` that a `==X.*` makes redundant is not done.
 
 **Edits.**
 
 - Tag revs are replaced in place, keeping quotes and comments.
 - Frozen revs get the new SHA and the version in the `# frozen:` comment is rewritten.
-- Pinning a tag rev writes the SHA and inserts ` # frozen: <version>` after the value.
+- Pinning a tag rev writes the SHA and inserts ` # frozen: <version>` after the value; so does an update of a bare SHA the engine resolved to a tag.
+- Additional dependencies have their range, specifier or version rewritten inside the YAML string; quotes and the rest of the list are kept.
 
 ## gitlabci
 
@@ -3486,7 +3540,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `gitea-tags` | `owner/repo` on `registryUrl` (default `https://gitea.com`), or a repository URL `https://host/owner/repo` | `GET <registryUrl>/api/v1/repos/<owner>/<repo>/tags?limit=50`. Newest first; pages are followed while the response links a next one, at most 10. The digest is the tag's `commit.sha`; a pinned tag older than the listed pages is looked up with `GET …/tags/<tag>` | Basic credentials registered for the host (the platform token, `x-access-token:<token>`); without, on 401/403/404 `git credential fill` once per host | `commit.created` |
 | `forgejo-releases` | `owner/repo` on `registryUrl` (default `https://code.forgejo.org`), or a repository URL `https://host/owner/repo` | as `gitea-releases` (the same API) | Basic credentials registered for the host (the platform token, `x-access-token:<token>`); without, on 401/403/404 `git credential fill` once per host | `published_at` |
 | `forgejo-tags` | `owner/repo` on `registryUrl` (default `https://code.forgejo.org`), or a repository URL `https://host/owner/repo` | as `gitea-tags` (the same API) | Basic credentials registered for the host (the platform token, `x-access-token:<token>`); without, on 401/403/404 `git credential fill` once per host | `commit.created` |
-| `go` | module path; outside go.mod (mise `go:` tools, custom managers) also a package path, resolved like `go install <package>@<version>` to the longest prefix that lists versions (`github.com/golangci/golangci-lint/v2/cmd/golangci-lint` → `github.com/golangci/golangci-lint/v2`) | GOPROXY `<proxy>/<escaped path>/@v/list`, following `,` / `\|` fallback semantics (`direct` → `go list -m -versions -json`); GONOPROXY/GOPRIVATE modules via `go list`. Pseudo-version deps also ask `<proxy>/<escaped path>/@latest` (`go list -m -json <path>@latest`); major module path probes list `<path>/v<N+1>/@v/list`, … from the GOPROXY URLs only, reusing the proxy's list of a successor path that is a dependency itself | none for proxy requests; `go list` uses the go command's own auth (git credentials, `.netrc`) | `@v/<v>.info`, read from `$GOMODCACHE/cache/download` first, then the proxy (`go list -m -json` for private modules) |
+| `go` | module path; outside go.mod (mise `go:` tools, pre-commit golang hooks' additional_dependencies, custom managers) also a package path, resolved like `go install <package>@<version>` to the longest prefix that lists versions (`github.com/golangci/golangci-lint/v2/cmd/golangci-lint` → `github.com/golangci/golangci-lint/v2`) | GOPROXY `<proxy>/<escaped path>/@v/list`, following `,` / `\|` fallback semantics (`direct` → `go list -m -versions -json`); GONOPROXY/GOPRIVATE modules via `go list`. Pseudo-version deps also ask `<proxy>/<escaped path>/@latest` (`go list -m -json <path>@latest`); major module path probes list `<path>/v<N+1>/@v/list`, … from the GOPROXY URLs only, reusing the proxy's list of a successor path that is a dependency itself | none for proxy requests; `go list` uses the go command's own auth (git credentials, `.netrc`) | `@v/<v>.info`, read from `$GOMODCACHE/cache/download` first, then the proxy (`go list -m -json` for private modules) |
 | `go-toolchain` | `go` / `toolchain` | `https://go.dev/dl/?mode=json&include=all`, once per run; a derived `X.Y` per minor. Release dates: `https://raw.githubusercontent.com/golang/website/HEAD/internal/history/release.go` (as Renovate's golang-version), once per run when a release time is needed | none | release date from Go's release history (midnight UTC); a derived `X.Y` has the date of `X.Y.0` |
 | `docker` | image reference | registry `tags/list` (Docker Hub with page size 10000, others 1000; at most 20 pages, 1000 for ghcr.io, quay.io, cgr.dev and the Red Hat registries, which list oldest first or per build), manifest HEAD for digests (index digest for multi-platform images); gcr.io and Artifact Registry (also behind registry.k8s.io) list each tag's digest with it, so their digests need no HEAD; elsewhere, for release times, a manifest GET by tag (Docker Hub: by the HEAD's digest, once per digest) | Docker config and credential helpers (`authn.DefaultKeychain`) | on gcr.io and Artifact Registry the `tags/list` times (`timeCreatedMs`, else `timeUploadedMs`, as for indexes); elsewhere the image config `created`; else, and for non-image artifacts (Helm charts), the manifest annotation `org.opencontainers.image.created`; a Helm chart without it is dated by the modification time of its chart archive's first entry (the packaging time; stamps before 1980 count as unknown) |
 | `npm` | package name (`@scope/name` sent as `@scope%2fname`); yarn 2 and later as the npm manager's `packageManager`, `engines` or `volta` tool is `@yarnpkg/cli-dist` (the `yarn` package stops at 1.x) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata) once per registry and package, stream-decoded; deprecated versions dropped, their messages kept for the dashboard's deprecated dependencies (a deprecated `dist-tags.latest` deprecates the package, else the installed version's own message counts); 404 → `package <name> not found`. The full packument (`Accept: application/json`) is fetched at most once per registry and package, only for release times and the source repository | `.npmrc` `//host/path/:_authToken=` (longest prefix), `${VAR}` expansion | packument `time`; not fetched for `minimumReleaseAge` when the abbreviated `modified` is already older |
