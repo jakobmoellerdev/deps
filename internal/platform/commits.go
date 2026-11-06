@@ -138,11 +138,12 @@ type shaJSON struct {
 	SHA string `json:"sha"`
 }
 
-// CommitFile is one file Commit writes or deletes.
+// CommitFile is one file Commit writes or deletes, or a submodule it moves.
 type CommitFile struct {
 	Path       string // slash path relative to the committer's prefix
 	Executable bool   // mode 100755 instead of 100644
 	Content    []byte // nil deletes the file
+	Gitlink    bool   // Content is the submodule commit (hex) recorded as a gitlink (mode 160000)
 }
 
 // Commit creates a commit with message msg on top of parent with files applied and returns
@@ -159,6 +160,13 @@ func (g *GitHubCommits) Commit(ctx context.Context, parent string, files []Commi
 	entries := make([]treeEntry, 0, len(files))
 	for _, f := range files {
 		e := treeEntry{Path: path.Join(g.prefix, f.Path), Mode: "100644", Type: "blob"}
+		if f.Gitlink {
+			// A gitlink names the submodule commit itself; there is no blob to upload.
+			sha := string(f.Content)
+			e.Mode, e.Type, e.SHA = "160000", "commit", &sha
+			entries = append(entries, e)
+			continue
+		}
 		if f.Executable {
 			e.Mode = "100755"
 		}

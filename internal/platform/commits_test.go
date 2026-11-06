@@ -27,6 +27,7 @@ type fakeGitData struct {
 	refs    map[string]string // refs/heads/... -> commit
 }
 
+// fakeEntry is a tree entry: blob is a blob id, or the commit of a gitlink (mode 160000).
 type fakeEntry struct{ mode, blob string }
 
 type fakeCommit struct {
@@ -98,7 +99,11 @@ func (f *fakeGitData) serve(w http.ResponseWriter, r *http.Request) {
 				delete(tree, path)
 				continue
 			}
-			tree[path] = fakeEntry{e["mode"].(string), e["sha"].(string)}
+			mode, sha := e["mode"].(string), e["sha"].(string)
+			if _, blob := f.blobs[sha]; (mode == "160000") != (e["type"] == "commit") || e["type"] != "commit" && !blob {
+				f.t.Errorf("tree entry %v: mode, type and sha disagree", e)
+			}
+			tree[path] = fakeEntry{mode, sha}
 		}
 		id := f.id("t")
 		f.trees[id] = tree
@@ -164,6 +169,10 @@ func (f *fakeGitData) files(commit string) map[string]string {
 	defer f.mu.Unlock()
 	out := map[string]string{}
 	for p, e := range f.trees[f.commits[commit].tree] {
+		if e.mode == "160000" {
+			out[p] = e.mode + " " + e.blob
+			continue
+		}
 		out[p] = e.mode + " " + string(f.blobs[e.blob])
 	}
 	return out
@@ -226,12 +235,14 @@ func TestGitHubCommits(t *testing.T) {
 	}
 	const branch = "deps/npm/@types-node"
 
-	// New branch: modify, add an executable and a binary file, delete a file.
+	// New branch: modify, add an executable and a binary file, delete a file, move a submodule.
+	const submodule = "2222222222222222222222222222222222222222"
 	c1, err := g.Commit(ctx, "c0", []CommitFile{
 		{Path: "a.txt", Content: []byte("changed\n")},
 		{Path: "run.sh", Executable: true, Content: []byte("#!/bin/sh\n")},
 		{Path: "bin", Content: []byte{0xff, 0x00, 0xfe}},
 		{Path: "old.txt"},
+		{Path: "lib", Gitlink: true, Content: []byte(submodule)},
 	}, "chore(deps): update x\n\nbody\n")
 	if err != nil {
 		t.Fatal(err)
@@ -250,10 +261,18 @@ func TestGitHubCommits(t *testing.T) {
 		"sub/a.txt":  "100644 changed\n",
 		"sub/run.sh": "100755 #!/bin/sh\n",
 		"sub/bin":    "100644 \xff\x00\xfe",
+		"sub/lib":    "160000 " + submodule,
 	}
 	if got := f.files(c1); !maps.Equal(got, want) {
 		t.Errorf("tree = %q, want %q", got, want)
 	}
+	f.mu.Lock()
+	for id, b := range f.blobs {
+		if string(b) == submodule {
+			t.Errorf("gitlink uploaded as blob %s", id)
+		}
+	}
+	f.mu.Unlock()
 	if c := f.commit(c1); len(c.parents) != 1 || c.parents[0] != "c0" || c.msg != "chore(deps): update x\n\nbody\n" {
 		t.Errorf("commit = %+v", c)
 	}

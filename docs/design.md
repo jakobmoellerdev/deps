@@ -681,7 +681,7 @@ func DefaultActionsHost(info Info, getenv func(string) string) (host, source str
 
 // platformCommit (GitHub only); cmd wraps it with gitx.Repo into a bot.Git
 func IsAppToken(token string) bool // "ghs_" prefix: App installation token (also GITHUB_TOKEN)
-type CommitFile struct{ Path string; Executable bool; Content []byte } // nil Content deletes
+type CommitFile struct{ Path string; Executable bool; Content []byte; Gitlink bool } // nil Content deletes; Gitlink: Content is the submodule commit, written as mode 160000 with no blob
 func NewGitHubCommits(ctx context.Context, info Info, token string, c *http.Client, prefix string) (*GitHubCommits, error) // looks up the token's account
 func (g *GitHubCommits) Author() (name, email string) // <id>+<login>@users.noreply.<host>
 func (g *GitHubCommits) Commit(ctx context.Context, parent string, files []CommitFile, msg string) (string, error)

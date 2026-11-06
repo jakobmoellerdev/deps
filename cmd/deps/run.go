@@ -213,7 +213,7 @@ type apiGit struct {
 func (g apiGit) Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, _, _ string) (string, error) {
 	files := make([]platform.CommitFile, len(changes))
 	for i, c := range changes {
-		files[i] = platform.CommitFile{Path: c.Path, Executable: c.Mode&0o111 != 0, Content: c.New}
+		files[i] = platform.CommitFile{Path: c.Path, Executable: c.Mode&0o111 != 0, Content: c.New, Gitlink: c.Gitlink}
 	}
 	return g.api.Commit(ctx, parent, files, msg)
 }
