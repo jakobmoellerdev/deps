@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"slices"
@@ -11,22 +12,33 @@ import (
 )
 
 // linked extracts files in path order with one manager, links them like the engine and
-// returns every dep rendered as "<file>:<line> <depType> <name> <source> <version> <skip>".
-// It checks that the span of every updatable dep holds its version.
+// returns every dep rendered as "<file>:<line> <depType> <name> <source> <version> <skip>"
+// (plus " range=<range>" for a range). It checks that the span of every updatable dep holds
+// its version (its range).
 func linked(t *testing.T, m manager.Manager, files map[string]string) []string {
 	t.Helper()
+	return linkedEnv(t, m, files, manager.Env{})
+}
+
+// linkedEnv is linked with env.
+func linkedEnv(t *testing.T, m manager.Manager, files map[string]string, env manager.Env) []string {
+	t.Helper()
 	var out []string
-	for _, ds := range linkedDeps(t, m, files) {
+	for _, ds := range linkedDepsEnv(t, m, files, env) {
 		for _, d := range ds {
-			if d.Manager != Name || d.Datasource != Datasource || d.Versioning != Versioning {
+			if d.Manager != Name || (d.Datasource != Datasource || d.Versioning != Versioning) && (d.Datasource != "git-tags" || d.Versioning != "tag") {
 				t.Errorf("%+v: wrong manager/datasource/versioning", d)
 			}
 			if d.Skip == "" {
-				if got := files[d.File][d.RefSpan.Start:d.RefSpan.End]; got != d.Version {
-					t.Errorf("%s:%d: span text %q, want %q", d.File, d.Line, got, d.Version)
+				if got, want := files[d.File][d.RefSpan.Start:d.RefSpan.End], cmp.Or(d.Range, d.Version); got != want {
+					t.Errorf("%s:%d: span text %q, want %q", d.File, d.Line, got, want)
 				}
 			}
-			out = append(out, fmt.Sprintf("%s:%d %s %s %s %s %s", d.File, d.Line, d.DepType, d.Name, d.Source, d.Version, d.Skip))
+			s := fmt.Sprintf("%s:%d %s %s %s %s %s", d.File, d.Line, d.DepType, d.Name, d.Source, d.Version, d.Skip)
+			if d.Range != "" {
+				s += " range=" + d.Range
+			}
+			out = append(out, s)
 		}
 	}
 	return out
@@ -36,13 +48,19 @@ func linked(t *testing.T, m manager.Manager, files map[string]string) []string {
 // It checks that every NamePart holds its text.
 func linkedDeps(t *testing.T, m manager.Manager, files map[string]string) [][]dep.Dep {
 	t.Helper()
+	return linkedDepsEnv(t, m, files, manager.Env{})
+}
+
+// linkedDepsEnv is linkedDeps with env.
+func linkedDepsEnv(t *testing.T, m manager.Manager, files map[string]string, env manager.Env) [][]dep.Dep {
+	t.Helper()
 	paths := slices.Sorted(maps.Keys(files))
 	var per [][]dep.Dep
 	for _, p := range paths {
 		if !m.Match(p) {
 			t.Fatalf("%s not matched", p)
 		}
-		ds, err := m.Extract(p, []byte(files[p]), manager.Env{})
+		ds, err := m.Extract(p, []byte(files[p]), env)
 		if err != nil {
 			t.Fatalf("%s: %v", p, err)
 		}
@@ -181,7 +199,7 @@ spec:
 		"k0s/k0s.yaml:21 k0s gamma https://own.example.com 3.0.0 ",
 		"k0s/k0s.yaml:24 k0s /var/lib/k0s/charts/delta.tgz  0.1.0 local chart",
 		"k0s/k0s.yaml:27 k0s epsilon  1.0.0 unknown chart repository missing",
-		"k0s/k0s.yaml:30 k0s zeta  ~1.2.0 version range",
+		"k0s/k0s.yaml:30 k0s zeta https://charts.example.com/stable 1.2.0  range=~1.2.0",
 		"k0s/k0s.yaml:33 k0s stable/sub/eta  1.0.0 invalid chart reference",
 		"k0s/k0s.yaml:38 k0s oci://nopath  1.0.0 invalid chart reference",
 		"k0s/manifests/charts.yaml:12 k0s cert-manager https://charts.jetstack.io v1.21.3 ",
@@ -395,7 +413,7 @@ spec:
 	}
 	check(t, linked(t, New(), files), []string{
 		"clusters/oci.yaml:9 flux podinfo oci://ghcr.io/stefanprodan/charts 6.4.0 ",
-		"clusters/oci.yaml:25 flux app oci://ghcr.io/org/charts  version range",
+		"clusters/oci.yaml:29 flux app oci://ghcr.io/org/charts 1.0.0  range=>=1.0.0",
 		"clusters/oci.yaml:34 flux pinned oci://ghcr.io/org/charts  pinned by digest",
 		"clusters/releases.yaml:10 flux podinfo https://stefanprodan.github.io/podinfo 6.5.0 ",
 		"clusters/releases.yaml:25 flux redis oci://registry-1.docker.io/bitnamicharts 18.0.0 ",
@@ -458,7 +476,7 @@ spec:
 	check(t, linked(t, New(), files), []string{
 		"argo/apps.yaml:7 argocd nginx https://charts.bitnami.com/bitnami 15.0.0 ",
 		"argo/apps.yaml:15 argocd redis oci://registry-1.docker.io/bitnamicharts 18.1.0 ",
-		"argo/apps.yaml:18 argocd app oci://ghcr.io/org/charts 1.x version range",
+		"argo/apps.yaml:18 argocd app oci://ghcr.io/org/charts 1.0.0  range=1.x",
 		"argo/apps.yaml:23 argocd norepo  1.0.0 no repoURL",
 		"argo/apps.yaml:33 argocd {{ .chart }} https://charts.example.com 1.0.0 template value",
 		"argo/apps.yaml:43 argocd fixed https://charts.example.com 2.0.0 ",

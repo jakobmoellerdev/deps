@@ -14,6 +14,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -135,10 +136,14 @@ func (x *extractor) walk(b body) {
 }
 
 // Edits replaces the version token and, for a replacement (u.NewName), the source address;
-// image references are rewritten like the docker manager rewrites them (name, tag, digest).
+// image references are rewritten like the docker manager rewrites them (name, tag, digest),
+// helm_release chart versions like the helm manager (helm.VersionEdits: ranges are rewritten).
 func (tfManager) Edits(u dep.Update) ([]patch.Edit, error) {
-	if u.Dep.Datasource == "docker" {
+	switch u.Dep.Datasource {
+	case "docker":
 		return docker.New().Edits(u)
+	case "helm":
+		return helm.VersionEdits(u), nil
 	}
 	return edits(u)
 }

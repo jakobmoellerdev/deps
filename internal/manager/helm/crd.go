@@ -25,6 +25,7 @@ var crdResources = map[string]func(x *crdExtractor, n, spec *yaml.Node){
 	"helm.toolkit.fluxcd.io HelmRelease":      (*crdExtractor).helmRelease,
 	"source.toolkit.fluxcd.io HelmRepository": (*crdExtractor).helmRepository,
 	"source.toolkit.fluxcd.io OCIRepository":  (*crdExtractor).ociRepository,
+	"source.toolkit.fluxcd.io GitRepository":  func(x *crdExtractor, _, spec *yaml.Node) { x.gitRepository(spec) },
 	"argoproj.io Application":                 func(x *crdExtractor, _, spec *yaml.Node) { x.argoSpec(spec) },
 	"argoproj.io ApplicationSet": func(x *crdExtractor, _, spec *yaml.Node) {
 		x.argoSpec(yamlspan.Get(yamlspan.Get(spec, "template"), "spec"))
@@ -75,20 +76,21 @@ func hasCRDGroup(src []byte) bool {
 // the definitions (repository aliases, HelmRepositories) and the references to resolve in
 // Link in fileLinks.
 type crdExtractor struct {
-	file  string
-	src   []byte
-	lines []int
-	deps  []dep.Dep
+	file    string
+	src     []byte
+	lines   []int
+	aliases map[string]string // config registryAliases
+	deps    []dep.Dep
 	fileLinks
 }
 
 // manifests extracts chart deps from the k0s, Flux and Argo CD resources of a Kubernetes YAML
-// file. Unparsable files (templates) yield no deps.
-func (m *helmManager) manifests(file string, src []byte) []dep.Dep {
+// file; aliases are the registryAliases. Unparsable files (templates) yield no deps.
+func (m *helmManager) manifests(file string, src []byte, aliases map[string]string) []dep.Dep {
 	if !hasCRDGroup(src) {
 		return nil
 	}
-	x := crdExtractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
+	x := crdExtractor{file: file, src: src, lines: yamlspan.LineStarts(src), aliases: aliases}
 	dec := yaml.NewDecoder(bytes.NewReader(yamlspan.KeepDocuments(src, mayHaveCRD)))
 	for {
 		var doc yaml.Node

@@ -64,33 +64,37 @@ func isRequirements(p string) bool {
 // for the paths that cannot match.
 func isHelmfile(p string) bool { return strings.Contains(p, "helmfile") && helmfileRe.MatchString(p) }
 
-// Extract returns the chart deps of src with RefSpan on the version.
-func (m *helmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+// Extract returns the chart deps of src with RefSpan on the version. A Helm repository config
+// (repositories.yaml) is recorded for Link besides.
+func (m *helmManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	switch {
 	case isChart(file):
-		return chartDeps(file, TypeChart, src)
+		return chartDeps(file, TypeChart, src, env.RegistryAliases)
 	case isRequirements(file):
-		return chartDeps(file, TypeRequirements, src)
+		return chartDeps(file, TypeRequirements, src, env.RegistryAliases)
 	case isHelmfile(file):
 		return helmfileDeps(file, src)
+	case path.Base(file) == repositoriesFile:
+		m.repositoryConfig(file, src)
 	}
-	return m.manifests(file, src), nil
+	return m.manifests(file, src, env.RegistryAliases), nil
 }
 
-// Edits replaces the version and, for a replacement (u.NewName), the chart name and the
-// repository it moves to (see Rename).
+// Edits replaces the version (rewrites a range, see VersionEdits) and, for a replacement
+// (u.NewName), the chart name and the repository it moves to (see Rename).
 func (*helmManager) Edits(u dep.Update) ([]patch.Edit, error) {
-	d := u.Dep
 	var edits []patch.Edit
 	if u.NewName != "" {
-		ne, err := NameEdits(d, u.NewName)
+		ne, err := NameEdits(u.Dep, u.NewName)
 		if err != nil {
 			return nil, err
 		}
 		edits = ne
 	}
-	if u.NewVersion != d.Version {
-		edits = append(edits, patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion})
-	}
-	return edits, nil
+	return append(edits, VersionEdits(u)...), nil
+}
+
+// NewRange implements manager.RangeRewriter (NewRange).
+func (*helmManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	return NewRange(d, v, strategy)
 }

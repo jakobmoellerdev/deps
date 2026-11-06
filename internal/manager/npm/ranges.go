@@ -108,7 +108,11 @@ var ops = []string{"~>", ">=", "<=", "^", "~", ">", "<", "="}
 
 // parseRange parses an npm range; ok is false for anything outside the grammar, an empty
 // alternative, or a range without any version (`*`, `x`).
-func parseRange(s string) (npmRange, bool) {
+func parseRange(s string) (npmRange, bool) { return parseRangeIn(s, false) }
+
+// parseRangeIn is parseRange; with commas, a comparator may also be followed by `,` (and
+// spaces), the AND of Masterminds constraints (`>= 1.2, < 2`).
+func parseRangeIn(s string, commas bool) (npmRange, bool) {
 	r := npmRange{raw: s}
 	anyNum := false
 	start := 0
@@ -119,7 +123,7 @@ func parseRange(s string) (npmRange, bool) {
 		} else {
 			end += start
 		}
-		a, ok := parseAlternative(s, start, end)
+		a, ok := parseAlternative(s, start, end, commas)
 		if !ok {
 			return npmRange{}, false
 		}
@@ -135,8 +139,8 @@ func parseRange(s string) (npmRange, bool) {
 	return r, anyNum
 }
 
-// parseAlternative parses s[start:end].
-func parseAlternative(s string, start, end int) (alternative, bool) {
+// parseAlternative parses s[start:end]; commas as in parseRangeIn.
+func parseAlternative(s string, start, end int, commas bool) (alternative, bool) {
 	a := alternative{}
 	i := skipSpace(s, start, end)
 	a.start = i
@@ -149,7 +153,7 @@ func parseAlternative(s string, start, end int) (alternative, bool) {
 			}
 		}
 		j := skipSpace(s, i+len(c.op), end)
-		v, ok := parseVersion(s, j, end)
+		v, ok := parseVersion(s, j, end, commas)
 		if !ok {
 			return alternative{}, false
 		}
@@ -157,12 +161,15 @@ func parseAlternative(s string, start, end int) (alternative, bool) {
 		a.cmps = append(a.cmps, c)
 		a.end = v.end
 		i = skipSpace(s, v.end, end)
+		if commas && i < end && s[i] == ',' && i+1 < end {
+			i = skipSpace(s, i+1, end)
+		}
 		if i < end && s[i] == '-' && c.op == "" && len(a.cmps) == 1 && !a.hyphen && i > v.end {
 			k := skipSpace(s, i+1, end)
 			if k == i+1 {
 				return alternative{}, false
 			}
-			hi, ok := parseVersion(s, k, end)
+			hi, ok := parseVersion(s, k, end, commas)
 			if !ok {
 				return alternative{}, false
 			}
@@ -182,8 +189,9 @@ func skipSpace(s string, i, end int) int {
 	return i
 }
 
-// parseVersion reads a partial version at i: `v`? xr(.xr(.xr pre? build?)?)?.
-func parseVersion(s string, i, end int) (version, bool) {
+// parseVersion reads a partial version at i: `v`? xr(.xr(.xr pre? build?)?)?, followed by a
+// space, the end, or (commas) a `,`.
+func parseVersion(s string, i, end int, commas bool) (version, bool) {
 	v := version{start: i}
 	if i < end && (s[i] == 'v' || s[i] == 'V') {
 		v.v = true
@@ -221,7 +229,7 @@ func parseVersion(s string, i, end int) (version, bool) {
 		}
 		v.pre, i = s[i:j], j
 	}
-	if i < end && s[i] != ' ' && s[i] != '\t' {
+	if i < end && s[i] != ' ' && s[i] != '\t' && (!commas || s[i] != ',') {
 		return version{}, false
 	}
 	v.end = i
@@ -254,25 +262,33 @@ type compiledRange struct {
 	each  []*semver.Constraints
 }
 
-// compiled caches compileRange by range string (nil for a range parseRange rejects): the
-// engine asks for a dependency's range once per candidate version. Only input ranges are
-// cached, never the generated ones, so it holds one entry per distinct range in the run.
-var compiled sync.Map
+// compiled caches compileRange by range string (nil for a range parseRange rejects), and
+// compiledCommas compileRangeIn with commas: the engine asks for a dependency's range once per
+// candidate version. Only input ranges are cached, never the generated ones, so each holds one
+// entry per distinct range in the run.
+var compiled, compiledCommas sync.Map
 
 // compileRange parses s and compiles its constraints once per s; ok as parseRange.
-func compileRange(s string) (*compiledRange, bool) {
-	if c, hit := compiled.Load(s); hit {
+func compileRange(s string) (*compiledRange, bool) { return compileRangeIn(s, false) }
+
+// compileRangeIn is compileRange with the commas of parseRangeIn.
+func compileRangeIn(s string, commas bool) (*compiledRange, bool) {
+	cache := &compiled
+	if commas {
+		cache = &compiledCommas
+	}
+	if c, hit := cache.Load(s); hit {
 		cr := c.(*compiledRange)
 		return cr, cr != nil
 	}
 	var cr *compiledRange
-	if r, ok := parseRange(s); ok {
+	if r, ok := parseRangeIn(s, commas); ok {
 		cr = &compiledRange{npmRange: r, whole: constraint(s), each: make([]*semver.Constraints, len(r.alts))}
 		for i, a := range r.alts {
 			cr.each[i] = constraint(s[a.start:a.end])
 		}
 	}
-	compiled.Store(s, cr)
+	cache.Store(s, cr)
 	return cr, cr != nil
 }
 

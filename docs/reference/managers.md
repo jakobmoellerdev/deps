@@ -480,14 +480,15 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), Helm v
 - `requirements.y(a)ml` of Helm v2 (`apiVersion: v1`) charts (DepType `requirements`); files without `dependencies` (Ansible Galaxy) yield nothing
 - `helmfile.y(a)ml`, `helmfile.d/*.y(a)ml`, each optionally `.gotmpl` (DepType `helmfile`)
 - other `*.y(a)ml` containing the API group of a k0s, Flux, Argo CD or Sveltos resource below, parsed document by document (DepTypes `k0s`, `flux`, `argocd`, `sveltos`)
+- `repositories.yaml` in Helm's repository config format (`repositories[]` with `name` and `url`): no deps, it resolves Chart.yaml repository aliases (below)
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `chart` | `dependencies[].version` with `name` and `repository` | `helm` | `semver` | updated |
+| `chart` | `dependencies[].version` with `name` and `repository` (a URL, or an alias `@name` / `alias:name`, see Repository aliases) | `helm` | `semver` | updated |
 | `requirements` | `dependencies[].version` with `name` and `repository`, as in Chart.yaml | `helm` | `semver` | updated |
 | `helmfile` | `releases[].version` with `chart: <repo>/<name>` (resolved through `repositories[]`, `oci: true` → `oci://`) or `chart: oci://host/path/name` | `helm` | `semver` | updated |
 | `k0s` | k0s `Chart` (`helm.k0sproject.io`) `spec.chartName` + `spec.version`, and ClusterConfig (`k0s.k0sproject.io`, also embedded in a k0sctl `Cluster` as `spec.k0s.config`) `spec.extensions.helm.charts[].chartname` + `version`; the repository is `spec.repository.url`, the `<alias>` of `<alias>/<chart>` from a ClusterConfig's `spec.extensions.helm.repositories[]` in any file, or `oci://host/path/<chart>` | `helm` | `semver` | updated |
-| `flux` | `HelmRelease` (`helm.toolkit.fluxcd.io/v2*`) `spec.chart.spec.chart` + `version` from its `sourceRef` `HelmRepository` (`source.toolkit.fluxcd.io`, any file; `spec.type: oci` → `oci://`), and the `OCIRepository` chart (`spec.url` + `spec.ref.tag`) a `spec.chartRef` names or whose `spec.layerSelector.mediaType` is the Helm chart type | `helm` | `semver` | updated |
+| `flux` | `HelmRelease` (`helm.toolkit.fluxcd.io/v2*`) `spec.chart.spec.chart` + `version` from its `sourceRef` `HelmRepository` (`source.toolkit.fluxcd.io`, any file; `spec.type: oci` → `oci://`; none found: the [`registryAliases`](configuration.md#registryaliases) URL of the `sourceRef` name), the `OCIRepository` chart (`spec.url` + `spec.ref.semver`, else `spec.ref.tag`) a `spec.chartRef` names or whose `spec.layerSelector.mediaType` is the Helm chart type, and the `spec.ref.tag` of a `GitRepository` (`spec.url`, named after its path, `git-tags` with `tag` versioning) | `helm`, `git-tags` | `semver`; GitRepository: `tag` | updated |
 | `argocd` | `Application` `spec.source` / `spec.sources[]` and `ApplicationSet` `spec.template.spec.source(s)` with a `chart`: `repoURL` + `chart` + `targetRevision`; a `repoURL` without scheme is an OCI registry | `helm` | `semver` | updated |
 | `sveltos` | `ClusterProfile` and `Profile` (`config.projectsveltos.io`) `spec.helmCharts[]`, `ClusterPromotion` `spec.profileSpec.helmCharts[]` and `EventTrigger` (`lib.projectsveltos.io`) `spec.helmCharts[]`: `chartVersion` of `chartName` (without its `<repositoryName>/` prefix) in `repositoryURL`; an `oci://` `repositoryURL` is the chart reference itself | `helm` | `semver` | updated |
 
@@ -495,26 +496,40 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), Helm v
 
 | Reason | When |
 |---|---|
-| `version range` | anything but a full `MAJOR.MINOR.PATCH[-pre][+build]` (optionally `v`-prefixed): `~1.2.0`, `^1`, `>=1.0.0`, `1.2.x`, `1.2` |
+| `unsupported range` | a version range deps cannot rewrite: `*`, `!=1.2.3` (see Version ranges); flux: a GitRepository `spec.ref.semver` |
 | `no version` | the version is missing or empty |
 | `template value` | the version (or a resource's chart name, `repoURL` or `repositoryURL`) contains `{{` |
 | `local chart` | Chart.yaml, requirements.yaml: empty or `file://` repository; helmfile: a chart path (`./x`, `../x`, `/x`, no `/`); k0s: a chart path (`/x`, `./x`, `*.tgz`) |
-| `repository alias` | Chart.yaml, requirements.yaml: `@name` or `alias:name` repositories (resolved by the user's Helm repository config) |
+| `repository alias` | Chart.yaml, requirements.yaml: an `@name` or `alias:name` repository nothing resolves (see Repository aliases); the dep's source is the alias as written |
 | `unknown chart repository <repo>` | Chart.yaml: a repository that is no URL; helmfile: a `<repo>/` prefix not in `repositories[]`; k0s: an alias no scanned ClusterConfig declares |
 | `ambiguous chart repository <alias>` | k0s: ClusterConfigs in other files declare the alias with different URLs (the chart's own file declares none) |
 | `invalid chart reference` | helmfile and k0s: `oci://` without a path, or `<repo>/a/b`; k0s: a chart name without `/` |
 | `unknown HelmRepository <namespace>/<name>` | flux: no scanned HelmRepository matches the `sourceRef` |
 | `ambiguous HelmRepository <name>` | flux: the `sourceRef` matches HelmRepositories with different URLs |
-| `chart from <kind> source` | flux: the `sourceRef` is a `GitRepository` or `Bucket` |
+| `chart from <kind> source` | flux: the `sourceRef` is a `GitRepository` or `Bucket`: Flux ignores `version` for them and builds the chart at the source's revision, so the GitRepository's `spec.ref.tag` is the dep |
 | `no sourceRef` | flux: the HelmRelease chart has no `sourceRef` kind |
 | `pinned by digest` | flux: the OCIRepository selects `spec.ref.digest` |
+| `commit ref` | flux: a GitRepository with `spec.ref.commit` (Flux checks out the commit, whatever the tag) |
+| `non-version ref` | flux: a GitRepository following `spec.ref.name`, `spec.ref.branch` or no ref (the default branch) |
+| `unrecognized git URL` | flux: a GitRepository `spec.url` that is no https/ssh/git URL with a host and path |
 | `no repoURL` | argocd: a Helm source without `repoURL` |
 | `no repositoryURL` | sveltos: a `helmCharts[]` entry without `repositoryURL` |
 | `cannot locate value` | the version's bytes could not be found (escapes, block scalars) |
 
 **Versioning.**
 
-`semver`: the `v` prefix style of the current value is kept, prereleases are only proposed from a prerelease. Only exact versions are updated; Helm treats everything else as a constraint.
+`semver`: the `v` prefix style of the current value is kept, prereleases are only proposed from a prerelease.
+
+**Version ranges.**
+
+- Helm reads a chart version as a Masterminds constraint: anything but a full `[v]MAJOR.MINOR.PATCH[-pre][+build]` is a range, `~1.2.0`, `^1`, `1.2.x`, `1.2` (= `1.2.x`), `>=1.0.0 <2`, `>= 1.2, < 2` (`,` is AND), `^1 || ^2`, `1.2 - 1.4`, in every file type above and in kustomize `helmCharts` and terraform `helm_release`. The dep's version is the range's lowest version (`^1.2` → 1.2.0).
+- Ranges are rewritten as Renovate's helm versioning (its npm versioning) does, keeping operators, precision, wildcards and commas: under [`rangeStrategy`](configuration.md#rulesrangestrategy) `auto` (= `replace`, Renovate's default for Helm) a version the range admits is left alone and a newer one replaces it (`~1.2.0` → `~1.3.0`, `1.2.x` → `1.3.x`, `>= 1.2, < 2` → `>= 2.1, < 3`); `bump` raises the floor, `widen` extends the upper bound (`^1.2.0 || ^2.0.0`), `pin` writes the exact version. `update-lockfile` and `in-range-only` act like `replace` and `bump`: deps reads no locked versions.
+- A Chart.lock entry of a rewritten range takes the update's version.
+
+**Repository aliases.**
+
+- A Chart.yaml (requirements.yaml) `repository: "@name"` or `alias:name` resolves, first found: the [`registryAliases`](configuration.md#registryaliases) entry `name`; the `name` of a scanned `repositories.yaml` (Helm's repository config, as `helm repo add` writes it, committed anywhere in the repository; one URL per name, else it is ambiguous); the URL the sibling Chart.lock (requirements.lock) locks for the chart, which `helm dependency update` resolved; Renovate's default `stable` → `https://charts.helm.sh/stable`. The user's own Helm config (`$HELM_CONFIG_HOME`) is not read, so runs do not depend on the machine.
+- An alias dep keeps the alias in the file: replacements can rename its chart, not move its repository.
 
 **Chart.lock and requirements.lock.**
 
@@ -527,7 +542,7 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), Helm v
 **Kubernetes resources.**
 
 - Repository references are resolved across files once every file was extracted: a k0s alias from any ClusterConfig (its own file first), a HelmRelease `sourceRef` by namespace and name (the namespace defaults to the HelmRelease's). When one side has no namespace (a Kustomization sets it), the name alone must match a single URL.
-- A Flux `OCIRepository` (`spec.ref.semver` skips as `version range`) that neither a HelmRelease `chartRef` names nor declares the Helm chart media type is a Kustomization artifact, not a dep.
+- A Flux `OCIRepository` that neither a HelmRelease `chartRef` names nor declares the Helm chart media type is a Kustomization artifact, not a dep.
 - HelmReleases with a `chartRef` carry no version; the OCIRepository does. Container images in the same files (values) are found by the docker manager.
 
 **Replacements.**
@@ -536,7 +551,7 @@ A chart is [replaced](configuration.md#rulesreplacementname) by a chart name (sa
 
 **Edits.**
 
-The version is replaced in place.
+The version is replaced in place, a range rewritten in place (Version ranges).
 
 ## kustomize
 
@@ -549,7 +564,7 @@ Updates image tags and digests, Helm chart versions and the `?ref=` of remote gi
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
 | `image` | `images[]` `newTag` (`1.2` or `1.2@sha256:…`) and `digest` of `newName`, else `name`; without `newTag` the version is `latest` (no tag is written) | `docker` | `docker` | updated |
-| `helmChart` | `helmCharts[]` `version` of chart `name` from `repo` (`https://`, `http://` or `oci://`) | `helm` | `semver` | updated |
+| `helmChart` | `helmCharts[]` `version` of chart `name` from `repo` (`https://`, `http://` or `oci://`); a version range (`~1.2.0`, `>= 1.2, < 2`) is rewritten as the [helm manager](#helm) does (Version ranges; rangeStrategy `auto` = `replace`) | `helm` | `semver` | updated |
 | `resource` | remote git targets in `resources[]`, `components[]` and `bases[]` with a `ref` (or `version`) query parameter: `[git::]https://host/org/repo[.git][//path]`, `ssh://[user@]host/…`, `git@host:org/repo[.git][//path]`, `host/org/repo[//path]`; the span covers the ref value. A full commit SHA ref is the digest of version `HEAD` (git-refs) | `git-tags`, `git-refs` | `tag` | updated |
 
 **Skips:**
@@ -562,7 +577,7 @@ Updates image tags and digests, Helm chart versions and the `?ref=` of remote gi
 | `no repo` | helmChart: no `repo` (a chart from `chartHome`) |
 | `unknown chart repository <repo>` | helmChart: a `repo` that is no `https://`, `http://` or `oci://` URL |
 | `no version` | helmChart: the version is missing or empty |
-| `version range` | helmChart: anything but a full `MAJOR.MINOR.PATCH[-pre][+build]` (optionally `v`-prefixed) |
+| `unsupported range` | helmChart: a version range the helm manager cannot rewrite (`*`, `!=1.2.3`) |
 | `no ref` | resource: an empty `ref=` |
 | `non-version ref` | resource: the ref is a branch, a short SHA or a tag that is no `v?N[.N[.N]]` version (kustomize fetches its head on every build; nothing is pinned) |
 | `invalid repository URL` | resource: no repository path could be derived from the target |
@@ -1809,7 +1824,7 @@ Updates provider, module and Terraform version constraints in Terraform and Open
 | `provider` | the legacy `version` of a `provider "<name>"` block; the source is the file's `required_providers` entry of that name, else `hashicorp/<name>`. Blocks without `version` are not deps. | `terraform-provider` | `hashicorp` | updated |
 | `module` | `module` blocks: a registry `source` (`[host/]namespace/name/provider[//subdir]`) with its `version`, or a git `source` with `?ref=` | registry: `terraform-module`; git: `git-tags` | registry: `hashicorp`; git: `semver`, partial refs `tag` | updated |
 | `required_version` | `terraform { required_version }` | `github-releases` (`hashicorp/terraform`; `opentofu/opentofu` in `*.tofu` files) | `hashicorp` | updated |
-| `helm_release` | `chart`, `repository` and `version` of a `helm_release` resource (also `chart = "oci://host/path/name"`); only exact versions are rewritten, as with the helm manager | `helm` | `semver` | updated |
+| `helm_release` | `chart`, `repository` and `version` of a `helm_release` resource (also `chart = "oci://host/path/name"`); a version range (`~1.2.0`, `>= 1.2, < 2`) is rewritten as the [helm manager](#helm) does (Version ranges; rangeStrategy `widen` and `pin` act as `replace`) | `helm` | `semver` | updated |
 | `tfe_workspace` | `terraform_version` of a `tfe_workspace` resource | `github-releases` (`hashicorp/terraform`) | `hashicorp` | updated |
 | `docker_image` | `name` of a `docker_image` resource | `docker` | `docker` | updated |
 | `docker_container` | `image` of a `docker_container` resource | `docker` | `docker` | updated |
@@ -1849,7 +1864,7 @@ Updates provider, module and Terraform version constraints in Terraform and Open
 | `repository alias` | helm_release: a `repo/chart` chart without `repository` (a `helm repo add` name) |
 | `invalid chart reference` | helm_release: an `oci://` chart without path and name |
 | `unknown chart repository <repository>` | helm_release: a `repository` that is not `http(s)://` or `oci://` |
-| `version range` | helm_release: a version that is not a full `[v]MAJOR.MINOR.PATCH[-pre][+build]` |
+| `unsupported range` | helm_release: a version range the helm manager cannot rewrite (`*`, `!=1.2.3`) |
 | `no version` | helm_release without `version` |
 | `invalid reference` | an image literal that is not a valid reference |
 

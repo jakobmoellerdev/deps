@@ -223,8 +223,8 @@ func helmChart(chart string, repo *attr) (source, name, skip string) {
 	}
 }
 
-// chartVersion sets d's version from the version attribute ver (nil when absent): only exact
-// versions are updated.
+// chartVersion sets d's version from the version attribute ver (nil when absent): an exact
+// version, or a range (dep.Dep.Range) rewritten as the helm manager does (helm.ChartVersion).
 func (x *extractor) chartVersion(d *dep.Dep, ver *attr) {
 	switch {
 	case ver == nil:
@@ -235,14 +235,13 @@ func (x *extractor) chartVersion(d *dep.Dep, ver *attr) {
 		return
 	}
 	d.Line, d.Version = x.lineAt(ver.off), ver.val.str
+	v, rng, skip := helm.ChartVersion(ver.val.str)
 	switch {
-	case ver.val.str == "":
-		d.Skip = "no version"
-	case !helm.ExactVersion(ver.val.str):
-		d.Skip = "version range"
+	case skip != "":
+		d.Skip = skip
 	case ver.val.span == (dep.Span{}):
 		d.Skip = "cannot locate value"
 	default:
-		d.RefSpan = ver.val.span
+		d.Version, d.Range, d.RefSpan = v, rng, ver.val.span
 	}
 }

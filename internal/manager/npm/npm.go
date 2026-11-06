@@ -148,21 +148,9 @@ func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	return edits, nil
 }
 
-// NewRange implements manager.RangeRewriter (compiledRange.newRange).
+// NewRange implements manager.RangeRewriter (NewRange).
 func (npmManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	r, ok := compileRange(d.Range)
-	if !ok {
-		return "", false
-	}
-	nv, err := semver.NewVersion(v)
-	if err != nil {
-		return "", false
-	}
-	out := r.newRange(nv, strategy)
-	if out == d.Range || !admits(out, nv) {
-		return "", false
-	}
-	return out, true
+	return NewRange(d.Range, v, strategy)
 }
 
 // packageNameRe is npm's package name grammar (validate-npm-package-name for new packages).

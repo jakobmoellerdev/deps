@@ -66,6 +66,12 @@ dependencies:
   - name: aliased2
     version: 1.0.0
     repository: alias:stable
+  - name: configured
+    version: 2.0.0
+    repository: "@bitnami"
+  - name: configured-range
+    version: "*"
+    repository: alias:bitnami
   - name: odd
     version: 1.0.0
     repository: stable
@@ -81,22 +87,24 @@ dependencies:
 	if !m.Match("charts/app/Chart.yaml") || !m.Match("Chart.yaml") {
 		t.Fatal("Chart.yaml not matched")
 	}
-	got, err := m.Extract("charts/app/Chart.yaml", []byte(src), manager.Env{})
+	got, err := m.Extract("charts/app/Chart.yaml", []byte(src), manager.Env{RegistryAliases: map[string]string{"bitnami": "https://charts.bitnami.com/bitnami/"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	checkChartDeps(t, src, got, []wantChartDep{
 		{name: "cert-manager", source: "https://charts.jetstack.io", version: "v1.14.0", span: "v1.14.0", line: 6},
 		{name: "redis", source: "oci://registry-1.docker.io/bitnamicharts", version: "18.0.0", span: "18.0.0", line: 9},
-		{name: "ranged", source: "https://example.com/charts", skip: "version range", line: 13},
-		{name: "partial", source: "https://example.com/charts", skip: "version range", line: 16},
+		{name: "ranged", source: "https://example.com/charts", version: "1.2.0", span: "~1.2.0", line: 13},
+		{name: "partial", source: "https://example.com/charts", version: "1.2.0", span: "1.2", line: 16},
 		{name: "local", skip: "local chart", line: 18},
 		{name: "subchart", skip: "local chart", line: 21},
-		{name: "aliased", skip: "repository alias", line: 23},
-		{name: "aliased2", skip: "repository alias", line: 26},
-		{name: "odd", skip: "unknown chart repository stable", line: 29},
-		{name: "noversion", source: "https://example.com/charts", skip: "no version", line: 32},
-		{name: "escaped", source: "https://example.com/charts", skip: "cannot locate value", line: 35},
+		{name: "aliased", source: "@stable", skip: "repository alias", line: 24},
+		{name: "aliased2", source: "alias:stable", skip: "repository alias", line: 27},
+		{name: "configured", source: "https://charts.bitnami.com/bitnami", version: "2.0.0", span: "2.0.0", line: 30},
+		{name: "configured-range", skip: "unsupported range", line: 33},
+		{name: "odd", skip: "unknown chart repository stable", line: 35},
+		{name: "noversion", source: "https://example.com/charts", skip: "no version", line: 38},
+		{name: "escaped", source: "https://example.com/charts", skip: "cannot locate value", line: 41},
 	}, TypeChart)
 }
 
@@ -113,16 +121,42 @@ func TestChartDepsEdgeCases(t *testing.T) {
 	}
 }
 
-func TestVersionSkip(t *testing.T) {
-	for v, want := range map[string]string{
-		"1.2.3": "", "v1.2.3": "", "1.2.3-rc.1+build.5": "", "0.0.0": "",
-		"": "no version", "{{ .Values.v }}": "template value",
-		"1.2": "version range", "^1.2.3": "version range", "~1.2.0": "version range", ">=1.0.0 <2": "version range",
-		"1.2.x": "version range", "*": "version range", "01.2.3": "version range", "1.2.3 || 2.0.0": "version range",
+func TestChartVersion(t *testing.T) {
+	for v, want := range map[string][3]string{
+		"1.2.3": {"1.2.3"}, "v1.2.3": {"v1.2.3"}, "1.2.3-rc.1+build.5": {"1.2.3-rc.1+build.5"}, "0.0.0": {"0.0.0"},
+		"": {"", "", "no version"}, "{{ .Values.v }}": {"", "", "template value"},
+		"1.2": {"1.2.0", "1.2"}, "^1.2.3": {"1.2.3", "^1.2.3"}, "~1.2.0": {"1.2.0", "~1.2.0"}, ">=1.0.0 <2": {"1.0.0", ">=1.0.0 <2"},
+		">= 1.2, < 2": {"1.2.0", ">= 1.2, < 2"}, "1.2.x": {"1.2.0", "1.2.x"}, "1.2.3 || 2.0.0": {"2.0.0", "1.2.3 || 2.0.0"},
+		"~v1.14.0": {"v1.14.0", "~v1.14.0"}, ">= v1.2, < v2": {"v1.2.0", ">= v1.2, < v2"}, "<2": {"2.0.0", "<2"},
+		"*": {"", "", "unsupported range"}, "01.2.3": {"1.2.3", "01.2.3"}, "!=1.2.3": {"", "", "unsupported range"},
+		"1.2.3,": {"", "", "unsupported range"}, ">=1, <2 garbage": {"", "", "unsupported range"},
 	} {
-		if got := versionSkip(v); got != want {
-			t.Errorf("versionSkip(%q) = %q, want %q", v, got, want)
+		if ver, rng, skip := ChartVersion(v); [3]string{ver, rng, skip} != want {
+			t.Errorf("ChartVersion(%q) = %q, %q, %q, want %q", v, ver, rng, skip, want)
 		}
+	}
+}
+
+func TestRangeEdits(t *testing.T) {
+	src := "version: \">= 1.2, < 2\"\n"
+	d := dep.Dep{Version: "1.2.0", Range: ">= 1.2, < 2", RefSpan: dep.Span{Start: 10, End: 21}}
+	m := New()
+	for _, tt := range []struct{ v, strategy, want string }{
+		{"2.3.0", "", ">= 2.3, < 3"},
+		{"2.3.0", "widen", ">= 1.2, < 3"},
+		{"2.3.0", "pin", "2.3.0"},
+		{"1.5.0", "bump", ">= 1.5, < 2"},
+	} {
+		edits, err := m.Edits(dep.Update{Dep: d, NewVersion: tt.v, RangeStrategy: tt.strategy})
+		if err != nil || len(edits) != 1 || src[edits[0].Start:edits[0].End] != d.Range || edits[0].New != tt.want {
+			t.Errorf("%s %s: %+v, %v; want %q", tt.v, tt.strategy, edits, err, tt.want)
+		}
+		if r, ok := m.(manager.RangeRewriter).NewRange(d, tt.v, tt.strategy); !ok || r != tt.want {
+			t.Errorf("NewRange(%s, %s) = %q, %v", tt.v, tt.strategy, r, ok)
+		}
+	}
+	if edits, err := m.Edits(dep.Update{Dep: d, NewVersion: "1.2.0"}); err != nil || len(edits) != 0 {
+		t.Errorf("anchor: %+v, %v", edits, err)
 	}
 }
 

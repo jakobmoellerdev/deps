@@ -44,7 +44,7 @@ func BenchmarkManifests(b *testing.B) {
 	for b.Loop() {
 		m := &helmManager{}
 		for i, p := range paths {
-			m.manifests(p, srcs[i])
+			m.manifests(p, srcs[i], nil)
 		}
 	}
 }

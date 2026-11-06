@@ -935,13 +935,14 @@ type resolver struct {
 }
 
 // autoRange is what rangeStrategy auto means per manager (Renovate's defaults): replace for
-// terraform, terragrunt and pub (Renovate's pub manager has no lockfile-only updates), widen
-// for elm package constraints (Dependabot's; Renovate has no Elm manager) and gleam
-// requirements, update-lockfile for npm, cargo and any other manager (widen for npm
-// peerDependencies and `||` ranges, for composer constraints with alternatives, for mix
+// terraform, terragrunt, pub (Renovate's pub manager has no lockfile-only updates) and the
+// Helm chart ranges of helm and kustomize (Renovate's helm managers have no lockfile-only
+// updates either), widen for elm package constraints (Dependabot's; Renovate has no Elm
+// manager) and gleam requirements, update-lockfile for npm, cargo and any other manager (widen
+// for npm peerDependencies and `||` ranges, for composer constraints with alternatives, for mix
 // requirements with several comparators and for julia compat entries without a locked
 // version, replace for the dependencies of a bundler gemspec, rangeStrategy).
-var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace, "elm": config.RangeWiden, "pub": config.RangeReplace, beam.NameGleam: config.RangeWiden}
+var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace, "elm": config.RangeWiden, "pub": config.RangeReplace, beam.NameGleam: config.RangeWiden, "helm": config.RangeReplace, "kustomize": config.RangeReplace}
 
 // rangeStrategy is the effective rangeStrategy of the range dep: auto resolved per manager
 // (bump too for composer constraints with alternatives and mix and gleam requirements with

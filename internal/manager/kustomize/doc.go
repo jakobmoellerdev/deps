@@ -11,7 +11,7 @@ var Doc = refdoc.Manager{
 	Files:   []string{"`kustomization.yaml`, `kustomization.yml`, `Kustomization`"},
 	DepTypes: []refdoc.DepType{
 		{Name: "image", What: "`images[]` `newTag` (`1.2` or `1.2@sha256:…`) and `digest` of `newName`, else `name`; without `newTag` the version is `latest` (no tag is written)", Versioning: "`docker`", Datasources: []string{"docker"}},
-		{Name: "helmChart", What: "`helmCharts[]` `version` of chart `name` from `repo` (`https://`, `http://` or `oci://`)", Versioning: "`semver`", Datasources: []string{"helm"}},
+		{Name: "helmChart", What: "`helmCharts[]` `version` of chart `name` from `repo` (`https://`, `http://` or `oci://`); a version range (`~1.2.0`, `>= 1.2, < 2`) is rewritten as the [helm manager](#helm) does (Version ranges; rangeStrategy `auto` = `replace`)", Versioning: "`semver`", Datasources: []string{"helm"}},
 		{Name: "resource", What: "remote git targets in `resources[]`, `components[]` and `bases[]` with a `ref` (or `version`) query parameter: `[git::]https://host/org/repo[.git][//path]`, `ssh://[user@]host/…`, `git@host:org/repo[.git][//path]`, `host/org/repo[//path]`; the span covers the ref value. A full commit SHA ref is the digest of version `HEAD` (git-refs)", Versioning: "`tag`", Datasources: []string{"git-tags", "git-refs"}},
 	},
 	Skips: []refdoc.Skip{
@@ -21,7 +21,7 @@ var Doc = refdoc.Manager{
 		{Reason: "no repo", When: "helmChart: no `repo` (a chart from `chartHome`)"},
 		{Reason: "unknown chart repository <repo>", When: "helmChart: a `repo` that is no `https://`, `http://` or `oci://` URL"},
 		{Reason: "no version", When: "helmChart: the version is missing or empty"},
-		{Reason: "version range", When: "helmChart: anything but a full `MAJOR.MINOR.PATCH[-pre][+build]` (optionally `v`-prefixed)"},
+		{Reason: "unsupported range", When: "helmChart: a version range the helm manager cannot rewrite (`*`, `!=1.2.3`)"},
 		{Reason: "no ref", When: "resource: an empty `ref=`"},
 		{Reason: "non-version ref", When: "resource: the ref is a branch, a short SHA or a tag that is no `v?N[.N[.N]]` version (kustomize fetches its head on every build; nothing is pinned)"},
 		{Reason: "invalid repository URL", When: "resource: no repository path could be derived from the target"},

@@ -228,7 +228,8 @@ func assertSkipsInCode(t *testing.T, owner string, skips []refdoc.Skip, code str
 func TestSkipDocsAreProducedByCode(t *testing.T) {
 	assertSkipsInCode(t, "engine", SkipDocs, codeOf(t, ".", "../config"))
 	// pkgDirs maps managers to their package directories when the name differs; kustomize,
-	// gitlabci and terraform report docker.ParseRef's skips, cargo the crate datasource's
+	// gitlabci and terraform report docker.ParseRef's skips (kustomize and terraform also the
+	// helm manager's chart version skips), cargo the crate datasource's
 	// registry skip, the Python managers internal/pyreq's, gomod the engine's and
 	// internal/gotool's module path skip, pip_requirements internal/pytool's conflict skip,
 	// custom the deb datasource's registry URL skip.
@@ -236,14 +237,14 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		actions.Name: {"actions"}, "pre-commit": {"precommit"},
 		"nvm": {"toolversions"}, "nodenv": {"toolversions"}, "ruby-version": {"toolversions"}, "pyenv": {"toolversions"}, "runtime-version": {"toolversions"},
 		"asdf": {"toolversions"}, "mise": {"toolversions"},
-		"kustomize": {"kustomize", "docker"}, "gitlabci": {"gitlabci", "docker"},
+		"kustomize": {"kustomize", "docker", "helm"}, "gitlabci": {"gitlabci", "docker"},
 		"cargo":              {"cargo", filepath.Join("..", "datasource", "crate")},
 		"gomod":              {"gomod", filepath.Join("..", "engine"), filepath.Join("..", "gotool")},
 		piprequirements.Name: {"piprequirements", "../pyreq", "../pytool"}, pep621.Name: {"pep621", "../pyreq"},
 		poetry.Name: {"poetry", "../pyreq"}, pipenv.Name: {"pipenv", "../pyreq"}, "conda": {"conda", "../pyreq"},
 		"pep723": {"pep723", "../pyreq"}, "setup-cfg": {"setupcfg", "../pyreq"}, "pip_setup": {"pipsetup", "../pyreq"},
 		"homeassistant-manifest": {"homeassistant", "../pyreq"},
-		terraform.Name:           {"terraform", "docker"}, terraform.VersionName: {"terraform"}, terraform.TFLintName: {"terraform"},
+		terraform.Name:           {"terraform", "docker", "helm"}, terraform.VersionName: {"terraform"}, terraform.TFLintName: {"terraform"},
 		terraform.TerragruntName: {"terraform"},
 		gradlewrapper.Name:       {"gradlewrapper"}, mavenwrapper.Name: {"mavenwrapper"}, "git-submodules": {"gitsubmodules"},
 		"rust-toolchain":      {"rusttoolchain"},

@@ -89,7 +89,7 @@ func TestExtract(t *testing.T) {
 		{TypeHelmChart, "cert-manager", "https://charts.jetstack.io", "v1.16.1", "", "v1.16.1", "", "", 36},
 		{TypeHelmChart, "podinfo", "oci://ghcr.io/stefanprodan/charts", "6.7.0", "", "6.7.0", "", "", 40},
 		{TypeHelmChart, "local", "", "1.0.0", "", "", "", "no repo", 42},
-		{TypeHelmChart, "loose", "https://charts.example.com", "~1.2.0", "", "", "", "version range", 45},
+		{TypeHelmChart, "loose", "https://charts.example.com", "1.2.0", "", "~1.2.0", "", "", 45},
 		{TypeHelmChart, "latest", "https://charts.example.com", "", "", "", "", "no version", 46},
 		{TypeHelmChart, "alias", "@stable", "1.0.0", "", "", "", "unknown chart repository @stable", 50},
 		{TypeResource, "github.com/kubernetes-sigs/kustomize", "https://github.com/kubernetes-sigs/kustomize", "v5.4.0", "", "v5.4.0", "", "", 6},
@@ -236,6 +236,7 @@ func TestEdits(t *testing.T) {
 		{"postgres", "17.0", digestA, "    newTag: '16.4'\n    digest: " + digestB + "\n", "    newTag: '17.0'\n    digest: " + digestA + "\n"},
 		{"cert-manager", "v1.17.0", "", "    version: v1.16.1\n", "    version: v1.17.0\n"},
 		{"podinfo", "6.8.0", "", "    version: 6.7.0\n", "    version: 6.8.0\n"},
+		{"loose", "1.3.1", "", "    version: ~1.2.0\n", "    version: ~1.3.1\n"},
 		{"github.com/org/infra", "v1.3", "", "git@github.com:org/infra.git//apps/x?ref=v1.2&timeout=2m", "git@github.com:org/infra.git//apps/x?ref=v1.3&timeout=2m"},
 		{"git.example.com/team/app", "v0.4.0", "", "k8s?submodules=false&ref=v0.3.1\"", "k8s?submodules=false&ref=v0.4.0\""},
 		{"dev.azure.com/org/project/_git/repo", "v2.1.0", "", "path?version=v2.0.0", "path?version=v2.1.0"},
@@ -276,6 +277,12 @@ func TestEdits(t *testing.T) {
 	}
 	if !Untagged(byName["example.com/renamed"]) || !Untagged(byName["busybox"]) || Untagged(byName["nginx"]) {
 		t.Error("Untagged: want only the images without newTag")
+	}
+	if r, ok := m.(manager.RangeRewriter).NewRange(byName["loose"], "2.0.0", "widen"); !ok || r != "~1.2.0 || ~2.0.0" {
+		t.Errorf("NewRange widen = %q, %v", r, ok)
+	}
+	if e, err := m.Edits(dep.Update{Dep: byName["loose"], NewVersion: "1.2.0"}); err != nil || len(e) != 0 {
+		t.Errorf("in-range edit = %v, %v", e, err)
 	}
 }
 

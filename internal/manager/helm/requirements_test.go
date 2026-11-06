@@ -59,8 +59,8 @@ func TestRequirementsDeps(t *testing.T) {
 		}
 		checkChartDeps(t, src, got, []wantChartDep{
 			{name: "mariadb", source: "https://charts.bitnami.com/bitnami", version: "7.3.14", span: "7.3.14", line: 3},
-			{name: "redis", source: "https://charts.bitnami.com/bitnami", skip: "version range", line: 7},
-			{name: "common", skip: "repository alias", line: 9},
+			{name: "redis", source: "https://charts.bitnami.com/bitnami", version: "10.5.0", span: "10.5.*", line: 7},
+			{name: "common", source: "@stable", skip: "repository alias", line: 10},
 			{name: "local", skip: "local chart", line: 12},
 		}, TypeRequirements)
 	}

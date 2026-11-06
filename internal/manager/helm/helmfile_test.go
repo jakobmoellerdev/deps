@@ -71,7 +71,7 @@ releases:
 		{name: "thing", skip: "unknown chart repository stable", line: 31},
 		{name: "jetstack/a/b", skip: "invalid chart reference", line: 34},
 		{name: "oci://nohost", skip: "invalid chart reference", line: 36},
-		{name: "x", source: "https://charts.jetstack.io", skip: "version range", line: 39},
+		{name: "x", source: "https://charts.jetstack.io", version: "1.0.0", span: ">=1.0.0", line: 39},
 	}, TypeHelmfile)
 }
 

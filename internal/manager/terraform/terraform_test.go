@@ -50,6 +50,11 @@ func summarize(t *testing.T, src []byte, deps []dep.Dep) []string {
 			if d.RefSpan.Start != d.InsertAt {
 				t.Errorf("%s: untagged RefSpan %v, InsertAt %d", s, d.RefSpan, d.InsertAt)
 			}
+		case d.Datasource == "helm" && d.Range != "":
+			s += " range=" + d.Range
+			if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != d.Range {
+				t.Errorf("%s: RefSpan covers %q", s, got)
+			}
 		default:
 			if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != d.Version {
 				t.Errorf("%s: RefSpan covers %q", s, got)

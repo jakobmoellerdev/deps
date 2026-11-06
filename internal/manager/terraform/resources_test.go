@@ -239,8 +239,8 @@ resource "aws_instance" "x" { image = "not:checked" }
 		"26 helm_release helm oci://nohost - - semver [invalid chart reference]",
 		"30 helm_release helm cert-manager https://charts.jetstack.io v1.14.0 semver",
 		"35 helm_release helm plain http://charts.example.com 1.0.0-rc.1+b5 semver",
-		"40 helm_release helm range " + ex + " ~1.2.0 semver [version range]",
-		"45 helm_release helm partial " + ex + " 1.2 semver [version range]",
+		"40 helm_release helm range " + ex + " 1.2.0 semver range=~1.2.0",
+		"45 helm_release helm partial " + ex + " 1.2.0 semver range=1.2",
 		"50 helm_release helm empty " + ex + " - semver [no version]",
 		"55 helm_release helm esc " + ex + " 1.0.0 semver [cannot locate value]",
 		"59 helm_release helm gcs - - semver [unknown chart repository gs://bucket/charts]",
@@ -325,6 +325,10 @@ func TestResourceEdits(t *testing.T) {
 				`provider "aws" { version = "~> 6.2" }`,
 				`resource "docker_image" "x" { name = "nginx:1.27.2@` + dig + `" }`,
 			}},
+		{"helm.tf", []byte("resource \"helm_release\" \"x\" {\n  repository = \"https://charts.example.com\"\n  chart      = \"x\"\n  version    = \">= 1.2, < 2\"\n}\n"),
+			func(d dep.Dep) dep.Update {
+				return dep.Update{Dep: d, NewVersion: "2.1.0"}
+			}, []string{`  version    = ">= 2.1, < 3"`}},
 	} {
 		t.Run(tt.file, func(t *testing.T) {
 			src := tt.src

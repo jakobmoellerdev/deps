@@ -15,6 +15,7 @@ import (
 
 	"go.yaml.in/yaml/v4"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
@@ -23,7 +24,8 @@ import (
 // (or a Helm v2 requirements.yaml) it brings the sibling Chart.lock (requirements.lock) in
 // line, in process and without network access. Every exact
 // dependency version whose locked version differs is written into the lock (matched by
-// position and name, keeping the lock's "v" prefix style). A dependency a replacement renamed
+// position and name, keeping the lock's "v" prefix style), and a rewritten range locks the
+// NewVersion of its update (engine.UpdatePinner). A dependency a replacement renamed
 // or moved to another repository (its old name still locked at its position) gets its new name
 // and repository URL locked too. The lock digest is recomputed as Helm does, so `helm
 // dependency build` accepts the lock. The `generated` timestamp is
@@ -64,7 +66,14 @@ func (Locker) ScopeInputs(_ context.Context, _, dir string, manifests []string) 
 // requirements.yaml in manifests; without a lock it does nothing. The old digest must be
 // reproducible from the unpatched manifest in dir, otherwise the lock is out of sync (or deps'
 // digest computation would be wrong) and the update fails.
-func (Locker) Process(_ context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
+func (l Locker) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
+	return l.ProcessUpdates(ctx, dir, manifests, files, nil, nil)
+}
+
+// ProcessUpdates implements engine.UpdatePinner: Process, where a dependency whose range an
+// update in ups rewrote is locked at the update's NewVersion. Lockfile-only updates (locks)
+// do not occur: the helm manager reads no locked versions.
+func (Locker) ProcessUpdates(_ context.Context, dir string, manifests, files map[string][]byte, ups, _ map[string][]dep.Update) (map[string][]byte, error) {
 	var out map[string][]byte
 	for _, k := range lockKinds {
 		lockSrc, ok := files[k.lock]
@@ -72,7 +81,7 @@ func (Locker) Process(_ context.Context, dir string, manifests, files map[string
 		if !ok || !patched {
 			continue
 		}
-		b, err := k.process(dir, newChart, lockSrc)
+		b, err := k.process(dir, newChart, lockSrc, ups[k.manifest])
 		if err != nil {
 			return nil, err
 		}
@@ -103,8 +112,9 @@ func (k lockKind) digests(reqs, lock []*chartDependency) ([]string, error) {
 	return []string{sum, raw, res}, err
 }
 
-// process returns the updated lock for the patched manifest newChart, nil when unchanged.
-func (k lockKind) process(dir string, newChart, lockSrc []byte) ([]byte, error) {
+// process returns the updated lock for the patched manifest newChart, nil when unchanged; ups
+// are the updates of the manifest.
+func (k lockKind) process(dir string, newChart, lockSrc []byte, ups []dep.Update) ([]byte, error) {
 	chartFile, lockFile := k.manifest, k.lock
 	oldChart, err := os.ReadFile(filepath.Join(dir, chartFile))
 	if err != nil {
@@ -148,10 +158,16 @@ func (k lockKind) process(dir string, newChart, lockSrc []byte) ([]byte, error) 
 	for i, ld := range lock.deps {
 		nd := *ld
 		newDeps[i] = &nd
-		if i >= len(newReqs) || versionSkip(newReqs[i].Version) != "" {
+		if i >= len(newReqs) {
 			continue
 		}
 		nr, f := newReqs[i], lock.fields[i]
+		want := nr.Version
+		if !ExactVersion(want) {
+			if want = rangeVersion(oldReqs, i, nr, ups); want == "" {
+				continue
+			}
+		}
 		// ld locks the dependency at i, which a replacement may have moved to another chart.
 		same := i < len(oldReqs) && oldReqs[i].Name == ld.Name
 		if nr.Name != ld.Name {
@@ -169,7 +185,7 @@ func (k lockKind) process(dir string, newChart, lockSrc []byte) ([]byte, error) 
 			}
 			nd.Repository = nr.Repository
 		}
-		if v := lockStyle(ld.Version, nr.Version); v != ld.Version {
+		if v := lockStyle(ld.Version, want); v != ld.Version {
 			if err := edit(f.version, ld.Version, v, "version", ld.Name); err != nil {
 				return nil, err
 			}
@@ -194,6 +210,22 @@ func (k lockKind) process(dir string, newChart, lockSrc []byte) ([]byte, error) 
 		return nil, fmt.Errorf("%s: %w", lockFile, err)
 	}
 	return out, nil
+}
+
+// rangeVersion returns the version to lock for the range dependency nr at i of the patched
+// manifest: the NewVersion of the update in ups that rewrote the range written at i in oldReqs
+// (same chart, the old range as its dep's Range); "" when no update rewrote it.
+func rangeVersion(oldReqs []*chartDependency, i int, nr *chartDependency, ups []dep.Update) string {
+	if i >= len(oldReqs) || oldReqs[i].Version == nr.Version {
+		return ""
+	}
+	old := oldReqs[i]
+	for _, u := range ups {
+		if u.Dep.Name == old.Name && u.Dep.Range == old.Version {
+			return u.NewVersion
+		}
+	}
+	return ""
 }
 
 // chartDependency mirrors Helm's chart.Dependency field for field, with its JSON names and

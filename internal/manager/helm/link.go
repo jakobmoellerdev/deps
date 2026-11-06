@@ -2,6 +2,7 @@ package helm
 
 import (
 	"slices"
+	"strings"
 	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -23,14 +24,18 @@ type ref struct {
 	i    int // index into the file's deps
 	kind refKind
 	key  key
+	// alias is the registryAliases URL of a refFlux sourceRef's name, which an unknown
+	// HelmRepository falls back to (Renovate's flux manager); "" = none.
+	alias string
 }
 
 // fileLinks are the definitions and references of one file.
 type fileLinks struct {
-	k0sRepos  map[string]string // k0s ClusterConfig repository alias → URL
-	helmRepos map[key]string    // Flux HelmRepository → URL (oci:// for OCI registries)
-	chartRefs []key             // OCIRepositories named by a HelmRelease chartRef
-	refs      []ref
+	k0sRepos   map[string]string // k0s ClusterConfig repository alias → URL
+	helmRepos  map[key]string    // Flux HelmRepository → URL (oci:// for OCI registries)
+	chartRefs  []key             // OCIRepositories named by a HelmRelease chartRef
+	repoConfig map[string]string // Helm repository config (repositories.yaml) name → URL
+	refs       []ref
 }
 
 // k0sRepo is a k0s repository alias definition and the file declaring it.
@@ -39,16 +44,17 @@ type k0sRepo struct{ file, url string }
 // links collects the definitions and references of every file of a run (Extract runs
 // concurrently) until Link resolves them. It only holds repository names and URLs.
 type links struct {
-	mu        sync.Mutex
-	k0sRepos  map[string][]k0sRepo
-	helmRepos map[key]string
-	chartRefs map[key]bool
-	refs      map[string][]ref // by file
+	mu         sync.Mutex
+	k0sRepos   map[string][]k0sRepo
+	helmRepos  map[key]string
+	chartRefs  map[key]bool
+	repoConfig map[string][]string // Helm repository config name → its distinct URLs
+	refs       map[string][]ref    // by file
 }
 
 // add merges the definitions and references of file.
 func (l *links) add(file string, f *fileLinks) {
-	if f.k0sRepos == nil && f.helmRepos == nil && f.chartRefs == nil && f.refs == nil {
+	if f.k0sRepos == nil && f.helmRepos == nil && f.chartRefs == nil && f.repoConfig == nil && f.refs == nil {
 		return
 	}
 	l.mu.Lock()
@@ -61,6 +67,11 @@ func (l *links) add(file string, f *fileLinks) {
 	}
 	for _, k := range f.chartRefs {
 		l.chartRefs = addTo(l.chartRefs, k, true)
+	}
+	for name, url := range f.repoConfig {
+		if !slices.Contains(l.repoConfig[name], url) {
+			l.repoConfig = addTo(l.repoConfig, name, append(l.repoConfig[name], url))
+		}
 	}
 	if f.refs != nil {
 		l.refs = addTo(l.refs, file, f.refs)
@@ -77,8 +88,10 @@ func addTo[K comparable, V any](m map[K]V, k K, v V) map[K]V {
 }
 
 // Link resolves the repository references of the run's deps: k0s chart aliases against the
-// ClusterConfig repositories, Flux HelmRelease sourceRefs against the HelmRepositories, and
-// drops the OCIRepositories that are not charts. Then it forgets the run's definitions.
+// ClusterConfig repositories, Flux HelmRelease sourceRefs against the HelmRepositories (else
+// registryAliases), Chart.yaml repository aliases against the repositories.yaml files (one
+// URL per name), and drops the OCIRepositories that are not charts. Then it forgets the run's
+// definitions.
 func (m *helmManager) Link(files [][]dep.Dep) {
 	l := &m.links
 	l.mu.Lock()
@@ -96,9 +109,19 @@ func (m *helmManager) Link(files [][]dep.Dep) {
 				d.Source, d.Skip = l.k0sRepo(d.File, r.key.name)
 			case refFlux:
 				d.Source, d.Skip = l.helmRepo(r.key)
+				if url, skip := chartRepository(r.alias); strings.HasPrefix(d.Skip, "unknown ") && skip == "" {
+					d.Source, d.Skip = url, ""
+				}
 			case refOCI:
 				if !l.chartRef(r.key) {
 					d.Manager, drop = "", true
+				}
+			}
+		}
+		for i := range deps {
+			if d := &deps[i]; d.Skip == skipAlias {
+				if name, _ := aliasName(d.Source); len(l.repoConfig[name]) == 1 {
+					resolveAlias(d, l.repoConfig[name][0])
 				}
 			}
 		}
@@ -106,7 +129,7 @@ func (m *helmManager) Link(files [][]dep.Dep) {
 			files[f] = slices.DeleteFunc(deps, func(d dep.Dep) bool { return d.Manager == "" })
 		}
 	}
-	l.k0sRepos, l.helmRepos, l.chartRefs, l.refs = nil, nil, nil, nil
+	l.k0sRepos, l.helmRepos, l.chartRefs, l.repoConfig, l.refs = nil, nil, nil, nil, nil
 }
 
 // k0sRepo resolves a k0s repository alias used in file. One URL for the alias wins; with

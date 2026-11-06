@@ -91,7 +91,9 @@ func (kustomizeManager) Edits(u dep.Update) ([]patch.Edit, error) {
 		}
 		edits = ne
 	}
-	if u.NewVersion != d.Version {
+	if d.Range != "" { // a chart version range
+		edits = append(edits, helm.VersionEdits(u)...)
+	} else if u.NewVersion != d.Version {
 		if d.RefSpan == (dep.Span{}) {
 			return nil, errors.New("cannot set the tag of an image without newTag")
 		}
@@ -123,6 +125,12 @@ func Pinnable(d dep.Dep) bool {
 // silently change it.
 func Untagged(d dep.Dep) bool {
 	return d.Manager == Name && d.DepType == TypeImage && d.RefSpan == (dep.Span{}) && d.Version == untaggedVersion
+}
+
+// NewRange implements manager.RangeRewriter for chart version ranges (helm.NewRange), the
+// only deps of the manager with a range.
+func (kustomizeManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	return helm.NewRange(d, v, strategy)
 }
 
 // Rename returns d as name names it: an image (docker.Rename) or a chart, possibly with the
@@ -289,13 +297,16 @@ func (x *extractor) helmChart(m *yaml.Node) {
 		d.Skip = "unknown chart repository " + repo
 	case v == nil || v.Value == "":
 		d.Skip = "no version"
-	case !helm.ExactVersion(v.Value):
-		d.Skip = "version range"
+	default:
+		var ver string
+		if ver, d.Range, d.Skip = helm.ChartVersion(v.Value); d.Skip == "" {
+			d.Version = ver
+		}
 	}
 	d.Source = repo
 	if d.Skip == "" {
 		if off := yamlspan.Locate(x.src, x.lines, v); off < 0 {
-			d.Skip = "cannot locate value"
+			d.Skip, d.Range = "cannot locate value", ""
 		} else {
 			d.RefSpan = dep.Span{Start: off, End: off + len(v.Value)}
 			d.NameParts = helm.ChartParts(x.src, x.lines, nameNode, nameNode.Value, false, repoNode)

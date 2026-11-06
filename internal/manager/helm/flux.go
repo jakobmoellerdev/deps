@@ -5,11 +5,59 @@ import (
 
 	"go.yaml.in/yaml/v4"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // helmChartMediaType is the layer media type of Helm charts in OCI registries.
 const helmChartMediaType = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+
+// Skip reasons of a Flux GitRepository.
+const (
+	skipCommitRef  = "commit ref"
+	skipNonVersion = "non-version ref"
+	skipGitURL     = "unrecognized git URL"
+)
+
+// gitRepository extracts a Flux GitRepository (source.toolkit.fluxcd.io) as Renovate's flux
+// manager does: spec.ref.tag is a git-tags dep of spec.url (named after its path, `tag`
+// versioning). The source of a HelmRelease chart (`chart from GitRepository source`) and of
+// Kustomizations moves with it. Flux picks spec.ref.commit, name, semver, tag, branch in that
+// order: a commit is skipped as `commit ref`, a semver range as SkipRange, a name or branch
+// (or no ref: the default branch) as `non-version ref`.
+func (x *crdExtractor) gitRepository(spec *yaml.Node) {
+	urlNode := yamlspan.Str(yamlspan.Get(spec, "url"))
+	if urlNode == nil || urlNode.Value == "" {
+		return
+	}
+	d := dep.Dep{Manager: Name, Datasource: "git-tags", Versioning: "tag", DepType: TypeFlux, File: x.file, Line: urlNode.Line}
+	d.Name, d.Source = manager.GitRepo(urlNode.Value)
+	r := yamlspan.Get(spec, "ref")
+	tag := yamlspan.Str(yamlspan.Get(r, "tag"))
+	switch {
+	case d.Source == "":
+		d.Name, d.Skip = urlNode.Value, skipGitURL
+	case yamlspan.Get(r, "commit") != nil:
+		d.Skip = skipCommitRef
+	case yamlspan.Get(r, "name") != nil:
+		d.Skip = skipNonVersion
+	case yamlspan.Get(r, "semver") != nil:
+		d.Skip = SkipRange
+	case tag == nil || tag.Value == "":
+		d.Skip = skipNonVersion
+	case strings.Contains(tag.Value, "{{"):
+		d.Version, d.Line, d.Skip = tag.Value, tag.Line, "template value"
+	default:
+		d.Version, d.Line = tag.Value, tag.Line
+		if off := yamlspan.Locate(x.src, x.lines, tag); off < 0 {
+			d.Skip = "cannot locate value"
+		} else {
+			d.RefSpan = dep.Span{Start: off, End: off + len(tag.Value)}
+		}
+	}
+	x.deps = append(x.deps, d)
+}
 
 // helmRepository records a Flux HelmRepository (source.toolkit.fluxcd.io): spec.url, an OCI
 // registry when spec.type is oci.
@@ -50,7 +98,8 @@ func (x *crdExtractor) helmRelease(n, spec *yaml.Node) {
 		i := x.add(TypeFlux, "", chartNode.Value, chartNode, yamlspan.Get(cs, "version"), "")
 		if x.deps[i].Skip == "" {
 			x.rename(i, chartNode, false, nil)
-			x.refs = append(x.refs, ref{i: i, kind: refFlux, key: refKey(src, ns)})
+			k := refKey(src, ns)
+			x.refs = append(x.refs, ref{i: i, kind: refFlux, key: k, alias: x.aliases[k.name]})
 		}
 	case "":
 		x.add(TypeFlux, "", chartNode.Value, chartNode, yamlspan.Get(cs, "version"), "no sourceRef")
@@ -60,7 +109,8 @@ func (x *crdExtractor) helmRelease(n, spec *yaml.Node) {
 }
 
 // ociRepository extracts a Flux OCIRepository (source.toolkit.fluxcd.io): the chart is the last
-// path segment of spec.url, the version spec.ref.tag. An OCIRepository is a chart only when its
+// path segment of spec.url, the version spec.ref.semver (a range, which Flux prefers) or
+// spec.ref.tag. An OCIRepository is a chart only when its
 // spec.layerSelector.mediaType is the Helm chart media type or a HelmRelease's chartRef names
 // it; Link drops the others (Kustomization artifacts). spec.url is the NameParts (repository
 // and chart).
@@ -74,14 +124,15 @@ func (x *crdExtractor) ociRepository(n, spec *yaml.Node) {
 		return
 	}
 	r := yamlspan.Get(spec, "ref")
+	v := yamlspan.Get(r, "tag")
 	var skip string
 	switch {
 	case yamlspan.Get(r, "digest") != nil:
 		skip = "pinned by digest"
 	case yamlspan.Get(r, "semver") != nil:
-		skip = "version range"
+		v = yamlspan.Get(r, "semver")
 	}
-	i := x.add(TypeFlux, repo, chart, urlNode, yamlspan.Get(r, "tag"), skip)
+	i := x.add(TypeFlux, repo, chart, urlNode, v, skip)
 	if skip == "" {
 		x.rename(i, urlNode, true, nil)
 	}
