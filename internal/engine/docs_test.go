@@ -230,6 +230,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"gomod":              {"gomod", filepath.Join("..", "engine"), filepath.Join("..", "gotool")},
 		piprequirements.Name: {"piprequirements", "../pyreq", "../pytool"}, pep621.Name: {"pep621", "../pyreq"},
 		poetry.Name: {"poetry", "../pyreq"}, pipenv.Name: {"pipenv", "../pyreq"}, "conda": {"conda", "../pyreq"},
+		"pep723": {"pep723", "../pyreq"}, "setup-cfg": {"setupcfg", "../pyreq"}, "pip_setup": {"pipsetup", "../pyreq"},
 		terraform.Name: {"terraform", "docker"}, terraform.VersionName: {"terraform"}, terraform.TFLintName: {"terraform"},
 		terraform.TerragruntName: {"terraform"},
 		gradlewrapper.Name:       {"gradlewrapper"}, mavenwrapper.Name: {"mavenwrapper"}, "git-submodules": {"gitsubmodules"},

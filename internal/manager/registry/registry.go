@@ -35,11 +35,14 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nuget"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep723"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipsetup"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/precommit"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/rusttoolchain"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/setupcfg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/swift"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
@@ -73,6 +76,9 @@ var Builtin = []Entry{
 	{cargo.Doc, cargo.New},
 	{piprequirements.Doc, piprequirements.New},
 	{pep621.Doc, pep621.New},
+	{pep723.Doc, pep723.New},
+	{setupcfg.Doc, setupcfg.New},
+	{pipsetup.Doc, pipsetup.New},
 	{poetry.Doc, poetry.New},
 	{pipenv.Doc, pipenv.New},
 	{conda.Doc, conda.New},

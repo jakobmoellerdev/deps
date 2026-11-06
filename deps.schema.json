@@ -717,6 +717,97 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "pep723"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "project.dependencies"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
+                    "setup-cfg"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "install",
+                    "setup",
+                    "test",
+                    "extra"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
+                    "pip_setup"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "install",
+                    "setup",
+                    "test",
+                    "extra",
+                    "other"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "poetry"
                   ]
                 },
@@ -1682,6 +1773,9 @@
               "cargo",
               "pip_requirements",
               "pep621",
+              "pep723",
+              "setup-cfg",
+              "pip_setup",
               "poetry",
               "pipenv",
               "conda",
@@ -1775,6 +1869,10 @@
               "dependency-groups",
               "tool.uv.dev-dependencies",
               "tool.pdm.dev-dependencies",
+              "install",
+              "test",
+              "extra",
+              "other",
               "group",
               "packages",
               "dev-packages",
@@ -1813,7 +1911,6 @@
               "compile",
               "provided",
               "runtime",
-              "test",
               "system",
               "import",
               "parent",
