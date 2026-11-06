@@ -876,7 +876,7 @@ See the bucket table under [`separateMajorMinor`](#separatemajorminor).
 
 ## Config.custom
 
-Each entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, `artifactory`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
+Each entry is one manager instance with dep types `annotation` (no `match` or `jsonata`), `regex` (`match` set) or `jsonata` (`jsonata` set). Datasources: `git-tags`, `github-releases`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, `artifactory`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
 
 **Annotation mode (no `match`).** A comment marker annotates the **next line**, and that line's first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Comment starters are `#`, `//`, `--`, `;` and `<!--`.
 
@@ -899,7 +899,7 @@ ARG GOLANGCI_VERSION=v2.5.0
 RUN go install golang.org/x/tools/cmd/goimports@v0.38.0
 ```
 
-**Regex mode (`match` set)**: see [`custom[].match`](#custommatch).
+**Regex mode (`match` set)**: see [`custom[].match`](#custommatch). **JSONata mode (`jsonata` set)**: see [`custom[].jsonata`](#customjsonata).
 
 ## Custom.files
 
@@ -931,7 +931,7 @@ custom:
 
 ## Custom.registryUrl
 
-Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags` and `endoflife-date` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group or a marker's `registryUrl=` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
+Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags` and `endoflife-date` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group, a marker's `registryUrl=` or a JSONata result's `registryUrl` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
 
 ```yaml
 custom:
@@ -972,9 +972,42 @@ custom:
 
 For the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags datasources it is the forge instance (default `https://gitlab.com`, `https://gitea.com` and `https://code.forgejo.org`).
 
+## Custom.jsonata
+
+Renovate's `customType: jsonata` managers. The file is parsed as [`fileFormat`](#customfileformat) and the [JSONata](https://docs.jsonata.org/overview.html) query runs over it (a full JSONata 2.x implementation, so queries written for Renovate work unchanged). The query returns one dep object or a list of them; each object is one dep:
+
+| Field | Aliases | Meaning |
+|---|---|---|
+| `currentValue` | `version` | required; the replaced version |
+| `depName` | `packageName` (wins), `name` | overrides `name` |
+| `datasource` | | overrides `datasource` |
+| `versioning` | | scheme name |
+| `currentDigest` | `digest` | replaced together with the version |
+| `extractVersion` | | as a Renovate marker's `extractVersion=` |
+| `registryUrl` | | overrides `registryUrl` |
+
+Other fields (`depType`, `indentation`) are ignored. Fields must be strings: a number skips the dep as `not a string: <field>`, and empty ones as `empty version`, `empty name` or `empty datasource`. A query that returns nothing yields no deps; a query error or a result that is no object is a file error. Each evaluation stops after 10 seconds.
+
+The results carry no byte positions, so deps finds each version where the file spells it: every occurrence of the value gets a distinct numeric marker appended, the marked file is queried again, and the occurrence whose marker comes back on that result is the one replaced. So equal versions of different deps each get their own bytes, and values the query cuts out of a longer string (`$split(image, ":")[1]`, `$substringAfter`) are found too. A version the file does not spell (built by the query, or escaped) is skipped as `version not found in file`.
+
+```yaml
+custom:
+  - files: [package.json]
+    fileFormat: json
+    jsonata: '$each(dependencies, function($v, $k) { {"depName": $k, "currentValue": $v} })'
+    datasource: npm
+  - files: ['**/tools.yaml']
+    fileFormat: yaml
+    jsonata: 'tools.{"depName": repo, "currentValue": version, "datasource": "github-releases"}'
+```
+
+## Custom.fileFormat
+
+`json` (comments and trailing commas allowed, as Renovate's JSONC parser), `yaml` or `toml`. A YAML file is the list of its documents, as in Renovate, so `packages.{…}` maps over every document; `$[0]` is the first one. Keys keep their file order, so `$each`, `$keys` and `*` list deps in file order. YAML timestamps are strings; TOML datetimes are strings, its integers, floats and booleans keep their type.
+
 ## Custom.versioning
 
-Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, else `semver`. A marker's `versioning=` or a `versioning` group overrides the entry's.
+Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, else `semver`. A marker's `versioning=`, a `versioning` group or a JSONata result's `versioning` overrides the entry's.
 
 ## Custom.checksum
 

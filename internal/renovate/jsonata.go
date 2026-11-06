@@ -1,6 +1,8 @@
 package renovate
 
 import (
+	"bytes"
+	"encoding/json"
 	"regexp"
 	"strings"
 )
@@ -82,4 +84,31 @@ func jsonataPath(p string) (string, bool) {
 		return "", false
 	}
 	return "." + p, true
+}
+
+// jsonataMerge returns the customManagers query q with the string fields of merge set on each
+// of its result objects, as Renovate's literal templates override the query's fields.
+func jsonataMerge(q string, merge omap) string {
+	if len(merge) == 0 {
+		return q
+	}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false) // keep regex groups (?<version>) readable
+	str := func(s string) {
+		_ = enc.Encode(s)       // a string always encodes
+		b.Truncate(b.Len() - 1) // Encode's newline
+	}
+	b.WriteString("(" + q + ") ~> $map(function($d) { $merge([$d, {")
+	for i, f := range merge {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		v, _ := f.v.(string)
+		str(f.k)
+		b.WriteString(": ")
+		str(v)
+	}
+	b.WriteString("}]) })")
+	return b.String()
 }

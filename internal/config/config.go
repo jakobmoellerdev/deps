@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/recolabs/gnata"
 	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
@@ -514,15 +515,18 @@ type Rule struct {
 // rule was not loaded from a file.
 func (r *Rule) Source() (file string, line int) { return r.source, r.line }
 
-// Custom is a custom manager: annotation mode when Match is empty, regex mode otherwise.
+// Custom is a custom manager: annotation mode when Match and JSONata are empty, regex mode
+// with Match, JSONata mode with JSONata.
 type Custom struct {
 	Files       []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !<pattern> excludes (a negation-only list matches everything else)."`
-	Match       string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
+	Match       string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode (or JSONata mode with jsonata)."`
+	JSONata     string    `yaml:"jsonata" jsonschema_description:"JSONata query run over the file parsed as fileFormat; it returns dep objects (or a list of them) with string fields currentValue (alias version), depName/packageName (alias name), datasource, versioning, currentDigest (alias digest), extractVersion and registryUrl. Exclusive with match."`
+	FileFormat  string    `yaml:"fileFormat" jsonschema_description:"Format the jsonata query reads the file as: json (comments and trailing commas allowed), yaml (a list of the file's documents) or toml; required with jsonata."`
 	Datasource  string    `yaml:"datasource" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases."`
 	Name        string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
 	Versioning  string    `yaml:"versioning" jsonschema:"default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb), else semver."` // default semver; see DefaultCustomVersioning
 	Checksum    *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
-	RegistryURL string    `yaml:"registryUrl" jsonschema_description:"Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb, artifactory, gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases, forgejo-tags and endoflife-date datasources; a (?P<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources."`
+	RegistryURL string    `yaml:"registryUrl" jsonschema_description:"Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb, artifactory, gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases, forgejo-tags and endoflife-date datasources; a (?P<registryUrl>) group, a Renovate marker's registryUrl= or a JSONata result's registryUrl overrides it. Ignored for other datasources."`
 }
 
 // customVersionings are the default versionings of custom[] deps by datasource; deps of other
@@ -536,6 +540,9 @@ var customVersionings = map[string]string{"rpm": "rpm", "apk": "apk", "deb": "de
 func DefaultCustomVersioning(datasource string) string {
 	return cmp.Or(customVersionings[datasource], "semver")
 }
+
+// CustomFileFormats are the accepted custom[].fileFormat values.
+var CustomFileFormats = []string{"json", "yaml", "toml"}
 
 // Checksum locates the sha256/sha512 checksum written next to a version. Its fields are
 // templates; {{version}} is the new version exactly as written into the file.
@@ -1186,6 +1193,13 @@ func (cu *Custom) validate(f string, c *Config, add addFunc) {
 			add(f+".versioning", "%v%s", err, versioningHint(cu.Versioning))
 		}
 	}
+	switch {
+	case cu.JSONata != "":
+		cu.validateJSONata(f, add)
+		return
+	case cu.FileFormat != "":
+		add(f+".fileFormat", "requires jsonata")
+	}
 	if cu.Match == "" {
 		if cu.Checksum != nil {
 			add(f+".checksum", "requires match (regex mode)")
@@ -1216,6 +1230,26 @@ func (cu *Custom) validate(f string, c *Config, add addFunc) {
 	}
 	if cu.Checksum != nil {
 		cu.Checksum.validate(f+".checksum", cu.Datasource, add)
+	}
+}
+
+// validateJSONata checks a JSONata entry: a query that compiles, a fileFormat, and no regex
+// mode fields. Name and datasource may come from the query's results, so they are optional.
+func (cu *Custom) validateJSONata(f string, add addFunc) {
+	if _, err := gnata.Compile(cu.JSONata); err != nil {
+		add(f+".jsonata", "invalid JSONata query: %v", err)
+	}
+	switch {
+	case cu.FileFormat == "":
+		add(f+".fileFormat", "required with jsonata (one of %s)", list(CustomFileFormats))
+	case !slices.Contains(CustomFileFormats, cu.FileFormat):
+		add(f+".fileFormat", "%s", oneOf("fileFormat", CustomFileFormats, cu.FileFormat))
+	}
+	if cu.Match != "" {
+		add(f+".match", "exclusive with jsonata")
+	}
+	if cu.Checksum != nil {
+		add(f+".checksum", "requires match (regex mode)")
 	}
 }
 

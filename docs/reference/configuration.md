@@ -186,6 +186,8 @@ customDatasources:
 - [`custom`](#custom)
   - [`custom[].files`](#customfiles)
   - [`custom[].match`](#custommatch)
+  - [`custom[].jsonata`](#customjsonata)
+  - [`custom[].fileFormat`](#customfileformat)
   - [`custom[].datasource`](#customdatasource)
   - [`custom[].name`](#customname)
   - [`custom[].versioning`](#customversioning)
@@ -1093,7 +1095,7 @@ Renovate's `!pattern` works: `['actions/*', '!actions/cache']` matches every `ac
 Only match deps of these types; with managers set to one manager, the schema offers that manager's dep types.
 
 - **Type:** list of strings
-- **Values:** `action`, `setup`, `direct`, `indirect`, `go`, `toolchain`, `dockerfile`, `compose`, `workflow`, `kubernetes`, `helm`, `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager`, `engines`, `volta`, `chart`, `helmfile`, `k0s`, `flux`, `argocd`, `sveltos`, `image`, `helmChart`, `resource`, `repository`, `service`, `include`, `component`, `node`, `tool`, `dev-dependencies`, `build-dependencies`, `workspace.dependencies`, `patch`, `replace`, `requirements`, `project.dependencies`, `project.optional-dependencies`, `dependency-groups`, `tool.uv.dev-dependencies`, `tool.pdm.dev-dependencies`, `group`, `packages`, `dev-packages`, `category`, `pip`, `required_provider`, `provider`, `module`, `required_version`, `helm_release`, `tfe_workspace`, `docker_image`, `docker_container`, `docker_service`, `docker_registry_image`, `kubernetes_pod`, `kubernetes_pod_v1`, `kubernetes_deployment`, `kubernetes_deployment_v1`, `kubernetes_daemonset`, `kubernetes_daemon_set_v1`, `kubernetes_stateful_set`, `kubernetes_stateful_set_v1`, `kubernetes_job`, `kubernetes_job_v1`, `kubernetes_cron_job`, `kubernetes_cron_job_v1`, `kubernetes_replication_controller`, `kubernetes_replication_controller_v1`, `terraform-version`, `opentofu-version`, `plugin`, `github`, `gitTags`, `terragrunt`, `compile`, `provided`, `runtime`, `test`, `system`, `import`, `parent`, `build`, `wrapper`, `maven`, `ruby`, `development`, `submodule`, `feature`, `feature-version`, `pipe`, `orb`, `container`, `task`, `builtin-baseline`, `default-registry`, `registry`, `overrides`, `test-direct`, `test-indirect`, `test-dependencies`, `elm-version`, `require`, `require-dev`, `deps`, `weakdeps`, `extras`, `julia`, `bazel_dep`, `single_version_override`, `git_override`, `archive_override`, `local_path_override`, `multiple_version_override`, `git_repository`, `new_git_repository`, `oci_pull`, `rules_img_pull`, `maven_install`, `crate_spec`, `bazel`, `nuget`, `msbuild-sdk`, `dotnet-sdk`, `annotation`, `regex`
+- **Values:** `action`, `setup`, `direct`, `indirect`, `go`, `toolchain`, `dockerfile`, `compose`, `workflow`, `kubernetes`, `helm`, `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, `packageManager`, `engines`, `volta`, `chart`, `helmfile`, `k0s`, `flux`, `argocd`, `sveltos`, `image`, `helmChart`, `resource`, `repository`, `service`, `include`, `component`, `node`, `tool`, `dev-dependencies`, `build-dependencies`, `workspace.dependencies`, `patch`, `replace`, `requirements`, `project.dependencies`, `project.optional-dependencies`, `dependency-groups`, `tool.uv.dev-dependencies`, `tool.pdm.dev-dependencies`, `group`, `packages`, `dev-packages`, `category`, `pip`, `required_provider`, `provider`, `module`, `required_version`, `helm_release`, `tfe_workspace`, `docker_image`, `docker_container`, `docker_service`, `docker_registry_image`, `kubernetes_pod`, `kubernetes_pod_v1`, `kubernetes_deployment`, `kubernetes_deployment_v1`, `kubernetes_daemonset`, `kubernetes_daemon_set_v1`, `kubernetes_stateful_set`, `kubernetes_stateful_set_v1`, `kubernetes_job`, `kubernetes_job_v1`, `kubernetes_cron_job`, `kubernetes_cron_job_v1`, `kubernetes_replication_controller`, `kubernetes_replication_controller_v1`, `terraform-version`, `opentofu-version`, `plugin`, `github`, `gitTags`, `terragrunt`, `compile`, `provided`, `runtime`, `test`, `system`, `import`, `parent`, `build`, `wrapper`, `maven`, `ruby`, `development`, `submodule`, `feature`, `feature-version`, `pipe`, `orb`, `container`, `task`, `builtin-baseline`, `default-registry`, `registry`, `overrides`, `test-direct`, `test-indirect`, `test-dependencies`, `elm-version`, `require`, `require-dev`, `deps`, `weakdeps`, `extras`, `julia`, `bazel_dep`, `single_version_override`, `git_override`, `archive_override`, `local_path_override`, `multiple_version_override`, `git_repository`, `new_git_repository`, `oci_pull`, `rules_img_pull`, `maven_install`, `crate_spec`, `bazel`, `nuget`, `msbuild-sdk`, `dotnet-sdk`, `annotation`, `regex`, `jsonata`
 
 [managers.md](managers.md) lists the dep types of each manager.
 
@@ -1507,7 +1509,7 @@ Custom managers: `# deps: <datasource> <name>` annotations, or RE2 regex manager
 - **Type:** list of objects
 - **Required keys:** `files`
 
-Each entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, `artifactory`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
+Each entry is one manager instance with dep types `annotation` (no `match` or `jsonata`), `regex` (`match` set) or `jsonata` (`jsonata` set). Datasources: `git-tags`, `github-releases`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, `artifactory`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
 
 **Annotation mode (no `match`).** A comment marker annotates the **next line**, and that line's first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Comment starters are `#`, `//`, `--`, `;` and `<!--`.
 
@@ -1530,7 +1532,7 @@ ARG GOLANGCI_VERSION=v2.5.0
 RUN go install golang.org/x/tools/cmd/goimports@v0.38.0
 ```
 
-**Regex mode (`match` set)**: see [`custom[].match`](#custommatch).
+**Regex mode (`match` set)**: see [`custom[].match`](#custommatch). **JSONata mode (`jsonata` set)**: see [`custom[].jsonata`](#customjsonata).
 
 ### `custom[].files`
 
@@ -1543,7 +1545,7 @@ Must not be empty.
 
 ### `custom[].match`
 
-RE2 regexp with a (?P\<version>) or (?P\<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode.
+RE2 regexp with a (?P\<version>) or (?P\<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode (or JSONata mode with jsonata).
 
 - **Type:** string
 
@@ -1569,6 +1571,48 @@ custom:
     name: golangci/golangci-lint
 ```
 
+### `custom[].jsonata`
+
+JSONata query run over the file parsed as fileFormat; it returns dep objects (or a list of them) with string fields currentValue (alias version), depName/packageName (alias name), datasource, versioning, currentDigest (alias digest), extractVersion and registryUrl. Exclusive with match.
+
+- **Type:** string
+
+Renovate's `customType: jsonata` managers. The file is parsed as [`fileFormat`](#customfileformat) and the [JSONata](https://docs.jsonata.org/overview.html) query runs over it (a full JSONata 2.x implementation, so queries written for Renovate work unchanged). The query returns one dep object or a list of them; each object is one dep:
+
+| Field | Aliases | Meaning |
+|---|---|---|
+| `currentValue` | `version` | required; the replaced version |
+| `depName` | `packageName` (wins), `name` | overrides `name` |
+| `datasource` | | overrides `datasource` |
+| `versioning` | | scheme name |
+| `currentDigest` | `digest` | replaced together with the version |
+| `extractVersion` | | as a Renovate marker's `extractVersion=` |
+| `registryUrl` | | overrides `registryUrl` |
+
+Other fields (`depType`, `indentation`) are ignored. Fields must be strings: a number skips the dep as `not a string: <field>`, and empty ones as `empty version`, `empty name` or `empty datasource`. A query that returns nothing yields no deps; a query error or a result that is no object is a file error. Each evaluation stops after 10 seconds.
+
+The results carry no byte positions, so deps finds each version where the file spells it: every occurrence of the value gets a distinct numeric marker appended, the marked file is queried again, and the occurrence whose marker comes back on that result is the one replaced. So equal versions of different deps each get their own bytes, and values the query cuts out of a longer string (`$split(image, ":")[1]`, `$substringAfter`) are found too. A version the file does not spell (built by the query, or escaped) is skipped as `version not found in file`.
+
+```yaml
+custom:
+  - files: [package.json]
+    fileFormat: json
+    jsonata: '$each(dependencies, function($v, $k) { {"depName": $k, "currentValue": $v} })'
+    datasource: npm
+  - files: ['**/tools.yaml']
+    fileFormat: yaml
+    jsonata: 'tools.{"depName": repo, "currentValue": version, "datasource": "github-releases"}'
+```
+
+### `custom[].fileFormat`
+
+Format the jsonata query reads the file as: json (comments and trailing commas allowed), yaml (a list of the file's documents) or toml; required with jsonata.
+
+- **Type:** string
+- **Values:** `json`, `yaml`, `toml`
+
+`json` (comments and trailing commas allowed, as Renovate's JSONC parser), `yaml` or `toml`. A YAML file is the list of its documents, as in Renovate, so `packages.{…}` maps over every document; `$[0]` is the first one. Keys keep their file order, so `$each`, `$keys` and `*` list deps in file order. YAML timestamps are strings; TOML datetimes are strings, its integers, floats and booleans keep their type.
+
 ### `custom[].datasource`
 
 Datasource of the matched deps, or custom.\<name> of customDatasources; required in regex mode unless match has a (?P\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases.
@@ -1590,7 +1634,7 @@ Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo
 - **Default:** `semver`
 - **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|composer|julia|bazel-module|nuget|rpm|apk|deb|regex:.+)$`
 
-Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, else `semver`. A marker's `versioning=` or a `versioning` group overrides the entry's.
+Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, else `semver`. A marker's `versioning=`, a `versioning` group or a JSONata result's `versioning` overrides the entry's.
 
 ### `custom[].checksum`
 
@@ -1636,11 +1680,11 @@ Entry name inside the url document (`<hex>  <name>` or `<hex> *<name>`); empty m
 
 ### `custom[].registryUrl`
 
-Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb, artifactory, gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases, forgejo-tags and endoflife-date datasources; a (?P\<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources.
+Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb, artifactory, gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases, forgejo-tags and endoflife-date datasources; a (?P\<registryUrl>) group, a Renovate marker's registryUrl= or a JSONata result's registryUrl overrides it. Ignored for other datasources.
 
 - **Type:** string
 
-Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags` and `endoflife-date` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group or a marker's `registryUrl=` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
+Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags` and `endoflife-date` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group, a marker's `registryUrl=` or a JSONata result's `registryUrl` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
 
 ```yaml
 custom:

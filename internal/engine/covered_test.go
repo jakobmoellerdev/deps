@@ -108,3 +108,39 @@ func TestResolveFirstCustomMatchWins(t *testing.T) {
 		t.Errorf("updates = %+v, skipped = %+v", res.Updates, res.Skipped)
 	}
 }
+
+// A JSONata entry over compose files claims the image tags it selects: the native docker deps
+// of those bytes are skipped, the custom deps stay.
+func TestResolveJSONataCoversNativeDep(t *testing.T) {
+	root, cfg := setup(t, `custom:
+  - files: [compose.yml]
+    fileFormat: yaml
+    jsonata: 'services.*[$contains(image, "nginx")].{"depName": $substringBefore(image, ":"), "currentValue": $substringAfter(image, ":")}'
+    datasource: docker
+    versioning: docker
+`, map[string]string{"compose.yml": "services:\n  web:\n    image: nginx:1.25.0\n  db:\n    image: postgres:16.1\n"})
+	ms, err := Managers(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := sources(nil, nil)
+	o.Managers = ms
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type key struct{ manager, name, skip string }
+	var got []key
+	for _, d := range res.Deps {
+		got = append(got, key{d.Manager, d.Name, d.Skip})
+	}
+	for _, want := range []key{
+		{"docker", "nginx", "covered by custom jsonata match on line 3"},
+		{"custom", "nginx", ""},
+		{"docker", "postgres", ""},
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %+v in %+v", want, got)
+		}
+	}
+}

@@ -165,6 +165,12 @@ func TestLoadErrors(t *testing.T) {
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: 'u/{{version}', file: f}}]\n", "custom[0].checksum.url: unbalanced template braces"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, file: '{{name}}'}}]\n", "custom[0].checksum.file: unknown template variable {{name}}"},
 		{"custom: [{files: [x], match: '(?P<version>\\S+) (?P<checksum>\\S+)', datasource: go, name: x, checksum: {url: u, pathh: f}}]\n", "custom[0].checksum.pathh: unknown key"},
+		{"custom: [{files: [x], jsonata: 'a('}]\n", "custom[0].jsonata: invalid JSONata query"},
+		{"custom: [{files: [x], jsonata: a}]\n", "custom[0].fileFormat: required with jsonata (one of json, yaml, toml)"},
+		{"custom: [{files: [x], jsonata: a, fileFormat: yml}]\n", `custom[0].fileFormat: must be one of json, yaml, toml, got "yml" (did you mean yaml?)`},
+		{"custom: [{files: [x], jsonata: a, fileFormat: json, match: '(?P<version>x)'}]\n", "custom[0].match: exclusive with jsonata"},
+		{"custom: [{files: [x], jsonata: a, fileFormat: json, checksum: {url: u}}]\n", "custom[0].checksum: requires match (regex mode)"},
+		{"custom: [{files: [x], fileFormat: json}]\n", "custom[0].fileFormat: requires jsonata"},
 		{"rebaseWhen: always\n", `rebaseWhen: must be one of conflicted, behind-base-branch, never, got "always"`},
 		{"platformCommit: always\n", `platformCommit: must be one of auto, enabled, disabled, got "always"`},
 		{"minimumReleaseAge: soon\n", `minimumReleaseAge: invalid age "soon"`},
@@ -668,6 +674,25 @@ func TestCustomRegexGroupAliases(t *testing.T) {
 		if _, err := load(t, ".deps.yaml", "custom: [{files: [x], datasource: "+ds+"}]\n"); err != nil {
 			t.Errorf("datasource %s: %v", ds, err)
 		}
+	}
+}
+
+// A JSONata entry needs neither datasource nor name: its query results may set them.
+func TestCustomJSONata(t *testing.T) {
+	c, err := load(t, ".deps.yaml", `custom:
+  - files: [package.json]
+    fileFormat: json
+    jsonata: '$each(dependencies, function($v, $k) { {"depName": $k, "currentValue": $v} })'
+    datasource: npm
+  - files: ['**/tools.yaml']
+    fileFormat: yaml
+    jsonata: 'tools.{"depName": name, "currentValue": version, "datasource": datasource}'
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Custom) != 2 || c.Custom[1].FileFormat != "yaml" || c.Custom[1].Versioning != "" {
+		t.Errorf("custom = %+v", c.Custom)
 	}
 }
 

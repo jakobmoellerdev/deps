@@ -655,7 +655,7 @@ func dedupeCovered(ex []extracted) {
 	type claim struct {
 		spans [3]dep.Span
 		line  int
-		regex bool
+		what  string // the skip reason's name of the custom dep
 	}
 	claims := map[string][]claim{}
 	for _, e := range ex {
@@ -663,9 +663,16 @@ func dedupeCovered(ex []extracted) {
 			if d.Manager != custom.Name || d.RefSpan.End <= d.RefSpan.Start {
 				continue
 			}
-			c := claim{spans: [3]dep.Span{d.RefSpan, d.DigestSpan, d.VersionSpan}, line: d.Line, regex: d.DepType == custom.DepTypeRegex}
-			if !c.regex && c.line > 1 {
-				c.line-- // the annotation comment precedes the annotated line
+			c := claim{spans: [3]dep.Span{d.RefSpan, d.DigestSpan, d.VersionSpan}, line: d.Line, what: "annotation"}
+			switch d.DepType {
+			case custom.DepTypeRegex:
+				c.what = "custom regex match"
+			case custom.DepTypeJSONata:
+				c.what = "custom jsonata match"
+			default:
+				if c.line > 1 {
+					c.line-- // the annotation comment precedes the annotated line
+				}
 			}
 			claims[d.File] = append(claims[d.File], c)
 		}
@@ -692,11 +699,7 @@ func dedupeCovered(ex []extracted) {
 				if !hit {
 					continue
 				}
-				if c.regex {
-					d.Skip = fmt.Sprintf("covered by custom regex match on line %d", c.line)
-				} else {
-					d.Skip = fmt.Sprintf("covered by annotation on line %d", c.line)
-				}
+				d.Skip = fmt.Sprintf("covered by %s on line %d", c.what, c.line)
 				break
 			}
 		}

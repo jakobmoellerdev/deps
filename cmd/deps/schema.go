@@ -176,6 +176,7 @@ func addEnums(s *jsonschema.Schema) {
 	items(rule, "allowedUpdateTypes", enumOf(config.UpdateTypes))
 	scalar(rule, "commitType", enumOf(config.CommitTypes))
 	scalar(custom, "datasource", enumOf(config.DatasourceNames))
+	scalar(custom, "fileFormat", enumOf(config.CustomFileFormats))
 	scalar(s.Definitions["CustomDatasource"], "format", enumOf(customds.Formats))
 	scalar(s.Definitions["PostUpgradeTasks"], "executionMode", enumOf(config.ExecutionModes))
 	alts := make([]string, len(config.Versionings))

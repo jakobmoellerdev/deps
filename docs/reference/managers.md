@@ -2385,6 +2385,7 @@ User-defined managers: each `custom[]` entry is one manager instance; see [`cust
 |---|---|---|---|---|
 | `annotation` | `# deps: <datasource> <name>` or `# renovate: datasource=… depName=…` on the previous line | from the marker | from the marker or `custom[].versioning` | updated |
 | `regex` | `match` RE2 over the whole file | `custom[].datasource` or the `datasource` group | `custom[].versioning` or the `versioning` group | updated |
+| `jsonata` | `jsonata` query over the file parsed as `fileFormat` (json, yaml, toml) | `custom[].datasource` or the result's `datasource` | `custom[].versioning` or the result's `versioning` | updated |
 
 **Skips:**
 
@@ -2393,9 +2394,12 @@ User-defined managers: each `custom[]` entry is one manager instance; see [`cust
 | `no version on next line` | an annotation is not followed by a line with a version |
 | `renovate marker without datasource` | a `# renovate:` marker lacks `datasource=` |
 | `renovate marker without depName` | a `# renovate:` marker lacks `depName=` |
-| `empty version` | regex mode: the version is empty |
-| `empty name` | regex mode: the name is empty |
-| `empty datasource` | regex mode: the datasource is empty |
+| `empty version` | regex and JSONata mode: the version is empty |
+| `empty name` | regex and JSONata mode: the name is empty |
+| `empty datasource` | regex and JSONata mode: the datasource is empty |
+| `not a string: <field>` | JSONata mode: a result field deps reads is a number, boolean, object or list |
+| `version not found in file` | JSONata mode: the version is not a substring of the file (escaped, or computed by the query) or the query does not keep it apart from other occurrences |
+| `digest not found in file` | JSONata mode: as `version not found in file`, for the result's `currentDigest` |
 | `checksum is not 64 or 128 hex digits` | regex mode: the `checksum` group is not a SHA-256 or SHA-512 hex digest |
 | `unknown versioning "<v>"` | the versioning is not a known scheme |
 | `invalid git-tags name "<name>"` | a `git-tags` dep whose name is not a repository URL |
@@ -2406,22 +2410,28 @@ User-defined managers: each `custom[]` entry is one manager instance; see [`cust
 | `invalid artifactory name "<name>"` | an `artifactory` dep whose registry URL joined with its name (or the name alone, without a registry URL) is no `https://` or `http://` URL |
 | `invalid <datasource> name "<name>"` | a `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases` or `forgejo-tags` dep whose name is not a project path (`owner/repo`; GitLab also `group/subgroup/project`) or a repository URL |
 | `invalid <datasource> registry URL "<url>"` | such a dep whose `registryUrl` is not an `http(s)://` URL |
-| `invalid extractVersion: <err>` | a Renovate marker's `extractVersion=` is not an RE2 regexp with a `version` group |
+| `invalid extractVersion: <err>` | a Renovate marker's `extractVersion=` or a JSONata result's `extractVersion` is not an RE2 regexp with a `version` group |
 | `unknown datasource "<ds>"` | the datasource is neither built in nor `custom.<name>` of `customDatasources` |
 
 **Edits.**
 
-The version is replaced. A captured digest (`@sha256:` for docker markers, or a `digest` group) and a `checksum` group are replaced together with it.
+The version is replaced. A captured digest (`@sha256:` for docker markers, a `digest` group or a JSONata result's `currentDigest`) and a `checksum` group are replaced together with it.
+
+**JSONata mode.**
+
+- The query runs over the parsed file, so its results carry no byte positions. deps finds each version (and digest) where the file spells it: it appends a distinct numeric marker to every occurrence of the value, queries the marked file again and keeps the occurrence whose marker comes back on that result. Values the query takes from a longer string (`$split("foo@1.2.3", "@")[1]`, `$substringAfter`) are found too.
+- JSON allows comments and trailing commas; YAML is the list of the file's documents (as in Renovate: query `packages` maps over every document); TOML is its root table. Keys keep their order, so `$each`, `$keys` and `*` list deps in file order.
+- A query that returns nothing yields no deps; one that fails, or returns anything but objects, is a file error. Each evaluation is limited to 10 seconds.
 
 **Helm charts.**
 
 - `# deps: helm <repository>/<chart>` or `# deps: helm <repository> <chart>`, with an `https://` (index.yaml) or `oci://` repository: `# deps: helm https://charts.jetstack.io cert-manager`.
 - Renovate markers give the repository as `registryUrl=`: `# renovate: datasource=helm depName=redis registryUrl=https://charts.bitnami.com/bitnami`.
-- Regex mode takes `<repository>/<chart>` as the name.
+- Regex mode takes `<repository>/<chart>` as the name; JSONata results may give the repository as `registryUrl` and the chart as the name.
 
 **Registry URLs.**
 
-- `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `endoflife-date` and the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags deps take their registry from `registryUrl`: a Renovate marker's `registryUrl=`, else a regex `(?P<registryUrl>…)` group, else the entry's `registryUrl` field. Other datasources ignore it.
+- `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `endoflife-date` and the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags deps take their registry from `registryUrl`: a Renovate marker's `registryUrl=`, else a regex `(?P<registryUrl>…)` group or a JSONata result's `registryUrl`, else the entry's `registryUrl` field. Other datasources ignore it.
 - `# renovate: datasource=gitlab-packages packageName=gitlab-org/cli:glab registryUrl=https://gitlab.com` (`<project>:<package>`; without a registry URL the configured GitLab instance).
 - `# renovate: datasource=rpm depName=golang registryUrl=https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/repodata/` (several whitespace-separated repositories are merged); rpm deps use the `rpm` versioning unless the marker, the regex group or the entry sets one.
 - `# renovate: datasource=apk depName=bash registryUrl=https://dl-cdn.alpinelinux.org/alpine?branch=v3.22&components=main&arch=x86_64` above `RUN apk add bash=5.2.37-r0` (one index per component); apk deps use the `apk` versioning unless the marker, the regex group or the entry sets one.
@@ -2445,7 +2455,7 @@ The version is replaced. A captured digest (`@sha256:` for docker markers, or a 
 
 **Precedence over native managers.**
 
-When a custom dep and a native manager's dep (docker, helm, …) cover the same version bytes of a file, the custom dep wins: the native dep is skipped as `covered by annotation on line <n>` (regex mode: `covered by custom regex match on line <n>`), so the bytes are edited once and only one PR is opened. Between custom entries the first one in `custom` wins; a later entry matching the same version is skipped as `covered by custom match on line <n>`.
+When a custom dep and a native manager's dep (docker, helm, …) cover the same version bytes of a file, the custom dep wins: the native dep is skipped as `covered by annotation on line <n>` (regex mode: `covered by custom regex match on line <n>`, JSONata mode: `covered by custom jsonata match on line <n>`), so the bytes are edited once and only one PR is opened. Between custom entries the first one in `custom` wins; a later entry matching the same version is skipped as `covered by custom match on line <n>`.
 
 ## Datasources
 

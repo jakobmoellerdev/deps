@@ -11,6 +11,8 @@
 // Regex mode: an RE2 `match` with a required `version` (alias `currentValue`) group and
 // optional `name` (aliases `depName`, `packageName`), `datasource`, `versioning` and `digest`
 // (alias `currentDigest`) groups is run over the whole file; every match is a dependency.
+// JSONata mode: a `jsonata` query runs over the file parsed as `fileFormat` and returns dep
+// objects; see jsonata.go for how their versions are found in the file.
 //
 // The entry's `versioning` accepts every scheme including `regex:<RE2>`; the versioning
 // fields of markers and the `versioning` group accept the scheme names (config.Versionings),
@@ -28,6 +30,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/recolabs/gnata"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	debds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deb"
@@ -49,6 +53,7 @@ const Name = customdoc.Name
 const (
 	DepTypeAnnotation = customdoc.DepTypeAnnotation
 	DepTypeRegex      = customdoc.DepTypeRegex
+	DepTypeJSONata    = customdoc.DepTypeJSONata
 )
 
 var (
@@ -72,7 +77,9 @@ var (
 type customManager struct {
 	known      func(datasource string) bool // config.Config.KnownDatasource
 	files      *pattern.List
-	re         *regexp.Regexp // nil = annotation mode
+	re         *regexp.Regexp    // nil = annotation or JSONata mode
+	query      *gnata.Expression // nil = annotation or regex mode
+	format     string            // fileFormat of query
 	datasource string
 	name       string
 	versioning string              // the entry's; "" = per dep, config.DefaultCustomVersioning
@@ -132,6 +139,12 @@ func newManager(c config.Custom, known func(string) bool) (*customManager, error
 	if m.datasource != "" && !known(m.datasource) {
 		return nil, fmt.Errorf("datasource: unknown %q", m.datasource)
 	}
+	if c.JSONata != "" {
+		return m.withJSONata(c)
+	}
+	if c.FileFormat != "" {
+		return nil, errors.New("fileFormat: requires jsonata")
+	}
 	if c.Match == "" {
 		return m, nil
 	}
@@ -180,9 +193,12 @@ func (*customManager) Name() string { return Name }
 // Match reports whether the slash path matches the entry's files patterns.
 func (m *customManager) Match(path string) bool { return m.files.Match(path) }
 
-// Extract returns the annotated or regex-matched deps of src.
+// Extract returns the annotated, regex-matched or JSONata-selected deps of src.
 func (m *customManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
-	if m.re == nil {
+	switch {
+	case m.query != nil:
+		return m.jsonata(file, src)
+	case m.re == nil:
 		return m.annotations(file, src), nil
 	}
 	return m.matches(file, src), nil

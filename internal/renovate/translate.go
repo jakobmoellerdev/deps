@@ -259,6 +259,7 @@ var managerMap = func() map[string][]expansion {
 		"gitlabci-include": {{"gitlabci", []string{"include"}}},
 		"regex":            {{"custom", nil}},
 		"custom.regex":     {{"custom", nil}},
+		"custom.jsonata":   {{"custom", nil}},
 	}
 	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 poetry pipenv terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker droneci circleci azure-pipelines composer julia bazel-module bazelisk nuget") {
 		m[n] = []expansion{{n, nil}}
@@ -295,6 +296,7 @@ var categories = map[string][]string{
 	"julia":      {"julia"},
 	"bazel":      {"bazel-module", "bazelisk"},
 	"dotnet":     {"nuget"},
+	"custom":     {"custom.regex", "custom.jsonata"},
 }
 
 // datasourceMap maps the Renovate datasources whose deps datasource has another name that
@@ -942,16 +944,22 @@ func (t *translator) customDatasources(v any) {
 	}
 }
 
-// customManager translates one customManagers (or regexManagers) element.
+// customManager translates one customManagers (or regexManagers) element. A regex manager
+// becomes one regex entry per matchStrings element, a jsonata manager one JSONata entry per
+// query. A literal (non-template) extractVersionTemplate of a jsonata manager, which has no
+// entry field, is merged into each query's results.
 func (t *translator) customManager(m map[string]any, legacy bool, origin string) {
 	t.n.builtin = builtinOrigin(origin)
 	defer func() { t.n.builtin = false }()
-	if ct, _ := m["customType"].(string); ct != "regex" && (!legacy || m["customType"] != nil) {
+	ct, _ := m["customType"].(string)
+	jsonata := !legacy && ct == "jsonata"
+	if !jsonata && ct != "regex" && (!legacy || m["customType"] != nil) {
 		t.n.warn(origin, "customType %v is not supported; dropped", m["customType"])
 		return
 	}
 	var files, matches []string
-	var datasource, name, versioning, registry string
+	var datasource, name, versioning, registry, fileFormat string
+	var merge omap // jsonata: literal templates without an entry field
 	nameKey := ""
 	for _, k := range slices.Sorted(mapKeys(m)) {
 		v := m[k]
@@ -999,7 +1007,13 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 					name = s
 				}
 			}
-		case "currentValueTemplate", "extractVersionTemplate", "autoReplaceStringTemplate":
+		case "extractVersionTemplate":
+			if !jsonata || strings.Contains(s, "{{") {
+				t.n.warn(origin, "%s has no deps equivalent; dropped", k)
+				return
+			}
+			merge.set("extractVersion", s)
+		case "currentValueTemplate", "autoReplaceStringTemplate":
 			t.n.warn(origin, "%s has no deps equivalent; dropped", k)
 			return
 		case "registryUrlTemplate":
@@ -1012,12 +1026,21 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 			}
 		case "depTypeTemplate":
 			t.n.info(origin+"."+k, "no deps equivalent; ignored")
+		case "fileFormat":
+			if !jsonata {
+				t.untranslated(origin+"."+k, k)
+				continue
+			}
+			fileFormat = s
 		default:
 			t.untranslated(origin+"."+k, k)
 		}
 	}
 	for i, match := range matches {
 		c := omap{{"files", files}, {"match", match}}
+		if jsonata {
+			c = omap{{"files", files}, {"fileFormat", fileFormat}, {"jsonata", jsonataMerge(match, merge)}}
+		}
 		if datasource != "" {
 			c.set("datasource", datasource)
 		}

@@ -732,7 +732,7 @@ func TestLoadCustom(t *testing.T) {
 			{customType: 'regex', fileMatch: ['(^|/)\\.env$'], matchStrings: ['E=(?<currentValue>\\S+)'], datasourceTemplate: 'custom.envtest', depNameTemplate: 'envtest'},
 			{customType: 'regex', managerFilePatterns: ['**/*.mk'], matchStrings: ['L=(?<currentValue>\\S+)', 'M=(?<currentValue>\\S+)'], datasourceTemplate: 'custom.list', depNameTemplate: 'l', versioningTemplate: 'loose'},
 			{customType: 'regex', managerFilePatterns: ['x'], matchStrings: ['(?<currentValue>.)'], datasourceTemplate: '{{{datasource}}}'},
-			{customType: 'jsonata', managerFilePatterns: ['x']},
+			{customType: 'xpath', managerFilePatterns: ['x']},
 		],
 		packageRules: [{matchDatasources: ['custom.envtest'], enabled: false}],
 	}`)
@@ -762,7 +762,7 @@ func TestLoadCustom(t *testing.T) {
 	for _, n := range []string{
 		"warn customDatasources.envtest: JSONata transformTemplates \"$x\" has no deps equivalent; write versions/versionRegex by hand; datasource dropped",
 		"warn customManagers[2]: dropped: datasource: required unless match has a (?P<datasource>...) group; name: required unless match has a (?P<name>...), (?P<depName>...) or (?P<packageName>...) group",
-		"warn customManagers[3]: customType jsonata is not supported; dropped",
+		"warn customManagers[3]: customType xpath is not supported; dropped",
 		"warn packageRules[0]: datasource custom.envtest has no deps equivalent; dropped",
 		"warn packageRules[0]: matches no deps datasource; rule dropped",
 	} {
@@ -776,6 +776,86 @@ func TestLoadCustom(t *testing.T) {
 	}
 	if !dropped {
 		t.Errorf("customManagers[0] (envtest) not dropped:\n%s", strings.Join(notes, "\n"))
+	}
+}
+
+// Renovate's documented package.json JSONata manager: one entry per query; a literal
+// extractVersionTemplate is merged into the query's results, a literal registryUrlTemplate
+// becomes the entry's registryUrl.
+func TestLoadCustomJSONata(t *testing.T) {
+	res, err := load(t, `{
+		customManagers: [
+			{
+				customType: 'jsonata', fileFormat: 'json', managerFilePatterns: ['/package.json/'],
+				matchStrings: [
+					'$each(dependencies, function($v, $k) { {"depName":$k, "currentValue": $v, "depType": "dependencies"}})',
+					'{ "depName": "pnpm", "currentValue": $substring(packageManager, 5),  "depType": "packageManager"}',
+				],
+				datasourceTemplate: 'npm',
+			},
+			{
+				customType: 'jsonata', fileFormat: 'yaml', managerFilePatterns: ['tools.yaml'],
+				matchStrings: ['tools.{"depName": repo, "currentValue": version}'],
+				datasourceTemplate: 'github-tags', extractVersionTemplate: '^v(?<version>.+)$', registryUrlTemplate: 'https://github.com', depTypeTemplate: 'tool',
+			},
+			{customType: 'jsonata', fileFormat: 'toml', managerFilePatterns: ['x'], matchStrings: ['a'], depNameTemplate: '{{{packageName}}}'},
+			{customType: 'jsonata', fileFormat: 'toml', managerFilePatterns: ['x'], matchStrings: ['a'], extractVersionTemplate: '{{{x}}}'},
+			{customType: 'jsonata', fileFormat: 'xml', managerFilePatterns: ['x'], matchStrings: ['a']},
+			{customType: 'jsonata', fileFormat: 'json', managerFilePatterns: ['x'], matchStrings: ['a('], currentValueTemplate: '1'},
+			{customType: 'regex', fileFormat: 'json', managerFilePatterns: ['x'], matchStrings: ['(?<currentValue>.)'], datasourceTemplate: 'npm', depNameTemplate: 'x'},
+		],
+		packageRules: [
+			{matchManagers: ['custom.jsonata'], groupName: 'tools'},
+			{matchCategories: ['custom'], groupName: 'all custom'},
+		],
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := section(t, res, "custom"), `  - # customManagers[0].matchStrings[0]
+    files: [/package.json/]
+    fileFormat: json
+    jsonata: '$each(dependencies, function($v, $k) { {"depName":$k, "currentValue": $v, "depType": "dependencies"}})'
+    datasource: npm
+  - # customManagers[0].matchStrings[1]
+    files: [/package.json/]
+    fileFormat: json
+    jsonata: '{ "depName": "pnpm", "currentValue": $substring(packageManager, 5),  "depType": "packageManager"}'
+    datasource: npm
+  - # customManagers[1]
+    files: [tools.yaml]
+    fileFormat: yaml
+    jsonata: '(tools.{"depName": repo, "currentValue": version}) ~> $map(function($d) { $merge([$d, {"extractVersion": "^v(?<version>.+)$"}]) })'
+    datasource: github-tags
+    registryUrl: https://github.com
+  - # customManagers[6]
+    files: [x]
+    match: (?<currentValue>.)
+    datasource: npm
+    name: x`; got != want {
+		t.Errorf("custom:\n%s\nwant:\n%s", got, want)
+	}
+	notes := noteLines(res)
+	for _, n := range []string{
+		"info customManagers[1].depTypeTemplate: no deps equivalent; ignored",
+		`warn customManagers[2]: depNameTemplate "{{{packageName}}}" is a template; dropped`,
+		"warn customManagers[3]: extractVersionTemplate has no deps equivalent; dropped",
+		"warn customManagers[5]: currentValueTemplate has no deps equivalent; dropped",
+	} {
+		if !slices.Contains(notes, n) {
+			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
+		}
+	}
+	var badFormat, regexFormat bool
+	for _, n := range res.Notes {
+		badFormat = badFormat || n.Path == "customManagers[4]" && strings.Contains(n.Msg, `fileFormat: must be one of json, yaml, toml, got "xml"`)
+		regexFormat = regexFormat || strings.HasPrefix(n.Path, "customManagers[6].fileFormat")
+	}
+	if !badFormat || !regexFormat {
+		t.Errorf("fileFormat notes missing:\n%s", strings.Join(notes, "\n"))
+	}
+	if got := section(t, res, "rules"); strings.Count(got, "managers: [custom]") != 2 {
+		t.Errorf("rules:\n%s", got)
 	}
 }
 
