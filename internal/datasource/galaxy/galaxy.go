@@ -37,6 +37,10 @@ const DefaultURL = "https://galaxy.ansible.com"
 // pageSize is the page size of v3 version lists (Galaxy NG's maximum is 100).
 const pageSize = 100
 
+// maxPages caps the pages of one version list; a longer list is an error, not a silently
+// truncated result.
+const maxPages = 100
+
 // Roles is the galaxy datasource: roles by `namespace.name`.
 type Roles struct {
 	client *http.Client
@@ -302,7 +306,15 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		}
 		pep, _ := versioning.Get("pep440")
 		next := p.versions + fmt.Sprintf("?limit=%d", pageSize)
-		for pages := 0; next != "" && pages < 100; pages++ {
+		seen := map[string]bool{}
+		for next != "" {
+			if seen[next] {
+				return nil, fmt.Errorf("galaxy collection %s: pagination loop at %s", d.Name, next)
+			}
+			if len(seen) == maxPages {
+				return nil, fmt.Errorf("galaxy collection %s: version listing exceeded %d pages", d.Name, maxPages)
+			}
+			seen[next] = true
 			var page struct {
 				Links struct {
 					Next string `json:"next"`

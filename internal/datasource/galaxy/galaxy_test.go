@@ -215,6 +215,17 @@ func TestCollections(t *testing.T) {
 	if _, err := ds.Releases(t.Context(), dep.Dep{Name: "a.b", Source: base + "/nothing"}, ""); err == nil || !strings.Contains(err.Error(), "galaxy server") {
 		t.Errorf("no API: %v", err)
 	}
+
+	// A links.next pointing back at an already-fetched page fails instead of looping.
+	loop := "/api/v3/collections/loop/thing/versions/?limit=100"
+	s.files["/api/v3/collections/loop/thing/"] = `{"deprecated":false}`
+	s.files[loop] = `{"links":{"next":"` + loop + `"},"data":[{"version":"1.0.0"}]}`
+	if _, err := ds.Releases(t.Context(), dep.Dep{Name: "loop.thing"}, ""); err == nil || !strings.Contains(err.Error(), "pagination loop") {
+		t.Errorf("loop: %v", err)
+	}
+	if s.hits[loop] != 1 {
+		t.Errorf("loop hits = %d", s.hits[loop])
+	}
 }
 
 func TestDefaults(t *testing.T) {
