@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json/v2"
 	"errors"
@@ -11,7 +12,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeGitData is an in-memory GitHub repository o/r behind the git data API (blobs, trees,
@@ -333,5 +336,81 @@ func TestGitHubCommits(t *testing.T) {
 	// An unknown parent fails before anything is created.
 	if _, err := g.Commit(ctx, "nope", []CommitFile{{Path: "a.txt", Content: []byte("x")}}, "m"); err == nil || !strings.Contains(err.Error(), "GET /repos/o/r/git/commits/nope: 404") {
 		t.Errorf("unknown parent: err = %v", err)
+	}
+}
+
+// TestGitHubCommitsRequests checks that a committer fetches the tree of a parent once for all
+// its commits and uploads the blobs of a commit concurrently.
+func TestGitHubCommitsRequests(t *testing.T) {
+	f, _ := newFakeGitData(t)
+	var (
+		mu       sync.Mutex
+		gets     = map[string]int{}
+		inFlight atomic.Int32
+		once     sync.Once
+	)
+	overlap := make(chan struct{}) // closed once two blob uploads are in flight together
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			mu.Lock()
+			gets[r.URL.Path]++
+			mu.Unlock()
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/git/blobs" {
+			b, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(b))
+			if bytes.Contains(b, []byte(base64.StdEncoding.EncodeToString([]byte("fail")))) {
+				http.Error(w, "boom", http.StatusInternalServerError)
+				return
+			}
+			if inFlight.Add(1) == 2 {
+				once.Do(func() { close(overlap) })
+			}
+			select {
+			case <-overlap:
+			case <-time.After(2 * time.Second):
+				once.Do(func() {
+					t.Error("blob uploads did not overlap")
+					close(overlap)
+				})
+			}
+			inFlight.Add(-1)
+		}
+		f.serve(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ctx := t.Context()
+	g, err := NewGitHubCommits(ctx, Info{Kind: GitHub, APIURL: srv.URL, Repo: "o/r", Host: "github.com"}, "ghs_app", srv.Client(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make([]CommitFile, 6)
+	want := map[string]string{"README": "100644 readme\n", "sub/old.txt": "100644 old\n"}
+	for i := range files {
+		p := fmt.Sprintf("f%d", i)
+		files[i] = CommitFile{Path: p, Content: []byte(p)}
+		want[p] = "100644 " + p
+	}
+	files = append(files, CommitFile{Path: "sub/a.txt"}) // a deletion between uploads
+	c1, err := g.Commit(ctx, "c0", files, "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.files(c1); !maps.Equal(got, want) {
+		t.Errorf("tree = %q, want %q", got, want)
+	}
+	if _, err := g.Commit(ctx, "c0", files[:1], "m2"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	if n := gets["/repos/o/r/git/commits/c0"]; n != 1 {
+		t.Errorf("GET /repos/o/r/git/commits/c0 sent %d times, want 1", n)
+	}
+	mu.Unlock()
+
+	// A failed upload fails the commit and names its file.
+	bad := []CommitFile{files[0], {Path: "bad", Content: []byte("fail")}}
+	if _, err := g.Commit(ctx, "c0", bad, "m3"); err == nil || !strings.Contains(err.Error(), "bad: POST /repos/o/r/git/blobs: 500") {
+		t.Errorf("failed upload: err = %v", err)
 	}
 }

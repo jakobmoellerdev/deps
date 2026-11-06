@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 )
 
 // IsAppToken reports whether token is a GitHub App installation token, as GITHUB_TOKEN in
@@ -45,6 +46,9 @@ type GitHubCommits struct {
 	prefix      string // path of the change paths' directory in the repository: "" or ending in '/'
 	name, email string // the token's account (Author)
 	id          int64  // its user id
+
+	mu    sync.Mutex
+	trees map[string]string // commit id -> its tree id, filled by baseTree
 }
 
 // NewGitHubCommits returns the GitHub API committer for info and looks up the token's account:
@@ -151,13 +155,12 @@ type CommitFile struct {
 // committer to GitHub. The commit is on no branch until Push.
 func (g *GitHubCommits) Commit(ctx context.Context, parent string, files []CommitFile, msg string) (string, error) {
 	repo := "/repos/" + g.gh.repo
-	var pc struct {
-		Tree shaJSON `json:"tree"`
-	}
-	if err := g.gh.do(ctx, http.MethodGet, repo+"/git/commits/"+parent, nil, &pc, g.gh.headers); err != nil {
+	base, err := g.baseTree(ctx, parent)
+	if err != nil {
 		return "", err
 	}
 	entries := make([]treeEntry, 0, len(files))
+	var blobs []int // entries uploadBlobs fills in
 	for _, f := range files {
 		e := treeEntry{Path: path.Join(g.prefix, f.Path), Mode: "100644", Type: "blob"}
 		if f.Gitlink {
@@ -171,18 +174,15 @@ func (g *GitHubCommits) Commit(ctx context.Context, parent string, files []Commi
 			e.Mode = "100755"
 		}
 		if f.Content != nil {
-			// Blobs carry the exact bytes, binary files included (inline tree content must be UTF-8).
-			var b shaJSON
-			in := map[string]string{"content": base64.StdEncoding.EncodeToString(f.Content), "encoding": "base64"}
-			if err := g.gh.do(ctx, http.MethodPost, repo+"/git/blobs", in, &b, g.gh.headers); err != nil {
-				return "", fmt.Errorf("%s: %w", f.Path, err)
-			}
-			e.SHA = &b.SHA
+			blobs = append(blobs, len(entries))
 		}
 		entries = append(entries, e)
 	}
+	if err := g.uploadBlobs(ctx, files, entries, blobs); err != nil {
+		return "", err
+	}
 	var tree shaJSON
-	if err := g.gh.do(ctx, http.MethodPost, repo+"/git/trees", map[string]any{"base_tree": pc.Tree.SHA, "tree": entries}, &tree, g.gh.headers); err != nil {
+	if err := g.gh.do(ctx, http.MethodPost, repo+"/git/trees", map[string]any{"base_tree": base, "tree": entries}, &tree, g.gh.headers); err != nil {
 		return "", err
 	}
 	var commit shaJSON
@@ -191,6 +191,68 @@ func (g *GitHubCommits) Commit(ctx context.Context, parent string, files []Commi
 		return "", err
 	}
 	return commit.SHA, nil
+}
+
+// baseTree returns the tree of commit parent (GET /git/commits/{parent}). A commit id names
+// an immutable commit, so the tree is kept: every group of a run commits on the same base head.
+func (g *GitHubCommits) baseTree(ctx context.Context, parent string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if t, ok := g.trees[parent]; ok {
+		return t, nil
+	}
+	var pc struct {
+		Tree shaJSON `json:"tree"`
+	}
+	if err := g.gh.do(ctx, http.MethodGet, "/repos/"+g.gh.repo+"/git/commits/"+parent, nil, &pc, g.gh.headers); err != nil {
+		return "", err
+	}
+	if g.trees == nil {
+		g.trees = map[string]string{}
+	}
+	g.trees[parent] = pc.Tree.SHA
+	return pc.Tree.SHA, nil
+}
+
+// blobUploads bounds the concurrent POST /git/blobs of one Commit.
+const blobUploads = 4
+
+// uploadBlobs uploads files[i].Content for each i of idx, up to blobUploads at a time, and
+// sets entries[i].SHA to the blob. Blobs carry the exact bytes, binary files included (inline
+// tree content must be UTF-8). The first failure cancels the uploads not yet done and is the
+// error returned.
+func (g *GitHubCommits) uploadBlobs(ctx context.Context, files []CommitFile, entries []treeEntry, idx []int) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var (
+		wg    sync.WaitGroup
+		once  sync.Once
+		first error
+	)
+	sem := make(chan struct{}, blobUploads)
+	for _, i := range idx {
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				return
+			}
+			var b shaJSON
+			in := map[string]string{"content": base64.StdEncoding.EncodeToString(files[i].Content), "encoding": "base64"}
+			if err := g.gh.do(ctx, http.MethodPost, "/repos/"+g.gh.repo+"/git/blobs", in, &b, g.gh.headers); err != nil {
+				once.Do(func() { first = fmt.Errorf("%s: %w", files[i].Path, err) })
+				cancel()
+				return
+			}
+			entries[i].SHA = &b.SHA
+		})
+	}
+	wg.Wait()
+	if first == nil {
+		// A canceled ctx can stop uploads before any of them fails.
+		return context.Cause(ctx)
+	}
+	return first
 }
 
 const updateRefsMutation = `mutation($repo: ID!, $ref: GitRefname!, $before: GitObjectID!, $after: GitObjectID!) {
