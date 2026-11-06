@@ -39,7 +39,11 @@ const (
 const (
 	providerDatasource = "terraform-provider"
 	moduleDatasource   = "terraform-module"
+	gitRefsDatasource  = "git-refs" // commit-pinned git sources
 )
+
+// defaultBranch is the version of a commit-pinned git source: git-refs' default branch head.
+const defaultBranch = "HEAD"
 
 // Default registry hosts of provider and module addresses without one: Terraform's, and
 // OpenTofu's for *.tofu files (config terraform.defaultRegistry overrides both).
@@ -137,12 +141,13 @@ func (x *extractor) walk(b body) {
 
 // Edits replaces the version token and, for a replacement (u.NewName), the source address;
 // image references are rewritten like the docker manager rewrites them (name, tag, digest),
-// helm_release chart versions like the helm manager (helm.VersionEdits: ranges are rewritten).
+// helm_release chart versions like the helm manager (helm.VersionEdits: ranges are rewritten),
+// OCI module sources only in their `?tag=`.
 func (tfManager) Edits(u dep.Update) ([]patch.Edit, error) {
-	switch u.Dep.Datasource {
-	case "docker":
+	switch {
+	case u.Dep.Datasource == "docker" && u.Dep.DepType != DepTypeModule:
 		return docker.New().Edits(u)
-	case "helm":
+	case u.Dep.Datasource == "helm":
 		return helm.VersionEdits(u), nil
 	}
 	return edits(u)
@@ -172,9 +177,16 @@ func (tfManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
 	return registryRename(d, name, host, path, wrote != "")
 }
 
-// edits returns the edits of u: the address for a replacement (u.NewName), and the version
-// token unless a replacement keeps the version.
+// edits returns the edits of u: the commit of a commit-pinned git source, the address for a
+// replacement (u.NewName), and the version token unless a replacement keeps the version.
 func edits(u dep.Update) ([]patch.Edit, error) {
+	if u.Dep.Datasource == gitRefsDatasource {
+		d := u.Dep
+		if u.NewDigest == "" || d.DigestSpan == (dep.Span{}) {
+			return nil, fmt.Errorf("%s: no new commit", d.Name)
+		}
+		return []patch.Edit{{Start: d.DigestSpan.Start, End: d.DigestSpan.End, Old: d.Digest, New: u.NewDigest}}, nil
+	}
 	if u.NewName == "" {
 		return versionEdit(u)
 	}
@@ -228,14 +240,14 @@ func registryRename(d dep.Dep, name, host, path string, hosted bool) (dep.Dep, e
 	return d, nil
 }
 
-// nameParts locates the address v.str[off:off+n] of the string literal v (one NameWhole part);
-// nil when the bytes of v differ from its value (escapes).
-func nameParts(v value, off, n int) []dep.NamePart {
+// nameParts locates the address v.str[:n] of the string literal v (one NameWhole part); nil
+// when the bytes of v differ from its value (escapes, or text not written in this file).
+func nameParts(v value, n int) []dep.NamePart {
 	if v.span == (dep.Span{}) {
 		return nil
 	}
-	start := v.span.Start + off
-	return []dep.NamePart{{Span: dep.Span{Start: start, End: start + n}, Text: v.str[off : off+n]}}
+	start := v.span.Start
+	return []dep.NamePart{{Span: dep.Span{Start: start, End: start + n}, Text: v.str[:n]}}
 }
 
 // newExtractor returns the extractor of file: hostless addresses resolve against
@@ -327,7 +339,7 @@ func (x *extractor) provider(a attr) {
 	case host == "terraform.io" && strings.HasPrefix(name, "builtin/"):
 		d.Skip = "builtin provider"
 	case named.kind == kindString:
-		d.NameParts = nameParts(named, 0, len(source))
+		d.NameParts = nameParts(named, len(source))
 	}
 	if d.Skip == "" {
 		setConstraint(&d, version)
@@ -393,7 +405,17 @@ func (x *extractor) module(blk block) {
 	s := src.val.str
 	d.Name = s
 	if g, ok := parseGitSource(s); ok {
-		x.gitModule(&d, g, src.val.span)
+		x.gitModule(&d, g, literalText(src.val))
+		x.deps = append(x.deps, d)
+		return
+	}
+	if g, ok := parseArchiveSource(s); ok {
+		x.gitModule(&d, g, literalText(src.val))
+		x.deps = append(x.deps, d)
+		return
+	}
+	if strings.HasPrefix(s, "oci://") {
+		ociModule(&d, literalText(src.val))
 		x.deps = append(x.deps, d)
 		return
 	}
@@ -410,7 +432,7 @@ func (x *extractor) module(blk block) {
 		if m[1] != "" {
 			n += len(m[1]) + 1
 		}
-		d.NameParts = nameParts(src.val, 0, n)
+		d.NameParts = nameParts(src.val, n)
 		if ver == nil {
 			d.Skip = "no version constraint"
 		} else {
@@ -418,29 +440,40 @@ func (x *extractor) module(blk block) {
 			setConstraint(&d, ver.val)
 		}
 	default:
-		d.Skip = "unsupported module source"
+		d.Skip = unsupportedSource(s)
 	}
 	x.deps = append(x.deps, d)
 }
 
-// gitModule fills d from the git source g whose literal is at span.
-func (x *extractor) gitModule(d *dep.Dep, g gitSource, span dep.Span) {
+// gitModule fills d from the git source g whose text is t. A 40-hex commit ref tracks the
+// default branch head (git-refs digest updates, as Bazel git overrides); a `tags/` or
+// `refs/tags/` prefix of the ref is not part of the version.
+func (x *extractor) gitModule(d *dep.Dep, g gitSource, t text) {
 	d.Datasource, d.Name, d.Source = "git-tags", g.name, g.repo
-	switch {
-	case !g.hasRef:
+	ref, off := g.ref, g.refOff
+	for _, p := range [...]string{"refs/tags/", "tags/"} {
+		if r, ok := strings.CutPrefix(ref, p); ok {
+			ref, off = r, off+len(p)
+			break
+		}
+	}
+	if !g.hasRef {
 		d.Skip = "no ref"
-	case strings.Contains(g.ref, "%"):
-		d.Version, d.Skip = g.ref, "cannot locate value"
-	case shaRe.MatchString(g.ref):
-		d.Version, d.Skip = g.ref, "commit ref"
-	case span == (dep.Span{}):
-		d.Version, d.Skip = g.ref, "cannot locate value"
+		return
+	}
+	v := t.lit(off, len(ref))
+	switch {
+	case strings.Contains(ref, "%") || v.span == (dep.Span{}):
+		d.Version, d.Skip = ref, "cannot locate value"
+	case shaRe.MatchString(ref):
+		d.Datasource, d.Version, d.Versioning = gitRefsDatasource, defaultBranch, "tag"
+		d.Digest, d.DigestSpan = ref, v.span
 	default:
-		d.Version, d.Versioning = g.ref, "semver"
-		if !fullRe.MatchString(g.ref) && partialRe.MatchString(g.ref) {
+		d.Version, d.Versioning = ref, "semver"
+		if !fullRe.MatchString(ref) && partialRe.MatchString(ref) {
 			d.Versioning = "tag"
 		}
-		d.RefSpan = dep.Span{Start: span.Start + g.refOff, End: span.Start + g.refOff + len(g.ref)}
+		d.RefSpan = v.span
 	}
 }
 

@@ -373,7 +373,7 @@ See [`terraform.defaultRegistry`](#terraformdefaultregistry).
 
 ## Terraform.defaultRegistry
 
-The registry of provider and module addresses without a host (`hashicorp/aws`, `terraform-aws-modules/vpc/aws`, `tfr:///…` in Terragrunt). Without it, `*.tf` files use `registry.terraform.io` and `*.tofu` files OpenTofu's `registry.opentofu.org`, as the two CLIs do. Set it when an OpenTofu project keeps `*.tf` files, or for a private mirror implementing the registry protocol. A scheme and trailing slash are ignored.
+The registry of provider and module addresses without a host (`hashicorp/aws`, `terraform-aws-modules/vpc/aws`, `tfr:///…` in Terragrunt). Without it, `*.tf` files use `registry.terraform.io` and `*.tofu` files OpenTofu's `registry.opentofu.org`, as the two CLIs do. Set it when an OpenTofu project keeps `*.tf` files, or for a private mirror implementing the registry protocol. A scheme and trailing slash are ignored. For Terragrunt's `tfr:///…` sources, `$TG_TF_DEFAULT_REGISTRY_HOST` takes precedence when set, as it does for Terragrunt.
 
 ```yaml
 terraform:

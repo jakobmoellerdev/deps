@@ -13,12 +13,15 @@ import (
 // TerragruntName is the name of the terragrunt manager.
 const TerragruntName = "terragrunt"
 
-// DepTypes of the terragrunt manager (Renovate's): the `terraform { source }` of a
-// terragrunt.hcl from GitHub, from another git host, or from a module registry (`tfr://`).
+// DepTypes of the terragrunt manager: the `terraform { source }` of a terragrunt.hcl from
+// GitHub, from another git host, or from a module registry (`tfr://`), as Renovate names them,
+// from an OCI registry, and the `engine` plugin.
 const (
 	DepTypeTerragruntGitHub   = "github"
 	DepTypeTerragruntGitTags  = "gitTags"
 	DepTypeTerragruntRegistry = "terragrunt"
+	DepTypeTerragruntOCI      = "oci"
+	DepTypeTerragruntEngine   = "engine"
 )
 
 var terragruntRe = regexp.MustCompile(`(^|/)terragrunt\.hcl$`)
@@ -38,19 +41,60 @@ func (terragruntManager) Match(p string) bool {
 		!strings.HasPrefix(p, ".terragrunt-cache/") && !strings.Contains(p, "/.terragrunt-cache/")
 }
 
-// Extract parses src and returns the source of each top-level terraform block.
+// Extract parses src and returns the source of each top-level terraform block and the engine
+// block's plugin. include, dependency and generate blocks are not deps: they name local
+// configurations or generate code at run time; includes only resolve `include.<label>.locals`.
 func (terragruntManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	b, err := parseHCL(src)
 	if err != nil {
 		return nil, err
 	}
 	x := newExtractor(file, src, env)
+	if r := strings.TrimSuffix(strings.TrimPrefix(env.TerragruntRegistry, "https://"), "/"); r != "" {
+		x.registry = strings.ToLower(r)
+	}
+	ev := &tgEval{exists: env.Exists, readFile: env.ReadFile}
+	var sc *tgScope // the file's locals and includes, collected for the first terraform block
 	for _, blk := range b.blocks {
-		if blk.typ == "terraform" && len(blk.labels) == 0 {
-			x.terragrunt(blk.body)
+		switch {
+		case blk.typ == "terraform" && len(blk.labels) == 0:
+			if sc == nil {
+				sc = newScope(file, src, b, false)
+			}
+			x.terragrunt(blk.body, ev, sc)
+		case blk.typ == "engine" && len(blk.labels) == 0:
+			x.engine(blk.body)
 		}
 	}
 	return x.deps, nil
+}
+
+// engine extracts the plugin of an engine block: `source = "github.com/<owner>/<repo>"` with
+// the GitHub release `version` Terragrunt downloads (without one it always takes the latest).
+func (x *extractor) engine(b body) {
+	var source, version *attr
+	for i, a := range b.attrs {
+		switch a.name {
+		case "source":
+			source = &b.attrs[i]
+		case "version":
+			version = &b.attrs[i]
+		}
+	}
+	if source == nil {
+		return
+	}
+	d := x.newDep(TerragruntName, DepTypeTerragruntEngine, source.off)
+	d.Datasource, d.Versioning = "github-releases", "semver"
+	if s := source.val.str; source.val.kind == kindString && !strings.HasPrefix(s, "github.com/") {
+		d.Name, d.Skip = s, "unsupported engine source" // a download URL or local path
+		if strings.HasPrefix(s, "/") || strings.HasPrefix(s, ".") {
+			d.Skip = "local engine"
+		}
+		x.deps = append(x.deps, d)
+		return
+	}
+	x.deps = append(x.deps, x.plugin(d, "engine", source, version))
 }
 
 // Edits replaces the version token and, for a replacement (u.NewName), the registry address.
@@ -74,9 +118,12 @@ func (terragruntManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
 	return registryRename(d, name, host, path, hosted)
 }
 
-// terragrunt extracts `source` of a terraform block: a git source with its `?ref=`, or a
-// `tfr://` registry module with its `?version=` or the block's `version` constraint.
-func (x *extractor) terragrunt(b body) {
+// terragrunt extracts `source` of a terraform block: a git source with its `?ref=`, a
+// `tfr://` registry module with its `?version=` or the block's `version` constraint, or an
+// `oci://` repository with its `?tag=`. A source expression is evaluated as far as tgEval
+// can (locals, included locals, path functions); a version written verbatim in this file
+// stays editable.
+func (x *extractor) terragrunt(b body, ev *tgEval, sc *tgScope) {
 	var src, ver *attr
 	for i, a := range b.attrs {
 		switch a.name {
@@ -90,51 +137,73 @@ func (x *extractor) terragrunt(b body) {
 		return
 	}
 	d := x.newDep(TerragruntName, DepTypeTerragruntRegistry, src.off)
-	if src.val.kind != kindString {
+	t, ok := ev.eval(sc, src.val)
+	switch {
+	case t.local:
+		d.Name, d.Skip = "terraform.source", "local module"
+		if ok {
+			d.Name = t.s
+		}
+		x.deps = append(x.deps, d)
+		return
+	case !ok:
 		d.Name, d.Skip = "terraform.source", "non-literal source"
 		x.deps = append(x.deps, d)
 		return
 	}
-	s := src.val.str
+	s := t.s
 	d.Name = s
-	if g, ok := parseGitSource(s); ok {
+	g, ok := parseGitSource(s)
+	if !ok {
+		g, ok = parseArchiveSource(s)
+	}
+	if ok {
 		d.DepType = DepTypeTerragruntGitTags
 		if strings.HasPrefix(g.name, "github.com/") {
 			d.DepType = DepTypeTerragruntGitHub
 		}
-		x.gitModule(&d, g, src.val.span)
+		x.gitModule(&d, g, t)
 		x.deps = append(x.deps, d)
 		return
 	}
-	t, ok := parseTFRSource(s)
+	if strings.HasPrefix(s, "oci://") {
+		d.DepType = DepTypeTerragruntOCI
+		ociModule(&d, t)
+		x.deps = append(x.deps, d)
+		return
+	}
+	tfr, ok := parseTFRSource(s)
 	switch {
 	case ok:
-		x.tfrModule(&d, t, src.val, ver)
+		x.tfrModule(&d, tfr, t, ver)
 	case s == "." || s == ".." || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") || strings.HasPrefix(s, "/"):
 		d.Skip = "local module"
 	default:
-		d.Skip = "unsupported module source"
+		d.Skip = unsupportedSource(s)
 	}
 	x.deps = append(x.deps, d)
 }
 
-// tfrModule fills d from the registry source t whose literal is v; without `?version=` the
+// tfrModule fills d from the registry source t whose text is src; without `?version=` the
 // version is the constraint of the terraform block's version attribute.
-func (x *extractor) tfrModule(d *dep.Dep, t tfrSource, v value, ver *attr) {
-	host, span := t.host, v.span
+func (x *extractor) tfrModule(d *dep.Dep, t tfrSource, src text, ver *attr) {
+	host := t.host
 	if host == "" {
 		host = x.registry
 	}
 	d.Datasource, d.Name, d.Source = moduleDatasource, t.name, "https://"+host
-	d.NameParts = nameParts(v, t.addrOff, len(t.addr))
+	d.NameParts = nameParts(src.lit(t.addrOff, len(t.addr)), len(t.addr))
+	var v value
+	if t.hasVersion {
+		v = src.lit(t.versionOff, len(t.version))
+	}
 	switch {
-	case t.hasVersion && (strings.Contains(t.version, "%") || span == (dep.Span{})):
+	case t.hasVersion && (strings.Contains(t.version, "%") || v.span == (dep.Span{})):
 		d.Version, d.Skip = t.version, "cannot locate value"
 	case t.hasVersion && !versionRe.MatchString(t.version):
 		d.Version, d.Versioning, d.Skip = t.version, "hashicorp", "unsupported constraint"
 	case t.hasVersion:
-		start := span.Start + t.versionOff
-		setConstraint(d, value{kind: kindString, str: t.version, span: dep.Span{Start: start, End: start + len(t.version)}})
+		setConstraint(d, v)
 	case ver != nil:
 		d.Line = x.lineAt(ver.off)
 		setConstraint(d, ver.val)

@@ -144,6 +144,8 @@ var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pr
 // refresh a digest they already carry (regex `digest` group, an annotated `@sha256:`, a
 // kustomize `digest` field or commit ref, an `oci.pull` digest, a git override commit, the commit a flake
 // input is locked or pinned to, `feature:1@sha256:…`); they have no place to insert a new one.
+// Neither have terraform and terragrunt module sources: a commit-pinned git source
+// (`?ref=<sha>`, git-refs) refreshes its commit, an OCI source (`?tag=`) is never pinned.
 func digestCapable(d dep.Dep) bool {
 	switch d.Manager {
 	case "custom", "cargo", bazel.Name, nix.Name:
@@ -152,7 +154,12 @@ func digestCapable(d dep.Dep) bool {
 		return d.Digest != "" || kustomize.Pinnable(d)
 	case "gitlabci":
 		return d.Datasource == "docker" || d.Digest != "" || d.InsertAt > 0
-	case "terraform", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "ansible":
+	case "terraform", "terragrunt":
+		if d.DepType == "module" || d.Manager == "terragrunt" {
+			return d.Datasource == "git-refs" && d.Digest != ""
+		}
+		return d.Datasource == "docker"
+	case "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "ansible":
 		return d.Datasource == "docker"
 	case devcontainer.Name:
 		return d.DepType == devcontainer.DepTypeImage || d.DepType == devcontainer.DepTypeFeature && d.Digest != ""
@@ -214,6 +221,11 @@ func extractTree(ctx context.Context, root string, cfg *config.Config, env manag
 		env.Exists = func(p string) bool {
 			_, err := os.Stat(filepath.Join(root, filepath.FromSlash(p)))
 			return err == nil
+		}
+	}
+	if env.ReadFile == nil {
+		env.ReadFile = func(p string) ([]byte, error) {
+			return os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
 		}
 	}
 	if env.Gitlinks == nil {

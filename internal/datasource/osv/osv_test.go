@@ -890,3 +890,47 @@ func TestAdvisoriesHex(t *testing.T) {
 		t.Errorf("batches = %+v", f.batches)
 	}
 }
+
+func TestAdvisoriesTerraform(t *testing.T) {
+	f := newFake(t)
+	f.results["Go|github.com/hashicorp/terraform|1.5.0|"] = result{ids: []string{"GHSA-h626-pv66-hhm7", "GO-2023-2055"}}
+	f.results["Go|github.com/hashicorp/terraform-provider-aws|1.13.0|"] = result{ids: []string{"GHSA-r48h-jr2j-9g78"}}
+	// Advisory documents as OSV serves them (2026-11-06), trimmed to the fields deps reads.
+	f.vulns["GHSA-h626-pv66-hhm7"] = `{"id":"GHSA-h626-pv66-hhm7","summary":"Terraform allows arbitrary file write during the ` + "`init`" + ` operation","aliases":["CVE-2023-4782","GO-2023-2055"],
+		"affected":[{"package":{"name":"github.com/hashicorp/terraform","ecosystem":"Go"},"ranges":[{"type":"SEMVER","events":[{"introduced":"1.0.8"},{"fixed":"1.5.7"}]}]}]}`
+	f.vulns["GO-2023-2055"] = `{"id":"GO-2023-2055","summary":"Terraform allows arbitrary file write during the ` + "`init`" + ` operation in github.com/hashicorp/terraform","aliases":["CVE-2023-4782","GHSA-h626-pv66-hhm7"],
+		"affected":[{"package":{"name":"github.com/hashicorp/terraform","ecosystem":"Go"},"ranges":[{"type":"SEMVER","events":[{"introduced":"1.0.8"},{"fixed":"1.5.7"}]}]}]}`
+	f.vulns["GHSA-r48h-jr2j-9g78"] = `{"id":"GHSA-r48h-jr2j-9g78","summary":" HashiCorp Terraform Amazon Web Services (AWS) uses an insecure PRNG ","aliases":["CVE-2018-9057"],
+		"affected":[{"package":{"name":"github.com/hashicorp/terraform-provider-aws","ecosystem":"Go"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.14.0"}]}]}]}`
+	s := f.start(nil)
+	const tr = "https://registry.terraform.io"
+	deps := []dep.Dep{
+		// The locked version of a provider is queried, else an exact constraint's.
+		{Manager: "terraform", Datasource: "terraform-provider", Name: "hashicorp/aws", Source: tr, Version: "1.0", Range: "~> 1.0", Locked: "1.13.0"},
+		{Manager: "terraform", Datasource: "terraform-provider", Name: "Hashicorp/AWS", Source: "https://registry.opentofu.org", Version: "1.13.0", Range: "= 1.13.0"},
+		{Manager: "terraform", Datasource: "terraform-provider", Name: "hashicorp/aws", Source: tr, Version: "1.0", Range: "~> 1.0"},
+		{Manager: "terraform", Datasource: "terraform-provider", Name: "acme/aws", Source: "https://app.terraform.io", Version: "1.13.0", Range: "1.13.0"},
+		{Manager: "terraform-version", Datasource: "github-releases", Name: "hashicorp/terraform", Version: "1.5.0"},
+		{Manager: "terraform", Datasource: "github-releases", Name: "hashicorp/terraform", Version: "v1.5.0", Range: "v1.5.0"},
+		{Manager: "terraform", Datasource: "github-releases", Name: "hashicorp/terraform", Version: "1.5", Range: ">= 1.5"},
+		{Manager: "terraform-version", Datasource: "github-releases", Name: "hashicorp/terraform", Version: "1.5"},
+		{Manager: "terraform", Datasource: "github-releases", Name: "hashicorp/terraform", Version: "1.5.0", Range: "~> 1.5 x"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aws := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-r48h-jr2j-9g78", Summary: " HashiCorp Terraform Amazon Web Services (AWS) uses an insecure PRNG ", URL: "https://osv.dev/vulnerability/GHSA-r48h-jr2j-9g78"}, Fixed: []string{"1.14.0"}}}
+	tfAdv := dep.Advisory{ID: "GO-2023-2055", Summary: "Terraform allows arbitrary file write during the `init` operation in github.com/hashicorp/terraform", URL: "https://osv.dev/vulnerability/GO-2023-2055"}
+	want := [][]datasource.Vuln{aws, aws, nil, nil,
+		{{Advisory: tfAdv, Fixed: []string{"1.5.7"}}},
+		{{Advisory: tfAdv, Fixed: []string{"v1.5.7"}}},
+		nil, nil, nil,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if len(f.batches) != 1 || len(f.batches[0]) != 2 {
+		t.Errorf("batches = %+v", f.batches)
+	}
+}

@@ -126,7 +126,7 @@ func (x *extractor) plugin(d dep.Dep, label string, source, version *attr) dep.D
 		return d
 	}
 	d.Name, d.Source = pluginName(host, owner, repo)
-	d.NameParts = nameParts(source.val, 0, len(source.val.str))
+	d.NameParts = nameParts(source.val, len(source.val.str))
 	if version == nil {
 		d.Skip = "no version"
 		return d

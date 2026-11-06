@@ -18,6 +18,8 @@ import (
 // Fixtures, copied unchanged:
 //   - testdata/eks: github.com/terraform-aws-modules/terraform-aws-eks@91b8a8d (Apache-2.0):
 //     versions.tf, main.tf and examples/eks-hybrid-nodes/remote.tf.
+//   - testdata/cloudposse-components: github.com/cloudposse/terraform-aws-components@1f74a96
+//     (Apache-2.0): deprecated/aws/account-settings/main.tf (a `?ref=tags/<version>` source).
 //   - testdata/moj: github.com/ministryofjustice/cloud-platform-infrastructure@921d44f (MIT):
 //     terraform/aws-accounts/cloud-platform-aws/account/{versions.tf,ecr.tf,.terraform.lock.hcl}
 //     and .tflint.hcl (lock and tflint files renamed without the leading dot).
@@ -54,6 +56,11 @@ func summarize(t *testing.T, src []byte, deps []dep.Dep) []string {
 			s += " range=" + d.Range
 			if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != d.Range {
 				t.Errorf("%s: RefSpan covers %q", s, got)
+			}
+		case d.Datasource == gitRefsDatasource:
+			s += " @" + d.Digest
+			if got := string(src[d.DigestSpan.Start:d.DigestSpan.End]); got != d.Digest {
+				t.Errorf("%s: DigestSpan covers %q", s, got)
 			}
 		default:
 			if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != d.Version {
@@ -102,6 +109,10 @@ func TestExtractRealWorld(t *testing.T) {
 			"5 required_provider terraform-provider hashicorp/aws " + tr + " 6.59 hashicorp",
 			"9 required_provider terraform-provider hashicorp/tls " + tr + " 4.0 hashicorp",
 			"13 required_provider terraform-provider hashicorp/time " + tr + " 0.9 hashicorp",
+		}},
+		{"cloudposse-components/deprecated/aws/account-settings/main.tf", []string{
+			"2 required_version github-releases hashicorp/terraform https://github.com/hashicorp/terraform 0.11.2 hashicorp",
+			"14 module git-tags github.com/cloudposse/terraform-aws-iam-account-settings https://github.com/cloudposse/terraform-aws-iam-account-settings.git 0.1.0 semver",
 		}},
 		{"eks/main.tf", []string{
 			"401 module terraform-module terraform-aws-modules/kms/aws " + tr + " 4.0.0 hashicorp",
@@ -202,6 +213,21 @@ module "archive" {
 module "s3" {
   source = "s3::https://s3-eu-west-1.amazonaws.com/bucket/vpc.zip"
 }
+module "oci" {
+  source = "oci://ghcr.io/acme/vpc//sub?tag=v1.2.0"
+}
+module "cloudposse" {
+  source = "git::https://github.com/cloudposse/x.git?ref=tags/0.4.0"
+}
+module "gharchive" {
+  source = "https://github.com/acme/vpc/archive/v1.0.0.zip"
+}
+module "hg" {
+  source = "hg::http://example.com/vpc.hg"
+}
+module "gcs" {
+  source = "gcs::https://www.googleapis.com/storage/v1/b/vpc.zip"
+}
 module "dyn" {
   source = local.src
 }
@@ -239,15 +265,20 @@ resource "x" "y" {
 		"30 module git-tags example.com/org/repo https://example.com/org/repo.git v1.2.3 semver",
 		"33 module git-tags github.com/org/repo https://github.com/org/repo.git v2 tag",
 		"36 module git-tags github.com/org/scp https://github.com/org/scp.git 1.0.0 semver",
-		"39 module git-tags github.com/org/sha https://github.com/org/sha 0123456789abcdef0123456789abcdef01234567 - [commit ref]",
+		"39 module git-refs github.com/org/sha https://github.com/org/sha HEAD tag @0123456789abcdef0123456789abcdef01234567",
 		"42 module git-tags bitbucket.org/org/noref https://bitbucket.org/org/noref - - [no ref]",
 		"45 module git-tags github.com/org/enc https://github.com/org/enc release%2F1 - [cannot locate value]",
 		"49 module terraform-module hashicorp/consul/aws " + tr + " 0.11.0 hashicorp",
 		"53 module terraform-module Acme/vpc/aws https://app.terraform.io 1 hashicorp",
 		"56 module terraform-module terraform-aws-modules/vpc/aws " + tr + " - - [no version constraint]",
-		"59 module - https://example.com/vpc-module.zip?ref=1.0.0 - - - [unsupported module source]",
-		"62 module - s3::https://s3-eu-west-1.amazonaws.com/bucket/vpc.zip - - - [unsupported module source]",
-		"65 module - dyn - - - [non-literal source]",
+		"59 module - https://example.com/vpc-module.zip?ref=1.0.0 - - - [archive module source]",
+		"62 module - s3::https://s3-eu-west-1.amazonaws.com/bucket/vpc.zip - - - [s3 module source]",
+		"65 module docker ghcr.io/acme/vpc ghcr.io/acme/vpc v1.2.0 docker",
+		"68 module git-tags github.com/cloudposse/x https://github.com/cloudposse/x.git 0.4.0 semver",
+		"71 module git-tags github.com/acme/vpc https://github.com/acme/vpc v1.0.0 semver",
+		"74 module - hg::http://example.com/vpc.hg - - - [hg module source]",
+		"77 module - gcs::https://www.googleapis.com/storage/v1/b/vpc.zip - - - [gcs module source]",
+		"80 module - dyn - - - [non-literal source]",
 	}
 	got := extract(t, New(), "main.tf", []byte(src))
 	if !slices.Equal(got, want) {

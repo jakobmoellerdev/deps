@@ -1822,7 +1822,7 @@ Updates provider, module and Terraform version constraints in Terraform and Open
 |---|---|---|---|---|
 | `required_provider` | `terraform { required_providers { <name> = { source, version } } }`; a bare `<name> = "<constraint>"` means `hashicorp/<name>` | `terraform-provider` | `hashicorp` | updated |
 | `provider` | the legacy `version` of a `provider "<name>"` block; the source is the file's `required_providers` entry of that name, else `hashicorp/<name>`. Blocks without `version` are not deps. | `terraform-provider` | `hashicorp` | updated |
-| `module` | `module` blocks: a registry `source` (`[host/]namespace/name/provider[//subdir]`) with its `version`, or a git `source` with `?ref=` | registry: `terraform-module`; git: `git-tags` | registry: `hashicorp`; git: `semver`, partial refs `tag` | updated |
+| `module` | `module` blocks: a registry `source` (`[host/]namespace/name/provider[//subdir]`) with its `version`, a git `source` with `?ref=` (also a GitHub tag archive `https://github.com/<owner>/<repo>/archive/[refs/tags/]<tag>.zip\|.tar.gz`; a 40-hex commit ref follows the default branch head), or an OpenTofu `oci://<registry>/<repository>[//subdir]?tag=<tag>` source | registry: `terraform-module`; git: `git-tags`, commit refs `git-refs`; OCI: `docker` | registry: `hashicorp`; git: `semver`, partial refs `tag`; OCI: `docker` | updated |
 | `required_version` | `terraform { required_version }` | `github-releases` (`hashicorp/terraform`; `opentofu/opentofu` in `*.tofu` files) | `hashicorp` | updated |
 | `helm_release` | `chart`, `repository` and `version` of a `helm_release` resource (also `chart = "oci://host/path/name"`); a version range (`~1.2.0`, `>= 1.2, < 2`) is rewritten as the [helm manager](#helm) does (Version ranges; rangeStrategy `widen` and `pin` act as `replace`) | `helm` | `semver` | updated |
 | `tfe_workspace` | `terraform_version` of a `tfe_workspace` resource | `github-releases` (`hashicorp/terraform`) | `hashicorp` | updated |
@@ -1857,16 +1857,21 @@ Updates provider, module and Terraform version constraints in Terraform and Open
 | `invalid provider source` | a `source` that is not `[host/]namespace/type` |
 | `builtin provider` | `terraform.io/builtin/…` |
 | `local module` | `./…`, `../…` |
-| `unsupported module source` | archives (`https://…`), `s3::`, `gcs::`, `hg::` and other go-getter sources |
-| `no ref` | a git module source without `?ref=` |
-| `commit ref` | a git module pinned to a 40-hex commit |
+| `archive module source` | an `http(s)://` URL that is not a GitHub tag archive (an archive or an `X-Terraform-Get` redirect, which name no version) |
+| `s3 module source` | `s3::…` or an `*.amazonaws.com` S3 URL |
+| `gcs module source` | `gcs::…` or a `www.googleapis.com/storage/…` URL |
+| `hg module source` | `hg::…` (Mercurial) |
+| `unsupported module source` | other go-getter sources |
+| `no ref` | a git module source without `?ref=`: it follows the default branch, there is no version to update (as with Renovate) |
 | `local chart` | helm_release: a chart path (`./x`, `/x`), a chart URL (`https://…/x.tgz`), or a chart name without `repository` |
 | `repository alias` | helm_release: a `repo/chart` chart without `repository` (a `helm repo add` name) |
 | `invalid chart reference` | helm_release: an `oci://` chart without path and name |
 | `unknown chart repository <repository>` | helm_release: a `repository` that is not `http(s)://` or `oci://` |
 | `unsupported range` | helm_release: a version range the helm manager cannot rewrite (`*`, `!=1.2.3`) |
 | `no version` | helm_release without `version` |
-| `invalid reference` | an image literal that is not a valid reference |
+| `no tag` | an `oci://` module source without `?tag=` (OpenTofu uses `latest`) |
+| `digest without tag` | an `oci://` module source with `?digest=` only |
+| `invalid reference` | an image literal that is not a valid reference, or an `oci://` module source that is not `<registry>/<repository>` |
 
 **Constraints and rangeStrategy.**
 
@@ -1881,7 +1886,9 @@ Updates provider, module and Terraform version constraints in Terraform and Open
 
 - Provider and module addresses without a host use `registry.terraform.io`, in `*.tofu`/`*.tofu.json` files OpenTofu's `registry.opentofu.org`; [`terraform.defaultRegistry`](configuration.md#terraformdefaultregistry) sets the host for both. An explicit host (`registry.opentofu.org/…`, `app.terraform.io/…`) is looked up on that registry through service discovery.
 - `required_version` in `*.tofu` files is an OpenTofu version (`github-releases` `opentofu/opentofu`).
-- Git module sources (`git::https://…`, `git::ssh://…`, `git@host:…`, `github.com/…`, `bitbucket.org/…`) are looked up with `git-tags` over HTTPS; the `?ref=` value is the version.
+- Git module sources (`git::https://…`, `git::ssh://…`, `git@host:…`, `github.com/…`, `bitbucket.org/…`, GitHub tag archives) are looked up with `git-tags` over HTTPS; the `?ref=` value is the version, after a `tags/` or `refs/tags/` prefix (go-getter checks those out too; `?ref=tags/0.4.0` is version `0.4.0`).
+- A `?ref=` pinned to a 40-hex commit is a `git-refs` dep on the default branch (version `HEAD`): digest updates replace the commit with the branch head's, like Bazel git overrides. Renovate does not update commit refs.
+- OpenTofu `oci://` module sources are looked up like images (`docker` datasource, registry credentials as for images); only the `?tag=` value is rewritten, and they are never digest-pinned.
 
 **Resources.**
 
@@ -1958,7 +1965,7 @@ Updates the versions of tflint ruleset plugins in `.tflint.hcl`. Plugins without
 
 ## terragrunt
 
-Updates the module `source` of the `terraform` block in Terragrunt configurations: git sources by their `?ref=`, `tfr://` registry modules by their `?version=` or the block's `version` constraint. Other blocks (`include`, `dependency`, `generate`, `engine`) are not extracted; `.terraform.lock.hcl` is not refreshed.
+Updates the module `source` of the `terraform` block in Terragrunt configurations (git sources by their `?ref=`, `tfr://` registry modules by their `?version=` or the block's `version` constraint, `oci://` modules by their `?tag=`) and the `engine` plugin version. Source expressions built from locals, included locals and path functions are evaluated. `include`, `dependency` and `generate` blocks are not deps. Lock file maintenance refreshes the `.terraform.lock.hcl` next to a `terragrunt.hcl`.
 
 **Files:**
 
@@ -1966,34 +1973,63 @@ Updates the module `source` of the `terraform` block in Terragrunt configuration
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `github` | `terraform { source }` from `github.com` (`github.com/…`, `git::https://github.com/…`, `git::git@github.com:…`, `git::ssh://git@github.com/…`) with `?ref=` | `git-tags` | `semver`, partial refs `tag` | updated |
-| `gitTags` | `terraform { source }` from another git host (`git::https://…`, `git::ssh://…`, `git@host:…`, `bitbucket.org/…`) with `?ref=` | `git-tags` | `semver`, partial refs `tag` | updated |
+| `github` | `terraform { source }` from `github.com` (`github.com/…`, `git::https://github.com/…`, `git::git@github.com:…`, `git::ssh://git@github.com/…`, a tag archive `https://github.com/<owner>/<repo>/archive/[refs/tags/]<tag>.zip\|.tar.gz`) with `?ref=`; a 40-hex commit ref follows the default branch head | `git-tags`; commit refs `git-refs` | `semver`, partial refs `tag` | updated |
+| `gitTags` | `terraform { source }` from another git host (`git::https://…`, `git::ssh://…`, `git@host:…`, `bitbucket.org/…`) with `?ref=`; a 40-hex commit ref follows the default branch head | `git-tags`; commit refs `git-refs` | `semver`, partial refs `tag` | updated |
 | `terragrunt` | `terraform { source = "tfr://[host]/<namespace>/<name>/<provider>[//subdir]?version=<version>" }`, or without `?version=` the block's `version` constraint; the name is `<namespace>/<name>/<provider>` | `terraform-module` | `hashicorp` | updated |
+| `oci` | `terraform { source = "oci://<registry>/<repository>[//subdir]?tag=<tag>" }` (Terragrunt's OCI getter); the name is the repository | `docker` | `docker` | updated |
+| `engine` | `engine { source = "github.com/<owner>/<repo>", version = "…" }`: the GitHub release Terragrunt downloads; the name is `<owner>/<repo>` | `github-releases` | `semver` | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
-| `non-literal source` | a `source` that is an expression (`"${include.envcommon.locals.base_source_url}?ref=v0.8.0"`, `get_repo_root()`) |
-| `local module` | `.`, `./…`, `../…`, `/…` |
-| `unsupported module source` | archives (`https://…`), `s3::`, `gcs::`, `hg::`, `oci://` and other go-getter sources, and malformed `tfr://` addresses |
-| `no ref` | a git source without `?ref=` |
-| `commit ref` | a git source pinned to a 40-hex commit |
-| `cannot locate value` | a source with escapes, or a URL-encoded `ref` or `version` |
+| `non-literal source` | a `source` expression that cannot be evaluated (functions other than the path functions, `dependency.…`, `read_terragrunt_config(…)`, directives, a local or include that does not resolve) |
+| `local module` | `.`, `./…`, `../…`, `/…`, or a source built from a path function (`${get_repo_root()}/modules/vpc`, `find_in_parent_folders("modules")`) |
+| `archive module source` | an `http(s)://` URL that is not a GitHub tag archive (an archive or an `X-Terraform-Get` redirect, which name no version) |
+| `s3 module source` | `s3::…` or an `*.amazonaws.com` S3 URL |
+| `gcs module source` | `gcs::…` or a `www.googleapis.com/storage/…` URL |
+| `hg module source` | `hg::…` (Mercurial) |
+| `unsupported module source` | other go-getter sources and malformed `tfr://` addresses |
+| `no ref` | a git source without `?ref=`: it follows the default branch, there is no version to update (as with Renovate) |
+| `cannot locate value` | a source with escapes, a URL-encoded `ref`, `version` or `tag`, or a `ref`/`version` that comes from an included file |
 | `no version constraint` | a `tfr://` source without `?version=` and without a `version` attribute |
 | `unsupported constraint` | a `?version=` that is not an exact version (Terragrunt rejects constraints there), or a `version` attribute that is not a constraint |
 | `non-literal value` | a `version` attribute that is an expression |
+| `no tag` | an `oci://` source without `?tag=` (OpenTofu and Terragrunt use `latest`) |
+| `digest without tag` | an `oci://` source pinned by `?digest=` only |
+| `invalid reference` | an `oci://` source that is not `<registry>/<repository>` |
+| `no version` | an `engine` without `version` (Terragrunt always downloads the latest release) |
+| `local engine` | an `engine` `source` that is a local path |
+| `unsupported engine source` | an `engine` `source` that is a download URL |
 
 **Versions.**
 
-- Only the version bytes are replaced: the `?ref=` value of git sources, the `?version=` value of `tfr://` sources (an exact version), or the version of the `version` attribute.
+- Only the version bytes are replaced: the `?ref=` value of git sources (after a `tags/` or `refs/tags/` prefix, which go-getter accepts), the `?version=` value of `tfr://` sources (an exact version), the version of the `version` attribute, the `?tag=` of `oci://` sources, or the engine `version`.
 - The `version` attribute follows the terraform manager's constraint rules: `~> 0.0.1` is bumped at its precision, multi-clause ranges (`>= 1.0, < 2.0`) are not rewritten.
+- A `?ref=` pinned to a 40-hex commit is a `git-refs` dep on the default branch (version `HEAD`): digest updates replace the commit with the branch head's, like Bazel git overrides. Renovate does not update commit refs.
+
+**Source expressions.**
+
+- A `source` that is not a string literal is evaluated: string templates, `local.<name>` (the file's `locals`), `include.<label>.locals.<name>` (the `locals` of the file a labeled `include` block's `path` names, read from the repository), and the path functions `get_terragrunt_dir()`, `get_repo_root()` (the scanned root), `get_path_to_repo_root()`, `get_parent_terragrunt_dir()`, `find_in_parent_folders([name[, fallback]])` (searched from the parent directory up to the scanned root) and `dirname()`.
+- `source = "${include.envcommon.locals.base_source_url}?ref=v0.8.0"` (the [terragrunt-infrastructure-live-example](https://github.com/gruntwork-io/terragrunt-infrastructure-live-example) layout) is the git source the include names, and its `v0.8.0` is updated in this file. A version written in a local of this file is updated there; one written in the included file is `cannot locate value`, since the included file is no manifest.
+- Sources built from path functions are local modules. Other functions and references (`get_env()`, `dependency.…`, `read_terragrunt_config(…)`) are not evaluated.
 
 **Registries.**
 
-- `tfr:///…` (no host) uses `registry.terraform.io` (config `terraform.defaultRegistry` overrides it); Terragrunt's own default depends on the wrapped CLI and `TG_TF_DEFAULT_REGISTRY_HOST`, which deps does not read.
+- `tfr:///…` (no host) uses `$TG_TF_DEFAULT_REGISTRY_HOST` when set (as Terragrunt does), else [`terraform.defaultRegistry`](configuration.md#terraformdefaultregistry), else `registry.terraform.io`. Terragrunt's own default without either depends on the wrapped CLI (`registry.opentofu.org` for OpenTofu), which deps cannot know.
 - `tfr://<host>/…` is looked up on that registry through service discovery, like Terraform module addresses.
 - Git sources are looked up with `git-tags` over HTTPS, as for Terraform modules; the `?ref=` value is the version.
+
+**Blocks.**
+
+- `include` blocks name local configuration files; they are read only to resolve `include.<label>.locals`. `dependency` blocks name local units (`config_path`). `generate` blocks write code at run time; their `contents` are not parsed. None of them is a dep, as with Renovate.
+- `engine` blocks are read in `terragrunt.hcl` only; engines configured in an included `root.hcl` are not seen.
+
+**Lock file.**
+
+- Terragrunt copies the module's `.terraform.lock.hcl` next to the `terragrunt.hcl`. Its providers are the module's, not deps of the `terragrunt.hcl`, so source updates leave it alone (as with Renovate).
+- [`lockFileMaintenance`](configuration.md#lockfilemaintenance) refreshes it, as Renovate's terragrunt maintenance does: `terraform init -upgrade -backend=false` (`tofu` when the lock names `registry.opentofu.org`) runs in an empty temporary directory holding the lock and a configuration requiring each locked provider under the `constraints` its entry records, so every provider moves to the newest version those admit, with fresh hashes. The module is not downloaded and no credentials are needed; the CLI must be on `PATH`.
+- Directories that also hold `*.tf`/`*.tofu` files are maintained by the terraform manager.
 
 ## maven
 
@@ -3551,7 +3587,8 @@ Release notes use the POM of the new version: `<scm><url>`, else `<scm><connecti
 
 - deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.
 - Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks, and sbt-package deps with their Scala suffix, `cats-core_2.13`), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), `Packagist` (`packagist` datasource: composer packages, lower-cased, with the version composer.lock locks without its `v`, else the constraint's anchor), `Pub` (`dart` datasource: hosted pub packages, with the version pubspec.lock locks, else the constraint's lower bound), `Hex` (`hex` datasource: mix and gleam packages, with the version mix.lock or manifest.toml locks, else the requirement's anchor; organization packages are not queried), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
-- Not queried, because OSV has no ecosystem for them (checked 2026-11-05): container images (OSV covers the distribution packages inside an image, such as `Debian` or `Alpine`, not the image or its tag), Terraform providers and modules, and Helm charts.
+- Terraform: OSV has no Terraform ecosystem, but providers and the CLIs are Go modules with `Go` advisories (GitHub's advisory database files them there). Providers of `registry.terraform.io` and `registry.opentofu.org` (`<namespace>/<type>`, published from `github.com/<namespace>/terraform-provider-<type>`) are queried as that module with the version `.terraform.lock.hcl` locks, else an exact constraint's; the Terraform and OpenTofu CLIs (`github-releases` `hashicorp/terraform` and `opentofu/opentofu`: `required_version`, `.terraform-version`, `.opentofu-version`, `tfe_workspace`) as `github.com/hashicorp/terraform` and `github.com/opentofu/opentofu` with an exact version. A range (`~> 5.0`, `>= 1.5`) names no installed version and is not queried. Fixed versions are bare (`1.5.7`).
+- Not queried, because OSV has no ecosystem for them (checked 2026-11-06): container images (OSV covers the distribution packages inside an image, such as `Debian` or `Alpine`, not the image or its tag), Terraform modules (registry, git and OCI sources) and Terragrunt engines, and Helm charts.
 - Withdrawn advisories are skipped, and aliases are reported once.
 
 ### Checksums

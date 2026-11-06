@@ -240,7 +240,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 | <img src="https://cdn.simpleicons.org/cplusplus" width="20" alt=""> | **C/C++**<br>vcpkg | `vcpkg.json` and `vcpkg-configuration.json` baselines and port versions | |
 | <img src="https://cdn.simpleicons.org/bazel" width="20" alt=""> | **Bazel** | `MODULE.bazel` (`bazel_dep`s from the BCR or `.bazelrc` registries, git overrides, rules_oci/rules_img images, rules_jvm_external artifacts, crate_universe crates), `.bazelversion` | `MODULE.bazel.lock` |
 | <img src="https://cdn.simpleicons.org/nixos" width="20" alt=""> | **Nix**<br>flakes | `flake.nix` inputs (branches, version-tag refs, pinned revs) | `flake.lock` (`nix flake update`) |
-| <img src="https://cdn.simpleicons.org/terraform" width="20" alt=""> <img src="https://cdn.simpleicons.org/opentofu" width="20" alt=""> | **Terraform / OpenTofu** | providers, modules, `required_version`, Terragrunt sources, tflint plugins | `.terraform.lock.hcl` |
+| <img src="https://cdn.simpleicons.org/terraform" width="20" alt=""> <img src="https://cdn.simpleicons.org/opentofu" width="20" alt=""> | **Terraform / OpenTofu** | providers, modules (registry, git, OCI), `required_version`, Terragrunt sources and engines, tflint plugins | `.terraform.lock.hcl` (also next to `terragrunt.hcl`, by lock file maintenance) |
 | <img src="https://cdn.simpleicons.org/apachemaven" width="20" alt=""> <img src="https://cdn.simpleicons.org/gradle/_/white" width="20" alt=""> | **JVM**<br>Maven, Gradle | `pom.xml`, Gradle builds and version catalogs, Maven and Gradle wrappers | `gradle.lockfile` |
 | <img src="https://cdn.simpleicons.org/scala" width="20" alt=""> | **Scala**<br>sbt, scalafmt | `*.sbt` and `project/*.scala` libraries (`%%` cross versions, `val` versions across files), `addSbtPlugin`, `scalaVersion`, `sbt.version`, `.scalafmt.conf` | |
 | <img src="https://cdn.simpleicons.org/gitlab" width="20" alt=""> | **GitLab CI** | images, project includes, CI/CD components | |
@@ -277,7 +277,7 @@ flowchart LR
 - **Quiet pull requests.** One PR per dependency or group, split into major/minor/patch. Unchanged PRs are never pushed again; obsolete PRs are closed only after an error-free run. PR limits, automerge and a dashboard issue are built in.
 - **PRs when you want them.** Schedules as cron triggers or Renovate-style time windows (`before 6am on monday`) in your `timezone`; draft PRs; PRs opened only once the branch's checks finished or passed (`prCreation`); updates held back until approved on the dashboard (`dashboardApproval`).
 - **Warnings about stale dependencies.** The dashboard and the PRs flag abandoned dependencies (no release within `abandonmentThreshold`) and deprecated, yanked or archived ones.
-- **Security updates** from OSV advisories for Go, npm, Rust, PyPI, Maven, RubyGems, Packagist, NuGet, Pub, Hex and GitHub Actions, bypassing schedules and the minimum release age.
+- **Security updates** from OSV advisories for Go, npm, Rust, PyPI, Maven, RubyGems, Packagist, NuGet, Pub, Hex, GitHub Actions and Terraform providers and CLIs, bypassing schedules and the minimum release age.
 - **Release notes in every PR:** notes, release ages and a compare link.
 - **Fast and light.** One directory walk, deduplicated lookups, commits without a checkout or worktree. See the numbers below.
 - **Runs anywhere.** Same binary on your laptop, in GitHub, Gitea or Forgejo Actions and in GitLab CI; the forge is detected automatically.

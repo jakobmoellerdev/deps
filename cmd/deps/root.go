@@ -491,13 +491,17 @@ func logExtends(ctx context.Context, cfg *config.Config) {
 }
 
 // configEnv is the manager environment of cfg: the actions default host (actionsHost) and the
-// GitLab URL (platform.GitLabURL), both logged with their source, and the Terraform registry.
+// GitLab URL (platform.GitLabURL), both logged with their source, the Terraform registry, and
+// Terragrunt's `tfr:///` registry ($TG_TF_DEFAULT_REGISTRY_HOST, as Terragrunt reads it).
 func configEnv(ctx context.Context, cfg *config.Config, info platform.Info) manager.Env {
 	host, source := actionsHost(cfg, info)
 	slog.InfoContext(ctx, "actions default host", "host", host, "source", source)
 	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, info, os.Getenv)
 	slog.DebugContext(ctx, "gitlab url", "url", gitlabURL, "source", gitlabSource)
-	return manager.Env{DefaultHost: host, GitLabURL: gitlabURL, TerraformRegistry: cfg.Terraform.DefaultRegistry, RegistryAliases: cfg.RegistryAliases}
+	return manager.Env{
+		DefaultHost: host, GitLabURL: gitlabURL, TerraformRegistry: cfg.Terraform.DefaultRegistry,
+		TerragruntRegistry: os.Getenv("TG_TF_DEFAULT_REGISTRY_HOST"), RegistryAliases: cfg.RegistryAliases,
+	}
 }
 
 // actionsHost is the host of owner/repo@ref actions and where it came from: the config's

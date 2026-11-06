@@ -1,6 +1,12 @@
 package terraform
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/imageref"
+)
 
 // gitSource is a git module source.
 type gitSource struct {
@@ -77,4 +83,92 @@ func queryRef(query string, base int) (ref string, off int, ok bool) {
 		query = rest
 	}
 	return "", 0, false
+}
+
+// githubArchiveRe is a GitHub tag archive URL: `https://github.com/<owner>/<repo>/archive/`
+// `[refs/tags/]<tag>.zip|.tar.gz|.tgz`; groups: owner/repo, the tag prefix, the tag.
+var githubArchiveRe = regexp.MustCompile(`^https://github\.com/([0-9A-Za-z_.-]+/[0-9A-Za-z_.-]+)/archive/(refs/tags/)?([^/?#]+?)\.(?:zip|tar\.gz|tgz)$`)
+
+// parseArchiveSource parses a GitHub tag archive URL as the git source it was cut from, the tag
+// as its ref. Archives with a `//subdir` (which usually repeats the tag in the archive's
+// top-level directory) or a query are not.
+func parseArchiveSource(s string) (gitSource, bool) {
+	m := githubArchiveRe.FindStringSubmatchIndex(s)
+	if m == nil {
+		return gitSource{}, false
+	}
+	repo := s[m[2]:m[3]]
+	return gitSource{
+		repo: "https://github.com/" + repo, name: "github.com/" + strings.TrimSuffix(repo, ".git"),
+		ref: s[m[6]:m[7]], refOff: m[6], hasRef: true,
+	}, true
+}
+
+// unsupportedSource returns the skip reason of a module source that names no git repository,
+// registry or OCI repository deps can look versions up in: the go-getter S3, GCS, Mercurial
+// and HTTP getters.
+func unsupportedSource(s string) string {
+	host, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(s, "https://"), "http://"), "/")
+	switch {
+	case strings.HasPrefix(s, "s3::"),
+		strings.HasSuffix(host, ".amazonaws.com") && (strings.HasPrefix(host, "s3") || strings.Contains(host, ".s3")):
+		return "s3 module source"
+	case strings.HasPrefix(s, "gcs::"), host == "www.googleapis.com" || host == "storage.googleapis.com":
+		return "gcs module source"
+	case strings.HasPrefix(s, "hg::"):
+		return "hg module source"
+	case strings.HasPrefix(s, "https://"), strings.HasPrefix(s, "http://"):
+		return "archive module source"
+	}
+	return "unsupported module source"
+}
+
+// ociModule fills d from the OpenTofu/Terragrunt OCI source
+// `oci://<registry>/<repository>[//subdir][?tag=<tag>|?digest=<digest>]` whose text is t: a
+// docker dep of the repository at the tag. Without either, OpenTofu uses `latest`.
+func ociModule(d *dep.Dep, t text) {
+	s := t.s
+	rest := strings.TrimPrefix(s, "oci://")
+	base := len("oci://")
+	var tag, digest string
+	tagOff := -1
+	if q := strings.IndexByte(rest, '?'); q >= 0 {
+		off := base + q + 1
+		for query := rest[q+1:]; query != ""; {
+			param, next, _ := strings.Cut(query, "&")
+			if v, ok := strings.CutPrefix(param, "tag="); ok {
+				tag, tagOff = v, off+len("tag=")
+			} else if v, ok := strings.CutPrefix(param, "digest="); ok {
+				digest = v
+			}
+			off += len(param) + 1
+			query = next
+		}
+		rest = rest[:q]
+	}
+	if i := strings.Index(rest, "//"); i >= 0 {
+		rest = rest[:i] // subdirectory
+	}
+	d.Datasource, d.Versioning, d.Name = "docker", "docker", rest
+	r, err := imageref.Parse(rest)
+	switch {
+	case err != nil || r.Tag != "" || r.Digest != "" || !strings.Contains(rest, "/"):
+		d.Skip = "invalid reference"
+		return
+	case tag == "" && digest != "":
+		d.Digest, d.Skip = digest, "digest without tag"
+	case tag == "":
+		d.Skip = "no tag"
+	}
+	d.Name, d.Source = r.Familiar, r.Name
+	if d.Skip != "" {
+		return
+	}
+	v := t.lit(tagOff, len(tag))
+	d.Version = tag
+	if strings.Contains(tag, "%") || v.span == (dep.Span{}) {
+		d.Skip = "cannot locate value"
+		return
+	}
+	d.RefSpan = v.span
 }

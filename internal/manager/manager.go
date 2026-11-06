@@ -23,10 +23,17 @@ type Env struct {
 	// RegistryAliases maps a registry alias as written (`$CI_REGISTRY`) to the registry it
 	// stands for (config registryAliases); nil = none.
 	RegistryAliases map[string]string
+	// TerragruntRegistry is the registry host of `tfr:///` Terragrunt sources
+	// ($TG_TF_DEFAULT_REGISTRY_HOST); "" = TerraformRegistry, else registry.terraform.io.
+	TerragruntRegistry string
 	// Exists reports whether the slash path (relative to the scanned root) exists, for
 	// file-based conditions such as Maven profile `<activation><file>`. engine.Resolve
 	// supplies a filesystem check when nil.
 	Exists func(path string) bool
+	// ReadFile returns the content of the slash path (relative to the scanned root), for
+	// files a manifest refers to that are not manifests themselves (Terragrunt includes).
+	// engine.Resolve supplies a filesystem read when nil.
+	ReadFile func(path string) ([]byte, error)
 	// Gitlinks returns the commits of the gitlinks (submodules) recorded in the git index at
 	// paths, slash paths relative to the scanned root; paths without a gitlink are absent.
 	// engine.Resolve supplies `git ls-files --stage` when nil.

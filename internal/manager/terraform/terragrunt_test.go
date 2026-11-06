@@ -1,6 +1,8 @@
 package terraform
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -13,9 +15,12 @@ import (
 // Terragrunt fixtures, copied unchanged (paths kept below testdata/<short-repo>/):
 //   - testdata/tg: github.com/gruntwork-io/terragrunt@1a46eb6 (MIT): test/fixtures/{tfr/root-shorthand,
 //     tfr/subdir,tfr/version-constraint,tfr/version-constraint-in-query,filter-source/github-acme-bar,
-//     source-map/single,docs/02-overview-azure/step-02-dependencies/vnet,codegen/generate-block/enable}/terragrunt.hcl.
+//     source-map/single,docs/02-overview-azure/step-02-dependencies/vnet,codegen/generate-block/enable}/terragrunt.hcl;
+//     @259d9b2: test/fixtures/engine/opentofu-engine/terragrunt.hcl, and
+//     docs/src/fixtures/terralith-to-terragrunt/walkthrough/step-6-breaking-the-terralith-further/live/dev/ddb/terragrunt.hcl
+//     as docs/terralith-step-6/live/dev/ddb/terragrunt.hcl.
 //   - testdata/tg-live: github.com/gruntwork-io/terragrunt-infrastructure-live-example@d106b47 (Apache-2.0):
-//     non-prod/us-east-1/qa/mysql/terragrunt.hcl.
+//     non-prod/us-east-1/qa/mysql/terragrunt.hcl, root.hcl and _envcommon/mysql.hcl (its include).
 //   - testdata/abra: github.com/antonbabenko/terragrunt-reference-architecture@1c414c7 (MIT):
 //     acme-prod/us-east-1/acm, acme-prod/global/iam-account and
 //     acme-master/eu-central-1/ecr-repositories/acme-api terragrunt.hcl.
@@ -24,6 +29,17 @@ import (
 //   - testdata/recipes: github.com/ryanoolala/recipes@8a732de (MIT): infrastructure/vpc/terragrunt.hcl.
 //   - testdata/teks: github.com/particuleio/teks@0b71bbc (Apache-2.0):
 //     terragrunt/live/production/eu-west-1/clusters/demo/vpc/terragrunt.hcl.
+
+// testdataEnv resolves Exists and ReadFile against testdata, the scanned root of the fixtures.
+func testdataEnv() manager.Env {
+	return manager.Env{
+		Exists: func(p string) bool {
+			_, err := os.Stat(filepath.Join("testdata", filepath.FromSlash(p)))
+			return err == nil
+		},
+		ReadFile: func(p string) ([]byte, error) { return os.ReadFile(filepath.Join("testdata", filepath.FromSlash(p))) },
+	}
+}
 
 func TestTerragruntRealWorld(t *testing.T) {
 	const (
@@ -58,8 +74,16 @@ func TestTerragruntRealWorld(t *testing.T) {
 		{"tg/codegen/generate-block/enable/terragrunt.hcl", []string{
 			"9 terragrunt - ../../module - - - [local module]",
 		}},
+		// include "envcommon" { path = "${dirname(find_in_parent_folders("root.hcl"))}/_envcommon/mysql.hcl" }
+		// and source = "${include.envcommon.locals.base_source_url}?ref=v0.8.0": the ref is this file's.
 		{"tg-live/non-prod/us-east-1/qa/mysql/terragrunt.hcl", []string{
-			"24 terragrunt - terraform.source - - - [non-literal source]",
+			"24 github git-tags github.com/gruntwork-io/terragrunt-infrastructure-modules-example https://github.com/gruntwork-io/terragrunt-infrastructure-modules-example.git v0.8.0 semver",
+		}},
+		{"tg/docs/terralith-step-6/live/dev/ddb/terragrunt.hcl", []string{
+			"6 terragrunt - terraform.source - - - [local module]",
+		}},
+		{"tg/engine/opentofu-engine/terragrunt.hcl", []string{
+			"3 engine github-releases gruntwork-io/terragrunt-engine-opentofu https://github.com/gruntwork-io/terragrunt-engine-opentofu v0.1.1 semver",
 		}},
 		{"abra/acme-prod/us-east-1/acm/terragrunt.hcl", []string{
 			"2 github git-tags github.com/terraform-aws-modules/terraform-aws-acm https://github.com/terraform-aws-modules/terraform-aws-acm.git v2.5.0 semver",
@@ -81,7 +105,11 @@ func TestTerragruntRealWorld(t *testing.T) {
 		}},
 	} {
 		t.Run(tt.file, func(t *testing.T) {
-			got := extract(t, NewTerragrunt(), tt.file, read(t, tt.file))
+			deps, err := NewTerragrunt().Extract(tt.file, read(t, tt.file), testdataEnv())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := summarize(t, read(t, tt.file), deps)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
 			}
@@ -114,15 +142,61 @@ func TestTerragruntForms(t *testing.T) {
 		{"git no ref", `terraform { source = "git::https://example.com/org/mod.git" }`, manager.Env{},
 			[]string{"1 gitTags git-tags example.com/org/mod https://example.com/org/mod.git - - [no ref]"}},
 		{"git commit ref", `terraform { source = "github.com/org/mod?ref=0123456789abcdef0123456789abcdef01234567" }`, manager.Env{},
-			[]string{"1 github git-tags github.com/org/mod https://github.com/org/mod 0123456789abcdef0123456789abcdef01234567 - [commit ref]"}},
+			[]string{"1 github git-refs github.com/org/mod https://github.com/org/mod HEAD tag @0123456789abcdef0123456789abcdef01234567"}},
+		{"git tags/ ref", `terraform { source = "git::https://github.com/org/mod.git?ref=tags/0.4.0" }`, manager.Env{},
+			[]string{"1 github git-tags github.com/org/mod https://github.com/org/mod.git 0.4.0 semver"}},
 		{"git partial ref and depth", `terraform { source = "git::ssh://git@bitbucket.org/org/mod.git//sub?depth=1&ref=v2" }`, manager.Env{},
 			[]string{"1 gitTags git-tags bitbucket.org/org/mod https://bitbucket.org/org/mod.git v2 tag"}},
 		{"archive", `terraform { source = "https://example.com/mod.zip" }`, manager.Env{},
-			[]string{"1 terragrunt - https://example.com/mod.zip - - - [unsupported module source]"}},
-		{"oci", `terraform { source = "oci://ghcr.io/acme/terraform-modules/vpc?tag=1.0.0" }`, manager.Env{},
-			[]string{"1 terragrunt - oci://ghcr.io/acme/terraform-modules/vpc?tag=1.0.0 - - - [unsupported module source]"}},
+			[]string{"1 terragrunt - https://example.com/mod.zip - - - [archive module source]"}},
+		{"github archive", `terraform { source = "https://github.com/acme/mod/archive/refs/tags/v1.2.0.tar.gz" }`, manager.Env{},
+			[]string{"1 github git-tags github.com/acme/mod https://github.com/acme/mod v1.2.0 semver"}},
+		{"s3", `terraform { source = "s3::https://s3-eu-west-1.amazonaws.com/bucket/mod.zip" }`, manager.Env{},
+			[]string{"1 terragrunt - s3::https://s3-eu-west-1.amazonaws.com/bucket/mod.zip - - - [s3 module source]"}},
+		{"s3 host", `terraform { source = "bucket.s3.eu-west-1.amazonaws.com/mod.zip" }`, manager.Env{},
+			[]string{"1 terragrunt - bucket.s3.eu-west-1.amazonaws.com/mod.zip - - - [s3 module source]"}},
+		{"gcs", `terraform { source = "gcs::https://www.googleapis.com/storage/v1/bucket/mod.zip" }`, manager.Env{},
+			[]string{"1 terragrunt - gcs::https://www.googleapis.com/storage/v1/bucket/mod.zip - - - [gcs module source]"}},
+		{"hg", `terraform { source = "hg::https://example.com/mod?ref=v1" }`, manager.Env{},
+			[]string{"1 terragrunt - hg::https://example.com/mod?ref=v1 - - - [hg module source]"}},
+		{"oci", `terraform { source = "oci://ghcr.io/acme/terraform-modules/vpc//sub?tag=1.0.0" }`, manager.Env{},
+			[]string{"1 oci docker ghcr.io/acme/terraform-modules/vpc ghcr.io/acme/terraform-modules/vpc 1.0.0 docker"}},
+		{"oci digest", `terraform { source = "oci://ghcr.io/acme/vpc?digest=sha256:0123" }`, manager.Env{},
+			[]string{"1 oci docker ghcr.io/acme/vpc ghcr.io/acme/vpc - docker [digest without tag]"}},
+		{"oci untagged", `terraform { source = "oci://ghcr.io/acme/vpc" }`, manager.Env{},
+			[]string{"1 oci docker ghcr.io/acme/vpc ghcr.io/acme/vpc - docker [no tag]"}},
+		{"oci no repository", `terraform { source = "oci://ghcr.io?tag=1" }`, manager.Env{},
+			[]string{"1 oci docker ghcr.io - - docker [invalid reference]"}},
 		{"local dot", `terraform { source = "." }`, manager.Env{}, []string{"1 terragrunt - . - - - [local module]"}},
-		{"other blocks ignored", "include \"root\" {\n  path = find_in_parent_folders(\"root.hcl\")\n}\nterraform {\n  extra_arguments \"x\" {\n    commands = [\"plan\"]\n  }\n}\nengine {\n  source = \"github.com/gruntwork-io/terragrunt-engine-opentofu\"\n}\n", manager.Env{}, []string{}},
+		{"TG_TF_DEFAULT_REGISTRY_HOST", `terraform { source = "tfr:///acme/vpc/aws?version=1.2.3" }`,
+			manager.Env{TerragruntRegistry: "Registry.OpenTofu.org", TerraformRegistry: "registry.example.com"},
+			[]string{"1 terragrunt terraform-module acme/vpc/aws https://registry.opentofu.org 1.2.3 hashicorp"}},
+		{"local", "locals {\n  base = \"git::https://example.com/org/mod.git\"\n  src = \"${local.base}//sub\"\n}\nterraform {\n  source = \"${local.src}?ref=v1.2.3\"\n}\n", manager.Env{},
+			[]string{"6 gitTags git-tags example.com/org/mod https://example.com/org/mod.git v1.2.3 semver"}},
+		{"local with ref", "locals {\n  v = \"v1.2.3\"\n}\nterraform {\n  source = \"git::https://example.com/org/mod.git?ref=${local.v}\" # pinned\n}\n", manager.Env{},
+			[]string{"5 gitTags git-tags example.com/org/mod https://example.com/org/mod.git v1.2.3 semver"}},
+		{"traversal", "locals {\n  source = \"tfr:///acme/vpc/aws?version=1.2.3\"\n}\nterraform {\n  source = local.source\n}\n", manager.Env{},
+			[]string{"5 terragrunt terraform-module acme/vpc/aws https://registry.terraform.io 1.2.3 hashicorp"}},
+		{"included ref", "include \"c\" {\n  path = \"c.hcl\"\n}\nterraform {\n  source = include.c.locals.src\n}\n",
+			manager.Env{ReadFile: func(string) ([]byte, error) {
+				return []byte("locals {\n  src = \"git::https://example.com/org/mod.git?ref=v1.0.0\"\n}\n"), nil
+			}},
+			[]string{"5 gitTags git-tags example.com/org/mod https://example.com/org/mod.git v1.0.0 - [cannot locate value]"}},
+		{"unknown function", "terraform {\n  source = \"${get_env(\"SRC\")}?ref=v1\"\n}\n", manager.Env{},
+			[]string{"2 terragrunt - terraform.source - - - [non-literal source]"}},
+		{"repo root", "terraform {\n  source = \"${get_repo_root()}/modules/vpc\"\n}\n", manager.Env{},
+			[]string{"2 terragrunt - /modules/vpc - - - [local module]"}},
+		{"terragrunt dir", "terraform {\n  source = \"${get_terragrunt_dir()}/../modules//vpc\"\n}\n", manager.Env{},
+			[]string{"2 terragrunt - /../modules//vpc - - - [local module]"}},
+		{"local cycle", "locals {\n  a = local.b\n  b = local.a\n}\nterraform {\n  source = local.a\n}\n", manager.Env{},
+			[]string{"6 terragrunt - terraform.source - - - [non-literal source]"}},
+		{"other blocks ignored", "include \"root\" {\n  path = find_in_parent_folders(\"root.hcl\")\n}\ndependency \"vpc\" {\n  config_path = \"../vpc\"\n}\ngenerate \"provider\" {\n  path = \"provider.tf\"\n  contents = <<EOF\nterraform {\n  required_providers {\n    aws = { source = \"hashicorp/aws\", version = \"~> 5.0\" }\n  }\n}\nEOF\n}\nterraform {\n  extra_arguments \"x\" {\n    commands = [\"plan\"]\n  }\n}\n", manager.Env{}, []string{}},
+		{"engine", "engine {\n  source = \"github.com/gruntwork-io/terragrunt-engine-opentofu\"\n}\nengine {\n  source = \"/opt/engines/tofu\"\n}\nengine {\n  source = \"https://example.com/engine.zip\"\n}\n", manager.Env{},
+			[]string{
+				"2 engine github-releases gruntwork-io/terragrunt-engine-opentofu https://github.com/gruntwork-io/terragrunt-engine-opentofu - semver [no version]",
+				"5 engine github-releases /opt/engines/tofu - - semver [local engine]",
+				"8 engine github-releases https://example.com/engine.zip - - semver [unsupported engine source]",
+			}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			deps, err := NewTerragrunt().Extract("terragrunt.hcl", []byte(tt.src), tt.env)
@@ -159,10 +233,12 @@ func TestTerragruntEdits(t *testing.T) {
 		{"tg/tfr/subdir/terragrunt.hcl", "0.1.0", `source = "tfr://registry.terraform.io/yorinasub17/terragrunt-registry-test/null//modules/one?version=0.1.0"`},
 		{"tg/tfr/version-constraint/terragrunt.hcl", "0.2.4", `version = "~> 0.2.4"`},
 		{"do-database/examples/terragrunt/terragrunt.hcl", "v1.2.0", `source = "git::https://github.com/terraform-do-modules/terraform-digitalocean-database.git//?ref=v1.2.0"`},
+		{"tg-live/non-prod/us-east-1/qa/mysql/terragrunt.hcl", "v0.9.0", `source = "${include.envcommon.locals.base_source_url}?ref=v0.9.0"`},
+		{"tg/engine/opentofu-engine/terragrunt.hcl", "v0.2.0", `version = "v0.2.0"`},
 	} {
 		t.Run(tt.file, func(t *testing.T) {
 			src := read(t, tt.file)
-			deps, err := NewTerragrunt().Extract(tt.file, src, manager.Env{})
+			deps, err := NewTerragrunt().Extract(tt.file, src, testdataEnv())
 			if err != nil || len(deps) != 1 {
 				t.Fatalf("deps = %+v, %v", deps, err)
 			}
@@ -178,6 +254,43 @@ func TestTerragruntEdits(t *testing.T) {
 				t.Errorf("got\n%s", out)
 			}
 		})
+	}
+}
+
+func TestTerragruntSourceEdits(t *testing.T) {
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+	for _, tt := range []struct {
+		name, src string
+		u         dep.Update
+		want      string
+	}{
+		{"commit", `terraform { source = "git::https://github.com/org/mod.git//x?ref=` + sha + `" }`,
+			dep.Update{NewVersion: defaultBranch, NewDigest: "fedcba9876543210fedcba9876543210fedcba98"},
+			`terraform { source = "git::https://github.com/org/mod.git//x?ref=fedcba9876543210fedcba9876543210fedcba98" }`},
+		{"oci tag", `terraform { source = "oci://ghcr.io/acme/vpc?tag=1.0.0" }`,
+			dep.Update{NewVersion: "1.1.0"}, `terraform { source = "oci://ghcr.io/acme/vpc?tag=1.1.0" }`},
+		{"local ref", "locals {\n  v = \"v1.2.3\"\n}\nterraform {\n  source = \"git::https://example.com/org/mod.git?ref=${local.v}\"\n}\n",
+			dep.Update{NewVersion: "v1.3.0"}, "  v = \"v1.3.0\""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			deps, err := NewTerragrunt().Extract("terragrunt.hcl", []byte(tt.src), manager.Env{})
+			if err != nil || len(deps) != 1 {
+				t.Fatalf("deps = %+v, %v", deps, err)
+			}
+			tt.u.Dep = deps[0]
+			e, err := NewTerragrunt().Edits(tt.u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := patch.Apply([]byte(tt.src), e)
+			if err != nil || !strings.Contains(string(out), tt.want) {
+				t.Errorf("got %s, %v", out, err)
+			}
+		})
+	}
+	d := dep.Dep{Datasource: gitRefsDatasource, Name: "x", Digest: sha, DigestSpan: dep.Span{Start: 1, End: 41}}
+	if _, err := NewTerragrunt().Edits(dep.Update{Dep: d}); err == nil {
+		t.Error("a commit update without a new commit has no edits")
 	}
 }
 
@@ -223,5 +336,94 @@ func TestTerragruntReplacements(t *testing.T) {
 	}
 	if _, err := NewTerragrunt().(manager.Renamer).Rename(deps[0], "acme/vpc/aws"); err == nil {
 		t.Error("git source renamed")
+	}
+}
+
+// TestTerragruntEval covers the expression subset tgEval evaluates, in a configuration at
+// live/prod/app/terragrunt.hcl whose parents hold root.hcl and an include.
+func TestTerragruntEval(t *testing.T) {
+	files := map[string]string{
+		"live/root.hcl":           "",
+		"live/common.hcl":         "locals {\n  base = \"git::https://example.com/org/mod.git\"\n  derived = \"${local.base}//sub\"\n}\n",
+		"live/broken.hcl":         "locals {",
+		"live/prod/app/local.hcl": "",
+	}
+	env := manager.Env{
+		Exists: func(p string) bool { _, ok := files[p]; return ok },
+		ReadFile: func(p string) ([]byte, error) {
+			if s, ok := files[p]; ok {
+				return []byte(s), nil
+			}
+			return nil, os.ErrNotExist
+		},
+	}
+	for _, tt := range []struct {
+		expr, want string
+		ok, local  bool
+	}{
+		{`"a${local.l}b"`, "aXb", true, false},
+		{`"esc\"aped $${x} %%{y}"`, `esc"aped ${x} %{y}`, true, false},
+		{`"%{ if true }x%{ endif }"`, "", false, false},
+		{`local.l /* c */ # c`, "X", true, false},
+		{`local.l // c`, "X", true, false},
+		{`local.missing`, "", false, false},
+		{`local.`, "", false, false},
+		{`var.x`, "", false, false},
+		{`1 + 2`, "", false, false},
+		{`local.l local.l`, "X", false, false},
+		{`include.c.locals.derived`, "git::https://example.com/org/mod.git//sub", true, false},
+		{`include.c.locals.missing`, "", false, false},
+		{`include.nope.locals.base`, "", false, false},
+		{`include.b.locals.base`, "", false, false},
+		{`include.gone.locals.base`, "", false, false},
+		{`include.up.locals.base`, "", false, false},
+		{`include.fn.locals.base`, "", false, false},
+		{`get_terragrunt_dir()`, "/live/prod/app", true, true},
+		{`get_repo_root()`, "", true, true},
+		{`get_path_to_repo_root()`, "../../..", true, true},
+		{`get_parent_terragrunt_dir()`, "", false, true},
+		{`dirname(find_in_parent_folders("root.hcl"))`, "/live", true, true},
+		{`find_in_parent_folders("local.hcl")`, "", false, true},
+		{`find_in_parent_folders("nope.hcl", "fallback")`, "fallback", true, true},
+		{`find_in_parent_folders("a", "b", "c")`, "", false, true},
+		{`dirname("a/b", "c")`, "", false, false},
+		{`dirname(get_env("X"))`, "", false, false},
+		{`get_env("X", get_repo_root())`, "", false, true},
+		{`find_in_parent_folders(get_env("X"))`, "", false, true},
+		{`get_repo_root(1 2)`, "", false, true},
+	} {
+		t.Run(tt.expr, func(t *testing.T) {
+			src := "locals {\n  l = \"X\"\n}\n" +
+				"include \"c\" {\n  path = \"../../common.hcl\"\n}\n" +
+				"include \"b\" {\n  path = \"${get_repo_root()}/live/broken.hcl\"\n}\n" +
+				"include \"gone\" {\n  path = \"../../gone.hcl\"\n}\n" +
+				"include \"up\" {\n  path = \"../../../../x.hcl\"\n}\n" +
+				"include \"fn\" {\n  path = get_env(\"X\")\n}\n" +
+				"x = " + tt.expr + "\n"
+			b, err := parseHCL([]byte(src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			file := "live/prod/app/terragrunt.hcl"
+			sc := newScope(file, []byte(src), b, false)
+			got, ok := (&tgEval{exists: env.Exists, readFile: env.ReadFile}).eval(sc, b.attrs[len(b.attrs)-1].val)
+			if ok != tt.ok || got.local != tt.local || ok && got.s != tt.want {
+				t.Errorf("eval = %q, %v (local %v)", got.s, ok, got.local)
+			}
+		})
+	}
+	// An included file is read once per extraction.
+	reads := 0
+	ev := &tgEval{readFile: func(p string) ([]byte, error) { reads++; return []byte(files["live/common.hcl"]), nil }}
+	src := "include \"c\" {\n  path = \"../../common.hcl\"\n}\n"
+	b, _ := parseHCL([]byte(src))
+	sc := newScope("live/prod/app/terragrunt.hcl", []byte(src), b, false)
+	for range 2 {
+		if _, ok := ev.include(sc, "c"); !ok {
+			t.Fatal("include not resolved")
+		}
+	}
+	if reads != 1 {
+		t.Errorf("reads = %d", reads)
 	}
 }

@@ -1067,7 +1067,9 @@
                   "enum": [
                     "github",
                     "gitTags",
-                    "terragrunt"
+                    "terragrunt",
+                    "oci",
+                    "engine"
                   ]
                 }
               }
@@ -2291,6 +2293,8 @@
               "github",
               "gitTags",
               "terragrunt",
+              "oci",
+              "engine",
               "compile",
               "provided",
               "runtime",
@@ -2743,7 +2747,7 @@
         "defaultRegistry": {
           "type": "string",
           "description": "Registry host of provider and module addresses without one in *.tf files, e.g. registry.opentofu.org; empty means registry.terraform.io. *.tofu files default to registry.opentofu.org unless this is set.",
-          "markdownDescription": "Registry host of provider and module addresses without one in \\*.tf files, e.g. registry.opentofu.org; empty means registry.terraform.io. \\*.tofu files default to registry.opentofu.org unless this is set.\n\nThe registry of provider and module addresses without a host (`hashicorp/aws`, `terraform-aws-modules/vpc/aws`, `tfr:///…` in Terragrunt). Without it, `*.tf` files use `registry.terraform.io` and `*.tofu` files OpenTofu's `registry.opentofu.org`, as the two CLIs do. Set it when an OpenTofu project keeps `*.tf` files, or for a private mirror implementing the registry protocol. A scheme and trailing slash are ignored.\n\n```yaml\nterraform:\n  defaultRegistry: registry.opentofu.org\n```"
+          "markdownDescription": "Registry host of provider and module addresses without one in \\*.tf files, e.g. registry.opentofu.org; empty means registry.terraform.io. \\*.tofu files default to registry.opentofu.org unless this is set.\n\nThe registry of provider and module addresses without a host (`hashicorp/aws`, `terraform-aws-modules/vpc/aws`, `tfr:///…` in Terragrunt). Without it, `*.tf` files use `registry.terraform.io` and `*.tofu` files OpenTofu's `registry.opentofu.org`, as the two CLIs do. Set it when an OpenTofu project keeps `*.tf` files, or for a private mirror implementing the registry protocol. A scheme and trailing slash are ignored. For Terragrunt's `tfr:///…` sources, `$TG_TF_DEFAULT_REGISTRY_HOST` takes precedence when set, as it does for Terragrunt.\n\n```yaml\nterraform:\n  defaultRegistry: registry.opentofu.org\n```"
         }
       },
       "additionalProperties": false,

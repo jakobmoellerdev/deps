@@ -28,6 +28,7 @@ type value struct {
 	str  string   // kindString: the literal (escapes decoded only when span is zero)
 	span dep.Span // kindString: the bytes between the quotes; zero when they differ from str
 	obj  []attr   // kindObject: the items
+	expr dep.Span // the whole expression (HCL values; zero for JSON), trailing blanks and comments included
 }
 
 type valueKind int
@@ -230,11 +231,14 @@ func (p *hclParser) value() (value, error) {
 			return value{}, err
 		}
 		if p.exprEnd() {
+			v.expr = dep.Span{Start: start, End: p.pos}
 			return v, nil
 		}
 		v = value{}
 	}
-	return v, p.skipExpr()
+	err := p.skipExpr()
+	v.expr = dep.Span{Start: start, End: p.pos}
+	return v, err
 }
 
 // exprEnd reports whether pos ends an expression: a newline, a comma, a closing bracket or the

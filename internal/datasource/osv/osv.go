@@ -66,6 +66,13 @@
 //     ecosystem "Hex" with the package name and the locked version (dep.Dep.Locked), else the
 //     requirement's anchor; packages of private organizations (`name:organization`) are not
 //     queried. OSV matches server-side. Fixed versions are returned as published.
+//   - terraform-provider deps of registry.terraform.io and registry.opentofu.org (no OSV
+//     Terraform ecosystem) are queried as ecosystem "Go" with the module
+//     github.com/<namespace>/terraform-provider-<type> they are published from, and the
+//     github-releases deps hashicorp/terraform and opentofu/opentofu (the CLIs) as
+//     github.com/hashicorp/terraform and github.com/opentofu/opentofu, with the locked version
+//     (dep.Dep.Locked), else an exact constraint's; ranges are not queried. Fixed versions are
+//     rendered bare, in the dep version's style.
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -280,6 +287,9 @@ func targetOf(d dep.Dep) *target {
 		}
 		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoHex}, Version: v})
 	}
+	if t := terraformTarget(d); t != nil {
+		return t
+	}
 	switch d.Manager {
 	case "gomod":
 		switch d.DepType {
@@ -338,6 +348,52 @@ func targetOf(d dep.Dep) *target {
 		return t
 	}
 	return nil
+}
+
+// terraformTarget returns the target of a Terraform provider of the public registries or of
+// the Terraform or OpenTofu CLI: OSV has no Terraform ecosystem, but providers and CLIs are Go
+// modules whose advisories it lists under "Go". A provider `<namespace>/<type>` is published
+// from github.com/<namespace>/terraform-provider-<type> (the registries' naming rule); the CLIs
+// are github.com/hashicorp/terraform and github.com/opentofu/opentofu. The version is the
+// locked one (dep.Dep.Locked), else an exact constraint's (`1.5.7`, `= 1.5.7`); a range says
+// nothing about the installed version. Fixed versions are bare, as Terraform writes them.
+func terraformTarget(d dep.Dep) *target {
+	var name string
+	switch {
+	case d.Datasource == "terraform-provider":
+		switch strings.TrimPrefix(d.Source, "https://") {
+		case "registry.terraform.io", "registry.opentofu.org":
+		default:
+			return nil
+		}
+		ns, typ, ok := strings.Cut(strings.ToLower(d.Name), "/")
+		if !ok || ns == "" || typ == "" || strings.Contains(typ, "/") {
+			return nil
+		}
+		name = "github.com/" + ns + "/terraform-provider-" + typ
+	case d.Datasource == "github-releases" && (d.Name == "hashicorp/terraform" || d.Name == "opentofu/opentofu"):
+		name = "github.com/" + d.Name
+	default:
+		return nil
+	}
+	v := d.Locked
+	if v == "" {
+		v = d.Version
+		if d.Range != "" {
+			clauses, err := versioning.ParseHashicorpConstraint(d.Range)
+			if err != nil || len(clauses) != 1 || clauses[0].Op != "" && clauses[0].Op != "=" {
+				return nil
+			}
+			v = clauses[0].Version
+		}
+	}
+	tag, ok := versioning.ParseTag(v)
+	if !ok || len(tag.Parts) != 3 {
+		return nil
+	}
+	t := newTarget(query{Package: pkg{Name: name, Ecosystem: ecoGo}, Version: strings.TrimPrefix(v, "v")})
+	t.tag = tag // fixes are rendered in the version's style
+	return t
 }
 
 // lookup runs querybatch over queries and fetches every distinct advisory found. A fetch starts
