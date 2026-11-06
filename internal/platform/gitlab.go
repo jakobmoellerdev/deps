@@ -19,9 +19,17 @@ type gitlabClient struct {
 	r       rest   // the JSON core; its /repos/ helpers are not used
 	project string // "/projects/<url-encoded path>"
 
-	mu      sync.Mutex
-	info    *gitlabProject   // GET /projects/:id, cached after the first success
-	userIDs map[string]int64 // username -> id of the users looked up so far
+	mu    sync.Mutex
+	info  *gitlabProject         // GET /projects/:id, cached after the first success
+	users map[string]*gitlabUser // lowercase username -> its lookup
+}
+
+// gitlabUser is the lookup of one username. mu is held across the request, so concurrent
+// callers of the name share it while other names proceed; a failed lookup is retried.
+type gitlabUser struct {
+	mu   sync.Mutex
+	id   int64 // 0: no such user
+	done bool
 }
 
 func newGitLab(info Info, token string, c *http.Client) *gitlabClient {
@@ -228,71 +236,60 @@ func (g *gitlabClient) ClosePR(ctx context.Context, n int) error {
 }
 
 // SetPRMetadata adds the labels (add_labels; GitLab creates missing project labels), and sets
-// reviewers and assignees by user id (usernames looked up with GET /users?username=). GitLab
-// has no team reviewers: team:<slug> entries fail that part, the users are still requested.
+// reviewers and assignees by user id (usernames looked up with GET /users?username=), all in
+// one PUT. GitLab has no team reviewers: team:<slug> entries fail that part, the users are
+// still requested; unknown users fail it too, the known ones are still set.
 func (g *gitlabClient) SetPRMetadata(ctx context.Context, n int, m PRMetadata) error {
+	in := map[string]any{}
+	var parts []string // what the PUT sets, for its error
 	var errs []error
 	if len(m.Labels) > 0 {
-		if err := g.do(ctx, http.MethodPut, g.mrPath(n), map[string]string{"add_labels": strings.Join(m.Labels, ",")}, nil); err != nil {
-			errs = append(errs, fmt.Errorf("add labels to !%d: %w", n, err))
-		}
+		in["add_labels"] = strings.Join(m.Labels, ",")
+		parts = append(parts, "labels")
 	}
 	if len(m.Reviewers) > 0 {
 		users, teams := splitReviewers(m.Reviewers)
 		if len(teams) > 0 {
 			errs = append(errs, fmt.Errorf("request reviewers of !%d: GitLab has no team reviewers: %s", n, strings.Join(teams, ", ")))
 		}
-		if err := g.setUsers(ctx, n, "reviewer_ids", users); err != nil {
+		ids, err := g.userIDsOf(ctx, users)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("request reviewers of !%d: %w", n, err))
+		}
+		if len(ids) > 0 {
+			in["reviewer_ids"] = ids
+			parts = append(parts, "reviewers")
 		}
 	}
 	if len(m.Assignees) > 0 {
-		if err := g.setUsers(ctx, n, "assignee_ids", m.Assignees); err != nil {
+		ids, err := g.userIDsOf(ctx, m.Assignees)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("assign !%d: %w", n, err))
+		}
+		if len(ids) > 0 {
+			in["assignee_ids"] = ids
+			parts = append(parts, "assignees")
+		}
+	}
+	if len(in) > 0 {
+		if err := g.do(ctx, http.MethodPut, g.mrPath(n), in, nil); err != nil {
+			errs = append(errs, fmt.Errorf("set %s of !%d: %w", strings.Join(parts, ", "), n, err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// setUsers sets field (reviewer_ids, assignee_ids) of MR n to the ids of names. Unknown
-// names are an error; the known ones are still set.
-func (g *gitlabClient) setUsers(ctx context.Context, n int, field string, names []string) error {
-	if len(names) == 0 {
-		return nil
-	}
-	ids, err := g.userIDsOf(ctx, names)
-	if len(ids) > 0 {
-		if perr := g.do(ctx, http.MethodPut, g.mrPath(n), map[string][]int64{field: ids}, nil); perr != nil {
-			return errors.Join(err, perr)
-		}
-	}
-	return err
-}
-
-// userIDsOf resolves usernames to user ids, each looked up at most once per client.
+// userIDsOf resolves usernames to user ids, each looked up at most once per client. Unknown
+// names are an error; the ids of the known ones are still returned.
 func (g *gitlabClient) userIDsOf(ctx context.Context, names []string) ([]int64, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.userIDs == nil {
-		g.userIDs = map[string]int64{}
-	}
 	var ids []int64
 	var errs []error
 	for _, name := range names {
 		name = strings.TrimPrefix(name, "@")
-		id, ok := g.userIDs[strings.ToLower(name)]
-		if !ok {
-			var us []struct {
-				ID int64 `json:"id"`
-			}
-			if err := g.do(ctx, http.MethodGet, "/users?username="+url.QueryEscape(name), nil, &us); err != nil {
-				errs = append(errs, err)
-				continue
-			}
-			if len(us) > 0 {
-				id = us[0].ID
-			}
-			g.userIDs[strings.ToLower(name)] = id
+		id, err := g.userID(ctx, name)
+		if err != nil {
+			errs = append(errs, err)
+			continue
 		}
 		if id == 0 {
 			errs = append(errs, fmt.Errorf("unknown user %q", name))
@@ -303,6 +300,36 @@ func (g *gitlabClient) userIDsOf(ctx context.Context, names []string) ([]int64, 
 		}
 	}
 	return ids, errors.Join(errs...)
+}
+
+// userID returns the id of the user name, 0 when there is none.
+func (g *gitlabClient) userID(ctx context.Context, name string) (int64, error) {
+	key := strings.ToLower(name)
+	g.mu.Lock()
+	u := g.users[key]
+	if u == nil {
+		if g.users == nil {
+			g.users = map[string]*gitlabUser{}
+		}
+		u = &gitlabUser{}
+		g.users[key] = u
+	}
+	g.mu.Unlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.done {
+		var us []struct {
+			ID int64 `json:"id"`
+		}
+		if err := g.do(ctx, http.MethodGet, "/users?username="+url.QueryEscape(name), nil, &us); err != nil {
+			return 0, err
+		}
+		if len(us) > 0 {
+			u.id = us[0].ID
+		}
+		u.done = true
+	}
+	return u.id, nil
 }
 
 // RemovePRLabel removes the MR's labels whose name equals label case-insensitively (GitLab's

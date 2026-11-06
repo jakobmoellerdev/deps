@@ -3,8 +3,11 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -246,10 +249,8 @@ func TestGitLabSetPRMetadata(t *testing.T) {
 		}
 		puts = append(puts, fmt.Sprintf("%s %v", call.uri, call.body))
 	}
-	want := []string{
-		glAPI + "/merge_requests/7 map[add_labels:dependencies,go]",
-		glAPI + "/merge_requests/7 map[reviewer_ids:[11 12]]",
-		glAPI + "/merge_requests/7 map[assignee_ids:[12]]",
+	want := []string{ // one PUT per MR
+		glAPI + "/merge_requests/7 map[add_labels:dependencies,go assignee_ids:[12] reviewer_ids:[11 12]]",
 		glAPI + "/merge_requests/8 map[assignee_ids:[11]]",
 	}
 	if fmt.Sprint(puts) != fmt.Sprint(want) {
@@ -263,18 +264,71 @@ func TestGitLabSetPRMetadata(t *testing.T) {
 	}
 	c, _ = gitlabTestClient(t, nil)
 	err = c.SetPRMetadata(t.Context(), 7, PRMetadata{Labels: []string{"x"}, Reviewers: []string{"team:a"}})
-	if err == nil || !strings.Contains(err.Error(), "add labels to !7") || !strings.Contains(err.Error(), "team reviewers") {
+	if err == nil || !strings.Contains(err.Error(), "set labels of !7") || !strings.Contains(err.Error(), "team reviewers") {
 		t.Errorf("err = %v", err)
 	}
 }
 
-func TestGitLabSetUsersPutFails(t *testing.T) {
+func TestGitLabSetPRMetadataPutFails(t *testing.T) {
 	c, _ := gitlabTestClient(t, map[string]route{
 		"GET /api/v4/users?username=alice":   {body: `[{"id":11}]`},
+		"GET /api/v4/users?username=nobody":  {body: `[]`},
 		"PUT " + glAPI + "/merge_requests/7": {code: http.StatusForbidden, body: `{"message":"403 Forbidden"}`},
 	})
-	if err := c.SetPRMetadata(t.Context(), 7, PRMetadata{Reviewers: []string{"alice"}}); err == nil || !strings.Contains(err.Error(), "request reviewers of !7") {
+	err := c.SetPRMetadata(t.Context(), 7, PRMetadata{Labels: []string{"x"}, Reviewers: []string{"alice"}, Assignees: []string{"nobody"}})
+	if err == nil || !strings.Contains(err.Error(), "set labels, reviewers of !7") || !strings.Contains(err.Error(), `assign !7: unknown user "nobody"`) {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TestGitLabUserLookupsConcurrent checks that the lookup of one username does not hold up
+// the lookups of others, and that concurrent callers of one username share its lookup.
+func TestGitLabUserLookupsConcurrent(t *testing.T) {
+	aliceAsked, bobAsked := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	lookups := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("username")
+		if r.Method != http.MethodGet || name == "" {
+			io.WriteString(w, `{}`)
+			return
+		}
+		mu.Lock()
+		lookups[name]++
+		first := lookups[name] == 1
+		mu.Unlock()
+		switch {
+		case name == "bob" && first:
+			close(bobAsked)
+		case name == "alice" && first:
+			close(aliceAsked)
+			select {
+			case <-bobAsked:
+			case <-time.After(5 * time.Second):
+				t.Error("the lookup of alice held up the lookup of bob")
+			}
+		}
+		io.WriteString(w, `[{"id":11}]`)
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(Info{Kind: GitLab, APIURL: srv.URL + "/api/v4", Repo: "grp/sub/r"}, "tok", srv.Client())
+	var wg sync.WaitGroup
+	set := func(n int, user string) {
+		wg.Go(func() {
+			if err := c.SetPRMetadata(t.Context(), n, PRMetadata{Assignees: []string{user}}); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	set(7, "alice")
+	<-aliceAsked
+	set(8, "alice")
+	set(9, "bob")
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if lookups["alice"] != 1 || lookups["bob"] != 1 {
+		t.Errorf("lookups = %v, want each user once", lookups)
 	}
 }
 
