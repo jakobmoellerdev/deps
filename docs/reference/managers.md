@@ -3034,7 +3034,7 @@ User-defined managers: each `custom[]` entry is one manager instance; see [`cust
 | `invalid deb registry URL "<url>": <why>` | a `deb` registry URL that is not `http(s)` or lacks `suite`, `components` or `binaryArch` |
 | `invalid artifactory name "<name>"` | an `artifactory` dep whose registry URL joined with its name (or the name alone, without a registry URL) is no `https://` or `http://` URL |
 | `invalid <datasource> name "<name>"` | a `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases` or `forgejo-tags` dep whose name is not a project path (`owner/repo`; GitLab also `group/subgroup/project`) or a repository URL |
-| `invalid <datasource> registry URL "<url>"` | such a dep whose `registryUrl` is not an `http(s)://` URL |
+| `invalid <datasource> registry URL "<url>"` | such a dep or an `endoflife-date` dep whose (first) `registryUrl` is not an `http(s)://` URL |
 | `invalid extractVersion: <err>` | a Renovate marker's `extractVersion=` or a JSONata result's `extractVersion` is not an RE2 regexp with a `version` group |
 | `unknown datasource "<ds>"` | the datasource is neither built in nor `custom.<name>` of `customDatasources` |
 

@@ -47,7 +47,7 @@ var Doc = refdoc.Manager{
 		{Reason: "invalid deb registry URL \"<url>\": <why>", When: "a `deb` registry URL that is not `http(s)` or lacks `suite`, `components` or `binaryArch`"},
 		{Reason: "invalid artifactory name \"<name>\"", When: "an `artifactory` dep whose registry URL joined with its name (or the name alone, without a registry URL) is no `https://` or `http://` URL"},
 		{Reason: "invalid <datasource> name \"<name>\"", When: "a `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases` or `forgejo-tags` dep whose name is not a project path (`owner/repo`; GitLab also `group/subgroup/project`) or a repository URL"},
-		{Reason: "invalid <datasource> registry URL \"<url>\"", When: "such a dep whose `registryUrl` is not an `http(s)://` URL"},
+		{Reason: "invalid <datasource> registry URL \"<url>\"", When: "such a dep or an `endoflife-date` dep whose (first) `registryUrl` is not an `http(s)://` URL"},
 		{Reason: "invalid extractVersion: <err>", When: "a Renovate marker's `extractVersion=` or a JSONata result's `extractVersion` is not an RE2 regexp with a `version` group"},
 		{Reason: "unknown datasource \"<ds>\"", When: "the datasource is neither built in nor `custom.<name>` of `customDatasources`"},
 	},

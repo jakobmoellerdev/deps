@@ -129,7 +129,11 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*product, error) {
 	if d.Name == "" || strings.ContainsAny(d.Name, "/?#") {
 		return nil, fmt.Errorf("invalid endoflife.date product %q", d.Name)
 	}
-	u := strings.TrimSuffix(cmp.Or(d.Source, s.base), "/") + "/" + url.PathEscape(d.Name) + ".json"
+	base := s.base
+	if f := strings.Fields(d.Source); len(f) > 0 {
+		base = f[0]
+	}
+	u := strings.TrimSuffix(base, "/") + "/" + url.PathEscape(d.Name) + ".json"
 	return s.products.Do(u, func() (*product, error) {
 		start := time.Now()
 		p, err := s.fetch(ctx, u)

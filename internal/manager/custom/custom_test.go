@@ -863,3 +863,19 @@ func TestRegistryURLForge(t *testing.T) {
 		{3, "npm", "left-pad", "", "semver", "1.3.0", "", ""},
 	})
 }
+
+// The endoflife-date registryUrl is whitespace-separated like the other datasources':
+// only its first URL is the API base, and a non-URL registryUrl is skipped.
+func TestRegistryURLEndoflife(t *testing.T) {
+	src := "# renovate: datasource=endoflife-date depName=nodejs registryUrl=oci://x\nNODE=24.11.0"
+	m := one(t, config.Custom{Files: []string{"f"}})
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "endoflife-date", "nodejs", "oci://x", "semver", "", "", `invalid endoflife-date registry URL "oci://x"`},
+	})
+
+	re := one(t, config.Custom{Files: []string{"f"}, Match: `(?m)^(?P<name>\S+) (?P<version>\S+)$`, Datasource: "endoflife-date", RegistryURL: "https://a.example/api https://b.example/api"})
+	src = "nodejs 24.11.0"
+	check(t, src, extract(t, re, src), DepTypeRegex, []want{
+		{1, "endoflife-date", "nodejs", "https://a.example/api https://b.example/api", "semver", "24.11.0", "", ""},
+	})
+}

@@ -135,6 +135,11 @@ func TestRegistryURL(t *testing.T) {
 	if err != nil || !slices.Contains(versions(rels), "3.14.10") {
 		t.Fatalf("python = %v, %v", versions(rels), err)
 	}
+	// registryUrl is whitespace-separated: the first URL is the API base.
+	rels, err = s.Releases(context.Background(), dep.Dep{Name: "python", Source: srv.URL + " http://127.0.0.1:1"}, "")
+	if err != nil || !slices.Contains(versions(rels), "3.14.10") {
+		t.Fatalf("python (two registry URLs) = %v, %v", versions(rels), err)
+	}
 }
 
 func TestErrors(t *testing.T) {

@@ -562,7 +562,7 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //     or a repository URL `https://host/path`; Source is the registryUrl, if any
 //     (forge.ParseRepo).
 //   - endoflife-date: Name is the endoflife.date product; Source is the registryUrl (the API
-//     base URL), if any.
+//     base URL), if any; only its first URL is used.
 //   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
 func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
@@ -612,7 +612,11 @@ func (m *customManager) classify(d *dep.Dep) {
 		if _, err := forge.ParseRepo(d.Datasource, d.Name, d.Source); err != nil {
 			d.Skip = err.Error()
 		}
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "endoflife-date", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob":
+	case "endoflife-date":
+		if f := strings.Fields(d.Source); len(f) > 0 && !httpURL(f[0]) {
+			d.Skip = fmt.Sprintf("invalid endoflife-date registry URL %q", f[0])
+		}
 	case debds.Name:
 		if d.Name == "" || strings.ContainsAny(d.Name, " \t/") {
 			d.Skip = fmt.Sprintf("invalid deb name %q", d.Name)
