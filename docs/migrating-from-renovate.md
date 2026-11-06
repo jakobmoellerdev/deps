@@ -97,7 +97,7 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `matchCurrentValue` | `rules[].currentVersion` in the regex form: `/re/`, `/re/i`, `!/re/` as written, an exact string `s` as `/^s$/i`; matched against the locked version, else the version as written (the bare version of a range, not Renovate's `^1.2.3`); globs have no equivalent |
 | `matchCurrentAge` | `rules[].currentAge` (`> 1 year`, `< 30 days`; a month is 30 days, a year 365): the release time of the current version, looked up only for deps the rule's other selectors match; unknown times match no rule |
 | `matchSourceUrls` | not supported: the source repository is only known after a per-dep (for docker: per-image config) lookup; match the packages with `names` instead |
-| `matchDatasources` | `rules[].datasources` (`golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags` accepted; `apk` and `deb` for custom-manager deps) |
+| `matchDatasources` | `rules[].datasources` (`golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags` accepted; `apk`, `deb` and `artifactory` for custom-manager deps) |
 | `matchBaseBranches` | `rules[].baseBranches` (names, `/regex/`; `!` excludes, as in `names`; globs are not supported): the base branch `run` resolves; `plan`, `apply`, `explain` and `preview` have none, so such rules match nothing there |
 | `matchUpdateTypes` | `rules[].updateTypes`; `pinDigest` = `pin` |
 | `matchCategories` | `deps migrate` expands it to the category's managers; in `.deps.yaml` use `managers`/`datasources` (`golang` ≈ `managers: [gomod]` plus `datasources: [golang-version]`) |
@@ -141,10 +141,11 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `customManagers` (`customType: regex`) | `custom[]` with `match` (Renovate group names accepted) |
 | `managerFilePatterns` / `fileMatch` | `custom[].files` (doublestar globs or `/regex/`; `fileMatch` entries are regexes, so write them as `/…/`) |
 | `datasourceTemplate`, `depNameTemplate`, `versioningTemplate` | `custom[].datasource`, `name`, `versioning` (literal values, no templates) |
-| `registryUrlTemplate`, regex group `registryUrl` | `custom[].registryUrl` (literal values; a templated one is ignored with a note: capture the URL in a `registryUrl` group instead) and the `registryUrl` group, for `helm`, `gitlab-packages`, `rpm`, `apk` and `deb` deps. `packageRules[].registryUrls` has no equivalent: set the registry on the custom entry |
+| `registryUrlTemplate`, regex group `registryUrl` | `custom[].registryUrl` (literal values; a templated one is ignored with a note: capture the URL in a `registryUrl` group instead) and the `registryUrl` group, for `helm`, `gitlab-packages`, `rpm`, `apk`, `deb` and `artifactory` deps. `packageRules[].registryUrls` has no equivalent: set the registry on the custom entry |
 | datasource `rpm` (yum/dnf repositories), versioning `rpm` | `rpm` datasource and versioning; rpm deps default to `rpm` versioning, versions are `<ver>-<rel>` as in Renovate |
 | datasource `apk` (Alpine/Wolfi repositories), versioning `apk` | `apk` datasource and versioning; apk deps default to `apk` versioning |
 | datasource `deb` (APT repositories), versioning `deb` | `deb` datasource and versioning; deb deps default to `deb` versioning; registry URLs as in Renovate (`https://deb.debian.org/debian?suite=bookworm&components=main&binaryArch=amd64`) |
+| datasource `artifactory` (Artifactory folder listings) | `artifactory` datasource: the folder path below the `registryUrl`s (whitespace-separated, merged), or the full folder URL without one |
 | `customDatasources` (`defaultRegistryUrlTemplate`, `format`, `transformTemplates`) | `customDatasources` (`url`, `format`, `versions` selector + `versionRegex` instead of JSONata) |
 | `github-release-attachments` digests | a regex `currentDigest` group with datasource `github-release-attachments` is kept current like Renovate: the asset of the current release with that sha256 is found and the same asset of the new release is used; `custom[].checksum.asset` / `checksum.url` name the asset explicitly |
 | `hostRules` (tokens) | env tokens, `.npmrc`, Docker credentials, git credential helper; retries are built in |

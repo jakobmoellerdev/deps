@@ -876,16 +876,16 @@ See the bucket table under [`separateMajorMinor`](#separatemajorminor).
 
 ## Config.custom
 
-Each entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
+Each entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, `artifactory`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
 
 **Annotation mode (no `match`).** A comment marker annotates the **next line**, and that line's first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Comment starters are `#`, `//`, `--`, `;` and `<!--`.
 
 - `deps: <datasource> <name> [versioning=<scheme>]`; `helm` and `deb` also take `deps: <datasource> <registry> <name>`.
-- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`; `registryUrl` is the registry of `helm`, `gitlab-packages`, `rpm`, `apk` and `deb` deps (see [`custom[].registryUrl`](#customregistryurl)) and ignored for other datasources, as are unknown keys.
+- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`; `registryUrl` is the registry of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb` and `artifactory` deps (see [`custom[].registryUrl`](#customregistryurl)) and ignored for other datasources, as are unknown keys.
 - With the docker datasource, the next line's first tagged image reference is used: the tag is the version, and an adjacent `@sha256:` digest is rewritten with it.
 - With the deb datasource, the next line's first Debian version is used (`curl=8.14.1-2`, `1:2.39.5-0+deb12u2`, `3.0.15-1~deb12u1`: epoch and `~`/`+` suffixes included).
 - A marker's `versioning=` takes a scheme name (not `regex:`). Without it, docker deps use `docker` versioning, others the entry's `versioning`, else their datasource's default (see [`custom[].versioning`](#customversioning)).
-- Skips: `no version on next line`, `renovate marker without datasource`, `renovate marker without depName`, `invalid deb name "<name>"`, `invalid deb registry URL "<url>": <why>`.
+- Skips: `no version on next line`, `renovate marker without datasource`, `renovate marker without depName`, `invalid deb name "<name>"`, `invalid deb registry URL "<url>": <why>`, `invalid artifactory name "<name>"`.
 
 ```yaml
 custom:
@@ -931,7 +931,7 @@ custom:
 
 ## Custom.registryUrl
 
-Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk` and `deb` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group or a marker's `registryUrl=` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
+Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb` and `artifactory` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group or a marker's `registryUrl=` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
 
 ```yaml
 custom:
@@ -957,6 +957,17 @@ custom:
 FROM debian:bookworm
 # renovate: datasource=deb depName=curl
 RUN apt-get install -y curl=7.88.1-10+deb12u12
+```
+
+For `artifactory` it is the Artifactory repository URL the dep's name (a folder path) lies below; several, separated by whitespace, are listed and merged. Without one, the name is the full `https://` folder URL.
+
+```yaml
+custom:
+  - files: ['tools.env']
+    match: 'CLI_VERSION=(?P<version>\S+)'
+    datasource: artifactory
+    name: tools/cli
+    registryUrl: https://example.jfrog.io/artifactory/generic-local
 ```
 
 ## Custom.versioning

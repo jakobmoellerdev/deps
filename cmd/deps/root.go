@@ -17,6 +17,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	apkds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/apk"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/artifactory"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/azuretasks"
 	bazelds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bazel"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
@@ -417,6 +418,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		nugetds.Name:            nugetds.New(client, sem, os.Getenv),
 		dotnetversion.Name:      dotnetversion.New(client, sem, os.Getenv),
 		debds.Name:              debds.New(client, sem, auth),
+		artifactory.Name:        artifactory.New(client, sem, auth),
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err

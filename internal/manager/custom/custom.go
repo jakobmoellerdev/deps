@@ -84,7 +84,7 @@ type customManager struct {
 // registryURLDatasources are the datasources whose deps take a registryUrl (entry field,
 // regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
 // datasources keep an empty Source.
-var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name}
+var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name, "artifactory"}
 
 // setRegistry sets d.Source to registry when d's datasource takes a registry URL.
 func setRegistry(d *dep.Dep, registry string) {
@@ -537,6 +537,8 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //     missing repository).
 //   - apk: Name is the package; Source is the registryUrl (empty: the datasource reports the
 //     missing repository).
+//   - artifactory: Name is the folder path below Source (Renovate `registryUrl=`), or the full
+//     `https://` or `http://` folder URL when Source is empty; slashes around both are trimmed.
 //   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
 func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
@@ -594,6 +596,24 @@ func (m *customManager) classify(d *dep.Dep) {
 				return
 			}
 		}
+	case "artifactory":
+		urls := strings.Fields(d.Source)
+		for i, u := range urls {
+			urls[i] = strings.TrimRight(u, "/")
+		}
+		if len(urls) == 0 {
+			d.Name = strings.TrimRight(d.Name, "/")
+			urls = []string{""}
+		} else {
+			d.Name = strings.Trim(d.Name, "/")
+		}
+		for _, u := range urls {
+			if !httpURL(strings.TrimPrefix(u+"/"+d.Name, "/")) || (u != "" && d.Name == "") {
+				d.Skip = fmt.Sprintf("invalid artifactory name %q", strings.TrimPrefix(d.Source+" "+d.Name, " "))
+				return
+			}
+		}
+		d.Source = strings.Join(urls, " ")
 	default:
 		if !strings.HasPrefix(d.Datasource, config.CustomDatasourcePrefix) || !m.known(d.Datasource) {
 			d.Skip = fmt.Sprintf("unknown datasource %q", ds)
@@ -605,6 +625,16 @@ func (m *customManager) classify(d *dep.Dep) {
 func helmRepository(repo string) bool {
 	for _, scheme := range []string{"https://", "http://", "oci://"} {
 		if rest, ok := strings.CutPrefix(repo, scheme); ok {
+			return rest != "" && !strings.HasPrefix(rest, "/")
+		}
+	}
+	return false
+}
+
+// httpURL reports whether u is an `https://` or `http://` URL with a host.
+func httpURL(u string) bool {
+	for _, scheme := range []string{"https://", "http://"} {
+		if rest, ok := strings.CutPrefix(u, scheme); ok {
 			return rest != "" && !strings.HasPrefix(rest, "/")
 		}
 	}

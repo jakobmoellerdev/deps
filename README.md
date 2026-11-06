@@ -246,7 +246,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 | <img src="https://cdn.simpleicons.org/redhat" width="20" alt=""> | **RPM packages**<br>dnf, yum | package versions pinned in any file (markers or regex managers), looked up in the yum/dnf repositories you name | |
 | <img src="https://cdn.simpleicons.org/alpinelinux" width="20" alt=""> | **Alpine packages**<br>apk | `apk add <pkg>=<version>` pins through `# renovate: datasource=apk` markers or regex managers, against Alpine or Wolfi repository indexes | |
 | <img src="https://cdn.simpleicons.org/debian" width="20" alt=""> | **Debian / Ubuntu packages** | pinned apt package versions (`curl=8.14.1-2`) via `# renovate: datasource=deb` markers or regex managers, looked up in APT repository indexes | |
-| ✏️ | **Anything else** | `# deps:` and `# renovate:` markers, regex managers | |
+| ✏️ | **Anything else** | `# deps:` and `# renovate:` markers, regex managers (any datasource, plus Artifactory folder listings) | |
 
 File patterns, dep types and skip reasons for every manager: [managers and datasources](docs/reference/managers.md).
 

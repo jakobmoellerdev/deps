@@ -522,7 +522,7 @@ type Custom struct {
 	Name        string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
 	Versioning  string    `yaml:"versioning" jsonschema:"default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb), else semver."` // default semver; see DefaultCustomVersioning
 	Checksum    *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
-	RegistryURL string    `yaml:"registryUrl" jsonschema_description:"Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk and deb datasources; a (?P<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources."`
+	RegistryURL string    `yaml:"registryUrl" jsonschema_description:"Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb and artifactory datasources; a (?P<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources."`
 }
 
 // customVersionings are the default versionings of custom[] deps by datasource; deps of other

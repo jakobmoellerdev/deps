@@ -1108,7 +1108,7 @@ Only match deps whose file (slash path relative to --dir) matches any of these d
 Only match deps looked up with these datasources, or custom.\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) match their deps datasource.
 
 - **Type:** list of strings
-- **Values:** `apk`, `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `deb`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `gitlab-packages`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `rpm`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `apk`, `artifactory`, `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `deb`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `gitlab-packages`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `rpm`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`, `bitbucket-tags` = `git-tags` (Bitbucket pipes). `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
 
@@ -1507,16 +1507,16 @@ Custom managers: `# deps: <datasource> <name>` annotations, or RE2 regex manager
 - **Type:** list of objects
 - **Required keys:** `files`
 
-Each entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
+Each entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, `artifactory`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
 
 **Annotation mode (no `match`).** A comment marker annotates the **next line**, and that line's first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Comment starters are `#`, `//`, `--`, `;` and `<!--`.
 
 - `deps: <datasource> <name> [versioning=<scheme>]`; `helm` and `deb` also take `deps: <datasource> <registry> <name>`.
-- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`; `registryUrl` is the registry of `helm`, `gitlab-packages`, `rpm`, `apk` and `deb` deps (see [`custom[].registryUrl`](#customregistryurl)) and ignored for other datasources, as are unknown keys.
+- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`; `registryUrl` is the registry of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb` and `artifactory` deps (see [`custom[].registryUrl`](#customregistryurl)) and ignored for other datasources, as are unknown keys.
 - With the docker datasource, the next line's first tagged image reference is used: the tag is the version, and an adjacent `@sha256:` digest is rewritten with it.
 - With the deb datasource, the next line's first Debian version is used (`curl=8.14.1-2`, `1:2.39.5-0+deb12u2`, `3.0.15-1~deb12u1`: epoch and `~`/`+` suffixes included).
 - A marker's `versioning=` takes a scheme name (not `regex:`). Without it, docker deps use `docker` versioning, others the entry's `versioning`, else their datasource's default (see [`custom[].versioning`](#customversioning)).
-- Skips: `no version on next line`, `renovate marker without datasource`, `renovate marker without depName`, `invalid deb name "<name>"`, `invalid deb registry URL "<url>": <why>`.
+- Skips: `no version on next line`, `renovate marker without datasource`, `renovate marker without depName`, `invalid deb name "<name>"`, `invalid deb registry URL "<url>": <why>`, `invalid artifactory name "<name>"`.
 
 ```yaml
 custom:
@@ -1574,7 +1574,7 @@ custom:
 Datasource of the matched deps, or custom.\<name> of customDatasources; required in regex mode unless match has a (?P\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases.
 
 - **Type:** string
-- **Values:** `apk`, `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `deb`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `gitlab-packages`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `rpm`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `apk`, `artifactory`, `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `deb`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `gitlab-packages`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `rpm`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 ### `custom[].name`
 
@@ -1636,11 +1636,11 @@ Entry name inside the url document (`<hex>  <name>` or `<hex> *<name>`); empty m
 
 ### `custom[].registryUrl`
 
-Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk and deb datasources; a (?P\<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources.
+Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb and artifactory datasources; a (?P\<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources.
 
 - **Type:** string
 
-Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk` and `deb` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group or a marker's `registryUrl=` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
+Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb` and `artifactory` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group or a marker's `registryUrl=` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
 
 ```yaml
 custom:
@@ -1666,6 +1666,17 @@ custom:
 FROM debian:bookworm
 # renovate: datasource=deb depName=curl
 RUN apt-get install -y curl=7.88.1-10+deb12u12
+```
+
+For `artifactory` it is the Artifactory repository URL the dep's name (a folder path) lies below; several, separated by whitespace, are listed and merged. Without one, the name is the full `https://` folder URL.
+
+```yaml
+custom:
+  - files: ['tools.env']
+    match: 'CLI_VERSION=(?P<version>\S+)'
+    datasource: artifactory
+    name: tools/cli
+    registryUrl: https://example.jfrog.io/artifactory/generic-local
 ```
 
 ## `customDatasources`

@@ -777,3 +777,44 @@ func TestFirstDebVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestArtifactoryAnnotations(t *testing.T) {
+	src := strings.Join([]string{
+		"# renovate: datasource=artifactory depName=tools/cli/ registryUrl=https://example.jfrog.io/artifactory/generic-local/", // 1
+		"CLI_VERSION=1.4.2", // 2
+		"# deps: artifactory https://example.jfrog.io/artifactory/generic-local/tools/cli/", // 3
+		"cli 1.4.2",                     // 4
+		"# deps: artifactory tools/cli", // 5
+		"1.0.0",                         // 6
+		"# renovate: datasource=artifactory depName=/ registryUrl=https://x", // 7
+		"1.0.0", // 8
+		"# renovate: datasource=go depName=example.com/m registryUrl=https://x", // 9
+		"1.0.0", // 10
+	}, "\n")
+	m := one(t, config.Custom{Files: []string{"f"}})
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "artifactory", "tools/cli", "https://example.jfrog.io/artifactory/generic-local", "semver", "1.4.2", "", ""},
+		{4, "artifactory", "https://example.jfrog.io/artifactory/generic-local/tools/cli", "", "semver", "1.4.2", "", ""},
+		{6, "artifactory", "tools/cli", "", "semver", "", "", `invalid artifactory name "tools/cli"`},
+		{8, "artifactory", "", "https://x", "semver", "", "", `invalid artifactory name "https://x "`},
+		{10, "go", "example.com/m", "", "semver", "1.0.0", "", ""},
+	})
+}
+
+// The artifactory registry URL comes from a regex registryUrl group, else the entry's
+// registryUrl (several URLs, trailing slashes trimmed).
+func TestArtifactoryRegexRegistryURL(t *testing.T) {
+	// Renovate's artifactory readme example: an OpenAPI definition fetched from a generic repository.
+	src := "const a = 'https://example.jfrog.io/artifactory/api-local/path/to/api/api-definition_v1.2.3.yaml';\n" +
+		"const b = 'api/other_v2.0.0.yaml';\n"
+	m := one(t, config.Custom{
+		Files:       []string{"f"},
+		Match:       `'(?P<registryUrl>https://[^'/]+/artifactory/[^'/]+/)?(?P<packageName>[^']+/)[a-z-]+_(?P<currentValue>v?[0-9.]+)\.yaml'`,
+		Datasource:  "artifactory",
+		RegistryURL: "https://a.example/artifactory/r1 https://b.example/artifactory/r2/",
+	})
+	check(t, src, extract(t, m, src), DepTypeRegex, []want{
+		{1, "artifactory", "path/to/api", "https://example.jfrog.io/artifactory/api-local", "semver", "v1.2.3", "", ""},
+		{2, "artifactory", "api", "https://a.example/artifactory/r1 https://b.example/artifactory/r2", "semver", "v2.0.0", "", ""},
+	})
+}
