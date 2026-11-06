@@ -85,6 +85,7 @@ type gitlabMR struct {
 	State        string    `json:"state"` // opened, closed, merged, locked
 	WebURL       string    `json:"web_url"`
 	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 	SourceBranch string    `json:"source_branch"`
 	TargetBranch string    `json:"target_branch"`
 	SHA          string    `json:"sha"`
@@ -131,31 +132,53 @@ func (g *gitlabClient) mrPath(n int) string {
 }
 
 // ListPRs pages through the merge requests, most recently updated first. "closed" lists
-// closed and merged ones (state=all without the open ones), as GitHub's closed PRs include
-// the merged.
+// closed and merged ones, as GitHub's closed PRs include the merged; each GitLab state gets
+// its own page budget so a busy project's open MRs cannot push them out of the window.
 func (g *gitlabClient) ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) {
-	const per = 100
-	q := "opened"
-	if state != "open" {
-		q = "all"
+	if state == "open" {
+		ms, err := g.listMRs(ctx, "opened", maxPages)
+		return gitlabPRs(ms), err
 	}
-	var out []PR
+	closed, err := g.listMRs(ctx, "closed", maxPages)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := g.listMRs(ctx, "merged", maxPages)
+	if err != nil {
+		return nil, err
+	}
+	ms := slices.Concat(closed, merged)
+	slices.SortStableFunc(ms, func(a, b gitlabMR) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
+	return gitlabPRs(ms), nil
+}
+
+// listMRs pages through the merge requests in GitLab state q, most recently updated first.
+func (g *gitlabClient) listMRs(ctx context.Context, q string, maxPages int) ([]gitlabMR, error) {
+	const per = 100
+	var out []gitlabMR
 	for page := 1; page <= maxPages; page++ {
 		var ms []gitlabMR
 		path := g.project + "/merge_requests?state=" + q + "&order_by=updated_at&sort=desc&per_page=100&page=" + strconv.Itoa(page)
 		if err := g.do(ctx, http.MethodGet, path, nil, &ms); err != nil {
 			return nil, err
 		}
-		for i := range ms {
-			if p := ms[i].pr(); p.State == state {
-				out = append(out, p)
-			}
-		}
+		out = append(out, ms...)
 		if len(ms) < per {
 			break
 		}
 	}
 	return out, nil
+}
+
+func gitlabPRs(ms []gitlabMR) []PR {
+	if len(ms) == 0 {
+		return nil
+	}
+	out := make([]PR, len(ms))
+	for i := range ms {
+		out[i] = ms[i].pr()
+	}
+	return out
 }
 
 func (g *gitlabClient) GetPR(ctx context.Context, n int) (PR, error) {

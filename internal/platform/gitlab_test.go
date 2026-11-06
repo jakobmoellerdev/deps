@@ -84,18 +84,19 @@ func TestGitLabListPRs(t *testing.T) {
 	c, calls := gitlabTestClient(t, map[string]route{
 		"GET " + glAPI + "/merge_requests?state=opened" + q + "1": {body: "[" + strings.Join(full, ",") + "]"},
 		"GET " + glAPI + "/merge_requests?state=opened" + q + "2": {body: `[{"iid":101,"state":"opened"}]`},
-		"GET " + glAPI + "/merge_requests?state=all" + q + "1": {body: `[{"iid":1,"state":"opened"},{"iid":2,"state":"closed"},
-			{"iid":3,"state":"merged"},{"iid":4,"state":"locked"}]`},
+		"GET " + glAPI + "/merge_requests?state=closed" + q + "1": {body: `[{"iid":2,"state":"closed","updated_at":"2026-01-02T00:00:00Z"},
+			{"iid":5,"state":"closed","updated_at":"2026-01-01T00:00:00Z"}]`},
+		"GET " + glAPI + "/merge_requests?state=merged" + q + "1": {body: `[{"iid":3,"state":"merged","updated_at":"2026-01-01T12:00:00Z"}]`},
 	})
 	open, err := c.ListPRs(t.Context(), "open", 5)
 	if err != nil || len(open) != 101 || open[100].Number != 101 || open[0].Head != "deps/b1" {
 		t.Fatalf("open = %d %v", len(open), err)
 	}
-	closed, err := c.ListPRs(t.Context(), "closed", 4)
-	if err != nil || len(closed) != 2 || closed[0].Number != 2 || closed[1].Number != 3 || !closed[1].Merged {
+	closed, err := c.ListPRs(t.Context(), "closed", 1)
+	if err != nil || len(closed) != 3 || closed[0].Number != 2 || closed[1].Number != 3 || !closed[1].Merged || closed[2].Number != 5 {
 		t.Fatalf("closed = %+v %v", closed, err)
 	}
-	if n := len(calls()); n != 3 {
+	if n := len(calls()); n != 4 {
 		t.Errorf("calls = %v", uris(calls()))
 	}
 	if _, err := c.ListPRs(t.Context(), "open", 0); err != nil {
