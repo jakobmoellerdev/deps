@@ -510,6 +510,7 @@
                     "image",
                     "service",
                     "include",
+                    "remote",
                     "component"
                   ]
                 }
@@ -2230,6 +2231,7 @@
               "repository",
               "service",
               "include",
+              "remote",
               "component",
               "node",
               "tool",

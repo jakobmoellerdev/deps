@@ -1,7 +1,7 @@
 // Package gitlabci extracts container images (`image`, `services`), project includes
-// (`include: {project, ref}`) and CI/CD components (`include: {component}`) from GitLab CI
-// configuration files. One manager covers what Renovate splits into gitlabci and
-// gitlabci-include.
+// (`include: {project, ref}`), versioned remote includes (`include: {remote}` or a URL string)
+// and CI/CD components (`include: {component}`) from GitLab CI configuration files. One
+// manager covers what Renovate splits into gitlabci and gitlabci-include.
 package gitlabci
 
 import (
@@ -32,7 +32,14 @@ const (
 	TypeImage     = "image"
 	TypeService   = "service"
 	TypeInclude   = "include"
+	TypeRemote    = "remote"
 	TypeComponent = "component"
+)
+
+// Datasources of includes and components: git-tags for a version tag, git-refs for a branch.
+const (
+	dsTags = "git-tags"
+	dsRefs = "git-refs"
 )
 
 // serverVars are the GitLab CI predefined variables that name the instance host
@@ -93,18 +100,34 @@ func (gitlabManager) Extract(file string, src []byte, env manager.Env) ([]dep.De
 	return x.deps, nil
 }
 
-// Edits rewrites image references like the docker manager, and include/component refs in
-// place.
+// Edits rewrites image references like the docker manager. Include, remote and component
+// refs: tag → tag in place; pinned commit → new commit plus the comment version; tag or
+// branch → commit with " # <version>" inserted after the value (pin: digest).
 func (gitlabManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	switch d.DepType {
 	case TypeImage, TypeService:
 		return docker.New().Edits(u)
 	}
-	if u.NewDigest != "" {
-		return nil, errors.New("digest pinning of GitLab includes is not supported")
+	switch {
+	case u.NewDigest == "":
+		if d.Digest != "" {
+			return nil, errors.New("cannot unpin a commit-pinned GitLab include")
+		}
+		return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+	case d.Digest != "":
+		edits := []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Digest, New: u.NewDigest}}
+		if u.NewVersion != d.Version {
+			edits = append(edits, patch.Edit{Start: d.VersionSpan.Start, End: d.VersionSpan.End, Old: d.Version, New: u.NewVersion})
+		}
+		return edits, nil
+	case d.InsertAt == 0:
+		return nil, errors.New("no place for a version comment after the GitLab include ref")
 	}
-	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+	return []patch.Edit{
+		{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewDigest},
+		{Start: d.InsertAt, End: d.InsertAt, New: " # " + u.NewVersion},
+	}, nil
 }
 
 // Rename implements manager.Renamer for image references, like the docker manager; includes
@@ -180,18 +203,28 @@ func (x *extractor) ref(depType string, v *yaml.Node) {
 	x.deps = append(x.deps, d)
 }
 
-// include handles a single include (mapping) or a list; string (local/remote) includes and
-// `local`, `remote`, `template` mappings are not deps.
+// include handles a single include (mapping or string) or a list. Local and template
+// includes are not deps: they have no version.
 func (x *extractor) include(v *yaml.Node) {
 	switch v.Kind {
 	case yaml.SequenceNode:
 		for _, c := range v.Content {
-			if c.Kind == yaml.MappingNode {
-				x.includeEntry(c)
-			}
+			x.includeItem(c)
 		}
+	default:
+		x.includeItem(v)
+	}
+}
+
+func (x *extractor) includeItem(v *yaml.Node) {
+	switch v.Kind {
 	case yaml.MappingNode:
 		x.includeEntry(v)
+	case yaml.ScalarNode:
+		// A string include is remote when it is a URL, else local.
+		if strings.HasPrefix(v.Value, "https://") || strings.HasPrefix(v.Value, "http://") {
+			x.remote(v)
+		}
 	}
 }
 
@@ -200,12 +233,16 @@ func (x *extractor) includeEntry(m *yaml.Node) {
 		x.component(c)
 		return
 	}
+	if r := yamlspan.Get(m, "remote"); r != nil && r.Kind == yaml.ScalarNode {
+		x.remote(r)
+		return
+	}
 	p := yamlspan.Get(m, "project")
 	if p == nil || p.Kind != yaml.ScalarNode || p.Value == "" {
 		return
 	}
 	project := strings.Trim(p.Value, "/")
-	d := dep.Dep{Manager: Name, Datasource: "git-tags", Versioning: "tag", DepType: TypeInclude, File: x.file, Line: p.Line, Name: project}
+	d := dep.Dep{Manager: Name, Datasource: dsTags, Versioning: "tag", DepType: TypeInclude, File: x.file, Line: p.Line, Name: project}
 	r := yamlspan.Get(m, "ref")
 	switch {
 	case strings.Contains(project, "$"):
@@ -216,6 +253,51 @@ func (x *extractor) includeEntry(m *yaml.Node) {
 		d.Source = x.base + "/" + project
 		d.Line = r.Line
 		x.version(&d, r, r.Value, 0)
+	}
+	x.deps = append(x.deps, d)
+}
+
+// remote handles a remote include URL that names a repository ref: a GitLab raw file
+// (`https://<host>/<project>/-/raw/<ref>/<file>`) or a GitHub one
+// (`https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<file>`). Other URLs are not deps.
+func (x *extractor) remote(v *yaml.Node) {
+	s := v.Value
+	scheme, rest, ok := strings.Cut(s, "://")
+	if !ok || strings.ContainsAny(rest, "?#") {
+		return
+	}
+	host, path, ok := strings.Cut(rest, "/")
+	if !ok || host == "" {
+		return
+	}
+	pathAt := len(scheme) + 3 + len(host) + 1 // offset of path in s
+	var repo string
+	var refAt int
+	if host == "raw.githubusercontent.com" {
+		parts := strings.SplitN(path, "/", 4)
+		if len(parts) < 4 || parts[0] == "" || parts[1] == "" {
+			return
+		}
+		repo = "https://github.com/" + parts[0] + "/" + parts[1]
+		refAt = pathAt + len(parts[0]) + 1 + len(parts[1]) + 1
+	} else {
+		i := strings.Index(path, "/-/raw/")
+		if i <= 0 {
+			return
+		}
+		repo = scheme + "://" + host + "/" + path[:i]
+		refAt = pathAt + i + len("/-/raw/")
+	}
+	ref, _, ok := strings.Cut(s[refAt:], "/")
+	if !ok || ref == "" {
+		return
+	}
+	d := dep.Dep{Manager: Name, Datasource: dsTags, Versioning: "tag", DepType: TypeRemote, File: x.file, Line: v.Line, Name: repo[len(scheme)+3:]}
+	if strings.Contains(repo, "$") {
+		d.Skip = "variable reference"
+	} else {
+		d.Source = repo
+		x.version(&d, v, ref, refAt)
 	}
 	x.deps = append(x.deps, d)
 }
@@ -258,19 +340,67 @@ func (x *extractor) componentSource(project string) string {
 	return "https://" + project
 }
 
-// version sets d's version to ver, found at byte rel of scalar v's value.
+// version sets d's ref to ver, found at byte rel of scalar v's value: a version tag
+// (git-tags), a branch (git-refs: digest updates once pinned) or a 40-hex commit followed by
+// a `# <version or branch>` comment. InsertAt, where pinning inserts the version comment, is
+// after the value (and its closing quote) when only blanks or a comment follow it on the
+// line, else 0 (a flow mapping: no place for a comment).
 func (x *extractor) version(d *dep.Dep, v *yaml.Node, ver string, rel int) {
 	off := yamlspan.Locate(x.src, x.lines, v)
-	_, isVersion := versioning.ParseTag(ver)
 	switch {
 	case strings.Contains(ver, "$"):
 		d.Skip = "variable reference"
-	case !isVersion:
-		d.Skip = "non-version ref"
+		return
+	case ver == "~latest":
+		d.Skip = "latest version"
+		return
 	case off < 0:
 		d.Skip = "cannot locate value"
-	default:
-		d.Version = ver
-		d.RefSpan = dep.Span{Start: off + rel, End: off + rel + len(ver)}
+		return
 	}
+	d.RefSpan = dep.Span{Start: off + rel, End: off + rel + len(ver)}
+	end := off + len(v.Value)
+	if q := manager.QuoteChar(v.Style); q != 0 && end < len(x.src) && x.src[end] == q {
+		end++
+	}
+	le := len(x.src)
+	if i := bytes.IndexByte(x.src[end:], '\n'); i >= 0 {
+		le = end + i
+	}
+	if rest := bytes.TrimLeft(x.src[end:le], " \t\r"); len(rest) == 0 || rest[0] == '#' {
+		d.InsertAt = end
+	}
+	if !manager.IsHex(ver, 40) {
+		d.Version = ver
+		if _, ok := versioning.ParseTag(ver); !ok {
+			d.Datasource = dsRefs
+		}
+		return
+	}
+	sp, tok := commentToken(x.src, end, le)
+	if tok == "" {
+		d.Skip = "pinned without version comment"
+		return
+	}
+	d.Digest, d.Version, d.VersionSpan = ver, tok, sp
+	if _, ok := versioning.ParseTag(tok); !ok {
+		d.Datasource = dsRefs
+	}
+}
+
+// commentToken returns the first word of a `#` comment in src[from:le] and its span.
+func commentToken(src []byte, from, le int) (dep.Span, string) {
+	h := bytes.IndexByte(src[from:le], '#')
+	if h < 0 {
+		return dep.Span{}, ""
+	}
+	s := from + h + 1
+	for s < le && (src[s] == ' ' || src[s] == '\t') {
+		s++
+	}
+	e := s
+	for e < le && src[e] != ' ' && src[e] != '\t' && src[e] != '\r' {
+		e++
+	}
+	return dep.Span{Start: s, End: e}, string(src[s:e])
 }

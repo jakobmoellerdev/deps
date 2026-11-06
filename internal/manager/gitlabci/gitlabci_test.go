@@ -10,6 +10,8 @@ import (
 
 const sha1 = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
+const commit = "1111111111111111111111111111111111111111"
+
 type want struct {
 	line                   int
 	depT, ds, name, source string
@@ -41,6 +43,15 @@ func check(t *testing.T, src string, deps []dep.Dep, wants []want) {
 			d.Source != w.source || d.Version != w.version || d.Digest != w.digest || d.Skip != w.skip {
 			t.Errorf("%d: got %s/%s line=%d name=%q source=%q version=%q digest=%q skip=%q\nwant %+v",
 				i, d.DepType, d.Datasource, d.Line, d.Name, d.Source, d.Version, d.Digest, d.Skip, w)
+			continue
+		}
+		if d.Datasource != "docker" && d.Digest != "" {
+			if got := src[d.RefSpan.Start:d.RefSpan.End]; got != w.digest {
+				t.Errorf("%d: src[RefSpan] = %q, want %q", i, got, w.digest)
+			}
+			if got := src[d.VersionSpan.Start:d.VersionSpan.End]; got != w.version {
+				t.Errorf("%d: src[VersionSpan] = %q, want %q", i, got, w.version)
+			}
 			continue
 		}
 		if d.Version != "" {
@@ -77,6 +88,7 @@ func TestExtract(t *testing.T) {
 	const (
 		d  = "docker"
 		gt = "git-tags"
+		gr = "git-refs"
 	)
 	tests := []struct {
 		name  string
@@ -145,7 +157,7 @@ variables:
 `,
 			wants: []want{
 				{line: 7, depT: TypeInclude, ds: gt, name: "group/sub/proj", source: "https://gitlab.com/group/sub/proj", version: "2.0.0"},
-				{line: 10, depT: TypeInclude, ds: gt, name: "group/branchy", source: "https://gitlab.com/group/branchy", skip: "non-version ref"},
+				{line: 10, depT: TypeInclude, ds: gr, name: "group/branchy", source: "https://gitlab.com/group/branchy", version: "main"},
 				{line: 11, depT: TypeInclude, ds: gt, name: "group/noref", skip: "no ref"},
 				{line: 13, depT: TypeInclude, ds: gt, name: "$CI_PROJECT_PATH", skip: "variable reference"},
 			},
@@ -153,6 +165,43 @@ variables:
 		{
 			name: "string include ignored",
 			src:  "include: /ci/local.yml\n",
+		},
+		{
+			name: "remote includes",
+			src: `include:
+  - remote: https://gitlab.com/gitlab-org/gitlab-foss/-/raw/v16.0.0/lib/gitlab/ci/templates/Jobs/Build.gitlab-ci.yml
+  - 'https://raw.githubusercontent.com/actions/checkout/v4.2.2/action.yml'
+  - remote: https://gitlab.com/group/proj/-/raw/main/ci.yml
+  - https://gitlab.com/group/proj/-/raw/` + commit + `/ci.yml # v1.2.3
+  - remote: https://example.com/ci.yml
+  - remote: https://gitlab.com/group/proj/-/raw/v1/x.yml?inline=false
+  - remote: https://$HOST/group/proj/-/raw/v1/x.yml
+`,
+			wants: []want{
+				{line: 2, depT: TypeRemote, ds: gt, name: "gitlab.com/gitlab-org/gitlab-foss", source: "https://gitlab.com/gitlab-org/gitlab-foss", version: "v16.0.0"},
+				{line: 3, depT: TypeRemote, ds: gt, name: "github.com/actions/checkout", source: "https://github.com/actions/checkout", version: "v4.2.2"},
+				{line: 4, depT: TypeRemote, ds: gr, name: "gitlab.com/group/proj", source: "https://gitlab.com/group/proj", version: "main"},
+				{line: 5, depT: TypeRemote, ds: gt, name: "gitlab.com/group/proj", source: "https://gitlab.com/group/proj", version: "v1.2.3", digest: commit},
+				{line: 8, depT: TypeRemote, ds: gt, name: "$HOST/group/proj", skip: "variable reference"},
+			},
+		},
+		{
+			name: "commit pins",
+			src: `include:
+  - project: group/proj
+    ref: ` + commit + ` # v1.2.3
+  - project: group/branch
+    ref: "` + commit + `"  # main
+  - project: group/bare
+    ref: ` + commit + `
+  - component: gitlab.com/group/proj/build@` + commit + ` # 2.0.0
+`,
+			wants: []want{
+				{line: 3, depT: TypeInclude, ds: gt, name: "group/proj", source: "https://gitlab.com/group/proj", version: "v1.2.3", digest: commit},
+				{line: 5, depT: TypeInclude, ds: gr, name: "group/branch", source: "https://gitlab.com/group/branch", version: "main", digest: commit},
+				{line: 7, depT: TypeInclude, ds: gt, name: "group/bare", source: "https://gitlab.com/group/bare", skip: "pinned without version comment"},
+				{line: 8, depT: TypeComponent, ds: gt, name: "gitlab.com/group/proj/build", source: "https://gitlab.com/group/proj", version: "2.0.0", digest: commit},
+			},
 		},
 		{
 			name: "components",
@@ -168,6 +217,7 @@ include:
   - component: "gitlab.example.com/group/sub/proj/build@v1.0"
   - component: $CI_SERVER_FQDN/group/proj/lint@1.0.0
   - component: gitlab.com/components/opentofu/full-pipeline@~latest
+  - component: gitlab.com/components/opentofu/full-pipeline@main
   - component: gitlab.com/components/sast/sast
   - component: gitlab.com/x@1.0.0
 `,
@@ -175,9 +225,10 @@ include:
 				{line: 7, depT: TypeComponent, ds: gt, name: "gitlab.com/components/sast/sast", source: "https://gitlab.com/components/sast", version: "2.1.0"},
 				{line: 10, depT: TypeComponent, ds: gt, name: "gitlab.example.com/group/sub/proj/build", source: "https://gitlab.example.com/group/sub/proj", version: "v1.0"},
 				{line: 11, depT: TypeComponent, ds: gt, name: "$CI_SERVER_FQDN/group/proj/lint", source: "https://gitlab.com/group/proj", version: "1.0.0"},
-				{line: 12, depT: TypeComponent, ds: gt, name: "gitlab.com/components/opentofu/full-pipeline", source: "https://gitlab.com/components/opentofu", skip: "non-version ref"},
-				{line: 13, depT: TypeComponent, ds: gt, name: "gitlab.com/components/sast/sast", skip: "no version"},
-				{line: 14, depT: TypeComponent, ds: gt, name: "gitlab.com/x", skip: "invalid component"},
+				{line: 12, depT: TypeComponent, ds: gt, name: "gitlab.com/components/opentofu/full-pipeline", source: "https://gitlab.com/components/opentofu", skip: "latest version"},
+				{line: 13, depT: TypeComponent, ds: gr, name: "gitlab.com/components/opentofu/full-pipeline", source: "https://gitlab.com/components/opentofu", version: "main"},
+				{line: 14, depT: TypeComponent, ds: gt, name: "gitlab.com/components/sast/sast", skip: "no version"},
+				{line: 15, depT: TypeComponent, ds: gt, name: "gitlab.com/x", skip: "invalid component"},
 			},
 		},
 		{
@@ -255,7 +306,70 @@ services:
 	if string(got) != wantSrc {
 		t.Errorf("got\n%s\nwant\n%s", got, wantSrc)
 	}
-	if _, err := New().Edits(dep.Update{Dep: deps[0], NewVersion: "v2", NewDigest: sha2}); err == nil {
-		t.Error("include digest edit: want error")
+	if _, err := New().Edits(dep.Update{Dep: deps[0], NewVersion: "v2"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEditsDigest(t *testing.T) {
+	const sha2 = "2222222222222222222222222222222222222222"
+	src := `include:
+  - project: group/proj
+    ref: 'v1.2.3' # pinned
+  - project: group/branch
+    ref: main
+  - component: gitlab.com/group/proj/build@2.0.0
+  - remote: https://gitlab.com/group/proj/-/raw/v1.0.0/ci.yml
+  - project: group/old
+    ref: ` + commit + ` # v1.0.0
+  - project: group/flow
+    ref: ` + commit + ` # main
+  - {project: group/flowtag, ref: v1.0.0}
+`
+	deps := extract(t, src)
+	updates := []dep.Update{
+		{Dep: deps[0], NewVersion: "v1.2.3", NewDigest: sha2},
+		{Dep: deps[1], NewVersion: "main", NewDigest: sha2},
+		{Dep: deps[2], NewVersion: "2.1.0", NewDigest: sha2},
+		{Dep: deps[3], NewVersion: "v1.0.0", NewDigest: sha2},
+		{Dep: deps[4], NewVersion: "v1.1.0", NewDigest: sha2},
+		{Dep: deps[5], NewVersion: "main", NewDigest: sha2},
+	}
+	var edits []patch.Edit
+	for _, u := range updates {
+		e, err := New().Edits(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edits = append(edits, e...)
+	}
+	got, err := patch.Apply([]byte(src), edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSrc := `include:
+  - project: group/proj
+    ref: '` + sha2 + `' # v1.2.3 # pinned
+  - project: group/branch
+    ref: ` + sha2 + ` # main
+  - component: gitlab.com/group/proj/build@` + sha2 + ` # 2.1.0
+  - remote: https://gitlab.com/group/proj/-/raw/` + sha2 + `/ci.yml # v1.0.0
+  - project: group/old
+    ref: ` + sha2 + ` # v1.1.0
+  - project: group/flow
+    ref: ` + sha2 + ` # main
+  - {project: group/flowtag, ref: v1.0.0}
+`
+	if string(got) != wantSrc {
+		t.Errorf("got\n%s\nwant\n%s", got, wantSrc)
+	}
+	if deps[6].InsertAt != 0 {
+		t.Errorf("flow mapping InsertAt = %d, want 0", deps[6].InsertAt)
+	}
+	if _, err := New().Edits(dep.Update{Dep: deps[6], NewVersion: "v1.0.0", NewDigest: sha2}); err == nil {
+		t.Error("flow mapping pin: want error")
+	}
+	if _, err := New().Edits(dep.Update{Dep: deps[4], NewVersion: "v1.1.0"}); err == nil {
+		t.Error("unpin: want error")
 	}
 }
