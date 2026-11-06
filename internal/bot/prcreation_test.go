@@ -291,7 +291,8 @@ func TestDashboardPendingStatusChecks(t *testing.T) {
 		}
 	}
 
-	// Ticked: the PR is opened for the rebuilt branch without waiting for the checks.
+	// Ticked: the PR is opened on the unchanged branch without waiting for its checks or
+	// pushing a new commit that would restart them.
 	pc := &fakePC{checks: platform.ChecksPending}
 	g := branchGit(branchA)
 	if _, errs, _ := dashRun(t, Options{}, res, root, pc, &g); len(errs) > 0 {
@@ -305,8 +306,8 @@ func TestDashboardPendingStatusChecks(t *testing.T) {
 		t.Fatal(errs)
 	}
 	i := slices.IndexFunc(acts, func(a Action) bool { return a.Branch == branchA })
-	if i < 0 || acts[i].Display() != StatusCreated || !slices.Equal(pc.created, []string{branchA}) || len(pc.checked) != 0 {
-		t.Errorf("actions %+v, created %v, checked %v", acts, pc.created, pc.checked)
+	if i < 0 || acts[i].Display() != StatusCreated || !slices.Equal(pc.created, []string{branchA}) || len(pc.checked) != 0 || len(g.pushes) != 0 {
+		t.Errorf("actions %+v, created %v, checked %v, pushes %v", acts, pc.created, pc.checked, g.pushes)
 	}
 	if body := pc.updatedIssues[0].Body; strings.Contains(body, "Pending status checks") {
 		t.Errorf("body after the PR was opened:\n%s", body)

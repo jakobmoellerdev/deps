@@ -351,7 +351,8 @@ func TestDashboardBranchAutomerge(t *testing.T) {
 		t.Fatalf("body lacks %q:\n%s", want, body)
 	}
 
-	// Ticked: the PR is opened for the rebuilt branch, and automerged as a PR.
+	// Ticked: the PR is opened on the unchanged branch, without a push restarting its
+	// checks, and automerged as a PR.
 	ticked := strings.ReplaceAll(body, "- [ ] <!-- deps:pr=", "- [x] <!-- deps:pr=")
 	pc = &fakePC{checks: platform.ChecksPending, issues: []platform.Issue{{Number: 7, Title: dashTitle, Body: ticked}}}
 	g = branchGit(branchA)
@@ -361,8 +362,8 @@ func TestDashboardBranchAutomerge(t *testing.T) {
 	}
 	i := slices.IndexFunc(acts, func(a Action) bool { return a.Branch == branchA })
 	if i < 0 || acts[i].Display() != "created, "+AutomergeRequested || !slices.Equal(pc.created, []string{branchA}) ||
-		!slices.Equal(g.pushes, []string{pushed + ":" + branchA + "@" + tipA}) || len(pc.checked) != 0 {
-		t.Errorf("actions %+v, created %v, pushes %v, checked %v", acts, pc.created, g.pushes, pc.checked)
+		len(g.pushes) != 0 || !slices.Equal(pc.automerge, []string{"101:squash@" + tipA}) || len(pc.checked) != 0 {
+		t.Errorf("actions %+v, created %v, pushes %v, automerge %v, checked %v", acts, pc.created, g.pushes, pc.automerge, pc.checked)
 	}
 	if body := pc.updatedIssues[0].Body; strings.Contains(body, "Pending branch automerge") || !strings.Contains(body, "- [ ] <!-- deps:rebase="+branchA+" -->") {
 		t.Errorf("body after the PR was opened:\n%s", body)

@@ -861,6 +861,17 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	if branchMode {
 		return handleBranch(ctx, o, s, grp, changes, fp, b.input, f, expected, exists, t, pc, g)
 	}
+	if pr == nil && exists && f.pr && !f.rebase {
+		// The dashboard asked for the PR of a branch pushed without one: an unchanged branch
+		// gets its PR on the pushed commit, keeping the checks that already ran on it.
+		fresh, err := branchFresh(ctx, o, s, grp, changes, expected, t, g)
+		if err != nil {
+			return a, nil, err
+		}
+		if fresh {
+			return raisePR(ctx, o, s, grp, fp, b.input, f, expected, "", pc)
+		}
+	}
 	if o.DryRun {
 		switch {
 		case rebase:
@@ -933,15 +944,9 @@ func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group,
 ) (a Action, target *platform.PR, err error) {
 	a = Action{Branch: grp.Branch, Title: grp.Title}
 	if exists && !f.rebase {
-		tree, err := g.WriteTree(ctx, s.head, changes)
+		fresh, err := branchFresh(ctx, o, s, grp, changes, expected, t, g)
 		if err != nil {
 			return a, nil, err
-		}
-		fresh := slices.Equal(t.Parents, []string{s.head}) && t.Tree == tree
-		if !fresh && !grp.AutomergeBranch && o.RebaseWhen != config.RebaseBehindBase {
-			if fresh, err = sameChanges(ctx, g, expected, tree, changes); err != nil {
-				return a, nil, err
-			}
 		}
 		switch {
 		case fresh && grp.AutomergeBranch:
@@ -984,6 +989,23 @@ func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group,
 		a.Automerge = AutomergeBranchWaiting
 	}
 	return a, nil, nil
+}
+
+// branchFresh reports whether the existing branch (tip t, sha expected) holds what this run
+// built: one commit on base with the built tree, or, for a waiting branch unless rebaseWhen
+// is behind-base-branch, the same contents of the changed files.
+func branchFresh(ctx context.Context, o Options, s *runState, grp engine.Group, changes []engine.FileChange, expected string, t platform.Tip, g Git) (bool, error) {
+	tree, err := g.WriteTree(ctx, s.head, changes)
+	if err != nil {
+		return false, err
+	}
+	if slices.Equal(t.Parents, []string{s.head}) && t.Tree == tree {
+		return true, nil
+	}
+	if grp.AutomergeBranch || o.RebaseWhen == config.RebaseBehindBase {
+		return false, nil
+	}
+	return sameChanges(ctx, g, expected, tree, changes)
 }
 
 // sameChanges reports whether the files changes touch are the same in commit sha (the
