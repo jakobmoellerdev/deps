@@ -318,17 +318,57 @@ func dynamic(v string) bool {
 	return strings.HasPrefix(v, "latest.") || strings.Contains(v, "+") || strings.ContainsAny(v[:1], "[]()")
 }
 
-// scalaBinary returns the Scala binary version of a full Scala version: `3` for Scala 3,
-// `2.13` for 2.13.x; prereleases and other forms are their own binary version.
+// Scala version shapes, ported from sbt librarymanagement CrossVersionUtil.
+var (
+	scalaReleaseV    = regexp.MustCompile(`^(\d{1,19})\.(\d{1,19})\.(\d{1,19})(-\d+)?$`)
+	scalaBinCompatV  = regexp.MustCompile(`^(\d{1,19})\.(\d{1,19})\.(\d{1,19})(-\w+(?:\.\w+)*)?-bin(-.*)?$`)
+	scalaNonReleaseN = regexp.MustCompile(`^(\d{1,19})\.(\d{1,19})\.(\d{1,19})((?:-\w+(?:\.\w+)*)*)$`)
+	scalaNonRelease1 = regexp.MustCompile(`^(\d{1,19})\.(\d{1,19})\.(\d{1,19})(-\w+(?:\.\w+)*)$`)
+)
+
+// scalaBinary returns the Scala binary version of a full Scala version like sbt's
+// CrossVersion.binaryScalaVersion: `3` for Scala 3 releases and for prereleases past 3.0.0,
+// `2.13` for 2.13.x releases, `-bin` builds and one-word prereleases with a patch above 0;
+// other forms (2.13.0-M5, 3.0.0-RC1) are their own binary version.
 func scalaBinary(v string) string {
-	parts := strings.Split(v, ".")
-	switch {
-	case len(parts) != 3 || strings.ContainsAny(parts[2], "-+"):
+	if v == "3" {
 		return v
-	case parts[0] == "3":
-		return "3"
 	}
-	return parts[0] + "." + parts[1]
+	if strings.HasPrefix(v, "3.") {
+		if m := scalaBinCompatV.FindStringSubmatch(v); m != nil {
+			v = m[1] + "." + m[2] + "." + m[3] + m[4]
+		}
+		if scalaReleaseV.MatchString(v) {
+			return "3"
+		}
+		if m := scalaNonReleaseN.FindStringSubmatch(v); len(m) == 5 && (m[2] != "0" || m[3] != "0") {
+			return "3"
+		}
+		return v
+	}
+	m := scalaReleaseV.FindStringSubmatch(v)
+	if m == nil {
+		m = scalaBinCompatV.FindStringSubmatch(v)
+	}
+	if m == nil {
+		if m = scalaNonRelease1.FindStringSubmatch(v); len(m) == 5 && strings.Trim(m[3], "0") == "" {
+			m = nil
+		}
+	}
+	// Binary versions start at Scala 2.10; earlier versions are their own.
+	if len(m) < 3 || m[1] == "2" && len(m[2]) == 1 {
+		return v
+	}
+	return m[1] + "." + m[2]
+}
+
+// scalaPatch returns the CrossVersion.patch suffix of a full Scala version: the version
+// without a `-bin...` build suffix.
+func scalaPatch(v string) string {
+	if m := scalaBinCompatV.FindStringSubmatch(v); m != nil {
+		return m[1] + "." + m[2] + "." + m[3] + m[4]
+	}
+	return v
 }
 
 // sources joins dep Source entries, without duplicates.

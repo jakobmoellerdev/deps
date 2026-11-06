@@ -330,7 +330,8 @@ func (b *build) moduleDep(file string, st *fileState, f found) (dep.Dep, bool) {
 }
 
 // crossSuffix returns the artifact suffix of a ModuleID: `_<binary>` for `%%`/`%%%` and
-// CrossVersion.binary, `_<full>` for CrossVersion.full (and patch), none for `%` and
+// CrossVersion.binary, `_<full>` for CrossVersion.full, `_<full without -bin...>` for
+// CrossVersion.patch, none for `%` and
 // CrossVersion.disabled. ok is false when the Scala version it needs is unknown.
 func (b *build) crossSuffix(m *module, meta bool) (string, bool) {
 	bin, full := b.scalaBin, b.scalaFull
@@ -350,6 +351,9 @@ func (b *build) crossSuffix(m *module, meta bool) (string, bool) {
 	case "full", "patch":
 		if full == "" {
 			return "", false
+		}
+		if mode == "patch" {
+			full = scalaPatch(full)
 		}
 		return "_" + full, true
 	}

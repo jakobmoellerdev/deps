@@ -457,9 +457,27 @@ func TestLex(t *testing.T) {
 }
 
 func TestHelpers(t *testing.T) {
-	for v, want := range map[string]string{"2.13.15": "2.13", "3.3.4": "3", "2.13.0-M5": "2.13.0-M5", "3": "3"} {
+	for v, want := range map[string]string{
+		"2.13.12":                            "2.13",
+		"2.13.15":                            "2.13",
+		"2.13.13-RC1":                        "2.13",
+		"2.13.0-M5":                          "2.13.0-M5",
+		"2.13.12-bin-typelevel-4":            "2.13",
+		"2.9.3":                              "2.9.3",
+		"3.3.1":                              "3",
+		"3.4.0-RC1":                          "3",
+		"3.0.0-RC1":                          "3.0.0-RC1",
+		"3.5.0-RC1-bin-20240417-abc-NIGHTLY": "3",
+		"3":                                  "3",
+	} {
 		if got := scalaBinary(v); got != want {
-			t.Errorf("scalaBinary(%q) = %q", v, got)
+			t.Errorf("scalaBinary(%q) = %q, want %q", v, got, want)
+		}
+	}
+	b := &build{scalaFull: "2.13.12-bin-typelevel-4", scalaBin: "2.13"}
+	for mode, want := range map[string]string{"patch": "_2.13.12", "full": "_2.13.12-bin-typelevel-4", "binary": "_2.13"} {
+		if got, ok := b.crossSuffix(&module{cross: "%", crossVersion: mode}, false); !ok || got != want {
+			t.Errorf("crossSuffix(%s) = %q, %v, want %q", mode, got, ok, want)
 		}
 	}
 	for v, want := range map[string]bool{"latest.integration": true, "[1.0,2.0)": true, "1.+": true, "1.0": false} {
