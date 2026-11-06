@@ -497,7 +497,7 @@ func configEnv(ctx context.Context, cfg *config.Config, info platform.Info) mana
 	slog.InfoContext(ctx, "actions default host", "host", host, "source", source)
 	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, info, os.Getenv)
 	slog.DebugContext(ctx, "gitlab url", "url", gitlabURL, "source", gitlabSource)
-	return manager.Env{DefaultHost: host, GitLabURL: gitlabURL, TerraformRegistry: cfg.Terraform.DefaultRegistry}
+	return manager.Env{DefaultHost: host, GitLabURL: gitlabURL, TerraformRegistry: cfg.Terraform.DefaultRegistry, RegistryAliases: cfg.RegistryAliases}
 }
 
 // actionsHost is the host of owner/repo@ref actions and where it came from: the config's

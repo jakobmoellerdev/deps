@@ -570,6 +570,7 @@ func TestLoadTopLevel(t *testing.T) {
 		minimumReleaseAge: '7 days', vulnerabilityAlerts: {enabled: false}, schedule: ['before 6am on monday', 'every 2 weeks'],
 		timezone: 'Europe/Berlin', lockFileMaintenance: {enabled: true, automerge: true}, labels: ['deps'],
 		pinDigests: true, rangeStrategy: 'pin', cocoapods: {enabled: true},
+		registryAliases: {'${HARBOR:-}/proxy': 'harbor.example.com/hub', '$CI_REGISTRY': 'registry.example.com'},
 	}`)
 	if err != nil {
 		t.Fatal(err)
@@ -588,6 +589,9 @@ minimumReleaseAge: 7 days
 minimumReleaseAgeBehaviour: timestamp-required
 schedule: [before 6am on monday]
 timezone: Europe/Berlin
+registryAliases:
+  $CI_REGISTRY: registry.example.com
+  ${HARBOR:-}/proxy: harbor.example.com/hub
 ignorePaths: [/foo/, '**/bar/**', /^x/]
 automerge: true
 automergeStrategy: merge

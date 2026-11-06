@@ -544,6 +544,17 @@ func (t *translator) translate(cfg map[string]any) omap {
 	if v, ok := get("timezone"); ok {
 		emit("timezone", v)
 	}
+	if v, ok := get("registryAliases"); ok {
+		if m, isMap := v.(map[string]any); isMap {
+			var aliases omap
+			for _, k := range slices.Sorted(maps.Keys(m)) {
+				aliases.set(k, m[k])
+			}
+			emit("registryAliases", aliases)
+		} else {
+			t.n.warn("registryAliases", "must be an object; ignored")
+		}
+	}
 	ignorePaths := []string{"**/node_modules/**", "**/bower_components/**"}
 	if v, ok := get("ignorePaths"); ok {
 		l, _ := strs(v)

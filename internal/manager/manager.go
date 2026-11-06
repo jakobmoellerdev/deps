@@ -20,6 +20,9 @@ type Env struct {
 	// TerraformRegistry is the registry host of hostless provider and module addresses
 	// (config terraform.defaultRegistry); "" = the default of the file type.
 	TerraformRegistry string
+	// RegistryAliases maps a registry alias as written (`$CI_REGISTRY`) to the registry it
+	// stands for (config registryAliases); nil = none.
+	RegistryAliases map[string]string
 	// Exists reports whether the slash path (relative to the scanned root) exists, for
 	// file-based conditions such as Maven profile `<activation><file>`. engine.Resolve
 	// supplies a filesystem check when nil.
