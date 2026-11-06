@@ -202,7 +202,7 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer closeBody(resp)
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
@@ -214,4 +214,10 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 		return fmt.Errorf("GET %s: %w", target, err)
 	}
 	return nil
+}
+
+// closeBody drains a little of the body so the connection can be reused, then closes it.
+func closeBody(resp *http.Response) {
+	httpx.DrainBody(resp)
+	_ = resp.Body.Close()
 }

@@ -424,7 +424,7 @@ func (s *Source) get(ctx context.Context, r *registry, u string) (io.ReadCloser,
 		case http.StatusUnauthorized:
 			if own && r.token == "" && !helped {
 				if user, pass, helped = s.auth.Helper(ctx, req.URL.Host); helped {
-					resp.Body.Close()
+					closeBody(resp)
 					continue
 				}
 			}
@@ -434,7 +434,7 @@ func (s *Source) get(ctx context.Context, r *registry, u string) (io.ReadCloser,
 		default:
 			err = fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
 		}
-		resp.Body.Close()
+		closeBody(resp)
 		release()
 		return nil, err
 	}
@@ -449,4 +449,10 @@ func (r releaseOnClose) Close() error {
 	err := r.ReadCloser.Close()
 	r.release()
 	return err
+}
+
+// closeBody drains a little of the body so the connection can be reused, then closes it.
+func closeBody(resp *http.Response) {
+	httpx.DrainBody(resp)
+	_ = resp.Body.Close()
 }

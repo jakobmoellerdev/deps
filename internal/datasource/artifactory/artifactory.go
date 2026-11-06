@@ -168,6 +168,7 @@ func (s *Source) fetch(ctx context.Context, u string) (*folder, error) {
 	resp, err := s.get(ctx, u, user, pass, ok)
 	if err == nil && resp.StatusCode == http.StatusUnauthorized {
 		if user, pass, ok = s.auth.Helper(ctx, parsed.Host); ok {
+			httpx.DrainBody(resp)
 			resp.Body.Close()
 			resp, err = s.get(ctx, u, user, pass, ok)
 		}
@@ -177,6 +178,7 @@ func (s *Source) fetch(ctx context.Context, u string) (*folder, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		httpx.DrainBody(resp)
 		return nil, fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxListing))

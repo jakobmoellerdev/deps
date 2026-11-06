@@ -30,7 +30,7 @@ func GetStream(ctx context.Context, client *http.Client, sem chan struct{}, url 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer closeBody(resp)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s: HTTP %d", req.URL.Redacted(), resp.StatusCode)
 	}
@@ -71,4 +71,10 @@ func DecodeArray[T any](r io.Reader, each func(T)) error {
 		each(v)
 	}
 	return nil
+}
+
+// closeBody drains a little of the body so the connection can be reused, then closes it.
+func closeBody(resp *http.Response) {
+	httpx.DrainBody(resp)
+	_ = resp.Body.Close()
 }

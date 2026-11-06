@@ -332,7 +332,7 @@ func (c *core) list(ctx context.Context, u string) (listing, error) {
 		if err != nil {
 			return listing{}, err
 		}
-		defer func() { _ = resp.Body.Close() }()
+		defer closeBody(resp)
 		switch {
 		case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
 			return listing{notFound: true}, nil
@@ -369,4 +369,10 @@ func withSlash(u string) string {
 		return u
 	}
 	return u + "/"
+}
+
+// closeBody drains a little of the body so the connection can be reused, then closes it.
+func closeBody(resp *http.Response) {
+	httpx.DrainBody(resp)
+	_ = resp.Body.Close()
 }

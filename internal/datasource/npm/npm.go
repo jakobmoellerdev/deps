@@ -762,6 +762,6 @@ func expectObject(dec *jsontext.Decoder) error {
 
 // closeBody drains a little of the body so the connection can be reused, then closes it.
 func closeBody(resp *http.Response) {
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	httpx.DrainBody(resp)
 	_ = resp.Body.Close()
 }

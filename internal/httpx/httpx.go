@@ -2,6 +2,7 @@
 package httpx
 
 import (
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -66,4 +67,13 @@ func Redact(raw string) string {
 		return "<invalid URL>"
 	}
 	return u.Redacted()
+}
+
+// DrainBody reads and discards up to 4 KiB of resp's body. Closing a body that was not read
+// to EOF (an error page, a stream abandoned after the data it needed) leaves net/http only a
+// background drain with a short deadline, which the next request to the host races, so it
+// often dials a new connection; draining first makes Close return the connection to the
+// pool. Callers close the body themselves, in their own package, so bodyclose sees it.
+func DrainBody(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 }

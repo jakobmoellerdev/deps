@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
@@ -125,5 +128,47 @@ func TestGetStreamRedactsCredentials(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "secretpw") {
 			t.Errorf("err = %v, want error without password", err)
 		}
+	}
+}
+
+// An error page or a stream read only up to its closing ']' must leave the keep-alive
+// connection reusable, so repeated lookups against one host do not dial again each time.
+func TestGetStreamReusesConnection(t *testing.T) {
+	var dials atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/missing" {
+			w.WriteHeader(http.StatusNotFound)
+		}
+		_, _ = io.WriteString(w, `[{"a":"x"}]`)
+		w.(http.Flusher).Flush()
+		// The end of the chunked body comes later than net/http waits for when it drains a
+		// body closed unread in the background, so only a drain before Close keeps the
+		// connection.
+		time.Sleep(60 * time.Millisecond)
+		_, _ = io.WriteString(w, "\n")
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			dials.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	const n = 3
+	for range n {
+		if err := GetStream(t.Context(), srv.Client(), nil, srv.URL+"/missing", func(io.Reader) error { return nil }); err == nil {
+			t.Fatal("404: want error")
+		}
+	}
+	for range n {
+		if err := GetStream(t.Context(), srv.Client(), nil, srv.URL, func(r io.Reader) error {
+			return DecodeArray(r, func(struct{}) {})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := dials.Load(); got != 1 {
+		t.Errorf("%d connections for %d requests, want 1", got, 2*n)
 	}
 }
