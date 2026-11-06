@@ -13,11 +13,15 @@ import (
 const (
 	chartFile = "Chart.yaml"
 	lockFile  = "Chart.lock"
+	// Helm v2 (apiVersion v1) charts declare their dependencies in requirements.yaml, locked
+	// by requirements.lock.
+	requirementsFile = "requirements.yaml"
+	requirementsLock = "requirements.lock"
 )
 
 // chartDeps extracts Chart.yaml `dependencies[]` with RefSpan on `version`; the name and the
 // repository of a chart from a repository URL are its NameParts.
-func chartDeps(file string, src []byte) ([]dep.Dep, error) {
+func chartDeps(file, depType string, src []byte) ([]dep.Dep, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(src, &doc); err != nil {
 		return nil, err
@@ -36,7 +40,7 @@ func chartDeps(file string, src []byte) ([]dep.Dep, error) {
 		if name == nil || name.Value == "" {
 			continue
 		}
-		d := newDep(file, TypeChart)
+		d := newDep(file, depType)
 		d.Name, d.Line = name.Value, name.Line
 		repoNode := yamlspan.Str(yamlspan.Get(r, "repository"))
 		if d.Source, d.Skip = chartRepository(yamlspan.Value(repoNode)); d.Skip == "" {

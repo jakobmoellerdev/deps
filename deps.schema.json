@@ -404,6 +404,7 @@
                 "items": {
                   "enum": [
                     "chart",
+                    "requirements",
                     "helmfile",
                     "k0s",
                     "flux",
@@ -1720,6 +1721,7 @@
               "engines",
               "volta",
               "chart",
+              "requirements",
               "helmfile",
               "k0s",
               "flux",
@@ -1739,7 +1741,6 @@
               "workspace.dependencies",
               "patch",
               "replace",
-              "requirements",
               "project.dependencies",
               "project.optional-dependencies",
               "dependency-groups",

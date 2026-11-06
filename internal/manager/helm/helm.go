@@ -1,5 +1,5 @@
-// Package helm updates Helm chart versions: Chart.yaml dependencies (and the matching
-// Chart.lock entries and digest, see Locker), helmfile releases, and the chart references of
+// Package helm updates Helm chart versions: Chart.yaml and Helm v2 requirements.yaml
+// dependencies (and the matching Chart.lock / requirements.lock entries and digest, see Locker), helmfile releases, and the chart references of
 // Kubernetes custom resources (k0s Chart, Flux HelmRelease, Argo CD Application). Charts are
 // looked up with the helm datasource in classic chart repositories (index.yaml) and OCI
 // registries.
@@ -26,12 +26,13 @@ const (
 
 // Dep types.
 const (
-	TypeChart    = "chart"
-	TypeHelmfile = "helmfile"
-	TypeK0s      = "k0s"
-	TypeFlux     = "flux"
-	TypeArgoCD   = "argocd"
-	TypeSveltos  = "sveltos"
+	TypeChart        = "chart"
+	TypeRequirements = "requirements"
+	TypeHelmfile     = "helmfile"
+	TypeK0s          = "k0s"
+	TypeFlux         = "flux"
+	TypeArgoCD       = "argocd"
+	TypeSveltos      = "sveltos"
 )
 
 var helmfileRe = regexp.MustCompile(`(^|/)(helmfile\.ya?ml|helmfile\.d/[^/]+\.ya?ml)(\.gotmpl)?$`)
@@ -53,6 +54,12 @@ func (*helmManager) Match(p string) bool {
 
 func isChart(p string) bool { return path.Base(p) == chartFile }
 
+// isRequirements reports whether the slash path is a Helm v2 requirements.y(a)ml.
+func isRequirements(p string) bool {
+	b := path.Base(p)
+	return b == requirementsFile || b == "requirements.yml"
+}
+
 // isHelmfile reports whether the slash path is a helmfile. The name check skips the regexp
 // for the paths that cannot match.
 func isHelmfile(p string) bool { return strings.Contains(p, "helmfile") && helmfileRe.MatchString(p) }
@@ -61,7 +68,9 @@ func isHelmfile(p string) bool { return strings.Contains(p, "helmfile") && helmf
 func (m *helmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	switch {
 	case isChart(file):
-		return chartDeps(file, src)
+		return chartDeps(file, TypeChart, src)
+	case isRequirements(file):
+		return chartDeps(file, TypeRequirements, src)
 	case isHelmfile(file):
 		return helmfileDeps(file, src)
 	}

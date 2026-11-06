@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
@@ -18,8 +19,9 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
-// Locker is the helm post-processor (engine.PostProcessor): after deps patched a Chart.yaml it
-// brings the sibling Chart.lock in line, in process and without network access. Every exact
+// Locker is the helm post-processor (engine.PostProcessor): after deps patched a Chart.yaml
+// (or a Helm v2 requirements.yaml) it brings the sibling Chart.lock (requirements.lock) in
+// line, in process and without network access. Every exact
 // dependency version whose locked version differs is written into the lock (matched by
 // position and name, keeping the lock's "v" prefix style). A dependency a replacement renamed
 // or moved to another repository (its old name still locked at its position) gets its new name
@@ -28,33 +30,82 @@ import (
 // kept, so the same update always yields the same bytes. Lock bytes are edited in place.
 type Locker struct{}
 
-// Scope returns the chart directory of a Chart.yaml; other helm files (helmfiles, resources)
-// have no derived files.
+// lockKind pairs a dependency manifest with its lock file. v2 marks requirements.lock, whose
+// digest is Helm 2's (requirements only) or Helm 3's (requirements and lock), see digests.
+type lockKind struct {
+	manifest, lock string
+	v2             bool
+}
+
+var lockKinds = [...]lockKind{{chartFile, lockFile, false}, {requirementsFile, requirementsLock, true}}
+
+// Scope returns the chart directory of a Chart.yaml or requirements.yaml; other helm files
+// (helmfiles, resources) have no derived files.
 func (Locker) Scope(_ context.Context, _, manifest string) (string, bool) {
-	if !isChart(manifest) {
+	if b := path.Base(manifest); b != chartFile && b != requirementsFile {
 		return "", false
 	}
 	return path.Dir(manifest), true
 }
 
-// Siblings lists the lock file.
-func (Locker) Siblings() []string { return []string{lockFile} }
+// Siblings lists the lock files.
+func (Locker) Siblings() []string { return []string{lockFile, requirementsLock} }
 
 // ScopeInputs implements engine.ScopeInputLister: Process reads nothing of the chart
-// directory but Chart.yaml, which it patches, and the Chart.lock sibling.
-func (Locker) ScopeInputs(_ context.Context, _, dir string, _ []string) (paths, digests []string, err error) {
-	return []string{path.Join(dir, chartFile)}, nil, nil
+// directory but the manifests it patches (Chart.yaml, requirements.yaml) and the lock siblings.
+func (Locker) ScopeInputs(_ context.Context, _, dir string, manifests []string) (paths, digests []string, err error) {
+	for _, m := range manifests {
+		paths = append(paths, path.Join(dir, m))
+	}
+	return paths, nil, nil
 }
 
-// Process updates Chart.lock from the patched Chart.yaml in manifests; without a lock it does
-// nothing. The old digest must be reproducible from the unpatched Chart.yaml in dir, otherwise
-// the lock is out of sync (or deps' digest computation would be wrong) and the update fails.
+// Process updates Chart.lock and requirements.lock from the patched Chart.yaml and
+// requirements.yaml in manifests; without a lock it does nothing. The old digest must be
+// reproducible from the unpatched manifest in dir, otherwise the lock is out of sync (or deps'
+// digest computation would be wrong) and the update fails.
 func (Locker) Process(_ context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
-	lockSrc, ok := files[lockFile]
-	newChart, patched := manifests[chartFile]
-	if !ok || !patched {
-		return nil, nil
+	var out map[string][]byte
+	for _, k := range lockKinds {
+		lockSrc, ok := files[k.lock]
+		newChart, patched := manifests[k.manifest]
+		if !ok || !patched {
+			continue
+		}
+		b, err := k.process(dir, newChart, lockSrc)
+		if err != nil {
+			return nil, err
+		}
+		if b != nil {
+			if out == nil {
+				out = map[string][]byte{}
+			}
+			out[k.lock] = b
+		}
 	}
+	return out, nil
+}
+
+// digests returns the candidate digests Helm writes for reqs and lock: Helm 3's hashReq, and
+// for requirements.lock also Helm 2's hash over the requirements alone, with the repository
+// aliases unresolved and resolved.
+func (k lockKind) digests(reqs, lock []*chartDependency) ([]string, error) {
+	resolved := resolveAliases(reqs, lock)
+	sum, err := hashReq(resolved, lock)
+	if err != nil || !k.v2 {
+		return []string{sum}, err
+	}
+	raw, err := hashReqV2(reqs)
+	if err != nil {
+		return nil, err
+	}
+	res, err := hashReqV2(resolved)
+	return []string{sum, raw, res}, err
+}
+
+// process returns the updated lock for the patched manifest newChart, nil when unchanged.
+func (k lockKind) process(dir string, newChart, lockSrc []byte) ([]byte, error) {
+	chartFile, lockFile := k.manifest, k.lock
 	oldChart, err := os.ReadFile(filepath.Join(dir, chartFile))
 	if err != nil {
 		return nil, err
@@ -71,10 +122,13 @@ func (Locker) Process(_ context.Context, dir string, manifests, files map[string
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", lockFile, err)
 	}
-	if sum, err := hashReq(resolveAliases(oldReqs, lock.deps), lock.deps); err != nil {
+	sums, err := k.digests(oldReqs, lock.deps)
+	if err != nil {
 		return nil, err
-	} else if sum != lock.digest.Value {
-		return nil, fmt.Errorf("%s is out of sync with %s (digest %s, expected %s); run helm dependency update", lockFile, chartFile, lock.digest.Value, sum)
+	}
+	algo := slices.Index(sums, lock.digest.Value)
+	if algo < 0 {
+		return nil, fmt.Errorf("%s is out of sync with %s (digest %s, expected %s); run helm dependency update", lockFile, chartFile, lock.digest.Value, sums[0])
 	}
 
 	newDeps := make([]*chartDependency, len(lock.deps))
@@ -122,11 +176,10 @@ func (Locker) Process(_ context.Context, dir string, manifests, files map[string
 			nd.Version = v
 		}
 	}
-	sum, err := hashReq(resolveAliases(newReqs, newDeps), newDeps)
-	if err != nil {
+	if sums, err = k.digests(newReqs, newDeps); err != nil {
 		return nil, err
 	}
-	if sum != lock.digest.Value {
+	if sum := sums[algo]; sum != lock.digest.Value {
 		off := yamlspan.Locate(lockSrc, lines, lock.digest)
 		if off < 0 {
 			return nil, fmt.Errorf("%s: cannot locate the digest", lockFile)
@@ -140,7 +193,7 @@ func (Locker) Process(_ context.Context, dir string, manifests, files map[string
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", lockFile, err)
 	}
-	return map[string][]byte{lockFile: out}, nil
+	return out, nil
 }
 
 // chartDependency mirrors Helm's chart.Dependency field for field, with its JSON names and
@@ -247,6 +300,19 @@ func isAlias(repo string) bool {
 // only omits empty JSON) and change the digest helm checks.
 func hashReq(req, lock []*chartDependency) (string, error) {
 	data, err := json.Marshal([2][]*chartDependency{req, lock})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// hashReqV2 is Helm 2's resolver.HashReq: "sha256:" + hex sha256 of the JSON of the
+// requirements ({"dependencies": req}) alone.
+func hashReqV2(req []*chartDependency) (string, error) {
+	data, err := json.Marshal(struct {
+		Dependencies []*chartDependency `json:"dependencies"`
+	}{req})
 	if err != nil {
 		return "", err
 	}

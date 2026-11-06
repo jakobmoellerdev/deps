@@ -415,7 +415,7 @@ func TestLoadRules(t *testing.T) {
     ignore: true
   - # enabledManagers
     managers: [helm]
-    depTypes: [helmfile, k0s, flux, argocd]
+    depTypes: [requirements, helmfile, k0s, flux, argocd]
     ignore: true
 ` + strings.Join(func() []string {
 				var out []string

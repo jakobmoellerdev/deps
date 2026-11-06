@@ -159,7 +159,7 @@ func TestLockerScope(t *testing.T) {
 	if _, ok := l.Scope(t.Context(), "/root", "helmfile.yaml"); ok {
 		t.Error("helmfile has a scope")
 	}
-	if s := l.Siblings(); len(s) != 1 || s[0] != lockFile {
+	if s := l.Siblings(); len(s) != 2 || s[0] != lockFile || s[1] != requirementsLock {
 		t.Errorf("Siblings = %v", s)
 	}
 	if p, d, err := l.ScopeInputs(t.Context(), "/root", "charts/app", []string{"Chart.yaml"}); err != nil || len(p) != 1 || p[0] != "charts/app/Chart.yaml" || d != nil {

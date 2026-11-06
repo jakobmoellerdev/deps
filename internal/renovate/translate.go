@@ -247,19 +247,20 @@ type expansion struct {
 // managerMap maps the Renovate managers deps implements.
 var managerMap = func() map[string][]expansion {
 	m := map[string][]expansion{
-		"github-actions":   {{"github-actions", nil}, {"docker", []string{"workflow", "action"}}},
-		"dockerfile":       {{"docker", []string{"dockerfile"}}},
-		"docker-compose":   {{"docker", []string{"compose"}}},
-		"kubernetes":       {{"docker", []string{"kubernetes"}}},
-		"helm-values":      {{"docker", []string{"helm"}}},
-		"helmv3":           {{"helm", []string{"chart"}}},
-		"helmfile":         {{"helm", []string{"helmfile"}}},
-		"flux":             {{"helm", []string{"flux"}}},
-		"argocd":           {{"helm", []string{"argocd"}}},
-		"gitlabci-include": {{"gitlabci", []string{"include"}}},
-		"regex":            {{"custom", nil}},
-		"custom.regex":     {{"custom", nil}},
-		"custom.jsonata":   {{"custom", nil}},
+		"github-actions":    {{"github-actions", nil}, {"docker", []string{"workflow", "action"}}},
+		"dockerfile":        {{"docker", []string{"dockerfile"}}},
+		"docker-compose":    {{"docker", []string{"compose"}}},
+		"kubernetes":        {{"docker", []string{"kubernetes"}}},
+		"helm-values":       {{"docker", []string{"helm"}}},
+		"helmv3":            {{"helm", []string{"chart"}}},
+		"helmfile":          {{"helm", []string{"helmfile"}}},
+		"helm-requirements": {{"helm", []string{"requirements"}}},
+		"flux":              {{"helm", []string{"flux"}}},
+		"argocd":            {{"helm", []string{"argocd"}}},
+		"gitlabci-include":  {{"gitlabci", []string{"include"}}},
+		"regex":             {{"custom", nil}},
+		"custom.regex":      {{"custom", nil}},
+		"custom.jsonata":    {{"custom", nil}},
 	}
 	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 poetry pipenv terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker droneci circleci azure-pipelines composer julia bazel-module bazelisk nuget") {
 		m[n] = []expansion{{n, nil}}
@@ -270,7 +271,7 @@ var managerMap = func() map[string][]expansion {
 // depTypeUniverse lists the dep types of deps managers that several Renovate managers share.
 var depTypeUniverse = map[string][]string{
 	"docker":   {"dockerfile", "compose", "workflow", "action", "kubernetes", "helm"},
-	"helm":     {"chart", "helmfile", "k0s", "flux", "argocd"},
+	"helm":     {"chart", "requirements", "helmfile", "k0s", "flux", "argocd"},
 	"gitlabci": {"image", "service", "include", "component"},
 }
 
@@ -280,8 +281,8 @@ var categories = map[string][]string{
 	"ci":         {"github-actions", "gitlabci", "gitlabci-include", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines"},
 	"golang":     {"gomod"},
 	"docker":     {"dockerfile", "docker-compose", "devcontainer"},
-	"kubernetes": {"kubernetes", "helm-values", "helmv3", "helmfile", "flux", "argocd", "kustomize"},
-	"helm":       {"helm-values", "helmv3", "helmfile"},
+	"kubernetes": {"kubernetes", "helm-requirements", "helm-values", "helmv3", "helmfile", "flux", "argocd", "kustomize"},
+	"helm":       {"helm-requirements", "helm-values", "helmv3", "helmfile"},
 	"cd":         {"helmfile", "flux", "argocd"},
 	"js":         {"npm", "nvm", "nodenv"},
 	"node":       {"nvm", "nodenv"},

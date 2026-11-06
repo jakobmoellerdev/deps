@@ -224,7 +224,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 | <img src="https://cdn.simpleicons.org/docker" width="20" alt=""> | **Containers** | Dockerfiles, Compose, workflow containers, Kubernetes manifests, Helm values | |
 | 📦 | **Dev Containers** | `devcontainer.json` images, features and feature versions | |
 | <img src="https://cdn.simpleicons.org/kubernetes" width="20" alt=""> | **Kubernetes** | Kustomize images, charts and remote refs | |
-| <img src="https://cdn.simpleicons.org/helm/_/white" width="20" alt=""> | **Helm** | `Chart.yaml`, helmfiles, chart custom resources (classic repos and OCI) | `Chart.lock` |
+| <img src="https://cdn.simpleicons.org/helm/_/white" width="20" alt=""> | **Helm** | `Chart.yaml`, Helm v2 `requirements.yaml`, helmfiles, chart custom resources (classic repos and OCI) | `Chart.lock`, `requirements.lock` |
 | <img src="https://cdn.simpleicons.org/nodedotjs" width="20" alt=""> | **Node.js**<br>npm, pnpm, Yarn, Bun | `package.json` (deps, `packageManager`, `engines`, `volta`), `.nvmrc`, `.node-version` | `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` |
 | <img src="https://cdn.simpleicons.org/python" width="20" alt=""> | **Python**<br>pip, pip-tools, uv, Poetry, pdm, Pipenv, conda | `requirements*.txt` and pip-compile inputs, `pyproject.toml` (PEP 621/735), `Pipfile`, conda `environment.yml` (with its `pip:` list) | `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, pip-compile outputs |
 | <img src="https://cdn.simpleicons.org/ruby" width="20" alt=""> | **Ruby**<br>Bundler | `Gemfile`/`gems.rb`, `*.gemspec`, Ruby version (`ruby` directive, `.ruby-version`, asdf/mise) | `Gemfile.lock`/`gems.locked` (incl. `RUBY VERSION`) |

@@ -405,17 +405,19 @@ With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the lo
 
 ## helm
 
-Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfiles and chart custom resources, from classic chart repositories and OCI registries.
+Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), Helm v2 requirements.yaml (with requirements.lock), helmfiles and chart custom resources, from classic chart repositories and OCI registries.
 
 **Files:**
 
 - `Chart.yaml` (DepType `chart`)
+- `requirements.y(a)ml` of Helm v2 (`apiVersion: v1`) charts (DepType `requirements`); files without `dependencies` (Ansible Galaxy) yield nothing
 - `helmfile.y(a)ml`, `helmfile.d/*.y(a)ml`, each optionally `.gotmpl` (DepType `helmfile`)
 - other `*.y(a)ml` containing the API group of a k0s, Flux, Argo CD or Sveltos resource below, parsed document by document (DepTypes `k0s`, `flux`, `argocd`, `sveltos`)
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
 | `chart` | `dependencies[].version` with `name` and `repository` | `helm` | `semver` | updated |
+| `requirements` | `dependencies[].version` with `name` and `repository`, as in Chart.yaml | `helm` | `semver` | updated |
 | `helmfile` | `releases[].version` with `chart: <repo>/<name>` (resolved through `repositories[]`, `oci: true` → `oci://`) or `chart: oci://host/path/name` | `helm` | `semver` | updated |
 | `k0s` | k0s `Chart` (`helm.k0sproject.io`) `spec.chartName` + `spec.version`, and ClusterConfig (`k0s.k0sproject.io`, also embedded in a k0sctl `Cluster` as `spec.k0s.config`) `spec.extensions.helm.charts[].chartname` + `version`; the repository is `spec.repository.url`, the `<alias>` of `<alias>/<chart>` from a ClusterConfig's `spec.extensions.helm.repositories[]` in any file, or `oci://host/path/<chart>` | `helm` | `semver` | updated |
 | `flux` | `HelmRelease` (`helm.toolkit.fluxcd.io/v2*`) `spec.chart.spec.chart` + `version` from its `sourceRef` `HelmRepository` (`source.toolkit.fluxcd.io`, any file; `spec.type: oci` → `oci://`), and the `OCIRepository` chart (`spec.url` + `spec.ref.tag`) a `spec.chartRef` names or whose `spec.layerSelector.mediaType` is the Helm chart type | `helm` | `semver` | updated |
@@ -429,8 +431,8 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 | `version range` | anything but a full `MAJOR.MINOR.PATCH[-pre][+build]` (optionally `v`-prefixed): `~1.2.0`, `^1`, `>=1.0.0`, `1.2.x`, `1.2` |
 | `no version` | the version is missing or empty |
 | `template value` | the version (or a resource's chart name, `repoURL` or `repositoryURL`) contains `{{` |
-| `local chart` | Chart.yaml: empty or `file://` repository; helmfile: a chart path (`./x`, `../x`, `/x`, no `/`); k0s: a chart path (`/x`, `./x`, `*.tgz`) |
-| `repository alias` | Chart.yaml: `@name` or `alias:name` repositories (resolved by the user's Helm repository config) |
+| `local chart` | Chart.yaml, requirements.yaml: empty or `file://` repository; helmfile: a chart path (`./x`, `../x`, `/x`, no `/`); k0s: a chart path (`/x`, `./x`, `*.tgz`) |
+| `repository alias` | Chart.yaml, requirements.yaml: `@name` or `alias:name` repositories (resolved by the user's Helm repository config) |
 | `unknown chart repository <repo>` | Chart.yaml: a repository that is no URL; helmfile: a `<repo>/` prefix not in `repositories[]`; k0s: an alias no scanned ClusterConfig declares |
 | `ambiguous chart repository <alias>` | k0s: ClusterConfigs in other files declare the alias with different URLs (the chart's own file declares none) |
 | `invalid chart reference` | helmfile and k0s: `oci://` without a path, or `<repo>/a/b`; k0s: a chart name without `/` |
@@ -447,11 +449,12 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), helmfi
 
 `semver`: the `v` prefix style of the current value is kept, prereleases are only proposed from a prerelease. Only exact versions are updated; Helm treats everything else as a constraint.
 
-**Chart.lock.**
+**Chart.lock and requirements.lock.**
 
 - After Chart.yaml is patched (`plan`, `apply`, `run`), the sibling `Chart.lock` gets the new version of every exact dependency whose locked version differs, matched by position and name.
 - `digest` is recomputed as Helm does (`sha256` over the JSON of the Chart.yaml and Chart.lock dependencies), so `helm dependency build` accepts the lock. Repository aliases take the URL locked for them.
 - The old digest is verified first; when deps cannot reproduce it (a lock out of sync), the chart's update fails with an error instead of writing a lock Helm would reject.
+- A Helm v2 `requirements.yaml` is handled the same way with its sibling `requirements.lock`; its digest is either Helm 2's (`sha256` over the JSON of the requirements alone, aliases as written or resolved) or Helm 3's (as for Chart.lock), whichever reproduces the old digest, and the new digest uses the same.
 - `generated` is kept, so unchanged updates produce identical commits.
 
 **Kubernetes resources.**
