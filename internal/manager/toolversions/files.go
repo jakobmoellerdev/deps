@@ -8,7 +8,8 @@ import (
 
 // extractFirst returns the version of a single-version file (`.nvmrc`, `.node-version`,
 // `.ruby-version`, `.python-version`) as a dep of t: the first token of the first line that is
-// neither blank nor a `#` comment.
+// neither blank nor a `#` comment. An operator-led token followed by another (`>=20 <22`) is
+// a compound range, kept whole so it is skipped.
 func extractFirst(mgr, depType string, t tool, file string, src []byte) []dep.Dep {
 	var deps []dep.Dep
 	eachLine(src, func(l []byte, n, off int) bool {
@@ -16,7 +17,11 @@ func extractFirst(mgr, depType string, t tool, file string, src []byte) []dep.De
 		if k == 0 {
 			return true
 		}
-		deps = append(deps, newDep(mgr, depType, file, n, t, string(l[f[0][0]:f[0][1]]), off+f[0][0]))
+		end := f[0][1]
+		if k > 1 && strings.IndexByte("<>=^~", l[f[0][0]]) >= 0 {
+			end = f[1][1]
+		}
+		deps = append(deps, newDep(mgr, depType, file, n, t, string(l[f[0][0]:end]), off+f[0][0]))
 		return false
 	})
 	return deps

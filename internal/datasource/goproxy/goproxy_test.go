@@ -176,6 +176,62 @@ func TestDatasource(t *testing.T) {
 	}
 }
 
+// A package path outside go.mod (a mise `go:` tool) resolves to the longest prefix with
+// versions; a go.mod requirement is looked up as written; release times use the module.
+func TestReleasesPackagePath(t *testing.T) {
+	var lists []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/p/github.com/golangci/golangci-lint/v2/@v/list":
+			lists = append(lists, r.URL.Path)
+			io.WriteString(w, "v2.5.0\nv2.6.0\n")
+		case "/p/github.com/golangci/golangci-lint/v2/@v/v2.6.0.info":
+			io.WriteString(w, `{"Version":"v2.6.0","Time":"2026-10-30T12:00:00Z"}`)
+		case "/p/example.com/empty/@v/list":
+			lists = append(lists, r.URL.Path)
+		default:
+			lists = append(lists, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	s := NewForProxy(srv.Client(), srv.URL+"/p", 0)
+	d := dep.Dep{Manager: "mise", Name: "github.com/golangci/golangci-lint/v2/cmd/golangci-lint"}
+	for range 2 { // deduped per name
+		rels, err := s.Releases(t.Context(), d, ".")
+		if err != nil || !reflect.DeepEqual(rels, []datasource.Release{{Version: "v2.5.0"}, {Version: "v2.6.0"}}) {
+			t.Fatalf("Releases = %+v, %v", rels, err)
+		}
+	}
+	want := []string{
+		"/p/github.com/golangci/golangci-lint/v2/cmd/golangci-lint/@v/list",
+		"/p/github.com/golangci/golangci-lint/v2/cmd/@v/list",
+		"/p/github.com/golangci/golangci-lint/v2/@v/list",
+	}
+	if !reflect.DeepEqual(lists, want) {
+		t.Errorf("lists = %q, want %q", lists, want)
+	}
+	if got, err := s.ReleaseTime(t.Context(), d, "v2.6.0"); err != nil || !got.Equal(time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)) {
+		t.Errorf("ReleaseTime = %v, %v", got, err)
+	}
+
+	lists = nil
+	if _, err := s.Releases(t.Context(), dep.Dep{Manager: gomodManager, Name: "example.com/a/b"}, "."); err == nil {
+		t.Error("gomod requirement without versions: no error")
+	}
+	if want := []string{"/p/example.com/a/b/@v/list"}; !reflect.DeepEqual(lists, want) {
+		t.Errorf("gomod lists = %q, want %q", lists, want)
+	}
+	lists = nil
+	rels, err := s.Releases(t.Context(), dep.Dep{Manager: "mise", Name: "example.com/empty"}, ".")
+	if err != nil || len(rels) != 0 {
+		t.Errorf("no prefix lists versions: Releases = %+v, %v", rels, err)
+	}
+	if want := []string{"/p/example.com/empty/@v/list"}; !reflect.DeepEqual(lists, want) {
+		t.Errorf("empty lists = %q, want %q", lists, want)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

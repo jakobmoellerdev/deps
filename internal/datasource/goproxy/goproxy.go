@@ -38,12 +38,13 @@ type Source struct {
 	latest       func(ctx context.Context, dir, path string) (gotool.Module, error)
 	probeTimeout time.Duration // per proxy request of a major path probe; 0 = probeTimeout
 
-	goEnv  datasource.Once[gotool.GoEnv]
-	times  datasource.Memo[string, time.Time]           // module@version
-	heads  datasource.Memo[string, datasource.Revision] // module path
-	paths  datasource.Memo[string, string]              // module@version: declared module path
-	cache  datasource.Memo[string, *entry]              // module path
-	probes datasource.Memo[string, []string]            // probed major module path: versions, nil = missing
+	goEnv   datasource.Once[gotool.GoEnv]
+	times   datasource.Memo[string, time.Time]           // module@version
+	heads   datasource.Memo[string, datasource.Revision] // module path
+	paths   datasource.Memo[string, string]              // module@version: declared module path
+	cache   datasource.Memo[string, *entry]              // module path
+	probes  datasource.Memo[string, []string]            // probed major module path: versions, nil = missing
+	modules datasource.Memo[string, string]              // package path outside go.mod: its module path
 
 	mu   sync.Mutex
 	dirs map[string]string // module path -> directory of its first lookup, for `go list`
@@ -73,10 +74,50 @@ func (s *Source) Versions(ctx context.Context, modPath, dir string) ([]string, e
 }
 
 // Releases implements datasource.Datasource for module d.Name; releases carry no digest.
-// The slice is shared between callers and must not be modified.
+// The slice is shared between callers and must not be modified. A dep outside go.mod (a mise
+// `go:` tool, a custom manager) may name a package, as `go install` does: it resolves to
+// the longest prefix of d.Name that lists versions (see module).
 func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
-	e, err := s.get(ctx, d.Name, dir)
+	e, err := s.get(ctx, s.module(ctx, d, dir), dir)
 	return e.rels, err
+}
+
+// gomodManager is the manager whose requirements are module paths by construction.
+const gomodManager = "gomod"
+
+// module returns the module path that provides d: d.Name for go.mod requirements, else the
+// longest prefix of d.Name (ending before a "/", keeping at least one "/") whose lookup lists
+// versions, as `go install <package>@<version>` and mise's go backend resolve a package
+// (`github.com/golangci/golangci-lint/v2/cmd/golangci-lint` → `…/golangci-lint/v2`). When no
+// prefix lists any, d.Name's own lookup decides. Deduped per name; dir is the directory of
+// the first lookup.
+func (s *Source) module(ctx context.Context, d dep.Dep, dir string) string {
+	if d.Manager == gomodManager {
+		return d.Name
+	}
+	mod, _ := s.modules.Do(ctx, d.Name, func() (string, error) {
+		for p := d.Name; strings.Contains(p, "/"); p = p[:strings.LastIndexByte(p, '/')] {
+			if e, err := s.get(ctx, p, dir); err == nil && len(e.versions) > 0 {
+				if p != d.Name {
+					slog.DebugContext(ctx, "package resolved to module", "package", d.Name, "module", p)
+				}
+				return p, nil
+			}
+		}
+		return d.Name, nil
+	})
+	return mod
+}
+
+// resolved returns the module an earlier Releases resolved d's package path to (see module),
+// else d.Name; it looks nothing up.
+func (s *Source) resolved(d dep.Dep) string {
+	if d.Manager != gomodManager {
+		if mod, ok := s.modules.Peek(d.Name); ok {
+			return mod
+		}
+	}
+	return d.Name
 }
 
 // Digest always fails: Go module versions are not digest-pinned.
@@ -277,12 +318,13 @@ func (s *Source) listed(ctx context.Context, modPath string) ([]string, bool) {
 // `go list -m -json` for direct and GONOPROXY/GOPRIVATE modules (run in the directory of the
 // module's earlier Releases lookup). Results are deduped per module@version.
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
+	mod := s.resolved(d)
 	s.mu.Lock()
-	dir := cmp.Or(s.dirs[d.Name], ".")
+	dir := cmp.Or(s.dirs[mod], ".")
 	s.mu.Unlock()
-	return s.times.Do(ctx, d.Name+"@"+version, func() (time.Time, error) {
-		t, err := s.releaseTime(ctx, d.Name, version, dir)
-		slog.DebugContext(ctx, "module release time", "module", d.Name, "version", version, "time", t, "err", err)
+	return s.times.Do(ctx, mod+"@"+version, func() (time.Time, error) {
+		t, err := s.releaseTime(ctx, mod, version, dir)
+		slog.DebugContext(ctx, "module release time", "module", mod, "version", version, "time", t, "err", err)
 		return t, err
 	})
 }

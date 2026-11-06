@@ -35,6 +35,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
@@ -1201,6 +1202,9 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 			prefixed = &extracting{ds: r.ds, x: x, fallback: true}
 			r.ds = wrapExtract(prefixed)
 		}
+	}
+	if toolversions.Partial(d) {
+		r.ds = withLines(r.ds)
 	}
 	ups, err := r.updates(t, scheme, vulns)
 	if err != nil {

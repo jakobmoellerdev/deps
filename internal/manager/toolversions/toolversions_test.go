@@ -139,8 +139,14 @@ func TestNodeFiles(t *testing.T) {
 		{"node alias", "node\n", want{"node", dsNode, "", "node", "non-version value", 1}, "", "node\n"},
 		{"stable", "stable\n", want{"node", dsNode, "", "stable", "non-version value", 1}, "", "stable\n"},
 		{"system", "system\n", want{"node", dsNode, "", "system", "non-version value", 1}, "", "system\n"},
-		{"range", ">=20\n", want{"node", dsNode, "", ">=20", "unsupported range", 1}, "", ">=20\n"},
-		{"x range", "20.x\n", want{"node", dsNode, "", "20.x", "unsupported range", 1}, "", "20.x\n"},
+		{"range", ">=20\n", want{"node", dsNode, "tag", "20", "", 1}, "26", ">=26\n"},
+		{"caret full", "^20.11.1\n", want{"node", dsNode, "semver", "20.11.1", "", 1}, "26.1.0", "^26.1.0\n"},
+		{"tilde minor", "~20.11\n", want{"node", dsNode, "tag", "20.11", "", 1}, "20.12", "~20.12\n"},
+		{"x range", "20.x\n", want{"node", dsNode, "tag", "20", "", 1}, "26", "26.x\n"},
+		{"x minor range", "v20.11.x\n", want{"node", dsNode, "tag", "20.11", "", 1}, "20.19", "v20.19.x\n"},
+		{"star range", "20.*\n", want{"node", dsNode, "tag", "20", "", 1}, "26", "26.*\n"},
+		{"compound range", ">=20 <22\n", want{"node", dsNode, "", ">=20 <22", "unsupported range", 1}, "", ">=20 <22\n"},
+		{"or range", "20||22\n", want{"node", dsNode, "", "20||22", "unsupported range", 1}, "", "20||22\n"},
 	} {
 		for _, m := range []manager.Manager{NewNvm(), NewNodenv()} {
 			t.Run(m.Name()+"/"+c.name, func(t *testing.T) {
@@ -290,8 +296,8 @@ func TestClassify(t *testing.T) {
 		{goTool, "1.27rc1", "", "", "unsupported range", 0},
 		{gh, "3.16.0", "3.16.0", "semver", "", 0},
 		{gh, "v3.16.0", "v3.16.0", "semver", "", 0},
-		{gh, "3.16", "", "", "partial version", 0},
-		{gh, "v3", "", "", "partial version", 0},
+		{gh, "3.16", "3.16", "tag", "", 0},
+		{gh, "v3", "3", "tag", "", 1},
 		{gh, "latest", "", "", "non-version value", 0},
 		{gh, "system", "", "", "non-version value", 0},
 		{gh, "latest:3.16", "", "", "non-version value", 0},
@@ -301,7 +307,27 @@ func TestClassify(t *testing.T) {
 		{gh, "prefix:3.16", "", "", "unsupported range", 0},
 		{gh, "~3.16.0", "", "", "unsupported range", 0},
 		{npmTool("pnpm"), "9.1.0", "9.1.0", "semver", "", 0},
-		{npmTool("pnpm"), "9", "", "", "partial version", 0},
+		{npmTool("pnpm"), "9", "9", "tag", "", 0},
+		{pypiTool("poetry"), "2.1.3", "2.1.3", "pep440", "", 0},
+		{pypiTool("poetry"), "2.1", "2.1", "pep440", "", 0},
+		{pypiTool("poetry"), "2.2.0rc1", "2.2.0rc1", "pep440", "", 0},
+		{pypiTool("poetry"), "2", "2", "tag", "", 0},
+		{pypiTool("poetry"), "~=2.1", "", "", "unsupported range", 0},
+		{tool{datasource: dsCrate, name: "ripgrep"}, "14.1.1", "14.1.1", "semver", "", 0},
+		{tool{datasource: dsCrate, name: "ripgrep"}, "14", "14", "tag", "", 0},
+		{tool{datasource: dsGoMod, name: "golang.org/x/tools/gopls", bare: true}, "v0.20.0", "0.20.0", "semver", "", 1},
+		{tool{datasource: dsGoMod, name: "golang.org/x/tools/gopls", bare: true}, "0.20.0", "0.20.0", "semver", "", 0},
+		{tool{datasource: dsGitTags, refPrefix: "tag:"}, "tag:v0.3.1", "v0.3.1", "semver", "", 4},
+		{tool{datasource: dsGitTags, refPrefix: "tag:"}, "branch:main", "", "", "git ref", 0},
+		{tool{datasource: dsGitTags, refPrefix: "tag:"}, "rev:abc123", "", "", "git ref", 0},
+		{tool{datasource: dsGitTags, refPrefix: "tag:"}, "0.3.1", "", "", "unsupported range", 0},
+		{tools["flutter"], "3.24.5-stable", "3.24.5", "semver", "", 0},
+		{tools["flutter"], "3.27.0-0.1.pre-beta", "3.27.0-0.1.pre", "semver", "", 0},
+		{tools["dotnet-core"], "8.0.404", "8.0.404", "semver", "", 0},
+		{nodeTool, ">=20", "20", "tag", "", 2},
+		{nodeTool, "^20.11.1", "20.11.1", "semver", "", 1},
+		{nodeTool, "v20.x", "20", "tag", "", 1},
+		{nodeTool, "lts/iron", "", "", "non-version value", 0},
 		{gradleTool, "8.11", "8.11", "maven", "", 0},
 		{gradleTool, "8.11-rc-1", "8.11-rc-1", "maven", "", 0},
 		{mavenTool, "3.9.9", "3.9.9", "maven", "", 0},
@@ -349,12 +375,12 @@ func TestAsdf(t *testing.T) {
 		{"derailed/k9s", dsGitHub, "", "path:/opt/k9s", "local path", 12},
 		{"kubernetes-sigs/kind", dsGitHub, "", "latest", "non-version value", 13},
 		{"node", dsNode, "tag", "20", "", 14},
-		{"fluxcd/flux2", dsGitHub, "", "2.6", "partial version", 15},
+		{"fluxcd/flux2", dsGitHub, "tag", "2.6", "", 15},
 		{"golangci/golangci-lint", dsGitHub, "semver", "2.5.0", "", 18},
 	}
 	news := map[string]string{
 		"20.11.1": "20.12.0", "1.27": "1.28", "v1.13.4": "v1.14.0", "3.16.0": "3.17.1",
-		"v1.34.1": "v1.35.0", "20": "22", "2.5.0": "2.6.0", "3.13.1": "3.14.10",
+		"v1.34.1": "v1.35.0", "20": "22", "2.5.0": "2.6.0", "3.13.1": "3.14.10", "2.6": "2.7",
 	}
 	got := check(t, NewAsdf(), ".tool-versions", in, wants, news)
 	want := "# runtime versions\n" +
@@ -371,7 +397,7 @@ func TestAsdf(t *testing.T) {
 		"k9s path:/opt/k9s\n" +
 		"kind latest\n" +
 		"nodejs v22\n" +
-		"flux2 2.6\n" +
+		"flux2 2.7\n" +
 		"lonely\n" +
 		"   \n" +
 		"golangci-lint 2.6.0"
@@ -393,6 +419,62 @@ func TestAsdfJVMTools(t *testing.T) {
 	got := check(t, NewAsdf(), ".tool-versions", in, wants, map[string]string{"8.10.2": "8.11", "3.9.9": "3.9.11"})
 	if want := "java temurin-21.0.5+11.0.LTS\ngradle 8.11\nmaven 3.9.11\n"; got != want {
 		t.Errorf("patched = %q, want %q", got, want)
+	}
+}
+
+// Tools of the larger table (after Renovate's asdf/mise tables), as written in real
+// .tool-versions files.
+func TestAsdfMoreTools(t *testing.T) {
+	in := "terraform-ls 0.36.4\n" +
+		"kubectx 0.9.5\n" +
+		"awscli 2.22.0\n" +
+		"flutter 3.24.5-stable\n" +
+		"poetry 2.1.3\n" +
+		"protoc 29.2\n" +
+		"dotnet-core 8.0.404\n" +
+		"php 8.4.1\n" +
+		"swift 6.0.2\n"
+	wants := []want{
+		{"hashicorp/terraform-ls", dsGitHub, "semver", "0.36.4", "", 1},
+		{"ahmetb/kubectx", dsGitHub, "semver", "0.9.5", "", 2},
+		{"aws/aws-cli", dsGitTags, "semver", "2.22.0", "", 3},
+		{"flutter", dsFlutter, "semver", "3.24.5", "", 4},
+		{"poetry", dsPypi, "pep440", "2.1.3", "", 5},
+		{"protocolbuffers/protobuf", dsGitHub, "tag", "29.2", "", 6},
+		{"dotnet-sdk", dsDotnet, "semver", "8.0.404", "", 7},
+		{"php/php-src", dsGitTags, "semver", "8.4.1", "", 8},
+		{"swiftlang/swift", dsGitHub, "semver", "6.0.2", "", 9},
+	}
+	news := map[string]string{"3.24.5": "3.27.1", "29.2": "31.1", "2.22.0": "2.27.4"}
+	got := check(t, NewAsdf(), ".tool-versions", in, wants, news)
+	for _, r := range [][2]string{{"flutter 3.24.5-stable", "flutter 3.27.1-stable"}, {"protoc 29.2", "protoc 31.1"}, {"awscli 2.22.0", "awscli 2.27.4"}} {
+		in = strings.Replace(in, r[0], r[1], 1)
+	}
+	if got != in {
+		t.Errorf("patched =\n%s\nwant\n%s", got, in)
+	}
+	d, _ := NewAsdf().Extract(".tool-versions", []byte("php 8.4.1\naws-cli 2.22.0\n"), manager.Env{})
+	if d[0].ExtractVersion != `^php-(?<version>\d.*)$` || d[1].Source != "https://github.com/aws/aws-cli" {
+		t.Errorf("php extract %q, aws-cli source %q", d[0].ExtractVersion, d[1].Source)
+	}
+}
+
+func TestPartial(t *testing.T) {
+	for _, c := range []struct {
+		d    dep.Dep
+		want bool
+	}{
+		{dep.Dep{Manager: NameAsdf, Datasource: dsGitHub, Versioning: "tag", Version: "2.6"}, true},
+		{dep.Dep{Manager: NameMise, Datasource: dsNpm, Versioning: "tag", Version: "9"}, true},
+		{dep.Dep{Manager: NameMise, Datasource: dsGitHub, Versioning: "semver", Version: "2.6.0"}, false},
+		{dep.Dep{Manager: NameAsdf, Datasource: dsNode, Versioning: "tag", Version: "20"}, false},
+		{dep.Dep{Manager: NameAsdf, Datasource: dsCrate, Versioning: "tag", Version: "14"}, false},
+		{dep.Dep{Manager: NameNvm, Datasource: dsNode, Versioning: "tag", Version: "20"}, false},
+		{dep.Dep{Manager: "github-actions", Datasource: dsGitTags, Versioning: "tag", Version: "v4"}, false},
+	} {
+		if got := Partial(c.d); got != c.want {
+			t.Errorf("Partial(%+v) = %v, want %v", c.d, got, c.want)
+		}
 	}
 }
 
@@ -418,7 +500,7 @@ kubectl = [
 "github:cli/cli" = "2.60.0"
 "ubi:BurntSushi/ripgrep[exe=rg]" = "14.1.1"
 "npm:@biomejs/biome" = "1.9.4"
-"aqua:helm/helm" = "3.16.0"
+"aqua:helm/helm" = "v3.15.0"
 "github:gitlab.com/x" = "1.0.0"
 python = "3.13"
 yq = "latest"
@@ -457,13 +539,13 @@ experimental = true
 		{"cli/cli", dsGitHub, "semver", "2.60.0", "", 19},
 		{"BurntSushi/ripgrep", dsGitHub, "semver", "14.1.1", "", 20},
 		{"@biomejs/biome", dsNpm, "semver", "1.9.4", "", 21},
-		{"aqua:helm/helm", "", "", "3.16.0", "unsupported tool", 22},
+		{"helm/helm", dsGitTags, "semver", "3.15.0", "", 22},
 		{"github:gitlab.com/x", "", "", "1.0.0", "unsupported tool", 23},
 		{"python", dsPython, "tag", "3.13", "", 24},
 		{"mikefarah/yq", dsGitHub, "", "latest", "non-version value", 25},
 		{"kubernetes-sigs/kind", dsGitHub, "", "ref:v0.25.0", "git ref", 26},
 		{"go-task/task", dsGitHub, "", "prefix:3", "unsupported range", 27},
-		{"golangci/golangci-lint", dsGitHub, "", "2.5", "partial version", 28},
+		{"golangci/golangci-lint", dsGitHub, "tag", "2.5", "", 28},
 		{"kubernetes-sigs/kustomize", dsGitHub, "semver", "5.4.3", "", 29},
 		{"escaped", "", "", `1.\u0032.3`, "unsupported tool", 30},
 		{"jqlang/jq", dsGitHub, "", "1.7.1", "cannot locate value", 31},
@@ -473,6 +555,7 @@ experimental = true
 	news := map[string]string{
 		"20.11.1": "20.12.0", "1.27": "1.28", "v1.13.4": "v1.14.0", "3.16.0": "3.17.1", "1.34.1": "1.35.0",
 		"22": "24", "2.60.0": "2.61.0", "14.1.1": "14.2.0", "1.9.4": "2.0.0", "9.12.0": "10.0.0", "1.36.0": "1.37.0", "3.13": "3.14",
+		"3.15.0": "3.17.1", "2.5": "2.6",
 	}
 	got := check(t, NewMise(), "mise.toml", in, wants, news)
 	for _, r := range [][2]string{
@@ -485,6 +568,8 @@ experimental = true
 		{`"github:cli/cli" = "2.60.0"`, `"github:cli/cli" = "2.61.0"`},
 		{`exe=rg]" = "14.1.1"`, `exe=rg]" = "14.2.0"`},
 		{`"npm:@biomejs/biome" = "1.9.4"`, `"npm:@biomejs/biome" = "2.0.0"`},
+		{`"aqua:helm/helm" = "v3.15.0"`, `"aqua:helm/helm" = "v3.17.1"`},
+		{`golangci-lint = "2.5"`, `golangci-lint = "2.6"`},
 		{`python = "3.13"`, `python = "3.14"`},
 		{`pnpm.version = "9.12.0"`, `pnpm.version = "10.0.0"`},
 		{`version = "1.36.0"`, `version = "1.37.0"`},
@@ -493,6 +578,72 @@ experimental = true
 	}
 	if got != in {
 		t.Errorf("patched =\n%s\nwant\n%s", got, in)
+	}
+}
+
+// The aqua, cargo, go, pipx and pypi backends, as written in real mise configs.
+func TestMiseBackends(t *testing.T) {
+	in := `[tools]
+"aqua:cli/cli" = "2.83.0"
+"aqua:ahmetb/kubectx/kubens" = "0.9.4"
+"cargo:cargo-nextest" = "0.9.85"
+"cargo:ripgrep[features=pcre2]" = "14"
+"cargo:https://github.com/rust-lang/rustfmt" = "tag:v1.8.0"
+"cargo:https://github.com/x/y" = "branch:main"
+"cargo:https://github.com/x/z" = "1.0.0"
+"go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "2.6.0"
+"go:golang.org/x/tools/gopls" = "v0.20.0"
+"go:mvdan.cc/gofumpt" = "latest"
+"go:not a path" = "1.0.0"
+"go:github.com/coder/whichtests" = "377b8dbf1cccae3b04b48bc8cfc2410813491414"
+"pipx:black" = "24.10.0"
+"pipx:psf/black" = "24.10.0"
+"pipx:git+https://github.com/psf/black.git" = "24.10.0"
+"pipx:https://example.com/black.zip" = "1.0.0"
+"pypi:ruff" = "0.8"
+"conda:numpy" = "2.1.0"
+`
+	wants := []want{
+		{"cli/cli", dsGitTags, "semver", "2.83.0", "", 2},
+		{"ahmetb/kubectx/kubens", dsGitTags, "semver", "0.9.4", "", 3},
+		{"cargo-nextest", dsCrate, "semver", "0.9.85", "", 4},
+		{"ripgrep", dsCrate, "tag", "14", "", 5},
+		{"rust-lang/rustfmt", dsGitTags, "semver", "v1.8.0", "", 6},
+		{"x/y", dsGitTags, "", "branch:main", "git ref", 7},
+		{"x/z", dsGitTags, "", "1.0.0", "unsupported range", 8},
+		{"github.com/golangci/golangci-lint/v2/cmd/golangci-lint", dsGoMod, "semver", "2.6.0", "", 9},
+		{"golang.org/x/tools/gopls", dsGoMod, "semver", "0.20.0", "", 10},
+		{"mvdan.cc/gofumpt", dsGoMod, "", "latest", "non-version value", 11},
+		{"go:not a path", "", "", "1.0.0", "unsupported tool", 12},
+		{"github.com/coder/whichtests", dsGoMod, "", "377b8dbf1cccae3b04b48bc8cfc2410813491414", "git ref", 13},
+		{"black", dsPypi, "pep440", "24.10.0", "", 14},
+		{"psf/black", dsGitTags, "semver", "24.10.0", "", 15},
+		{"psf/black", dsGitTags, "semver", "24.10.0", "", 16},
+		{"pipx:https://example.com/black.zip", "", "", "1.0.0", "unsupported tool", 17},
+		{"ruff", dsPypi, "pep440", "0.8", "", 18},
+		{"conda:numpy", "", "", "2.1.0", "unsupported tool", 19},
+	}
+	news := map[string]string{"2.83.0": "2.84.0", "v1.8.0": "v1.8.1", "0.20.0": "0.21.0", "14": "15"}
+	got := check(t, NewMise(), "mise.toml", in, wants, news)
+	for _, r := range [][2]string{
+		{`"2.83.0"`, `"2.84.0"`}, {`"tag:v1.8.0"`, `"tag:v1.8.1"`}, {`"v0.20.0"`, `"v0.21.0"`}, {`pcre2]" = "14"`, `pcre2]" = "15"`},
+	} {
+		in = strings.Replace(in, r[0], r[1], 1)
+	}
+	if got != in {
+		t.Errorf("patched =\n%s\nwant\n%s", got, in)
+	}
+	deps, _ := NewMise().Extract("mise.toml", []byte(in), manager.Env{})
+	for i, w := range map[int][2]string{
+		0:  {aquaExtract, "https://github.com/cli/cli"},
+		4:  {"", "https://github.com/rust-lang/rustfmt"},
+		7:  {goModExtract, ""},
+		1:  {aquaExtract, "https://github.com/ahmetb/kubectx"},
+		14: {"", "https://github.com/psf/black"},
+	} {
+		if deps[i].ExtractVersion != w[0] || deps[i].Source != w[1] {
+			t.Errorf("%d: extractVersion %q, source %q; want %q", i, deps[i].ExtractVersion, deps[i].Source, w)
+		}
 	}
 }
 

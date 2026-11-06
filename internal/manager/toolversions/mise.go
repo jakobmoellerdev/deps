@@ -7,31 +7,95 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/mod/module"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
-// ghRepoRe is a github.com owner/repo; owners cannot contain dots, so `gitlab.com/x` is no match.
-var ghRepoRe = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$`)
+var (
+	// ghRepoRe is a github.com owner/repo; owners cannot contain dots, so `gitlab.com/x` is no
+	// match.
+	ghRepoRe = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$`)
+	// crateRe is a crates.io crate name.
+	crateRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	// pypiRe is a PyPI project name (PEP 508).
+	pypiRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$`)
+	// pipxGitHubRe is a pipx/pypi tool installed from a github.com repository.
+	pipxGitHubRe = regexp.MustCompile(`^git\+https://github\.com/([A-Za-z0-9-]+/[A-Za-z0-9_.-]+?)(?:\.git)?$`)
+)
 
-// miseLookup resolves a mise tool key: a tool name, `core:<tool>`, `github:` or
-// `ubi:<owner>/<repo>[options]` (github-releases) or `npm:<package>`. Other backends are
-// unsupported.
+// aquaExtract maps the tags of an aqua package's repository to versions (Renovate's).
+const aquaExtract = `^v?(?<version>.+)$`
+
+// goModExtract maps Go module versions to the versions mise writes (without "v").
+const goModExtract = `^v(?<version>.+)$`
+
+// miseLookup resolves a mise tool key (tool options in `[…]` dropped), after Renovate's mise
+// backends:
+//   - a tool name or `core:<tool>`: the tool table;
+//   - `github:` or `ubi:<owner>/<repo>`: github-releases;
+//   - `aqua:<owner>/<repo>[/<package>]`: the repository's git tags, a leading "v" dropped;
+//   - `cargo:<crate>`: crate; `cargo:<git url>` with a `tag:<tag>` version: its git tags;
+//   - `go:<package>`: go (resolved to the module providing the package), "v" dropped;
+//   - `npm:<package>`: npm;
+//   - `pipx:`/`pypi:<package>`: pypi; `<owner>/<repo>` or `git+https://github.com/<owner>/<repo>.git`:
+//     its git tags.
+//
+// Other backends and forms are unsupported.
 func miseLookup(key string) tool {
 	backend, name, ok := strings.Cut(key, ":")
 	if !ok {
 		return lookup(key)
 	}
+	if i := strings.IndexByte(name, '['); i >= 0 && strings.HasSuffix(name, "]") {
+		name = name[:i]
+	}
 	switch backend {
 	case "core":
 		return lookup(name)
 	case "github", "ubi":
-		if repo, _, _ := strings.Cut(name, "["); ghRepoRe.MatchString(repo) {
-			return githubTool(repo)
+		if ghRepoRe.MatchString(name) {
+			return githubTool(name)
+		}
+	case "aqua":
+		// aqua names a package of a repository with more segments
+		// (`ahmetb/kubectx/kubens`); the repository's tags are its versions.
+		repo := name
+		if i := strings.IndexByte(name, '/'); i >= 0 {
+			if j := strings.IndexByte(name[i+1:], '/'); j >= 0 {
+				repo = name[:i+1+j]
+			}
+		}
+		if ghRepoRe.MatchString(repo) {
+			t := tagsTool(repo, aquaExtract)
+			t.name, t.bare = name, true
+			return t
+		}
+	case "cargo":
+		if crateRe.MatchString(name) {
+			return tool{datasource: dsCrate, name: name}
+		}
+		if repo, src := manager.GitRepo(name); src != "" && strings.Contains(name, "://") {
+			return tool{datasource: dsGitTags, name: repo, source: src, refPrefix: "tag:"}
+		}
+	case "go":
+		if module.CheckImportPath(name) == nil && strings.Contains(name, "/") {
+			return tool{datasource: dsGoMod, name: name, extract: goModExtract, bare: true}
 		}
 	case "npm":
 		if name != "" {
 			return npmTool(name)
+		}
+	case "pipx", "pypi":
+		switch m := pipxGitHubRe.FindStringSubmatch(name); {
+		case m != nil:
+			return tagsTool(m[1], "")
+		case ghRepoRe.MatchString(name):
+			return tagsTool(name, "")
+		case pypiRe.MatchString(name):
+			return pypiTool(name)
 		}
 	}
 	return tool{name: key, skip: skipTool}

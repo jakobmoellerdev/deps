@@ -655,13 +655,14 @@ Updates the Node.js version in `.nvmrc`: the first token of the first line that 
 
 | Reason | When |
 |---|---|
-| `non-version value` | empty or a word or alias such as `lts/*`, `lts/iron`, `node`, `stable`, `system` |
-| `unsupported range` | anything else that is not `[v]X[.Y[.Z]]`, such as `>=20` or `20.x` |
+| `non-version value` | empty or a word or alias such as `lts/*`, `lts/iron`, `node`, `stable`, `system`: they float to the newest matching release by themselves (Renovate's node versioning does not update them either) |
+| `unsupported range` | anything else that is not a version with an optional operator or x-range, such as `>=20 <22` or `20 \|\| 22` |
 
 **Versions.**
 
 - A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style.
 - A partial `20` or `v20.11` uses `tag` versioning and keeps its precision (`20` → `22`); a leading `v` stays outside the replaced token.
+- An npm operator (`>=20`, `^20.11.1`, `~20.11`, `=20`) or x-range (`20.x`, `20.11.*`) stays as written and the version in it moves as above (`>=20` → `>=24`, `20.x` → `24.x`), as the [npm](#npm) manager treats `engines`.
 - Only the version token is replaced; comments and the rest of the file are kept.
 
 ## nodenv
@@ -680,13 +681,14 @@ Updates the Node.js version in `.node-version`: the first token of the first lin
 
 | Reason | When |
 |---|---|
-| `non-version value` | empty or a word or alias such as `lts/*`, `lts/iron`, `node`, `stable`, `system` |
-| `unsupported range` | anything else that is not `[v]X[.Y[.Z]]`, such as `>=20` or `20.x` |
+| `non-version value` | empty or a word or alias such as `lts/*`, `lts/iron`, `node`, `stable`, `system`: they float to the newest matching release by themselves (Renovate's node versioning does not update them either) |
+| `unsupported range` | anything else that is not a version with an optional operator or x-range, such as `>=20 <22` or `20 \|\| 22` |
 
 **Versions.**
 
 - A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style.
 - A partial `20` or `v20.11` uses `tag` versioning and keeps its precision (`20` → `22`); a leading `v` stays outside the replaced token.
+- An npm operator (`>=20`, `^20.11.1`, `~20.11`, `=20`) or x-range (`20.x`, `20.11.*`) stays as written and the version in it moves as above (`>=20` → `>=24`, `20.x` → `24.x`), as the [npm](#npm) manager treats `engines`.
 - Only the version token is replaced; comments and the rest of the file are kept.
 
 ## asdf
@@ -699,86 +701,220 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `tool` | a tool line; the dep name comes from the tool table | per tool (see Tools) | `semver`, `tag` or `maven` | updated |
+| `tool` | a tool line; the dep name comes from the tool table | per tool (see Tools) | `semver`, `tag`, `pep440`, `ruby` or `maven` | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
-| `unsupported tool` | a tool that is not in the tool table (or, for mise, an unsupported backend) |
+| `unsupported tool` | a tool that is not in the tool table (or, for mise, an unsupported backend or name form) |
 | `non-version value` | empty or a word such as `latest`, `system`, `lts` |
-| `git ref` | `ref:…` |
+| `git ref` | `ref:…`; `branch:…` and `rev:…` of a mise cargo git tool; a commit hash of a mise go tool |
 | `local path` | `path:…` |
 | `unsupported range` | `prefix:…` or anything else that is not a version |
-| `partial version` | `X` or `X.Y` for a tool whose datasource lists only full versions (github-releases, npm; `X` for go) |
+| `partial version` | `X` for go (Go has no `go 1` line) |
 
 **Versions.**
 
-- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`).
-- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`), ruby (`3.4`) and python (`3.13`); other tools skip it.
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`), pypi tools use `pep440`.
+- A partial version (`X`, `X.Y`) uses `tag` versioning and keeps its precision (`2.5` → `2.6`, `29` → `31`); a leading `v` stays outside the replaced token. node, go (`1.27`), ruby, python and crate list their release lines themselves; for the other datasources (github-releases, git-tags, npm, pypi, go, …) deps derives a line `X.Y` and `X` from every stable `[v]X.Y.Z` release (and the bare `X.Y` of a `vX.Y` release), dated by the line's first release. Renovate would replace a partial version by a full one.
+- `flutter` versions may carry asdf-flutter's channel suffix (`3.24.5-stable`), which stays outside the token.
 - `maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.
 - `ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).
 - `python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.
+- `java` stays an `unsupported tool` until deps has a java-version datasource; `rust`, `elixir` and `erlang` are tracked separately.
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
 
 | Tool | Datasource | Name | Release tags |
 |---|---|---|---|
+| `act` | `github-releases` | `nektos/act` |  |
 | `actionlint` | `github-releases` | `rhysd/actionlint` |  |
+| `adr-tools` | `git-tags` | `npryce/adr-tools` |  |
 | `age` | `github-releases` | `FiloSottile/age` |  |
 | `argocd` | `github-releases` | `argoproj/argo-cd` |  |
+| `asdf-plugin-manager` | `github-releases` | `asdf-community/asdf-plugin-manager` |  |
+| `ast-grep` | `github-releases` | `ast-grep/ast-grep` |  |
+| `astro` | `github-releases` | `astronomer/astro-cli` |  |
+| `atmos` | `github-releases` | `cloudposse/atmos` |  |
+| `aws-cli` | `git-tags` | `aws/aws-cli` |  |
+| `aws-vault` | `github-releases` | `99designs/aws-vault` |  |
+| `awscli` | `git-tags` | `aws/aws-cli` |  |
+| `azure-cli` | `github-releases` | `Azure/azure-cli` | extractVersion `^azure-cli-(?<version>\d.*)$` |
+| `bats` | `github-releases` | `bats-core/bats-core` |  |
 | `buf` | `github-releases` | `bufbuild/buf` |  |
 | `bun` | `github-releases` | `oven-sh/bun` | extractVersion `^bun-v(?<version>\d.*)$` |
+| `caddy` | `github-releases` | `caddyserver/caddy` |  |
+| `cargo-make` | `github-releases` | `sagiegurari/cargo-make` |  |
+| `ccache` | `github-releases` | `ccache/ccache` |  |
+| `changie` | `github-releases` | `miniscruff/changie` |  |
+| `checkov` | `git-tags` | `bridgecrewio/checkov` |  |
+| `clang-format` | `github-releases` | `llvm/llvm-project` | extractVersion `^llvmorg-(?<version>\d.*)$` |
+| `clojure` | `git-tags` | `clojure/brew-install` |  |
+| `clusterctl` | `github-releases` | `kubernetes-sigs/cluster-api` |  |
+| `cmake` | `github-releases` | `Kitware/CMake` |  |
+| `committed` | `github-releases` | `crate-ci/committed` |  |
+| `conan` | `github-releases` | `conan-io/conan` |  |
+| `concourse` | `github-releases` | `concourse/concourse` |  |
+| `conftest` | `github-releases` | `open-policy-agent/conftest` |  |
+| `consul` | `github-releases` | `hashicorp/consul` |  |
+| `container-structure-test` | `git-tags` | `GoogleContainerTools/container-structure-test` |  |
+| `cookiecutter` | `github-releases` | `cookiecutter/cookiecutter` |  |
 | `cosign` | `github-releases` | `sigstore/cosign` |  |
 | `crane` | `github-releases` | `google/go-containerregistry` |  |
+| `crystal` | `github-releases` | `crystal-lang/crystal` |  |
+| `dart` | `dart-version` | `dart` |  |
 | `deno` | `github-releases` | `denoland/deno` |  |
+| `detekt` | `github-releases` | `detekt/detekt` |  |
+| `direnv` | `github-releases` | `direnv/direnv` |  |
+| `doctl` | `github-releases` | `digitalocean/doctl` |  |
+| `dotenv-linter` | `github-releases` | `dotenv-linter/dotenv-linter` |  |
+| `dotnet` | `dotnet-version` | `dotnet-sdk` |  |
+| `dotnet-core` | `dotnet-version` | `dotnet-sdk` |  |
+| `dprint` | `github-releases` | `dprint/dprint` |  |
+| `ecspresso` | `github-releases` | `kayac/ecspresso` |  |
+| `editorconfig-checker` | `github-releases` | `editorconfig-checker/editorconfig-checker` |  |
+| `elm` | `github-releases` | `elm/compiler` |  |
+| `flutter` | `flutter-version` | `flutter` |  |
 | `flux` | `github-releases` | `fluxcd/flux2` |  |
 | `flux2` | `github-releases` | `fluxcd/flux2` |  |
 | `gh` | `github-releases` | `cli/cli` |  |
+| `ginkgo` | `github-releases` | `onsi/ginkgo` |  |
+| `git-cliff` | `github-releases` | `orhun/git-cliff` |  |
 | `github-cli` | `github-releases` | `cli/cli` |  |
 | `gitleaks` | `github-releases` | `gitleaks/gitleaks` |  |
+| `gleam` | `git-tags` | `gleam-lang/gleam` |  |
 | `go` | `go-toolchain` | `go` |  |
+| `gofumpt` | `github-releases` | `mvdan/gofumpt` |  |
 | `golang` | `go-toolchain` | `go` |  |
 | `golangci-lint` | `github-releases` | `golangci/golangci-lint` |  |
+| `gomplate` | `github-releases` | `hairyhenderson/gomplate` |  |
 | `goreleaser` | `github-releases` | `goreleaser/goreleaser` |  |
+| `gotestsum` | `github-releases` | `gotestyourself/gotestsum` |  |
 | `gradle` | `gradle-version` | `gradle` |  |
+| `grype` | `github-releases` | `anchore/grype` |  |
 | `hadolint` | `github-releases` | `hadolint/hadolint` |  |
 | `helm` | `github-releases` | `helm/helm` |  |
 | `helm-docs` | `github-releases` | `norwoodj/helm-docs` |  |
 | `helmfile` | `github-releases` | `helmfile/helmfile` |  |
+| `hivemind` | `github-releases` | `DarthSim/hivemind` |  |
+| `hk` | `github-releases` | `jdx/hk` |  |
+| `idris` | `git-tags` | `idris-lang/Idris-dev` |  |
+| `istioctl` | `github-releases` | `istio/istio` |  |
+| `jj` | `github-releases` | `jj-vcs/jj` |  |
 | `jq` | `github-releases` | `jqlang/jq` | extractVersion `^jq-(?<version>\d.*)$` |
+| `julia` | `github-releases` | `JuliaLang/julia` |  |
 | `just` | `github-releases` | `casey/just` |  |
 | `k3d` | `github-releases` | `k3d-io/k3d` |  |
+| `k3s` | `github-releases` | `k3s-io/k3s` |  |
 | `k9s` | `github-releases` | `derailed/k9s` |  |
+| `kafka` | `git-tags` | `apache/kafka` |  |
+| `kapp` | `github-releases` | `carvel-dev/kapp` |  |
 | `kind` | `github-releases` | `kubernetes-sigs/kind` |  |
 | `ko` | `github-releases` | `ko-build/ko` |  |
+| `kotlin` | `github-releases` | `JetBrains/kotlin` |  |
+| `ktlint` | `github-releases` | `pinterest/ktlint` |  |
+| `kubebuilder` | `git-tags` | `kubernetes-sigs/kubebuilder` |  |
 | `kubeconform` | `github-releases` | `yannh/kubeconform` |  |
 | `kubectl` | `github-releases` | `kubernetes/kubernetes` |  |
+| `kubectx` | `github-releases` | `ahmetb/kubectx` |  |
+| `kubens` | `github-releases` | `ahmetb/kubectx` |  |
+| `kubetail` | `github-releases` | `johanhaleby/kubetail` |  |
 | `kustomize` | `github-releases` | `kubernetes-sigs/kustomize` | extractVersion `^kustomize/v(?<version>\d.*)$` |
+| `lazygit` | `github-releases` | `jesseduffield/lazygit` |  |
+| `lefthook` | `github-releases` | `evilmartians/lefthook` |  |
+| `localstack` | `github-releases` | `localstack/localstack` |  |
+| `lua` | `github-releases` | `lua/lua` |  |
+| `lychee` | `github-releases` | `lycheeverse/lychee` | extractVersion `^lychee-v(?<version>\d.*)$` |
+| `maestro` | `github-releases` | `mobile-dev-inc/maestro` | extractVersion `^cli-(?<version>\d.*)$` |
+| `markdownlint-cli2` | `git-tags` | `DavidAnson/markdownlint-cli2` |  |
 | `maven` | `maven` | `org.apache.maven:apache-maven` |  |
+| `mimirtool` | `github-releases` | `grafana/mimir` | extractVersion `^mimir-(?<version>\d.*)$` |
+| `minikube` | `github-releases` | `kubernetes/minikube` |  |
+| `mockery` | `github-releases` | `vektra/mockery` |  |
+| `mold` | `github-releases` | `rui314/mold` |  |
+| `nim` | `git-tags` | `nim-lang/Nim` |  |
+| `ninja` | `github-releases` | `ninja-build/ninja` |  |
 | `node` | `node-version` | `node` |  |
 | `nodejs` | `node-version` | `node` |  |
 | `npm` | `npm` | `npm` |  |
+| `ocaml` | `github-releases` | `ocaml/ocaml` |  |
+| `oci` | `github-releases` | `oracle/oci-cli` |  |
+| `opa` | `github-releases` | `open-policy-agent/opa` |  |
+| `openfga` | `github-releases` | `openfga/openfga` |  |
 | `opentofu` | `github-releases` | `opentofu/opentofu` |  |
 | `packer` | `github-releases` | `hashicorp/packer` |  |
+| `perl` | `git-tags` | `Perl/perl5` |  |
+| `php` | `git-tags` | `php/php-src` | extractVersion `^php-(?<version>\d.*)$` |
+| `pipx` | `github-releases` | `pypa/pipx` |  |
+| `pkl` | `github-releases` | `apple/pkl` |  |
 | `pnpm` | `npm` | `pnpm` |  |
+| `poetry` | `pypi` | `poetry` |  |
+| `pre-commit` | `git-tags` | `pre-commit/pre-commit` |  |
+| `prettier` | `github-releases` | `prettier/prettier` |  |
+| `protoc` | `github-releases` | `protocolbuffers/protobuf` |  |
+| `protoc-gen-go` | `github-releases` | `protocolbuffers/protobuf-go` |  |
+| `pulumi` | `github-releases` | `pulumi/pulumi` |  |
 | `python` | `python-version` | `python` |  |
+| `rebar` | `git-tags` | `erlang/rebar3` |  |
+| `redis` | `github-releases` | `redis/redis` |  |
 | `ripgrep` | `github-releases` | `BurntSushi/ripgrep` |  |
 | `ruby` | `ruby-version` | `ruby` |  |
+| `ruff` | `github-releases` | `astral-sh/ruff` |  |
+| `rumdl` | `github-releases` | `rvben/rumdl` |  |
+| `sbt` | `github-releases` | `sbt/sbt` |  |
+| `scala` | `git-tags` | `scala/scala` |  |
+| `sccache` | `github-releases` | `mozilla/sccache` |  |
 | `shellcheck` | `github-releases` | `koalaman/shellcheck` |  |
+| `shfmt` | `github-releases` | `mvdan/sh` |  |
 | `skaffold` | `github-releases` | `GoogleContainerTools/skaffold` |  |
+| `skeema` | `github-releases` | `skeema/skeema` |  |
 | `sops` | `github-releases` | `getsops/sops` |  |
+| `sqlite` | `git-tags` | `sqlite/sqlite` | extractVersion `^version-(?<version>\d.*)$` |
+| `steampipe` | `github-releases` | `turbot/steampipe` |  |
 | `stern` | `github-releases` | `stern/stern` |  |
+| `stripe` | `github-releases` | `stripe/stripe-cli` |  |
+| `swift` | `github-releases` | `swiftlang/swift` | extractVersion `^swift-(?<version>\d.*)-RELEASE$` |
+| `swiftformat` | `github-releases` | `nicklockwood/SwiftFormat` |  |
+| `swiftlint` | `github-releases` | `realm/SwiftLint` |  |
+| `syft` | `github-releases` | `anchore/syft` |  |
+| `talhelper` | `git-tags` | `budimanjojo/talhelper` |  |
+| `talosctl` | `git-tags` | `siderolabs/talos` |  |
+| `taplo` | `github-releases` | `tamasfe/taplo` |  |
+| `tart` | `github-releases` | `cirruslabs/tart` |  |
 | `task` | `github-releases` | `go-task/task` |  |
 | `terraform` | `github-releases` | `hashicorp/terraform` |  |
+| `terraform-docs` | `git-tags` | `terraform-docs/terraform-docs` |  |
+| `terraform-ls` | `github-releases` | `hashicorp/terraform-ls` |  |
+| `terraform-lsp` | `github-releases` | `juliosueiras/terraform-lsp` |  |
+| `terraformer` | `github-releases` | `GoogleCloudPlatform/terraformer` |  |
 | `terragrunt` | `github-releases` | `gruntwork-io/terragrunt` |  |
+| `terramate` | `github-releases` | `terramate-io/terramate` |  |
 | `tflint` | `github-releases` | `terraform-linters/tflint` |  |
+| `tfsec` | `git-tags` | `aquasecurity/tfsec` |  |
+| `tfupdate` | `github-releases` | `minamijoyo/tfupdate` |  |
+| `tilt` | `github-releases` | `tilt-dev/tilt` |  |
 | `trivy` | `github-releases` | `aquasecurity/trivy` |  |
+| `tuist` | `git-tags` | `tuist/tuist` |  |
+| `tusd` | `github-releases` | `tus/tusd` |  |
+| `typos` | `github-releases` | `crate-ci/typos` |  |
+| `usage` | `github-releases` | `jdx/usage` |  |
+| `uv` | `github-releases` | `astral-sh/uv` |  |
+| `vale` | `github-releases` | `errata-ai/vale` |  |
 | `vault` | `github-releases` | `hashicorp/vault` |  |
+| `vendir` | `github-releases` | `carvel-dev/vendir` |  |
+| `vercel` | `npm` | `vercel` |  |
+| `watchexec` | `github-releases` | `watchexec/watchexec` |  |
+| `yamlfmt` | `github-releases` | `google/yamlfmt` |  |
+| `yamllint` | `git-tags` | `adrienverge/yamllint` |  |
+| `yarn` | `npm` | `@yarnpkg/cli` |  |
 | `yq` | `github-releases` | `mikefarah/yq` |  |
+| `ytt` | `github-releases` | `carvel-dev/ytt` |  |
+| `zig` | `git-tags` | `ziglang/zig` |  |
+| `zizmor` | `github-releases` | `zizmorcore/zizmor` |  |
 
-- github-releases tags are the version with or without a leading `v`, unless the table lists an extractVersion; a rule's `extractVersion` overrides it.
+- github-releases and git-tags tags are the version with or without a leading `v`, unless the table lists an extractVersion; a rule's `extractVersion` overrides it.
 - Tools that are not listed are skipped as `unsupported tool`.
 
 ## mise
@@ -793,93 +929,235 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `tool` | a `[tools]` entry; the dep name comes from the tool table or the backend | per tool (see Tools) | `semver`, `tag` or `maven` | updated |
+| `tool` | a `[tools]` entry; the dep name comes from the tool table or the backend | per tool (see Tools) or backend | `semver`, `tag`, `pep440`, `ruby` or `maven` | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
-| `unsupported tool` | a tool that is not in the tool table (or, for mise, an unsupported backend) |
+| `unsupported tool` | a tool that is not in the tool table (or, for mise, an unsupported backend or name form) |
 | `non-version value` | empty or a word such as `latest`, `system`, `lts` |
-| `git ref` | `ref:…` |
+| `git ref` | `ref:…`; `branch:…` and `rev:…` of a mise cargo git tool; a commit hash of a mise go tool |
 | `local path` | `path:…` |
 | `unsupported range` | `prefix:…` or anything else that is not a version |
-| `partial version` | `X` or `X.Y` for a tool whose datasource lists only full versions (github-releases, npm; `X` for go) |
+| `partial version` | `X` for go (Go has no `go 1` line) |
 | `cannot locate value` | a string with escapes or a multi-line string |
 
 **Extracted.**
 
 - `tool = "v"`, `tool = ["v", …]` (the first version only) and `tool = { version = "v", … }` in `[tools]`.
 - Dotted keys (`tools.node = "22"`, `node.version = "22"` in `[tools]`) and `[tools.<tool>]` tables with a `version` key.
-- Keys with a backend: `core:<tool>` uses the tool table; `github:<owner>/<repo>` and `ubi:<owner>/<repo>[…]` use `github-releases`; `npm:<package>` uses `npm`. Other backends (`aqua:`, `cargo:`, `go:`, `pipx:`, …) are skipped as `unsupported tool`.
+- Keys with a backend (tool options in `[…]` are ignored), as Renovate's mise manager maps them:
+- `core:<tool>` uses the tool table.
+- `github:<owner>/<repo>` and `ubi:<owner>/<repo>` use `github-releases`.
+- `aqua:<owner>/<repo>` uses the repository's `git-tags` with extractVersion `^v?(?<version>.+)$`; a leading `v` of the version stays outside the token. A package of a repository (`aqua:ahmetb/kubectx/kubens`) uses the repository's tags.
+- `cargo:<crate>` uses `crate` (`semver`; a partial version `tag`); `cargo:<git URL>` uses the repository's `git-tags` for a `tag:<tag>` version (`tag:` stays), `branch:`/`rev:` are `git ref`.
+- `go:<package>` uses `go` with extractVersion `^v(?<version>.+)$`: the package (`go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint`) resolves to the module that provides it, as `go install` does; a leading `v` stays outside the token; a commit hash is a `git ref`.
+- `npm:<package>` uses `npm`.
+- `pipx:` and `pypi:<package>` use `pypi`; `<owner>/<repo>` and `git+https://github.com/<owner>/<repo>.git` use the repository's `git-tags`; other URLs are `unsupported tool`.
+- Other backends (`conda:`, `gem:`, `dotnet:`, `spm:`, `gitlab:`, `http:`, `vfox:`, `asdf:`, …) are skipped as `unsupported tool`.
 
 **Versions.**
 
-- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`).
-- A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`), ruby (`3.4`) and python (`3.13`); other tools skip it.
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`), pypi tools use `pep440`.
+- A partial version (`X`, `X.Y`) uses `tag` versioning and keeps its precision (`2.5` → `2.6`, `29` → `31`); a leading `v` stays outside the replaced token. node, go (`1.27`), ruby, python and crate list their release lines themselves; for the other datasources (github-releases, git-tags, npm, pypi, go, …) deps derives a line `X.Y` and `X` from every stable `[v]X.Y.Z` release (and the bare `X.Y` of a `vX.Y` release), dated by the line's first release. Renovate would replace a partial version by a full one.
+- `flutter` versions may carry asdf-flutter's channel suffix (`3.24.5-stable`), which stays outside the token.
 - `maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.
 - `ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).
 - `python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.
+- `java` stays an `unsupported tool` until deps has a java-version datasource; `rust`, `elixir` and `erlang` are tracked separately.
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
 
 | Tool | Datasource | Name | Release tags |
 |---|---|---|---|
+| `act` | `github-releases` | `nektos/act` |  |
 | `actionlint` | `github-releases` | `rhysd/actionlint` |  |
+| `adr-tools` | `git-tags` | `npryce/adr-tools` |  |
 | `age` | `github-releases` | `FiloSottile/age` |  |
 | `argocd` | `github-releases` | `argoproj/argo-cd` |  |
+| `asdf-plugin-manager` | `github-releases` | `asdf-community/asdf-plugin-manager` |  |
+| `ast-grep` | `github-releases` | `ast-grep/ast-grep` |  |
+| `astro` | `github-releases` | `astronomer/astro-cli` |  |
+| `atmos` | `github-releases` | `cloudposse/atmos` |  |
+| `aws-cli` | `git-tags` | `aws/aws-cli` |  |
+| `aws-vault` | `github-releases` | `99designs/aws-vault` |  |
+| `awscli` | `git-tags` | `aws/aws-cli` |  |
+| `azure-cli` | `github-releases` | `Azure/azure-cli` | extractVersion `^azure-cli-(?<version>\d.*)$` |
+| `bats` | `github-releases` | `bats-core/bats-core` |  |
 | `buf` | `github-releases` | `bufbuild/buf` |  |
 | `bun` | `github-releases` | `oven-sh/bun` | extractVersion `^bun-v(?<version>\d.*)$` |
+| `caddy` | `github-releases` | `caddyserver/caddy` |  |
+| `cargo-make` | `github-releases` | `sagiegurari/cargo-make` |  |
+| `ccache` | `github-releases` | `ccache/ccache` |  |
+| `changie` | `github-releases` | `miniscruff/changie` |  |
+| `checkov` | `git-tags` | `bridgecrewio/checkov` |  |
+| `clang-format` | `github-releases` | `llvm/llvm-project` | extractVersion `^llvmorg-(?<version>\d.*)$` |
+| `clojure` | `git-tags` | `clojure/brew-install` |  |
+| `clusterctl` | `github-releases` | `kubernetes-sigs/cluster-api` |  |
+| `cmake` | `github-releases` | `Kitware/CMake` |  |
+| `committed` | `github-releases` | `crate-ci/committed` |  |
+| `conan` | `github-releases` | `conan-io/conan` |  |
+| `concourse` | `github-releases` | `concourse/concourse` |  |
+| `conftest` | `github-releases` | `open-policy-agent/conftest` |  |
+| `consul` | `github-releases` | `hashicorp/consul` |  |
+| `container-structure-test` | `git-tags` | `GoogleContainerTools/container-structure-test` |  |
+| `cookiecutter` | `github-releases` | `cookiecutter/cookiecutter` |  |
 | `cosign` | `github-releases` | `sigstore/cosign` |  |
 | `crane` | `github-releases` | `google/go-containerregistry` |  |
+| `crystal` | `github-releases` | `crystal-lang/crystal` |  |
+| `dart` | `dart-version` | `dart` |  |
 | `deno` | `github-releases` | `denoland/deno` |  |
+| `detekt` | `github-releases` | `detekt/detekt` |  |
+| `direnv` | `github-releases` | `direnv/direnv` |  |
+| `doctl` | `github-releases` | `digitalocean/doctl` |  |
+| `dotenv-linter` | `github-releases` | `dotenv-linter/dotenv-linter` |  |
+| `dotnet` | `dotnet-version` | `dotnet-sdk` |  |
+| `dotnet-core` | `dotnet-version` | `dotnet-sdk` |  |
+| `dprint` | `github-releases` | `dprint/dprint` |  |
+| `ecspresso` | `github-releases` | `kayac/ecspresso` |  |
+| `editorconfig-checker` | `github-releases` | `editorconfig-checker/editorconfig-checker` |  |
+| `elm` | `github-releases` | `elm/compiler` |  |
+| `flutter` | `flutter-version` | `flutter` |  |
 | `flux` | `github-releases` | `fluxcd/flux2` |  |
 | `flux2` | `github-releases` | `fluxcd/flux2` |  |
 | `gh` | `github-releases` | `cli/cli` |  |
+| `ginkgo` | `github-releases` | `onsi/ginkgo` |  |
+| `git-cliff` | `github-releases` | `orhun/git-cliff` |  |
 | `github-cli` | `github-releases` | `cli/cli` |  |
 | `gitleaks` | `github-releases` | `gitleaks/gitleaks` |  |
+| `gleam` | `git-tags` | `gleam-lang/gleam` |  |
 | `go` | `go-toolchain` | `go` |  |
+| `gofumpt` | `github-releases` | `mvdan/gofumpt` |  |
 | `golang` | `go-toolchain` | `go` |  |
 | `golangci-lint` | `github-releases` | `golangci/golangci-lint` |  |
+| `gomplate` | `github-releases` | `hairyhenderson/gomplate` |  |
 | `goreleaser` | `github-releases` | `goreleaser/goreleaser` |  |
+| `gotestsum` | `github-releases` | `gotestyourself/gotestsum` |  |
 | `gradle` | `gradle-version` | `gradle` |  |
+| `grype` | `github-releases` | `anchore/grype` |  |
 | `hadolint` | `github-releases` | `hadolint/hadolint` |  |
 | `helm` | `github-releases` | `helm/helm` |  |
 | `helm-docs` | `github-releases` | `norwoodj/helm-docs` |  |
 | `helmfile` | `github-releases` | `helmfile/helmfile` |  |
+| `hivemind` | `github-releases` | `DarthSim/hivemind` |  |
+| `hk` | `github-releases` | `jdx/hk` |  |
+| `idris` | `git-tags` | `idris-lang/Idris-dev` |  |
+| `istioctl` | `github-releases` | `istio/istio` |  |
+| `jj` | `github-releases` | `jj-vcs/jj` |  |
 | `jq` | `github-releases` | `jqlang/jq` | extractVersion `^jq-(?<version>\d.*)$` |
+| `julia` | `github-releases` | `JuliaLang/julia` |  |
 | `just` | `github-releases` | `casey/just` |  |
 | `k3d` | `github-releases` | `k3d-io/k3d` |  |
+| `k3s` | `github-releases` | `k3s-io/k3s` |  |
 | `k9s` | `github-releases` | `derailed/k9s` |  |
+| `kafka` | `git-tags` | `apache/kafka` |  |
+| `kapp` | `github-releases` | `carvel-dev/kapp` |  |
 | `kind` | `github-releases` | `kubernetes-sigs/kind` |  |
 | `ko` | `github-releases` | `ko-build/ko` |  |
+| `kotlin` | `github-releases` | `JetBrains/kotlin` |  |
+| `ktlint` | `github-releases` | `pinterest/ktlint` |  |
+| `kubebuilder` | `git-tags` | `kubernetes-sigs/kubebuilder` |  |
 | `kubeconform` | `github-releases` | `yannh/kubeconform` |  |
 | `kubectl` | `github-releases` | `kubernetes/kubernetes` |  |
+| `kubectx` | `github-releases` | `ahmetb/kubectx` |  |
+| `kubens` | `github-releases` | `ahmetb/kubectx` |  |
+| `kubetail` | `github-releases` | `johanhaleby/kubetail` |  |
 | `kustomize` | `github-releases` | `kubernetes-sigs/kustomize` | extractVersion `^kustomize/v(?<version>\d.*)$` |
+| `lazygit` | `github-releases` | `jesseduffield/lazygit` |  |
+| `lefthook` | `github-releases` | `evilmartians/lefthook` |  |
+| `localstack` | `github-releases` | `localstack/localstack` |  |
+| `lua` | `github-releases` | `lua/lua` |  |
+| `lychee` | `github-releases` | `lycheeverse/lychee` | extractVersion `^lychee-v(?<version>\d.*)$` |
+| `maestro` | `github-releases` | `mobile-dev-inc/maestro` | extractVersion `^cli-(?<version>\d.*)$` |
+| `markdownlint-cli2` | `git-tags` | `DavidAnson/markdownlint-cli2` |  |
 | `maven` | `maven` | `org.apache.maven:apache-maven` |  |
+| `mimirtool` | `github-releases` | `grafana/mimir` | extractVersion `^mimir-(?<version>\d.*)$` |
+| `minikube` | `github-releases` | `kubernetes/minikube` |  |
+| `mockery` | `github-releases` | `vektra/mockery` |  |
+| `mold` | `github-releases` | `rui314/mold` |  |
+| `nim` | `git-tags` | `nim-lang/Nim` |  |
+| `ninja` | `github-releases` | `ninja-build/ninja` |  |
 | `node` | `node-version` | `node` |  |
 | `nodejs` | `node-version` | `node` |  |
 | `npm` | `npm` | `npm` |  |
+| `ocaml` | `github-releases` | `ocaml/ocaml` |  |
+| `oci` | `github-releases` | `oracle/oci-cli` |  |
+| `opa` | `github-releases` | `open-policy-agent/opa` |  |
+| `openfga` | `github-releases` | `openfga/openfga` |  |
 | `opentofu` | `github-releases` | `opentofu/opentofu` |  |
 | `packer` | `github-releases` | `hashicorp/packer` |  |
+| `perl` | `git-tags` | `Perl/perl5` |  |
+| `php` | `git-tags` | `php/php-src` | extractVersion `^php-(?<version>\d.*)$` |
+| `pipx` | `github-releases` | `pypa/pipx` |  |
+| `pkl` | `github-releases` | `apple/pkl` |  |
 | `pnpm` | `npm` | `pnpm` |  |
+| `poetry` | `pypi` | `poetry` |  |
+| `pre-commit` | `git-tags` | `pre-commit/pre-commit` |  |
+| `prettier` | `github-releases` | `prettier/prettier` |  |
+| `protoc` | `github-releases` | `protocolbuffers/protobuf` |  |
+| `protoc-gen-go` | `github-releases` | `protocolbuffers/protobuf-go` |  |
+| `pulumi` | `github-releases` | `pulumi/pulumi` |  |
 | `python` | `python-version` | `python` |  |
+| `rebar` | `git-tags` | `erlang/rebar3` |  |
+| `redis` | `github-releases` | `redis/redis` |  |
 | `ripgrep` | `github-releases` | `BurntSushi/ripgrep` |  |
 | `ruby` | `ruby-version` | `ruby` |  |
+| `ruff` | `github-releases` | `astral-sh/ruff` |  |
+| `rumdl` | `github-releases` | `rvben/rumdl` |  |
+| `sbt` | `github-releases` | `sbt/sbt` |  |
+| `scala` | `git-tags` | `scala/scala` |  |
+| `sccache` | `github-releases` | `mozilla/sccache` |  |
 | `shellcheck` | `github-releases` | `koalaman/shellcheck` |  |
+| `shfmt` | `github-releases` | `mvdan/sh` |  |
 | `skaffold` | `github-releases` | `GoogleContainerTools/skaffold` |  |
+| `skeema` | `github-releases` | `skeema/skeema` |  |
 | `sops` | `github-releases` | `getsops/sops` |  |
+| `sqlite` | `git-tags` | `sqlite/sqlite` | extractVersion `^version-(?<version>\d.*)$` |
+| `steampipe` | `github-releases` | `turbot/steampipe` |  |
 | `stern` | `github-releases` | `stern/stern` |  |
+| `stripe` | `github-releases` | `stripe/stripe-cli` |  |
+| `swift` | `github-releases` | `swiftlang/swift` | extractVersion `^swift-(?<version>\d.*)-RELEASE$` |
+| `swiftformat` | `github-releases` | `nicklockwood/SwiftFormat` |  |
+| `swiftlint` | `github-releases` | `realm/SwiftLint` |  |
+| `syft` | `github-releases` | `anchore/syft` |  |
+| `talhelper` | `git-tags` | `budimanjojo/talhelper` |  |
+| `talosctl` | `git-tags` | `siderolabs/talos` |  |
+| `taplo` | `github-releases` | `tamasfe/taplo` |  |
+| `tart` | `github-releases` | `cirruslabs/tart` |  |
 | `task` | `github-releases` | `go-task/task` |  |
 | `terraform` | `github-releases` | `hashicorp/terraform` |  |
+| `terraform-docs` | `git-tags` | `terraform-docs/terraform-docs` |  |
+| `terraform-ls` | `github-releases` | `hashicorp/terraform-ls` |  |
+| `terraform-lsp` | `github-releases` | `juliosueiras/terraform-lsp` |  |
+| `terraformer` | `github-releases` | `GoogleCloudPlatform/terraformer` |  |
 | `terragrunt` | `github-releases` | `gruntwork-io/terragrunt` |  |
+| `terramate` | `github-releases` | `terramate-io/terramate` |  |
 | `tflint` | `github-releases` | `terraform-linters/tflint` |  |
+| `tfsec` | `git-tags` | `aquasecurity/tfsec` |  |
+| `tfupdate` | `github-releases` | `minamijoyo/tfupdate` |  |
+| `tilt` | `github-releases` | `tilt-dev/tilt` |  |
 | `trivy` | `github-releases` | `aquasecurity/trivy` |  |
+| `tuist` | `git-tags` | `tuist/tuist` |  |
+| `tusd` | `github-releases` | `tus/tusd` |  |
+| `typos` | `github-releases` | `crate-ci/typos` |  |
+| `usage` | `github-releases` | `jdx/usage` |  |
+| `uv` | `github-releases` | `astral-sh/uv` |  |
+| `vale` | `github-releases` | `errata-ai/vale` |  |
 | `vault` | `github-releases` | `hashicorp/vault` |  |
+| `vendir` | `github-releases` | `carvel-dev/vendir` |  |
+| `vercel` | `npm` | `vercel` |  |
+| `watchexec` | `github-releases` | `watchexec/watchexec` |  |
+| `yamlfmt` | `github-releases` | `google/yamlfmt` |  |
+| `yamllint` | `git-tags` | `adrienverge/yamllint` |  |
+| `yarn` | `npm` | `@yarnpkg/cli` |  |
 | `yq` | `github-releases` | `mikefarah/yq` |  |
+| `ytt` | `github-releases` | `carvel-dev/ytt` |  |
+| `zig` | `git-tags` | `ziglang/zig` |  |
+| `zizmor` | `github-releases` | `zizmorcore/zizmor` |  |
 
-- github-releases tags are the version with or without a leading `v`, unless the table lists an extractVersion; a rule's `extractVersion` overrides it.
+- github-releases and git-tags tags are the version with or without a leading `v`, unless the table lists an extractVersion; a rule's `extractVersion` overrides it.
 - Tools that are not listed are skipped as `unsupported tool`.
 
 ## cargo
@@ -3138,7 +3416,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `gitea-tags` | `owner/repo` on `registryUrl` (default `https://gitea.com`), or a repository URL `https://host/owner/repo` | `GET <registryUrl>/api/v1/repos/<owner>/<repo>/tags?limit=50`. Newest first; pages are followed while the response links a next one, at most 10. The digest is the tag's `commit.sha`; a pinned tag older than the listed pages is looked up with `GET …/tags/<tag>` | Basic credentials registered for the host (the platform token, `x-access-token:<token>`); without, on 401/403/404 `git credential fill` once per host | `commit.created` |
 | `forgejo-releases` | `owner/repo` on `registryUrl` (default `https://code.forgejo.org`), or a repository URL `https://host/owner/repo` | as `gitea-releases` (the same API) | Basic credentials registered for the host (the platform token, `x-access-token:<token>`); without, on 401/403/404 `git credential fill` once per host | `published_at` |
 | `forgejo-tags` | `owner/repo` on `registryUrl` (default `https://code.forgejo.org`), or a repository URL `https://host/owner/repo` | as `gitea-tags` (the same API) | Basic credentials registered for the host (the platform token, `x-access-token:<token>`); without, on 401/403/404 `git credential fill` once per host | `commit.created` |
-| `go` | module path | GOPROXY `<proxy>/<escaped path>/@v/list`, following `,` / `\|` fallback semantics (`direct` → `go list -m -versions -json`); GONOPROXY/GOPRIVATE modules via `go list`. Pseudo-version deps also ask `<proxy>/<escaped path>/@latest` (`go list -m -json <path>@latest`); major module path probes list `<path>/v<N+1>/@v/list`, … from the GOPROXY URLs only, reusing the proxy's list of a successor path that is a dependency itself | none for proxy requests; `go list` uses the go command's own auth (git credentials, `.netrc`) | `@v/<v>.info`, read from `$GOMODCACHE/cache/download` first, then the proxy (`go list -m -json` for private modules) |
+| `go` | module path; outside go.mod (mise `go:` tools, custom managers) also a package path, resolved like `go install <package>@<version>` to the longest prefix that lists versions (`github.com/golangci/golangci-lint/v2/cmd/golangci-lint` → `github.com/golangci/golangci-lint/v2`) | GOPROXY `<proxy>/<escaped path>/@v/list`, following `,` / `\|` fallback semantics (`direct` → `go list -m -versions -json`); GONOPROXY/GOPRIVATE modules via `go list`. Pseudo-version deps also ask `<proxy>/<escaped path>/@latest` (`go list -m -json <path>@latest`); major module path probes list `<path>/v<N+1>/@v/list`, … from the GOPROXY URLs only, reusing the proxy's list of a successor path that is a dependency itself | none for proxy requests; `go list` uses the go command's own auth (git credentials, `.netrc`) | `@v/<v>.info`, read from `$GOMODCACHE/cache/download` first, then the proxy (`go list -m -json` for private modules) |
 | `go-toolchain` | `go` / `toolchain` | `https://go.dev/dl/?mode=json&include=all`, once per run; a derived `X.Y` per minor. Release dates: `https://raw.githubusercontent.com/golang/website/HEAD/internal/history/release.go` (as Renovate's golang-version), once per run when a release time is needed | none | release date from Go's release history (midnight UTC); a derived `X.Y` has the date of `X.Y.0` |
 | `docker` | image reference | registry `tags/list` (Docker Hub with page size 10000, others 1000; at most 20 pages, 1000 for ghcr.io, quay.io, cgr.dev and the Red Hat registries, which list oldest first or per build), manifest HEAD for digests (index digest for multi-platform images); gcr.io and Artifact Registry (also behind registry.k8s.io) list each tag's digest with it, so their digests need no HEAD; elsewhere, for release times, a manifest GET by tag (Docker Hub: by the HEAD's digest, once per digest) | Docker config and credential helpers (`authn.DefaultKeychain`) | on gcr.io and Artifact Registry the `tags/list` times (`timeCreatedMs`, else `timeUploadedMs`, as for indexes); elsewhere the image config `created`; else, and for non-image artifacts (Helm charts), the manifest annotation `org.opencontainers.image.created`; a Helm chart without it is dated by the modification time of its chart archive's first entry (the packaging time; stamps before 1980 count as unknown) |
 | `npm` | package name (`@scope/name` sent as `@scope%2fname`); yarn 2 and later as the npm manager's `packageManager`, `engines` or `volta` tool is `@yarnpkg/cli-dist` (the `yarn` package stops at 1.x) | `GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata) once per registry and package, stream-decoded; deprecated versions dropped, their messages kept for the dashboard's deprecated dependencies (a deprecated `dist-tags.latest` deprecates the package, else the installed version's own message counts); 404 → `package <name> not found`. The full packument (`Accept: application/json`) is fetched at most once per registry and package, only for release times and the source repository | `.npmrc` `//host/path/:_authToken=` (longest prefix), `${VAR}` expansion | packument `time`; not fetched for `minimumReleaseAge` when the abbreviated `modified` is already older |

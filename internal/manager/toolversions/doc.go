@@ -9,35 +9,38 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
-// toolDatasources are the datasources of the tool table, sorted. The mise backends
-// (github, ubi, npm) use datasources of the table too.
-func toolDatasources() []string {
+// toolDatasources are the datasources of the tool table plus extra (the mise backends'), sorted.
+func toolDatasources(extra ...string) []string {
 	seen := map[string]bool{}
 	for _, t := range tools {
 		seen[t.datasource] = true
+	}
+	for _, ds := range extra {
+		seen[ds] = true
 	}
 	return slices.Sorted(maps.Keys(seen))
 }
 
 // nodeSkips are the skip reasons of a Node.js version (nvm, nodenv).
 var nodeSkips = []refdoc.Skip{
-	{Reason: "non-version value", When: "empty or a word or alias such as `lts/*`, `lts/iron`, `node`, `stable`, `system`"},
-	{Reason: "unsupported range", When: "anything else that is not `[v]X[.Y[.Z]]`, such as `>=20` or `20.x`"},
+	{Reason: "non-version value", When: "empty or a word or alias such as `lts/*`, `lts/iron`, `node`, `stable`, `system`: they float to the newest matching release by themselves (Renovate's node versioning does not update them either)"},
+	{Reason: "unsupported range", When: "anything else that is not a version with an optional operator or x-range, such as `>=20 <22` or `20 || 22`"},
 }
 
 // toolSkips are the skip reasons of a tool version (asdf, mise).
 var toolSkips = []refdoc.Skip{
-	{Reason: "unsupported tool", When: "a tool that is not in the tool table (or, for mise, an unsupported backend)"},
+	{Reason: "unsupported tool", When: "a tool that is not in the tool table (or, for mise, an unsupported backend or name form)"},
 	{Reason: "non-version value", When: "empty or a word such as `latest`, `system`, `lts`"},
-	{Reason: "git ref", When: "`ref:…`"},
+	{Reason: "git ref", When: "`ref:…`; `branch:…` and `rev:…` of a mise cargo git tool; a commit hash of a mise go tool"},
 	{Reason: "local path", When: "`path:…`"},
 	{Reason: "unsupported range", When: "`prefix:…` or anything else that is not a version"},
-	{Reason: "partial version", When: "`X` or `X.Y` for a tool whose datasource lists only full versions (github-releases, npm; `X` for go)"},
+	{Reason: "partial version", When: "`X` for go (Go has no `go 1` line)"},
 }
 
 var nodeVersionItems = []string{
 	"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style.",
 	"A partial `20` or `v20.11` uses `tag` versioning and keeps its precision (`20` → `22`); a leading `v` stays outside the replaced token.",
+	"An npm operator (`>=20`, `^20.11.1`, `~20.11`, `=20`) or x-range (`20.x`, `20.11.*`) stays as written and the version in it moves as above (`>=20` → `>=24`, `20.x` → `24.x`), as the [npm](#npm) manager treats `engines`.",
 	"Only the version token is replaced; comments and the rest of the file are kept.",
 }
 
@@ -132,11 +135,13 @@ var DocRuntimeVersion = refdoc.Manager{
 }
 
 var toolVersionItems = []string{
-	"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`).",
-	"A partial version uses `tag` versioning and keeps its precision for node (`20`, `20.11`), go (`1.27`), ruby (`3.4`) and python (`3.13`); other tools skip it.",
+	"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`), pypi tools use `pep440`.",
+	"A partial version (`X`, `X.Y`) uses `tag` versioning and keeps its precision (`2.5` → `2.6`, `29` → `31`); a leading `v` stays outside the replaced token. node, go (`1.27`), ruby, python and crate list their release lines themselves; for the other datasources (github-releases, git-tags, npm, pypi, go, …) deps derives a line `X.Y` and `X` from every stable `[v]X.Y.Z` release (and the bare `X.Y` of a `vX.Y` release), dated by the line's first release. Renovate would replace a partial version by a full one.",
+	"`flutter` versions may carry asdf-flutter's channel suffix (`3.24.5-stable`), which stays outside the token.",
 	"`maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.",
 	"`ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).",
 	"`python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.",
+	"`java` stays an `unsupported tool` until deps has a java-version datasource; `rust`, `elixir` and `erlang` are tracked separately.",
 	"Only the version token is replaced; quotes, comments and the rest of the file are kept.",
 }
 
@@ -146,7 +151,7 @@ var DocAsdf = refdoc.Manager{
 	Summary: "Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Only the first version of a line is a dep; `#` starts a comment.",
 	Files:   []string{"any `.tool-versions`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeTool, What: "a tool line; the dep name comes from the tool table", Datasource: "per tool (see Tools)", Versioning: "`semver`, `tag` or `maven`", Datasources: toolDatasources()},
+		{Name: DepTypeTool, What: "a tool line; the dep name comes from the tool table", Datasource: "per tool (see Tools)", Versioning: "`semver`, `tag`, `pep440`, `ruby` or `maven`", Datasources: toolDatasources()},
 	},
 	Skips:    toolSkips,
 	Sections: []refdoc.Section{{Title: "Versions", Items: toolVersionItems}, toolsSection()},
@@ -159,14 +164,22 @@ var DocMise = refdoc.Manager{
 		"so only the version bytes change.",
 	Files: []string{"`mise.toml`, `.mise.toml`", "`mise/config.toml`, `.mise/config.toml`", "`.config/mise.toml`, `.config/mise/config.toml`"},
 	DepTypes: []refdoc.DepType{
-		{Name: DepTypeTool, What: "a `[tools]` entry; the dep name comes from the tool table or the backend", Datasource: "per tool (see Tools)", Versioning: "`semver`, `tag` or `maven`", Datasources: toolDatasources()},
+		{Name: DepTypeTool, What: "a `[tools]` entry; the dep name comes from the tool table or the backend", Datasource: "per tool (see Tools) or backend", Versioning: "`semver`, `tag`, `pep440`, `ruby` or `maven`", Datasources: toolDatasources(dsCrate, dsGoMod)},
 	},
 	Skips: append(slices.Clip(toolSkips), refdoc.Skip{Reason: "cannot locate value", When: "a string with escapes or a multi-line string"}),
 	Sections: []refdoc.Section{
 		{Title: "Extracted", Items: []string{
 			"`tool = \"v\"`, `tool = [\"v\", …]` (the first version only) and `tool = { version = \"v\", … }` in `[tools]`.",
 			"Dotted keys (`tools.node = \"22\"`, `node.version = \"22\"` in `[tools]`) and `[tools.<tool>]` tables with a `version` key.",
-			"Keys with a backend: `core:<tool>` uses the tool table; `github:<owner>/<repo>` and `ubi:<owner>/<repo>[…]` use `github-releases`; `npm:<package>` uses `npm`. Other backends (`aqua:`, `cargo:`, `go:`, `pipx:`, …) are skipped as `unsupported tool`.",
+			"Keys with a backend (tool options in `[…]` are ignored), as Renovate's mise manager maps them:",
+			"`core:<tool>` uses the tool table.",
+			"`github:<owner>/<repo>` and `ubi:<owner>/<repo>` use `github-releases`.",
+			"`aqua:<owner>/<repo>` uses the repository's `git-tags` with extractVersion `^v?(?<version>.+)$`; a leading `v` of the version stays outside the token. A package of a repository (`aqua:ahmetb/kubectx/kubens`) uses the repository's tags.",
+			"`cargo:<crate>` uses `crate` (`semver`; a partial version `tag`); `cargo:<git URL>` uses the repository's `git-tags` for a `tag:<tag>` version (`tag:` stays), `branch:`/`rev:` are `git ref`.",
+			"`go:<package>` uses `go` with extractVersion `^v(?<version>.+)$`: the package (`go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint`) resolves to the module that provides it, as `go install` does; a leading `v` stays outside the token; a commit hash is a `git ref`.",
+			"`npm:<package>` uses `npm`.",
+			"`pipx:` and `pypi:<package>` use `pypi`; `<owner>/<repo>` and `git+https://github.com/<owner>/<repo>.git` use the repository's `git-tags`; other URLs are `unsupported tool`.",
+			"Other backends (`conda:`, `gem:`, `dotnet:`, `spm:`, `gitlab:`, `http:`, `vfox:`, `asdf:`, …) are skipped as `unsupported tool`.",
 		}},
 		{Title: "Versions", Items: toolVersionItems},
 		toolsSection(),
@@ -189,7 +202,7 @@ func toolsSection() refdoc.Section {
 		Title: "Tools",
 		Body:  strings.TrimSuffix(b.String(), "\n"),
 		Items: []string{
-			"github-releases tags are the version with or without a leading `v`, unless the table lists an extractVersion; a rule's `extractVersion` overrides it.",
+			"github-releases and git-tags tags are the version with or without a leading `v`, unless the table lists an extractVersion; a rule's `extractVersion` overrides it.",
 			"Tools that are not listed are skipped as `unsupported tool`.",
 		},
 	}
