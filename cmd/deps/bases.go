@@ -141,6 +141,7 @@ func runResult(bases []bot.Base, prefix string, multi bool, resErrs []error) (*e
 		res.Skipped = append(res.Skipped, b.Res.Skipped...)
 		res.Deps = append(res.Deps, b.Res.Deps...)
 		res.Pending = append(res.Pending, b.Res.Pending...)
+		res.Warnings = append(res.Warnings, b.Res.Warnings...)
 		groups = append(groups, engine.GroupUpdates(b.Res.Updates, prefixOf(b))...)
 	}
 	return res, groups
