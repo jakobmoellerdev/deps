@@ -1,7 +1,8 @@
 // Package rpm lists the versions of RPM packages from yum/dnf repositories (Renovate's `rpm`
 // datasource): the repository's `repodata/repomd.xml` names its primary metadata file, which
 // lists every package with its version and release. Each repository is read once per run and
-// indexed by package name, so every dep of that repository shares one download.
+// stream-scanned; only the packages some dep asks for are kept (datasource.Planner), and a
+// package asked for after the scan started costs one more scan.
 package rpm
 
 import (
@@ -16,10 +17,12 @@ import (
 	"html"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -41,11 +44,18 @@ type Source struct {
 	client *http.Client
 	sem    chan struct{}
 
-	repos datasource.Memo[string, *repo] // by repository URL (without /repodata)
+	mu      sync.Mutex
+	wanted  map[string]map[string]bool     // repository URL (without /repodata) → package names asked for
+	repos   datasource.Memo[string, *repo] // by repository URL (without /repodata)
+	late    datasource.Memo[string, *pkg]  // by repository URL and package asked for after its scan
+	lookups datasource.Memo[string, *pkg]  // by dep source and package name
 }
 
-// repo is the index of one repository's primary metadata: the releases of every package.
-type repo struct{ pkgs map[string]*pkg }
+// repo is the index of one repository's primary metadata: the releases of the wanted packages.
+type repo struct {
+	wanted map[string]bool
+	pkgs   map[string]*pkg
+}
 
 // pkg is what a repository lists for a package name: each version once (the builds of every
 // architecture merged) and the earliest time a build of it was added to the repository.
@@ -56,7 +66,29 @@ type pkg struct {
 
 // New returns the rpm datasource. sem bounds concurrent requests (nil = unbounded).
 func New(client *http.Client, sem chan struct{}) *Source {
-	return &Source{client: client, sem: sem}
+	return &Source{client: client, sem: sem, wanted: map[string]map[string]bool{}}
+}
+
+// Plan records the packages each repository will be asked for, so one scan keeps all of them
+// (datasource.Planner).
+func (s *Source) Plan(deps []dep.Dep) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, d := range deps {
+		for u := range strings.FieldsSeq(d.Source) {
+			s.want(repoBase(u), d.Name)
+		}
+	}
+}
+
+// want registers name for the repository base; s.mu must be held.
+func (s *Source) want(base, name string) {
+	w := s.wanted[base]
+	if w == nil {
+		w = map[string]bool{}
+		s.wanted[base] = w
+	}
+	w[name] = true
 }
 
 // Releases lists the versions of d.Name in the repositories of d.Source (whitespace-separated
@@ -92,20 +124,25 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 	return "", datasource.UnsupportedDigest(Name, d)
 }
 
-// lookup merges the listings of d's package in every repository of d.Source.
+// lookup returns the merged listing of d's package, merged once per dep source and package:
+// Releases and the ReleaseTime of every candidate share it.
 func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
+	return s.lookups.Do(d.Source+"\x00"+d.Name, func() (*pkg, error) { return s.merge(ctx, d) })
+}
+
+// merge merges the listings of d's package in every repository of d.Source.
+func (s *Source) merge(ctx context.Context, d dep.Dep) (*pkg, error) {
 	urls := strings.Fields(d.Source)
 	if len(urls) == 0 {
 		return nil, fmt.Errorf("rpm package %s: no repository: set registryUrl to the repository's repodata/ URL", d.Name)
 	}
 	var found []*pkg
 	for _, u := range urls {
-		base := repoBase(u)
-		r, err := s.repos.Do(base, func() (*repo, error) { return s.fetch(ctx, base) })
+		p, err := s.find(ctx, repoBase(u), d.Name)
 		if err != nil {
 			return nil, err
 		}
-		if p := r.pkgs[d.Name]; p != nil {
+		if p != nil {
 			found = append(found, p)
 		}
 	}
@@ -126,6 +163,34 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		}
 	}
 	return merged, nil
+}
+
+// find returns the listing of name in the repository base; nil when the repository does not
+// list it.
+func (s *Source) find(ctx context.Context, base, name string) (*pkg, error) {
+	s.mu.Lock()
+	s.want(base, name)
+	s.mu.Unlock()
+	r, err := s.repos.Do(base, func() (*repo, error) {
+		s.mu.Lock()
+		wanted := maps.Clone(s.wanted[base])
+		s.mu.Unlock()
+		return s.fetch(ctx, base, wanted)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if r.wanted[name] {
+		return r.pkgs[name], nil
+	}
+	// Asked for after the scan started: scan again for this package alone.
+	return s.late.Do(base+"\x00"+name, func() (*pkg, error) {
+		r, err := s.fetch(ctx, base, map[string]bool{name: true})
+		if err != nil {
+			return nil, err
+		}
+		return r.pkgs[name], nil
+	})
 }
 
 // add records version with the build time t, keeping the earliest known time of a version.
@@ -164,8 +229,9 @@ type repomd struct {
 // maxRepomd bounds the size of repomd.xml, a few KB in practice.
 const maxRepomd = 4 << 20
 
-// fetch reads base's repomd.xml, then streams the primary metadata it names into an index.
-func (s *Source) fetch(ctx context.Context, base string) (r *repo, err error) {
+// fetch reads base's repomd.xml, then streams the primary metadata it names into an index of
+// the wanted packages.
+func (s *Source) fetch(ctx context.Context, base string, wanted map[string]bool) (r *repo, err error) {
 	start := time.Now()
 	defer func() {
 		n := 0
@@ -193,20 +259,23 @@ func (s *Source) fetch(ctx context.Context, base string) (r *repo, err error) {
 	if primary == "" {
 		return nil, fmt.Errorf("rpm %s: no primary metadata", httpx.Redact(base+"/repodata/repomd.xml"))
 	}
-	r = &repo{pkgs: map[string]*pkg{}}
+	r = &repo{wanted: wanted, pkgs: map[string]*pkg{}}
 	err = s.get(ctx, primary, func(body io.Reader) error {
 		plain, closeFn, err := decompress(body)
 		if err != nil {
 			return err
 		}
 		defer closeFn()
-		return scanPrimary(plain, r.add)
+		return scanPrimary(plain, r.wants, r.add)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return r, nil
 }
+
+// wants reports whether name is a wanted package of the repository.
+func (r *repo) wants(name []byte) bool { return r.wanted[string(name)] }
 
 func (r *repo) add(name []byte, version string, t time.Time) {
 	p := r.pkgs[string(name)]
@@ -304,22 +373,24 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	return nil
 }
 
-// scanPrimary streams primary.xml and calls add for each `<package type="rpm">` with its
-// `<name>`, its version (`<version ver rel>` as `ver-rel`, `ver` without a release) and its
-// `<time file>`. It reads tags with a byte scanner instead of encoding/xml: a distribution's
-// primary.xml is hundreds of MB, of which only these three elements matter. Element
-// texts other than the name are skipped unread; attribute values and the name are unescaped.
-func scanPrimary(r io.Reader, add func(name []byte, version string, t time.Time)) error {
+// scanPrimary streams primary.xml and calls add for each `<package type="rpm">` whose `<name>`
+// want accepts, with its name, its version (`<version ver rel>` as `ver-rel`, `ver` without a
+// release) and its `<time file>`. It reads tags with a byte scanner instead of encoding/xml: a
+// distribution's primary.xml is hundreds of MB, of which only these three elements matter, and
+// tens of thousands of packages, of which a run asks for a few. Element texts other than the
+// name are skipped unread; attribute values and the name are unescaped. The version is built
+// at the end of a package, only for a wanted one, so unwanted packages allocate nothing.
+func scanPrimary(r io.Reader, want func(name []byte) bool, add func(name []byte, version string, t time.Time)) error {
 	s := tagScanner{br: bufio.NewReaderSize(r, 64<<10)}
 	if _, err := s.until('<', false); err != nil {
 		return fmt.Errorf("no XML: %w", err)
 	}
 	var (
-		in             bool // inside a package of type rpm
-		name           []byte
-		ver, rel       string
-		hasVer, hasRel bool
-		added          time.Time
+		in         bool // inside a package of type rpm
+		name       []byte
+		version    []byte // the package's last `<version …>` tag, when hasVersion
+		hasVersion bool
+		added      time.Time
 	)
 	for {
 		tag, err := s.until('>', true)
@@ -330,15 +401,14 @@ func scanPrimary(r io.Reader, add func(name []byte, version string, t time.Time)
 		case string(elem) == "/metadata":
 			return nil
 		case string(elem) == "package":
-			in = attr(tag, "type") == "rpm"
-			name, hasVer, hasRel, added = name[:0], false, false, time.Time{}
+			typ, _ := attrRaw(tag, "type")
+			in = string(typ) == "rpm" || bytes.IndexByte(typ, '&') >= 0 && html.UnescapeString(string(typ)) == "rpm"
+			name, version, hasVersion, added = name[:0], version[:0], false, time.Time{}
 		case string(elem) == "/package":
-			if in && len(name) > 0 && hasVer && ver != "" {
-				v := ver
-				if hasRel && rel != "" {
-					v += "-" + rel
+			if in && len(name) > 0 && hasVersion && want(name) {
+				if v := versionOf(version); v != "" {
+					add(name, v, added)
 				}
-				add(name, v, added)
 			}
 			in = false
 		case in && string(elem) == "name" && tag[len(tag)-1] != '/':
@@ -352,10 +422,13 @@ func scanPrimary(r io.Reader, add func(name []byte, version string, t time.Time)
 			}
 			continue // the text up to '<' is consumed
 		case in && string(elem) == "version":
-			ver, hasVer = attrOK(tag, "ver")
-			rel, hasRel = attrOK(tag, "rel")
+			version, hasVersion = append(version[:0], tag...), true
 		case in && string(elem) == "time":
-			if n, err := strconv.ParseInt(attr(tag, "file"), 10, 64); err == nil && n > 0 {
+			file, _ := attrRaw(tag, "file")
+			if bytes.IndexByte(file, '&') >= 0 {
+				file = []byte(html.UnescapeString(string(file)))
+			}
+			if n, err := strconv.ParseInt(string(file), 10, 64); err == nil && n > 0 {
 				added = time.Unix(n, 0).UTC()
 			}
 		}
@@ -363,6 +436,19 @@ func scanPrimary(r io.Reader, add func(name []byte, version string, t time.Time)
 			return unexpectedEOF(err)
 		}
 	}
+}
+
+// versionOf returns the version of a `<version ver rel>` tag's content: `ver-rel`, `ver`
+// without a release, "" without a ver.
+func versionOf(tag []byte) string {
+	ver, _ := attrOK(tag, "ver")
+	if ver == "" {
+		return ""
+	}
+	if rel, _ := attrOK(tag, "rel"); rel != "" {
+		return ver + "-" + rel
+	}
+	return ver
 }
 
 func unexpectedEOF(err error) error {
@@ -420,19 +506,23 @@ func element(tag []byte) []byte {
 	return tag[:end]
 }
 
-// attr returns the unescaped value of the attribute key of a tag's content, or "".
-func attr(tag []byte, key string) string {
-	v, _ := attrOK(tag, key)
-	return v
-}
-
 // attrOK returns the unescaped value of the attribute key of a tag's content and whether
 // the tag has it.
 func attrOK(tag []byte, key string) (string, bool) {
+	v, ok := attrRaw(tag, key)
+	if bytes.IndexByte(v, '&') >= 0 {
+		return html.UnescapeString(string(v)), ok
+	}
+	return string(v), ok
+}
+
+// attrRaw returns the value of the attribute key of a tag's content as written (escaped,
+// aliasing tag) and whether the tag has it.
+func attrRaw(tag []byte, key string) ([]byte, bool) {
 	for i := 0; i < len(tag); {
 		k := bytes.Index(tag[i:], []byte(key))
 		if k < 0 {
-			return "", false
+			return nil, false
 		}
 		k += i
 		i = k + len(key)
@@ -456,15 +546,11 @@ func attrOK(tag []byte, key string) (string, bool) {
 		q := tag[j]
 		e := bytes.IndexByte(tag[j+1:], q)
 		if e < 0 {
-			return "", false
+			return nil, false
 		}
-		v := tag[j+1 : j+1+e]
-		if bytes.IndexByte(v, '&') >= 0 {
-			return html.UnescapeString(string(v)), true
-		}
-		return string(v), true
+		return tag[j+1 : j+1+e], true
 	}
-	return "", false
+	return nil, false
 }
 
 func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\r' || c == '\n' }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -189,6 +190,9 @@ func TestReleasesMerge(t *testing.T) {
 	if err != nil || !at.Equal(time.Unix(1683854002, 0)) {
 		t.Errorf("ReleaseTime = %v, %v", at, err)
 	}
+	if again, _ := s.Releases(context.Background(), d, ""); &again[0] != &rels[0] {
+		t.Error("merged releases are rebuilt on every lookup")
+	}
 
 	p := &pkg{}
 	p.add("1.0-1", time.Time{})
@@ -262,6 +266,46 @@ func TestReleasesConcurrent(t *testing.T) {
 	}
 }
 
+func TestReleasesPlanned(t *testing.T) {
+	var hits atomic.Int32
+	srv := serve(t, &hits)
+	s := New(srv.Client(), nil)
+	ctx := context.Background()
+	docker := srv.URL + "/docker/repodata/"
+	s.Plan([]dep.Dep{{Name: "docker-ce", Source: docker}, {Name: "docker-ce-cli", Source: srv.URL + "/docker"}})
+	for _, name := range []string{"docker-ce", "docker-ce-cli"} {
+		if rels, err := s.Releases(ctx, dep.Dep{Name: name, Source: docker}, ""); err != nil || len(rels) != 40 {
+			t.Errorf("%s: %d releases, %v", name, len(rels), err)
+		}
+	}
+	if n := hits.Load(); n != 2 { // one scan for both planned packages
+		t.Errorf("requests = %d, want 2", n)
+	}
+	r, _ := s.repos.Do(srv.URL+"/docker", nil)
+	if got := slices.Sorted(maps.Keys(r.pkgs)); !slices.Equal(got, []string{"docker-ce", "docker-ce-cli"}) {
+		t.Errorf("indexed packages = %v, want only the planned ones", got)
+	}
+
+	// A package asked for after the scan costs one more scan, once for every URL form of the
+	// repository.
+	for _, src := range []string{docker, srv.URL + "/docker"} {
+		late := dep.Dep{Name: "containerd.io", Source: src}
+		rels, err := s.Releases(ctx, late, "")
+		if err != nil || len(rels) != 20 {
+			t.Fatalf("late %s: %d releases, %v", src, len(rels), err)
+		}
+		if at, err := s.ReleaseTime(ctx, late, rels[0].Version); err != nil || at.IsZero() {
+			t.Errorf("late ReleaseTime = %v, %v", at, err)
+		}
+	}
+	if n := hits.Load(); n != 4 {
+		t.Errorf("requests = %d, want 4", n)
+	}
+	if _, err := s.Releases(ctx, dep.Dep{Name: "nope", Source: docker}, ""); err == nil || !strings.Contains(err.Error(), "rpm package nope not found") {
+		t.Errorf("late unknown package: %v", err)
+	}
+}
+
 func TestScanPrimary(t *testing.T) {
 	type entry struct {
 		name, version string
@@ -291,7 +335,8 @@ func TestScanPrimary(t *testing.T) {
 			want: []entry{{strings.Repeat("n", 100<<10), "1", 0}}},
 	} {
 		var got []entry
-		err := scanPrimary(strings.NewReader(tt.in), func(name []byte, v string, at time.Time) {
+		all := func([]byte) bool { return true }
+		err := scanPrimary(strings.NewReader(tt.in), all, func(name []byte, v string, at time.Time) {
 			var u int64
 			if !at.IsZero() {
 				u = at.Unix()
@@ -302,10 +347,21 @@ func TestScanPrimary(t *testing.T) {
 			t.Errorf("scanPrimary(%.60q) = %v, %v; want %v (err %v)", tt.in, got, err, tt.want, tt.err)
 		}
 	}
+	// Only the wanted packages are added, whatever the order of their elements.
+	var got []string
+	in := `<metadata><package type="rpm"><version ver="1"/><name>a</name></package>` +
+		`<package type="rpm"><name>b</name><version ver="2" rel="1"/></package>` +
+		`<package type="rpm"><time file="5"/><version ver="3"/><name>c</name></package></metadata>`
+	err := scanPrimary(strings.NewReader(in), func(name []byte) bool { return string(name) != "b" }, func(name []byte, v string, _ time.Time) {
+		got = append(got, string(name)+"="+v)
+	})
+	if err != nil || !slices.Equal(got, []string{"a=1", "c=3"}) {
+		t.Errorf("scanPrimary(want) = %v, %v", got, err)
+	}
 	if v, ok := attrOK([]byte(`version ver="1" rel="2`), "rel"); ok || v != "" {
 		t.Errorf("unterminated attribute = %q, %v", v, ok)
 	}
-	if v := attr([]byte(`version xver="1" ver`), "ver"); v != "" {
+	if v, _ := attrOK([]byte(`version xver="1" ver`), "ver"); v != "" {
 		t.Errorf("attribute without value = %q", v)
 	}
 	if got := string(element([]byte("/package"))); got != "/package" {
