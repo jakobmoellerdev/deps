@@ -29,7 +29,7 @@ func serve(t *testing.T, hits *atomic.Int32, headers *atomic.Value) *httptest.Se
 			http.Error(w, "no user agent", http.StatusForbidden)
 			return
 		}
-		headers.Store(r.Header.Get("PRIVATE-TOKEN") + "|" + r.Header.Get("JOB-TOKEN"))
+		headers.Store(r.Header.Get("Authorization") + "|" + r.Header.Get("JOB-TOKEN"))
 		q := r.URL.Query()
 		if q.Get("per_page") != "100" {
 			http.Error(w, "per_page", http.StatusBadRequest)
@@ -123,7 +123,7 @@ func TestReleasesFilterAndRegistries(t *testing.T) {
 	if got := strings.Join(versions(rels), " "); got != "1.0.0 2.0.0" {
 		t.Fatalf("versions = %q", got)
 	}
-	if h := headers.Load(); h != "pat|" {
+	if h := headers.Load(); h != "Bearer pat|" {
 		t.Fatalf("auth headers = %q", h)
 	}
 
@@ -133,6 +133,37 @@ func TestReleasesFilterAndRegistries(t *testing.T) {
 	}
 	if h := headers.Load(); h != "|job" {
 		t.Fatalf("job auth headers = %q", h)
+	}
+}
+
+// TestReleasesHelperAfter404 checks that without a static token a 404 (GitLab's answer for a
+// private project) asks the git credential helper once and retries with its token.
+func TestReleasesHelperAfter404(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.Header.Get("Authorization") != "Bearer helper-token" {
+			http.Error(w, `{"message":"404 Project Not Found"}`, http.StatusNotFound)
+			return
+		}
+		w.Write([]byte(`[{"name":"lib","version":"1.0.0","created_at":"2024-01-01T00:00:00Z"}]`))
+	}))
+	t.Cleanup(srv.Close)
+	var calls atomic.Int32
+	helper := httpx.WithHelper(func(_ context.Context, host string) (string, string, bool) {
+		calls.Add(1)
+		return "me", "helper-token", host == strings.TrimPrefix(srv.URL, "http://")
+	})
+	auth := httpx.NewAuth(platform.Info{}, "", func(string) string { return "" }, helper)
+	rels, err := New(srv.Client(), nil, auth, srv.URL).Releases(t.Context(), dep.Dep{Name: "private:lib"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(versions(rels), " "); got != "1.0.0" {
+		t.Fatalf("versions = %q", got)
+	}
+	if c, h := calls.Load(), hits.Load(); c != 1 || h != 2 {
+		t.Fatalf("helper calls = %d, hits = %d; want 1, 2", c, h)
 	}
 }
 

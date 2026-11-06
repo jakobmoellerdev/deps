@@ -9,6 +9,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -151,37 +152,62 @@ func (s *Source) fetch(ctx context.Context, api, project, name string) (*pkg, er
 	})
 }
 
-// page reads one page of u into p and returns the next page number ("" = last page).
-func (s *Source) page(ctx context.Context, u, name string, p *pkg) (next string, err error) {
-	release, err := httpx.Acquire(ctx, s.sem)
+// page reads one page of u into p and returns the next page number ("" = last page). Without
+// static credentials (httpx.Auth.Static), a 401, 403 or 404 asks the git credential helper once
+// per host and retries with its answer: GitLab answers 404 for private projects.
+func (s *Source) page(ctx context.Context, u, name string, p *pkg) (string, error) {
+	pu, err := url.Parse(u)
 	if err != nil {
 		return "", err
+	}
+	user, pass, authed := s.auth.Static(pu.Hostname())
+	for {
+		status, next, err := s.do(ctx, u, user, pass, authed, name, p)
+		if authed || status != http.StatusUnauthorized && status != http.StatusForbidden && status != http.StatusNotFound {
+			return next, err
+		}
+		if user, pass, authed = s.auth.Helper(ctx, pu.Host); !authed {
+			return next, err
+		}
+	}
+}
+
+// do sends one GET of u, with the token as `Authorization: Bearer` when authed (`JOB-TOKEN`
+// for the CI job token user gitlab-ci-token), and reads a 200 page into p. status is the HTTP
+// status, 0 when no response arrived.
+func (s *Source) do(ctx context.Context, u, user, pass string, authed bool, name string, p *pkg) (status int, next string, err error) {
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
+		return 0, "", err
 	}
 	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
-		return "", err
+		return 0, "", err
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	req.Header.Set("Accept", "application/json")
-	if user, pass, ok := s.auth.Static(req.URL.Hostname()); ok {
-		if user == "gitlab-ci-token" {
-			req.Header.Set("JOB-TOKEN", pass)
-		} else {
-			req.Header.Set("PRIVATE-TOKEN", pass)
-		}
+	switch {
+	case !authed:
+	case user == "gitlab-ci-token":
+		req.Header.Set("JOB-TOKEN", pass)
+	default:
+		req.Header.Set("Authorization", "Bearer "+pass)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return "", err
+		return 0, "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
+		return resp.StatusCode, "", fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
 	}
 	var entries []entry
 	if err := json.UnmarshalRead(resp.Body, &entries); err != nil {
-		return "", fmt.Errorf("GET %s: %w", u, err)
+		return resp.StatusCode, "", fmt.Errorf("GET %s: %w", u, err)
 	}
 	for _, e := range entries {
 		if cmp.Or(e.ConanName, e.Name) != name || e.Version == "" {
@@ -196,7 +222,7 @@ func (s *Source) page(ctx context.Context, u, name string, p *pkg) (next string,
 	}
 	next = resp.Header.Get("X-Next-Page")
 	if _, err := strconv.Atoi(next); next != "" && err != nil {
-		return "", errors.New("invalid X-Next-Page " + strconv.Quote(next))
+		return resp.StatusCode, "", errors.New("invalid X-Next-Page " + strconv.Quote(next))
 	}
-	return next, nil
+	return resp.StatusCode, next, nil
 }
