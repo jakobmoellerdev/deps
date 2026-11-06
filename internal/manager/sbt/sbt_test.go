@@ -275,7 +275,8 @@ func TestRepositoriesFile(t *testing.T) {
   bad: ftp://x
   nocolon
 `,
-		"build.sbt":           `libraryDependencies += "g" % "a" % "1"`,
+		"build.sbt": `libraryDependencies += "g" % "a" % "1"
+scalaVersion := "2.13.15"`,
 		"project/plugins.sbt": `addSbtPlugin("p" % "q" % "0.1")`,
 	})
 	if d := deps["build.sbt"][0]; d.Source != "https://repo.maven.apache.org/maven2/ https://repo.example/maven/ ivy=https://repo.example/ivy/" {
@@ -283,6 +284,11 @@ func TestRepositoriesFile(t *testing.T) {
 	}
 	if d := deps["project/plugins.sbt"][0]; d.Source != "https://repo.maven.apache.org/maven2/ https://repo.example/maven/ ivy=https://repo.example/ivy/" {
 		t.Errorf("plugin source = %q", d.Source)
+	}
+	for _, d := range deps["build.sbt"] {
+		if d.DepType == DepTypeScala && d.Source != "https://repo.maven.apache.org/maven2/ https://repo.example/maven/" {
+			t.Errorf("scala source = %q", d.Source)
+		}
 	}
 	if d := deps["repositories"]; len(d) != 0 {
 		t.Errorf("repositories deps = %v", d)

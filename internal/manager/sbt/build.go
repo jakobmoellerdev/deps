@@ -257,8 +257,12 @@ func (b *build) dep(file string, st *fileState, mt depMeta) (d dep.Dep, keep boo
 	case metaModule:
 		return b.moduleDep(file, st, mt.found)
 	case metaScala:
+		// scala-library is looked up by the maven datasource, which reads ivy=<url> entries
+		// as Maven repositories: drop the Ivy repositories from its Source.
+		src := strings.Fields(b.librarySource(false))
+		src = slices.DeleteFunc(src, func(s string) bool { return strings.HasPrefix(s, sbtds.IvyID+"=") })
 		d = dep.Dep{Manager: Name, Datasource: "maven", Versioning: "maven", DepType: DepTypeScala,
-			File: file, Line: mt.scala.line, Name: "org.scala-lang:scala-library", Source: b.librarySource(false)}
+			File: file, Line: mt.scala.line, Name: "org.scala-lang:scala-library", Source: strings.Join(src, " ")}
 		b.version(&d, file, mt.scala.value)
 		if d.Skip == "" && strings.HasPrefix(d.Version, "3.") {
 			d.Name = "org.scala-lang:scala3-library_3"
