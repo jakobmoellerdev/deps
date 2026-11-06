@@ -31,6 +31,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/endoflife"
 	forgeds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubrunners"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gitlabpackages"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
@@ -394,6 +395,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		gotoolchain.Name:        gotoolchain.New(client, sem),
 		"docker":                docker,
 		githubreleases.Name:     releases,
+		githubrunners.Name:      githubrunners.New(),
 		npmds.Name:              npmds.New(client, limits.NPM, os.Getenv),
 		nodeversion.Name:        nodeversion.New(client, sem, os.Getenv),
 		helmds.Name:             helmds.New(client, sem, auth, docker),

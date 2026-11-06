@@ -75,7 +75,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 
 ## github-actions
 
-Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and Forgejo workflow and action files, plus the version inputs of known setup actions.
+Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and Forgejo workflow and action files, the version inputs of known setup actions, and GitHub-hosted runner labels in `runs-on:`.
 
 **Files:**
 
@@ -86,6 +86,7 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 |---|---|---|---|---|
 | `action` | `uses: owner/repo[/path]@ref` | `git-tags` | `tag` | updated |
 | `setup` | the version input of a setup action (see Setup action inputs) | per action (see Setup action inputs) | `semver` or `tag` | updated |
+| `github-runner` | a GitHub-hosted runner label in a job's `runs-on:` (`ubuntu-24.04`, `macos-15`, `windows-2025`; see Runner labels) | `github-runners` | `docker` | updated |
 
 **Skips:**
 
@@ -100,6 +101,7 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 | `expression` | setup input: `${{ … }}` |
 | `non-version value` | setup input: empty or a word such as `lts/*`, `stable` |
 | `unsupported range` | setup input: a range rather than a literal version |
+| `non-version value` | runner label: `<runner>-latest` (`ubuntu-latest`) |
 
 **Extracted.**
 
@@ -158,6 +160,13 @@ For these actions, the version input in `with:` is also a dep (DepType `setup`):
 - A partial `26`, `1.27` or `v2.1` uses `tag` versioning, and its precision is kept (`26` → `27`).
 - setup-python and setup-java are not extracted.
 - Skips: `expression` (`${{ … }}`), `non-version value` (empty or a word such as `lts/*`, `stable`), `unsupported range`, `cannot locate value`.
+
+**Runner labels.**
+
+- A job's `runs-on:` label, or each label of a `runs-on:` list, of the form `<runner>-<version>` is a dep named `<runner>` (`ubuntu`, `macos`, `windows`, `xcode`) with that version, when the table of the `github-runners` datasource (see [Datasources](#datasources)) lists the version: `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15-large`, `windows-11-arm`. `<runner>-latest` is skipped. Other labels (`self-hosted`, larger-runner names, `${{ … }}` expressions, `runs-on: {group: …}`) are not deps, as in Renovate.
+- Updates keep the suffix: `ubuntu-22.04` → `ubuntu-24.04`, `ubuntu-22.04-arm` → `ubuntu-24.04-arm`, `macos-14-large` → `macos-15-large`. Deprecated images are never targets; a dep on one gets a `deprecated` warning.
+- Only the version is rewritten; runner labels are never digest-pinned.
+- Workflows under `.gitea/` and `.forgejo/` are skipped: their runners advertise labels of their own configuration (act_runner's `ubuntu-22.04` maps to an image the runner chose), so GitHub's images would be the wrong update source. Renovate extracts them too.
 
 ## gomod
 
@@ -2670,6 +2679,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `git-tags` | repository URL (`https://host/path` or `host/path`) | `GET <url>/info/refs?service=git-upload-pack`, then `POST <url>/git-upload-pack` (protocol v2 `ls-refs`, `ref-prefix refs/tags/`, `ref-prefix HEAD`, `peel`); v0 servers via the advertisement. `HEAD` is the default branch commit that github-actions commit pins track | Basic `x-access-token:<token>` for the platform host; `DEPS_GITHUB_COM_TOKEN` for github.com; on 401, `git credential fill` once per host | the tag's release (github.com: the release list; Gitea/Forgejo: their releases API); a tag without one (a floating `v25`) takes the earliest listed release of the same commit, else the tag date (GitHub GraphQL: tagger date of an annotated tag, else committer date; GitHub REST: committer date; Gitea/Forgejo: `GET /repos/{repo}/tags/{tag}` `commit.created`). The default branch head is dated by its committer date (GitHub GraphQL `object(oid)` or REST `/git/commits/{sha}`; Gitea/Forgejo `GET /repos/{repo}/git/commits/{sha}` `created`), asked only when a `digest` minimumReleaseAge applies |
 | `git-refs` | repository URL (`https://host/path`); the version is a branch, `HEAD` for the default branch, and the digest its commit | as `git-tags`, with `ref-prefix HEAD` and `ref-prefix refs/heads/` for the branch commits; releases are the tags | as `git-tags` | none: branch commits are not dated, so `minimumReleaseAge` never holds a digest update back |
 | `github-releases` | `owner/repo` (github.com) or `https://host/owner/repo` (GHES) | with a token: GraphQL `releases` (`https://api.github.com/graphql`, GHES `<host>/api/graphql`); without: `GET /repos/{repo}/releases?per_page=100`. At most 5 pages, and only until the current release is listed. Drafts and prereleases are dropped. The GraphQL list also reads the repository's `isArchived`: an archived repository is listed under the dashboard's deprecated dependencies. | token for the host | `publishedAt` |
+| `github-runners` | the runner name of a GitHub-hosted runner label: `ubuntu`, `macos`, `windows`, `xcode` | none: a table of the [runner images](https://github.com/actions/runner-images) in deps, like Renovate's; versions with a suffix (`24.04-arm`, `15-large`) only update within that suffix | none | the day GitHub announced the image generally available |
 | `gitlab-releases` | project path (`group/subgroup/project`) on `registryUrl` (default `https://gitlab.com`), or a repository URL `https://host/group/project` | `GET <registryUrl>/api/v4/projects/<path>/releases?per_page=100`. Newest first; pages are followed while the response links a next one, at most 10. Upcoming releases are dropped; the version is the `tag_name` | the token registered for the host (the platform token, `DEPS_GITLAB_TOKEN` or `CI_JOB_TOKEN` for the GitLab instance) as `Authorization: Bearer`, the CI job token as `JOB-TOKEN`; without, on 401/403/404 `git credential fill` once per host | `released_at` |
 | `gitlab-tags` | project path (`group/subgroup/project`) on `registryUrl` (default `https://gitlab.com`), or a repository URL `https://host/group/project` | `GET <registryUrl>/api/v4/projects/<path>/repository/tags?per_page=100`. Newest first; pages are followed while the response links a next one, at most 10. The digest is the tag's `commit.id`; a pinned tag older than the listed pages is looked up with `GET …/repository/tags/<tag>` | the token registered for the host (the platform token, `DEPS_GITLAB_TOKEN` or `CI_JOB_TOKEN` for the GitLab instance) as `Authorization: Bearer`, the CI job token as `JOB-TOKEN`; without, on 401/403/404 `git credential fill` once per host | `commit.created_at` |
 | `gitea-releases` | `owner/repo` on `registryUrl` (default `https://gitea.com`), or a repository URL `https://host/owner/repo` | `GET <registryUrl>/api/v1/repos/<owner>/<repo>/releases?draft=false&limit=50`. Newest first; pages are followed while the response links a next one, at most 10. Drafts and prereleases are dropped; the version is the `tag_name` | Basic credentials registered for the host (the platform token, `x-access-token:<token>`); without, on 401/403/404 `git credential fill` once per host | `published_at` |
@@ -2710,6 +2720,12 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
+
+### Deprecated runner images
+
+- Images GitHub deprecated or removed (`ubuntu-20.04`, `macos-13`, `windows-2019`, …) are never update targets.
+- A dep on one gets a `deprecated` warning on the dependency dashboard and in its update PR.
+- New images and deprecations arrive with deps releases.
 
 ### Go proxy environment
 

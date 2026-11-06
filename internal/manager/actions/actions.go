@@ -1,5 +1,6 @@
-// Package actions extracts GitHub/Gitea/Forgejo Actions `uses:` references and the version
-// inputs of well-known setup actions (DepType setup).
+// Package actions extracts GitHub/Gitea/Forgejo Actions `uses:` references, the version
+// inputs of well-known setup actions (DepType setup) and GitHub-hosted runner labels in
+// `runs-on:` (DepType github-runner).
 package actions
 
 import (
@@ -48,8 +49,9 @@ func IsWorkflowFile(path string) bool {
 	return (strings.Contains(path, "workflow") || strings.Contains(path, "actions/")) && workflowRe.MatchString(path)
 }
 
-// Extract returns every `uses:` reference in src with byte spans into src;
-// owner/repo refs resolve against env.DefaultHost.
+// Extract returns every `uses:` reference in src with byte spans into src, then the
+// GitHub-hosted runner labels of the jobs' `runs-on:`; owner/repo refs resolve against
+// env.DefaultHost.
 func (actionsManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	root, err := env.YAML.Document(src)
 	if err != nil {
@@ -57,6 +59,7 @@ func (actionsManager) Extract(file string, src []byte, env manager.Env) ([]dep.D
 	}
 	x := extractor{file: file, src: src, host: env.DefaultHost, lines: yamlspan.LineStarts(src)}
 	x.walk(root)
+	x.runners(root)
 	return x.deps, nil
 }
 

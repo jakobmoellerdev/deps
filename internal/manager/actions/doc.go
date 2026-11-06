@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubrunners"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
@@ -22,7 +23,7 @@ func setupDatasources() []string {
 var Doc = refdoc.Manager{
 	Name: Name,
 	Summary: "Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and Forgejo workflow and action files, " +
-		"plus the version inputs of known setup actions.",
+		"the version inputs of known setup actions, and GitHub-hosted runner labels in `runs-on:`.",
 	Files: []string{
 		"`(workflow-templates|.github|.gitea|.forgejo)/(workflows|actions)/**/*.y(a)ml`",
 		"any `action.y(a)ml`",
@@ -30,6 +31,7 @@ var Doc = refdoc.Manager{
 	DepTypes: []refdoc.DepType{
 		{Name: "action", What: "`uses: owner/repo[/path]@ref`", Versioning: "`tag`", Datasources: []string{"git-tags"}},
 		{Name: "setup", What: "the version input of a setup action (see Setup action inputs)", Datasource: "per action (see Setup action inputs)", Versioning: "`semver` or `tag`", Datasources: setupDatasources()},
+		{Name: DepTypeRunner, What: "a GitHub-hosted runner label in a job's `runs-on:` (`ubuntu-24.04`, `macos-15`, `windows-2025`; see Runner labels)", Versioning: "`docker`", Datasources: []string{githubrunners.Name}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "local action", When: "`./…`, `$/…`"},
@@ -41,6 +43,7 @@ var Doc = refdoc.Manager{
 		{Reason: "expression", When: "setup input: `${{ … }}`"},
 		{Reason: "non-version value", When: "setup input: empty or a word such as `lts/*`, `stable`"},
 		{Reason: "unsupported range", When: "setup input: a range rather than a literal version"},
+		{Reason: "non-version value", When: "runner label: `<runner>-latest` (`ubuntu-latest`)"},
 	},
 	Sections: []refdoc.Section{
 		{Title: "Extracted", Items: []string{
@@ -75,6 +78,12 @@ var Doc = refdoc.Manager{
 			"A `with: version:` input equal to the current version (the tag or the pinned comment version) is bumped in the same edit, e.g. `@<sha> # v0.2.5` with `version: v0.2.5`. A different value is left alone, and setup actions keep their own version input (DepType `setup`).",
 		}},
 		setupSection(),
+		{Title: "Runner labels", Items: []string{
+			"A job's `runs-on:` label, or each label of a `runs-on:` list, of the form `<runner>-<version>` is a dep named `<runner>` (`ubuntu`, `macos`, `windows`, `xcode`) with that version, when the table of the `github-runners` datasource (see [Datasources](#datasources)) lists the version: `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15-large`, `windows-11-arm`. `<runner>-latest` is skipped. Other labels (`self-hosted`, larger-runner names, `${{ … }}` expressions, `runs-on: {group: …}`) are not deps, as in Renovate.",
+			"Updates keep the suffix: `ubuntu-22.04` → `ubuntu-24.04`, `ubuntu-22.04-arm` → `ubuntu-24.04-arm`, `macos-14-large` → `macos-15-large`. Deprecated images are never targets; a dep on one gets a `deprecated` warning.",
+			"Only the version is rewritten; runner labels are never digest-pinned.",
+			"Workflows under `.gitea/` and `.forgejo/` are skipped: their runners advertise labels of their own configuration (act_runner's `ubuntu-22.04` maps to an image the runner chose), so GitHub's images would be the wrong update source. Renovate extracts them too.",
+		}},
 	},
 }
 

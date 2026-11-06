@@ -130,7 +130,7 @@ var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pr
 
 // digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
 // github-actions, docker, pre-commit and git-submodules deps whatever their versioning (a rule
-// may override it), except setup-action version inputs, which are plain values; vcpkg registry
+// may override it), except setup-action version inputs and runner labels, which are plain values; vcpkg registry
 // baselines (git-refs); images of
 // gitlabci, terraform (docker and kubernetes resources) and the CI pipeline managers, which are
 // edited like docker refs, and the devcontainer image. Custom, kustomize and bazel-module deps
@@ -149,7 +149,7 @@ func digestCapable(d dep.Dep) bool {
 	case vcpkg.Name:
 		return d.Datasource == "git-refs"
 	}
-	return digestManagers[d.Manager] && d.DepType != actions.DepTypeSetup
+	return digestManagers[d.Manager] && d.DepType != actions.DepTypeSetup && d.DepType != actions.DepTypeRunner
 }
 
 // tagOnly reports whether d's version is not a version but a ref whose digest can be
@@ -1159,7 +1159,7 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 			return nil, fmt.Errorf("extractVersion: %w", err)
 		}
 		r.ds = withExtract(r.ds, x)
-	case d.Manager == actions.Name && d.DepType != actions.DepTypeSetup:
+	case d.Manager == actions.Name && d.DepType != actions.DepTypeSetup && d.DepType != actions.DepTypeRunner:
 		if prefixExpr = actions.TagExtract(d.Name); prefixExpr != "" {
 			x, err := versioning.CompileExtract(prefixExpr)
 			if err != nil {

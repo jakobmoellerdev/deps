@@ -219,7 +219,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 
 | | Ecosystem | Manifests | Lockfiles kept in sync |
 |:-:|---|---|---|
-| <img src="https://cdn.simpleicons.org/githubactions" width="20" alt=""> | **CI actions**<br>GitHub, Gitea, Forgejo | `uses:` tags, SHA pins (with or without `# vX` comments), `setup-*` versions | |
+| <img src="https://cdn.simpleicons.org/githubactions" width="20" alt=""> | **CI actions**<br>GitHub, Gitea, Forgejo | `uses:` tags, SHA pins (with or without `# vX` comments), `setup-*` versions, GitHub-hosted `runs-on:` runners (`ubuntu-24.04`, `macos-15`, `windows-2025`) | |
 | <img src="https://cdn.simpleicons.org/go" width="20" alt=""> | **Go** | `go.mod` requires and `toolchain` | `go.sum` (`go mod tidy`) |
 | <img src="https://cdn.simpleicons.org/docker" width="20" alt=""> | **Containers** | Dockerfiles, Compose, workflow containers, Kubernetes manifests, Helm values | |
 | 📦 | **Dev Containers** | `devcontainer.json` images, features and feature versions | |

@@ -129,6 +129,15 @@ func TestLoadRules(t *testing.T) {
 			notes: []string{"warn packageRules[0]: depType final has no deps equivalent; dropped", "warn packageRules[0]: matches no deps depType; rule dropped"},
 		},
 		{
+			name: "github-runner depType and github-runners datasource",
+			src:  `{packageRules: [{matchManagers: ['github-actions'], matchDepTypes: ['github-runner'], matchDatasources: ['github-runners'], enabled: false}]}`,
+			rules: `  - # packageRules[0]
+    managers: [github-actions]
+    depTypes: [github-runner]
+    datasources: [github-runners]
+    ignore: true` + defaultExclusions,
+		},
+		{
 			name: "intersection of depTypes and the manager restriction, in matchManagers order",
 			src:  `{packageRules: [{matchManagers: ['dockerfile', 'github-actions'], matchDepTypes: ['action'], pinDigests: true}]}`,
 			rules: `  - # packageRules[0]

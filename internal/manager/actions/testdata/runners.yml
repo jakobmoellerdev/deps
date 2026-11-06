@@ -1,0 +1,51 @@
+# runs-on forms seen in real workflows (openclaw, ruff, argo-cd, airflow, grafana).
+name: CI
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+        default: ubuntu-22.04
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+  build:
+    runs-on: &linux_runner_ubuntu ubuntu-24.04
+    steps:
+      - uses: actions/setup-go@v6
+  test:
+    runs-on: *linux_runner_ubuntu
+  arm:
+    runs-on: ubuntu-24.04-arm
+  docs:
+    runs-on: ["ubuntu-22.04"]
+  slim:
+    runs-on: ["ubuntu-slim"]
+  windows:
+    runs-on: 'windows-2022'
+  mac:
+    runs-on: [self-hosted, "macos-14-large"]
+  legacy:
+    runs-on:
+      macos-13
+  ios:
+    runs-on: xcode-27-xlarge
+  larger:
+    runs-on: ubuntu-latest-16-core-oss
+  vendor:
+    runs-on: depot-ubuntu-24.04-4
+  expr:
+    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'github-ubuntu-24.04-x86_64-4' || 'ubuntu-latest' }}
+  grouped:
+    runs-on:
+      group: ubuntu-runners
+      labels: ubuntu-22.04
+  matrix:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+  future:
+    runs-on: ubuntu-28.04
