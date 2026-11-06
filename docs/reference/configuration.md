@@ -1484,7 +1484,7 @@ rules:
     postUpgradeTasks: ["go generate ./..."]
   - managers: [helm]
     postUpgradeTasks:
-      commands: ['helm dependency update "$(dirname "$DEPS_PACKAGE_FILE")"']
+      commands: ['helm dependency update "${DEPS_PACKAGE_FILE%/*}"']
       executionMode: update
       files: ["charts/**", "!**/*.bak"]
 ```

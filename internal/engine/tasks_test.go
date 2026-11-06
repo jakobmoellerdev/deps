@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -183,6 +184,31 @@ func TestTaskAllowlist(t *testing.T) {
 	err := TaskAllowlist{"make *"}.Check(runs("make gen", "go  generate ./..."))
 	if !errors.Is(err, ErrTasksNotAllowed) || err.Error() != `postUpgradeTasks command not allowed: "go  generate ./..."; allow it with --allow-tasks 'go generate ./...' (or DEPS_ALLOW_TASKS)` {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// The postUpgradeTasks example of the configuration reference passes its own allowlist.
+func TestTaskAllowlistDocExample(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "config", "schema.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sec, _ := strings.Cut(string(doc), "\n## Rule.postUpgradeTasks\n")
+	sec, _, _ = strings.Cut(sec, "\n## ")
+	var allow TaskAllowlist
+	_, with, _ := strings.Cut(sec, "```\n\nwith `deps run")
+	for _, m := range regexp.MustCompile(`--allow-tasks '([^']*)'`).FindAllStringSubmatch(with, -1) {
+		allow = append(allow, m[1])
+	}
+	var runs []TaskRun
+	for _, m := range regexp.MustCompile(`(?m)^\s+(?:postUpgradeTasks|commands): \[(?:"([^"]*)"|'([^']*)')\]$`).FindAllStringSubmatch(sec, -1) {
+		runs = append(runs, TaskRun{Command: m[1] + m[2]})
+	}
+	if len(allow) != 2 || len(runs) != 2 {
+		t.Fatalf("example not found: allow %q, runs %v", allow, runs)
+	}
+	if err := allow.Check(runs); err != nil {
+		t.Error(err)
 	}
 }
 
