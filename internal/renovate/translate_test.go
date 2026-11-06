@@ -761,7 +761,7 @@ func TestLoadCustom(t *testing.T) {
 	notes := noteLines(res)
 	for _, n := range []string{
 		"warn customDatasources.envtest: JSONata transformTemplates \"$x\" has no deps equivalent; write versions/versionRegex by hand; datasource dropped",
-		"warn customManagers[2]: datasourceTemplate \"{{{datasource}}}\" is a template; dropped",
+		"warn customManagers[2]: dropped: datasource: required unless match has a (?P<datasource>...) group; name: required unless match has a (?P<name>...), (?P<depName>...) or (?P<packageName>...) group",
 		"warn customManagers[3]: customType jsonata is not supported; dropped",
 		"warn packageRules[0]: datasource custom.envtest has no deps equivalent; dropped",
 		"warn packageRules[0]: matches no deps datasource; rule dropped",
@@ -985,5 +985,30 @@ func TestLoadRegistryURLTemplate(t *testing.T) {
 	}
 	if !slices.ContainsFunc(noteLines(res), func(s string) bool { return strings.Contains(s, "customManagers[1].registryUrlTemplate") }) {
 		t.Errorf("notes = %q", noteLines(res))
+	}
+}
+
+// Templates that only render the match's own group ({{{datasource}}}, {{registryUrl}}) are
+// what deps' regex mode does without them: the manager is kept.
+func TestLoadGroupTemplates(t *testing.T) {
+	res, err := load(t, `{customManagers: [{customType: 'regex', managerFilePatterns: ['/Dockerfile$/'],
+		matchStrings: ['# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) registryUrl=(?<registryUrl>\\S+)\\s+ARG \\w+_VERSION=(?<currentValue>\\S+)'],
+		datasourceTemplate: '{{{datasource}}}', depNameTemplate: '{{ depName }}', registryUrlTemplate: '{{{registryUrl}}}'}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := section(t, res, "custom")
+	if !strings.Contains(got, "(?<registryUrl>") || strings.Contains(got, "datasource:") || strings.Contains(got, "registryUrl:") || strings.Contains(got, "name:") {
+		t.Errorf("custom:\n%s", got)
+	}
+	for _, s := range noteLines(res) {
+		if strings.Contains(s, "customManagers[0]") {
+			t.Errorf("note %q", s)
+		}
+	}
+	for k, want := range map[string]bool{"{{{datasource}}}": true, "{{datasource}}": true, "{{ datasource }}": true, "{{{depName}}}": false, "{{datasource}": false, "apk": false} {
+		if got := groupTemplate("datasourceTemplate", k); got != want {
+			t.Errorf("groupTemplate(%q) = %v", k, got)
+		}
 	}
 }

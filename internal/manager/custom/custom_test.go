@@ -254,7 +254,7 @@ func TestNewErrors(t *testing.T) {
 	}{
 		{config.Custom{}, "custom[1]: files: must not be empty"},
 		{config.Custom{Files: []string{"a/[b"}}, `files: invalid glob "a/[b"`},
-		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm or regex:<RE2>, got "nope"`},
+		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk or regex:<RE2>, got "nope"`},
 		{config.Custom{Files: []string{"x"}, Versioning: "regex:(?<minor>1)"}, `versioning: regex: must have a (?<major>...) group`},
 		{config.Custom{Files: []string{"x"}, Datasource: "cpan"}, `datasource: unknown "cpan"`},
 		{config.Custom{Files: []string{"x"}, Datasource: "custom.envtest"}, `datasource: unknown "custom.envtest"`},
@@ -647,5 +647,50 @@ func TestRegistryURL(t *testing.T) {
 		{1, "gitlab-packages", "g/p:x", "https://group.example.com", "semver", "1.0.0", "", ""},
 		{2, "gitlab-packages", "g/p:y", "https://entry.example.com", "semver", "2.0.0", "", ""},
 		{3, "npm", "left-pad", "", "semver", "1.3.0", "", ""},
+	})
+}
+
+// registryUrl (entry field, regex group, Renovate marker) is the Source of apk deps, which
+// default to apk versioning in markers; other datasources ignore it.
+func TestApkRegistryURL(t *testing.T) {
+	const alpine = "https://dl-cdn.alpinelinux.org/alpine?branch=v3.22&components=main,community&arch=x86_64"
+	src := strings.Join([]string{
+		"# renovate: datasource=apk depName=bash registryUrl=" + alpine,                   // 1
+		"RUN apk add --no-cache bash=5.2.37-r0",                                           // 2
+		"# renovate: datasource=apk depName=curl",                                         // 3
+		"RUN apk add curl=8.14.1-r4",                                                      // 4
+		"# renovate: datasource=npm depName=left-pad registryUrl=https://npm.example.com", // 5
+		"PAD=1.3.0",           // 6
+		"# deps: apk openssl", // 7
+		"OPENSSL=3.5.9-r0",    // 8
+	}, "\n")
+	m := one(t, config.Custom{Files: []string{"f"}, RegistryURL: "https://packages.wolfi.dev/os?arch=x86_64"})
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "apk", "bash", alpine, "apk", "5.2.37-r0", "", ""},
+		{4, "apk", "curl", "https://packages.wolfi.dev/os?arch=x86_64", "apk", "8.14.1-r4", "", ""},
+		{6, "npm", "left-pad", "", "semver", "1.3.0", "", ""},
+		{8, "apk", "openssl", "https://packages.wolfi.dev/os?arch=x86_64", "apk", "3.5.9-r0", "", ""},
+	})
+
+	re := one(t, config.Custom{Files: []string{"f"}, Match: `(?m)^(?P<datasource>[a-z-]+) (?P<name>\S+) (?P<version>\S+)(?: (?P<registryUrl>\S+))?$`, Versioning: "apk", RegistryURL: alpine})
+	src = "apk jq 1.8.0-r0 https://packages.wolfi.dev/os?arch=aarch64\napk bash 5.2.37-r0\nnpm left-pad 1.3.0 https://npm.example.com"
+	check(t, src, extract(t, re, src), DepTypeRegex, []want{
+		{1, "apk", "jq", "https://packages.wolfi.dev/os?arch=aarch64", "apk", "1.8.0-r0", "", ""},
+		{2, "apk", "bash", alpine, "apk", "5.2.37-r0", "", ""},
+		{3, "npm", "left-pad", "", "apk", "1.3.0", "", ""},
+	})
+}
+
+// An entry's versioning wins over the apk default; without one apk regex deps use apk.
+func TestApkDefaultVersioning(t *testing.T) {
+	src := "apk bash 5.2.37-r0\nnpm left-pad 1.3.0"
+	match := `(?m)^(?P<datasource>[a-z-]+) (?P<name>\S+) (?P<version>\S+)$`
+	check(t, src, extract(t, one(t, config.Custom{Files: []string{"f"}, Match: match}), src), DepTypeRegex, []want{
+		{1, "apk", "bash", "", "apk", "5.2.37-r0", "", ""},
+		{2, "npm", "left-pad", "", "semver", "1.3.0", "", ""},
+	})
+	check(t, src, extract(t, one(t, config.Custom{Files: []string{"f"}, Match: match, Versioning: "loose"}), src), DepTypeRegex, []want{
+		{1, "apk", "bash", "", "loose", "5.2.37-r0", "", ""},
+		{2, "npm", "left-pad", "", "loose", "1.3.0", "", ""},
 	})
 }

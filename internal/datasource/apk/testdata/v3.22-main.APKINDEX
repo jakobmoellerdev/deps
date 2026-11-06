@@ -1,0 +1,65 @@
+C:Q14udpFii0NwGg/nIouNmGp661iqk=
+P:bash
+V:5.2.37-r0
+A:x86_64
+S:447041
+I:1273235
+T:The GNU Bourne Again shell
+U:https://www.gnu.org/software/bash/bash.html
+L:GPL-3.0-or-later
+o:bash
+m:Natanael Copa <ncopa@alpinelinux.org>
+t:1727144961
+c:dfdce3cefb431614e410ac9bc3665d33ea45020c
+D:/bin/sh so:libc.musl-x86_64.so.1 so:libreadline.so.8
+p:cmd:bash=5.2.37-r0
+
+C:Q1Pp11KIKAs8SS6R8w4SbCQA0XAbM=
+P:busybox
+V:1.37.0-r20
+A:x86_64
+S:506116
+I:817380
+T:Size optimized toolbox of many common UNIX utilities
+U:https://busybox.net/
+L:GPL-2.0-only
+o:busybox
+m:Sören Tempel <soeren+alpine@soeren-tempel.net>
+t:1763764856
+c:2e97d754a30d558f15524b8e422303c8a96832df
+D:so:libc.musl-x86_64.so.1
+p:cmd:busybox=1.37.0-r20
+
+C:Q1rqdMFcAQ5pdSKRgrXxpTq4iduxA=
+P:curl
+V:8.14.1-r4
+A:x86_64
+S:165901
+I:266838
+T:URL retrival utility and library
+U:https://curl.se/
+L:curl
+o:curl
+m:fossdd <fossdd@pwned.life>
+t:1792325509
+c:d1a2a43ff0517fffb947e767cdaeee61e7376cf2
+D:libcurl=8.14.1-r4 so:libc.musl-x86_64.so.1 so:libcurl.so.4 so:libz.so.1
+p:wcurl=8.14.1-r4 cmd:curl=8.14.1-r4 cmd:wcurl=8.14.1-r4
+
+C:Q12BMLkH1q0FiQrK6E1n1zezIWbxQ=
+P:openssl
+V:3.5.9-r0
+A:x86_64
+S:341112
+I:820288
+T:Toolkit for Transport Layer Security (TLS)
+U:https://www.openssl.org/
+L:Apache-2.0
+o:openssl
+m:Natanael Copa <ncopa@alpinelinux.org>
+t:1790753340
+c:b6d0d5c5639c0034e9073c39e9ff139e28e71818
+k:100
+D:libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 so:libc.musl-x86_64.so.1 so:libcrypto.so.3 so:libssl.so.3
+p:openssl3=3.5.9-r0 cmd:openssl=3.5.9-r0
+

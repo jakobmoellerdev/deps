@@ -980,6 +980,9 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 				return
 			}
 		case "datasourceTemplate", "packageNameTemplate", "depNameTemplate", "versioningTemplate":
+			if groupTemplate(k, s) {
+				continue // the match's own group, which deps reads anyway
+			}
 			if strings.Contains(s, "{{") {
 				t.n.warn(origin, "%s %q is a template; dropped", k, s)
 				return
@@ -1000,9 +1003,11 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 			t.n.warn(origin, "%s has no deps equivalent; dropped", k)
 			return
 		case "registryUrlTemplate":
-			if strings.Contains(s, "{{") {
+			switch {
+			case groupTemplate(k, s):
+			case strings.Contains(s, "{{"):
 				t.n.info(origin+"."+k, "templated registryUrlTemplate has no deps equivalent; ignored")
-			} else {
+			default:
 				registry = s
 			}
 		case "depTypeTemplate":
@@ -1035,6 +1040,20 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 		}
 		t.custom = append(t.custom, item{origin: o, body: c})
 	}
+}
+
+// groupTemplate reports whether the <field>Template value s only renders the match group of
+// the same field ({{{datasource}}} as datasourceTemplate), which deps' regex mode reads
+// without a template.
+func groupTemplate(key, s string) bool {
+	field := strings.TrimSuffix(key, "Template")
+	inner, ok := strings.CutPrefix(s, "{{{")
+	if ok {
+		inner, ok = strings.CutSuffix(inner, "}}}")
+	} else if inner, ok = strings.CutPrefix(s, "{{"); ok {
+		inner, ok = strings.CutSuffix(inner, "}}")
+	}
+	return ok && strings.TrimSpace(inner) == field
 }
 
 // ruleContext adds the top-level settings rule validation depends on to a check fragment.

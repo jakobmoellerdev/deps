@@ -80,7 +80,7 @@ type customManager struct {
 // registryURLDatasources are the datasources whose deps take a registryUrl (entry field,
 // regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
 // datasources keep an empty Source.
-var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm"}
+var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk"}
 
 // setRegistry sets d.Source to registry when d's datasource takes a registry URL.
 func setRegistry(d *dep.Dep, registry string) {
@@ -342,7 +342,7 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 }
 
 // depVersioning is the versioning of a dep of datasource ds that sets none: the entry's, else
-// the datasource's default (config.DefaultCustomVersioning: rpm for rpm, else semver).
+// the datasource's default (config.DefaultCustomVersioning: rpm for rpm, apk for apk, else semver).
 func (m *customManager) depVersioning(ds string) string {
 	if m.versioning != "" {
 		return m.versioning
@@ -501,6 +501,8 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //   - gitlab-packages: Name is `<project>:<package>`; Source is the registryUrl, if any.
 //   - rpm: Name is the package; Source is the registryUrl (empty: the datasource reports the
 //     missing repository).
+//   - apk: Name is the package; Source is the registryUrl (empty: the datasource reports the
+//     missing repository).
 //   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
 func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
@@ -546,7 +548,7 @@ func (m *customManager) classify(d *dep.Dep) {
 			return
 		}
 		d.Source, d.Name = repo, chart
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "gitlab-packages", "rpm":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "gitlab-packages", "rpm", "apk":
 	default:
 		if !strings.HasPrefix(d.Datasource, config.CustomDatasourcePrefix) || !m.known(d.Datasource) {
 			d.Skip = fmt.Sprintf("unknown datasource %q", ds)

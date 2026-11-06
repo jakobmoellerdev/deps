@@ -97,7 +97,7 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `matchCurrentValue` | `rules[].currentVersion` in the regex form: `/re/`, `/re/i`, `!/re/` as written, an exact string `s` as `/^s$/i`; matched against the locked version, else the version as written (the bare version of a range, not Renovate's `^1.2.3`); globs have no equivalent |
 | `matchCurrentAge` | `rules[].currentAge` (`> 1 year`, `< 30 days`; a month is 30 days, a year 365): the release time of the current version, looked up only for deps the rule's other selectors match; unknown times match no rule |
 | `matchSourceUrls` | not supported: the source repository is only known after a per-dep (for docker: per-image config) lookup; match the packages with `names` instead |
-| `matchDatasources` | `rules[].datasources` (`golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags` accepted) |
+| `matchDatasources` | `rules[].datasources` (`golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags` accepted; `apk` for custom-manager deps) |
 | `matchBaseBranches` | `rules[].baseBranches` (names, `/regex/`; `!` excludes, as in `names`; globs are not supported): the base branch `run` resolves; `plan`, `apply`, `explain` and `preview` have none, so such rules match nothing there |
 | `matchUpdateTypes` | `rules[].updateTypes`; `pinDigest` = `pin` |
 | `matchCategories` | `deps migrate` expands it to the category's managers; in `.deps.yaml` use `managers`/`datasources` (`golang` ≈ `managers: [gomod]` plus `datasources: [golang-version]`) |
@@ -141,8 +141,9 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `customManagers` (`customType: regex`) | `custom[]` with `match` (Renovate group names accepted) |
 | `managerFilePatterns` / `fileMatch` | `custom[].files` (doublestar globs or `/regex/`; `fileMatch` entries are regexes, so write them as `/…/`) |
 | `datasourceTemplate`, `depNameTemplate`, `versioningTemplate` | `custom[].datasource`, `name`, `versioning` (literal values, no templates) |
-| `registryUrlTemplate`, regex group `registryUrl` | `custom[].registryUrl` (literal values) and the `registryUrl` group, for `helm`, `gitlab-packages` and `rpm` deps |
+| `registryUrlTemplate`, regex group `registryUrl` | `custom[].registryUrl` (literal values) and the `registryUrl` group, for `helm`, `gitlab-packages`, `rpm` and `apk` deps |
 | datasource `rpm` (yum/dnf repositories), versioning `rpm` | `rpm` datasource and versioning; rpm deps default to `rpm` versioning, versions are `<ver>-<rel>` as in Renovate |
+| datasource `apk` (Alpine/Wolfi repositories), versioning `apk` | `apk` datasource and versioning; apk deps default to `apk` versioning |
 | `customDatasources` (`defaultRegistryUrlTemplate`, `format`, `transformTemplates`) | `customDatasources` (`url`, `format`, `versions` selector + `versionRegex` instead of JSONata) |
 | `github-release-attachments` digests | a regex `currentDigest` group with datasource `github-release-attachments` is kept current like Renovate: the asset of the current release with that sha256 is found and the same asset of the new release is used; `custom[].checksum.asset` / `checksum.url` name the asset explicitly |
 | `hostRules` (tokens) | env tokens, `.npmrc`, Docker credentials, git credential helper; retries are built in |
@@ -171,13 +172,13 @@ Annotation-mode `custom[]` entries accept Renovate's markers unchanged:
 GOLANGCI_VERSION=v2.5.0
 ```
 
-- `packageName` wins over `depName`, `versioning=` takes a scheme name, `extractVersion=` maps release names (`extractVersion=^jq-(?<version>.+)$`), `registryUrl=` is the registry of `helm`, `gitlab-packages` and `rpm` deps (ignored for others), and unknown keys are ignored.
+- `packageName` wins over `depName`, `versioning=` takes a scheme name, `extractVersion=` maps release names (`extractVersion=^jq-(?<version>.+)$`), `registryUrl=` is the registry of `helm`, `gitlab-packages`, `rpm` and `apk` deps (ignored for others), and unknown keys are ignored.
 - The marker applies to the **next line's** first version token. A Renovate regex that spans more lines needs a regex-mode `custom[]` entry instead.
 - deps' own `# deps: <datasource> <name>` form works the same way.
 
 In regex mode, Renovate's group names `currentValue`, `depName`, `packageName` and `currentDigest` are accepted, and so is its `(?<name>…)` syntax. Escaping differs, though: JSON5's `\\d` is YAML's `\d` in single quotes.
 
-A `customManagers` entry's literal `registryUrlTemplate` becomes the entry's `registryUrl` (a templated one is ignored), as does a `(?<registryUrl>…)` group; both apply to `helm`, `gitlab-packages` and `rpm` deps. `datasource=gitlab-packages packageName=<project>:<package>` works as in Renovate; without `registryUrl` deps asks the configured GitLab instance (default gitlab.com).
+A `customManagers` entry's literal `registryUrlTemplate` becomes the entry's `registryUrl` (a templated one is ignored), as does a `(?<registryUrl>…)` group; both apply to `helm`, `gitlab-packages`, `rpm` and `apk` deps. `datasource=gitlab-packages packageName=<project>:<package>` works as in Renovate; without `registryUrl` deps asks the configured GitLab instance (default gitlab.com).
 
 ## Branch prefix takeover
 

@@ -16,6 +16,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	apkds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/apk"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/azuretasks"
 	bazelds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bazel"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
@@ -408,6 +409,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		vcpkgds.Name:            vcpkgds.New(client, sem),
 		elmpackage.Name:         elmpackage.New(client, sem, os.Getenv),
 		gitlabpackages.Name:     gitlabpackages.New(client, sem, auth, env.GitLabURL),
+		apkds.Name:              apkds.New(client, sem),
 		packagist.Name:          packagist.New(client, sem, os.Getenv),
 		juliaregistry.Name:      juliaregistry.New(client, sem, os.Getenv),
 		bazelds.Name:            bazelds.New(client, sem, auth, os.Getenv),

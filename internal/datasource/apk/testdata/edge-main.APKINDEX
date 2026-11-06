@@ -1,0 +1,48 @@
+C:Q1qyXTSnXaSyki1Xip2eCGfPfHvgw=
+P:bash
+V:5.3.9-r2
+A:x86_64
+S:480929
+I:1377035
+T:The GNU Bourne Again shell
+U:https://www.gnu.org/software/bash/bash.html
+L:GPL-3.0-or-later
+o:bash
+m:Natanael Copa <ncopa@alpinelinux.org>
+t:1789452462
+c:052899da729dfcd14a202ddd63e5d5cc5e2fb533
+D:/bin/sh so:libc.musl-x86_64.so.1 so:libreadline.so.8
+p:cmd:bash=5.3.9-r2
+
+C:Q1ek3l7ATnXHl5WL95Um3wviQ2gOA=
+P:busybox
+V:1.38.0-r8
+A:x86_64
+S:510129
+I:821732
+T:Size optimized toolbox of many common UNIX utilities
+U:https://busybox.net/
+L:GPL-2.0-only
+o:busybox
+m:Sören Tempel <soeren+alpine@soeren-tempel.net>
+t:1792958306
+c:06463674236653aa3ba0795479b04675c29e668c
+D:so:libc.musl-x86_64.so.1
+p:cmd:busybox=1.38.0-r8
+
+C:Q1AOc0/aHccdBlpoj+UV+2lCp+EQ4=
+P:curl
+V:8.23.0-r0
+A:x86_64
+S:180011
+I:285358
+T:URL retrieval utility and library
+U:https://curl.se/
+L:curl
+o:curl
+m:Achill Gilgenast <achill@achill.org>
+t:1792203734
+c:b92ab102bb2a752ea3f69911889ebd462b801121
+D:libcurl=8.23.0-r0 so:libc.musl-x86_64.so.1 so:libcurl.so.4 so:libz.so.1
+p:wcurl=8.23.0-r0 cmd:curl=8.23.0-r0 cmd:wcurl=8.23.0-r0
+

@@ -50,13 +50,13 @@ type Candidate struct {
 }
 
 // Names are the versioning scheme names; "regex:<RE2>" schemes come on top (RegexPrefix).
-var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia", "bazel-module", "nuget", "rpm"}
+var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia", "bazel-module", "nuget", "rpm", "apk"}
 
 // RegexPrefix starts a regex scheme name: "regex:" followed by an RE2 regexp with named groups.
 const RegexPrefix = "regex:"
 
 // Get returns the scheme registered under name ("tag", "go", "docker", "semver", "loose", "cargo",
-// "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia", "bazel-module", "nuget", "rpm"), or the
+// "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia", "bazel-module", "nuget", "rpm", "apk"), or the
 // regex scheme of a valid "regex:<RE2>" name.
 func Get(name string) (Scheme, bool) {
 	s, err := Parse(name)
@@ -111,6 +111,7 @@ var schemes = map[string]Scheme{
 	"bazel-module": impl[bazelVersion]{parse: parseBazel, compat: bazelCompat, cmp: compareBazel, kind: bazelKind, semver: bazelVersion.semver, major: bazelVersion.major},
 	"nuget":        nugetScheme{impl[nugetVersion]{parse: parseNuGet, compat: nugetCompat, cmp: compareNuGet, kind: nugetKind, semver: nugetVersion.semver, major: nugetVersion.major}},
 	"rpm":          impl[rpmVersion]{parse: parseRPM, compat: rpmCompat, cmp: compareRPM, kind: rpmKind, semver: rpmVersion.semver, major: rpmVersion.major},
+	"apk":          impl[apkVersion]{parse: parseApk, compat: apkCompat, cmp: compareApk, kind: apkKind, semver: apkVersion.semver, major: apkVersion.major},
 }
 
 // impl implements Scheme over a parsed version type T so every candidate is parsed once.

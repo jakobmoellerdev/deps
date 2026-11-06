@@ -49,9 +49,10 @@ var Doc = refdoc.Manager{
 			"Regex mode takes `<repository>/<chart>` as the name.",
 		}},
 		{Title: "Registry URLs", Items: []string{
-			"`helm`, `gitlab-packages` and `rpm` deps take their registry from `registryUrl`: a Renovate marker's `registryUrl=`, else a regex `(?P<registryUrl>…)` group, else the entry's `registryUrl` field. Other datasources ignore it.",
+			"`helm`, `gitlab-packages`, `rpm` and `apk` deps take their registry from `registryUrl`: a Renovate marker's `registryUrl=`, else a regex `(?P<registryUrl>…)` group, else the entry's `registryUrl` field. Other datasources ignore it.",
 			"`# renovate: datasource=gitlab-packages packageName=gitlab-org/cli:glab registryUrl=https://gitlab.com` (`<project>:<package>`; without a registry URL the configured GitLab instance).",
 			"`# renovate: datasource=rpm depName=golang registryUrl=https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/repodata/` (several whitespace-separated repositories are merged); rpm deps use the `rpm` versioning unless the marker, the regex group or the entry sets one.",
+			"`# renovate: datasource=apk depName=bash registryUrl=https://dl-cdn.alpinelinux.org/alpine?branch=v3.22&components=main&arch=x86_64` above `RUN apk add bash=5.2.37-r0` (one index per component); apk deps use the `apk` versioning unless the marker, the regex group or the entry sets one.",
 		}},
 		{Title: "Release names (extractVersion)", Items: []string{
 			"A Renovate marker's `extractVersion=<RE2>` (or a rule's `extractVersion`, which overrides it) maps release names to versions: `# renovate: datasource=github-releases depName=jqlang/jq extractVersion=^jq-(?<version>.+)$`.",

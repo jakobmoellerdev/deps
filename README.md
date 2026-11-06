@@ -244,6 +244,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 | <img src="https://cdn.simpleicons.org/git" width="20" alt=""> | **Git submodules** | `.gitmodules` (tracked branch or version tag; opt-in, as in Renovate) | |
 | 🧰 | **Tool versions** | asdf `.tool-versions`, mise `[tools]` | |
 | <img src="https://cdn.simpleicons.org/redhat" width="20" alt=""> | **RPM packages**<br>dnf, yum | package versions pinned in any file (markers or regex managers), looked up in the yum/dnf repositories you name | |
+| <img src="https://cdn.simpleicons.org/alpinelinux" width="20" alt=""> | **Alpine packages**<br>apk | `apk add <pkg>=<version>` pins through `# renovate: datasource=apk` markers or regex managers, against Alpine or Wolfi repository indexes | |
 | ✏️ | **Anything else** | `# deps:` and `# renovate:` markers, regex managers | |
 
 File patterns, dep types and skip reasons for every manager: [managers and datasources](docs/reference/managers.md).
