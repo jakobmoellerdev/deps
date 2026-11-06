@@ -362,7 +362,7 @@ func extendsFetcher(info platform.Info, token, dir string) *config.GitFetcher {
 // newSession loads the config, prints its lint warnings (config.Lint) to stderr and as
 // annotations, and wires the managers and datasources onto one HTTP client and the request
 // pools of --concurrency (httpx.NewLimits).
-func newSession(ctx context.Context, o *rootOpts, info platform.Info, token string, client *http.Client, stderr io.Writer) (*session, error) {
+func newSession(ctx context.Context, o *rootOpts, info platform.Info, token string, client *http.Client, stderr io.Writer) (_ *session, err error) {
 	root, err := filepath.Abs(o.dir)
 	if err != nil {
 		return nil, err
@@ -370,6 +370,11 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	limits := httpx.NewLimits(o.concurrency)
 	sem := limits.Default
 	fetcher := extendsFetcher(info, token, root)
+	defer func() {
+		if err != nil {
+			closeFetcher(fetcher)
+		}
+	}()
 	// Remote Renovate presets are fetched before the config (and its GitLab URL) is known.
 	auth := httpx.NewAuth(info, token, os.Getenv, httpx.WithSecretHook(actionsLog.mask))
 	cfg, err := loadConfig(ctx, o, root, info, client, auth, githubapi.New(client, auth, sem), fetcher)
@@ -614,7 +619,8 @@ func (s *session) resolve(ctx context.Context) (*engine.Result, error) {
 func (s *session) abs(rel string) string { return filepath.Join(s.root, filepath.FromSlash(rel)) }
 
 // close releases what the datasources keep for the run (the crate datasource's git index
-// clones); failures only matter for temp space, so they are logged.
+// clones) and the repositories extends were read from; failures only matter for temp space,
+// so they are logged.
 func (s *session) close() {
 	if p, ok := s.progress.(*progress); ok {
 		p.endGroup()
@@ -625,5 +631,13 @@ func (s *session) close() {
 				slog.Warn("datasource cleanup", "datasource", name, "err", err)
 			}
 		}
+	}
+	closeFetcher(s.fetcher)
+}
+
+// closeFetcher removes the repositories f read extended files from, logging a failure.
+func closeFetcher(f *config.GitFetcher) {
+	if err := f.Close(); err != nil {
+		slog.Warn("extends cleanup", "err", err)
 	}
 }

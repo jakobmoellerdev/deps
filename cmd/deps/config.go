@@ -49,7 +49,9 @@ func loadOffline(ctx context.Context, o *rootOpts) (*config.Config, error) {
 		return nil, err
 	}
 	info, _ := platform.FromEnv(os.Getenv)
-	cfg, err := config.Load(ctx, root, o.config, extendsFetcher(info, envToken(), root))
+	fetcher := extendsFetcher(info, envToken(), root)
+	defer closeFetcher(fetcher)
+	cfg, err := config.Load(ctx, root, o.config, fetcher)
 	if err != nil {
 		return nil, err
 	}

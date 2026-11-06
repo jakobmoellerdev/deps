@@ -289,7 +289,7 @@ func TestLoadExtendsErrors(t *testing.T) {
 
 // gitRepo creates a bare repository with files committed on main and tagged v1, and returns
 // its file:// URL.
-func gitRepo(t *testing.T, files map[string]string) string {
+func gitRepo(t testing.TB, files map[string]string) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not in PATH")
@@ -355,6 +355,55 @@ func TestGitFetcher(t *testing.T) {
 	c, err := Load(t.Context(), dir, "", &GitFetcher{})
 	if err != nil || len(c.Rules) != 1 || c.Rules[0].Group != "go" || c.Rules[0].source != u+"//presets/go.yaml#v1" {
 		t.Fatalf("Load = %+v, %v", c, err)
+	}
+}
+
+// TestGitFetcherSharesFetch reads several files of one repository and ref from one fetch:
+// once the repository is gone, its other files still read, until Close.
+func TestGitFetcherSharesFetch(t *testing.T) {
+	u := gitRepo(t, map[string]string{".deps.yaml": "pin: digest\n", "presets/go.yaml": "rules: [{managers: [gomod], group: go}]\n"})
+	g := &GitFetcher{}
+	defer g.Close()
+	for _, ref := range []string{"", "v1"} {
+		if _, err := g.Fetch(t.Context(), Extend{Repo: u, Path: ".deps.yaml", Ref: ref}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.RemoveAll(strings.TrimPrefix(u, "file://")); err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"", "v1"} {
+		e := Extend{Repo: u, Path: "presets/go.yaml", Ref: ref}
+		if got, err := g.Fetch(t.Context(), e); err != nil || string(got) != "rules: [{managers: [gomod], group: go}]\n" {
+			t.Errorf("Fetch(%v) = %q, %v", e, got, err)
+		}
+	}
+	if err := g.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Fetch(t.Context(), Extend{Repo: u, Path: "missing.yaml"}); err == nil || !strings.Contains(err.Error(), "fetch "+u+" HEAD") {
+		t.Errorf("Fetch after Close = %v; want a new fetch", err)
+	}
+	// The content cache outlives Close.
+	if got, err := g.Fetch(t.Context(), Extend{Repo: u, Path: ".deps.yaml"}); err != nil || string(got) != "pin: digest\n" {
+		t.Errorf("cached Fetch after Close = %q, %v", got, err)
+	}
+}
+
+// BenchmarkGitFetcherSameRepo reads two files of one repository and ref, as an extends chain
+// of presets from one config repository does.
+func BenchmarkGitFetcherSameRepo(b *testing.B) {
+	u := gitRepo(b, map[string]string{".deps.yaml": "pin: digest\n", "presets/go.yaml": "rules: [{managers: [gomod], group: go}]\n"})
+	for b.Loop() {
+		g := &GitFetcher{}
+		for _, p := range []string{".deps.yaml", "presets/go.yaml"} {
+			if _, err := g.Fetch(b.Context(), Extend{Repo: u, Path: p, Ref: "v1"}); err != nil {
+				b.Fatal(err)
+			}
+		}
+		if err := g.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

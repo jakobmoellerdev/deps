@@ -119,7 +119,8 @@ type Fetcher interface {
 
 // GitFetcher reads extended files with git: a shallow fetch of the ref into a temporary bare
 // repository, then the file's blob. Results are cached, so a file several configs extend (a
-// multi-repository run) is fetched once.
+// multi-repository run) is fetched once, and the fetched repositories are kept until Close,
+// so the files of one repository and ref (presets of a config repository) share one fetch.
 type GitFetcher struct {
 	// Server returns the base URL of the forge owner/name entries are on, e.g.
 	// https://github.com; it is called at most once, when such an entry is first fetched.
@@ -134,6 +135,16 @@ type GitFetcher struct {
 	serverErr error
 	serverSet bool
 	cache     map[Extend]fetched
+	dir       string // the parent of the fetched repositories; "" before the first fetch
+	repos     map[gitRef]fetchedRepo
+}
+
+// gitRef is a ref of a repository: what one fetch reads.
+type gitRef struct{ url, ref string }
+
+type fetchedRepo struct {
+	dir string // the bare repository with the ref as FETCH_HEAD
+	err error
 }
 
 type fetched struct {
@@ -182,25 +193,72 @@ func (g *GitFetcher) fetch(ctx context.Context, e Extend) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "deps-extends-*")
+	ref := cmp.Or(e.Ref, "HEAD")
+	dir, err := g.repo(ctx, gitRef{u, ref})
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
-	start := time.Now()
-	if _, err := gitCmd(ctx, dir, nil, "init", "--quiet", "--bare"); err != nil {
-		return nil, err
-	}
-	ref := cmp.Or(e.Ref, "HEAD")
-	if _, err := gitCmd(ctx, dir, g.credentialEnv(u), "fetch", "--quiet", "--depth=1", "--no-tags", "--", u, ref); err != nil {
-		return nil, fmt.Errorf("fetch %s %s: %w", redact(u), ref, err)
-	}
 	data, err := gitCmd(ctx, dir, nil, "cat-file", "blob", "FETCH_HEAD:"+e.Path)
-	slog.DebugContext(ctx, "extends fetched", "repo", redact(u), "ref", ref, "path", e.Path, "duration", time.Since(start), "err", err)
 	if err != nil {
 		return nil, fmt.Errorf("no file %s at %s of %s", e.Path, ref, redact(u))
 	}
 	return data, nil
+}
+
+// repo returns the bare repository r is fetched into, fetching it the first time; like
+// Fetch's results, a failure is cached unless ctx ended.
+func (g *GitFetcher) repo(ctx context.Context, r gitRef) (string, error) {
+	if f, ok := g.repos[r]; ok {
+		return f.dir, f.err
+	}
+	dir, err := g.fetchRepo(ctx, r)
+	if ctx.Err() == nil {
+		if g.repos == nil {
+			g.repos = map[gitRef]fetchedRepo{}
+		}
+		g.repos[r] = fetchedRepo{dir, err}
+	}
+	return dir, err
+}
+
+func (g *GitFetcher) fetchRepo(ctx context.Context, r gitRef) (string, error) {
+	if g.dir == "" {
+		dir, err := os.MkdirTemp("", "deps-extends-*")
+		if err != nil {
+			return "", err
+		}
+		g.dir = dir
+	}
+	dir, err := os.MkdirTemp(g.dir, "repo-*")
+	if err != nil {
+		return "", err
+	}
+	start := time.Now()
+	_, err = gitCmd(ctx, dir, nil, "init", "--quiet", "--bare")
+	if err == nil {
+		if _, err = gitCmd(ctx, dir, g.credentialEnv(r.url), "fetch", "--quiet", "--depth=1", "--no-tags", "--", r.url, r.ref); err != nil {
+			err = fmt.Errorf("fetch %s %s: %w", redact(r.url), r.ref, err)
+		}
+	}
+	slog.DebugContext(ctx, "extends fetched", "repo", redact(r.url), "ref", r.ref, "duration", time.Since(start), "err", err)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
+}
+
+// Close removes the fetched repositories. The cached files stay; a file not read yet is
+// fetched again.
+func (g *GitFetcher) Close() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	dir := g.dir
+	g.dir, g.repos = "", nil
+	if dir == "" {
+		return nil
+	}
+	return os.RemoveAll(dir)
 }
 
 // credentialEnv returns the environment that makes git answer the credential request for
