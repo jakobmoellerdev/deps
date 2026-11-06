@@ -166,6 +166,27 @@ func TestSummaryRender(t *testing.T) {
 	}
 }
 
+func TestMarkdownTableCellsEscaped(t *testing.T) {
+	react := dep.Dep{Manager: "npm", File: "a|b/package.json", Line: 3, Name: "react", Version: "^1 || ^2", Range: "^1 || ^2"}
+	u := dep.Update{Dep: react, Type: dep.Pin, NewVersion: "2.0.0"}
+	res := &engine.Result{Updates: []dep.Update{u}, Deps: []dep.Dep{react},
+		Pending: []engine.Pending{{Dep: react, Version: "3|0", Reason: "too new"}}}
+	groups := engine.GroupUpdates(res.Updates, "")
+	const row = "| `react` | `a\\|b/package.json:3` | `^1 \\|\\| ^2` | `2.0.0` | pin |\n"
+	s := summary{Command: "plan", Res: res, Groups: groups}
+	md := s.markdown()
+	for _, want := range []string{row, "| `react` | `a\\|b/package.json:3` | `3\\|0` | too new |\n"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("summary lacks %q:\n%s", want, md)
+		}
+	}
+	var b strings.Builder
+	writePRTable(&b, previewPR{Branch: groups[0].Branch, Updates: groups[0].Updates})
+	if !strings.Contains(b.String(), row) {
+		t.Errorf("preview lacks %q:\n%s", row, b.String())
+	}
+}
+
 func TestSummaryStepFile(t *testing.T) {
 	s := summary{Command: "plan", Res: &engine.Result{}}
 	dir := t.TempDir()

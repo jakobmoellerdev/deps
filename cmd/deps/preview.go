@@ -117,11 +117,11 @@ func writePRTable(b *strings.Builder, p previewPR) {
 	fmt.Fprintf(b, "`%s`\n\n| Dependency | File | From | To | Type |\n|---|---|---|---|---|\n", p.Branch)
 	for _, u := range p.Updates {
 		if u.Maintenance() {
-			fmt.Fprintf(b, "| `%s` | `%s` | | | lock file maintenance |\n", u.Dep.Name, u.Dep.File)
+			fmt.Fprintf(b, "| `%s` | `%s` | | | lock file maintenance |\n", mdCell(u.Dep.Name), mdCell(u.Dep.File))
 			continue
 		}
 		from, to := u.FromTo()
-		fmt.Fprintf(b, "| `%s` | `%s:%d` | `%s` | `%s` | %s |\n", u.Dep.Name, u.Dep.File, u.Dep.Line, from, to, updateType(u, plain))
+		fmt.Fprintf(b, "| `%s` | `%s:%d` | `%s` | `%s` | %s |\n", mdCell(u.Dep.Name), mdCell(u.Dep.File), u.Dep.Line, mdCell(from), mdCell(to), mdCell(updateType(u, plain)))
 	}
 	b.WriteString("\n")
 }

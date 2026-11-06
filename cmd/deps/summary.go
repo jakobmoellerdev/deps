@@ -406,11 +406,11 @@ func (s *summary) markdownAt(level int) string {
 		b.WriteString("\n\n| Dependency | File | From | To | Type |\n|---|---|---|---|---|\n")
 		for _, u := range g.Updates {
 			if u.Maintenance() {
-				fmt.Fprintf(&b, "| `%s` | `%s` | | | lock file maintenance |\n", u.Dep.Name, u.Dep.File)
+				fmt.Fprintf(&b, "| `%s` | `%s` | | | lock file maintenance |\n", mdCell(u.Dep.Name), mdCell(u.Dep.File))
 				continue
 			}
 			from, to := u.FromTo()
-			fmt.Fprintf(&b, "| `%s` | `%s:%d` | `%s` | `%s` | %s |\n", u.Dep.Name, u.Dep.File, u.Dep.Line, from, to, updateType(u, plain))
+			fmt.Fprintf(&b, "| `%s` | `%s:%d` | `%s` | `%s` | %s |\n", mdCell(u.Dep.Name), mdCell(u.Dep.File), u.Dep.Line, mdCell(from), mdCell(to), mdCell(updateType(u, plain)))
 		}
 		b.WriteString("\n")
 	}
@@ -425,7 +425,7 @@ func (s *summary) markdownAt(level int) string {
 			if a.URL != "" {
 				link = fmt.Sprintf("[#%d](%s)", a.Number, a.URL)
 			}
-			fmt.Fprintf(&b, "| %s | %s | %s |\n", mdCell(title), a.Display(), link)
+			fmt.Fprintf(&b, "| %s | %s | %s |\n", mdCell(title), mdCell(a.Display()), link)
 		}
 		b.WriteString("\n")
 	}
@@ -436,7 +436,7 @@ func (s *summary) markdownAt(level int) string {
 		fmt.Fprintf(&b, "### Held back by minimumReleaseAge\n\n<details><summary>%s held back (too new, or without a release time under timestamp-required)</summary>\n\n| Dependency | File | Version | Reason |\n|---|---|---|---|\n",
 			plural(len(s.Res.Pending), "release", "releases"))
 		for _, p := range s.Res.Pending {
-			fmt.Fprintf(&b, "| `%s` | `%s:%d` | `%s` | %s |\n", p.Dep.Name, p.Dep.File, p.Dep.Line, p.Version, mdCell(p.Reason))
+			fmt.Fprintf(&b, "| `%s` | `%s:%d` | `%s` | %s |\n", mdCell(p.Dep.Name), mdCell(p.Dep.File), p.Dep.Line, mdCell(p.Version), mdCell(p.Reason))
 		}
 		b.WriteString("\n</details>\n\n")
 	}
