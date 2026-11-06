@@ -1,8 +1,8 @@
 // Package nix extracts the inputs of Nix flakes: every input of a `flake.nix` that its
 // `flake.lock` locks to a commit of a git repository (GitHub, GitLab, SourceHut, git URLs,
-// Gitea/Forgejo archive tarballs and NixOS channels) is a dep, tracking a branch (digest
-// updates of flake.lock) or a version tag (ref updates of flake.nix). flake.lock moves with
-// `nix flake update <input>` (Locker).
+// Gitea/Forgejo archive tarballs) is a dep, tracking a branch (digest updates of flake.lock)
+// or a version tag (ref updates of flake.nix). NixOS channels are skipped. flake.lock moves
+// with `nix flake update <input>` (Locker).
 package nix
 
 import (
@@ -50,6 +50,7 @@ const (
 	skipNoRev       = "no locked revision"
 	skipURL         = "unrecognized url"
 	skipTarball     = "unsupported tarball url"
+	skipChannel     = "nixos channel (lockFileMaintenance)"
 	skipRefSpan     = "cannot locate ref"
 	skipRevSpan     = "cannot locate rev"
 	skipUnsupported = "unsupported input type "

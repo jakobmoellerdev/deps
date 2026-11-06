@@ -24,12 +24,10 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
-// nixpkgsRepo is the repository of the NixOS channels.
-const nixpkgsRepo = "https://github.com/NixOS/nixpkgs"
-
 var (
-	// channelRe matches a NixOS channel tarball; the channel is a branch of nixpkgs.
-	channelRe = regexp.MustCompile(`^https://(?:channels\.nixos\.org|nixos\.org/channels)/([^/]+)/nixexprs\.tar\.(?:xz|zst|bz2|gz)$`)
+	// channelRe matches a NixOS channel tarball. Its commit lags the nixpkgs branch of the
+	// same name until Hydra passes, so it is no git-refs dep.
+	channelRe = regexp.MustCompile(`^https://(?:channels\.nixos\.org|nixos\.org/channels)/[^/]+/nixexprs\.tar\.(?:xz|zst|bz2|gz)$`)
 	// archiveRe matches a forge archive tarball (`https://<host>/<owner>/<repo>/archive/<ref>.tar.gz`).
 	archiveRe = regexp.MustCompile(`^https://([^/]+)/([^/]+)/([^/]+)/archive/.+\.tar\.gz$`)
 )
@@ -200,8 +198,8 @@ func origin(o *flakeRef) (source, ref, pin, skip string) {
 		return source, o.Ref, o.Rev, ""
 	case "tarball":
 		u := strings.TrimPrefix(o.URL, "tarball+")
-		if m := channelRe.FindStringSubmatch(u); m != nil {
-			return nixpkgsRepo, m[1], "", ""
+		if channelRe.MatchString(u) {
+			return "", "", "", skipChannel
 		}
 		m := archiveRe.FindStringSubmatch(u)
 		if m == nil {

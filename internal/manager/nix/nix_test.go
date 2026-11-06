@@ -100,7 +100,7 @@ func TestMatch(t *testing.T) {
 func TestExtractReal(t *testing.T) {
 	files, srcs := extract(t, "nixos-nix", "devenv", "hyprland", "home-manager")
 	want := [][]string{{
-		"4 nixpkgs git-refs nixos-26.05@fa13731 https://github.com/NixOS/nixpkgs ref=- rev=-",
+		`4 nixpkgs skip "nixos channel (lockFileMaintenance)"`,
 		"6 nixpkgs-regression git-refs HEAD@215d4d0 https://github.com/NixOS/nixpkgs ref=- rev=215d4d0fd80ca5163643b03a33fde804a29cc1e2",
 		"7 nixpkgs-23-11 git-refs HEAD@a62e6ed https://github.com/NixOS/nixpkgs ref=- rev=a62e6edd6d5e1fa0329b8653c801147986f8d446",
 		"9 flake-compat git-refs HEAD@5edf11c https://github.com/NixOS/flake-compat ref=- rev=-",
@@ -127,7 +127,7 @@ func TestExtractReal(t *testing.T) {
 		hypr[12] != "88 xdph git-refs HEAD@d1467fe https://github.com/hyprwm/xdg-desktop-portal-hyprland ref=- rev=-" {
 		t.Errorf("hyprland =\n%s", strings.Join(hypr, "\n"))
 	}
-	if got := renderAll(files[3], srcs["home-manager/flake.nix"]); !slices.Equal(got, []string{"4 nixpkgs git-refs nixpkgs-unstable@7d5589b https://github.com/NixOS/nixpkgs ref=- rev=-"}) {
+	if got := renderAll(files[3], srcs["home-manager/flake.nix"]); !slices.Equal(got, []string{`4 nixpkgs skip "nixos channel (lockFileMaintenance)"`}) {
 		t.Errorf("home-manager = %v", got)
 	}
 }
@@ -154,7 +154,7 @@ func TestExtractForms(t *testing.T) {
 		`26 hg skip "unsupported input type hg"`,
 		`27 stale skip "not in flake.lock"`,
 		`28 followed skip "follows another input"`,
-		"32 channel git-refs nixos-24.05@bbbbbbb https://github.com/NixOS/nixpkgs ref=- rev=-",
+		`32 channel skip "nixos channel (lockFileMaintenance)"`,
 	}
 	if got := renderAll(files[0], srcs["forms/flake.nix"]); !slices.Equal(got, want) {
 		t.Errorf("deps =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -198,6 +198,34 @@ func TestReadLocksErrors(t *testing.T) {
 		l.resolve(&d)
 		if d.Skip != c.skip {
 			t.Errorf("%+v: skip %q", c.node, d.Skip)
+		}
+	}
+}
+
+// TestReadLocksChannel: a NixOS channel only advances after Hydra passes, so its commit lags
+// the head of the nixpkgs branch of the same name, and `nix flake update` keeps locking the
+// channel's commit. A git-refs digest update to the branch head would be proposed on every run
+// without flake.lock ever reaching it; channel inputs are skipped, as Renovate has no digest
+// update for them either, and move with lock file maintenance.
+func TestReadLocksChannel(t *testing.T) {
+	l, err := parseLock([]byte(`{"nodes": {"root": {"inputs": {"nixpkgs": "nixpkgs"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{
+		"https://channels.nixos.org/nixos-24.05/nixexprs.tar.xz",
+		"https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.zst",
+		"https://nixos.org/channels/nixos-unstable/nixexprs.tar.xz",
+		"tarball+https://channels.nixos.org/nixos-24.11/nixexprs.tar.gz",
+	} {
+		l.Nodes["nixpkgs"] = lockNode{
+			Locked:   &flakeRef{Type: "tarball", Rev: strings.Repeat("b", 40), URL: "https://releases.nixos.org/nixos/24.05/nixos-24.05.1.bbbbbbbbbbbb/nixexprs.tar.xz"},
+			Original: &flakeRef{Type: "tarball", URL: u},
+		}
+		d := dep.Dep{Name: "nixpkgs"}
+		l.resolve(&d)
+		if d.Skip != skipChannel || d.Datasource != "" || d.Digest != "" {
+			t.Errorf("%s: %+v", u, d)
 		}
 	}
 }
