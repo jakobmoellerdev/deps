@@ -506,16 +506,14 @@ Updates image tags and digests, Helm chart versions and the `?ref=` of remote gi
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `image` | `images[]` `newTag` (`1.2` or `1.2@sha256:…`) and `digest` of `newName`, else `name` | `docker` | `docker` | updated |
+| `image` | `images[]` `newTag` (`1.2` or `1.2@sha256:…`) and `digest` of `newName`, else `name`; without `newTag` the version is `latest` (no tag is written) | `docker` | `docker` | updated |
 | `helmChart` | `helmCharts[]` `version` of chart `name` from `repo` (`https://`, `http://` or `oci://`) | `helm` | `semver` | updated |
-| `resource` | remote git targets in `resources[]`, `components[]` and `bases[]` with a `ref` (or `version`) query parameter: `[git::]https://host/org/repo[.git][//path]`, `ssh://[user@]host/…`, `git@host:org/repo[.git][//path]`, `host/org/repo[//path]`; the span covers the ref value | `git-tags` | `tag` | updated |
+| `resource` | remote git targets in `resources[]`, `components[]` and `bases[]` with a `ref` (or `version`) query parameter: `[git::]https://host/org/repo[.git][//path]`, `ssh://[user@]host/…`, `git@host:org/repo[.git][//path]`, `host/org/repo[//path]`; the span covers the ref value. A full commit SHA ref is the digest of version `HEAD` (git-refs) | `git-tags`, `git-refs` | `tag` | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
-| `no tag` | image: no `newTag` and no `digest` (a rename only) |
-| `digest without tag` | image: a `digest` without `newTag` |
 | `invalid reference` | image: the name and tag are no valid image reference |
 | `invalid digest` | image: a `digest` field that is not `sha256:…` |
 | `variable reference` | image: the name or tag contains `$` |
@@ -524,8 +522,7 @@ Updates image tags and digests, Helm chart versions and the `?ref=` of remote gi
 | `no version` | helmChart: the version is missing or empty |
 | `version range` | helmChart: anything but a full `MAJOR.MINOR.PATCH[-pre][+build]` (optionally `v`-prefixed) |
 | `no ref` | resource: an empty `ref=` |
-| `commit ref` | resource: the ref is a full commit SHA |
-| `non-version ref` | resource: the ref is a branch or a tag that is no `v?N[.N[.N]]` version |
+| `non-version ref` | resource: the ref is a branch, a short SHA or a tag that is no `v?N[.N[.N]]` version (kustomize fetches its head on every build; nothing is pinned) |
 | `invalid repository URL` | resource: no repository path could be derived from the target |
 | `cannot locate value` | the value's bytes could not be found (escapes, block scalars) |
 
@@ -533,6 +530,11 @@ Updates image tags and digests, Helm chart versions and the `?ref=` of remote gi
 
 - Without `//`, the repository ends at `.git`, after `_git/<repo>` (Azure DevOps), after `org/repo` on github.com, gitlab.com and bitbucket.org, or at the end of the path.
 - The dep name is `host/org/repo`; tags are listed from `https://host/org/repo` (also for `ssh://` and scp-like targets). Targets without a `ref` track a branch and are no deps.
+- A `ref` that is a full commit SHA tracks the default branch head: a `digest` update rewrites the ref to its newest commit (git-refs `HEAD`), as a Bazel `git_override` commit.
+
+**Untagged images.**
+
+An `images` entry without `newTag` keeps the manifests' tag, which the kustomization does not know; it is tracked as `latest`, as in Renovate. A `digest` field gets `digest` updates to the `latest` digest; an entry without one (a rename only) gets replacements but is never pinned, which could silently change the manifests' tag. Otherwise it is skipped as a `non-version tag`.
 
 **Replacements.**
 
@@ -540,7 +542,7 @@ An `images` entry is [replaced](configuration.md#rulesreplacementname) by rewrit
 
 **Edits.**
 
-The tag, chart version or ref is replaced in place; a digest-pinned image also gets its new digest. Images without a digest are not pinned: kustomize would need a new `digest` field.
+The tag, chart version or ref is replaced in place; a digest-pinned image or commit ref also gets its new digest. [`pin: digest`](configuration.md#rulespin) pins an image with a `newTag` by appending the digest (`newTag: 1.2@sha256:…`, Renovate's `{{newValue}}@{{newDigest}}`), which kustomize applies as `image:1.2@sha256:…`.
 
 ## pre-commit
 

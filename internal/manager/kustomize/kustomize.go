@@ -12,6 +12,7 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/imageref"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
@@ -75,9 +76,10 @@ func (kustomizeManager) Extract(file string, src []byte, _ manager.Env) ([]dep.D
 	return x.deps, nil
 }
 
-// Edits replaces the version (image tag, chart version or git ref) and, for digest-pinned
-// images, the digest. Images without a digest cannot be pinned: kustomize has no place to
-// insert one without adding a `digest` field. A replacement (u.NewName) rewrites an image's
+// Edits replaces the version (image tag, chart version or git ref) and the digest of a
+// digest-pinned image or a commit-pinned remote resource. Pinning appends `@<digest>` to an
+// image's newTag (Renovate's `{{newValue}}@{{newDigest}}`), or inserts a `digest` key before
+// the `name` key of an image without newTag. A replacement (u.NewName) rewrites an image's
 // newName, or inserts one after its `name` line, and a chart's name and repo (helm.NameEdits).
 func (kustomizeManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
@@ -90,18 +92,37 @@ func (kustomizeManager) Edits(u dep.Update) ([]patch.Edit, error) {
 		edits = ne
 	}
 	if u.NewVersion != d.Version {
+		if d.RefSpan == (dep.Span{}) {
+			return nil, errors.New("cannot set the tag of an image without newTag")
+		}
 		edits = append(edits, patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion})
 	}
 	switch {
 	case u.NewDigest == "" && d.Digest != "":
-		return nil, errors.New("cannot unpin a digest-pinned image")
+		return nil, errors.New("cannot unpin a digest")
 	case u.NewDigest == "":
-	case d.Digest == "":
-		return nil, errors.New("cannot pin an image without a digest")
-	default:
+	case d.Digest != "":
 		edits = append(edits, patch.Edit{Start: d.DigestSpan.Start, End: d.DigestSpan.End, Old: d.Digest, New: u.NewDigest})
+	case !Pinnable(d):
+		return nil, errors.New("cannot pin an image without newTag")
+	default:
+		edits = append(edits, patch.Edit{Start: d.InsertAt, End: d.InsertAt, New: "@" + u.NewDigest})
 	}
 	return edits, nil
+}
+
+// Pinnable reports whether d is a kustomize image Edits can pin to a digest it does not carry
+// yet: an image with a newTag, which gets `@<digest>` appended.
+func Pinnable(d dep.Dep) bool {
+	return d.Manager == Name && d.DepType == TypeImage && d.Digest == "" && d.RefSpan != (dep.Span{})
+}
+
+// Untagged reports whether d is a kustomize image without newTag (version untaggedVersion):
+// it gets digest updates of its `digest` field, or replacements, but is never pinned. The
+// manifests' own tag applies, which is unknown here: pinning the `latest` digest would
+// silently change it.
+func Untagged(d dep.Dep) bool {
+	return d.Manager == Name && d.DepType == TypeImage && d.RefSpan == (dep.Span{}) && d.Version == untaggedVersion
 }
 
 // Rename returns d as name names it: an image (docker.Rename) or a chart, possibly with the
@@ -141,7 +162,9 @@ type extractor struct {
 }
 
 // image extracts an `images[]` entry: the image is newName (else name), the version newTag
-// (`1.2` or `1.2@sha256:…`), the digest newTag's or the `digest` field.
+// (`1.2` or `1.2@sha256:…`), the digest newTag's or the `digest` field. Without newTag the
+// image runs the tag of the manifests, tracked as `latest` like Renovate's untagged images:
+// a `digest` field gets digest updates, an image without one can be pinned or replaced.
 func (x *extractor) image(m *yaml.Node) {
 	nameNode := yamlspan.Str(yamlspan.Get(m, "name"))
 	if nameNode == nil || nameNode.Value == "" {
@@ -159,10 +182,8 @@ func (x *extractor) image(m *yaml.Node) {
 	switch {
 	case strings.Contains(name, "$") || tag != nil && strings.Contains(tag.Value, "$"):
 		d.Skip = "variable reference"
-	case (tag == nil || tag.Value == "") && dg != nil && dg.Value != "":
-		d.Line, d.Skip = dg.Line, "digest without tag"
 	case tag == nil || tag.Value == "":
-		d.Skip = "no tag"
+		x.untagged(&d, dg)
 	default:
 		d.Line = tag.Line
 		off := yamlspan.Locate(x.src, x.lines, tag)
@@ -175,20 +196,43 @@ func (x *extractor) image(m *yaml.Node) {
 		if d.Skip != "" || d.Digest != "" || dg == nil || dg.Value == "" {
 			break
 		}
-		o := yamlspan.Locate(x.src, x.lines, dg)
-		switch {
-		case !strings.HasPrefix(dg.Value, "sha256:"):
-			d.Skip = "invalid digest"
-		case o < 0:
-			d.Skip = "cannot locate value"
-		default:
-			d.Digest, d.DigestSpan = dg.Value, dep.Span{Start: o, End: o + len(dg.Value)}
-		}
+		x.digestField(&d, dg)
 	}
 	if d.Skip == "" {
 		x.imageNameParts(&d, m, nameNode, newName)
 	}
 	x.deps = append(x.deps, d)
+}
+
+// untaggedVersion is the version of an image without newTag: the tag Renovate looks up.
+const untaggedVersion = "latest"
+
+// untagged completes the image d without newTag: version untaggedVersion (no RefSpan) and the
+// `digest` field dg if any. A name with a tag or digest is no valid newName.
+func (x *extractor) untagged(d *dep.Dep, dg *yaml.Node) {
+	r, err := imageref.Parse(d.Name)
+	if err != nil || r.Tag != "" || r.Digest != "" {
+		d.Skip = "invalid reference"
+		return
+	}
+	d.Name, d.Source, d.Version = r.Familiar, r.Name, untaggedVersion
+	if dg != nil && dg.Value != "" {
+		d.Line = dg.Line
+		x.digestField(d, dg)
+	}
+}
+
+// digestField sets the `digest` field dg as d's digest.
+func (x *extractor) digestField(d *dep.Dep, dg *yaml.Node) {
+	o := yamlspan.Locate(x.src, x.lines, dg)
+	switch {
+	case !strings.HasPrefix(dg.Value, "sha256:"):
+		d.Skip = "invalid digest"
+	case o < 0:
+		d.Skip = "cannot locate value"
+	default:
+		d.Digest, d.DigestSpan = dg.Value, dep.Span{Start: o, End: o + len(dg.Value)}
+	}
 }
 
 // imageNameParts makes the updatable image d renamable: one NameWhole part over its newName
@@ -267,8 +311,13 @@ func chartRepository(repo string) bool {
 	return false
 }
 
+// defaultBranch is the version of a commit ref: git-refs' default branch head.
+const defaultBranch = "HEAD"
+
 // resource extracts a remote git target with a `ref` (or `version`) query parameter; local
-// paths and URLs without a ref are no deps.
+// paths and URLs without a ref are no deps. A version tag gets tag updates; a full commit SHA
+// tracks the default branch head (git-refs, digest updates, as a Bazel git_override commit);
+// a branch or another tag has nothing pinned to update.
 func (x *extractor) resource(v *yaml.Node) {
 	if v.Kind != yaml.ScalarNode {
 		return
@@ -284,18 +333,22 @@ func (x *extractor) resource(v *yaml.Node) {
 	case r.ref == "":
 		d.Skip = "no ref"
 	case manager.IsHex(r.ref, 40, 64):
-		d.Version, d.Digest, d.Skip = "", r.ref, "commit ref"
+		d.Datasource, d.Version, d.Digest = "git-refs", defaultBranch, r.ref
 	default:
 		if _, ok := versioning.ParseTag(r.ref); !ok {
 			d.Skip = "non-version ref"
-			break
 		}
+	}
+	if d.Skip == "" {
 		off := yamlspan.Locate(x.src, x.lines, v)
-		if off < 0 {
+		switch {
+		case off < 0:
 			d.Skip = "cannot locate value"
-			break
+		case d.Digest != "":
+			d.DigestSpan = dep.Span{Start: off + r.refOff, End: off + r.refOff + len(r.ref)}
+		default:
+			d.RefSpan = dep.Span{Start: off + r.refOff, End: off + r.refOff + len(r.ref)}
 		}
-		d.RefSpan = dep.Span{Start: off + r.refOff, End: off + r.refOff + len(r.ref)}
 	}
 	x.deps = append(x.deps, d)
 }

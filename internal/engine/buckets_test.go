@@ -275,7 +275,8 @@ func TestLocal(t *testing.T) {
 	if local, separate := Local(ups[5:]); len(local) != 1 || !slices.Equal(separate, []bool{false}) {
 		t.Errorf("one update: %v %v", local, separate)
 	}
-	// Commit-only deps without a RefSpan (cargo git revs) are told apart by their DigestSpan.
+	// Commit-only deps without a RefSpan (cargo git revs, kustomize commit refs and untagged
+	// digests) are told apart by their DigestSpan.
 	r1 := dep.Dep{File: "Cargo.toml", Line: 2, DigestSpan: dep.Span{Start: 10, End: 50}}
 	r2 := dep.Dep{File: "Cargo.toml", Line: 3, DigestSpan: dep.Span{Start: 80, End: 120}}
 	revs := []dep.Update{{Dep: r1, Type: dep.Digest, NewVersion: "HEAD", NewDigest: "a"}, {Dep: r2, Type: dep.Digest, NewVersion: "HEAD", NewDigest: "a"}}

@@ -32,6 +32,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
@@ -135,16 +136,19 @@ var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pr
 // may override it), except setup-action version inputs and runner labels, which are plain values; vcpkg registry
 // baselines (git-refs); images of
 // gitlabci, terraform (docker and kubernetes resources), ansible tasks and the CI pipeline managers, which are
-// edited like docker refs, and the devcontainer image; gitlabci includes, remote includes and
-// components pinned to a commit, or with room for the version comment pinning writes. Custom, kustomize, bazel-module and nix
-// deps and devcontainer features (never pinned, as Renovate's pinDigests: false) can only
+// edited like docker refs, the devcontainer image, and kustomize images with a newTag (pinned
+// as `newTag: 1.2@sha256:…`); gitlabci includes, remote includes and
+// components pinned to a commit, or with room for the version comment pinning writes. Custom, bazel-module and nix
+// deps, other kustomize deps and devcontainer features (never pinned, as Renovate's pinDigests: false) can only
 // refresh a digest they already carry (regex `digest` group, an annotated `@sha256:`, a
-// kustomize `digest` field, an `oci.pull` digest, a git override commit, the commit a flake
+// kustomize `digest` field or commit ref, an `oci.pull` digest, a git override commit, the commit a flake
 // input is locked or pinned to, `feature:1@sha256:…`); they have no place to insert a new one.
 func digestCapable(d dep.Dep) bool {
 	switch d.Manager {
-	case "custom", "kustomize", "cargo", bazel.Name, nix.Name:
+	case "custom", "cargo", bazel.Name, nix.Name:
 		return d.Digest != ""
+	case kustomize.Name:
+		return d.Digest != "" || kustomize.Pinnable(d)
 	case "gitlabci":
 		return d.Datasource == "docker" || d.Digest != "" || d.InsertAt > 0
 	case "terraform", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "ansible":
@@ -160,10 +164,11 @@ func digestCapable(d dep.Dep) bool {
 // tagOnly reports whether d's version is not a version but a ref whose digest can be
 // maintained: a docker tag (latest, bookworm), or the branch a git submodule, a vcpkg
 // registry baseline or a git-refs dep (a Bazel git override commit) tracks. Such deps
-// get digest-only resolution.
+// get digest-only resolution. A kustomize image without newTag is one even without a digest:
+// it can still be replaced.
 func tagOnly(d dep.Dep) bool {
 	s, ok := versioning.Get(d.Versioning)
-	return ok && (d.Datasource == "docker" || d.Datasource == "git-refs" || d.Manager == gitsubmodules.Name || d.Manager == vcpkg.Name) && digestCapable(d) && !s.Valid(d.Version)
+	return ok && (d.Datasource == "docker" || d.Datasource == "git-refs" || d.Manager == gitsubmodules.Name || d.Manager == vcpkg.Name) && (digestCapable(d) || kustomize.Untagged(d)) && !s.Valid(d.Version)
 }
 
 type job struct {
@@ -813,8 +818,8 @@ func (p *policies) skip(d dep.Dep) string {
 	switch {
 	case p.pre.Ignore && !p.anyKind():
 		return p.pre.IgnoreReason
-	case d.Digest == "" && p.pre.Pin != config.PinDigest && tagOnly(d) && (p.pre.ReplacementName == "" || !d.Renamable()):
-		// A non-version tag without a digest can only be pinned or replaced.
+	case d.Digest == "" && (p.pre.Pin != config.PinDigest || !digestCapable(d)) && tagOnly(d) && (p.pre.ReplacementName == "" || !d.Renamable()):
+		// A non-version tag without a digest can only be pinned (when digestCapable) or replaced.
 		return "non-version tag"
 	}
 	return ""

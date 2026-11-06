@@ -132,7 +132,8 @@ func union(dst, add []string) []string {
 
 // Local splits updates into the ones plan and apply write and the ones only `run` proposes
 // (in their own PRs): a dependency occurrence (File, RefSpan and DigestSpan, so commit-only
-// deps without a RefSpan, such as a cargo git `rev`, stay apart) gets one local version, since
+// deps without a RefSpan, such as a cargo git `rev` or a kustomize commit ref or untagged
+// digest, stay apart) gets one local version, since
 // the updates of its PR buckets edit the same bytes. The newest non-major update is kept, else
 // the lowest major one (Resolve orders a dep's updates by version; deps sharing a version
 // definition are compared by version). Every update of a shared definition (dep.Dep.VersionRef)

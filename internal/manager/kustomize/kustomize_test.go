@@ -83,8 +83,8 @@ func TestExtract(t *testing.T) {
 		{TypeImage, "ghcr.io/org/app", "ghcr.io/org/app", "v2.1.0", "", "v2.1.0", "", "", 21},
 		{TypeImage, "redis", "docker.io/library/redis", "7.4", digestA, "7.4", digestA, "", 23},
 		{TypeImage, "postgres", "docker.io/library/postgres", "16.4", digestB, "16.4", digestB, "", 25},
-		{TypeImage, "busybox", "", "", "", "", "", "digest without tag", 28},
-		{TypeImage, "example.com/renamed", "", "", "", "", "", "no tag", 29},
+		{TypeImage, "busybox", "docker.io/library/busybox", "latest", digestA, "", digestA, "", 28},
+		{TypeImage, "example.com/renamed", "example.com/renamed", "latest", "", "", "", "", 29},
 		{TypeImage, "templ", "", "", "", "", "", "variable reference", 31},
 		{TypeHelmChart, "cert-manager", "https://charts.jetstack.io", "v1.16.1", "", "v1.16.1", "", "", 36},
 		{TypeHelmChart, "podinfo", "oci://ghcr.io/stefanprodan/charts", "6.7.0", "", "6.7.0", "", "", 40},
@@ -98,7 +98,7 @@ func TestExtract(t *testing.T) {
 		{TypeResource, "git.example.com/team/app", "https://git.example.com/team/app", "v0.3.1", "", "v0.3.1", "", "", 9},
 		{TypeResource, "dev.azure.com/org/project/_git/repo", "https://dev.azure.com/org/project/_git/repo", "v2.0.0", "", "v2.0.0", "", "", 10},
 		{TypeResource, "gitlab.com/group/repo", "https://gitlab.com/group/repo", "main", "", "", "", "non-version ref", 11},
-		{TypeResource, "github.com/org/pinned", "https://github.com/org/pinned", "", sha, "", "", "commit ref", 12},
+		{TypeResource, "github.com/org/pinned", "https://github.com/org/pinned", "HEAD", sha, "", sha, "", 12},
 		{TypeResource, "git.example.com/org/comp", "https://git.example.com/org/comp", "v3", "", "v3", "", "", 15},
 	}
 	if len(got) != len(ws) {
@@ -113,6 +113,9 @@ func TestExtract(t *testing.T) {
 			continue
 		}
 		dv := map[string][2]string{TypeImage: {"docker", "docker"}, TypeHelmChart: {"helm", "semver"}, TypeResource: {"git-tags", "tag"}}[w.depType]
+		if w.version == defaultBranch {
+			dv[0] = "git-refs"
+		}
 		ds, vs := dv[0], dv[1]
 		if d.Datasource != ds || d.Versioning != vs {
 			t.Errorf("%d: datasource/versioning = %s/%s, want %s/%s", i, d.Datasource, d.Versioning, ds, vs)
@@ -169,14 +172,14 @@ func TestExtractEdgeCases(t *testing.T) {
 		t.Error("broken kustomization accepted")
 	}
 	// Escaped and block scalars cannot be located; an invalid image reference is reported.
-	src := "images:\n  - name: a\n    newTag: \"1.\\x30\"\n  - name: UPPER\n    newTag: 1.0\n" +
+	src := "images:\n  - name: a\n    newTag: \"1.\\x30\"\n  - name: UPPER\n    newTag: 1.0\n  - name: t\n    newName: x:1\n  - name: d\n    digest: md5:x\n" +
 		"helmCharts:\n  - name: c\n    repo: https://x\n    version: >-\n      1.0.0\n" +
 		"resources:\n  - \"https://github.com/o/r?ref=v\\x31\"\n  - https://github.com//?ref=v1\n  - ?ref=v1\n  - https://github.com/o/r?ref=\n"
 	got, err := m.Extract("kustomization.yaml", []byte(src), manager.Env{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	skips := []string{"cannot locate value", "invalid reference", "cannot locate value", "cannot locate value", "invalid repository URL", "no ref"}
+	skips := []string{"cannot locate value", "invalid reference", "invalid reference", "invalid digest", "cannot locate value", "cannot locate value", "invalid repository URL", "no ref"}
 	if len(got) != len(skips) {
 		t.Fatalf("got %d deps, want %d: %+v", len(got), len(skips), got)
 	}
@@ -236,6 +239,11 @@ func TestEdits(t *testing.T) {
 		{"github.com/org/infra", "v1.3", "", "git@github.com:org/infra.git//apps/x?ref=v1.2&timeout=2m", "git@github.com:org/infra.git//apps/x?ref=v1.3&timeout=2m"},
 		{"git.example.com/team/app", "v0.4.0", "", "k8s?submodules=false&ref=v0.3.1\"", "k8s?submodules=false&ref=v0.4.0\""},
 		{"dev.azure.com/org/project/_git/repo", "v2.1.0", "", "path?version=v2.0.0", "path?version=v2.1.0"},
+		{"nginx", "1.27.3", digestA, "    newTag: 1.27.3\n", "    newTag: 1.27.3@" + digestA + "\n"},
+		{"nginx", "1.28.0", digestA, "    newTag: 1.27.3\n", "    newTag: 1.28.0@" + digestA + "\n"},
+		{"ghcr.io/org/app", "v2.1.0", digestB, `    newTag: "v2.1.0"` + "\n", `    newTag: "v2.1.0@` + digestB + `"` + "\n"},
+		{"busybox", "latest", digestB, "    digest: " + digestA + "\n  - name: rename", "    digest: " + digestB + "\n  - name: rename"},
+		{"github.com/org/pinned", defaultBranch, "fedcba9876543210fedcba9876543210fedcba98", "x?ref=" + sha, "x?ref=fedcba9876543210fedcba9876543210fedcba98"},
 	} {
 		d, ok := byName[tt.name]
 		if !ok {
@@ -257,8 +265,17 @@ func TestEdits(t *testing.T) {
 	if _, err := m.Edits(dep.Update{Dep: byName["redis"], NewVersion: "7.6"}); err == nil {
 		t.Error("unpinning a digest: no error")
 	}
-	if _, err := m.Edits(dep.Update{Dep: byName["nginx"], NewVersion: "1.27.3", NewDigest: digestA}); err == nil {
-		t.Error("pinning without digest field: no error")
+	if _, err := m.Edits(dep.Update{Dep: byName["example.com/renamed"], NewVersion: "latest", NewDigest: digestA}); err == nil {
+		t.Error("pinning an image without newTag: no error")
+	}
+	if _, err := m.Edits(dep.Update{Dep: byName["example.com/renamed"], NewVersion: "1.0"}); err == nil {
+		t.Error("setting a tag of an image without newTag: no error")
+	}
+	if !Pinnable(byName["nginx"]) || Pinnable(byName["redis"]) || Pinnable(byName["example.com/renamed"]) || Pinnable(byName["github.com/org/pinned"]) {
+		t.Error("Pinnable: want only the tagged image without digest")
+	}
+	if !Untagged(byName["example.com/renamed"]) || !Untagged(byName["busybox"]) || Untagged(byName["nginx"]) {
+		t.Error("Untagged: want only the images without newTag")
 	}
 }
 
@@ -268,10 +285,12 @@ func TestNameParts(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]dep.NamePart{
-		"nginx":           {Text: "  - name: nginx", Role: roleNameLine},
-		"ghcr.io/org/app": {Text: "ghcr.io/org/app"},
-		"redis":           {Text: "  - name: redis", Role: roleNameLine},
-		"postgres":        {Text: "  - name: postgres", Role: roleNameLine},
+		"nginx":               {Text: "  - name: nginx", Role: roleNameLine},
+		"ghcr.io/org/app":     {Text: "ghcr.io/org/app"},
+		"redis":               {Text: "  - name: redis", Role: roleNameLine},
+		"postgres":            {Text: "  - name: postgres", Role: roleNameLine},
+		"busybox":             {Text: "  - name: busybox", Role: roleNameLine},
+		"example.com/renamed": {Text: "example.com/renamed"},
 	}
 	for _, d := range deps {
 		w, ok := want[d.Name]
