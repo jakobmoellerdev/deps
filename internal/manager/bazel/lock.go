@@ -206,6 +206,7 @@ func runBazel(ctx context.Context, dir, scope, outBase string, args ...string) e
 	}
 	cmd := exec.CommandContext(ctx, bin, append([]string{"--output_base=" + outBase}, args...)...)
 	cmd.Dir = dir
+	cmd.Env = toolrun.Env()
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

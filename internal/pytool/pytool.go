@@ -499,7 +499,7 @@ func (c cmdSpec) run(ctx context.Context, dir string) error {
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), c.env...)
+	cmd.Env = toolrun.Env(c.env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

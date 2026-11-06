@@ -84,19 +84,18 @@ func hasTaskOperator(s string) bool {
 // taskTimeout bounds one postUpgradeTasks command.
 const taskTimeout = 15 * time.Minute
 
-// droppedEnv are kept from the commands' environment: the credentials of deps itself, and
-// the git variables that would point the commands' git elsewhere than the repository they
-// run in.
+// droppedEnv are kept from the commands' environment on top of toolrun.Secrets: the platform
+// tokens deps reads, and the git variables that would point the commands' git elsewhere than
+// the repository they run in.
 var droppedEnv = []string{
-	"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", "GITLAB_TOKEN",
-	"DEPS_GITHUB_COM_TOKEN", "DEPS_GITLAB_TOKEN", "CI_JOB_TOKEN", "DEPS_SIGNING_KEY",
+	"GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", "GITLAB_TOKEN", "CI_JOB_TOKEN",
 	"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
 	"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CEILING_DIRECTORIES",
 }
 
-// taskEnv is deps' environment without droppedEnv.
+// taskEnv is toolrun.Env without droppedEnv.
 func taskEnv() []string {
-	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
+	return slices.DeleteFunc(toolrun.Env(), func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
 		return slices.Contains(droppedEnv, k)
 	})

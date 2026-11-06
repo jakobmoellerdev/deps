@@ -521,7 +521,7 @@ func cargo(ctx context.Context, dir, scope string, args ...string) error {
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CARGO_TERM_COLOR=never", "CARGO_TERM_PROGRESS_WHEN=never")
+	cmd.Env = toolrun.Env("CARGO_TERM_COLOR=never", "CARGO_TERM_PROGRESS_WHEN=never")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

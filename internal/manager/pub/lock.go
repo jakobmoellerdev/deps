@@ -370,7 +370,7 @@ func runPub(ctx context.Context, dir, scope string, flutter bool, args ...string
 	}
 	cmd := exec.CommandContext(ctx, bin, append([]string{"--suppress-analytics", "pub"}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = toolrun.Env(env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

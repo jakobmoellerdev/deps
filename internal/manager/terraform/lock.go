@@ -581,7 +581,7 @@ func linkEntries(dir, mirrored, skip string) error {
 func runInit(ctx context.Context, bin, work string, args ...string) error {
 	cmd := exec.CommandContext(ctx, bin, append([]string{"init", "-backend=false", "-input=false", "-no-color"}, args...)...)
 	cmd.Dir = work
-	cmd.Env = append(os.Environ(), "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1", "TF_DATA_DIR="+filepath.Join(work, ".terraform"))
+	cmd.Env = toolrun.Env("TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1", "TF_DATA_DIR="+filepath.Join(work, ".terraform"))
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

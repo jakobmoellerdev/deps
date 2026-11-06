@@ -262,7 +262,7 @@ func composer(ctx context.Context, dir, scope string, args ...string) error {
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "COMPOSER="+filepath.Join(dir, manifest), "COMPOSER_NO_INTERACTION=1", "NO_COLOR=1")
+	cmd.Env = toolrun.Env("COMPOSER="+filepath.Join(dir, manifest), "COMPOSER_NO_INTERACTION=1", "NO_COLOR=1")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

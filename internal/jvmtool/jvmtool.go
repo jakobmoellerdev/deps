@@ -110,6 +110,7 @@ func readBack(tmp string, old map[string][]byte, names ...string) (map[string][]
 func run(ctx context.Context, dir string, argv []string) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
+	cmd.Env = toolrun.Env()
 	cmd.WaitDelay = waitDelay
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out

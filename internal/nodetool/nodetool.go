@@ -436,7 +436,7 @@ func (c cmdSpec) run(ctx context.Context, dir, version string) error {
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "npm_config_update_notifier=false", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0")
+	cmd.Env = toolrun.Env("npm_config_update_notifier=false", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0")
 	cmd.Env = append(cmd.Env, c.env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out

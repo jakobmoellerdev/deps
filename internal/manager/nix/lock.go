@@ -331,7 +331,7 @@ func (l Locker) nix(ctx context.Context, dir, scope string, args ...string) erro
 	}
 	cmd := exec.CommandContext(ctx, bin, append([]string{"--extra-experimental-features", "nix-command flakes"}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = os.Environ()
+	cmd.Env = toolrun.Env()
 	if l.GitHubToken != "" {
 		conf := "extra-access-tokens = github.com=" + l.GitHubToken
 		if prev := os.Getenv("NIX_CONFIG"); prev != "" {

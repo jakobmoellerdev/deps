@@ -447,7 +447,7 @@ func bundle(ctx context.Context, dir, scope, gemfile string, args ...string) err
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "BUNDLE_GEMFILE="+filepath.Join(dir, gemfile), "NO_COLOR=1")
+	cmd.Env = toolrun.Env("BUNDLE_GEMFILE="+filepath.Join(dir, gemfile), "NO_COLOR=1")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

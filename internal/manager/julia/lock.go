@@ -432,7 +432,7 @@ func julia(ctx context.Context, dir, scope, lock, script string, args []string) 
 	}
 	cmd := exec.CommandContext(ctx, bin, append([]string{"--startup-file=no", "--history-file=no", "--color=no", "-e", script}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "JULIA_PKG_PRECOMPILE_AUTO=0")
+	cmd.Env = toolrun.Env("JULIA_PKG_PRECOMPILE_AUTO=0")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

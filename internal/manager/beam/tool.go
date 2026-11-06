@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -42,7 +41,7 @@ func tool(ctx context.Context, name, lock, dir, scope string, args []string, env
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), "NO_COLOR=1"), env...)
+	cmd.Env = append(toolrun.Env("NO_COLOR=1"), env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

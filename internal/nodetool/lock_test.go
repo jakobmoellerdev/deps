@@ -624,3 +624,25 @@ func TestProcessLockedRealPnpmYarnBun(t *testing.T) {
 		})
 	}
 }
+
+// TestProcessLockedEnv checks that the tools run without deps' own credentials but with the
+// ecosystem ones private registries reference.
+func TestProcessLockedEnv(t *testing.T) {
+	bin, log := t.TempDir(), filepath.Join(t.TempDir(), "log")
+	script := "#!/bin/sh\nprintf 'deps=%s signing=%s github=%s' \"$DEPS_TOKEN\" \"$DEPS_SIGNING_KEY\" \"$GITHUB_TOKEN\" > '" + log + "'\n"
+	if err := os.WriteFile(filepath.Join(bin, "npm"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("DEPS_TOKEN", "deps-secret")
+	t.Setenv("DEPS_SIGNING_KEY", "key-secret")
+	t.Setenv("GITHUB_TOKEN", "gh")
+	dir := t.TempDir()
+	write(t, dir, map[string]string{"package.json": `{"name": "p", "dependencies": {"a": "^1.0.0"}}`})
+	locks := map[string][]dep.Update{"package.json": {lockUp("dependencies", "a", "^1.0.0", "1.3.0")}}
+	// The stub leaves the lock without a's entry; only its environment matters here.
+	_, _ = Locker{}.ProcessLocked(t.Context(), dir, nil, map[string][]byte{PackageLock: []byte("{}")}, locks)
+	if got := readLog(t, log); got != "deps= signing= github=gh" {
+		t.Errorf("env = %q, want deps= signing= github=gh", got)
+	}
+}
