@@ -203,6 +203,21 @@ func TestAnnotationsSecurityNotice(t *testing.T) {
 	}
 }
 
+// Only a leading ".." path element leaves the workspace; a directory named "..a" is inside.
+func TestAnnotatorPathDotDotNames(t *testing.T) {
+	ws := filepath.Join(t.TempDir(), "ws")
+	a := &annotator{workspace: ws}
+	for p, want := range map[string]string{
+		"..a/x": "..a/x",
+		"../x":  filepath.ToSlash(filepath.Join(filepath.Dir(ws), "x")),
+		"..":    filepath.ToSlash(filepath.Dir(ws)),
+	} {
+		if got := a.path(ws, p); got != want {
+			t.Errorf("path(%q) = %q, want %q", p, got, want)
+		}
+	}
+}
+
 func TestAnnotatorMask(t *testing.T) {
 	var b bytes.Buffer
 	a := &annotator{on: true, w: &b}

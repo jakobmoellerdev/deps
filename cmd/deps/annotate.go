@@ -79,7 +79,7 @@ func (a *annotator) path(base, p string) string {
 		return filepath.ToSlash(p)
 	}
 	rel, err := filepath.Rel(absWS, absP)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return filepath.ToSlash(absP)
 	}
 	return filepath.ToSlash(rel)

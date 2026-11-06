@@ -103,7 +103,7 @@ func Load(ctx context.Context, dir, explicitPath string, f *Fetcher) (*Result, e
 	doc := t.translate(cfg)
 
 	shown := p
-	if rel, err := filepath.Rel(dir, p); err == nil && !strings.HasPrefix(rel, "..") {
+	if rel, err := filepath.Rel(dir, p); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		shown = filepath.ToSlash(rel)
 	}
 	parsed, err := config.Parse(mustMarshal(doc, ""), p)
