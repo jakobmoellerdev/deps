@@ -308,11 +308,18 @@ func updatedCrates(dir string, manifests map[string][]byte) []crateUpdate {
 // pin is a `cargo update --precise` run.
 type pin struct{ name, locked, version string }
 
-// lockedPackage is a registry [[package]] of a Cargo.lock.
+// lockedPackage is a registry (or git) [[package]] of a Cargo.lock.
 type lockedPackage struct{ name, version, source string }
 
 // registryPackages returns the crates.io and other registry packages of the lockfile.
 func registryPackages(lock []byte) ([]lockedPackage, error) {
+	return packagesOf(lock, func(src string) bool {
+		return strings.HasPrefix(src, "registry+") || strings.HasPrefix(src, "sparse+")
+	})
+}
+
+// packagesOf returns the packages of the lockfile whose source keep accepts.
+func packagesOf(lock []byte, keep func(src string) bool) ([]lockedPackage, error) {
 	root, err := tomlspan.Parse(lock)
 	if err != nil {
 		return nil, err
@@ -329,7 +336,7 @@ func registryPackages(lock []byte) ([]lockedPackage, error) {
 			}
 			return ""
 		}
-		if src := str("source"); strings.HasPrefix(src, "registry+") || strings.HasPrefix(src, "sparse+") {
+		if src := str("source"); keep(src) {
 			out = append(out, lockedPackage{str("name"), str("version"), src})
 		}
 	}

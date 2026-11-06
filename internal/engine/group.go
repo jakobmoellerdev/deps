@@ -131,7 +131,8 @@ func union(dst, add []string) []string {
 }
 
 // Local splits updates into the ones plan and apply write and the ones only `run` proposes
-// (in their own PRs): a dependency occurrence (File and RefSpan) gets one local version, since
+// (in their own PRs): a dependency occurrence (File, RefSpan and DigestSpan, so commit-only
+// deps without a RefSpan, such as a cargo git `rev`, stay apart) gets one local version, since
 // the updates of its PR buckets edit the same bytes. The newest non-major update is kept, else
 // the lowest major one (Resolve orders a dep's updates by version; deps sharing a version
 // definition are compared by version). Every update of a shared definition (dep.Dep.VersionRef)
@@ -140,15 +141,15 @@ func union(dst, add []string) []string {
 // local keeps the order of updates; separate[i] reports whether updates[i] was left out.
 func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 	type occ struct {
-		file string
-		span dep.Span
+		file        string
+		ref, digest dep.Span
 	}
 	chosen := make(map[occ]int, len(updates))
 	for i, u := range updates {
 		if u.Maintenance() {
 			continue // run only: its own PR
 		}
-		k := occ{u.Dep.File, u.Dep.RefSpan}
+		k := occ{u.Dep.File, u.Dep.RefSpan, u.Dep.DigestSpan}
 		j, ok := chosen[k]
 		if !ok {
 			chosen[k] = i
@@ -177,7 +178,7 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 	}
 	local = make([]dep.Update, 0, len(chosen))
 	for i, u := range updates {
-		if j, ok := chosen[occ{u.Dep.File, u.Dep.RefSpan}]; !u.Maintenance() && ok && (j == i || sameSharedEdit(u, updates[j])) {
+		if j, ok := chosen[occ{u.Dep.File, u.Dep.RefSpan, u.Dep.DigestSpan}]; !u.Maintenance() && ok && (j == i || sameSharedEdit(u, updates[j])) {
 			local = append(local, u)
 		} else {
 			separate[i] = true

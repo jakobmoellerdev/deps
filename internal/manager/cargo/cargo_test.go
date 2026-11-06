@@ -289,7 +289,7 @@ dependencies regio 30 1.0.0 crate/cargo
 dependencies regidx 31 1.0.0 crate/cargo @sparse+https://corp/index/
 dependencies gittag 32 v1.2.0 git-tags/tag @https://github.com/o/r
 dependencies gitbranch 33 skip:git dependency
-dependencies gitrev 34 skip:git dependency
+dependencies gitrev 34 skip:git rev is not a commit
 dependencies gitssh 35 skip:git dependency
 dependencies gitescaped 36 skip:cannot locate value
 dependencies gitbad 37 skip:git dependency
@@ -372,5 +372,61 @@ func TestEdits(t *testing.T) {
 	bad.Range = "~>1"
 	if _, err := New().Edits(dep.Update{Dep: bad, NewVersion: "2"}); err == nil {
 		t.Error("unparsable range accepted")
+	}
+}
+
+// TestGitRev checks that a git dependency pinned to a commit rev is a git-refs dep tracking its
+// branch (else HEAD), that Edits rewrites the rev at its written length and refuses a branch
+// change, and that ReadLocks completes an abbreviated rev from Cargo.lock (or skips it).
+func TestGitRev(t *testing.T) {
+	const full = "0123456789abcdef0123456789abcdef01234567"
+	const next = "fedcba9876543210fedcba9876543210fedcba98"
+	src := []byte("[dependencies]\n" +
+		"pinned = { git = \"https://github.com/o/pinned.git\", rev = \"" + full + "\" }\n" +
+		"short = { git = \"https://github.com/o/short\", branch = \"dev\", rev = \"0123456\" }\n" +
+		"unlocked = { git = \"https://github.com/o/unlocked\", rev = \"89abcde\" }\n" +
+		"tagrev = { git = \"https://github.com/o/t\", tag = \"v1\", rev = \"" + full + "\" }\n")
+	root := t.TempDir()
+	write(t, root, map[string]string{"Cargo.toml": string(src), "Cargo.lock": "version = 4\n\n" +
+		"[[package]]\nname = \"short\"\nversion = \"0.1.0\"\nsource = \"git+https://github.com/o/short?branch=dev&rev=0123456#" + full + "\"\n\n" +
+		"[[package]]\nname = \"unlocked\"\nversion = \"0.1.0\"\nsource = \"git+https://github.com/o/unlocked?rev=1111111#" + next + "\"\n"})
+	deps := extract(t, src)
+	for i, want := range []struct{ ds, version, digest, source string }{
+		{DatasourceGitRefs, "HEAD", full, "https://github.com/o/pinned"},
+		{DatasourceGitRefs, "dev", "0123456", "https://github.com/o/short"},
+		{DatasourceGitRefs, "HEAD", "89abcde", "https://github.com/o/unlocked"},
+		{"git-tags", "v1", "", "https://github.com/o/t"},
+	} {
+		if d := deps[i]; d.Datasource != want.ds || d.Version != want.version || d.Digest != want.digest || d.Source != want.source || d.Skip != "" || d.Line != 2+i {
+			t.Errorf("dep %d = %+v, want %+v", i, d, want)
+		}
+	}
+	files := [][]dep.Dep{deps}
+	if errs := New().(cargoManager).ReadLocks(root, files); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if deps[1].Digest != full || deps[0].Digest != full || deps[2].Skip != "abbreviated git rev without a Cargo.lock commit" {
+		t.Errorf("after ReadLocks: %q %q skip %q", deps[0].Digest, deps[1].Digest, deps[2].Skip)
+	}
+	var edits []patch.Edit
+	for _, d := range deps[:2] {
+		e, err := New().Edits(dep.Update{Dep: d, Type: dep.Digest, NewVersion: d.Version, NewDigest: next})
+		if err != nil {
+			t.Fatal(err)
+		}
+		edits = append(edits, e...)
+	}
+	out, err := patch.Apply(src, edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.Replace(strings.Replace(string(src), full, next, 1), "\"0123456\"", "\"fedcba9\"", 1); string(out) != want {
+		t.Errorf("patched:\n%s\nwant:\n%s", out, want)
+	}
+	if _, err := New().Edits(dep.Update{Dep: deps[0], NewVersion: "main", NewDigest: next}); err == nil {
+		t.Error("branch change accepted")
+	}
+	if _, err := New().Edits(dep.Update{Dep: deps[0], NewVersion: "HEAD", NewDigest: "abc"}); err == nil {
+		t.Error("short digest accepted")
 	}
 }

@@ -9,10 +9,11 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-// comparatorRe is one comparator of a Cargo requirement: an optional operator and a
-// MAJOR[.MINOR[.PATCH[-pre][+build]]] version (group 2), optionally ending in a `.*`/`.x`
-// wildcard (group 3), or a bare `*`/`x` wildcard (group 4).
-var comparatorRe = regexp.MustCompile(`^(\^|~|=|>=|>|<=|<)?\s*(?:(\d+(?:\.\d+(?:\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)?)?)(\.[*xX])?|([*xX]))$`)
+// comparatorRe is one comparator of a Cargo requirement (the semver crate's grammar): an
+// optional operator and a MAJOR[.MINOR[.PATCH[-pre][+build]]] version without leading zeros
+// (group 2), optionally ending in a `.*`/`.x` or `.*.*` wildcard (group 3), or a bare `*`/`x`
+// wildcard (group 4).
+var comparatorRe = regexp.MustCompile(`^(\^|~|=|>=|>|<=|<)?\s*(?:((?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)?)?)(\.[*xX](?:\.[*xX])?)?|([*xX]))$`)
 
 // comparator is one part of a requirement; ver is a slice of the requirement text at off.
 type comparator struct {
@@ -31,7 +32,9 @@ type requirement struct {
 }
 
 // parseRequirement parses a requirement as written; ok is false for anything Cargo's grammar
-// does not have, or a wildcard combined with an operator.
+// does not have: a wildcard after a full version (`1.2.3.*`), a version part after a
+// wildcard, or a bare `*` next to other comparators or after an operator. An operator before
+// a partial wildcard (`>=1.*`) is Cargo's operator on the partial version (`>=1`).
 func parseRequirement(raw string) (requirement, bool) {
 	r := requirement{raw: raw}
 	off := 0
@@ -51,13 +54,14 @@ func parseRequirement(raw string) (requirement, bool) {
 			c.ver, c.off = s[m[4]:m[5]], off+lead+m[4]
 			if m[6] >= 0 {
 				c.wild = s[m[6]:m[7]]
-				if c.op != "" || strings.Count(c.ver, ".") == 2 {
+				dots := strings.Count(c.ver, ".")
+				if dots == 2 || (dots == 1 && len(c.wild) > 2) {
 					return requirement{}, false
 				}
 			}
 		default:
 			c.wild = s[m[8]:m[9]]
-			if c.op != "" {
+			if c.op != "" || off != 0 || len(raw) != len(part) {
 				return requirement{}, false
 			}
 		}
@@ -82,11 +86,16 @@ func (r requirement) version() string {
 func (r requirement) constraint() string {
 	parts := make([]string, len(r.cmps))
 	for i, c := range r.cmps {
-		op := c.op
-		if op == "" && c.wild == "" {
+		op, wild := c.op, c.wild
+		switch {
+		case op == "" && wild == "":
 			op = "^"
+		case op != "" && wild != "":
+			wild = "" // `>=1.*` is `>=1`
+		case len(wild) > 2:
+			wild = ".*" // `1.*.*` is `1.*`
 		}
-		parts[i] = op + c.ver + c.wild
+		parts[i] = op + c.ver + wild
 	}
 	return strings.Join(parts, ", ")
 }

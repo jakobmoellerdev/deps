@@ -142,7 +142,7 @@ var digestManagers = map[string]bool{"github-actions": true, "docker": true, "pr
 // input is locked or pinned to, `feature:1@sha256:…`); they have no place to insert a new one.
 func digestCapable(d dep.Dep) bool {
 	switch d.Manager {
-	case "custom", "kustomize", bazel.Name, nix.Name:
+	case "custom", "kustomize", "cargo", bazel.Name, nix.Name:
 		return d.Digest != ""
 	case "gitlabci", "terraform", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "ansible":
 		return d.Datasource == "docker"

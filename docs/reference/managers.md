@@ -856,7 +856,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 
 ## cargo
 
-Updates crate requirements in `Cargo.toml`, moves `Cargo.lock` with `cargo update` (in-range updates only touch the lock, as Renovate's `update-lockfile`), and groups the crates of well-known Rust monorepos. `Cargo.toml` is read with the span-keeping TOML parser `internal/tomlspan`; only the requirement's bytes are rewritten, so comments, formatting, operators and precision are kept. `[features]` and `[package]` are not extracted.
+Updates crate requirements in `Cargo.toml`, moves `Cargo.lock` with `cargo update` (in-range updates only touch the lock, as Renovate's `update-lockfile`), and groups the crates of well-known Rust monorepos. `Cargo.toml` is read with the span-keeping TOML parser `internal/tomlspan`; only the requirement's bytes are rewritten, so comments, formatting, operators and precision are kept. `[features]` (feature names, no versions) and `[package]` are not extracted (Renovate reads `[package] version` only for `bumpVersion`, which deps does not have).
 
 **Files:**
 
@@ -864,11 +864,11 @@ Updates crate requirements in `Cargo.toml`, moves `Cargo.lock` with `cargo updat
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `dependencies` | `[dependencies]` and `[target.<cfg>.dependencies]`: `name = "1.2"`, `name = { version = "1.2", features = [...] }`, `name.version = "1.2"` and `[<table>.name]` tables; `package = "<crate>"` renames are looked up by the crate name (updates use commit type `fix`) | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags` | `cargo`; git tags `tag` | updated |
-| `dev-dependencies` | `[dev-dependencies]` (also `dev_dependencies`) and `[target.<cfg>.dev-dependencies]` | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags` | `cargo`; git tags `tag` | updated |
-| `build-dependencies` | `[build-dependencies]` (also `build_dependencies`) and `[target.<cfg>.build-dependencies]` | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags` | `cargo`; git tags `tag` | updated |
-| `workspace.dependencies` | `[workspace.dependencies]`, inherited by members with `name.workspace = true` | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags` | `cargo`; git tags `tag` | updated |
-| `patch` | every `[patch.<source>]` table (`[patch.crates-io]`, `[patch."https://…"]`): versioned and git-tag entries; path patches are skipped | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags` | `cargo`; git tags `tag` | updated |
+| `dependencies` | `[dependencies]` and `[target.<cfg>.dependencies]`: `name = "1.2"`, `name = { version = "1.2", features = [...] }`, `name.version = "1.2"` and `[<table>.name]` tables; `package = "<crate>"` renames are looked up by the crate name (updates use commit type `fix`) | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags`; `git` + `rev`: `git-refs` | `cargo`; git tags and revs `tag` | updated |
+| `dev-dependencies` | `[dev-dependencies]` (also `dev_dependencies`) and `[target.<cfg>.dev-dependencies]` | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags`; `git` + `rev`: `git-refs` | `cargo`; git tags and revs `tag` | updated |
+| `build-dependencies` | `[build-dependencies]` (also `build_dependencies`) and `[target.<cfg>.build-dependencies]` | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags`; `git` + `rev`: `git-refs` | `cargo`; git tags and revs `tag` | updated |
+| `workspace.dependencies` | `[workspace.dependencies]`, inherited by members with `name.workspace = true` | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags`; `git` + `rev`: `git-refs` | `cargo`; git tags and revs `tag` | updated |
+| `patch` | every `[patch.<source>]` table (`[patch.crates-io]`, `[patch."https://…"]`): versioned and git-tag entries; path patches are skipped | `crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags`; `git` + `rev`: `git-refs` | `cargo`; git tags and revs `tag` | updated |
 | `replace` | `[replace]`: the git tag of `"<name>:<version>" = { git = …, tag = … }` (the key's version is the package being replaced and stays) | `git-tags` | `tag` | updated |
 
 **Skips:**
@@ -877,16 +877,18 @@ Updates crate requirements in `Cargo.toml`, moves `Cargo.lock` with `cargo updat
 |---|---|
 | `workspace dependency` | `workspace = true`: the requirement is inherited from `[workspace.dependencies]`, which is updated instead |
 | `path dependency` | `path = ...`, also together with `version` |
-| `git dependency` | `git = ...` without `tag`, with `branch`/`rev` only, or with a non-`http(s)` URL |
+| `git dependency` | `git = ...` without `tag` or `rev` (the default branch, or `branch` only: Cargo.lock holds the commit, `cargo update` moves it), or with a non-`http(s)` URL |
+| `git rev is not a commit` | `rev` that is not 7 to 40 hex digits (a tag or ref name) |
+| `abbreviated git rev without a Cargo.lock commit` | a `rev` shorter than 40 digits that no Cargo.lock git package of the crate resolves (`?rev=<rev>#<commit>`) |
 | `unknown registry <name>` | `registry = "<name>"` without `CARGO_REGISTRIES_<NAME>_INDEX` or a `[registries.<name>] index` in the config files (Cargo cannot resolve it either) |
 | `no version` | a table without `version` |
-| `unsupported requirement` | anything outside Cargo's grammar: `~>1`, `1.2 - 2.0`, `v1`, `>=1.*`, empty |
+| `unsupported requirement` | anything outside Cargo's grammar: `~>1`, `1.2 - 2.0`, `1 \|\| 2`, `v1`, `01.2`, `1.2.3.*`, `1.*.3`, `*` beside other comparators, empty |
 | `cannot locate value` | an escaped string |
 | `no Cargo.lock version for a requirement without a floor` | `*`, `<2` or `<=1.5` (nothing to raise) without a Cargo.lock entry of the crate |
 
 **Requirements.**
 
-- Cargo's grammar: comparators `^`, `~`, `=`, `>`, `>=`, `<`, `<=` (optionally followed by spaces) or none on `MAJOR[.MINOR[.PATCH[-pre][+build]]]`, wildcards `*`, `1.*`, `1.2.x`, and comma-separated lists (`">= 0.10, < 0.11"`). A bare `1.2` is `^1.2`; `Dep.Constraint` carries that translation for the engine.
+- Cargo's grammar (the semver crate's): comparators `^`, `~`, `=`, `>`, `>=`, `<`, `<=` (optionally followed by spaces) or none on `MAJOR[.MINOR[.PATCH[-pre][+build]]]` without leading zeros, wildcards `*` (alone), `1.*`, `1.2.x`, `1.*.*`, and comma-separated lists (`">= 0.10, < 0.11"`). An operator before a wildcard is the operator on the partial version (`>=1.*` is `>=1`; rewrites keep the wildcard: `>=2.*`). A bare `1.2` is `^1.2`; `Dep.Constraint` carries that translation for the engine.
 - The version a bump raises is that of the first lower bound (`^`, `~`, `=`, `>`, `>=`, none, or a wildcard's prefix). When the requirement is rewritten, every lower bound takes the new version at the precision it was written with, upper bounds `<B` that the new version reaches move to the next compatibility boundary above it, `<=B` to the new version: `1.2` → `1.4` or `2.0`, `~2.7.0` → `~2.9.1`, `1.*` → `2.*`, `">= 0.6.8, < 0.7"` → `">= 0.7.1, < 0.8"`, `<2` → `<3`.
 - `rangeStrategy` (top level or per rule, default `auto` = `update-lockfile`, as in Renovate): versions the requirement admits are lockfile-only updates from the version Cargo.lock locks (`, lockfile` in the report; the manifest is unchanged); newer ones rewrite the requirement. With `bump` every newer version rewrites it, with `in-range-only` only those it admits. Without a Cargo.lock, `update-lockfile` proposes only versions outside the requirement. `replace` leaves admitted versions alone; `widen` also does and keeps the lower bounds, moving only the upper ones (`">=1.2, <2"` → `">=1.2, <4"` for 3.1.0) or, when there are none, writing `>=<lower bound>, <boundary above the new version>` (`1.2` → `">=1.2, <3"` for 2.0.1; `=1.2.3` is replaced); `pin` writes `=<version>`: a `pin` update to the locked version (else the newest admitted one) unless another update shares its PR bucket, then every newer version.
 - A requirement without a floor (`*`, `<2`) has nothing to raise: its current version is the locked one, and under `bump` too its in-range updates only move the lock.
@@ -902,7 +904,7 @@ Updates crate requirements in `Cargo.toml`, moves `Cargo.lock` with `cargo updat
 
 **git dependencies.**
 
-`name = { git = "https://host/path", tag = "v1.2.0" }` (also in `[patch]` and `[replace]`) updates the tag from the repository's tags (`tag` versioning, so the prefix and number of parts are kept). The URL's query, fragment, trailing slash and `.git` suffix are dropped for the lookup.
+`name = { git = "https://host/path", tag = "v1.2.0" }` (also in `[patch]` and `[replace]`) updates the tag from the repository's tags (`tag` versioning, so the prefix and number of parts are kept). `name = { git = "https://host/path", rev = "<commit>" }` is a `git-refs` dep whose digest follows the head of its `branch` (version `HEAD` without one), as Renovate's `rev` handling: a `digest` update writes the new commit at the length the rev was written with, and `cargo update --workspace` moves the git package in Cargo.lock. An abbreviated rev is compared by the full commit Cargo.lock resolved it to. The URL's query, fragment, trailing slash and `.git` suffix are dropped for the lookup.
 
 **Lockfile (`apply`, `run`).**
 

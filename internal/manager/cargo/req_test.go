@@ -30,6 +30,11 @@ func TestRequirement(t *testing.T) {
 		{"0.3.x", "0.3", "0.3.x", []string{"0.3.9"}, []string{"0.4.0"}, map[string]string{"0.4": "0.4.x"}},
 		{"*", "", "", []string{"0.0.1", "9.0.0"}, nil, map[string]string{"1.2.3": "*"}},
 		{"<2", "", "", []string{"1.9.0"}, []string{"2.0.0"}, map[string]string{"1.5.0": "<2", "2.3.0": "<3"}},
+		// Cargo's operator before a partial wildcard is the operator on the partial version.
+		{">=1.*", "1", ">=1", []string{"1.0.0", "3.0.0"}, []string{"0.9.0"}, map[string]string{"2.0.1": ">=2.*"}},
+		{"^0.2.*", "0.2", "^0.2", []string{"0.2.5"}, []string{"0.3.0"}, map[string]string{"0.3.1": "^0.3.*"}},
+		{"1.*.*", "1", "1.*", []string{"1.4.0"}, []string{"2.0.0"}, map[string]string{"2.0.0": "2.*.*"}},
+		{"1.*, <1.5", "1", "1.*, <1.5", []string{"1.4.0"}, []string{"1.5.0"}, nil},
 	} {
 		r, ok := parseRequirement(tc.raw)
 		if !ok {
@@ -68,7 +73,7 @@ func TestRequirement(t *testing.T) {
 			}
 		}
 	}
-	for _, raw := range []string{"", "v1.2", "1.2.3.4", ">=1.*", "^*", "1.2.3.*", "1, ", "latest", "1.2 - 2.0", "~>1.0"} {
+	for _, raw := range []string{"", "v1.2", "1.2.3.4", "^*", "1.2.3.*", "1.2.*.*", "1.*.3", "*, <2", "<2, *", "01.2", "1.02.3", "1, ", "latest", "1.2 - 2.0", "~>1.0", "1 || 2"} {
 		if _, ok := parseRequirement(raw); ok {
 			t.Errorf("%q parsed", raw)
 		}

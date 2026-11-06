@@ -6,19 +6,19 @@ import (
 
 const (
 	dependencyForms = "`name = \"1.2\"`, `name = { version = \"1.2\", features = [...] }`, `name.version = \"1.2\"` and `[<table>.name]` tables; `package = \"<crate>\"` renames are looked up by the crate name"
-	datasources     = "`crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags`"
-	versionings     = "`cargo`; git tags `tag`"
+	datasources     = "`crate` (crates.io, or the `registry`/`registry-index` of the entry); `git` + `tag`: `git-tags`; `git` + `rev`: `git-refs`"
+	versionings     = "`cargo`; git tags and revs `tag`"
 )
 
 // depDatasources are the datasources of the versioned dep types: registries and git tags.
-var depDatasources = []string{Datasource, "git-tags"}
+var depDatasources = []string{Datasource, "git-tags", DatasourceGitRefs}
 
 // Doc is the reference documentation of the cargo manager (docs/reference/managers.md).
 var Doc = refdoc.Manager{
 	Name: Name,
 	Summary: "Updates crate requirements in `Cargo.toml`, moves `Cargo.lock` with `cargo update` (in-range updates only touch the lock, as Renovate's `update-lockfile`), and groups the crates of well-known Rust monorepos. " +
 		"`Cargo.toml` is read with the span-keeping TOML parser `internal/tomlspan`; only the requirement's bytes are rewritten, so comments, formatting, operators and precision are kept. " +
-		"`[features]` and `[package]` are not extracted.",
+		"`[features]` (feature names, no versions) and `[package]` are not extracted (Renovate reads `[package] version` only for `bumpVersion`, which deps does not have).",
 	Files: []string{"`Cargo.toml`"},
 	DepTypes: []refdoc.DepType{
 		{Name: DepTypeDependencies, What: "`[dependencies]` and `[target.<cfg>.dependencies]`: " + dependencyForms + " (updates use commit type `fix`)", Datasource: datasources, Versioning: versionings, Datasources: depDatasources},
@@ -31,16 +31,18 @@ var Doc = refdoc.Manager{
 	Skips: []refdoc.Skip{
 		{Reason: "workspace dependency", When: "`workspace = true`: the requirement is inherited from `[workspace.dependencies]`, which is updated instead"},
 		{Reason: "path dependency", When: "`path = ...`, also together with `version`"},
-		{Reason: "git dependency", When: "`git = ...` without `tag`, with `branch`/`rev` only, or with a non-`http(s)` URL"},
+		{Reason: "git dependency", When: "`git = ...` without `tag` or `rev` (the default branch, or `branch` only: Cargo.lock holds the commit, `cargo update` moves it), or with a non-`http(s)` URL"},
+		{Reason: "git rev is not a commit", When: "`rev` that is not 7 to 40 hex digits (a tag or ref name)"},
+		{Reason: "abbreviated git rev without a Cargo.lock commit", When: "a `rev` shorter than 40 digits that no Cargo.lock git package of the crate resolves (`?rev=<rev>#<commit>`)"},
 		{Reason: "unknown registry <name>", When: "`registry = \"<name>\"` without `CARGO_REGISTRIES_<NAME>_INDEX` or a `[registries.<name>] index` in the config files (Cargo cannot resolve it either)"},
 		{Reason: "no version", When: "a table without `version`"},
-		{Reason: "unsupported requirement", When: "anything outside Cargo's grammar: `~>1`, `1.2 - 2.0`, `v1`, `>=1.*`, empty"},
+		{Reason: "unsupported requirement", When: "anything outside Cargo's grammar: `~>1`, `1.2 - 2.0`, `1 || 2`, `v1`, `01.2`, `1.2.3.*`, `1.*.3`, `*` beside other comparators, empty"},
 		{Reason: "cannot locate value", When: "an escaped string"},
 		{Reason: "no Cargo.lock version for a requirement without a floor", When: "`*`, `<2` or `<=1.5` (nothing to raise) without a Cargo.lock entry of the crate"},
 	},
 	Sections: []refdoc.Section{
 		{Title: "Requirements", Items: []string{
-			"Cargo's grammar: comparators `^`, `~`, `=`, `>`, `>=`, `<`, `<=` (optionally followed by spaces) or none on `MAJOR[.MINOR[.PATCH[-pre][+build]]]`, wildcards `*`, `1.*`, `1.2.x`, and comma-separated lists (`\">= 0.10, < 0.11\"`). A bare `1.2` is `^1.2`; `Dep.Constraint` carries that translation for the engine.",
+			"Cargo's grammar (the semver crate's): comparators `^`, `~`, `=`, `>`, `>=`, `<`, `<=` (optionally followed by spaces) or none on `MAJOR[.MINOR[.PATCH[-pre][+build]]]` without leading zeros, wildcards `*` (alone), `1.*`, `1.2.x`, `1.*.*`, and comma-separated lists (`\">= 0.10, < 0.11\"`). An operator before a wildcard is the operator on the partial version (`>=1.*` is `>=1`; rewrites keep the wildcard: `>=2.*`). A bare `1.2` is `^1.2`; `Dep.Constraint` carries that translation for the engine.",
 			"The version a bump raises is that of the first lower bound (`^`, `~`, `=`, `>`, `>=`, none, or a wildcard's prefix). When the requirement is rewritten, every lower bound takes the new version at the precision it was written with, upper bounds `<B` that the new version reaches move to the next compatibility boundary above it, `<=B` to the new version: `1.2` → `1.4` or `2.0`, `~2.7.0` → `~2.9.1`, `1.*` → `2.*`, `\">= 0.6.8, < 0.7\"` → `\">= 0.7.1, < 0.8\"`, `<2` → `<3`.",
 			"`rangeStrategy` (top level or per rule, default `auto` = `update-lockfile`, as in Renovate): versions the requirement admits are lockfile-only updates from the version Cargo.lock locks (`, lockfile` in the report; the manifest is unchanged); newer ones rewrite the requirement. With `bump` every newer version rewrites it, with `in-range-only` only those it admits. Without a Cargo.lock, `update-lockfile` proposes only versions outside the requirement. `replace` leaves admitted versions alone; `widen` also does and keeps the lower bounds, moving only the upper ones (`\">=1.2, <2\"` → `\">=1.2, <4\"` for 3.1.0) or, when there are none, writing `>=<lower bound>, <boundary above the new version>` (`1.2` → `\">=1.2, <3\"` for 2.0.1; `=1.2.3` is replaced); `pin` writes `=<version>`: a `pin` update to the locked version (else the newest admitted one) unless another update shares its PR bucket, then every newer version.",
 			"A requirement without a floor (`*`, `<2`) has nothing to raise: its current version is the locked one, and under `bump` too its in-range updates only move the lock.",
@@ -54,7 +56,9 @@ var Doc = refdoc.Manager{
 			"`[source.crates-io] replace-with` is followed (also through chains) to a mirror with `registry = \"…\"`; `directory`/`local-registry` replacements vendor crates.io, which stays the lookup.",
 			"OSV advisories are only looked up for crates.io crates.",
 		}},
-		{Title: "git dependencies", Body: "`name = { git = \"https://host/path\", tag = \"v1.2.0\" }` (also in `[patch]` and `[replace]`) updates the tag from the repository's tags (`tag` versioning, so the prefix and number of parts are kept). The URL's query, fragment, trailing slash and `.git` suffix are dropped for the lookup."},
+		{Title: "git dependencies", Body: "`name = { git = \"https://host/path\", tag = \"v1.2.0\" }` (also in `[patch]` and `[replace]`) updates the tag from the repository's tags (`tag` versioning, so the prefix and number of parts are kept). " +
+			"`name = { git = \"https://host/path\", rev = \"<commit>\" }` is a `git-refs` dep whose digest follows the head of its `branch` (version `HEAD` without one), as Renovate's `rev` handling: a `digest` update writes the new commit at the length the rev was written with, and `cargo update --workspace` moves the git package in Cargo.lock. An abbreviated rev is compared by the full commit Cargo.lock resolved it to. " +
+			"The URL's query, fragment, trailing slash and `.git` suffix are dropped for the lookup."},
 		{Title: "Lockfile (`apply`, `run`)", Body: lockBody,
 			Items: []string{"`plan` does not run cargo, and prints `note    Cargo.lock changes are computed by apply/run`."}},
 		{Title: "Lock file maintenance (`run`)", Body: "With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `Cargo.lock` of a scanned `Cargo.toml` (its workspace root, as above) is refreshed with `cargo update` in the temporary copy, which moves every locked crate to the newest version its requirement admits. " +

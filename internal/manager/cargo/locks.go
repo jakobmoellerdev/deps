@@ -19,12 +19,14 @@ import (
 // ReadLocks records the version the workspace's Cargo.lock (Locker.Scope) locks each registry
 // requirement to: the highest registry package of the crate that the requirement admits
 // (Cargo locks at most one per compatibility range). A requirement without a floor (`*`,
-// `<2`) takes the locked version as its Version, or is skipped without one. An unreadable
+// `<2`) takes the locked version as its Version, or is skipped without one. An abbreviated
+// git `rev` takes the full commit Cargo.lock resolved it to as its Digest, or is skipped
+// without one (a digest update could not tell it from the branch head). An unreadable
 // Cargo.lock is reported once and its deps are bumped (LockUnread).
 func (cargoManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	type lockState struct {
-		pkgs []lockedPackage
-		err  error
+		pkgs, git []lockedPackage
+		err       error
 	}
 	type scope struct {
 		dir string
@@ -36,7 +38,8 @@ func (cargoManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	for _, f := range files {
 		for j := range f {
 			d := &f[j]
-			if d.Range == "" || d.Skip != "" {
+			shortRev := d.Datasource == DatasourceGitRefs && len(d.Digest) < fullCommit
+			if (d.Range == "" && !shortRev) || d.Skip != "" {
 				continue
 			}
 			sc, seen := scopes[d.File]
@@ -52,7 +55,17 @@ func (cargoManager) ReadLocks(root string, files [][]dep.Dep) []error {
 					file := path.Join(dir, lockFile)
 					b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
 					if err == nil {
-						st.pkgs, err = registryPackages(b)
+						var all []lockedPackage
+						all, err = packagesOf(b, func(src string) bool {
+							return strings.HasPrefix(src, "registry+") || strings.HasPrefix(src, "sparse+") || strings.HasPrefix(src, "git+")
+						})
+						for _, p := range all {
+							if strings.HasPrefix(p.source, "git+") {
+								st.git = append(st.git, p)
+							} else {
+								st.pkgs = append(st.pkgs, p)
+							}
+						}
 					}
 					if err != nil {
 						st.err = fmt.Errorf("%s: %w", file, err)
@@ -60,11 +73,20 @@ func (cargoManager) ReadLocks(root string, files [][]dep.Dep) []error {
 					}
 					locks[dir] = st
 				}
-				if st.err != nil {
+				switch {
+				case st.err != nil:
 					d.LockUnread = true
-				} else {
+				case shortRev:
+					d.Digest = lockedCommit(st.git, d)
+				default:
 					d.Locked = lockedVersion(st.pkgs, d)
 				}
+			}
+			if shortRev {
+				if len(d.Digest) < fullCommit {
+					d.Skip = "abbreviated git rev without a Cargo.lock commit"
+				}
+				continue
 			}
 			if d.Version == "" {
 				if d.Locked == "" {
@@ -76,6 +98,25 @@ func (cargoManager) ReadLocks(root string, files [][]dep.Dep) []error {
 		}
 	}
 	return errs
+}
+
+// lockedCommit returns d's rev completed to the full commit of the Cargo.lock git package of
+// its crate and rev (source `git+<url>?rev=<rev>#<commit>`, also with a branch), keeping the
+// case of the written prefix; d.Digest when there is none.
+func lockedCommit(pkgs []lockedPackage, d *dep.Dep) string {
+	for _, p := range pkgs {
+		rest, commit, ok := strings.Cut(p.source, "#")
+		_, query, _ := strings.Cut(rest, "?")
+		if !ok || p.name != d.Name || len(commit) != fullCommit || !strings.HasPrefix(commit, strings.ToLower(d.Digest)) {
+			continue
+		}
+		for kv := range strings.SplitSeq(query, "&") {
+			if strings.EqualFold(kv, "rev="+d.Digest) {
+				return d.Digest + commit[len(d.Digest):]
+			}
+		}
+	}
+	return d.Digest
 }
 
 // lockedVersion returns the highest locked version of d's crate that its requirement admits.

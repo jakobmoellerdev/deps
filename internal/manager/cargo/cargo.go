@@ -138,7 +138,7 @@ func entryDep(file, depType, key string, v *tomlspan.Value) dep.Dep {
 	}
 	var ver *tomlspan.Value
 	var gitURL string
-	var tag *tomlspan.Value
+	var tag, rev, branch *tomlspan.Value
 	var workspace, path bool
 	switch v.Kind {
 	case tomlspan.String:
@@ -159,7 +159,7 @@ func entryDep(file, depType, key string, v *tomlspan.Value) dep.Dep {
 		if g := str("git"); g != nil {
 			gitURL = g.Str
 		}
-		tag = str("tag")
+		tag, rev, branch = str("tag"), str("rev"), str("branch")
 		path = v.Fields["path"] != nil
 		if w := v.Fields["workspace"]; w != nil && w.Kind == tomlspan.Scalar && w.Str == "true" {
 			workspace = true
@@ -177,7 +177,7 @@ func entryDep(file, depType, key string, v *tomlspan.Value) dep.Dep {
 	case path:
 		d.Skip = "path dependency"
 	case gitURL != "":
-		gitDep(&d, gitURL, tag)
+		gitDep(&d, gitURL, tag, rev, branch)
 	case ver == nil:
 		d.Skip = "no version"
 	case !ver.Exact:
@@ -208,29 +208,67 @@ func SetRequirement(d *dep.Dep, raw string) bool {
 	return true
 }
 
-// gitDep makes a `git` dependency with a `tag` on an http(s) repository a git-tags dep; any
-// other git dependency (branch, rev, default branch, ssh URL) is skipped.
-func gitDep(d *dep.Dep, raw string, tag *tomlspan.Value) {
+// gitDep makes a `git` dependency on an http(s) repository with a `tag` a git-tags dep, and
+// one with a commit `rev` (7 to 40 hex digits) a git-refs dep whose digest follows the head of
+// its `branch`, else of the default branch (Renovate: git-refs on `rev`). Any other git
+// dependency (only a branch, the default branch, a rev that is no commit, an ssh URL) is
+// skipped. An abbreviated rev is expanded from Cargo.lock (ReadLocks).
+func gitDep(d *dep.Dep, raw string, tag, rev, branch *tomlspan.Value) {
 	d.Source = ""
 	u, err := url.Parse(raw)
 	switch {
-	case tag == nil || err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "":
+	case (tag == nil && rev == nil) || err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "":
 		d.Skip = "git dependency"
 		return
-	case !tag.Exact:
+	case tag == nil && !commitRe.MatchString(rev.Str):
+		d.Skip = "git rev is not a commit"
+		return
+	case tag != nil && !tag.Exact, tag == nil && (!rev.Exact || branch != nil && !branch.Exact):
 		d.Skip = "cannot locate value"
 		return
 	}
 	u.RawQuery, u.Fragment, u.User = "", "", nil
-	d.Datasource, d.Versioning = "git-tags", "tag"
 	d.Source = strings.TrimSuffix(strings.TrimSuffix(u.String(), "/"), ".git")
-	d.Version, d.RefSpan, d.Line = tag.Str, dep.Span{Start: tag.Start, End: tag.End}, tag.Line
+	d.Versioning = "tag"
+	if tag != nil {
+		d.Datasource = "git-tags"
+		d.Version, d.RefSpan, d.Line = tag.Str, dep.Span{Start: tag.Start, End: tag.End}, tag.Line
+		return
+	}
+	d.Datasource, d.Version = DatasourceGitRefs, defaultBranch
+	if branch != nil {
+		d.Version = branch.Str
+	}
+	d.Digest, d.DigestSpan, d.Line = rev.Str, dep.Span{Start: rev.Start, End: rev.End}, rev.Line
 }
 
-// Edits replaces the git tag, or rewrites the requirement for the new version under the
-// update's rangeStrategy (rewrite): the operators, wildcards and precision are kept.
+// DatasourceGitRefs is the datasource of git dependencies pinned to a commit `rev`.
+const DatasourceGitRefs = "git-refs"
+
+// defaultBranch is the version of a rev dependency without `branch`: the repository's HEAD.
+const defaultBranch = "HEAD"
+
+// commitRe is a full or abbreviated commit hash.
+var commitRe = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+
+// fullCommit is the length of a full SHA-1 commit hash.
+const fullCommit = 40
+
+// Edits replaces the git tag or the commit rev (at the length it was written with), or
+// rewrites the requirement for the new version under the update's rangeStrategy (rewrite):
+// the operators, wildcards and precision are kept.
 func (cargoManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
+	if d.Datasource == DatasourceGitRefs {
+		n := d.DigestSpan.End - d.DigestSpan.Start
+		switch {
+		case u.NewVersion != d.Version:
+			return nil, fmt.Errorf("cannot change the branch of git dependency %s", d.Name)
+		case len(u.NewDigest) < n || len(d.Digest) < n:
+			return nil, fmt.Errorf("git dependency %s: digest %q shorter than rev %q", d.Name, u.NewDigest, d.Digest)
+		}
+		return []patch.Edit{{Start: d.DigestSpan.Start, End: d.DigestSpan.End, Old: d.Digest[:n], New: strings.ToLower(u.NewDigest[:n])}}, nil
+	}
 	if d.Range == "" {
 		return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
 	}
