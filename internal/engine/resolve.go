@@ -25,6 +25,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/beam"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
@@ -918,15 +919,17 @@ type resolver struct {
 }
 
 // autoRange is what rangeStrategy auto means per manager (Renovate's defaults): replace for
-// terraform, terragrunt and pub (Renovate's pub manager has no lockfile-only updates), widen for elm package constraints (Dependabot's; Renovate has no
-// Elm manager), update-lockfile for npm, cargo and any other manager (widen for npm
-// peerDependencies and `||` ranges, for composer constraints with alternatives and for julia
-// compat entries without a locked version, replace for the dependencies of a bundler gemspec,
-// rangeStrategy).
-var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace, "elm": config.RangeWiden, "pub": config.RangeReplace}
+// terraform, terragrunt and pub (Renovate's pub manager has no lockfile-only updates), widen
+// for elm package constraints (Dependabot's; Renovate has no Elm manager) and gleam
+// requirements, update-lockfile for npm, cargo and any other manager (widen for npm
+// peerDependencies and `||` ranges, for composer constraints with alternatives, for mix
+// requirements with several comparators and for julia compat entries without a locked
+// version, replace for the dependencies of a bundler gemspec, rangeStrategy).
+var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace, "elm": config.RangeWiden, "pub": config.RangeReplace, beam.NameGleam: config.RangeWiden}
 
 // rangeStrategy is the effective rangeStrategy of the range dep: auto resolved per manager
-// (bump too for composer constraints with alternatives, which it widens as Renovate does),
+// (bump too for composer constraints with alternatives and mix and gleam requirements with
+// several comparators, which it widens as Renovate does),
 // widen and pin resolved to replace for managers that cannot write them (no
 // manager.RangeRewriter: terraform, Gradle) and for ranges that are never rewritten.
 func (r *resolver) rangeStrategy() string {
@@ -944,6 +947,8 @@ func (r *resolver) rangeStrategy() string {
 			s = config.RangeReplace
 		case d.Manager == composer.Name && strings.Contains(d.Range, "|"):
 			s = config.RangeWiden
+		case d.Manager == beam.NameMix && beam.Complex(d.Range):
+			s = config.RangeWiden
 		case d.Manager == julia.Name && d.Locked == "" && !d.LockUnread:
 			// A Julia package commits no manifest: its compat entries are what it supports,
 			// and the Julia convention (CompatHelper) adds new majors rather than drop old ones.
@@ -952,6 +957,9 @@ func (r *resolver) rangeStrategy() string {
 	}
 	if s == config.RangeBump && d.Manager == composer.Name && strings.Contains(d.Range, "|") {
 		s = config.RangeWiden // Renovate's composer getRangeStrategy: bump cannot raise `^1 || ^2`
+	}
+	if s == config.RangeBump && (d.Manager == beam.NameMix || d.Manager == beam.NameGleam) && beam.Complex(d.Range) {
+		s = config.RangeWiden // Renovate's mix and gleam getRangeStrategy
 	}
 	if (s == config.RangeWiden || s == config.RangePin) && (r.rewriter == nil || d.RangeFixed) {
 		s = config.RangeReplace

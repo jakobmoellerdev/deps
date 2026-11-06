@@ -17,6 +17,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/beam"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
@@ -148,6 +149,12 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	}
 	if !write && hasManager(res, bazel.Name) {
 		fmt.Fprintln(stderr, "note    MODULE.bazel.lock changes are computed by apply/run")
+	}
+	if !write && hasManager(res, beam.NameMix) {
+		fmt.Fprintln(stderr, "note    mix.lock changes are computed by apply/run")
+	}
+	if !write && hasManager(res, beam.NameGleam) {
+		fmt.Fprintln(stderr, "note    manifest.toml changes are computed by apply/run")
 	}
 	if write && slices.ContainsFunc(changes, func(c engine.FileChange) bool { return c.Gitlink }) {
 		fmt.Fprintln(stderr, "note    submodule commits are staged in the git index; run git submodule update to check them out")

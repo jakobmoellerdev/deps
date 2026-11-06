@@ -60,6 +60,10 @@
 //     ecosystem "Pub" with the package name and the locked version (dep.Dep.Locked), else the
 //     constraint's lower bound; OSV matches server-side. Fixed versions are returned as
 //     published ("0.13.3").
+//   - hex-datasource deps (the mix and gleam managers' packages, custom entries) are queried as
+//     ecosystem "Hex" with the package name and the locked version (dep.Dep.Locked), else the
+//     requirement's anchor; packages of private organizations (`name:organization`) are not
+//     queried. OSV matches server-side. Fixed versions are returned as published.
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -105,6 +109,7 @@ const (
 	ecoPHP     = "Packagist"
 	ecoNuGet   = "NuGet"
 	ecoPub     = "Pub"
+	ecoHex     = "Hex"
 )
 
 // Source queries OSV. Advisory documents are fetched once per ID per run.
@@ -260,6 +265,13 @@ func targetOf(d dep.Dep) *target {
 			return nil
 		}
 		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoNuGet}, Version: d.Version})
+	}
+	if d.Datasource == "hex" { // mix and gleam packages, and custom deps of the datasource
+		v := cmp.Or(d.Locked, d.Version)
+		if d.Name == "" || v == "" || strings.Contains(d.Name, ":") {
+			return nil
+		}
+		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoHex}, Version: v})
 	}
 	switch d.Manager {
 	case "gomod":
@@ -594,7 +606,7 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			if len(t.tag.Parts) > 0 {
 				fixed = t.actionsFixed(entries) // partial requirement: at its precision
 			}
-		case ecoMaven, ecoRuby, ecoPHP, ecoNuGet, ecoPub:
+		case ecoMaven, ecoRuby, ecoPHP, ecoNuGet, ecoPub, ecoHex:
 			fixed = mavenFixed(entries)
 		case ecoGo:
 			if len(t.tag.Parts) > 0 {

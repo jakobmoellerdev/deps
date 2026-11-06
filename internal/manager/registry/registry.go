@@ -11,6 +11,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/ansible"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/azurepipelines"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/beam"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bitbucketpipelines"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
@@ -123,6 +124,8 @@ var Builtin = []Entry{
 	{sbt.ScalafmtDoc, sbt.NewScalafmt},
 	{pub.Doc, pub.New},
 	{fvm.Doc, fvm.New},
+	{beam.DocMix, beam.NewMix},
+	{beam.DocGleam, beam.NewGleam},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,

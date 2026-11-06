@@ -68,6 +68,8 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`scalafmt`](#scalafmt)
 - [`pub`](#pub)
 - [`fvm`](#fvm)
+- [`mix`](#mix)
+- [`gleam`](#gleam)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -2844,6 +2846,106 @@ Updates the Flutter SDK version [FVM](https://fvm.app) pins for a project: the t
 - Stable versions get stable updates; a beta (`-x.y.pre`) also gets newer betas.
 - Nothing else is run: `fvm use` installs the new version on the next run.
 
+## mix
+
+Updates the Hex requirements and git tags of Elixir dependencies in `mix.exs` and moves `mix.lock` with `mix deps.update` (in-range updates only touch the lock, as Renovate's `update-lockfile`). mix.exs is Elixir code: deps reads the dependency tuples of the functions named `deps` or ending in `_deps` (`defp deps do … end`, `defp target_deps(:app), do: […]`) without running it, and rewrites only the requirement or tag strings that change.
+
+**Files:**
+
+- `mix.exs` (its lock: the `lockfile:` of its project, as umbrella apps set `lockfile: "../../mix.lock"`, else the `mix.lock` next to it)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `prod` | a dependency tuple `{:app, "<requirement>", …}` without `only:`, or with an `only:` naming `:prod` (updates use commit type `fix`) | `hex` (hex.pm; `name:organization` for an organization's package), `git-tags` for a git dependency with a `tag:` | `hex`, `tag` | updated |
+| `dev` | a dependency tuple whose `only:` leaves out `:prod` (`only: [:dev, :test]`) | `hex` (hex.pm; `name:organization` for an organization's package), `git-tags` for a git dependency with a `tag:` | `hex`, `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `path dependency` | a `path:` dependency |
+| `umbrella dependency` | an `in_umbrella: true` dependency |
+| `git dependency` | a `git:`/`github:` dependency without a `tag:` (a `branch:`, a `ref:` commit, the default branch), or of a URL deps cannot list tags of |
+| `no requirement` | a Hex dependency without a requirement (`{:dep, override: true}`) |
+| `unsupported requirement` | a requirement that is no string literal (`@version`, a function call) or outside Elixir's grammar |
+| `cannot locate value` | a requirement or tag with escapes or interpolation (`"~> #{@v}"`) |
+| `custom hex repository` | a `repo:` other than `hexpm` or `hexpm:<organization>` (a self-hosted Hex repository) |
+| `no locked version` | a requirement without a lower bound (`>= 0.0.0`, `< 2.0.0`) that the lockfile does not lock (or without one) |
+
+**Dependencies.**
+
+- A tuple's first element is the app (`:phoenix`), the Hex package unless `hex: :other` names another; `organization: "acme"` (or `repo: "hexpm:acme"`) looks the package up in that private organization (`HEX_API_KEY`). Options after the requirement may be written as a keyword list or `[…]`; a tuple whose options are an expression (`{:hex_core, "~> 0.18", opts()}`) keeps its requirement.
+- Only list elements are dependencies, also inside expressions (`if … do [{:spec_lint, "~> 0.1"}] else [] end`); module attributes and other code are not evaluated.
+- A `git:` or `github: "owner/repo"` dependency with a `tag:` is a `git-tags` dep of the repository (https and ssh URLs); its tag is replaced (`tag: "v2.1.1"` → `"v2.2.0"`).
+
+**Requirements.**
+
+- `auto` is `update-lockfile`, as in Renovate: versions the requirement admits are lockfile-only updates from the version mix.lock locks (`, lockfile` in the report; mix.exs is unchanged), others replace the requirement; a requirement with several comparators (`>= 1.0.0 and < 2.0.0`, `~> 1.0 or ~> 2.0`) is widened instead. Without mix.lock only versions outside the requirement are proposed.
+- Elixir's requirement grammar (`Version`): `~> 1.7` (`>= 1.7.0 and < 2.0.0-0`), `~> 1.7.2` (`>= 1.7.2 and < 1.8.0-0`), `==`, `!=`, `>`, `>=`, `<`, `<=` and bare versions (`1.7.2`, which is `==`), joined by `and` and `or` (`and` binding tighter). Versions are full SemVer (`1.7.2`, `2.0.0-rc.0`); only `~>` takes MAJOR.MINOR. As Hex resolves (`allow_pre: false`), a prerelease only satisfies an alternative of which a comparator names a prerelease.
+- Requirements are rewritten per [rangeStrategy](configuration.md#rangestrategy) (top level or per rule), after Renovate's hex versioning: a version outside the requirement replaces its last alternative (`~> 1.7` → `~> 2.1` for 2.1.0, `~> 1.7.2` → `~> 2.1.0`, `== 0.12.0` → `== 0.13.0`, `>= 1.0.0 and < 2.0.0` → `>= 2.1.0 and < 3.0.0`; `>` becomes `>=`, `!=` stays, upper bounds move past the version at their precision: `< 0.15.0` → `< 0.17.0` for 0.16.0, `<= 0.38.0` → `<= 0.39.0`). `widen` moves only the upper bounds of the last alternative (`>= 1.0.0 and < 2.0.0` → `>= 1.0.0 and < 3.0.0`), or appends the replaced last alternative (`~> 1.7` → `~> 1.7 or ~> 2.1`); `bump` raises the lower bounds of the first alternative admitting a newer version (`~> 1.7` → `~> 1.9` for 1.9.3, `>= 1.0.0 and < 2.0.0` → `>= 1.4.0 and < 2.0.0`), `in-range-only` only to versions the requirement admits; `pin` writes `== <version>`. The blanks after operators and the words between comparators are kept. `bump` of a requirement with several comparators widens, as in Renovate. A requirement without a lower bound (`>= 0.0.0`, `< 2.0.0`) is ranked from the locked version, and skipped without one.
+- Versioning `hex` orders versions as SemVer 2.0 does (the build is ignored); versions with a `v` or fewer than three parts are not versions. Update types follow the three parts; prereleases are only proposed from one.
+
+**Lockfile (`apply`, `run`).**
+
+1. **Lockfile.** The lockfile of a mix.exs is its project's `lockfile:` (umbrella apps: the umbrella's mix.lock), else the `mix.lock` next to it; without one the file is only patched.
+2. **Locked versions.** Before resolution each mix.lock is read: a Hex package gets the version of its `{:hex, :name, "<version>", …}` entry (an organization's package, with repository `<organization>`, is `name:organization`). An unreadable lock is reported once and its dependencies are bumped.
+3. **Temporary mirror.** The lockfile's directory is mirrored to a temp dir: its directories are recreated without `deps`, `_build`, `node_modules`, `.elixir_ls` and `.git`, mix.lock and the patched mix.exs files are copied, every other file is symlinked; the directories above it up to the repository top are recreated with their entries symlinked, so `path:` dependencies resolve as in the checkout.
+4. **Update.** In the mirror's mix.exs files the requirement of every updated Hex dependency, lockfile-only updates included, is `== <version>`, and `mix deps.update <app>…` runs (with `MIX_ENV=dev`): Mix locks exactly the update's version, even when the rewritten requirement admits a newer one (e.g. one `minimumReleaseAge` held back); as `mix deps.update` does, the updated packages' own dependencies may move too, other packages keep their versions. Git dependencies move to their new tag. The written mix.exs keeps the rewritten requirement.
+5. **Tool.** `mix` with Hex must be on `PATH` (e.g. from `erlef/setup-beam`, or `mix local.hex --force`). It fetches the project's dependencies into the mirror (git dependencies are cloned) and evaluates mix.exs; `HEX_API_KEY` authenticates organization packages. Without it, the mix.exs files fail with `mix not found (needed to update mix.lock)`.
+6. **Failure.** A failed command reports `mix deps.update in <dir>: <last 20 output lines>`, and the mix.exs's changes are dropped.
+
+- `plan` does not run the tool, and prints `note    mix.lock changes are computed by apply/run`.
+
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every mix.lock of a scanned mix.exs (an umbrella's once) is refreshed with `mix deps.update --all` in the mirror, which moves every locked dependency, transitive ones included, to the newest version the requirements admit. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`; `minimumReleaseAge` does not apply to it.
+
+## gleam
+
+Updates the Hex requirements of Gleam packages in `gleam.toml` and moves `manifest.toml` with `gleam deps update`. gleam.toml is scanned as TOML without decoding it, so only the requirement bytes change.
+
+**Files:**
+
+- `gleam.toml` (its lock: the `manifest.toml` next to it)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `dependencies` | entries of `[dependencies]`: `name = "<requirement>"` or `name = { version = "<requirement>" }` (updates use commit type `fix`) | `hex` | `hex` | updated |
+| `dev-dependencies` | entries of `[dev-dependencies]` or `[dev_dependencies]` | `hex` | `hex` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `path dependency` | a `{ path = "…" }` dependency |
+| `git dependency` | a `{ git = "…", ref = "…" }` dependency |
+| `no requirement` | a dependency without a version string |
+| `unsupported requirement` | a requirement outside Elixir's grammar |
+| `cannot locate value` | a requirement written with escapes |
+| `no locked version` | a requirement without a lower bound (`>= 0.0.0`, `< 2.0.0`) that manifest.toml does not lock (or without one) |
+
+**Requirements.**
+
+- `auto` is `widen`, as in Renovate: versions the requirement admits are not proposed (enable [lockFileMaintenance](configuration.md#lockfilemaintenance) to move them in manifest.toml), others widen it (`>= 0.44.0 and < 2.0.0` → `>= 0.44.0 and < 3.0.0` for 2.1.0). Set `rangeStrategy: update-lockfile` for lockfile-only updates of admitted versions.
+- Elixir's requirement grammar (`Version`): `~> 1.7` (`>= 1.7.0 and < 2.0.0-0`), `~> 1.7.2` (`>= 1.7.2 and < 1.8.0-0`), `==`, `!=`, `>`, `>=`, `<`, `<=` and bare versions (`1.7.2`, which is `==`), joined by `and` and `or` (`and` binding tighter). Versions are full SemVer (`1.7.2`, `2.0.0-rc.0`); only `~>` takes MAJOR.MINOR. As Hex resolves (`allow_pre: false`), a prerelease only satisfies an alternative of which a comparator names a prerelease.
+- Requirements are rewritten per [rangeStrategy](configuration.md#rangestrategy) (top level or per rule), after Renovate's hex versioning: a version outside the requirement replaces its last alternative (`~> 1.7` → `~> 2.1` for 2.1.0, `~> 1.7.2` → `~> 2.1.0`, `== 0.12.0` → `== 0.13.0`, `>= 1.0.0 and < 2.0.0` → `>= 2.1.0 and < 3.0.0`; `>` becomes `>=`, `!=` stays, upper bounds move past the version at their precision: `< 0.15.0` → `< 0.17.0` for 0.16.0, `<= 0.38.0` → `<= 0.39.0`). `widen` moves only the upper bounds of the last alternative (`>= 1.0.0 and < 2.0.0` → `>= 1.0.0 and < 3.0.0`), or appends the replaced last alternative (`~> 1.7` → `~> 1.7 or ~> 2.1`); `bump` raises the lower bounds of the first alternative admitting a newer version (`~> 1.7` → `~> 1.9` for 1.9.3, `>= 1.0.0 and < 2.0.0` → `>= 1.4.0 and < 2.0.0`), `in-range-only` only to versions the requirement admits; `pin` writes `== <version>`. The blanks after operators and the words between comparators are kept. `bump` of a requirement with several comparators widens, as in Renovate. A requirement without a lower bound (`>= 0.0.0`, `< 2.0.0`) is ranked from the locked version, and skipped without one.
+- Versioning `hex` orders versions as SemVer 2.0 does (the build is ignored); versions with a `v` or fewer than three parts are not versions. Update types follow the three parts; prereleases are only proposed from one.
+
+**Lockfile (`apply`, `run`).**
+
+1. **Lockfile.** The lockfile of a gleam.toml is the `manifest.toml` next to it; without one the file is only patched.
+2. **Locked versions.** Before resolution each manifest.toml is read: a package gets the version of its `packages` entry with `source = "hex"`. An unreadable manifest is reported once and its dependencies are bumped.
+3. **Temporary mirror.** The project directory is mirrored to a temp dir as for mix (without `build`, `node_modules` and `.git`), with gleam.toml and manifest.toml copied.
+4. **Update.** In the mirror's gleam.toml the requirement of every updated package, lockfile-only updates included, is `== <version>`, and `gleam deps update <name>…` runs, so Gleam locks exactly the update's version and moves other packages only where the new versions need it; the `[requirements]` records of manifest.toml are then set back to the written gleam.toml's requirements.
+5. **Tool.** `gleam` must be on `PATH` (e.g. from `erlef/setup-beam`); it downloads the packages into the mirror. Without it, the gleam.toml files fail with `gleam not found (needed to update manifest.toml)`.
+6. **Failure.** A failed command reports `gleam deps in <dir>: <last 20 output lines>`, and the gleam.toml's changes are dropped.
+
+- `plan` does not run the tool, and prints `note    manifest.toml changes are computed by apply/run`.
+
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every manifest.toml next to a scanned gleam.toml is refreshed with `gleam deps update` in the mirror, which moves every locked package to the newest version the requirements admit. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`; `minimumReleaseAge` does not apply to it.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -2986,6 +3088,8 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `dart` | the package name as in pubspec.yaml (`http`); the pub manager sets the repository of a `hosted` dependency | `GET <repository>/api/packages/<name>` once per repository and package: the `hosted` URL of the dependency, else `PUB_HOSTED_URL` (as for the pub client), else `https://pub.dev`; retracted versions are dropped. Source repository (release notes): the `repository` of the newest version's pubspec, else its `homepage` | none | the `published` time of each version |
 | `dart-version` | any (`dart`) | `GET <DEPS_DART_ARCHIVE_URL or https://storage.googleapis.com>/storage/v1/b/dart-archive/o?delimiter=/&prefix=channels/<channel>/release/` for the channels `stable`, `beta` and `dev` (all pages), once per run, as Renovate does: one release directory per version (`3.5.4`, `3.6.0-216.1.beta`, `3.7.0-1.0.dev`); `latest`, old Subversion revision numbers and stable versions listed in another channel are skipped. Source repository (release notes): `dart-lang/sdk` | none | none |
 | `flutter-version` | any (`flutter`) | `GET <FLUTTER_STORAGE_BASE_URL or https://storage.googleapis.com>/flutter_infra_release/releases/releases_linux.json` once per run (the variable is the flutter tool's mirror setting): stable releases and betas (`3.26.0-0.1.pre`); a stable version listed in the beta or dev channel is skipped, as in Renovate. Source repository (release notes): `flutter/flutter` | none | the `release_date` of each version (the earliest, for a version listed more than once) |
+| `hex` | the Hex package name (`phoenix`, `gleam_stdlib`), or `name:organization` for a package of a private Hex organization (Renovate's form) | `GET <DEPS_HEX_URL or https://hex.pm>/api/packages/<name>` (`/api/repos/<organization>/packages/<name>` for an organization's package), once per package; versions that are not SemVer are dropped, retired versions (`mix hex.retire`) stay listed and are reported as deprecated with their reason. Source repository (release notes): the package's `GitHub` link. hex.pm allows 100 unauthenticated API requests per minute (500 with a key); the shared client waits out its `X-RateLimit-Reset` | `HEX_API_KEY` (a hex.pm API key, `mix hex.user key generate`), sent as the `Authorization` header; needed for organization packages | the `inserted_at` time of each release |
+| `hexpm-bob` | `elixir` for Elixir, `otp/<os>-<version>` (`otp/ubuntu-22.04`) for the Erlang/OTP builds of that system. No manager uses it; use it from a [custom manager](#custom) (Renovate's name, for `.tool-versions`, Dockerfile `ARG`s or CI files). Elixir versions are listed without their `v` (`1.18.4`) and per OTP release (`1.18.4-otp-27`), OTP versions without `OTP-` (`27.3.4.1`, `27.0-rc1`); branch builds (`main`, `v1.18`, `maint-27`) are not versions. For a pinned `1.18.4-otp-27` that should stay on its OTP release, use `versioning: 'regex:^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-otp-(?<compatibility>\d+))?$'`; OTP's up to four parts need `loose` | `GET <DEPS_HEXPM_BOB_URL or https://builds.hex.pm>/builds/<name>/builds.txt`, once per name. Source repository (release notes): `https://github.com/elixir-lang/elixir` or `https://github.com/erlang/otp` | none | the build time of each build in the list |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
@@ -3061,7 +3165,7 @@ Release notes use the POM of the new version: `<scm><url>`, else `<scm><connecti
 ### Security advisories (OSV)
 
 - deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.
-- Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks, and sbt-package deps with their Scala suffix, `cats-core_2.13`), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), `Packagist` (`packagist` datasource: composer packages, lower-cased, with the version composer.lock locks without its `v`, else the constraint's anchor), `Pub` (`dart` datasource: hosted pub packages, with the version pubspec.lock locks, else the constraint's lower bound), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
+- Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks, and sbt-package deps with their Scala suffix, `cats-core_2.13`), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), `Packagist` (`packagist` datasource: composer packages, lower-cased, with the version composer.lock locks without its `v`, else the constraint's anchor), `Pub` (`dart` datasource: hosted pub packages, with the version pubspec.lock locks, else the constraint's lower bound), `Hex` (`hex` datasource: mix and gleam packages, with the version mix.lock or manifest.toml locks, else the requirement's anchor; organization packages are not queried), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
 - Not queried, because OSV has no ecosystem for them (checked 2026-11-05): container images (OSV covers the distribution packages inside an image, such as `Debian` or `Alpine`, not the image or its tag), Terraform providers and modules, and Helm charts.
 - Withdrawn advisories are skipped, and aliases are reported once.
 

@@ -11,6 +11,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gotool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jvmtool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/beam"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
@@ -48,7 +49,8 @@ func newApply(o *rootOpts) *cli.Command {
 // postProcessors regenerate go.sum (go mod tidy), package-lock.json (npm), Cargo.lock
 // (cargo update), uv.lock, poetry.lock, pdm.lock and Pipfile.lock (pytool), .terraform.lock.hcl
 // (terraform init), Gemfile.lock (bundle lock), composer.lock (composer update), Manifest.toml
-// (julia Pkg), pubspec.lock (dart pub), MODULE.bazel.lock (bazel mod deps), Gradle lockfiles and verification metadata and
+// (julia Pkg), pubspec.lock (dart pub), MODULE.bazel.lock (bazel mod deps), mix.lock (mix deps.update),
+// manifest.toml (gleam deps update), Gradle lockfiles and verification metadata and
 // the Gradle and Maven wrapper files (jvmtool) on temporary copies, Chart.lock and
 // Package.resolved in process and requirements files (pytool.Compiler: pip-compile/uv output
 // regenerated, other hashes from the session's pypi datasource), for apply and run.
@@ -60,7 +62,7 @@ func postProcessors(s *session) map[string]engine.PostProcessor {
 		pep621.Name: pytool.Locker{}, poetry.Name: pytool.Locker{}, pipenv.Name: pytool.Locker{},
 		piprequirements.Name: pytool.Compiler{Hashes: hashes},
 		gradle.Name:          jvmtool.GradleLocker{}, gradlewrapper.Name: jvmtool.GradleWrapper{}, mavenwrapper.Name: jvmtool.MavenWrapper{},
-		swift.Name: swiftLocker(s), julia.Name: julia.Locker{}, pub.Name: pub.Locker{},
+		swift.Name: swiftLocker(s), julia.Name: julia.Locker{}, pub.Name: pub.Locker{}, beam.NameMix: beam.MixLocker{}, beam.NameGleam: beam.GleamLocker{},
 	}
 }
 

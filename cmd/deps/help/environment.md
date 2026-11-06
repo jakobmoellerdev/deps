@@ -42,6 +42,9 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_AZURE_DEVOPS_URL`, `DEPS_AZURE_DEVOPS_TOKEN` | `azure-pipelines-tasks` datasource | both set: the task versions are those installed in this Azure DevOps organization or collection (`https://dev.azure.com/<org>`), listed with the personal access token as basic auth, instead of the public lists |
 | `DEPS_BAZEL_REGISTRY_URL` | `bazel` datasource | Bazel Central Registry base (a mirror), also where `.bazelrc` names `https://bcr.bazel.build` (default `https://bcr.bazel.build`) |
 | `DEPS_NUGET_URL` | `nuget` datasource | service index read for nuget.org, also where a nuget.config names `https://api.nuget.org/v3/index.json` (default that URL; a mirror serving the v3 API) |
+| `DEPS_HEX_URL` | `hex` datasource | base of the hex.pm API (`/api/packages/<name>`; default `https://hex.pm`; a mirror serving its API) |
+| `HEX_API_KEY` | `hex` datasource | hex.pm API key sent as `Authorization`: lifts the API rate limit (100 to 500 requests per minute) and reads the packages of private organizations (`organization:` in mix.exs); `mix deps.update` reads it too |
+| `DEPS_HEXPM_BOB_URL` | `hexpm-bob` datasource | base of bob's build lists (`/builds/<name>/builds.txt`; default `https://builds.hex.pm`) |
 | `NuGetPackageSourceCredentials_<key>` | `nuget` datasource | NuGet's credentials of the nuget.config package source `<key>`: `Username=<user>;Password=<token>`; sent as basic auth to that source's host only |
 | `DEPS_DOTNET_RELEASES_URL` | `dotnet-version` datasource | URL of the .NET release metadata index (default `https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json`); the channels' `releases.json` URLs come from it |
 | `DEPS_ENDOFLIFE_DATE_URL` | `endoflife-date` datasource | base URL of the endoflife.date API (default `https://endoflife.date/api`); a dep's Renovate `registryUrl` overrides it |

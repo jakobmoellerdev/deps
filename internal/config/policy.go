@@ -95,6 +95,10 @@ func production(d dep.Dep) bool {
 		return d.DepType == "require"
 	case "julia":
 		return d.DepType == "deps"
+	case "mix":
+		return d.DepType == "prod"
+	case "gleam":
+		return d.DepType == "dependencies"
 	case "pep621", "pep723":
 		return d.DepType == "project.dependencies"
 	case "setup-cfg", "pip_setup":

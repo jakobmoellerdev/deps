@@ -35,6 +35,8 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gradleversion"
 	helmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/helm"
+	hexds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hex"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hexpmbob"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/juliaregistry"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
@@ -247,7 +249,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"devcontainer":        {"devcontainer", "docker", "toolversions"},
 		"bitbucket-pipelines": {"bitbucketpipelines", "docker"}, "woodpecker": {"woodpecker", "docker"}, "droneci": {"droneci", "docker"},
 		"circleci": {"circleci", "docker"}, "azure-pipelines": {"azurepipelines", "docker"},
-		"bazel-module": {"bazel"}, "bazelisk": {"bazel"}, "scalafmt": {"sbt"},
+		"bazel-module": {"bazel"}, "bazelisk": {"bazel"}, "scalafmt": {"sbt"}, "mix": {"beam"}, "gleam": {"beam"},
 		"custom":  {"custom", filepath.Join("..", "datasource", "deb")},
 		"ansible": {"ansible", "docker"}, "ansible-galaxy": {"ansible", "../pyreq"},
 	}
@@ -282,7 +284,7 @@ func TestManagerDocsComplete(t *testing.T) {
 }
 
 func TestDatasourceDocsComplete(t *testing.T) {
-	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, githubrunners.Doc, forge.GitLabReleasesDoc, forge.GitLabTagsDoc, forge.GiteaReleasesDoc, forge.GiteaTagsDoc, forge.ForgejoReleasesDoc, forge.ForgejoTagsDoc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, pythonversion.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, galaxy.Doc, galaxy.CollectionDoc, rpmds.Doc, apkds.Doc, debds.Doc, endoflife.Doc, sbtds.PackageDoc, sbtds.PluginDoc, dart.Doc, dartversion.Doc, flutterversion.Doc, customds.Doc, artifactory.Doc}
+	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, githubrunners.Doc, forge.GitLabReleasesDoc, forge.GitLabTagsDoc, forge.GiteaReleasesDoc, forge.GiteaTagsDoc, forge.ForgejoReleasesDoc, forge.ForgejoTagsDoc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, pythonversion.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, galaxy.Doc, galaxy.CollectionDoc, rpmds.Doc, apkds.Doc, debds.Doc, endoflife.Doc, sbtds.PackageDoc, sbtds.PluginDoc, dart.Doc, dartversion.Doc, flutterversion.Doc, hexds.Doc, hexpmbob.Doc, customds.Doc, artifactory.Doc}
 	var names []string
 	for _, d := range docs {
 		if d.Name == "" || d.NameForm == "" || d.Endpoints == "" || d.Auth == "" || d.ReleaseTimes == "" {

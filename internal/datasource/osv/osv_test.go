@@ -829,3 +829,33 @@ func TestAdvisoriesNuGet(t *testing.T) {
 		t.Errorf("batches = %+v", f.batches)
 	}
 }
+
+// GHSA-2q6v-32mr-8p8x as api.osv.dev serves it (2026-11-06), affected entries only.
+func TestAdvisoriesHex(t *testing.T) {
+	f := newFake(t)
+	f.results["Hex|plug|1.3.0|"] = result{ids: []string{"GHSA-2q6v-32mr-8p8x"}}
+	f.vulns["GHSA-2q6v-32mr-8p8x"] = `{"id":"GHSA-2q6v-32mr-8p8x","summary":"Null Byte Injection in Plug.Static","aliases":["CVE-2017-1000052"],
+		"affected":[{"package":{"name":"plug","ecosystem":"Hex"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.0.4"}]}]},
+		            {"package":{"name":"plug","ecosystem":"Hex"},"ranges":[{"type":"SEMVER","events":[{"introduced":"1.1.0"},{"fixed":"1.1.7"}]}]},
+		            {"package":{"name":"plug","ecosystem":"Hex"},"ranges":[{"type":"SEMVER","events":[{"introduced":"1.2.0"},{"fixed":"1.2.3"}]}]},
+		            {"package":{"name":"plug","ecosystem":"Hex"},"ranges":[{"type":"SEMVER","events":[{"introduced":"1.3.0"},{"fixed":"1.3.2"}]}]}]}`
+	s := f.start(nil)
+	deps := []dep.Dep{
+		// The locked version is queried, else the requirement's anchor.
+		{Manager: "mix", Datasource: "hex", DepType: "prod", Name: "plug", Version: "1.0.0", Range: "~> 1.0", Locked: "1.3.0"},
+		{Manager: "gleam", Datasource: "hex", DepType: "dependencies", Name: "plug", Version: "1.3.0", Range: "== 1.3.0"},
+		{Manager: "mix", Datasource: "hex", DepType: "prod", Name: "secret:acme", Version: "1.3.0", Range: "== 1.3.0"},
+		{Manager: "mix", Datasource: "git-tags", Name: "plug", Version: "v1.3.0", Source: "https://github.com/elixir-plug/plug"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plug := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-2q6v-32mr-8p8x", Summary: "Null Byte Injection in Plug.Static", URL: "https://osv.dev/vulnerability/GHSA-2q6v-32mr-8p8x"}, Fixed: []string{"1.0.4", "1.1.7", "1.2.3", "1.3.2"}}}
+	if want := [][]datasource.Vuln{plug, plug, nil, nil}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if len(f.batches) != 1 || len(f.batches[0]) != 1 || f.batches[0][0].Package != (pkg{Name: "plug", Ecosystem: "Hex"}) {
+		t.Errorf("batches = %+v", f.batches)
+	}
+}

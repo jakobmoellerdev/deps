@@ -965,15 +965,14 @@ func TestIsConfigName(t *testing.T) {
 // Settings only Renovate's built-in presets set are reported as info, the repository's own as
 // warnings.
 func TestLoadBuiltinPresetNotes(t *testing.T) {
-	res, err := load(t, `{extends: [':pinDevDependencies', ':ignoreModulesAndTests'], packageRules: [{matchDepTypes: ['dev'], enabled: false}], cocoapods: {enabled: true}}`)
+	res, err := load(t, `{extends: [':pinDevDependencies', ':ignoreModulesAndTests'], packageRules: [{matchDepTypes: ['devonly'], enabled: false}], cocoapods: {enabled: true}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	notes := noteLines(res)
 	for _, n := range []string{
-		"info :pinDevDependencies packageRules[0]: depType dev has no deps equivalent; dropped (from a built-in preset)",
 		"info nuget.ignorePaths: not supported; ignored (from a built-in preset)",
-		"warn packageRules[0]: depType dev has no deps equivalent; dropped",
+		"warn packageRules[0]: depType devonly has no deps equivalent; dropped",
 		"warn cocoapods: not supported; ignored",
 	} {
 		if !slices.Contains(notes, n) {

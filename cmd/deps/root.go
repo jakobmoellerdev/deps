@@ -42,6 +42,8 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gradleversion"
 	helmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/helm"
+	hexds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hex"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hexpmbob"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/juliaregistry"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
@@ -439,6 +441,8 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		dart.Name:               dart.New(client, sem, os.Getenv),
 		dartversion.Name:        dartversion.New(client, sem, os.Getenv),
 		flutterversion.Name:     flutterversion.New(client, sem, os.Getenv),
+		hexds.Name:              hexds.New(client, sem, os.Getenv),
+		hexpmbob.Name:           hexpmbob.New(client, sem, os.Getenv),
 	}
 	for _, name := range forgeds.Names {
 		sources[name] = forgeds.New(name, client, sem, auth)

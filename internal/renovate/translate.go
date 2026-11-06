@@ -262,7 +262,7 @@ var managerMap = func() map[string][]expansion {
 		"custom.regex":      {{"custom", nil}},
 		"custom.jsonata":    {{"custom", nil}},
 	}
-	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker droneci circleci azure-pipelines composer julia bazel-module bazelisk nuget homebrew ansible ansible-galaxy sbt scalafmt pub fvm") {
+	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker droneci circleci azure-pipelines composer julia bazel-module bazelisk nuget homebrew ansible ansible-galaxy sbt scalafmt pub fvm mix gleam") {
 		m[n] = []expansion{{n, nil}}
 	}
 	return m
@@ -300,6 +300,7 @@ var categories = map[string][]string{
 	"dotnet":     {"nuget"},
 	"custom":     {"custom.regex", "custom.jsonata"},
 	"dart":       {"pub", "fvm"},
+	"elixir":     {"mix", "gleam"},
 }
 
 // datasourceMap maps the Renovate datasources whose deps datasource has another name that

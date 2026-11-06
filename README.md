@@ -235,6 +235,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 | <img src="https://cdn.simpleicons.org/dotnet" width="20" alt=""> | **.NET**<br>NuGet | `*.csproj`/`*.fsproj`/`*.vbproj`, `Directory.Packages.props` and other MSBuild files (`$(Property)` versions, `nuget.config` sources), MSBuild SDKs, .NET SDK in `global.json`, `dotnet-tools.json` | |
 | <img src="https://cdn.simpleicons.org/dart" width="20" alt=""> | **Dart / Flutter**<br>pub, FVM | `pubspec.yaml` (hosted and git packages, Dart and Flutter SDK constraints, workspaces), `.fvmrc`/`.fvm/fvm_config.json` | `pubspec.lock` (`dart pub upgrade`) |
 | <img src="https://cdn.simpleicons.org/julia" width="20" alt=""> | **Julia** | `[compat]` entries in `Project.toml` | `Manifest.toml` |
+| <img src="https://cdn.simpleicons.org/elixir" width="20" alt=""> <img src="https://cdn.simpleicons.org/gleam" width="20" alt=""> | **Elixir / Gleam**<br>Mix, Gleam (Hex) | `mix.exs` (Hex requirements, git tags, umbrella apps), `gleam.toml` | `mix.lock`, `manifest.toml` |
 | <img src="https://cdn.simpleicons.org/elm" width="20" alt=""> | **Elm** | `elm.json` packages and compiler version | |
 | <img src="https://cdn.simpleicons.org/cplusplus" width="20" alt=""> | **C/C++**<br>vcpkg | `vcpkg.json` and `vcpkg-configuration.json` baselines and port versions | |
 | <img src="https://cdn.simpleicons.org/bazel" width="20" alt=""> | **Bazel** | `MODULE.bazel` (`bazel_dep`s from the BCR or `.bazelrc` registries, git overrides, rules_oci/rules_img images, rules_jvm_external artifacts, crate_universe crates), `.bazelversion` | `MODULE.bazel.lock` |
@@ -275,7 +276,7 @@ flowchart LR
 - **Quiet pull requests.** One PR per dependency or group, split into major/minor/patch. Unchanged PRs are never pushed again; obsolete PRs are closed only after an error-free run. PR limits, automerge and a dashboard issue are built in.
 - **PRs when you want them.** Schedules as cron triggers or Renovate-style time windows (`before 6am on monday`) in your `timezone`; draft PRs; PRs opened only once the branch's checks finished or passed (`prCreation`); updates held back until approved on the dashboard (`dashboardApproval`).
 - **Warnings about stale dependencies.** The dashboard and the PRs flag abandoned dependencies (no release within `abandonmentThreshold`) and deprecated, yanked or archived ones.
-- **Security updates** from OSV advisories for Go, npm, Rust, PyPI, Maven, RubyGems, Packagist, NuGet, Pub and GitHub Actions, bypassing schedules and the minimum release age.
+- **Security updates** from OSV advisories for Go, npm, Rust, PyPI, Maven, RubyGems, Packagist, NuGet, Pub, Hex and GitHub Actions, bypassing schedules and the minimum release age.
 - **Release notes in every PR:** notes, release ages and a compare link.
 - **Fast and light.** One directory walk, deduplicated lookups, commits without a checkout or worktree. See the numbers below.
 - **Runs anywhere.** Same binary on your laptop, in GitHub, Gitea or Forgejo Actions and in GitLab CI; the forge is detected automatically.

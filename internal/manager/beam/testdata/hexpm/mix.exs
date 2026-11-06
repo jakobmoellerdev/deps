@@ -1,0 +1,205 @@
+defmodule Hexpm.MixProject do
+  use Mix.Project
+
+  def project() do
+    [
+      app: :hexpm,
+      version: "0.0.1",
+      elixir: "~> 1.20",
+      elixirc_paths: elixirc_paths(Mix.env()),
+      compilers: Mix.compilers(),
+      build_embedded: Mix.env() == :prod,
+      start_permanent: Mix.env() == :prod,
+      listeners: [Phoenix.CodeReloader],
+      aliases: aliases(),
+      releases: releases(),
+      deps: deps()
+    ]
+  end
+
+  def application() do
+    [
+      mod: {Hexpm.Application, []},
+      extra_applications: extra_applications(Mix.env())
+    ]
+  end
+
+  defp extra_applications(:test), do: [:logger]
+  defp extra_applications(_), do: [:logger, :runtime_tools, :os_mon]
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
+  defp deps() do
+    [
+      {:swoosh, "~> 1.0"},
+      {:phoenix_swoosh, "~> 1.0"},
+      {:bandit, "~> 1.0"},
+      {:bcrypt_elixir, "~> 3.0"},
+      {:broadway, "~> 1.0"},
+      {:broadway_sqs, "~> 1.0.0"},
+      {:corsica, "~> 2.0"},
+      {:cvss, "~> 0.1.0"},
+      {:ecto_psql_extras, "~> 0.6"},
+      {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
+      {:ecto_sql, "~> 3.0"},
+      {:ecto, "~> 3.0"},
+      {:eqrcode, "~> 0.2.1"},
+      {:ex_aws_s3, "~> 2.0"},
+      {:ex_aws_sqs, "~> 3.0"},
+      {:ex_aws, "~> 2.0"},
+      {:ex_machina, "~> 2.0"},
+      # Finch 0.23.0 closes idle-expired HTTP/1 connections inside the pool
+      # process, where a peer that doesn't answer the TLS close blocks every
+      # checkout for up to 5 s. No release includes the fix yet.
+      # https://github.com/sneako/finch/pull/392
+      {:finch,
+       github: "sneako/finch",
+       ref: "79885b6cd1ca072824149389b6ab8899f8b970d1",
+       depth: 1,
+       override: true},
+      {:geolix, "~> 2.0"},
+      {:geolix_adapter_mmdb2, "~> 0.6"},
+      {:goth, "~> 1.4"},
+      {:hex_core, "~> 0.18", hex_core_opts()},
+      {:secret_scan, "~> 0.1"},
+      {:joken, "~> 2.6"},
+      {:lasso, "~> 0.1.4", only: :test},
+      {:libcluster, "~> 3.0"},
+      {:logger_json, "~> 7.0"},
+      {:git_diff,
+       github: "ericmj/git_diff", ref: "d47473d661ff0073ce4080ae04db1a439d78a62b", depth: 1},
+      {:mdex, "~> 0.14"},
+      {:mdex_gfm, "~> 0.1"},
+      {:lumis, "~> 0.10"},
+      {:lumis_wasm_bash, "~> 0.26.0"},
+      {:lumis_wasm_c, "~> 0.26.0"},
+      {:lumis_wasm_clojure, "~> 0.26.0"},
+      {:lumis_wasm_cmake, "~> 0.26.0"},
+      {:lumis_wasm_comment, "~> 0.26.0"},
+      {:lumis_wasm_commonlisp, "~> 0.26.0"},
+      {:lumis_wasm_cpp, "~> 0.26.0"},
+      {:lumis_wasm_css, "~> 0.26.0"},
+      {:lumis_wasm_csv, "~> 0.26.0"},
+      {:lumis_wasm_diff, "~> 0.26.0"},
+      {:lumis_wasm_dockerfile, "~> 0.26.0"},
+      {:lumis_wasm_eex, "~> 0.26.0"},
+      {:lumis_wasm_elixir, "~> 0.26.0"},
+      {:lumis_wasm_embedded_template, "~> 0.26.0"},
+      {:lumis_wasm_erlang, "~> 0.26.0"},
+      {:lumis_wasm_gitignore, "~> 0.26.0"},
+      {:lumis_wasm_gleam, "~> 0.26.0"},
+      {:lumis_wasm_glimmer, "~> 0.26.0"},
+      {:lumis_wasm_go, "~> 0.26.0"},
+      {:lumis_wasm_graphql, "~> 0.26.0"},
+      {:lumis_wasm_heex, "~> 0.26.0"},
+      {:lumis_wasm_html, "~> 0.26.0"},
+      {:lumis_wasm_http, "~> 0.26.0"},
+      {:lumis_wasm_iex, "~> 0.26.0"},
+      {:lumis_wasm_ini, "~> 0.26.0"},
+      {:lumis_wasm_javascript, "~> 0.26.0"},
+      {:lumis_wasm_json, "~> 0.26.0"},
+      {:lumis_wasm_latex, "~> 0.26.0"},
+      {:lumis_wasm_liquid, "~> 0.26.0"},
+      {:lumis_wasm_lua, "~> 0.26.0"},
+      {:lumis_wasm_make, "~> 0.26.0"},
+      {:lumis_wasm_markdown, "~> 0.26.0"},
+      {:lumis_wasm_markdown_inline, "~> 0.26.0"},
+      {:lumis_wasm_mermaid, "~> 0.26.0"},
+      {:lumis_wasm_nginx, "~> 0.26.0"},
+      {:lumis_wasm_nix, "~> 0.26.0"},
+      {:lumis_wasm_powershell, "~> 0.26.0"},
+      {:lumis_wasm_protobuf, "~> 0.26.0"},
+      {:lumis_wasm_python, "~> 0.26.0"},
+      {:lumis_wasm_regex, "~> 0.26.0"},
+      {:lumis_wasm_ruby, "~> 0.26.0"},
+      {:lumis_wasm_rust, "~> 0.26.0"},
+      {:lumis_wasm_scss, "~> 0.26.0"},
+      {:lumis_wasm_sql, "~> 0.26.0"},
+      {:lumis_wasm_surface, "~> 0.26.0"},
+      {:lumis_wasm_svelte, "~> 0.26.0"},
+      {:lumis_wasm_toml, "~> 0.26.0"},
+      {:lumis_wasm_tsx, "~> 0.26.0"},
+      {:lumis_wasm_typescript, "~> 0.26.0"},
+      {:lumis_wasm_vue, "~> 0.26.0"},
+      {:lumis_wasm_xml, "~> 0.26.0"},
+      {:lumis_wasm_yaml, "~> 0.26.0"},
+      {:lumis_wasm_zig, "~> 0.26.0"},
+      {:lumis_wasm_zsh, "~> 0.26.0"},
+      {:mox, "~> 1.0", only: :test},
+      {:nimble_ownership, "~> 1.0"},
+      {:oban, "~> 2.23"},
+      {:oidcc, "~> 3.8"},
+      {:stream_data, "~> 1.0", only: :test},
+      {:phoenix_ecto, "~> 4.0"},
+      {:phoenix_html, "~> 4.0"},
+      {:phoenix_html_helpers, "~> 1.0"},
+      {:phoenix_live_dashboard, "~> 0.6"},
+      {:phoenix_live_view, "~> 1.0"},
+      {:phoenix_live_reload, "~> 1.0", only: :dev},
+      {:phoenix_pubsub, "~> 2.0"},
+      {:phoenix_view, "~> 2.0"},
+      {:phoenix, "~> 1.6"},
+      {:plug_attack, "~> 0.3"},
+      {:plug_content_security_policy, "~> 0.2.1"},
+      {:plug, "~> 1.7"},
+      {:postgrex, "~> 0.14"},
+      {:pot, "~> 1.0"},
+      {:prom_ex, "~> 1.11"},
+      {:sentry, "~> 14.0"},
+      {:tailwind, "~> 0.4", runtime: Mix.env() == :dev},
+      {:tidewave, "~> 0.9.0", only: :dev},
+      # Dependency is broken with mix due to missing dependency on :ssl application
+      {:ssl_verify_fun, "~> 1.1", manager: :rebar3, override: true},
+      {:sweet_xml, "~> 0.5"},
+      {:telemetry_metrics, "~> 1.0"},
+      {:telemetry_poller, "~> 1.0"},
+      {:ueberauth, "~> 0.10"},
+      {:ueberauth_github, "~> 0.8"},
+      {:lazy_html, "~> 0.1.12"},
+      # ExAws signs empty-body GET requests that Req 0.7 rewrites as POST.
+      # https://github.com/ex-aws/ex_aws/issues/1246
+      {:req, "0.7.5"}
+    ]
+  end
+
+  defp hex_core_opts() do
+    if path = System.get_env("HEX_CORE_PATH") do
+      [path: path]
+    else
+      # TODO: revert to the published `{:hex_core, "~> 0.19"}` dependency once a
+      # hex_core release ships the per-repository policy model
+      [github: "hexpm/hex_core", depth: 1]
+    end
+  end
+
+  defp aliases() do
+    [
+      setup: [
+        "deps.get",
+        "ecto.setup",
+        "esbuild.install",
+        "tailwind.install",
+        "generate_lumis_css"
+      ],
+      "ecto.setup": ["ecto.reset", "run priv/repo/seeds.exs"],
+      "ecto.reset": ["ecto.drop", "ecto.create", "ecto.load", "ecto.migrate"],
+      "assets.deploy": [
+        "generate_lumis_css",
+        "esbuild hexpm --minify",
+        "tailwind default --minify",
+        "phx.digest"
+      ],
+      test: ["ecto.create --quiet", "ecto.load --skip-if-loaded", "ecto.migrate", "test"]
+    ]
+  end
+
+  defp releases() do
+    [
+      hexpm: [
+        include_executables_for: [:unix],
+        reboot_system_after_config: true
+      ]
+    ]
+  end
+end

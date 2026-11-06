@@ -50,14 +50,14 @@ type Candidate struct {
 }
 
 // Names are the versioning scheme names; "regex:<RE2>" schemes come on top (RegexPrefix).
-var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia", "bazel-module", "nuget", "rpm", "apk", "deb", "pub"}
+var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia", "bazel-module", "nuget", "rpm", "apk", "deb", "pub", "hex"}
 
 // RegexPrefix starts a regex scheme name: "regex:" followed by an RE2 regexp with named groups.
 const RegexPrefix = "regex:"
 
 // Get returns the scheme registered under name ("tag", "go", "docker", "semver", "loose", "cargo",
 // "pep440", "hashicorp", "maven", "ruby", "conda", "composer", "julia", "bazel-module", "nuget", "rpm", "apk",
-// "deb", "pub"), or the regex scheme of a valid "regex:<RE2>" name.
+// "deb", "pub", "hex"), or the regex scheme of a valid "regex:<RE2>" name.
 func Get(name string) (Scheme, bool) {
 	s, err := Parse(name)
 	return s, err == nil
@@ -114,6 +114,7 @@ var schemes = map[string]Scheme{
 	"apk":          impl[apkVersion]{parse: parseApk, compat: apkCompat, cmp: compareApk, kind: apkKind, semver: apkVersion.semver, major: apkVersion.major},
 	"deb":          impl[debVersion]{parse: parseDeb, compat: debCompat, cmp: compareDeb, kind: debKind, semver: debVersion.semver, major: debVersion.major},
 	"pub":          pubScheme{impl[cargoVersion]{parse: parsePub, compat: pubCompat, cmp: compareJulia, kind: pubKind, semver: cargoVersion.semver, major: pubMajor}},
+	"hex":          hexScheme{impl[semverVersion]{parse: parseStrictSemver, compat: semverCompat, cmp: compareSemver, kind: semverKind, semver: semverVersion.semver, major: semverMajor}},
 }
 
 // impl implements Scheme over a parsed version type T so every candidate is parsed once.
