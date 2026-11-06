@@ -34,12 +34,22 @@ const (
 type repoRef struct {
 	kind              forgeKind
 	host, owner, name string
+	// scheme is the URL scheme of the forge; empty means https.
+	scheme string
 	// tagPrefix precedes the version in tag names (`sub/` for a Go module in a subdirectory).
 	tagPrefix string
 }
 
+// base returns the forge's origin, `<scheme>://<host>`.
+func (r repoRef) base() string {
+	if r.scheme == "" {
+		return "https://" + r.host
+	}
+	return r.scheme + "://" + r.host
+}
+
 // web returns the repository's web URL.
-func (r repoRef) web() string { return "https://" + r.host + "/" + r.owner + "/" + r.name }
+func (r repoRef) web() string { return r.base() + "/" + r.owner + "/" + r.name }
 
 // goVanity maps module path prefixes without a forge host to their GitHub repositories. The
 // value is the "owner/repo" for an exact module or "owner/" for a prefix whose next path
@@ -78,7 +88,11 @@ func (n *Notes) resolve(ctx context.Context, d dep.Dep, version string) (repoRef
 			return repoRef{}, false
 		}
 		owner, name, _ := strings.Cut(fr.Path, "/")
-		return repoRef{kind: gitea, host: u.Host, owner: owner, name: name}, true
+		ref := repoRef{kind: gitea, host: u.Host, owner: owner, name: name}
+		if u.Scheme == "http" {
+			ref.scheme = "http"
+		}
+		return ref, true
 	case dsGo:
 		return n.goRepo(d.Name)
 	case dsNpm, dsDocker, dsPypi, dsMaven:

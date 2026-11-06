@@ -435,14 +435,14 @@ func sanitize(body string, r repoRef) string {
 				b.WriteString(seg)
 				continue
 			}
-			writeProse(&b, seg, base, r.host)
+			writeProse(&b, seg, base, r.base())
 		}
 	}
 	return redirect(b.String())
 }
 
 // writeProse writes s with mentions neutralized and issue references linked.
-func writeProse(b *strings.Builder, s, base, host string) {
+func writeProse(b *strings.Builder, s, base, origin string) {
 	boundary := func(i int) bool { // s[i-1] may start a mention or reference
 		return i == 0 || strings.IndexByte(" \t\n(", s[i-1]) >= 0
 	}
@@ -466,8 +466,8 @@ func writeProse(b *strings.Builder, s, base, host string) {
 			}
 			if ref := s[i:k]; k < len(s) && s[k] == '#' && strings.Count(ref, "/") == 1 && !strings.HasPrefix(ref, "/") && !strings.HasSuffix(ref, "/") {
 				if j := digitsEnd(s, k+1); j > k+1 && (j == len(s) || !isWord(s[j]) && s[j] != ']') {
-					repoBase := "https://" + host + "/" + ref
-					if host == "github.com" {
+					repoBase := origin + "/" + ref
+					if origin == "https://github.com" {
 						repoBase = "https://redirect.github.com/" + ref
 					}
 					fmt.Fprintf(b, "[%s](%s/issues/%s)", s[i:j], repoBase, s[k+1:j])

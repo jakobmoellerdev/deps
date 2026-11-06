@@ -573,6 +573,23 @@ func TestSectionNoCompareWithoutTags(t *testing.T) {
 	}
 }
 
+// A gitea-tags registry served over plain http is asked over http, not https.
+func TestSectionGiteaHTTPRegistry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/o/r/releases" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.MarshalWrite(w, []map[string]any{rel("v2.0.0", "plain http notes")})
+	}))
+	t.Cleanup(srv.Close)
+	n := New(srv.Client(), nil, nil, nil, nil)
+	u := dep.Update{Dep: dep.Dep{Datasource: "gitea-tags", Name: "o/r", Source: srv.URL, Version: "v1.0.0"}, NewVersion: "v2.0.0"}
+	if got := n.Section(t.Context(), []dep.Update{u}); !strings.Contains(got, "plain http notes") {
+		t.Errorf("section = %q, want the notes fetched over http", got)
+	}
+}
+
 // With extractVersion, releases and compare tags are found by the extracted version: jq's
 // `jq-1.8.1` tag holds the notes of 1.7.1 → 1.8.1, other tags of the repository do not count.
 func TestSectionExtractVersion(t *testing.T) {

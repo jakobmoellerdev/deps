@@ -71,7 +71,7 @@ func (n *Notes) fetchGitHub(ctx context.Context, r repoRef) ([]release, error) {
 
 // fetchGitea lists the releases of a Gitea/Forgejo repository (`<host>/api/v1`).
 func (n *Notes) fetchGitea(ctx context.Context, r repoRef) ([]release, error) {
-	target := "https://" + r.host + "/api/v1/repos/" + r.owner + "/" + r.name + "/releases?limit=" + strconv.Itoa(giteaNotes)
+	target := r.base() + "/api/v1/repos/" + r.owner + "/" + r.name + "/releases?limit=" + strconv.Itoa(giteaNotes)
 	host := r.host
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
