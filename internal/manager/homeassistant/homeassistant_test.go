@@ -174,3 +174,22 @@ func TestEdits(t *testing.T) {
 		}
 	}
 }
+
+// TestExtractJSONC: browser extension manifests with a byte order mark, comments or trailing
+// commas are no Home Assistant manifests and no file errors; HA manifests keep their offsets.
+func TestExtractJSONC(t *testing.T) {
+	for _, src := range []string{
+		"\ufeff{\"manifest_version\": 3, \"name\": \"ext\"}",
+		"{\n  // Chrome extension\n  \"manifest_version\": 3,\n  /* x */ \"name\": \"ext\",\n}",
+	} {
+		ds, err := New().Extract("manifest.json", []byte(src), manager.Env{})
+		if err != nil || len(ds) != 0 {
+			t.Errorf("%q: deps %v, err %v", src, ds, err)
+		}
+	}
+	src := "\ufeff{\"domain\": \"x\", // c\n\"name\": \"X\", \"requirements\": [\"a==1\"]}"
+	ds, err := New().Extract("manifest.json", []byte(src), manager.Env{})
+	if err != nil || len(ds) != 1 || ds[0].Line != 2 {
+		t.Fatalf("deps %v, err %v", ds, err)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jsonc"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
@@ -50,8 +51,11 @@ func (haManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 
 // Extract returns one dep per `requirements` string of a top-level object that has string
 // `domain` and `name` members (Renovate's schema); other manifest.json files have no deps.
-// Non-string requirements are ignored.
+// Non-string requirements are ignored. A byte order mark, comments and trailing commas
+// (browser extension manifests often have them) are blanked first (jsonc.Strip), so offsets
+// are those of src.
 func (haManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+	src = jsonc.Strip(src)
 	dec := jsontext.NewDecoder(bytes.NewReader(src), jsontext.AllowDuplicateNames(true))
 	if dec.PeekKind() != '{' {
 		if _, err := dec.ReadToken(); err != nil && !errors.Is(err, io.EOF) {
