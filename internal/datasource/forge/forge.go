@@ -87,7 +87,7 @@ func ParseRepo(name, depName, registry string) (Repo, error) {
 	if !ok {
 		return Repo{}, fmt.Errorf("unknown forge datasource %q", name)
 	}
-	invalid := fmt.Errorf("invalid %s name %q", name, depName)
+	invalid := func() error { return fmt.Errorf("invalid %s name %q", name, depName) }
 	base, path := sp.defaultURL, depName
 	if f := strings.Fields(registry); len(f) > 0 {
 		base = f[0]
@@ -95,9 +95,17 @@ func ParseRepo(name, depName, registry string) (Repo, error) {
 	if strings.Contains(depName, "://") {
 		u, err := url.Parse(depName)
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			return Repo{}, invalid
+			return Repo{}, invalid()
 		}
-		base, path = u.Scheme+"://"+u.Host, strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+		p := strings.Trim(u.Path, "/")
+		if sp.gitlab {
+			// A copied browser URL (…/group/proj/-/releases): GitLab reserves "-" as the
+			// separator between the project path and its pages.
+			if i := strings.Index(p+"/", "/-/"); i >= 0 {
+				p = p[:i]
+			}
+		}
+		base, path = u.Scheme+"://"+u.Host, strings.TrimSuffix(p, ".git")
 	}
 	u, err := url.Parse(base)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
@@ -106,11 +114,11 @@ func ParseRepo(name, depName, registry string) (Repo, error) {
 	path = strings.Trim(path, "/")
 	segs := strings.Split(path, "/")
 	if len(segs) < 2 || !sp.gitlab && len(segs) != 2 {
-		return Repo{}, invalid
+		return Repo{}, invalid()
 	}
 	for _, s := range segs {
 		if s == "" || s == "." || s == ".." {
-			return Repo{}, invalid
+			return Repo{}, invalid()
 		}
 	}
 	return Repo{Base: strings.TrimRight(base, "/"), Path: path}, nil
