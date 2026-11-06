@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
@@ -69,11 +70,28 @@ func joinParts(parts []uint64) string {
 	return b.String()
 }
 
+// ranges caches parseRange by range string (nil when it does not parse): the engine checks and
+// rewrites a dep's range for every candidate release.
+var ranges sync.Map // string -> *versioning.NuGetRange
+
+// parseRange returns the parsed range rng, or nil.
+func parseRange(rng string) *versioning.NuGetRange {
+	if p, ok := ranges.Load(rng); ok {
+		return p.(*versioning.NuGetRange)
+	}
+	var p *versioning.NuGetRange
+	if r, err := versioning.ParseNuGetRange(rng); err == nil {
+		p = &r
+	}
+	got, _ := ranges.LoadOrStore(rng, p)
+	return got.(*versioning.NuGetRange)
+}
+
 // InRange implements manager.RangeUpdater: whether d's range admits v
 // (versioning.NuGetRange.Admits).
 func (*nugetManager) InRange(d dep.Dep, v string) bool {
-	r, err := versioning.ParseNuGetRange(d.Range)
-	return err == nil && r.Admits(v)
+	r := parseRange(d.Range)
+	return r != nil && r.Admits(v)
 }
 
 // NewRange implements manager.RangeUpdater for floating versions and intervals. pin writes v
@@ -84,9 +102,9 @@ func (*nugetManager) InRange(d dep.Dep, v string) bool {
 // the lower bound kept; for a v the interval admits the lower bound is raised to v (`[1.0,2.0)`
 // → `[1.5.0,2.0)`), which the engine only writes under bump.
 func (*nugetManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	r, err := versioning.ParseNuGetRange(d.Range)
+	r := parseRange(d.Range)
 	parts, pre, ok := versioning.NuGetParts(v)
-	if err != nil || !ok {
+	if r == nil || !ok {
 		return "", false
 	}
 	var out string
@@ -96,7 +114,7 @@ func (*nugetManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 	case r.Admits(v) && r.Float != "":
 		return "", false
 	case r.Float != "":
-		out = floatAt(r, parts, pre)
+		out = floatAt(*r, parts, pre)
 	case r.Admits(v):
 		if r.Min == "" || r.Bare {
 			return "", false
@@ -105,7 +123,7 @@ func (*nugetManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 	case r.Max == "":
 		return "", false // below the lower bound, or a prerelease it does not admit
 	default:
-		out = d.Range[:r.MaxSpan.Start] + upperBound(r, parts, v) + d.Range[r.MaxSpan.End:]
+		out = d.Range[:r.MaxSpan.Start] + upperBound(*r, parts, v) + d.Range[r.MaxSpan.End:]
 	}
 	if out == d.Range {
 		return "", false

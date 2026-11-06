@@ -193,6 +193,8 @@ type NuGetRange struct {
 	Star      bool
 	PrePrefix string
 	FloatPre  bool
+
+	lo, hi nugetVersion // Min and Max parsed
 }
 
 // Exact reports whether the range is `[v]`; `[v,v]`, an interval with equal bounds, is not:
@@ -215,10 +217,11 @@ func ParseNuGetRange(s string) (NuGetRange, error) {
 		return parseNuGetFloat(t)
 	}
 	if t[0] != '[' && t[0] != '(' {
-		if _, ok := parseNuGet(t); !ok {
+		v, ok := parseNuGet(t)
+		if !ok {
 			return r, fmt.Errorf("invalid version %q", t)
 		}
-		r.Min, r.MinIncl, r.MinSpan, r.Bare = t, true, dep.Span{Start: off, End: off + len(t)}, true
+		r.Min, r.MinIncl, r.MinSpan, r.Bare, r.lo = t, true, dep.Span{Start: off, End: off + len(t)}, true, v
 		return r, nil
 	}
 	last := t[len(t)-1]
@@ -229,19 +232,20 @@ func ParseNuGetRange(s string) (NuGetRange, error) {
 	inner := t[1 : len(t)-1]
 	base := off + 1
 	lo, hi, comma := strings.Cut(inner, ",")
-	bound := func(raw string, at int) (string, dep.Span, error) {
+	bound := func(raw string, at int) (string, nugetVersion, dep.Span, error) {
 		v := strings.TrimSpace(raw)
 		if v == "" {
-			return "", dep.Span{}, nil
+			return "", nugetVersion{}, dep.Span{}, nil
 		}
-		if _, ok := parseNuGet(v); !ok {
-			return "", dep.Span{}, fmt.Errorf("invalid version %q in range %q", v, t)
+		p, ok := parseNuGet(v)
+		if !ok {
+			return "", nugetVersion{}, dep.Span{}, fmt.Errorf("invalid version %q in range %q", v, t)
 		}
 		st := at + strings.Index(raw, v)
-		return v, dep.Span{Start: st, End: st + len(v)}, nil
+		return v, p, dep.Span{Start: st, End: st + len(v)}, nil
 	}
 	var err error
-	if r.Min, r.MinSpan, err = bound(lo, base); err != nil {
+	if r.Min, r.lo, r.MinSpan, err = bound(lo, base); err != nil {
 		return r, err
 	}
 	if !comma {
@@ -249,22 +253,20 @@ func ParseNuGetRange(s string) (NuGetRange, error) {
 		if r.Min == "" || !r.MinIncl || !r.MaxIncl {
 			return r, fmt.Errorf("invalid version range %q", t)
 		}
-		r.Max, r.MaxSpan = r.Min, r.MinSpan
+		r.Max, r.hi, r.MaxSpan = r.Min, r.lo, r.MinSpan
 		return r, nil
 	}
 	if strings.Contains(hi, ",") {
 		return r, fmt.Errorf("invalid version range %q", t)
 	}
-	if r.Max, r.MaxSpan, err = bound(hi, base+len(lo)+1); err != nil {
+	if r.Max, r.hi, r.MaxSpan, err = bound(hi, base+len(lo)+1); err != nil {
 		return r, err
 	}
 	if r.Min == "" && r.Max == "" {
 		return r, fmt.Errorf("invalid version range %q", t)
 	}
 	if r.Min != "" && r.Max != "" {
-		minV, _ := parseNuGet(r.Min)
-		maxV, _ := parseNuGet(r.Max)
-		if c := compareNuGet(minV, maxV); c > 0 || c == 0 && (!r.MinIncl || !r.MaxIncl) {
+		if c := compareNuGet(r.lo, r.hi); c > 0 || c == 0 && (!r.MinIncl || !r.MaxIncl) {
 			return r, fmt.Errorf("invalid version range %q", t)
 		}
 	}
@@ -342,20 +344,18 @@ func (r NuGetRange) Admits(s string) bool {
 	}
 	pre := false
 	if r.Min != "" {
-		lo, _ := parseNuGet(r.Min)
-		c := compareNuGet(v, lo)
+		c := compareNuGet(v, r.lo)
 		if c < 0 || c == 0 && !r.MinIncl {
 			return false
 		}
-		pre = lo.pre != ""
+		pre = r.lo.pre != ""
 	}
 	if r.Max != "" {
-		up, _ := parseNuGet(r.Max)
-		c := compareNuGet(v, up)
+		c := compareNuGet(v, r.hi)
 		if c > 0 || c == 0 && !r.MaxIncl {
 			return false
 		}
-		pre = pre || up.pre != ""
+		pre = pre || r.hi.pre != ""
 	}
 	return v.pre == "" || pre
 }

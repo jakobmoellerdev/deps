@@ -10,6 +10,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -101,8 +102,8 @@ func (elmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 
 // NewRange implements manager.RangeRewriter (constraint.rewrite).
 func (elmManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	c, ok := parseConstraint(d.Range)
-	if !ok {
+	c := cachedConstraint(d.Range)
+	if c == nil {
 		return "", false
 	}
 	out := c.rewrite(v, strategy)
@@ -111,6 +112,23 @@ func (elmManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 	}
 	nc, ok := parseConstraint(out)
 	return out, ok && nc.admits(v)
+}
+
+// constraints caches cachedConstraint by constraint string (nil when it does not parse): the
+// engine rewrites a dep's constraint for every candidate release.
+var constraints sync.Map // string -> *constraint
+
+// cachedConstraint returns the parsed constraint s, or nil.
+func cachedConstraint(s string) *constraint {
+	if p, ok := constraints.Load(s); ok {
+		return p.(*constraint)
+	}
+	var p *constraint
+	if c, ok := parseConstraint(s); ok {
+		p = &c
+	}
+	got, _ := constraints.LoadOrStore(s, p)
+	return got.(*constraint)
 }
 
 // constraintRe is Elm's constraint grammar (`1.0.0 <= v < 2.0.0`): a lower bound, `<` or

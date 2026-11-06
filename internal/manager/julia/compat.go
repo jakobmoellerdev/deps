@@ -3,10 +3,25 @@ package julia
 import (
 	"strconv"
 	"strings"
+	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
+
+// compats caches parseCompat by compat entry (nil when it does not parse): the engine rewrites
+// a dep's entry for every candidate release.
+var compats sync.Map // string -> []versioning.JuliaTerm
+
+// parseCompat returns the terms of the compat entry spec, or nil when it does not parse.
+func parseCompat(spec string) []versioning.JuliaTerm {
+	if p, ok := compats.Load(spec); ok {
+		return p.([]versioning.JuliaTerm)
+	}
+	terms, _ := versioning.ParseJuliaCompat(spec) // nil on error
+	got, _ := compats.LoadOrStore(spec, terms)
+	return got.([]versioning.JuliaTerm)
+}
 
 // rewrite returns the compat entry spec rewritten for the version v under strategy (a
 // config.RangeStrategies value; "" = the default rewrite), or false when it stays unchanged or
@@ -24,8 +39,8 @@ import (
 //     its precision (`0.21, 1` → `2`, `4.2` → `5.1`, `~1.2` → `~1.5`, `1.2 - 1.5` → `2.1 - 2.1`,
 //     `< 2` → `< 3`); an `=` term takes v (`=6.5.1` → `=6.6.0`), since `=1.2` means 1.2.0 only.
 func rewrite(spec, v, strategy string) (string, bool) {
-	terms, err := versioning.ParseJuliaCompat(spec)
-	if err != nil {
+	terms := parseCompat(spec)
+	if terms == nil {
 		return "", false
 	}
 	parts, ok := versioning.JuliaParts(v)
