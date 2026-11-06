@@ -44,6 +44,7 @@ import (
 	helmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/helm"
 	hexds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hex"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hexpmbob"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/javaversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/juliaregistry"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
@@ -443,6 +444,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		bazelds.Name:            bazelds.New(client, sem, auth, os.Getenv),
 		nugetds.Name:            nugetds.New(client, sem, os.Getenv),
 		dotnetversion.Name:      dotnetversion.New(client, sem, os.Getenv),
+		javaversion.Name:        javaversion.New(client, sem, os.Getenv),
 		debds.Name:              debds.New(client, sem, auth),
 		artifactory.Name:        artifactory.New(client, sem, auth),
 		endoflife.Name:          endoflife.New(client, sem, os.Getenv),

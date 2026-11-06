@@ -813,14 +813,17 @@ func (p *policies) of(kind dep.UpdateType) *config.Policy {
 }
 
 // skip is why the policies leave d (with a valid or tag-only version) alone, "" when it is
-// looked up: ignored for every update type, or a non-version tag without a digest that is not
-// pinned nor replaced.
+// looked up: ignored for every update type, or a non-version tag (a branch ref of git-refs)
+// without a digest that is not pinned nor replaced.
 func (p *policies) skip(d dep.Dep) string {
 	switch {
 	case p.pre.Ignore && !p.anyKind():
 		return p.pre.IgnoreReason
 	case d.Digest == "" && (p.pre.Pin != config.PinDigest || !digestCapable(d)) && tagOnly(d) && (p.pre.ReplacementName == "" || !d.Renamable()):
 		// A non-version tag without a digest can only be pinned (when digestCapable) or replaced.
+		if d.Manager == actions.Name && d.Datasource == "git-refs" {
+			return "branch ref"
+		}
 		return "non-version tag"
 	}
 	return ""
@@ -1193,7 +1196,8 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 			return nil, fmt.Errorf("extractVersion: %w", err)
 		}
 		r.ds = withExtract(r.ds, x)
-	case d.Manager == actions.Name && d.DepType != actions.DepTypeSetup && d.DepType != actions.DepTypeRunner:
+	case d.Manager == actions.Name && d.DepType != actions.DepTypeSetup && d.DepType != actions.DepTypeRunner && d.Datasource != "git-refs":
+		// A branch ref (git-refs) names a branch, not a per-action tag.
 		if prefixExpr = actions.TagExtract(d.Name); prefixExpr != "" {
 			x, err := versioning.CompileExtract(prefixExpr)
 			if err != nil {

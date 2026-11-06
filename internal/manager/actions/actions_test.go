@@ -64,7 +64,7 @@ func TestExtract(t *testing.T) {
 				{"./local", "", "", "", "", "", "local action", ""},
 				{"$/x/y@v1", "", "", "", "", "", "local action", ""},
 				{"docker://alpine:3", "", "", "", "", "", "docker reference (docker manager)", ""},
-				{"actions/checkout", "https://github.com/actions/checkout", "", "", "main", "", "non-version ref", ""},
+				{"actions/checkout", "https://github.com/actions/checkout", "main", "", "main", "", "", ""}, // branch: git-refs
 				{"github/codeql-action/init", "https://github.com/github/codeql-action", "v3", "", "v3", "", "", ""},
 				{"actions/checkout", "https://gitea.com/actions/checkout", "v4", "", "v4", "", "", ""},
 				{"a/b", "https://github.com/a/b", "v2", "", "v2", "", "", ""},
@@ -76,8 +76,12 @@ func TestExtract(t *testing.T) {
 			}
 			for i, w := range wants {
 				d := deps[i]
+				ds := "git-tags"
+				if w.version == "main" {
+					ds = gitRefs
+				}
 				if d.Manager != Name || d.Name != w.name || d.Source != w.source || d.Version != w.version || d.Digest != w.digest || d.Skip != w.skip ||
-					d.Datasource != "git-tags" || d.Versioning != "tag" || d.DepType != "action" {
+					d.Datasource != ds || d.Versioning != "tag" || d.DepType != "action" {
 					t.Errorf("%d: got %+v, want %+v", i, d, w)
 				}
 				if w.skip == "" || w.skip == "non-version ref" {
@@ -117,10 +121,11 @@ func TestExtractParseError(t *testing.T) {
 func TestExtractSkips(t *testing.T) {
 	src := "steps:\n" +
 		"  - uses: a/b@" + sha + " # ratchet:exclude\n" +
-		"  - uses: a/b@" + sha + " # main\n" +
-		"  - uses: a/b@" + strings.Repeat("g", 40) + "\n" +
+		"  - uses: a/b@" + sha + " # keep on main\n" +
+		"  - uses: a/b@abc1234\n" +
 		"  - uses:\n      a/c@v1\n" +
-		"  - uses: \"a/d\\x40v1\"\n"
+		"  - uses: \"a/d\\x40v1\"\n" +
+		"  - uses: a/b@" + sha + " #get-vault-secrets-v1.2.0\n"
 	deps, err := New().Extract("action.yml", []byte(src), env)
 	if err != nil {
 		t.Fatal(err)
@@ -132,8 +137,9 @@ func TestExtractSkips(t *testing.T) {
 		{"a/b", "pinned without version comment", 2},
 		{"a/b", "pinned without version comment", 3},
 		{"a/b", "non-version ref", 4},
-		{"a/c", "cannot locate value", 6}, // value on a continuation line
-		{"a/d", "cannot locate value", 7}, // escaped in the source
+		{"a/c", "cannot locate value", 6},            // value on a continuation line
+		{"a/d", "cannot locate value", 7},            // escaped in the source
+		{"a/b", "pinned without version comment", 8}, // a prefixed version (Renovate's pinned version), no branch
 	}
 	if len(deps) != len(want) {
 		t.Fatalf("got %d deps: %+v", len(deps), deps)
@@ -267,7 +273,7 @@ func TestEditsTagPrefix(t *testing.T) {
 	if err != nil || len(deps) != 4 {
 		t.Fatalf("deps = %+v, err = %v", deps, err)
 	}
-	for i, w := range []struct{ version, skip string }{{"v1.0.2", ""}, {"v1.0.2", ""}, {"v1", ""}, {"", "non-version ref"}} {
+	for i, w := range []struct{ version, skip string }{{"v1.0.2", ""}, {"v1.0.2", ""}, {"v1", ""}, {"y/v1", ""}} {
 		if d := deps[i]; d.Version != w.version || d.Skip != w.skip {
 			t.Errorf("%d: version %q skip %q, want %q %q", i, d.Version, d.Skip, w.version, w.skip)
 		}
@@ -400,6 +406,47 @@ func TestParseUses(t *testing.T) {
 	} {
 		if got := ParseUses(tc.in, "github.com"); got.Skip != tc.skip {
 			t.Errorf("%q: %+v", tc.in, got)
+		}
+	}
+}
+
+// A branch ref is a git-refs dep: pin: digest writes `@<sha> # <branch>`, and a SHA whose
+// comment is only a branch name tracks that branch (digest refreshes keep the comment).
+func TestBranchRefs(t *testing.T) {
+	sha2 := strings.Repeat("b", 40)
+	src := "- uses: actions/checkout@main\n" +
+		"- uses: 'o/r@release/v1'\n" +
+		"- uses: o/r@" + sha + " # main \n"
+	deps, err := New().Extract("action.yml", []byte(src), env)
+	if err != nil || len(deps) != 3 {
+		t.Fatalf("deps = %+v, err = %v", deps, err)
+	}
+	for i, w := range []struct{ version, digest string }{{"main", ""}, {"release/v1", ""}, {"main", sha}} {
+		if d := deps[i]; d.Datasource != gitRefs || d.Version != w.version || d.Digest != w.digest || d.Skip != "" {
+			t.Errorf("%d: got %+v, want %+v", i, d, w)
+		}
+	}
+	tests := []struct {
+		u    dep.Update
+		want string
+	}{
+		{dep.Update{Dep: deps[0], Type: dep.Pin, NewVersion: "main", NewDigest: sha2}, "- uses: actions/checkout@" + sha2 + " # main\n"},
+		{dep.Update{Dep: deps[1], Type: dep.Pin, NewVersion: "release/v1", NewDigest: sha2}, "- uses: 'o/r@" + sha2 + "' # release/v1\n"},
+		{dep.Update{Dep: deps[2], Type: dep.Digest, NewVersion: "main", NewDigest: sha2}, "- uses: o/r@" + sha2 + " # main \n"},
+	}
+	for i, tt := range tests {
+		edits, err := New().Edits(tt.u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := patch.Apply([]byte(src), edits)
+		if err != nil || !strings.Contains(string(out), tt.want) {
+			t.Errorf("%d: got %q, %v; want line %q", i, out, err, tt.want)
+		}
+	}
+	for _, ref := range []string{"abc1234", "v1.x", "a..b", "x.lock", "-x", "a/"} {
+		if branchRef(ref) {
+			t.Errorf("branchRef(%q) = true", ref)
 		}
 	}
 }

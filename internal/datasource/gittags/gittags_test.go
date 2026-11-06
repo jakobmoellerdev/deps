@@ -534,7 +534,7 @@ func TestRefsDigestV2(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		bodies = append(bodies, string(body))
 		if strings.Contains(string(body), "ref-prefix refs/tags/") {
-			io.WriteString(w, pkts("3333333333333333333333333333333333333333 refs/tags/main\n", "0000"))
+			io.WriteString(w, pkts("3333333333333333333333333333333333333333 refs/tags/main\n", "4444444444444444444444444444444444444444 refs/tags/stable\n", "0000"))
 			return
 		}
 		io.WriteString(w, pkts(
@@ -554,14 +554,18 @@ func TestRefsDigestV2(t *testing.T) {
 			t.Errorf("Digest(%s) = %q, %v; want %q", ref, got, err, want)
 		}
 	}
-	if _, err := refs.Digest(t.Context(), d, "gone"); err == nil || err.Error() != "branch gone not found upstream" {
+	if _, err := refs.Digest(t.Context(), d, "gone"); !errors.Is(err, datasource.ErrVersionNotFound) || err.Error() != "branch or tag gone not found upstream" {
 		t.Errorf("Digest(gone) err = %v", err)
+	}
+	// A ref that is no branch is looked up among the tags.
+	if got, err := refs.Digest(t.Context(), d, "stable"); err != nil || got != "4444444444444444444444444444444444444444" {
+		t.Errorf("Digest(stable) = %q, %v; want the tag", got, err)
 	}
 	// Branches and tags are separate listings; the branches were listed once.
 	if got, err := refs.Digest(t.Context(), d, "main"); err != nil || got != "1111111111111111111111111111111111111111" {
 		t.Errorf("Digest(main) = %q, %v; want the branch, not the tag", got, err)
 	}
-	if rels, err := refs.Releases(t.Context(), d, ""); err != nil || len(rels) != 1 || rels[0].Version != "main" {
+	if rels, err := refs.Releases(t.Context(), d, ""); err != nil || len(rels) != 2 || rels[0].Version != "main" {
 		t.Errorf("Releases = %+v, %v; want the tags", rels, err)
 	}
 	want := []string{

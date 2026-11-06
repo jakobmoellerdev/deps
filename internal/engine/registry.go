@@ -28,5 +28,6 @@ var SkipDocs = []refdoc.Skip{
 	{Reason: "ignored by default (<type>; enable with a rule setting ignore: false)", When: "dep types `indirect`, `test-indirect`, `go`, `peerDependencies`, `engines`, `submodule`, `task`"},
 	{Reason: "non-version value \"<v>\"", When: "the current value is not valid in the dep's versioning scheme"},
 	{Reason: "non-version tag", When: "a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep`"},
+	{Reason: "branch ref", When: "a github-actions branch ref (`@main`, git-refs) without a digest, and `pin: keep`"},
 	{Reason: "current version <v> not found upstream (pin an existing version)", When: "a pinned or to-be-pinned dep whose current tag or image tag no longer exists (digest refresh and pin need it)"},
 }

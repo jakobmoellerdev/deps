@@ -59,6 +59,7 @@ var skipHints = []struct{ prefix, hint string }{
 	{"local action", "actions in this repository (`./…`) have no upstream version"},
 	{"non-version ref", "a branch or other ref; pin a version tag to get updates"},
 	{"non-version tag", "a tag without a version; set `pin: digest` to pin it"},
+	{"branch ref", "an action on a branch (`@main`); set `pin: digest` to pin it to the branch's commit"},
 	{"pinned without version comment", "add a `# vX.Y.Z` comment after the SHA"},
 	{"pseudo-version", "a commit pseudo-version; require a tagged version to get updates"},
 	{"module path changed", "the new version's go.mod declares another module path; require that path to update"},

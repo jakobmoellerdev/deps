@@ -14,6 +14,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
@@ -67,11 +68,19 @@ func (actionsManager) Extract(file string, src []byte, env manager.Env) ([]dep.D
 // tag → digest with " # <version>" inserted after the value. A per-action tag prefix
 // (`@get-vault-secrets/v1.3.1`) is kept; with u.NewName it becomes the new name's prefix
 // (see newPrefix). A commit pin without a version comment gets the new digest, and
-// " # <version>" inserted when the engine resolved its commit to a tag.
+// " # <version>" inserted when the engine resolved its commit to a tag. A branch ref
+// (`@main`) pins as `@<sha> # main`. A setup input range (`1.27.x`) is rewritten whole for
+// the new version (NewRange).
 func (actionsManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	var edits []patch.Edit
 	switch {
+	case d.Range != "":
+		nr, ok := npm.NewRange(d.Range, u.NewVersion, u.RangeStrategy)
+		if !ok {
+			return nil, fmt.Errorf("range %q cannot be rewritten for %s", d.Range, u.NewVersion)
+		}
+		return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: nr}}, nil
 	case u.NewDigest == "":
 		if d.Digest != "" {
 			return nil, errors.New("cannot unpin a digest-pinned action")
@@ -125,6 +134,15 @@ func (actionsManager) Edits(u dep.Update) ([]patch.Edit, error) {
 		}
 	}
 	return edits, nil
+}
+
+// NewRange implements manager.RangeRewriter for the npm ranges of setup inputs
+// (`1.27.x`, `>=24`, setup-dotnet's `8.0`); other deps have no range.
+func (actionsManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	if d.Range == "" {
+		return "", false
+	}
+	return npm.NewRange(d.Range, v, strategy)
 }
 
 // roleTagPrefix is the role of the NamePart over the per-action tag prefix (`get-vault-secrets/`)
@@ -278,14 +296,17 @@ func (x *extractor) add(v *yaml.Node) {
 	switch {
 	case manager.IsHex(u.Ref, 40, 64):
 		// A bare SHA keeps Version "": the engine resolves the commit to the tag pointing at
-		// it, or tracks the default branch (see Doc). A comment that is no version (`# main`)
-		// may name what the SHA tracks, so that pin is left alone.
+		// it, or tracks the default branch (see Doc). A comment that is only a branch name
+		// (`# main`, what `pin: digest` writes for `@main`) names the branch the SHA tracks;
+		// another comment that is no version leaves the pin alone.
 		d.Digest = u.Ref
 		if sp, ver, p, ok := x.commentVersion(u.Name, d.InsertAt, le); ok {
 			d.Version, d.VersionSpan = ver, sp
 			if s := sp.Start - p; p > 0 && d.NameParts != nil {
 				d.NameParts = append(d.NameParts, dep.NamePart{Span: dep.Span{Start: s, End: sp.Start}, Text: string(x.src[s:sp.Start]), Role: roleTagPrefix})
 			}
+		} else if sp, ok := x.commentBranch(d.InsertAt, le); ok {
+			d.Datasource, d.Version, d.VersionSpan = gitRefs, string(x.src[sp.Start:sp.End]), sp
 		} else if bytes.IndexByte(x.src[d.InsertAt:le], '#') >= 0 {
 			d.Skip = "pinned without version comment"
 		}
@@ -297,11 +318,56 @@ func (x *extractor) add(v *yaml.Node) {
 			if d.NameParts != nil {
 				d.NameParts = append(d.NameParts, dep.NamePart{Span: dep.Span{Start: d.RefSpan.Start, End: d.RefSpan.Start + p}, Text: u.Ref[:p], Role: roleTagPrefix})
 			}
+		} else if branchRef(u.Ref) {
+			// A branch (or another non-version ref): pin: digest pins it to its commit, as
+			// Renovate's pinDigests does; otherwise it gets no updates.
+			d.Datasource, d.Version = gitRefs, u.Ref
 		} else {
 			d.Skip = "non-version ref"
 		}
 	}
 	x.deps = append(x.deps, d)
+}
+
+// gitRefs is the datasource of a branch ref: its commit is the digest (gittags.RefsName).
+const gitRefs = "git-refs"
+
+var (
+	// branchRe is a git branch name as refs are written in `uses:` (`main`,
+	// `release/v1`); versionLikeRe starts like a version (Renovate's versionLikeRe);
+	// pinTokenRe is a comment token Renovate reads as a pinned version, a prefix included
+	// (its pinTokenRe: `get-vault-secrets-v1.2.0`, `release/v1`).
+	branchRe      = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]*$`)
+	versionLikeRe = regexp.MustCompile(`^v?\d`)
+	pinTokenRe    = regexp.MustCompile(`^(?:[\w-]*[-/])?v?\d`)
+)
+
+// branchRef reports whether ref is pinned as a branch: a branch-like name that does not
+// start like a version (`v1.x`) and is no abbreviated commit (`abc1234`, kept as a skip).
+func branchRef(ref string) bool {
+	return branchRe.MatchString(ref) && !versionLikeRe.MatchString(ref) && !manager.IsHex(ref, 6, 7, 8, 9, 10, 11, 12) &&
+		!strings.Contains(ref, "..") && !strings.HasSuffix(ref, ".lock") && !strings.HasSuffix(ref, "/")
+}
+
+// commentBranch finds a comment in src[from:le] that is a single branch name (branchRef),
+// Renovate's bare ref comment: `# main`. A token Renovate reads as a pinned version
+// (pinTokenRe) is none.
+func (x *extractor) commentBranch(from, le int) (dep.Span, bool) {
+	h := bytes.IndexByte(x.src[from:le], '#')
+	if h < 0 {
+		return dep.Span{}, false
+	}
+	s, e := from+h+1, le
+	for s < e && (x.src[s] == ' ' || x.src[s] == '\t') {
+		s++
+	}
+	for e > s && (x.src[e-1] == ' ' || x.src[e-1] == '\t') {
+		e--
+	}
+	if tok := string(x.src[s:e]); !branchRef(tok) || pinTokenRe.MatchString(tok) {
+		return dep.Span{}, false
+	}
+	return dep.Span{Start: s, End: e}, true
 }
 
 // commentVersion finds the version token in the first comment in src[from:le]; a per-action

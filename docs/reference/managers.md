@@ -82,6 +82,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 | `ignored by default (<type>; enable with a rule setting ignore: false)` | dep types `indirect`, `test-indirect`, `go`, `peerDependencies`, `engines`, `submodule`, `task` |
 | `non-version value "<v>"` | the current value is not valid in the dep's versioning scheme |
 | `non-version tag` | a docker-datasource dep with a non-version tag (`latest`, `bookworm`, a commit hash), not pinned, and `pin: keep` |
+| `branch ref` | a github-actions branch ref (`@main`, git-refs) without a digest, and `pin: keep` |
 | `current version <v> not found upstream (pin an existing version)` | a pinned or to-be-pinned dep whose current tag or image tag no longer exists (digest refresh and pin need it) |
 
 ## github-actions
@@ -95,8 +96,8 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `action` | `uses: owner/repo[/path]@ref` | `git-tags` | `tag` | updated |
-| `setup` | the version input of a setup action (see Setup action inputs) | per action (see Setup action inputs) | `semver` or `tag` | updated |
+| `action` | `uses: owner/repo[/path]@ref` | `git-tags`; `git-refs` for a branch ref (see Branch refs) | `tag` | updated |
+| `setup` | the version input of a setup action (see Setup action inputs) | per action (see Setup action inputs) | `semver` (full versions and ranges) or `tag` | updated |
 | `github-runner` | a GitHub-hosted runner label in a job's `runs-on:` (`ubuntu-24.04`, `macos-15`, `windows-2025`; see Runner labels) | `github-runners` | `docker` | updated |
 
 **Skips:**
@@ -106,12 +107,13 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 | `local action` | `./…`, `$/…` |
 | `docker reference (docker manager)` | `docker://…`, handled by the docker manager |
 | `unrecognized uses` | no `@`, missing owner/repo/ref, unparsable URL |
-| `non-version ref` | a branch or other ref that is not a tag (`@main`) |
-| `pinned without version comment` | a SHA followed by a comment that is no version (`# main`) |
+| `non-version ref` | a ref that is neither a tag nor a branch name: an abbreviated SHA (`@abc1234`) or a ref that starts like a version but is none (`@v1.x`) |
+| `pinned without version comment` | a SHA followed by a comment that is neither a version nor a single branch name (`# keep on main`) |
 | `cannot locate value` | the value's bytes could not be found on its line |
 | `expression` | setup input: `${{ … }}` |
-| `non-version value` | setup input: empty or a word such as `lts/*`, `stable` |
-| `unsupported range` | setup input: a range rather than a literal version |
+| `non-version value` | setup input: empty, a word such as `lts/*`, `stable`, `pypy3.10`, `jruby-9.4`, or a file (`.ruby-version`) |
+| `unsupported range` | setup input: outside npm's range grammar (`9.0.1xx`, `3.13t`), a multi-line list, or a setup-java range (`21.x`) |
+| `unsupported distribution` | setup-java: `distribution` missing or other than `temurin`, `adopt`, `adopt-hotspot` |
 | `non-version value` | runner label: `<runner>-latest` (`ubuntu-latest`) |
 
 **Extracted.**
@@ -125,8 +127,15 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 - Tag: `@v4`, `@v4.2.0`.
 - Pinned: `@<40/64-hex sha> # v4.2.0`, or `# ratchet:owner/repo@v4`.
 - Commit pin: a bare `@<40/64-hex sha>` without a comment (see Commit pins).
+- Branch: `@main`, `@release/v1`, or a SHA whose comment is only the branch name, `@<sha> # main` (see Branch refs).
 - An action in a subdirectory (`owner/repo/<path>`) may carry a per-action tag prefix, `<path>/` or `<last path element>/`, in the tag or the comment: `@get-vault-secrets/v1.3.1`, `@<sha> # get-vault-secrets/v1.3.1`.
 - Anything else is skipped.
+
+**Branch refs.**
+
+- A ref that is no version and looks like a branch name (not starting like a version, no abbreviated SHA) is a `git-refs` dep whose version is the branch, as Renovate's `github-digest` deps of such refs.
+- It gets no updates unless `pin: digest` is set (skipped as `branch ref`): then it is pinned to the branch's commit (a `pin` update), `@main` → `@<sha> # main`. A ref that is no branch is looked up as a tag (`@stable`); one that is neither is skipped (`current version … not found upstream`).
+- A SHA whose comment is a single branch name (`# main`, `# master`) follows that branch: a new commit on it is a `digest` update, and the comment stays. A comment token Renovate reads as a pinned version (`#get-vault-secrets-v1.2.0`) is none. Branch commits are not dated, so `minimumReleaseAge` does not hold them back.
 
 **Commit pins.**
 
@@ -148,7 +157,7 @@ Finds `uses:` references to actions and reusable workflows in GitHub, Gitea and 
 
 - A tag is replaced by the new tag at the same precision (`@v4` → `@v5`, `@v4.1.0` → `@v4.2.0`).
 - A pinned ref gets the new SHA, and the comment version is replaced.
-- With `pin: digest`, a tag becomes `@<sha> # <tag>`.
+- With `pin: digest`, a tag becomes `@<sha> # <tag>`, a branch `@<sha> # <branch>`.
 - A floating pin (`@<sha> # v4`) whose tag moved gets a digest refresh.
 - A per-action tag prefix is kept: `@get-vault-secrets/v1.3.1` → `@get-vault-secrets/v1.4.0`, pinned as `@<sha> # get-vault-secrets/v1.4.0`.
 - A `with: version:` input equal to the current version (the tag or the pinned comment version) is bumped in the same edit, e.g. `@<sha> # v0.2.5` with `version: v0.2.5`. A different value is left alone, and setup actions keep their own version input (DepType `setup`).
@@ -159,18 +168,24 @@ For these actions, the version input in `with:` is also a dep (DepType `setup`):
 
 | Action | Input | Datasource | Name |
 |---|---|---|---|
+| `actions/setup-dotnet` | `dotnet-version` | `dotnet-version` | `dotnet-sdk` |
 | `actions/setup-go` | `go-version` | `go-toolchain` | `go` |
+| `actions/setup-java` | `java-version` | `java-version` | `java-jdk` |
 | `actions/setup-node` | `node-version` | `node-version` | `node` |
+| `actions/setup-python` | `python-version` | `python-version` | `python` |
 | `azure/setup-helm` | `version` | `github-releases` | `helm/helm` |
 | `azure/setup-kubectl` | `version` | `github-releases` | `kubernetes/kubernetes` |
 | `golangci/golangci-lint-action` | `version` | `github-releases` | `golangci/golangci-lint` |
 | `hashicorp/setup-terraform` | `terraform_version` | `github-releases` | `hashicorp/terraform` |
+| `ruby/setup-ruby` | `ruby-version` | `ruby-version` | `ruby` |
 
 - Only literal values are extracted.
-- A full `[v]X.Y.Z` uses `semver` and keeps the `v` style.
+- A full `[v]X.Y.Z` (with build metadata for setup-java: `17.0.7+7`) uses `semver` and keeps the `v` style.
 - A partial `26`, `1.27` or `v2.1` uses `tag` versioning, and its precision is kept (`26` → `27`).
-- setup-python and setup-java are not extracted.
-- Skips: `expression` (`${{ … }}`), `non-version value` (empty or a word such as `lts/*`, `stable`), `unsupported range`, `cannot locate value`.
+- A range in npm's grammar, which setup-node, setup-go and setup-python resolve with node-semver (`1.27.x`, `>=24`, `^3.12`, `20 || 22`), is a range dep (`semver` versioning, its anchor as the version) under [rangeStrategy](configuration.md#rangestrategy) (auto: replace, as there is no lockfile): a version the range admits is left alone, one outside it rewrites the range at its precision (`1.27.x` → `1.28.x`, `^3.12` → `^4.0`); `bump` raises an admitted range's floor (`>=24` → `>=26`), `widen` appends (`8.0.x || 10.0.x`). As in Renovate, which uses npm versioning for these inputs.
+- setup-dotnet's partial values are channels (`8.0`, `8`): the dotnet-version datasource lists full SDK versions only, so they are ranges too (`8.0` → `10.0`). Feature-band wildcards (`9.0.1xx`) are skipped.
+- setup-java is versioned by the java-version datasource (Eclipse Temurin) only for `distribution: temurin`, `adopt` or `adopt-hotspot`, as in Renovate; the name is `java-jre` for a `java-package` starting with `jre`, else `java-jdk`. Full and partial values only (Renovate skips java-version ranges too).
+- Skips: `expression` (`${{ … }}`), `non-version value` (empty, a word such as `lts/*`, `stable`, `pypy3.10`, or a file such as `.ruby-version`), `unsupported range`, `unsupported distribution`, `cannot locate value`.
 
 **Runner labels.**
 
@@ -3407,7 +3422,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | Datasource | Dep name | Endpoints | Auth | Release times |
 |---|---|---|---|---|
 | `git-tags` | repository URL (`https://host/path` or `host/path`) | `GET <url>/info/refs?service=git-upload-pack`, then `POST <url>/git-upload-pack` (protocol v2 `ls-refs`, `ref-prefix refs/tags/`, `ref-prefix HEAD`, `peel`); v0 servers via the advertisement. `HEAD` is the default branch commit that github-actions commit pins track | Basic `x-access-token:<token>` for the platform host; `DEPS_GITHUB_COM_TOKEN` for github.com; on 401, `git credential fill` once per host | the tag's release (github.com: the release list; GitLab: the `gitlab-releases` list, `released_at`; Gitea/Forgejo: their releases API); a tag without one (a floating `v25`) takes the earliest listed release of the same commit, else the tag date (GitHub GraphQL: tagger date of an annotated tag, else committer date; GitHub REST: committer date; GitLab: the `gitlab-tags` list, `commit.created_at`; Gitea/Forgejo: `GET /repos/{repo}/tags/{tag}` `commit.created`). GitLab means gitlab.com and the instance of `gitlabci.url` (else `CI_SERVER_URL`, a GitLab platform); its lists are the gitlab datasources' (up to 10 pages, once per repository); other hosts are asked for the Gitea/Forgejo API, and without it the time is unknown. The default branch head is dated by its committer date (GitHub GraphQL `object(oid)` or REST `/git/commits/{sha}`; GitLab `GET /projects/<path>/repository/commits/{sha}` `committed_date`; Gitea/Forgejo `GET /repos/{repo}/git/commits/{sha}` `created`), asked only when a `digest` minimumReleaseAge applies |
-| `git-refs` | repository URL (`https://host/path`); the version is a branch, `HEAD` for the default branch, and the digest its commit | as `git-tags`, with `ref-prefix HEAD` and `ref-prefix refs/heads/` for the branch commits; releases are the tags | as `git-tags` | none: branch commits are not dated, so `minimumReleaseAge` never holds a digest update back |
+| `git-refs` | repository URL (`https://host/path`); the version is a branch, `HEAD` for the default branch, and the digest its commit (a version that is no branch is looked up as a tag: an action ref such as `@stable`) | as `git-tags`, with `ref-prefix HEAD` and `ref-prefix refs/heads/` for the branch commits (the tag listing only when the version is no branch); releases are the tags | as `git-tags` | none: branch commits are not dated, so `minimumReleaseAge` never holds a digest update back |
 | `github-releases` | `owner/repo` (github.com) or `https://host/owner/repo` (GHES) | with a token: GraphQL `releases` (`https://api.github.com/graphql`, GHES `<host>/api/graphql`); without: `GET /repos/{repo}/releases?per_page=100`. Newest first by creation; pages are fetched only until the current release (a prerelease too) is listed, since every release created after it precedes it, else up to 100 pages (10000 releases, Renovate's GraphQL query limit). Drafts and prereleases are dropped. The GraphQL list also reads the repository's `isArchived`: an archived repository is listed under the dashboard's deprecated dependencies. | token for the host | `publishedAt` |
 | `github-runners` | the runner name of a GitHub-hosted runner label: `ubuntu`, `macos`, `windows`, `xcode` | none: a table of the [runner images](https://github.com/actions/runner-images) in deps, like Renovate's; versions with a suffix (`24.04-arm`, `15-large`) only update within that suffix | none | the day GitHub announced the image generally available |
 | `gitlab-releases` | project path (`group/subgroup/project`) on `registryUrl` (default `https://gitlab.com`), or a repository URL `https://host/group/project` | `GET <registryUrl>/api/v4/projects/<path>/releases?per_page=100`. Newest first; pages are followed while the response links a next one, at most 10. Upcoming releases are dropped; the version is the `tag_name` | the token registered for the host (the platform token, `DEPS_GITLAB_TOKEN` or `CI_JOB_TOKEN` for the GitLab instance) as `Authorization: Bearer`, the CI job token as `JOB-TOKEN`; without, on 401/403/404 `git credential fill` once per host | `released_at` |
@@ -3458,6 +3473,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `hex` | the Hex package name (`phoenix`, `gleam_stdlib`), or `name:organization` for a package of a private Hex organization (Renovate's form) | `GET <DEPS_HEX_URL or https://hex.pm>/api/packages/<name>` (`/api/repos/<organization>/packages/<name>` for an organization's package), once per package; versions that are not SemVer are dropped, retired versions (`mix hex.retire`) stay listed and are reported as deprecated with their reason. Source repository (release notes): the package's `GitHub` link. hex.pm allows 100 unauthenticated API requests per minute (500 with a key); the shared client waits out its `X-RateLimit-Reset` | `HEX_API_KEY` (a hex.pm API key, `mix hex.user key generate`), sent as the `Authorization` header; needed for organization packages | the `inserted_at` time of each release |
 | `hexpm-bob` | `elixir` for Elixir, `otp/<os>-<version>` (`otp/ubuntu-22.04`) for the Erlang/OTP builds of that system. No manager uses it; use it from a [custom manager](#custom) (Renovate's name, for `.tool-versions`, Dockerfile `ARG`s or CI files). Elixir versions are listed without their `v` (`1.18.4`) and per OTP release (`1.18.4-otp-27`), OTP versions without `OTP-` (`27.3.4.1`, `27.0-rc1`); branch builds (`main`, `v1.18`, `maint-27`) are not versions. For a pinned `1.18.4-otp-27` that should stay on its OTP release, use `versioning: 'regex:^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-otp-(?<compatibility>\d+))?$'`; OTP's up to four parts need `loose` | `GET <DEPS_HEXPM_BOB_URL or https://builds.hex.pm>/builds/<name>/builds.txt`, once per name. Source repository (release notes): `https://github.com/elixir-lang/elixir` or `https://github.com/erlang/otp` | none | the build time of each build in the list |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
+| `java-version` | `java` or `java-jdk` (the JDK) or `java-jre` (the JRE), optionally followed by `?os=<os>&architecture=<arch>` (Renovate's form) | `GET <DEPS_JAVA_RELEASES_URL or https://api.adoptium.net/v3/info/release_versions>?image_type=<jdk\|jre>&project=jdk&release_type=ga&sort_method=DATE&sort_order=DESC&page_size=50&page=<n>` (Renovate's source, Eclipse Temurin) once per image type and filter per run, pages until a short page or a 404, at most 50: the GA versions as Adoptium semver (`21.0.5+11`), plus a derived `X.Y` and `X` per line | none | none: the Adoptium version list carries no dates (Renovate's has none either), so `minimumReleaseAge` treats versions as of unknown age (see `minimumReleaseAgeBehaviour`) |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
 

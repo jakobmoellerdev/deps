@@ -16,8 +16,8 @@ var Doc = refdoc.Datasource{
 // RefsDoc is the reference documentation of the git-refs datasource.
 var RefsDoc = refdoc.Datasource{
 	Name:         RefsName,
-	NameForm:     "repository URL (`https://host/path`); the version is a branch, `HEAD` for the default branch, and the digest its commit",
-	Endpoints:    "as `git-tags`, with `ref-prefix HEAD` and `ref-prefix refs/heads/` for the branch commits; releases are the tags",
+	NameForm:     "repository URL (`https://host/path`); the version is a branch, `HEAD` for the default branch, and the digest its commit (a version that is no branch is looked up as a tag: an action ref such as `@stable`)",
+	Endpoints:    "as `git-tags`, with `ref-prefix HEAD` and `ref-prefix refs/heads/` for the branch commits (the tag listing only when the version is no branch); releases are the tags",
 	Auth:         "as `git-tags`",
 	ReleaseTimes: "none: branch commits are not dated, so `minimumReleaseAge` never holds a digest update back",
 }

@@ -47,6 +47,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_HEXPM_BOB_URL` | `hexpm-bob` datasource | base of bob's build lists (`/builds/<name>/builds.txt`; default `https://builds.hex.pm`) |
 | `NuGetPackageSourceCredentials_<key>` | `nuget` datasource | NuGet's credentials of the nuget.config package source `<key>`: `Username=<user>;Password=<token>`; sent as basic auth to that source's host only |
 | `DEPS_DOTNET_RELEASES_URL` | `dotnet-version` datasource | URL of the .NET release metadata index (default `https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json`); the channels' `releases.json` URLs come from it |
+| `DEPS_JAVA_RELEASES_URL` | `java-version` datasource | URL of the Adoptium release version list (default `https://api.adoptium.net/v3/info/release_versions`); the filter and page parameters are appended |
 | `DEPS_ENDOFLIFE_DATE_URL` | `endoflife-date` datasource | base URL of the endoflife.date API (default `https://endoflife.date/api`); a dep's Renovate `registryUrl` overrides it |
 | `PUB_HOSTED_URL` | `dart` datasource | default pub repository, as for the pub client (default `https://pub.dev`); a `hosted` dependency uses its own URL |
 | `DEPS_DART_ARCHIVE_URL` | `dart-version` datasource | Google Cloud Storage JSON API base serving the `dart-archive` bucket (default `https://storage.googleapis.com`) |

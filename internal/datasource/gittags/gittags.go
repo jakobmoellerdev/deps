@@ -144,18 +144,23 @@ func (r Refs) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource
 	return r.l.Releases(ctx, d, dir)
 }
 
-// Digest returns the commit of branch ref in d.Source; HEAD is the default branch.
+// Digest returns the commit of branch ref in d.Source (HEAD is the default branch), else of
+// the tag named ref (an action ref such as `@stable` may be either, as for GitHub's
+// commits/<ref>); neither is datasource.ErrVersionNotFound. The tags are listed only when ref
+// is no branch.
 func (r Refs) Digest(ctx context.Context, d dep.Dep, ref string) (string, error) {
-	e, err := r.l.get(ctx, d.Source, true)
-	if err != nil {
-		return "", err
-	}
-	for _, h := range e.tags {
-		if h.Name == ref {
-			return h.Commit, nil
+	for _, heads := range [...]bool{true, false} {
+		e, err := r.l.get(ctx, d.Source, heads)
+		if err != nil {
+			return "", err
+		}
+		for _, h := range e.tags {
+			if h.Name == ref {
+				return h.Commit, nil
+			}
 		}
 	}
-	return "", fmt.Errorf("branch %s not found upstream", ref)
+	return "", fmt.Errorf("branch or tag %s %w", ref, datasource.ErrVersionNotFound)
 }
 
 // CommitTime implements datasource.CommitTimer: the committer date of commit in d.Source, via
