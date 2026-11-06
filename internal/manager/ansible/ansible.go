@@ -53,7 +53,7 @@ func (tasksManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep
 	if err != nil {
 		return nil, err
 	}
-	x := docker.Images{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src)}
+	x := docker.Images{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src), Aliases: env.RegistryAliases}
 	walk(doc, func(v *yaml.Node) {
 		if strings.Contains(v.Value, "{{") {
 			x.Deps = append(x.Deps, dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: DepTypeImage, File: file, Line: v.Line, Name: v.Value, Skip: skipTemplate})

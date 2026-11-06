@@ -6,6 +6,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -24,7 +25,7 @@ func extract(t *testing.T, src []byte) []dep.Dep {
 		if d.Manager != Name || d.Datasource != "docker" || d.Versioning != "docker" {
 			t.Errorf("%d: %s/%s/%s", i, d.Manager, d.Datasource, d.Versioning)
 		}
-		if d.Version != "" && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Version {
+		if d.Version != "" && !docker.Untagged(d) && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Version {
 			t.Errorf("%d: src[RefSpan] = %q, want %q", i, src[d.RefSpan.Start:d.RefSpan.End], d.Version)
 		}
 	}
@@ -87,7 +88,7 @@ pipeline:
 		0: {line: 5, depT: TypeImage, name: "woodpeckerci/plugin-git", version: "2.6.0"},
 		1: {line: 2, depT: TypeImage, name: "golang", version: "1.27"},
 		2: {line: 12, depT: TypeImage, name: "node:${NODE_VERSION}", skip: "variable reference"},
-		3: {line: 14, depT: TypeImage, name: "alpine", skip: "no tag"},
+		3: {line: 14, depT: TypeImage, name: "alpine", version: "latest"},
 		4: {line: 20, depT: TypeImage, name: "debian", version: "13"},
 		5: {line: 17, depT: TypeService, name: "postgres", version: "18"},
 	})

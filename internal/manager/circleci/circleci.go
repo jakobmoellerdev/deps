@@ -50,7 +50,7 @@ func (circleManager) Extract(file string, src []byte, env manager.Env) ([]dep.De
 	if err != nil {
 		return nil, err
 	}
-	x := extractor{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src)}
+	x := extractor{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src), Aliases: env.RegistryAliases}
 	if len(doc.Content) == 1 {
 		root := doc.Content[0]
 		x.definition(root)

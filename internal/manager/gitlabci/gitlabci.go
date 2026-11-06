@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -76,7 +77,7 @@ func (gitlabManager) Match(path string) bool {
 // `spec:` header document). Project includes and components on the instance resolve against
 // env.GitLabURL.
 func (gitlabManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
-	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src), base: env.GitLabURL}
+	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src), base: env.GitLabURL, aliases: aliases(env.RegistryAliases)}
 	if x.base == "" {
 		x.base = platform.DefaultGitLabURL
 	}
@@ -140,12 +141,31 @@ func (gitlabManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
 }
 
 type extractor struct {
-	file  string
-	src   []byte
-	lines []int
-	deps  []dep.Dep
-	base  string // GitLab instance base URL without trailing slash
-	host  string // host[:port] of base
+	file    string
+	src     []byte
+	lines   []int
+	deps    []dep.Dep
+	base    string            // GitLab instance base URL without trailing slash
+	host    string            // host[:port] of base
+	aliases map[string]string // registry aliases of images (see aliases)
+}
+
+// dependencyProxy are the prefixes of GitLab's Dependency Proxy for Docker Hub images, which
+// Renovate resolves to Docker Hub.
+var dependencyProxy = map[string]string{
+	"$CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX": "", "${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}": "",
+	"$CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX": "", "${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}": "",
+}
+
+// aliases returns the registry aliases of images: the dependency proxy prefixes and the
+// config's registryAliases, which override them.
+func aliases(config map[string]string) map[string]string {
+	if len(config) == 0 {
+		return dependencyProxy
+	}
+	m := maps.Clone(dependencyProxy)
+	maps.Copy(m, config)
+	return m
 }
 
 func (x *extractor) root(m *yaml.Node) {
@@ -192,14 +212,7 @@ func (x *extractor) ref(depType string, v *yaml.Node) {
 		return
 	}
 	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: depType, File: x.file, Line: v.Line, Name: v.Value}
-	switch off := yamlspan.Locate(x.src, x.lines, v); {
-	case strings.Contains(v.Value, "$"):
-		d.Skip = "variable reference"
-	case off < 0:
-		d.Skip = "cannot locate value"
-	default:
-		docker.ParseInlineRef(&d, off, v.Value)
-	}
+	docker.ParseImage(&d, yamlspan.Locate(x.src, x.lines, v), v.Value, x.aliases)
 	x.deps = append(x.deps, d)
 }
 

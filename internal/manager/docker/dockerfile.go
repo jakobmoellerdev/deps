@@ -2,6 +2,7 @@ package docker
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -26,17 +27,26 @@ type stageState struct {
 	globals map[string]arg  // ARGs before the first FROM
 	args    map[string]arg  // ARGs of the current stage; nil before the first FROM
 	used    map[int]bool    // ARG defaults already extracted
+	// substituted are the deps already extracted by substitute, by name and edited bytes.
+	substituted map[substKey]bool
+}
+
+type substKey struct {
+	name        string
+	ref, digest dep.Span
+	insertAt    int
 }
 
 // dockerfile extracts the images of FROM, `COPY --from=` and `RUN --mount=...,from=`.
 // Instructions are case-insensitive and may span lines with the escape character (`\`, or
 // the `# escape=` directive's). scratch, stage names and stage indexes are not dependencies.
-// `$X`/`${X}` resolve to the default of `ARG X=<image>` in scope, extracted at the ARG.
+// `$X`/`${X}` resolve to the default of `ARG X=<image>` in scope, extracted at the ARG; other
+// references with ARGs are substituted (substitute).
 func (x *extractor) dockerfile() {
 	src := x.src
 	esc := byte('\\')
 	directives := true
-	st := stageState{stages: map[string]bool{}, globals: map[string]arg{}, used: map[int]bool{}}
+	st := stageState{stages: map[string]bool{}, globals: map[string]arg{}, used: map[int]bool{}, substituted: map[substKey]bool{}}
 	var toks []token
 	for i := 0; i < len(src); {
 		le := lineEnd(src, i)
@@ -84,7 +94,7 @@ func (x *extractor) from(args []token, st *stageState) {
 	image := x.text(args[0])
 	if !x.variable(image, st) {
 		lower := strings.ToLower(image)
-		if lower != "scratch" && !st.stages[lower] {
+		if lower != "scratch" && !st.stages[lower] && !(strings.Contains(image, "$") && x.substitute(args[0].start, image, st)) {
 			x.add(TypeDockerfile, x.lineOf(args[0].start), args[0].start, image)
 		}
 	}
@@ -118,7 +128,9 @@ func (x *extractor) flagImages(args []token, flag string, st *stageState) {
 		}
 		lower := strings.ToLower(v)
 		switch {
-		case v == "", lower == "scratch", st.stages[lower], isIndex(v), x.variable(v, st), strings.Contains(v, "$"):
+		case v == "", lower == "scratch", st.stages[lower], isIndex(v), x.variable(v, st):
+		case strings.Contains(v, "$"):
+			x.substitute(off, v, st) // else possibly a stage name: none
 		default:
 			x.add(TypeDockerfile, x.lineOf(off), off, v)
 		}
@@ -128,14 +140,7 @@ func (x *extractor) flagImages(args []token, flag string, st *stageState) {
 // variable handles a reference that is exactly `$X` or `${X}` with X an ARG in scope, and
 // reports whether it did. The dep is extracted once per ARG at its default value.
 func (x *extractor) variable(ref string, st *stageState) bool {
-	name := varName(ref)
-	if name == "" {
-		return false
-	}
-	a, ok := st.args[name]
-	if !ok {
-		a, ok = st.globals[name]
-	}
+	a, ok := st.lookup(varName(ref))
 	if !ok {
 		return false
 	}
@@ -152,6 +157,102 @@ func (x *extractor) variable(ref string, st *stageState) bool {
 		x.add(TypeDockerfile, x.lineOf(a.off), a.off, a.val)
 	}
 	return true
+}
+
+// lookup returns the ARG name in scope: the stage's, else the global one.
+func (st *stageState) lookup(name string) (arg, bool) {
+	if name == "" {
+		return arg{}, false
+	}
+	a, ok := st.args[name]
+	if !ok {
+		a, ok = st.globals[name]
+	}
+	return a, ok
+}
+
+// substitute extracts the reference ref written at off whose ARG references (`$X`, `${X}`)
+// are not the whole reference (variable): `alpine:${ALPINE_VERSION}`, `${BASE}:3.22`,
+// `${REGISTRY}/app:${APP_VERSION}`. Each reference to an ARG with a literal default in scope
+// is replaced by the default; other variables stay as written, for a registry alias (Alias)
+// to resolve. The tag and the digest must each be one run of source bytes, in the instruction
+// or in one ARG default (then the dep's VersionRef is `ARG <name>`, so deps sharing it get one
+// version); else, and with variables left, the dep is a "variable reference". A dep is
+// extracted once per name and edited bytes. It reports whether ref had a substituted ARG.
+func (x *extractor) substitute(off int, ref string, st *stageState) bool {
+	var (
+		b    strings.Builder
+		pos  []int
+		args []string // the substituted ARG names, in order
+	)
+	for i := 0; i < len(ref); {
+		n, name := varRefAt(ref[i:])
+		a, ok := st.lookup(name)
+		if n == 0 || !ok || a.skip {
+			n = max(n, 1)
+			b.WriteString(ref[i : i+n])
+			for j := range n {
+				pos = append(pos, off+i+j)
+			}
+			i += n
+			continue
+		}
+		b.WriteString(a.val)
+		for j := range len(a.val) {
+			pos = append(pos, a.off+j)
+		}
+		args = append(args, name)
+		i += n
+	}
+	if len(args) == 0 {
+		return false
+	}
+	resolved := b.String()
+	if v, rest, ok := alias(resolved, x.aliases); ok {
+		resolved = v + resolved[rest:]
+		pos = append(slices.Repeat([]int{-1}, len(v)), pos[rest:]...)
+	}
+	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeDockerfile, File: x.file, Line: x.lineOf(off), Name: ref}
+	if !strings.Contains(resolved, "$") {
+		ParseRef(&d, 0, resolved)
+	}
+	switch {
+	case strings.Contains(resolved, "$"), d.Skip == "" && !remap(&d, pos, 0):
+		d = dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeDockerfile, File: x.file, Line: x.lineOf(off), Name: ref, Skip: skipVariable}
+	case d.Skip == "":
+		for _, name := range args {
+			if a, _ := st.lookup(name); !Untagged(d) && a.off <= d.RefSpan.Start && d.RefSpan.End <= a.off+len(a.val) {
+				d.VersionRef = "ARG " + name
+			}
+		}
+		k := substKey{d.Name, d.RefSpan, d.DigestSpan, d.InsertAt}
+		if st.substituted[k] {
+			return true
+		}
+		st.substituted[k] = true
+	}
+	x.deps = append(x.deps, d)
+	return true
+}
+
+// varRefAt returns the length and the name of the ARG reference `$X` or `${X}` at the start
+// of s; 0 when there is none (`${X:-default}` and other modifiers are none).
+func varRefAt(s string) (int, string) {
+	if !strings.HasPrefix(s, "$") {
+		return 0, ""
+	}
+	if rest, ok := strings.CutPrefix(s, "${"); ok {
+		end := strings.IndexByte(rest, '}')
+		if end < 0 || varNameLen(rest[:end]) != end {
+			return 0, ""
+		}
+		return end + 3, rest[:end]
+	}
+	n := varNameLen(s[1:])
+	if n == 0 {
+		return 0, ""
+	}
+	return n + 1, s[1 : n+1]
 }
 
 // arg records `ARG NAME[=default] ...`. A stage ARG without default inherits the global one.

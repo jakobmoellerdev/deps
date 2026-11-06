@@ -19,14 +19,15 @@ f: [x]
 g: ""
 h: docker://
 i: redis@` + sha1 + `
+j: $REG/team/app:1.0
 `)
 	var doc yaml.Node
 	if err := yaml.Unmarshal(src, &doc); err != nil {
 		t.Fatal(err)
 	}
 	root := doc.Content[0]
-	c := Images{Manager: "m", File: "f.yml", Src: src, Lines: yamlspan.LineStarts(src)}
-	for _, k := range []string{"a", "b", "d", "e", "f", "g", "i"} {
+	c := Images{Manager: "m", File: "f.yml", Src: src, Lines: yamlspan.LineStarts(src), Aliases: map[string]string{"$REG": "registry.example.com/"}}
+	for _, k := range []string{"a", "b", "d", "e", "f", "g", "i", "j"} {
 		c.Add("image", yamlspan.Get(root, k))
 	}
 	c.Add("image", nil)
@@ -41,7 +42,8 @@ i: redis@` + sha1 + `
 		{1, "image", "golang", "1.26", ""},
 		{4, "image", "${IMAGE}", "", "variable reference"},
 		{5, "image", "multiline:1", "", "cannot locate value"},
-		{10, "image", "redis", "", "digest without tag"},
+		{10, "image", "redis", "latest", ""},
+		{11, "image", "registry.example.com/team/app", "1.0", ""},
 		{3, "pipe", "alpine", "3.22", ""},
 	}
 	if len(c.Deps) != len(wants) {
@@ -54,8 +56,15 @@ i: redis@` + sha1 + `
 			t.Errorf("%d: got %+v, want %+v", i, d, x)
 		}
 		if d.Version != "" {
-			if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != d.Version {
+			want := d.Version
+			if Untagged(d) {
+				want = ""
+			}
+			if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != want {
 				t.Errorf("%d: src[RefSpan] = %q", i, got)
+			}
+			if len(d.NameParts) == 0 {
+				continue // aliased: the name as written is not the dep's
 			}
 			if got := string(src[d.NameParts[0].Span.Start:d.NameParts[0].Span.End]); got != d.Name {
 				t.Errorf("%d: src[NamePart] = %q", i, got)

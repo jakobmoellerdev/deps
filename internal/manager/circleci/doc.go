@@ -19,15 +19,13 @@ var Doc = refdoc.Manager{
 		{Reason: "parameter reference", When: "`<< … >>` (pipeline or job parameters) or `$` in the orb or image"},
 		{Reason: "no version", When: "an orb without `@<version>`"},
 		{Reason: "invalid orb", When: "an orb name without `<namespace>/`"},
-		{Reason: "variable reference", When: "`$` in an image"},
+		{Reason: "variable reference", When: "`$` in an image that no [`registryAliases`](configuration.md#registryaliases) entry resolves"},
 		{Reason: "invalid reference", When: "the image reference does not parse"},
-		{Reason: "no tag", When: "an image without tag"},
-		{Reason: "digest without tag", When: "an image pinned by digest only"},
 		{Reason: "cannot locate value", When: "the value bytes were not found (escapes, block scalars)"},
 	},
 	Sections: []refdoc.Section{
 		{Title: "Details", Items: []string{
-			"Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.",
+			"Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.",
 			"`@volatile` and `@dev:<label>` orbs are skipped as non-version values. Renovate pins a partial orb version to the full one (its `rangeStrategy` `pin`); deps keeps the precision (`circleci/node@5` → `circleci/node@7`).",
 			"`machine.image` values are CircleCI VM images, not container images, and are not extracted (as in Renovate).",
 			"YAML anchors are extracted where they are written, also under custom top-level keys (not `parameters`); aliases and merge keys (`<<: *defaults`) add nothing.",

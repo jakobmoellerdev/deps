@@ -149,6 +149,11 @@ func (x *extractor) composeImage(v *yaml.Node, prefix string) {
 		return
 	}
 	ref := v.Value[len(prefix):]
+	if r, ok := Alias(ref, x.aliases); ok && !strings.Contains(r, "$") {
+		// Renovate resolves registryAliases before interpolation: `${REGISTRY:-}/app:1.0`.
+		x.scalar(TypeCompose, v, prefix)
+		return
+	}
 	skipped := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeCompose, File: x.file, Line: v.Line, Name: ref}
 	res, pos, ok := interpolate(ref)
 	off := yamlspan.Locate(x.src, x.lines, v)
@@ -185,7 +190,8 @@ func remap(d *dep.Dep, pos []int, off int) bool {
 		return dep.Span{Start: off + a, End: off + a + s.End - s.Start}, true
 	}
 	ok := true
-	if d.Version != "" {
+	untagged := Untagged(*d)
+	if !untagged {
 		d.RefSpan, ok = span(d.RefSpan)
 	}
 	if ok && d.Digest != "" {
@@ -195,6 +201,9 @@ func remap(d *dep.Dep, pos []int, off int) bool {
 		return false
 	}
 	d.InsertAt = off + pos[d.InsertAt-1] + 1
+	if untagged {
+		d.RefSpan = dep.Span{Start: d.InsertAt, End: d.InsertAt}
+	}
 	return true
 }
 

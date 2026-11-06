@@ -96,8 +96,9 @@ func (tfManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, e
 type extractor struct {
 	file     string
 	src      []byte
-	registry string // registry host of hostless addresses
-	tofu     bool   // an OpenTofu-only file (*.tofu)
+	registry string            // registry host of hostless addresses
+	aliases  map[string]string // config registryAliases of images
+	tofu     bool              // an OpenTofu-only file (*.tofu)
 	deps     []dep.Dep
 	pos      int // offset up to which nl newlines were counted
 	nl       int
@@ -235,7 +236,7 @@ func nameParts(v value, off, n int) []dep.NamePart {
 // newExtractor returns the extractor of file: hostless addresses resolve against
 // env.TerraformRegistry, else OpenTofu's registry for *.tofu files, else Terraform's.
 func newExtractor(file string, src []byte, env manager.Env) *extractor {
-	x := &extractor{file: file, src: src, tofu: isTofu(file), registry: DefaultRegistry}
+	x := &extractor{file: file, src: src, tofu: isTofu(file), registry: DefaultRegistry, aliases: env.RegistryAliases}
 	switch r := strings.TrimSuffix(strings.TrimPrefix(env.TerraformRegistry, "https://"), "/"); {
 	case r != "":
 		x.registry = strings.ToLower(r)

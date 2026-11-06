@@ -6,6 +6,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -30,7 +31,7 @@ func extract(t *testing.T, src []byte) []dep.Dep {
 		if d.Manager != Name {
 			t.Errorf("%d: manager %q", i, d.Manager)
 		}
-		if d.Version != "" && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Version {
+		if d.Version != "" && !docker.Untagged(d) && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Version {
 			t.Errorf("%d: src[RefSpan] = %q, want %q", i, src[d.RefSpan.Start:d.RefSpan.End], d.Version)
 		}
 	}

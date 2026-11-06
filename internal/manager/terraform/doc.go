@@ -41,8 +41,6 @@ var Doc = refdoc.Manager{
 		{Reason: "unknown chart repository <repository>", When: "helm_release: a `repository` that is not `http(s)://` or `oci://`"},
 		{Reason: "version range", When: "helm_release: a version that is not a full `[v]MAJOR.MINOR.PATCH[-pre][+build]`"},
 		{Reason: "no version", When: "helm_release without `version`"},
-		{Reason: "no tag", When: "an image without tag or digest"},
-		{Reason: "digest without tag", When: "an image pinned by digest only"},
 		{Reason: "invalid reference", When: "an image literal that is not a valid reference"},
 	},
 	Sections: []refdoc.Section{
@@ -61,7 +59,7 @@ var Doc = refdoc.Manager{
 		}},
 		{Title: "Resources", Items: []string{
 			"`helm_release` charts are looked up in their `repository` (`http(s)://` or `oci://`), or in the registry path of an `oci://host/path/name` chart.",
-			"Images of the docker provider and of the kubernetes workload resources are parsed and edited like the docker manager's references (tags, `@sha256:` digests, digest refresh and `pin: digest`). Images given as expressions (`docker_image.x.image_id`, `var.image`) are not deps.",
+			"Images of the docker provider and of the kubernetes workload resources are parsed and edited like the docker manager's references (tags, `@sha256:` digests, digest refresh and `pin: digest`; an image without a tag is its implicit `latest`; [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes). Images given as expressions (`docker_image.x.image_id`, `var.image`) are not deps.",
 			"`tfe_workspace` `terraform_version` follows Terraform CLI releases like `required_version`.",
 		}},
 		{Title: "Replacements", Body: "Literal provider `source` addresses, registry module sources (a `//subdir` is kept) and container images in resources can be [replaced](configuration.md#rulesreplacementname): a new name with a host moves to that registry, one without keeps the file's registry (rejected when the file names a host). The lock entry of a renamed provider is dropped and the new one locked by `init`. Git, URL and local module sources, implied `hashicorp/` providers and the tool version are not replaced."},

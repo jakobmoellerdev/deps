@@ -6,6 +6,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -24,7 +25,7 @@ func extract(t *testing.T, src []byte) []dep.Dep {
 		if d.Manager != Name {
 			t.Errorf("%d: manager %q", i, d.Manager)
 		}
-		if d.Version != "" && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Version {
+		if d.Version != "" && !docker.Untagged(d) && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Version {
 			t.Errorf("%d: src[RefSpan] = %q, want %q", i, src[d.RefSpan.Start:d.RefSpan.End], d.Version)
 		}
 		if d.Digest != "" && string(src[d.DigestSpan.Start:d.DigestSpan.End]) != d.Digest {
@@ -170,8 +171,8 @@ func TestExtractFixtures(t *testing.T) {
 		{"testdata/influxdb.yml", 14, map[int]want{
 			0:  {line: 64, depT: TypeOrb, ds: o, name: "circleci/rust", version: "1.6.1"},
 			3:  {line: 251, depT: TypeImage, ds: d, name: "cimg/go", version: "1.25"},
-			7:  {line: 374, depT: TypeImage, ds: d, name: "us-east1-docker.pkg.dev/influxdata-team-edge/ci-support/ci-cross-influxdb3", skip: "digest without tag"},
-			13: {line: 756, depT: TypeImage, ds: d, name: "busybox", skip: "no tag"},
+			7:  {line: 374, depT: TypeImage, ds: d, name: "us-east1-docker.pkg.dev/influxdata-team-edge/ci-support/ci-cross-influxdb3", version: "latest"},
+			13: {line: 756, depT: TypeImage, ds: d, name: "busybox", version: "latest"},
 		}},
 	} {
 		t.Run(tt.file, func(t *testing.T) {

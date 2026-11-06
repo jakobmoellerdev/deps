@@ -11,6 +11,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -44,6 +45,10 @@ func summarize(t *testing.T, src []byte, deps []dep.Dep) []string {
 		case d.RangeFixed:
 			if d.RefSpan != (dep.Span{}) {
 				t.Errorf("%s: fixed range with a RefSpan", s)
+			}
+		case docker.Untagged(d):
+			if d.RefSpan.Start != d.InsertAt {
+				t.Errorf("%s: untagged RefSpan %v, InsertAt %d", s, d.RefSpan, d.InsertAt)
 			}
 		default:
 			if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != d.Version {
@@ -471,7 +476,7 @@ resource "docker_image" "y" { name = "busybox" }
 			names = append(names, d.NameParts[0].Text)
 		}
 	}
-	if want := []string{"hashicorp/aws", "registry.terraform.io/hashicorp/template", "null", "terraform-aws-modules/vpc/aws", "app.terraform.io/acme/vpc/aws", "nginx"}; !slices.Equal(names, want) {
+	if want := []string{"hashicorp/aws", "registry.terraform.io/hashicorp/template", "null", "terraform-aws-modules/vpc/aws", "app.terraform.io/acme/vpc/aws", "nginx", "busybox"}; !slices.Equal(names, want) {
 		t.Errorf("renamable %q, want %q", names, want)
 	}
 	const json = `{"terraform": {"required_providers": {"aws": {"source": "hashicorp/aws", "version": "~> 5.0"}}}}`

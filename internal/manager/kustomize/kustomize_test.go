@@ -328,6 +328,29 @@ func TestNameParts(t *testing.T) {
 	}
 }
 
+// A registryAliases prefix resolves tagged and untagged images; aliased images keep the alias
+// as written and are not renamable.
+func TestExtractRegistryAliases(t *testing.T) {
+	const src = "images:\n  - name: $CI_REGISTRY/group/app\n    newTag: '1.2'\n  - name: $CI_REGISTRY/group/db\n  - name: $OTHER/x\n    newTag: '1'\n"
+	deps, err := New().Extract("kustomization.yaml", []byte(src), manager.Env{RegistryAliases: map[string]string{"$CI_REGISTRY": "registry.gitlab.com"}})
+	if err != nil || len(deps) != 3 {
+		t.Fatalf("got %+v, %v; want 3 deps", deps, err)
+	}
+	for i, w := range []struct{ name, version, skip string }{
+		{"registry.gitlab.com/group/app", "1.2", ""},
+		{"registry.gitlab.com/group/db", untaggedVersion, ""},
+		{"$OTHER/x", "", "variable reference"},
+	} {
+		d := deps[i]
+		if d.Name != w.name || d.Source != w.name && w.skip == "" || d.Version != w.version || d.Skip != w.skip || d.Renamable() {
+			t.Errorf("%d: got name=%q source=%q version=%q skip=%q renamable=%v, want %+v", i, d.Name, d.Source, d.Version, d.Skip, d.Renamable(), w)
+		}
+	}
+	if !Untagged(deps[1]) {
+		t.Error("untagged aliased image: Untagged = false")
+	}
+}
+
 func TestRenameEdits(t *testing.T) {
 	m := New()
 	for _, tt := range []struct {

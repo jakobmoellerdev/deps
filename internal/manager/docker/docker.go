@@ -66,11 +66,11 @@ func isDockerfile(path string) bool {
 func (dockerManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	switch {
 	case isDockerfile(file):
-		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
+		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src), aliases: env.RegistryAliases}
 		x.dockerfile()
 		return x.deps, nil
 	case strings.Contains(file, "compose") && composeRe.MatchString(file):
-		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
+		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src), aliases: env.RegistryAliases}
 		if err := x.yaml(env.YAML, x.compose); err != nil {
 			// Not standalone YAML (e.g. an indented fragment concatenated by a script).
 			slog.Debug("skipping unparsable compose file", "file", file, "err", err)
@@ -86,13 +86,13 @@ func (dockerManager) Extract(file string, src []byte, env manager.Env) ([]dep.De
 			!bytes.Contains(src, []byte("docker://")) {
 			return nil, nil
 		}
-		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
+		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src), aliases: env.RegistryAliases}
 		return x.deps, x.yaml(env.YAML, x.workflow)
 	}
 	if !bytes.Contains(src, []byte("image:")) && !bytes.Contains(src, []byte("repository:")) {
 		return nil, nil
 	}
-	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
+	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src), aliases: env.RegistryAliases}
 	x.manifests()
 	return x.deps, nil
 }
@@ -110,7 +110,12 @@ func (dockerManager) Edits(u dep.Update) ([]patch.Edit, error) {
 		}
 		edits = ne
 	}
-	if u.NewVersion != d.Version {
+	switch {
+	case u.NewVersion == d.Version:
+	case Untagged(d):
+		// The tag is written after the name, before a digest: ":<tag>@<digest>".
+		edits = append(edits, patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, New: ":" + u.NewVersion})
+	default:
 		edits = append(edits, patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion})
 	}
 	switch {
@@ -146,11 +151,12 @@ func Rename(d dep.Dep, name string) (dep.Dep, error) {
 }
 
 type extractor struct {
-	file  string
-	src   []byte
-	lines []int
-	deps  []dep.Dep
-	seen  map[*yaml.Node]bool // compose: nodes already extracted (anchors)
+	file    string
+	src     []byte
+	lines   []int
+	aliases map[string]string // config registryAliases
+	deps    []dep.Dep
+	seen    map[*yaml.Node]bool // compose: nodes already extracted (anchors)
 }
 
 // lineOf returns the 1-based line of byte offset off.
@@ -170,22 +176,27 @@ func (x *extractor) lineOf(off int) int {
 // add records the image reference ref found at byte offset off (-1 = not locatable) on line.
 func (x *extractor) add(depType string, line, off int, ref string) {
 	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: depType, File: x.file, Line: line, Name: ref}
-	switch {
-	case depType == TypeKubernetes && strings.Contains(ref, "{{"):
+	if depType == TypeKubernetes && strings.Contains(ref, "{{") {
 		d.Skip = "template value"
-	case strings.Contains(ref, "$"):
-		d.Skip = "variable reference"
-	case off < 0:
-		d.Skip = "cannot locate value"
-	default:
-		d.Line = x.lineOf(off)
-		ParseInlineRef(&d, off, ref)
+	} else {
+		ParseImage(&d, off, ref, x.aliases)
+		if off >= 0 && d.Skip != skipVariable {
+			d.Line = x.lineOf(off)
+		}
 	}
 	x.deps = append(x.deps, d)
 }
 
+const skipVariable = "variable reference"
+
+// implicitTag is the tag of a reference written without one: what docker pulls, and what
+// Renovate looks it up as.
+const implicitTag = "latest"
+
 // ParseRef fills d from ref, which starts at byte offset off. Tags that are not versions
-// (latest, bookworm) are kept: the engine refreshes or pins their digest.
+// (latest, bookworm) are kept: the engine refreshes or pins their digest. A reference without
+// a tag (`alpine`, `alpine@sha256:…`) is the image's implicit `latest` (Untagged): its digest
+// is pinned (pin: digest) or refreshed like that of `alpine:latest`.
 func ParseRef(d *dep.Dep, off int, ref string) {
 	r, err := imageref.Parse(ref)
 	if err != nil {
@@ -200,16 +211,17 @@ func ParseRef(d *dep.Dep, off int, ref string) {
 		end -= len(d.Digest) + 1
 	}
 	d.InsertAt = end
-	switch {
-	case r.Tag == "" && d.Digest != "":
-		d.Skip = "digest without tag"
-	case r.Tag == "":
-		d.Skip = "no tag"
-	default:
-		d.Version = r.Tag
-		d.RefSpan = dep.Span{Start: end - len(d.Version), End: end}
+	if r.Tag == "" {
+		d.Version, d.RefSpan = implicitTag, dep.Span{Start: end, End: end}
+		return
 	}
+	d.Version = r.Tag
+	d.RefSpan = dep.Span{Start: end - len(d.Version), End: end}
 }
+
+// Untagged reports whether the image reference d was parsed from (ParseRef) has no tag: its
+// version is the implicit `latest` and its RefSpan the empty span where `:<tag>` would go.
+func Untagged(d dep.Dep) bool { return d.Version == implicitTag && d.RefSpan.Start == d.RefSpan.End }
 
 // ParseInlineRef is ParseRef for a reference written as one token at off: one NameWhole part
 // locates the image name as written, which replacements rewrite.
@@ -219,5 +231,68 @@ func ParseInlineRef(d *dep.Dep, off int, ref string) {
 		return
 	}
 	end := d.RefSpan.Start - 1 // the ':' before the tag
+	if Untagged(*d) {
+		end = d.RefSpan.Start
+	}
 	d.NameParts = []dep.NamePart{{Span: dep.Span{Start: off, End: end}, Text: ref[:end-off]}}
+}
+
+// ParseImage fills d from the image reference ref written as one token at off (-1: its bytes
+// were not found) like ParseInlineRef, after resolving a registry alias (Alias). A reference
+// with a variable no alias resolves is a "variable reference". An aliased reference is looked
+// up as resolved, its tag and digest edited in place; its name, which the alias keeps as
+// written, is not renamable.
+func ParseImage(d *dep.Dep, off int, ref string, aliases map[string]string) {
+	resolved, aliased := Alias(ref, aliases)
+	switch {
+	case strings.Contains(resolved, "$"):
+		d.Skip = skipVariable
+	case off < 0:
+		d.Skip = "cannot locate value"
+	case aliased:
+		// The tag and digest end the reference in both forms: their spans count from the end.
+		ParseRef(d, off+len(ref)-len(resolved), resolved)
+	default:
+		ParseInlineRef(d, off, ref)
+	}
+}
+
+// Alias resolves a registry alias of aliases (config registryAliases, Renovate's
+// registryAliases) at the start of ref: the longest key followed by "/", or for a key ending
+// in "}" (`${REGISTRY}`, `${REGISTRY:-}`) the longest key, is replaced by its value ("" =
+// Docker Hub; a trailing slash is ignored). ok is false, and resolved is ref, when no key
+// matches.
+func Alias(ref string, aliases map[string]string) (resolved string, ok bool) {
+	v, rest, ok := alias(ref, aliases)
+	if !ok {
+		return ref, false
+	}
+	return v + ref[rest:], true
+}
+
+// alias is Alias: ref resolves to v+ref[rest:].
+func alias(ref string, aliases map[string]string) (v string, rest int, ok bool) {
+	key := ""
+	for k := range aliases {
+		var n int
+		switch {
+		case k == "" || len(k) <= len(key) || !strings.HasPrefix(ref, k):
+			continue
+		case len(ref) > len(k) && ref[len(k)] == '/':
+			n = len(k) + 1
+		case strings.HasSuffix(k, "}"):
+			n = len(k)
+		default:
+			continue
+		}
+		key, rest = k, n
+	}
+	if key == "" {
+		return "", 0, false
+	}
+	v = strings.TrimSuffix(aliases[key], "/")
+	if v != "" {
+		v += "/"
+	}
+	return v, rest, true
 }

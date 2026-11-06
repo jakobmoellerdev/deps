@@ -64,7 +64,7 @@ func (azureManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep
 	if err != nil {
 		return nil, err
 	}
-	x := extractor{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src)}
+	x := extractor{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src), Aliases: env.RegistryAliases}
 	if len(doc.Content) != 1 {
 		return nil, nil
 	}

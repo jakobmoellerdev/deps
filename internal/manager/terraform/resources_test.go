@@ -50,11 +50,11 @@ func TestExtractResourcesRealWorld(t *testing.T) {
 			"29 docker_service docker repo.mycompany.com:8080/foo-service repo.mycompany.com:8080/foo-service v1 docker",
 		}},
 		{"docker/container-import.tf", []string{
-			"3 docker_container docker nginx docker.io/library/nginx - docker [no tag]",
+			"3 docker_container docker nginx docker.io/library/nginx latest docker",
 		}},
 		{"docker/provider-credentials.tf", []string{
-			"22 docker_registry_image docker myorg/privateimage docker.io/myorg/privateimage - docker [no tag]",
-			"26 docker_registry_image docker quay.io:8181/myorg/privateimage quay.io:8181/myorg/privateimage - docker [no tag]",
+			"22 docker_registry_image docker myorg/privateimage docker.io/myorg/privateimage latest docker",
+			"26 docker_registry_image docker quay.io:8181/myorg/privateimage quay.io:8181/myorg/privateimage latest docker",
 		}},
 		{"kubernetes/stateful_set_v1.tf", []string{
 			"44 kubernetes_stateful_set_v1 docker busybox docker.io/library/busybox latest docker",
@@ -62,7 +62,7 @@ func TestExtractResourcesRealWorld(t *testing.T) {
 			"86 kubernetes_stateful_set_v1 docker prom/prometheus docker.io/prom/prometheus v2.2.1 docker",
 		}},
 		{"kubernetes/cron_job_v1.tf", []string{
-			"22 kubernetes_cron_job_v1 docker busybox docker.io/library/busybox - docker [no tag]",
+			"22 kubernetes_cron_job_v1 docker busybox docker.io/library/busybox latest docker",
 		}},
 		{"kubernetes/pod_v1.tf", []string{
 			"35 kubernetes_pod_v1 docker k8s.gcr.io/pause k8s.gcr.io/pause 2.0 docker",
@@ -251,7 +251,7 @@ resource "aws_instance" "x" { image = "not:checked" }
 		"74 tfe_workspace github-releases hashicorp/terraform https://github.com/hashicorp/terraform 1.9.8 hashicorp",
 		"75 tfe_workspace github-releases hashicorp/terraform https://github.com/hashicorp/terraform - - [non-literal value]",
 		"79 docker_image docker nginx docker.io/library/nginx 1.25.3 docker",
-		"82 docker_image docker nginx docker.io/library/nginx - docker [digest without tag]",
+		"82 docker_image docker nginx docker.io/library/nginx latest docker",
 		"85 docker_image docker nginx:1.25.3 - - docker [cannot locate value]",
 		"86 docker_image docker Bad Ref - - docker [invalid reference]",
 		"87 docker_container docker ghcr.io/org/app ghcr.io/org/app 2.0.0 docker",

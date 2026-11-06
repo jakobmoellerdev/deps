@@ -18,17 +18,15 @@ var Doc = refdoc.Manager{
 		{Name: "pipe", What: "`pipe: <account>/<repo>:<version>` (Source `https://bitbucket.org/<account>/<repo>`), `pipe: docker://<image>` as an image", Datasource: "`git-tags`; `docker` for `docker://`", Versioning: "`tag`; `docker` for `docker://`", Datasources: []string{"git-tags", "docker"}},
 	},
 	Skips: []refdoc.Skip{
-		{Reason: "variable reference", When: "`$` in the image or pipe"},
+		{Reason: "variable reference", When: "`$` in the image or pipe that no [`registryAliases`](configuration.md#registryaliases) entry resolves"},
 		{Reason: "no version", When: "a pipe without `:<version>`"},
 		{Reason: "invalid pipe", When: "a pipe that is not `<account>/<repo>[:<version>]` or `docker://<image>`"},
 		{Reason: "invalid reference", When: "the image reference does not parse"},
-		{Reason: "no tag", When: "an image without tag"},
-		{Reason: "digest without tag", When: "an image pinned by digest only"},
 		{Reason: "cannot locate value", When: "the value bytes were not found (escapes, block scalars)"},
 	},
 	Sections: []refdoc.Section{
 		{Title: "Details", Items: []string{
-			"Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.",
+			"Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.",
 			"Pipes are Bitbucket repositories; their tags are listed with `git-tags` (Renovate's `bitbucket-tags`), and only the version after `:` is rewritten.",
 			"YAML anchors (`&step`) are extracted where they are written; aliases (`*step`, `<<: *step`) add nothing.",
 		}},

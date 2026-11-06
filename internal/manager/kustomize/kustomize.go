@@ -52,7 +52,7 @@ func (kustomizeManager) Match(path string) bool {
 
 // Extract returns the images, Helm charts and remote git resources of src with byte spans
 // into src.
-func (kustomizeManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+func (kustomizeManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(src, &doc); err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func (kustomizeManager) Extract(file string, src []byte, _ manager.Env) ([]dep.D
 		return nil, nil
 	}
 	root := doc.Content[0]
-	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
+	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src), aliases: env.RegistryAliases}
 	for _, m := range yamlspan.Seq(yamlspan.Get(root, "images")) {
 		x.image(m)
 	}
@@ -155,10 +155,11 @@ func nameEdits(d dep.Dep, name string) ([]patch.Edit, error) {
 }
 
 type extractor struct {
-	file  string
-	src   []byte
-	lines []int
-	deps  []dep.Dep
+	file    string
+	src     []byte
+	lines   []int
+	aliases map[string]string // config registryAliases of images
+	deps    []dep.Dep
 }
 
 // image extracts an `images[]` entry: the image is newName (else name), the version newTag
@@ -179,11 +180,12 @@ func (x *extractor) image(m *yaml.Node) {
 	}
 	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: TypeImage, File: x.file, Line: nameNode.Line, Name: name}
 	tag, dg := yamlspan.Str(yamlspan.Get(m, "newTag")), yamlspan.Str(yamlspan.Get(m, "digest"))
+	resolved, aliased := docker.Alias(name, x.aliases)
 	switch {
-	case strings.Contains(name, "$") || tag != nil && strings.Contains(tag.Value, "$"):
+	case strings.Contains(resolved, "$") || tag != nil && strings.Contains(tag.Value, "$"):
 		d.Skip = "variable reference"
 	case tag == nil || tag.Value == "":
-		x.untagged(&d, dg)
+		x.untagged(&d, resolved, dg)
 	default:
 		d.Line = tag.Line
 		off := yamlspan.Locate(x.src, x.lines, tag)
@@ -191,14 +193,14 @@ func (x *extractor) image(m *yaml.Node) {
 			d.Skip = "cannot locate value"
 			break
 		}
-		ref := name + ":" + tag.Value
+		ref := resolved + ":" + tag.Value
 		docker.ParseRef(&d, off+len(tag.Value)-len(ref), ref)
 		if d.Skip != "" || d.Digest != "" || dg == nil || dg.Value == "" {
 			break
 		}
 		x.digestField(&d, dg)
 	}
-	if d.Skip == "" {
+	if d.Skip == "" && !aliased {
 		x.imageNameParts(&d, m, nameNode, newName)
 	}
 	x.deps = append(x.deps, d)
@@ -207,10 +209,11 @@ func (x *extractor) image(m *yaml.Node) {
 // untaggedVersion is the version of an image without newTag: the tag Renovate looks up.
 const untaggedVersion = "latest"
 
-// untagged completes the image d without newTag: version untaggedVersion (no RefSpan) and the
-// `digest` field dg if any. A name with a tag or digest is no valid newName.
-func (x *extractor) untagged(d *dep.Dep, dg *yaml.Node) {
-	r, err := imageref.Parse(d.Name)
+// untagged completes the image d without newTag from its alias-resolved name ref: version
+// untaggedVersion (no RefSpan) and the `digest` field dg if any. A name with a tag or digest is
+// no valid newName.
+func (x *extractor) untagged(d *dep.Dep, ref string, dg *yaml.Node) {
+	r, err := imageref.Parse(ref)
 	if err != nil || r.Tag != "" || r.Digest != "" {
 		d.Skip = "invalid reference"
 		return

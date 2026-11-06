@@ -54,7 +54,7 @@ func (bitbucketManager) Extract(file string, src []byte, env manager.Env) ([]dep
 	if err != nil {
 		return nil, err
 	}
-	x := extractor{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src)}
+	x := extractor{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src), Aliases: env.RegistryAliases}
 	x.walk(doc)
 	return x.Deps, nil
 }

@@ -57,9 +57,9 @@ func (devcontainerManager) Match(path string) bool {
 
 // Extract returns the image, feature and feature version deps of src. Comments and trailing
 // commas are blanked first (jsonc.Strip), so offsets are those of src.
-func (devcontainerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+func (devcontainerManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	clean := jsonc.Strip(src)
-	x := extractor{file: file, src: clean, dec: jsontext.NewDecoder(bytes.NewReader(clean), jsontext.AllowDuplicateNames(true)), line: 1}
+	x := extractor{file: file, src: clean, dec: jsontext.NewDecoder(bytes.NewReader(clean), jsontext.AllowDuplicateNames(true)), line: 1, aliases: env.RegistryAliases}
 	if err := x.run(); err != nil {
 		if errors.Is(err, io.EOF) {
 			err = io.ErrUnexpectedEOF // a truncated document, not a clean end
@@ -91,10 +91,11 @@ func (devcontainerManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
 }
 
 type extractor struct {
-	file string
-	src  []byte // src with comments and trailing commas blanked
-	dec  *jsontext.Decoder
-	deps []dep.Dep
+	file    string
+	src     []byte // src with comments and trailing commas blanked
+	dec     *jsontext.Decoder
+	aliases map[string]string // config registryAliases
+	deps    []dep.Dep
 
 	// line is the 1-based line of offset pos; offsets only grow, so lines are counted
 	// incrementally.
@@ -179,16 +180,17 @@ func (x *extractor) lineOf(span dep.Span) int {
 	return x.lineAt(span.Start)
 }
 
-// ref returns the docker-datasource dep of the image or feature reference ref at span.
+// ref returns the docker-datasource dep of the image or feature reference ref at span. A
+// feature without tag or digest is skipped: features are never pinned.
 func (x *extractor) ref(depType, ref string, span dep.Span) dep.Dep {
 	d := dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: depType, File: x.file, Line: x.lineOf(span), Name: ref}
-	switch {
-	case span == dep.Span{}:
-		d.Skip = "cannot locate value"
-	case strings.Contains(ref, "$"):
-		d.Skip = "variable reference"
-	default:
-		docker.ParseInlineRef(&d, span.Start, ref)
+	off := span.Start
+	if span == (dep.Span{}) {
+		off = -1
+	}
+	docker.ParseImage(&d, off, ref, x.aliases)
+	if d.Skip == "" && depType == DepTypeFeature && d.Digest == "" && docker.Untagged(d) {
+		d = dep.Dep{Manager: Name, Datasource: "docker", Versioning: "docker", DepType: depType, File: x.file, Line: d.Line, Name: d.Name, Source: d.Source, Skip: "no tag"}
 	}
 	return d
 }

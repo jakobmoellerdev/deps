@@ -24,12 +24,11 @@ var Doc = refdoc.Manager{
 		{Name: "helm", What: "`*image` mappings with `repository` + `tag` (optional `registry`, digest in `tag: x@sha256:…` or sibling `digest:`)", Versioning: "`docker`", Datasources: []string{"docker"}},
 	},
 	Skips: []refdoc.Skip{
-		{Reason: "variable reference", When: "`$` in the reference, or a variable ARG default (Compose: see `interpolated image`)"},
-		{Reason: "interpolated image", When: "Compose interpolation other than `${VAR:-default}` / `${VAR-default}`, or a version spanning a variable boundary"},
-		{Reason: "template value", When: "`{{` in Kubernetes or Helm values"},
+		{Reason: "variable reference", When: "a `$` that no ARG default (Dockerfile) or [`registryAliases`](configuration.md#registryaliases) entry resolves, a variable ARG default, or a Dockerfile tag or digest spanning an ARG boundary (`node:${NODE}-alpine`); Compose: see `interpolated image`"},
+		{Reason: "interpolated image", When: "Compose interpolation other than `${VAR:-default}` / `${VAR-default}` (and no `registryAliases` key), or a version spanning a variable boundary"},
+		{Reason: "template value", When: "`{{` in a Kubernetes image (also on the `image:` lines of YAML that does not parse) or in Helm values"},
 		{Reason: "invalid reference", When: "the reference does not parse"},
-		{Reason: "no tag", When: "the reference has neither tag nor digest"},
-		{Reason: "digest without tag", When: "the reference has a digest but no tag"},
+		{Reason: "no tag", When: "Helm values with an empty `tag` (the chart's `appVersion` applies, not `latest`)"},
 		{Reason: "unparsable compose file", When: "a Compose file name whose content is not valid YAML (e.g. an indented fragment); one dep-less skip at line 1"},
 		{Reason: "cannot locate value", When: "the value's bytes could not be found"},
 	},
@@ -37,6 +36,7 @@ var Doc = refdoc.Manager{
 		{Title: "Dockerfile details", Items: []string{
 			"`scratch`, earlier stage names (`AS <name>`) and numeric stage indexes are not deps.",
 			"A reference that is exactly `$X` or `${X}` resolves to `ARG X=<image>`, declared before the first `FROM` or in the current stage. The dep sits at the ARG default, so the update rewrites the ARG line.",
+			"Other ARG references in a reference are replaced by their defaults, as Renovate does: `alpine:${ALPINE_VERSION}`, `${BASE}:3.13-slim`, `${REGISTRY}/app:${APP_VERSION}`. The tag and the digest are edited where their bytes are, in the instruction or in the ARG default; deps whose tag is one ARG default share it (VersionRef `ARG <name>`, one version for all). A tag that spans an ARG boundary (`node:${NODE_VERSION}-alpine`) cannot be edited and is a `variable reference`. Variables without a literal default stay as written, for `registryAliases` to resolve.",
 		}},
 		{Title: "Compose details", Items: []string{
 			"A YAML file with another name is a Compose file when every top-level key is a Compose key (`version`, `name`, `include`, `services`, `networks`, `volumes`, `configs`, `secrets`, `models`) or an `x-*` extension, and `services` is a mapping of mappings, at least one with `image` or `build`. Kubernetes manifests, workflows and Helm values fail this check.",
@@ -45,10 +45,11 @@ var Doc = refdoc.Manager{
 			"`build.args` values are not images. Dockerfiles referenced by `build.dockerfile` are found by the Dockerfile rules on their own.",
 			"`include:` and `extends:` need no handling: the referenced files are scanned like every other file.",
 		}},
-		{Title: "YAML files", Body: "Other YAML is parsed document by document. A parse error (typically a Helm template) yields no deps and no error."},
+		{Title: "YAML files", Body: "Other YAML is parsed document by document. A file that does not parse (typically a Helm template) is read line by line instead: each block-style `image: <value>` line is a `kubernetes` dep (a plain or quoted value; `{{` makes it a `template value`), and the parse error is logged (info level when such lines exist, else debug)."},
 		{Title: "Names", Body: "References are parsed as docker does (names without a registry are on docker.io, single-component ones under library/). The dep name is the familiar name (`postgres`, `ghcr.io/org/img`); lookups use the canonical name."},
 		{Title: "Versioning", Body: "`docker`. Candidates need the same prefix, the same number of numeric parts and the same suffix."},
-		{Title: "Non-version tags", Body: "Non-version tags (`latest`, `bookworm`, commit hashes such as `3a22eba`) only get digest maintenance: a pinned ref → `digest` refresh; unpinned with `pin: digest` → `pin`; otherwise skipped as `non-version tag`."},
+		{Title: "Non-version tags", Body: "Non-version tags (`latest`, `bookworm`, commit hashes such as `3a22eba`) only get digest maintenance: a pinned ref → `digest` refresh; unpinned with `pin: digest` → `pin`; otherwise skipped as `non-version tag`. A reference without a tag is its implicit `latest`, as docker pulls it and Renovate looks it up: `FROM alpine` is pinned to `alpine@sha256:<latest's digest>` under `pin: digest` (else `non-version tag`), and `image@sha256:…` gets `digest` updates to the digest `latest` has now."},
+		{Title: "Registry aliases", Body: "[`registryAliases`](configuration.md#registryaliases) resolve a prefix such as `$CI_REGISTRY/` or `${REGISTRY:-}` before the reference is parsed (Compose: before interpolation, Dockerfiles: after ARG substitution). The dep is named and looked up by the resolved image; the file keeps the alias, only the tag and digest are edited, and the image is not renamed by replacements."},
 		{Title: "Replacements", Body: "Image references written as one token (Dockerfiles, compose, workflows, Kubernetes manifests) and Helm values images (`repository`, and `registry` when set: the new name is split at its registry) can be [replaced](configuration.md#rulesreplacementname) by another image name; the tag and a pinned digest (of the new image) are written with it."},
 		{Title: "Edits", Items: []string{
 			"The tag is replaced in place.",

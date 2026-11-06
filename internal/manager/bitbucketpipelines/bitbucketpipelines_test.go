@@ -6,6 +6,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -33,7 +34,7 @@ func checkSpans(t *testing.T, src string, deps []dep.Dep) {
 		if d.Manager != Name {
 			t.Errorf("%d: manager %q", i, d.Manager)
 		}
-		if d.Version != "" && src[d.RefSpan.Start:d.RefSpan.End] != d.Version {
+		if d.Version != "" && !docker.Untagged(d) && src[d.RefSpan.Start:d.RefSpan.End] != d.Version {
 			t.Errorf("%d: src[RefSpan] = %q, want %q", i, src[d.RefSpan.Start:d.RefSpan.End], d.Version)
 		}
 		if d.Digest != "" && src[d.DigestSpan.Start:d.DigestSpan.End] != d.Digest {
@@ -125,7 +126,7 @@ pipelines:
 		{line: 17, depT: TypePipe, ds: gt, name: "$PIPE", skip: "variable reference"},
 		{line: 18, depT: TypePipe, ds: gt, name: "not a pipe", skip: "invalid pipe"},
 		{line: 28, depT: TypeImage, ds: d, name: "${IMAGE}", skip: "variable reference"},
-		{line: 30, depT: TypeImage, ds: d, name: "python", source: "docker.io/library/python", skip: "no tag"},
+		{line: 30, depT: TypeImage, ds: d, name: "python", source: "docker.io/library/python", version: "latest"},
 		{line: 35, depT: TypePipe, ds: gt, name: "atlassian/aws-ecr-push-image", source: "https://bitbucket.org/atlassian/aws-ecr-push-image", version: "2"},
 	})
 }
@@ -158,7 +159,7 @@ func TestExtractFixtures(t *testing.T) {
 		{"testdata/ara.yml", 17, map[int]want{
 			0: {line: 8, depT: TypeService, ds: d, name: "us-east1-docker.pkg.dev/enroute-interne/enroute-interne/enroute-postgresql",
 				source: "us-east1-docker.pkg.dev/enroute-interne/enroute-interne/enroute-postgresql", version: "dev"},
-			1: {line: 16, depT: TypeService, ds: d, name: "redis", source: "docker.io/library/redis", skip: "no tag"},
+			1: {line: 16, depT: TypeService, ds: d, name: "redis", source: "docker.io/library/redis", version: "latest"},
 			2: {line: 21, depT: TypeImage, ds: d, name: "us-east1-docker.pkg.dev/enroute-interne/enroute-interne/enroute-golang",
 				source: "us-east1-docker.pkg.dev/enroute-interne/enroute-interne/enroute-golang", version: "dev"},
 			12: {line: 190, depT: TypePipe, ds: gt, name: "atlassian/datadog-send-event", source: "https://bitbucket.org/atlassian/datadog-send-event", version: "2.3.1"},

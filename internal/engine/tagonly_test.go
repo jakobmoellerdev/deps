@@ -35,7 +35,9 @@ func TestNonVersionTagDigests(t *testing.T) {
 			"Dockerfile": "FROM ubuntu:latest@" + zero + "\n" +
 				"FROM debian:bookworm\n" +
 				"FROM " + grafana + ":" + commit + "\n" +
-				"FROM alpine:latest@" + imageDigest("alpine", "latest") + "\n",
+				"FROM alpine:latest@" + imageDigest("alpine", "latest") + "\n" +
+				"FROM busybox\n" + // untagged: the implicit latest
+				"FROM nginx@" + zero + "\n", // digest only
 			"chart/values.yaml": "manager:\n  image:\n    repository: " + controller + "\n    tag: latest@" + zero + "\n",
 			".env":              "# renovate: datasource=docker depName=" + openscap + "\nOPENSCAP_IMAGE=" + openscap + ":latest@" + zero + "\n",
 		}
@@ -51,13 +53,15 @@ func TestNonVersionTagDigests(t *testing.T) {
 		{
 			name:    "refresh pinned, skip unpinned",
 			cfg:     customCfg,
-			updates: map[string]dep.UpdateType{"ubuntu": dep.Digest, controller: dep.Digest, openscap: dep.Digest},
-			skipped: map[string]string{"debian": "non-version tag", grafana: "non-version tag"},
+			updates: map[string]dep.UpdateType{"ubuntu": dep.Digest, controller: dep.Digest, openscap: dep.Digest, "nginx": dep.Digest},
+			skipped: map[string]string{"debian": "non-version tag", grafana: "non-version tag", "busybox": "non-version tag"},
 			lines: map[string]string{
 				"Dockerfile": "FROM ubuntu:latest@" + imageDigest("ubuntu", "latest") + "\n" +
 					"FROM debian:bookworm\n" +
 					"FROM " + grafana + ":" + commit + "\n" +
-					"FROM alpine:latest@" + imageDigest("alpine", "latest") + "\n",
+					"FROM alpine:latest@" + imageDigest("alpine", "latest") + "\n" +
+					"FROM busybox\n" +
+					"FROM nginx@" + imageDigest("nginx", "latest") + "\n",
 				"chart/values.yaml": "manager:\n  image:\n    repository: " + controller + "\n    tag: latest@" + imageDigest(controller, "latest") + "\n",
 				".env":              "# renovate: datasource=docker depName=" + openscap + "\nOPENSCAP_IMAGE=" + openscap + ":latest@" + imageDigest(openscap, "latest") + "\n",
 			},
@@ -65,19 +69,21 @@ func TestNonVersionTagDigests(t *testing.T) {
 		{
 			name:    "pin: digest pins the non-version tag",
 			cfg:     customCfg + "pin: digest\n",
-			updates: map[string]dep.UpdateType{"ubuntu": dep.Digest, "debian": dep.Pin, grafana: dep.Pin, controller: dep.Digest, openscap: dep.Digest},
+			updates: map[string]dep.UpdateType{"ubuntu": dep.Digest, "debian": dep.Pin, grafana: dep.Pin, controller: dep.Digest, openscap: dep.Digest, "busybox": dep.Pin, "nginx": dep.Digest},
 			lines: map[string]string{
 				"Dockerfile": "FROM ubuntu:latest@" + imageDigest("ubuntu", "latest") + "\n" +
 					"FROM debian:bookworm@" + imageDigest("debian", "bookworm") + "\n" +
 					"FROM " + grafana + ":" + commit + "@" + imageDigest(grafana, commit) + "\n" +
-					"FROM alpine:latest@" + imageDigest("alpine", "latest") + "\n",
+					"FROM alpine:latest@" + imageDigest("alpine", "latest") + "\n" +
+					"FROM busybox@" + imageDigest("busybox", "latest") + "\n" +
+					"FROM nginx@" + imageDigest("nginx", "latest") + "\n",
 			},
 		},
 		{
 			name:    "digest updates disabled",
 			cfg:     customCfg + "rules: [{allowedUpdateTypes: [major, minor, patch]}]\n",
 			updates: map[string]dep.UpdateType{},
-			skipped: map[string]string{"debian": "non-version tag", grafana: "non-version tag"},
+			skipped: map[string]string{"debian": "non-version tag", grafana: "non-version tag", "busybox": "non-version tag"},
 		},
 	}
 	for _, tc := range tests {

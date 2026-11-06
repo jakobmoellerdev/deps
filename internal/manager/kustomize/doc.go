@@ -17,7 +17,7 @@ var Doc = refdoc.Manager{
 	Skips: []refdoc.Skip{
 		{Reason: "invalid reference", When: "image: the name and tag are no valid image reference"},
 		{Reason: "invalid digest", When: "image: a `digest` field that is not `sha256:…`"},
-		{Reason: "variable reference", When: "image: the name or tag contains `$`"},
+		{Reason: "variable reference", When: "image: the name or tag contains `$` (a name prefix of [`registryAliases`](configuration.md#registryaliases) resolves; such images are not renamed)"},
 		{Reason: "no repo", When: "helmChart: no `repo` (a chart from `chartHome`)"},
 		{Reason: "unknown chart repository <repo>", When: "helmChart: a `repo` that is no `https://`, `http://` or `oci://` URL"},
 		{Reason: "no version", When: "helmChart: the version is missing or empty"},

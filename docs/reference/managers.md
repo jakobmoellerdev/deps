@@ -296,12 +296,11 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 
 | Reason | When |
 |---|---|
-| `variable reference` | `$` in the reference, or a variable ARG default (Compose: see `interpolated image`) |
-| `interpolated image` | Compose interpolation other than `${VAR:-default}` / `${VAR-default}`, or a version spanning a variable boundary |
-| `template value` | `{{` in Kubernetes or Helm values |
+| `variable reference` | a `$` that no ARG default (Dockerfile) or [`registryAliases`](configuration.md#registryaliases) entry resolves, a variable ARG default, or a Dockerfile tag or digest spanning an ARG boundary (`node:${NODE}-alpine`); Compose: see `interpolated image` |
+| `interpolated image` | Compose interpolation other than `${VAR:-default}` / `${VAR-default}` (and no `registryAliases` key), or a version spanning a variable boundary |
+| `template value` | `{{` in a Kubernetes image (also on the `image:` lines of YAML that does not parse) or in Helm values |
 | `invalid reference` | the reference does not parse |
-| `no tag` | the reference has neither tag nor digest |
-| `digest without tag` | the reference has a digest but no tag |
+| `no tag` | Helm values with an empty `tag` (the chart's `appVersion` applies, not `latest`) |
 | `unparsable compose file` | a Compose file name whose content is not valid YAML (e.g. an indented fragment); one dep-less skip at line 1 |
 | `cannot locate value` | the value's bytes could not be found |
 
@@ -309,6 +308,7 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 
 - `scratch`, earlier stage names (`AS <name>`) and numeric stage indexes are not deps.
 - A reference that is exactly `$X` or `${X}` resolves to `ARG X=<image>`, declared before the first `FROM` or in the current stage. The dep sits at the ARG default, so the update rewrites the ARG line.
+- Other ARG references in a reference are replaced by their defaults, as Renovate does: `alpine:${ALPINE_VERSION}`, `${BASE}:3.13-slim`, `${REGISTRY}/app:${APP_VERSION}`. The tag and the digest are edited where their bytes are, in the instruction or in the ARG default; deps whose tag is one ARG default share it (VersionRef `ARG <name>`, one version for all). A tag that spans an ARG boundary (`node:${NODE_VERSION}-alpine`) cannot be edited and is a `variable reference`. Variables without a literal default stay as written, for `registryAliases` to resolve.
 
 **Compose details.**
 
@@ -320,7 +320,7 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 
 **YAML files.**
 
-Other YAML is parsed document by document. A parse error (typically a Helm template) yields no deps and no error.
+Other YAML is parsed document by document. A file that does not parse (typically a Helm template) is read line by line instead: each block-style `image: <value>` line is a `kubernetes` dep (a plain or quoted value; `{{` makes it a `template value`), and the parse error is logged (info level when such lines exist, else debug).
 
 **Names.**
 
@@ -332,7 +332,11 @@ References are parsed as docker does (names without a registry are on docker.io,
 
 **Non-version tags.**
 
-Non-version tags (`latest`, `bookworm`, commit hashes such as `3a22eba`) only get digest maintenance: a pinned ref → `digest` refresh; unpinned with `pin: digest` → `pin`; otherwise skipped as `non-version tag`.
+Non-version tags (`latest`, `bookworm`, commit hashes such as `3a22eba`) only get digest maintenance: a pinned ref → `digest` refresh; unpinned with `pin: digest` → `pin`; otherwise skipped as `non-version tag`. A reference without a tag is its implicit `latest`, as docker pulls it and Renovate looks it up: `FROM alpine` is pinned to `alpine@sha256:<latest's digest>` under `pin: digest` (else `non-version tag`), and `image@sha256:…` gets `digest` updates to the digest `latest` has now.
+
+**Registry aliases.**
+
+[`registryAliases`](configuration.md#registryaliases) resolve a prefix such as `$CI_REGISTRY/` or `${REGISTRY:-}` before the reference is parsed (Compose: before interpolation, Dockerfiles: after ARG substitution). The dep is named and looked up by the resolved image; the file keeps the alias, only the tag and digest are edited, and the image is not renamed by replacements.
 
 **Replacements.**
 
@@ -554,7 +558,7 @@ Updates image tags and digests, Helm chart versions and the `?ref=` of remote gi
 |---|---|
 | `invalid reference` | image: the name and tag are no valid image reference |
 | `invalid digest` | image: a `digest` field that is not `sha256:…` |
-| `variable reference` | image: the name or tag contains `$` |
+| `variable reference` | image: the name or tag contains `$` (a name prefix of [`registryAliases`](configuration.md#registryaliases) resolves; such images are not renamed) |
 | `no repo` | helmChart: no `repo` (a chart from `chartHome`) |
 | `unknown chart repository <repo>` | helmChart: a `repo` that is no `https://`, `http://` or `oci://` URL |
 | `no version` | helmChart: the version is missing or empty |
@@ -633,20 +637,18 @@ Updates container images, project includes, versioned remote includes and CI/CD 
 
 | Reason | When |
 |---|---|
-| `variable reference` | `$` in the image, project, component, remote repository or ref, other than a leading `$CI_SERVER_FQDN`/`$CI_SERVER_HOST` in a component |
+| `variable reference` | `$` in the image, project, component, remote repository or ref, other than a leading `$CI_SERVER_FQDN`/`$CI_SERVER_HOST` in a component, a Dependency Proxy prefix or a [`registryAliases`](configuration.md#registryaliases) key in an image |
 | `no ref` | a project include without `ref` (default branch) |
 | `no version` | a component without `@<version>` |
 | `invalid component` | a component path with fewer than three segments |
 | `latest version` | a `~latest` component: GitLab resolves it to the newest catalog release on every pipeline, so there is nothing to bump or pin |
 | `pinned without version comment` | a 40-hex commit ref not followed by a `# <version or branch>` comment |
 | `invalid reference` | the image reference does not parse |
-| `no tag` | an image without tag |
-| `digest without tag` | an image pinned by digest only |
 | `cannot locate value` | the value bytes were not found (escapes, block scalars) |
 
 **Details.**
 
-- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes. The Dependency Proxy prefixes `$CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX/` and `$CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX/` (also `${…}`) are Docker Hub, as in Renovate; a `registryAliases` entry of the same key overrides them.
 - Local and `template` includes and remote URLs that name no repository ref are not deps.
 - Include, remote and component refs can be pinned to commits (`pin: digest`): `ref: <commit> # v1.2.3`, `@<commit> # v1.2.3`, `/-/raw/<commit>/… # v1.2.3`. A pinned commit is refreshed from the comment's version tag (git-tags) or branch (`# main`, git-refs); version updates rewrite both. A branch ref (`ref: main`) is pinned to the branch head with `# main` and its digest kept current; unpinned and without `pin: digest` it is skipped as `non-version tag`. A ref inside a flow mapping (`{project: p, ref: v1}`) cannot be pinned: there is no place for the comment.
 - The instance URL is `gitlabci.url` from the config, else `CI_SERVER_URL` (set by GitLab CI), else the GitLab platform `deps run` detected from the remote, else `https://gitlab.com`; a path prefix such as `https://example.com/gitlab` is kept.
@@ -1849,8 +1851,6 @@ Updates provider, module and Terraform version constraints in Terraform and Open
 | `unknown chart repository <repository>` | helm_release: a `repository` that is not `http(s)://` or `oci://` |
 | `version range` | helm_release: a version that is not a full `[v]MAJOR.MINOR.PATCH[-pre][+build]` |
 | `no version` | helm_release without `version` |
-| `no tag` | an image without tag or digest |
-| `digest without tag` | an image pinned by digest only |
 | `invalid reference` | an image literal that is not a valid reference |
 
 **Constraints and rangeStrategy.**
@@ -1871,7 +1871,7 @@ Updates provider, module and Terraform version constraints in Terraform and Open
 **Resources.**
 
 - `helm_release` charts are looked up in their `repository` (`http(s)://` or `oci://`), or in the registry path of an `oci://host/path/name` chart.
-- Images of the docker provider and of the kubernetes workload resources are parsed and edited like the docker manager's references (tags, `@sha256:` digests, digest refresh and `pin: digest`). Images given as expressions (`docker_image.x.image_id`, `var.image`) are not deps.
+- Images of the docker provider and of the kubernetes workload resources are parsed and edited like the docker manager's references (tags, `@sha256:` digests, digest refresh and `pin: digest`; an image without a tag is its implicit `latest`; [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes). Images given as expressions (`docker_image.x.image_id`, `var.image`) are not deps.
 - `tfe_workspace` `terraform_version` follows Terraform CLI releases like `required_version`.
 
 **Replacements.**
@@ -2480,10 +2480,9 @@ Updates the image, the Dev Container Features and the node, go, python and ruby 
 | `local feature` | a feature in a folder of the repository (`./my-feature`) |
 | `tarball feature` | a feature downloaded from an `https://` tarball URL |
 | `not an OCI reference` | a feature without a registry host: a legacy short id (`docker-in-docker`) or a GitHub release reference (`owner/repo/feature@v1`) |
-| `variable reference` | `$` in the image or feature (`${localEnv:…}`) |
+| `variable reference` | `$` in the image or feature (`${localEnv:…}`) that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
 | `invalid reference` | the image or feature reference does not parse |
-| `no tag` | an image or feature without tag |
-| `digest without tag` | an image or feature pinned by digest only |
+| `no tag` | a feature without tag or digest (features are never pinned) |
 | `no version` | a node, go, python or ruby feature without a `version` option (the feature's default, typically `lts` or `latest`) |
 | `non-version value` | a version option that is a word: `lts`, `latest`, `none`, `os-provided` |
 | `partial version` | a go version with one part (`1`) |
@@ -2493,7 +2492,7 @@ Updates the image, the Dev Container Features and the node, go, python and ruby 
 **Details.**
 
 - The file is JSON with comments (`//`, `/* */`) and trailing commas; edits replace the version bytes only, so comments and formatting stay.
-- The image and the features are parsed and edited like the [docker](#docker) manager's references: the tag is updated, an image digest is refreshed or, with `pin: digest`, pinned. Features are never pinned (as Renovate's `pinDigests: false`); a digest already written after a feature tag is refreshed.
+- The image and the features are parsed and edited like the [docker](#docker) manager's references: the tag is updated, an image digest is refreshed or, with `pin: digest`, pinned; an image without a tag is its implicit `latest`. Features are never pinned (as Renovate's `pinDigests: false`); a digest already written after a feature tag, or after a feature without tag (`latest`), is refreshed.
 - Feature tags are usually a major (`:1`): docker versioning keeps the precision, so `:1` moves to `:2`.
 - Feature version options are read like the [asdf](#asdf) tools of the same name: `20` and `20.11` keep their precision (node, python, ruby), `1.22` and `1.22.3` are go-toolchain versions.
 - `build.dockerfile` and `dockerComposeFile` are not read: the [docker](#docker) manager finds the Dockerfile (`Dockerfile`, `Dockerfile.<x>`, `<x>.Dockerfile`) and the Compose file on its own.
@@ -2516,17 +2515,15 @@ Updates container images and pipes in Bitbucket Pipelines configuration.
 
 | Reason | When |
 |---|---|
-| `variable reference` | `$` in the image or pipe |
+| `variable reference` | `$` in the image or pipe that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
 | `no version` | a pipe without `:<version>` |
 | `invalid pipe` | a pipe that is not `<account>/<repo>[:<version>]` or `docker://<image>` |
 | `invalid reference` | the image reference does not parse |
-| `no tag` | an image without tag |
-| `digest without tag` | an image pinned by digest only |
 | `cannot locate value` | the value bytes were not found (escapes, block scalars) |
 
 **Details.**
 
-- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.
 - Pipes are Bitbucket repositories; their tags are listed with `git-tags` (Renovate's `bitbucket-tags`), and only the version after `:` is rewritten.
 - YAML anchors (`&step`) are extracted where they are written; aliases (`*step`, `<<: *step`) add nothing.
 
@@ -2547,15 +2544,13 @@ Updates container images in Woodpecker CI workflows.
 
 | Reason | When |
 |---|---|
-| `variable reference` | `$` in the image (matrix or environment variables) |
+| `variable reference` | `$` in the image (matrix or environment variables) that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
 | `invalid reference` | the image reference does not parse |
-| `no tag` | an image without tag |
-| `digest without tag` | an image pinned by digest only |
 | `cannot locate value` | the value bytes were not found (escapes, block scalars) |
 
 **Details.**
 
-- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.
 - An image written once as an anchor (`variables: [&golang_image 'golang:1.27']`) and used as `image: *golang_image` is one dep, at the anchor.
 
 ## droneci
@@ -2575,15 +2570,13 @@ Updates container images in Drone CI pipelines.
 
 | Reason | When |
 |---|---|
-| `variable reference` | `$` in the image |
+| `variable reference` | `$` in the image that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
 | `invalid reference` | the image reference does not parse |
-| `no tag` | an image without tag |
-| `digest without tag` | an image pinned by digest only |
 | `cannot locate value` | the value bytes were not found (escapes, block scalars, a double-quoted image continued over lines with `\`) |
 
 **Details.**
 
-- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.
 - Every YAML document is scanned (`kind: pipeline` documents of any `type`); documents without `image` are not parsed.
 
 ## circleci
@@ -2606,15 +2599,13 @@ Updates orbs and container images in CircleCI configuration.
 | `parameter reference` | `<< … >>` (pipeline or job parameters) or `$` in the orb or image |
 | `no version` | an orb without `@<version>` |
 | `invalid orb` | an orb name without `<namespace>/` |
-| `variable reference` | `$` in an image |
+| `variable reference` | `$` in an image that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
 | `invalid reference` | the image reference does not parse |
-| `no tag` | an image without tag |
-| `digest without tag` | an image pinned by digest only |
 | `cannot locate value` | the value bytes were not found (escapes, block scalars) |
 
 **Details.**
 
-- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.
 - `@volatile` and `@dev:<label>` orbs are skipped as non-version values. Renovate pins a partial orb version to the full one (its `rangeStrategy` `pin`); deps keeps the precision (`circleci/node@5` → `circleci/node@7`).
 - `machine.image` values are CircleCI VM images, not container images, and are not extracted (as in Renovate).
 - YAML anchors are extracted where they are written, also under custom top-level keys (not `parameters`); aliases and merge keys (`<<: *defaults`) add nothing.
@@ -2644,8 +2635,6 @@ Updates container resources, GitHub repository resources and task versions in Az
 | `non-tag ref` | a ref other than `refs/tags/<tag>` (a branch) |
 | `no version` | a task without `@<version>` |
 | `invalid reference` | the image reference does not parse |
-| `no tag` | an image without tag |
-| `digest without tag` | an image pinned by digest only |
 | `cannot locate value` | the value bytes were not found (escapes, block scalars) |
 
 **Tasks.**
@@ -2656,7 +2645,7 @@ Updates container resources, GitHub repository resources and task versions in Az
 
 **Details.**
 
-- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned. The docker manager leaves `containers` entries with a `container` key to this manager.
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes. The docker manager leaves `containers` entries with a `container` key to this manager.
 - Job-level `container:` values are not extracted: they can name a container resource instead of an image (as in Renovate).
 
 ## vcpkg
@@ -3025,15 +3014,13 @@ Updates container images in Ansible task files.
 | Reason | When |
 |---|---|
 | `template` | a Jinja2 expression (`{{`) in the image |
-| `variable reference` | `$` in the image |
+| `variable reference` | `$` in the image that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
 | `invalid reference` | the image reference does not parse |
-| `no tag` | an image without tag |
-| `digest without tag` | an image pinned by digest only |
 | `cannot locate value` | the value bytes were not found (escapes, block scalars) |
 
 **Details.**
 
-- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.
 - Files without `image` are not parsed.
 
 ## sbt

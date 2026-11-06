@@ -25,8 +25,6 @@ var Doc = refdoc.Manager{
 		{Reason: "non-tag ref", When: "a ref other than `refs/tags/<tag>` (a branch)"},
 		{Reason: "no version", When: "a task without `@<version>`"},
 		{Reason: "invalid reference", When: "the image reference does not parse"},
-		{Reason: "no tag", When: "an image without tag"},
-		{Reason: "digest without tag", When: "an image pinned by digest only"},
 		{Reason: "cannot locate value", When: "the value bytes were not found (escapes, block scalars)"},
 	},
 	Sections: []refdoc.Section{
@@ -36,7 +34,7 @@ var Doc = refdoc.Manager{
 			"With `DEPS_AZURE_DEVOPS_URL` and `DEPS_AZURE_DEVOPS_TOKEN`, the versions are the tasks installed in that organization or collection (see the `azure-pipelines-tasks` datasource).",
 		}},
 		{Title: "Details", Items: []string{
-			"Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned. The docker manager leaves `containers` entries with a `container` key to this manager.",
+			"Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes. The docker manager leaves `containers` entries with a `container` key to this manager.",
 			"Job-level `container:` values are not extracted: they can name a container resource instead of an image (as in Renovate).",
 		}},
 	},

@@ -152,11 +152,11 @@ func (x *extractor) image(depType string, b body, name string) {
 	}
 	d := x.newDep(Name, depType, a.off)
 	d.Datasource, d.Versioning, d.Name = "docker", "docker", a.val.str
+	off := a.val.span.Start
 	if a.val.span == (dep.Span{}) {
-		d.Skip = "cannot locate value"
-	} else {
-		docker.ParseInlineRef(&d, a.val.span.Start, a.val.str)
+		off = -1
 	}
+	docker.ParseImage(&d, off, a.val.str, x.aliases)
 	x.deps = append(x.deps, d)
 }
 

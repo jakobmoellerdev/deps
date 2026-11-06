@@ -5,6 +5,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -54,7 +55,7 @@ func check(t *testing.T, src string, deps []dep.Dep, wants []want) {
 			}
 			continue
 		}
-		if d.Version != "" {
+		if d.Version != "" && !docker.Untagged(d) {
 			if got := src[d.RefSpan.Start:d.RefSpan.End]; got != w.version {
 				t.Errorf("%d: src[RefSpan] = %q, want %q", i, got, w.version)
 			}
@@ -372,4 +373,25 @@ func TestEditsDigest(t *testing.T) {
 	if _, err := New().Edits(dep.Update{Dep: deps[4], NewVersion: "v1.1.0"}); err == nil {
 		t.Error("unpin: want error")
 	}
+}
+
+// The Dependency Proxy prefixes are Docker Hub, registryAliases resolve the others, and an
+// image without a tag is its implicit latest.
+func TestExtractImageAliases(t *testing.T) {
+	src := `a:
+  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/node:22
+  services:
+    - $CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX/postgres:17
+    - name: $CI_REGISTRY/group/db:1.2
+    - $CI_REGISTRY_IMAGE/x:1
+    - redis
+`
+	d := "docker"
+	check(t, src, extractEnv(t, src, manager.Env{RegistryAliases: map[string]string{"$CI_REGISTRY": "registry.gitlab.com"}}), []want{
+		{line: 2, depT: TypeImage, ds: d, name: "node", source: "docker.io/library/node", version: "22"},
+		{line: 4, depT: TypeService, ds: d, name: "postgres", source: "docker.io/library/postgres", version: "17"},
+		{line: 5, depT: TypeService, ds: d, name: "registry.gitlab.com/group/db", source: "registry.gitlab.com/group/db", version: "1.2"},
+		{line: 6, depT: TypeService, ds: d, name: "$CI_REGISTRY_IMAGE/x:1", skip: "variable reference"},
+		{line: 7, depT: TypeService, ds: d, name: "redis", source: "docker.io/library/redis", version: "latest"},
+	})
 }

@@ -45,7 +45,7 @@ func (woodpeckerManager) Extract(file string, src []byte, env manager.Env) ([]de
 	if err != nil {
 		return nil, err
 	}
-	x := docker.Images{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src)}
+	x := docker.Images{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src), Aliases: env.RegistryAliases}
 	if len(doc.Content) != 1 {
 		return nil, nil
 	}

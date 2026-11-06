@@ -6,6 +6,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -24,7 +25,7 @@ func extract(t *testing.T, src []byte) []dep.Dep {
 		if d.Manager != Name || d.Datasource != "docker" || d.Versioning != "docker" {
 			t.Errorf("%d: %s/%s/%s", i, d.Manager, d.Datasource, d.Versioning)
 		}
-		if d.Version != "" && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Version {
+		if d.Version != "" && !docker.Untagged(d) && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Version {
 			t.Errorf("%d: src[RefSpan] = %q, want %q", i, src[d.RefSpan.Start:d.RefSpan.End], d.Version)
 		}
 	}
@@ -90,7 +91,7 @@ services:
 `)
 	check(t, extract(t, src), 6, map[int]want{
 		0: {line: 7, depT: TypeImage, name: "golang", version: "1.26"},
-		1: {line: 9, depT: TypeImage, name: "plugins/docker", skip: "no tag"},
+		1: {line: 9, depT: TypeImage, name: "plugins/docker", version: "latest"},
 		2: {line: 11, depT: TypeImage, name: "registry.example.com/team/tool:1.0", skip: "cannot locate value"},
 		3: {line: 15, depT: TypeService, name: "postgres", version: "17"},
 		4: {line: 24, depT: TypeImage, name: "node:${NODE}", skip: "variable reference"},
@@ -116,7 +117,7 @@ func TestExtractFixtures(t *testing.T) {
 		{"testdata/barong.yml", 31, map[int]want{
 			0:  {line: 35, depT: TypeImage, name: "vault", version: "0.11.4"},
 			2:  {line: 65, depT: TypeImage, name: "quay.io/openware/sdk-citools", version: "2.6.7"},
-			5:  {line: 116, depT: TypeImage, name: "plugins/docker", skip: "no tag"},
+			5:  {line: 116, depT: TypeImage, name: "plugins/docker", version: "latest"},
 			9:  {line: 7, depT: TypeService, name: "mysql", version: "5.7"},
 			15: {line: 200, depT: TypeService, name: "mariadb", version: "10.3"},
 		}},

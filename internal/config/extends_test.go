@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,6 +101,7 @@ customDatasources:
     url: https://example.com/shared.json
   over:
     url: https://example.com/base.json
+registryAliases: {$CI_REGISTRY: registry.example.com, $HUB: mirror.example.com}
 extends: [org/presets//go.yaml]
 `
 	presets := `rules:
@@ -117,6 +119,8 @@ rules:
 customDatasources:
   over:
     url: https://example.com/local.json
+registryAliases:
+  $HUB: ""
 `
 	c, f, err := loadExtends(t, local, map[string]string{"org/cfg//.deps.yaml": base, "org/presets//go.yaml": presets})
 	if err != nil {
@@ -156,6 +160,9 @@ customDatasources:
 	}
 	if c.CustomDatasources["shared"].URL != "https://example.com/shared.json" || c.CustomDatasources["over"].URL != "https://example.com/local.json" {
 		t.Errorf("customDatasources = %+v", c.CustomDatasources)
+	}
+	if !maps.Equal(c.RegistryAliases, map[string]string{"$CI_REGISTRY": "registry.example.com", "$HUB": ""}) {
+		t.Errorf("registryAliases = %v", c.RegistryAliases)
 	}
 }
 

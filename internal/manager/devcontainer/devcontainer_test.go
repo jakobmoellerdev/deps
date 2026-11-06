@@ -116,7 +116,7 @@ func TestExtract(t *testing.T) {
 				"14 feature ghcr.io/devcontainers/features/docker-in-docker docker docker 2.12.0 ref=2.12.0",
 				"17 feature ghcr.io/devcontainers/features/sshd docker docker 1 ref=1@sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
 				"18 feature ghcr.io/devcontainers/features/rust: skip=invalid reference",
-				"19 feature ghcr.io/x/f skip=digest without tag",
+				"19 feature ghcr.io/x/f docker docker latest ref=@sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
 				"20 feature ./local-feature skip=local feature",
 				"21 feature ../shared/feature skip=local feature",
 				"22 feature https://example.com/feature.tgz skip=tarball feature",

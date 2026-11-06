@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -39,8 +41,15 @@ func check(t *testing.T, src []byte, deps []dep.Dep, wants []want) {
 		if d.Skip != "" && d.Version == "" {
 			continue
 		}
-		if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != w.version {
-			t.Errorf("%d: src[RefSpan] = %q, want %q", i, got, w.version)
+		wantRef := w.version
+		if Untagged(d) {
+			wantRef = "" // the empty span where ":<tag>" goes, at InsertAt
+			if d.RefSpan.Start != d.InsertAt {
+				t.Errorf("%d: untagged RefSpan %v, InsertAt %d", i, d.RefSpan, d.InsertAt)
+			}
+		}
+		if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != wantRef {
+			t.Errorf("%d: src[RefSpan] = %q, want %q", i, got, wantRef)
 		}
 		if got := string(src[d.DigestSpan.Start:d.DigestSpan.End]); got != w.digest {
 			t.Errorf("%d: src[DigestSpan] = %q, want %q", i, got, w.digest)
@@ -98,10 +107,10 @@ func TestExtractDockerfile(t *testing.T) {
 				{line: 3, name: "golang", source: "docker.io/library/golang", version: "1.22.3-alpine", depT: TypeDockerfile, insert: " AS build"},
 				{line: 4, name: "node", source: "docker.io/library/node", version: "20", depT: TypeDockerfile, insert: " as Web"},
 				{line: 9, name: "python", source: "docker.io/library/python", version: "3.12-slim", digest: sha1, depT: TypeDockerfile, insert: "@sha256:1111"},
-				{line: 13, name: "golang:${GO}", depT: TypeDockerfile, skip: "variable reference"},
-				{line: 14, name: "alpine", source: "docker.io/library/alpine", depT: TypeDockerfile, skip: "no tag"},
+				{line: 13, name: "golang", source: "docker.io/library/golang", version: "1.22", depT: TypeDockerfile}, // the tag is ARG GO's default
+				{line: 14, name: "alpine", source: "docker.io/library/alpine", version: "latest", depT: TypeDockerfile},
 				{line: 15, name: "ubuntu", source: "docker.io/library/ubuntu", version: "latest", depT: TypeDockerfile},
-				{line: 16, name: "ghcr.io/org/img", source: "ghcr.io/org/img", digest: sha1, depT: TypeDockerfile, skip: "digest without tag"},
+				{line: 16, name: "ghcr.io/org/img", source: "ghcr.io/org/img", digest: sha1, version: "latest", depT: TypeDockerfile},
 				{line: 17, name: "redis", source: "docker.io/library/redis", version: "7.2", depT: TypeDockerfile, insert: " AS cache"},
 				{line: 19, name: "UPPER:1", depT: TypeDockerfile, skip: "invalid reference"},
 				{line: 23, name: "indented", source: "docker.io/library/indented", version: "1.0", depT: TypeDockerfile},
@@ -172,7 +181,7 @@ func TestExtractCompose(t *testing.T) {
 				{line: 5, name: "redis", source: "docker.io/library/redis", version: "7", depT: TypeCompose, insert: `"`},
 				{line: 7, name: "ghcr.io/org/app", source: "ghcr.io/org/app", version: "1.2.3", digest: sha1, depT: TypeCompose, insert: "@" + sha1 + "'"},
 				{line: 11, name: "${REGISTRY}/x:1.0", depT: TypeCompose, skip: "interpolated image"},
-				{line: 13, name: "nginx", source: "docker.io/library/nginx", depT: TypeCompose, skip: "no tag"},
+				{line: 13, name: "nginx", source: "docker.io/library/nginx", version: "latest", depT: TypeCompose},
 				{line: 14, name: "caddy", source: "docker.io/library/caddy", version: "2.8", depT: TypeCompose, insert: "}"},
 				{line: 16, name: "alpine:3.19", depT: TypeCompose, skip: "cannot locate value"},
 				{line: 18, name: "alpine:3.19\n", depT: TypeCompose, skip: "cannot locate value"},
@@ -517,6 +526,141 @@ func TestEdits(t *testing.T) {
 	}
 }
 
+// An image without a tag is its implicit latest: pinned by appending the digest, refreshed in
+// place when pinned by digest only, and given a tag (a replacement version) before the digest.
+func TestEditsUntagged(t *testing.T) {
+	const src = "FROM alpine AS a\nFROM ghcr.io/o/img@" + sha1 + "\n"
+	deps := extract(t, "Dockerfile", src)
+	bare, digestOnly := deps[0], deps[1]
+	if !Untagged(bare) || !Untagged(digestOnly) || bare.Version != "latest" || digestOnly.Digest != sha1 {
+		t.Fatalf("deps = %+v", deps)
+	}
+	for _, c := range []struct {
+		name string
+		u    dep.Update
+		want string
+	}{
+		{"pin", dep.Update{Dep: bare, Type: dep.Pin, NewVersion: "latest", NewDigest: sha2},
+			"FROM alpine@" + sha2 + " AS a\nFROM ghcr.io/o/img@" + sha1 + "\n"},
+		{"digest refresh", dep.Update{Dep: digestOnly, Type: dep.Digest, NewVersion: "latest", NewDigest: sha2},
+			"FROM alpine AS a\nFROM ghcr.io/o/img@" + sha2 + "\n"},
+		{"tag", dep.Update{Dep: bare, Type: dep.Replacement, NewName: "docker.io/library/busybox", NewVersion: "1.37"},
+			"FROM docker.io/library/busybox:1.37 AS a\nFROM ghcr.io/o/img@" + sha1 + "\n"},
+		{"tag and digest", dep.Update{Dep: digestOnly, Type: dep.Replacement, NewVersion: "2.0", NewDigest: sha2},
+			"FROM alpine AS a\nFROM ghcr.io/o/img:2.0@" + sha2 + "\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			edits, err := New().Edits(c.u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := patch.Apply([]byte(src), edits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(out) != c.want {
+				t.Errorf("got\n%s\nwant\n%s", out, c.want)
+			}
+		})
+	}
+}
+
+// ARG references inside a FROM are substituted; the tag is edited where its bytes are.
+func TestExtractDockerfileSubstitution(t *testing.T) {
+	const src = `ARG ALPINE_VERSION=3.22
+ARG BASE=python
+ARG REG=ghcr.io/acme
+ARG NOVAL
+FROM alpine:${ALPINE_VERSION} AS a
+FROM alpine:$ALPINE_VERSION AS b
+FROM ${BASE}:3.13-slim
+FROM ${REG}/tool:1.4@` + sha1 + `
+FROM ${REG}/bare
+FROM node:${ALPINE_VERSION}-alpine
+FROM ${NOVAL}/x:1.0
+FROM ${PRIVATE}/team/app:2.1
+FROM ${UNKNOWN}
+COPY --from=${REG}/assets:0.9 / /
+COPY --from=${STAGE} / /
+`
+	for name, src := range variants(src) {
+		t.Run(name, func(t *testing.T) {
+			deps, err := New().Extract("Dockerfile", []byte(src), manager.Env{RegistryAliases: map[string]string{"${PRIVATE}": "registry.example.com"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, []byte(src), deps, []want{
+				{line: 5, name: "alpine", source: "docker.io/library/alpine", version: "3.22", depT: TypeDockerfile},
+				{line: 7, name: "python", source: "docker.io/library/python", version: "3.13-slim", depT: TypeDockerfile},
+				{line: 8, name: "ghcr.io/acme/tool", source: "ghcr.io/acme/tool", version: "1.4", digest: sha1, depT: TypeDockerfile, insert: "@"},
+				{line: 9, name: "ghcr.io/acme/bare", source: "ghcr.io/acme/bare", version: "latest", depT: TypeDockerfile},
+				{line: 10, name: "node:${ALPINE_VERSION}-alpine", depT: TypeDockerfile, skip: "variable reference"},
+				{line: 11, name: "${NOVAL}/x:1.0", depT: TypeDockerfile, skip: "variable reference"},
+				{line: 12, name: "registry.example.com/team/app", source: "registry.example.com/team/app", version: "2.1", depT: TypeDockerfile},
+				{line: 13, name: "${UNKNOWN}", depT: TypeDockerfile, skip: "variable reference"},
+				{line: 14, name: "ghcr.io/acme/assets", source: "ghcr.io/acme/assets", version: "0.9", depT: TypeDockerfile, insert: " /"},
+			})
+			if deps[0].VersionRef != "ARG ALPINE_VERSION" || deps[1].VersionRef != "" || deps[6].NameParts != nil {
+				t.Errorf("VersionRef %q %q, aliased NameParts %v", deps[0].VersionRef, deps[1].VersionRef, deps[6].NameParts)
+			}
+		})
+	}
+}
+
+func TestAlias(t *testing.T) {
+	aliases := map[string]string{
+		"$CI_REGISTRY": "registry.gitlab.com/", "$CI_REGISTRY/proxy": "docker.io", "${HUB:-}": "", "mirror.example.com/ghcr": "ghcr.io",
+	}
+	for ref, want := range map[string]string{
+		"$CI_REGISTRY/g/p:1":             "registry.gitlab.com/g/p:1",
+		"$CI_REGISTRY/proxy/nginx:1":     "docker.io/nginx:1", // the longest key
+		"$CI_REGISTRY_IMAGE/x:1":         "",                  // a bare variable key needs the slash
+		"${HUB:-}nginx:1":                "nginx:1",
+		"${HUB:-}/nginx:1":               "nginx:1",
+		"mirror.example.com/ghcr/o/r:1":  "ghcr.io/o/r:1",
+		"mirror.example.com/ghcrx/o/r:1": "",
+	} {
+		got, ok := Alias(ref, aliases)
+		if ok != (want != "") || ok && got != want {
+			t.Errorf("Alias(%q) = %q, %v; want %q", ref, got, ok, want)
+		}
+	}
+}
+
+func TestExtractRegistryAliases(t *testing.T) {
+	env := manager.Env{RegistryAliases: map[string]string{"${REGISTRY:-}": "ghcr.io/acme", "$REG": "quay.io/acme"}}
+	for _, c := range []struct {
+		file, src string
+		want      []want
+	}{
+		{"compose.yaml", "services:\n  a:\n    image: ${REGISTRY:-}/app:1.0\n  b:\n    image: ${REGISTRY:-}app2\n  c:\n    image: ${OTHER}/x:1\n", []want{
+			{line: 3, name: "ghcr.io/acme/app", source: "ghcr.io/acme/app", version: "1.0", depT: TypeCompose},
+			{line: 5, name: "ghcr.io/acme/app2", source: "ghcr.io/acme/app2", version: "latest", depT: TypeCompose},
+			{line: 7, name: "${OTHER}/x:1", depT: TypeCompose, skip: "interpolated image"},
+		}},
+		{"deploy.yaml", "spec:\n  containers:\n    - image: $REG/web:2.1@" + sha1 + "\n", []want{
+			{line: 3, name: "quay.io/acme/web", source: "quay.io/acme/web", version: "2.1", digest: sha1, depT: TypeKubernetes, insert: "@"},
+		}},
+		{"values.yaml", "image:\n  repository: $REG/api\n  tag: 3.0\nother:\n  image:\n    repository: $NOPE/x\n    tag: 1\n", []want{
+			{line: 3, name: "quay.io/acme/api", source: "quay.io/acme/api", version: "3.0", depT: TypeHelm},
+			{line: 7, name: "$NOPE/x", depT: TypeHelm, skip: "variable reference"},
+		}},
+	} {
+		t.Run(c.file, func(t *testing.T) {
+			deps, err := New().Extract(c.file, []byte(c.src), env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, []byte(c.src), deps, c.want)
+			for _, d := range deps {
+				if d.Skip == "" && d.Renamable() {
+					t.Errorf("%s: aliased image is renamable", d.Name)
+				}
+			}
+		})
+	}
+}
+
 func TestEditsYAML(t *testing.T) {
 	src := "services:\n  a:\n    image: 'redis:7.2'\n"
 	d := extract(t, "compose.yml", src)[0]
@@ -569,7 +713,7 @@ func TestExtractDockerfileArgsAndFrom(t *testing.T) {
 				{line: 14, name: "busybox", source: "docker.io/library/busybox", version: "1.36", depT: TypeDockerfile, insert: " /bin/sh"},
 				{line: 11, name: "ghcr.io/o/tool", source: "ghcr.io/o/tool", version: "1.0", depT: TypeDockerfile},
 				{line: 17, name: "ghcr.io/o/src", source: "ghcr.io/o/src", version: "2.0", depT: TypeDockerfile, insert: ",source"},
-				{line: 19, name: "nginx", source: "docker.io/library/nginx", depT: TypeDockerfile, skip: "no tag"},
+				{line: 19, name: "nginx", source: "docker.io/library/nginx", version: "latest", depT: TypeDockerfile},
 			})
 		})
 	}
@@ -616,7 +760,7 @@ func TestExtractKubernetes(t *testing.T) {
 				{line: 8, name: "busybox", source: "docker.io/library/busybox", version: "1.36", depT: TypeKubernetes},
 				{line: 11, name: "ghcr.io/stefanprodan/podinfo", source: "ghcr.io/stefanprodan/podinfo", version: "6.5.0", depT: TypeKubernetes, insert: `"`},
 				{line: 13, name: "{{ .Values.image }}", depT: TypeKubernetes, skip: "template value"},
-				{line: 15, name: "nginx", source: "docker.io/library/nginx", digest: sha1, depT: TypeKubernetes, skip: "digest without tag"},
+				{line: 15, name: "nginx", source: "docker.io/library/nginx", digest: sha1, version: "latest", depT: TypeKubernetes},
 				{line: 21, name: "alpine", source: "docker.io/library/alpine", version: "3.20", depT: TypeKubernetes},
 			})
 		})
@@ -680,14 +824,49 @@ func TestExtractManifestsPrefilterAndErrors(t *testing.T) {
 	if manifestParses.Load() != before {
 		t.Error("file without image:/repository: was parsed")
 	}
-	// helm templates: parse errors are not errors, and drop deps of earlier documents
-	for _, src := range []string{"containers:\n  - image: a:1\n---\n{{ bad\n", "image: {{ .Values.image }}\n"} {
-		if deps, err := New().Extract("templates/d.yaml", []byte(src), manager.Env{}); err != nil || len(deps) != 0 {
-			t.Errorf("%q: %v %v", src, deps, err)
+	// helm templates: parse errors are not errors; the image: lines are read one by one
+	const tmpl = `spec:
+  containers:
+    - name: app
+      image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+    - name: hook
+      image: busybox:1.36 # pinned
+    - image: 'ghcr.io/o/x@` + sha1 + `'
+    - image: "a\"b:1"
+    - image: [x]
+{{- if .Values.sidecar }}
+    - image: {{ include "sidecar.image" . }}
+{{- end }}
+`
+	for src, want := range map[string][]string{
+		"containers:\n  - image: a:1\n---\n{{ bad\n": {"2 a 1 "},
+		"image: {{ .Values.image }}\n":               nil, // parses: a mapping with a mapping key
+		tmpl: {
+			`4 "{{ .Values.image.repository }}:{{ .Values.image.tag }}"  template value`,
+			"6 busybox 1.36 ", "7 ghcr.io/o/x latest ",
+			`11 {{ include "sidecar.image" . }}  template value`,
+		},
+	} {
+		deps, err := New().Extract("templates/d.yaml", []byte(src), manager.Env{})
+		var got []string
+		for _, d := range deps {
+			got = append(got, fmt.Sprintf("%d %s %s %s", d.Line, d.Name, d.Version, d.Skip))
+		}
+		if err != nil || !slices.Equal(got, want) {
+			t.Errorf("%q: %q %v, want %q", src, got, err, want)
 		}
 	}
-	if manifestParses.Load() != before+2 {
-		t.Errorf("parses = %d, want 2", manifestParses.Load()-before)
+	if manifestParses.Load() != before+3 {
+		t.Errorf("parses = %d, want 3", manifestParses.Load()-before)
+	}
+	// edits of a line-read image keep the template around it
+	deps, _ := New().Extract("templates/d.yaml", []byte(tmpl), manager.Env{})
+	ed, err := New().Edits(dep.Update{Dep: deps[1], NewVersion: "1.37"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := patch.Apply([]byte(tmpl), ed); err != nil || !strings.Contains(string(out), "image: busybox:1.37 # pinned\n") {
+		t.Errorf("edit: %v\n%s", err, out)
 	}
 }
 

@@ -40,8 +40,8 @@ func (droneManager) Match(path string) bool {
 
 // Extract returns the step and service images of every document of src (pipelines, secrets
 // and signatures are separate documents). Documents without "image" are not parsed.
-func (droneManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
-	x := docker.Images{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src)}
+func (droneManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
+	x := docker.Images{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src), Aliases: env.RegistryAliases}
 	dec := yaml.NewDecoder(bytes.NewReader(yamlspan.KeepDocuments(src, func(doc []byte) bool {
 		return bytes.Contains(doc, []byte("image"))
 	})))

@@ -90,13 +90,13 @@ func FuzzManifestsKeepDocuments(f *testing.F) {
 	})
 }
 
-// TestManifestsUnparsableDocuments pins which parse errors still drop a file's images: an
-// error in a templated document does (Helm templates), one in a document without an image key
-// (never parsed) no longer does.
+// TestManifestsUnparsableDocuments pins the parse errors that make manifests read a file's
+// image: lines one by one: an error in a templated document does (Helm templates), one in a
+// document without an image key is never seen (not parsed). Both keep the image.
 func TestManifestsUnparsableDocuments(t *testing.T) {
 	deployment := "containers:\n  - image: a:1\n"
 	for src, want := range map[string]int{
-		deployment + "---\n{{ bad\n":              0,
+		deployment + "---\n{{ bad\n":              1,
 		deployment + "---\nkind: [unterminated\n": 1,
 	} {
 		deps, err := New().Extract("k8s/d.yaml", []byte(src), manager.Env{})

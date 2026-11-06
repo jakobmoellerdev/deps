@@ -947,10 +947,8 @@ func (c *Config) validate() []*Problem {
 		c.Custom[i].validate(fmt.Sprintf("custom[%d]", i), c, add)
 	}
 	c.validateCustomDatasources(add)
-	for _, k := range slices.Sorted(maps.Keys(c.RegistryAliases)) {
-		if k == "" || strings.TrimSpace(c.RegistryAliases[k]) == "" {
-			add("registryAliases", "alias %q: key and value must not be empty", k)
-		}
+	if _, ok := c.RegistryAliases[""]; ok {
+		add("registryAliases", "an alias must not be empty")
 	}
 	c.GitLabCI.validate(add)
 	return probs

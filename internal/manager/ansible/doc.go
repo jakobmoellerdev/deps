@@ -15,15 +15,13 @@ var Doc = refdoc.Manager{
 	},
 	Skips: []refdoc.Skip{
 		{Reason: skipTemplate, When: "a Jinja2 expression (`{{`) in the image"},
-		{Reason: "variable reference", When: "`$` in the image"},
+		{Reason: "variable reference", When: "`$` in the image that no [`registryAliases`](configuration.md#registryaliases) entry resolves"},
 		{Reason: "invalid reference", When: "the image reference does not parse"},
-		{Reason: "no tag", When: "an image without tag"},
-		{Reason: "digest without tag", When: "an image pinned by digest only"},
 		{Reason: "cannot locate value", When: "the value bytes were not found (escapes, block scalars)"},
 	},
 	Sections: []refdoc.Section{
 		{Title: "Details", Items: []string{
-			"Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.",
+			"Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.",
 			"Files without `image` are not parsed.",
 		}},
 	},

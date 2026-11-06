@@ -109,6 +109,7 @@ customDatasources:
 - [`gomodUpdateImportPaths`](#gomodupdateimportpaths)
 - [`gitlabci`](#gitlabci)
   - [`gitlabci.url`](#gitlabciurl)
+- [`registryAliases`](#registryaliases)
 - [`minimumReleaseAge`](#minimumreleaseage)
 - [`minimumReleaseAgeBehaviour`](#minimumreleaseagebehaviour)
 - [`abandonmentThreshold`](#abandonmentthreshold)
@@ -626,6 +627,25 @@ Base URL of the GitLab instance project includes and $CI_SERVER_FQDN components 
 
 - **Type:** string
 
+## `registryAliases`
+
+Registry aliases by the prefix written in files, e.g. $CI_REGISTRY or ${REGISTRY}: an image reference `<alias>/<path>[:tag][@digest]` is looked up as `<value>/<path>` while the file keeps the alias. Extended files merge it by key.
+
+- **Type:** map of name → string
+
+Renovate's `registryAliases`. A key is a prefix as written in files, usually a CI variable (`$CI_REGISTRY`, `${CI_REGISTRY}`, `${CI_REGISTRY:-}`) or a pull-through cache path; its value is the registry (with an optional path) it stands for, or `""` for Docker Hub. A trailing slash on the value is ignored.
+
+- An image reference `<key>/<path>[:<tag>][@<digest>]` is looked up as `<value>/<path>`; a key ending in `}` also matches without the `/` (`${REGISTRY}alpine:3.22`). The longest matching key wins. A bare `$VAR` key does not match `$VAR_OTHER/…`.
+- The dep's name is the resolved image (`registry.example.com/team/app`), which rules match. Updates edit the tag and digest only, so the file keeps the alias; aliased images are not renamed by replacements.
+- It applies to the image references of the docker manager (Dockerfiles after ARG substitution, Compose files, workflows, actions, Kubernetes manifests, Helm values `repository`), gitlabci, kustomize, terraform, devcontainer, ansible and the CI pipeline managers (bitbucket-pipelines, woodpecker, droneci, circleci, azure-pipelines). Without a matching alias, a reference with a variable is skipped as `variable reference`.
+- Extended files merge it by key, a later file's entry replacing an earlier one's.
+
+```yaml
+registryAliases:
+  $CI_REGISTRY: registry.gitlab.example.com
+  ${HARBOR}/proxy: harbor.example.com/dockerhub-proxy
+```
+
 ## `minimumReleaseAge`
 
 Minimum age of a new version before it is proposed, e.g. `3 days`, `12h`, `90m` or a Go duration; `0` disables. Versions with an unknown release time are allowed unless minimumReleaseAgeBehaviour is timestamp-required; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time.
@@ -1023,7 +1043,7 @@ rules:
 
 ## `extends`
 
-Configs this file builds on, each `<repo>[//<path>][#<ref>]`: owner/name of a repository on the same forge (or a git URL: https://, ssh://, file://, user@host:path), the file in it (default .deps.yaml) and a branch, tag or commit (default: its default branch). Their rules come first, so this file's rules override them; this file's other keys replace theirs, custom managers are appended and customDatasources merged by name. Later entries override earlier ones; extended files may extend others, cycles are errors.
+Configs this file builds on, each `<repo>[//<path>][#<ref>]`: owner/name of a repository on the same forge (or a git URL: https://, ssh://, file://, user@host:path), the file in it (default .deps.yaml) and a branch, tag or commit (default: its default branch). Their rules come first, so this file's rules override them; this file's other keys replace theirs, custom managers are appended and customDatasources and registryAliases merged by name. Later entries override earlier ones; extended files may extend others, cycles are errors.
 
 - **Type:** list of strings
 
@@ -1042,7 +1062,7 @@ rules:
 - **Entries** are `<repo>[//<path>][#<ref>]`. `<repo>` is `owner/name` (GitLab-style `group/sub/name` too) on the forge of the repository deps runs on (the CI environment's server, else the host of the checkout's `origin` remote), or a git URL (`https://`, `http://`, `ssh://`, `git://`, `file://`, or `user@host:path`; no passwords in it). `<path>` is a clean relative slash path in that repository, default `.deps.yaml`. `<ref>` is a branch, tag or commit (fetching a commit needs a forge that allows it, as GitHub and Gitea do), default the repository's default branch.
 - **Reading.** Each file is fetched with git: a shallow fetch of the ref into a temporary bare repository, then the file's blob; nothing is checked out. Public repositories need no credentials. For an https repository on the platform host, the platform token (`DEPS_TOKEN`, …; `DEPS_GITHUB_COM_TOKEN` for github.com) is offered as `x-access-token:<token>` through a credential helper scoped to that host, after git's own credential helpers (which a CI job usually has none of), so it is in neither the command line nor a file; other hosts and SSH URLs use git's own credentials. A file is fetched once per run, also when several configs (or the repositories of `run --repositories`) extend it. On GitHub Actions the job's `GITHUB_TOKEN` reads only its own repository: a private config repository needs a token with read access to it (an App token or PAT as `DEPS_TOKEN`), or a public one.
 - **Strict.** An extended file is decoded as strictly as `.deps.yaml` (unknown keys and wrong types are errors) and may itself have `extends`, resolved the same way. A file the chain already reaches through another entry is read once (its rules come where it is first reached); a cycle (`a` extends `b` extends `a`) is an error naming the chain. Every problem, also a missing file or a failed fetch, is a config error (exit 2) located at this file's `extends` entry it comes through, e.g. `my-org/deps-config//.deps.yaml: rules[1].allow: invalid constraint ...` or `extends[0]: my-org/deps-config//.deps.yaml: no file .deps.yaml at HEAD of https://github.com/my-org/deps-config.git`.
-- **Merging.** The files are combined in order: each entry's file (after the files it extends), then the next entry's, then this file. `rules` are concatenated, so the rules of extended files come first and this file's rules override them (later matching rules win field by field); `custom` managers are appended; `customDatasources` are merged by name, a later file's entry replacing an earlier one's; every other top-level key a later file sets replaces the earlier value as a whole (`labels: []` clears inherited labels, `lockFileMaintenance` and `actions` are replaced, not merged). Keys no file sets keep their defaults; `ignorePaths` keeps the default list unless some file sets it.
+- **Merging.** The files are combined in order: each entry's file (after the files it extends), then the next entry's, then this file. `rules` are concatenated, so the rules of extended files come first and this file's rules override them (later matching rules win field by field); `custom` managers are appended; `customDatasources` and `registryAliases` are merged by name, a later file's entry replacing an earlier one's; every other top-level key a later file sets replaces the earlier value as a whole (`labels: []` clears inherited labels, `lockFileMaintenance` and `actions` are replaced, not merged). Keys no file sets keep their defaults; `ignorePaths` keeps the default list unless some file sets it.
 - **Where a rule comes from.** `deps explain` prints each matching rule with its file and line, `(from my-org/deps-config//.deps.yaml:12)` or `(from .deps.yaml:5)`. Rule numbers (`#<i>`, `ignored by rule #<i>`) count the rules of the merged config.
 
 ## `rules`
