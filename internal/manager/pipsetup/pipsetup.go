@@ -164,9 +164,9 @@ func (lx *lexer) literal(file string) (dep.Dep, bool) {
 	if prefix != "" && strings.Trim(prefix, "rRuUfFbB") != "" {
 		plain = false // an identifier, not a prefix
 	}
-	if strings.HasPrefix(lx.src[lx.i:], strings.Repeat(string(q), 3)) {
+	if delim := lx.src[lx.i:min(lx.i+3, len(lx.src))]; delim == `"""` || delim == `'''` {
 		lx.i += 3
-		for lx.i < len(lx.src) && !strings.HasPrefix(lx.src[lx.i:], strings.Repeat(string(q), 3)) {
+		for lx.i < len(lx.src) && !strings.HasPrefix(lx.src[lx.i:], delim) {
 			if lx.src[lx.i] == '\\' {
 				lx.i++
 			}
