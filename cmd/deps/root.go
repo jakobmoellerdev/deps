@@ -28,6 +28,7 @@ import (
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/endoflife"
 	forgeds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gitlabpackages"
@@ -420,6 +421,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		dotnetversion.Name:      dotnetversion.New(client, sem, os.Getenv),
 		debds.Name:              debds.New(client, sem, auth),
 		artifactory.Name:        artifactory.New(client, sem, auth),
+		endoflife.Name:          endoflife.New(client, sem, os.Getenv),
 	}
 	for _, name := range forgeds.Names {
 		sources[name] = forgeds.New(name, client, sem, auth)

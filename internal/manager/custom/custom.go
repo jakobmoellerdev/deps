@@ -85,7 +85,7 @@ type customManager struct {
 // registryURLDatasources are the datasources whose deps take a registryUrl (entry field,
 // regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
 // datasources keep an empty Source.
-var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name, "artifactory", forge.GitLabReleases, forge.GitLabTags, forge.GiteaReleases, forge.GiteaTags, forge.ForgejoReleases, forge.ForgejoTags}
+var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name, "artifactory", forge.GitLabReleases, forge.GitLabTags, forge.GiteaReleases, forge.GiteaTags, forge.ForgejoReleases, forge.ForgejoTags, "endoflife-date"}
 
 // setRegistry sets d.Source to registry when d's datasource takes a registry URL.
 func setRegistry(d *dep.Dep, registry string) {
@@ -544,6 +544,8 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //     forgejo-tags: Name is the project path (`owner/repo`, GitLab `group/subgroup/project`)
 //     or a repository URL `https://host/path`; Source is the registryUrl, if any
 //     (forge.ParseRepo).
+//   - endoflife-date: Name is the endoflife.date product; Source is the registryUrl (the API
+//     base URL), if any.
 //   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
 func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
@@ -593,7 +595,7 @@ func (m *customManager) classify(d *dep.Dep) {
 		if _, err := forge.ParseRepo(d.Datasource, d.Name, d.Source); err != nil {
 			d.Skip = err.Error()
 		}
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "gitlab-packages", "rpm", "apk":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "gitlab-packages", "rpm", "apk", "endoflife-date":
 	case debds.Name:
 		if d.Name == "" || strings.ContainsAny(d.Name, " \t/") {
 			d.Skip = fmt.Sprintf("invalid deb name %q", d.Name)

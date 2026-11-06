@@ -59,7 +59,7 @@ func depTypeNames() []string {
 
 // standaloneDatasources are datasources no built-in manager uses: custom managers and
 // Renovate markers reach them.
-var standaloneDatasources = []string{"gitlab-packages", "rpm", "apk", "deb", "artifactory", "gitlab-releases", "gitlab-tags", "gitea-releases", "gitea-tags", "forgejo-releases", "forgejo-tags"}
+var standaloneDatasources = []string{"gitlab-packages", "rpm", "apk", "deb", "artifactory", "gitlab-releases", "gitlab-tags", "gitea-releases", "gitea-tags", "forgejo-releases", "forgejo-tags", "endoflife-date"}
 
 // datasourceNames are the datasources of all managers' dep types and standaloneDatasources,
 // sorted.

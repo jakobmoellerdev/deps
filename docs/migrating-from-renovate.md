@@ -97,7 +97,7 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `matchCurrentValue` | `rules[].currentVersion` in the regex form: `/re/`, `/re/i`, `!/re/` as written, an exact string `s` as `/^s$/i`; matched against the locked version, else the version as written (the bare version of a range, not Renovate's `^1.2.3`); globs have no equivalent |
 | `matchCurrentAge` | `rules[].currentAge` (`> 1 year`, `< 30 days`; a month is 30 days, a year 365): the release time of the current version, looked up only for deps the rule's other selectors match; unknown times match no rule |
 | `matchSourceUrls` | not supported: the source repository is only known after a per-dep (for docker: per-image config) lookup; match the packages with `names` instead |
-| `matchDatasources` | `rules[].datasources` (`golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags` accepted; `apk`, `deb`, `artifactory`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases` and `forgejo-tags` for custom-manager deps) |
+| `matchDatasources` | `rules[].datasources` (`golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags` accepted; `apk`, `deb`, `artifactory`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags` and `endoflife-date` for custom-manager deps) |
 | `matchBaseBranches` | `rules[].baseBranches` (names, `/regex/`; `!` excludes, as in `names`; globs are not supported): the base branch `run` resolves; `plan`, `apply`, `explain` and `preview` have none, so such rules match nothing there |
 | `matchUpdateTypes` | `rules[].updateTypes`; `pinDigest` = `pin` |
 | `matchCategories` | `deps migrate` expands it to the category's managers; in `.deps.yaml` use `managers`/`datasources` (`golang` ≈ `managers: [gomod]` plus `datasources: [golang-version]`) |
@@ -141,7 +141,7 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `customManagers` (`customType: regex`) | `custom[]` with `match` (Renovate group names accepted) |
 | `managerFilePatterns` / `fileMatch` | `custom[].files` (doublestar globs or `/regex/`; `fileMatch` entries are regexes, so write them as `/…/`) |
 | `datasourceTemplate`, `depNameTemplate`, `versioningTemplate` | `custom[].datasource`, `name`, `versioning` (literal values, no templates) |
-| `registryUrlTemplate`, regex group `registryUrl` | `custom[].registryUrl` (literal values; a templated one is ignored with a note: capture the URL in a `registryUrl` group instead) and the `registryUrl` group, for `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases` and `forgejo-tags` deps. `packageRules[].registryUrls` has no equivalent: set the registry on the custom entry |
+| `registryUrlTemplate`, regex group `registryUrl` | `custom[].registryUrl` (literal values; a templated one is ignored with a note: capture the URL in a `registryUrl` group instead) and the `registryUrl` group, for `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags` and `endoflife-date` deps. `packageRules[].registryUrls` has no equivalent: set the registry on the custom entry |
 | datasource `rpm` (yum/dnf repositories), versioning `rpm` | `rpm` datasource and versioning; rpm deps default to `rpm` versioning, versions are `<ver>-<rel>` as in Renovate |
 | datasource `apk` (Alpine/Wolfi repositories), versioning `apk` | `apk` datasource and versioning; apk deps default to `apk` versioning |
 | datasource `deb` (APT repositories), versioning `deb` | `deb` datasource and versioning; deb deps default to `deb` versioning; registry URLs as in Renovate (`https://deb.debian.org/debian?suite=bookworm&components=main&binaryArch=amd64`) |
@@ -174,13 +174,13 @@ Annotation-mode `custom[]` entries accept Renovate's markers unchanged:
 GOLANGCI_VERSION=v2.5.0
 ```
 
-- `packageName` wins over `depName`, `versioning=` takes a scheme name, `extractVersion=` maps release names (`extractVersion=^jq-(?<version>.+)$`), `registryUrl=` is the registry of `helm`, `gitlab-packages`, `rpm`, `apk` and `deb` deps and the instance of `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases` and `forgejo-tags` (`# renovate: datasource=gitlab-tags depName=group/project registryUrl=https://gitlab.example.com`; ignored for others), and unknown keys are ignored.
+- `packageName` wins over `depName`, `versioning=` takes a scheme name, `extractVersion=` maps release names (`extractVersion=^jq-(?<version>.+)$`), `registryUrl=` is the registry of `helm`, `gitlab-packages`, `rpm`, `apk` and `deb` deps, the API base URL of `endoflife-date` deps and the instance of `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases` and `forgejo-tags` (`# renovate: datasource=gitlab-tags depName=group/project registryUrl=https://gitlab.example.com`; ignored for others), and unknown keys are ignored.
 - The marker applies to the **next line's** first version token. A Renovate regex that spans more lines needs a regex-mode `custom[]` entry instead.
 - deps' own `# deps: <datasource> <name>` form works the same way.
 
 In regex mode, Renovate's group names `currentValue`, `depName`, `packageName` and `currentDigest` are accepted, and so is its `(?<name>…)` syntax. Escaping differs, though: JSON5's `\\d` is YAML's `\d` in single quotes.
 
-A `customManagers` entry's literal `registryUrlTemplate` becomes the entry's `registryUrl` (a templated one is ignored), as does a `(?<registryUrl>…)` group; both apply to `helm`, `gitlab-packages`, `rpm` and `apk` deps and the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags datasources. `datasource=gitlab-packages packageName=<project>:<package>` works as in Renovate; without `registryUrl` deps asks the configured GitLab instance (default gitlab.com).
+A `customManagers` entry's literal `registryUrlTemplate` becomes the entry's `registryUrl` (a templated one is ignored), as does a `(?<registryUrl>…)` group; both apply to `helm`, `gitlab-packages`, `rpm`, `apk` and `endoflife-date` deps and the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags datasources. `datasource=gitlab-packages packageName=<project>:<package>` works as in Renovate; without `registryUrl` deps asks the configured GitLab instance (default gitlab.com).
 
 ## Branch prefix takeover
 

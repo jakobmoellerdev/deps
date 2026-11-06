@@ -487,8 +487,12 @@ func TestRenovateMarkers(t *testing.T) {
 		"1.0.0", // 37
 		"# renovate: datasource=node depName=node", // 38 Renovate's old name
 		"NODE=v26.5.0", // 39
-		"# renovate: datasource=pypi depName=Django", // 40
-		"DJANGO_VERSION=4.2.11",                      // 41
+		"# renovate: datasource=pypi depName=Django",                            // 40
+		"DJANGO_VERSION=4.2.11",                                                 // 41
+		"# renovate: datasource=endoflife-date depName=ubuntu versioning=loose", // 42
+		"UBUNTU=24.04", // 43
+		"# renovate: datasource=endoflife-date depName=nodejs registryUrl=https://eol.example.com/api", // 44
+		"NODE=24.11.0", // 45
 	}, "\n")
 	m := oneWith(t, &config.Config{Custom: []config.Custom{{Files: []string{"**/.env"}}},
 		CustomDatasources: map[string]config.CustomDatasource{"envtest": {URL: "https://x/envtest.yaml"}}})
@@ -514,6 +518,8 @@ func TestRenovateMarkers(t *testing.T) {
 		{37, "custom.missing", "x", "", "semver", "", "", `unknown datasource "custom.missing"`},
 		{39, "node-version", "node", "", "semver", "v26.5.0", "", ""},
 		{41, "pypi", "Django", "", "semver", "4.2.11", "", ""},
+		{43, "endoflife-date", "ubuntu", "", "loose", "24.04", "", ""},
+		{45, "endoflife-date", "nodejs", "https://eol.example.com/api", "semver", "24.11.0", "", ""},
 	})
 }
 
