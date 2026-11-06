@@ -516,12 +516,13 @@ func (r *Rule) Source() (file string, line int) { return r.source, r.line }
 
 // Custom is a custom manager: annotation mode when Match is empty, regex mode otherwise.
 type Custom struct {
-	Files      []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !<pattern> excludes (a negation-only list matches everything else)."`
-	Match      string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
-	Datasource string    `yaml:"datasource" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases."`
-	Name       string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
-	Versioning string    `yaml:"versioning" jsonschema:"default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names."` // default semver
-	Checksum   *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
+	Files       []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !<pattern> excludes (a negation-only list matches everything else)."`
+	Match       string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode."`
+	Datasource  string    `yaml:"datasource" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases."`
+	Name        string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
+	Versioning  string    `yaml:"versioning" jsonschema:"default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names."` // default semver
+	Checksum    *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
+	RegistryURL string    `yaml:"registryUrl" jsonschema_description:"Registry URLs (whitespace-separated) of the matched deps, for the helm and gitlab-packages datasources; a (?P<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources."`
 }
 
 // Checksum locates the sha256/sha512 checksum written next to a version. Its fields are

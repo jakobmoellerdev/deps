@@ -26,6 +26,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gitlabpackages"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
@@ -404,6 +405,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		azuretasks.Name:         azuretasks.New(client, sem, os.Getenv),
 		vcpkgds.Name:            vcpkgds.New(client, sem),
 		elmpackage.Name:         elmpackage.New(client, sem, os.Getenv),
+		gitlabpackages.Name:     gitlabpackages.New(client, sem, auth, env.GitLabURL),
 		packagist.Name:          packagist.New(client, sem, os.Getenv),
 		juliaregistry.Name:      juliaregistry.New(client, sem, os.Getenv),
 		bazelds.Name:            bazelds.New(client, sem, auth, os.Getenv),

@@ -970,3 +970,20 @@ func TestLoadSchedules(t *testing.T) {
 		}
 	}
 }
+
+// A literal registryUrlTemplate becomes the entry's registryUrl; a templated one is ignored.
+func TestLoadRegistryURLTemplate(t *testing.T) {
+	res, err := load(t, `{customManagers: [
+		{customType: 'regex', managerFilePatterns: ['/^versions\\.env$/'], matchStrings: ['GLAB=(?<currentValue>\\S+)'], datasourceTemplate: 'gitlab-packages', packageNameTemplate: 'gitlab-org/cli:glab', registryUrlTemplate: 'https://gitlab.example.com'},
+		{customType: 'regex', managerFilePatterns: ['/^b$/'], matchStrings: ['V=(?<currentValue>\\S+)'], datasourceTemplate: 'gitlab-packages', packageNameTemplate: 'g/p:x', registryUrlTemplate: '{{{registry}}}'}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := section(t, res, "custom")
+	if !strings.Contains(got, "registryUrl: https://gitlab.example.com") || strings.Count(got, "registryUrl") != 1 || !strings.Contains(got, "datasource: gitlab-packages") {
+		t.Errorf("custom:\n%s", got)
+	}
+	if !slices.ContainsFunc(noteLines(res), func(s string) bool { return strings.Contains(s, "customManagers[1].registryUrlTemplate") }) {
+		t.Errorf("notes = %q", noteLines(res))
+	}
+}

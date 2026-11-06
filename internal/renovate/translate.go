@@ -951,7 +951,7 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 		return
 	}
 	var files, matches []string
-	var datasource, name, versioning string
+	var datasource, name, versioning, registry string
 	nameKey := ""
 	for _, k := range slices.Sorted(mapKeys(m)) {
 		v := m[k]
@@ -999,7 +999,13 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 		case "currentValueTemplate", "extractVersionTemplate", "autoReplaceStringTemplate":
 			t.n.warn(origin, "%s has no deps equivalent; dropped", k)
 			return
-		case "registryUrlTemplate", "depTypeTemplate":
+		case "registryUrlTemplate":
+			if strings.Contains(s, "{{") {
+				t.n.info(origin+"."+k, "templated registryUrlTemplate has no deps equivalent; ignored")
+			} else {
+				registry = s
+			}
+		case "depTypeTemplate":
 			t.n.info(origin+"."+k, "no deps equivalent; ignored")
 		default:
 			t.untranslated(origin+"."+k, k)
@@ -1015,6 +1021,9 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 		}
 		if versioning != "" {
 			c.set("versioning", versioning)
+		}
+		if registry != "" {
+			c.set("registryUrl", registry)
 		}
 		o := origin
 		if len(matches) > 1 {

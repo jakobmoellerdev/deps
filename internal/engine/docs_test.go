@@ -19,6 +19,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubreleases"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gitlabpackages"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
@@ -262,7 +263,7 @@ func TestManagerDocsComplete(t *testing.T) {
 }
 
 func TestDatasourceDocsComplete(t *testing.T) {
-	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, customds.Doc}
+	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, customds.Doc}
 	var names []string
 	for _, d := range docs {
 		if d.Name == "" || d.NameForm == "" || d.Endpoints == "" || d.Auth == "" || d.ReleaseTimes == "" {

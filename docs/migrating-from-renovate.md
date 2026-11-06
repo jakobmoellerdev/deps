@@ -169,11 +169,13 @@ Annotation-mode `custom[]` entries accept Renovate's markers unchanged:
 GOLANGCI_VERSION=v2.5.0
 ```
 
-- `packageName` wins over `depName`, `versioning=` takes a scheme name, `extractVersion=` maps release names (`extractVersion=^jq-(?<version>.+)$`), and `registryUrl` and unknown keys are ignored.
+- `packageName` wins over `depName`, `versioning=` takes a scheme name, `extractVersion=` maps release names (`extractVersion=^jq-(?<version>.+)$`), `registryUrl=` is the registry of `helm` and `gitlab-packages` deps (ignored for others), and unknown keys are ignored.
 - The marker applies to the **next line's** first version token. A Renovate regex that spans more lines needs a regex-mode `custom[]` entry instead.
 - deps' own `# deps: <datasource> <name>` form works the same way.
 
 In regex mode, Renovate's group names `currentValue`, `depName`, `packageName` and `currentDigest` are accepted, and so is its `(?<name>…)` syntax. Escaping differs, though: JSON5's `\\d` is YAML's `\d` in single quotes.
+
+A `customManagers` entry's literal `registryUrlTemplate` becomes the entry's `registryUrl` (a templated one is ignored), as does a `(?<registryUrl>…)` group; both apply to `helm` and `gitlab-packages` deps. `datasource=gitlab-packages packageName=<project>:<package>` works as in Renovate; without `registryUrl` deps asks the configured GitLab instance (default gitlab.com).
 
 ## Branch prefix takeover
 

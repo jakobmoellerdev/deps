@@ -581,3 +581,33 @@ func TestRegexAttachmentDigest(t *testing.T) {
 		t.Errorf("edits = %+v, %v", edits, err)
 	}
 }
+
+// registryUrl (entry field, regex group, Renovate marker) is the Source of helm and
+// gitlab-packages deps and ignored for other datasources.
+func TestRegistryURL(t *testing.T) {
+	src := strings.Join([]string{
+		"# renovate: datasource=gitlab-packages packageName=gitlab-org/cli:glab registryUrl=https://gitlab.example.com", // 1
+		"GLAB=1.44.1", // 2
+		"# renovate: datasource=gitlab-packages packageName=g/p:x", // 3
+		"X=1.0.0", // 4
+		"# renovate: datasource=npm depName=left-pad registryUrl=https://npm.example.com", // 5
+		"PAD=1.3.0",                     // 6
+		"# deps: gitlab-packages g/p:y", // 7
+		"Y=2.0.0",                       // 8
+	}, "\n")
+	m := one(t, config.Custom{Files: []string{"f"}, RegistryURL: "https://entry.example.com"})
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "gitlab-packages", "gitlab-org/cli:glab", "https://gitlab.example.com", "semver", "1.44.1", "", ""},
+		{4, "gitlab-packages", "g/p:x", "https://entry.example.com", "semver", "1.0.0", "", ""},
+		{6, "npm", "left-pad", "", "semver", "1.3.0", "", ""},
+		{8, "gitlab-packages", "g/p:y", "https://entry.example.com", "semver", "2.0.0", "", ""},
+	})
+
+	re := one(t, config.Custom{Files: []string{"f"}, Match: `(?m)^(?P<datasource>[a-z-]+) (?P<name>\S+) (?P<version>\S+)(?: (?P<registryUrl>\S+))?$`, RegistryURL: "https://entry.example.com"})
+	src = "gitlab-packages g/p:x 1.0.0 https://group.example.com\ngitlab-packages g/p:y 2.0.0\nnpm left-pad 1.3.0 https://npm.example.com"
+	check(t, src, extract(t, re, src), DepTypeRegex, []want{
+		{1, "gitlab-packages", "g/p:x", "https://group.example.com", "semver", "1.0.0", "", ""},
+		{2, "gitlab-packages", "g/p:y", "https://entry.example.com", "semver", "2.0.0", "", ""},
+		{3, "npm", "left-pad", "", "semver", "1.3.0", "", ""},
+	})
+}

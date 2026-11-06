@@ -57,9 +57,14 @@ func depTypeNames() []string {
 	return out
 }
 
-// datasourceNames are the datasources of all managers' dep types, sorted.
+// standaloneDatasources are datasources no built-in manager uses: custom managers and
+// Renovate markers reach them.
+var standaloneDatasources = []string{"gitlab-packages"}
+
+// datasourceNames are the datasources of all managers' dep types and standaloneDatasources,
+// sorted.
 func datasourceNames() []string {
-	var out []string
+	out := slices.Clone(standaloneDatasources)
 	for _, m := range managers {
 		for _, dt := range m.DepTypes {
 			for _, ds := range dt.Datasources {

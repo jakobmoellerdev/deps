@@ -48,6 +48,10 @@ var Doc = refdoc.Manager{
 			"Renovate markers give the repository as `registryUrl=`: `# renovate: datasource=helm depName=redis registryUrl=https://charts.bitnami.com/bitnami`.",
 			"Regex mode takes `<repository>/<chart>` as the name.",
 		}},
+		{Title: "Registry URLs", Items: []string{
+			"`helm` and `gitlab-packages` deps take their registry from `registryUrl`: a Renovate marker's `registryUrl=`, else a regex `(?P<registryUrl>…)` group, else the entry's `registryUrl` field. Other datasources ignore it.",
+			"`# renovate: datasource=gitlab-packages packageName=gitlab-org/cli:glab registryUrl=https://gitlab.com` (`<project>:<package>`; without a registry URL the configured GitLab instance).",
+		}},
 		{Title: "Release names (extractVersion)", Items: []string{
 			"A Renovate marker's `extractVersion=<RE2>` (or a rule's `extractVersion`, which overrides it) maps release names to versions: `# renovate: datasource=github-releases depName=jqlang/jq extractVersion=^jq-(?<version>.+)$`.",
 			"Release names the expression does not match are ignored; the extracted version is compared and written. Digests, release times and checksum assets are looked up by the original release name.",

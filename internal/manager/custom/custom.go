@@ -73,9 +73,22 @@ type customManager struct {
 	datasource string
 	name       string
 	versioning string
+	registry   string              // registryUrl of the entry; "" = none
 	checksum   *dep.ChecksumSource // nil = no checksum group
 	// submatch group numbers in re; -1 = absent
-	gVersion, gName, gDepName, gPackageName, gDatasource, gVersioning, gDigest, gChecksum int
+	gVersion, gName, gDepName, gPackageName, gDatasource, gVersioning, gDigest, gChecksum, gRegistryURL int
+}
+
+// registryURLDatasources are the datasources whose deps take a registryUrl (entry field,
+// regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
+// datasources keep an empty Source.
+var registryURLDatasources = []string{"helm", "gitlab-packages"}
+
+// setRegistry sets d.Source to registry when d's datasource takes a registry URL.
+func setRegistry(d *dep.Dep, registry string) {
+	if registry != "" && slices.Contains(registryURLDatasources, d.Datasource) {
+		d.Source = registry
+	}
 }
 
 // New returns one manager per cfg.Custom entry, in order. Entries are validated again here so
@@ -106,7 +119,8 @@ func newManager(c config.Custom, known func(string) bool) (*customManager, error
 		return nil, fmt.Errorf("files: %w", err)
 	}
 	m := &customManager{known: known, files: files, datasource: c.Datasource, name: c.Name, versioning: c.Versioning,
-		gVersion: -1, gName: -1, gDepName: -1, gPackageName: -1, gDatasource: -1, gVersioning: -1, gDigest: -1, gChecksum: -1}
+		registry: c.RegistryURL,
+		gVersion: -1, gName: -1, gDepName: -1, gPackageName: -1, gDatasource: -1, gVersioning: -1, gDigest: -1, gChecksum: -1, gRegistryURL: -1}
 	if m.versioning == "" {
 		m.versioning = defaultVersioning
 	}
@@ -132,6 +146,7 @@ func newManager(c config.Custom, known func(string) bool) (*customManager, error
 	m.gVersioning = subexp(re, "versioning")
 	m.gDigest = subexp(re, "digest", "currentDigest")
 	m.gChecksum = subexp(re, "checksum")
+	m.gRegistryURL = subexp(re, "registryUrl")
 	switch {
 	case m.gVersion < 0:
 		return nil, errors.New("match: must have a (?P<version>...) group or a (?P<currentValue>...) group")
@@ -252,6 +267,7 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 			if ann[6] >= 0 {
 				d.Versioning = string(line[ann[6]:ann[7]])
 			}
+			setRegistry(&d, m.registry)
 			if d.Datasource == "helm" {
 				helmChartToken(&d, line[ann[5]:])
 			}
@@ -276,8 +292,8 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 }
 
 // renovateMarker builds the pending dep of a Renovate marker's key=value fields. Name is
-// packageName, else depName; registryUrl is the chart repository of helm deps and ignored
-// otherwise, as are unknown keys. Without a versioning field docker deps use docker
+// packageName, else depName; registryUrl is the Source of registryURLDatasources deps and
+// ignored otherwise, as are unknown keys. Without a versioning field docker deps use docker
 // versioning, others the entry's versioning.
 func (m *customManager) renovateMarker(file string, lineNo int, fields string) dep.Dep {
 	d := dep.Dep{Manager: Name, DepType: DepTypeAnnotation, File: file, Line: lineNo}
@@ -300,9 +316,7 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 		}
 	}
 	d.Name = cmp.Or(pkgName, depName)
-	if d.Datasource == "helm" {
-		d.Source = registry
-	}
+	setRegistry(&d, cmp.Or(registry, m.registry))
 	switch {
 	case d.Datasource == "":
 		d.Skip = "renovate marker without datasource"
@@ -438,6 +452,11 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 			d.ChecksumSpan = dep.Span{Start: s, End: e}
 			d.ChecksumSource = m.checksum
 		}
+		registry := m.registry
+		if s, e, ok := group(loc, m.gRegistryURL); ok && e > s {
+			registry = string(src[s:e])
+		}
+		setRegistry(&d, registry)
 		switch {
 		case !ok || ve == vs:
 			d.Skip = "empty version"
@@ -471,6 +490,7 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //   - helm: Name is `<repository>/<chart>`, or the chart when Source already holds the
 //     repository (annotation `deps: helm <repository> <chart>`, Renovate `registryUrl=`); the
 //     repository is an `https://`, `http://` or `oci://` URL and becomes Source, Name the chart.
+//   - gitlab-packages: Name is `<project>:<package>`; Source is the registryUrl, if any.
 //   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
 func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
@@ -516,7 +536,7 @@ func (m *customManager) classify(d *dep.Dep) {
 			return
 		}
 		d.Source, d.Name = repo, chart
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "gitlab-packages":
 	default:
 		if !strings.HasPrefix(d.Datasource, config.CustomDatasourcePrefix) || !m.known(d.Datasource) {
 			d.Skip = fmt.Sprintf("unknown datasource %q", ds)

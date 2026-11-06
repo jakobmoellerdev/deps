@@ -65,6 +65,7 @@
                 "git-refs",
                 "git-tags",
                 "github-releases",
+                "gitlab-packages",
                 "go",
                 "go-toolchain",
                 "gradle-version",
@@ -114,6 +115,11 @@
           "$ref": "#/$defs/Checksum",
           "description": "Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match.",
           "markdownDescription": "Where the checksum of a new version comes from; regex mode only, requires a (?P\\<checksum>) group in match.\n\nThe regex entry keeps a sha256/sha512 checksum next to the version. This needs a `(?P<checksum>…)` group plus a `checksum:` block with exactly one source:\n\n- `asset` (github-releases only): the release asset's API `digest`. This costs no extra request.\n- `url`: a document downloaded once per URL (1 MiB cap). With `file`, the matching `<hex>  <name>` / `<hex> *<name>` line is used, else the first hex token in the document.\n\nThe only template variable is `{{version}}`, the new version as written into the file. Others are errors (`unknown template variable {{x}} (only {{version}})`). The new checksum must have the same length as the current one and keeps its letter case. If fetching it fails, the dep is not updated, so version and checksum always change together.\n\n```yaml\ncustom:\n  - files: [Dockerfile]\n    match: 'ARG GH_VERSION=(?P<version>\\S+)\\nARG GH_SHA256=(?P<checksum>[0-9a-f]{64})'\n    datasource: github-releases\n    name: cli/cli\n    checksum:\n      url: 'https://github.com/cli/cli/releases/download/v{{version}}/gh_{{version}}_checksums.txt'\n      file: 'gh_{{version}}_linux_amd64.tar.gz'\n```"
+        },
+        "registryUrl": {
+          "type": "string",
+          "description": "Registry URLs (whitespace-separated) of the matched deps, for the helm and gitlab-packages datasources; a (?P<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources.",
+          "markdownDescription": "Registry URLs (whitespace-separated) of the matched deps, for the helm and gitlab-packages datasources; a (?P\\<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources."
         }
       },
       "additionalProperties": false,
@@ -1828,6 +1834,7 @@
                   "git-refs",
                   "git-tags",
                   "github-releases",
+                  "gitlab-packages",
                   "go",
                   "go-toolchain",
                   "gradle-version",

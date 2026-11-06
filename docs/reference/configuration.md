@@ -193,6 +193,7 @@ customDatasources:
     - [`custom[].checksum.asset`](#customchecksumasset)
     - [`custom[].checksum.url`](#customchecksumurl)
     - [`custom[].checksum.file`](#customchecksumfile)
+  - [`custom[].registryUrl`](#customregistryurl)
 - [`customDatasources`](#customdatasources)
   - [`customDatasources.<name>.url`](#customdatasourcesnameurl)
   - [`customDatasources.<name>.format`](#customdatasourcesnameformat)
@@ -1107,7 +1108,7 @@ Only match deps whose file (slash path relative to --dir) matches any of these d
 Only match deps looked up with these datasources, or custom.\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) match their deps datasource.
 
 - **Type:** list of strings
-- **Values:** `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `gitlab-packages`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`, `bitbucket-tags` = `git-tags` (Bitbucket pipes). `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
 
@@ -1568,7 +1569,7 @@ custom:
 Datasource of the matched deps, or custom.\<name> of customDatasources; required in regex mode unless match has a (?P\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases.
 
 - **Type:** string
-- **Values:** `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `docker`, `dotnet-version`, `elm-package`, `git-refs`, `git-tags`, `github-releases`, `gitlab-packages`, `go`, `go-toolchain`, `gradle-version`, `helm`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `ruby-version`, `rubygems`, `rust-version`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 ### `custom[].name`
 
@@ -1625,6 +1626,12 @@ URL of a checksum document (sha256sum style or a bare hex digest). Exclusive wit
 #### `custom[].checksum.file`
 
 Entry name inside the url document (`<hex>  <name>` or `<hex> *<name>`); empty means the first hex token of the body.
+
+- **Type:** string
+
+### `custom[].registryUrl`
+
+Registry URLs (whitespace-separated) of the matched deps, for the helm and gitlab-packages datasources; a (?P\<registryUrl>) group or a Renovate marker's registryUrl= overrides it. Ignored for other datasources.
 
 - **Type:** string
 
