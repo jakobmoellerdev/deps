@@ -412,6 +412,7 @@ func (r *baseRun) handleGroups(ctx context.Context, o Options, dash *dashboard, 
 	}
 	inputs := inputFingerprints(ctx, o, root, s.head, groups, ran, post, r.Git)
 	skipped := make([]bool, len(groups))
+	fetched := make([]*fetchedPR, len(groups))
 	logs := newPRLogs(ctx, o.PRLog, groups)
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
@@ -419,9 +420,18 @@ func (r *baseRun) handleGroups(ctx context.Context, o Options, dash *dashboard, 
 		if !ran[i] {
 			continue
 		}
-		if pr := prOf(s.open, groups[i].Branch); pr != nil && reusable(o, *pr, inputs[i], forced[i]) {
+		pr := prOf(s.open, groups[i].Branch)
+		if pr != nil && reusable(o, *pr, inputs[i], forced[i]) {
 			slog.DebugContext(logs.ctx(i), "input fingerprint matches the open PR, not building", "branch", groups[i].Branch, "number", pr.Number, "input", inputs[i])
 			skipped[i] = true
+			if looksUpMergeable(o, pr, forced[i]) {
+				// handle treats the PR as matched: look its mergeability up alongside the builds.
+				wg.Go(func() {
+					sem <- struct{}{}
+					defer func() { <-sem }()
+					fetched[i] = fetchPR(logs.ctx(i), pc, pr.Number)
+				})
+			}
 			continue
 		}
 		wg.Go(func() {
@@ -431,6 +441,9 @@ func (r *baseRun) handleGroups(ctx context.Context, o Options, dash *dashboard, 
 			changes, errs := build(logs.ctx(i), o, root, s.head, groups[i].Updates, post)
 			built[i], buildErrs[i] = changes, errs
 			logs.spent[i] += time.Since(start)
+			if errs == nil && len(changes) > 0 && looksUpMergeable(o, pr, forced[i]) && bodyFingerprint(pr.Body) == fingerprint(changes) {
+				fetched[i] = fetchPR(logs.ctx(i), pc, pr.Number)
+			}
 		})
 	}
 	wg.Wait()
@@ -463,7 +476,7 @@ func (r *baseRun) handleGroups(ctx context.Context, o Options, dash *dashboard, 
 				delete(wanted, grp.Branch)
 				return
 			}
-			b := groupBuild{changes: built[i], input: inputs[i]}
+			b := groupBuild{changes: built[i], input: inputs[i], pr: fetched[i]}
 			if skipped[i] {
 				b.build = func() ([]engine.FileChange, error) {
 					changes, errs := build(ctx, o, root, s.head, grp.Updates, post)
@@ -715,6 +728,25 @@ type groupBuild struct {
 	changes []engine.FileChange
 	input   string // input fingerprint; "" = none
 	build   func() ([]engine.FileChange, error)
+	pr      *fetchedPR // the open PR as GetPR returned it, fetched ahead; nil = not fetched
+}
+
+// fetchedPR is a GetPR result.
+type fetchedPR struct {
+	pr  platform.PR
+	err error
+}
+
+func fetchPR(ctx context.Context, pc platform.Client, number int) *fetchedPR {
+	pr, err := pc.GetPR(ctx, number)
+	return &fetchedPR{pr: pr, err: err}
+}
+
+// looksUpMergeable reports whether handle looks up the mergeability of the open PR pr once its
+// fingerprint matches: the PR listing left it unknown (GitHub's never reports it) and it
+// decides whether the PR is rebuilt.
+func looksUpMergeable(o Options, pr *platform.PR, f force) bool {
+	return pr != nil && pr.Mergeable == nil && !f.rebase && o.RebaseWhen != config.RebaseNever
 }
 
 // errNoChanges is handle's error when a deferred build (groupBuild.build) yields no changes.
@@ -807,11 +839,14 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 		}
 		mergeable := pr.Mergeable
 		if mergeable == nil {
-			full, err := pc.GetPR(ctx, pr.Number)
-			if err != nil {
-				return a, nil, err
+			got := b.pr
+			if got == nil {
+				got = fetchPR(ctx, pc, pr.Number)
 			}
-			mergeable = full.Mergeable
+			if got.err != nil {
+				return a, nil, got.err
+			}
+			mergeable = got.pr.Mergeable
 		}
 		if mergeable != nil && !*mergeable {
 			slog.DebugContext(ctx, "PR not mergeable, rebuilding", "branch", grp.Branch, "number", pr.Number)

@@ -59,9 +59,9 @@ type fakeGit struct {
 // newTree is the tree fakeGit.WriteTree writes.
 const newTree = "7777777777777777777777777777777777777777"
 
-// fakeListMu guards the fake fields Run's concurrent state reads write
-// (fakeGit.patterns, fakePC.issuePages); the fakes are copied by value in
-// test tables, so the lock cannot live in them.
+// fakeListMu guards the fake fields Run's concurrent state reads and
+// mergeability lookups write (fakeGit.patterns, fakePC.issuePages, fakePC.got);
+// the fakes are copied by value in test tables, so the lock cannot live in them.
 var fakeListMu sync.Mutex
 
 func (g *fakeGit) RevParse(context.Context, string) (string, error) {
@@ -187,7 +187,9 @@ func (c *fakePC) GetPR(_ context.Context, n int) (platform.PR, error) {
 	if err := fail(c.fail, "GetPR", ""); err != nil {
 		return platform.PR{}, err
 	}
+	fakeListMu.Lock()
 	c.got = append(c.got, n)
+	fakeListMu.Unlock()
 	return platform.PR{Number: n, Mergeable: c.mergeable, HeadSHA: c.headSHA}, nil
 }
 func (c *fakePC) CreatePR(_ context.Context, head, base, title, body string, draft bool) (platform.PR, error) {
@@ -1080,5 +1082,67 @@ func TestRunPRLog(t *testing.T) {
 	}
 	if begun[branchA] != 1 || begun[branchB] != 1 || done[branchA] != StatusCreated || done[branchB] != "error" {
 		t.Errorf("begun = %v, done = %v", begun, done)
+	}
+}
+
+// barrierGetPC blocks each GetPR until want lookups are in flight (or a timeout), recording
+// the most seen at once.
+type barrierGetPC struct {
+	fakePC
+	want     int
+	mu       sync.Mutex
+	inFlight int
+	most     int
+	all      chan struct{}
+}
+
+func (c *barrierGetPC) GetPR(ctx context.Context, n int) (platform.PR, error) {
+	c.mu.Lock()
+	c.inFlight++
+	c.most = max(c.most, c.inFlight)
+	if c.inFlight == c.want {
+		close(c.all)
+	}
+	c.mu.Unlock()
+	select {
+	case <-c.all:
+	case <-time.After(time.Second):
+	}
+	c.mu.Lock()
+	c.inFlight--
+	c.mu.Unlock()
+	return c.fakePC.GetPR(ctx, n)
+}
+
+// TestRunLooksUpMergeableConcurrently checks that the mergeability of matched open PRs the
+// listing left unknown is looked up concurrently, built or not, not one group after another.
+func TestRunLooksUpMergeableConcurrently(t *testing.T) {
+	yes := true
+	root, res := fixture(t)
+	fpA, fpB := fingerprintOf(t, root, res, "a/x"), fingerprintOf(t, root, res, "b/y")
+	in := inputOf(t, root, res, "b/y", nil, &fakeGit{})
+	if in == "" {
+		t.Fatal("no input fingerprint")
+	}
+	pc := &barrierGetPC{want: 2, all: make(chan struct{}), mergeable: &yes, open: []platform.PR{
+		{Number: 1, Head: branchA, Body: "x\n<!-- deps:fingerprint=" + fpA + " -->\n"},
+		// b/y's input matches: not built, only looked up.
+		{Number: 2, Head: branchB, Body: withInput("x\n<!-- deps:fingerprint="+fpB+" -->\n", in)},
+	}}
+	g := &fakeGit{
+		branches: map[string]string{"refs/heads/" + branchA: "x", "refs/heads/" + branchB: "y"},
+		authors:  map[string]string{branchA: email, branchB: email},
+	}
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	for _, a := range acts {
+		if a.Status != StatusUpToDate {
+			t.Errorf("%s: status %s, want %s", a.Branch, a.Status, StatusUpToDate)
+		}
+	}
+	if len(pc.got) != 2 || pc.most != 2 {
+		t.Errorf("GetPR calls = %v, at most %d at once, want 2 concurrent", pc.got, pc.most)
 	}
 }
