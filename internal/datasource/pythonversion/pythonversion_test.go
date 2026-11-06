@@ -125,7 +125,7 @@ func TestReleasesErrors(t *testing.T) {
 		"[]": "no releases",
 		`[{"name":"Python install manager 26.4","is_published":true}]`: "no releases",
 		`{"detail":"x"}`: "malformed release list",
-		`[{"name":1}]`:   "cannot unmarshal",
+		`[{"name":1}]`:   "name", // the decoder's wording differs between Go releases
 	} {
 		s := newSource(t, body, &hits)
 		_, err := s.Releases(ctx, dep.Dep{}, "")
