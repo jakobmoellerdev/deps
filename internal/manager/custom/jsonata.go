@@ -269,33 +269,35 @@ func firstString(o map[string]any, keys []string) string {
 
 // occurrences returns the non-overlapping places src spells a wanted value, in file order;
 // at one offset the longest value wins. Unless glued, the bytes before and after an
-// occurrence must not be ASCII letters or digits.
+// occurrence must not be ASCII letters or digits. It scans src once, trying at each offset
+// the lengths of the wanted values whose first byte is there, longest first.
 func occurrences(src []byte, want map[string]bool, glued bool) []occurrence {
-	var occ []occurrence
+	var lens [256][]int // per first byte, the distinct lengths of wanted values, descending
 	for v := range want {
-		b := []byte(v)
-		for off := 0; ; {
-			i := bytes.Index(src[off:], b)
-			if i < 0 {
-				break
-			}
-			s, e := off+i, off+i+len(b)
-			if glued || (s == 0 || !isAlnum(src[s-1])) && (e == len(src) || !isAlnum(src[e])) {
-				occ = append(occ, occurrence{s, e, v})
-			}
-			off = s + 1
+		if l := &lens[v[0]]; !slices.Contains(*l, len(v)) {
+			*l = append(*l, len(v))
 		}
 	}
-	slices.SortFunc(occ, func(a, b occurrence) int { return cmp.Or(a.start-b.start, b.end-a.end) })
-	out := occ[:0]
-	end := 0
-	for _, o := range occ {
-		if o.start >= end {
-			out = append(out, o)
-			end = o.end
+	for i := range lens {
+		slices.SortFunc(lens[i], func(a, b int) int { return b - a })
+	}
+	var occ []occurrence
+	text := string(src) // occurrence values share one copy
+	for s := 0; s < len(src); s++ {
+		if !glued && s > 0 && isAlnum(src[s-1]) {
+			continue
+		}
+		for _, n := range lens[src[s]] {
+			e := s + n
+			if e > len(src) || !want[text[s:e]] || !glued && e < len(src) && isAlnum(src[e]) {
+				continue
+			}
+			occ = append(occ, occurrence{s, e, text[s:e]})
+			s = e - 1
+			break
 		}
 	}
-	return out
+	return occ
 }
 
 func isAlnum(c byte) bool {

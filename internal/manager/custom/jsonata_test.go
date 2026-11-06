@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -304,5 +305,61 @@ func TestYAMLDocumentScalars(t *testing.T) {
 	}
 	if _, err := jsonataDocument("xml", nil); err == nil {
 		t.Error("xml: no error")
+	}
+}
+
+// BenchmarkJSONataLockfile extracts a package-lock-like file of 2000 packages.
+func BenchmarkJSONataLockfile(b *testing.B) {
+	var sb strings.Builder
+	sb.WriteString("{\n  \"name\": \"app\",\n  \"lockfileVersion\": 3,\n  \"packages\": {\n")
+	for i := range 2000 {
+		if i > 0 {
+			sb.WriteString(",\n")
+		}
+		fmt.Fprintf(&sb, "    \"node_modules/pkg-%d\": {\n      \"version\": \"%d.%d.%d\",\n      \"resolved\": \"https://registry.npmjs.org/pkg-%d/-/pkg-%d-%d.%d.%d.tgz\",\n      \"integrity\": \"sha512-%040d\"\n    }",
+			i, i%7, i%13, i, i, i, i%7, i%13, i, i)
+	}
+	sb.WriteString("\n  }\n}\n")
+	src := []byte(sb.String())
+	c := jsonataEntry("json", `$each(packages, function($v, $k) { {"depName": $substringAfter($k, "node_modules/"), "currentValue": $v.version} })`)
+	c.Datasource = "npm"
+	m, err := New(&config.Config{Custom: []config.Custom{c}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		deps, err := m[0].Extract("package-lock.json", src, manager.Env{})
+		if err != nil || len(deps) != 2000 || deps[1999].RefSpan.End == 0 {
+			b.Fatal(err, len(deps))
+		}
+	}
+}
+
+func TestOccurrences(t *testing.T) {
+	want := map[string]bool{"1.2": true, "1.2.3": true, "2.3": true, "v1": true}
+	for _, c := range []struct {
+		src   string
+		glued bool
+		want  string
+	}{
+		// Longest at one offset wins; occurrences do not overlap.
+		{`"1.2.3" 1.2.3`, false, "1:6=1.2.3 8:13=1.2.3"},
+		// Unless glued, an alphanumeric neighbor rejects the longer value but not a shorter one.
+		{`1.2.3a 1.2.x`, false, "0:3=1.2 7:10=1.2"},
+		{`x1.2.3 v1`, false, "3:6=2.3 7:9=v1"},
+		{`x1.2.3 v1`, true, "1:6=1.2.3 7:9=v1"},
+		// A rejected occurrence leaves its bytes free for a later start.
+		{`a1.2.3 `, false, "3:6=2.3"},
+		{`1.2.3`, true, "0:5=1.2.3"},
+		{``, false, ""},
+	} {
+		var got []string
+		for _, o := range occurrences([]byte(c.src), want, c.glued) {
+			got = append(got, fmt.Sprintf("%d:%d=%s", o.start, o.end, o.value))
+		}
+		if g := strings.Join(got, " "); g != c.want {
+			t.Errorf("occurrences(%q, glued=%v) = %q, want %q", c.src, c.glued, g, c.want)
+		}
 	}
 }
