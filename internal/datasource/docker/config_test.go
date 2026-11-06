@@ -1,6 +1,9 @@
 package dockerds
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +35,21 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 		SchemaVersion: 2, MediaType: ocispec.MediaTypeImageManifest, Config: noCreated, Layers: []ocispec.Descriptor{},
 		Annotations: map[string]string{ocispec.AnnotationCreated: imgTime.Add(3 * time.Hour).Format(time.RFC3339)},
 	}))
+	// Helm charts without the created annotation (as bitnamicharts push them) are dated by the
+	// first entry of their chart archive; an unreadable archive or an epoch stamp is unknown.
+	chartLayer := func(b []byte) []ocispec.Descriptor {
+		return []ocispec.Descriptor{f.reg.putRaw(mediaTypeHelmChart, b)}
+	}
+	for tag, layers := range map[string][]ocispec.Descriptor{
+		"6.1": chartLayer(chartArchive(t, imgTime.Add(4*time.Hour))),
+		"6.2": chartLayer([]byte("not gzip")),
+		"6.3": chartLayer(chartArchive(t, time.Unix(0, 0))),
+		"6.4": {},
+	} {
+		f.reg.tag("img", tag, f.reg.put(t, ocispec.MediaTypeImageManifest, ocispec.Manifest{
+			SchemaVersion: 2, MediaType: ocispec.MediaTypeImageManifest, Config: chartCfg, Layers: layers,
+		}))
+	}
 
 	s := newSource(f.srv.Client(), make(chan struct{}, 1), anon)
 	var (
@@ -47,6 +65,10 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 		{version: "4.0", want: imgTime.Add(time.Hour)},
 		{version: "5.0", wantErr: "index has no platform image"},
 		{version: "6.0", want: imgTime.Add(2 * time.Hour), wantSource: "https://github.com/o/chart"},
+		{version: "6.1", want: imgTime.Add(4 * time.Hour)},
+		{version: "6.2"},
+		{version: "6.3"},
+		{version: "6.4"},
 		{version: "7.0", want: imgTime.Add(3 * time.Hour)},
 		{version: "9.9", wantErr: "image config " + f.host + "/img:9.9"},
 	}
@@ -74,6 +96,31 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	if _, err := timer.ReleaseTime(t.Context(), dep.Dep{Name: "Bad Name"}, "1"); err == nil {
 		t.Error("invalid image: no error")
 	}
+}
+
+// chartArchive returns a chart archive as `helm package` writes it: a gzipped tar whose
+// entries are stamped with the packaging time.
+func chartArchive(t *testing.T, at time.Time) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	for _, name := range []string{"nginx/Chart.yaml", "nginx/values.yaml"} {
+		body := []byte("name: nginx\n")
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), ModTime: at}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 // TestConfigPullLimited checks that on the pull-limited registry (Docker Hub) configs are

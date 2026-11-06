@@ -1,0 +1,87 @@
+{
+  "url": "https://gitea.com/api/v1/repos/gitea/tea/git/commits/9c12138d6273ba8feb6e7578833cc330c0cd6461",
+  "sha": "9c12138d6273ba8feb6e7578833cc330c0cd6461",
+  "created": "2026-09-10T04:29:39Z",
+  "html_url": "https://gitea.com/gitea/tea/commit/9c12138d6273ba8feb6e7578833cc330c0cd6461",
+  "commit": {
+    "url": "https://gitea.com/api/v1/repos/gitea/tea/git/commits/9c12138d6273ba8feb6e7578833cc330c0cd6461",
+    "author": {
+      "name": "ongolk",
+      "email": "238961+ongolk@noreply.gitea.com",
+      "date": "2026-09-10T04:29:39Z"
+    },
+    "committer": {
+      "name": "Lunny Xiao",
+      "email": "xiaolunwen@gmail.com",
+      "date": "2026-09-10T04:29:39Z"
+    },
+    "message": "Make `tea issues create` honor `--output json` (#1114)\n\n## Problem\n\nFollow-up to #1111, covering the issues side of the same hole: `tea issues create` accepts `--output` (it parses through the urfave/cli v3 ancestor-flag cascade — `issues` carries the flag via `AllDefaultFlags`, `create` never declares it) but the action never reads it. Without this fix, `tea issues create --output json | jq .url` feeds jq a markdown document.\n\nThe default output is doubly hostile to consumers: glamour renders the details as markdown (with OSC 8 hyperlinks around the URL when piped), and a second bare `fmt.Println(issue.HTMLURL)` line follows it.\n\n## What this changes\n\n- `task.CreateIssue` now returns the created `*gitea.Issue` instead of printing it.\n- `runIssuesCreate` switches on `--output`, mirroring the detail-command precedent and the merged create-PR behavior from #1111: `--output json` emits compact lean JSON; any other value (or no flag) falls through to the previous rendering, byte-identical to before.\n- Lean JSON shape: `index`, `title`, `url`, `state` — matching `createdPullJSON` in `cmd/pulls/create.go`, including its post-review compact encoding.\n- The interactive path is untouched — it only triggers when zero flags are set, so `--output` can never be active there.\n\nExample:\n\n```\n$ tea issues create --output json --title \"bug: thing\" | jq -r .url\nhttps://gitea.example.com/owner/repo/issues/42\n```\n\nThere is no agit-flow equivalent on issues, so no extra guard is needed — unlike the pulls side, every creation path produces an `*gitea.Issue`.\n\n---------\n\nCo-authored-by: Danilo Sousa <code@danilosousa.net>\nReviewed-on: https://gitea.com/gitea/tea/pulls/1114\nReviewed-by: Lunny Xiao <xiaolunwen@gmail.com>\nCo-authored-by: ongolk <238961+ongolk@noreply.gitea.com>\n",
+    "tree": {
+      "url": "https://gitea.com/api/v1/repos/gitea/tea/git/trees/9aef378fedad0e977c82dbf1c98e88750b86a95e",
+      "sha": "9aef378fedad0e977c82dbf1c98e88750b86a95e",
+      "created": "2026-09-10T04:29:39Z"
+    },
+    "verification": null
+  },
+  "author": {
+    "id": 238961,
+    "login": "ongolk",
+    "type": "User",
+    "login_name": "",
+    "source_id": 0,
+    "full_name": "Danilo",
+    "email": "238961+ongolk@noreply.gitea.com",
+    "avatar_url": "https://gitea.com/avatars/bcf62ffea1913d84109a908a52d59504f020943568265ccb2627dc1e06ebe125",
+    "html_url": "https://gitea.com/ongolk",
+    "language": "",
+    "is_admin": false,
+    "last_login": "0001-01-01T00:00:00Z",
+    "created": "2026-09-04T13:31:35Z",
+    "restricted": false,
+    "active": false,
+    "prohibit_login": false,
+    "location": "",
+    "website": "https://danilo.ooo",
+    "description": "",
+    "visibility": "public",
+    "followers_count": 0,
+    "following_count": 0,
+    "starred_repos_count": 0,
+    "username": "ongolk"
+  },
+  "committer": {
+    "id": 1,
+    "login": "lunny",
+    "type": "User",
+    "login_name": "",
+    "source_id": 0,
+    "full_name": "Lunny Xiao",
+    "email": "1+lunny@noreply.gitea.com",
+    "avatar_url": "https://gitea.com/avatars/5739143ce171af62d1ff0baa027dacfd5e5ffe9c28b7b92fc4ed02d952ab1cc3",
+    "html_url": "https://gitea.com/lunny",
+    "language": "",
+    "is_admin": false,
+    "last_login": "0001-01-01T00:00:00Z",
+    "created": "2018-11-27T17:33:38Z",
+    "restricted": false,
+    "active": false,
+    "prohibit_login": false,
+    "location": "Silicon Valley",
+    "website": "https://gitea.com",
+    "description": "",
+    "visibility": "public",
+    "followers_count": 115,
+    "following_count": 95,
+    "starred_repos_count": 365,
+    "username": "lunny"
+  },
+  "parents": [
+    {
+      "url": "https://gitea.com/api/v1/repos/gitea/tea/git/commits/4d09587d4cb53dd3d7becee4514118993b01f7e0",
+      "sha": "4d09587d4cb53dd3d7becee4514118993b01f7e0",
+      "created": "0001-01-01T00:00:00Z"
+    }
+  ],
+  "files": null,
+  "stats": null
+}

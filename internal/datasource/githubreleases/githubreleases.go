@@ -26,8 +26,12 @@ func New(gh *githubapi.Client) *Source { return &Source{gh: gh} }
 
 // Releases lists the non-draft, non-prerelease releases of d.Name (`owner/repo` on github.com
 // or `http(s)://host/owner/repo` on GitHub Enterprise Server), newest first. Pages are fetched
-// only until d.Version's release is listed (everything newer precedes it; at most 500
-// releases); Version is the tag name and Digest is empty. The slice must not be modified.
+// only until d.Version's release (a prerelease too) is listed, else up to githubapi.MaxPages:
+// the list is ordered by creation, so every release created after the current one precedes
+// it. A higher release created before it (the current one is a backport) is missed only when
+// its whole line saw no release while a page of the current line's followed; Renovate lists
+// every page instead. Version is the tag name and Digest is empty. The slice must not be
+// modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
 	var rels []datasource.Release
 	err := s.with(ctx, d.Name, d.Version, func(l *githubapi.List) { rels = l.Stable() })
@@ -35,13 +39,31 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 }
 
 // with runs fn on the repository's release list after fetching pages until version's release
-// is listed or no pages are left.
+// (a prerelease too) is listed or no pages are left.
 func (s *Source) with(ctx context.Context, name, version string, fn func(*githubapi.List)) error {
 	r, err := githubapi.ParseRepo(name)
 	if err != nil {
 		return err
 	}
-	return s.gh.Releases(ctx, r, func(l *githubapi.List) bool { _, _, ok := release(l, version); return ok }, fn)
+	return s.gh.Releases(ctx, r, func(l *githubapi.List) bool { return listed(l, version) }, fn)
+}
+
+// listed reports whether l lists a release of version: the tag equal to version, or to version
+// with a leading "v" added or removed.
+func listed(l *githubapi.List, version string) bool {
+	if _, ok := l.Find(version); ok {
+		return true
+	}
+	_, ok := l.Find(otherTag(version))
+	return ok
+}
+
+// otherTag returns version with a leading "v" removed, or added when it has none.
+func otherTag(version string) string {
+	if tag, ok := strings.CutPrefix(version, "v"); ok {
+		return tag
+	}
+	return "v" + version
 }
 
 // release returns the published, non-prerelease release of version: the tag equal to version,
@@ -50,10 +72,7 @@ func release(l *githubapi.List, version string) (string, githubapi.Release, bool
 	if rel, ok := l.Find(version); ok && !rel.Prerelease {
 		return version, rel, true
 	}
-	tag, ok := strings.CutPrefix(version, "v")
-	if !ok {
-		tag = "v" + version
-	}
+	tag := otherTag(version)
 	if rel, ok := l.Find(tag); ok && !rel.Prerelease {
 		return tag, rel, true
 	}

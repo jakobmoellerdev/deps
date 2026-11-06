@@ -319,3 +319,41 @@ func TestNewUnknownPanics(t *testing.T) {
 	}()
 	New("github-releases", nil, nil, nil)
 }
+
+// TestCommitTime reads the committer date from responses captured from gitlab.com
+// (gitlab-org/cli) and gitea.com (gitea/tea); a missing commit is zero.
+func TestCommitTime(t *testing.T) {
+	const (
+		glSHA = "519ea19f7d3e9c701a4063f277ae27254bbafdad"
+		gtSHA = "9c12138d6273ba8feb6e7578833cc330c0cd6461"
+	)
+	var queries []string
+	srv := serve(t, map[string]string{
+		"/api/v4/projects/gitlab-org%2Fcli/repository/commits/" + glSHA: "gitlab-commit.json",
+		"/api/v1/repos/gitea/tea/git/commits/" + gtSHA:                  "gitea-commit.json",
+	}, func(r *http.Request) { queries = append(queries, r.URL.RawQuery) })
+	for _, tc := range []struct {
+		ds, name, commit string
+		want             time.Time
+	}{
+		{GitLabTags, "gitlab-org/cli", glSHA, time.Date(2026, 11, 3, 11, 7, 41, 0, time.UTC)},
+		{GiteaTags, "gitea/tea", gtSHA, time.Date(2026, 9, 10, 4, 29, 39, 0, time.UTC)},
+		{GitLabTags, "gitlab-org/cli", gtSHA, time.Time{}},
+	} {
+		got, err := New(tc.ds, srv.Client(), nil, newAuth()).CommitTime(t.Context(), dep.Dep{Name: tc.name, Source: srv.URL}, tc.commit)
+		if err != nil || !got.Equal(tc.want) {
+			t.Errorf("%s %s@%s = %v, %v; want %v", tc.ds, tc.name, tc.commit, got, err, tc.want)
+		}
+	}
+	if queries[1] != "stat=false&verification=false&files=false" {
+		t.Errorf("gitea query = %q", queries[1])
+	}
+	if _, err := New(GitLabTags, srv.Client(), nil, newAuth()).CommitTime(t.Context(), dep.Dep{Name: "x"}, glSHA); err == nil {
+		t.Error("invalid name: no error")
+	}
+	srvErr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }))
+	t.Cleanup(srvErr.Close)
+	if _, err := New(GiteaTags, srvErr.Client(), nil, newAuth()).CommitTime(t.Context(), dep.Dep{Name: "o/r", Source: srvErr.URL}, glSHA); err == nil {
+		t.Error("HTTP 418: no error")
+	}
+}

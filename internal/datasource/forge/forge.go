@@ -235,6 +235,40 @@ func (s *Source) Digest(ctx context.Context, d dep.Dep, version string) (string,
 	return commit, nil
 }
 
+// CommitTime returns the committer date of commit in d's repository (GitLab
+// `GET /projects/<path>/repository/commits/<sha>`, `committed_date`; Gitea/Forgejo
+// `GET /repos/<owner>/<repo>/git/commits/<sha>`, `created`); zero when the commit is not found.
+// Callers dedupe.
+func (s *Source) CommitTime(ctx context.Context, d dep.Dep, commit string) (time.Time, error) {
+	r, err := ParseRepo(s.name, d.Name, d.Source)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var target string
+	if s.spec.gitlab {
+		target = r.Base + "/api/v4/projects/" + url.PathEscape(r.Path) + "/repository/commits/" + url.PathEscape(commit)
+	} else {
+		owner, repo, _ := strings.Cut(r.Path, "/")
+		target = r.Base + "/api/v1/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/git/commits/" +
+			url.PathEscape(commit) + "?stat=false&verification=false&files=false"
+	}
+	var c struct {
+		CommittedDate time.Time `json:"committed_date"` // GitLab
+		Created       time.Time `json:"created"`        // Gitea
+	}
+	status, _, err := s.get(ctx, target, func(body io.Reader) error { return json.UnmarshalRead(body, &c) })
+	if status == http.StatusNotFound {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	if s.spec.gitlab {
+		return c.CommittedDate, nil
+	}
+	return c.Created, nil
+}
+
 func (s *Source) list(ctx context.Context, d dep.Dep) (*list, error) {
 	r, err := ParseRepo(s.name, d.Name, d.Source)
 	if err != nil {

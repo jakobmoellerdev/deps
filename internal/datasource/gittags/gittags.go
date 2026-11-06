@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
+	forgeds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
@@ -41,6 +42,7 @@ type Lister struct {
 	auth   *httpx.Auth
 	sem    chan struct{}
 	gh     *githubapi.Client // release times of github.com repositories
+	gitlab *GitLab           // release times of GitLab repositories; nil: none
 
 	times datasource.Memo[string, time.Time]  // repository URL + "@" + tag, for tags not in the release lists
 	tags  datasource.Memo[string, *entry]     // repository URL -> tags
@@ -66,6 +68,21 @@ type entry struct {
 // whose release lists the github-releases datasource shares.
 func New(client *http.Client, auth *httpx.Auth, sem chan struct{}, gh *githubapi.Client) *Lister {
 	return &Lister{client: client, auth: auth, sem: sem, gh: gh}
+}
+
+// GitLab names the GitLab instances whose repositories' tags are dated through the GitLab API
+// rather than probed for Gitea's: by the gitlab-releases and gitlab-tags datasources, whose
+// lists their own deps share.
+type GitLab struct {
+	Bases          []string        // instance URLs: https://gitlab.com, a self-managed `https://host[/path]`
+	Releases, Tags *forgeds.Source // the gitlab-releases and gitlab-tags datasources
+}
+
+// WithGitLab dates the tags of repositories under gl.Bases with gl's datasources (see
+// ReleaseTime); it returns l. Call it before the first lookup.
+func (l *Lister) WithGitLab(gl GitLab) *Lister {
+	l.gitlab = &gl
+	return l
 }
 
 // Tags returns the tags of the repository at repoURL (e.g. https://github.com/actions/checkout).
@@ -142,9 +159,9 @@ func (r Refs) Digest(ctx context.Context, d dep.Dep, ref string) (string, error)
 }
 
 // CommitTime implements datasource.CommitTimer: the committer date of commit in d.Source, via
-// the GitHub API for github.com and the Gitea/Forgejo API (`<server>/api/v1`) for other hosts;
-// zero when unknown (a host without either API, a missing commit). Once per repository and
-// commit.
+// the GitHub API for github.com, the GitLab API for the GitLab instances (WithGitLab) and the
+// Gitea/Forgejo API (`<server>/api/v1`) for other hosts; zero when unknown (a host without
+// any of them, a missing commit). Once per repository and commit.
 func (l *Lister) CommitTime(ctx context.Context, d dep.Dep, commit string) (time.Time, error) {
 	repoURL := strings.TrimSuffix(d.Source, "/")
 	return l.times.Do(ctx, repoURL+"#"+commit, func() (time.Time, error) {
@@ -152,6 +169,8 @@ func (l *Lister) CommitTime(ctx context.Context, d dep.Dep, commit string) (time
 		var err error
 		if r, isGH := githubRepo(repoURL); isGH {
 			t, err = l.gh.CommitTime(ctx, r, commit)
+		} else if fd, isGL := l.gitlabRepo(repoURL); isGL {
+			t, err = l.gitlab.Tags.CommitTime(ctx, fd, commit)
 		} else {
 			t, err = l.giteaCommitTime(ctx, repoURL, commit)
 		}
@@ -161,8 +180,9 @@ func (l *Lister) CommitTime(ctx context.Context, d dep.Dep, commit string) (time
 }
 
 // ReleaseTime implements datasource.Timer for tag version in d.Source, via the GitHub API for
-// github.com and the Gitea/Forgejo API (`<server>/api/v1`) for other hosts; on a host without
-// either API it is unknown (zero). The time is, in this order:
+// github.com, the GitLab API for the GitLab instances (WithGitLab; see gitlabTime) and the
+// Gitea/Forgejo API (`<server>/api/v1`) for other hosts; on a host without any of them it is
+// unknown (zero). The time is, in this order:
 //   - the publication time of the tag's release;
 //   - for a tag without a release of its own (a floating `v25` next to the `v25.0.0` release,
 //     or a repository that only tags), the earliest publication time of a listed release
@@ -176,6 +196,9 @@ func (l *Lister) CommitTime(ctx context.Context, d dep.Dep, commit string) (time
 func (l *Lister) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
 	repoURL := strings.TrimSuffix(d.Source, "/")
 	r, isGH := githubRepo(repoURL)
+	if fd, isGL := l.gitlabRepo(repoURL); isGL && !isGH {
+		return l.tagTime(ctx, repoURL, version, func() (time.Time, error) { return l.gitlabTime(ctx, repoURL, fd, version) })
+	}
 	var (
 		t        time.Time
 		complete bool // the list decides whether the tag has a release
@@ -229,37 +252,18 @@ func (l *Lister) unreleasedTime(ctx context.Context, repoURL string, r githubapi
 	if err != nil {
 		return time.Time{}, err
 	}
-	var commit string
-	if i := slices.IndexFunc(tags, func(t Tag) bool { return t.Name == tag }); i >= 0 {
-		commit = tags[i].Commit
-	}
 	var t time.Time
-	earliest := func(p time.Time) {
-		if !p.IsZero() && (t.IsZero() || p.Before(t)) {
-			t = p
+	commit := commitOf(tags, tag)
+	if isGH {
+		err = l.gh.Releases(ctx, r, nil, func(gl *githubapi.List) {
+			t = earliestRelease(tags, commit, func(name string) time.Time { rel, _ := gl.Find(name); return rel.Published })
+		})
+		if err != nil {
+			return time.Time{}, err
 		}
-	}
-	if commit != "" {
-		if isGH {
-			err = l.gh.Releases(ctx, r, nil, func(gl *githubapi.List) {
-				for _, o := range tags {
-					if o.Commit == commit {
-						rel, _ := gl.Find(o.Name)
-						earliest(rel.Published)
-					}
-				}
-			})
-			if err != nil {
-				return time.Time{}, err
-			}
-		} else {
-			le, _ := l.giteaList(ctx, repoURL)
-			for _, o := range tags {
-				if o.Commit == commit {
-					earliest(le.times[o.Name])
-				}
-			}
-		}
+	} else {
+		le, _ := l.giteaList(ctx, repoURL)
+		t = earliestRelease(tags, commit, func(name string) time.Time { return le.times[name] })
 	}
 	if !t.IsZero() {
 		slog.DebugContext(ctx, "tag dated by a release of its commit", "repo", repoURL, "tag", tag, "commit", commit, "time", t)
@@ -269,6 +273,74 @@ func (l *Lister) unreleasedTime(ctx context.Context, repoURL string, r githubapi
 		return l.gh.TagTime(ctx, r, tag, commit)
 	}
 	return l.giteaTagTime(ctx, repoURL, tag)
+}
+
+// commitOf returns the commit of tag among tags, "" when it is not listed.
+func commitOf(tags []Tag, tag string) string {
+	if i := slices.IndexFunc(tags, func(t Tag) bool { return t.Name == tag }); i >= 0 {
+		return tags[i].Commit
+	}
+	return ""
+}
+
+// earliestRelease returns the earliest non-zero publication time, by published, of the tags
+// pointing to commit; zero for an empty commit.
+func earliestRelease(tags []Tag, commit string, published func(tag string) time.Time) time.Time {
+	var t time.Time
+	if commit == "" {
+		return t
+	}
+	for _, o := range tags {
+		if o.Commit != commit {
+			continue
+		}
+		if p := published(o.Name); !p.IsZero() && (t.IsZero() || p.Before(t)) {
+			t = p
+		}
+	}
+	return t
+}
+
+// gitlabTime dates tag of a GitLab repository as ReleaseTime does elsewhere, from the lists
+// of the gitlab-releases and gitlab-tags datasources (up to 10 pages each, fetched once per
+// repository and shared with their own deps): the tag's release (`released_at`), else the
+// earliest release of a tag of the same commit, else the tag's commit date
+// (`commit.created_at`). A failed release list falls through to the tag list.
+func (l *Lister) gitlabTime(ctx context.Context, repoURL string, fd dep.Dep, tag string) (time.Time, error) {
+	rels := l.gitlab.Releases
+	t, err := rels.ReleaseTime(ctx, fd, tag)
+	if err == nil && t.IsZero() {
+		var tags []Tag
+		if tags, err = l.Tags(ctx, repoURL); err == nil {
+			commit := commitOf(tags, tag)
+			t = earliestRelease(tags, commit, func(name string) time.Time { p, _ := rels.ReleaseTime(ctx, fd, name); return p })
+			if !t.IsZero() {
+				slog.DebugContext(ctx, "tag dated by a release of its commit", "repo", repoURL, "tag", tag, "commit", commit, "time", t)
+			}
+		}
+	}
+	if !t.IsZero() {
+		return t, nil
+	}
+	if err != nil {
+		slog.DebugContext(ctx, "gitlab releases unavailable, dating the tag by its commit", "repo", repoURL, "tag", tag, "err", err)
+	}
+	return l.gitlab.Tags.ReleaseTime(ctx, fd, tag)
+}
+
+// gitlabRepo returns the gitlab-releases/gitlab-tags dep of repoURL when it lies under one of
+// the GitLab instances (WithGitLab): the project path as name, the instance as registry.
+func (l *Lister) gitlabRepo(repoURL string) (dep.Dep, bool) {
+	if l.gitlab == nil {
+		return dep.Dep{}, false
+	}
+	for _, base := range l.gitlab.Bases {
+		base = strings.TrimRight(base, "/")
+		if len(repoURL) > len(base)+1 && repoURL[len(base)] == '/' && strings.EqualFold(repoURL[:len(base)], base) {
+			return dep.Dep{Name: strings.TrimSuffix(repoURL[len(base)+1:], ".git"), Source: base}, true
+		}
+	}
+	return dep.Dep{}, false
 }
 
 // githubRepo returns the github.com repository of repoURL.

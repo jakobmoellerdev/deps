@@ -39,6 +39,11 @@ func (r *memRegistry) put(t *testing.T, mediaType string, v any) ocispec.Descrip
 	if err != nil {
 		t.Fatal(err)
 	}
+	return r.putRaw(mediaType, b)
+}
+
+// putRaw stores b as content of mediaType and returns its descriptor.
+func (r *memRegistry) putRaw(mediaType string, b []byte) ocispec.Descriptor {
 	desc := ocispec.Descriptor{MediaType: mediaType, Digest: digest.FromBytes(b), Size: int64(len(b))}
 	r.mu.Lock()
 	defer r.mu.Unlock()

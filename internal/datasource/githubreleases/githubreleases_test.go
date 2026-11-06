@@ -68,7 +68,8 @@ func TestReleasesPagination(t *testing.T) {
 		{"short page", 30, 1},
 		{"exact page", 100, 2},
 		{"three pages", 250, 3},
-		{"capped at five", 900, 5},
+		{"nine pages", 900, 10},
+		{"capped", githubapi.MaxPages*githubapi.PageSize + 50, githubapi.MaxPages},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var reqs atomic.Int32
@@ -95,7 +96,7 @@ func TestReleasesPagination(t *testing.T) {
 				t.Errorf("got %d requests, want %d", reqs.Load(), c.pages)
 			}
 			var want []string
-			for k := range min(c.total, 500) {
+			for k := range min(c.total, githubapi.MaxPages*githubapi.PageSize) {
 				if k%10 != 9 && k%7 != 6 {
 					want = append(want, fmt.Sprintf("v1.%d.0", k))
 				}
@@ -122,11 +123,12 @@ func TestReleasesStopAtCurrentVersion(t *testing.T) {
 		releases bool // the result must contain the version
 	}{
 		{"v1.50.0", 1, true},
-		{"1.50.0", 1, true},   // v-less match, no new request
-		{"v1.150.0", 2, true}, // page 2
-		{"v1.21.0", 2, true},  // already listed
-		{"v9.0.0", 5, false},  // not released: all pages up to the cap
-		{"v1.450.0", 5, true}, // within the five pages already read
+		{"1.50.0", 1, true},                    // v-less match, no new request
+		{"v1.13.0", 1, false},                  // a prerelease is listed too: no further page, but no candidate
+		{"v1.150.0", 2, true},                  // page 2
+		{"v1.21.0", 2, true},                   // already listed
+		{"v9.0.0", githubapi.MaxPages, false},  // not released: all pages up to the cap
+		{"v1.450.0", githubapi.MaxPages, true}, // within the pages already read
 	} {
 		rels, err := s.Releases(t.Context(), dep.Dep{Name: "o/r", Version: c.version}, "")
 		if err != nil {

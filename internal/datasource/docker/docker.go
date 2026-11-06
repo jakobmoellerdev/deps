@@ -11,7 +11,9 @@
 package dockerds
 
 import (
+	"archive/tar"
 	"cmp"
+	"compress/gzip"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -19,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -330,7 +333,9 @@ func (s *Source) pullLimitHint(name string, err error) error {
 // fetchConfig reads the config blob of ref (tag or digest): manifest, (index: first platform
 // manifest), config. Artifacts whose config is no image config (Helm charts) are not fetched
 // further: their manifest's `org.opencontainers.image.created` and `…source` annotations answer
-// instead. An image config without `created` falls back to the manifest annotation as well.
+// instead; a Helm chart without the annotation (bitnamicharts, grafana and karpenter push
+// none) is dated by its chart archive (chartTime). An image config without `created` falls
+// back to the manifest annotation as well.
 func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, string, error) {
 	release, err := httpx.Acquire(ctx, s.sem)
 	if err != nil {
@@ -361,6 +366,9 @@ func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, 
 	created, _ := time.Parse(time.RFC3339, m.Annotations[ocispec.AnnotationCreated])
 	source := m.Annotations[sourceLabel]
 	if m.Config.MediaType != ocispec.MediaTypeImageConfig && m.Config.MediaType != mediaTypeDockerConfig {
+		if created.IsZero() {
+			created = chartTime(ctx, repo, m.Layers)
+		}
 		return created, source, nil
 	}
 	if b, err = content.FetchAll(ctx, repo, m.Config); err != nil {
@@ -374,6 +382,40 @@ func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, 
 		created = *img.Created
 	}
 	return created, cmp.Or(img.Config.Labels[sourceLabel], source), nil
+}
+
+// mediaTypeHelmChart is the layer media type of a Helm chart archive (`helm push`).
+const mediaTypeHelmChart = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+
+// chartTime returns the modification time of the first file in the Helm chart archive among
+// layers: `helm package` stamps every entry with the packaging time. Only the archive's first
+// block is read. Zero when there is no chart layer, it cannot be read, or the stamp predates
+// 1980 (a reproducible build's epoch); a failure leaves the time unknown, it is no error.
+func chartTime(ctx context.Context, repo *remote.Repository, layers []ocispec.Descriptor) time.Time {
+	i := slices.IndexFunc(layers, func(l ocispec.Descriptor) bool { return l.MediaType == mediaTypeHelmChart })
+	if i < 0 {
+		return time.Time{}
+	}
+	rc, err := repo.Fetch(ctx, layers[i])
+	if err != nil {
+		slog.DebugContext(ctx, "chart archive not readable", "digest", layers[i].Digest, "err", err)
+		return time.Time{}
+	}
+	defer rc.Close()
+	zr, err := gzip.NewReader(rc)
+	if err != nil {
+		slog.DebugContext(ctx, "chart archive not readable", "digest", layers[i].Digest, "err", err)
+		return time.Time{}
+	}
+	h, err := tar.NewReader(zr).Next()
+	if err != nil {
+		slog.DebugContext(ctx, "chart archive not readable", "digest", layers[i].Digest, "err", err)
+		return time.Time{}
+	}
+	if h.ModTime.Year() < 1980 {
+		return time.Time{}
+	}
+	return h.ModTime.UTC()
 }
 
 // fetchManifest GETs the manifest of ref (tag or digest); the descriptor's digest is the

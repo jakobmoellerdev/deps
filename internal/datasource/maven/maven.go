@@ -351,6 +351,15 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 	return "", datasource.UnsupportedDigest(Name, d)
 }
 
+// Module returns the Maven coordinate `group:artifact` of a maven-datasource dep name: name
+// itself, or for a Gradle plugin id (no ":") its marker artifact `<id>:<id>.gradle.plugin`.
+func Module(name string) string {
+	if strings.Contains(name, ":") {
+		return name
+	}
+	return name + ":" + name + ".gradle.plugin"
+}
+
 // artifactPath maps `group:artifact` to `group/path/artifact/` and the artifact. A name
 // without ":" is a Gradle plugin id, looked up as its marker artifact `<id>:<id>.gradle.plugin`.
 func artifactPath(name string) (base, artifact string, err error) {

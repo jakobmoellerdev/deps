@@ -21,8 +21,9 @@ import (
 const (
 	// PageSize is the number of releases per page (the maximum of both APIs).
 	PageSize = 100
-	// MaxPages bounds the pages listed per repository.
-	MaxPages = 5
+	// MaxPages bounds the pages listed per repository: 10000 releases, as Renovate's GraphQL
+	// fetcher stops after 100 queries. Callers usually stop much earlier (see Releases).
+	MaxPages = 100
 )
 
 // Release is a published (non-draft) release.

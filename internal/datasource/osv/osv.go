@@ -39,8 +39,10 @@
 //   - maven-datasource deps (maven and gradle managers, custom entries) and sbt-package deps
 //     (the sbt manager's libraries, named with their Scala suffix) named `group:artifact` are
 //     queried as ecosystem "Maven" with that name and the locked version (dep.Dep.Locked),
-//     else the version; OSV matches server-side. Gradle plugin ids (no ":") and sbt plugins
-//     are not queried. Fixed versions are returned as published.
+//     else the version; OSV matches server-side. A Gradle plugin id (no ":") is queried as
+//     its marker artifact `<id>:<id>.gradle.plugin`, the coordinate GitHub's advisories (and
+//     Renovate) use for plugins; sbt plugins are not queried. Fixed versions are returned as
+//     published.
 //   - rubygems-datasource deps (the bundler manager's gems of Gemfiles, gems.rb and gemspecs,
 //     custom entries) are queried as ecosystem "RubyGems" with the gem name (case-sensitive)
 //     and the locked version (dep.Dep.Locked), else the requirement's floor; OSV matches
@@ -88,6 +90,7 @@ import (
 	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
+	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
@@ -234,10 +237,14 @@ func targetOf(d dep.Dep) *target {
 	}
 	if d.Datasource == "maven" || d.Datasource == "sbt-package" {
 		v := cmp.Or(d.Locked, d.Version) // gradle.lockfile pins the resolved version
-		if !strings.Contains(d.Name, ":") || v == "" {
+		name := d.Name
+		if d.Datasource == "maven" {
+			name = mavends.Module(name) // a Gradle plugin id is published as its marker artifact
+		}
+		if d.Name == "" || !strings.Contains(name, ":") || v == "" {
 			return nil
 		}
-		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoMaven}, Version: v})
+		return newTarget(query{Package: pkg{Name: name, Ecosystem: ecoMaven}, Version: v})
 	}
 	if d.Datasource == "rubygems" { // gems of every bundler file, and custom deps of the datasource
 		v := cmp.Or(d.Locked, d.Version)

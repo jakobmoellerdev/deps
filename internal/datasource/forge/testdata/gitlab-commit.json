@@ -1,0 +1,39 @@
+{
+  "id": "519ea19f7d3e9c701a4063f277ae27254bbafdad",
+  "short_id": "519ea19f",
+  "created_at": "2026-11-03T11:07:41.000+00:00",
+  "parent_ids": [
+    "db1ef7f82fd372ac4ab619bfabe7d5724af7a30a",
+    "02d9f1cec584072ad2bd0d1cf6ab61aedbbb4ee0"
+  ],
+  "title": "Merge branch 'df-upstream-failure-warning' into 'main'",
+  "message": "Merge branch 'df-upstream-failure-warning' into 'main'\n\nfix(df): warn once per registry when a registry request fails\n\nSee merge request https://gitlab.com/gitlab-org/cli/-/merge_requests/4278\n\nMerged-by: Hannah Baker <hbaker@gitlab.com>\nApproved-by: GitLab Duo <gitlab-duo@gitlab.com>\nApproved-by: Hannah Baker <hbaker@gitlab.com>\nReviewed-by: Hannah Baker <hbaker@gitlab.com>\nCo-authored-by: Arpit Gogia <12347103-arpitgogia@users.noreply.gitlab.com>",
+  "author_name": "Hannah Baker",
+  "author_email": "hbaker@gitlab.com",
+  "authored_date": "2026-11-03T11:07:41.000+00:00",
+  "committer_name": "GitLab",
+  "committer_email": "noreply@gitlab.com",
+  "committed_date": "2026-11-03T11:07:41.000+00:00",
+  "trailers": {},
+  "extended_trailers": {},
+  "web_url": "https://gitlab.com/gitlab-org/cli/-/commit/519ea19f7d3e9c701a4063f277ae27254bbafdad",
+  "stats": {
+    "additions": 186,
+    "deletions": 6,
+    "total": 192
+  },
+  "status": "success",
+  "project_id": 34675721,
+  "last_pipeline": {
+    "id": 3022211464,
+    "iid": 16641,
+    "project_id": 34675721,
+    "sha": "519ea19f7d3e9c701a4063f277ae27254bbafdad",
+    "ref": "v1.128.0",
+    "status": "success",
+    "source": "push",
+    "created_at": "2026-11-03T12:07:39.681Z",
+    "updated_at": "2026-11-03T12:29:12.022Z",
+    "web_url": "https://gitlab.com/gitlab-org/cli/-/pipelines/3022211464"
+  }
+}

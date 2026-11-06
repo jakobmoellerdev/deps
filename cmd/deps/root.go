@@ -400,7 +400,14 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	docker := dockerds.New(client, limits.Docker)
 	registry := tfregistry.New(client, sem, os.Getenv)
 	maven := mavends.New(client, limits.Maven, os.Getenv)
-	tags := gittags.New(client, auth, sem, gh)
+	forges := make(map[string]*forgeds.Source, len(forgeds.Names))
+	for _, name := range forgeds.Names {
+		forges[name] = forgeds.New(name, client, sem, auth)
+	}
+	tags := gittags.New(client, auth, sem, gh).WithGitLab(gittags.GitLab{
+		Bases:    gitLabBases(env.GitLabURL),
+		Releases: forges[forgeds.GitLabReleases], Tags: forges[forgeds.GitLabTags],
+	})
 	sbtPackages, sbtPlugins := sbtds.New(maven, client, limits.Maven)
 	sources := map[string]engine.Datasource{
 		"git-tags":              tags,
@@ -449,8 +456,8 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		hexds.Name:              hexds.New(client, sem, os.Getenv),
 		hexpmbob.Name:           hexpmbob.New(client, sem, os.Getenv),
 	}
-	for _, name := range forgeds.Names {
-		sources[name] = forgeds.New(name, client, sem, auth)
+	for name, src := range forges {
+		sources[name] = src
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err
@@ -583,6 +590,15 @@ func gitLabAuth(gitlabURL string, getenv func(string) string) []httpx.AuthOption
 		opts = append(opts, httpx.WithToken(host, "gitlab-ci-token", getenv("CI_JOB_TOKEN")))
 	}
 	return opts
+}
+
+// gitLabBases are the GitLab instances whose git-tags deps are dated through the GitLab API:
+// gitlab.com and the instance at gitlabURL (platform.GitLabURL).
+func gitLabBases(gitlabURL string) []string {
+	if strings.EqualFold(gitlabURL, platform.DefaultGitLabURL) {
+		return []string{platform.DefaultGitLabURL}
+	}
+	return []string{platform.DefaultGitLabURL, gitlabURL}
 }
 
 // options returns the engine options of this session; callers add Filter/Trace.

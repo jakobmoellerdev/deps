@@ -8,7 +8,8 @@
 // An OCI repository (`oci://host/path`) holds one repository per chart (`host/path/<chart>`);
 // its tags are listed with the docker datasource (same credentials, token cache and Docker Hub
 // handling), with Helm's `_` for `+` mapped back. Release times are the manifest's
-// `org.opencontainers.image.created` annotation, which `helm push` sets.
+// `org.opencontainers.image.created` annotation, which `helm push` sets, else (charts pushed
+// without it) the packaging time stamped in the chart archive (see the docker datasource).
 package helmds
 
 import (

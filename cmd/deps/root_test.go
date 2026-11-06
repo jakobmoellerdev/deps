@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
@@ -56,5 +57,14 @@ func TestGitLabAuth(t *testing.T) {
 				t.Fatalf("Static(%q) = %q, %q, %v; want %q, %q", host, user, pass, ok, tt.user, tt.pass)
 			}
 		})
+	}
+}
+
+func TestGitLabBases(t *testing.T) {
+	if got := gitLabBases("https://gitlab.com"); !slices.Equal(got, []string{"https://gitlab.com"}) {
+		t.Errorf("default = %q", got)
+	}
+	if got := gitLabBases("https://git.example/gitlab"); !slices.Equal(got, []string{"https://gitlab.com", "https://git.example/gitlab"}) {
+		t.Errorf("self-managed = %q", got)
 	}
 }

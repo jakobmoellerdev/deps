@@ -9,7 +9,7 @@ var Doc = refdoc.Datasource{
 	Name:     Name,
 	NameForm: "`owner/repo` (github.com) or `https://host/owner/repo` (GHES)",
 	Endpoints: "with a token: GraphQL `releases` (`https://api.github.com/graphql`, GHES `<host>/api/graphql`); without: `GET /repos/{repo}/releases?per_page=100`. " +
-		"At most 5 pages, and only until the current release is listed. Drafts and prereleases are dropped. The GraphQL list also reads the repository's `isArchived`: an archived repository is listed under the dashboard's deprecated dependencies.",
+		"Newest first by creation; pages are fetched only until the current release (a prerelease too) is listed, since every release created after it precedes it, else up to 100 pages (10000 releases, Renovate's GraphQL query limit). Drafts and prereleases are dropped. The GraphQL list also reads the repository's `isArchived`: an archived repository is listed under the dashboard's deprecated dependencies.",
 	Auth:         "token for the host",
 	ReleaseTimes: "`publishedAt`",
 }

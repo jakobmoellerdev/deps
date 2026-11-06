@@ -216,3 +216,14 @@ func TestErrors(t *testing.T) {
 		t.Error("canceled: no error")
 	}
 }
+
+func TestModule(t *testing.T) {
+	for name, want := range map[string]string{
+		"org.jetbrains.kotlin.jvm":                    "org.jetbrains.kotlin.jvm:org.jetbrains.kotlin.jvm.gradle.plugin",
+		"com.fasterxml.jackson.core:jackson-databind": "com.fasterxml.jackson.core:jackson-databind",
+	} {
+		if got := Module(name); got != want {
+			t.Errorf("Module(%q) = %q, want %q", name, got, want)
+		}
+	}
+}

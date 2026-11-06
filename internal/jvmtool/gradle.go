@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
@@ -222,12 +223,7 @@ func verificationArg(meta []byte) string {
 
 // lockModule is the module coordinate Gradle locks for a dep: group:artifact, or the plugin
 // marker `<id>:<id>.gradle.plugin` of a plugin id.
-func lockModule(d dep.Dep) string {
-	if strings.Contains(d.Name, ":") {
-		return d.Name
-	}
-	return d.Name + ":" + d.Name + ".gradle.plugin"
-}
+func lockModule(d dep.Dep) string { return mavends.Module(d.Name) }
 
 // Process rewrites the lockfiles and verification metadata of the build at dir for the
 // patched manifests (`--write-locks`).

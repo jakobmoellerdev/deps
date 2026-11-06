@@ -120,16 +120,16 @@ func TestReleasesGraphQLPaging(t *testing.T) {
 	for _, step := range []struct {
 		tag   string
 		pages int
-	}{{"v50", 1}, {"v150", 2}, {"v10", 2}, {"v9999", 5}, {"v450", 5}} {
+	}{{"v50", 1}, {"v150", 2}, {"v10", 2}, {"v99999", MaxPages}, {"v450", MaxPages}} {
 		var listed, complete bool
 		if err := c.Releases(ctx, oR, find(step.tag), func(l *List) { _, listed = l.Find(step.tag); complete = l.Complete(); n = len(l.Stable()) }); err != nil {
 			t.Fatal(err)
 		}
-		if len(s.reqs) != step.pages || listed != (step.tag != "v9999") || complete {
+		if len(s.reqs) != step.pages || listed != (step.tag != "v99999") || complete {
 			t.Errorf("%s: %d pages, listed %v, complete %v", step.tag, len(s.reqs), listed, complete)
 		}
 	}
-	if n != 5*98 { // one draft and one prerelease per page
+	if n != MaxPages*98 { // one draft and one prerelease per page
 		t.Errorf("stable = %d", n)
 	}
 	for i, q := range s.reqs {

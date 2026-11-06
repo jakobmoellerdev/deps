@@ -26,7 +26,9 @@ type indexVersion struct {
 // written by `helm repo index` in block style: `entries:` at column 0, one key per chart at a
 // common indentation, its version list below. Only the lines of a wanted chart are buffered and
 // decoded. A JSON (flow style) index is decoded whole. Versions without download URLs are
-// dropped, as Helm ignores them.
+// dropped: Helm lists them but cannot fetch them (`helm dependency update` and `helm pull`
+// fail with "has no downloadable URLs"), so an update to one could not be applied. Renovate
+// keeps them.
 func scanIndex(r io.Reader, wanted map[string]bool) (map[string][]Release, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
 	if first, err := firstByte(br); err != nil {

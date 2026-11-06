@@ -719,11 +719,20 @@ func TestAdvisoriesMaven(t *testing.T) {
 	f.vulns["GHSA-57j2-w4cx-62h2"] = `{"id":"GHSA-57j2-w4cx-62h2","summary":"Deeply nested json in jackson-databind",
 		"affected":[{"package":{"name":"` + name + `","ecosystem":"Maven"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"2.12.7.1"}]}]},
 		            {"package":{"name":"` + name + `","ecosystem":"Maven"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"2.13.0"},{"fixed":"2.13.4.1"}]}]}]}`
+	// A Gradle plugin id is queried as its marker artifact; GHSA-cv78-v957-jx34 as OSV serves
+	// it (affected entries, versions lists cut; fetched 2026-11-06) names the implementation
+	// artifact and the marker.
+	const marker = "com.gradle.plugin-publish:com.gradle.plugin-publish.gradle.plugin"
+	f.results["Maven|"+marker+"|0.10.1|"] = result{ids: []string{"GHSA-cv78-v957-jx34"}}
+	f.vulns["GHSA-cv78-v957-jx34"] = `{"id":"GHSA-cv78-v957-jx34","summary":"Exposure of Sensitive Information in Gradle publish plugin",
+		"affected":[{"package":{"name":"com.gradle.publish:plugin-publish-plugin","ecosystem":"Maven","purl":"pkg:maven/com.gradle.publish/plugin-publish-plugin"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"0.11.0"}]}],"versions":["0.10.0","0.10.1"]},
+		            {"package":{"name":"` + marker + `","ecosystem":"Maven","purl":"pkg:maven/com.gradle.plugin-publish/com.gradle.plugin-publish.gradle.plugin"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"0.11.0"}]}],"versions":["0.10.0","0.10.1"]}]}`
 	s := f.start(nil)
 	deps := []dep.Dep{
 		{Manager: "maven", Datasource: "maven", DepType: "compile", Name: name, Version: "2.9.10"},
-		{Manager: "gradle", Datasource: "maven", DepType: "plugin", Name: "org.jetbrains.kotlin.jvm", Version: "2.0.0"},
+		{Manager: "gradle", Datasource: "maven", DepType: "plugin", Name: "com.gradle.plugin-publish", Version: "0.10.1"},
 		{Manager: "maven", Datasource: "maven", Name: "g:unversioned"},
+		{Manager: "maven", Datasource: "maven", Version: "1.0"},
 		{Manager: "sbt", Datasource: "sbt-package", DepType: "compile", Name: name, Version: "2.9.10"},
 		{Manager: "sbt", Datasource: "sbt-plugin", DepType: "plugin", Name: "com.github.sbt:sbt-git", Version: "2.0.0"},
 	}
@@ -732,11 +741,12 @@ func TestAdvisoriesMaven(t *testing.T) {
 		t.Fatal(err)
 	}
 	jackson := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-57j2-w4cx-62h2", Summary: "Deeply nested json in jackson-databind", URL: "https://osv.dev/vulnerability/GHSA-57j2-w4cx-62h2"}, Fixed: []string{"2.12.7.1", "2.13.4.1"}}}
-	want := [][]datasource.Vuln{jackson, nil, nil, jackson, nil}
+	publish := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-cv78-v957-jx34", Summary: "Exposure of Sensitive Information in Gradle publish plugin", URL: "https://osv.dev/vulnerability/GHSA-cv78-v957-jx34"}, Fixed: []string{"0.11.0"}}}
+	want := [][]datasource.Vuln{jackson, publish, nil, nil, jackson, nil}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
-	if len(f.batches) != 1 || len(f.batches[0]) != 1 || f.batches[0][0].Package.Ecosystem != "Maven" {
+	if len(f.batches) != 1 || len(f.batches[0]) != 2 || f.batches[0][1].Package != (pkg{Name: marker, Ecosystem: "Maven"}) {
 		t.Errorf("batches = %+v", f.batches)
 	}
 }
