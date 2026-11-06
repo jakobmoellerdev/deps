@@ -685,3 +685,39 @@ func TestYarnFiles(t *testing.T) {
 		t.Errorf("no .yarnrc.yml: %v, %v", got, err)
 	}
 }
+
+// TestWorkspaceMembersOutsideRoot drops workspace globs that leave the root: staging them
+// would write their package.json outside the temp tree.
+func TestWorkspaceMembersOutsideRoot(t *testing.T) {
+	top := t.TempDir()
+	write(t, top, map[string]string{
+		"root/package.json":    `{"workspaces": ["../sib", "../*", "in"]}`,
+		"root/in/package.json": "{}",
+		"sib/package.json":     "{}",
+	})
+	dir := filepath.Join(top, "root")
+	ws, err := parseWorkspaces(rootManifest{Workspaces: []byte(`["../sib", "../*"]`)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ws.members(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("members = %v, want none", got)
+	}
+
+	s, err := stage(t.Context(), dir, nil, map[string][]byte{"package-lock.json": []byte("{}")}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for p := range s.write {
+		if !filepath.IsLocal(filepath.FromSlash(p)) {
+			t.Errorf("stage writes %q outside the temp tree", p)
+		}
+	}
+	if _, ok := s.write["in/package.json"]; !ok {
+		t.Errorf("stage write = %v, want in/package.json", slices.Collect(maps.Keys(s.write)))
+	}
+}

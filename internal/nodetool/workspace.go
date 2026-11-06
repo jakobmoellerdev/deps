@@ -116,8 +116,8 @@ func (w workspaces) members(dir string) ([]string, error) {
 	var out []string
 	for _, g := range w.include {
 		base, rest := doublestar.SplitPattern(g)
-		if base == "/" {
-			continue // absolute globs are not workspace members
+		if base == "/" || !filepath.IsLocal(filepath.FromSlash(base)) {
+			continue // absolute and out-of-root globs are not workspace members
 		}
 		depth := -1 // levels below base the glob can match; -1 = any (`**`)
 		if !strings.Contains(rest, "**") {
