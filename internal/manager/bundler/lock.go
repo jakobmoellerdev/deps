@@ -429,39 +429,12 @@ func pin(src []byte, gemspec bool, pins map[string]string) ([]byte, error) {
 	return patch.Apply(src, edits)
 }
 
-// mirrorDir builds a temporary tree in which the files of dir in copies (the Gemfile, the
-// lockfile and patched gemspecs, by name) are written and every other entry of dir is
-// symlinked, below the mirrored repository ancestors (toolrun.MirrorAncestors), so `path:`
-// gems, `gemspec` and `eval_gemfile` resolve as in the checkout. The caller removes tmp; base
-// is the mirror of dir.
+// mirrorDir builds a temporary tree (toolrun.Mirror) in which the files of dir in copies (the
+// Gemfile, the lockfile and patched gemspecs, by name) are written and every other entry of
+// dir but .git is symlinked, so `path:` gems, `gemspec` and `eval_gemfile` resolve as in the
+// checkout. The caller removes tmp; base is the mirror of dir.
 func mirrorDir(dir string, copies map[string][]byte) (tmp, base string, err error) {
-	if tmp, err = os.MkdirTemp("", "deps-bundler-*"); err != nil {
-		return "", "", err
-	}
-	defer func() {
-		if err != nil {
-			os.RemoveAll(tmp)
-		}
-	}()
-	if base, err = toolrun.MirrorAncestors(dir, tmp); err != nil {
-		return "", "", err
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", "", err
-	}
-	for _, e := range entries {
-		if _, ok := copies[e.Name()]; ok || e.Name() == ".git" {
-			continue
-		}
-		if err := os.Symlink(filepath.Join(dir, e.Name()), filepath.Join(base, e.Name())); err != nil {
-			return "", "", err
-		}
-	}
-	if err := toolrun.WriteFiles(base, copies); err != nil {
-		return "", "", err
-	}
-	return tmp, base, nil
+	return toolrun.Mirror(dir, toolrun.MirrorOptions{Pattern: "deps-bundler-*", Files: copies, Skip: toolrun.SkipGit})
 }
 
 // bundle runs `bundle args...` in dir (the mirror of scope) with BUNDLE_GEMFILE set to its

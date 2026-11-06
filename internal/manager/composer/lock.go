@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -239,38 +240,16 @@ func flags(src []byte) []string {
 	return append(out, "--ignore-platform-reqs")
 }
 
-// mirrorDir builds a temporary tree in which the files of dir in copies (composer.json and
-// composer.lock) are written and every other entry of dir but vendor is symlinked, below the
-// mirrored repository ancestors (toolrun.MirrorAncestors), so path repositories (`../packages/*`)
-// resolve as in the checkout. The caller removes tmp; base is the mirror of dir.
+// mirrorDir builds a temporary tree (toolrun.Mirror) in which the files of dir in copies
+// (composer.json and composer.lock) are written and every other entry of dir but .git and
+// vendor is symlinked, so path repositories (`../packages/*`) resolve as in the checkout. The
+// caller removes tmp; base is the mirror of dir.
 func mirrorDir(dir string, copies map[string][]byte) (tmp, base string, err error) {
-	if tmp, err = os.MkdirTemp("", "deps-composer-*"); err != nil {
-		return "", "", err
-	}
-	defer func() {
-		if err != nil {
-			os.RemoveAll(tmp)
-		}
-	}()
-	if base, err = toolrun.MirrorAncestors(dir, tmp); err != nil {
-		return "", "", err
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", "", err
-	}
-	for _, e := range entries {
-		if _, ok := copies[e.Name()]; ok || e.Name() == ".git" || e.Name() == "vendor" {
-			continue
-		}
-		if err := os.Symlink(filepath.Join(dir, e.Name()), filepath.Join(base, e.Name())); err != nil {
-			return "", "", err
-		}
-	}
-	if err := toolrun.WriteFiles(base, copies); err != nil {
-		return "", "", err
-	}
-	return tmp, base, nil
+	return toolrun.Mirror(dir, toolrun.MirrorOptions{
+		Pattern: "deps-composer-*",
+		Files:   copies,
+		Skip:    func(rel string, _ fs.DirEntry) bool { return rel == ".git" || rel == "vendor" },
+	})
 }
 
 // composer runs `composer args...` in dir (the mirror of scope) with COMPOSER naming its

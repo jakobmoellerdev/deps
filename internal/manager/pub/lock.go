@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -346,61 +347,16 @@ func usesFlutterSDK(lock []byte, pubspecs map[string][]byte) bool {
 // skipEntries are not mirrored: pub's own state, build output and the repository metadata.
 var skipEntries = map[string]bool{".dart_tool": true, "build": true, ".git": true}
 
-// mirrorDir builds a temporary tree in which the files (slash paths relative to dir) are
-// written as copies, the directories leading to them recreated, and every other entry of
-// those directories but skipEntries symlinked, below the mirrored repository ancestors
-// (toolrun.MirrorAncestors), so path dependencies resolve as in the checkout. The caller
-// removes tmp; base is the mirror of dir.
+// mirrorDir builds a temporary tree (toolrun.Mirror) in which the files (slash paths relative
+// to dir) are written as copies, the directories leading to them recreated, and every other
+// entry of those directories but skipEntries symlinked, so path dependencies resolve as in
+// the checkout. The caller removes tmp; base is the mirror of dir.
 func mirrorDir(dir string, files map[string][]byte) (tmp, base string, err error) {
-	if tmp, err = os.MkdirTemp("", "deps-pub-*"); err != nil {
-		return "", "", err
-	}
-	defer func() {
-		if err != nil {
-			os.RemoveAll(tmp)
-		}
-	}()
-	if base, err = toolrun.MirrorAncestors(dir, tmp); err != nil {
-		return "", "", err
-	}
-	parents := map[string]bool{} // the directories leading to a file
-	for f := range files {
-		for d := path.Dir(f); d != "."; d = path.Dir(d) {
-			parents[d] = true
-		}
-	}
-	var mirror func(rel string) error
-	mirror = func(rel string) error {
-		entries, err := os.ReadDir(filepath.Join(dir, filepath.FromSlash(rel)))
-		if err != nil {
-			return err
-		}
-		for _, e := range entries {
-			p := path.Join(rel, e.Name())
-			switch {
-			case files[p] != nil || skipEntries[e.Name()]:
-			case e.IsDir() && parents[p]:
-				if err := os.MkdirAll(filepath.Join(base, filepath.FromSlash(p)), 0o755); err != nil {
-					return err
-				}
-				if err := mirror(p); err != nil {
-					return err
-				}
-			default:
-				if err := os.Symlink(filepath.Join(dir, filepath.FromSlash(p)), filepath.Join(base, filepath.FromSlash(p))); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	if err := mirror("."); err != nil {
-		return "", "", err
-	}
-	if err := toolrun.WriteFiles(base, files); err != nil {
-		return "", "", err
-	}
-	return tmp, base, nil
+	return toolrun.Mirror(dir, toolrun.MirrorOptions{
+		Pattern: "deps-pub-*",
+		Files:   files,
+		Skip:    func(_ string, d fs.DirEntry) bool { return skipEntries[d.Name()] },
+	})
 }
 
 // runPub runs `dart pub args...` in dir (the mirror of scope). For a Flutter scope it runs the
