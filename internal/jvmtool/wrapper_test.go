@@ -131,7 +131,7 @@ func TestGradleWrapperErrors(t *testing.T) {
 		manifests map[string][]byte
 		err       string
 	}{
-		{name: "no java", noJava: true, gradle: true, manifests: good, err: "java not found (needed to regenerate the Gradle wrapper)"},
+		{name: "no java", noJava: true, gradle: true, manifests: good},
 		{name: "no gradle", manifests: good, err: "gradle not found (needed to regenerate the Gradle wrapper)"},
 		{name: "not patched", manifests: map[string][]byte{}, err: GradleWrapperProperties + " was not patched"},
 		{name: "custom url", manifests: map[string][]byte{GradleWrapperProperties: []byte("distributionUrl=https://x/custom.zip\n")}, err: `unsupported distributionUrl "https://x/custom.zip"`},
@@ -143,9 +143,9 @@ func TestGradleWrapperErrors(t *testing.T) {
 			}
 			dir := t.TempDir()
 			write(t, dir, map[string]string{GradleWrapperProperties: "", "gradlew": "not executable"})
-			_, err := GradleWrapper{}.Process(t.Context(), dir, tc.manifests, nil)
-			if err == nil || err.Error() != tc.err {
-				t.Errorf("err = %v, want %s", err, tc.err)
+			out, err := GradleWrapper{}.Process(t.Context(), dir, tc.manifests, nil)
+			if got := fmt.Sprint(err); tc.err == "" && (err != nil || out != nil) || tc.err != "" && got != tc.err {
+				t.Errorf("out, err = %v, %v, want %s", out, err, tc.err)
 			}
 		})
 	}
@@ -231,7 +231,7 @@ func TestMavenWrapperErrors(t *testing.T) {
 		manifests map[string][]byte
 		err       string
 	}{
-		{name: "no java", noJava: true, mvn: true, manifests: good, err: "java not found (needed to regenerate the Maven wrapper)"},
+		{name: "no java", noJava: true, mvn: true, manifests: good},
 		{name: "no mvn", manifests: good, err: "mvn not found (needed to regenerate the Maven wrapper)"},
 		{name: "not patched", manifests: map[string][]byte{}, err: MavenWrapperProperties + " was not patched"},
 		{name: "mvnd url", manifests: map[string][]byte{MavenWrapperProperties: []byte("distributionUrl=https://x/maven-mvnd-1.0.2-bin.zip\n")},
@@ -242,9 +242,9 @@ func TestMavenWrapperErrors(t *testing.T) {
 			if tc.mvn {
 				script(t, filepath.Join(bin, "mvn"), log, "exit 0")
 			}
-			_, err := MavenWrapper{}.Process(t.Context(), t.TempDir(), tc.manifests, nil)
-			if err == nil || err.Error() != tc.err {
-				t.Errorf("err = %v, want %s", err, tc.err)
+			out, err := MavenWrapper{}.Process(t.Context(), t.TempDir(), tc.manifests, nil)
+			if got := fmt.Sprint(err); tc.err == "" && (err != nil || out != nil) || tc.err != "" && got != tc.err {
+				t.Errorf("out, err = %v, %v, want %s", out, err, tc.err)
 			}
 		})
 	}

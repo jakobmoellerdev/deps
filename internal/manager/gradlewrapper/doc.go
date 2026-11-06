@@ -26,6 +26,6 @@ var Doc = refdoc.Manager{
 			"`./gradlew --console=plain --no-daemon -q wrapper --gradle-version <version> --distribution-type <bin|all>` (`gradle` from `PATH` without an executable `gradlew`) runs on a temporary copy of the project with the edited properties, " +
 			"adding `--gradle-distribution-url <url>` for a mirror and `--gradle-distribution-sha256-sum <sum>` with a pinned checksum. " +
 			"The edited properties file is kept unless Gradle's rewrite differs in more than formatting (a key the new version adds). " +
-			"Without Java (`java` on `PATH` or `JAVA_HOME`) the update fails with `java not found (needed to regenerate the Gradle wrapper)`; `plan` shows only the properties edit."},
+			"Without Java (`java` on `PATH` or `JAVA_HOME`) the wrapper files are kept with a warning and the update carries only the properties edit, which the existing wrapper reads to download the new distribution (Renovate commits that edit too and reports an artifact error); `plan` always shows only the properties edit."},
 	},
 }

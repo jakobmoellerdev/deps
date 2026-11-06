@@ -70,7 +70,10 @@ func TestMatch(t *testing.T) {
 		"gradle/libs.versions.toml":                true,
 		"libs.versions.toml":                       true,
 		"build-logic/gradle/x.versions.toml":       true,
-		"gradle/versions.toml":                     false,
+		"gradle/versions.toml":                     true, // from(files("gradle/versions.toml")), Renovate's gradle/*.toml
+		"build-logic/gradle/deps/core.toml":        true,
+		"deps.toml":                                false,
+		"config/versions.toml":                     false,
 		".versions.toml":                           false,
 		"Cargo.toml":                               false,
 		"build.gradle":                             true,
@@ -213,7 +216,7 @@ func TestExtractCatalog(t *testing.T) {
 			"kotlin-stdlib.module = \"org.jetbrains.kotlin:kotlin-stdlib\"\nkotlin-stdlib.version.ref = \"kotlin\"\n" +
 			"n = { module = \"g:n\", version.ref = \"nested.name\" }\n" +
 			"[libraries.table-form]\nmodule = \"g:table\"\nversion = \"7\"\n",
-			want: []want{lib("org.codehaus.groovy:groovy", "", 7, "rich version"), lib("org.jetbrains.kotlin:kotlin-stdlib", "2.0.0", 9, ""),
+			want: []want{lib("org.codehaus.groovy:groovy", "[3.0,4.0)", 7, "dynamic version [3.0,4.0)"), lib("org.jetbrains.kotlin:kotlin-stdlib", "2.0.0", 9, ""),
 				lib("g:n", "5", 11, ""), lib("g:table", "7", 12, "")}},
 		{name: "rich versions and unknown refs", src: "[versions]\nrich = { strictly = \"[1,2)\", prefer = \"1.5\" }\n" +
 			"num = 3\n" +
@@ -223,10 +226,13 @@ func TestExtractCatalog(t *testing.T) {
 			"c = { module = \"g:c\", version.ref = \"missing\" }\n" +
 			"d = { module = \"g:d\", version.ref = \"num\" }\n" +
 			"e = { module = \"g:e\", version.require = \"1.0\" }\n" +
+			"f = { module = \"g:f\", version = { require = \"1.0\", reject = [\"1.0.1\"] } }\n" +
+			"g = { module = \"g:g\", version = { rejectAll = true } }\n" +
 			"[plugins]\n" +
 			"p = { id = \"p\", version.ref = \"missing\" }\n",
-			want: []want{lib("g:a", "", 5, "rich version"), lib("g:b", "", 6, "rich version"), lib("g:c", "", 7, "unresolved version.ref missing"),
-				lib("g:d", "", 8, "cannot locate value"), lib("g:e", "", 9, "rich version"), plug("p", "", 11, "unresolved version.ref missing")}},
+			want: []want{lib("g:a", "", 5, "rich version"), lib("g:b", "1.0", 6, ""), lib("g:c", "", 7, "unresolved version.ref missing"),
+				lib("g:d", "", 8, "cannot locate value"), lib("g:e", "1.0", 9, ""), lib("g:f", "", 10, "rich version"), lib("g:g", "", 11, "rich version"),
+				plug("p", "", 13, "unresolved version.ref missing")}},
 		{name: "escapes", src: "[versions]\nesc = \"1.\\u0030\"\n[libraries]\n" +
 			"a = { module = \"g:a\", version.ref = \"esc\" }\n" +
 			"b = \"g:b:1\\t\"\n" +
@@ -341,6 +347,27 @@ func TestEdits(t *testing.T) {
 			want: "[plugins]\np = \"com.example:2.0-rc1\"\n"},
 		{name: "build script classifier", file: "build.gradle", src: "dependencies {\n  testImplementation 'g:x:1.0:tests@jar'\n}\n", dep: "g:x", to: "1.1",
 			want: "dependencies {\n  testImplementation 'g:x:1.1:tests@jar'\n}\n"},
+		{name: "catalog rich require", file: "gradle/libs.versions.toml",
+			src: "[versions]\nguava = { require = \"32.0.0-jre\" }\n[libraries]\nguava = { module = \"com.google.guava:guava\", version.ref = \"guava\" }\n",
+			dep: "com.google.guava:guava", to: "33.3.1-jre",
+			want: "[versions]\nguava = { require = \"33.3.1-jre\" }\n[libraries]\nguava = { module = \"com.google.guava:guava\", version.ref = \"guava\" }\n"},
+		{name: "catalog rich strictly inline", file: "gradle/libs.versions.toml",
+			src: "[libraries]\nslf4j = { module = \"org.slf4j:slf4j-api\", version = { strictly = \"2.0.13\" } }\n", dep: "org.slf4j:slf4j-api", to: "2.0.16",
+			want: "[libraries]\nslf4j = { module = \"org.slf4j:slf4j-api\", version = { strictly = \"2.0.16\" } }\n"},
+		{name: "settings rich version", file: "settings.gradle.kts",
+			src: "dependencyResolutionManagement {\n  versionCatalogs {\n    create(\"libs\") {\n      version(\"slf4j\") { strictly(\"2.0.13\") }\n" +
+				"      library(\"slf4j\", \"org.slf4j\", \"slf4j-api\").versionRef(\"slf4j\")\n" +
+				"      library(\"guava\", \"com.google.guava\", \"guava\").version { prefer(\"32.0.0-jre\") }\n    }\n  }\n}\n",
+			dep: "com.google.guava:guava", to: "33.3.1-jre",
+			want: "dependencyResolutionManagement {\n  versionCatalogs {\n    create(\"libs\") {\n      version(\"slf4j\") { strictly(\"2.0.13\") }\n" +
+				"      library(\"slf4j\", \"org.slf4j\", \"slf4j-api\").versionRef(\"slf4j\")\n" +
+				"      library(\"guava\", \"com.google.guava\", \"guava\").version { prefer(\"33.3.1-jre\") }\n    }\n  }\n}\n"},
+		{name: "settings rich versionRef", file: "settings.gradle.kts",
+			src: "dependencyResolutionManagement {\n  versionCatalogs {\n    create(\"libs\") {\n      version(\"slf4j\") { strictly(\"2.0.13\") }\n" +
+				"      library(\"slf4j\", \"org.slf4j\", \"slf4j-api\").versionRef(\"slf4j\")\n    }\n  }\n}\n",
+			dep: "org.slf4j:slf4j-api", to: "2.0.16",
+			want: "dependencyResolutionManagement {\n  versionCatalogs {\n    create(\"libs\") {\n      version(\"slf4j\") { strictly(\"2.0.16\") }\n" +
+				"      library(\"slf4j\", \"org.slf4j\", \"slf4j-api\").versionRef(\"slf4j\")\n    }\n  }\n}\n"},
 		{name: "build script plugin", file: "settings.gradle.kts", src: "plugins { kotlin(\"jvm\") version \"2.0.0\" }\n", dep: "org.jetbrains.kotlin.jvm", to: "2.1.0",
 			want: "plugins { kotlin(\"jvm\") version \"2.1.0\" }\n"},
 	} {

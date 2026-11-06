@@ -1012,7 +1012,7 @@ func TestSettingsCatalogs(t *testing.T) {
 		{DepTypePlugin, "com.github.ben-manes.versions", "0.45.0", 13, ""},
 		{DepTypeDependencies, "g:short", "1.0", 14, ""},
 		{DepTypeDependencies, "g:missing", "", 18, "unresolved version.ref nope"},
-		{DepTypeDependencies, "g:richref", "", 20, "rich version"},
+		{DepTypeDependencies, "g:richref", "1.0", 20, ""},
 		{DepTypeDependencies, "g:dyn", "1.+", 22, "dynamic version 1.+"},
 		{DepTypePlugin, "p.ref", "3.0.5", 23, ""},
 	}; !slices.Equal(got, want) {

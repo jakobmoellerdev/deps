@@ -34,7 +34,9 @@ const (
 )
 
 var (
-	catalogRe    = regexp.MustCompile(`(^|/)[^/]+\.versions\.toml$`)
+	// catalogRe: `*.versions.toml` anywhere and any `.toml` below a `gradle/` directory
+	// (Renovate's patterns), which covers catalogs imported with `from(files("gradle/x.toml"))`.
+	catalogRe    = regexp.MustCompile(`(^|/)(?:[^/]+\.versions|gradle/.+)\.toml$`)
 	scriptRe     = regexp.MustCompile(`(^|/)[^/]+\.gradle(\.kts)?$`)
 	propertiesRe = regexp.MustCompile(`(^|/)gradle\.properties$`)
 	// sourceRe: buildSrc sources and the Kotlin sources of build-logic style included builds.
@@ -130,7 +132,7 @@ func (*gradleManager) Match(p string) bool {
 		}
 		return sourceRe.MatchString(p) && !strings.Contains(p, "buildSrc/build/")
 	}
-	if !strings.HasSuffix(p, ".versions.toml") && !strings.HasSuffix(p, ".gradle") &&
+	if !strings.HasSuffix(p, ".toml") && !strings.HasSuffix(p, ".gradle") &&
 		!strings.HasSuffix(p, ".gradle.kts") && !strings.HasSuffix(p, "gradle.properties") {
 		return false
 	}

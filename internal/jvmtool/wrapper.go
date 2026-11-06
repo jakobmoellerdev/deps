@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -70,8 +71,9 @@ func (GradleWrapper) Process(ctx context.Context, dir string, manifests, files m
 	if m == nil {
 		return nil, fmt.Errorf("unsupported distributionUrl %q", u)
 	}
-	if err := checkJava(); err != nil {
-		return nil, errors.New("java not found (needed to regenerate the Gradle wrapper)")
+	if checkJava() != nil {
+		slog.WarnContext(ctx, "java not found: keeping the Gradle wrapper jar and scripts, only "+GradleWrapperProperties+" is updated", "dir", dir)
+		return nil, nil
 	}
 	tmp, err := copyBuild(dir, manifests, gradleSkip)
 	if err != nil {
@@ -129,8 +131,9 @@ func (MavenWrapper) Process(ctx context.Context, dir string, manifests, files ma
 	if err != nil {
 		return nil, err
 	}
-	if err := checkJava(); err != nil {
-		return nil, errors.New("java not found (needed to regenerate the Maven wrapper)")
+	if checkJava() != nil {
+		slog.WarnContext(ctx, "java not found: keeping the Maven wrapper scripts, only "+MavenWrapperProperties+" is updated", "dir", dir)
+		return nil, nil
 	}
 	tmp, err := copyBuild(dir, manifests, mavenSkip)
 	if err != nil {

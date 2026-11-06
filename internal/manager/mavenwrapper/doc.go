@@ -34,6 +34,6 @@ var Doc = refdoc.Manager{
 		{Title: "Wrapper files", Body: "After the properties are edited, `apply` and `run` run `./mvnw -B -q org.apache.maven.plugins:maven-wrapper-plugin:<wrapperVersion>:wrapper -Dmaven=<version> -Dtype=<type>` " +
 			"(`mvn` from `PATH` without an executable `mvnw`) on a temporary copy of the project and take `mvnw`, `mvnw.cmd`, `.mvn/wrapper/maven-wrapper.jar` and `.mvn/wrapper/MavenWrapperDownloader.java` from it; " +
 			"the edited properties file is kept. `<type>` is `distributionType`, else `bin` with a `maven-wrapper.jar`, `source` with a `MavenWrapperDownloader.java`, `script` with a `wrapperUrl`, else `only-script`; " +
-			"without a known wrapper version the goal is `wrapper:wrapper`. Without Java (`java` on `PATH` or `JAVA_HOME`) the update fails with `java not found (needed to regenerate the Maven wrapper)`; `plan` shows only the properties edit."},
+			"without a known wrapper version the goal is `wrapper:wrapper`. Without Java (`java` on `PATH` or `JAVA_HOME`) the wrapper files are kept with a warning and the update carries only the properties edit, which the existing wrapper reads to download the new distribution (Renovate commits that edit too and reports an artifact error); `plan` always shows only the properties edit."},
 	},
 }

@@ -1694,7 +1694,7 @@ Updates the versions of dependencies, plugins, build extensions, annotation proc
 | `property <ref> only defined in profiles` | a `${name}` version whose property only profiles define, none of them active or several active ones (see Profiles); a dep inside a profile also sees its own profile's properties |
 | `unresolved property in <group:artifact>` | a groupId or artifactId with a `${…}` that neither the properties (as for versions) nor `project.groupId`/`project.artifactId` resolve |
 | `unsupported version <value>` | a version mixing a property with text (`${guava.version}-jre`, `${revision}${changelist}`) |
-| `version range` | `[1.0,2.0)`, `(,1.0]` |
+| `version range` | a range Maven rejects (`[2.0,1.0)`, `(1.0)`, `[1.0`); valid ranges are updated (see Version ranges) |
 | `cannot locate value` | a version written with entities, CDATA or split by a comment |
 | `internal module` | the groupId:artifactId of a pom extracted in the same run (a module or parent of the repository); applied after property resolution |
 | `m2e lifecycle mapping (not a published plugin)` | `org.eclipse.m2e:lifecycle-mapping`, the Eclipse m2e settings pseudo-plugin (no repository publishes it: Central answers 404 for its `maven-metadata.xml`) |
@@ -1708,6 +1708,7 @@ Updates the versions of dependencies, plugins, build extensions, annotation proc
 - The update edits the final definition of the chain, which may be in a parent pom or maven.config: the dep's file and line are then the definition's. The dep's version reference is the property name.
 - Deps sharing a definition (`${jackson.version}`, in one pom or across modules) are updated together: one version, one PR named after the property unless a rule groups them (`group:`).
 - Properties of remote parent poms are not read: they live in published, immutable poms (https://central.sonatype.org/publish/requirements/immutability/) that only the `parent` dep's update moves; Renovate likewise resolves parents only among the repository's package files (`resolveParents` in lib/modules/manager/maven/extract.ts). `-D` flags on the actual command line and environment variables are not known.
+- Maven built-ins (`${project.version}`, `${project.parent.version}`) name the project's own version, almost always that of a sibling module, and versions mixing properties with text (`${revision}${changelist}`, `${guava.version}-jre`) have no single definition to rewrite; both are skipped, as Renovate skips them (`version-placeholder`).
 
 **Profiles.**
 
@@ -1722,13 +1723,17 @@ Updates the versions of dependencies, plugins, build extensions, annotation proc
 - Each repository is passed to the datasource as `<id>=<url>/`. Without repositories, only Maven Central is used. URLs with properties are ignored.
 - `settings.xml` mirrors, credentials and active-profile repositories are applied by the maven datasource (see its docs), matched by repository id.
 
+**Version ranges.**
+
+A range (`[1.0,2.0)`, `(,1.0]`, `[1.5,)`, `(,1.0],[1.2,)`, also in a property) is the dep's range; candidates are ranked from its first lower bound (else its first upper one). Maven resolves the newest version a range admits itself, so admitted versions are not proposed; a newer version it excludes extends the range as Renovate's maven versioning does: a range one step wide moves (`[1,2)` → `[4,5)` for 4.3.2, also `[1,2-alpha)`), an inclusive upper bound becomes the version (`[1.0,1.2.23]` → `[1.0,1.2.24]`), an exclusive one the version at the bound's precision incremented (`[1.0,2.0)` → `[1.0,2.6)` for 2.5.1); with several restrictions the last one the version exceeds changes. `rangeStrategy: pin` writes the exact version. An exact `[1.0]` is updated like a plain version (`[1.1]`).
+
 **Replacements.**
 
 Dependencies, plugins with an explicit `groupId`, extensions, annotation processor paths and the parent can be [replaced](configuration.md#rulesreplacementname) by other `groupId:artifactId` coordinates when both are written literally; only the changed elements are rewritten. A replacement version is not written to a version property (`${...}`) other dependencies may share: such deps keep their version or are skipped.
 
 **Versioning.**
 
-`maven` (Maven's ComparableVersion): `1.0` = `1.0.0` = `1.0-final`, `alpha` < `beta` < `milestone` < `rc` < `snapshot` < release < `sp`. SNAPSHOTs are never proposed, other prereleases only from a prerelease, and the first unknown qualifier after a `-` must match (`33.3.1-jre` stays on `-jre`). Deps sharing a property take the highest version all of them reach. See [`rules[].versioning`](configuration.md#rulesversioning).
+`maven` (Maven's ComparableVersion): `1.0` = `1.0.0` = `1.0-final`, `alpha` < `beta` < `milestone` < `rc` < `snapshot` < release < `sp`. SNAPSHOTs are never proposed (a `-SNAPSHOT` names a moving development build, which repositories publish as timestamped snapshots in a separate `maven-metadata.xml` the datasource does not read, as Renovate does not); a SNAPSHOT dep is offered the releases above it. Other prereleases are proposed only from a prerelease, and the first unknown qualifier after a `-` must match (`33.3.1-jre` stays on `-jre`). Deps sharing a property take the highest version all of them reach. See [`rules[].versioning`](configuration.md#rulesversioning).
 
 ## gradle
 
@@ -1736,7 +1741,7 @@ Updates Maven dependencies and Gradle plugins in Gradle version catalogs, build 
 
 **Files:**
 
-- `*.versions.toml` (default `gradle/libs.versions.toml`)
+- `*.versions.toml` (default `gradle/libs.versions.toml`) and any `.toml` below a `gradle/` directory (catalogs imported with `from(files("gradle/deps.toml"))`), as Renovate matches them
 - `*.gradle`, `*.gradle.kts` (`build.gradle(.kts)`, `settings.gradle(.kts)`, applied scripts such as `gradle/dependencies.gradle`)
 - `gradle.properties` (variable definitions only)
 - `buildSrc/**/*.kt`, `buildSrc/**/*.groovy`; `*.kt` below `src/main/kotlin` of `build-logic`, `build-conventions` and `convention-plugins` included builds
@@ -1751,7 +1756,7 @@ Updates Maven dependencies and Gradle plugins in Gradle version catalogs, build 
 | Reason | When |
 |---|---|
 | `unresolved version.ref <k>` | a catalog entry (TOML or settings) references a version key that does not exist |
-| `rich version` | a catalog version is a rich version (TOML table or settings `version("k") { strictly(…) }`/`.version { … }` with `strictly`, `require`, `prefer`, `reject`, `rejectAll`) |
+| `rich version` | a catalog rich version (TOML table or settings `version("k") { … }`/`.version { … }`) with more than one of `strictly`, `require` and `prefer`, or with `reject`/`rejectAll`; one of them alone is the version an update rewrites (`{ strictly = "2.0.13" }`), as in Renovate |
 | `cannot locate value` | a TOML catalog version is not a single-line string or contains a backslash escape |
 | `unresolved variable <x>` | a version is exactly one variable reference and no literal definition of it is visible (see Variables) |
 | `version variable` | a coordinate's group or name, or a plugin id, is interpolated, or the version mixes variables with text (`${v}-jre`) or is an expression that is not a variable reference |
@@ -1789,11 +1794,11 @@ Literal coordinates (`"g:a:v"` strings, `group`/`name` maps, catalog `module` an
 
 **Not covered.**
 
-- Values computed from expressions (`"$a.$b"`, `if`/`?:`, `versions["a"]!!["b"]`), catalogs imported in settings with `from(files(…))` (the TOML file itself is a catalog dep source) and `useModule(…)` in `resolutionStrategy`.
-- Variables defined in `~/.gradle/gradle.properties`, by `-P`/environment, or in included builds other than `buildSrc`.
+- Values computed from expressions (`"$a.$b"`, `if`/`?:`, `versions["a"]!!["b"]`) have no single definition an update could rewrite; Renovate skips them too (`unspecified-version`). Catalog files imported with `from(files(…))` outside a `gradle/` directory and not named `*.versions.toml`, and `useModule(…)` in `resolutionStrategy`.
+- Variables defined in `~/.gradle/gradle.properties` or by `-P`/environment are not in the repository; those of included builds other than `buildSrc` are not shared with the including build (Gradle does not either: an included build has its own properties).
 - `latest.<status>` for statuses other than release and integration (`latest.milestone`, custom statuses) depend on component metadata deps does not read; they are skipped even with a lockfile.
-- Prefixes without a dot (`1.2+`): Gradle matches the text before the `+` as a string prefix (https://docs.gradle.org/current/userguide/dependency_versions.html: "Only versions exactly matching the portion before the + are included"), so `1.2+` also admits 1.20–1.29, which no semver constraint expresses; they are skipped.
-- `exclusiveContent { forRepositories(…) }` by reference, `onlyForConfigurations`/`notForConfigurations`, version-specific excludes and Ivy/flatDir repositories.
+- Prefixes without a dot (`1.2+`): Gradle matches the text before the `+` as a string prefix (https://docs.gradle.org/current/userguide/dependency_versions.html: "Only versions exactly matching the portion before the + are included"), so `1.2+` also admits 1.20–1.29, which no semver constraint expresses; they are skipped. Renovate's gradle versioning accepts neither (a prefix needs a `.`, `-` or `_` before the `+`).
+- `exclusiveContent { forRepositories(…) }` by reference, `onlyForConfigurations`/`notForConfigurations`, version-specific excludes and Ivy/flatDir repositories (no Maven metadata to look versions up in; Renovate ignores them too). `mavenLocal()` is the machine's `~/.m2` cache, not a repository deps can read.
 
 ## gradle-wrapper
 
@@ -1820,7 +1825,7 @@ Updates the Gradle version of the wrapper in `gradle-wrapper.properties`: the ve
 
 **Wrapper files.**
 
-After the properties are edited, `apply` and `run` regenerate `gradle/wrapper/gradle-wrapper.jar`, `gradlew` and `gradlew.bat` as Renovate does: `./gradlew --console=plain --no-daemon -q wrapper --gradle-version <version> --distribution-type <bin|all>` (`gradle` from `PATH` without an executable `gradlew`) runs on a temporary copy of the project with the edited properties, adding `--gradle-distribution-url <url>` for a mirror and `--gradle-distribution-sha256-sum <sum>` with a pinned checksum. The edited properties file is kept unless Gradle's rewrite differs in more than formatting (a key the new version adds). Without Java (`java` on `PATH` or `JAVA_HOME`) the update fails with `java not found (needed to regenerate the Gradle wrapper)`; `plan` shows only the properties edit.
+After the properties are edited, `apply` and `run` regenerate `gradle/wrapper/gradle-wrapper.jar`, `gradlew` and `gradlew.bat` as Renovate does: `./gradlew --console=plain --no-daemon -q wrapper --gradle-version <version> --distribution-type <bin|all>` (`gradle` from `PATH` without an executable `gradlew`) runs on a temporary copy of the project with the edited properties, adding `--gradle-distribution-url <url>` for a mirror and `--gradle-distribution-sha256-sum <sum>` with a pinned checksum. The edited properties file is kept unless Gradle's rewrite differs in more than formatting (a key the new version adds). Without Java (`java` on `PATH` or `JAVA_HOME`) the wrapper files are kept with a warning and the update carries only the properties edit, which the existing wrapper reads to download the new distribution (Renovate commits that edit too and reports an artifact error); `plan` always shows only the properties edit.
 
 ## maven-wrapper
 
@@ -1856,7 +1861,7 @@ Updates the Maven version of `distributionUrl` (`…/org/apache/maven/apache-mav
 
 **Wrapper files.**
 
-After the properties are edited, `apply` and `run` run `./mvnw -B -q org.apache.maven.plugins:maven-wrapper-plugin:<wrapperVersion>:wrapper -Dmaven=<version> -Dtype=<type>` (`mvn` from `PATH` without an executable `mvnw`) on a temporary copy of the project and take `mvnw`, `mvnw.cmd`, `.mvn/wrapper/maven-wrapper.jar` and `.mvn/wrapper/MavenWrapperDownloader.java` from it; the edited properties file is kept. `<type>` is `distributionType`, else `bin` with a `maven-wrapper.jar`, `source` with a `MavenWrapperDownloader.java`, `script` with a `wrapperUrl`, else `only-script`; without a known wrapper version the goal is `wrapper:wrapper`. Without Java (`java` on `PATH` or `JAVA_HOME`) the update fails with `java not found (needed to regenerate the Maven wrapper)`; `plan` shows only the properties edit.
+After the properties are edited, `apply` and `run` run `./mvnw -B -q org.apache.maven.plugins:maven-wrapper-plugin:<wrapperVersion>:wrapper -Dmaven=<version> -Dtype=<type>` (`mvn` from `PATH` without an executable `mvnw`) on a temporary copy of the project and take `mvnw`, `mvnw.cmd`, `.mvn/wrapper/maven-wrapper.jar` and `.mvn/wrapper/MavenWrapperDownloader.java` from it; the edited properties file is kept. `<type>` is `distributionType`, else `bin` with a `maven-wrapper.jar`, `source` with a `MavenWrapperDownloader.java`, `script` with a `wrapperUrl`, else `only-script`; without a known wrapper version the goal is `wrapper:wrapper`. Without Java (`java` on `PATH` or `JAVA_HOME`) the wrapper files are kept with a warning and the update carries only the properties edit, which the existing wrapper reads to download the new distribution (Renovate commits that edit too and reports an artifact error); `plan` always shows only the properties edit.
 
 ## homebrew
 

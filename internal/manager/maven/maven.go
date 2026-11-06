@@ -18,6 +18,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Name is the manager name.
@@ -472,6 +473,13 @@ func (m *mavenManager) parent(p *pom, byGA, byGAV map[string]*pom) *pom {
 func (*mavenManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	edits := []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}
+	if d.Range != "" {
+		out, ok := (&mavenManager{}).NewRange(d, u.NewVersion, u.RangeStrategy)
+		if !ok {
+			return nil, fmt.Errorf("range %s cannot be rewritten for %s", d.Range, u.NewVersion)
+		}
+		edits[0].Old, edits[0].New = d.Range, out
+	}
 	if u.NewName != "" {
 		ne, err := manager.NameEdits(d, u.NewName)
 		if err != nil {
@@ -794,16 +802,55 @@ func (s scope) resolve(d *dep.Dep, u decl) {
 		v, owner, ref = def, file, m[1]
 	}
 	switch {
-	case strings.HasPrefix(v.value, "[") || strings.HasPrefix(v.value, "("):
-		d.Skip, d.Version = "version range", v.value
 	case v.span == (dep.Span{}):
 		d.Skip, d.Version = "cannot locate value", v.value
+	case versioning.IsMavenRange(v.value):
+		r, err := versioning.ParseMavenRange(v.value)
+		if err != nil {
+			d.Skip, d.Version = "version range", v.value
+			return
+		}
+		setRange(d, r, v)
+		d.VersionRef = ref
 	default:
 		d.Version, d.RefSpan, d.VersionRef = v.value, v.span, ref
-		if owner != s.poms[0].file {
-			d.File, d.Line, d.NameParts = owner, v.line, nil
-		}
 	}
+	if d.Skip == "" && owner != s.poms[0].file {
+		d.File, d.Line, d.NameParts = owner, v.line, nil
+	}
+}
+
+// setRange sets the version of d from the Maven range r written as v: an exact `[1.0]` gets
+// Version and a RefSpan on the version alone, like a plain version; any other range becomes
+// the dep's Range, RefSpan the whole value, Version its anchor (the first lower bound, else
+// the first upper one) that candidates are ranked from.
+func setRange(d *dep.Dep, r versioning.MavenRange, v propDef) {
+	if len(r) == 1 && r[0].Exact() {
+		d.Version = r[0].Min
+		d.RefSpan = dep.Span{Start: v.span.Start + r[0].MinSpan.Start, End: v.span.Start + r[0].MinSpan.End}
+		return
+	}
+	d.Range, d.Version, d.RefSpan = v.value, cmp.Or(r[0].Min, r[0].Max), v.span
+}
+
+// InRange implements manager.RangeUpdater: whether d's Maven range admits v.
+func (*mavenManager) InRange(d dep.Dep, v string) bool {
+	r, err := versioning.ParseMavenRange(d.Range)
+	return err == nil && r.Admits(v)
+}
+
+// NewRange implements manager.RangeUpdater for Maven ranges as Renovate's maven versioning
+// does (versioning.MavenRange.Extend): pin writes v; a range admitting v is kept (Maven
+// resolves the newest admitted version itself); one v exceeds is extended to admit it.
+func (*mavenManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	if strategy == dep.RangePin {
+		return v, v != d.Range
+	}
+	r, err := versioning.ParseMavenRange(d.Range)
+	if err != nil {
+		return "", false
+	}
+	return r.Extend(d.Range, v)
 }
 
 // lookup returns the file and nearest definition of the property name: a maven.config -D,

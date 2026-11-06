@@ -14,6 +14,9 @@ var (
 	catEntryRe = regexp.MustCompile(`\b(library|plugin)\([ \t]*["'] *["'][ \t]*,[ \t]*`)
 	// catChainRe: .version(…), .versionRef(…), .version { … }, .withoutVersion() after an entry.
 	catChainRe = regexp.MustCompile(`^[ \t\r\n]*\.[ \t]*(versionRef|version|withoutVersion)[ \t]*([({])[ \t]*`)
+	// richRe: a constraint of a rich version block (`strictly("1.0")`, Groovy `strictly '1.0'`);
+	// the value follows.
+	richRe = regexp.MustCompile(`\b(strictly|require|prefer|reject|rejectAll)\b[ \t]*\(?[ \t]*`)
 )
 
 // catVersion is a version("k", …) of a settings catalog.
@@ -48,7 +51,11 @@ func (x *extractor) settingsCatalogs() {
 				vals[string(s.src[base+m[2]:base+m[3]])] = k
 			}
 			if s.code[base+m[6]] != ',' {
-				versions[k] = catVersion{rich: true}
+				v, ok := x.richValue(base + m[7] - 1)
+				versions[k] = catVersion{v: v, rich: !ok}
+				if ok && v.isLit {
+					x.taken[v.lit.start] = true
+				}
 				continue
 			}
 			if v, _ := x.argValue(base + m[1]); v.exists {
@@ -107,7 +114,15 @@ func (x *extractor) catalogEntry(off, i int, plugin bool, versions map[string]ca
 	arg, _ := x.argValue(i + m[1])
 	switch {
 	case open == '{':
-		d.Skip = "rich version"
+		v, ok := x.richValue(i + m[4])
+		if !ok {
+			d.Skip = "rich version"
+			break
+		}
+		x.catalogVersion(&d, &meta, v)
+		if v.isLit {
+			x.taken[v.lit.start] = true
+		}
 	case !arg.exists:
 		return
 	case method == "versionRef":
@@ -156,4 +171,28 @@ func (x *extractor) catalogVersion(d *dep.Dep, meta *depMeta, v value) {
 	if t := x.s.text(v.lit); t != "" {
 		x.version(d, meta, t, dep.Span{Start: v.lit.start, End: v.lit.end})
 	}
+}
+
+// richValue returns the value of the rich version block whose '{' is at open when it states
+// exactly one of `strictly`, `require` and `prefer` (Renovate's): an update rewrites it in
+// place. Several constraints, a `reject`/`rejectAll` or none are not a single value.
+func (x *extractor) richValue(open int) (value, bool) {
+	s := x.s
+	b := s.blockAt(open)
+	if b < 0 {
+		return value{}, false
+	}
+	var v value
+	n := 0
+	for _, m := range richRe.FindAllSubmatchIndex(s.code[open+1:s.blocks[b].end], -1) {
+		if s.enclosing(open+1+m[0]) != b {
+			continue
+		}
+		if k := string(s.code[open+1+m[2] : open+1+m[3]]); k == "reject" || k == "rejectAll" {
+			return value{}, false
+		}
+		n++
+		v, _ = x.argValue(open + 1 + m[1])
+	}
+	return v, n == 1 && v.exists
 }

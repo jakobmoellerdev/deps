@@ -1,6 +1,7 @@
 package maven
 
 import (
+	"cmp"
 	"os"
 	"slices"
 	"strings"
@@ -46,7 +47,7 @@ func check(t *testing.T, src []byte, ds []dep.Dep, ws []want) {
 		if d.Manager != Name || d.Datasource != "maven" || d.Versioning != "maven" {
 			t.Errorf("%s: manager/datasource/versioning = %s/%s/%s", d.Name, d.Manager, d.Datasource, d.Versioning)
 		}
-		if d.Skip == "" && string(src[d.RefSpan.Start:d.RefSpan.End]) != d.Version {
+		if d.Skip == "" && string(src[d.RefSpan.Start:d.RefSpan.End]) != cmp.Or(d.Range, d.Version) {
 			t.Errorf("%s: span holds %q, version %q", d.Name, src[d.RefSpan.Start:d.RefSpan.End], d.Version)
 		}
 		if i >= len(ws) {
@@ -209,8 +210,8 @@ func TestExtract(t *testing.T) {
 		{31, "compile", "a:cycle", "${cycle.a}", "unresolved property ${cycle.a}"},
 		{32, "compile", "a:missing", "${nope}", "unresolved property ${nope}"},
 		{33, "compile", "a:mixed", "${lib.version}-jre", "unsupported version ${lib.version}-jre"},
-		{34, "compile", "a:range", "[1.0,2.0)", "version range"},
-		{35, "compile", "a:range-prop", "(,1.0]", "version range"},
+		{34, "compile", "a:range", "1.0", ""},
+		{35, "compile", "a:range-prop", "1.0", ""},
 		{36, "compile", "a:entity", "1.0", "cannot locate value"},
 		{37, "compile", "a:cdata", "3.0", "cannot locate value"},
 		{38, "compile", "a:split", "3.0", "cannot locate value"},
@@ -389,6 +390,61 @@ func TestEdits(t *testing.T) {
 	}
 	if len(out) != len(src) {
 		t.Errorf("length changed by %d", len(out)-len(src))
+	}
+}
+
+// TestRangeEdits: ranges (in an element or a property) are extended to admit a version they
+// exclude, an exact `[v]` is a plain version, and a version a range admits is not written.
+func TestRangeEdits(t *testing.T) {
+	src := []byte(`<project>
+  <properties><guava.range>[32.0,33.0)</guava.range></properties>
+  <dependencies>
+    <dependency><groupId>com.google.guava</groupId><artifactId>guava</artifactId><version>${guava.range}</version></dependency>
+    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>[1.7,2)</version></dependency>
+    <dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>[4.13.1]</version></dependency>
+    <dependency><groupId>a</groupId><artifactId>bad</artifactId><version>[2.0,1.0)</version></dependency>
+  </dependencies>
+</project>`)
+	m := New()
+	ds, err := m.Extract("pom.xml", src, manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.(manager.Linker).Link([][]dep.Dep{ds})
+	check(t, src, ds, []want{
+		{4, "compile", "com.google.guava:guava", "32.0", ""},
+		{5, "compile", "org.slf4j:slf4j-api", "1.7", ""},
+		{6, "compile", "junit:junit", "4.13.1", ""},
+		{7, "compile", "a:bad", "[2.0,1.0)", "version range"},
+	})
+	if ds[0].Range != "[32.0,33.0)" || ds[0].VersionRef != "guava.range" || ds[2].Range != "" {
+		t.Errorf("ranges = %q (%q), %q", ds[0].Range, ds[0].VersionRef, ds[2].Range)
+	}
+	ru := m.(manager.RangeUpdater)
+	if !ru.InRange(ds[0], "32.1.3-jre") || ru.InRange(ds[0], "33.3.1-jre") {
+		t.Error("InRange")
+	}
+	if _, ok := ru.NewRange(ds[0], "32.1.3-jre", ""); ok {
+		t.Error("admitted version rewrites the range")
+	}
+	if got, ok := ru.NewRange(ds[1], "2.0.16", dep.RangePin); !ok || got != "2.0.16" {
+		t.Errorf("pin = %q", got)
+	}
+	var edits []patch.Edit
+	for i, v := range map[int]string{0: "33.3.1-jre", 1: "2.0.16", 2: "4.13.2"} {
+		edits = append(edits, must(m.Edits(dep.Update{Dep: ds[i], NewVersion: v}))...)
+	}
+	out, err := patch.Apply(src, edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"<guava.range>[32.0,33.4)</guava.range>", "<version>[1.7,3)</version>", "<version>[4.13.2]</version>"} {
+		if !strings.Contains(string(out), s) {
+			t.Errorf("patched pom lacks %q:\n%s", s, out)
+		}
+	}
+	if _, err := m.Edits(dep.Update{Dep: ds[1], NewVersion: "1.8"}); err == nil {
+		t.Error("an admitted version is written")
 	}
 }
 

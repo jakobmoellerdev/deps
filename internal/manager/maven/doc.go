@@ -28,7 +28,7 @@ var Doc = refdoc.Manager{
 		{Reason: "property <ref> only defined in profiles", When: "a `${name}` version whose property only profiles define, none of them active or several active ones (see Profiles); a dep inside a profile also sees its own profile's properties"},
 		{Reason: "unresolved property in <group:artifact>", When: "a groupId or artifactId with a `${…}` that neither the properties (as for versions) nor `project.groupId`/`project.artifactId` resolve"},
 		{Reason: "unsupported version <value>", When: "a version mixing a property with text (`${guava.version}-jre`, `${revision}${changelist}`)"},
-		{Reason: "version range", When: "`[1.0,2.0)`, `(,1.0]`"},
+		{Reason: "version range", When: "a range Maven rejects (`[2.0,1.0)`, `(1.0)`, `[1.0`); valid ranges are updated (see Version ranges)"},
 		{Reason: "cannot locate value", When: "a version written with entities, CDATA or split by a comment"},
 		{Reason: "internal module", When: "the groupId:artifactId of a pom extracted in the same run (a module or parent of the repository); applied after property resolution"},
 		{Reason: "m2e lifecycle mapping (not a published plugin)", When: "`org.eclipse.m2e:lifecycle-mapping`, the Eclipse m2e settings pseudo-plugin (no repository publishes it: Central answers 404 for its `maven-metadata.xml`)"},
@@ -47,6 +47,8 @@ var Doc = refdoc.Manager{
 			"Deps sharing a definition (`${jackson.version}`, in one pom or across modules) are updated together: one version, one PR named after the property unless a rule groups them (`group:`).",
 			"Properties of remote parent poms are not read: they live in published, immutable poms (https://central.sonatype.org/publish/requirements/immutability/) that only the `parent` dep's update moves; " +
 				"Renovate likewise resolves parents only among the repository's package files (`resolveParents` in lib/modules/manager/maven/extract.ts). `-D` flags on the actual command line and environment variables are not known.",
+			"Maven built-ins (`${project.version}`, `${project.parent.version}`) name the project's own version, almost always that of a sibling module, and versions mixing properties with text " +
+				"(`${revision}${changelist}`, `${guava.version}-jre`) have no single definition to rewrite; both are skipped, as Renovate skips them (`version-placeholder`).",
 		}},
 		{Title: "Profiles", Items: []string{
 			"A profile is active when maven.config's `-P` selects it, or when it has conditions and all of them hold, unless `-P` deactivates it; when none is, the `<activeByDefault>true` ones are (as in Maven).",
@@ -60,9 +62,14 @@ var Doc = refdoc.Manager{
 			"Each repository is passed to the datasource as `<id>=<url>/`. Without repositories, only Maven Central is used. URLs with properties are ignored.",
 			"`settings.xml` mirrors, credentials and active-profile repositories are applied by the maven datasource (see its docs), matched by repository id.",
 		}},
+		{Title: "Version ranges", Body: "A range (`[1.0,2.0)`, `(,1.0]`, `[1.5,)`, `(,1.0],[1.2,)`, also in a property) is the dep's range; candidates are ranked from its first lower bound (else its first upper one). " +
+			"Maven resolves the newest version a range admits itself, so admitted versions are not proposed; a newer version it excludes extends the range as Renovate's maven versioning does: " +
+			"a range one step wide moves (`[1,2)` → `[4,5)` for 4.3.2, also `[1,2-alpha)`), an inclusive upper bound becomes the version (`[1.0,1.2.23]` → `[1.0,1.2.24]`), " +
+			"an exclusive one the version at the bound's precision incremented (`[1.0,2.0)` → `[1.0,2.6)` for 2.5.1); with several restrictions the last one the version exceeds changes. " +
+			"`rangeStrategy: pin` writes the exact version. An exact `[1.0]` is updated like a plain version (`[1.1]`)."},
 		{Title: "Replacements", Body: "Dependencies, plugins with an explicit `groupId`, extensions, annotation processor paths and the parent can be [replaced](configuration.md#rulesreplacementname) by other `groupId:artifactId` coordinates when both are written literally; only the changed elements are rewritten. A replacement version is not written to a version property (`${...}`) other dependencies may share: such deps keep their version or are skipped."},
 		{Title: "Versioning", Body: "`maven` (Maven's ComparableVersion): `1.0` = `1.0.0` = `1.0-final`, `alpha` < `beta` < `milestone` < `rc` < `snapshot` < release < `sp`. " +
-			"SNAPSHOTs are never proposed, other prereleases only from a prerelease, and the first unknown qualifier after a `-` must match (`33.3.1-jre` stays on `-jre`). " +
+			"SNAPSHOTs are never proposed (a `-SNAPSHOT` names a moving development build, which repositories publish as timestamped snapshots in a separate `maven-metadata.xml` the datasource does not read, as Renovate does not); a SNAPSHOT dep is offered the releases above it. Other prereleases are proposed only from a prerelease, and the first unknown qualifier after a `-` must match (`33.3.1-jre` stays on `-jre`). " +
 			"Deps sharing a property take the highest version all of them reach. " +
 			"See [`rules[].versioning`](configuration.md#rulesversioning)."},
 	},

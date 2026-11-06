@@ -140,8 +140,7 @@ func version(d dep.Dep, e, versions *tomlspan.Value) (dep.Dep, bool) {
 		if len(v.Keys) == 0 {
 			return d, false
 		}
-		d.Skip = "rich version"
-		return d, true
+		return richVersion(d, v)
 	}
 	var def *tomlspan.Value
 	if versions != nil {
@@ -149,16 +148,38 @@ func version(d dep.Dep, e, versions *tomlspan.Value) (dep.Dep, bool) {
 			def = versions.Get(strings.Split(r.Str, ".")...)
 		}
 	}
-	switch {
-	case def == nil || def.Kind == tomlspan.Table && !slices.ContainsFunc(richKeys, func(k string) bool { return def.Fields[k] != nil }):
+	if def == nil || def.Kind == tomlspan.Table && !slices.ContainsFunc(richKeys, func(k string) bool { return def.Fields[k] != nil }) {
 		d.Skip = "unresolved version.ref " + r.Str
-		return d, true
-	case def.Kind == tomlspan.Table:
-		d.Skip = "rich version"
 		return d, true
 	}
 	d.VersionRef = r.Str
+	if def.Kind == tomlspan.Table {
+		return richVersion(d, def)
+	}
 	return literalValue(d, def)
+}
+
+// richVersion sets the version from a rich version table with exactly one of `strictly`,
+// `require` and `prefer` (Renovate's catalog extraction), which an update rewrites in place;
+// several of them, or a `reject`/`rejectAll`, are skipped as `rich version`.
+func richVersion(d dep.Dep, t *tomlspan.Value) (dep.Dep, bool) {
+	var one *tomlspan.Value
+	for _, k := range richKeys {
+		f := t.Fields[k]
+		if f == nil {
+			continue
+		}
+		if one != nil || k == "reject" || k == "rejectAll" {
+			one = nil
+			break
+		}
+		one = f
+	}
+	if one == nil {
+		d.Skip, d.VersionRef = "rich version", ""
+		return d, true
+	}
+	return literalValue(d, one)
 }
 
 // literalValue sets the version from a string value; other kinds cannot be edited.
