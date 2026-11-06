@@ -195,9 +195,10 @@ type NuGetRange struct {
 	FloatPre  bool
 }
 
-// Exact reports whether the range is `[v]`.
+// Exact reports whether the range is `[v]`; `[v,v]`, an interval with equal bounds, is not:
+// its bounds are two spans to rewrite.
 func (r NuGetRange) Exact() bool {
-	return r.Float == "" && !r.Bare && r.MinIncl && r.MaxIncl && r.Min == r.Max
+	return r.Float == "" && !r.Bare && r.MinIncl && r.MaxIncl && r.Min != "" && r.MinSpan == r.MaxSpan
 }
 
 // ParseNuGetRange parses s as VersionRange.TryParse does: an interval with inclusive `[ ]` or

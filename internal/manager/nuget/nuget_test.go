@@ -434,6 +434,22 @@ func TestNewRange(t *testing.T) {
 	}
 }
 
+// A closed interval with equal bounds (`[1.0,1.0]`) is an interval, not the exact form `[1.0]`:
+// editing only its lower bound would write `[2.0,1.0]`.
+func TestClosedIntervalEdit(t *testing.T) {
+	src := `<Project><ItemGroup><PackageReference Include="X" Version="[1.0,1.0]" /></ItemGroup></Project>`
+	dir := write(t, map[string]string{"App.csproj": src})
+	d := find(t, run(t, dir, "App.csproj")["App.csproj"], DepTypeNuGet, "X")
+	e, err := New().Edits(dep.Update{Dep: d, NewVersion: "2.0"})
+	if err != nil || len(e) != 1 {
+		t.Fatalf("Edits = %v, %v", e, err)
+	}
+	got := src[:e[0].Start] + e[0].New + src[e[0].End:]
+	if !strings.Contains(got, `Version="[1.0,2.0]"`) {
+		t.Errorf("edited to %s", got)
+	}
+}
+
 func TestFloatAnchor(t *testing.T) {
 	for in, want := range map[string]string{"1.*": "1", "1.2.*": "1.2", "1.0.0-rc*": "1.0.0-rc", "1.*-*": "1-0", "1.0.0-rc.*": "1.0.0-rc"} {
 		d := dep.Dep{}
