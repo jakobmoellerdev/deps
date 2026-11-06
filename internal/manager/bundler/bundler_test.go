@@ -246,6 +246,26 @@ func TestExtractSources(t *testing.T) {
 	}
 }
 
+// TestExtractHashRocket covers unspaced `:key=>value` pairs, which must not lex as setter
+// symbols (`:require=` followed by `>`).
+func TestExtractHashRocket(t *testing.T) {
+	for src, want := range map[string]string{
+		"gem 'rails', '~> 6.0', :require=>false\n":     `1 rails dependencies range='~> 6.0' constraint="~> 6.0" version="6.0" source=`,
+		"gem 'x', '~> 1.0', :group=>:test\n":           `1 x group range='~> 1.0' constraint="~> 1.0" version="1.0" source=`,
+		"gem 'y', :git=>'https://example.com/y.git'\n": `1 y dependencies range= constraint="" version="" source= skip=git dependency`,
+		"ruby '2.7.1', :patchlevel=>'1'\n":             `1 ruby ruby range= constraint="" version="" source= skip=` + skipRubyPatchlevel,
+	} {
+		deps, err := New().Extract("Gemfile", []byte(src), manager.Env{})
+		var got []string
+		for _, d := range deps {
+			got = append(got, describe([]byte(src), d))
+		}
+		if err != nil || strings.Join(got, "\n") != want {
+			t.Errorf("%q:\n%s\nwant %s (%v)", src, strings.Join(got, "\n"), want, err)
+		}
+	}
+}
+
 func TestExtractOddInput(t *testing.T) {
 	for _, src := range []string{
 		"", "end\nend\n", "gem", "gem 'unterminated", "gem \"a\", %w(x", "=begin\nno end", "gem <<~X\n", "group :a do\n",

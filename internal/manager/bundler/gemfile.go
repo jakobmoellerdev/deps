@@ -124,7 +124,9 @@ func lex(src []byte) []token {
 				for j < len(src) && isIdentChar(src[j]) {
 					j++
 				}
-				if j < len(src) && (src[j] == '?' || src[j] == '!' || src[j] == '=') {
+				// Ruby takes `?`/`!`, or a setter `=` not starting `=>`, `=~` or `==`.
+				if j < len(src) && (src[j] == '?' || src[j] == '!' ||
+					src[j] == '=' && (j+1 == len(src) || src[j+1] != '>' && src[j+1] != '~' && src[j+1] != '=')) {
 					j++
 				}
 				emit(token{kind: tSymbol, text: string(src[i+1 : j]), start: i, end: j})
