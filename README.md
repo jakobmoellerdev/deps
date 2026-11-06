@@ -14,7 +14,8 @@
 <p align="center">
   <img src="https://cdn.simpleicons.org/github/_/white" height="22" alt="GitHub" title="GitHub">&nbsp;&nbsp;
   <img src="https://cdn.simpleicons.org/gitea" height="22" alt="Gitea" title="Gitea">&nbsp;&nbsp;
-  <img src="https://cdn.simpleicons.org/forgejo" height="22" alt="Forgejo" title="Forgejo">
+  <img src="https://cdn.simpleicons.org/forgejo" height="22" alt="Forgejo" title="Forgejo">&nbsp;&nbsp;
+  <img src="https://cdn.simpleicons.org/gitlab" height="22" alt="GitLab" title="GitLab">
 </p>
 
 <p align="center">
@@ -112,7 +113,7 @@ deps plan   # preview every update as a diff, no config needed
 
 Packages install `/usr/bin/deps` with shell completions. Checksums and Sigstore verification: [install](docs/install.md).
 
-**Coming from Renovate?** Disable Renovate, add `branchPrefix: renovate/` to `.deps.yaml`, then `deps run --dry-run` to see which PRs deps would open. Once a real run completes without errors, deps closes Renovate's old PRs under that prefix. Option mapping: [migrating from Renovate](docs/migrating-from-renovate.md).
+**Coming from Renovate?** Disable Renovate and run `deps migrate`: it translates your Renovate config, presets included, into a commented `.deps.yaml` that keeps Renovate's `renovate/` branch prefix (`deps plan --renovate` runs from the Renovate config as it is). `deps run --dry-run` shows which PRs deps would open; once a real run completes without errors, deps closes Renovate's old PRs under that prefix. Option mapping and what can't be translated: [migrating from Renovate](docs/migrating-from-renovate.md); an [agent skill](skills/migrate-from-renovate/SKILL.md) does the migration for you.
 
 ## Getting started
 
@@ -191,6 +192,13 @@ Use the Gitea workflow as `.forgejo/workflows/deps.yml`, with two changes: drop 
 
 </details>
 
+<details>
+<summary><b>GitLab</b></summary>
+
+Add a `deps` job to `.gitlab-ci.yml` that downloads the release binary and runs `deps run` on a pipeline schedule, with a project access token (scopes `api`, `write_repository`) in the CI/CD variable `DEPS_TOKEN`. deps opens merge requests, uses `merge_when_pipeline_succeeds` for automerge and pipelines as checks. The job and token setup: [GitLab CI](docs/ci.md#gitlab-ci).
+
+</details>
+
 ### Configuration (optional)
 
 Without a `.deps.yaml`, every direct dependency is updated. A small config:
@@ -218,13 +226,20 @@ The first line turns on completion and checks in editors that use yaml-language-
 | <img src="https://cdn.simpleicons.org/kubernetes" width="20" alt=""> | **Kubernetes** | Kustomize images, charts and remote refs | |
 | <img src="https://cdn.simpleicons.org/helm/_/white" width="20" alt=""> | **Helm** | `Chart.yaml`, helmfiles, chart custom resources (classic repos and OCI) | `Chart.lock` |
 | <img src="https://cdn.simpleicons.org/nodedotjs" width="20" alt=""> | **Node.js**<br>npm, pnpm, Yarn, Bun | `package.json` (deps, `packageManager`, `engines`, `volta`), `.nvmrc`, `.node-version` | `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` |
-| <img src="https://cdn.simpleicons.org/python" width="20" alt=""> | **Python**<br>pip, pip-tools, uv, Poetry, pdm, Pipenv | `requirements*.txt` and pip-compile inputs, `pyproject.toml` (PEP 621/735), `Pipfile` | `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, pip-compile outputs |
+| <img src="https://cdn.simpleicons.org/python" width="20" alt=""> | **Python**<br>pip, pip-tools, uv, Poetry, pdm, Pipenv, conda | `requirements*.txt` and pip-compile inputs, `pyproject.toml` (PEP 621/735), `Pipfile`, conda `environment.yml` (with its `pip:` list) | `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, pip-compile outputs |
 | <img src="https://cdn.simpleicons.org/ruby" width="20" alt=""> | **Ruby**<br>Bundler | `Gemfile`/`gems.rb`, `*.gemspec`, Ruby version (`ruby` directive, `.ruby-version`, asdf/mise) | `Gemfile.lock`/`gems.locked` (incl. `RUBY VERSION`) |
 | <img src="https://cdn.simpleicons.org/rust/_/white" width="20" alt=""> | **Rust** | `Cargo.toml`, with well-known crate monorepos grouped; toolchain in `rust-toolchain.toml` | `Cargo.lock` |
 | <img src="https://cdn.simpleicons.org/swift" width="20" alt=""> | **Swift** | `Package.swift` (`from:`, `exact:`, ranges) | `Package.resolved` |
+| <img src="https://cdn.simpleicons.org/php" width="20" alt=""> | **PHP**<br>Composer | `composer.json` | `composer.lock` |
+| <img src="https://cdn.simpleicons.org/dotnet" width="20" alt=""> | **.NET**<br>NuGet | `*.csproj`/`*.fsproj`/`*.vbproj`, `Directory.Packages.props` and other MSBuild files (`$(Property)` versions, `nuget.config` sources), MSBuild SDKs, .NET SDK in `global.json`, `dotnet-tools.json` | |
+| <img src="https://cdn.simpleicons.org/julia" width="20" alt=""> | **Julia** | `[compat]` entries in `Project.toml` | `Manifest.toml` |
+| <img src="https://cdn.simpleicons.org/elm" width="20" alt=""> | **Elm** | `elm.json` packages and compiler version | |
+| <img src="https://cdn.simpleicons.org/cplusplus" width="20" alt=""> | **C/C++**<br>vcpkg | `vcpkg.json` and `vcpkg-configuration.json` baselines and port versions | |
+| <img src="https://cdn.simpleicons.org/bazel" width="20" alt=""> | **Bazel** | `MODULE.bazel` (`bazel_dep`s from the BCR or `.bazelrc` registries, git overrides, rules_oci/rules_img images, rules_jvm_external artifacts, crate_universe crates), `.bazelversion` | `MODULE.bazel.lock` |
 | <img src="https://cdn.simpleicons.org/terraform" width="20" alt=""> <img src="https://cdn.simpleicons.org/opentofu" width="20" alt=""> | **Terraform / OpenTofu** | providers, modules, `required_version`, Terragrunt sources, tflint plugins | `.terraform.lock.hcl` |
 | <img src="https://cdn.simpleicons.org/apachemaven" width="20" alt=""> <img src="https://cdn.simpleicons.org/gradle/_/white" width="20" alt=""> | **JVM**<br>Maven, Gradle | `pom.xml`, Gradle builds and version catalogs, Maven and Gradle wrappers | `gradle.lockfile` |
 | <img src="https://cdn.simpleicons.org/gitlab" width="20" alt=""> | **GitLab CI** | images, project includes, CI/CD components | |
+| <img src="https://cdn.simpleicons.org/circleci/_/white" width="20" alt=""> | **Other CI pipelines**<br>Bitbucket, Woodpecker, Drone, CircleCI, Azure | Bitbucket Pipelines images and pipes, Woodpecker and Drone images, CircleCI images and orbs, Azure Pipelines containers, repositories and tasks | |
 | <img src="https://cdn.simpleicons.org/precommit" width="20" alt=""> | **pre-commit** | hook `rev`s, including frozen SHAs | |
 | <img src="https://cdn.simpleicons.org/git" width="20" alt=""> | **Git submodules** | `.gitmodules` (tracked branch or version tag; opt-in, as in Renovate) | |
 | 🧰 | **Tool versions** | asdf `.tool-versions`, mise `[tools]` | |
@@ -247,14 +262,17 @@ flowchart LR
 > [!NOTE]
 > **We love Renovate.** deps exists because of it: it reads Renovate's markers, takes over its branches, and borrows many of its ideas. But with AI-assisted development, code and dependencies change many times a day, and the update bot has to keep up. deps is built for that: a binary that starts in milliseconds, a run that finishes in seconds, and a re-run on every push to the default branch, so dependency PRs react to your changes instead of waiting for the next scheduled run.
 
-- **Drop-in for Renovate users.** Reads `# renovate:` markers, takes over `renovate/` branches, and maps most options one to one ([migration guide](docs/migrating-from-renovate.md)).
+- **Drop-in for Renovate users.** Reads `# renovate:` markers, takes over `renovate/` branches, and maps most options one to one: `deps migrate` writes your Renovate config as a `.deps.yaml`, and `--renovate` runs from it directly ([migration guide](docs/migrating-from-renovate.md)).
 - **Diffs you can trust.** Only version bytes change: no reformatting, no reordered keys, comments kept.
 - **A small, strict config.** Rules are read top to bottom, later rules override single fields. Unknown keys are errors with a line number, and a JSON Schema gives editor completion.
-- **Quiet pull requests.** One PR per dependency or group, split into major/minor/patch. Unchanged PRs are never pushed again; obsolete PRs are closed only after an error-free run. Schedules, PR limits, automerge and a dashboard issue are built in.
-- **Security updates** from OSV advisories for Go, npm, Rust, PyPI, Maven, RubyGems and GitHub Actions, bypassing schedules and the minimum release age.
+- **Quiet pull requests.** One PR per dependency or group, split into major/minor/patch. Unchanged PRs are never pushed again; obsolete PRs are closed only after an error-free run. PR limits, automerge and a dashboard issue are built in.
+- **PRs when you want them.** Schedules as cron triggers or Renovate-style time windows (`before 6am on monday`) in your `timezone`; draft PRs; PRs opened only once the branch's checks finished or passed (`prCreation`); updates held back until approved on the dashboard (`dashboardApproval`).
+- **Warnings about stale dependencies.** The dashboard and the PRs flag abandoned dependencies (no release within `abandonmentThreshold`) and deprecated, yanked or archived ones.
+- **Security updates** from OSV advisories for Go, npm, Rust, PyPI, Maven, RubyGems, Packagist, NuGet and GitHub Actions, bypassing schedules and the minimum release age.
 - **Release notes in every PR:** notes, release ages and a compare link.
 - **Fast and light.** One directory walk, deduplicated lookups, commits without a checkout or worktree. See the numbers below.
-- **Runs anywhere.** Same binary on your laptop and in GitHub, Gitea or Forgejo Actions; the forge is detected automatically.
+- **Runs anywhere.** Same binary on your laptop, in GitHub, Gitea or Forgejo Actions and in GitLab CI; the forge is detected automatically.
+- **Scales to an organisation.** Several base branches per repository (`baseBranches`), shared config through `extends`, and one job for many repositories (`run --repositories my-org/*`).
 
 ### Compared with Renovate and Dependabot
 
@@ -263,12 +281,14 @@ flowchart LR
 | Runtime | one static Go binary | Node.js app or container image | hosted by GitHub |
 | GitHub | ✅ | ✅ | ✅ |
 | Gitea / Forgejo | ✅ | ✅ | ❌ |
-| GitLab, Bitbucket | 🟡 partial¹ | ✅ | ❌ |
+| GitLab | ✅ | ✅ | ❌ |
+| Bitbucket | 🟡 partial¹ | ✅ | ❌ |
 | Config | one strict `.deps.yaml`, unknown keys are errors | JSON with presets | `dependabot.yml` |
 | `# renovate:` markers | ✅ | ✅ | ❌ |
+| Runs from a Renovate config | ✅ `--renovate`, `deps migrate` | ✅ | ❌ |
 | Single static binary, no runtime | ✅ | ❌ | ❌ |
 
-¹ deps opens PRs on GitHub, Gitea and Forgejo only. In those repos it still updates what points at GitLab and Bitbucket: GitLab CI images, includes and components, and Terraform/Terragrunt modules and Kustomize remotes hosted there.
+¹ deps opens PRs on GitHub, Gitea, Forgejo and GitLab only. In those repos it still updates what points at Bitbucket: Bitbucket Pipelines images and pipes, and Terraform/Terragrunt modules and Kustomize remotes hosted there.
 
 Renovate covers more platforms and managers; deps trades that breadth for a single binary, a smaller config and predictable diffs. Feature-by-feature status: [Renovate parity](docs/renovate-parity.md).
 
@@ -300,8 +320,10 @@ CPU time is deps itself; the rest of the wall time is registry latency, mostly c
 
 - **Running in CI** ([docs/ci.md](docs/ci.md)):
   - [tokens and permissions](docs/ci.md#tokens-and-permissions)
+  - [GitLab CI](docs/ci.md#gitlab-ci)
   - [schedules](docs/ci.md#schedules) and [running on push](docs/ci.md#run-on-push-to-the-default-branch)
-  - [automerge](docs/ci.md#automerge) and the [dependency dashboard](docs/ci.md#dependency-dashboard)
+  - [automerge](docs/ci.md#automerge), [draft PRs and PRs after CI](docs/ci.md#draft-prs-and-prs-after-ci) and the [dependency dashboard](docs/ci.md#dependency-dashboard)
+  - [several base branches](docs/ci.md#several-base-branches), [shared config and many repositories](docs/ci.md#shared-config-and-many-repositories)
   - [signed commits](docs/ci.md#signed-commits)
   - [self-hosted runners and actions hosts](docs/ci.md#self-hosted-runners-and-actions-hosts)
   - [preview on pull requests](docs/ci.md#preview-on-pull-requests)
@@ -312,7 +334,7 @@ CPU time is deps itself; the rest of the wall time is registry latency, mostly c
   - [managers and datasources](docs/reference/managers.md): what is found, skip reasons and lookups
   - [action](docs/reference/action.md): inputs and outputs of the composite action
 - **[Install and verify](docs/install.md)**: Debian, RPM, Arch Linux and Alpine packages, the static binary, `go install`, verifying a download, and running deps locally.
-- **[Migrating from Renovate](docs/migrating-from-renovate.md)**: option mapping and differences.
+- **[Migrating from Renovate](docs/migrating-from-renovate.md)**: `deps migrate` and `--renovate` (run from an existing Renovate config), option mapping, what cannot be translated, and differences. An [agent skill](skills/migrate-from-renovate/SKILL.md) does the migration for you.
 - **Background:** [design](docs/design.md), [Renovate parity](docs/renovate-parity.md), [changelog](CHANGELOG.md) ([how releases are made](docs/ci.md#releases-maintainers)).
 
 ## Development
