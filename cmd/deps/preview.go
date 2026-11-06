@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -164,18 +163,8 @@ func (d previewDiff) markdown(errs []error) string {
 	return b.String()
 }
 
-// truncateMarkdown cuts md at a line boundary to at most limit bytes, with a note.
-func truncateMarkdown(md string, limit int) string {
-	if len(md) <= limit {
-		return md
-	}
-	const note = "\n\n**Truncated; the job log has everything.**\n"
-	cut := max(limit-len(note), 0)
-	if i := strings.LastIndexByte(md[:cut], '\n'); i >= 0 {
-		cut = i
-	}
-	return md[:cut] + note
-}
+// previewTruncated ends a preview cut to a size limit.
+const previewTruncated = "\n\n**Truncated; the job log has everything.**\n"
 
 func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string) error {
 	start := time.Now()
@@ -214,11 +203,7 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 		reportError(stderr, o.term, e)
 	}
 	md := d.markdown(headRes.Errors)
-	if p := summaryPath(os.Getenv); p != "" {
-		if err := appendFile(p, truncateMarkdown(md, stepSummaryBudget)); err != nil {
-			fmt.Fprintf(stderr, "deps: step summary: %v\n", err)
-		}
-	}
+	appendStepSummary(stderr, func(room int) string { return truncateMarkdown(md, room, previewTruncated) })
 	if sha := pullRequestHead(os.Getenv); sha != "" && info.Kind == platform.GitHub {
 		conclusion := "success"
 		if len(headRes.Errors) > 0 {
@@ -226,7 +211,7 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 		}
 		url, err := platform.CreateCheckRun(ctx, info, token, client, platform.CheckRun{
 			Name: "deps preview", HeadSHA: sha, Conclusion: conclusion,
-			Title: d.headline(), Summary: truncateMarkdown(md, platform.CheckRunSummaryLimit),
+			Title: d.headline(), Summary: truncateMarkdown(md, platform.CheckRunSummaryLimit, previewTruncated),
 		})
 		switch {
 		case errors.Is(err, platform.ErrNoCheckRuns):
@@ -243,18 +228,6 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 		return errReported
 	}
 	return nil
-}
-
-// stepSummaryBudget bounds the preview in the step summary (GitHub accepts 1 MiB per step).
-const stepSummaryBudget = 1 << 20
-
-func appendFile(path, s string) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	_, err = f.WriteString(s)
-	return cmp.Or(err, f.Close())
 }
 
 // pullRequestHead is the head commit of the pull request that triggered the job (from the

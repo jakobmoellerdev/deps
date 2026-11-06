@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/bot"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -283,23 +284,60 @@ func TestSummaryMarkdownFit(t *testing.T) {
 }
 
 func TestSummaryStepFileLimit(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
 	res := summaryFixture()
 	p := filepath.Join(t.TempDir(), "summary.md")
 	t.Setenv("GITHUB_STEP_SUMMARY", p)
 	t.Setenv("GITEA_STEP_SUMMARY", "")
 	s := summary{Command: "plan", Res: res, Groups: engine.GroupUpdates(res.Updates, "")}
-	// An earlier command of the step already used all but a little of the limit.
-	room := len(s.markdownAt(mdNoSkippedList))
-	if err := os.WriteFile(p, bytes.Repeat([]byte("x"), stepSummaryLimit-room), 0o644); err != nil {
-		t.Fatal(err)
+	// fill makes the file as if earlier commands of the step used all but room bytes.
+	fill := func(room int) {
+		t.Helper()
+		if err := os.WriteFile(p, bytes.Repeat([]byte("x"), stepSummaryLimit-room), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
+	read := func() string {
+		t.Helper()
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(got)
+	}
+	fill(len(s.markdownAt(mdNoSkippedList)))
 	var stderr bytes.Buffer
 	s.write(&stderr)
-	got, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) > stepSummaryLimit || !strings.HasSuffix(string(got), s.markdownAt(mdNoSkippedList)) {
+	if got := read(); len(got) > stepSummaryLimit || !strings.HasSuffix(got, s.markdownAt(mdNoSkippedList)) {
 		t.Errorf("file is %d bytes (limit %d), stderr %q", len(got), stepSummaryLimit, stderr.String())
+	}
+
+	// Without room for even the truncation note, nothing is appended and deps says so.
+	fill(10)
+	stderr.Reset()
+	s.write(&stderr)
+	if got := read(); len(got) != stepSummaryLimit-10 || !strings.Contains(stderr.String(), "deps: step summary: no room\n") {
+		t.Errorf("summary: file is %d bytes (limit %d), stderr %q", len(got), stepSummaryLimit, stderr.String())
+	}
+	work := t.TempDir()
+	writeFiles(t, work, map[string]string{"go.mod": gomodSrc})
+	fill(10)
+	_, errOut, code := execute(t, "preview", "--dir", work, "--base-dir", work)
+	if got := read(); code != 0 || len(got) != stepSummaryLimit-10 || !strings.Contains(errOut, "deps: step summary: no room\n") {
+		t.Errorf("preview: exit %d, file is %d bytes (limit %d), stderr:\n%s", code, len(got), stepSummaryLimit, errOut)
+	}
+	// The preview counts what the file already holds.
+	fill(len(previewTruncated) + 5)
+	if _, errOut, code = execute(t, "preview", "--dir", work, "--base-dir", work); code != 0 {
+		t.Fatalf("preview: exit %d\n%s", code, errOut)
+	}
+	if got := read(); len(got) != stepSummaryLimit || !strings.HasSuffix(got, "x## de"+previewTruncated) {
+		t.Errorf("preview: file is %d bytes (limit %d), ends %q", len(got), stepSummaryLimit, got[max(len(got)-200, 0):])
+	}
+
+	// A cut without a line boundary stays on a rune boundary.
+	if got := truncateMarkdown(strings.Repeat("é", 100), len(previewTruncated)+5, previewTruncated); !utf8.ValidString(got) || len(got) > len(previewTruncated)+5 {
+		t.Errorf("truncateMarkdown = %q", got)
 	}
 }

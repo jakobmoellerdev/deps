@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/bot"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
@@ -360,13 +361,24 @@ func (s *summary) markdownFit(limit int) string {
 			return md
 		}
 	}
-	const note = "\n\n**Step summary truncated to its size limit; the job log has everything.**\n"
-	cut := max(limit-len(note), 0)
-	if i := strings.LastIndexByte(md[:min(cut, len(md))], '\n'); i >= 0 {
+	return truncateMarkdown(md, limit, "\n\n**Step summary truncated to its size limit; the job log has everything.**\n")
+}
+
+// truncateMarkdown cuts md to at most limit bytes ending with note: at the last line boundary
+// that leaves room for the note, else at a rune boundary. It is "" when not even the note fits.
+func truncateMarkdown(md string, limit int, note string) string {
+	if len(md) <= limit {
+		return md
+	}
+	cut := limit - len(note)
+	if cut < 0 {
+		return ""
+	}
+	if i := strings.LastIndexByte(md[:cut], '\n'); i >= 0 {
 		cut = i
 	}
-	if cut+len(note) > limit {
-		return ""
+	for cut > 0 && !utf8.RuneStart(md[cut]) {
+		cut--
 	}
 	return md[:cut] + note
 }
@@ -482,13 +494,19 @@ func summaryPath(getenv func(string) string) string {
 }
 
 // write prints the text summary to stderr and appends the markdown to the step summary file,
-// if the runner provides one. The file is one step's summary, so what earlier commands of the
-// step wrote counts against stepSummaryLimit.
+// if the runner provides one.
 func (s *summary) write(stderr io.Writer) {
 	s.writeText(stderr)
 	if s.Repository == "" {
 		s.writeMachine(stderr, s.Report)
 	}
+	appendStepSummary(stderr, s.markdownFit)
+}
+
+// appendStepSummary appends fit(room) to the step summary file, if the runner provides one.
+// The file is one step's summary, so room is what earlier commands of the step left of
+// stepSummaryLimit; fit returns "" when nothing fits.
+func appendStepSummary(stderr io.Writer, fit func(room int) string) {
 	p := summaryPath(os.Getenv)
 	if p == "" {
 		return
@@ -498,11 +516,16 @@ func (s *summary) write(stderr io.Writer) {
 		fmt.Fprintf(stderr, "deps: step summary: %v\n", err)
 		return
 	}
-	md := s.markdown()
-	if fi, serr := f.Stat(); serr == nil && fi.Size()+int64(len(md)) > stepSummaryLimit {
-		md = s.markdownFit(stepSummaryLimit - int(min(fi.Size(), stepSummaryLimit)))
+	room := stepSummaryLimit
+	if fi, serr := f.Stat(); serr == nil {
+		room -= int(min(fi.Size(), stepSummaryLimit))
 	}
-	_, err = f.WriteString(md)
+	md := fit(room)
+	if md == "" {
+		fmt.Fprintln(stderr, "deps: step summary: no room")
+	} else {
+		_, err = f.WriteString(md)
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
