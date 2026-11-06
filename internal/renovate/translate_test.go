@@ -1012,3 +1012,18 @@ func TestLoadGroupTemplates(t *testing.T) {
 		}
 	}
 }
+
+// The forge datasources keep their Renovate names; a literal registryUrlTemplate is their
+// instance.
+func TestLoadForgeDatasources(t *testing.T) {
+	res, err := load(t, `{customManagers: [
+		{customType: 'regex', managerFilePatterns: ['/^versions\\.env$/'], matchStrings: ['GLAB=(?<currentValue>\\S+)'], datasourceTemplate: 'gitlab-releases', packageNameTemplate: 'gitlab-org/cli', registryUrlTemplate: 'https://gitlab.example.com'},
+		{customType: 'regex', managerFilePatterns: ['/^b$/'], matchStrings: ['V=(?<currentValue>\\S+)'], datasourceTemplate: 'forgejo-tags', packageNameTemplate: 'forgejo/runner'}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := section(t, res, "custom")
+	if !strings.Contains(got, "registryUrl: https://gitlab.example.com") || !strings.Contains(got, "datasource: gitlab-releases") || !strings.Contains(got, "datasource: forgejo-tags") {
+		t.Errorf("custom:\n%s", got)
+	}
+}

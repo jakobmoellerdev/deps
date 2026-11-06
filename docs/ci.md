@@ -480,7 +480,7 @@ For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back
 **Network.** The runner needs HTTPS access to:
 
 - the forge;
-- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), pypi.org, api.anaconda.org (conda packages), gitlab.com or your GitLab instance (`gitlab-packages` custom deps), rubygems.org (and the Gemfiles' `source`s), repo.packagist.org (and composer.json's composer `repositories`, plus whatever Composer fetches for `composer.lock`), package.elm-lang.org, your Artifactory hosts (`artifactory` custom deps), the apk repositories of `apk` deps' `registryUrl`s (dl-cdn.alpinelinux.org, packages.wolfi.dev, …), bcr.bazel.build (and the `--registry`s of `.bazelrc`; plus whatever Bazel fetches for `MODULE.bazel.lock`), raw.githubusercontent.com (Ruby and Go release lists, vcpkg versions databases), static.rust-lang.org (Rust releases), raw.githubusercontent.com/JuliaRegistries/General (Julia packages; plus whatever Pkg fetches for `Manifest.toml`, by default pkg.julialang.org), api.nuget.org (and the nuget.config package sources), builds.dotnet.microsoft.com (.NET SDK releases), the `registryUrl` yum/dnf repositories of `rpm` deps (and the mirrors their `repomd.xml` `xml:base` names), deb.debian.org (deb packages without a registry URL; else the hosts of the deb registry URLs, such as security.debian.org or archive.ubuntu.com), api.osv.dev for security updates;
+- the upstream hosts of your dependencies: github.com, proxy.golang.org, registries, registry.npmjs.org, index.crates.io and crates.io (plus whatever cargo fetches for `Cargo.lock`), pypi.org, api.anaconda.org (conda packages), gitlab.com or your GitLab instance (`gitlab-packages` custom deps), rubygems.org (and the Gemfiles' `source`s), repo.packagist.org (and composer.json's composer `repositories`, plus whatever Composer fetches for `composer.lock`), package.elm-lang.org, your Artifactory hosts (`artifactory` custom deps), the apk repositories of `apk` deps' `registryUrl`s (dl-cdn.alpinelinux.org, packages.wolfi.dev, …), bcr.bazel.build (and the `--registry`s of `.bazelrc`; plus whatever Bazel fetches for `MODULE.bazel.lock`), raw.githubusercontent.com (Ruby and Go release lists, vcpkg versions databases), static.rust-lang.org (Rust releases), raw.githubusercontent.com/JuliaRegistries/General (Julia packages; plus whatever Pkg fetches for `Manifest.toml`, by default pkg.julialang.org), api.nuget.org (and the nuget.config package sources), builds.dotnet.microsoft.com (.NET SDK releases), the `registryUrl` yum/dnf repositories of `rpm` deps (and the mirrors their `repomd.xml` `xml:base` names), deb.debian.org (deb packages without a registry URL; else the hosts of the deb registry URLs, such as security.debian.org or archive.ubuntu.com), gitlab.com, gitea.com and code.forgejo.org (the default instances of the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags datasources, else their `registryUrl`), api.osv.dev for security updates;
 - the release download host.
 
 deps honors `HTTPS_PROXY`/`NO_PROXY`.
@@ -504,12 +504,12 @@ gitlabci:
 
 A component path starting with `$CI_SERVER_FQDN` or `$CI_SERVER_HOST` (also `${...}`) is on the instance. So is one whose host, port included, is the instance's host. Components on other hosts are looked up at `https://<host>/<project>`.
 
-**Private instances.** deps clones tags with Basic credentials for the instance's host:
+**Private instances.** deps clones tags, and lists the releases and tags of the `gitlab-releases` and `gitlab-tags` datasources, with credentials for the instance's host:
 
-1. `DEPS_GITLAB_TOKEN`, a personal, group or project access token with `read_repository`, as user `oauth2`;
-2. otherwise, in a GitLab CI job on the same instance (`CI_SERVER_HOST`, or the host of `CI_SERVER_URL`), `CI_JOB_TOKEN` as user `gitlab-ci-token`. The job token reads only projects that allow it in their job token allowlist.
+1. `DEPS_GITLAB_TOKEN`, a personal, group or project access token with `read_repository` (`read_api` for the releases and tags APIs), as user `oauth2` (the API gets it as `Authorization: Bearer`);
+2. otherwise, in a GitLab CI job on the same instance (`CI_SERVER_HOST`, or the host of `CI_SERVER_URL`), `CI_JOB_TOKEN` as user `gitlab-ci-token` (the API gets it as `JOB-TOKEN`). The job token reads only projects that allow it in their job token allowlist.
 
-A platform token (`DEPS_TOKEN` and friends) for the same host takes precedence over both. Without any of them, deps falls back to `git credential fill` on a 401.
+A platform token (`DEPS_TOKEN` and friends) for the same host takes precedence over both. Without any of them, deps falls back to `git credential fill` on a 401 (the releases and tags APIs also on 403 and 404, which GitLab answers for private projects).
 
 ## Several base branches
 

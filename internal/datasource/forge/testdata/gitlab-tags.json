@@ -1,0 +1,83 @@
+[
+ {
+  "name": "v1.128.0",
+  "message": "Release v1.128.0",
+  "target": "f31e09281a822c27234be404f5d551dff0dbf02b",
+  "commit": {
+   "id": "519ea19f7d3e9c701a4063f277ae27254bbafdad",
+   "short_id": "519ea19f",
+   "created_at": "2026-11-03T11:07:41.000+00:00",
+   "parent_ids": [
+    "db1ef7f82fd372ac4ab619bfabe7d5724af7a30a",
+    "02d9f1cec584072ad2bd0d1cf6ab61aedbbb4ee0"
+   ],
+   "title": "Merge branch 'df-upstream-failure-warning' into 'main'",
+   "message": "Merge branch 'df-upstream-failure-warning' into 'main'\n\nfix(df): warn once per registry when a registry request fails\n\nSee merge request https://gitlab.com/gitlab-org/cli/-/merge_requests/4278\n\nMerged-by: Hannah Baker <hbaker@gitlab.com>\nApproved-by: GitLab Duo <gitlab-duo@gitlab.com>\nApproved-by: Hannah Baker <hbaker@gitlab.com>\nReviewed-by: Hannah Baker <hbaker@gitlab.com>\nCo-authored-by: Arpit Gogia <12347103-arpitgogia@users.noreply.gitlab.com>",
+   "author_name": "Hannah Baker",
+   "author_email": "hbaker@gitlab.com",
+   "authored_date": "2026-11-03T11:07:41.000+00:00",
+   "committer_name": "GitLab",
+   "committer_email": "noreply@gitlab.com",
+   "committed_date": "2026-11-03T11:07:41.000+00:00",
+   "trailers": {},
+   "extended_trailers": {},
+   "web_url": "https://gitlab.com/gitlab-org/cli/-/commit/519ea19f7d3e9c701a4063f277ae27254bbafdad"
+  },
+  "protected": true,
+  "created_at": "2026-11-03T12:07:37.000Z"
+ },
+ {
+  "name": "v1.127.0",
+  "message": "Release v1.127.0",
+  "target": "64c9c9ada9339de37ab532554d27da9f26574abd",
+  "commit": {
+   "id": "2e352a17e7e00bef420b0f38e0ce9ab4e1a38e5d",
+   "short_id": "2e352a17",
+   "created_at": "2026-11-02T11:05:24.000+01:00",
+   "parent_ids": [
+    "71927f64a6433b903cb854be65b83449d0c0b9ae",
+    "735c92feb02c251ccba3594641126578e292b554"
+   ],
+   "title": "Merge branch 'tv/2026-11/duo-10' into 'main'",
+   "message": "Merge branch 'tv/2026-11/duo-10' into 'main'\n\nfeat(duo): support Duo CLI v10 auto-updates\n\nSee merge request https://gitlab.com/gitlab-org/cli/-/merge_requests/4287\n\nMerged-by: Tomas Vik <tvik@gitlab.com>\nApproved-by: GitLab Duo <gitlab-duo@gitlab.com>\nApproved-by: \ud83e\udd16 GitLab Bot \ud83e\udd16 <gitlab-bot@gitlab.com>\n",
+   "author_name": "Tomas Vik",
+   "author_email": "tvik@gitlab.com",
+   "authored_date": "2026-11-02T11:05:24.000+01:00",
+   "committer_name": "GitLab",
+   "committer_email": "noreply@gitlab.com",
+   "committed_date": "2026-11-02T11:05:24.000+01:00",
+   "trailers": {},
+   "extended_trailers": {},
+   "web_url": "https://gitlab.com/gitlab-org/cli/-/commit/2e352a17e7e00bef420b0f38e0ce9ab4e1a38e5d"
+  },
+  "protected": true,
+  "created_at": "2026-11-02T12:45:01.000Z"
+ },
+ {
+  "name": "v1.126.0",
+  "message": "Release v1.126.0",
+  "target": "e60a3d15d9e23ee89cf635714eb977bdc7a68afd",
+  "commit": {
+   "id": "4dd0d32d18361db6c1c668eb4ac691c0d6edf255",
+   "short_id": "4dd0d32d",
+   "created_at": "2026-10-29T07:13:38.000+10:00",
+   "parent_ids": [
+    "e4a47109025f5330ab7e0635ea7f7482dd40f682",
+    "edf45cc216b0bac7da40cb344450cfb97cc58490"
+   ],
+   "title": "Merge branch 'mnohr-main-patch-4698' into 'main'",
+   "message": "Merge branch 'mnohr-main-patch-4698' into 'main'\n\nchore: Add gitlab-bot to CODEOWNERS so automated approvals of MRs satisfy requirements\n\nCloses #8575\n\nSee merge request https://gitlab.com/gitlab-org/cli/-/merge_requests/4194\n\nMerged-by: Jay McCure <jmccure@gitlab.com>\nApproved-by: GitLab Duo <gitlab-duo@gitlab.com>\nApproved-by: Jay McCure <jmccure@gitlab.com>\nCo-authored-by: Matt Nohr <mnohr@gitlab.com>",
+   "author_name": "Jay McCure",
+   "author_email": "jmccure@gitlab.com",
+   "authored_date": "2026-10-29T07:13:38.000+10:00",
+   "committer_name": "GitLab",
+   "committer_email": "noreply@gitlab.com",
+   "committed_date": "2026-10-29T07:13:38.000+10:00",
+   "trailers": {},
+   "extended_trailers": {},
+   "web_url": "https://gitlab.com/gitlab-org/cli/-/commit/4dd0d32d18361db6c1c668eb4ac691c0d6edf255"
+  },
+  "protected": true,
+  "created_at": "2026-10-28T21:31:40.000Z"
+ }
+]

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
+	forgeds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
@@ -66,6 +67,18 @@ func (n *Notes) resolve(ctx context.Context, d dep.Dep, version string) (repoRef
 		r, ok := parseRepo(src, true)
 		r.kind = github
 		return r, ok
+	case forgeds.GiteaReleases, forgeds.GiteaTags, forgeds.ForgejoReleases, forgeds.ForgejoTags:
+		// These always speak the Gitea API; an instance under a path prefix is not supported.
+		fr, err := forgeds.ParseRepo(d.Datasource, d.Name, d.Source)
+		if err != nil {
+			return repoRef{}, false
+		}
+		u, err := url.Parse(fr.Base)
+		if err != nil || strings.Trim(u.Path, "/") != "" {
+			return repoRef{}, false
+		}
+		owner, name, _ := strings.Cut(fr.Path, "/")
+		return repoRef{kind: gitea, host: u.Host, owner: owner, name: name}, true
 	case dsGo:
 		return n.goRepo(d.Name)
 	case dsNpm, dsDocker, dsPypi, dsMaven:

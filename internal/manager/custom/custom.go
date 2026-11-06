@@ -31,6 +31,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	debds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deb"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom/customdoc"
@@ -84,7 +85,7 @@ type customManager struct {
 // registryURLDatasources are the datasources whose deps take a registryUrl (entry field,
 // regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
 // datasources keep an empty Source.
-var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name, "artifactory"}
+var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name, "artifactory", forge.GitLabReleases, forge.GitLabTags, forge.GiteaReleases, forge.GiteaTags, forge.ForgejoReleases, forge.ForgejoTags}
 
 // setRegistry sets d.Source to registry when d's datasource takes a registry URL.
 func setRegistry(d *dep.Dep, registry string) {
@@ -539,6 +540,10 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //     missing repository).
 //   - artifactory: Name is the folder path below Source (Renovate `registryUrl=`), or the full
 //     `https://` or `http://` folder URL when Source is empty; slashes around both are trimmed.
+//   - gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases,
+//     forgejo-tags: Name is the project path (`owner/repo`, GitLab `group/subgroup/project`)
+//     or a repository URL `https://host/path`; Source is the registryUrl, if any
+//     (forge.ParseRepo).
 //   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
 func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
@@ -584,6 +589,10 @@ func (m *customManager) classify(d *dep.Dep) {
 			return
 		}
 		d.Source, d.Name = repo, chart
+	case forge.GitLabReleases, forge.GitLabTags, forge.GiteaReleases, forge.GiteaTags, forge.ForgejoReleases, forge.ForgejoTags:
+		if _, err := forge.ParseRepo(d.Datasource, d.Name, d.Source); err != nil {
+			d.Skip = err.Error()
+		}
 	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "gitlab-packages", "rpm", "apk":
 	case debds.Name:
 		if d.Name == "" || strings.ContainsAny(d.Name, " \t/") {

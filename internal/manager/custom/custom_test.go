@@ -818,3 +818,39 @@ func TestArtifactoryRegexRegistryURL(t *testing.T) {
 		{2, "artifactory", "api", "https://a.example/artifactory/r1 https://b.example/artifactory/r2", "semver", "v2.0.0", "", ""},
 	})
 }
+
+// registryUrl (entry field, regex group, Renovate marker) is the Source of the forge
+// datasources and ignored for other datasources; invalid project paths are skipped.
+func TestRegistryURLForge(t *testing.T) {
+	src := strings.Join([]string{
+		"# renovate: datasource=gitlab-releases depName=gitlab-org/cli registryUrl=https://gitlab.example.com", // 1
+		"GLAB=v1.44.1", // 2
+		"# renovate: datasource=forgejo-tags packageName=forgejo/runner", // 3
+		"RUNNER=v13.2.0", // 4
+		"# renovate: datasource=npm depName=left-pad registryUrl=https://npm.example.com", // 5
+		"PAD=1.3.0",                  // 6
+		"# deps: gitea-releases o/r", // 7
+		"R=2.0.0",                    // 8
+		"# deps: gitea-tags a/b/c",   // 9
+		"C=1.0.0",                    // 10
+		"# renovate: datasource=gitlab-tags depName=g/p registryUrl=oci://x", // 11
+		"P=1.0.0", // 12
+	}, "\n")
+	m := one(t, config.Custom{Files: []string{"f"}, RegistryURL: "https://entry.example.com"})
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "gitlab-releases", "gitlab-org/cli", "https://gitlab.example.com", "semver", "v1.44.1", "", ""},
+		{4, "forgejo-tags", "forgejo/runner", "https://entry.example.com", "semver", "v13.2.0", "", ""},
+		{6, "npm", "left-pad", "", "semver", "1.3.0", "", ""},
+		{8, "gitea-releases", "o/r", "https://entry.example.com", "semver", "2.0.0", "", ""},
+		{10, "gitea-tags", "a/b/c", "https://entry.example.com", "semver", "", "", `invalid gitea-tags name "a/b/c"`},
+		{12, "gitlab-tags", "g/p", "oci://x", "semver", "", "", `invalid gitlab-tags registry URL "oci://x"`},
+	})
+
+	re := one(t, config.Custom{Files: []string{"f"}, Match: `(?m)^(?P<datasource>[a-z-]+) (?P<name>\S+) (?P<version>\S+)(?: (?P<registryUrl>\S+))?$`})
+	src = "gitlab-tags g/s/p 1.0.0 https://gitlab.example.com\nforgejo-releases https://codeberg.org/o/r 2.0.0\nnpm left-pad 1.3.0 https://npm.example.com"
+	check(t, src, extract(t, re, src), DepTypeRegex, []want{
+		{1, "gitlab-tags", "g/s/p", "https://gitlab.example.com", "semver", "1.0.0", "", ""},
+		{2, "forgejo-releases", "https://codeberg.org/o/r", "", "semver", "2.0.0", "", ""},
+		{3, "npm", "left-pad", "", "semver", "1.3.0", "", ""},
+	})
+}
