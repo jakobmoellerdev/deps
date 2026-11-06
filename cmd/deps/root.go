@@ -23,6 +23,7 @@ import (
 	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
+	debds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deb"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
@@ -415,6 +416,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		bazelds.Name:            bazelds.New(client, sem, auth, os.Getenv),
 		nugetds.Name:            nugetds.New(client, sem, os.Getenv),
 		dotnetversion.Name:      dotnetversion.New(client, sem, os.Getenv),
+		debds.Name:              debds.New(client, sem, auth),
 	}
 	if err := addCustomSources(sources, client, sem, cfg); err != nil {
 		return nil, err

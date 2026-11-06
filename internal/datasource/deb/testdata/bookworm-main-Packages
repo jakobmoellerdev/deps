@@ -1,0 +1,111 @@
+Package: curl
+Version: 7.88.1-10+deb12u15
+Installed-Size: 489
+Maintainer: Alessandro Ghedini <ghedo@debian.org>
+Architecture: amd64
+Depends: libc6 (>= 2.34), libcurl4 (= 7.88.1-10+deb12u15), zlib1g (>= 1:1.1.4)
+Description: command line tool for transferring data with URL syntax
+Multi-Arch: foreign
+Homepage: https://curl.se/
+Description-md5: f83293d10df083ae6f7bb7d01642913c
+Tag: implemented-in::c, interface::commandline, network::client,
+ protocol::ftp, protocol::gopher, protocol::http, protocol::imap,
+ protocol::ipv6, protocol::kerberos, protocol::ldap, protocol::pop3,
+ protocol::sftp, protocol::smtp, protocol::ssh, protocol::ssl,
+ protocol::telnet, protocol::tftp, role::program, scope::utility,
+ use::downloading, use::synchronizing, use::transmission,
+ works-with::file, works-with::mail
+Section: web
+Priority: optional
+Filename: pool/main/c/curl/curl_7.88.1-10+deb12u15_amd64.deb
+Size: 315764
+MD5sum: 2e321a27de9d997830dd178de4c2c583
+SHA256: 0dd9b6bf7a0bd11af2d68a52ec44c2a223fa7c11f9104c36ce1047e1137d4a8f
+
+Package: libcurl4
+Source: curl
+Version: 7.88.1-10+deb12u15
+Installed-Size: 840
+Maintainer: Alessandro Ghedini <ghedo@debian.org>
+Architecture: amd64
+Replaces: libcurl3
+Depends: libbrotli1 (>= 0.6.0), libc6 (>= 2.34), libgssapi-krb5-2 (>= 1.17), libidn2-0 (>= 0.6), libldap-2.5-0 (>= 2.5.4), libnghttp2-14 (>= 1.50.0), libpsl5 (>= 0.16.0), librtmp1 (>= 2.3), libssh2-1 (>= 1.7.0), libssl3 (>= 3.0.0), libzstd1 (>= 1.5.2), zlib1g (>= 1:1.1.4)
+Recommends: ca-certificates
+Conflicts: libcurl3
+Description: easy-to-use client-side URL transfer library (OpenSSL flavour)
+Multi-Arch: same
+Homepage: https://curl.se/
+Description-md5: f1c7f18aba2d8ab7a7e32acea1dc61e7
+Tag: role::shared-lib
+Section: libs
+Priority: optional
+Filename: pool/main/c/curl/libcurl4_7.88.1-10+deb12u15_amd64.deb
+Size: 392184
+MD5sum: 31f3ce5464013ac2f6f580533dbeb9fb
+SHA256: 3042904de01f9c4fbdcf1452b8f81abedcf2b015f9b9deba109063322b5bd68b
+
+Package: git
+Version: 1:2.39.5-0+deb12u3
+Installed-Size: 44890
+Maintainer: Jonathan Nieder <jrnieder@gmail.com>
+Architecture: amd64
+Provides: git-completion, git-core
+Depends: libc6 (>= 2.34), libcurl3-gnutls (>= 7.56.1), libexpat1 (>= 2.0.1), libpcre2-8-0 (>= 10.34), zlib1g (>= 1:1.2.2), perl, liberror-perl, git-man (>> 1:2.39.5), git-man (<< 1:2.39.5-.)
+Recommends: ca-certificates, patch, less, ssh-client
+Suggests: gettext-base, git-daemon-run | git-daemon-sysvinit, git-doc, git-email, git-gui, gitk, gitweb, git-cvs, git-mediawiki, git-svn
+Breaks: bash-completion (<< 1:1.90-1), cogito (<= 0.18.2+), dgit (<< 5.1~), git-buildpackage (<< 0.6.5), git-el (<< 1:2.32.0~rc2-1~), gitosis (<< 0.2+20090917-7), gitpkg (<< 0.15), guilt (<< 0.33), openssh-client (<< 1:6.8), stgit (<< 0.15), stgit-contrib (<< 0.15)
+Description: fast, scalable, distributed revision control system
+Multi-Arch: foreign
+Homepage: https://git-scm.com/
+Description-md5: c1f968556452a190fe359bffd151c012
+Tag: devel::lang:perl, devel::library, devel::rcs, implemented-in::c,
+ implemented-in::perl, implemented-in::shell, interface::text-mode,
+ network::client, network::server, protocol::ssh, protocol::tcp,
+ role::devel-lib, role::program, works-with::file,
+ works-with::software:source, works-with::vcs
+Section: vcs
+Priority: optional
+Filename: pool/main/g/git/git_2.39.5-0+deb12u3_amd64.deb
+Size: 7264380
+MD5sum: b493c1ad123361900c2e3686921c8f39
+SHA256: 637a85ddd6247fab13bdd0592f2f39aff04ce4dbf0655d3ab553ac359a38ce6f
+
+Package: openssl
+Version: 3.0.20-1~deb12u2
+Installed-Size: 2310
+Maintainer: Debian OpenSSL Team <pkg-openssl-devel@alioth-lists.debian.net>
+Architecture: amd64
+Depends: libc6 (>= 2.34), libssl3 (>= 3.0.9)
+Suggests: ca-certificates
+Description: Secure Sockets Layer toolkit - cryptographic utility
+Multi-Arch: foreign
+Homepage: https://www.openssl.org/
+Description-md5: 9b6de2bb6e1d9016aeb0f00bcf6617bd
+Tag: implemented-in::c, interface::commandline, protocol::ssl, role::program,
+ scope::utility, security::cryptography, security::integrity,
+ use::checking
+Section: utils
+Priority: optional
+Filename: pool/main/o/openssl/openssl_3.0.20-1~deb12u2_amd64.deb
+Size: 1438712
+MD5sum: 5be72c521ad1ce86dfdfaffa78340b81
+SHA256: 4d218561dc838de081de97f54584c4a29e77e26c7ed9fe3440d776d8e6071bf9
+
+Package: tzdata
+Version: 2026b-0+deb12u1
+Installed-Size: 2573
+Maintainer: GNU Libc Maintainers <debian-glibc@lists.debian.org>
+Architecture: all
+Provides: tzdata-bookworm
+Depends: debconf (>= 0.5) | debconf-2.0
+Description: time zone and daylight-saving time data
+Multi-Arch: foreign
+Homepage: https://www.iana.org/time-zones
+Description-md5: a77a3cc9a67658dd7cfdc6547391b8f8
+Tag: role::app-data, use::timekeeping
+Section: localization
+Priority: required
+Filename: pool/main/t/tzdata/tzdata_2026b-0+deb12u1_all.deb
+Size: 304148
+MD5sum: 92902e55935bd95b6176c6e5029a461a
+SHA256: 0edb49f4dffe0d5608069f7e4ba4d69544d3b9e86fc314dd8b75e9958d8e5e98

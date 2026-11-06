@@ -254,7 +254,7 @@ func TestNewErrors(t *testing.T) {
 	}{
 		{config.Custom{}, "custom[1]: files: must not be empty"},
 		{config.Custom{Files: []string{"a/[b"}}, `files: invalid glob "a/[b"`},
-		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk or regex:<RE2>, got "nope"`},
+		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb or regex:<RE2>, got "nope"`},
 		{config.Custom{Files: []string{"x"}, Versioning: "regex:(?<minor>1)"}, `versioning: regex: must have a (?<major>...) group`},
 		{config.Custom{Files: []string{"x"}, Datasource: "cpan"}, `datasource: unknown "cpan"`},
 		{config.Custom{Files: []string{"x"}, Datasource: "custom.envtest"}, `datasource: unknown "custom.envtest"`},
@@ -693,4 +693,87 @@ func TestApkDefaultVersioning(t *testing.T) {
 		{1, "apk", "bash", "", "loose", "5.2.37-r0", "", ""},
 		{2, "npm", "left-pad", "", "loose", "1.3.0", "", ""},
 	})
+}
+
+// TestDeb covers the deb datasource in every mode: Renovate's Dockerfile marker example, a
+// `deps:` annotation with a registry, the entry's registryUrl and a regex registryUrl group.
+func TestDeb(t *testing.T) {
+	const trixie = "https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64"
+	const sec = "https://security.debian.org/debian-security?suite=bookworm-security&components=main&binaryArch=amd64"
+	src := strings.Join([]string{
+		"# renovate: suite=bullseye depName=gcc-11 datasource=deb",          // 1 no registryUrl: the default
+		`ENV GCC_VERSION="11.2.0-19"`,                                       // 2
+		"# renovate: datasource=deb depName=curl registryUrl=" + trixie,     // 3
+		"RUN apt-get install -y curl=8.14.1-2 && rm -rf /var/lib/apt/lists", // 4
+		"# deps: deb " + sec + " openssl",                                   // 5
+		"ARG OPENSSL=3.0.15-1~deb12u1",                                      // 6
+		"# deps: deb git",                                                   // 7
+		"ARG GIT_1=1:2.39.5-0+deb12u2.",                                     // 8 epoch, trailing dot
+		"# deps: deb tzdata versioning=loose",                               // 9
+		"TZ 2024a-0+deb12u1",                                                // 10
+		"# renovate: datasource=deb depName=x registryUrl=https://deb.debian.org/debian?suite=stable", // 11
+		"X=1.0-1",                                // 12
+		"# renovate: datasource=deb depName=a/b", // 13
+		"X=1.0-1",                                // 14
+		"# deps: deb nover",                      // 15
+		"just text and v1",                       // 16
+		"# deps: deb dockerce",                   // 17
+		"pkg=5:23.0.0-1~debian.12~bookworm",      // 18
+	}, "\n")
+	m := one(t, config.Custom{Files: []string{"x"}})
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "deb", "gcc-11", "", "deb", "11.2.0-19", "", ""},
+		{4, "deb", "curl", trixie, "deb", "8.14.1-2", "", ""},
+		{6, "deb", "openssl", sec, "deb", "3.0.15-1~deb12u1", "", ""},
+		{8, "deb", "git", "", "deb", "1:2.39.5-0+deb12u2", "", ""},
+		{10, "deb", "tzdata", "", "loose", "2024a-0+deb12u1", "", ""},
+		{12, "deb", "x", "https://deb.debian.org/debian?suite=stable", "deb", "", "", `invalid deb registry URL "https://deb.debian.org/debian?suite=stable": missing query parameter components`},
+		{14, "deb", "a/b", "", "deb", "", "", `invalid deb name "a/b"`},
+		{16, "deb", "nover", "", "deb", "", "", "no version on next line"},
+		{18, "deb", "dockerce", "", "deb", "5:23.0.0-1~debian.12~bookworm", "", ""},
+	})
+
+	// The entry's registryUrl and versioning apply unless the marker sets them.
+	m = one(t, config.Custom{Files: []string{"x"}, RegistryURL: trixie, Versioning: "loose"})
+	src = "# deps: deb curl\nX=8.14.1-2\n# renovate: datasource=deb depName=git registryUrl=" + sec + "\nX=1.0-1\n"
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "deb", "curl", trixie, "loose", "8.14.1-2", "", ""},
+		{4, "deb", "git", sec, "loose", "1.0-1", "", ""},
+	})
+
+	// Regex mode: a registryUrl group wins over the entry's registryUrl.
+	m = one(t, config.Custom{Files: []string{"x"}, Datasource: "deb", RegistryURL: trixie,
+		Match: `# renovate:(?: suite=(?P<suite>\S+))?(?: registryUrl=(?P<registryUrl>\S+))? depName=(?P<depName>\S+)\nENV \w+="(?P<currentValue>[^"]+)"`})
+	src = "# renovate: suite=bullseye depName=gcc-11\nENV GCC_VERSION=\"11.2.0-19\"\n" +
+		"# renovate: registryUrl=" + sec + " depName=openssl\nENV OPENSSL_VERSION=\"3.0.15-1~deb12u1\"\n"
+	check(t, src, extract(t, m, src), DepTypeRegex, []want{
+		{2, "deb", "gcc-11", trixie, "deb", "11.2.0-19", "", ""},
+		{4, "deb", "openssl", sec, "deb", "3.0.15-1~deb12u1", "", ""},
+	})
+	// An entry's own versioning wins over deb's default; a regex datasource group gets it.
+	m = one(t, config.Custom{Files: []string{"x"}, Versioning: "semver"})
+	src = "# renovate: datasource=deb depName=git\nARG GIT=1:2.47.3-0+deb13u1\n"
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{{2, "deb", "git", "", "semver", "1:2.47.3-0+deb13u1", "", ""}})
+	m = one(t, config.Custom{Files: []string{"x"}, Name: "git", Match: `(?P<datasource>deb) (?P<version>\S+)`})
+	check(t, "deb 1:2.47.3-0+deb13u1", extract(t, m, "deb 1:2.47.3-0+deb13u1"), DepTypeRegex, []want{{1, "deb", "git", "", "deb", "1:2.47.3-0+deb13u1", "", ""}})
+	// Datasources without a registry keep an empty source.
+	m = one(t, config.Custom{Files: []string{"x"}, Datasource: "npm", Name: "n", RegistryURL: trixie, Match: `(?P<version>\d+\.\d+)`})
+	check(t, "1.2", extract(t, m, "1.2"), DepTypeRegex, []want{{1, "npm", "n", "", "semver", "1.2", "", ""}})
+}
+
+func TestFirstDebVersion(t *testing.T) {
+	for line, want := range map[string]string{
+		"curl=8.14.1-2 git=1:2.39.5":    "8.14.1-2",
+		"X_1 Y=1:2.39.5-0+deb12u2:":     "1:2.39.5-0+deb12u2",
+		"python3.11 v=3.11.2-6+deb12u4": "3.11.2-6+deb12u4",
+		"ca-certificates=20250419 \\":   "20250419",
+		"abc1.0 1.0.":                   "1.0",
+		"x=1.0~rc1 ":                    "1.0~rc1",
+		"bad 1.0-a_b":                   "",
+	} {
+		s, e, ok := firstDebVersion([]byte(line))
+		if got := line[s:e]; ok != (want != "") || got != want {
+			t.Errorf("firstDebVersion(%q) = %q, %v, want %q", line, got, ok, want)
+		}
+	}
 }

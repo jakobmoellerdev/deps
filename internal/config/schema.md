@@ -826,6 +826,7 @@ The scheme validates the current value, ranks candidates, classifies update kind
 | `nuget` | NuGetVersion: 1–4 numeric parts, optional `-<prerelease>` labels, optional `+metadata` | missing parts are 0 (`1.2` = `1.2.0.0`); prereleases compare as SemVer 2.0, case-insensitively; metadata does not count. Update types follow the first two parts; prereleases only from a prerelease. Ranges are NuGet version ranges (`[1.0,2.0)`, `(,2.0]`, `[1.2.3]`) and floating versions (`1.*`, `1.0.0-rc*`). The default of the nuget manager |
 | `rpm` | RPM EVR: `[<epoch>:]<version>[-<release>]`, version and release of `[0-9A-Za-z._+~^]`, the version starting with a digit | ordered as RPM's `rpmvercmp`: epoch, then version, then release; runs of digits compare numerically and above letters, `~` sorts below everything (`1.0~rc1` < `1.0`), `^` above the end but below more parts (`1.0` < `1.0^git1` < `1.0.1`); a version without a release sorts below the same version with one. A `~` marks a prerelease, proposed only from a prerelease. The first number of the version (and the epoch) is major, the second minor, anything else (the release: `1-1.azl3` → `1-2.azl3`) patch. No ranges. The default of rpm deps (Renovate's `rpm` versioning) |
 | `apk` | Alpine package versions (apk-tools): `N[.N]...[a-z][_suffix[N]]...[~hash][-rN]` (`3.2.1-r0`, `2.39.0_rc1-r0`, `6.5_p20250503-r0`, `1.1.1w-r1`) | ordered as apk-tools does: numbers, then the letter, then suffixes (`_alpha` < `_beta` < `_pre` < `_rc` < none < `_cvs` < `_svn` < `_git` < `_hg` < `_p`), then the revision; the commit hash is ignored. Update types follow the first two numbers, everything after them (letter, suffixes, `-rN` revision) is a patch update; pre-releases only from a pre-release; a version with `-rN` only moves to versions with one and vice versa. No constraints (`=~`, `>=`). The default of apk deps (Renovate's `apk` versioning) |
+| `deb` | Debian package versions (deb-version(7)): `[epoch:]upstream_version[-debian_revision]`, the upstream version starting with a digit | ordered as `dpkg --compare-versions`: epoch first, then upstream version and revision, digit runs numerically and `~` below everything (`1.0~rc1` < `1.0` < `1.0+deb12u1`). Update types follow an epoch change (major) and the first three numbers after the epoch, revision included (`8.14.1-1` → `8.14.1-2` is patch); every valid version is a candidate. No ranges. The default of `deb` deps |
 | `regex:<RE2>` | the expression's named groups | `major` (required), `minor`, `patch`, `build`, `revision` (numeric, absent = 0), `prerelease`, `compatibility`; other names are errors. `(?<name>)` and `(?P<name>)` both work. Candidates must share `compatibility`. |
 
 Errors: `rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group "x" (allowed: ...)`, `regex: invalid RE2 regexp: ...`, and `cannot be combined with updateTypes: ...`.
@@ -875,15 +876,16 @@ See the bucket table under [`separateMajorMinor`](#separatemajorminor).
 
 ## Config.custom
 
-Each entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
+Each entry is one manager instance with dep types `annotation` (no `match`) or `regex` (`match` set). Datasources: `git-tags`, `github-releases`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
 
 **Annotation mode (no `match`).** A comment marker annotates the **next line**, and that line's first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Comment starters are `#`, `//`, `--`, `;` and `<!--`.
 
-- `deps: <datasource> <name> [versioning=<scheme>]`
-- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`; `registryUrl` is the registry of `helm`, `gitlab-packages`, `rpm` and `apk` deps (see [`custom[].registryUrl`](#customregistryurl)) and ignored for other datasources, as are unknown keys.
+- `deps: <datasource> <name> [versioning=<scheme>]`; `helm` and `deb` also take `deps: <datasource> <registry> <name>`.
+- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`; `registryUrl` is the registry of `helm`, `gitlab-packages`, `rpm`, `apk` and `deb` deps (see [`custom[].registryUrl`](#customregistryurl)) and ignored for other datasources, as are unknown keys.
 - With the docker datasource, the next line's first tagged image reference is used: the tag is the version, and an adjacent `@sha256:` digest is rewritten with it.
+- With the deb datasource, the next line's first Debian version is used (`curl=8.14.1-2`, `1:2.39.5-0+deb12u2`, `3.0.15-1~deb12u1`: epoch and `~`/`+` suffixes included).
 - A marker's `versioning=` takes a scheme name (not `regex:`). Without it, docker deps use `docker` versioning, others the entry's `versioning`, else their datasource's default (see [`custom[].versioning`](#customversioning)).
-- Skips: `no version on next line`, `renovate marker without datasource`, `renovate marker without depName`.
+- Skips: `no version on next line`, `renovate marker without datasource`, `renovate marker without depName`, `invalid deb name "<name>"`, `invalid deb registry URL "<url>": <why>`.
 
 ```yaml
 custom:
@@ -929,7 +931,7 @@ custom:
 
 ## Custom.registryUrl
 
-Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm` and `apk` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group or a marker's `registryUrl=` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
+Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk` and `deb` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group or a marker's `registryUrl=` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
 
 ```yaml
 custom:
@@ -943,9 +945,23 @@ custom:
 
 For `apk` it is Renovate's `<base>?arch=<arch>[&branch=<b>][&components=<c1>,<c2>]` (one `APKINDEX.tar.gz` per component, e.g. `https://dl-cdn.alpinelinux.org/alpine?branch=v3.22&components=main,community&arch=x86_64`), or an index URL or its directory (`https://packages.wolfi.dev/os/x86_64`).
 
+A deb registry is Renovate's `<repository>?suite=<suite>&components=<c1,c2>&binaryArch=<arch>` (see the [deb datasource](managers.md#datasources)); several, separated by whitespace, are merged. Without one, deb deps use `https://deb.debian.org/debian?suite=stable&components=main,contrib,non-free&binaryArch=amd64`.
+
+```yaml
+custom:
+  - files: ['Dockerfile']
+    registryUrl: https://deb.debian.org/debian?suite=bookworm&components=main&binaryArch=amd64
+```
+
+```dockerfile
+FROM debian:bookworm
+# renovate: datasource=deb depName=curl
+RUN apt-get install -y curl=7.88.1-10+deb12u12
+```
+
 ## Custom.versioning
 
-Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, else `semver`. A marker's `versioning=` or a `versioning` group overrides the entry's.
+Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, else `semver`. A marker's `versioning=` or a `versioning` group overrides the entry's.
 
 ## Custom.checksum
 

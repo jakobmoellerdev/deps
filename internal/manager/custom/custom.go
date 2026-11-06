@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	debds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deb"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom/customdoc"
@@ -62,6 +63,9 @@ var (
 	// optional "-"/"+" suffix of alphanumeric components separated by ".", "-" or "+"
 	// (1.2, v1.2.3, 1.22-alpine, 2.0.0-rc.1+build.5). Boundaries are checked by firstVersion.
 	versionRe = regexp.MustCompile(`v?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z]+(?:[.+-][0-9A-Za-z]+)*)?`)
+	// debVersionRe is a run of Debian version characters from a digit; firstDebVersion
+	// checks it.
+	debVersionRe = regexp.MustCompile(`\d[0-9A-Za-z.+~:-]*`)
 )
 
 type customManager struct {
@@ -80,7 +84,7 @@ type customManager struct {
 // registryURLDatasources are the datasources whose deps take a registryUrl (entry field,
 // regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
 // datasources keep an empty Source.
-var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk"}
+var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name}
 
 // setRegistry sets d.Source to registry when d's datasource takes a registry URL.
 func setRegistry(d *dep.Dep, registry string) {
@@ -266,7 +270,7 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 				d.Versioning = string(line[ann[6]:ann[7]])
 			}
 			setRegistry(&d, m.registry)
-			if d.Datasource == "helm" {
+			if d.Datasource == "helm" || d.Datasource == debds.Name {
 				helmChartToken(&d, line[ann[5]:])
 			}
 			m.classify(&d)
@@ -357,8 +361,17 @@ func (m *customManager) knownVersioning(v string) bool {
 }
 
 // nextLineVersion sets the version (and for docker refs the digest) of d from the annotated
-// line starting at offset pos. Docker deps prefer the first tagged image reference.
+// line starting at offset pos. Docker deps prefer the first tagged image reference, deb deps
+// take the first Debian version (firstDebVersion).
 func nextLineVersion(d *dep.Dep, line []byte, pos int) bool {
+	if d.Datasource == debds.Name {
+		s, e, ok := firstDebVersion(line)
+		if ok {
+			d.Version = string(line[s:e])
+			d.RefSpan = dep.Span{Start: pos + s, End: pos + e}
+		}
+		return ok
+	}
 	if d.Datasource == "docker" {
 		if loc := firstDockerRef(line); loc != nil {
 			d.Version = string(line[loc[2]:loc[3]])
@@ -406,6 +419,27 @@ func firstVersion(line []byte) (int, int, bool) {
 			continue
 		}
 		return s, e, true
+	}
+	return 0, 0, false
+}
+
+// firstDebVersion returns the span of the first Debian version in line (`8.14.1-2`,
+// `1:2.39.5-0+deb12u2`, `3.0.15-1~deb12u1`, `20250419`, with epoch and `~`/`+` suffixes the
+// generic version token would cut): a run of version characters starting with a digit that is
+// not glued to word characters, without a trailing ".", "-" or ":", that is a valid deb version.
+func firstDebVersion(line []byte) (int, int, bool) {
+	scheme, _ := versioning.Get(debds.Versioning)
+	for _, loc := range debVersionRe.FindAllIndex(line, -1) {
+		s, e := loc[0], loc[1]
+		if s > 0 && (isWord(line[s-1]) || strings.IndexByte(".+~", line[s-1]) >= 0) || e < len(line) && isWord(line[e]) {
+			continue
+		}
+		for e > s && strings.IndexByte(".-:", line[e-1]) >= 0 {
+			e--
+		}
+		if scheme.Valid(string(line[s:e])) {
+			return s, e, true
+		}
 	}
 	return 0, 0, false
 }
@@ -549,6 +583,17 @@ func (m *customManager) classify(d *dep.Dep) {
 		}
 		d.Source, d.Name = repo, chart
 	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "gitlab-packages", "rpm", "apk":
+	case debds.Name:
+		if d.Name == "" || strings.ContainsAny(d.Name, " \t/") {
+			d.Skip = fmt.Sprintf("invalid deb name %q", d.Name)
+			return
+		}
+		for r := range strings.FieldsSeq(d.Source) {
+			if _, err := debds.ParseRegistry(r); err != nil {
+				d.Skip = err.Error()
+				return
+			}
+		}
 	default:
 		if !strings.HasPrefix(d.Datasource, config.CustomDatasourcePrefix) || !m.known(d.Datasource) {
 			d.Skip = fmt.Sprintf("unknown datasource %q", ds)
@@ -566,9 +611,9 @@ func helmRepository(repo string) bool {
 	return false
 }
 
-// helmChartToken reads the optional chart token of `deps: helm <repository> <chart>
-// [versioning=<scheme>]` from rest, the text after the name token: with a chart, the name
-// token is the repository.
+// helmChartToken reads the optional name token of `deps: helm <repository> <chart>` or
+// `deps: deb <registry> <package>` (with `[versioning=<scheme>]`) from rest, the text after
+// the first token: with a name, the first token is the repository.
 func helmChartToken(d *dep.Dep, rest []byte) {
 	for f := range strings.FieldsSeq(string(rest)) {
 		switch {

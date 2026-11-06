@@ -16,6 +16,7 @@ import (
 	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
+	debds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deb"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
@@ -216,7 +217,8 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 	// pkgDirs maps managers to their package directories when the name differs; kustomize,
 	// gitlabci and terraform report docker.ParseRef's skips, cargo the crate datasource's
 	// registry skip, the Python managers internal/pyreq's, gomod the engine's and
-	// internal/gotool's module path skip, pip_requirements internal/pytool's conflict skip.
+	// internal/gotool's module path skip, pip_requirements internal/pytool's conflict skip,
+	// custom the deb datasource's registry URL skip.
 	pkgDirs := map[string][]string{
 		actions.Name: {"actions"}, "pre-commit": {"precommit"},
 		"nvm": {"toolversions"}, "nodenv": {"toolversions"}, "ruby-version": {"toolversions"}, "asdf": {"toolversions"}, "mise": {"toolversions"},
@@ -233,6 +235,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"bitbucket-pipelines": {"bitbucketpipelines", "docker"}, "woodpecker": {"woodpecker", "docker"}, "droneci": {"droneci", "docker"},
 		"circleci": {"circleci", "docker"}, "azure-pipelines": {"azurepipelines", "docker"},
 		"bazel-module": {"bazel"}, "bazelisk": {"bazel"},
+		"custom": {"custom", filepath.Join("..", "datasource", "deb")},
 	}
 	for _, m := range registry.Docs() {
 		dirs, ok := pkgDirs[m.Name]
@@ -265,7 +268,7 @@ func TestManagerDocsComplete(t *testing.T) {
 }
 
 func TestDatasourceDocsComplete(t *testing.T) {
-	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, rpmds.Doc, apkds.Doc, customds.Doc}
+	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, rpmds.Doc, apkds.Doc, debds.Doc, customds.Doc}
 	var names []string
 	for _, d := range docs {
 		if d.Name == "" || d.NameForm == "" || d.Endpoints == "" || d.Auth == "" || d.ReleaseTimes == "" {

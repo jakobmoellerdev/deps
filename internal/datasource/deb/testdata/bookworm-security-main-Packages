@@ -1,0 +1,72 @@
+Package: curl
+Version: 7.88.1-10+deb12u5
+Installed-Size: 488
+Maintainer: Alessandro Ghedini <ghedo@debian.org>
+Architecture: amd64
+Depends: libc6 (>= 2.34), libcurl4 (= 7.88.1-10+deb12u5), zlib1g (>= 1:1.1.4)
+Description: command line tool for transferring data with URL syntax
+Homepage: https://curl.se/
+Description-md5: f83293d10df083ae6f7bb7d01642913c
+Multi-Arch: foreign
+Section: web
+Priority: optional
+Filename: pool/updates/main/c/curl/curl_7.88.1-10+deb12u5_amd64.deb
+Size: 314852
+SHA256: e3f80e7399b9ea2e78eaf68a96db7062ca1c22717f63437198464d2eee66d650
+
+Package: libcurl4
+Source: curl
+Version: 7.88.1-10+deb12u5
+Installed-Size: 843
+Maintainer: Alessandro Ghedini <ghedo@debian.org>
+Architecture: amd64
+Replaces: libcurl3
+Depends: libbrotli1 (>= 0.6.0), libc6 (>= 2.34), libgssapi-krb5-2 (>= 1.17), libidn2-0 (>= 0.6), libldap-2.5-0 (>= 2.5.4), libnghttp2-14 (>= 1.50.0), libpsl5 (>= 0.16.0), librtmp1 (>= 2.3), libssh2-1 (>= 1.7.0), libssl3 (>= 3.0.0), libzstd1 (>= 1.5.2), zlib1g (>= 1:1.1.4)
+Conflicts: libcurl3
+Description: easy-to-use client-side URL transfer library (OpenSSL flavour)
+Homepage: https://curl.se/
+Description-md5: f1c7f18aba2d8ab7a7e32acea1dc61e7
+Multi-Arch: same
+Recommends: ca-certificates
+Section: libs
+Priority: optional
+Filename: pool/updates/main/c/curl/libcurl4_7.88.1-10+deb12u5_amd64.deb
+Size: 390208
+SHA256: 619b592d51c0e75be0b153dbb671e732739d306bf22f42f8e1bc103235299f0d
+
+Package: git
+Version: 1:2.39.5-0+deb12u2
+Installed-Size: 44890
+Maintainer: Jonathan Nieder <jrnieder@gmail.com>
+Architecture: amd64
+Provides: git-completion, git-core
+Depends: libc6 (>= 2.34), libcurl3-gnutls (>= 7.56.1), libexpat1 (>= 2.0.1), libpcre2-8-0 (>= 10.34), zlib1g (>= 1:1.2.2), perl, liberror-perl, git-man (>> 1:2.39.5), git-man (<< 1:2.39.5-.)
+Suggests: gettext-base, git-daemon-run | git-daemon-sysvinit, git-doc, git-email, git-gui, gitk, gitweb, git-cvs, git-mediawiki, git-svn
+Breaks: bash-completion (<< 1:1.90-1), cogito (<= 0.18.2+), dgit (<< 5.1~), git-buildpackage (<< 0.6.5), git-el (<< 1:2.32.0~rc2-1~), gitosis (<< 0.2+20090917-7), gitpkg (<< 0.15), guilt (<< 0.33), openssh-client (<< 1:6.8), stgit (<< 0.15), stgit-contrib (<< 0.15)
+Description: fast, scalable, distributed revision control system
+Homepage: https://git-scm.com/
+Description-md5: c1f968556452a190fe359bffd151c012
+Multi-Arch: foreign
+Recommends: ca-certificates, patch, less, ssh-client
+Section: vcs
+Priority: optional
+Filename: pool/updates/main/g/git/git_2.39.5-0+deb12u2_amd64.deb
+Size: 7259684
+SHA256: 5446b1f6c6f9f058e7b22413b650a45b527c979eb2276d33f46570265ee5eb35
+
+Package: openssl
+Version: 3.0.22-1~deb12u2
+Installed-Size: 2315
+Maintainer: Debian OpenSSL Team <pkg-openssl-devel@alioth-lists.debian.net>
+Architecture: amd64
+Depends: libc6 (>= 2.34), libssl3 (>= 3.0.9)
+Suggests: ca-certificates
+Description: Secure Sockets Layer toolkit - cryptographic utility
+Homepage: https://www.openssl.org/
+Description-md5: 9b6de2bb6e1d9016aeb0f00bcf6617bd
+Multi-Arch: foreign
+Section: utils
+Priority: optional
+Filename: pool/updates/main/o/openssl/openssl_3.0.22-1~deb12u2_amd64.deb
+Size: 1441784
+SHA256: 5cdf0b735b1c8a96ae0bf83ed328c83c2170f8320dedb035e98705b60b2d0cfe
