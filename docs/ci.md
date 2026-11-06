@@ -76,7 +76,7 @@ On a miss the binary is downloaded and verified, then saved under that key (`Cac
 **Version pinning.** Pin a release tag (`@v0.1.0`) so runs are reproducible; `@main` downloads the latest release.
 
 - deps updates its own `uses:` line like any other action.
-- With [`pin: digest`](reference/configuration.md#pin), deps rewrites that line to `@<sha> # v0.1.0`. `github.action_ref` is then a SHA, and the action downloads the *latest* release. Set `version:` if the binary must match the pin exactly; deps keeps a `version:` equal to the current version in sync with the ref (`@<sha> # v0.3.0` plus `version: v0.3.0` both move to the new release).
+- With [`pin: digest`](reference/configuration.md#pin), deps rewrites that line to `@<sha> # v0.1.0`. `github.action_ref` is then a SHA, and the action downloads the *latest* release. Set `version:` if the binary must match the pin exactly; deps keeps a `version:` equal to the current version in sync with the ref (`@<sha> # v0.4.0` plus `version: v0.4.0` both move to the new release).
 
 ## GitHub
 
@@ -108,7 +108,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ steps.app.outputs.token }}
-      - uses: jakobmoellerdev/deps@v0.3.0
+      - uses: jakobmoellerdev/deps@v0.4.0
         with:
           token: ${{ steps.app.outputs.token }}
           show-skipped: true
@@ -189,7 +189,7 @@ If the action repository isn't reachable, install the binary with `go install` t
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: stable
-      - run: go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@v0.3.0
+      - run: go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@v0.4.0
       - run: deps run --show-skipped --log-level info
         env:
           DEPS_TOKEN: ${{ steps.app.outputs.token }}
@@ -227,13 +227,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.3.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.4.0
         with:
           show-skipped: true
           log-level: info
 ```
 
-**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.3.0` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. This repository's own workflow (`.gitea/workflows/deps.yml`) is this example plus the bot token, signing key and identity, pinned to the latest release; deps opens the PR that bumps that pin after each release. It also has a `dry-run` job for pull requests ([Preview on pull requests](#preview-on-pull-requests)).
+**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.4.0` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. This repository's own workflow (`.gitea/workflows/deps.yml`) is this example plus the bot token, signing key and identity, pinned to the latest release; deps opens the PR that bumps that pin after each release. It also has a `dry-run` job for pull requests ([Preview on pull requests](#preview-on-pull-requests)).
 
 **The job token (`GITEA_TOKEN`).** Its permissions come from:
 
@@ -252,7 +252,7 @@ When CI must run on deps PRs (for [automerge](#automerge)), or a private reposit
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ secrets.DEPS_TOKEN }}
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.3.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.4.0
         with:
           token: ${{ secrets.DEPS_TOKEN }}
 ```
@@ -288,7 +288,7 @@ jobs:
     runs-on: docker # a label of your runner
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.3.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.4.0
 ```
 
 - **Detection.** deps detects Forgejo from `FORGEJO_ACTIONS=true` and reads `FORGEJO_SERVER_URL`, `FORGEJO_API_URL` and `FORGEJO_REPOSITORY`, falling back to the `GITHUB_*` names. API calls use the Gitea-compatible `/api/v1`.
@@ -310,7 +310,7 @@ deps:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # see "Run on push to the default branch"
   resource_group: deps # one run at a time, like a concurrency group
   variables:
-    DEPS_VERSION: v0.3.0
+    DEPS_VERSION: v0.4.0
   script:
     - |
       base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/$DEPS_VERSION
@@ -366,7 +366,7 @@ Add a pipeline schedule (*Build → Pipeline schedules*) on the default branch, 
        with:
          username: ${{ vars.DOCKERHUB_USERNAME }}
          password: ${{ secrets.DOCKERHUB_TOKEN }}
-     - uses: jakobmoellerdev/deps@v0.3.0
+     - uses: jakobmoellerdev/deps@v0.4.0
      ```
 5. **Go modules.** `go` itself, through `GOPRIVATE`, `GONOPROXY`, `GOPROXY` and git credentials. Private modules need `GOPRIVATE` set in the job, and git credentials for their host. The checkout's credentials cover only the platform host; for other hosts use, e.g., `git config --global url."https://x-access-token:${TOKEN}@host/".insteadOf "https://host/"`.
 
@@ -567,7 +567,7 @@ jobs:
   deps:
     runs-on: ubuntu-latest
     steps:
-      - uses: jakobmoellerdev/deps@v0.3.0
+      - uses: jakobmoellerdev/deps@v0.4.0
         with:
           token: ${{ secrets.DEPS_TOKEN }} # write access to every repository
           args: run --repositories my-org/*,other-org/tool
@@ -789,7 +789,7 @@ rules:
 [`rules[].postUpgradeTasks`](reference/configuration.md#rulespostupgradetasks) (e.g. `["go generate ./..."]`) run only when the workflow allows their commands with the `allow-tasks` input (`DEPS_ALLOW_TASKS`, `--allow-tasks`): one pattern per line, matched against the whole command. `*` matches any text except command chaining and substitution (`;`, `&`, `|`, backticks, `$(`, line breaks), so `make *` allows `make docs` but not `make docs; curl …` or `make $(id)`; operators written in the pattern match literally (`echo * >> deps.txt`), and the pattern `*` alone allows every command. A PR with a command no pattern allows fails instead of missing its generated files. Install the tools the commands need in a step before deps.
 
 ```yaml
-      - uses: jakobmoellerdev/deps@v0.3.0
+      - uses: jakobmoellerdev/deps@v0.4.0
         with:
           allow-tasks: |
             go generate ./...
@@ -862,7 +862,7 @@ GitHub rejects a step summary larger than 1 MiB as a whole, so deps keeps the fi
 The action has outputs with the counts of the run (`updates`, `prs`, `created`, `updated`, `closed`, `automerged`, `errors`) and `report`, the path of a JSON file with the whole result: every PR with its updates, status and link, the held-back releases, the skip reasons and the errors with their file and line. The fields are listed in `deps help output`. Later steps can use them, for example to notify on new PRs or on errors:
 
 ```yaml
-      - uses: jakobmoellerdev/deps@v0.3.0
+      - uses: jakobmoellerdev/deps@v0.4.0
         id: deps
         continue-on-error: true # keep going on lookup errors; the next step decides
         with:
@@ -896,7 +896,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: jakobmoellerdev/deps@v0.3.0 # full URL on Gitea/Forgejo
+      - uses: jakobmoellerdev/deps@v0.4.0 # full URL on Gitea/Forgejo
         with:
           args: plan
           show-skipped: true
@@ -939,7 +939,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.ref }}
           path: base
-      - uses: jakobmoellerdev/deps@v0.3.0 # full URL on Gitea/Forgejo
+      - uses: jakobmoellerdev/deps@v0.4.0 # full URL on Gitea/Forgejo
         with:
           args: preview --dir pr --base-dir base
 ```
@@ -998,7 +998,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: jakobmoellerdev/deps@v0.3.0
+      - uses: jakobmoellerdev/deps@v0.4.0
         with:
           args: submit
 ```
@@ -1015,7 +1015,7 @@ The dependency graph must be enabled for the repository (*Settings → Code secu
         with:
           go-version-file: go.mod
           cache: true
-      - uses: jakobmoellerdev/deps@v0.3.0
+      - uses: jakobmoellerdev/deps@v0.4.0
 ```
 
 For several modules, or without setup-go, use `actions/cache`:
@@ -1266,13 +1266,13 @@ Users verify downloads with `gh attestation verify` or cosign ([Verify a downloa
    3. verifies every bundle against the Gitea file with `cosign verify-blob-attestation` (`--type slsaprovenance1` for provenance, `--type https://spdx.dev/Document/v2.3` for SBOMs), checks that each SBOM asset equals the attested predicate, and fails before uploading anything if one doesn't match. A pass also proves that both builders produced the same bytes;
    4. uploads the bundles and SBOMs to the Gitea release with `gt release upload --clobber`, so re-runs are idempotent.
 
-**Identity.** The certificates are issued by `https://token.actions.githubusercontent.com` to the workflow `https://github.com/jakobmoellerdev/deps/.github/workflows/release.yml@<ref>`, where `<ref>` is `refs/tags/<tag>` for a tag push. A `workflow_dispatch` republish signs as the ref it was dispatched on, normally `refs/heads/main`, even though it builds the tag; the script accepts exactly these two identities, and its provenance names `main` as the workflow ref. Dispatch with `--ref <tag>` to sign as the tag, but only tags whose `release.yml` already attests (after v0.3.0) have the attest steps.
+**Identity.** The certificates are issued by `https://token.actions.githubusercontent.com` to the workflow `https://github.com/jakobmoellerdev/deps/.github/workflows/release.yml@<ref>`, where `<ref>` is `refs/tags/<tag>` for a tag push. A `workflow_dispatch` republish signs as the ref it was dispatched on, normally `refs/heads/main`, even though it builds the tag; the script accepts exactly these two identities, and its provenance names `main` as the workflow ref. Dispatch with `--ref <tag>` to sign as the tag, but only tags whose `release.yml` already attests (after v0.4.0) have the attest steps.
 
 **Republishing old tags.** The build uses the tag's Taskfile, while `release:sbom` comes from the Taskfile of the workflow's own revision (a sparse checkout into `.release-tooling`), so tags older than the SBOM task can be republished and attested.
 
 **Backfill.** `.gitea/workflows/attest.yml` (`workflow_dispatch`, input `tag`) runs the script against the files of an existing Gitea release: for releases made before attestations existed, after a GitHub republish, or when the release job's attest step failed. To attest an older release, republish it on GitHub first, then backfill:
 
 ```sh
-gh workflow run release.yml -R jakobmoellerdev/deps -f tag=v0.3.0   # wait for it: gh run watch -R jakobmoellerdev/deps
-gt workflow run attest.yml --ref main -f tag=v0.3.0 --follow
+gh workflow run release.yml -R jakobmoellerdev/deps -f tag=v0.4.0   # wait for it: gh run watch -R jakobmoellerdev/deps
+gt workflow run attest.yml --ref main -f tag=v0.4.0 --follow
 ```
