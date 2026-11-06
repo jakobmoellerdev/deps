@@ -50,6 +50,10 @@ const (
 // resolves.
 func skipUnresolved(ref string) string { return "unresolved version " + ref }
 
+// skipAmbiguous is the skip reason of a version reference several definitions of the
+// build may mean.
+func skipAmbiguous(ref string) string { return "ambiguous version " + ref }
+
 // termText returns how a group or artifact term is written: the literal or the reference.
 func termText(t term) string {
 	if t.kind == termStr {

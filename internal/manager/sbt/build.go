@@ -159,11 +159,13 @@ func (b *build) metaScala() string {
 }
 
 // resolved is a string literal a term resolves to, with the file holding it and the
-// definition it was reached through ("" = the term itself is the literal).
+// definition it was reached through ("" = the term itself is the literal). ambiguous is
+// set (with ok false) when a reference matches several definitions.
 type resolved struct {
-	tok  token
-	file string
-	def  string
+	tok       token
+	file      string
+	def       string
+	ambiguous bool
 }
 
 // maxDepth bounds reference chains (`val a = b`).
@@ -181,64 +183,100 @@ func (b *build) resolve(file string, t term, depth int) (resolved, bool) {
 	}
 	ref := strings.TrimPrefix(t.ref, "_root_.")
 	if p, ok := strings.CutSuffix(ref, ".revision"); ok {
-		f, d := b.lookup(file, p)
+		f, d, amb := b.lookup(file, t.scope, p)
 		if d == nil || d.kind != defModule {
-			return resolved{}, false
+			return resolved{ambiguous: amb}, false
 		}
 		r, ok := b.resolve(f, d.mod.version, depth+1)
 		r.def = cmp.Or(r.def, d.path)
 		return r, ok
 	}
 	if p, ok := strings.CutSuffix(ref, ".head"); ok {
-		f, d := b.lookup(file, p)
+		f, d, amb := b.lookup(file, t.scope, p)
 		if d == nil || d.kind != defSeq || len(d.items) == 0 {
-			return resolved{}, false
+			return resolved{ambiguous: amb}, false
 		}
 		return b.resolve(f, d.items[0], depth+1)
 	}
-	f, d := b.lookup(file, ref)
+	f, d, amb := b.lookup(file, t.scope, ref)
 	if d == nil {
-		return resolved{}, false
+		return resolved{ambiguous: amb}, false
 	}
 	switch d.kind {
 	case defString:
 		return resolved{tok: d.tok, file: f, def: d.path}, true
 	case defRef:
-		r, ok := b.resolve(f, term{kind: termRef, ref: d.ref}, depth+1)
+		r, ok := b.resolve(f, term{kind: termRef, ref: d.ref, scope: defScope(d.path)}, depth+1)
 		r.def = cmp.Or(r.def, d.path)
 		return r, ok
 	}
 	return resolved{}, false
 }
 
-// lookup returns the definition ref names, seen from file: one whose qualified path is ref
-// or ends with `.ref`, in file first, then in the other files of the build.
-func (b *build) lookup(file, ref string) (string, *def) {
-	find := func(f string) *def {
-		st := b.states[f]
-		if st == nil {
-			return nil
-		}
-		for i := range st.scan.defs {
-			d := &st.scan.defs[i]
-			if d.path == ref || strings.HasSuffix(d.path, "."+ref) {
-				return d
+// defScope returns the objects enclosing the definition at p: `A.B` of `A.B.x`.
+func defScope(p string) string {
+	if s, _, ok := strings.CutLast(p, "."); ok {
+		return s
+	}
+	return ""
+}
+
+// lookup returns the definition ref names, seen from scope in file, as Scala resolves it:
+// `<scope>.ref` for scope and each enclosing object outward, then the qualified path ref,
+// then the one definition whose path ends with `.ref` (an import). Each is looked for in
+// file first, then in the other files of the build. ambiguous is true (and d nil) when
+// several definitions end with `.ref`.
+func (b *build) lookup(file, scope, ref string) (string, *def, bool) {
+	exact := func(p string) (string, *def) {
+		for f := range b.searchOrder(file) {
+			for i := range b.states[f].scan.defs {
+				if d := &b.states[f].scan.defs[i]; d.path == p {
+					return f, d
+				}
 			}
 		}
-		return nil
+		return "", nil
 	}
-	if d := find(file); d != nil {
-		return file, d
-	}
-	for _, f := range b.files {
-		if f == file {
-			continue
-		}
-		if d := find(f); d != nil {
-			return f, d
+	for s := scope; s != ""; s = defScope(s) {
+		if f, d := exact(s + "." + ref); d != nil {
+			return f, d, false
 		}
 	}
-	return "", nil
+	if f, d := exact(ref); d != nil {
+		return f, d, false
+	}
+	var (
+		found string
+		match *def
+	)
+	suffix := "." + ref
+	for f := range b.searchOrder(file) {
+		for i := range b.states[f].scan.defs {
+			d := &b.states[f].scan.defs[i]
+			if !strings.HasSuffix(d.path, suffix) || match != nil && d.path == match.path {
+				continue
+			}
+			if match != nil {
+				return "", nil, true
+			}
+			found, match = f, d
+		}
+	}
+	return found, match, false
+}
+
+// searchOrder yields file followed by the other files of the build that have a state.
+func (b *build) searchOrder(file string) func(yield func(string) bool) {
+	return func(yield func(string) bool) {
+		if b.states[file] != nil && !yield(file) {
+			return
+		}
+		for _, f := range b.files {
+			if f != file && b.states[f] != nil && !yield(f) {
+				return
+			}
+		}
+	}
 }
 
 // str returns the plain string a group or artifact term resolves to.
@@ -382,6 +420,9 @@ func (b *build) version(d *dep.Dep, file string, t term) {
 	r, ok := b.resolve(file, t, 0)
 	if !ok {
 		d.Skip = skipUnresolved(t.ref)
+		if r.ambiguous {
+			d.Skip = skipAmbiguous(t.ref)
+		}
 		return
 	}
 	if !r.tok.plain || r.tok.text == "" {

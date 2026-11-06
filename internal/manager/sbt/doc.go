@@ -28,6 +28,7 @@ var Doc = refdoc.Manager{
 	Skips: []refdoc.Skip{
 		{Reason: skipNonLiteral, When: "a version that is an expression (`sys.props.getOrElse(…)`, `(v + \".0\")`), an interpolated or escaped string"},
 		{Reason: "unresolved version <ref>", When: "a version reference no `val` of the build defines as a string literal (`scalaVersion.value`, a setting key)"},
+		{Reason: "ambiguous version <ref>", When: "a version reference that neither an enclosing object nor a qualified path defines and that several definitions of the build end with (`cats` with `Compile.cats` and `Test.cats`)"},
 		{Reason: skipDynamic, When: "an Ivy dynamic revision: `latest.integration`, `1.+`, `[1.0,2.0)`"},
 		{Reason: skipScalaVersion, When: "a `%%`/`%%%` (or `CrossVersion.full`) ModuleID of a build whose `scalaVersion` and `crossScalaVersions` settings do not resolve to a literal"},
 		{Reason: skipCoordinates, When: "only when a file is extracted alone: a ModuleID whose group or artifact refers to a `val` of another file; with the whole build, ModuleIDs whose group or artifact is not a string are not deps"},

@@ -2737,6 +2737,7 @@ Updates sbt builds as Renovate's sbt manager: library and plugin ModuleIDs of `*
 |---|---|
 | `non-literal version` | a version that is an expression (`sys.props.getOrElse(…)`, `(v + ".0")`), an interpolated or escaped string |
 | `unresolved version <ref>` | a version reference no `val` of the build defines as a string literal (`scalaVersion.value`, a setting key) |
+| `ambiguous version <ref>` | a version reference that neither an enclosing object nor a qualified path defines and that several definitions of the build end with (`cats` with `Compile.cats` and `Test.cats`) |
 | `dynamic version` | an Ivy dynamic revision: `latest.integration`, `1.+`, `[1.0,2.0)` |
 | `unresolved Scala version` | a `%%`/`%%%` (or `CrossVersion.full`) ModuleID of a build whose `scalaVersion` and `crossScalaVersions` settings do not resolve to a literal |
 | `unresolved group or artifact` | only when a file is extracted alone: a ModuleID whose group or artifact refers to a `val` of another file; with the whole build, ModuleIDs whose group or artifact is not a string are not deps |

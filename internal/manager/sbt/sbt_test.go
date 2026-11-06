@@ -370,6 +370,51 @@ object Other { val v = "9.9" }
 	}
 }
 
+// A reference resolves from its enclosing objects outward, then as a qualified path, then
+// to the one definition ending with it.
+func TestDefinitionScopes(t *testing.T) {
+	deps, _ := extractFiles(t, map[string]string{
+		"build.sbt": `
+val kit = "1.0"
+object Kit {
+  val kit = "2.0"
+  val k = "a" % "inner" % kit
+}
+libraryDependencies ++= Seq(
+  "a" % "outer" % kit,
+  "a" % "ambiguous" % cats,
+  "a" % "qualified" % Test.cats,
+)
+`,
+		"project/Deps.scala": `
+object Compile { val cats = "2.9.0" }
+object Test {
+  val cats = "2.8.0"
+  val m = "org.typelevel" % "cats-core" % cats
+  object Nested { val n = "org.typelevel" % "cats-nested" % cats }
+}
+`,
+	})
+	got := map[string]dep.Dep{}
+	for _, ds := range deps {
+		for _, d := range ds {
+			got[d.Name] = d
+		}
+	}
+	for name, want := range map[string][3]string{
+		"a:inner":                   {"2.0", "Kit.kit", ""},
+		"a:outer":                   {"1.0", "kit", ""},
+		"a:ambiguous":               {"", "", "ambiguous version cats"},
+		"a:qualified":               {"2.8.0", "Test.cats", ""},
+		"org.typelevel:cats-core":   {"2.8.0", "Test.cats", ""},
+		"org.typelevel:cats-nested": {"2.8.0", "Test.cats", ""},
+	} {
+		if d := got[name]; d.Version != want[0] || d.VersionRef != want[1] || d.Skip != want[2] {
+			t.Errorf("%s = %s, want %v", name, summary(d), want)
+		}
+	}
+}
+
 func TestExtractAlone(t *testing.T) {
 	ds, err := New().Extract("build.sbt", []byte(`libraryDependencies += Deps.g %% "a" % "1.0"`+"\n"+`libraryDependencies += "g" % s"a$x" % "1"`), manager.Env{})
 	if err != nil || len(ds) != 1 || ds[0].Skip != skipCoordinates || ds[0].Name != "Deps.g:a" {

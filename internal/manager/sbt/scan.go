@@ -14,11 +14,13 @@ const (
 	termOther                 // any other expression (a call, a parenthesized expression)
 )
 
-// term is one parsed expression: a string literal (tok) or a reference (ref).
+// term is one parsed expression: a string literal (tok) or a reference (ref), with the
+// objects enclosing it (scope, `A.B`; "" = top level) that the reference is resolved from.
 type term struct {
-	kind termKind
-	tok  token
-	ref  string
+	kind  termKind
+	tok   token
+	ref   string
+	scope string
 }
 
 // module is a ModuleID expression `group %[%[%]] artifact % version [% config]` with its
@@ -167,7 +169,7 @@ func (s *scanner) step(i int) int {
 				}
 				v, next := s.term(j)
 				if v.kind == termRef {
-					s.out.cross = append(s.out.cross, term{kind: termRef, ref: v.ref + ".head"}) // a Seq definition
+					s.out.cross = append(s.out.cross, term{kind: termRef, ref: v.ref + ".head", scope: v.scope}) // a Seq definition
 				}
 				return next
 			}
@@ -245,7 +247,7 @@ func (s *scanner) term(i int) (term, int) {
 		if s.tok(j).is(tPunct, "(") || s.tok(j).is(tPunct, "[") {
 			return term{kind: termOther}, s.skipGroup(j)
 		}
-		return term{kind: termRef, ref: ref}, j
+		return term{kind: termRef, ref: ref, scope: strings.TrimSuffix(s.qualify(""), ".")}, j
 	case t.is(tPunct, "("):
 		return term{kind: termOther}, s.skipGroup(i)
 	}
