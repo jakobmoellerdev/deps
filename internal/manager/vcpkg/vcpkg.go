@@ -6,7 +6,6 @@
 package vcpkg
 
 import (
-	"bytes"
 	"path"
 	"regexp"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // Name is the manager name.
@@ -133,12 +133,18 @@ func (m *vcpkgManager) Extract(file string, src []byte, env manager.Env) ([]dep.
 }
 
 type extractor struct {
-	file string
-	src  []byte
-	deps []dep.Dep
+	file  string
+	src   []byte
+	lines []int // line starts of src, computed on first use
+	deps  []dep.Dep
 }
 
-func (x *extractor) line(off int) int { return 1 + bytes.Count(x.src[:off], []byte{'\n'}) }
+func (x *extractor) line(off int) int {
+	if x.lines == nil {
+		x.lines = yamlspan.LineStarts(x.src)
+	}
+	return yamlspan.LineOf(x.lines, off)
+}
 
 // baseline adds the dep of a registry baseline commit of the git repository repo, tracking
 // branch ref ("" = HEAD).

@@ -15,6 +15,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // Name is the manager name (Renovate's).
@@ -106,7 +107,7 @@ type extractor struct {
 // rules, and the `oci.pull`, rules_img `pull`, `maven.install`/`maven.artifact` and `crate.spec`
 // extension tags.
 func (moduleManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
-	x := &extractor{file: file, lines: lineStarts(src), exts: map[string]string{}, rules: map[string]string{}, maven: map[string][]string{}}
+	x := &extractor{file: file, lines: yamlspan.LineStarts(src), exts: map[string]string{}, rules: map[string]string{}, maven: map[string][]string{}}
 	cs := calls(tokenize(src))
 	// maven.install repositories apply to every artifact of the same install name, also to
 	// maven.artifact tags before the install.
@@ -205,7 +206,7 @@ func (x *extractor) useRepoRule(c call) {
 
 // newDep returns a dep of c with the line of the call.
 func (x *extractor) newDep(c call, depType, datasource, versioning string) dep.Dep {
-	return dep.Dep{Manager: Name, DepType: depType, Datasource: datasource, Versioning: versioning, File: x.file, Line: lineOf(x.lines, c.start)}
+	return dep.Dep{Manager: Name, DepType: depType, Datasource: datasource, Versioning: versioning, File: x.file, Line: yamlspan.LineOf(x.lines, c.start)}
 }
 
 // setVersion sets the version of d from the keyword argument key of c (RefSpan, Line); it
@@ -218,7 +219,7 @@ func (x *extractor) setVersion(d *dep.Dep, c call, key string) bool {
 	case !ok:
 		d.Skip = skipNonLiteral
 	default:
-		d.Version, d.RefSpan, d.Line = v, sp, lineOf(x.lines, sp.Start)
+		d.Version, d.RefSpan, d.Line = v, sp, yamlspan.LineOf(x.lines, sp.Start)
 		return true
 	}
 	return false
@@ -263,7 +264,7 @@ func (x *extractor) override(c call) {
 		}
 		d.Skip = skipRegistryOnly
 		if v, sp, ok, _ := c.str("version"); ok && v != "" {
-			d.Version, d.RefSpan, d.Line, d.Skip = v, sp, lineOf(x.lines, sp.Start), skipVersionPin
+			d.Version, d.RefSpan, d.Line, d.Skip = v, sp, yamlspan.LineOf(x.lines, sp.Start), skipVersionPin
 		}
 	case DepTypeMultipleVersionOverride:
 		d.Skip = skipMultiple
@@ -301,12 +302,12 @@ func (x *extractor) gitRef(d *dep.Dep, c call) {
 	case commitSet && !hasCommit || tagSet && !hasTag:
 		d.Skip = skipNonLiteral
 	case hasTag && tag != "":
-		d.Datasource, d.Version, d.RefSpan, d.Line = dsGitTags, tag, tsp, lineOf(x.lines, tsp.Start)
+		d.Datasource, d.Version, d.RefSpan, d.Line = dsGitTags, tag, tsp, yamlspan.LineOf(x.lines, tsp.Start)
 		if hasCommit && commit != "" {
 			d.Digest, d.DigestSpan = commit, csp
 		}
 	case hasCommit && manager.IsHex(commit, 40):
-		d.Datasource, d.Version, d.Digest, d.DigestSpan, d.Line = dsGitRefs, defaultBranch, commit, csp, lineOf(x.lines, csp.Start)
+		d.Datasource, d.Version, d.Digest, d.DigestSpan, d.Line = dsGitRefs, defaultBranch, commit, csp, yamlspan.LineOf(x.lines, csp.Start)
 	case hasCommit:
 		d.Skip = skipGitRef
 	default:
@@ -348,7 +349,7 @@ func (x *extractor) image(d *dep.Dep, image string, c call) {
 	case tag == "":
 		d.Skip = skipNoTag
 	default:
-		d.Version, d.RefSpan, d.Line = tag, tsp, lineOf(x.lines, tsp.Start)
+		d.Version, d.RefSpan, d.Line = tag, tsp, yamlspan.LineOf(x.lines, tsp.Start)
 		if digest != "" {
 			d.Digest, d.DigestSpan = digest, dsp
 		}
@@ -419,7 +420,7 @@ func (x *extractor) mavenInstall(c call) {
 	src := x.mavenSource(c)
 	for _, a := range arts.items {
 		d := x.newDep(c, DepTypeMavenInstall, dsMaven, "maven")
-		d.Source, d.Line = src, lineOf(x.lines, a.start)
+		d.Source, d.Line = src, yamlspan.LineOf(x.lines, a.start)
 		parts := strings.Split(a.text, ":")
 		switch {
 		case !a.plain:
@@ -480,7 +481,7 @@ func (x *extractor) crateSpec(c call) {
 			break
 		}
 		d.Datasource, d.Versioning, d.Source = dsGitTags, "tag", source
-		d.Version, d.RefSpan, d.Line = tag, tsp, lineOf(x.lines, tsp.Start)
+		d.Version, d.RefSpan, d.Line = tag, tsp, yamlspan.LineOf(x.lines, tsp.Start)
 	case x.setVersion(&d, c, "version"):
 		if !cargo.SetRequirement(&d, d.Version) {
 			d.Skip = skipRequirement
@@ -578,24 +579,4 @@ func (moduleManager) Link(files [][]dep.Dep) {
 			return d.DepType == DepTypeSingleVersionOverride && d.Skip == skipRegistryOnly
 		})
 	}
-}
-
-// lineStarts returns the offsets at which the lines of src start.
-func lineStarts(src []byte) []int {
-	starts := []int{0}
-	for i, c := range src {
-		if c == '\n' {
-			starts = append(starts, i+1)
-		}
-	}
-	return starts
-}
-
-// lineOf returns the 1-based line of offset off.
-func lineOf(starts []int, off int) int {
-	i, found := slices.BinarySearch(starts, off)
-	if found {
-		return i + 1
-	}
-	return i
 }

@@ -10,7 +10,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -18,6 +17,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // Name is the manager name (Renovate's).
@@ -82,7 +82,7 @@ func (swiftManager) Match(p string) bool {
 // Version with RefSpan on its string. Local, registry, branch and revision packages are
 // skipped.
 func (swiftManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
-	lines := lineStarts(src)
+	lines := yamlspan.LineStarts(src)
 	calls := packageCalls(tokenize(src))
 	exactLabel := exactLabelTools(src)
 	deps := make([]dep.Dep, 0, len(calls))
@@ -97,7 +97,7 @@ func (swiftManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, 
 func callDep(file string, src []byte, lines []int, c call, exactLabel bool) dep.Dep {
 	d := dep.Dep{
 		Manager: Name, Datasource: Datasource, Versioning: Versioning, DepType: DepTypeDependencies,
-		ExtractVersion: extractVersion, File: file, Line: lineOf(lines, c.start),
+		ExtractVersion: extractVersion, File: file, Line: yamlspan.LineOf(lines, c.start),
 	}
 	var u, req *arg
 	extra, named := false, false
@@ -154,12 +154,12 @@ func callDep(file string, src []byte, lines []int, c call, exactLabel bool) dep.
 	case r.kind == reqExact:
 		d.Version = r.lower.v
 		d.RefSpan = dep.Span{Start: req.start + r.lower.span.Start, End: req.start + r.lower.span.End}
-		d.Line = lineOf(lines, d.RefSpan.Start)
+		d.Line = yamlspan.LineOf(lines, d.RefSpan.Start)
 	case r.isRange():
 		d.Range, d.Version, d.Constraint = text, r.lower.v, r.constraint()
 		d.ExactLabel = exactLabel && !named
 		d.RefSpan = dep.Span{Start: req.start, End: req.end}
-		d.Line = lineOf(lines, req.start+r.lower.span.Start)
+		d.Line = yamlspan.LineOf(lines, req.start+r.lower.span.Start)
 	default:
 		d.Skip = skipRequirement
 	}
@@ -277,24 +277,4 @@ func (swiftManager) ReadLocks(top string, files [][]dep.Dep) []error {
 func compare(a, b string) int {
 	s, _ := versioning.Get(Versioning)
 	return s.Compare(a, b)
-}
-
-// lineStarts returns the offsets at which the lines of src start.
-func lineStarts(src []byte) []int {
-	starts := []int{0}
-	for i, c := range src {
-		if c == '\n' {
-			starts = append(starts, i+1)
-		}
-	}
-	return starts
-}
-
-// lineOf returns the 1-based line of offset off.
-func lineOf(starts []int, off int) int {
-	i, found := slices.BinarySearch(starts, off)
-	if found {
-		return i + 1
-	}
-	return i
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // ghRepoRe is a github.com owner/repo; owners cannot contain dots, so `gitlab.com/x` is no match.
@@ -59,13 +60,13 @@ func extractMise(file string, src []byte) ([]dep.Dep, error) {
 			return
 		}
 		if ls == nil {
-			ls = lineStarts(src)
+			ls = yamlspan.LineStarts(src)
 		}
 		t := miseLookup(key)
 		if t.skip == "" && !v.exact {
 			t.skip = "cannot locate value"
 		}
-		deps = append(deps, newDep(NameMise, DepTypeTool, file, lineAt(ls, v.start), t, v.str, v.start))
+		deps = append(deps, newDep(NameMise, DepTypeTool, file, yamlspan.LineOf(ls, v.start), t, v.str, v.start))
 	})
 	return deps, err
 }

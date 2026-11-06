@@ -7,7 +7,6 @@ package toolversions
 import (
 	"bytes"
 	"regexp"
-	"slices"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -357,23 +356,6 @@ func newDep(mgr, depType, file string, line int, t tool, raw string, at int) dep
 	d.Version, d.Versioning = ver, versioning
 	d.RefSpan = dep.Span{Start: at + off, End: at + off + len(ver)}
 	return d
-}
-
-// lineStarts returns the byte offset of every line of src.
-func lineStarts(src []byte) []int {
-	ls := []int{0}
-	for i, b := range src {
-		if b == '\n' {
-			ls = append(ls, i+1)
-		}
-	}
-	return ls
-}
-
-// lineAt returns the 1-based line of byte offset off given lineStarts ls.
-func lineAt(ls []int, off int) int {
-	n, _ := slices.BinarySearch(ls, off+1)
-	return n
 }
 
 // bom is the UTF-8 byte order mark, skipped at the start of a file.

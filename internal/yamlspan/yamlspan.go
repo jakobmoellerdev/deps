@@ -5,6 +5,7 @@ package yamlspan
 
 import (
 	"bytes"
+	"slices"
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v4"
@@ -21,6 +22,12 @@ func LineStarts(src []byte) []int {
 		off += i + 1
 		ls = append(ls, off)
 	}
+}
+
+// LineOf returns the 1-based line of byte offset off, given the LineStarts of its source.
+func LineOf(starts []int, off int) int {
+	n, _ := slices.BinarySearch(starts, off+1)
+	return n
 }
 
 // KeepDocuments returns src with every YAML document for which keep is false blanked, so a
