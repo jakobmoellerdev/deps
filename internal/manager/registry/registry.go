@@ -27,6 +27,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradle"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homebrew"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/maven"
@@ -83,6 +84,7 @@ var Builtin = []Entry{
 	{gradle.Doc, gradle.New},
 	{gradlewrapper.Doc, gradlewrapper.New},
 	{mavenwrapper.Doc, mavenwrapper.New},
+	{homebrew.Doc, homebrew.New},
 	{swift.Doc, swift.New},
 	{bundler.Doc, bundler.New},
 	{toolversions.DocRubyVersion, toolversions.NewRubyVersion},

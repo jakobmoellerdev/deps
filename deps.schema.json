@@ -1065,6 +1065,34 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "homebrew"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "formula"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "swift"
                   ]
                 },
@@ -1665,6 +1693,7 @@
               "gradle",
               "gradle-wrapper",
               "maven-wrapper",
+              "homebrew",
               "swift",
               "bundler",
               "ruby-version",
@@ -1791,6 +1820,7 @@
               "build",
               "wrapper",
               "maven",
+              "formula",
               "ruby",
               "development",
               "submodule",
