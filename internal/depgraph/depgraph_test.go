@@ -63,3 +63,12 @@ func TestBuild(t *testing.T) {
 		t.Errorf("all managers: n = %d, want 4", n)
 	}
 }
+
+func TestBuildPrefix(t *testing.T) {
+	deps := []dep.Dep{{Manager: "docker", File: "Dockerfile", Datasource: "docker", Name: "alpine", Version: "3.20"}}
+	s, n := Build(deps, Options{Prefix: "services/api/"})
+	m, ok := s.Manifests["services/api/Dockerfile"]
+	if n != 1 || !ok || m.Name != "services/api/Dockerfile" || m.File.SourceLocation != "services/api/Dockerfile" {
+		t.Errorf("manifests = %+v, want them keyed by the path from the repository root", s.Manifests)
+	}
+}

@@ -4,8 +4,11 @@ import (
 	"encoding/json/v2"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/depgraph"
 )
 
 func TestSubmit(t *testing.T) {
@@ -56,5 +59,25 @@ func TestSubmitOutsideGitHub(t *testing.T) {
 	stdout, _, code := execute(t, "submit", "--dir", dir, "--dry-run")
 	if code != 0 || !strings.Contains(stdout, `"pkg:docker/library/alpine@3.20"`) || !strings.Contains(stdout, `"correlator":"deps"`) {
 		t.Errorf("exit %d, stdout %s", code, stdout)
+	}
+}
+
+func TestSubmitSubdirectory(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	git(t, root, "init", "-q")
+	dir := filepath.Join(root, "services", "api")
+	writeFiles(t, dir, map[string]string{"Dockerfile": "FROM alpine:3.20\n"})
+	stdout, stderr, code := execute(t, "submit", "--dir", dir, "--dry-run")
+	if code != 0 || !strings.Contains(stderr, "manifest  services/api/Dockerfile  1\n") {
+		t.Fatalf("exit %d:\n%s", code, stderr)
+	}
+	var got depgraph.Snapshot
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	m, ok := got.Manifests["services/api/Dockerfile"]
+	if !ok || m.Name != "services/api/Dockerfile" || m.File.SourceLocation != "services/api/Dockerfile" || got.Job.Correlator != "deps services/api" {
+		t.Errorf("snapshot = %+v, want paths from the repository root and a correlator naming the directory", got)
 	}
 }

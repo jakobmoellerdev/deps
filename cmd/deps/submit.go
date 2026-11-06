@@ -16,6 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/depgraph"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
@@ -56,14 +57,23 @@ func submit(ctx context.Context, cmd *cli.Command, o *rootOpts, dryRun, all bool
 	if err != nil {
 		return err
 	}
+	// GitHub wants manifest paths from the repository root. Outside a git work tree they stay
+	// relative to --dir.
+	prefix, err := gitx.Repo{Dir: s.root}.Prefix(ctx)
+	if err != nil {
+		prefix = ""
+	}
+	// Only the latest snapshot per correlator counts, so each --dir gets its own.
+	correlator := []string{os.Getenv("GITHUB_WORKFLOW"), os.Getenv("GITHUB_JOB"), "deps", strings.TrimSuffix(prefix, "/")}
 	snap, n := depgraph.Build(deps, depgraph.Options{
 		Job: depgraph.Job{
 			ID:         cmp.Or(os.Getenv("GITHUB_RUN_ID"), "local"),
-			Correlator: strings.Join(slices.DeleteFunc([]string{os.Getenv("GITHUB_WORKFLOW"), os.Getenv("GITHUB_JOB"), "deps"}, func(s string) bool { return s == "" }), " "),
+			Correlator: strings.Join(slices.DeleteFunc(correlator, func(s string) bool { return s == "" }), " "),
 		},
 		SHA: os.Getenv("GITHUB_SHA"), Ref: os.Getenv("GITHUB_REF"),
 		Detector:    depgraph.Detector{Name: "deps", Version: version, URL: "https://github.com/jakobmoellerdev/deps"},
 		Scanned:     time.Now(),
+		Prefix:      prefix,
 		AllManagers: all,
 	})
 	for _, e := range errs {

@@ -65,6 +65,9 @@ type Options struct {
 	SHA, Ref string
 	Detector Detector
 	Scanned  time.Time
+	// Prefix is the path of the scanned directory from the repository root, with a trailing
+	// '/' ("" at the root): GitHub wants manifest paths relative to the repository root.
+	Prefix string
 	// AllManagers also submits the managers of Static.
 	AllManagers bool
 }
@@ -91,10 +94,11 @@ func Build(deps []dep.Dep, o Options) (Snapshot, int) {
 		if !ok {
 			continue
 		}
-		m, ok := s.Manifests[d.File]
+		file := o.Prefix + d.File
+		m, ok := s.Manifests[file]
 		if !ok {
-			m = Manifest{Name: d.File, File: File{SourceLocation: d.File}, Resolved: map[string]Package{}}
-			s.Manifests[d.File] = m
+			m = Manifest{Name: file, File: File{SourceLocation: file}, Resolved: map[string]Package{}}
+			s.Manifests[file] = m
 		}
 		if _, dup := m.Resolved[purl]; dup {
 			continue
