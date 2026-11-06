@@ -2269,7 +2269,7 @@ Updates orbs and container images in CircleCI configuration.
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
 | `orb` | `orbs: {<alias>: <namespace>/<name>@<version>}`, also in inline orb definitions; full (`5.1.0`) and partial (`5`, `5.1`) versions keep their precision | `orb` | `tag` | updated |
-| `image` | `docker[].image` of `executors` and `jobs` (also in inline orbs), and `image` of top-level `aliases[]` entries | `docker` | `docker` | updated |
+| `image` | `docker[].image` of `executors` and `jobs` (also in inline orbs) and of anchored blocks under other top-level keys (`defaults: &defaults`), and `image` of top-level `aliases[]` entries | `docker` | `docker` | updated |
 
 **Skips:**
 
@@ -2289,7 +2289,7 @@ Updates orbs and container images in CircleCI configuration.
 - Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned.
 - `@volatile` and `@dev:<label>` orbs are skipped as non-version values. Renovate pins a partial orb version to the full one (its `rangeStrategy` `pin`); deps keeps the precision (`circleci/node@5` → `circleci/node@7`).
 - `machine.image` values are CircleCI VM images, not container images, and are not extracted (as in Renovate).
-- YAML anchors are extracted where they are written; aliases and merge keys (`<<: *defaults`) add nothing.
+- YAML anchors are extracted where they are written, also under custom top-level keys (not `parameters`); aliases and merge keys (`<<: *defaults`) add nothing.
 
 ## azure-pipelines
 

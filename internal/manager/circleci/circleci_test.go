@@ -126,6 +126,26 @@ jobs:
 	}
 }
 
+// An anchored `docker` block under a custom top-level key, merged into a job with `<<`, is
+// extracted once where it is written.
+func TestExtractAnchoredDefaults(t *testing.T) {
+	src := []byte(`defaults: &defaults
+  docker:
+    - image: cimg/node:18.0
+parameters:
+  docker:
+    - image: not/an-image:1
+jobs:
+  build:
+    <<: *defaults
+    steps: [checkout]
+  test: *defaults
+`)
+	check(t, extract(t, src), 1, map[int]want{
+		0: {line: 3, depT: TypeImage, ds: "docker", name: "cimg/node", version: "18.0"},
+	})
+}
+
 // The fixtures are real-world configurations: jasmine/jasmine (orb, executors), emscripten-core/emsdk
 // (partial orb version, a machine image) and influxdata/influxdb (jobs with merge keys, digest-only
 // images).

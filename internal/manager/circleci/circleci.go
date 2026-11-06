@@ -57,6 +57,15 @@ func (circleManager) Extract(file string, src []byte, env manager.Env) ([]dep.De
 		for _, a := range yamlspan.Seq(yamlspan.Get(root, "aliases")) {
 			x.image(yamlspan.Get(a, "image"))
 		}
+		// Other top-level keys (`defaults: &defaults`, `x-*`) hold anchored blocks merged
+		// into jobs with `<<`; their `docker` images are extracted where they are written.
+		for i := 0; root.Kind == yaml.MappingNode && i+1 < len(root.Content); i += 2 {
+			switch root.Content[i].Value {
+			case "orbs", "executors", "jobs", "aliases", "parameters":
+			default:
+				x.walk(root.Content[i+1])
+			}
+		}
 	}
 	return x.Deps, nil
 }
@@ -103,6 +112,28 @@ func (x *extractor) definition(m *yaml.Node) {
 			for _, c := range yamlspan.Seq(yamlspan.Get(env, "docker")) {
 				x.image(yamlspan.Get(c, "image"))
 			}
+		}
+	}
+}
+
+// walk extracts the images of every `docker: [{image}]` list below n; `parameters` are not
+// entered and aliases are not followed.
+func (x *extractor) walk(n *yaml.Node) {
+	if n.Kind != yaml.MappingNode {
+		for _, c := range n.Content {
+			x.walk(c)
+		}
+		return
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		switch k, v := n.Content[i].Value, n.Content[i+1]; k {
+		case "docker":
+			for _, c := range yamlspan.Seq(v) {
+				x.image(yamlspan.Get(c, "image"))
+			}
+		case "parameters":
+		default:
+			x.walk(v)
 		}
 	}
 }
