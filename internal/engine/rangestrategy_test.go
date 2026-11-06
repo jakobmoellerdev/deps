@@ -410,3 +410,33 @@ func TestBuildRangeRewrites(t *testing.T) {
 		}
 	}
 }
+
+// TestToolRangeRewrites: engines/volta ranges follow rangeStrategy like dependency ranges
+// (auto: versions the range admits are left alone, others rewrite it) and never get
+// lockfile-only updates, even when the lockfile has a package of the tool's name.
+func TestToolRangeRewrites(t *testing.T) {
+	pkg := `{"engines": {"node": ">=20.9.0 <25", "npm": ">=10 <12"}, "volta": {"yarn": "4.x"}}`
+	lock := `{"lockfileVersion": 3, "packages": {"": {}, "node_modules/npm": {"version": "10.0.0"}}}`
+	releases := fakeGo{"node": {"20.9.0", "24.1.0", "26.1.0"}, "npm": {"10.0.0", "10.5.0", "12.0.0"}, "yarn": {"4.0.0", "4.5.0", "5.0.0"}}
+	root, cfg := setup(t, "rules:\n  - depTypes: [engines]\n    ignore: false\n", map[string]string{"package.json": pkg, "package-lock.json": lock})
+	o := Options{Managers: []manager.Manager{npm.New()}, Datasources: map[string]Datasource{"npm": releases, "node-version": releases}}
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil || len(res.Errors) > 0 {
+		t.Fatal(err, res.Errors)
+	}
+	want := map[string]string{
+		"node 20.9.0->26.1.0 major": `"node": ">=26.1.0 <27"`,
+		"npm 10.0.0->12.0.0 major":  `"npm": ">=12 <13"`, // 10.5.0 is admitted: no update, also not in the lock
+		"yarn 4.0.0->5.0.0 major":   `"yarn": "5.x"`,
+	}
+	if len(res.Updates) != len(want) {
+		t.Fatalf("updates =\n%s", renderUpdates(res.Updates))
+	}
+	for _, u := range res.Updates {
+		line := renderUpdates([]dep.Update{u})
+		changes, errs := Build(t.Context(), root, o.Managers, []dep.Update{u}, nil)
+		if len(errs) > 0 || len(changes) != 1 || want[line] == "" || !strings.Contains(string(changes[0].New), want[line]) {
+			t.Errorf("%s: changes = %+v, %v; want %s", line, changes, errs, want[line])
+		}
+	}
+}

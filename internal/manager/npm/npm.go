@@ -36,8 +36,8 @@ const (
 	DepTypeVolta          = "volta"
 )
 
-// skipRange is the skip reason of a value outside npm's range grammar (and of the tool and
-// packageManager versions, which are not ranges).
+// skipRange is the skip reason of a value outside npm's range grammar (and of a packageManager
+// version that is not a full version).
 const skipRange = "unsupported range"
 
 var (
@@ -83,7 +83,8 @@ func (npmManager) Match(p string) bool {
 // Range and RefSpan covers all of it; Version is its bare version (`^1.2.3` → 1.2.3) or, for
 // the rest of npm's range grammar (`||`, x-ranges, partial versions, `<`, hyphen ranges), its
 // anchor (npmRange.anchor). For the packageManager field and the engines/volta tools RefSpan
-// covers only the version, so an operator (^1.2.3) is preserved. Values the grammar does not
+// covers only the version, so an operator (^1.2.3) is preserved; other engines/volta ranges are
+// range deps as in the dependency sections (extractor.tools). Values the grammar does not
 // cover are skipped with a reason. Duplicate names are accepted, as npm's JSON.parse does.
 func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	dec := jsontext.NewDecoder(bytes.NewReader(src), jsontext.AllowDuplicateNames(true))
@@ -97,9 +98,9 @@ func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 	return x.deps, nil
 }
 
-// Edits rewrites a dependency-section range for the new version under the update's
-// rangeStrategy (compiledRange.newRange), and replaces the version token of the other deps. A
-// replacement (u.NewName) also rewrites the package name.
+// Edits rewrites a range (dependency sections, engines/volta ranges) for the new version
+// under the update's rangeStrategy (compiledRange.newRange), and replaces the version token of
+// the other deps. A replacement (u.NewName) also rewrites the package name.
 func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	var edits []patch.Edit
@@ -159,7 +160,7 @@ func (npmManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	var refs []*dep.Dep
 	for _, f := range files {
 		for j := range f {
-			if d := &f[j]; d.Range != "" && d.Skip == "" {
+			if d := &f[j]; d.Range != "" && d.Skip == "" && sections[d.DepType] { // engines/volta ranges lock nothing
 				wants = append(wants, nodetool.Want{Manifest: d.File, Name: d.Name, Range: d.Range})
 				refs = append(refs, d)
 			}
@@ -336,7 +337,10 @@ func (x *extractor) section(depType string) error {
 }
 
 // tools extracts the node/npm/pnpm/yarn entries of the engines or volta object; other keys
-// are ignored.
+// are ignored. A full version with an optional ^, ~, >= or = keeps its operator and only the
+// version is replaced; so is a partial one, under tag versioning. The rest of npm's range
+// grammar (`>=18 <27`, `20.x`, `^20 || ^22`, `18 - 22`) is a range dep as in the dependency
+// sections (Range, anchored version), rewritten under rangeStrategy.
 func (x *extractor) tools(depType string) error {
 	if ok, err := x.object(); !ok || err != nil {
 		return err
@@ -363,11 +367,21 @@ func (x *extractor) tools(depType string) error {
 		d := x.newDep(depType, name, raw, span)
 		d.Datasource = ds
 		ver, off, skip := classify(raw)
+		isRange := false
 		if m := partialRe.FindStringSubmatchIndex(raw); m != nil {
 			ver, off, skip = raw[m[4]:m[5]], m[4], ""
 			d.Versioning = "tag"
+		} else if skip == skipRange {
+			if r, ok := parseRange(raw); ok {
+				if a := r.anchor(); a != "" {
+					ver, off, skip, isRange = a, 0, "", true
+				}
+			}
 		}
 		x.finish(&d, span, ver, off, skip)
+		if isRange && d.Skip == "" {
+			d.Range, d.RefSpan = raw, span
+		}
 		x.deps = append(x.deps, d)
 	}
 	_, err := x.dec.ReadToken()
