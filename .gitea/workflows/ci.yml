@@ -18,7 +18,9 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          # The runners mount shared Go cache volumes (monstera ci/runner/config.yaml); restoring the
+          # cache here would unpack ~1 GB per job over them.
+          cache: false
       # The pinned golangci-lint binary (task lint:install), so it is not downloaded from GitHub
       # on every run. One cache entry per version.
       - id: lint
@@ -36,7 +38,7 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       - run: task cover
   # Release tags reuse the check and test results instead of running task ci again.
   release:
@@ -52,7 +54,7 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       - run: task release:build VERSION="${GITHUB_REF_NAME}"
       - run: task release:notes
       - name: Check binaries are static

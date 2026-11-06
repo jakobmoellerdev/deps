@@ -59,8 +59,7 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: pr/go.mod
-          cache: true
-          cache-dependency-path: pr/go.sum
+          cache: false # shared Go cache volumes on the runners, see ci.yml
       - run: go build -C pr -trimpath -o "$RUNNER_TEMP/deps" ./cmd/deps
       - run: '"$RUNNER_TEMP/deps" plan --show-skipped --log-level info --dir pr'
       - run: '"$RUNNER_TEMP/deps" preview --log-level info --dir pr --base-dir base'
