@@ -31,8 +31,8 @@
 //     the requirement's version; OSV matches server-side. Without a lock a partial requirement
 //     ("1", "0.4") is queried as its lowest version ("1.0.0", "0.4.0") and its fixed versions
 //     are cut to its precision ("0.5.2" → "0.5"), so only fixes outside its range count.
-//   - pypi deps (the pip_requirements, pep621, pep723, setup-cfg, pip_setup, poetry and
-//     pipenv managers, and custom deps of the datasource) are queried as ecosystem "PyPI" with the PEP 503-normalized name and the
+//   - pypi deps (the pip_requirements, pep621, pep723, setup-cfg, pip_setup, poetry, pipenv
+//     and homeassistant-manifest managers, and custom deps of the datasource) are queried as ecosystem "PyPI" with the PEP 503-normalized name and the
 //     locked version (dep.Dep.Locked), else the range's anchor version; OSV matches
 //     server-side. Affected entries are matched by normalized name.
 //     Fixed versions are bare, as OSV lists them ("2.32.0").

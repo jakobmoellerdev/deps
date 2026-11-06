@@ -27,6 +27,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradle"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homeassistant"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homebrew"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
@@ -81,6 +82,7 @@ var Builtin = []Entry{
 	{pipsetup.Doc, pipsetup.New},
 	{poetry.Doc, poetry.New},
 	{pipenv.Doc, pipenv.New},
+	{homeassistant.Doc, homeassistant.New},
 	{conda.Doc, conda.New},
 	{terraform.Doc, terraform.New},
 	{terraform.VersionDoc, terraform.NewVersion},

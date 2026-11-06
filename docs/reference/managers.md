@@ -31,6 +31,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`pip_setup`](#pip_setup)
 - [`poetry`](#poetry)
 - [`pipenv`](#pipenv)
+- [`homeassistant-manifest`](#homeassistant-manifest)
 - [`conda`](#conda)
 - [`terraform`](#terraform)
 - [`terraform-version`](#terraform-version)
@@ -1351,6 +1352,46 @@ With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the `P
 | `Pipfile.lock` | `pipenv lock` (pipenv resolves every package anew) |
 
 All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only lockfiles; `minimumReleaseAge` does not apply to it.
+
+## homeassistant-manifest
+
+Updates the PEP 508 `requirements` of Home Assistant integration manifests (`custom_components/<domain>/manifest.json`, or the integrations of Home Assistant core). Only the specifier's versions inside the JSON string are rewritten; the file keeps its formatting. There is no lockfile.
+
+**Files:**
+
+- `manifest.json` at any depth whose top-level object has string `domain` and `name` members (other `manifest.json` files, such as web app or browser extension manifests, have no deps)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `requirements` | every string of `requirements` (`"alexapy==1.34.0"`, `"dictor>=0.1.12,<0.2"`); non-string items are ignored | `pypi` | `pep440` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unconstrained` | no specifier, `*`, or only `!=` exclusions |
+| `unsupported range` | a specifier that does not parse: a version that is not PEP 440 (`>=1.0-SNAPSHOT`, `===foobar`), a wildcard other than a trailing `.*` of `==` or `!=` (`~=1.*`, `>=1.*`), Poetry syntax (`^1.2`, `>=1 <2`, `\|\|`), or a bare version outside Pipfiles |
+| `cannot locate value` | a JSON string with escapes |
+| `url dependency` | `name @ https://…` |
+| `git dependency` | `name @ git+…` |
+| `local dependency` | `name @ file://…` |
+| `invalid dependency specification` | a requirement that does not start with a valid project name |
+
+**Specifiers.**
+
+- Every PEP 440 specifier set is accepted: `==`, `===`, `~=`, `!=`, `<`, `<=`, `>` and `>=` clauses separated by commas, with a trailing `.*` after `==` or `!=` (in a Pipfile also a bare version, meaning `==`). How a range is updated is described under Ranges.
+- The dep's version is the range's anchor: in its last `||` alternative the first clause that is not `<`, `<=` or `!=` (`>=1.2,<2` → `1.2`, `<1.0.0,>=0.114.2` → `0.114.2`), else its first upper bound (`<2` → `2`). The anchor's precision is kept: candidates with non-zero parts beyond it are skipped (`precision`), others are cut to it (`>=1.2,<2` sees 3.1.0 as `3.1`). With a lockfile, the locked version takes the anchor's place.
+- Versioning is `pep440`: pre and dev releases are only considered from a pre or dev release.
+- Names are kept as written; the datasource looks them up PEP 503-normalized.
+
+**Ranges (`rangeStrategy`).**
+
+- `auto` (the default) is `update-lockfile`: a new version the range admits only moves the lockfile from the locked version (see Locked versions), and is not proposed without a lockfile deps reads; a version outside the range rewrites the range. Renovate's `auto` is `update-lockfile` for poetry and `replace` for pep621, pipenv and pip_requirements, which only differs where deps reads a lockfile.
+- `bump` rewrites the range for every newer version, raising its lower bound (`>=1.2,<2` with 1.5.0 → `>=1.5.0,<2`, `^2.31` with 2.32.3 → `^2.32`, `>=2.31.0` → `>=2.32.3`). An admitted version a range has no bound to raise for (`<2`, `<=2`, `>1`, `==1.*`) is handled as under `update-lockfile`. `in-range-only` is `bump` without the versions outside the range.
+- `replace` leaves admitted versions alone. `widen` does too, and for a version outside the range moves only its upper bounds (`>=1.2,<2` with 3.1.0 → `>=1.2,<4`); when that is not enough a Poetry constraint gets a new `||` alternative (`^2.13.0` → `^2.13.0 || ^3.0.0`) and any other range, like an exact version, is replaced. `pin` writes `==<version>` (an exact clause keeps its operator: `===1.4` → `===1.5.0`, Poetry `1.0` → `1.1`): a `pin` update to the locked version (else the newest version the range admits) unless another update shares its PR bucket, then every newer version.
+- Rewrites follow Renovate's pep440 `getNewValue` (`lib/modules/versioning/pep440/range.ts`): an admitted version gets its `bump` rules, any other its `replace` rules (`widen` and `pin` aside, above), under every strategy (Renovate's `bump` would write the full new version as lower bound there too). Clause by clause: `!=` exclusions are kept verbatim; `<V` moves past the new version at the range's precision (`>=1.2,<2` with 3.1.0 → `>=3.1,<4`; with two clauses the precision is the first part in which the bounds differ, one finer for a major followed by `0`: `>=1.2.0,<2.0.0` with 3.1.4 → `>=3.1.4,<3.2.0`); `>=` and `>` take the new version at their own precision (`>=1.2` → `>=3.1`, a new version at or below them `>=<new>`); trailing zeros are trimmed when a clause has fewer than three parts; `~=`, `^` and `~` take the new version cut or zero-padded to their precision (`~=7.2` with 8.0.1 → `~=8.0`); `==`, `===`, `=`, a bare version and `<=` become the new version; wildcards keep `.*` at their precision (`==1.0.*` → `==1.2.*`).
+- A Poetry constraint with `||` alternatives gets a new alternative for a version outside all of them (`^1 || ^2` with 3.0.0 → `^1 || ^2 || ^3`, as Renovate widens npm `||` ranges); `bump` raises the alternative that admits the version.
+- Only the changed versions (and operators, `>` → `>=`) are rewritten; the bytes between clauses are kept. A rewrite that would not admit the new version (it is excluded by `!=`) is not proposed. Renovate's removal of a `>=` that a `==X.*` makes redundant is not done.
 
 ## conda
 
