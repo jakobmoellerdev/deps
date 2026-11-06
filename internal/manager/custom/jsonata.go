@@ -78,19 +78,33 @@ func (m *customManager) jsonata(file string, src []byte) ([]dep.Dep, error) {
 	for i, o := range objs {
 		deps[i] = m.jsonataDep(file, o)
 	}
-	m.locate(src, objs, deps)
+	markErr := m.locate(src, objs, deps)
 	for i := range deps {
-		m.finishJSONataDep(&deps[i])
+		m.finishJSONataDep(&deps[i], markErr)
 	}
 	return deps, nil
 }
 
 // queryFile parses src as the entry's fileFormat and returns the query's dep objects.
 func (m *customManager) queryFile(src []byte) ([]map[string]any, error) {
+	doc, err := m.parse(src)
+	if err != nil {
+		return nil, err
+	}
+	return m.queryDoc(doc)
+}
+
+// parse returns src parsed as the entry's fileFormat (see jsonataDocument).
+func (m *customManager) parse(src []byte) ([]byte, error) {
 	doc, err := jsonataDocument(m.format, src)
 	if err != nil {
 		return nil, fmt.Errorf("parse as %s: %w", m.format, err)
 	}
+	return doc, nil
+}
+
+// queryDoc returns the query's dep objects over doc, a parsed file.
+func (m *customManager) queryDoc(doc []byte) ([]map[string]any, error) {
 	r, err := m.query.EvalBytes(context.Background(), doc)
 	if err != nil {
 		return nil, fmt.Errorf("jsonata: %w", err)
@@ -174,17 +188,18 @@ func (m *customManager) jsonataDep(file string, o map[string]any) dep.Dep {
 	return d
 }
 
-// finishJSONataDep checks a dep that jsonataDep did not skip once locate has run.
-func (m *customManager) finishJSONataDep(d *dep.Dep) {
+// finishJSONataDep checks a dep that jsonataDep did not skip once locate has run; markErr is
+// the error locate returned.
+func (m *customManager) finishJSONataDep(d *dep.Dep, markErr error) {
 	if d.Skip != "" {
 		return
 	}
 	switch {
 	case d.RefSpan.End <= d.RefSpan.Start:
-		d.Skip = "version not found in file"
+		d.Skip = "version not found in file" + unmarked(markErr)
 		return
 	case d.Digest != "" && d.DigestSpan.End <= d.DigestSpan.Start:
-		d.Skip = "digest not found in file"
+		d.Skip = "digest not found in file" + unmarked(markErr)
 		return
 	}
 	m.classify(d)
@@ -194,6 +209,15 @@ func (m *customManager) finishJSONataDep(d *dep.Dep) {
 	if _, err := versioning.CompileExtract(d.ExtractVersion); d.Skip == "" && d.ExtractVersion != "" && err != nil {
 		d.Skip = "invalid extractVersion: " + err.Error()
 	}
+}
+
+// unmarked follows a not-found skip reason with the parse error of the markers locate had to
+// leave out, if any.
+func unmarked(markErr error) string {
+	if markErr == nil {
+		return ""
+	}
+	return " (markers break " + markErr.Error() + ")"
 }
 
 // occurrence is one place a wanted value is spelled in the file.
@@ -206,8 +230,10 @@ type occurrence struct {
 // first pass marks only occurrences not glued to letters or digits on either side, so that
 // unrelated keys and words stay intact; a second pass marks every occurrence of the values
 // still unlocated. A dep is located only when its marked result also has its name, so a query
-// that reorders its results by value cannot swap two deps' spans.
-func (m *customManager) locate(src []byte, objs []map[string]any, deps []dep.Dep) {
+// that reorders its results by value cannot swap two deps' spans. Occurrences whose markers
+// break the file's parse stay unmarked (see parsable); the error is the parse error of one.
+func (m *customManager) locate(src []byte, objs []map[string]any, deps []dep.Dep) error {
+	var markErr error
 	for _, glued := range []bool{false, true} {
 		want := map[string]bool{}
 		for _, d := range deps {
@@ -221,11 +247,14 @@ func (m *customManager) locate(src []byte, objs []map[string]any, deps []dep.Dep
 		if len(want) == 0 {
 			break
 		}
-		occ := occurrences(src, want, glued)
+		occ, doc, err := m.parsable(src, occurrences(src, want, glued))
+		if err != nil {
+			markErr = err
+		}
 		if len(occ) == 0 {
 			continue
 		}
-		marked, err := m.queryFile(mark(src, occ))
+		marked, err := m.queryDoc(doc)
 		if err != nil || len(marked) != len(objs) {
 			continue
 		}
@@ -255,6 +284,7 @@ func (m *customManager) locate(src []byte, objs []map[string]any, deps []dep.Dep
 			d.Line = l + 1
 		}
 	}
+	return markErr
 }
 
 // firstString returns the first present string field of keys in o, or "".
@@ -314,6 +344,40 @@ func mark(src []byte, occ []occurrence) []byte {
 		at = o.end
 	}
 	return append(out, src[at:]...)
+}
+
+// parsable returns the occurrences of occ whose markers keep src parsable, and the parsed
+// marked file. A marker breaks the parse where a value is also spelled in, say, a datetime
+// (the year of TOML's 2024-05-01 07:32:00Z); the halves of occ are then marked apart, so that
+// only such occurrences go unmarked, and err is the parse error of one.
+func (m *customManager) parsable(src []byte, occ []occurrence) (kept []occurrence, doc []byte, err error) {
+	if len(occ) == 0 {
+		return nil, nil, nil
+	}
+	if doc, err = m.parse(mark(src, occ)); err == nil {
+		return occ, doc, nil
+	}
+	if len(occ) == 1 {
+		return nil, nil, err
+	}
+	h := len(occ) / 2
+	a, docA, errA := m.parsable(src, occ[:h])
+	b, docB, errB := m.parsable(src, occ[h:])
+	err = cmp.Or(errA, errB, err)
+	switch {
+	case len(b) == 0:
+		return a, docA, err
+	case len(a) == 0:
+		return b, docB, err
+	}
+	kept = slices.Concat(a, b)
+	if doc, uerr := m.parse(mark(src, kept)); uerr == nil {
+		return kept, doc, err
+	}
+	if len(b) > len(a) {
+		return b, docB, err
+	}
+	return a, docA, err
 }
 
 // markedSpan returns the span of the occurrence of v whose marker follows v in marked.

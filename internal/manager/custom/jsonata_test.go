@@ -121,6 +121,26 @@ func TestJSONataTOML(t *testing.T) {
 	}
 }
 
+// A version that is also the year of a TOML datetime: its marker makes the datetime invalid,
+// so only that occurrence goes unmarked and the dep is still found. A version spelled
+// nowhere else names the parse error in its skip reason.
+func TestJSONataTOMLMarkerBreaksParse(t *testing.T) {
+	src := "released = 2024-05-01 07:32:00Z\n[tools]\ncalver = \"2024\"\nnode = \"22.21.0\"\n"
+	c := jsonataEntry("toml", `$each(tools, function($v, $k) { {"depName": $k, "currentValue": $v} })`)
+	c.Datasource = "npm"
+	check(t, src, extract(t, one(t, c), src), DepTypeJSONata, []want{
+		{3, "npm", "calver", "", "semver", "2024", "", ""},
+		{4, "npm", "node", "", "semver", "22.21.0", "", ""},
+	})
+
+	c = jsonataEntry("toml", `{"depName": "year", "currentValue": $substring(released, 0, 4)}`)
+	c.Datasource = "npm"
+	d := extract(t, one(t, c), src)
+	if len(d) != 1 || !strings.HasPrefix(d[0].Skip, "version not found in file (markers break parse as toml: ") {
+		t.Errorf("year: %+v", d)
+	}
+}
+
 // Renovate's documented "name and version in one string" shape: the marker after each
 // occurrence survives $split.
 func TestJSONataSplit(t *testing.T) {
