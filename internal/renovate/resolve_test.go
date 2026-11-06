@@ -101,7 +101,7 @@ func resolveWith(t *testing.T, presets map[string]string, cfg string) (map[strin
 	r := &resolver{ctx: t.Context(), notes: n}
 	m := mustJSON5(t, cfg)
 	setOrigins(m, "")
-	got, err := r.resolve(m, nil)
+	got, err := r.resolve(m, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestResolve(t *testing.T) {
 func TestBuiltinPresets(t *testing.T) {
 	for name := range builtin {
 		r := &resolver{ctx: t.Context(), notes: &notes{}}
-		if _, err := r.resolve(map[string]any{"extends": []any{name}}, nil); err != nil {
+		if _, err := r.resolve(map[string]any{"extends": []any{name}}, nil, nil); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -292,5 +292,32 @@ func TestFetcherGitLab(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("requests = %q, want %q", got, want)
+	}
+}
+
+// ignorePresets drops matching extends entries, in the config's own list and in every
+// preset it extends.
+func TestResolveIgnorePresets(t *testing.T) {
+	builtin["default:testIgnore"] = `{extends: ['group:monorepos', ':testIgnoreRule'], prHourlyLimit: 4}`
+	builtin["default:testIgnoreRule"] = `{packageRules: [{matchPackageNames: ['a']}]}`
+	t.Cleanup(func() { delete(builtin, "default:testIgnore"); delete(builtin, "default:testIgnoreRule") })
+	for _, cfg := range []string{
+		`{extends: ['config:recommended'], ignorePresets: ['group:monorepos', 'group:recommended']}`,
+		`{extends: [':testIgnore'], ignorePresets: ['group:monorepos', ':testIgnoreRule']}`,
+	} {
+		r := &resolver{ctx: t.Context(), notes: &notes{}}
+		got, err := r.resolve(mustJSON5(t, cfg), nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.monorepos {
+			t.Errorf("%s: monorepos set", cfg)
+		}
+		if _, ok := got["packageRules"]; ok && strings.Contains(cfg, "testIgnoreRule") {
+			t.Errorf("%s: ignored preset's rules kept: %v", cfg, got["packageRules"])
+		}
+		if _, ok := got["ignorePresets"]; ok {
+			t.Errorf("%s: ignorePresets kept", cfg)
+		}
 	}
 }

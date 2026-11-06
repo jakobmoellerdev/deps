@@ -173,9 +173,18 @@ func extendsList(v any) []string {
 
 // resolve returns m with its extends (and those of nested objects, e.g. packageRules
 // elements) merged in: each preset, resolved recursively, in order, then m's own keys.
-func (r *resolver) resolve(m map[string]any, chain []string) (map[string]any, error) {
+// ignore is the inherited ignorePresets list; as in Renovate's resolveConfigPresets, a
+// non-empty inherited list wins over m's own, and entries match extends strings exactly.
+func (r *resolver) resolve(m map[string]any, chain, ignore []string) (map[string]any, error) {
+	if len(ignore) == 0 {
+		ignore = extendsList(m["ignorePresets"])
+	}
 	base := map[string]any{}
 	for i, e := range extendsList(m["extends"]) {
+		if slices.Contains(ignore, e) {
+			r.notes.info(e, "listed in ignorePresets, skipped")
+			continue
+		}
 		key, _, _ := strings.Cut(e, "(") // a preset with other params is the same preset
 		if slices.Contains(chain, key) {
 			r.notes.warn(e, "preset cycle, skipped")
@@ -189,20 +198,20 @@ func (r *resolver) resolve(m map[string]any, chain []string) (map[string]any, er
 			continue
 		}
 		next := append(slices.Clip(chain), key)
-		if p, err = r.resolve(p, next); err != nil {
+		if p, err = r.resolve(p, next, ignore); err != nil {
 			return nil, err
 		}
 		base = merge(base, p)
 	}
 	own := make(map[string]any, len(m))
 	for k, v := range m {
-		if k == "extends" {
+		if k == "extends" || k == "ignorePresets" {
 			continue
 		}
 		var err error
 		switch v := v.(type) {
 		case map[string]any:
-			if own[k], err = r.resolve(v, chain); err != nil {
+			if own[k], err = r.resolve(v, chain, ignore); err != nil {
 				return nil, err
 			}
 			continue
@@ -210,7 +219,7 @@ func (r *resolver) resolve(m map[string]any, chain []string) (map[string]any, er
 			list := slices.Clone(v)
 			for j, el := range list {
 				if em, ok := el.(map[string]any); ok {
-					if list[j], err = r.resolve(em, chain); err != nil {
+					if list[j], err = r.resolve(em, chain, ignore); err != nil {
 						return nil, err
 					}
 				}

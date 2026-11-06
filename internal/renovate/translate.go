@@ -91,7 +91,7 @@ func Load(ctx context.Context, dir, explicitPath string, f *Fetcher) (*Result, e
 	setOrigins(raw, "")
 	n := &notes{}
 	r := &resolver{ctx: ctx, fetcher: f, notes: n}
-	cfg, err := r.resolve(raw, nil)
+	cfg, err := r.resolve(raw, nil, nil)
 	if err != nil {
 		return nil, err
 	}
