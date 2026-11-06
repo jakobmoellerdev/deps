@@ -156,6 +156,26 @@ func TestPackagePlatformFallback(t *testing.T) {
 	}
 }
 
+// A failing repository returns its error without looking up platform artifacts, and a name
+// already naming a platform gets no candidates.
+func TestPackagePlatformFallbackOnlyOnNotFound(t *testing.T) {
+	s := newServer(t, nil)
+	pkg, _ := newSources(t, s)
+	_, err := pkg.Releases(context.Background(), dep.Dep{Name: "g:a_2.13", Source: s.URL + "/broken/m2/ ivy=" + s.URL + "/broken/ivy"}, "")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Errorf("err = %v", err)
+	}
+	if len(s.hits) != 2 {
+		t.Errorf("requests = %v, want only the primary artifact's", s.hits)
+	}
+	if got := platformNames("g:a_sjs1_2.13"); got != nil {
+		t.Errorf("platformNames of a Scala.js artifact = %v", got)
+	}
+	if got := platformNames("g:a_native0.5_3"); got != nil {
+		t.Errorf("platformNames of a Scala Native artifact = %v", got)
+	}
+}
+
 func TestListingFailure(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)

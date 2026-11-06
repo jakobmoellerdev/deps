@@ -284,8 +284,12 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 	case len(errs) > 0:
 		return nil, errors.Join(errs...)
 	}
-	return nil, fmt.Errorf("artifact %s not found", d.Name)
+	return nil, fmt.Errorf("artifact %s %w", d.Name, ErrNotFound)
 }
+
+// ErrNotFound is wrapped by the Releases error of an artifact no repository has (every one
+// answered 404/410), as opposed to a failing repository.
+var ErrNotFound = errors.New("not found")
 
 // ReleaseTime implements datasource.Timer with the Last-Modified header of the version's POM
 // in the first repository listing it; zero when unknown.

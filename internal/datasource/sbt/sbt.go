@@ -116,9 +116,11 @@ func (c *core) lookup(ctx context.Context, md dep.Dep, dir string, hasMaven bool
 	}
 	if hasMaven {
 		mr, err := c.maven.Releases(ctx, md, dir)
-		if err != nil {
+		switch {
+		case errors.Is(err, mavends.ErrNotFound):
+		case err != nil:
 			errs = append(errs, err)
-		} else {
+		default:
 			found = true
 			for _, r := range mr {
 				add(r.Version)
@@ -146,25 +148,30 @@ func (c *core) lookup(ctx context.Context, md dep.Dep, dir string, hasMaven bool
 	case len(errs) > 0:
 		return nil, errors.Join(errs...)
 	}
-	return nil, fmt.Errorf("artifact %s not found", md.Name)
+	return nil, fmt.Errorf("artifact %s %w", md.Name, mavends.ErrNotFound)
 }
 
 // Releases lists the versions of the library in the dep's Maven repositories
 // (maven-metadata.xml) and Ivy repositories (`<url>/<group>/<artifact>/`). A Scala artifact
 // (`<name>_2.13`, `<name>_3`) none of them has is looked up as its Scala.js and Scala Native
 // artifacts (`<name>_sjs1_2.13`, `<name>_native0.5_2.13`, `<name>_native0.4_2.13`): `%%%`
-// names the platform's artifact, which the build's platform decides.
+// names the platform's artifact, which the build's platform decides. Only an artifact every
+// repository lacks falls back; a failing repository returns its error without more requests.
 func (p Package) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
 	rels, err := p.releases(ctx, d, dir)
-	if err == nil {
-		return rels, nil
+	if err == nil || !errors.Is(err, mavends.ErrNotFound) {
+		return rels, err
 	}
 	for _, name := range platformNames(d.Name) {
 		pd := d
 		pd.Name = name
-		if prels, perr := p.releases(ctx, pd, dir); perr == nil {
+		prels, perr := p.releases(ctx, pd, dir)
+		switch {
+		case perr == nil:
 			p.platform.Store(d.Name+"\x00"+d.Source, name)
 			return prels, nil
+		case !errors.Is(perr, mavends.ErrNotFound):
+			return nil, err
 		}
 	}
 	return nil, err
@@ -185,11 +192,17 @@ func (p Package) releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 	return p.lookup(ctx, md, dir, hasMaven, dirs)
 }
 
-// platformNames returns the Scala.js and Scala Native artifacts of a Scala artifact name.
+// platformNames returns the Scala.js and Scala Native artifacts of a Scala artifact name;
+// none for a name that already names a platform (`_sjs1_2.13`, `_native0.5_3`).
 func platformNames(name string) []string {
 	i := strings.LastIndexByte(name, '_')
 	if i < 0 || !strings.Contains(name[:i], ":") {
 		return nil
+	}
+	if j := strings.LastIndexByte(name[:i], '_'); j >= 0 {
+		if seg := name[j+1 : i]; strings.HasPrefix(seg, "sjs") || strings.HasPrefix(seg, "native") {
+			return nil
+		}
 	}
 	switch bin := name[i+1:]; bin {
 	case "2.11", "2.12", "2.13", "3":
