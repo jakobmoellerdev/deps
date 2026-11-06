@@ -407,7 +407,7 @@ func (s *Source) fetchJSON(ctx context.Context, written, name string) (p project
 	target := s.base + "/pypi/" + url.PathEscape(name) + "/json"
 	start, yanked := time.Now(), 0
 	defer func() {
-		slog.DebugContext(ctx, "pypi project fetched", "name", name, "index", redact(s.base), "api", "json",
+		slog.DebugContext(ctx, "pypi project fetched", "name", name, "index", httpx.Redact(s.base), "api", "json",
 			"versions", len(p.rels), "yanked", yanked, "repository", p.repo, "duration", time.Since(start), "err", err)
 	}()
 	release, err := httpx.Acquire(ctx, s.sem)
@@ -422,7 +422,7 @@ func (s *Source) fetchJSON(ctx context.Context, written, name string) (p project
 	defer closeBody(resp)
 	p, yanked, err = decodeJSON(resp.Body)
 	if err != nil {
-		return project{}, fmt.Errorf("pypi %s: malformed response: %w", redact(target), err)
+		return project{}, fmt.Errorf("pypi %s: malformed response: %w", httpx.Redact(target), err)
 	}
 	return p, nil
 }
@@ -434,7 +434,7 @@ func (s *Source) fetchSimple(ctx context.Context, idx, written, name string) (p 
 	target := idx + url.PathEscape(name) + "/"
 	start, yanked, api := time.Now(), 0, "simple"
 	defer func() {
-		slog.DebugContext(ctx, "pypi project fetched", "name", name, "index", redact(idx), "api", api,
+		slog.DebugContext(ctx, "pypi project fetched", "name", name, "index", httpx.Redact(idx), "api", api,
 			"versions", len(p.rels), "yanked", yanked, "duration", time.Since(start), "err", err)
 	}()
 	release, err := httpx.Acquire(ctx, s.sem)
@@ -444,7 +444,7 @@ func (s *Source) fetchSimple(ctx context.Context, idx, written, name string) (p 
 	defer release()
 	resp, err := s.getSimple(ctx, target, written)
 	if errors.Is(err, errNotAcceptable) {
-		return project{}, fmt.Errorf("%s serves neither the JSON nor the HTML simple API", redact(idx))
+		return project{}, fmt.Errorf("%s serves neither the JSON nor the HTML simple API", httpx.Redact(idx))
 	}
 	if err != nil {
 		return project{}, err
@@ -459,10 +459,10 @@ func (s *Source) fetchSimple(ctx context.Context, idx, written, name string) (p 
 		api = "simple-html"
 		p, yanked, err = decodeHTML(resp.Body, resp.Request.URL, name)
 	default:
-		return project{}, fmt.Errorf("pypi %s: unsupported content type %q (want %s or HTML)", redact(target), ct, simpleJSON)
+		return project{}, fmt.Errorf("pypi %s: unsupported content type %q (want %s or HTML)", httpx.Redact(target), ct, simpleJSON)
 	}
 	if err != nil {
-		return project{}, fmt.Errorf("pypi %s: malformed response: %w", redact(target), err)
+		return project{}, fmt.Errorf("pypi %s: malformed response: %w", httpx.Redact(target), err)
 	}
 	return p, nil
 }
@@ -485,13 +485,13 @@ func (s *Source) get(ctx context.Context, target, name, accept string) (*http.Re
 		if ue, ok := errors.AsType[*url.Error](err); ok { // its message holds the URL with the password
 			err = ue.Err
 		}
-		return nil, fmt.Errorf("pypi %s: %w", redact(target), err)
+		return nil, fmt.Errorf("pypi %s: %w", httpx.Redact(target), err)
 	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
 	if err != nil {
-		return nil, fmt.Errorf("pypi %s: %w", redact(target), err)
+		return nil, fmt.Errorf("pypi %s: %w", httpx.Redact(target), err)
 	}
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
@@ -502,18 +502,9 @@ func (s *Source) get(ctx context.Context, target, name, accept string) (*http.Re
 		return nil, errNotAcceptable
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		closeBody(resp)
-		return nil, fmt.Errorf("pypi %s: HTTP %d", redact(target), resp.StatusCode)
+		return nil, fmt.Errorf("pypi %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
 	}
 	return resp, nil
-}
-
-// redact returns raw with the password of its userinfo masked.
-func redact(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "<invalid URL>"
-	}
-	return u.Redacted()
 }
 
 // decodeJSON streams a PyPI JSON API document. `releases` maps each version to its files; one

@@ -113,7 +113,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 	case 0:
 		redacted := make([]string, len(urls))
 		for i, u := range urls {
-			redacted[i] = redact(u)
+			redacted[i] = httpx.Redact(u)
 		}
 		return nil, fmt.Errorf("rpm package %s not found in %s", d.Name, strings.Join(redacted, ", "))
 	case 1:
@@ -172,7 +172,7 @@ func (s *Source) fetch(ctx context.Context, base string) (r *repo, err error) {
 		if r != nil {
 			n = len(r.pkgs)
 		}
-		slog.DebugContext(ctx, "rpm repository indexed", "repo", redact(base), "packages", n, "duration", time.Since(start), "err", err)
+		slog.DebugContext(ctx, "rpm repository indexed", "repo", httpx.Redact(base), "packages", n, "duration", time.Since(start), "err", err)
 	}()
 	var md repomd
 	if err := s.get(ctx, base+"/repodata/repomd.xml", func(body io.Reader) error {
@@ -185,13 +185,13 @@ func (s *Source) fetch(ctx context.Context, base string) (r *repo, err error) {
 		if d.Type == "primary" && d.Location.Href != "" {
 			primary, err = resolve(base+"/", d.Location.Base, d.Location.Href)
 			if err != nil {
-				return nil, fmt.Errorf("rpm %s: %w", redact(base+"/repodata/repomd.xml"), err)
+				return nil, fmt.Errorf("rpm %s: %w", httpx.Redact(base+"/repodata/repomd.xml"), err)
 			}
 			break
 		}
 	}
 	if primary == "" {
-		return nil, fmt.Errorf("rpm %s: no primary metadata", redact(base+"/repodata/repomd.xml"))
+		return nil, fmt.Errorf("rpm %s: no primary metadata", httpx.Redact(base+"/repodata/repomd.xml"))
 	}
 	r = &repo{pkgs: map[string]*pkg{}}
 	err = s.get(ctx, primary, func(body io.Reader) error {
@@ -284,7 +284,7 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return fmt.Errorf("rpm: invalid URL %s", redact(target))
+		return fmt.Errorf("rpm: invalid URL %s", httpx.Redact(target))
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
@@ -296,21 +296,12 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("rpm %s: HTTP %d", redact(target), resp.StatusCode)
+		return fmt.Errorf("rpm %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
 	}
 	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("rpm %s: malformed metadata: %w", redact(target), err)
+		return fmt.Errorf("rpm %s: malformed metadata: %w", httpx.Redact(target), err)
 	}
 	return nil
-}
-
-// redact returns u without the password of its userinfo.
-func redact(u string) string {
-	p, err := url.Parse(u)
-	if err != nil {
-		return "<invalid URL>"
-	}
-	return p.Redacted()
 }
 
 // scanPrimary streams primary.xml and calls add for each `<package type="rpm">` with its

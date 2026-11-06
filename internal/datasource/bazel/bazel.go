@@ -166,7 +166,7 @@ func (s *Source) fetch(ctx context.Context, root, reg, name string) (m *module, 
 		if m != nil {
 			n = len(m.rels)
 		}
-		slog.DebugContext(ctx, "bazel module fetched", "name", name, "registry", redact(reg), "versions", n, "duration", time.Since(start), "err", err)
+		slog.DebugContext(ctx, "bazel module fetched", "name", name, "registry", httpx.Redact(reg), "versions", n, "duration", time.Since(start), "err", err)
 	}()
 	var meta metadata
 	rel := "modules/" + name + "/metadata.json"
@@ -242,7 +242,7 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return fmt.Errorf("bazel registry %s: invalid URL", redact(target))
+		return fmt.Errorf("bazel registry %s: invalid URL", httpx.Redact(target))
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	if req.URL.User == nil && !strings.HasPrefix(target, s.base+"/") {
@@ -252,7 +252,7 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	}
 	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
 	if err != nil {
-		return fmt.Errorf("bazel registry %s: %w", redact(target), err)
+		return fmt.Errorf("bazel registry %s: %w", httpx.Redact(target), err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
@@ -262,27 +262,18 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	case resp.StatusCode == http.StatusNotFound:
 		return errNotFound
 	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("bazel registry %s: HTTP %d", redact(target), resp.StatusCode)
+		return fmt.Errorf("bazel registry %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
 	}
 	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("bazel registry %s: malformed metadata.json: %w", redact(target), err)
+		return fmt.Errorf("bazel registry %s: malformed metadata.json: %w", httpx.Redact(target), err)
 	}
 	return nil
-}
-
-// redact returns raw with the password of its userinfo masked.
-func redact(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "<invalid URL>"
-	}
-	return u.Redacted()
 }
 
 func redactAll(regs []string) []string {
 	out := make([]string, len(regs))
 	for i, r := range regs {
-		out[i] = redact(r)
+		out[i] = httpx.Redact(r)
 	}
 	return out
 }

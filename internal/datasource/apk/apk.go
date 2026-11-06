@@ -22,6 +22,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -100,7 +101,11 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) ([]entry, error) {
 		out = append(out, idx[d.Name]...)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("package %q not found in %s", d.Name, strings.Join(urls, ", "))
+		shown := make([]string, len(urls))
+		for i, u := range urls {
+			shown[i] = httpx.Redact(u)
+		}
+		return nil, fmt.Errorf("package %q not found in %s", d.Name, strings.Join(shown, ", "))
 	}
 	scheme, _ := versioning.Get("apk")
 	slices.SortStableFunc(out, func(a, b entry) int {
@@ -132,7 +137,7 @@ func IndexURLs(registry string) ([]string, error) {
 	for raw := range strings.FieldsSeq(registry) {
 		u, err := url.Parse(raw)
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			return nil, fmt.Errorf("invalid apk registry URL %q", raw)
+			return nil, fmt.Errorf("invalid apk registry URL %q", httpx.Redact(raw))
 		}
 		q := u.Query()
 		u.RawQuery, u.Fragment = "", ""
@@ -146,12 +151,12 @@ func IndexURLs(registry string) ([]string, error) {
 		}
 		for k := range q {
 			if k != "arch" && k != "branch" && k != "components" {
-				return nil, fmt.Errorf("apk registry URL %q: unknown parameter %q (want arch, branch, components)", raw, k)
+				return nil, fmt.Errorf("apk registry URL %q: unknown parameter %q (want arch, branch, components)", httpx.Redact(raw), k)
 			}
 		}
 		arch := q.Get("arch")
 		if arch == "" {
-			return nil, fmt.Errorf("apk registry URL %q: missing arch parameter", raw)
+			return nil, fmt.Errorf("apk registry URL %q: missing arch parameter", httpx.Redact(raw))
 		}
 		if b := q.Get("branch"); b != "" {
 			base += "/" + url.PathEscape(b)
@@ -183,7 +188,7 @@ func (s *Source) fetch(ctx context.Context, u string) (index, error) {
 		idx, err = parseArchive(r)
 		return err
 	})
-	slog.DebugContext(ctx, "apk index", "url", u, "packages", len(idx), "duration", time.Since(start), "err", err)
+	slog.DebugContext(ctx, "apk index", "url", httpx.Redact(u), "packages", len(idx), "duration", time.Since(start), "err", err)
 	return idx, err
 }
 

@@ -106,3 +106,24 @@ func TestDecodeArray(t *testing.T) {
 		})
 	}
 }
+
+func TestGetStreamRedactsCredentials(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/missing" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, "body")
+	}))
+	defer srv.Close()
+	cred := strings.Replace(srv.URL, "://", "://u:secretpw@", 1)
+	errs := []error{
+		GetStream(t.Context(), srv.Client(), nil, cred+"/missing", func(io.Reader) error { return nil }),
+		GetStream(t.Context(), srv.Client(), nil, cred+"/ok", func(io.Reader) error { return errors.New("bad") }),
+	}
+	for _, err := range errs {
+		if err == nil || strings.Contains(err.Error(), "secretpw") {
+			t.Errorf("err = %v, want error without password", err)
+		}
+	}
+}

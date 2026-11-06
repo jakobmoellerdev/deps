@@ -237,10 +237,10 @@ func (s *Source) scan(ctx context.Context, comp string, wanted map[string]bool) 
 		if errors.Is(err, errNotFound) {
 			continue
 		}
-		slog.DebugContext(ctx, "deb index scanned", "url", redact(target), "wanted", len(wanted), "found", len(pkgs), "err", err)
+		slog.DebugContext(ctx, "deb index scanned", "url", httpx.Redact(target), "wanted", len(wanted), "found", len(pkgs), "err", err)
 		return pkgs, err
 	}
-	return nil, fmt.Errorf("deb index %s: no %s", redact(base), strings.Join(indexFiles, ", "))
+	return nil, fmt.Errorf("deb index %s: no %s", httpx.Redact(base), strings.Join(indexFiles, ", "))
 }
 
 var errNotFound = errors.New("not found")
@@ -254,7 +254,7 @@ func (s *Source) fetch(ctx context.Context, target, file string, wanted map[stri
 	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return nil, fmt.Errorf("deb index %s: %w", redact(target), err)
+		return nil, fmt.Errorf("deb index %s: %w", httpx.Redact(target), err)
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	if user, pass, ok := s.auth.Static(req.URL.Hostname()); ok && req.URL.User == nil {
@@ -272,38 +272,29 @@ func (s *Source) fetch(ctx context.Context, target, file string, wanted map[stri
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, errNotFound
 	case resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("deb index %s: HTTP %d", redact(target), resp.StatusCode)
+		return nil, fmt.Errorf("deb index %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
 	}
 	var r io.Reader = resp.Body
 	switch {
 	case strings.HasSuffix(file, ".gz"):
 		zr, err := gzip.NewReader(r)
 		if err != nil {
-			return nil, fmt.Errorf("deb index %s: %w", redact(target), err)
+			return nil, fmt.Errorf("deb index %s: %w", httpx.Redact(target), err)
 		}
 		defer zr.Close()
 		r = zr
 	case strings.HasSuffix(file, ".xz"):
 		zr, err := xz.NewReader(bufio.NewReaderSize(r, 64<<10))
 		if err != nil {
-			return nil, fmt.Errorf("deb index %s: %w", redact(target), err)
+			return nil, fmt.Errorf("deb index %s: %w", httpx.Redact(target), err)
 		}
 		r = zr
 	}
 	pkgs, err := scanIndex(r, wanted)
 	if err != nil {
-		return nil, fmt.Errorf("deb index %s: %w", redact(target), err)
+		return nil, fmt.Errorf("deb index %s: %w", httpx.Redact(target), err)
 	}
 	return pkgs, nil
-}
-
-// redact drops the userinfo of a URL for messages.
-func redact(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.User == nil {
-		return raw
-	}
-	return u.Redacted()
 }
 
 var (

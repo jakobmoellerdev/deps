@@ -218,7 +218,4 @@ func TestCredentialsAndForge(t *testing.T) {
 			t.Errorf("onForge(%q) = %v", raw, got)
 		}
 	}
-	if redact("%") != "<invalid URL>" || redact("https://u:p@h/x") != "https://u:xxxxx@h/x" {
-		t.Error("redact")
-	}
 }

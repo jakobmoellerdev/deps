@@ -154,7 +154,7 @@ func (s *Source) fetch(ctx context.Context, srv, name string) (g *gem, err error
 		if g != nil {
 			n = len(g.rels)
 		}
-		slog.DebugContext(ctx, "rubygems gem fetched", "name", name, "server", redact(cmp.Or(srv, s.base)), "api", api,
+		slog.DebugContext(ctx, "rubygems gem fetched", "name", name, "server", httpx.Redact(cmp.Or(srv, s.base)), "api", api,
 			"versions", n, "duration", time.Since(start), "err", err)
 	}()
 	if s.isDefault(srv) {
@@ -254,7 +254,7 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return fmt.Errorf("rubygems %s: invalid URL", redact(target))
+		return fmt.Errorf("rubygems %s: invalid URL", httpx.Redact(target))
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	if req.URL.User == nil {
@@ -265,7 +265,7 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	}
 	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
 	if err != nil {
-		return fmt.Errorf("rubygems %s: %w", redact(target), err)
+		return fmt.Errorf("rubygems %s: %w", httpx.Redact(target), err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
@@ -275,10 +275,10 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	case resp.StatusCode == http.StatusNotFound:
 		return errNotFound
 	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("rubygems %s: HTTP %d", redact(target), resp.StatusCode)
+		return fmt.Errorf("rubygems %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
 	}
 	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("rubygems %s: malformed response: %w", redact(target), err)
+		return fmt.Errorf("rubygems %s: malformed response: %w", httpx.Redact(target), err)
 	}
 	return nil
 }
@@ -288,15 +288,6 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 // "___" (gems.example-corp.com → BUNDLE_GEMS__EXAMPLE___CORP__COM).
 func bundleKey(host string) string {
 	return "BUNDLE_" + strings.ToUpper(strings.NewReplacer(".", "__", "-", "___").Replace(host))
-}
-
-// redact returns raw with the password of its userinfo masked.
-func redact(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "<invalid URL>"
-	}
-	return u.Redacted()
 }
 
 // onForge reports whether raw is an http(s) URL on github.com, gitlab.com or codeberg.org.

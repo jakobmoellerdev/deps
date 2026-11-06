@@ -345,7 +345,4 @@ func TestResolve(t *testing.T) {
 	if _, err := resolve("https://h/r/", "http://[::1", "x"); err == nil {
 		t.Error("invalid xml:base")
 	}
-	if got := redact("%zz://"); got != "<invalid URL>" {
-		t.Errorf("redact = %s", got)
-	}
 }

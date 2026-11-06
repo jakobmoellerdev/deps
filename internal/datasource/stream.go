@@ -32,10 +32,10 @@ func GetStream(ctx context.Context, client *http.Client, sem chan struct{}, url 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: HTTP %d", url, resp.StatusCode)
+		return fmt.Errorf("GET %s: HTTP %d", req.URL.Redacted(), resp.StatusCode)
 	}
 	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("GET %s: %w", url, err)
+		return fmt.Errorf("GET %s: %w", req.URL.Redacted(), err)
 	}
 	return nil
 }

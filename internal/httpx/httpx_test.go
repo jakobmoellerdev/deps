@@ -135,3 +135,16 @@ func TestGitCredentialFill(t *testing.T) {
 		}
 	})
 }
+
+func TestRedact(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://u:p@h/x": "https://u:xxxxx@h/x",
+		"https://h/x?a=1": "https://h/x?a=1",
+		"%":               "<invalid URL>",
+		"http://[::1":     "<invalid URL>",
+	} {
+		if got := Redact(raw); got != want {
+			t.Errorf("Redact(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}

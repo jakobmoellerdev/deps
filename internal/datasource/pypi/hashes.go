@@ -30,7 +30,7 @@ func (s *Source) Hashes(ctx context.Context, d dep.Dep, version string) (hashes 
 	name := pyreq.Normalize(d.Name)
 	start := time.Now()
 	defer func() {
-		slog.DebugContext(ctx, "pypi hashes fetched", "name", name, "version", version, "index", redact(cmp.Or(idx, s.base)),
+		slog.DebugContext(ctx, "pypi hashes fetched", "name", name, "version", version, "index", httpx.Redact(cmp.Or(idx, s.base)),
 			"hashes", len(hashes), "duration", time.Since(start), "err", err)
 	}()
 	release, err := httpx.Acquire(ctx, s.sem)
@@ -70,7 +70,7 @@ func (s *Source) jsonHashes(ctx context.Context, written, name, version string) 
 		} `json:"urls"`
 	}
 	if err := json.UnmarshalRead(resp.Body, &doc); err != nil {
-		return nil, fmt.Errorf("pypi %s: malformed response: %w", redact(target), err)
+		return nil, fmt.Errorf("pypi %s: malformed response: %w", httpx.Redact(target), err)
 	}
 	var out []string
 	for _, u := range doc.URLs {
@@ -107,17 +107,17 @@ func (s *Source) simpleHashes(ctx context.Context, idx, written, name, version s
 			} `json:"files"`
 		}
 		if err := json.UnmarshalRead(resp.Body, &doc); err != nil {
-			return nil, fmt.Errorf("pypi %s: malformed response: %w", redact(target), err)
+			return nil, fmt.Errorf("pypi %s: malformed response: %w", httpx.Redact(target), err)
 		}
 		for _, f := range doc.Files {
 			add(f.Filename, f.Hashes["sha256"])
 		}
 	case simpleHTML, "text/html":
 		if err := decodeHTMLFiles(resp.Body, resp.Request.URL, func(f simpleFile) { add(f.Filename, f.SHA256) }); err != nil {
-			return nil, fmt.Errorf("pypi %s: malformed response: %w", redact(target), err)
+			return nil, fmt.Errorf("pypi %s: malformed response: %w", httpx.Redact(target), err)
 		}
 	default:
-		return nil, fmt.Errorf("pypi %s: unexpected content type %q", redact(target), resp.Header.Get("Content-Type"))
+		return nil, fmt.Errorf("pypi %s: unexpected content type %q", httpx.Redact(target), resp.Header.Get("Content-Type"))
 	}
 	return out, nil
 }

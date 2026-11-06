@@ -178,7 +178,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		for _, f := range feeds {
 			if !v3(f.url) {
 				v2++
-				slog.DebugContext(ctx, "nuget v2 feed not read", "feed", redact(f.url), "name", d.Name)
+				slog.DebugContext(ctx, "nuget v2 feed not read", "feed", httpx.Redact(f.url), "name", d.Name)
 				continue
 			}
 			p, err := s.pkgs.Do(f.url+"\x00"+id, func() (*pkg, error) { return s.fetch(ctx, f, id) })
@@ -227,7 +227,7 @@ func (s *Source) service(ctx context.Context, f feed) (*service, error) {
 		var ix index
 		err := s.get(ctx, f, f.url, func(r io.Reader) error { return json.UnmarshalRead(r, &ix) })
 		if errors.Is(err, errNotFound) {
-			return nil, fmt.Errorf("nuget %s: service index not found (HTTP 404)", redact(f.url))
+			return nil, fmt.Errorf("nuget %s: service index not found (HTTP 404)", httpx.Redact(f.url))
 		}
 		if err != nil {
 			return nil, err
@@ -247,7 +247,7 @@ func (s *Source) service(ctx context.Context, f feed) (*service, error) {
 			}
 		}
 		if svc.registration == "" && svc.flat == "" {
-			return nil, fmt.Errorf("nuget %s: service index has no registration or package base address", redact(f.url))
+			return nil, fmt.Errorf("nuget %s: service index has no registration or package base address", httpx.Redact(f.url))
 		}
 		return svc, nil
 	})
@@ -282,7 +282,7 @@ func (s *Source) fetch(ctx context.Context, f feed, id string) (p *pkg, err erro
 		if p != nil {
 			n = len(p.rels)
 		}
-		slog.DebugContext(ctx, "nuget package fetched", "name", id, "feed", redact(f.url), "versions", n, "duration", time.Since(start), "err", err)
+		slog.DebugContext(ctx, "nuget package fetched", "name", id, "feed", httpx.Redact(f.url), "versions", n, "duration", time.Since(start), "err", err)
 	}()
 	svc, err := s.service(ctx, f)
 	if err != nil {
@@ -373,7 +373,7 @@ func (s *Source) get(ctx context.Context, f feed, target string, read func(io.Re
 	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return fmt.Errorf("nuget %s: invalid URL", redact(target))
+		return fmt.Errorf("nuget %s: invalid URL", httpx.Redact(target))
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	if req.URL.User == nil && f.key != "" && sameHost(f.url, req.URL) {
@@ -383,7 +383,7 @@ func (s *Source) get(ctx context.Context, f feed, target string, read func(io.Re
 	}
 	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
 	if err != nil {
-		return fmt.Errorf("nuget %s: %w", redact(target), err)
+		return fmt.Errorf("nuget %s: %w", httpx.Redact(target), err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
@@ -393,19 +393,19 @@ func (s *Source) get(ctx context.Context, f feed, target string, read func(io.Re
 	case resp.StatusCode == http.StatusNotFound:
 		return errNotFound
 	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("nuget %s: HTTP %d", redact(target), resp.StatusCode)
+		return fmt.Errorf("nuget %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
 	}
 	body := io.Reader(resp.Body)
 	if !resp.Uncompressed && strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
 		zr, err := gzip.NewReader(resp.Body)
 		if err != nil {
-			return fmt.Errorf("nuget %s: malformed response: %w", redact(target), err)
+			return fmt.Errorf("nuget %s: malformed response: %w", httpx.Redact(target), err)
 		}
 		defer zr.Close()
 		body = zr
 	}
 	if err := read(body); err != nil {
-		return fmt.Errorf("nuget %s: malformed response: %w", redact(target), err)
+		return fmt.Errorf("nuget %s: malformed response: %w", httpx.Redact(target), err)
 	}
 	return nil
 }
@@ -433,15 +433,6 @@ func credentials(v string) (user, pass string, ok bool) {
 		}
 	}
 	return user, pass, ok
-}
-
-// redact returns raw with the password of its userinfo masked.
-func redact(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "<invalid URL>"
-	}
-	return u.Redacted()
 }
 
 // onForge reports whether raw is an http(s) URL on github.com, gitlab.com or codeberg.org.

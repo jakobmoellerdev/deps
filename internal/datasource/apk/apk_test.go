@@ -189,3 +189,17 @@ func TestParseIndex(t *testing.T) {
 		t.Errorf("parseIndex = %v", idx)
 	}
 }
+
+func TestReleasesRedactsCredentials(t *testing.T) {
+	srv, _ := server(t, map[string][]byte{
+		"/ok/APKINDEX.tar.gz": archive(t, fixture(t, "edge-main.APKINDEX")),
+	})
+	s := New(srv.Client(), nil)
+	cred := strings.Replace(srv.URL, "://", "://u:secretpw@", 1)
+	for _, reg := range []string{cred + "/a", cred + "/ok", cred + "/a?arch=x&bogus=1", cred + "/a?branch=v3"} {
+		_, err := s.Releases(context.Background(), dep.Dep{Name: "nope", Source: reg}, "")
+		if err == nil || strings.Contains(err.Error(), "secretpw") {
+			t.Errorf("Releases(%q) err = %v, want error without password", reg, err)
+		}
+	}
+}

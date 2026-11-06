@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -55,4 +56,14 @@ func (t logTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	slog.DebugContext(ctx, "http request", attrs...)
 	return resp, nil
+}
+
+// Redact returns raw with the password of its userinfo masked (url.URL.Redacted), for
+// errors and logs; unparsable input becomes "<invalid URL>" so it cannot leak a secret.
+func Redact(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid URL>"
+	}
+	return u.Redacted()
 }

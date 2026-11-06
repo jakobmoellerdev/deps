@@ -12,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -58,7 +57,7 @@ type pkg struct {
 // getenv supplies DEPS_JULIA_REGISTRY_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
 	base := strings.TrimSuffix(cmp.Or(getenv("DEPS_JULIA_REGISTRY_URL"), DefaultURL), "/")
-	return &Source{client: client, sem: sem, base: base, shown: redact(base)}
+	return &Source{client: client, sem: sem, base: base, shown: httpx.Redact(base)}
 }
 
 // Path is the directory of the package name in a registry: `<first letter, upper-cased>/<name>`,
@@ -138,7 +137,7 @@ func (s *Source) fetch(ctx context.Context, name string) (p *pkg, err error) {
 	}
 	p = &pkg{uuid: str(meta, "uuid"), repo: str(meta, "repo")}
 	if got := str(meta, "name"); got != name {
-		return nil, fmt.Errorf("julia-registry %s: Package.toml names %q, not %q", redact(dir), got, name)
+		return nil, fmt.Errorf("julia-registry %s: Package.toml names %q, not %q", httpx.Redact(dir), got, name)
 	}
 	for _, v := range versions.Keys {
 		e := versions.Fields[v]
@@ -171,7 +170,7 @@ func (s *Source) get(ctx context.Context, target string) (*tomlspan.Value, error
 	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return nil, fmt.Errorf("julia-registry: invalid URL %s", redact(target))
+		return nil, fmt.Errorf("julia-registry: invalid URL %s", httpx.Redact(target))
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
@@ -186,24 +185,15 @@ func (s *Source) get(ctx context.Context, target string) (*tomlspan.Value, error
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, errNotFound
 	case resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("julia-registry %s: HTTP %d", redact(target), resp.StatusCode)
+		return nil, fmt.Errorf("julia-registry %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxFile))
 	if err != nil {
-		return nil, fmt.Errorf("julia-registry %s: %w", redact(target), err)
+		return nil, fmt.Errorf("julia-registry %s: %w", httpx.Redact(target), err)
 	}
 	t, err := tomlspan.Parse(b)
 	if err != nil {
-		return nil, fmt.Errorf("julia-registry %s: malformed TOML: %w", redact(target), err)
+		return nil, fmt.Errorf("julia-registry %s: malformed TOML: %w", httpx.Redact(target), err)
 	}
 	return t, nil
-}
-
-// redact returns raw with the password of its userinfo masked.
-func redact(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "<invalid URL>"
-	}
-	return u.Redacted()
 }

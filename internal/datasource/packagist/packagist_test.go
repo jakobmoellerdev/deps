@@ -236,9 +236,6 @@ func TestErrors(t *testing.T) {
 			t.Errorf("%+v: SourceRepo without error", tt.d)
 		}
 	}
-	if redact("http://[::1") != "<invalid URL>" {
-		t.Error("redact")
-	}
 	if err := s.get(t.Context(), "http://[::1", nil); err == nil {
 		t.Error("invalid URL")
 	}

@@ -176,7 +176,7 @@ func (s *Source) metadata(ctx context.Context, target, name string) (*pkg, error
 			if p != nil {
 				n = len(p.rels)
 			}
-			slog.DebugContext(ctx, "packagist package fetched", "name", name, "url", redact(target), "versions", n, "duration", time.Since(start), "err", err)
+			slog.DebugContext(ctx, "packagist package fetched", "name", name, "url", httpx.Redact(target), "versions", n, "duration", time.Since(start), "err", err)
 		}()
 		err = s.get(ctx, target, func(r io.Reader) error {
 			pkgs, err := readPackages(jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true)), name)
@@ -415,7 +415,7 @@ func (s *Source) index(ctx context.Context, repo string) (*repository, error) {
 	var pj packagesJSON
 	if err := s.get(ctx, index, func(r io.Reader) error { return json.UnmarshalRead(r, &pj) }); err != nil {
 		if errors.Is(err, errNotFound) {
-			return nil, fmt.Errorf("packagist %s: no packages.json", redact(index))
+			return nil, fmt.Errorf("packagist %s: no packages.json", httpx.Redact(index))
 		}
 		return nil, err
 	}
@@ -429,7 +429,7 @@ func (s *Source) index(ctx context.Context, repo string) (*repository, error) {
 	if pj.MetadataURL != "" {
 		ref, err := url.Parse(strings.ReplaceAll(pj.MetadataURL, "%package%", "__deps_package__"))
 		if err != nil {
-			return nil, fmt.Errorf("packagist %s: invalid metadata-url", redact(index))
+			return nil, fmt.Errorf("packagist %s: invalid metadata-url", httpx.Redact(index))
 		}
 		r.metadata = strings.ReplaceAll(base.ResolveReference(ref).String(), "__deps_package__", "%package%")
 		return r, nil
@@ -438,13 +438,13 @@ func (s *Source) index(ctx context.Context, repo string) (*repository, error) {
 	if len(pj.Packages) > 0 {
 		doc := append(append([]byte(`{"packages":`), pj.Packages...), '}')
 		if err := addInline(r.inline, bytes.NewReader(doc)); err != nil {
-			return nil, fmt.Errorf("packagist %s: malformed packages: %w", redact(index), err)
+			return nil, fmt.Errorf("packagist %s: malformed packages: %w", httpx.Redact(index), err)
 		}
 	}
 	for _, inc := range slices.Sorted(maps.Keys(pj.Includes)) {
 		ref, err := url.Parse(inc)
 		if err != nil {
-			return nil, fmt.Errorf("packagist %s: invalid include %q", redact(index), inc)
+			return nil, fmt.Errorf("packagist %s: invalid include %q", httpx.Redact(index), inc)
 		}
 		if err := s.get(ctx, base.ResolveReference(ref).String(), func(body io.Reader) error {
 			return addInline(r.inline, body)
@@ -453,7 +453,7 @@ func (s *Source) index(ctx context.Context, repo string) (*repository, error) {
 		}
 	}
 	if len(r.inline) == 0 && pj.ProvidersURL != "" {
-		return nil, fmt.Errorf("packagist %s: only the Composer 1 providers API is served (no metadata-url)", redact(index))
+		return nil, fmt.Errorf("packagist %s: only the Composer 1 providers API is served (no metadata-url)", httpx.Redact(index))
 	}
 	return r, nil
 }
@@ -521,13 +521,13 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return fmt.Errorf("packagist %s: invalid URL", redact(target))
+		return fmt.Errorf("packagist %s: invalid URL", httpx.Redact(target))
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	s.credentials(ctx, req)
 	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
 	if err != nil {
-		return fmt.Errorf("packagist %s: %w", redact(target), err)
+		return fmt.Errorf("packagist %s: %w", httpx.Redact(target), err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
@@ -537,19 +537,10 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 	case resp.StatusCode == http.StatusNotFound:
 		return errNotFound
 	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("packagist %s: HTTP %d", redact(target), resp.StatusCode)
+		return fmt.Errorf("packagist %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
 	}
 	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("packagist %s: malformed response: %w", redact(target), err)
+		return fmt.Errorf("packagist %s: malformed response: %w", httpx.Redact(target), err)
 	}
 	return nil
-}
-
-// redact returns raw with the password of its userinfo masked.
-func redact(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "<invalid URL>"
-	}
-	return u.Redacted()
 }
