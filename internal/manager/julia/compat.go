@@ -70,23 +70,11 @@ func top(terms []versioning.JuliaTerm) versioning.JuliaTerm {
 		if !okB {
 			continue
 		}
-		if !okT || cmpParts(ht, hb) >= 0 {
+		if !okT || versioning.JuliaCompareParts(ht, hb) >= 0 {
 			best = t
 		}
 	}
 	return best
-}
-
-func cmpParts(a, b [3]uint64) int {
-	for i := range a {
-		switch {
-		case a[i] < b[i]:
-			return -1
-		case a[i] > b[i]:
-			return 1
-		}
-	}
-	return 0
 }
 
 // sep is the separator between the terms of spec: ", " unless spec writes ",".

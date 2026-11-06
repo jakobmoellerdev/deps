@@ -3,6 +3,7 @@ package versioning
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -156,13 +157,13 @@ func upperOf(p [3]uint64, n int) [3]uint64 {
 // as their release, as Pkg compares them).
 func (t JuliaTerm) Admits(v [3]uint64) bool {
 	lo, hi, inf := t.interval()
-	return cmpParts(v, lo) >= 0 && (inf || cmpParts(v, hi) < 0)
+	return JuliaCompareParts(v, lo) >= 0 && (inf || JuliaCompareParts(v, hi) < 0)
 }
 
 // Below reports whether every version the term admits is below v.
 func (t JuliaTerm) Below(v [3]uint64) bool {
 	_, hi, inf := t.interval()
-	return !inf && cmpParts(hi, v) <= 0
+	return !inf && JuliaCompareParts(hi, v) <= 0
 }
 
 // Upper is the term's exclusive upper bound; ok is false for an unbounded term (`>= 1`).
@@ -171,13 +172,9 @@ func (t JuliaTerm) Upper() (hi [3]uint64, ok bool) {
 	return hi, !inf
 }
 
-func cmpParts(a, b [3]uint64) int {
-	for i := range a {
-		if c := cmpUint(a[i], b[i]); c != 0 {
-			return c
-		}
-	}
-	return 0
+// JuliaCompareParts orders two release-part triples (major, minor, patch): -1, 0 or +1.
+func JuliaCompareParts(a, b [3]uint64) int {
+	return slices.Compare(a[:], b[:])
 }
 
 // JuliaParts returns the release parts of a Julia version (`1.2.3+0` → 1, 2, 3); ok is false

@@ -178,7 +178,7 @@ func compatDep(file string, root *tomlspan.Value, pkgs map[string]pkgRef, name s
 	}
 	var floor versioning.JuliaBound
 	for _, t := range terms {
-		if t.Floor() && (floor.N == 0 || cmpBound(t.Lo, floor) > 0) {
+		if t.Floor() && (floor.N == 0 || versioning.JuliaCompareParts(t.Lo.Parts, floor.Parts) > 0) {
 			floor = t.Lo
 		}
 	}
@@ -186,11 +186,6 @@ func compatDep(file string, root *tomlspan.Value, pkgs map[string]pkgRef, name s
 		d.Version = floor.String()
 	}
 	return d
-}
-
-// cmpBound orders two bounds by their padded parts.
-func cmpBound(a, b versioning.JuliaBound) int {
-	return slices.Compare(a.Parts[:], b.Parts[:])
 }
 
 // Edits replaces the compat entry with the one NewRange writes for the new version.
