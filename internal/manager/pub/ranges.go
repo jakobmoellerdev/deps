@@ -2,10 +2,34 @@ package pub
 
 import (
 	"slices"
+	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
+
+// constraint is a parsed pub version constraint and its matcher.
+type constraint struct {
+	c     versioning.PubConstraint
+	match func(string) bool
+}
+
+// constraints caches parse by constraint string (nil when it does not parse): the engine
+// rewrites a dep's constraint for every candidate release.
+var constraints sync.Map // string -> *constraint
+
+// parse returns the parsed constraint rng, or nil.
+func parse(rng string) *constraint {
+	if p, ok := constraints.Load(rng); ok {
+		return p.(*constraint)
+	}
+	var p *constraint
+	if c, err := versioning.ParsePubConstraint(rng); err == nil {
+		p = &constraint{c: c, match: c.Matcher()}
+	}
+	got, _ := constraints.LoadOrStore(rng, p)
+	return got.(*constraint)
+}
 
 // newRange returns the constraint rng rewritten for version v under strategy (a
 // config.RangeStrategies value other than auto; "" = replace, Renovate's auto for pub), or
@@ -21,10 +45,11 @@ import (
 // An exclusive upper bound moved past v becomes the first version `^v` excludes (the next
 // major, or the next minor of a 0.x version); an inclusive one becomes v.
 func newRange(rng, v, strategy string) (string, bool) {
-	c, err := versioning.ParsePubConstraint(rng)
-	if err != nil || c.Any {
+	p := parse(rng)
+	if p == nil || p.c.Any {
 		return "", false
 	}
+	c := p.c
 	floor, hasFloor := c.Floor()
 	if hasFloor && versioning.ComparePub(v, floor.V) < 0 {
 		return "", false // not an upgrade
@@ -35,7 +60,7 @@ func newRange(rng, v, strategy string) (string, bool) {
 		out = v
 	case len(c.Terms) == 1 && c.Terms[0].Op == "":
 		out = v
-	case c.Admits(v):
+	case p.match(v):
 		if !hasFloor {
 			return "", false
 		}
@@ -67,7 +92,7 @@ func newRange(rng, v, strategy string) (string, bool) {
 	if out == rng {
 		return "", false
 	}
-	if nc, err := versioning.ParsePubConstraint(out); err != nil || !nc.Admits(v) {
+	if q := parse(out); q == nil || !q.match(v) {
 		return "", false
 	}
 	return out, true

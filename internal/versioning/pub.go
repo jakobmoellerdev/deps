@@ -62,10 +62,16 @@ func PubNextBreaking(v string) (string, bool) {
 	if !ok {
 		return "", false
 	}
+	h := pubNextBreaking(c)
+	return strconv.FormatUint(h.parts[0], 10) + "." + strconv.FormatUint(h.parts[1], 10) + ".0", true
+}
+
+// pubNextBreaking is PubNextBreaking of a parsed version.
+func pubNextBreaking(c cargoVersion) cargoVersion {
 	if c.parts[0] > 0 {
-		return strconv.FormatUint(c.parts[0]+1, 10) + ".0.0", true
+		return cargoVersion{parts: [3]uint64{c.parts[0] + 1, 0, 0}, n: 3}
 	}
-	return "0." + strconv.FormatUint(c.parts[1]+1, 10) + ".0", true
+	return cargoVersion{parts: [3]uint64{0, c.parts[1] + 1, 0}, n: 3}
 }
 
 // ComparePub orders two pub versions (invalid ones bytewise).
@@ -148,57 +154,86 @@ func (c PubConstraint) Floor() (PubTerm, bool) {
 	return PubTerm{}, false
 }
 
-// Admits reports whether the valid pub version v satisfies every term. As in pub_semver, an
-// exclusive upper bound that is a release excludes that release's prereleases (`<2.0.0` and
-// `^1.2.3` exclude 2.0.0-dev.1), unless the lower bound is a prerelease of it.
-func (c PubConstraint) Admits(v string) bool {
-	x, ok := parsePub(v)
-	if !ok {
-		return false
-	}
-	if c.Any {
-		return true
-	}
-	floor, _ := c.Floor()
-	for _, t := range c.Terms {
-		y, _ := parsePub(t.V)
-		cmp := compareJulia(x, y)
-		switch t.Op {
-		case "":
-			if cmp != 0 {
-				return false
-			}
-		case ">=":
-			if cmp < 0 {
-				return false
-			}
-		case ">":
-			if cmp <= 0 {
-				return false
-			}
-		case "<=":
-			if cmp > 0 {
-				return false
-			}
-		case "<":
-			if cmp >= 0 || excludedPre(x, y, floor) {
-				return false
-			}
-		case "^":
-			hi, _ := PubNextBreaking(t.V)
-			h, _ := parsePub(hi)
-			if cmp < 0 || compareJulia(x, h) >= 0 || excludedPre(x, h, t) {
-				return false
-			}
-		}
-	}
-	return true
+// pubBound is a compiled PubTerm: its operator and version, and for an exclusive upper bound
+// (`<`, `^`) the version hi it stays below and whether hi's prereleases are left out.
+type pubBound struct {
+	op      string
+	v, hi   cargoVersion
+	exclPre bool
 }
 
-// excludedPre reports whether x is a prerelease of the release hi that an exclusive upper bound
-// `<hi` leaves out: hi is a release and the floor is not a prerelease of hi's parts.
-func excludedPre(x, hi cargoVersion, floor PubTerm) bool {
-	if x.pre() == "" || hi.pre() != "" || x.parts != hi.parts {
+// Matcher returns whether a valid pub version satisfies every term, with the terms' versions
+// parsed once. As in pub_semver, an exclusive upper bound that is a release excludes that
+// release's prereleases (`<2.0.0` and `^1.2.3` exclude 2.0.0-dev.1), unless the lower bound
+// is a prerelease of it.
+func (c PubConstraint) Matcher() func(v string) bool {
+	if c.Any {
+		return func(v string) bool {
+			_, ok := parsePub(v)
+			return ok
+		}
+	}
+	floor, _ := c.Floor()
+	bounds := make([]pubBound, len(c.Terms))
+	for i, t := range c.Terms {
+		y, _ := parsePub(t.V)
+		b := pubBound{op: t.Op, v: y}
+		switch t.Op {
+		case "<":
+			b.hi, b.exclPre = y, excludesPre(y, floor)
+		case "^":
+			b.hi = pubNextBreaking(y)
+			b.exclPre = excludesPre(b.hi, t)
+		}
+		bounds[i] = b
+	}
+	return func(v string) bool {
+		x, ok := parsePub(v)
+		if !ok {
+			return false
+		}
+		for _, b := range bounds {
+			cmp := compareJulia(x, b.v)
+			switch b.op {
+			case "":
+				if cmp != 0 {
+					return false
+				}
+			case ">=":
+				if cmp < 0 {
+					return false
+				}
+			case ">":
+				if cmp <= 0 {
+					return false
+				}
+			case "<=":
+				if cmp > 0 {
+					return false
+				}
+			case "<":
+				if cmp >= 0 || b.excluded(x) {
+					return false
+				}
+			case "^":
+				if cmp < 0 || compareJulia(x, b.hi) >= 0 || b.excluded(x) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+}
+
+// excluded reports whether x is a prerelease of b.hi that the exclusive upper bound leaves out.
+func (b pubBound) excluded(x cargoVersion) bool {
+	return b.exclPre && x.parts == b.hi.parts && x.pre() != ""
+}
+
+// excludesPre reports whether an exclusive upper bound `<hi` leaves out hi's prereleases: hi
+// is a release and the floor is not a prerelease of hi's parts.
+func excludesPre(hi cargoVersion, floor PubTerm) bool {
+	if hi.pre() != "" {
 		return false
 	}
 	f, ok := parsePub(floor.V)
@@ -206,11 +241,11 @@ func excludedPre(x, hi cargoVersion, floor PubTerm) bool {
 }
 
 // MatchRange implements RangeMatcher with pub's constraint semantics (ParsePubConstraint,
-// PubConstraint.Admits).
+// PubConstraint.Matcher).
 func (pubScheme) MatchRange(rng string) (func(v string) bool, error) {
 	c, err := ParsePubConstraint(rng)
 	if err != nil {
 		return nil, err
 	}
-	return c.Admits, nil
+	return c.Matcher(), nil
 }
