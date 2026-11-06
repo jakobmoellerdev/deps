@@ -31,6 +31,22 @@ type Fetcher struct {
 	once    sync.Once
 	info    platform.Info
 	infoErr error
+
+	mu    sync.Mutex
+	files map[presetFile]parsedPreset // parsed preset files; one per file however often extended
+}
+
+// presetFile identifies a preset file: the ref without its params and preset keys, plus the
+// first presetName segment naming the file.
+type presetFile struct {
+	source, repo, path, tag, file string
+}
+
+// parsedPreset is a fetched and parsed preset file; deprecated marks the renovate.json
+// fallback of a default preset.
+type parsedPreset struct {
+	v          any
+	deprecated bool
 }
 
 // errPresetNotFound marks a missing preset file.
@@ -64,40 +80,84 @@ func (f *Fetcher) fetch(ctx context.Context, ref presetRef, label string, n *not
 	default:
 		file += ".json"
 	}
-	withPath := func(name string) string {
-		if ref.path != "" {
-			return ref.path + "/" + name
-		}
-		return name
+	if ref.path != "" {
+		file = ref.path + "/" + file
 	}
-	src, err := f.read(ctx, ref, withPath(file), label)
-	if errors.Is(err, errPresetNotFound) && segs[0] == "default" {
-		if src, err = f.read(ctx, ref, withPath("renovate.json"), label); err == nil {
-			n.info(label, "renovate.json as preset file is deprecated in Renovate")
-		}
-	}
-	if errors.Is(err, errPresetNotFound) {
-		return nil, configErr("%s: %s not found in %s", label, withPath(file), ref.repo)
-	}
+	p, err := f.file(ctx, ref, segs[0], file, label)
 	if err != nil {
 		return nil, err
 	}
-	v, err := parseJSON5(src)
-	if err != nil {
-		return nil, configErr("%s: %s: %w", label, withPath(file), err)
+	if p.deprecated {
+		n.info(label, "renovate.json as preset file is deprecated in Renovate")
 	}
+	v := p.v
 	for _, key := range segs[1:] {
 		obj, _ := v.(map[string]any)
 		var ok bool
 		if v, ok = obj[key]; !ok {
-			return nil, configErr("%s: preset %s not found in %s", label, ref.name, withPath(file))
+			return nil, configErr("%s: preset %s not found in %s", label, ref.name, file)
 		}
 	}
 	obj, ok := v.(map[string]any)
 	if !ok {
-		return nil, configErr("%s: preset %s in %s is not an object", label, ref.name, withPath(file))
+		return nil, configErr("%s: preset %s in %s is not an object", label, ref.name, file)
 	}
-	return obj, nil
+	return cloneJSON(obj).(map[string]any), nil // callers mutate the fragment (setOrigins)
+}
+
+// file returns the parsed preset file (below ref.path, named by presetName segment seg) of
+// ref's repository, fetching it on first use; failures are not cached, as their messages
+// name the extends entry and they end the resolution anyway.
+func (f *Fetcher) file(ctx context.Context, ref presetRef, seg, file, label string) (parsedPreset, error) {
+	key := presetFile{ref.source, ref.repo, ref.path, ref.tag, seg}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if p, ok := f.files[key]; ok {
+		return p, nil
+	}
+	var p parsedPreset
+	src, err := f.read(ctx, ref, file, label)
+	if errors.Is(err, errPresetNotFound) && seg == "default" {
+		fallback := "renovate.json"
+		if ref.path != "" {
+			fallback = ref.path + "/" + fallback
+		}
+		src, err = f.read(ctx, ref, fallback, label)
+		p.deprecated = err == nil
+	}
+	if errors.Is(err, errPresetNotFound) {
+		return p, configErr("%s: %s not found in %s", label, file, ref.repo)
+	}
+	if err != nil {
+		return p, err
+	}
+	if p.v, err = parseJSON5(src); err != nil {
+		return p, configErr("%s: %s: %w", label, file, err)
+	}
+	if f.files == nil {
+		f.files = map[presetFile]parsedPreset{}
+	}
+	f.files[key] = p
+	return p, nil
+}
+
+// cloneJSON deep-copies the objects and arrays of a parsed JSON value.
+func cloneJSON(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			out[k] = cloneJSON(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = cloneJSON(e)
+		}
+		return out
+	}
+	return v
 }
 
 // read returns file of ref's repository at ref.tag; a missing file is errPresetNotFound.

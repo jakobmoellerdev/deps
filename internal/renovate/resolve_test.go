@@ -321,3 +321,75 @@ func TestResolveIgnorePresets(t *testing.T) {
 		}
 	}
 }
+
+// A preset file several presets extend (a diamond) is fetched once, and each use gets its
+// own copy: params and origins of one use do not leak into another.
+func TestFetcherCache(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.Path)
+		body, ok := map[string]string{
+			"/api/v1/repos/org/presets/raw/a.json":    `{extends: ['local>org/presets:base(a)']}`,
+			"/api/v1/repos/org/presets/raw/b.json":    `{extends: ['local>org/presets:base(b)']}`,
+			"/api/v1/repos/org/presets/raw/base.json": `{packageRules: [{matchPackageNames: ['{{arg0}}'], enabled: false}]}`,
+		}[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	gitea := platform.Info{Kind: platform.Gitea, ServerURL: srv.URL, APIURL: srv.URL + "/api/v1", Host: "127.0.0.1", Repo: "org/repo"}
+	f := &Fetcher{Platform: func(context.Context) (platform.Info, error) { return gitea, nil }, Client: srv.Client()}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "renovate.json"), []byte(`{extends: ['local>org/presets:a', 'local>org/presets:b']}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Load(t.Context(), dir, "", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y := string(res.YAML)
+	for _, s := range []string{"names: [a]", "names: [b]"} {
+		if !strings.Contains(y, s) {
+			t.Errorf("missing %q in\n%s", s, y)
+		}
+	}
+	want := []string{"/api/v1/repos/org/presets/raw/a.json", "/api/v1/repos/org/presets/raw/base.json", "/api/v1/repos/org/presets/raw/b.json"}
+	if !slices.Equal(got, want) {
+		t.Errorf("requests = %q, want %q", got, want)
+	}
+
+	ref := presetRef{source: "local", repo: "org/presets", name: "base"}
+	first, err := f.fetch(t.Context(), ref, "first", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setOrigins(first, "first ")
+	first["packageRules"].([]any)[0].(map[string]any)["enabled"] = true
+	second, err := f.fetch(t.Context(), ref, "second", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rule := second["packageRules"].([]any)[0]; !reflect.DeepEqual(rule, map[string]any{"matchPackageNames": []any{"{{arg0}}"}, "enabled": false}) {
+		t.Errorf("second use sees the first's changes: %v", rule)
+	}
+	if len(got) != 3 {
+		t.Errorf("requests = %q, want no more", got)
+	}
+
+	// A cached preset is still skipped when a later config lists it in ignorePresets.
+	if err := os.WriteFile(filepath.Join(dir, "renovate.json"), []byte(`{extends: ['local>org/presets:a', 'local>org/presets:b'], ignorePresets: ['local>org/presets:base(a)']}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if res, err = Load(t.Context(), dir, "", f); err != nil {
+		t.Fatal(err)
+	}
+	if y := string(res.YAML); strings.Contains(y, "names: [a]") || !strings.Contains(y, "names: [b]") {
+		t.Errorf("ignorePresets with cached presets:\n%s", y)
+	}
+	if len(got) != 3 {
+		t.Errorf("requests = %q, want no more", got)
+	}
+}
