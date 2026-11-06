@@ -209,13 +209,17 @@ type chartDependency struct {
 	Alias        string   `json:"alias,omitempty" yaml:"alias,omitempty"`
 }
 
-// chartRequirements decodes the dependencies of a Chart.yaml.
+// chartRequirements decodes the dependencies of a Chart.yaml. A bare `-` entry decodes as
+// nil; it is rejected like in parseLock, as skipping it would misalign the lock indexes.
 func chartRequirements(src []byte) ([]*chartDependency, error) {
 	var c struct {
 		Dependencies []*chartDependency `yaml:"dependencies"`
 	}
 	if err := yaml.Unmarshal(src, &c); err != nil {
 		return nil, err
+	}
+	if hasNil(c.Dependencies) {
+		return nil, errors.New("malformed dependencies")
 	}
 	return c.Dependencies, nil
 }

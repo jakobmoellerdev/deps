@@ -148,6 +148,26 @@ func TestLockerErrors(t *testing.T) {
 	}
 }
 
+func TestLockerNilRequirement(t *testing.T) {
+	const chart = "dependencies:\n  -\n  - name: a\n    version: 1.0.0\n    repository: https://example.com/charts\n"
+	locked := []*chartDependency{
+		{Name: "x", Repository: "https://example.com/charts", Version: "1.0.0"},
+		{Name: "a", Repository: "https://example.com/charts", Version: "1.0.0"},
+	}
+	digest, err := hashReq([]*chartDependency{nil, locked[1]}, locked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := "dependencies:\n- name: x\n  repository: https://example.com/charts\n  version: 1.0.0\n" +
+		"- name: a\n  repository: https://example.com/charts\n  version: 1.0.0\n" +
+		"digest: " + digest + "\n"
+	patched := strings.Replace(chart, "version: 1.0.0", "version: 1.1.0", 1)
+	_, err = Locker{}.Process(t.Context(), chartDir(t, chart, lock), map[string][]byte{chartFile: []byte(patched)}, map[string][]byte{lockFile: []byte(lock)})
+	if err == nil || !strings.Contains(err.Error(), "malformed dependencies") {
+		t.Errorf("Process error = %v, want malformed dependencies", err)
+	}
+}
+
 func TestLockerScope(t *testing.T) {
 	l := Locker{}
 	if dir, ok := l.Scope(t.Context(), "/root", "charts/app/Chart.yaml"); !ok || dir != "charts/app" {
