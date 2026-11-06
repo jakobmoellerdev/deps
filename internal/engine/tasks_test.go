@@ -268,3 +268,86 @@ func TestApplyTasksFiles(t *testing.T) {
 		t.Errorf("run.sh restored without its executable bit: %v %v", fi, err)
 	}
 }
+
+// A symlink the commands create, change or delete fails the build naming it: the commit paths
+// carry regular files and gitlinks only, so neither the link's target bytes nor a read error
+// of a dangling link or one to a directory may stand in for it. Outside the tasks' files
+// globs it is left out like any other change there.
+func TestBuildWithTasksSymlinks(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cmd, link string
+		files     []string
+	}{
+		"to file":       {cmd: "ln -s a.txt lnk", link: "lnk"},
+		"dangling":      {cmd: "ln -s missing lnk", link: "lnk"},
+		"to directory":  {cmd: "mkdir d && ln -s d lnk", link: "lnk"},
+		"retargeted":    {cmd: "rm old && ln -s missing old", link: "old"},
+		"deleted":       {cmd: "rm old", link: "old"},
+		"outside files": {cmd: "rm old && ln -s missing lnk && echo g > g.txt", files: []string{"g.txt"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			repo(t, dir, map[string]string{"a.txt": "a\n"})
+			if err := os.Symlink("a.txt", filepath.Join(dir, "old")); err != nil {
+				t.Fatal(err)
+			}
+			git(t, dir, "add", "old")
+			git(t, dir, "commit", "-qm", "link")
+			base := git(t, dir, "rev-parse", "HEAD")
+			ups := []dep.Update{{Tasks: dep.Tasks{Commands: []string{tc.cmd}, Files: tc.files}}}
+			got, err := BuildWithTasks(t.Context(), dir, base, ups, nil, TaskAllowlist{"*"})
+			if tc.link == "" {
+				if err != nil || len(got) != 1 || got[0].Path != "g.txt" {
+					t.Errorf("changes = %+v (%v), want g.txt only", got, err)
+				}
+				return
+			}
+			if want := "postUpgradeTasks: symlink " + tc.link + " changed; symlinks are not supported"; err == nil || err.Error() != want {
+				t.Errorf("err = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+// apply restores symlinks the commands changed outside files as symlinks, and restores a file
+// or directory the commands replaced with a symlink without writing through the link.
+func TestApplyTasksSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	repo(t, dir, map[string]string{"a.txt": "a\n", "r.txt": "r\n", "sub/s.txt": "s\n"})
+	for _, l := range []string{"lnk", "gone"} {
+		if err := os.Symlink("a.txt", filepath.Join(dir, l)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, dir, "add", "lnk", "gone")
+	git(t, dir, "commit", "-qm", "links")
+	if err := os.Symlink("r.txt", filepath.Join(dir, "mine")); err != nil { // the user's link
+		t.Fatal(err)
+	}
+	ups := []dep.Update{{Tasks: dep.Tasks{Commands: []string{
+		"rm -r lnk mine gone r.txt sub && echo x > lnk && echo m > mine && ln -s a.txt r.txt && ln -s missing new && mkdir other && ln -s other sub",
+	}, Files: []string{"gen/**"}}}}
+	if err := ApplyTasks(t.Context(), dir, ups); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"lnk": "a.txt", "gone": "a.txt", "mine": "r.txt"} {
+		if got, err := os.Readlink(filepath.Join(dir, name)); err != nil || got != want {
+			t.Errorf("%s -> %q (%v), want a symlink to %q", name, got, err, want)
+		}
+	}
+	for name, want := range map[string]string{"a.txt": "a\n", "r.txt": "r\n", "sub/s.txt": "s\n"} {
+		if fi, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(name))); err != nil || !fi.Mode().IsRegular() {
+			t.Errorf("%s is not a regular file: %v %v", name, fi, err)
+		} else if got, _ := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name))); string(got) != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	for _, name := range []string{"new", "other/s.txt"} {
+		if _, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(name))); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s: %v, want it absent", name, err)
+		}
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, "sub")); err != nil || !fi.IsDir() {
+		t.Errorf("sub is not a directory: %v %v", fi, err)
+	}
+}

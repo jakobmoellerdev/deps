@@ -181,8 +181,9 @@ func runTasks(ctx context.Context, dir string, runs []TaskRun) error {
 // (git add -A, so .gitignore decides) then replace changes. The checkout's repository is only
 // read. Submodule pointers cannot change: a command that moves a submodule's HEAD fails the
 // group, and files inside submodules never become changes; the tasks' files globs limit what
-// the commands add to changes (taskFilter). A command allow does not allow fails it before
-// anything runs; without tasks it returns changes.
+// the commands add to changes (taskFilter), and a symlink they create, change or delete there
+// fails the group. A command allow does not allow fails it before anything runs; without
+// tasks it returns changes.
 func BuildWithTasks(ctx context.Context, root, head string, ups []dep.Update, changes []FileChange, allow TaskAllowlist) ([]FileChange, error) {
 	runs := TaskRuns(ups)
 	if len(runs) == 0 {
@@ -238,7 +239,7 @@ func BuildWithTasks(ctx context.Context, root, head string, ups []dep.Update, ch
 	if out, err = gitOut(ctx, top, nil, "diff", "--cached", "--raw", "-z", "--no-renames", "--ignore-submodules=none", head, "--", spec); err != nil {
 		return nil, err
 	}
-	after, err := copyChanges(out, realTop, top, prefix, links)
+	after, err := copyChanges(out, realTop, top, prefix, links, taskKeep(ups))
 	if err != nil {
 		return nil, err
 	}
@@ -290,9 +291,10 @@ func taskKeep(ups []dep.Update) func(string) bool {
 
 // ApplyTasks performs the postUpgradeTasks runs of ups (TaskRuns) in the checkout root, which
 // holds the build's changes, for apply. With files globs (taskKeep), each file below root the
-// runs changed and no task entry keeps is restored to its state before them: snapshots of
-// root before and after the runs on a temporary index of HEAD (git add -A, so .gitignore
-// decides and ignored files are left alone) tell those files apart.
+// runs changed and no task entry keeps is restored to its state before them, a symlink as a
+// symlink: snapshots of root before and after the runs on a temporary index of HEAD (git add
+// -A, so .gitignore decides and ignored files are left alone) tell those files apart. What the
+// runs left at a restored path is removed first, so no restore writes through their symlinks.
 func ApplyTasks(ctx context.Context, root string, ups []dep.Update) error {
 	runs, keep := TaskRuns(ups), taskKeep(ups)
 	if len(runs) == 0 {
@@ -350,32 +352,38 @@ func ApplyTasks(ctx context.Context, root string, ups []dep.Update) error {
 			continue
 		}
 		file := filepath.Join(root, filepath.FromSlash(p))
-		var content string
-		perm, remove := fs.FileMode(0o644), false
+		var content, mode string
+		remove := false
 		switch {
-		case prior == entry{}: // as in HEAD, where it may not exist
-			if content, err = gitOut(ctx, root, nil, "show", "HEAD:./"+p); err != nil {
-				remove, err = true, nil
-			} else if ls, _ := gitOut(ctx, root, nil, "ls-tree", "HEAD", "--", p); strings.HasPrefix(ls, "100755") {
-				perm = 0o755
+		case prior == entry{}: // as in HEAD, where it may not exist or be a directory
+			ls, _ := gitOut(ctx, root, nil, "ls-tree", "HEAD", "--", p) // <mode> <type> <id>\t<path>
+			if m := strings.Fields(ls); len(m) < 3 || m[1] != "blob" {
+				remove = true // a directory's files are restored on their own
+			} else {
+				mode = m[0]
+				content, err = gitOut(ctx, root, nil, "cat-file", "blob", m[2])
 			}
 		case prior.mode == "000000": // deleted
 			remove = true
 		default:
+			mode = prior.mode
 			content, err = gitOut(ctx, root, nil, "cat-file", "blob", prior.id)
-			if prior.mode == "100755" {
-				perm = 0o755
-			}
 		}
-		switch {
-		case err != nil:
-		case remove:
+		if err == nil { // first, so nothing is written through a symlink the runs left at p
 			if err = os.Remove(file); errors.Is(err, fs.ErrNotExist) {
 				err = nil
 			}
-		default:
+		}
+		if err == nil && !remove {
 			if err = os.MkdirAll(filepath.Dir(file), 0o755); err == nil {
-				err = os.WriteFile(file, []byte(content), perm)
+				switch mode {
+				case "120000":
+					err = os.Symlink(content, file)
+				case "100755":
+					err = os.WriteFile(file, []byte(content), 0o755)
+				default:
+					err = os.WriteFile(file, []byte(content), 0o644)
+				}
 			}
 		}
 		if err != nil {
@@ -500,8 +508,10 @@ func hasPassword(u string) bool {
 
 // copyChanges returns the changes git diff --raw -z (out, paths relative to the top of the
 // work tree) lists below prefix: Old from the checkout realTop, New from the copy top.
-// Submodule pointers and paths inside submodules (links) are left out.
-func copyChanges(out, realTop, top, prefix string, links []string) ([]FileChange, error) {
+// Submodule pointers and paths inside submodules (links) are left out. A symlink on either
+// side fails where keep (nil: everywhere) keeps the tasks' changes, and is left out elsewhere:
+// FileChange and the commit paths carry regular files and gitlinks only.
+func copyChanges(out, realTop, top, prefix string, links []string, keep func(string) bool) ([]FileChange, error) {
 	fields := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
 	var changes []FileChange
 	for i := 0; i+1 < len(fields); i += 2 {
@@ -513,6 +523,12 @@ func copyChanges(out, realTop, top, prefix string, links []string) ([]FileChange
 			continue
 		}
 		c := FileChange{Path: strings.TrimPrefix(name, prefix), Mode: 0o644}
+		if meta[0] == ":120000" || meta[1] == "120000" {
+			if keep != nil && !keep(c.Path) {
+				continue // taskFilter keeps the build's change here
+			}
+			return nil, fmt.Errorf("postUpgradeTasks: symlink %s changed; symlinks are not supported", c.Path)
+		}
 		if meta[1] == "100755" {
 			c.Mode = 0o755
 		}
