@@ -95,3 +95,7 @@ overrides:
       - git
 archlinux:
   packager: Jakob Möller <contact@jakob-moeller.com>
+# The RPM header records the build host (default os.Hostname()); a fixed one keeps the RPMs
+# identical across the Gitea and GitHub release builds.
+rpm:
+  buildhost: deps
