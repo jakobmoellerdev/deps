@@ -142,7 +142,7 @@ var errEmpty = errors.New("empty listings")
 // list fetches and parses the directory listing at u once per run. The platform token of
 // u's host is sent as Basic auth; after a 401 the git credential helper is asked once.
 func (s *Source) list(ctx context.Context, u string) (*folder, error) {
-	return s.folders.Do(u, func() (*folder, error) {
+	return s.folders.Do(ctx, u, func() (*folder, error) {
 		start := time.Now()
 		f, err := s.fetch(ctx, u)
 		n := 0

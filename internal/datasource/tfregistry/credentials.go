@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 )
 
@@ -34,36 +35,20 @@ type credentials struct {
 	dir  string // the CLI config directory; "" when unknown
 	err  error
 
-	mu    sync.Mutex
-	hosts map[string]*tokenEntry
-}
-
-type tokenEntry struct {
-	once  sync.Once
-	token string
-	err   error
+	hosts datasource.Memo[string, string]
 }
 
 func newCredentials(getenv func(string) string) *credentials {
 	return &credentials{
 		getenv: getenv, goos: runtime.GOOS,
 		readFile: os.ReadFile, readDir: os.ReadDir, stat: os.Stat, lookPath: exec.LookPath, run: runHelper,
-		hosts: map[string]*tokenEntry{},
 	}
 }
 
 // token returns the token of host ("" for anonymous), resolved once per host.
 func (c *credentials) token(ctx context.Context, host string) (string, error) {
 	host = strings.ToLower(host)
-	c.mu.Lock()
-	e := c.hosts[host]
-	if e == nil {
-		e = &tokenEntry{}
-		c.hosts[host] = e
-	}
-	c.mu.Unlock()
-	e.once.Do(func() { e.token, e.err = c.resolve(ctx, host) })
-	return e.token, e.err
+	return c.hosts.Do(ctx, host, func() (string, error) { return c.resolve(ctx, host) })
 }
 
 func (c *credentials) resolve(ctx context.Context, host string) (string, error) {

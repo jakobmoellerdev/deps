@@ -94,7 +94,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) ([]entry, error) {
 	}
 	var out []entry
 	for _, u := range urls {
-		idx, err := s.indexes.Do(u, func() (index, error) { return s.fetch(ctx, u) })
+		idx, err := s.indexes.Do(ctx, u, func() (index, error) { return s.fetch(ctx, u) })
 		if err != nil {
 			return nil, err
 		}

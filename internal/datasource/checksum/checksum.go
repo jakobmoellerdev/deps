@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
@@ -52,22 +51,20 @@ type Source struct {
 	assets  Assets
 	openers map[string]ArtifactOpener
 
-	mu    sync.Mutex
-	cache map[string]*entry
+	docs datasource.Memo[string, doc] // by document URL; artifacts by algorithm + " " + URL
 }
 
-type entry struct {
-	once  sync.Once
+// doc is a fetched checksum document, or the digest of an artifact in first.
+type doc struct {
 	first string            // first hex token of the body; an artifact's digest
 	files map[string]string // entry name -> hex
-	err   error
 }
 
 // New returns the checksum source. sem bounds concurrent requests (nil = unbounded); assets
 // may be nil when no github-releases datasource is available. openers download the artifacts
 // of deps by datasource name (nil = all with client).
 func New(client *http.Client, sem chan struct{}, assets Assets, openers map[string]ArtifactOpener) datasource.ChecksumSource {
-	return &Source{client: client, sem: sem, assets: assets, openers: openers, cache: make(map[string]*entry)}
+	return &Source{client: client, sem: sem, assets: assets, openers: openers}
 }
 
 // Checksum returns the checksum of version per d.ChecksumSource. Templates expand version;
@@ -100,9 +97,12 @@ func (s *Source) Checksum(ctx context.Context, d dep.Dep, version, release strin
 		return "", errors.New("checksum source has neither asset, url nor artifact")
 	}
 	u := dep.ExpandVersion(cs.URL, version)
-	e := s.document(ctx, u)
-	if e.err != nil {
-		return "", e.err
+	e, err := s.docs.Do(ctx, u, func() (doc, error) {
+		first, files, err := s.fetch(ctx, u)
+		return doc{first, files}, err
+	})
+	if err != nil {
+		return "", err
 	}
 	if cs.File == "" {
 		if e.first == "" {
@@ -115,23 +115,6 @@ func (s *Source) Checksum(ctx context.Context, d dep.Dep, version, release strin
 		return h, nil
 	}
 	return "", fmt.Errorf("no checksum for %s in %s", file, u)
-}
-
-func (s *Source) document(ctx context.Context, u string) *entry {
-	return s.once(u, func(e *entry) { e.first, e.files, e.err = s.fetch(ctx, u) })
-}
-
-// once runs fill for the cache entry key on first use and returns the entry.
-func (s *Source) once(key string, fill func(*entry)) *entry {
-	s.mu.Lock()
-	e := s.cache[key]
-	if e == nil {
-		e = &entry{}
-		s.cache[key] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() { fill(e) })
-	return e
 }
 
 // artifactDigest returns the hex digest of the artifact at u: sha256 for a 64-hex pinned
@@ -147,8 +130,11 @@ func (s *Source) artifactDigest(ctx context.Context, d dep.Dep, u string) (strin
 	default:
 		return "", fmt.Errorf("artifact %s: pinned checksum is neither sha256 nor sha512 hex", u)
 	}
-	e := s.once(algo+" "+u, func(e *entry) { e.first, e.err = s.hash(ctx, d, u, newHash()) })
-	return e.first, e.err
+	e, err := s.docs.Do(ctx, algo+" "+u, func() (doc, error) {
+		sum, err := s.hash(ctx, d, u, newHash())
+		return doc{first: sum}, err
+	})
+	return e.first, err
 }
 
 // hash streams the artifact at u through h, up to maxArtifact bytes, downloaded by the

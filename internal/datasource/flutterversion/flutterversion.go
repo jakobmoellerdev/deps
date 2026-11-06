@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -37,10 +36,13 @@ type Source struct {
 	sem    chan struct{}
 	url    string
 
-	once     sync.Once
+	index datasource.Once[index]
+}
+
+// index is the parsed release list.
+type index struct {
 	releases []datasource.Release
 	times    map[string]time.Time
-	err      error
 }
 
 // New returns the flutter-version datasource. sem bounds concurrent requests (nil =
@@ -54,18 +56,18 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 // `v`-prefixed old ones as listed) and betas (`3.26.0-0.1.pre`); a stable version listed in the
 // beta or dev channel is skipped, as in Renovate. Every name is the dep's (`flutter`).
 func (s *Source) Releases(ctx context.Context, _ dep.Dep, _ string) ([]datasource.Release, error) {
-	s.load(ctx)
-	return s.releases, s.err
+	ix, err := s.load(ctx)
+	return ix.releases, err
 }
 
 // ReleaseTime implements datasource.Timer with the `release_date` of version (the earliest,
 // for a version listed twice); zero when unknown.
 func (s *Source) ReleaseTime(ctx context.Context, _ dep.Dep, version string) (time.Time, error) {
-	s.load(ctx)
-	if s.err != nil {
-		return time.Time{}, s.err
+	ix, err := s.load(ctx)
+	if err != nil {
+		return time.Time{}, err
 	}
-	return s.times[version], nil
+	return ix.times[version], nil
 }
 
 // SourceRepo implements datasource.SourceRepo: every release is a tag of flutter/flutter.
@@ -76,19 +78,21 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 	return "", datasource.UnsupportedDigest(Name, d)
 }
 
-func (s *Source) load(ctx context.Context) {
-	s.once.Do(func() {
+func (s *Source) load(ctx context.Context) (index, error) {
+	return s.index.Do(ctx, func() (index, error) {
 		start := time.Now()
-		s.err = datasource.GetStream(ctx, s.client, s.sem, s.url, s.read)
-		if s.err != nil {
-			s.releases, s.times = nil, nil
+		var ix index
+		err := datasource.GetStream(ctx, s.client, s.sem, s.url, ix.read)
+		if err != nil {
+			ix = index{}
 		}
-		slog.DebugContext(ctx, "flutter releases", "url", s.url, "releases", len(s.releases), "duration", time.Since(start), "err", s.err)
+		slog.DebugContext(ctx, "flutter releases", "url", s.url, "releases", len(ix.releases), "duration", time.Since(start), "err", err)
+		return ix, err
 	})
 }
 
 // read parses the release list: `releases` entries with version, channel and release_date.
-func (s *Source) read(r io.Reader) error {
+func (ix *index) read(r io.Reader) error {
 	var list struct {
 		Releases []struct {
 			Version     string `json:"version"`
@@ -99,7 +103,7 @@ func (s *Source) read(r io.Reader) error {
 	if err := json.UnmarshalRead(r, &list); err != nil {
 		return err
 	}
-	s.times = map[string]time.Time{}
+	ix.times = map[string]time.Time{}
 	var vs []*semver.Version
 	for _, e := range list.Releases {
 		v, err := semver.NewVersion(e.Version)
@@ -107,22 +111,22 @@ func (s *Source) read(r io.Reader) error {
 			continue
 		}
 		t, _ := time.Parse(time.RFC3339Nano, e.ReleaseDate)
-		if old, seen := s.times[e.Version]; seen {
+		if old, seen := ix.times[e.Version]; seen {
 			if !t.IsZero() && (old.IsZero() || t.Before(old)) {
-				s.times[e.Version] = t.UTC()
+				ix.times[e.Version] = t.UTC()
 			}
 			continue
 		}
-		s.times[e.Version] = t.UTC()
+		ix.times[e.Version] = t.UTC()
 		vs = append(vs, v)
 	}
 	if len(vs) == 0 {
 		return errors.New("no releases")
 	}
 	slices.SortStableFunc(vs, (*semver.Version).Compare)
-	s.releases = make([]datasource.Release, len(vs))
+	ix.releases = make([]datasource.Release, len(vs))
 	for i, v := range vs {
-		s.releases[i] = datasource.Release{Version: v.Original()}
+		ix.releases[i] = datasource.Release{Version: v.Original()}
 	}
 	return nil
 }

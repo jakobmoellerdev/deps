@@ -281,7 +281,7 @@ func TestReleasesPlanned(t *testing.T) {
 	if n := hits.Load(); n != 2 { // one scan for both planned packages
 		t.Errorf("requests = %d, want 2", n)
 	}
-	r, _ := s.repos.Do(srv.URL+"/docker", nil)
+	r, _ := s.repos.Peek(srv.URL + "/docker")
 	if got := slices.Sorted(maps.Keys(r.pkgs)); !slices.Equal(got, []string{"docker-ce", "docker-ce-cli"}) {
 		t.Errorf("indexed packages = %v, want only the planned ones", got)
 	}

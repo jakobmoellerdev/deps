@@ -43,29 +43,21 @@ type Source struct {
 	index, api string // crates.io sparse index and web API
 
 	mu         sync.Mutex
-	crates     map[string]*entry       // index + "\x00" + lowercase name
-	repos      map[string]*repoEntry   // api + "\x00" + name@version
-	registries map[string]*registry    // index URL + "\x00" + token
-	configs    map[string]*configEntry // manifest directory -> Cargo configuration
-	located    map[string]*registry    // file + "\x00" + name -> registry of the Releases lookup
-	clones     []string                // git index clones, removed by Close
+	crates     datasource.Memo[string, *entry] // index + "\x00" + lowercase name
+	repos      datasource.Memo[string, string] // api + "\x00" + name@version; "config\x00" + index -> api
+	registries map[string]*registry            // index URL + "\x00" + token
+	configs    map[string]*configEntry         // manifest directory -> Cargo configuration
+	located    map[string]*registry            // file + "\x00" + name -> registry of the Releases lookup
+	clones     []string                        // git index clones, removed by Close
 }
 
 type entry struct {
-	once sync.Once
 	// rels are the published versions, lines the same followed by the derived release lines.
 	rels, lines []datasource.Release
 	times       map[string]time.Time // version or release line -> publication time
 	latest      map[string]string    // release line -> newest version of the line
 	newest      string               // the last published version
 	yanked      map[string]bool      // yanked versions; nil = none
-	err         error
-}
-
-type repoEntry struct {
-	once sync.Once
-	repo string
-	err  error
 }
 
 // New returns the crate datasource. sem bounds concurrent requests (nil = unbounded); auth
@@ -83,7 +75,6 @@ func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, getenv func(s
 	return &Source{
 		client: client, sem: sem, auth: auth, getenv: getenv,
 		index: strings.TrimSuffix(index, "/"), api: strings.TrimSuffix(api, "/"),
-		crates: make(map[string]*entry), repos: make(map[string]*repoEntry),
 		registries: make(map[string]*registry), configs: make(map[string]*configEntry), located: make(map[string]*registry),
 	}
 }
@@ -101,11 +92,14 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 	s.mu.Lock()
 	s.located[d.File+"\x00"+d.Name] = r
 	s.mu.Unlock()
-	e := s.load(ctx, r, d.Name)
-	if strings.Count(d.Version, ".") < 2 {
-		return e.lines, e.err
+	e, err := s.load(ctx, r, d.Name)
+	if err != nil {
+		return nil, err
 	}
-	return e.rels, e.err
+	if strings.Count(d.Version, ".") < 2 {
+		return e.lines, nil
+	}
+	return e.rels, nil
 }
 
 // locate returns the registry of d's Releases lookup, else crates.io.
@@ -122,19 +116,23 @@ func (s *Source) locate(d dep.Dep) *registry {
 // ReleaseTime implements datasource.Timer with the index's `pubtime`; a release line has the
 // time of its first release. Zero when unknown (registries that do not write pubtime).
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
-	e := s.load(ctx, s.locate(d), d.Name)
-	return e.times[version], e.err
+	e, err := s.load(ctx, s.locate(d), d.Name)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return e.times[version], nil
 }
 
 // Deprecation implements datasource.DeprecationSource: version is yanked in the index of d's
 // earlier Releases lookup (complete by then).
 func (s *Source) Deprecation(d dep.Dep, version string) string {
 	s.mu.Lock()
-	var e *entry
-	if r := s.located[d.File+"\x00"+d.Name]; r != nil {
-		e = s.crates[r.index+"\x00"+strings.ToLower(d.Name)]
-	}
+	r := s.located[d.File+"\x00"+d.Name]
 	s.mu.Unlock()
+	var e *entry
+	if r != nil {
+		e, _ = s.crates.Peek(r.index + "\x00" + strings.ToLower(d.Name))
+	}
 	if e == nil || !e.yanked[version] {
 		return ""
 	}
@@ -146,9 +144,9 @@ func (s *Source) Deprecation(d dep.Dep, version string) string {
 // "" without one); a release line asks for its newest version.
 func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error) {
 	r := s.locate(d)
-	e := s.load(ctx, r, d.Name)
-	if e.err != nil {
-		return "", e.err
+	e, err := s.load(ctx, r, d.Name)
+	if err != nil {
+		return "", err
 	}
 	if v, ok := e.latest[version]; ok {
 		version = v
@@ -161,15 +159,7 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (str
 		return "", err
 	}
 	key := api + "\x00" + strings.ToLower(d.Name) + "@" + version
-	s.mu.Lock()
-	re := s.repos[key]
-	if re == nil {
-		re = &repoEntry{}
-		s.repos[key] = re
-	}
-	s.mu.Unlock()
-	re.once.Do(func() { re.repo, re.err = s.fetchRepo(ctx, r, api, d.Name, version) })
-	return re.repo, re.err
+	return s.repos.Do(ctx, key, func() (string, error) { return s.fetchRepo(ctx, r, api, d.Name, version) })
 }
 
 // apiOf returns the web API base of r: crates.io's, else the `api` of the index's
@@ -178,33 +168,23 @@ func (s *Source) apiOf(ctx context.Context, r *registry) (string, error) {
 	if r.api != "" {
 		return r.api, nil
 	}
-	s.mu.Lock()
-	e := s.repos["config\x00"+r.index]
-	if e == nil {
-		e = &repoEntry{}
-		s.repos["config\x00"+r.index] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() {
+	return s.repos.Do(ctx, "config\x00"+r.index, func() (string, error) {
 		body, err := s.open(ctx, r, "config.json")
 		if errors.Is(err, errNotFound) {
-			return
+			return "", nil
 		}
 		if err != nil {
-			e.err = err
-			return
+			return "", err
 		}
 		defer body.Close()
 		var cfg struct {
 			API string `json:"api"`
 		}
 		if err := json.UnmarshalRead(body, &cfg); err != nil {
-			e.err = fmt.Errorf("%s config.json: %w", r.index, err)
-			return
+			return "", fmt.Errorf("%s config.json: %w", r.index, err)
 		}
-		e.repo = strings.TrimSuffix(cfg.API, "/")
+		return strings.TrimSuffix(cfg.API, "/"), nil
 	})
-	return e.repo, e.err
 }
 
 // Digest is unsupported.
@@ -212,21 +192,17 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 	return "", datasource.UnsupportedDigest(Name, d)
 }
 
-func (s *Source) load(ctx context.Context, r *registry, name string) *entry {
-	key := r.index + "\x00" + strings.ToLower(name)
-	s.mu.Lock()
-	e := s.crates[key]
-	if e == nil {
-		e = &entry{}
-		s.crates[key] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() {
+func (s *Source) load(ctx context.Context, r *registry, name string) (*entry, error) {
+	return s.crates.Do(ctx, r.index+"\x00"+strings.ToLower(name), func() (*entry, error) {
 		start := time.Now()
-		e.err = s.fetch(ctx, r, strings.ToLower(name), e)
-		slog.DebugContext(ctx, "crate index", "registry", r.index, "name", name, "releases", len(e.rels), "duration", time.Since(start), "err", e.err)
+		e := &entry{}
+		err := s.fetch(ctx, r, strings.ToLower(name), e)
+		slog.DebugContext(ctx, "crate index", "registry", r.index, "name", name, "releases", len(e.rels), "duration", time.Since(start), "err", err)
+		if err != nil {
+			return nil, err
+		}
+		return e, nil
 	})
-	return e
 }
 
 // IndexPath returns the sparse index path of the crate: `1/<n>`, `2/<n>`, `3/<c>/<n>` or

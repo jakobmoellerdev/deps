@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"go.yaml.in/yaml/v4"
@@ -62,9 +61,7 @@ type Source struct {
 	re     *regexp.Regexp // nil = every value is a version
 	group  int            // index of the `version` group in re; 0 = whole match
 
-	once     sync.Once
-	releases []datasource.Release
-	err      error
+	releases datasource.Once[[]datasource.Release]
 }
 
 // New returns the datasource custom.<name>. sem bounds concurrent requests (nil = unbounded).
@@ -100,13 +97,13 @@ func New(client *http.Client, sem chan struct{}, name string, spec Spec) (*Sourc
 // Releases returns the selected versions, in document order without duplicates; d and dir
 // are ignored, every dep of this datasource shares the one list.
 func (s *Source) Releases(ctx context.Context, _ dep.Dep, _ string) ([]datasource.Release, error) {
-	s.once.Do(func() {
+	return s.releases.Do(ctx, func() ([]datasource.Release, error) {
 		start := time.Now()
-		s.releases, s.err = s.fetch(ctx)
+		rels, err := s.fetch(ctx)
 		slog.DebugContext(ctx, "custom datasource fetched", "datasource", s.name, "url", s.spec.URL,
-			"releases", len(s.releases), "duration", time.Since(start), "err", s.err)
+			"releases", len(rels), "duration", time.Since(start), "err", err)
+		return rels, err
 	})
-	return s.releases, s.err
 }
 
 // Digest is unsupported.

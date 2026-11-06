@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
@@ -29,10 +28,13 @@ type Source struct {
 	sem    chan struct{}
 	url    string
 
-	once     sync.Once
+	list datasource.Once[list]
+}
+
+// list is the parsed version index.
+type list struct {
 	releases []datasource.Release
 	times    map[string]time.Time
-	err      error
 }
 
 // New returns the gradle-version datasource. sem bounds concurrent requests (nil = unbounded);
@@ -48,17 +50,17 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 // Releases returns the published versions (`8.10.2`, `8.11-rc-1`, `9.0-milestone-1`) without
 // snapshots, nightlies and broken releases; the versioning scheme filters prereleases.
 func (s *Source) Releases(ctx context.Context, _ dep.Dep, _ string) ([]datasource.Release, error) {
-	s.load(ctx)
-	return s.releases, s.err
+	ix, err := s.load(ctx)
+	return ix.releases, err
 }
 
 // ReleaseTime implements datasource.Timer with the build time of version; zero when unknown.
 func (s *Source) ReleaseTime(ctx context.Context, _ dep.Dep, version string) (time.Time, error) {
-	s.load(ctx)
-	if s.err != nil {
-		return time.Time{}, s.err
+	ix, err := s.load(ctx)
+	if err != nil {
+		return time.Time{}, err
 	}
-	return s.times[version], nil
+	return ix.times[version], nil
 }
 
 // Digest is unsupported.
@@ -66,14 +68,12 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 	return "", datasource.UnsupportedDigest(Name, d)
 }
 
-func (s *Source) load(ctx context.Context) {
-	s.once.Do(func() {
+func (s *Source) load(ctx context.Context) (list, error) {
+	return s.list.Do(ctx, func() (list, error) {
 		start := time.Now()
-		s.err = s.fetch(ctx)
-		if s.err != nil {
-			s.releases, s.times = nil, nil
-		}
-		slog.DebugContext(ctx, "gradle releases", "url", s.url, "releases", len(s.releases), "duration", time.Since(start), "err", s.err)
+		ix, err := s.fetch(ctx)
+		slog.DebugContext(ctx, "gradle releases", "url", s.url, "releases", len(ix.releases), "duration", time.Since(start), "err", err)
+		return ix, err
 	})
 }
 
@@ -87,16 +87,17 @@ type release struct {
 	Broken         bool   `json:"broken"`
 }
 
-func (s *Source) fetch(ctx context.Context) error {
-	return datasource.GetStream(ctx, s.client, s.sem, s.url, func(r io.Reader) error {
-		s.times = map[string]time.Time{}
+func (s *Source) fetch(ctx context.Context) (list, error) {
+	var ix list
+	err := datasource.GetStream(ctx, s.client, s.sem, s.url, func(r io.Reader) error {
+		ix.times = map[string]time.Time{}
 		err := datasource.DecodeArray(r, func(rel release) {
 			if rel.Version == "" || rel.Snapshot || rel.Nightly || rel.ReleaseNightly || rel.Broken {
 				return
 			}
-			s.releases = append(s.releases, datasource.Release{Version: rel.Version})
+			ix.releases = append(ix.releases, datasource.Release{Version: rel.Version})
 			if t, err := time.Parse(buildTimeLayout, rel.BuildTime); err == nil {
-				s.times[rel.Version] = t
+				ix.times[rel.Version] = t
 			}
 		})
 		if errors.Is(err, datasource.ErrNotArray) {
@@ -105,9 +106,13 @@ func (s *Source) fetch(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if len(s.releases) == 0 {
+		if len(ix.releases) == 0 {
 			return errors.New("no releases")
 		}
 		return nil
 	})
+	if err != nil {
+		return list{}, err
+	}
+	return ix, nil
 }

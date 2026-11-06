@@ -29,9 +29,7 @@ type registry struct {
 	token  string // Authorization header, only sent to the index host (owns); "" = none
 	api    string // web API base for source repositories; "" = read from config.json
 
-	once sync.Once // git: the clone; sparse: config.json
-	dir  string    // git clone
-	err  error
+	clone datasource.Once[string] // git: the clone's directory
 }
 
 // owns reports whether u is on r's index host: Cargo credentials belong to the index, so only
@@ -219,11 +217,11 @@ func (s *Source) open(ctx context.Context, r *registry, p string) (io.ReadCloser
 	if r.sparse {
 		return s.get(ctx, r, r.index+"/"+p)
 	}
-	r.once.Do(func() { r.dir, r.err = s.clone(ctx, r.index) })
-	if r.err != nil {
-		return nil, r.err
+	dir, err := r.clone.Do(ctx, func() (string, error) { return s.clone(ctx, r.index) })
+	if err != nil {
+		return nil, err
 	}
-	out, err := git(ctx, r.dir, "cat-file", "blob", "HEAD:"+p)
+	out, err := git(ctx, dir, "cat-file", "blob", "HEAD:"+p)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") || strings.Contains(err.Error(), "Not a valid object name") {
 			return nil, errNotFound

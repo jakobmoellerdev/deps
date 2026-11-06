@@ -106,7 +106,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		return nil, fmt.Errorf("invalid pub package name %q", d.Name)
 	}
 	base := strings.TrimSuffix(cmp.Or(d.Source, s.base), "/")
-	return s.pkgs.Do(base+"\x00"+d.Name, func() (*pkg, error) {
+	return s.pkgs.Do(ctx, base+"\x00"+d.Name, func() (*pkg, error) {
 		start := time.Now()
 		u := base + "/api/packages/" + url.PathEscape(d.Name)
 		p := &pkg{times: map[string]time.Time{}}

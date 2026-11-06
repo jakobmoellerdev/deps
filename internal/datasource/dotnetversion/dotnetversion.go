@@ -38,9 +38,7 @@ type Source struct {
 	sem    chan struct{}
 	url    string
 
-	once     sync.Once
-	channels []channel
-	err      error
+	channels datasource.Once[[]channel]
 
 	releases datasource.Memo[string, *releases] // by releases.json URL
 }
@@ -109,13 +107,13 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 // lists returns the releases of the channels at or above the major.minor of version (every
 // channel when it has none), fetched concurrently.
 func (s *Source) lists(ctx context.Context, version string) ([]*releases, error) {
-	s.once.Do(func() { s.err = s.index(ctx) })
-	if s.err != nil {
-		return nil, s.err
+	channels, err := s.channels.Do(ctx, func() ([]channel, error) { return s.index(ctx) })
+	if err != nil {
+		return nil, err
 	}
 	floor, hasFloor := majorMinor(version)
 	var want []channel
-	for _, c := range s.channels {
+	for _, c := range channels {
 		if !hasFloor || c.version[0] > floor[0] || c.version[0] == floor[0] && c.version[1] >= floor[1] {
 			want = append(want, c)
 		}
@@ -125,7 +123,7 @@ func (s *Source) lists(ctx context.Context, version string) ([]*releases, error)
 	var wg sync.WaitGroup
 	for i, c := range want {
 		wg.Go(func() {
-			out[i], errs[i] = s.releases.Do(c.releasesJSON, func() (*releases, error) { return s.channel(ctx, c.releasesJSON) })
+			out[i], errs[i] = s.releases.Do(ctx, c.releasesJSON, func() (*releases, error) { return s.channel(ctx, c.releasesJSON) })
 		})
 	}
 	wg.Wait()
@@ -142,7 +140,7 @@ func majorMinor(v string) ([2]int, bool) {
 }
 
 // index reads the channel list, newest first as published.
-func (s *Source) index(ctx context.Context) error {
+func (s *Source) index(ctx context.Context) ([]channel, error) {
 	start := time.Now()
 	var ix struct {
 		Index []struct {
@@ -151,17 +149,18 @@ func (s *Source) index(ctx context.Context) error {
 		} `json:"releases-index"`
 	}
 	err := datasource.GetStream(ctx, s.client, s.sem, s.url, func(r io.Reader) error { return json.UnmarshalRead(r, &ix) })
+	var channels []channel
 	for _, c := range ix.Index {
 		v, ok := majorMinor(c.Channel + ".")
 		if ok && c.Releases != "" {
-			s.channels = append(s.channels, channel{version: v, releasesJSON: c.Releases})
+			channels = append(channels, channel{version: v, releasesJSON: c.Releases})
 		}
 	}
-	if err == nil && len(s.channels) == 0 {
+	if err == nil && len(channels) == 0 {
 		err = errors.New("dotnet-version: no channels in " + s.url)
 	}
-	slog.DebugContext(ctx, "dotnet release index", "url", s.url, "channels", len(s.channels), "duration", time.Since(start), "err", err)
-	return err
+	slog.DebugContext(ctx, "dotnet release index", "url", s.url, "channels", len(channels), "duration", time.Since(start), "err", err)
+	return channels, err
 }
 
 // channel reads one releases.json: per release its date, runtime version and SDK versions

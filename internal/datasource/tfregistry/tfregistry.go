@@ -87,7 +87,7 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 	if err != nil {
 		return nil, err
 	}
-	return s.r.lists.Do(base+d.Name, func() ([]datasource.Release, error) { return s.fetchVersions(ctx, d, base) })
+	return s.r.lists.Do(ctx, base+d.Name, func() ([]datasource.Release, error) { return s.fetchVersions(ctx, d, base) })
 }
 
 // ReleaseTime implements datasource.Timer with the `published_at` of the version document
@@ -116,7 +116,7 @@ func (s *Source) base(ctx context.Context, d dep.Dep) (string, error) {
 	if reg == "" {
 		reg = DefaultRegistry
 	}
-	svc, err := s.r.services.Do(reg, func() (map[string]string, error) { return s.r.discover(ctx, reg) })
+	svc, err := s.r.services.Do(ctx, reg, func() (map[string]string, error) { return s.r.discover(ctx, reg) })
 	if err != nil {
 		return "", err
 	}
@@ -145,7 +145,7 @@ func (s *Source) doc(ctx context.Context, d dep.Dep, version string) (versionDoc
 		return versionDoc{}, err
 	}
 	key := base + d.Name + "/" + version
-	return s.r.docs.Do(key, func() (versionDoc, error) {
+	return s.r.docs.Do(ctx, key, func() (versionDoc, error) {
 		published, source, err := s.fetchDoc(ctx, d, key)
 		return versionDoc{published, source}, err
 	})

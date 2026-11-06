@@ -92,7 +92,7 @@ type packages struct {
 }
 
 func (s *Source) lookup(ctx context.Context, name string) (*orb, error) {
-	return s.orbs.Do(name, func() (*orb, error) {
+	return s.orbs.Do(ctx, name, func() (*orb, error) {
 		target := s.base + "/api/v3/orb/packages?" + url.Values{"filter[name]": {name}}.Encode()
 		var resp packages
 		if err := s.get(ctx, target, func(r io.Reader) error { return json.UnmarshalRead(r, &resp) }); err != nil {

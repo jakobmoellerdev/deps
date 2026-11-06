@@ -2,6 +2,7 @@ package rustversion
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -101,6 +102,31 @@ func TestReleases(t *testing.T) {
 	tag, _ := versioning.Get("tag")
 	if got, _ := tag.Best("1.82", cands, nil, nil); got != "1.99" {
 		t.Errorf("tag best from 1.82 = %q", got)
+	}
+}
+
+// A first caller whose context ended (a canceled sibling, a passed deadline) does not leave
+// its error to the dependencies looked up after it with a live context.
+func TestReleasesAfterCanceledCaller(t *testing.T) {
+	b, err := os.ReadFile("testdata/manifests.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hits atomic.Int32
+	s := newSource(t, string(b), &hits)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := s.Releases(canceled, dep.Dep{}, ""); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled: err = %v, want context.Canceled", err)
+	}
+	if rs, err := s.Releases(t.Context(), dep.Dep{}, ""); err != nil || len(rs) == 0 {
+		t.Fatalf("live: %d releases, err %v", len(rs), err)
+	}
+	if ts, err := s.ReleaseTime(t.Context(), dep.Dep{}, "1.82.0"); err != nil || ts.IsZero() {
+		t.Errorf("ReleaseTime = %v, %v", ts, err)
+	}
+	if hits.Load() != 1 {
+		t.Errorf("%d requests, want 1", hits.Load())
 	}
 }
 

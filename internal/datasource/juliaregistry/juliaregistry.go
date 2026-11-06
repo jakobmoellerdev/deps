@@ -101,7 +101,7 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, e
 
 // lookup returns the registry entry of d's package, checking its UUID.
 func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
-	p, err := s.pkgs.Do(d.Name, func() (*pkg, error) { return s.fetch(ctx, d.Name) })
+	p, err := s.pkgs.Do(ctx, d.Name, func() (*pkg, error) { return s.fetch(ctx, d.Name) })
 	switch {
 	case errors.Is(err, errNotFound):
 		return nil, &dep.SkipError{Reason: fmt.Sprintf("package %s is not in the registry %s", d.Name, s.shown)}

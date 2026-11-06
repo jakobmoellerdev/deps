@@ -21,7 +21,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
@@ -43,61 +42,52 @@ type Lister struct {
 	sem    chan struct{}
 	gh     *githubapi.Client // release times of github.com repositories
 
-	times datasource.Memo[string, time.Time] // repository URL + "@" + tag, for tags not in the release lists
-
-	mu    sync.Mutex
-	cache map[string]*entry
-	heads map[string]*entry     // repository URL -> branches and HEAD
-	lists map[string]*listEntry // Gitea/Forgejo repository URL -> first page of releases
+	times datasource.Memo[string, time.Time]  // repository URL + "@" + tag, for tags not in the release lists
+	tags  datasource.Memo[string, *entry]     // repository URL -> tags
+	heads datasource.Memo[string, *entry]     // repository URL -> branches and HEAD
+	lists datasource.Memo[string, *listEntry] // Gitea/Forgejo repository URL -> first page of releases
 }
 
 // listEntry is one page of a Gitea/Forgejo repository's releases.
 type listEntry struct {
-	once     sync.Once
 	times    map[string]time.Time // tag -> published_at; drafts are omitted
 	complete bool                 // the page holds every release: absent tags have none
 	api      bool                 // the host answered the releases API
-	err      error
 }
 
 type entry struct {
-	once sync.Once
 	tags []Tag
 	head string // commit of HEAD, "" when the server reported none (an empty repository)
 	rels []datasource.Release
-	err  error
 }
 
 // New returns a Lister. sem bounds concurrent requests and is shared with other datasources;
 // auth may be nil for anonymous access. Release times of github.com repositories come from gh,
 // whose release lists the github-releases datasource shares.
 func New(client *http.Client, auth *httpx.Auth, sem chan struct{}, gh *githubapi.Client) *Lister {
-	return &Lister{
-		client: client, auth: auth, sem: sem, gh: gh,
-		cache: make(map[string]*entry), heads: make(map[string]*entry), lists: make(map[string]*listEntry),
-	}
+	return &Lister{client: client, auth: auth, sem: sem, gh: gh}
 }
 
 // Tags returns the tags of the repository at repoURL (e.g. https://github.com/actions/checkout).
 // The returned slice is shared between callers and must not be modified.
 func (l *Lister) Tags(ctx context.Context, repoURL string) ([]Tag, error) {
-	e := l.get(ctx, repoURL, false)
-	return e.tags, e.err
+	e, err := l.get(ctx, repoURL, false)
+	return e.tags, err
 }
 
 // Releases implements datasource.Datasource: the tags of d.Source, each with its commit as
 // digest. The slice is shared between callers and must not be modified.
 func (l *Lister) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
-	e := l.get(ctx, d.Source, false)
-	return e.rels, e.err
+	e, err := l.get(ctx, d.Source, false)
+	return e.rels, err
 }
 
 // Digest returns the commit of tag version in d.Source: the tag equal to version, else to
 // version with a leading "v" added or removed.
 func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string, error) {
-	e := l.get(ctx, d.Source, false)
-	if e.err != nil {
-		return "", e.err
+	e, err := l.get(ctx, d.Source, false)
+	if err != nil {
+		return "", err
 	}
 	toggled, ok := strings.CutPrefix(version, "v")
 	if !ok {
@@ -117,8 +107,8 @@ func (l *Lister) Digest(ctx context.Context, d dep.Dep, version string) (string,
 // from the same ls-refs request as the tags. Version is "": the head is no tag. An empty
 // repository has no head (zero Revision). The time is left unknown; see CommitTime.
 func (l *Lister) Head(ctx context.Context, d dep.Dep, _ string) (datasource.Revision, error) {
-	e := l.get(ctx, d.Source, false)
-	return datasource.Revision{Digest: e.head}, e.err
+	e, err := l.get(ctx, d.Source, false)
+	return datasource.Revision{Digest: e.head}, err
 }
 
 // RefsName is the name of the git-refs datasource.
@@ -139,9 +129,9 @@ func (r Refs) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource
 
 // Digest returns the commit of branch ref in d.Source; HEAD is the default branch.
 func (r Refs) Digest(ctx context.Context, d dep.Dep, ref string) (string, error) {
-	e := r.l.get(ctx, d.Source, true)
-	if e.err != nil {
-		return "", e.err
+	e, err := r.l.get(ctx, d.Source, true)
+	if err != nil {
+		return "", err
 	}
 	for _, h := range e.tags {
 		if h.Name == ref {
@@ -157,7 +147,7 @@ func (r Refs) Digest(ctx context.Context, d dep.Dep, ref string) (string, error)
 // commit.
 func (l *Lister) CommitTime(ctx context.Context, d dep.Dep, commit string) (time.Time, error) {
 	repoURL := strings.TrimSuffix(d.Source, "/")
-	return l.times.Do(repoURL+"#"+commit, func() (time.Time, error) {
+	return l.times.Do(ctx, repoURL+"#"+commit, func() (time.Time, error) {
 		var t time.Time
 		var err error
 		if r, isGH := githubRepo(repoURL); isGH {
@@ -202,10 +192,10 @@ func (l *Lister) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 			return t, err
 		}
 	} else {
-		le := l.giteaList(ctx, repoURL)
+		le, err := l.giteaList(ctx, repoURL)
 		switch {
-		case le.err != nil:
-			return time.Time{}, le.err
+		case err != nil:
+			return time.Time{}, err
 		case !le.api:
 			return time.Time{}, nil
 		}
@@ -263,7 +253,7 @@ func (l *Lister) unreleasedTime(ctx context.Context, repoURL string, r githubapi
 				return time.Time{}, err
 			}
 		} else {
-			le := l.giteaList(ctx, repoURL)
+			le, _ := l.giteaList(ctx, repoURL)
 			for _, o := range tags {
 				if o.Commit == commit {
 					earliest(le.times[o.Name])
@@ -293,7 +283,7 @@ func githubRepo(repoURL string) (githubapi.Repo, bool) {
 
 // tagTime runs lookup once per repository and tag.
 func (l *Lister) tagTime(ctx context.Context, repoURL, tag string, lookup func() (time.Time, error)) (time.Time, error) {
-	return l.times.Do(repoURL+"@"+tag, func() (time.Time, error) {
+	return l.times.Do(ctx, repoURL+"@"+tag, func() (time.Time, error) {
 		t, err := lookup()
 		slog.DebugContext(ctx, "tag release time", "repo", repoURL, "tag", tag, "time", t, "err", err)
 		return t, err
@@ -304,20 +294,16 @@ func (l *Lister) tagTime(ctx context.Context, repoURL, tag string, lookup func()
 // (default 50).
 const giteaListSize = 50
 
-// giteaList returns the first page of releases of repoURL, fetched once per repository.
-func (l *Lister) giteaList(ctx context.Context, repoURL string) *listEntry {
-	l.mu.Lock()
-	le := l.lists[repoURL]
-	if le == nil {
-		le = &listEntry{}
-		l.lists[repoURL] = le
-	}
-	l.mu.Unlock()
-	le.once.Do(func() {
-		le.times, le.complete, le.api, le.err = l.releaseList(ctx, repoURL)
-		slog.DebugContext(ctx, "releases listed", "repo", repoURL, "releases", len(le.times), "complete", le.complete, "api", le.api, "err", le.err)
+// giteaList returns the first page of releases of repoURL, fetched once per repository. The
+// entry is never nil.
+func (l *Lister) giteaList(ctx context.Context, repoURL string) (*listEntry, error) {
+	return l.lists.Do(ctx, repoURL, func() (*listEntry, error) {
+		le := &listEntry{}
+		var err error
+		le.times, le.complete, le.api, err = l.releaseList(ctx, repoURL)
+		slog.DebugContext(ctx, "releases listed", "repo", repoURL, "releases", len(le.times), "complete", le.complete, "api", le.api, "err", err)
+		return le, err
 	})
-	return le
 }
 
 // releaseList fetches the first page of releases of repoURL. A host without the API (404 or a
@@ -458,30 +444,26 @@ func (l *Lister) getJSON(ctx context.Context, u *url.URL, path string, v any) (f
 }
 
 // get returns the tags of repoURL, or with heads its branches and HEAD, fetching them once.
-func (l *Lister) get(ctx context.Context, repoURL string, heads bool) *entry {
+// The entry is never nil.
+func (l *Lister) get(ctx context.Context, repoURL string, heads bool) (*entry, error) {
 	repoURL = strings.TrimSuffix(repoURL, "/")
-	cache := l.cache
+	memo := &l.tags
 	if heads {
-		cache = l.heads
+		memo = &l.heads
 	}
-	l.mu.Lock()
-	e := cache[repoURL]
-	if e == nil {
-		e = &entry{}
-		cache[repoURL] = e
-	}
-	l.mu.Unlock()
-	e.once.Do(func() {
-		e.tags, e.head, e.err = l.fetch(ctx, repoURL, heads)
+	return memo.Do(ctx, repoURL, func() (*entry, error) {
+		e := &entry{}
+		var err error
+		e.tags, e.head, err = l.fetch(ctx, repoURL, heads)
 		if heads {
-			return
+			return e, err
 		}
 		e.rels = make([]datasource.Release, len(e.tags))
 		for i, t := range e.tags {
 			e.rels[i] = datasource.Release{Version: t.Name, Digest: t.Commit}
 		}
+		return e, err
 	})
-	return e
 }
 
 // session carries the credentials of one repository fetch across its requests.

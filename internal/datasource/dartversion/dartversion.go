@@ -41,9 +41,7 @@ type Source struct {
 	sem    chan struct{}
 	base   string
 
-	once     sync.Once
-	releases []datasource.Release
-	err      error
+	releases datasource.Once[[]datasource.Release]
 }
 
 // New returns the dart-version datasource. sem bounds concurrent requests (nil = unbounded);
@@ -57,8 +55,7 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 // latter two for a stable current version. Old Subversion revision numbers, `latest` and a
 // stable version listed in another channel are skipped. Every name is the dep's (`dart`).
 func (s *Source) Releases(ctx context.Context, _ dep.Dep, _ string) ([]datasource.Release, error) {
-	s.once.Do(func() { s.releases, s.err = s.load(ctx) })
-	return s.releases, s.err
+	return s.releases.Do(ctx, func() ([]datasource.Release, error) { return s.load(ctx) })
 }
 
 // SourceRepo implements datasource.SourceRepo: every release is a tag of dart-lang/sdk.

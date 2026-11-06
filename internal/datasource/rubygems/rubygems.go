@@ -93,7 +93,7 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, e
 	if slices.ContainsFunc(servers(d), func(srv string) bool { return !s.isDefault(srv) }) {
 		return "", nil
 	}
-	return s.repos.Do(d.Name, func() (string, error) {
+	return s.repos.Do(ctx, d.Name, func() (string, error) {
 		var meta struct {
 			SourceCodeURI string `json:"source_code_uri"`
 			HomepageURI   string `json:"homepage_uri"`
@@ -126,7 +126,7 @@ func servers(d dep.Dep) []string {
 // lookup returns the listing of d's gem on the first of its servers that has it.
 func (s *Source) lookup(ctx context.Context, d dep.Dep) (*gem, error) {
 	for _, srv := range servers(d) {
-		g, err := s.gems.Do(srv+"\x00"+d.Name, func() (*gem, error) { return s.fetch(ctx, srv, d.Name) })
+		g, err := s.gems.Do(ctx, srv+"\x00"+d.Name, func() (*gem, error) { return s.fetch(ctx, srv, d.Name) })
 		if !errors.Is(err, errNotFound) {
 			return g, err
 		}

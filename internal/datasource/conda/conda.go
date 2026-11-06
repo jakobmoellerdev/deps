@@ -129,7 +129,7 @@ func split(d dep.Dep) (channels []string, name string) {
 func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 	channels, name := split(d)
 	for _, ch := range channels {
-		p, err := s.pkgs.Do(ch+"\x00"+name, func() (*pkg, error) { return s.fetch(ctx, ch, name) })
+		p, err := s.pkgs.Do(ctx, ch+"\x00"+name, func() (*pkg, error) { return s.fetch(ctx, ch, name) })
 		if !errors.Is(err, errNotFound) {
 			return p, err
 		}

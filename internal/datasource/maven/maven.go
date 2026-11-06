@@ -46,11 +46,11 @@ type Source struct {
 	getenv  func(string) string
 	central string
 
+	meta  datasource.Memo[reqKey, metaEntry]
+	poms  datasource.Memo[reqKey, pomEntry]
 	times datasource.Memo[reqKey, time.Time]
 
 	mu       sync.Mutex
-	meta     map[reqKey]*metaEntry
-	poms     map[reqKey]*pomEntry
 	resolved map[string][]repository   // dep key -> repositories of its Releases lookup
 	settings map[string]*settingsEntry // in-repository settings path ("" = none) -> effective settings
 	nearest  map[string]*nearestEntry  // pom directory -> nearest in-repository settings path
@@ -90,8 +90,8 @@ type auth struct {
 
 type header struct{ name, value string }
 
+// metaEntry is the metadata of an artifact in one repository; err is the lookup's failure.
 type metaEntry struct {
-	once     sync.Once
 	versions []string
 	notFound bool
 	err      error
@@ -107,7 +107,6 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 	}
 	return &Source{
 		client: stripHeadersOnRedirect(client), sem: sem, getenv: getenv, central: central,
-		meta: map[reqKey]*metaEntry{}, poms: map[reqKey]*pomEntry{},
 		resolved: map[string][]repository{}, settings: map[string]*settingsEntry{},
 		nearest: map[string]*nearestEntry{}, files: map[string]*fileEntry{}, gradleAuths: map[string]*auth{},
 	}
@@ -247,7 +246,7 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 	s.resolved[depKey(d)] = repos
 	s.mu.Unlock()
 	// Fetch every repository together (each request takes its own slot), merge in order.
-	entries := make([]*metaEntry, len(repos))
+	entries := make([]metaEntry, len(repos))
 	var wg sync.WaitGroup
 	for i, r := range repos {
 		wg.Go(func() { entries[i] = s.metadata(ctx, r, d.Name, base) })
@@ -365,21 +364,15 @@ func artifactPath(name string) (base, artifact string, err error) {
 	return strings.ReplaceAll(group, ".", "/") + "/" + artifact + "/", artifact, nil
 }
 
-func (s *Source) metadata(ctx context.Context, r repository, name, base string) *metaEntry {
-	k := reqKey{r.url, r.auth, name}
-	s.mu.Lock()
-	e := s.meta[k]
-	if e == nil {
-		e = &metaEntry{}
-		s.meta[k] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() {
+func (s *Source) metadata(ctx context.Context, r repository, name, base string) metaEntry {
+	e, err := s.meta.Do(ctx, reqKey{r.url, r.auth, name}, func() (metaEntry, error) {
 		start := time.Now()
-		e.versions, e.notFound, e.err = s.fetchMetadata(ctx, r.url+base+"maven-metadata.xml", r.auth)
+		versions, notFound, err := s.fetchMetadata(ctx, r.url+base+"maven-metadata.xml", r.auth)
 		slog.DebugContext(ctx, "maven metadata fetched", "name", name, "repository", r.url, "authenticated", r.auth != nil,
-			"versions", len(e.versions), "notFound", e.notFound, "duration", time.Since(start), "err", e.err)
+			"versions", len(versions), "notFound", notFound, "duration", time.Since(start), "err", err)
+		return metaEntry{versions: versions, notFound: notFound}, err
 	})
+	e.err = err
 	return e
 }
 
@@ -432,7 +425,7 @@ func decodeMetadata(b []byte) ([]string, error) {
 
 // pomTime HEADs the POM at path below repository r once per run.
 func (s *Source) pomTime(ctx context.Context, r repository, path string) (time.Time, error) {
-	return s.times.Do(reqKey{r.url, r.auth, path}, func() (time.Time, error) {
+	return s.times.Do(ctx, reqKey{r.url, r.auth, path}, func() (time.Time, error) {
 		u := r.url + path
 		resp, err := s.do(ctx, http.MethodHead, u, r.auth)
 		if err != nil {

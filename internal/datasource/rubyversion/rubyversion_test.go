@@ -2,6 +2,7 @@ package rubyversion
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -89,6 +90,28 @@ func TestReleases(t *testing.T) {
 	tag, _ := versioning.Get("tag")
 	if got, _ := tag.Best("3.4", cands, nil, nil); got != "4.0" {
 		t.Errorf("tag best from 3.4 = %q", got)
+	}
+}
+
+// A first caller whose context ended does not leave its error to the dependencies looked up
+// after it with a live context.
+func TestReleasesAfterCanceledCaller(t *testing.T) {
+	b, err := os.ReadFile("testdata/releases.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hits atomic.Int32
+	s := newSource(t, string(b), &hits)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := s.ReleaseTime(canceled, dep.Dep{}, "4.0.9"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled: err = %v, want context.Canceled", err)
+	}
+	if rs, err := s.Releases(t.Context(), dep.Dep{}, ""); err != nil || len(rs) == 0 {
+		t.Fatalf("live: %d releases, err %v", len(rs), err)
+	}
+	if hits.Load() != 1 {
+		t.Errorf("%d requests, want 1", hits.Load())
 	}
 }
 

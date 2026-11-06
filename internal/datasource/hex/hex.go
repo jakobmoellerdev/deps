@@ -129,7 +129,7 @@ func (s *Source) lookup(ctx context.Context, name string) (*pkg, error) {
 	if m == nil {
 		return nil, fmt.Errorf("invalid Hex package name %q (want name or name:organization)", name)
 	}
-	return s.pkgs.Do(name, func() (*pkg, error) {
+	return s.pkgs.Do(ctx, name, func() (*pkg, error) {
 		start := time.Now()
 		u := s.base + "/api/packages/" + url.PathEscape(m[1])
 		if m[2] != "" {

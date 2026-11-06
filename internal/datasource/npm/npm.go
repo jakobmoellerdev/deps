@@ -51,13 +51,14 @@ type Source struct {
 	sem    chan struct{}
 	getenv func(string) string
 
-	mu       sync.Mutex
-	packages map[string]*entry    // registry + "\x00" + name: abbreviated metadata
-	docs     map[string]*docEntry // registry + "\x00" + name: full packument
-	located  map[string]location  // file + "\x00" + name -> registry of the last Releases lookup
-	rcs      map[string]*rcEntry  // package.json directory -> effective .npmrc
-	wsDirs   map[string]*wsEntry  // package.json directory -> names of its workspace's packages
-	wsRoots  map[string]*wsEntry  // workspace root directory -> names of its packages
+	packages datasource.Memo[string, *metadata] // registry + "\x00" + name: abbreviated metadata (nil = failed)
+	docs     datasource.Memo[string, packument] // registry + "\x00" + name: full packument
+
+	mu      sync.Mutex
+	located map[string]location // file + "\x00" + name -> registry of the last Releases lookup
+	rcs     map[string]*rcEntry // package.json directory -> effective .npmrc
+	wsDirs  map[string]*wsEntry // package.json directory -> names of its workspace's packages
+	wsRoots map[string]*wsEntry // workspace root directory -> names of its packages
 }
 
 // location is the registry (with trailing slash) and token a dependency resolved against.
@@ -78,18 +79,6 @@ type packument struct {
 	repo  string               // top-level `repository` URL as published
 }
 
-type entry struct {
-	once sync.Once
-	metadata
-	err error
-}
-
-type docEntry struct {
-	once sync.Once
-	packument
-	err error
-}
-
 type rcEntry struct {
 	once sync.Once
 	rc   *npmrc
@@ -107,8 +96,8 @@ type wsEntry struct {
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) datasource.Datasource {
 	return &Source{
 		client: client, sem: sem, getenv: getenv,
-		packages: make(map[string]*entry), docs: make(map[string]*docEntry), located: make(map[string]location),
-		rcs: make(map[string]*rcEntry), wsDirs: make(map[string]*wsEntry), wsRoots: make(map[string]*wsEntry),
+		located: make(map[string]location),
+		rcs:     make(map[string]*rcEntry), wsDirs: make(map[string]*wsEntry), wsRoots: make(map[string]*wsEntry),
 	}
 }
 
@@ -136,23 +125,23 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 	s.mu.Lock()
 	s.located[d.File+"\x00"+d.Name] = loc
 	s.mu.Unlock()
-	e := s.load(ctx, loc, d.Name)
-	return e.rels, e.err
+	m, err := s.load(ctx, loc, d.Name)
+	if err != nil {
+		return nil, err
+	}
+	return m.rels, nil
 }
 
 // load returns the abbreviated metadata of name in loc's registry, fetched once per
-// (registry, name).
-func (s *Source) load(ctx context.Context, loc location, name string) *entry {
-	key := loc.reg + "\x00" + name
-	s.mu.Lock()
-	e := s.packages[key]
-	if e == nil {
-		e = &entry{}
-		s.packages[key] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() { e.metadata, e.err = s.fetchMetadata(ctx, loc, name) })
-	return e
+// (registry, name); nil on failure.
+func (s *Source) load(ctx context.Context, loc location, name string) (*metadata, error) {
+	return s.packages.Do(ctx, loc.reg+"\x00"+name, func() (*metadata, error) {
+		m, err := s.fetchMetadata(ctx, loc, name)
+		if err != nil {
+			return nil, err
+		}
+		return &m, nil
+	})
 }
 
 // locate returns the registry of package name: rc's, then NPM_CONFIG_REGISTRY, then the default.
@@ -174,11 +163,11 @@ func (s *Source) locate(rc *npmrc, name string) location {
 // ReleaseTime implements datasource.Timer from the full packument's `time` object. The
 // registry is the one of d's earlier Releases lookup (else NPM_CONFIG_REGISTRY or the default).
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
-	e := s.doc(ctx, d)
-	if e.err != nil {
-		return time.Time{}, e.err
+	p, err := s.doc(ctx, d)
+	if err != nil {
+		return time.Time{}, err
 	}
-	v, ok := e.times[version]
+	v, ok := p.times[version]
 	if !ok {
 		return time.Time{}, nil
 	}
@@ -235,45 +224,36 @@ func message(msg string) string {
 }
 
 // loaded returns the metadata of d's earlier Releases lookup, or nil when there was none or it
-// failed. Releases of d completed e.once before the engine asks, so e is complete.
-func (s *Source) loaded(d dep.Dep) *entry {
+// failed. Releases of d returned before the engine asks, so its result is shared by then.
+func (s *Source) loaded(d dep.Dep) *metadata {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	loc, ok := s.located[d.File+"\x00"+d.Name]
+	s.mu.Unlock()
 	if !ok {
 		return nil
 	}
-	if e := s.packages[loc.reg+"\x00"+d.Name]; e != nil && e.err == nil {
-		return e
-	}
-	return nil
+	m, _ := s.packages.Peek(loc.reg + "\x00" + d.Name)
+	return m
 }
 
 // SourceRepo implements datasource.SourceRepo with the full packument's top-level
 // `repository` (the latest version's).
 func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, error) {
-	e := s.doc(ctx, d)
-	return e.repo, e.err
+	p, err := s.doc(ctx, d)
+	return p.repo, err
 }
 
 // doc returns the full packument of d, fetched once per (registry, name), in the registry of
 // d's earlier Releases lookup (else NPM_CONFIG_REGISTRY or the default): ReleaseTime and
 // SourceRepo share the one request.
-func (s *Source) doc(ctx context.Context, d dep.Dep) *docEntry {
+func (s *Source) doc(ctx context.Context, d dep.Dep) (packument, error) {
 	s.mu.Lock()
 	loc, ok := s.located[d.File+"\x00"+d.Name]
+	s.mu.Unlock()
 	if !ok {
 		loc = s.locate(&npmrc{}, d.Name)
 	}
-	key := loc.reg + "\x00" + d.Name
-	e := s.docs[key]
-	if e == nil {
-		e = &docEntry{}
-		s.docs[key] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() { e.packument, e.err = s.fetch(ctx, loc, d.Name) })
-	return e
+	return s.docs.Do(ctx, loc.reg+"\x00"+d.Name, func() (packument, error) { return s.fetch(ctx, loc, d.Name) })
 }
 
 // Digest is unsupported: npm versions are not digest-pinned.

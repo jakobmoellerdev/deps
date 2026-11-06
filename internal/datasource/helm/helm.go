@@ -51,22 +51,15 @@ type Source struct {
 	oci    datasource.Datasource // lists OCI tags (the docker datasource)
 
 	mu      sync.Mutex
-	wanted  map[string]map[string]bool // classic repository URL -> charts asked for so far
-	indexes map[string]*index          // classic repository URL
-	charts  map[string]*chart          // repository + "\x00" + chart, for OCI and late classic lookups
+	wanted  map[string]map[string]bool       // classic repository URL -> charts asked for so far
+	indexes datasource.Memo[string, *index]  // classic repository URL
+	charts  datasource.Memo[string, *result] // repository + "\x00" + chart, for OCI and late classic lookups
 }
 
 // index is one scan of a classic repository's index.yaml.
 type index struct {
-	once   sync.Once
 	wanted map[string]bool // the charts the scan kept
 	charts map[string]*result
-	err    error
-}
-
-type chart struct {
-	once sync.Once
-	res  *result
 }
 
 // result is the releases of one chart, also converted for the engine.
@@ -93,7 +86,7 @@ func newResult(rels []Release, err error) *result {
 func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, oci datasource.Datasource) *Source {
 	return &Source{
 		client: client, sem: sem, auth: auth, oci: oci,
-		wanted: map[string]map[string]bool{}, indexes: map[string]*index{}, charts: map[string]*chart{},
+		wanted: map[string]map[string]bool{},
 	}
 }
 
@@ -174,25 +167,21 @@ func (s *Source) lookup(ctx context.Context, repo, chart string) *result {
 	case repo == "":
 		return &result{err: errors.New("no chart repository")}
 	case strings.HasPrefix(repo, ociScheme):
-		return s.once(repo, chart, func() *result { return s.ociChart(ctx, repo, chart) })
+		return s.once(ctx, repo, chart, func() *result { return s.ociChart(ctx, repo, chart) })
 	}
 	s.mu.Lock()
-	ix := s.indexes[repo]
-	if ix == nil {
-		ix = &index{}
-		s.indexes[repo] = ix
-	}
 	s.want(repo, chart)
 	s.mu.Unlock()
-	ix.once.Do(func() {
+	ix, err := s.indexes.Do(ctx, repo, func() (*index, error) {
 		s.mu.Lock()
-		ix.wanted = maps.Clone(s.wanted[repo])
+		wanted := maps.Clone(s.wanted[repo])
 		s.mu.Unlock()
-		ix.charts, ix.err = s.scan(ctx, repo, ix.wanted)
+		charts, err := s.scan(ctx, repo, wanted)
+		return &index{wanted: wanted, charts: charts}, err
 	})
 	if !ix.wanted[chart] {
 		// Asked for after the scan started: scan again for this chart alone.
-		return s.once(repo, chart, func() *result {
+		return s.once(ctx, repo, chart, func() *result {
 			charts, err := s.scan(ctx, repo, map[string]bool{chart: true})
 			if err != nil {
 				return &result{err: err}
@@ -200,24 +189,19 @@ func (s *Source) lookup(ctx context.Context, repo, chart string) *result {
 			return charts[chart]
 		})
 	}
-	if ix.err != nil {
-		return &result{err: ix.err}
+	if err != nil {
+		return &result{err: err}
 	}
 	return ix.charts[chart]
 }
 
 // once runs fetch once per (repo, chart).
-func (s *Source) once(repo, name string, fetch func() *result) *result {
-	key := repo + "\x00" + name
-	s.mu.Lock()
-	c := s.charts[key]
-	if c == nil {
-		c = &chart{}
-		s.charts[key] = c
-	}
-	s.mu.Unlock()
-	c.once.Do(func() { c.res = fetch() })
-	return c.res
+func (s *Source) once(ctx context.Context, repo, name string, fetch func() *result) *result {
+	r, _ := s.charts.Do(ctx, repo+"\x00"+name, func() (*result, error) {
+		r := fetch()
+		return r, r.err
+	})
+	return r
 }
 
 // scan fetches repo's index.yaml and returns the results of the wanted charts; a wanted chart

@@ -97,7 +97,7 @@ func (s *Source) lookup(ctx context.Context, name string) (*pkg, error) {
 	if !ok {
 		return nil, fmt.Errorf("invalid Elm package name %q (want author/project)", name)
 	}
-	return s.pkgs.Do(name, func() (*pkg, error) {
+	return s.pkgs.Do(ctx, name, func() (*pkg, error) {
 		start := time.Now()
 		u := s.base + "/packages/" + url.PathEscape(author) + "/" + url.PathEscape(project) + "/releases.json"
 		p := &pkg{times: map[string]time.Time{}}

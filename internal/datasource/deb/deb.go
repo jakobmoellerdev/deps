@@ -105,24 +105,22 @@ type Source struct {
 	auth   *httpx.Auth
 
 	mu      sync.Mutex
-	wanted  map[string]map[string]bool // component URL → package names asked for
-	indexes map[string]*index          // by component URL
+	wanted  map[string]map[string]bool      // component URL → package names asked for
+	indexes datasource.Memo[string, *index] // by component URL
 	late    datasource.Memo[string, []string]
 }
 
 // index is one scan of a component's package index.
 type index struct {
-	once   sync.Once
 	wanted map[string]bool
 	pkgs   map[string][]string // package → versions in index order, each once
-	err    error
 }
 
 // New returns the deb datasource. sem bounds concurrent requests (nil = unbounded); auth
 // supplies Basic credentials for the forge's host (a repository proxied by it); credentials in
 // a registry URL's userinfo are sent as Basic auth too.
 func New(client *http.Client, sem chan struct{}, auth *httpx.Auth) *Source {
-	return &Source{client: client, sem: sem, auth: auth, wanted: map[string]map[string]bool{}, indexes: map[string]*index{}}
+	return &Source{client: client, sem: sem, auth: auth, wanted: map[string]map[string]bool{}}
 }
 
 // Plan records the packages each component index will be asked for, so one scan keeps all of
@@ -201,24 +199,21 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 // lookup returns the versions of pkg in the component index comp; nil when it is not listed.
 func (s *Source) lookup(ctx context.Context, comp, pkg string) ([]string, error) {
 	s.mu.Lock()
-	ix := s.indexes[comp]
-	if ix == nil {
-		ix = &index{}
-		s.indexes[comp] = ix
-	}
 	s.want(comp, pkg)
 	s.mu.Unlock()
-	ix.once.Do(func() {
+	ix, err := s.indexes.Do(ctx, comp, func() (*index, error) {
 		s.mu.Lock()
-		ix.wanted = maps.Clone(s.wanted[comp])
+		ix := &index{wanted: maps.Clone(s.wanted[comp])}
 		s.mu.Unlock()
-		ix.pkgs, ix.err = s.scan(ctx, comp, ix.wanted)
+		var err error
+		ix.pkgs, err = s.scan(ctx, comp, ix.wanted)
+		return ix, err
 	})
 	if ix.wanted[pkg] {
-		return ix.pkgs[pkg], ix.err
+		return ix.pkgs[pkg], err
 	}
 	// Asked for after the scan started: scan again for this package alone.
-	return s.late.Do(comp+"\x00"+pkg, func() ([]string, error) {
+	return s.late.Do(ctx, comp+"\x00"+pkg, func() ([]string, error) {
 		pkgs, err := s.scan(ctx, comp, map[string]bool{pkg: true})
 		return pkgs[pkg], err
 	})

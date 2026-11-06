@@ -74,7 +74,7 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 	if target == "" || d.Source == "" {
 		return nil, fmt.Errorf("vcpkg: port %q without a registry", d.Name)
 	}
-	return s.ports.Do(target, func() ([]datasource.Release, error) { return s.fetch(ctx, target, d.Name) })
+	return s.ports.Do(ctx, target, func() ([]datasource.Release, error) { return s.fetch(ctx, target, d.Name) })
 }
 
 // Digest is unsupported: port versions are not digest-pinned.

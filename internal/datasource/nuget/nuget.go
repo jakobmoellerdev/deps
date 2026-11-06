@@ -113,7 +113,7 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (str
 	}
 	id := strings.ToLower(d.Name)
 	v := strings.ToLower(version)
-	repo, err := s.repos.Do(p.feed.url+"\x00"+id+"\x00"+v, func() (string, error) {
+	repo, err := s.repos.Do(ctx, p.feed.url+"\x00"+id+"\x00"+v, func() (string, error) {
 		var spec struct {
 			Repository struct {
 				URL string `xml:"url,attr"`
@@ -171,7 +171,7 @@ func v3(u string) bool {
 // lookup returns the listing of d's package merged over its feeds.
 func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 	id := strings.ToLower(d.Name)
-	return s.merged.Do(d.Source+"\x00"+id, func() (*pkg, error) {
+	return s.merged.Do(ctx, d.Source+"\x00"+id, func() (*pkg, error) {
 		var out *pkg
 		v2 := 0
 		feeds := s.feeds(d)
@@ -181,7 +181,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 				slog.DebugContext(ctx, "nuget v2 feed not read", "feed", httpx.Redact(f.url), "name", d.Name)
 				continue
 			}
-			p, err := s.pkgs.Do(f.url+"\x00"+id, func() (*pkg, error) { return s.fetch(ctx, f, id) })
+			p, err := s.pkgs.Do(ctx, f.url+"\x00"+id, func() (*pkg, error) { return s.fetch(ctx, f, id) })
 			if errors.Is(err, errNotFound) {
 				continue
 			}
@@ -223,7 +223,7 @@ var registrationTypes = []string{"RegistrationsBaseUrl/3.6.0", "RegistrationsBas
 
 // service reads the service index of f once.
 func (s *Source) service(ctx context.Context, f feed) (*service, error) {
-	return s.services.Do(f.url, func() (*service, error) {
+	return s.services.Do(ctx, f.url, func() (*service, error) {
 		var ix index
 		err := s.get(ctx, f, f.url, func(r io.Reader) error { return json.UnmarshalRead(r, &ix) })
 		if errors.Is(err, errNotFound) {

@@ -53,11 +53,7 @@ type Source struct {
 }
 
 // list is one loaded task list: lower-case task key → releases.
-type list struct {
-	once  sync.Once
-	tasks map[string][]datasource.Release
-	err   error
-}
+type list = datasource.Once[map[string][]datasource.Release]
 
 // New returns the azure-pipelines-tasks datasource. sem bounds concurrent requests (nil =
 // unbounded); getenv supplies DEPS_AZURE_PIPELINES_TASKS_URL, and DEPS_AZURE_DEVOPS_URL with
@@ -134,12 +130,12 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 }
 
 func (s *Source) load(ctx context.Context, l *list, fetch func(context.Context) (map[string][]datasource.Release, error)) (map[string][]datasource.Release, error) {
-	l.once.Do(func() {
+	return l.Do(ctx, func() (map[string][]datasource.Release, error) {
 		start := time.Now()
-		l.tasks, l.err = fetch(ctx)
-		slog.DebugContext(ctx, "azure pipelines tasks", "tasks", len(l.tasks), "duration", time.Since(start), "err", l.err)
+		tasks, err := fetch(ctx)
+		slog.DebugContext(ctx, "azure pipelines tasks", "tasks", len(tasks), "duration", time.Since(start), "err", err)
+		return tasks, err
 	})
-	return l.tasks, l.err
 }
 
 // fetchList reads a public task list, keeping the tasks in want (nil = all).

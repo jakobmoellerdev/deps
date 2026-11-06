@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
@@ -68,8 +67,8 @@ func (p *props) UnmarshalXML(dec *xml.Decoder, _ xml.StartElement) error {
 	}
 }
 
+// pomEntry is the POM at a path in one repository; err is the lookup's failure.
 type pomEntry struct {
-	once     sync.Once
 	pom      *pomXML
 	notFound bool
 	err      error
@@ -200,20 +199,14 @@ func (s *Source) findPOM(ctx context.Context, repos []repository, c coords) (*po
 	return nil, errors.Join(errs...)
 }
 
-func (s *Source) pomEntry(ctx context.Context, r repository, p string) *pomEntry {
-	k := reqKey{r.url, r.auth, p}
-	s.mu.Lock()
-	e := s.poms[k]
-	if e == nil {
-		e = &pomEntry{}
-		s.poms[k] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() {
+func (s *Source) pomEntry(ctx context.Context, r repository, p string) pomEntry {
+	e, err := s.poms.Do(ctx, reqKey{r.url, r.auth, p}, func() (pomEntry, error) {
 		u := r.url + p
-		e.pom, e.notFound, e.err = s.fetchPOM(ctx, u, r.auth)
-		slog.DebugContext(ctx, "maven pom fetched", "url", u, "authenticated", r.auth != nil, "notFound", e.notFound, "err", e.err)
+		pom, notFound, err := s.fetchPOM(ctx, u, r.auth)
+		slog.DebugContext(ctx, "maven pom fetched", "url", u, "authenticated", r.auth != nil, "notFound", notFound, "err", err)
+		return pomEntry{pom: pom, notFound: notFound}, err
 	})
+	e.err = err
 	return e
 }
 

@@ -151,7 +151,7 @@ func (s *Source) fetch(ctx context.Context, repo, name string) (*pkg, error) {
 	if isDefault(repo) {
 		return s.metadata(ctx, s.base+"/p2/"+name+".json", name)
 	}
-	r, err := s.repos.Do(repo, func() (*repository, error) { return s.index(ctx, repo) })
+	r, err := s.repos.Do(ctx, repo, func() (*repository, error) { return s.index(ctx, repo) })
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func (s *Source) fetch(ctx context.Context, repo, name string) (*pkg, error) {
 
 // metadata reads a Composer 2 metadata file (`p2/<name>.json`) once per URL.
 func (s *Source) metadata(ctx context.Context, target, name string) (*pkg, error) {
-	return s.pkgs.Do(target, func() (p *pkg, err error) {
+	return s.pkgs.Do(ctx, target, func() (p *pkg, err error) {
 		start := time.Now()
 		defer func() {
 			n := 0

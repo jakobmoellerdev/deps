@@ -317,7 +317,7 @@ var hrefRe = regexp.MustCompile(`(?i)<a\s[^>]*?href="([^"]+)"`)
 
 // list returns the subdirectories of the directory listing at u once per run.
 func (c *core) list(ctx context.Context, u string) (listing, error) {
-	return c.lists.Do(u, func() (listing, error) {
+	return c.lists.Do(ctx, u, func() (listing, error) {
 		release, err := httpx.Acquire(ctx, c.sem)
 		if err != nil {
 			return listing{}, err

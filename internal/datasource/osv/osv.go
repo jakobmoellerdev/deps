@@ -511,7 +511,7 @@ type vuln struct {
 
 // vuln fetches one advisory, once per ID.
 func (s *Source) vuln(ctx context.Context, id string) (*vuln, error) {
-	return s.vulns.Do(id, func() (*vuln, error) {
+	return s.vulns.Do(ctx, id, func() (*vuln, error) {
 		var v vuln
 		err := s.do(ctx, http.MethodGet, s.baseURL+"/v1/vulns/"+url.PathEscape(id), nil, &v)
 		slog.DebugContext(ctx, "osv vuln", "id", id, "withdrawn", v.Withdrawn != "", "err", err)

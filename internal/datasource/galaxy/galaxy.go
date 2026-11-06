@@ -150,7 +150,7 @@ func (s *Roles) lookup(ctx context.Context, name string) (*pkg, error) {
 	if !ok {
 		return nil, fmt.Errorf("invalid Galaxy role name %q (want namespace.name)", name)
 	}
-	return s.roles.Do(name, func() (*pkg, error) {
+	return s.roles.Do(ctx, name, func() (*pkg, error) {
 		start := time.Now()
 		u := s.base + "/api/v1/roles/?owner__username=" + url.QueryEscape(ns) + "&name=" + url.QueryEscape(n)
 		var body roleV1
@@ -227,7 +227,7 @@ func (s *Collections) SourceRepo(ctx context.Context, d dep.Dep, version string)
 		return "", err
 	}
 	srv := s.server(d)
-	return s.repos.Do([3]string{srv, d.Name, version}, func() (string, error) {
+	return s.repos.Do(ctx, [3]string{srv, d.Name, version}, func() (string, error) {
 		var v struct {
 			Metadata struct {
 				Repository string `json:"repository"`
@@ -252,7 +252,7 @@ func (s *Collections) server(d dep.Dep) string {
 // `available_versions.v3` of the API root, `<server>/api/` first unless server already names
 // an API path (`…/api/automation-hub/content/published`), then server itself.
 func (s *Collections) api(ctx context.Context, server string) (string, error) {
-	return s.apis.Do(server, func() (string, error) {
+	return s.apis.Do(ctx, server, func() (string, error) {
 		cands := []string{server + "/"}
 		if !strings.Contains(server+"/", "/api/") {
 			cands = []string{server + "/api/", server + "/"}
@@ -284,7 +284,7 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		return nil, fmt.Errorf("invalid Galaxy collection name %q (want namespace.name)", d.Name)
 	}
 	srv := s.server(d)
-	return s.colls.Do([2]string{srv, d.Name}, func() (*pkg, error) {
+	return s.colls.Do(ctx, [2]string{srv, d.Name}, func() (*pkg, error) {
 		start := time.Now()
 		api, err := s.api(ctx, srv)
 		if err != nil {

@@ -20,8 +20,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -54,32 +52,20 @@ type Source struct {
 	// repository's pull scope (registryScopes).
 	scopes map[string][]auth.Scope
 
-	mu      sync.Mutex
-	tags    map[string]*tagsEntry   // canonical repository
-	digests map[string]*digestEntry // canonical repository + ":" + tag
-	configs map[string]*configEntry // canonical repository + ":" + tag, or + "@" + digest
+	tags    datasource.Memo[string, tagListing]  // canonical repository
+	digests datasource.Memo[string, string]      // canonical repository + ":" + tag
+	configs datasource.Memo[string, imageConfig] // canonical repository + ":" + tag, or + "@" + digest
 }
 
-type tagsEntry struct {
-	once sync.Once
-	done atomic.Bool // set once rels, meta and err are final
+type tagListing struct {
 	rels []datasource.Release
 	meta map[string]tagMeta // tag → listed digest and time; nil unless the registry lists them
-	err  error
 }
 
-type digestEntry struct {
-	once   sync.Once
-	digest string
-	err    error
-}
-
-// configEntry is what deps keeps of a tag's image config: its creation time and source label.
-type configEntry struct {
-	once    sync.Once
+// imageConfig is what deps keeps of a tag's image config: its creation time and source label.
+type imageConfig struct {
 	created time.Time
 	source  string
-	err     error
 }
 
 // sourceLabel is the OCI annotation (and image label) naming the image's source repository.
@@ -189,9 +175,6 @@ func newSource(client *http.Client, sem chan struct{}, cred credentials.Credenti
 		pullLimited: hubRegistry,
 		challenger:  ch,
 		scopes:      registryScopes,
-		tags:        map[string]*tagsEntry{},
-		digests:     map[string]*digestEntry{},
-		configs:     map[string]*configEntry{},
 	}
 }
 
@@ -245,18 +228,11 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	e := s.tags[name]
-	if e == nil {
-		e = &tagsEntry{}
-		s.tags[name] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() {
-		e.rels, e.meta, e.err = s.list(ctx, name)
-		e.done.Store(true)
+	l, err := s.tags.Do(ctx, name, func() (tagListing, error) {
+		rels, meta, err := s.list(ctx, name)
+		return tagListing{rels, meta}, err
 	})
-	return e.rels, e.err
+	return l.rels, err
 }
 
 // listed returns what the finished tag listing of the canonical repository name says about
@@ -264,13 +240,8 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 // finished, or it lacks the tag. It never lists itself: the engine resolves non-version tags
 // (latest) without a listing.
 func (s *Source) listed(name, version string) tagMeta {
-	s.mu.Lock()
-	e := s.tags[name]
-	s.mu.Unlock()
-	if e == nil || !e.done.Load() {
-		return tagMeta{}
-	}
-	return e.meta[version]
+	l, _ := s.tags.Peek(name)
+	return l.meta[version]
 }
 
 // Digest returns the manifest digest ("sha256:…") of tag version: the index digest for
@@ -288,16 +259,7 @@ func (s *Source) Digest(ctx context.Context, d dep.Dep, version string) (string,
 
 // digest resolves the digest of tag in the canonical repository name once per run.
 func (s *Source) digest(ctx context.Context, name, tag string) (string, error) {
-	key := name + ":" + tag
-	s.mu.Lock()
-	e := s.digests[key]
-	if e == nil {
-		e = &digestEntry{}
-		s.digests[key] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() { e.digest, e.err = s.head(ctx, name, tag) })
-	return e.digest, e.err
+	return s.digests.Do(ctx, name+":"+tag, func() (string, error) { return s.head(ctx, name, tag) })
 }
 
 // ReleaseTime implements datasource.Timer with the time the tag listing gives (gcr.io,
@@ -311,8 +273,8 @@ func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 	if m := s.listed(name, version); !m.time.IsZero() {
 		return m.time, nil
 	}
-	e := s.config(ctx, name, version)
-	return e.created, e.err
+	c, err := s.config(ctx, name, version)
+	return c.created, err
 }
 
 // SourceRepo implements datasource.SourceRepo with the image's
@@ -323,38 +285,31 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (str
 	if err != nil {
 		return "", err
 	}
-	e := s.config(ctx, name, version)
-	return e.source, e.err
+	c, err := s.config(ctx, name, version)
+	return c.source, err
 }
 
 // config fetches the image config of tag version of the canonical repository name once per
 // (repository, tag). On the pull-limited registry the tag is first resolved with the HEAD that
 // Digest shares, which is free, and the config is fetched once per (repository, digest): tags
 // of one image (postgres:18 and postgres:18.6) cost one counted manifest GET.
-func (s *Source) config(ctx context.Context, name, version string) *configEntry {
+func (s *Source) config(ctx context.Context, name, version string) (imageConfig, error) {
 	key, ref := name+":"+version, version
 	if s.limitsPulls(name) {
 		dg, err := s.digest(ctx, name, version)
 		if err != nil {
-			return &configEntry{err: fmt.Errorf("image config %s: %w", key, err)}
+			return imageConfig{}, fmt.Errorf("image config %s: %w", key, err)
 		}
 		key, ref = name+"@"+dg, dg
 	}
-	s.mu.Lock()
-	e := s.configs[key]
-	if e == nil {
-		e = &configEntry{}
-		s.configs[key] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() {
-		e.created, e.source, e.err = s.fetchConfig(ctx, name, ref)
-		if e.err != nil {
-			e.err = s.pullLimitHint(name, fmt.Errorf("image config %s: %w", key, e.err))
+	return s.configs.Do(ctx, key, func() (imageConfig, error) {
+		created, source, err := s.fetchConfig(ctx, name, ref)
+		if err != nil {
+			err = s.pullLimitHint(name, fmt.Errorf("image config %s: %w", key, err))
 		}
-		slog.DebugContext(ctx, "image config fetched", "ref", key, "created", e.created, "source", e.source, "err", e.err)
+		slog.DebugContext(ctx, "image config fetched", "ref", key, "created", created, "source", source, "err", err)
+		return imageConfig{created, source}, err
 	})
-	return e
 }
 
 // limitsPulls reports whether the canonical repository name is on the pull-limited registry.

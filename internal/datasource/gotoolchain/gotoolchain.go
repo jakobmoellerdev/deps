@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
@@ -35,13 +34,8 @@ type Source struct {
 	url        string
 	historyURL string
 
-	once     sync.Once
-	releases []datasource.Release
-	err      error
-
-	historyOnce sync.Once
-	dates       map[string]time.Time
-	historyErr  error
+	releases datasource.Once[[]datasource.Release]
+	dates    datasource.Once[map[string]time.Time]
 }
 
 // New returns the go-toolchain datasource. sem bounds concurrent requests (nil = unbounded).
@@ -52,11 +46,11 @@ func New(client *http.Client, sem chan struct{}) datasource.Datasource {
 // Releases returns every stable "X.Y.Z" plus a derived "X.Y" per stable minor, so 2-part
 // go directives have 2-part candidates under tag versioning.
 func (s *Source) Releases(ctx context.Context, _ dep.Dep, _ string) ([]datasource.Release, error) {
-	s.once.Do(func() {
-		s.releases, s.err = s.fetch(ctx)
-		slog.DebugContext(ctx, "go toolchain releases", "url", s.url, "releases", len(s.releases), "err", s.err)
+	return s.releases.Do(ctx, func() ([]datasource.Release, error) {
+		rels, err := s.fetch(ctx)
+		slog.DebugContext(ctx, "go toolchain releases", "url", s.url, "releases", len(rels), "err", err)
+		return rels, err
 	})
-	return s.releases, s.err
 }
 
 // Digest is unsupported.
@@ -68,11 +62,12 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 // from Go's release history; a derived "X.Y" has the date of X.Y.0. A version missing from the
 // history is zero.
 func (s *Source) ReleaseTime(ctx context.Context, _ dep.Dep, version string) (time.Time, error) {
-	s.historyOnce.Do(func() {
-		s.dates, s.historyErr = s.history(ctx)
-		slog.DebugContext(ctx, "go release history", "url", s.historyURL, "releases", len(s.dates), "err", s.historyErr)
+	dates, err := s.dates.Do(ctx, func() (map[string]time.Time, error) {
+		dates, err := s.history(ctx)
+		slog.DebugContext(ctx, "go release history", "url", s.historyURL, "releases", len(dates), "err", err)
+		return dates, err
 	})
-	return s.dates[version], s.historyErr
+	return dates[version], err
 }
 
 // historyRe matches an entry of the history's Releases table, e.g.

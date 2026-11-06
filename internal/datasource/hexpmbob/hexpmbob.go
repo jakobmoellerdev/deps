@@ -107,7 +107,7 @@ func (s *Source) lookup(ctx context.Context, name string) (*list, error) {
 	default:
 		return nil, fmt.Errorf("invalid hexpm-bob name %q (want elixir or otp/<os>-<version>, e.g. otp/ubuntu-22.04)", name)
 	}
-	return s.lists.Do(name, func() (*list, error) {
+	return s.lists.Do(ctx, name, func() (*list, error) {
 		start := time.Now()
 		u := s.base + "/builds/" + name + "/builds.txt"
 		l := &list{times: map[string]time.Time{}}

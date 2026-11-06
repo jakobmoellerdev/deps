@@ -106,7 +106,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep, dir string) (*module, er
 	}
 	if len(regs) == 0 {
 		var err error
-		if regs, err = s.rcs.Do(ws, func() ([]string, error) {
+		if regs, err = s.rcs.Do(ctx, ws, func() ([]string, error) {
 			return readBazelrc(ws, datasource.RootOf(d.File, dir))
 		}); err != nil {
 			return nil, err
@@ -120,7 +120,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep, dir string) (*module, er
 		if reg = strings.TrimSuffix(reg, "/"); reg == DefaultURL {
 			reg = s.base // DEPS_BAZEL_REGISTRY_URL mirrors the BCR also where .bazelrc names it
 		}
-		m, err := s.modules.Do(reg+"\x00"+d.Name, func() (*module, error) { return s.fetch(ctx, root, reg, d.Name) })
+		m, err := s.modules.Do(ctx, reg+"\x00"+d.Name, func() (*module, error) { return s.fetch(ctx, root, reg, d.Name) })
 		if errors.Is(err, errNotFound) {
 			continue
 		}

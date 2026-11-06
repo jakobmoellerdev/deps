@@ -73,10 +73,11 @@ type Source struct {
 	getenv func(string) string
 	base   string // JSON API base URL without trailing slash
 
-	mu       sync.Mutex
-	projects map[string]*entry  // index ("" = PyPI JSON API) + "\x00" + normalized name
-	views    map[string]*entry  // indexes + "\x00" + normalized name + "\x00" + Python constraint
-	admits   map[[2]string]bool // (project Python, requires-python) -> every Python of the project admitted
+	projects datasource.Memo[string, project] // index ("" = PyPI JSON API) + "\x00" + normalized name
+	views    datasource.Memo[string, project] // indexes + "\x00" + normalized name + "\x00" + Python constraint
+
+	mu     sync.Mutex
+	admits map[[2]string]bool // (project Python, requires-python) -> every Python of the project admitted
 }
 
 // project is what deps keeps of a project document.
@@ -91,8 +92,8 @@ type project struct {
 	inactive bool
 }
 
+// entry is the outcome of fetching a project from one index.
 type entry struct {
-	once sync.Once
 	project
 	err error
 }
@@ -102,10 +103,8 @@ type entry struct {
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
 	return &Source{
 		client: client, sem: sem, getenv: getenv,
-		base:     strings.TrimSuffix(cmp.Or(getenv("DEPS_PYPI_URL"), DefaultURL), "/"),
-		projects: make(map[string]*entry),
-		views:    make(map[string]*entry),
-		admits:   make(map[[2]string]bool),
+		base:   strings.TrimSuffix(cmp.Or(getenv("DEPS_PYPI_URL"), DefaultURL), "/"),
+		admits: make(map[[2]string]bool),
 	}
 }
 
@@ -115,47 +114,38 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 // *dep.SkipError (pyreq.InRepository) for a dep a scanned pyproject.toml defines
 // (d.DefinedIn). The slice is shared between callers and must not be modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
-	e, err := s.view(ctx, d)
-	if err != nil {
-		return nil, err
-	}
-	if d.DefinedIn != "" && errors.Is(e.err, errNotFound) {
+	p, err := s.view(ctx, d)
+	if d.DefinedIn != "" && errors.Is(err, errNotFound) {
 		return nil, &dep.SkipError{Reason: pyreq.InRepository(d.DefinedIn)}
 	}
-	return e.rels, e.err
+	return p.rels, err
 }
 
 // ReleaseTime implements datasource.Timer with the earliest upload time of version's files on
 // any of d's indexes; zero when unknown.
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
-	e, err := s.view(ctx, d)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return e.times[versionKey(version)], e.err
+	p, err := s.view(ctx, d)
+	return p.times[versionKey(version)], err
 }
 
 // SourceRepo implements datasource.SourceRepo from the JSON API's `info.project_urls` and
 // `info.home_page` (of the first index that has them). They describe the latest release
 // whatever the version; simple indexes publish no project URLs, so their packages have none.
 func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, error) {
-	e, err := s.view(ctx, d)
-	if err != nil {
-		return "", err
-	}
-	return e.repo, e.err
+	p, err := s.view(ctx, d)
+	return p.repo, err
 }
 
 // Deprecation implements datasource.DeprecationSource from the JSON API: the project is
 // classified `Development Status :: 7 - Inactive`, or every file of version is yanked.
 func (s *Source) Deprecation(d dep.Dep, version string) string {
-	e, err := s.view(context.Background(), d) // built by the earlier Releases call
+	p, err := s.view(context.Background(), d) // built by the earlier Releases call
 	switch {
-	case err != nil || e.err != nil:
+	case err != nil:
 		return ""
-	case e.inactive:
+	case p.inactive:
 		return "project inactive (Development Status :: 7 - Inactive)"
-	case e.yanked[versionKey(version)]:
+	case p.yanked[versionKey(version)]:
 		return "version " + version + " yanked"
 	}
 	return ""
@@ -168,22 +158,15 @@ func (*Source) Digest(context.Context, dep.Dep, string) (string, error) {
 
 // view returns the project of d merged across its indexes and filtered by its Python
 // constraint, built once per (indexes, normalized name, constraint).
-func (s *Source) view(ctx context.Context, d dep.Dep) (*entry, error) {
+func (s *Source) view(ctx context.Context, d dep.Dep) (project, error) {
 	idxs, err := s.indexes(d)
 	if err != nil {
-		return nil, err
+		return project{}, err
 	}
 	name := pyreq.Normalize(d.Name)
 	key := strings.Join(idxs, "\n") + "\x00" + name + "\x00" + d.PythonConstraint
-	s.mu.Lock()
-	v := s.views[key]
-	if v == nil {
-		v = &entry{}
-		s.views[key] = v
-	}
-	s.mu.Unlock()
-	v.once.Do(func() {
-		es := make([]*entry, len(idxs))
+	return s.views.Do(ctx, key, func() (project, error) {
+		es := make([]entry, len(idxs))
 		if len(idxs) == 1 {
 			es[0] = s.project(ctx, idxs[0], d.Name, name)
 		} else {
@@ -193,40 +176,31 @@ func (s *Source) view(ctx context.Context, d dep.Dep) (*entry, error) {
 			}
 			wg.Wait()
 		}
-		v.project, v.err = merge(es)
-		if v.err == nil && d.PythonConstraint != "" {
-			v.project = s.filterPython(ctx, v.project, name, d.PythonConstraint)
+		p, err := merge(es)
+		if err == nil && d.PythonConstraint != "" {
+			p = s.filterPython(ctx, p, name, d.PythonConstraint)
 		}
+		return p, err
 	})
-	return v, nil
 }
 
 // project returns the fetched project normalized name (written is the dep name) on idx,
 // fetching it once per (index, normalized name).
-func (s *Source) project(ctx context.Context, idx, written, name string) *entry {
-	key := idx + "\x00" + name
-	s.mu.Lock()
-	e := s.projects[key]
-	if e == nil {
-		e = &entry{}
-		s.projects[key] = e
-	}
-	s.mu.Unlock()
-	e.once.Do(func() {
+func (s *Source) project(ctx context.Context, idx, written, name string) entry {
+	p, err := s.projects.Do(ctx, idx+"\x00"+name, func() (project, error) {
 		if idx == "" {
-			e.project, e.err = s.fetchJSON(ctx, written, name)
-		} else {
-			e.project, e.err = s.fetchSimple(ctx, idx, written, name)
+			return s.fetchJSON(ctx, written, name)
 		}
+		return s.fetchSimple(ctx, idx, written, name)
 	})
-	return e
+	return entry{p, err}
 }
 
 // merge unions the projects of es (in index order): each version once, as first listed, with
 // the earliest upload time; requires-python is kept from the first index listing the
 // version. An index without the project is skipped unless all are; any other error fails.
-func merge(es []*entry) (project, error) {
-	var found []*entry
+func merge(es []entry) (project, error) {
+	var found []entry
 	for _, e := range es {
 		switch {
 		case e.err == nil:

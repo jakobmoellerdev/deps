@@ -127,7 +127,7 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 // lookup returns the merged listing of d's package, merged once per dep source and package:
 // Releases and the ReleaseTime of every candidate share it.
 func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
-	return s.lookups.Do(d.Source+"\x00"+d.Name, func() (*pkg, error) { return s.merge(ctx, d) })
+	return s.lookups.Do(ctx, d.Source+"\x00"+d.Name, func() (*pkg, error) { return s.merge(ctx, d) })
 }
 
 // merge merges the listings of d's package in every repository of d.Source.
@@ -171,7 +171,7 @@ func (s *Source) find(ctx context.Context, base, name string) (*pkg, error) {
 	s.mu.Lock()
 	s.want(base, name)
 	s.mu.Unlock()
-	r, err := s.repos.Do(base, func() (*repo, error) {
+	r, err := s.repos.Do(ctx, base, func() (*repo, error) {
 		s.mu.Lock()
 		wanted := maps.Clone(s.wanted[base])
 		s.mu.Unlock()
@@ -184,7 +184,7 @@ func (s *Source) find(ctx context.Context, base, name string) (*pkg, error) {
 		return r.pkgs[name], nil
 	}
 	// Asked for after the scan started: scan again for this package alone.
-	return s.late.Do(base+"\x00"+name, func() (*pkg, error) {
+	return s.late.Do(ctx, base+"\x00"+name, func() (*pkg, error) {
 		r, err := s.fetch(ctx, base, map[string]bool{name: true})
 		if err != nil {
 			return nil, err

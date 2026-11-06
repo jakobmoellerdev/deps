@@ -129,7 +129,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 // by page (X-Next-Page), once per registry and package. package_name is a fuzzy match, so
 // only entries whose name equals name are kept (as Renovate).
 func (s *Source) fetch(ctx context.Context, api, project, name string) (*pkg, error) {
-	return s.pkgs.Do(api+"\x00"+project+"\x00"+name, func() (*pkg, error) {
+	return s.pkgs.Do(ctx, api+"\x00"+project+"\x00"+name, func() (*pkg, error) {
 		start := time.Now()
 		p := &pkg{times: map[string]time.Time{}}
 		u := api + "/projects/" + url.PathEscape(project) + "/packages?package_name=" + url.QueryEscape(name) + "&per_page=100"

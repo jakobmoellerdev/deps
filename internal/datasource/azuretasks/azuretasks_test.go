@@ -1,6 +1,8 @@
 package azuretasks
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -177,6 +179,28 @@ func TestOrganization(t *testing.T) {
 	invalid := New(srv.Client(), nil, env(map[string]string{"DEPS_AZURE_DEVOPS_URL": "http://[::1", "DEPS_AZURE_DEVOPS_TOKEN": "pat"}))
 	if _, err := invalid.Releases(t.Context(), dep.Dep{Name: "PowerShell"}, ""); err == nil {
 		t.Error("invalid URL: want error")
+	}
+}
+
+// A first caller whose context ended does not leave its error to the tasks looked up after it
+// with a live context.
+func TestPublicListsAfterCanceledCaller(t *testing.T) {
+	hits := map[string]*atomic.Int32{builtinFile: {}, marketplaceFile: {}}
+	srv := servePublic(t, hits)
+	s := New(srv.Client(), make(chan struct{}, 1), env(map[string]string{"DEPS_AZURE_PIPELINES_TASKS_URL": srv.URL + "/"}))
+	s.Plan([]dep.Dep{{Name: "Bash"}, {Name: "ReplaceTokens"}})
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := s.Releases(canceled, dep.Dep{Name: "Bash"}, ""); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled: err = %v, want context.Canceled", err)
+	}
+	for _, name := range []string{"Bash", "ReplaceTokens"} {
+		if rs, err := s.Releases(t.Context(), dep.Dep{Name: name}, ""); err != nil || len(rs) == 0 {
+			t.Errorf("%s: %d releases, err %v", name, len(rs), err)
+		}
+	}
+	if hits[builtinFile].Load() != 1 || hits[marketplaceFile].Load() != 1 {
+		t.Errorf("requests = %d builtin, %d marketplace; want 1 each", hits[builtinFile].Load(), hits[marketplaceFile].Load())
 	}
 }
 

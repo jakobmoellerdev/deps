@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
@@ -42,10 +41,13 @@ type Source struct {
 	sem    chan struct{}
 	url    string
 
-	once     sync.Once
+	index datasource.Once[index]
+}
+
+// index is the parsed manifest index.
+type index struct {
 	releases []datasource.Release
 	times    map[string]time.Time
-	err      error
 }
 
 // New returns the rust-version datasource. sem bounds concurrent requests (nil = unbounded);
@@ -59,19 +61,19 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 // release line, so a toolchain pinned to a line (`channel = "1.82"`) has candidates of its
 // precision under tag versioning.
 func (s *Source) Releases(ctx context.Context, _ dep.Dep, _ string) ([]datasource.Release, error) {
-	s.load(ctx)
-	return s.releases, s.err
+	ix, err := s.load(ctx)
+	return ix.releases, err
 }
 
 // ReleaseTime implements datasource.Timer with the date of the first manifest of version (a
 // manifest re-published later keeps its first date); a derived "X.Y" has the date of X.Y.0.
 // Zero when unknown.
 func (s *Source) ReleaseTime(ctx context.Context, _ dep.Dep, version string) (time.Time, error) {
-	s.load(ctx)
-	if s.err != nil {
-		return time.Time{}, s.err
+	ix, err := s.load(ctx)
+	if err != nil {
+		return time.Time{}, err
 	}
-	return s.times[version], nil
+	return ix.times[version], nil
 }
 
 // SourceRepo implements datasource.SourceRepo: every release is built from rust-lang/rust.
@@ -82,20 +84,22 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 	return "", datasource.UnsupportedDigest(Name, d)
 }
 
-func (s *Source) load(ctx context.Context) {
-	s.once.Do(func() {
+func (s *Source) load(ctx context.Context) (index, error) {
+	return s.index.Do(ctx, func() (index, error) {
 		start := time.Now()
-		s.err = datasource.GetStream(ctx, s.client, s.sem, s.url, s.read)
-		if s.err != nil {
-			s.releases, s.times = nil, nil
+		var ix index
+		err := datasource.GetStream(ctx, s.client, s.sem, s.url, ix.read)
+		if err != nil {
+			ix = index{}
 		}
-		slog.DebugContext(ctx, "rust releases", "url", s.url, "releases", len(s.releases), "duration", time.Since(start), "err", s.err)
+		slog.DebugContext(ctx, "rust releases", "url", s.url, "releases", len(ix.releases), "duration", time.Since(start), "err", err)
+		return ix, err
 	})
 }
 
 // read parses the manifest index, one URL per line.
-func (s *Source) read(r io.Reader) error {
-	s.times = map[string]time.Time{}
+func (ix *index) read(r io.Reader) error {
+	ix.times = map[string]time.Time{}
 	var derived []datasource.Release
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
@@ -104,26 +108,26 @@ func (s *Source) read(r io.Reader) error {
 			continue
 		}
 		version := m[2]
-		if _, seen := s.times[version]; seen {
+		if _, seen := ix.times[version]; seen {
 			continue // re-published manifest (1.8.0, 1.14.0): the first date is the release
 		}
 		t, _ := time.Parse(time.DateOnly, m[1])
-		s.releases = append(s.releases, datasource.Release{Version: version})
-		s.times[version] = t
+		ix.releases = append(ix.releases, datasource.Release{Version: version})
+		ix.times[version] = t
 		if !strings.Contains(version, "-") {
 			line := version[:strings.LastIndexByte(version, '.')]
-			if _, seen := s.times[line]; !seen {
+			if _, seen := ix.times[line]; !seen {
 				derived = append(derived, datasource.Release{Version: line})
-				s.times[line] = t
+				ix.times[line] = t
 			}
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return err
 	}
-	if len(s.releases) == 0 {
+	if len(ix.releases) == 0 {
 		return errors.New("no releases")
 	}
-	s.releases = append(s.releases, derived...)
+	ix.releases = append(ix.releases, derived...)
 	return nil
 }

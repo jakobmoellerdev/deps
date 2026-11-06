@@ -134,7 +134,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*product, error) {
 		base = f[0]
 	}
 	u := strings.TrimSuffix(base, "/") + "/" + url.PathEscape(d.Name) + ".json"
-	return s.products.Do(u, func() (*product, error) {
+	return s.products.Do(ctx, u, func() (*product, error) {
 		start := time.Now()
 		p, err := s.fetch(ctx, u)
 		slog.DebugContext(ctx, "endoflife.date cycles", "url", u, "releases", len(p.rels), "duration", time.Since(start), "err", err)

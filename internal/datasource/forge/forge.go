@@ -240,7 +240,7 @@ func (s *Source) list(ctx context.Context, d dep.Dep) (*list, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.lists.Do(r, func() (*list, error) { return s.fetch(ctx, r) })
+	return s.lists.Do(ctx, r, func() (*list, error) { return s.fetch(ctx, r) })
 }
 
 // api returns the URL of the repository's release or tag list, plus suffix (a single tag).
