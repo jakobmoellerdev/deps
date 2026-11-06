@@ -215,7 +215,7 @@ custom:
 - `asset` (github-releases only): the release asset's API `digest` from the already-fetched release list (no extra request);
 - `url`: a checksum document downloaded once per URL (streamed, 1 MiB cap); with `file`, the entry is looked up in a sha256sum-style list (`<hex>  <name>` / `<hex> *<name>`), else the first hex token is taken.
 
-The only template variable is `{{version}}` (the new version as written into the file), validated at load. sha256 (64 hex) and sha512 (128 hex) are accepted; the new checksum must have the current length and keeps its letter case. The checksum is fetched only after an update is chosen; a failure is that dependency's error (no update), so version and checksum always change together.
+The only template variable is `{{version}}` (the new version as written into the file), validated at load. sha256 (64 hex) and sha512 (128 hex) are accepted; the new checksum must have the current length and keeps its letter case. The checksum is fetched only after an update is chosen; a failure drops that update (trace reason `no checksum`), so version and checksum always change together, and the dependency's other updates (another PR bucket whose release has the asset) stay. When no update is left, the first failure is the dependency's error.
 
 ```yaml
 custom:

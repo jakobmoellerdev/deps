@@ -1338,6 +1338,9 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		return nil, err
 	}
 
+	// A checksum failure drops only that update: another bucket's release may carry the asset.
+	var csErr error
+	kept := ups[:0]
 	for i := range ups {
 		up := &ups[i]
 		if up.Type != dep.Digest && up.Type != dep.Pin && wantDigest {
@@ -1347,9 +1350,20 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		}
 		if d.ChecksumSource != nil && up.NewVersion != d.Version {
 			if up.NewChecksum, err = r.checksumOf(up.NewVersion); err != nil {
-				return nil, err
+				if csErr == nil {
+					csErr = err
+				}
+				if reject != nil {
+					reject(up.NewVersion, "no checksum")
+				}
+				continue
 			}
 		}
+		kept = append(kept, *up)
+	}
+	ups = kept
+	if len(ups) == 0 && csErr != nil {
+		return nil, csErr
 	}
 	if len(ups) == 0 && r.renamed != "" {
 		return nil, &dep.SkipError{Reason: r.renamed}

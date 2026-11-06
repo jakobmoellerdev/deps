@@ -132,3 +132,37 @@ rules: [{names: [o/fail], allow: '< 2'}]
 		})
 	}
 }
+
+// A release without the checksum asset drops only its own update: the lower bucket stays.
+func TestResolveChecksumPerUpdate(t *testing.T) {
+	h1, h2 := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	const cfgYAML = `custom:
+  - files: [Dockerfile]
+    match: 'ARG (?P<name>[\w/]+)_VERSION=(?P<version>\S+)\nARG \w+_SHA256=(?P<checksum>[0-9a-fA-F]+)'
+    datasource: github-releases
+    checksum: {url: 'https://x/{{version}}/sums'}
+`
+	root, cfg := setup(t, cfgYAML, map[string]string{"Dockerfile": "ARG o/x_VERSION=1.0.0\nARG X_SHA256=" + h1 + "\n"})
+	ms, err := Managers(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rejected map[string][]string
+	o := Options{Managers: ms, Datasources: map[string]Datasource{"github-releases": fakeReleases{"2.0.0", "1.1.0", "1.0.0"}},
+		Checksums: &fakeChecksums{sums: map[string]string{"1.1.0": h2}},
+		Trace:     func(tr Trace) { rejected = tr.Rejected }}
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, u := range res.Updates {
+		got = append(got, u.NewVersion+" "+u.NewChecksum)
+	}
+	if want := "1.1.0 " + h2; strings.Join(got, "|") != want || len(res.Errors) != 0 {
+		t.Errorf("updates = %q, errors = %v; want %q, none", got, res.Errors, want)
+	}
+	if vs := rejected["no checksum"]; len(vs) != 1 || vs[0] != "2.0.0" {
+		t.Errorf("rejected = %v, want no checksum: [2.0.0]", rejected)
+	}
+}
