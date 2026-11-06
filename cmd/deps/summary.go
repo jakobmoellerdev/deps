@@ -497,9 +497,6 @@ func summaryPath(getenv func(string) string) string {
 // if the runner provides one.
 func (s *summary) write(stderr io.Writer) {
 	s.writeText(stderr)
-	if s.Repository == "" {
-		s.writeMachine(stderr, s.Report)
-	}
 	appendStepSummary(stderr, s.markdownFit)
 }
 

@@ -437,6 +437,10 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 		multi.add(&sum)
 	}
 	sum.write(stderr)
+	var reportErr error
+	if multi == nil {
+		reportErr = sum.writeMachine(stderr, sum.Report)
+	}
 	fmt.Fprintf(stderr, "%d created, %d updated, %d closed, %d up-to-date, %d skipped, %d automerge, %d errors", n.created, n.updated, n.closed, n.upToDate, n.skipped, n.automerged, nErr)
 	if r.dryRun {
 		fmt.Fprintf(stderr, " (dry run: %d would change, %d would automerge)", n.would, n.wouldAutomerge)
@@ -445,7 +449,7 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 	if nErr > 0 {
 		return errReported
 	}
-	return nil
+	return reportErr
 }
 
 // validateRepositories checks the --repositories entries: owner/name, or owner/<glob> with
@@ -576,12 +580,12 @@ func runRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runO
 		}
 	}
 	actionsLog.setRepo("")
-	multi.write(stderr, o.report, time.Since(start))
+	reportErr := multi.write(stderr, o.report, time.Since(start))
 	fmt.Fprintf(stderr, "%d repositories, %d failed\n", len(names), failed)
 	if failed > 0 {
 		return errReported
 	}
-	return nil
+	return reportErr
 }
 
 // gitAuthHeader is the http.extraheader that authenticates git with token as Basic

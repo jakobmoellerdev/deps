@@ -56,6 +56,19 @@ func TestPlanReportAndOutputs(t *testing.T) {
 	}
 }
 
+func TestPlanReportWriteFailureExits1(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{".github/workflows/ci.yml": workflow, "go.mod": gomodSrc})
+	report := filepath.Join(t.TempDir(), "missing", "x.json")
+
+	_, stderr, code := execute(t, "plan", "--dir", dir, "--report", report)
+	if code != 1 || !strings.Contains(stderr, "deps: report: ") {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+}
+
 func TestReportUnusedRules(t *testing.T) {
 	res := summaryFixture()
 	s := summary{Command: "plan", Res: res, Unused: []int{1, 3}}

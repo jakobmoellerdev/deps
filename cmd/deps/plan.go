@@ -170,6 +170,7 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, Elapsed: time.Since(start), ShowSkipped: o.showSkipped,
 		Unused: s.cfg.UnusedRules(res.Deps), Config: s.cfg, Report: o.report, Style: o.term.style}
 	sum.write(stderr)
+	reportErr := sum.writeMachine(stderr, o.report)
 	files := map[string]bool{}
 	for _, u := range res.Updates {
 		files[u.Dep.File] = true
@@ -178,7 +179,7 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	if len(errs) > 0 {
 		return errReported
 	}
-	return nil
+	return reportErr
 }
 
 // report prints update, skip (--show-skipped) and error lines. separate (nil for run) marks the

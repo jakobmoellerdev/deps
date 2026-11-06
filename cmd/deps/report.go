@@ -240,16 +240,19 @@ func kebab(s string) string {
 }
 
 // writeMachine writes the --report file and the step outputs, reporting failures on stderr.
-func (s *summary) writeMachine(stderr io.Writer, reportPath string) {
-	writeMachine(stderr, reportPath, func() any { return s.report() }, s.counts())
+func (s *summary) writeMachine(stderr io.Writer, reportPath string) error {
+	return writeMachine(stderr, reportPath, func() any { return s.report() }, s.counts())
 }
 
 // writeMachine writes the --report document doc() to reportPath ("" = none) and the counts c
-// as step outputs, reporting failures on stderr.
-func writeMachine(stderr io.Writer, reportPath string, doc func() any, c map[string]int) {
+// as step outputs, reporting failures on stderr. A failed report write returns errReported: the
+// file was asked for explicitly, so later steps would fail on it; step outputs stay best effort.
+func writeMachine(stderr io.Writer, reportPath string, doc func() any, c map[string]int) error {
+	var failed error
 	if reportPath != "" {
 		if err := writeJSON(reportPath, doc()); err != nil {
 			fmt.Fprintf(stderr, "deps: report: %v\n", err)
+			failed = errReported
 		}
 	}
 	if p := os.Getenv("GITHUB_OUTPUT"); p != "" {
@@ -257,6 +260,7 @@ func writeMachine(stderr io.Writer, reportPath string, doc func() any, c map[str
 			fmt.Fprintf(stderr, "deps: step outputs: %v\n", err)
 		}
 	}
+	return failed
 }
 
 // jsonMultiReport is the --report document of a multi-repository run (run --repositories):
@@ -295,7 +299,7 @@ func (m *multiRun) fail(repo string, err error) {
 }
 
 // write writes the report to reportPath and the summed counts as step outputs.
-func (m *multiRun) write(stderr io.Writer, reportPath string, elapsed time.Duration) {
+func (m *multiRun) write(stderr io.Writer, reportPath string, elapsed time.Duration) error {
 	m.report.DurationMS = elapsed.Milliseconds()
-	writeMachine(stderr, reportPath, func() any { return m.report }, m.report.Counts)
+	return writeMachine(stderr, reportPath, func() any { return m.report }, m.report.Counts)
 }
