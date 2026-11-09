@@ -1,0 +1,191 @@
+apiVersion: v1
+entries:
+  cert-manager:
+  - annotations:
+      artifacthub.io/category: security
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/signKey: |
+        fingerprint: 1020CF3C033D4F35BAE1C19E1226061C665DF13E
+        url: https://cert-manager.io/public-keys/cert-manager-keyring-2021-09-20-1020CF3C033D4F35BAE1C19E1226061C665DF13E.gpg
+    apiVersion: v2
+    appVersion: v1.21.3
+    created: "2026-10-23T20:38:37.170655495Z"
+    description: A Helm chart for cert-manager
+    digest: 9ec67938b2981d8b333af61b3fcf53e26b4f6f5deb7ccda3de4ea116bb373a17
+    home: https://cert-manager.io
+    icon: https://raw.githubusercontent.com/cert-manager/community/4d35a69437d21b76322157e6284be4cd64e6d2b7/logo/logo-small.png
+    keywords:
+    - cert-manager
+    - kube-lego
+    - letsencrypt
+    - tls
+    kubeVersion: '>= 1.22.0-0'
+    maintainers:
+    - email: cert-manager-maintainers@googlegroups.com
+      name: cert-manager-maintainers
+      url: https://cert-manager.io
+    name: cert-manager
+    sources:
+    - https://github.com/cert-manager/cert-manager
+    urls:
+    - charts/cert-manager-v1.21.3.tgz
+    version: v1.21.3
+  - annotations:
+      artifacthub.io/category: security
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/signKey: |
+        fingerprint: 1020CF3C033D4F35BAE1C19E1226061C665DF13E
+        url: https://cert-manager.io/public-keys/cert-manager-keyring-2021-09-20-1020CF3C033D4F35BAE1C19E1226061C665DF13E.gpg
+    apiVersion: v2
+    appVersion: v1.21.2
+    created: "2026-09-11T06:54:32.855312301Z"
+    description: A Helm chart for cert-manager
+    digest: 73a56e1728edd6c99f1f31082618c3259d279a76b7ebd3d4bdc5475c2442d34a
+    home: https://cert-manager.io
+    icon: https://raw.githubusercontent.com/cert-manager/community/4d35a69437d21b76322157e6284be4cd64e6d2b7/logo/logo-small.png
+    keywords:
+    - cert-manager
+    - kube-lego
+    - letsencrypt
+    - tls
+    kubeVersion: '>= 1.22.0-0'
+    maintainers:
+    - email: cert-manager-maintainers@googlegroups.com
+      name: cert-manager-maintainers
+      url: https://cert-manager.io
+    name: cert-manager
+    sources:
+    - https://github.com/cert-manager/cert-manager
+    urls:
+    - charts/cert-manager-v1.21.2.tgz
+    version: v1.21.2
+  - annotations:
+      artifacthub.io/category: security
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/signKey: |
+        fingerprint: 1020CF3C033D4F35BAE1C19E1226061C665DF13E
+        url: https://cert-manager.io/public-keys/cert-manager-keyring-2021-09-20-1020CF3C033D4F35BAE1C19E1226061C665DF13E.gpg
+    apiVersion: v2
+    appVersion: v1.21.1
+    created: "2026-07-29T14:46:40.693256598Z"
+    description: A Helm chart for cert-manager
+    digest: c27101f3f3e2349fb4a9e704316105bf7b52ad73b8c8257d3498ef7f2f6a4adc
+    home: https://cert-manager.io
+    icon: https://raw.githubusercontent.com/cert-manager/community/4d35a69437d21b76322157e6284be4cd64e6d2b7/logo/logo-small.png
+    keywords:
+    - cert-manager
+    - kube-lego
+    - letsencrypt
+    - tls
+    kubeVersion: '>= 1.22.0-0'
+    maintainers:
+    - email: cert-manager-maintainers@googlegroups.com
+      name: cert-manager-maintainers
+      url: https://cert-manager.io
+    name: cert-manager
+    sources:
+    - https://github.com/cert-manager/cert-manager
+    urls:
+    - charts/cert-manager-v1.21.1.tgz
+    version: v1.21.1
+  trust-manager:
+  - annotations:
+      artifacthub.io/category: security
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/recommendations: |
+        - url: https://artifacthub.io/packages/helm/cert-manager/cert-manager
+    apiVersion: v2
+    appVersion: v0.26.0
+    created: "2026-10-27T12:08:29.70226506Z"
+    description: trust-manager is the easiest way to manage TLS trust bundles in Kubernetes
+      and OpenShift clusters
+    digest: 9230abdfe42580c7dd2996432d1bf6a2521b659a7f38e26c3b9a91e8033ea5b6
+    home: https://cert-manager.io/docs/trust/trust-manager
+    icon: https://raw.githubusercontent.com/cert-manager/community/4d35a69437d21b76322157e6284be4cd64e6d2b7/logo/logo-small.png
+    keywords:
+    - trust-manager
+    - cert-manager
+    - tls
+    - trust bundle
+    - trust anchor
+    kubeVersion: '>= 1.25.0-0'
+    maintainers:
+    - email: cert-manager-maintainers@googlegroups.com
+      name: cert-manager-maintainers
+      url: https://cert-manager.io
+    name: trust-manager
+    sources:
+    - https://github.com/cert-manager/trust-manager
+    type: application
+    urls:
+    - charts/trust-manager-v0.26.0.tgz
+    version: v0.26.0
+  - annotations:
+      artifacthub.io/category: security
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/recommendations: |
+        - url: https://artifacthub.io/packages/helm/cert-manager/cert-manager
+    apiVersion: v2
+    appVersion: v0.25.0
+    created: "2026-09-11T17:04:54.527785043Z"
+    description: trust-manager is the easiest way to manage TLS trust bundles in Kubernetes
+      and OpenShift clusters
+    digest: b271163e34fdf5c0894e56e568f3616c0db3a02d7ea5a8f9bcfd42f9f3e111f0
+    home: https://cert-manager.io/docs/trust/trust-manager
+    icon: https://raw.githubusercontent.com/cert-manager/community/4d35a69437d21b76322157e6284be4cd64e6d2b7/logo/logo-small.png
+    keywords:
+    - trust-manager
+    - cert-manager
+    - tls
+    - trust bundle
+    - trust anchor
+    kubeVersion: '>= 1.25.0-0'
+    maintainers:
+    - email: cert-manager-maintainers@googlegroups.com
+      name: cert-manager-maintainers
+      url: https://cert-manager.io
+    name: trust-manager
+    sources:
+    - https://github.com/cert-manager/trust-manager
+    type: application
+    urls:
+    - charts/trust-manager-v0.25.0.tgz
+    version: v0.25.0
+  - annotations:
+      artifacthub.io/category: security
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/recommendations: |
+        - url: https://artifacthub.io/packages/helm/cert-manager/cert-manager
+    apiVersion: v2
+    appVersion: v0.24.0
+    created: "2026-07-01T14:58:21.664015388Z"
+    description: trust-manager is the easiest way to manage TLS trust bundles in Kubernetes
+      and OpenShift clusters
+    digest: 0de4bbef2d1a013bd4a91c6f59a9cb0273dda9a785e018a9a16e8f2b096af823
+    home: https://cert-manager.io/docs/trust/trust-manager
+    icon: https://raw.githubusercontent.com/cert-manager/community/4d35a69437d21b76322157e6284be4cd64e6d2b7/logo/logo-small.png
+    keywords:
+    - trust-manager
+    - cert-manager
+    - tls
+    - trust bundle
+    - trust anchor
+    kubeVersion: '>= 1.25.0-0'
+    maintainers:
+    - email: cert-manager-maintainers@googlegroups.com
+      name: cert-manager-maintainers
+      url: https://cert-manager.io
+    name: trust-manager
+    sources:
+    - https://github.com/cert-manager/trust-manager
+    type: application
+    urls:
+    - charts/trust-manager-v0.24.0.tgz
+    version: v0.24.0
+generated: "2021-04-28T15:22:46.833256826+01:00"

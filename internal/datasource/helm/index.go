@@ -25,10 +25,10 @@ type indexVersion struct {
 // every other chart is skipped line by line without being parsed or kept. Index files are
 // written by `helm repo index` in block style: `entries:` at column 0, one key per chart at a
 // common indentation, its version list below. Only the lines of a wanted chart are buffered and
-// decoded. A JSON (flow style) index is decoded whole. Versions without download URLs are
-// dropped: Helm lists them but cannot fetch them (`helm dependency update` and `helm pull`
-// fail with "has no downloadable URLs"), so an update to one could not be applied. Renovate
-// keeps them.
+// decoded (see decodeChart). A JSON (flow style) index is decoded whole. Versions without
+// download URLs are dropped: Helm lists them but cannot fetch them (`helm dependency update` and
+// `helm pull` fail with "has no downloadable URLs"), so an update to one could not be applied.
+// Renovate keeps them.
 func scanIndex(r io.Reader, wanted map[string]bool) (map[string][]Release, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
 	if first, err := firstByte(br); err != nil {
@@ -156,8 +156,17 @@ func chartKey(content []byte) string {
 	return string(k)
 }
 
-// decodeChart decodes one captured `name:` block of entries.
+// decodeChart decodes one captured `name:` block of entries: with scanChart when it is laid out
+// as `helm repo index` writes it, else as YAML.
 func decodeChart(block []byte, chart string) ([]Release, error) {
+	if rels, ok := scanChart(block, chart); ok {
+		return rels, nil
+	}
+	return decodeChartYAML(block, chart)
+}
+
+// decodeChartYAML decodes a chart block as YAML.
+func decodeChartYAML(block []byte, chart string) ([]Release, error) {
 	var m map[string][]indexVersion
 	if err := yaml.Unmarshal(block, &m); err != nil {
 		return nil, err
