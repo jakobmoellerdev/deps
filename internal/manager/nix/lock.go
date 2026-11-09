@@ -22,12 +22,16 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
+// nixpkgsRepo is the repository of the NixOS channels and of nixpkgs-versioned inputs.
+const nixpkgsRepo = "https://github.com/NixOS/nixpkgs"
+
 var (
-	// channelRe matches a NixOS channel tarball. Its commit lags the nixpkgs branch of the
-	// same name until Hydra passes, so it is no git-refs dep.
-	channelRe = regexp.MustCompile(`^https://(?:channels\.nixos\.org|nixos\.org/channels)/[^/]+/nixexprs\.tar\.(?:xz|zst|bz2|gz)$`)
+	// channelRe matches a NixOS channel tarball; the channel is named like the nixpkgs branch
+	// it follows.
+	channelRe = regexp.MustCompile(`^https://(?:channels\.nixos\.org|nixos\.org/channels)/([^/]+)/nixexprs\.tar\.(?:xz|zst|bz2|gz)$`)
 	// archiveRe matches a forge archive tarball (`https://<host>/<owner>/<repo>/archive/<ref>.tar.gz`).
 	archiveRe = regexp.MustCompile(`^https://([^/]+)/([^/]+)/([^/]+)/archive/.+\.tar\.gz$`)
 	// inputNameRe matches the input names `nix flake update` accepts (Nix's flakeIdRegex): it
@@ -134,7 +138,8 @@ func (l *flakeLock) resolve(d *dep.Dep) {
 		return
 	}
 	source, ref, pin, skip := origin(o)
-	if skip == "" && lk.Rev == "" {
+	channel := channelOf(o) != ""
+	if skip == "" && lk.Rev == "" && !channel {
 		skip = skipNoRev
 	}
 	if skip != "" {
@@ -149,6 +154,17 @@ func (l *flakeLock) resolve(d *dep.Dep) {
 	if d.Digest != pin {
 		d.DigestSpan = dep.Span{}
 	}
+	if channel {
+		// A channel advances only after Hydra passes, so its commit lags the nixpkgs branch of
+		// the same name and `nix flake update` never reaches the branch's head: no digest. A
+		// release channel moves to the next release (nixpkgs versioning) by its name in the URL.
+		if d.RefSpan == (dep.Span{}) || !versioning.NixpkgsRelease(ref) {
+			d.Skip = skipChannel
+			return
+		}
+		d.Datasource, d.Versioning, d.Digest = dsRefs, versioning.Nixpkgs, ""
+		return
+	}
 	written := ref
 	tag := false
 	if t, ok := strings.CutPrefix(ref, "refs/tags/"); ok {
@@ -159,12 +175,16 @@ func (l *flakeLock) resolve(d *dep.Dep) {
 	if d.RefSpan != (dep.Span{}) {
 		d.RefSpan.Start += len(written) - len(ref)
 	}
-	if tag || validTag(ref) {
+	switch {
+	case tag || validTag(ref):
 		d.Datasource, d.Version = dsTags, ref
 		if d.RefSpan == (dep.Span{}) {
 			d.Skip = skipRefSpan
 		}
-	} else {
+	case d.RefSpan != (dep.Span{}) && strings.EqualFold(source, nixpkgsRepo) && nixpkgsBranch(ref):
+		// A branch of NixOS/nixpkgs written verbatim moves to the next release branch.
+		d.Datasource, d.Version, d.Versioning = dsRefs, ref, versioning.Nixpkgs
+	default:
 		d.Datasource, d.Version, d.RefSpan = dsRefs, cmp.Or(ref, defaultBranch), dep.Span{}
 	}
 	if pin == "" {
@@ -179,6 +199,24 @@ func (l *flakeLock) resolve(d *dep.Dep) {
 	if d.DigestSpan == (dep.Span{}) && d.Skip == "" {
 		d.Skip = skipRevSpan
 	}
+}
+
+// channelOf returns the channel of a NixOS channel tarball reference, "" for other references.
+func channelOf(o *flakeRef) string {
+	if o.Type != "tarball" {
+		return ""
+	}
+	if m := channelRe.FindStringSubmatch(strings.TrimPrefix(o.URL, "tarball+")); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// nixpkgsBranch reports whether ref is a branch nixpkgs versioning orders (`nixos-24.05`,
+// `nixpkgs-unstable`).
+func nixpkgsBranch(ref string) bool {
+	s, _ := versioning.Get(versioning.Nixpkgs)
+	return s.Valid(ref)
 }
 
 // origin returns the https repository URL of an original flake reference, the ref it tracks
@@ -204,10 +242,10 @@ func origin(o *flakeRef) (source, ref, pin, skip string) {
 		}
 		return source, o.Ref, o.Rev, ""
 	case "tarball":
-		u := strings.TrimPrefix(o.URL, "tarball+")
-		if channelRe.MatchString(u) {
-			return "", "", "", skipChannel
+		if ch := channelOf(o); ch != "" {
+			return nixpkgsRepo, ch, "", ""
 		}
+		u := strings.TrimPrefix(o.URL, "tarball+")
 		m := archiveRe.FindStringSubmatch(u)
 		if m == nil {
 			return "", "", "", skipTarball

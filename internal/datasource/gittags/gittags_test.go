@@ -18,6 +18,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 func pkts(lines ...string) string {
@@ -573,6 +574,44 @@ func TestRefsDigestV2(t *testing.T) {
 		pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix refs/tags/\n", "ref-prefix HEAD\n", "0000"),
 	}
 	if !reflect.DeepEqual(bodies, want) {
+		t.Errorf("ls-refs bodies = %q, want %q", bodies, want)
+	}
+}
+
+// TestRefsReleasesNixpkgs: a dep under nixpkgs versioning gets the branches as releases (HEAD
+// left out) from the listing Digest shares: one ls-refs for both, and no tag listing.
+func TestRefsReleasesNixpkgs(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			io.WriteString(w, pkts(serviceHeader, "0000", "version 2\n", "ls-refs\n", "0000"))
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(body))
+		io.WriteString(w, pkts(
+			"1111111111111111111111111111111111111111 HEAD\n",
+			"1111111111111111111111111111111111111111 refs/heads/master\n",
+			"2222222222222222222222222222222222222222 refs/heads/nixos-24.05\n",
+			"3333333333333333333333333333333333333333 refs/heads/nixos-24.11\n",
+			"0000"))
+	}))
+	defer srv.Close()
+	refs := newLister(t, srv, nil).Refs()
+	d := dep.Dep{Source: srv.URL + "/NixOS/nixpkgs", Version: "nixos-24.05", Versioning: versioning.Nixpkgs}
+	rels, err := refs.Releases(t.Context(), d, "")
+	want := []datasource.Release{
+		{Version: "master", Digest: strings.Repeat("1", 40)},
+		{Version: "nixos-24.05", Digest: strings.Repeat("2", 40)},
+		{Version: "nixos-24.11", Digest: strings.Repeat("3", 40)},
+	}
+	if err != nil || !reflect.DeepEqual(rels, want) {
+		t.Errorf("Releases = %+v, %v; want the branches", rels, err)
+	}
+	if got, err := refs.Digest(t.Context(), d, "nixos-24.11"); err != nil || got != strings.Repeat("3", 40) {
+		t.Errorf("Digest = %q, %v", got, err)
+	}
+	if want := []string{pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix HEAD\n", "ref-prefix refs/heads/\n", "0000")}; !reflect.DeepEqual(bodies, want) {
 		t.Errorf("ls-refs bodies = %q, want %q", bodies, want)
 	}
 }

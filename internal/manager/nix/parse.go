@@ -399,8 +399,9 @@ type refParts struct {
 
 // parseRef reads the ref and rev of a flake reference URL whose first byte is at offset off
 // (off < 0: the URL is not in the file): the `ref`/`rev` query parameters, the third path
-// segment of `github:`, `gitlab:` and `sourcehut:` references, and the `<ref>` of a
-// `…/archive/<ref>.tar.gz` tarball; a path segment that is a 40- or 64-hex commit is the rev.
+// segment of `github:`, `gitlab:` and `sourcehut:` references, the `<ref>` of a
+// `…/archive/<ref>.tar.gz` tarball and the channel of a NixOS channel tarball; a path segment
+// that is a 40- or 64-hex commit is the rev.
 func parseRef(s string, off int) refParts {
 	var r refParts
 	set := func(v string, start int, rev bool) {
@@ -435,6 +436,11 @@ func parseRef(s string, off int) refParts {
 			if v := base[i+len("/archive/") : len(base)-len(".tar.gz")]; v != "" {
 				set(v, i+len("/archive/"), isCommit(v))
 			}
+			break
+		}
+		u := strings.TrimPrefix(base, "tarball+")
+		if m := channelRe.FindStringSubmatchIndex(u); m != nil {
+			set(u[m[2]:m[3]], len(base)-len(u)+m[2], false)
 		}
 	}
 	return r

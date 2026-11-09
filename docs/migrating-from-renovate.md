@@ -103,7 +103,7 @@ Then ask the agent to "migrate this repository from Renovate to deps". An agent 
 | `matchUpdateTypes` | `rules[].updateTypes`; `pinDigest` = `pin` |
 | `matchCategories` | `deps migrate` expands it to the category's managers; in `.deps.yaml` use `managers`/`datasources` (`golang` ≈ `managers: [gomod]` plus `datasources: [golang-version]`) |
 | `allowedVersions` | `rules[].allow` (semver constraint or `/regex/`, `!/regex/`) |
-| `versioning` | `rules[].versioning` (`semver`, `loose`, `maven`, `ivy`, `ruby`, `nuget`, `hex`, `regex:…`, plus deps' `tag`, `go`, `docker`) |
+| `versioning` | `rules[].versioning` (`semver`, `loose`, `maven`, `ivy`, `ruby`, `nuget`, `hex`, `nixpkgs`, `regex:…`, plus deps' `tag`, `go`, `docker`) |
 | `extractVersion` | `rules[].extractVersion`, marker `extractVersion=` (RE2 with a `version` group, same syntax) |
 | `groupName` | `rules[].group` (`groupSlug` is derived: `slug(group)`) |
 | `schedule` | `schedule` / `rules[].schedule`: Renovate's time windows as written (`before 6am on monday`, `every weekend`, `after 10pm and before 5am every weekday`, `on the first day of the month`, crons with minute `*` like `* 0-5 * * 1`), evaluated against the run time; or crons of the workflow's `on.schedule` triggers (see below) |

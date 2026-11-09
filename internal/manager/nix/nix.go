@@ -1,8 +1,9 @@
 // Package nix extracts the inputs of Nix flakes: every input of a `flake.nix` that its
 // `flake.lock` locks to a commit of a git repository (GitHub, GitLab, SourceHut, git URLs,
 // Gitea/Forgejo archive tarballs) is a dep, tracking a branch (digest updates of flake.lock)
-// or a version tag (ref updates of flake.nix). NixOS channels are skipped. flake.lock moves
-// with `nix flake update <input>` (Locker).
+// or a version tag (ref updates of flake.nix). Release branches of NixOS/nixpkgs and release
+// channels move to the next release (nixpkgs versioning). flake.lock moves with
+// `nix flake update <input>` (Locker).
 package nix
 
 import (
@@ -128,14 +129,15 @@ func (nixManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 	return deps, nil
 }
 
-// Edits rewrites the ref of an input tracking a version tag and the rev of an input pinned to
-// a commit in flake.nix; flake.lock moves with every update (Locker), so an update of an
-// unpinned branch input has no edits.
+// Edits rewrites the ref of an input tracking a version tag or a nixpkgs release branch (or
+// channel) and the rev of an input pinned to a commit in flake.nix; flake.lock moves with
+// every update (Locker), so an update of an unpinned branch input has no edits.
 func (nixManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	var edits []patch.Edit
 	if u.NewVersion != "" && u.NewVersion != d.Version {
-		if d.Datasource != dsTags || d.RefSpan == (dep.Span{}) {
+		// ReadLocks keeps the span of version tags and nixpkgs branches only.
+		if d.RefSpan == (dep.Span{}) {
 			return nil, errors.New("cannot change the branch of an input")
 		}
 		edits = append(edits, patch.Edit{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion})

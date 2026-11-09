@@ -30,6 +30,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Tag is a remote tag and the commit it points to (peeled for annotated tags). Branch listings
@@ -232,16 +233,24 @@ func (l *Lister) Head(ctx context.Context, d dep.Dep, _ string) (datasource.Revi
 const RefsName = "git-refs"
 
 // Refs is the git-refs datasource: the tags of a repository as releases (as git-tags), and the
-// commit of a branch (HEAD: the default branch) as digest. It shares the Lister's requests and
-// cache.
+// commit of a branch (HEAD: the default branch) as digest. Under nixpkgs versioning its
+// releases are the repository's branches instead (the release branches of NixOS/nixpkgs). It
+// shares the Lister's requests and cache.
 type Refs struct{ l *Lister }
 
 // Refs returns the git-refs datasource of l.
 func (l *Lister) Refs() Refs { return Refs{l} }
 
-// Releases implements datasource.Datasource with the tags of d.Source.
+// Releases implements datasource.Datasource with the tags of d.Source, each with its commit as
+// digest. A dep under nixpkgs versioning opts in to the branches instead (HEAD left out), from
+// the branch listing Digest shares (once per repository); other deps never list branches for
+// their releases. The slice is shared between callers and must not be modified.
 func (r Refs) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
-	return r.l.Releases(ctx, d, dir)
+	if d.Versioning != versioning.Nixpkgs {
+		return r.l.Releases(ctx, d, dir)
+	}
+	e, err := r.l.get(ctx, d.Source, true)
+	return e.rels, err
 }
 
 // Deprecation implements datasource.DeprecationSource as git-tags does.
@@ -638,12 +647,11 @@ func (l *Lister) get(ctx context.Context, repoURL string, heads bool) (*entry, e
 		e := &entry{}
 		var err error
 		e.tags, e.head, err = l.fetch(ctx, repoURL, heads)
-		if heads {
-			return e, err
-		}
-		e.rels = make([]datasource.Release, len(e.tags))
-		for i, t := range e.tags {
-			e.rels[i] = datasource.Release{Version: t.Name, Digest: t.Commit}
+		e.rels = make([]datasource.Release, 0, len(e.tags))
+		for _, t := range e.tags {
+			if !heads || t.Name != "HEAD" {
+				e.rels = append(e.rels, datasource.Release{Version: t.Name, Digest: t.Commit})
+			}
 		}
 		return e, err
 	})

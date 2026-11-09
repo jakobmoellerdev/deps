@@ -1290,10 +1290,10 @@ Range strategy for matching npm, cargo, Python, Swift, bundler, Elm, composer, j
 
 ### `rules[].versioning`
 
-Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, or regex:\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\<name>) and (?P\<name>) syntax both work. Cannot be combined with updateTypes.
+Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs, or regex:\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\<name>) and (?P\<name>) syntax both work. Cannot be combined with updateTypes.
 
 - **Type:** string
-- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ivy|ruby|conda|composer|julia|bazel-module|nuget|rpm|apk|deb|pub|hex|regex:.+)$`
+- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ivy|ruby|conda|composer|julia|bazel-module|nuget|rpm|apk|deb|pub|hex|nixpkgs|regex:.+)$`
 
 The scheme validates the current value, ranks candidates, classifies update kinds, converts versions for `allow`, and computes security fixes. A current value that the new scheme cannot parse is skipped as `non-version value "<v>"`.
 
@@ -1317,6 +1317,7 @@ The scheme validates the current value, ranks candidates, classifies update kind
 | `apk` | Alpine package versions (apk-tools): `N[.N]...[a-z][_suffix[N]]...[~hash][-rN]` (`3.2.1-r0`, `2.39.0_rc1-r0`, `6.5_p20250503-r0`, `1.1.1w-r1`) | ordered as apk-tools does: numbers, then the letter, then suffixes (`_alpha` < `_beta` < `_pre` < `_rc` < none < `_cvs` < `_svn` < `_git` < `_hg` < `_p`), then the revision; the commit hash is ignored. Update types follow the first two numbers, everything after them (letter, suffixes, `-rN` revision) is a patch update; pre-releases only from a pre-release; a version with `-rN` only moves to versions with one and vice versa. No constraints (`=~`, `>=`). The default of apk deps (Renovate's `apk` versioning) |
 | `deb` | Debian package versions (deb-version(7)): `[epoch:]upstream_version[-debian_revision]`, the upstream version starting with a digit | ordered as `dpkg --compare-versions`: epoch first, then upstream version and revision, digit runs numerically and `~` below everything (`1.0~rc1` < `1.0` < `1.0+deb12u1`). Update types follow an epoch change (major) and the first three numbers after the epoch, revision included (`8.14.1-1` → `8.14.1-2` is patch); every valid version is a candidate. No ranges. The default of `deb` deps |
 | `hex` | SemVer 2.0 as Elixir's `Version` parses it: `MAJOR.MINOR.PATCH`, optional `-<prerelease>` and `+<build>`; no `v` prefix, no partial versions | ordered as SemVer 2.0 (the build is ignored); update types follow the three parts; prereleases only from a prerelease. Ranges are Elixir requirements (`~> 1.7`, `>= 1.0.0 and < 2.0.0`, `~> 1.0 or ~> 2.0`, `== 1.2.3`); a prerelease only satisfies an alternative naming one, as Hex resolves. The default of the mix and gleam managers |
+| `nixpkgs` | branches of NixOS/nixpkgs, as Renovate's `nixpkgs`: `^(nixos\|nixpkgs\|release)-(YY.MM\|unstable)(-(small\|aarch64\|darwin))?$` (`nixos-24.05`, `nixpkgs-24.05-darwin`, `release-24.11`, `nixos-unstable`) | candidates need the same prefix and suffix; releases ordered by year and month, `unstable` above every release but never proposed from one. A new year is `major` (`nixos-24.11` → `nixos-25.05`), a new month `minor`. A `git-refs` dep under it gets the repository's branches as candidates instead of its tags. No ranges. The default of the nix manager's NixOS/nixpkgs branches and release channels |
 | `regex:<RE2>` | the expression's named groups | `major` (required), `minor`, `patch`, `build`, `revision` (numeric, absent = 0), `prerelease`, `compatibility`; other names are errors. `(?<name>)` and `(?P<name>)` both work. Candidates must share `compatibility`. |
 
 Errors: `rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group "x" (allowed: ...)`, `regex: invalid RE2 regexp: ...`, and `cannot be combined with updateTypes: ...`.
@@ -1712,11 +1713,11 @@ Dependency name; required in regex mode unless match has a (?P\<name>), (?P\<dep
 
 ### `custom[].versioning`
 
-Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version and galaxy-collection, pub for dart, hex for hex, maven for maven, ivy for sbt-package and sbt-plugin, tag for galaxy, docker for github-runners), else semver.
+Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version and galaxy-collection, pub for dart, hex for hex, maven for maven, ivy for sbt-package and sbt-plugin, tag for galaxy, docker for github-runners), else semver.
 
 - **Type:** string
 - **Default:** `semver`
-- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ivy|ruby|conda|composer|julia|bazel-module|nuget|rpm|apk|deb|pub|hex|regex:.+)$`
+- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ivy|ruby|conda|composer|julia|bazel-module|nuget|rpm|apk|deb|pub|hex|nixpkgs|regex:.+)$`
 
 Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, `hex` for hex deps, else `semver`. A marker's `versioning=`, a `versioning` group or a JSONata result's `versioning` overrides the entry's.
 

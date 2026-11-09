@@ -8,6 +8,26 @@
       "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "rev": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "type": "tarball", "url": "https://releases.nixos.org/nixos/24.05/nixos-24.05.7376.bbbbbbbbbbbb/nixexprs.tar.xz" },
       "original": { "type": "tarball", "url": "https://nixos.org/channels/nixos-24.05/nixexprs.tar.xz" }
     },
+    "darwin": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "nixos", "repo": "nixpkgs", "rev": "cccccccccccccccccccccccccccccccccccccccc", "type": "github" },
+      "original": { "owner": "nixos", "ref": "nixpkgs-24.05-darwin", "repo": "nixpkgs", "type": "github" }
+    },
+    "fork": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "acme", "repo": "nixpkgs", "rev": "dddddddddddddddddddddddddddddddddddddddd", "type": "github" },
+      "original": { "owner": "acme", "ref": "nixos-24.05", "repo": "nixpkgs", "type": "github" }
+    },
+    "release": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "ref": "refs/heads/release-24.05", "rev": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "revCount": 1, "type": "git", "url": "https://github.com/NixOS/nixpkgs" },
+      "original": { "ref": "refs/heads/release-24.05", "type": "git", "url": "https://github.com/NixOS/nixpkgs" }
+    },
+    "stable": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "NixOS", "repo": "nixpkgs", "rev": "ffffffffffffffffffffffffffffffffffffffff", "type": "github" },
+      "original": { "owner": "NixOS", "ref": "nixos-24.05", "repo": "nixpkgs", "type": "github" }
+    },
+    "unstable-channel": {
+      "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "rev": "9999999999999999999999999999999999999999", "type": "tarball", "url": "https://releases.nixos.org/nixos/unstable/nixos-25.11pre.999999999999/nixexprs.tar.xz" },
+      "original": { "type": "tarball", "url": "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz" }
+    },
     "escaped": {
       "locked": { "lastModified": 1, "narHash": "sha256-AAAA", "owner": "acme", "repo": "escaped", "rev": "6666666666666666666666666666666666666666", "type": "github" },
       "original": { "owner": "acme", "ref": "v1.0", "repo": "escaped", "type": "github" }
@@ -55,8 +75,10 @@
         "alias": [ "tagged" ],
         "attrs": "attrs",
         "channel": "channel",
+        "darwin": "darwin",
         "escaped": "escaped",
         "followed": [ "tagged" ],
+        "fork": "fork",
         "gh-archive": "gh-archive",
         "hg": "hg",
         "hub": "hub",
@@ -66,9 +88,12 @@
         "local-git": "local-git",
         "pinned-tag": "pinned-tag",
         "registry": "nixpkgs",
+        "release": "release",
         "ssh": "ssh",
+        "stable": "stable",
         "sub": "sub",
         "tagged": "tagged",
+        "unstable-channel": "unstable-channel",
         "uri": "uri"
       }
     },

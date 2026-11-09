@@ -30,6 +30,12 @@
     tagged.inputs.nixpkgs.follows = "";
   };
   inputs.channel.url = "https://nixos.org/channels/nixos-24.05/nixexprs.tar.xz";
+  inputs.unstable-channel.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
+  # nixpkgs release branches move to the next release; a fork's branch does not
+  inputs.stable.url = "github:NixOS/nixpkgs/nixos-24.05";
+  inputs.darwin.url = "github:nixos/nixpkgs/nixpkgs-24.05-darwin";
+  inputs.release.url = "git+https://github.com/NixOS/nixpkgs?ref=refs/heads/release-24.05";
+  inputs.fork.url = "github:acme/nixpkgs/nixos-24.05";
   /* inputs.commented.url = "github:acme/commented"; */
 
   outputs =
