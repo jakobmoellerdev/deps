@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os/exec"
 	"path"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -36,8 +35,6 @@ const (
 // defaultBranch is the version of a submodule without `branch`: the remote's HEAD.
 const defaultBranch = "HEAD"
 
-var fileRe = regexp.MustCompile(`(^|/)\.gitmodules$`)
-
 // submodule is one `[submodule "<name>"]` section.
 type submodule struct {
 	name              string
@@ -61,8 +58,11 @@ func New() manager.Manager { return submodulesManager{} }
 
 func (submodulesManager) Name() string { return Name }
 
-// Match reports whether the slash path is a `.gitmodules` file.
-func (submodulesManager) Match(p string) bool { return fileRe.MatchString(p) }
+// Match reports whether the slash path is a `.gitmodules` file. A suffix check, not a regexp:
+// discovery calls Match on every path of the repository.
+func (submodulesManager) Match(p string) bool {
+	return p == ".gitmodules" || strings.HasSuffix(p, "/.gitmodules")
+}
 
 // Extract returns one dep per `[submodule]` section, its digest the gitlink commit at the
 // submodule's path (relative to the file's directory) in the git index.

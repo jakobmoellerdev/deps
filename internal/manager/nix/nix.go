@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"path"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -58,8 +57,6 @@ const (
 	skipUnsupported = "unsupported input type "
 )
 
-var fileRe = regexp.MustCompile(`(^|/)flake\.nix$`)
-
 type nixManager struct{}
 
 // New returns the nix manager.
@@ -67,8 +64,11 @@ func New() manager.Manager { return nixManager{} }
 
 func (nixManager) Name() string { return Name }
 
-// Match reports whether the slash path is a flake.nix.
-func (nixManager) Match(p string) bool { return fileRe.MatchString(p) }
+// Match reports whether the slash path is a flake.nix. A suffix check, not a regexp:
+// discovery calls Match on every path of the repository.
+func (nixManager) Match(p string) bool {
+	return p == "flake.nix" || strings.HasSuffix(p, "/flake.nix")
+}
 
 // input is what the flake.nix says about one input.
 type input struct {
