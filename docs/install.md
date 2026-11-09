@@ -18,7 +18,7 @@ brew tap jakobmoellerdev/deps https://git.jakob-moeller.cloud/jakobmoellerdev/de
 brew install jakobmoellerdev/deps/deps
 ```
 
-The formula installs the release binary as `deps` with bash, zsh and fish completions and checks it against the release's sha256. Each release opens a pull request that moves the formula to it; once merged, `brew upgrade deps` picks up the new version. Pre-releases are not in the formula. `deps run` needs `git`, which macOS ships with the Command Line Tools.
+The formula installs the release binary as `deps` with bash, zsh and fish completions and checks it against the release's sha256. deps keeps it current itself: its `homebrew` manager opens a pull request for each new release, and once it is merged, `brew upgrade deps` picks up the new version. `deps run` needs `git`, which macOS ships with the Command Line Tools.
 
 ## Packages
 

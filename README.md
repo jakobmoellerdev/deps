@@ -264,7 +264,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 | 📋 | **Copier** | `.copier-answers.yml` template `_commit` | the template's changes (`copier update`) |
 | <img src="https://cdn.simpleicons.org/precommit" width="20" alt=""> | **pre-commit** | hook `rev`s on any git host, including frozen and bare SHAs; `additional_dependencies` of node, python and golang hooks | |
 | <img src="https://cdn.simpleicons.org/git" width="20" alt=""> | **Git submodules** | `.gitmodules` (tracked branch or version tag; opt-in, as in Renovate) | |
-| <img src="https://cdn.simpleicons.org/homebrew" width="20" alt=""> | **Homebrew** | formula `url`/`sha256` in `Formula/*.rb` (GitHub archives and releases, npm tarballs; new sha256 computed) | |
+| <img src="https://cdn.simpleicons.org/homebrew" width="20" alt=""> | **Homebrew** | formula and resource `url`/`sha256` in `Formula/*.rb`, also per platform, with mirrors and `version` (GitHub, Gitea, Forgejo and GitLab archives and releases, npm tarballs; new sha256 computed) | |
 | 🧰 | **Tool versions** | asdf `.tool-versions`, mise `[tools]` | |
 | ⚙️ | **deps config** | `extends` refs (`<repo>//<path>#<ref>`) in `.deps.yaml` | |
 | <img src="https://cdn.simpleicons.org/redhat" width="20" alt=""> | **RPM packages**<br>dnf, yum | package versions pinned in any file (markers or regex managers), looked up in the yum/dnf repositories you name | |
