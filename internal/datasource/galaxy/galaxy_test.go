@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -150,9 +151,9 @@ func TestCollections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 247 versions, of which 3 are semver prereleases that are no PEP 440 versions
-	// (0.3.0-experimental.meta.redirects-2)
-	if len(rels) != 244 || rels[len(rels)-1].Version != "14.0.0" || rels[0].Version != "0.1.1" {
+	// 247 versions, including semver prereleases that are no PEP 440 versions
+	// (0.3.0-experimental.meta.redirects-2), sorted in semver order
+	if len(rels) != 247 || rels[len(rels)-1].Version != "14.0.0" || rels[0].Version != "0.1.1" {
 		t.Errorf("%d releases, first %v last %v", len(rels), rels[0], rels[len(rels)-1])
 	}
 	tm, err := ds.ReleaseTime(t.Context(), d, "14.0.0")
@@ -214,6 +215,19 @@ func TestCollections(t *testing.T) {
 	}
 	if _, err := ds.Releases(t.Context(), dep.Dep{Name: "a.b", Source: base + "/nothing"}, ""); err == nil || !strings.Contains(err.Error(), "galaxy server") {
 		t.Errorf("no API: %v", err)
+	}
+
+	// Galaxy versions are semver: 1.0.0-dev sorts after 1.0.0-alpha (PEP 440 puts the dev
+	// release first) and non-PEP 440 prereleases are kept.
+	s.files["/api/v3/collections/pre/thing/"] = `{"deprecated":false}`
+	s.files["/api/v3/collections/pre/thing/versions/?limit=100"] = `{"data":[{"version":"1.0.0"},{"version":"1.0.0-dev"},{"version":"1.0.0-alpha"},{"version":"0.3.0-experimental.meta.redirects-2"}]}`
+	rels, err = ds.Releases(t.Context(), dep.Dep{Name: "pre.thing"}, "")
+	var got []string
+	for _, r := range rels {
+		got = append(got, r.Version)
+	}
+	if want := []string{"0.3.0-experimental.meta.redirects-2", "1.0.0-alpha", "1.0.0-dev", "1.0.0"}; err != nil || !slices.Equal(got, want) {
+		t.Errorf("prereleases = %v, %v; want %v", got, err, want)
 	}
 
 	// A links.next pointing back at an already-fetched page fails instead of looping.

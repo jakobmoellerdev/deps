@@ -39,7 +39,7 @@ var GalaxyDoc = refdoc.Manager{
 		{Name: DepTypeRole, What: "`roles[]` entry: `src` (else `name`) and `version`, or a `src,version` string. A Galaxy role `namespace.name`, or an SCM URL (`git+https://…`, `https://…`, `git@host:owner/repo`; `scm: git`)",
 			Datasource: "`galaxy` (`namespace.name`), `git-tags` (SCM URLs: the name is the URL path `owner/repo`, the source its `https://` URL)", Versioning: "`tag`", Datasources: []string{RoleDatasource, GitDatasource}},
 		{Name: DepTypeCollection, What: "`collections[]` entry: `name` and `version` (a bare version, `==`, or a range such as `>=1.0.0,<2.0.0`), the Galaxy server of `source`, or `type: git` with the repository URL as name (`git+https://…/repo.git,v1.0.0`); galaxy.yml `dependencies` (`community.general: \">=8.0.0\"`, or an SCM URL key with a git version: `'git+https://github.com/o/r': v1.0.0`)",
-			Datasource: "`galaxy-collection` (`namespace.name`, the source the entry's `source`), `git-tags` (`type: git` and SCM URL names)", Versioning: "`pep440` (Galaxy), `tag` (git)", Datasources: []string{CollectionDatasource, GitDatasource}},
+			Datasource: "`galaxy-collection` (`namespace.name`, the source the entry's `source`), `git-tags` (`type: git` and SCM URL names)", Versioning: "`semver` (Galaxy), `tag` (git)", Datasources: []string{CollectionDatasource, GitDatasource}},
 	},
 	Skips: []refdoc.Skip{
 		{Reason: skipNoVersion, When: "an entry without `version` (or `,version`), an empty or non-string specifier"},
@@ -54,7 +54,7 @@ var GalaxyDoc = refdoc.Manager{
 	Sections: []refdoc.Section{
 		{Title: "Details", Items: []string{
 			"The role and git versions are replaced in place, keeping quotes and comments; versions cannot be pinned to digests.",
-			"Collection specifiers are PEP 440 specifier sets in which a bare version means `==` (ansible-galaxy's syntax): their version is the range's anchor and they are rewritten per `rangeStrategy` like Python specifiers (`auto` = `update-lockfile`: a bare or `==` version is replaced by the new version, an open range such as `>=8.0.0` only moves for a version outside it).",
+			"Collection versions are semver (prereleases such as `0.3.0-experimental.1` or `1.0.0-dev` are ordered by semver rules). Collection specifiers are PEP 440 specifier sets in which a bare version means `==` (ansible-galaxy's syntax): their version is the range's anchor and they are rewritten per `rangeStrategy` like Python specifiers (`auto` = `update-lockfile`: a bare or `==` version is replaced by the new version, an open range such as `>=8.0.0` only moves for a version outside it).",
 			"`include:` entries of requirements files are not followed (the included file is extracted on its own when its name matches). List entries with keys other than `src`, `name`, `role`, `version` and `scm` are not roles (a task file named `requirements.yml`).",
 		}},
 	},

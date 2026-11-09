@@ -304,7 +304,7 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		if coll.Deprecated {
 			s.deprecated.Store([2]string{srv, d.Name}, true)
 		}
-		pep, _ := versioning.Get("pep440")
+		sv, _ := versioning.Get("semver")
 		next := p.versions + fmt.Sprintf("?limit=%d", pageSize)
 		seen := map[string]bool{}
 		for next != "" {
@@ -328,7 +328,7 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 				return nil, err
 			}
 			for _, v := range page.Data {
-				if !pep.Valid(v.Version) {
+				if !sv.Valid(v.Version) {
 					continue
 				}
 				p.rels = append(p.rels, datasource.Release{Version: v.Version})
@@ -346,7 +346,7 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		if len(p.rels) == 0 {
 			return nil, errors.New("galaxy collection " + d.Name + ": no versions")
 		}
-		sortReleases(p.rels, pep)
+		sortReleases(p.rels, sv)
 		return p, nil
 	})
 }

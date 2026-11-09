@@ -32,10 +32,11 @@ const (
 	GitDatasource        = "git-tags"
 	// RoleVersioning is the versioning of roles and git sources: their versions are git tags.
 	RoleVersioning = "tag"
-	// CollectionVersioning is the versioning of Galaxy collections, whose version specifiers
-	// (`>=1.0.0,<2.0.0`, a bare version meaning `==`) are PEP 440 specifier sets (Renovate's
-	// pep440).
-	CollectionVersioning = pyreq.Versioning
+	// CollectionVersioning is the versioning of Galaxy collections: Galaxy versions are semver
+	// (`1.0.0-dev` is a prerelease ordered by semver rules). Their specifiers
+	// (`>=1.0.0,<2.0.0`, a bare version meaning `==`) are parsed and rewritten as PEP 440
+	// specifier sets, the syntax ansible-galaxy accepts.
+	CollectionVersioning = "semver"
 )
 
 // Skip reasons.
