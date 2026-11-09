@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
@@ -44,10 +45,33 @@ type Lister struct {
 	gh     *githubapi.Client // release times of github.com repositories
 	gitlab *GitLab           // release times of GitLab repositories; nil: none
 
-	times datasource.Memo[string, time.Time]  // repository URL + "@" + tag, for tags not in the release lists
-	tags  datasource.Memo[string, *entry]     // repository URL -> tags
-	heads datasource.Memo[string, *entry]     // repository URL -> branches and HEAD
-	lists datasource.Memo[string, *listEntry] // Gitea/Forgejo repository URL -> first page of releases
+	times    datasource.Memo[string, time.Time]  // repository URL + "@" + tag, for tags not in the release lists
+	tags     datasource.Memo[string, *entry]     // repository URL -> tags
+	heads    datasource.Memo[string, *entry]     // repository URL -> branches and HEAD
+	lists    datasource.Memo[string, *listEntry] // Gitea/Forgejo repository URL -> first page of releases
+	archived datasource.Memo[string, bool]       // repository URL -> archived (see Archived)
+
+	planMu  sync.Mutex
+	planned map[string]githubapi.Repo        // lower-case owner/name -> github.com repository of a planned dep
+	ghBatch datasource.Once[map[string]bool] // lower-case owner/name -> archived, of the planned repositories
+}
+
+// Plan implements datasource.Planner: the github.com repositories of deps are asked together
+// whether they are archived (one GraphQL query per 100 repositories) by the first lookup of
+// one of them.
+func (l *Lister) Plan(deps []dep.Dep) {
+	l.planMu.Lock()
+	defer l.planMu.Unlock()
+	for _, d := range deps {
+		if r, ok := githubRepo(strings.TrimSuffix(d.Source, "/")); ok {
+			if l.planned == nil {
+				l.planned = map[string]githubapi.Repo{}
+			}
+			if key := strings.ToLower(r.Path()); l.planned[key] == (githubapi.Repo{}) {
+				l.planned[key] = r
+			}
+		}
+	}
 }
 
 // listEntry is one page of a Gitea/Forgejo repository's releases.
@@ -93,10 +117,86 @@ func (l *Lister) Tags(ctx context.Context, repoURL string) ([]Tag, error) {
 }
 
 // Releases implements datasource.Datasource: the tags of d.Source, each with its commit as
-// digest. The slice is shared between callers and must not be modified.
+// digest. Whether the repository is archived (Deprecation) is asked alongside, once per
+// repository (see Archived). The slice is shared between callers and must not be modified.
 func (l *Lister) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
+	var wg sync.WaitGroup
+	wg.Go(func() { _, _ = l.Archived(ctx, d.Source) })
 	e, err := l.get(ctx, d.Source, false)
+	wg.Wait()
 	return e.rels, err
+}
+
+// Deprecation implements datasource.DeprecationSource: d.Source is archived, as Releases
+// found out (see Archived); no request.
+func (l *Lister) Deprecation(d dep.Dep, _ string) string {
+	if archived, _ := l.archived.Peek(strings.TrimSuffix(d.Source, "/")); archived {
+		return "repository archived"
+	}
+	return ""
+}
+
+// Archived reports whether the repository at repoURL is archived, once per repository: on
+// github.com from GraphQL `isArchived` (only with a token: anonymous REST requests are scarce),
+// asked for every planned repository in one query (see Plan) and for an unplanned one on its
+// own; on the GitLab instances (WithGitLab) from the gitlab-tags datasource (GraphQL
+// `project{archived}`); elsewhere from the Gitea/Forgejo API (`GET /api/v1/repos/<repo>`,
+// `archived`). A host without any of them, or a repository the API does not show, is not
+// archived.
+func (l *Lister) Archived(ctx context.Context, repoURL string) (bool, error) {
+	repoURL = strings.TrimSuffix(repoURL, "/")
+	return l.archived.Do(ctx, repoURL, func() (archived bool, err error) {
+		defer func() {
+			slog.DebugContext(ctx, "repository archived checked", "repo", repoURL, "archived", archived, "err", err)
+		}()
+		if r, isGH := githubRepo(repoURL); isGH {
+			if !l.gh.GraphQL(r) {
+				return false, nil
+			}
+			return l.githubArchived(ctx, r)
+		}
+		if fd, isGL := l.gitlabRepo(repoURL); isGL {
+			return l.gitlab.Tags.Archived(ctx, fd)
+		}
+		u, repo, err := apiRepo(repoURL)
+		if err != nil {
+			return false, err
+		}
+		var meta struct {
+			Archived bool `json:"archived"`
+		}
+		found, err := l.getJSON(ctx, u, "/repos/"+repo, &meta)
+		return found && meta.Archived, err
+	})
+}
+
+// githubArchived answers from the batch query of the planned repositories (plus r), sent by
+// the first caller; a repository missing from it is asked on its own.
+func (l *Lister) githubArchived(ctx context.Context, r githubapi.Repo) (bool, error) {
+	key := strings.ToLower(r.Path())
+	batch, err := l.ghBatch.Do(ctx, func() (map[string]bool, error) {
+		l.planMu.Lock()
+		repos := make([]githubapi.Repo, 0, len(l.planned)+1)
+		for _, p := range l.planned {
+			repos = append(repos, p)
+		}
+		if _, ok := l.planned[key]; !ok {
+			repos = append(repos, r)
+		}
+		l.planMu.Unlock()
+		slices.SortFunc(repos, func(a, b githubapi.Repo) int { return strings.Compare(a.Path(), b.Path()) })
+		res, err := l.gh.Archived(ctx, repos)
+		m := make(map[string]bool, len(res))
+		for r, a := range res {
+			m[strings.ToLower(r.Path())] = a
+		}
+		return m, err
+	})
+	if archived, asked := batch[key]; asked || err != nil {
+		return archived, err
+	}
+	res, err := l.gh.Archived(ctx, []githubapi.Repo{r})
+	return res[r], err
 }
 
 // Digest returns the commit of tag version in d.Source: the tag equal to version, else to
@@ -143,6 +243,12 @@ func (l *Lister) Refs() Refs { return Refs{l} }
 func (r Refs) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
 	return r.l.Releases(ctx, d, dir)
 }
+
+// Deprecation implements datasource.DeprecationSource as git-tags does.
+func (r Refs) Deprecation(d dep.Dep, version string) string { return r.l.Deprecation(d, version) }
+
+// Plan implements datasource.Planner as git-tags does; both share one batch.
+func (r Refs) Plan(deps []dep.Dep) { r.l.Plan(deps) }
 
 // Digest returns the commit of branch ref in d.Source (HEAD is the default branch), else of
 // the tag named ref (an action ref such as `@stable` may be either, as for GitHub's

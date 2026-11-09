@@ -1,0 +1,19 @@
+{
+  "id": 550,
+  "owner": {
+    "id": 3,
+    "login": "gitea"
+  },
+  "name": "tea",
+  "full_name": "gitea/tea",
+  "description": "ARCHIVED\r\nA command line tool to interact with Gitea servers\r\nFind the replacement here:",
+  "empty": false,
+  "private": false,
+  "fork": false,
+  "mirror": false,
+  "archived": true,
+  "archived_at": "2026-10-29T21:07:11Z",
+  "html_url": "https://gitea.com/gitea/tea",
+  "default_branch": "main",
+  "updated_at": "2026-10-29T21:06:27Z"
+}

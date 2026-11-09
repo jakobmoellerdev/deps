@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,31 +59,51 @@ func versions(rels []datasource.Release) []string {
 }
 
 // TestRealResponses decodes responses captured from gitlab.com (gitlab-org/cli), gitea.com
-// (gitea/tea) and code.forgejo.org (forgejo/runner).
+// (gitea/tea, archived on 2026-10-29) and code.forgejo.org (forgejo/runner). The repository
+// documents (gitea-repo.json, forgejo-repo.json: `GET /api/v1/repos/<owner>/<repo>` trimmed
+// with jq; gitlab-project.json: GraphQL `project(fullPath){archived}`) are asked once,
+// alongside the first page, and answer Deprecation.
 func TestRealResponses(t *testing.T) {
 	for _, tc := range []struct {
 		ds, name, path, file string
 		want                 []string
 		time                 string // of want[0]
+		repoPath, repoFile   string
+		archived             bool
 	}{
 		{GitLabReleases, "gitlab-org/cli", "/api/v4/projects/gitlab-org%2Fcli/releases", "gitlab-releases.json",
-			[]string{"v1.128.0", "v1.127.0", "v1.126.0"}, "2026-11-03T12:18:50.742Z"},
+			[]string{"v1.128.0", "v1.127.0", "v1.126.0"}, "2026-11-03T12:18:50.742Z", "/api/graphql", "gitlab-project.json", false},
 		{GitLabTags, "gitlab-org/cli", "/api/v4/projects/gitlab-org%2Fcli/repository/tags", "gitlab-tags.json",
-			[]string{"v1.128.0@519ea19f7d3e9c701a4063f277ae27254bbafdad", "v1.127.0@2e352a17e7e00bef420b0f38e0ce9ab4e1a38e5d", "v1.126.0@4dd0d32d18361db6c1c668eb4ac691c0d6edf255"}, "2026-11-03T11:07:41Z"},
+			[]string{"v1.128.0@519ea19f7d3e9c701a4063f277ae27254bbafdad", "v1.127.0@2e352a17e7e00bef420b0f38e0ce9ab4e1a38e5d", "v1.126.0@4dd0d32d18361db6c1c668eb4ac691c0d6edf255"}, "2026-11-03T11:07:41Z",
+			"/api/graphql", "gitlab-project.json", false},
 		{GiteaReleases, "gitea/tea", "/api/v1/repos/gitea/tea/releases", "gitea-releases.json",
-			[]string{"v0.16.0", "v0.15.1", "v0.15.0"}, "2026-09-10T11:34:12Z"},
+			[]string{"v0.16.0", "v0.15.1", "v0.15.0"}, "2026-09-10T11:34:12Z", "/api/v1/repos/gitea/tea", "gitea-repo.json", true},
 		{GiteaTags, "gitea/tea", "/api/v1/repos/gitea/tea/tags", "gitea-tags.json",
-			[]string{"v0.16.0@9c12138d6273ba8feb6e7578833cc330c0cd6461", "v0.15.1@f34697c5ed65928e265d6f48e16928819ce0f332", "v0.15.0@61b8536e4a3e04d9db74b05b4d9cd489d07d8d50"}, "2026-09-10T04:29:39Z"},
+			[]string{"v0.16.0@9c12138d6273ba8feb6e7578833cc330c0cd6461", "v0.15.1@f34697c5ed65928e265d6f48e16928819ce0f332", "v0.15.0@61b8536e4a3e04d9db74b05b4d9cd489d07d8d50"}, "2026-09-10T04:29:39Z",
+			"/api/v1/repos/gitea/tea", "gitea-repo.json", true},
 		{ForgejoReleases, "forgejo/runner", "/api/v1/repos/forgejo/runner/releases", "forgejo-releases.json",
-			[]string{"v13.2.1", "v13.2.0", "v13.1.0"}, "2026-10-29T21:36:30Z"},
+			[]string{"v13.2.1", "v13.2.0", "v13.1.0"}, "2026-10-29T21:36:30Z", "/api/v1/repos/forgejo/runner", "forgejo-repo.json", false},
 		{ForgejoTags, "forgejo/runner", "/api/v1/repos/forgejo/runner/tags", "forgejo-tags.json",
-			[]string{"v13.2.1@c4a92ffa5e3a400ae7e9c40a2914e649eb338ad7", "v13.2.0@df6b843fb929bb04b933b09c6bf208774d42480b", "v13.1.0@6095cb17bfdbded5aa4ea84c18a4b69fd9574cca"}, "2026-10-02T02:59:29Z"},
+			[]string{"v13.2.1@c4a92ffa5e3a400ae7e9c40a2914e649eb338ad7", "v13.2.0@df6b843fb929bb04b933b09c6bf208774d42480b", "v13.1.0@6095cb17bfdbded5aa4ea84c18a4b69fd9574cca"}, "2026-10-02T02:59:29Z",
+			"/api/v1/repos/forgejo/runner", "forgejo-repo.json", false},
 	} {
 		t.Run(tc.ds, func(t *testing.T) {
-			var queries []string
-			srv := serve(t, map[string]string{tc.path: tc.file}, func(r *http.Request) { queries = append(queries, r.URL.RawQuery) })
+			var mu sync.Mutex
+			var queries, repoQueries []string
+			srv := serve(t, map[string]string{tc.path: tc.file, tc.repoPath: tc.repoFile}, func(r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				if r.URL.Path == tc.repoPath {
+					repoQueries = append(repoQueries, r.URL.RawQuery)
+				} else {
+					queries = append(queries, r.URL.RawQuery)
+				}
+			})
 			s := New(tc.ds, srv.Client(), nil, newAuth())
 			d := dep.Dep{Datasource: tc.ds, Name: tc.name, Source: srv.URL + "/"}
+			if why := s.Deprecation(d, ""); why != "" {
+				t.Errorf("Deprecation before Releases = %q, want none (no request)", why)
+			}
 			rels, err := s.Releases(t.Context(), d, "")
 			if err != nil {
 				t.Fatal(err)
@@ -99,10 +121,65 @@ func TestRealResponses(t *testing.T) {
 			if at, _ := s.ReleaseTime(t.Context(), d, "v0.0.1"); !at.IsZero() {
 				t.Errorf("unlisted release time = %v, want zero", at)
 			}
+			want := ""
+			if tc.archived {
+				want = "repository archived"
+			}
+			if why := s.Deprecation(d, tc.want[0]); why != want {
+				t.Errorf("Deprecation = %q, want %q", why, want)
+			}
+			if archived, err := s.Archived(t.Context(), d); err != nil || archived != tc.archived {
+				t.Errorf("Archived = %t, %v; want %t", archived, err, tc.archived)
+			}
 			if len(queries) != 1 || !strings.Contains(queries[0], "page=1") {
 				t.Errorf("queries = %v, want one first page (lists are fetched once)", queries)
 			}
+			if len(repoQueries) != 1 {
+				t.Fatalf("repository queries = %v, want one", repoQueries)
+			}
+			if q, _ := url.ParseQuery(repoQueries[0]); tc.repoPath == "/api/graphql" &&
+				(q.Get("query") != gitlabArchivedQuery || q.Get("variables") != `{"p":"gitlab-org/cli"}`) {
+				t.Errorf("GraphQL query = %v", q)
+			}
 		})
+	}
+}
+
+// TestArchived reads the archived flag of gitlab-org/golang-crypto (GraphQL, captured from
+// gitlab.com); a project GitLab does not show (`project: null`), a host without the API and a
+// failing request are not archived.
+func TestArchived(t *testing.T) {
+	srv := serve(t, map[string]string{"/api/graphql": "gitlab-project-archived.json"}, nil)
+	s := New(GitLabTags, srv.Client(), nil, newAuth())
+	d := dep.Dep{Name: "gitlab-org/golang-crypto", Source: srv.URL}
+	if archived, err := s.Archived(t.Context(), d); err != nil || !archived {
+		t.Errorf("Archived = %t, %v", archived, err)
+	}
+	if why := s.Deprecation(d, "v1"); why != "repository archived" {
+		t.Errorf("Deprecation = %q", why)
+	}
+	if _, err := s.Archived(t.Context(), dep.Dep{Name: "a/b/c", Source: srv.URL}); err != nil {
+		t.Errorf("GitLab subgroup path: %v", err)
+	}
+
+	null := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"data":{"project":null}}`)
+	}))
+	defer null.Close()
+	s = New(GitLabReleases, null.Client(), nil, newAuth())
+	if archived, err := s.Archived(t.Context(), dep.Dep{Name: "g/private", Source: null.URL}); err != nil || archived {
+		t.Errorf("Archived(project null) = %t, %v", archived, err)
+	}
+
+	s = New(GiteaTags, srv.Client(), nil, newAuth())
+	if archived, err := s.Archived(t.Context(), dep.Dep{Name: "o/r", Source: srv.URL}); err == nil || archived {
+		t.Errorf("Archived(404) = %t, %v; want the error", archived, err)
+	}
+	if _, err := s.Archived(t.Context(), dep.Dep{Name: "a/b/c", Source: srv.URL}); err == nil {
+		t.Error("Archived(invalid name): no error")
+	}
+	if why := s.Deprecation(dep.Dep{Name: "a/b/c", Source: srv.URL}, ""); why != "" {
+		t.Errorf("Deprecation(invalid name) = %q", why)
 	}
 }
 
@@ -136,6 +213,10 @@ func TestPagination(t *testing.T) {
 	}{{3, 3}, {50, maxPages}} {
 		var pages atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !strings.HasSuffix(r.URL.Path, "/releases") {
+				fmt.Fprint(w, `{"archived":false}`) // the repository
+				return
+			}
 			n := int(pages.Add(1))
 			if got := r.URL.Query().Get("page"); got != fmt.Sprint(n) {
 				t.Errorf("page = %s, want %d", got, n)
@@ -189,6 +270,10 @@ func TestAuth(t *testing.T) {
 					http.NotFound(w, r)
 					return
 				}
+				if r.URL.Path == "/api/graphql" || r.URL.Path == "/api/v1/repos/o/r" {
+					fmt.Fprint(w, `{"archived":false,"data":{"project":{"archived":false}}}`) // the repository
+					return
+				}
 				fmt.Fprint(w, `[{"tag_name":"v1","name":"v1","commit":{"id":"a","sha":"a"}}]`)
 			}))
 			defer srv.Close()
@@ -207,11 +292,11 @@ func TestAuth(t *testing.T) {
 			if len(rels) != 1 {
 				t.Errorf("releases = %v", rels)
 			}
-			want := int32(1)
+			want := int32(2) // the list and the repository
 			if tc.helper {
-				want = 2
+				want = 4
 			}
-			if requests.Load() != want || helped.Load() != want-1 {
+			if requests.Load() != want || helped.Load() != want/2-1 {
 				t.Errorf("requests = %d, helper calls = %d", requests.Load(), helped.Load())
 			}
 		})

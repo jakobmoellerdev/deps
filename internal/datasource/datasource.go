@@ -72,8 +72,9 @@ type LatestSource interface {
 
 // DeprecationSource is implemented by datasources whose registry marks packages or versions
 // as deprecated, yanked or archived (npm `deprecated`, a yanked crate or PyPI release, an
-// archived GitHub repository). It is optional and answered from data Releases fetched, so it
-// costs no request.
+// archived source repository). It is optional and answered from data Releases fetched
+// (alongside the release list, as for archived git-tags and forge repositories), so it costs
+// no request of its own.
 type DeprecationSource interface {
 	// Deprecation returns why version of d (or d as a whole) should no longer be used, e.g.
 	// `deprecated: use x instead` or `version 1.2.3 yanked`, or "" when it is not deprecated.

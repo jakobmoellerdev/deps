@@ -1,0 +1,19 @@
+{
+  "id": 2,
+  "owner": {
+    "id": 3,
+    "login": "forgejo"
+  },
+  "name": "runner",
+  "full_name": "forgejo/runner",
+  "description": "A daemon that connects to a Forgejo instance and runs jobs for continuous integration. The installation and usage instructions are part of the Forgejo documentation",
+  "empty": false,
+  "private": false,
+  "fork": false,
+  "mirror": false,
+  "archived": false,
+  "archived_at": "1970-01-01T00:00:00Z",
+  "html_url": "https://code.forgejo.org/forgejo/runner",
+  "default_branch": "main",
+  "updated_at": "2026-10-31T09:23:39Z"
+}

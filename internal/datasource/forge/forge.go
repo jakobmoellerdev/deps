@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
@@ -132,6 +134,7 @@ type Source struct {
 	getter httpx.Getter
 	auth   *httpx.Auth
 	lists  datasource.Memo[Repo, *list]
+	repos  datasource.Memo[Repo, bool] // repository -> archived
 }
 
 // New returns the datasource name (one of Names) on client, holding a slot of sem per request
@@ -204,6 +207,63 @@ func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 	return l.times[version], nil
 }
 
+// Deprecation implements datasource.DeprecationSource: d's repository is archived, as the
+// repository request Releases sent alongside the list reported (see Archived); no request.
+func (s *Source) Deprecation(d dep.Dep, _ string) string {
+	r, err := ParseRepo(s.name, d.Name, d.Source)
+	if err != nil {
+		return ""
+	}
+	if archived, _ := s.repos.Peek(r); archived {
+		return "repository archived"
+	}
+	return ""
+}
+
+// Archived reports whether d's repository is archived: GitLab
+// `GET /api/graphql?query={project(fullPath:<path>){archived}}` (the REST project of an
+// anonymous request has no `archived`), Gitea/Forgejo `GET /api/v1/repos/<owner>/<repo>`,
+// `archived`. One request per repository, shared with Releases (which sends it alongside the
+// list) and Deprecation; a project GitLab does not show is not archived.
+func (s *Source) Archived(ctx context.Context, d dep.Dep) (bool, error) {
+	r, err := ParseRepo(s.name, d.Name, d.Source)
+	if err != nil {
+		return false, err
+	}
+	return s.archived(ctx, r)
+}
+
+// gitlabArchivedQuery asks GitLab's GraphQL API whether the project $p is archived.
+const gitlabArchivedQuery = `query($p:ID!){project(fullPath:$p){archived}}`
+
+func (s *Source) archived(ctx context.Context, r Repo) (bool, error) {
+	return s.repos.Do(ctx, r, func() (bool, error) {
+		var target string
+		if s.spec.gitlab {
+			vars, err := json.Marshal(map[string]string{"p": r.Path})
+			if err != nil {
+				return false, err
+			}
+			target = r.Base + "/api/graphql?query=" + url.QueryEscape(gitlabArchivedQuery) + "&variables=" + url.QueryEscape(string(vars))
+		} else {
+			owner, repo, _ := strings.Cut(r.Path, "/")
+			target = r.Base + "/api/v1/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repo)
+		}
+		var meta struct {
+			Archived bool `json:"archived"` // Gitea/Forgejo
+			Data     struct {
+				Project struct {
+					Archived bool `json:"archived"`
+				} `json:"project"`
+			} `json:"data"` // GitLab
+		}
+		_, err := s.get(ctx, target, func(body io.Reader) error { return json.UnmarshalRead(body, &meta) })
+		archived := meta.Archived || meta.Data.Project.Archived
+		slog.DebugContext(ctx, "forge repository", "datasource", s.name, "repo", r.URL(), "archived", archived, "err", err)
+		return archived, err
+	})
+}
+
 // Digest returns the commit of tag version for the tags datasources, looking the tag up on its
 // own when it is older than the listed pages; release lists carry no digest.
 func (s *Source) Digest(ctx context.Context, d dep.Dep, version string) (string, error) {
@@ -274,7 +334,14 @@ func (s *Source) list(ctx context.Context, d dep.Dep) (*list, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.lists.Do(ctx, r, func() (*list, error) { return s.fetch(ctx, r) })
+	return s.lists.Do(ctx, r, func() (*list, error) {
+		// The repository's archived flag (Deprecation) is asked alongside the first page.
+		var wg sync.WaitGroup
+		wg.Go(func() { _, _ = s.archived(ctx, r) })
+		l, err := s.fetch(ctx, r)
+		wg.Wait()
+		return l, err
+	})
 }
 
 // api returns the URL of the repository's release or tag list, plus suffix (a single tag).
