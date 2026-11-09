@@ -223,7 +223,7 @@ The first line turns on completion and checks in editors that use yaml-language-
 | <img src="https://cdn.simpleicons.org/go" width="20" alt=""> | **Go** | `go.mod` requires and `toolchain` | `go.sum` (`go mod tidy`) |
 | <img src="https://cdn.simpleicons.org/docker" width="20" alt=""> | **Containers** | Dockerfiles, Compose, workflow containers, Kubernetes manifests, Helm values, Podman Quadlet units | |
 | 📦 | **Dev Containers** | `devcontainer.json` images, features and feature versions | |
-| <img src="https://cdn.simpleicons.org/kubernetes" width="20" alt=""> | **Kubernetes** | Kustomize images, charts and remote refs, Crossplane packages | |
+| <img src="https://cdn.simpleicons.org/kubernetes" width="20" alt=""> | **Kubernetes** | Kustomize images, charts and remote refs, Crossplane packages; manifest `apiVersion`s (with warnings for removed/deprecated APIs) | |
 | <img src="https://cdn.simpleicons.org/helm/_/white" width="20" alt=""> | **Helm** | `Chart.yaml`, Helm v2 `requirements.yaml`, helmfiles, chart custom resources (classic repos and OCI), Rancher Fleet `fleet.yaml`, Helmsman desired state files, `vendir.yml` | `Chart.lock`, `requirements.lock` |
 | <img src="https://cdn.simpleicons.org/kubernetes" width="20" alt=""> | **Glasskube** | `Package`/`ClusterPackage` versions from the `PackageRepository` in the repository | |
 | <img src="https://cdn.simpleicons.org/nodedotjs" width="20" alt=""> | **Node.js**<br>npm, pnpm, Yarn, Bun | `package.json` (deps, `packageManager`, `engines`, `volta`), `.nvmrc`, `.node-version` | `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` |
