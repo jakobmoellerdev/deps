@@ -89,7 +89,7 @@ func parseRange(rng string) *versioning.NuGetRange {
 
 // InRange implements manager.RangeUpdater: whether d's range admits v
 // (versioning.NuGetRange.Admits).
-func (*nugetManager) InRange(d dep.Dep, v string) bool {
+func (rangeEditor) InRange(d dep.Dep, v string) bool {
 	r := parseRange(d.Range)
 	return r != nil && r.Admits(v)
 }
@@ -101,7 +101,7 @@ func (*nugetManager) InRange(d dep.Dep, v string) bool {
 // position where the bounds differ (`[1.0,2.0)` → `[1.0,3.0)` for 2.5.1; `(,2.0)` → `(,3.0)`),
 // the lower bound kept; for a v the interval admits the lower bound is raised to v (`[1.0,2.0)`
 // → `[1.5.0,2.0)`), which the engine only writes under bump.
-func (*nugetManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+func (rangeEditor) NewRange(d dep.Dep, v, strategy string) (string, bool) {
 	r := parseRange(d.Range)
 	parts, pre, ok := versioning.NuGetParts(v)
 	if r == nil || !ok {

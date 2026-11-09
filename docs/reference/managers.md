@@ -69,6 +69,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`bazel-module`](#bazel-module)
 - [`bazelisk`](#bazelisk)
 - [`nuget`](#nuget)
+- [`cake`](#cake)
 - [`ansible-galaxy`](#ansible-galaxy)
 - [`ansible`](#ansible)
 - [`sbt`](#sbt)
@@ -3364,6 +3365,40 @@ Updates NuGet package references, MSBuild project SDKs and .NET tools in MSBuild
 **Lock file maintenance (`run`).**
 
 With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `packages.lock.json` next to a scanned project is refreshed with `dotnet restore --use-lock-file --force-evaluate` (same mirror and options), which moves floating versions (`13.*`) and ranges to the newest versions they admit, transitive packages included. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`; `minimumReleaseAge` does not apply to it.
+
+## cake
+
+Updates the NuGet packages Cake scripts install: the package URIs of `#addin`, `#tool`, `#module` and `#load` directives and of `InstallTool`/`InstallTools` calls. Only the `version` value of the URI is rewritten. The script is lexed as C# for comments and strings, so commented-out directives and URIs inside other strings are not deps; Cake is not run.
+
+**Files:**
+
+- `*.cake`
+- `nuget.config` (any case): package sources only, no deps (shared with the nuget manager's reading of it)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `addin` | `#addin nuget:?package=Cake.FileHelpers&version=6.1.3` (also quoted: `#addin "nuget:…"`) | `nuget` (nuget.org, or the nuget.config package sources) | `nuget` | updated |
+| `tool` | `#tool nuget:…`, `#tool dotnet:…`, and every `"nuget:…"`/`"dotnet:…"` string argument of an `InstallTool(…)` or `InstallTools(…)` call | `nuget` (nuget.org, or the nuget.config package sources) | `nuget` | updated |
+| `module` | `#module nuget:…` | `nuget` (nuget.org, or the nuget.config package sources) | `nuget` | updated |
+| `load` | `#load nuget:…` and its short form `#l nuget:…` (`#load` of a local `.cake` path is no dep) | `nuget` (nuget.org, or the nuget.config package sources) | `nuget` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `no version` | a URI without `version` (Cake installs the newest version) or with an empty one |
+| `invalid version "<v>"` | a `version` outside NuGet's version and range grammar |
+| `floating version <v>` | `version=*` |
+| `cannot locate value` | a `version` written with URL escapes (`%2B`, `+`) |
+| `unsupported url` | a source that is not an http(s) URL (`nuget:file:///packages?package=…`, a local path) |
+| `no http(s) package source in nuget.config` | a URI without source whose nuget.config files clear the package sources and add only local folders or `%VAR%` URLs |
+| `no packageSourceMapping pattern matches the package` | a URI without source, with `packageSourceMapping` configured and no pattern matching the package id |
+
+**Package URIs.**
+
+- A package URI is `nuget:` or `dotnet:`, an optional source, then the query: `package` is the package id, `version` its version (other parameters such as `prerelease`, `include` or `loaddependencies` are kept). A directive counts at the start of a line, its argument unquoted (up to the first blank) or as one quoted string; `InstallTool(s)` arguments are plain C# string literals, at any nesting inside the call.
+- Versions follow the [nuget manager](#nuget) (versioning `nuget`): a bare version is replaced, as Cake installs exactly that version; floating versions and intervals are ranges rewritten per [rangeStrategy](configuration.md#rangestrategy).
+- A URI with an http(s) source (`nuget:https://api.nuget.org/v3/index.json?package=…`) is looked up on that feed alone (v2 feeds are not read, see [Datasources](#datasources)); without a source (`nuget:?package=…`) the package sources of the nuget.config files above the script apply as for the [nuget manager](#nuget), nuget.org by default.
 
 ## ansible-galaxy
 

@@ -9,6 +9,9 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 // defaultFeed is nuget.org, the package source NuGet starts from (its user-wide default
@@ -91,6 +94,59 @@ func parseConfig(src []byte) (*nugetConfig, error) {
 
 // configNames are the file names NuGet reads a configuration from in each directory.
 func isConfig(p string) bool { return strings.EqualFold(path.Base(p), "nuget.config") }
+
+// configSet collects the nuget.config files of a run (Extract) for Link, by directory.
+type configSet struct {
+	mu sync.Mutex
+	m  map[string]*nugetConfig
+}
+
+// add parses the nuget.config file and records it for its directory.
+func (s *configSet) add(file string, src []byte) error {
+	c, err := parseConfig(src)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.m == nil {
+		s.m = map[string]*nugetConfig{}
+	}
+	s.m[path.Dir(file)] = c
+	return nil
+}
+
+// take returns the recorded configurations and forgets them, so the next run starts empty.
+func (s *configSet) take() map[string]*nugetConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.m
+	s.m = nil
+	return m
+}
+
+// applySources gives each nuget-datasource dep of deps (declared in directory dir) without a
+// Source of its own the package sources of the nuget.config files above dir (sourcesFor),
+// restricted by packageSourceMapping; a dep no source is left for is skipped.
+func applySources(configs map[string]*nugetConfig, dir string, deps []dep.Dep) {
+	feeds, mapping, _ := sourcesFor(configs, dir)
+	for i := range deps {
+		d := &deps[i]
+		if d.Datasource != dsNuGet || d.Source != "" {
+			continue
+		}
+		fs := mapped(feeds, mapping, d.Name)
+		switch {
+		case len(fs) > 0:
+			d.Source = sourceString(fs)
+		case d.Skip != "":
+		case len(feeds) > 0:
+			d.Skip = skipUnmapped
+		default:
+			d.Skip = skipNoSources
+		}
+	}
+}
 
 // sourcesFor returns the effective package sources of the directory dir (slash, relative to
 // the root): nuget.org, then the nuget.config files from the repository root down to dir

@@ -2049,6 +2049,37 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "cake"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "addin",
+                    "tool",
+                    "module",
+                    "load"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "ansible-galaxy"
                   ]
                 },
@@ -2701,6 +2732,7 @@
               "bazel-module",
               "bazelisk",
               "nuget",
+              "cake",
               "ansible-galaxy",
               "ansible",
               "sbt",
@@ -2891,6 +2923,8 @@
               "nuget",
               "msbuild-sdk",
               "dotnet-sdk",
+              "addin",
+              "load",
               "role",
               "galaxy-collection",
               "optional",

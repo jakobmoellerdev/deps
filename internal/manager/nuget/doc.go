@@ -63,3 +63,36 @@ var Doc = refdoc.Manager{
 			"All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`; `minimumReleaseAge` does not apply to it."},
 	},
 }
+
+// CakeDoc is the reference documentation of the cake manager (docs/reference/managers.md).
+var CakeDoc = refdoc.Manager{
+	Name: CakeName,
+	Summary: "Updates the NuGet packages Cake scripts install: the package URIs of `#addin`, `#tool`, `#module` and `#load` directives and of `InstallTool`/`InstallTools` calls. " +
+		"Only the `version` value of the URI is rewritten. The script is lexed as C# for comments and strings, so commented-out directives and URIs inside other strings are not deps; Cake is not run.",
+	Files: []string{
+		"`*.cake`",
+		"`nuget.config` (any case): package sources only, no deps (shared with the nuget manager's reading of it)",
+	},
+	DepTypes: []refdoc.DepType{
+		{Name: DepTypeAddin, What: "`#addin nuget:?package=Cake.FileHelpers&version=6.1.3` (also quoted: `#addin \"nuget:…\"`)", Datasource: nugetDatasource, Versioning: "`nuget`", Datasources: []string{"nuget"}},
+		{Name: DepTypeTool, What: "`#tool nuget:…`, `#tool dotnet:…`, and every `\"nuget:…\"`/`\"dotnet:…\"` string argument of an `InstallTool(…)` or `InstallTools(…)` call", Datasource: nugetDatasource, Versioning: "`nuget`", Datasources: []string{"nuget"}},
+		{Name: DepTypeModule, What: "`#module nuget:…`", Datasource: nugetDatasource, Versioning: "`nuget`", Datasources: []string{"nuget"}},
+		{Name: DepTypeLoad, What: "`#load nuget:…` and its short form `#l nuget:…` (`#load` of a local `.cake` path is no dep)", Datasource: nugetDatasource, Versioning: "`nuget`", Datasources: []string{"nuget"}},
+	},
+	Skips: []refdoc.Skip{
+		{Reason: skipNoVersion, When: "a URI without `version` (Cake installs the newest version) or with an empty one"},
+		{Reason: skipInvalid + " \"<v>\"", When: "a `version` outside NuGet's version and range grammar"},
+		{Reason: skipFloatAll + " <v>", When: "`version=*`"},
+		{Reason: skipLocate, When: "a `version` written with URL escapes (`%2B`, `+`)"},
+		{Reason: skipCakeSource, When: "a source that is not an http(s) URL (`nuget:file:///packages?package=…`, a local path)"},
+		{Reason: skipNoSources, When: "a URI without source whose nuget.config files clear the package sources and add only local folders or `%VAR%` URLs"},
+		{Reason: skipUnmapped, When: "a URI without source, with `packageSourceMapping` configured and no pattern matching the package id"},
+	},
+	Sections: []refdoc.Section{
+		{Title: "Package URIs", Items: []string{
+			"A package URI is `nuget:` or `dotnet:`, an optional source, then the query: `package` is the package id, `version` its version (other parameters such as `prerelease`, `include` or `loaddependencies` are kept). A directive counts at the start of a line, its argument unquoted (up to the first blank) or as one quoted string; `InstallTool(s)` arguments are plain C# string literals, at any nesting inside the call.",
+			"Versions follow the [nuget manager](#nuget) (versioning `nuget`): a bare version is replaced, as Cake installs exactly that version; floating versions and intervals are ranges rewritten per [rangeStrategy](configuration.md#rangestrategy).",
+			"A URI with an http(s) source (`nuget:https://api.nuget.org/v3/index.json?package=…`) is looked up on that feed alone (v2 feeds are not read, see [Datasources](#datasources)); without a source (`nuget:?package=…`) the package sources of the nuget.config files above the script apply as for the [nuget manager](#nuget), nuget.org by default.",
+		}},
+	},
+}

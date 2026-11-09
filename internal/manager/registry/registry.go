@@ -141,6 +141,7 @@ var Builtin = []Entry{
 	{bazel.Doc, bazel.New},
 	{bazel.BazeliskDoc, bazel.NewBazelisk},
 	{nuget.Doc, nuget.New},
+	{nuget.CakeDoc, nuget.NewCake},
 	{ansible.GalaxyDoc, ansible.NewGalaxy},
 	{ansible.Doc, ansible.New},
 	{sbt.Doc, sbt.New},

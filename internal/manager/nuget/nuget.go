@@ -53,10 +53,11 @@ const (
 const maxPropertyDepth = 8
 
 type nugetManager struct {
+	rangeEditor
+	configs  configSet
 	mu       sync.Mutex
-	projects map[string]*project     // MSBuild files of the run by path
-	refs     map[string][]ref        // per MSBuild file: deps whose property it does not define
-	configs  map[string]*nugetConfig // nuget.config files of the run by directory
+	projects map[string]*project // MSBuild files of the run by path
+	refs     map[string][]ref    // per MSBuild file: deps whose property it does not define
 }
 
 // ref is a dep of a file (index into its deps) whose version is a property defined elsewhere.
@@ -101,17 +102,7 @@ func (m *nugetManager) Extract(file string, src []byte, _ manager.Env) ([]dep.De
 	var err error
 	switch base := strings.ToLower(path.Base(file)); {
 	case isConfig(file):
-		c, err := parseConfig(src)
-		if err != nil {
-			return nil, err
-		}
-		m.mu.Lock()
-		if m.configs == nil {
-			m.configs = map[string]*nugetConfig{}
-		}
-		m.configs[path.Dir(file)] = c
-		m.mu.Unlock()
-		return nil, nil
+		return nil, m.configs.add(file, src)
 	case base == "global.json":
 		items, err = globalJSON(src)
 	case base == "dotnet-tools.json":
@@ -227,9 +218,10 @@ var importNames = []string{"Directory.Packages.props", "Directory.Build.props"}
 // sources of the nuget.config files above its file (sourcesFor), restricted by
 // packageSourceMapping. Then it forgets the run's files.
 func (m *nugetManager) Link(files [][]dep.Dep) {
+	configs := m.configs.take()
 	m.mu.Lock()
-	projects, refs, configs := m.projects, m.refs, m.configs
-	m.projects, m.refs, m.configs = nil, nil, nil
+	projects, refs := m.projects, m.refs
+	m.projects, m.refs = nil, nil
 	m.mu.Unlock()
 	for _, deps := range files {
 		if len(deps) == 0 {
@@ -248,23 +240,7 @@ func (m *nugetManager) Link(files [][]dep.Dep) {
 				return value{}, "", false
 			})
 		}
-		feeds, mapping, _ := sourcesFor(configs, path.Dir(file))
-		for i := range deps {
-			d := &deps[i]
-			if d.Datasource != dsNuGet {
-				continue
-			}
-			fs := mapped(feeds, mapping, d.Name)
-			switch {
-			case len(fs) > 0:
-				d.Source = sourceString(fs)
-			case d.Skip != "":
-			case len(feeds) > 0:
-				d.Skip = skipUnmapped
-			default:
-				d.Skip = skipNoSources
-			}
-		}
+		applySources(configs, path.Dir(file), deps)
 	}
 }
 
@@ -284,14 +260,18 @@ func importChain(projects map[string]*project, file string) []string {
 	}
 }
 
+// rangeEditor implements Edits and manager.RangeUpdater for the nuget-versioned deps of the
+// nuget and cake managers.
+type rangeEditor struct{}
+
 // Edits replaces the version (RefSpan) with the new version, or rewrites a range for it
 // (NewRange) under the update's rangeStrategy.
-func (m *nugetManager) Edits(u dep.Update) ([]patch.Edit, error) {
+func (e rangeEditor) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
 	if d.Range == "" {
 		return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
 	}
-	out, ok := m.NewRange(d, u.NewVersion, u.RangeStrategy)
+	out, ok := e.NewRange(d, u.NewVersion, u.RangeStrategy)
 	if !ok {
 		return nil, fmt.Errorf("range %s cannot be rewritten for %s", d.Range, u.NewVersion)
 	}
