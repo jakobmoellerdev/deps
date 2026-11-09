@@ -34,15 +34,37 @@ import (
 	"github.com/recolabs/gnata"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/azuretasks"
+	bazelds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bazel"
+	bitriseds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bitrise"
+	clojureds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/clojure"
+	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	debds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deb"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/galaxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubrunners"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gradleversion"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/javaversion"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/jenkinsplugins"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/juliaregistry"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/kubernetesapi"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
+	nugetds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nuget"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/orb"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/packagist"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubygems"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rubyversion"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rustversion"
 	sbtds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/sbt"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/tfregistry"
+	vcpkgds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom/customdoc"
+	vcpkgmgr "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
@@ -97,7 +119,8 @@ type customManager struct {
 // regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
 // datasources keep an empty Source.
 var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name, "artifactory", forge.GitLabReleases, forge.GitLabTags, forge.GiteaReleases, forge.GiteaTags, forge.ForgejoReleases, forge.ForgejoTags, "endoflife-date",
-	galaxy.CollectionName, mavends.Name, sbtds.PackageName, sbtds.PluginName, "glasskube-packages", "pod"}
+	galaxy.CollectionName, mavends.Name, sbtds.PackageName, sbtds.PluginName, "glasskube-packages", "pod",
+	bazelds.Name, bitriseds.Name, clojureds.Name, condads.Name, crate.Name, nugetds.Name, packagist.Name, rubygems.Name, tfregistry.ProviderName, tfregistry.ModuleName, vcpkgds.Name}
 
 // setRegistry sets d.Source to registry when d's datasource takes a registry URL.
 func setRegistry(d *dep.Dep, registry string) {
@@ -296,7 +319,7 @@ func (m *customManager) annotations(file string, src []byte) []dep.Dep {
 				helmChartToken(&d, line[ann[5]:])
 			}
 			m.classify(&d)
-			if d.Skip == "" && !m.knownVersioning(d.Versioning) {
+			if d.Skip == "" && !m.knownVersioning(d.Versioning, d.Datasource) {
 				d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
 			}
 			pending = &d
@@ -358,7 +381,7 @@ func (m *customManager) renovateMarker(file string, lineNo int, fields string) d
 	default:
 		d.Versioning = m.depVersioning(d.Datasource)
 	}
-	if d.Skip == "" && !m.knownVersioning(d.Versioning) {
+	if d.Skip == "" && !m.knownVersioning(d.Versioning, d.Datasource) {
 		d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
 	}
 	if _, err := versioning.CompileExtract(d.ExtractVersion); d.Skip == "" && d.ExtractVersion != "" && err != nil {
@@ -376,10 +399,11 @@ func (m *customManager) depVersioning(ds string) string {
 	return config.DefaultCustomVersioning(config.CanonicalDatasource(ds))
 }
 
-// knownVersioning reports whether a dep may use versioning v: the entry's own (validated by
-// newManager, also a regex scheme) or a scheme name.
-func (m *customManager) knownVersioning(v string) bool {
-	return v == m.versioning || slices.Contains(config.Versionings, v)
+// knownVersioning reports whether a dep of datasource ds may use versioning v: the entry's own
+// (validated by newManager, also a regex scheme), ds's default (vcpkg's is a regex scheme) or a
+// scheme name.
+func (m *customManager) knownVersioning(v, ds string) bool {
+	return v == m.versioning || v == config.DefaultCustomVersioning(config.CanonicalDatasource(ds)) || slices.Contains(config.Versionings, v)
 }
 
 // nextLineVersion sets the version (and for docker refs the digest) of d from the annotated
@@ -536,7 +560,7 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 			d.Version = string(src[vs:ve])
 			d.RefSpan = dep.Span{Start: vs, End: ve}
 			m.classify(&d)
-			if d.Skip == "" && !m.knownVersioning(d.Versioning) {
+			if d.Skip == "" && !m.knownVersioning(d.Versioning, d.Datasource) {
 				d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
 			}
 		}
@@ -636,7 +660,74 @@ func (m *customManager) classify(d *dep.Dep) {
 		if _, err := forge.ParseRepo(d.Datasource, d.Name, d.Source); err != nil {
 			d.Skip = err.Error()
 		}
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob", galaxy.Name, "glasskube-packages", "pod", "jsr", "deno":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob", galaxy.Name, "glasskube-packages", "pod", "jsr", "deno",
+		azuretasks.Name, orb.Name, elmpackage.Name, gradleversion.Name, jenkinsplugins.Name, kubernetesapi.Name, rubyversion.Name, rustversion.Name, juliaregistry.Name:
+	case javaversion.Name:
+		if _, err := javaversion.Query(d.Name); err != nil {
+			d.Skip = fmt.Sprintf("invalid java-version name %q", d.Name)
+		}
+	case dotnetversion.Name:
+		if d.Name != dotnetversion.SDK && d.Name != dotnetversion.Runtime {
+			d.Skip = fmt.Sprintf("invalid dotnet-version name %q", d.Name)
+		}
+	case condads.Name:
+		urls := strings.Fields(d.Source)
+		for i, u := range urls {
+			ch, ok := condads.Channel(u)
+			if !ok {
+				d.Skip = fmt.Sprintf("invalid conda registry URL %q", u)
+				return
+			}
+			urls[i] = ch
+		}
+		d.Source = strings.Join(urls, " ")
+	case crate.Name:
+		// A registry name (Cargo's `registry = "<name>"`) or an index URL; crates.io when empty.
+		if f := strings.Fields(d.Source); len(f) > 0 {
+			d.Source = f[0]
+		}
+	case nugetds.Name:
+		for e := range strings.FieldsSeq(d.Source) {
+			_, u, ok := strings.Cut(e, "=")
+			if !ok {
+				u = e
+			}
+			if !httpURL(u) {
+				d.Skip = fmt.Sprintf("invalid nuget registry URL %q", e)
+				return
+			}
+		}
+	case rubygems.Name, packagist.Name, bazelds.Name:
+		registryURLs(d, false)
+	case clojureds.Name:
+		registryURLs(d, true)
+	case bitriseds.Name:
+		if f := strings.Fields(d.Source); len(f) > 0 {
+			if !httpURL(f[0]) {
+				d.Skip = fmt.Sprintf("invalid bitrise registry URL %q", f[0])
+				return
+			}
+			d.Source = f[0]
+		}
+	case tfregistry.ProviderName, tfregistry.ModuleName:
+		if f := strings.Fields(d.Source); len(f) > 0 {
+			if !httpURL(f[0]) {
+				d.Skip = fmt.Sprintf("invalid %s registry URL %q", d.Datasource, f[0])
+				return
+			}
+			d.Source = strings.TrimRight(f[0], "/")
+		}
+	case vcpkgds.Name:
+		f := strings.Fields(d.Source)
+		if len(f) == 0 {
+			d.Source = vcpkgds.RawBase(vcpkgmgr.BuiltinRepo, vcpkgDefaultRef)
+			return
+		}
+		if !httpURL(f[0]) {
+			d.Skip = fmt.Sprintf("invalid vcpkg registry URL %q", f[0])
+			return
+		}
+		d.Source = strings.TrimRight(f[0], "/")
 	case galaxy.CollectionName:
 		if f := strings.Fields(d.Source); len(f) > 0 {
 			if !httpURL(f[0]) {
@@ -687,6 +778,26 @@ func (m *customManager) classify(d *dep.Dep) {
 			d.Skip = fmt.Sprintf("unknown datasource %q", ds)
 		}
 	}
+}
+
+// vcpkgDefaultRef is the branch of microsoft/vcpkg whose versions database custom vcpkg deps
+// without a registryUrl are looked up in.
+const vcpkgDefaultRef = "master"
+
+// registryURLs checks the whitespace-separated registryUrls of d (Source) are `http(s)://`
+// URLs, adding a trailing slash to each when slash is set; others skip d.
+func registryURLs(d *dep.Dep, slash bool) {
+	urls := strings.Fields(d.Source)
+	for i, u := range urls {
+		if !httpURL(u) {
+			d.Skip = fmt.Sprintf("invalid %s registry URL %q", d.Datasource, u)
+			return
+		}
+		if slash && !strings.HasSuffix(u, "/") {
+			urls[i] = u + "/"
+		}
+	}
+	d.Source = strings.Join(urls, " ")
 }
 
 // mavenSource turns the registryUrls of a maven, sbt-package or sbt-plugin dep into its

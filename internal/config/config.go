@@ -25,6 +25,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	vcpkgmgr "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/prtemplate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
@@ -565,9 +566,9 @@ type Custom struct {
 	FileFormat  string    `yaml:"fileFormat" jsonschema_description:"Format the jsonata query reads the file as: json (comments and trailing commas allowed), yaml (a list of the file's documents) or toml; required with jsonata."`
 	Datasource  string    `yaml:"datasource" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) are aliases."`
 	Name        string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
-	Versioning  string    `yaml:"versioning" jsonschema:"default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs, glasskube, kubernetes-api or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version and galaxy-collection, pub for dart, hex for hex, maven for maven, ivy for sbt-package and sbt-plugin, tag for galaxy, docker for github-runners, glasskube for glasskube-packages, kubernetes-api for kubernetes-api), else semver."` // default semver; see DefaultCustomVersioning
+	Versioning  string    `yaml:"versioning" jsonschema:"default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs, glasskube, kubernetes-api or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version and galaxy-collection, pub for dart, hex for hex, maven for maven, ivy for sbt-package and sbt-plugin, tag for galaxy, docker for github-runners, glasskube for glasskube-packages, kubernetes-api for kubernetes-api, cargo for crate, conda for conda, nuget for nuget and dotnet-version, ruby for rubygems and ruby-version, composer for packagist, julia for julia-registry, hashicorp for terraform-provider and terraform-module, maven for gradle-version, jenkins-plugins and clojure, bazel-module for bazel, tag for azure-pipelines-tasks, orb and bitrise, the vcpkg port regex for vcpkg), else semver."` // default semver; see DefaultCustomVersioning
 	Checksum    *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
-	RegistryURL string    `yaml:"registryUrl" jsonschema_description:"Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb, artifactory, gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases, forgejo-tags, endoflife-date, galaxy-collection, maven, sbt-package, sbt-plugin, glasskube-packages and pod datasources; a (?P<registryUrl>) group, a Renovate marker's registryUrl= or a JSONata result's registryUrl overrides it. Ignored for other datasources."`
+	RegistryURL string    `yaml:"registryUrl" jsonschema_description:"Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb, artifactory, gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases, forgejo-tags, endoflife-date, galaxy-collection, maven, sbt-package, sbt-plugin, glasskube-packages, pod, bazel, bitrise, clojure, conda, crate, nuget, packagist, rubygems, terraform-provider, terraform-module and vcpkg datasources; a (?P<registryUrl>) group, a Renovate marker's registryUrl= or a JSONata result's registryUrl overrides it. Ignored for other datasources."`
 }
 
 // customVersionings are the default versionings of custom[] deps by datasource; deps of other
@@ -576,6 +577,10 @@ var customVersionings = map[string]string{
 	"rpm": "rpm", "apk": "apk", "deb": "deb", "python-version": "pep440", "dart": "pub", "hex": "hex",
 	"galaxy": "tag", "galaxy-collection": "pep440", "maven": "maven", "sbt-package": "ivy", "sbt-plugin": "ivy", "github-runners": "docker",
 	"glasskube-packages": "glasskube", "kubernetes-api": "kubernetes-api",
+	"crate": "cargo", "conda": "conda", "nuget": "nuget", "dotnet-version": "nuget", "rubygems": "ruby", "ruby-version": "ruby",
+	"packagist": "composer", "julia-registry": "julia", "terraform-provider": "hashicorp", "terraform-module": "hashicorp",
+	"gradle-version": "maven", "jenkins-plugins": "maven", "clojure": "maven", "bazel": "bazel-module",
+	"azure-pipelines-tasks": "tag", "orb": "tag", "bitrise": "tag", "vcpkg": vcpkgmgr.Versioning,
 }
 
 // DefaultCustomVersioning is the versioning of a custom[] dep of datasource (canonical name)
@@ -584,7 +589,11 @@ var customVersionings = map[string]string{
 // deb for deb, dpkg's order; pep440 for python-version; pub for dart; hex for hex; glasskube for
 // glasskube-packages), else semver.
 // Deps of the datasources of built-in managers use that manager's scheme (galaxy tag,
-// galaxy-collection pep440, maven maven, sbt-package and sbt-plugin ivy, github-runners docker).
+// galaxy-collection pep440, maven maven, sbt-package and sbt-plugin ivy, github-runners docker,
+// crate cargo, conda conda, nuget and dotnet-version nuget, rubygems and ruby-version ruby,
+// packagist composer, julia-registry julia, terraform-provider and terraform-module hashicorp,
+// gradle-version, jenkins-plugins and clojure maven, bazel bazel-module, azure-pipelines-tasks,
+// orb and bitrise tag, vcpkg the vcpkg manager's port regex).
 func DefaultCustomVersioning(datasource string) string {
 	return cmp.Or(customVersionings[datasource], "semver")
 }

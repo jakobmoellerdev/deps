@@ -203,7 +203,7 @@ func (m *customManager) finishJSONataDep(d *dep.Dep, markErr error) {
 		return
 	}
 	m.classify(d)
-	if d.Skip == "" && !m.knownVersioning(d.Versioning) {
+	if d.Skip == "" && !m.knownVersioning(d.Versioning, d.Datasource) {
 		d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
 	}
 	if _, err := versioning.CompileExtract(d.ExtractVersion); d.Skip == "" && d.ExtractVersion != "" && err != nil {

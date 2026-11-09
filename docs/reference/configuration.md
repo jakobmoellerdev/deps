@@ -1714,7 +1714,7 @@ Dependency name; required in regex mode unless match has a (?P\<name>), (?P\<dep
 
 ### `custom[].versioning`
 
-Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs, glasskube, kubernetes-api or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version and galaxy-collection, pub for dart, hex for hex, maven for maven, ivy for sbt-package and sbt-plugin, tag for galaxy, docker for github-runners, glasskube for glasskube-packages, kubernetes-api for kubernetes-api), else semver.
+Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs, glasskube, kubernetes-api or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version and galaxy-collection, pub for dart, hex for hex, maven for maven, ivy for sbt-package and sbt-plugin, tag for galaxy, docker for github-runners, glasskube for glasskube-packages, kubernetes-api for kubernetes-api, cargo for crate, conda for conda, nuget for nuget and dotnet-version, ruby for rubygems and ruby-version, composer for packagist, julia for julia-registry, hashicorp for terraform-provider and terraform-module, maven for gradle-version, jenkins-plugins and clojure, bazel-module for bazel, tag for azure-pipelines-tasks, orb and bitrise, the vcpkg port regex for vcpkg), else semver.
 
 - **Type:** string
 - **Default:** `semver`
@@ -1766,7 +1766,7 @@ Entry name inside the url document (`<hex>  <name>` or `<hex> *<name>`); empty m
 
 ### `custom[].registryUrl`
 
-Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb, artifactory, gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases, forgejo-tags, endoflife-date, galaxy-collection, maven, sbt-package, sbt-plugin, glasskube-packages and pod datasources; a (?P\<registryUrl>) group, a Renovate marker's registryUrl= or a JSONata result's registryUrl overrides it. Ignored for other datasources.
+Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb, artifactory, gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases, forgejo-tags, endoflife-date, galaxy-collection, maven, sbt-package, sbt-plugin, glasskube-packages, pod, bazel, bitrise, clojure, conda, crate, nuget, packagist, rubygems, terraform-provider, terraform-module and vcpkg datasources; a (?P\<registryUrl>) group, a Renovate marker's registryUrl= or a JSONata result's registryUrl overrides it. Ignored for other datasources.
 
 - **Type:** string
 

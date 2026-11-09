@@ -7,6 +7,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	vcpkgmgr "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -976,4 +977,89 @@ func TestGlasskubePackages(t *testing.T) {
 	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
 		{2, "glasskube-packages", "cert-manager", "https://packages.example/packages/", "glasskube", "v1.17.0+2", "", ""},
 	})
+}
+
+// Every datasource of a built-in manager works from custom managers with that manager's
+// versioning, and the registryUrl of the datasources that accept one becomes their Source.
+func TestOtherManagerDatasources(t *testing.T) {
+	vcpkgDefault := "https://raw.githubusercontent.com/microsoft/vcpkg/master"
+	tests := []struct {
+		marker, version                    string
+		ds, name, source, versioning, skip string
+	}{
+		{"datasource=crate depName=serde", "1.0.210", "crate", "serde", "", "cargo", ""},
+		{"datasource=crate depName=serde registryUrl=sparse+https://index.example/", "1.0.210", "crate", "serde", "sparse+https://index.example/", "cargo", ""},
+		{"datasource=crate depName=serde registryUrl=my-registry", "1.0.210", "crate", "serde", "my-registry", "cargo", ""},
+		{"datasource=conda depName=numpy", "2.1.0", "conda", "numpy", "", "conda", ""},
+		{"datasource=conda depName=samtools registryUrl=https://conda.anaconda.org/bioconda", "1.21", "conda", "samtools", "bioconda", "conda", ""},
+		{"datasource=conda depName=x registryUrl=https://example.com/conda", "1.0", "conda", "x", "", "", `invalid conda registry URL "https://example.com/conda"`},
+		{"datasource=nuget depName=Newtonsoft.Json", "13.0.3", "nuget", "Newtonsoft.Json", "", "nuget", ""},
+		{"datasource=nuget depName=Foo registryUrl=https://feed.example/v3/index.json", "1.0.0", "nuget", "Foo", "https://feed.example/v3/index.json", "nuget", ""},
+		{"datasource=nuget depName=Foo registryUrl=nuget.local", "1.0.0", "nuget", "Foo", "", "", `invalid nuget registry URL "nuget.local"`},
+		{"datasource=dotnet-version depName=dotnet-sdk", "8.0.100", "dotnet-version", "dotnet-sdk", "", "nuget", ""},
+		{"datasource=dotnet-version depName=dotnet", "8.0.100", "dotnet-version", "dotnet", "", "", `invalid dotnet-version name "dotnet"`},
+		{"datasource=rubygems depName=rails", "7.2.1", "rubygems", "rails", "", "ruby", ""},
+		{"datasource=rubygems depName=rails registryUrl=https://gems.example.com", "7.2.1", "rubygems", "rails", "https://gems.example.com", "ruby", ""},
+		{"datasource=rubygems depName=rails registryUrl=gems.example.com", "7.2.1", "rubygems", "rails", "", "", `invalid rubygems registry URL "gems.example.com"`},
+		{"datasource=ruby-version depName=ruby", "3.3.5", "ruby-version", "ruby", "", "ruby", ""},
+		{"datasource=packagist depName=symfony/console registryUrl=https://repo.example.com", "7.1.0", "packagist", "symfony/console", "https://repo.example.com", "composer", ""},
+		{"datasource=julia-registry depName=JSON", "0.21.4", "julia-registry", "JSON", "", "julia", ""},
+		{"datasource=terraform-provider depName=hashicorp/aws", "5.70.0", "terraform-provider", "hashicorp/aws", "", "hashicorp", ""},
+		{"datasource=terraform-provider depName=hashicorp/aws registryUrl=https://tf.example.com/", "5.70.0", "terraform-provider", "hashicorp/aws", "https://tf.example.com", "hashicorp", ""},
+		{"datasource=terraform-module depName=terraform-aws-modules/vpc/aws registryUrl=ftp://x", "5.13.0", "terraform-module", "terraform-aws-modules/vpc/aws", "", "", `invalid terraform-module registry URL "ftp://x"`},
+		{"datasource=gradle-version depName=gradle", "8.10.2", "gradle-version", "gradle", "", "maven", ""},
+		{"datasource=jenkins-plugins depName=git", "5.5.2", "jenkins-plugins", "git", "", "maven", ""},
+		{"datasource=clojure depName=org.clojure/clojure registryUrl=https://repo.example.com/maven", "1.12.0", "clojure", "org.clojure/clojure", "https://repo.example.com/maven/", "maven", ""},
+		{"datasource=bazel depName=rules_go registryUrl=https://bcr.example.com", "0.50.1", "bazel", "rules_go", "https://bcr.example.com", "bazel-module", ""},
+		{"datasource=azure-pipelines-tasks depName=Bash", "3.231.0", "azure-pipelines-tasks", "Bash", "", "tag", ""},
+		{"datasource=orb depName=circleci/node", "6.3.0", "orb", "circleci/node", "", "tag", ""},
+		{"datasource=bitrise depName=git-clone registryUrl=https://github.com/acme/steplib.git", "8.3.0", "bitrise", "git-clone", "https://github.com/acme/steplib.git", "tag", ""},
+		{"datasource=vcpkg depName=zlib", "1.3.1", "vcpkg", "zlib", vcpkgDefault, vcpkgmgr.Versioning, ""},
+		{"datasource=vcpkg depName=zlib registryUrl=https://raw.example.com/reg/abc/", "1.3.1", "vcpkg", "zlib", "https://raw.example.com/reg/abc", vcpkgmgr.Versioning, ""},
+		{"datasource=elm-package depName=elm/json", "1.1.3", "elm-package", "elm/json", "", "semver", ""},
+		{"datasource=rust-version depName=rust", "1.82.0", "rust-version", "rust", "", "semver", ""},
+		{"datasource=java-version depName=java-jdk", "21.0.5", "java-version", "java-jdk", "", "semver", ""},
+		{"datasource=java-version depName=temurin", "21.0.5", "java-version", "temurin", "", "", `invalid java-version name "temurin"`},
+	}
+	m := one(t, config.Custom{Files: []string{"f"}})
+	for _, tt := range tests {
+		t.Run(tt.marker, func(t *testing.T) {
+			src := "# renovate: " + tt.marker + "\nX=" + tt.version
+			deps := extract(t, m, src)
+			if len(deps) != 1 {
+				t.Fatalf("deps = %+v", deps)
+			}
+			d := deps[0]
+			if d.Datasource != tt.ds || d.Name != tt.name || d.Skip != tt.skip {
+				t.Fatalf("got %s %s skip %q, want %s %s skip %q", d.Datasource, d.Name, d.Skip, tt.ds, tt.name, tt.skip)
+			}
+			if tt.skip != "" {
+				return
+			}
+			if d.Source != tt.source || d.Versioning != tt.versioning || d.Version != tt.version {
+				t.Errorf("got source %q versioning %q version %q, want %q %q %q", d.Source, d.Versioning, d.Version, tt.source, tt.versioning, tt.version)
+			}
+		})
+	}
+}
+
+// kubernetes-api versions (apps/v1) are no version tokens of a marker's next line; regex mode
+// captures them with the kubernetes-api versioning.
+func TestKubernetesAPIRegex(t *testing.T) {
+	m := one(t, config.Custom{Files: []string{"f"}, Match: `(?m)^(?P<name>\w+): (?P<version>\S+)$`, Datasource: "kubernetes-api"})
+	src := "Deployment: apps/v1"
+	check(t, src, extract(t, m, src), DepTypeRegex, []want{
+		{1, "kubernetes-api", "Deployment", "", "kubernetes-api", "apps/v1", "", ""},
+	})
+}
+
+// No built-in datasource is an unknown datasource of custom managers.
+func TestEveryDatasourceKnown(t *testing.T) {
+	m := one(t, config.Custom{Files: []string{"f"}})
+	for _, ds := range config.Datasources {
+		deps := extract(t, m, "# renovate: datasource="+ds+" depName=x\nX=1.0.0")
+		if len(deps) != 1 || strings.HasPrefix(deps[0].Skip, "unknown datasource") {
+			t.Errorf("%s: %+v", ds, deps)
+		}
+	}
 }
