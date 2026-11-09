@@ -26,6 +26,12 @@ const Name = "hexpm-bob"
 // DefaultURL is bob's build host; DEPS_HEXPM_BOB_URL overrides it (a mirror).
 const DefaultURL = "https://builds.hex.pm"
 
+// ElixirVersioning is the versioning of an Elixir build (`1.18.4`, `1.18.4-otp-27`,
+// `1.18.0-rc.0-otp-27`): a regex scheme whose compatibility group is the OTP release a build
+// is for, so an update keeps it (`1.17.3-otp-27` → `1.18.4-otp-27`, a plain `1.17.3` → a plain
+// `1.18.4`), and whose prerelease (`rc.0`) is only proposed from a prerelease.
+const ElixirVersioning = `regex:^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<prerelease>[a-z]+\.\d+))?(?:-otp-(?<compatibility>\d+))?$`
+
 var (
 	// otpRe matches the OTP build names: `otp/<os>-<version>` (`otp/ubuntu-22.04`).
 	otpRe = regexp.MustCompile(`^otp/\w+-\d+\.\d+$`)

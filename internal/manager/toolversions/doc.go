@@ -143,7 +143,9 @@ var toolVersionItems = []string{
 	"`python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.",
 	"`rust` is read as in [rust-toolchain](#rust-toolchain): `X.Y.Z` uses `semver`, `X.Y` `tag` ([rust-version](#datasources) lists the release lines), and a dated nightly (`nightly-2025-10-10`) moves to the newest nightly as a patch update; the channels `stable`, `beta` and `nightly` are skipped as `non-version value`. " +
 		"A pinned `rust` of a mise config is the toolchain cargo resolves `Cargo.lock` with (see [cargo](#cargo)).",
-	"`java` stays an `unsupported tool` until deps has a java-version datasource; `elixir` and `erlang` are tracked separately.",
+	"`elixir` uses [hexpm-bob](#datasources), the builds asdf and mise install: a full `1.17.3` or `1.17.3-otp-27` uses a `regex:` versioning whose compatibility is the OTP release, so `1.17.3-otp-27` moves to the newest `-otp-27` build and a plain `1.17.3` to the newest plain one; release candidates (`1.18.0-rc.0`) only from a release candidate; a partial `1.17` keeps its precision. Branch builds (`main-otp-27`) are skipped as `non-version value`.",
+	"`erlang` uses the `OTP-<version>` tags of `erlang/otp` (Renovate's choice; asdf and mise build OTP from them) with `loose` versioning, as OTP releases have two to four parts (`27.1`, `27.1.2`, `26.2.5.4`); `27.0-rc1` is a pre-release, a single `27` keeps its precision.",
+	"`java` stays an `unsupported tool` until deps has a java-version datasource.",
 	"Only the version token is replaced; quotes, comments and the rest of the file are kept.",
 }
 

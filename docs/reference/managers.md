@@ -820,7 +820,9 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 - `ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).
 - `python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.
 - `rust` is read as in [rust-toolchain](#rust-toolchain): `X.Y.Z` uses `semver`, `X.Y` `tag` ([rust-version](#datasources) lists the release lines), and a dated nightly (`nightly-2025-10-10`) moves to the newest nightly as a patch update; the channels `stable`, `beta` and `nightly` are skipped as `non-version value`. A pinned `rust` of a mise config is the toolchain cargo resolves `Cargo.lock` with (see [cargo](#cargo)).
-- `java` stays an `unsupported tool` until deps has a java-version datasource; `elixir` and `erlang` are tracked separately.
+- `elixir` uses [hexpm-bob](#datasources), the builds asdf and mise install: a full `1.17.3` or `1.17.3-otp-27` uses a `regex:` versioning whose compatibility is the OTP release, so `1.17.3-otp-27` moves to the newest `-otp-27` build and a plain `1.17.3` to the newest plain one; release candidates (`1.18.0-rc.0`) only from a release candidate; a partial `1.17` keeps its precision. Branch builds (`main-otp-27`) are skipped as `non-version value`.
+- `erlang` uses the `OTP-<version>` tags of `erlang/otp` (Renovate's choice; asdf and mise build OTP from them) with `loose` versioning, as OTP releases have two to four parts (`27.1`, `27.1.2`, `26.2.5.4`); `27.0-rc1` is a pre-release, a single `27` keeps its precision.
+- `java` stays an `unsupported tool` until deps has a java-version datasource.
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -873,7 +875,9 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `dprint` | `github-releases` | `dprint/dprint` |  |
 | `ecspresso` | `github-releases` | `kayac/ecspresso` |  |
 | `editorconfig-checker` | `github-releases` | `editorconfig-checker/editorconfig-checker` |  |
+| `elixir` | `hexpm-bob` | `elixir` |  |
 | `elm` | `github-releases` | `elm/compiler` |  |
+| `erlang` | `git-tags` | `erlang/otp` | extractVersion `^OTP-(?<version>\d.*)$` |
 | `flutter` | `flutter-version` | `flutter` |  |
 | `flux` | `github-releases` | `fluxcd/flux2` |  |
 | `flux2` | `github-releases` | `fluxcd/flux2` |  |
@@ -1065,7 +1069,9 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 - `ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).
 - `python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.
 - `rust` is read as in [rust-toolchain](#rust-toolchain): `X.Y.Z` uses `semver`, `X.Y` `tag` ([rust-version](#datasources) lists the release lines), and a dated nightly (`nightly-2025-10-10`) moves to the newest nightly as a patch update; the channels `stable`, `beta` and `nightly` are skipped as `non-version value`. A pinned `rust` of a mise config is the toolchain cargo resolves `Cargo.lock` with (see [cargo](#cargo)).
-- `java` stays an `unsupported tool` until deps has a java-version datasource; `elixir` and `erlang` are tracked separately.
+- `elixir` uses [hexpm-bob](#datasources), the builds asdf and mise install: a full `1.17.3` or `1.17.3-otp-27` uses a `regex:` versioning whose compatibility is the OTP release, so `1.17.3-otp-27` moves to the newest `-otp-27` build and a plain `1.17.3` to the newest plain one; release candidates (`1.18.0-rc.0`) only from a release candidate; a partial `1.17` keeps its precision. Branch builds (`main-otp-27`) are skipped as `non-version value`.
+- `erlang` uses the `OTP-<version>` tags of `erlang/otp` (Renovate's choice; asdf and mise build OTP from them) with `loose` versioning, as OTP releases have two to four parts (`27.1`, `27.1.2`, `26.2.5.4`); `27.0-rc1` is a pre-release, a single `27` keeps its precision.
+- `java` stays an `unsupported tool` until deps has a java-version datasource.
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -1118,7 +1124,9 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `dprint` | `github-releases` | `dprint/dprint` |  |
 | `ecspresso` | `github-releases` | `kayac/ecspresso` |  |
 | `editorconfig-checker` | `github-releases` | `editorconfig-checker/editorconfig-checker` |  |
+| `elixir` | `hexpm-bob` | `elixir` |  |
 | `elm` | `github-releases` | `elm/compiler` |  |
+| `erlang` | `git-tags` | `erlang/otp` | extractVersion `^OTP-(?<version>\d.*)$` |
 | `flutter` | `flutter-version` | `flutter` |  |
 | `flux` | `github-releases` | `fluxcd/flux2` |  |
 | `flux2` | `github-releases` | `fluxcd/flux2` |  |
@@ -3644,7 +3652,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `dart-version` | any (`dart`) | `GET <DEPS_DART_ARCHIVE_URL or https://storage.googleapis.com>/storage/v1/b/dart-archive/o?delimiter=/&prefix=channels/<channel>/release/` for the channels `stable`, `beta` and `dev` (all pages), once per run, as Renovate does: one release directory per version (`3.5.4`, `3.6.0-216.1.beta`, `3.7.0-1.0.dev`); `latest`, old Subversion revision numbers and stable versions listed in another channel are skipped. Source repository (release notes): `dart-lang/sdk` | none | none |
 | `flutter-version` | any (`flutter`) | `GET <FLUTTER_STORAGE_BASE_URL or https://storage.googleapis.com>/flutter_infra_release/releases/releases_linux.json` once per run (the variable is the flutter tool's mirror setting): stable releases and betas (`3.26.0-0.1.pre`); a stable version listed in the beta or dev channel is skipped, as in Renovate. Source repository (release notes): `flutter/flutter` | none | the `release_date` of each version (the earliest, for a version listed more than once) |
 | `hex` | the Hex package name (`phoenix`, `gleam_stdlib`), or `name:organization` for a package of a private Hex organization (Renovate's form) | `GET <DEPS_HEX_URL or https://hex.pm>/api/packages/<name>` (`/api/repos/<organization>/packages/<name>` for an organization's package), once per package; versions that are not SemVer are dropped, retired versions (`mix hex.retire`) stay listed and are reported as deprecated with their reason. Source repository (release notes): the package's `GitHub` link. hex.pm allows 100 unauthenticated API requests per minute (500 with a key); the shared client waits out its `X-RateLimit-Reset` | `HEX_API_KEY` (a hex.pm API key, `mix hex.user key generate`), sent as the `Authorization` header; needed for organization packages | the `inserted_at` time of each release |
-| `hexpm-bob` | `elixir` for Elixir, `otp/<os>-<version>` (`otp/ubuntu-22.04`) for the Erlang/OTP builds of that system. No manager uses it; use it from a [custom manager](#custom) (Renovate's name, for `.tool-versions`, Dockerfile `ARG`s or CI files). Elixir versions are listed without their `v` (`1.18.4`) and per OTP release (`1.18.4-otp-27`), OTP versions without `OTP-` (`27.3.4.1`, `27.0-rc1`); branch builds (`main`, `v1.18`, `maint-27`) are not versions. For a pinned `1.18.4-otp-27` that should stay on its OTP release, use `versioning: 'regex:^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-otp-(?<compatibility>\d+))?$'`; OTP's up to four parts need `loose` | `GET <DEPS_HEXPM_BOB_URL or https://builds.hex.pm>/builds/<name>/builds.txt`, once per name. Source repository (release notes): `https://github.com/elixir-lang/elixir` or `https://github.com/erlang/otp` | none | the build time of each build in the list |
+| `hexpm-bob` | `elixir` for Elixir, `otp/<os>-<version>` (`otp/ubuntu-22.04`) for the Erlang/OTP builds of that system. The [asdf](#asdf) and [mise](#mise) `elixir` tool uses `elixir`; use it from a [custom manager](#custom) (Renovate's name) for Dockerfile `ARG`s, CI files or the OTP builds. Elixir versions are listed without their `v` (`1.18.4`) and per OTP release (`1.18.4-otp-27`), OTP versions without `OTP-` (`27.3.4.1`, `27.0-rc1`); branch builds (`main`, `v1.18`, `maint-27`) are not versions. For a pinned `1.18.4-otp-27` that should stay on its OTP release, use `versioning: 'regex:^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<prerelease>[a-z]+\.\d+))?(?:-otp-(?<compatibility>\d+))?$'` (what the asdf/mise `elixir` tool uses); OTP's up to four parts need `loose` | `GET <DEPS_HEXPM_BOB_URL or https://builds.hex.pm>/builds/<name>/builds.txt`, once per name. Source repository (release notes): `https://github.com/elixir-lang/elixir` or `https://github.com/erlang/otp` | none | the build time of each build in the list |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 | `java-version` | `java` or `java-jdk` (the JDK) or `java-jre` (the JRE), optionally followed by `?os=<os>&architecture=<arch>` (Renovate's form) | `GET <DEPS_JAVA_RELEASES_URL or https://api.adoptium.net/v3/info/release_versions>?image_type=<jdk\|jre>&project=jdk&release_type=ga&sort_method=DATE&sort_order=DESC&page_size=50&page=<n>` (Renovate's source, Eclipse Temurin) once per image type and filter per run, pages until a short page or a 404, at most 50: the GA versions as Adoptium semver (`21.0.5+11`), plus a derived `X.Y` and `X` per line | none | none: the Adoptium version list carries no dates (Renovate's has none either), so `minimumReleaseAge` treats versions as of unknown age (see `minimumReleaseAgeBehaviour`) |
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hexpmbob"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rustversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -340,6 +341,15 @@ func TestClassify(t *testing.T) {
 		{tools["rust"], "stable", "", "", "non-version value", 0},
 		{tools["rust"], "nightly", "", "", "non-version value", 0},
 		{tools["rust"], "nightly-2025-10", "", "", "non-version value", 0},
+		{tools["elixir"], "1.17.3-otp-27", "1.17.3-otp-27", hexpmbob.ElixirVersioning, "", 0},
+		{tools["elixir"], "1.18.0-rc.0", "1.18.0-rc.0", hexpmbob.ElixirVersioning, "", 0},
+		{tools["elixir"], "1.17", "1.17", "tag", "", 0},
+		{tools["elixir"], "main-otp-27", "", "", "non-version value", 0},
+		{tools["elixir"], "ref:v1.17.3", "", "", "git ref", 0},
+		{tools["erlang"], "27.1", "27.1", "loose", "", 0},
+		{tools["erlang"], "26.2.5.4", "26.2.5.4", "loose", "", 0},
+		{tools["erlang"], "27.0-rc1", "27.0-rc1", "loose", "", 0},
+		{tools["erlang"], "27", "27", "tag", "", 0},
 	} {
 		ver, off, versioning, why := classify(c.t, c.raw)
 		if ver != c.ver || off != c.off || versioning != c.versioning || why != c.why {
@@ -479,6 +489,28 @@ func TestAsdfRust(t *testing.T) {
 	got := check(t, NewAsdf(), ".tool-versions", in, wants, news)
 	if want := "rust 1.99.1\nrust 1.99\nrust nightly-2026-11-05\nrust stable\n"; got != want {
 		t.Errorf("patched = %q, want %q", got, want)
+	}
+}
+
+// elixir uses hexpm-bob and keeps a build's OTP release; erlang uses erlang/otp's OTP tags.
+func TestAsdfElixirErlang(t *testing.T) {
+	in := "elixir 1.17.3-otp-27\n" + "erlang 27.1.2\n" + "elixir 1.17\n" + "erlang 27\n" + "elixir main-otp-27\n" + "erlang 26.2.5.4\n"
+	wants := []want{
+		{"elixir", dsHexBob, hexpmbob.ElixirVersioning, "1.17.3-otp-27", "", 1},
+		{"erlang/otp", dsGitTags, "loose", "27.1.2", "", 2},
+		{"elixir", dsHexBob, "tag", "1.17", "", 3},
+		{"erlang/otp", dsGitTags, "tag", "27", "", 4},
+		{"elixir", dsHexBob, "", "main-otp-27", "non-version value", 5},
+		{"erlang/otp", dsGitTags, "loose", "26.2.5.4", "", 6},
+	}
+	news := map[string]string{"1.17.3-otp-27": "1.19.7-otp-27", "27.1.2": "28.1.1", "1.17": "1.19", "27": "28", "26.2.5.4": "28.1.1"}
+	got := check(t, NewAsdf(), ".tool-versions", in, wants, news)
+	if want := "elixir 1.19.7-otp-27\nerlang 28.1.1\nelixir 1.19\nerlang 28\nelixir main-otp-27\nerlang 28.1.1\n"; got != want {
+		t.Errorf("patched = %q, want %q", got, want)
+	}
+	d, _ := NewAsdf().Extract(".tool-versions", []byte(in), manager.Env{})
+	if d[1].ExtractVersion != `^OTP-(?<version>\d.*)$` || d[1].Source != "https://github.com/erlang/otp" {
+		t.Errorf("erlang extract %q, source %q", d[1].ExtractVersion, d[1].Source)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hexpmbob"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rustversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -156,11 +157,13 @@ func (*toolManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edi
 // whose release tags carry a prefix; skip, when set, is the reason a known tool is not
 // updatable. With bare, a leading "v" of the version stays outside the token (the extracted
 // release versions have none). refPrefix is the prefix a version must carry (`tag:` of a mise
-// cargo git tool), kept outside the token.
+// cargo git tool), kept outside the token. versioning, when set, is the scheme of every
+// version of more than one part that is valid under it (Elixir's `1.17.3-otp-27`, Erlang/OTP's
+// `27.1` and `26.2.5.4`); others are classified as for any tool.
 type tool struct {
 	datasource, name, source, extract, skip string
 	bare                                    bool
-	refPrefix                               string
+	refPrefix, versioning                   string
 }
 
 const (
@@ -180,6 +183,7 @@ const (
 	dsFlutter = "flutter-version"
 	dsDotnet  = "dotnet-version"
 	dsRust    = "rust-version"
+	dsHexBob  = "hexpm-bob"
 	skipTool  = "unsupported tool"
 )
 
@@ -191,6 +195,11 @@ var (
 	// The Maven distribution and Gradle use Maven's version order (3.9.9, 8.11, 8.11-rc-1).
 	mavenTool  = tool{datasource: dsMaven, name: "org.apache.maven:apache-maven"}
 	gradleTool = tool{datasource: dsGradle, name: "gradle"}
+	// Elixir builds are bob's (`1.17.3`, `1.17.3-otp-27`); an update keeps the OTP release.
+	elixirTool = tool{datasource: dsHexBob, name: "elixir", versioning: hexpmbob.ElixirVersioning}
+	// Erlang/OTP releases are the OTP-<version> tags asdf and mise build from (Renovate's
+	// github-tags erlang/otp), of two to four parts (27.1, 27.1.2, 26.2.5.4): loose versioning.
+	erlangTool = tool{datasource: dsGitTags, name: "erlang/otp", source: "https://github.com/erlang/otp", extract: `^OTP-(?<version>\d.*)$`, versioning: "loose"}
 )
 
 func githubTool(repo string) tool {
@@ -235,6 +244,8 @@ var tools = map[string]tool{
 	"dotnet":               {datasource: dsDotnet, name: "dotnet-sdk"},
 	"dotnet-core":          {datasource: dsDotnet, name: "dotnet-sdk"},
 	"rust":                 {datasource: dsRust, name: "rust"},
+	"elixir":               elixirTool,
+	"erlang":               erlangTool,
 	"act":                  githubTool("nektos/act"),
 	"actionlint":           githubTool("rhysd/actionlint"),
 	"age":                  githubTool("FiloSottile/age"),
@@ -533,6 +544,9 @@ func classify(t tool, raw string) (ver string, off int, versioning, skip string)
 	}
 	if raw == "" || wordRe.MatchString(raw) {
 		return "", 0, "", "non-version value"
+	}
+	if t.versioning != "" && strings.Contains(raw, ".") && validUnder(t.versioning, raw) {
+		return raw, 0, t.versioning, ""
 	}
 	bare := strings.TrimPrefix(raw, "v")
 	off = len(raw) - len(bare)

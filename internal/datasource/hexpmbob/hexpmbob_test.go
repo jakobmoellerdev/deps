@@ -12,6 +12,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // serve answers /builds/elixir/builds.txt and /builds/otp/ubuntu-22.04/builds.txt with
@@ -91,6 +92,31 @@ func TestElixir(t *testing.T) {
 	}
 	if n := hits.Load(); n != 1 {
 		t.Errorf("requests = %d, want one per name", n)
+	}
+}
+
+// ElixirVersioning keeps a build's OTP release and proposes release candidates only from one.
+func TestElixirVersioning(t *testing.T) {
+	var hits atomic.Int32
+	srv := serve(t, &hits)
+	rs, err := New(srv.Client(), nil, env(srv.URL)).Releases(t.Context(), dep.Dep{Name: "elixir"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := versioning.Parse(ElixirVersioning)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cur, want := range map[string]string{
+		"1.17.3-otp-27": "1.19.7-otp-27", "1.17.3-otp-25": "1.18.6-otp-25", "1.17.3": "1.19.7",
+		"1.18.0-rc.0-otp-27": "1.19.7-otp-27",
+	} {
+		if got, _ := s.Best(cur, versions(rs), nil, nil); got != want {
+			t.Errorf("best from %s = %q, want %q", cur, got, want)
+		}
+	}
+	if s.Valid("1.18") || s.Valid("main-otp-27") || !s.Valid("1.18.0-rc.0") {
+		t.Error("ElixirVersioning validity")
 	}
 }
 
