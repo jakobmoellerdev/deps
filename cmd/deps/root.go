@@ -48,6 +48,7 @@ import (
 	hexds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hex"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hexpmbob"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/javaversion"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/jenkinsplugins"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/juliaregistry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/kubernetesapi"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
@@ -473,6 +474,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		hexpmbob.Name:           hexpmbob.New(client, sem, os.Getenv),
 		glasskubepackages.Name:  glasskubepackages.New(client, sem),
 		clojureds.Name:          clojureds.New(maven, os.Getenv),
+		jenkinsplugins.Name:     jenkinsplugins.New(client, sem, os.Getenv),
 	}
 	for name, src := range forges {
 		sources[name] = src

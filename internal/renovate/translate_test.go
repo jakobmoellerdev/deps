@@ -327,7 +327,7 @@ func TestLoadRules(t *testing.T) {
     draftPR: true
     prCreation: status-success
   - # packageRules[2]
-    managers: [github-actions, gitlabci, bitbucket-pipelines, woodpecker, crow, droneci, circleci, azure-pipelines, cloudbuild, velaci, travis, buildkite, bitrise, tekton]
+    managers: [github-actions, gitlabci, bitbucket-pipelines, woodpecker, crow, droneci, circleci, azure-pipelines, cloudbuild, velaci, travis, buildkite, bitrise, tekton, jenkins]
     names: [x]
     abandonmentThreshold: 2 years
   - # packageRules[2]
@@ -371,6 +371,11 @@ func TestLoadRules(t *testing.T) {
 			name:  "fleet, helmsman and vendir managers",
 			src:   `{packageRules: [{matchManagers: ['fleet', 'helmsman', 'vendir'], groupName: 'cd'}]}`,
 			rules: "  - # packageRules[0]\n    managers: [helm]\n    depTypes: [fleet, helmsman, vendir]\n    group: cd" + defaultExclusions,
+		},
+		{
+			name:  "jenkins manager; jenkins-plugins datasource",
+			src:   `{packageRules: [{matchManagers: ['jenkins'], matchDatasources: ['jenkins-plugins'], groupName: 'jenkins'}]}`,
+			rules: "  - # packageRules[0]\n    managers: [jenkins]\n    datasources: [jenkins-plugins]\n    group: jenkins" + defaultExclusions,
 		},
 		{
 			name: "postUpgradeTasks top level and per rule, Ruby and Swift managers, rangeStrategy widen",

@@ -1,0 +1,28 @@
+plugins:
+- artifactId: "analysis-model-api"
+  source:
+    version: "14.18.0-1028.v9c938eeda_ef2"
+- artifactId: "ant"
+  source:
+    version: "520.vd082ecfb_16a_9"
+- artifactId: "antisamy-markup-formatter"
+  source:
+    version: "173.v680e3a_b_69ff3"
+- artifactId: "apache-httpcomponents-client-4-api"
+  source:
+    version: "4.5.14-269.vfa_2321039a_83"
+- artifactId: "artifact-manager-s3"
+  source:
+    version: "1002.v005e958510dd"
+- artifactId: "asm-api"
+  source:
+    version: "9.11.1-226.vff833a_e4c58e"
+- artifactId: "audit-trail"
+  source:
+    version: "472.vb_51e5934ec50"
+- artifactId: "authentication-tokens"
+  source:
+    version: "1.144.v5ff4a_5ec5c33"
+- artifactId: "aws-credentials"
+  source:
+    version: "265.v8422a_f384cd9"

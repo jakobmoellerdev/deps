@@ -90,6 +90,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`crossplane`](#crossplane)
 - [`tekton`](#tekton)
 - [`glasskube`](#glasskube)
+- [`jenkins`](#jenkins)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -4106,6 +4107,36 @@ Updates the package versions of Glasskube `Package` and `ClusterPackage` resourc
 
 - The version is replaced in place (`v1.17.0+1` → `v1.19.1+1`); the `+N` package revision is part of the version (see the `glasskube` versioning).
 
+## jenkins
+
+Updates the Jenkins plugin versions of plugin lists in the input formats of the plugin installation manager tool (`jenkins-plugin-cli --plugin-file`, the Jenkins Docker image's `plugins.txt`). Only the version is rewritten; the file keeps its formatting.
+
+**Files:**
+
+- `plugins.txt` at any depth: `<artifactId>:<version>` lines, `#` comments
+- `plugins.yml`, `plugins.yaml` at any depth: the `plugins` list (`artifactId`, `source.version`)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `plugin` | a plugins.txt line `git:5.10.1` (a line with only the artifact ID, the latest version, is no dep, as in Renovate); a plugins.yaml entry `{artifactId: git, source: {version: 5.10.1}}` | `jenkins-plugins` | `maven` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `download url` | a download URL: `source.url`, or a plugins.txt line `<artifactId>:<version>:<url>` |
+| `unsupported version` | the version `latest` or `experimental`, an incrementals version (a `groupId`, or `incrementals;<groupId>;<version>`) |
+| `no version` | a plugins.yaml entry without `source.version` |
+| `invalid version` | a plugins.yaml version that YAML reads as a number (`version: 2.10` is 2.1; quote it) |
+| `ignored` | a plugins.txt line with a `# renovate:ignore` comment, or a plugins.yaml entry with `renovate: {ignore: true}` (Renovate's) |
+| `cannot locate value` | the version bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Versions are looked up with the `jenkins-plugins` datasource on the Jenkins update center (`DEPS_JENKINS_PLUGINS_URL` for a mirror or another update site) and compared as Maven versions, so the incremental `1234.v<commit>` versions of newer plugins order by their build number.
+- A plain YAML version is replaced as written; a new version that YAML would read as a number is written single-quoted (`'2.10'`).
+- A plugin's `requiredCore` (the minimum Jenkins version) is not checked against the controller's version, as in Renovate without `constraints.jenkins`.
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -4265,6 +4296,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `java-version` | `java` or `java-jdk` (the JDK) or `java-jre` (the JRE), optionally followed by `?os=<os>&architecture=<arch>` (Renovate's form) | `GET <DEPS_JAVA_RELEASES_URL or https://api.adoptium.net/v3/info/release_versions>?image_type=<jdk\|jre>&project=jdk&release_type=ga&sort_method=DATE&sort_order=DESC&page_size=50&page=<n>` (Renovate's source, Eclipse Temurin) once per image type and filter per run, pages until a short page or a 404, at most 50: the GA versions as Adoptium semver (`21.0.5+11`), plus a derived `X.Y` and `X` per line | none | none: the Adoptium version list carries no dates (Renovate's has none either), so `minimumReleaseAge` treats versions as of unknown age (see `minimumReleaseAgeBehaviour`) |
 | `glasskube-packages` | the Glasskube package name (`cert-manager`); the dep's source is the package repository URL of its `PackageRepository` (glasskube manager) or `registryUrl` (custom managers; whitespace-separated URLs are tried in order, the first that has the package wins), default `https://packages.dl.glasskube.dev/packages`. Versioning `glasskube` (`v1.17.0+2`, the revision after the version) | `GET <repository>/<name>/versions.yaml` once per repository and package (redirects are followed: the default repository answers from glasskube.github.io): every `versions[].version` is a version, `latestVersion` the release the repository recommends (majors above it are not proposed, as npm's `latest`); a repository answering HTTP 404 does not have the package. Source repository (release notes): `GET <repository>/<name>/<latestVersion>/package.yaml` once per package, only for versions in a pull request: its `references` entry labeled `GitHub`, else one labeled `Website` on a forge | userinfo of the repository URL (`https://user:token@host/…`) as basic auth; redacted in errors and logs | none: versions.yaml has no release times, so `minimumReleaseAge` treats every version as of unknown age (`minimumReleaseAgeBehaviour`) |
 | `clojure` | `groupId:artifactId`; the repositories are the dep's `<url>/` list, Clojars (`https://repo.clojars.org/`, `DEPS_CLOJARS_URL`) then Maven Central when empty | as the `maven` datasource: `GET <repository>/<group/path>/<artifactId>/maven-metadata.xml` per repository, versions merged in repository order; a 404 contributes nothing; `DEPS_MAVEN_CENTRAL_URL` replaces Maven Central | none | as the `maven` datasource (POM `Last-Modified`) |
+| `jenkins-plugins` | the plugin's artifact ID (`git`, `workflow-aggregator`) | `GET <DEPS_JENKINS_PLUGINS_URL or https://updates.jenkins.io>/current/plugin-versions.json` once per run (about 25 MB for the Jenkins update center), read as a stream and keeping only the plugins the run looks up; every member of a plugin's object is a version, in the file's order. A plugin the file lacks (its distribution stopped) skips the dep (`plugin not found on <site>`). Source repository (release notes): the plugin's `scm` in `GET <site>/current/update-center.actual.json`, once per run and only when a PR is opened | none | each version's `releaseTimestamp`, else its `buildDate` |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `azure-tags` = `git-tags`, `bitbucket-server-tags` = `git-tags`, `bitbucket-tags` = `git-tags`, `github-digest` = `git-refs`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
 

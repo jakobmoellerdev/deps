@@ -107,6 +107,7 @@
                 "hex",
                 "hexpm-bob",
                 "java-version",
+                "jenkins-plugins",
                 "julia-registry",
                 "kubernetes-api",
                 "maven",
@@ -2672,6 +2673,34 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "jenkins"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "plugin"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "custom"
                   ]
                 },
@@ -2781,6 +2810,7 @@
               "crossplane",
               "tekton",
               "glasskube",
+              "jenkins",
               "custom"
             ]
           },
@@ -3044,6 +3074,7 @@
                   "hex",
                   "hexpm-bob",
                   "java-version",
+                  "jenkins-plugins",
                   "julia-registry",
                   "kubernetes-api",
                   "maven",

@@ -39,6 +39,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/helm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homeassistant"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homebrew"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/jenkins"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kotlinscript"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kubernetes"
@@ -163,6 +164,7 @@ var Builtin = []Entry{
 	{crossplane.Doc, crossplane.New},
 	{tekton.Doc, tekton.New},
 	{glasskube.Doc, glasskube.New},
+	{jenkins.Doc, jenkins.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,
