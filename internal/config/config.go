@@ -148,6 +148,9 @@ var (
 		"github-release-attachments": "github-releases",
 		"node":                       "node-version",
 		"bitbucket-tags":             "git-tags",
+		"azure-tags":                 "git-tags",
+		"bitbucket-server-tags":      "git-tags",
+		"github-digest":              "git-refs",
 	}
 	// DatasourceNames are the accepted datasource names of custom[].datasource and
 	// rules[].datasources: Datasources followed by the sorted DatasourceAliases keys (plus
@@ -442,7 +445,7 @@ type Rule struct {
 	Names       []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates). An entry starting with '!' excludes the names its glob matches (Renovate's '!pattern'); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after '!')."`
 	DepTypes    []string `yaml:"depTypes" jsonschema_description:"Only match deps of these types; with managers set to one manager, the schema offers that manager's dep types."`
 	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'. An entry starting with '!' excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after '!')."`
-	Datasources []string `yaml:"datasources" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) match their deps datasource."`
+	Datasources []string `yaml:"datasources" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) match their deps datasource."`
 	// BaseBranches matches the base branch of the run (Renovate's matchBaseBranches).
 	BaseBranches []string `yaml:"baseBranches" jsonschema_description:"Only match deps on these base branches of run (baseBranches, --base, else the default branch): names or RE2 regexes '/<RE2>/' (flag i allowed); an entry starting with '!' excludes the branches it matches, and a list of only exclusions matches every other branch. plan, apply, explain and preview have no base branch, so no rule with baseBranches matches there."`
 	// CurrentVersion and CurrentAge match the dep's current version (Renovate's
@@ -525,7 +528,7 @@ type Custom struct {
 	Match       string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode (or JSONata mode with jsonata)."`
 	JSONata     string    `yaml:"jsonata" jsonschema_description:"JSONata query run over the file parsed as fileFormat; it returns dep objects (or a list of them) with string fields currentValue (alias version), depName/packageName (alias name), datasource, versioning, currentDigest (alias digest), extractVersion and registryUrl. Exclusive with match."`
 	FileFormat  string    `yaml:"fileFormat" jsonschema_description:"Format the jsonata query reads the file as: json (comments and trailing commas allowed), yaml (a list of the file's documents) or toml; required with jsonata."`
-	Datasource  string    `yaml:"datasource" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases."`
+	Datasource  string    `yaml:"datasource" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) are aliases."`
 	Name        string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
 	Versioning  string    `yaml:"versioning" jsonschema:"default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version, pub for dart, hex for hex), else semver."` // default semver; see DefaultCustomVersioning
 	Checksum    *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`

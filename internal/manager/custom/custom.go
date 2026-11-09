@@ -542,8 +542,10 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 
 // classify maps Renovate datasource aliases, checks the datasource and derives Source from
 // Name; failures set Skip.
-//   - git-tags: Name is `https://host/path` or `host/path`; Source is the https URL. The
-//     Renovate alias github-tags takes `owner/repo` on github.com.
+//   - git-tags, git-refs: Name is `https://host/path` or `host/path`; Source is the https
+//     URL. The Renovate aliases github-tags and github-digest take `owner/repo` on github.com;
+//     azure-tags and bitbucket-server-tags take the repository URL. A git-refs version that
+//     is no version is a branch or tag whose commit (the digest) is kept current.
 //   - github-releases: Name is `owner/repo` (github.com) or `https://host/owner/repo` (GHES);
 //     Source is the repository URL.
 //   - go, go-toolchain, docker, npm, node-version, pypi, python-version, dart, dart-version,
@@ -570,14 +572,17 @@ func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
 	d.Datasource = config.CanonicalDatasource(ds)
 	switch d.Datasource {
-	case "git-tags":
+	case "git-tags", "git-refs":
 		name := d.Name
-		if ds == "github-tags" && !strings.Contains(name, "://") {
+		if (ds == "github-tags" || ds == "github-digest") && !strings.Contains(name, "://") {
 			name = "github.com/" + name
 		}
 		src, _, ok := repoURL(name)
 		if !ok {
 			d.Skip = fmt.Sprintf("invalid git-tags name %q", d.Name)
+			if d.Datasource == "git-refs" {
+				d.Skip = fmt.Sprintf("invalid git-refs name %q", d.Name)
+			}
 			return
 		}
 		d.Source = src

@@ -301,6 +301,11 @@ func TestLoadRules(t *testing.T) {
 			rules: "  - # packageRules[0]\n    managers: [ansible, ansible-galaxy]\n    datasources: [galaxy, galaxy-collection]\n    group: ansible" + defaultExclusions,
 		},
 		{
+			name:  "forge tag and digest datasource names",
+			src:   `{packageRules: [{matchDatasources: ['gitlab-tags', 'gitea-tags', 'forgejo-tags', 'azure-tags', 'bitbucket-server-tags', 'github-digest'], groupName: 'git'}]}`,
+			rules: "  - # packageRules[0]\n    datasources: [gitlab-tags, gitea-tags, forgejo-tags, azure-tags, bitbucket-server-tags, github-digest]\n    group: git" + defaultExclusions,
+		},
+		{
 			name: "postUpgradeTasks top level and per rule, Ruby and Swift managers, rangeStrategy widen",
 			src: `{postUpgradeTasks: {commands: ['make generate'], fileFilters: ['**/*.go'], executionMode: 'branch'},
 				packageRules: [{matchCategories: ['ruby'], rangeStrategy: 'widen', postUpgradeTasks: {commands: ['bundle exec rake']}},

@@ -1140,12 +1140,12 @@ Only match deps whose file (slash path relative to --dir) matches any of these d
 
 ### `rules[].datasources`
 
-Only match deps looked up with these datasources, or custom.\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) match their deps datasource.
+Only match deps looked up with these datasources, or custom.\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) match their deps datasource.
 
 - **Type:** list of strings
-- **Values:** `apk`, `artifactory`, `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `dart`, `dart-version`, `deb`, `docker`, `dotnet-version`, `elm-package`, `endoflife-date`, `flutter-version`, `forgejo-releases`, `forgejo-tags`, `galaxy`, `galaxy-collection`, `git-refs`, `git-tags`, `gitea-releases`, `gitea-tags`, `github-releases`, `github-runners`, `gitlab-packages`, `gitlab-releases`, `gitlab-tags`, `go`, `go-toolchain`, `gradle-version`, `helm`, `hex`, `hexpm-bob`, `java-version`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `python-version`, `rpm`, `ruby-version`, `rubygems`, `rust-version`, `sbt-package`, `sbt-plugin`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `apk`, `artifactory`, `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `dart`, `dart-version`, `deb`, `docker`, `dotnet-version`, `elm-package`, `endoflife-date`, `flutter-version`, `forgejo-releases`, `forgejo-tags`, `galaxy`, `galaxy-collection`, `git-refs`, `git-tags`, `gitea-releases`, `gitea-tags`, `github-releases`, `github-runners`, `gitlab-packages`, `gitlab-releases`, `gitlab-tags`, `go`, `go-toolchain`, `gradle-version`, `helm`, `hex`, `hexpm-bob`, `java-version`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `python-version`, `rpm`, `ruby-version`, `rubygems`, `rust-version`, `sbt-package`, `sbt-plugin`, `terraform-module`, `terraform-provider`, `vcpkg`, `azure-tags`, `bitbucket-server-tags`, `bitbucket-tags`, `github-digest`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
-Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`, `bitbucket-tags` = `git-tags` (Bitbucket pipes). `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
+Renovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`, `bitbucket-tags` = `git-tags` (Bitbucket pipes), `azure-tags` and `bitbucket-server-tags` = `git-tags` (tags via `git ls-remote`, which works on every forge), `github-digest` = `git-refs` (branch and tag commits). `custom.<name>` must be defined in [`customDatasources`](#customdatasources).
 
 ### `rules[].baseBranches`
 
@@ -1543,7 +1543,7 @@ Custom managers: `# deps: <datasource> <name>` annotations, or RE2 regex manager
 - **Type:** list of objects
 - **Required keys:** `files`
 
-Each entry is one manager instance with dep types `annotation` (no `match` or `jsonata`), `regex` (`match` set) or `jsonata` (`jsonata` set). Datasources: `git-tags`, `github-releases`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, `artifactory`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.
+Each entry is one manager instance with dep types `annotation` (no `match` or `jsonata`), `regex` (`match` set) or `jsonata` (`jsonata` set). Datasources: `git-tags`, `github-releases`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, `artifactory`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags`, `azure-tags`, `bitbucket-server-tags` (`git-tags`; the name is the repository URL) and `github-digest` (`git-refs`: `owner/repo` on github.com or a repository URL; a version that is no version is a branch or tag whose commit, the `digest`, is kept current), and `custom.<name>`.
 
 **Annotation mode (no `match`).** A comment marker annotates the **next line**, and that line's first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Comment starters are `#`, `//`, `--`, `;` and `<!--`.
 
@@ -1649,10 +1649,10 @@ Format the jsonata query reads the file as: json (comments and trailing commas a
 
 ### `custom[].datasource`
 
-Datasource of the matched deps, or custom.\<name> of customDatasources; required in regex mode unless match has a (?P\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases.
+Datasource of the matched deps, or custom.\<name> of customDatasources; required in regex mode unless match has a (?P\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) are aliases.
 
 - **Type:** string
-- **Values:** `apk`, `artifactory`, `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `dart`, `dart-version`, `deb`, `docker`, `dotnet-version`, `elm-package`, `endoflife-date`, `flutter-version`, `forgejo-releases`, `forgejo-tags`, `galaxy`, `galaxy-collection`, `git-refs`, `git-tags`, `gitea-releases`, `gitea-tags`, `github-releases`, `github-runners`, `gitlab-packages`, `gitlab-releases`, `gitlab-tags`, `go`, `go-toolchain`, `gradle-version`, `helm`, `hex`, `hexpm-bob`, `java-version`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `python-version`, `rpm`, `ruby-version`, `rubygems`, `rust-version`, `sbt-package`, `sbt-plugin`, `terraform-module`, `terraform-provider`, `vcpkg`, `bitbucket-tags`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
+- **Values:** `apk`, `artifactory`, `azure-pipelines-tasks`, `bazel`, `conda`, `crate`, `dart`, `dart-version`, `deb`, `docker`, `dotnet-version`, `elm-package`, `endoflife-date`, `flutter-version`, `forgejo-releases`, `forgejo-tags`, `galaxy`, `galaxy-collection`, `git-refs`, `git-tags`, `gitea-releases`, `gitea-tags`, `github-releases`, `github-runners`, `gitlab-packages`, `gitlab-releases`, `gitlab-tags`, `go`, `go-toolchain`, `gradle-version`, `helm`, `hex`, `hexpm-bob`, `java-version`, `julia-registry`, `maven`, `node-version`, `npm`, `nuget`, `orb`, `packagist`, `pypi`, `python-version`, `rpm`, `ruby-version`, `rubygems`, `rust-version`, `sbt-package`, `sbt-plugin`, `terraform-module`, `terraform-provider`, `vcpkg`, `azure-tags`, `bitbucket-server-tags`, `bitbucket-tags`, `github-digest`, `github-release-attachments`, `github-tags`, `golang-version`, `node`, values matching `^custom\.[A-Za-z0-9][A-Za-z0-9._-]*$`
 
 ### `custom[].name`
 

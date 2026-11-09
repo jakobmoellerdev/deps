@@ -122,7 +122,10 @@
                 "terraform-module",
                 "terraform-provider",
                 "vcpkg",
+                "azure-tags",
+                "bitbucket-server-tags",
                 "bitbucket-tags",
+                "github-digest",
                 "github-release-attachments",
                 "github-tags",
                 "golang-version",
@@ -134,8 +137,8 @@
               "pattern": "^custom\\.[A-Za-z0-9][A-Za-z0-9._-]*$"
             }
           ],
-          "description": "Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases.",
-          "markdownDescription": "Datasource of the matched deps, or custom.\\<name> of customDatasources; required in regex mode unless match has a (?P\\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) are aliases."
+          "description": "Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) are aliases.",
+          "markdownDescription": "Datasource of the matched deps, or custom.\\<name> of customDatasources; required in regex mode unless match has a (?P\\<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) are aliases."
         },
         "name": {
           "type": "string",
@@ -2445,7 +2448,10 @@
                   "terraform-module",
                   "terraform-provider",
                   "vcpkg",
+                  "azure-tags",
+                  "bitbucket-server-tags",
                   "bitbucket-tags",
+                  "github-digest",
                   "github-release-attachments",
                   "github-tags",
                   "golang-version",
@@ -2459,8 +2465,8 @@
             ]
           },
           "type": "array",
-          "description": "Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) match their deps datasource.",
-          "markdownDescription": "Only match deps looked up with these datasources, or custom.\\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags) match their deps datasource.\n\nRenovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`, `bitbucket-tags` = `git-tags` (Bitbucket pipes). `custom.<name>` must be defined in [`customDatasources`](#customdatasources)."
+          "description": "Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) match their deps datasource.",
+          "markdownDescription": "Only match deps looked up with these datasources, or custom.\\<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) match their deps datasource.\n\nRenovate names are normalized: `golang-version` = `go-toolchain`, `github-tags` = `git-tags` (so it also matches actions), `github-release-attachments` = `github-releases`, `node` = `node-version`, `bitbucket-tags` = `git-tags` (Bitbucket pipes), `azure-tags` and `bitbucket-server-tags` = `git-tags` (tags via `git ls-remote`, which works on every forge), `github-digest` = `git-refs` (branch and tag commits). `custom.<name>` must be defined in [`customDatasources`](#customdatasources)."
         },
         "baseBranches": {
           "items": {
@@ -3133,7 +3139,7 @@
       },
       "type": "array",
       "description": "Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set.",
-      "markdownDescription": "Custom managers: `# deps: <datasource> <name>` annotations, or RE2 regex managers when match is set.\n\nEach entry is one manager instance with dep types `annotation` (no `match` or `jsonata`), `regex` (`match` set) or `jsonata` (`jsonata` set). Datasources: `git-tags`, `github-releases`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, `artifactory`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node` and `bitbucket-tags`, and `custom.<name>`.\n\n**Annotation mode (no `match`).** A comment marker annotates the **next line**, and that line's first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Comment starters are `#`, `//`, `--`, `;` and `<!--`.\n\n- `deps: <datasource> <name> [versioning=<scheme>]`; `helm` and `deb` also take `deps: <datasource> <registry> <name>`.\n- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`; `registryUrl` is the registry of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb` and `artifactory` deps, the API base URL of `endoflife-date` deps and the instance of the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags datasources (default `https://gitlab.com`, `https://gitea.com`, `https://code.forgejo.org`; see [`custom[].registryUrl`](#customregistryurl)) and ignored for other datasources, as are unknown keys.\n- With the docker datasource, the next line's first tagged image reference is used: the tag is the version, and an adjacent `@sha256:` digest is rewritten with it.\n- With the deb datasource, the next line's first Debian version is used (`curl=8.14.1-2`, `1:2.39.5-0+deb12u2`, `3.0.15-1~deb12u1`: epoch and `~`/`+` suffixes included).\n- A marker's `versioning=` takes a scheme name (not `regex:`). Without it, docker deps use `docker` versioning, others the entry's `versioning`, else their datasource's default (see [`custom[].versioning`](#customversioning)).\n- Skips: `no version on next line`, `renovate marker without datasource`, `renovate marker without depName`, `invalid deb name \"<name>\"`, `invalid deb registry URL \"<url>\": <why>`, `invalid artifactory name \"<name>\"`.\n\n```yaml\ncustom:\n  - files: ['Dockerfile', '**/*.mk', '.env']\n```\n\n```dockerfile\n# deps: github-releases golangci/golangci-lint\nARG GOLANGCI_VERSION=v2.5.0\n# renovate: datasource=go depName=golang.org/x/tools\nRUN go install golang.org/x/tools/cmd/goimports@v0.38.0\n```\n\n**Regex mode (`match` set)**: see [`custom[].match`](#custommatch). **JSONata mode (`jsonata` set)**: see [`custom[].jsonata`](#customjsonata)."
+      "markdownDescription": "Custom managers: `# deps: <datasource> <name>` annotations, or RE2 regex managers when match is set.\n\nEach entry is one manager instance with dep types `annotation` (no `match` or `jsonata`), `regex` (`match` set) or `jsonata` (`jsonata` set). Datasources: `git-tags`, `github-releases`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags`, `go`, `go-toolchain`, `docker`, `npm`, `node-version`, `crate`, `rpm`, `apk`, `deb`, `artifactory`, the Renovate aliases `golang-version`, `github-tags`, `github-release-attachments`, `node`, `bitbucket-tags`, `azure-tags`, `bitbucket-server-tags` (`git-tags`; the name is the repository URL) and `github-digest` (`git-refs`: `owner/repo` on github.com or a repository URL; a version that is no version is a branch or tag whose commit, the `digest`, is kept current), and `custom.<name>`.\n\n**Annotation mode (no `match`).** A comment marker annotates the **next line**, and that line's first version token (`v?N.N[.N…][-suffix]`, not glued to other word characters) is the version. Comment starters are `#`, `//`, `--`, `;` and `<!--`.\n\n- `deps: <datasource> <name> [versioning=<scheme>]`; `helm` and `deb` also take `deps: <datasource> <registry> <name>`.\n- `renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [registryUrl=<url>]`. Fields can come in any order. `packageName` wins over `depName`; `registryUrl` is the registry of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb` and `artifactory` deps, the API base URL of `endoflife-date` deps and the instance of the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags datasources (default `https://gitlab.com`, `https://gitea.com`, `https://code.forgejo.org`; see [`custom[].registryUrl`](#customregistryurl)) and ignored for other datasources, as are unknown keys.\n- With the docker datasource, the next line's first tagged image reference is used: the tag is the version, and an adjacent `@sha256:` digest is rewritten with it.\n- With the deb datasource, the next line's first Debian version is used (`curl=8.14.1-2`, `1:2.39.5-0+deb12u2`, `3.0.15-1~deb12u1`: epoch and `~`/`+` suffixes included).\n- A marker's `versioning=` takes a scheme name (not `regex:`). Without it, docker deps use `docker` versioning, others the entry's `versioning`, else their datasource's default (see [`custom[].versioning`](#customversioning)).\n- Skips: `no version on next line`, `renovate marker without datasource`, `renovate marker without depName`, `invalid deb name \"<name>\"`, `invalid deb registry URL \"<url>\": <why>`, `invalid artifactory name \"<name>\"`.\n\n```yaml\ncustom:\n  - files: ['Dockerfile', '**/*.mk', '.env']\n```\n\n```dockerfile\n# deps: github-releases golangci/golangci-lint\nARG GOLANGCI_VERSION=v2.5.0\n# renovate: datasource=go depName=golang.org/x/tools\nRUN go install golang.org/x/tools/cmd/goimports@v0.38.0\n```\n\n**Regex mode (`match` set)**: see [`custom[].match`](#custommatch). **JSONata mode (`jsonata` set)**: see [`custom[].jsonata`](#customjsonata)."
     },
     "customDatasources": {
       "additionalProperties": {

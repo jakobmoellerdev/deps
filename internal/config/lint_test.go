@@ -106,7 +106,7 @@ func TestManagerRegistryLists(t *testing.T) {
 	if !slices.Equal(byManager["gomod"], []string{"direct", "indirect", "go", "toolchain"}) {
 		t.Errorf("gomod dep types = %v", byManager["gomod"])
 	}
-	if want := append(slices.Clone(Datasources), "bitbucket-tags", "github-release-attachments", "github-tags", "golang-version", "node"); !slices.Equal(DatasourceNames, want) {
+	if want := append(slices.Clone(Datasources), "azure-tags", "bitbucket-server-tags", "bitbucket-tags", "github-digest", "github-release-attachments", "github-tags", "golang-version", "node"); !slices.Equal(DatasourceNames, want) {
 		t.Errorf("DatasourceNames = %v", DatasourceNames)
 	}
 }

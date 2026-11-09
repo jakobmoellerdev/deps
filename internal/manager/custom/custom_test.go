@@ -588,6 +588,22 @@ func TestRegexRenovateGroups(t *testing.T) {
 	})
 }
 
+// The Renovate tag and digest datasources of other forges resolve through git-tags/git-refs.
+func TestRegexForgeTagAliases(t *testing.T) {
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+	src := "# renovate: datasource=github-digest depName=o/r\nREF=main@" + sha + "\n" +
+		"# renovate: datasource=azure-tags depName=https://dev.azure.com/org/p/_git/r\nREF=v1.2.3@\n" +
+		"# renovate: datasource=bitbucket-server-tags depName=https://bb.example.com/scm/p/r.git\nREF=1.0.0@\n" +
+		"# renovate: datasource=github-digest depName=ftp://x/y\nREF=main@" + sha + "\n"
+	m := one(t, config.Custom{Files: []string{"x"}, Match: `datasource=(?P<datasource>\S+) depName=(?P<depName>\S+)\s+REF=(?P<currentValue>[^@]+)@(?P<currentDigest>[0-9a-f]*)`})
+	check(t, src, extract(t, m, src), DepTypeRegex, []want{
+		{2, "git-refs", "o/r", "https://github.com/o/r", "semver", "main", sha, ""},
+		{4, "git-tags", "https://dev.azure.com/org/p/_git/r", "https://dev.azure.com/org/p/_git/r", "semver", "v1.2.3", "", ""},
+		{6, "git-tags", "https://bb.example.com/scm/p/r.git", "https://bb.example.com/scm/p/r.git", "semver", "1.0.0", "", ""},
+		{8, "git-refs", "ftp://x/y", "", "semver", "main", sha, `invalid git-refs name "ftp://x/y"`},
+	})
+}
+
 func BenchmarkAnnotations(b *testing.B) {
 	var sb strings.Builder
 	for i := range 5000 {

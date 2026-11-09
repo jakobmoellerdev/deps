@@ -3470,7 +3470,8 @@ User-defined managers: each `custom[]` entry is one manager instance; see [`cust
 | `digest not found in file` | JSONata mode: as `version not found in file`, for the result's `currentDigest` |
 | `checksum is not 64 or 128 hex digits` | regex mode: the `checksum` group is not a SHA-256 or SHA-512 hex digest |
 | `unknown versioning "<v>"` | the versioning is not a known scheme |
-| `invalid git-tags name "<name>"` | a `git-tags` dep whose name is not a repository URL |
+| `invalid git-tags name "<name>"` | a `git-tags` dep (also `github-tags`, `bitbucket-tags`, `azure-tags`, `bitbucket-server-tags`) whose name is not a repository URL |
+| `invalid git-refs name "<name>"` | a `git-refs` (`github-digest`) dep whose name is not `owner/repo` or a repository URL |
 | `invalid github-releases name "<name>"` | a `github-releases` dep whose name is not `owner/repo` or a repository URL |
 | `invalid helm name "<name>"` | a `helm` dep without an `https://`, `http://` or `oci://` repository and a chart name |
 | `invalid deb name "<name>"` | a `deb` dep whose package name is empty or holds `/` or blanks |
@@ -3588,7 +3589,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 | `java-version` | `java` or `java-jdk` (the JDK) or `java-jre` (the JRE), optionally followed by `?os=<os>&architecture=<arch>` (Renovate's form) | `GET <DEPS_JAVA_RELEASES_URL or https://api.adoptium.net/v3/info/release_versions>?image_type=<jdk\|jre>&project=jdk&release_type=ga&sort_method=DATE&sort_order=DESC&page_size=50&page=<n>` (Renovate's source, Eclipse Temurin) once per image type and filter per run, pages until a short page or a 404, at most 50: the GA versions as Adoptium semver (`21.0.5+11`), plus a derived `X.Y` and `X` per line | none | none: the Adoptium version list carries no dates (Renovate's has none either), so `minimumReleaseAge` treats versions as of unknown age (see `minimumReleaseAgeBehaviour`) |
 
-Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `bitbucket-tags` = `git-tags`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
+Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `azure-tags` = `git-tags`, `bitbucket-server-tags` = `git-tags`, `bitbucket-tags` = `git-tags`, `github-digest` = `git-refs`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
 
 ### Deprecated runner images
 
