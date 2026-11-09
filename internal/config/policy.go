@@ -130,6 +130,10 @@ var defaultIgnored = map[string]bool{"indirect": true, "test-indirect": true, "g
 // allUpdates allows every update type; policies share it until a rule sets allowedUpdateTypes.
 var allUpdates = updateSet(nil)
 
+// nonMajorUpdates allows every update type but major: the default of travis deps, whose
+// `node_js` lists are test matrices (Renovate's travis manager disables major updates too).
+var nonMajorUpdates = updateSet([]string{string(dep.Minor), string(dep.Patch), string(dep.Digest), string(dep.Pin)})
+
 // updateSet returns the set of types, or of every update type when types is nil.
 func updateSet(types []string) map[dep.UpdateType]bool {
 	if types == nil {
@@ -321,6 +325,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 	}
 	if production(d) {
 		p.CommitType = CommitFix
+	}
+	if d.Manager == "travis" {
+		p.AllowedUpdateTypes = nonMajorUpdates
 	}
 	if c.MonoreposEnabled() {
 		switch m := monorepoOf(d.Manager, d.Name); {

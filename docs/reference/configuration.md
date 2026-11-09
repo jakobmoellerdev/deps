@@ -1127,7 +1127,7 @@ A rule has two groups of fields:
 
 **Evaluation.**
 
-1. The policy of a dep starts as `{pin: <top-level>, allowedUpdateTypes: all five types, schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm, cargo, poetry and bundler `dependencies`, pep621 `project.dependencies`, pipenv `packages`, elm `direct` and `dependencies`, julia `deps`, pub `dependencies`, mix `prod`, gleam `dependencies`) and `chore` otherwise, and the scope as `deps`.
+1. The policy of a dep starts as `{pin: <top-level>, allowedUpdateTypes: all five types (all but `major` for travis deps, as in Renovate: `node_js` lists are test matrices), schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm, cargo, poetry and bundler `dependencies`, pep621 `project.dependencies`, pipenv `packages`, elm `direct` and `dependencies`, julia `deps`, pub `dependencies`, mix `prod`, gleam `dependencies`) and `chore` otherwise, and the scope as `deps`.
 2. **Default ignores.** Dep types `indirect` (Go, pip_requirements' transitive pins of compiled requirements files, which still get security updates, and Elm applications' indirect dependencies), `test-indirect` (Elm applications' indirect test dependencies), `go` (the go.mod `go` directive), `peerDependencies` and `engines` (npm), `submodule` (git-submodules, disabled by default as in Renovate), `task` (azure-pipelines tasks: Renovate disables the manager, since a public task version may not be installed in the organization yet) and `tool.uv.constraint-dependencies`, `tool.uv.override-dependencies`, `tool.uv.build-constraint-dependencies` (pep621: uv's lists usually cap versions on purpose; Renovate does not extract them) are ignored unless a rule sets `ignore: false`. The skip reason is `ignored by default (<type>; enable with a rule setting ignore: false)`.
 3. **Built-in monorepo groups** set `group: <name> monorepo`, the Ruby version deps `group: ruby` and the vcpkg deps `group: vcpkg` (unless [`monorepos: false`](#monorepos)).
 4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.
@@ -1155,7 +1155,7 @@ rules:
 Only match deps of these managers.
 
 - **Type:** list of strings
-- **Values:** `github-actions`, `gomod`, `docker`, `npm`, `helm`, `kustomize`, `pre-commit`, `gitlabci`, `nvm`, `nodenv`, `asdf`, `mise`, `cargo`, `pip_requirements`, `pep621`, `pep723`, `setup-cfg`, `pip_setup`, `poetry`, `pipenv`, `homeassistant-manifest`, `conda`, `terraform`, `terraform-version`, `tflint-plugin`, `terragrunt`, `maven`, `gradle`, `gradle-wrapper`, `maven-wrapper`, `homebrew`, `swift`, `bundler`, `ruby-version`, `pyenv`, `runtime-version`, `git-submodules`, `rust-toolchain`, `devcontainer`, `bitbucket-pipelines`, `woodpecker`, `droneci`, `circleci`, `azure-pipelines`, `cloudbuild`, `velaci`, `crow`, `vcpkg`, `elm`, `composer`, `julia`, `bazel-module`, `bazelisk`, `nuget`, `ansible-galaxy`, `ansible`, `sbt`, `scalafmt`, `pub`, `fvm`, `mix`, `gleam`, `nix`, `custom`
+- **Values:** `github-actions`, `gomod`, `docker`, `npm`, `helm`, `kustomize`, `pre-commit`, `gitlabci`, `nvm`, `nodenv`, `asdf`, `mise`, `cargo`, `pip_requirements`, `pep621`, `pep723`, `setup-cfg`, `pip_setup`, `poetry`, `pipenv`, `homeassistant-manifest`, `conda`, `terraform`, `terraform-version`, `tflint-plugin`, `terragrunt`, `maven`, `gradle`, `gradle-wrapper`, `maven-wrapper`, `homebrew`, `swift`, `bundler`, `ruby-version`, `pyenv`, `runtime-version`, `git-submodules`, `rust-toolchain`, `devcontainer`, `bitbucket-pipelines`, `woodpecker`, `droneci`, `circleci`, `azure-pipelines`, `cloudbuild`, `velaci`, `crow`, `travis`, `vcpkg`, `elm`, `composer`, `julia`, `bazel-module`, `bazelisk`, `nuget`, `ansible-galaxy`, `ansible`, `sbt`, `scalafmt`, `pub`, `fvm`, `mix`, `gleam`, `nix`, `custom`
 
 Manager names as in [managers.md](managers.md); `custom` matches the deps of every `custom[]` entry. With exactly one manager listed, the JSON Schema offers only that manager's dep types for `depTypes`.
 
@@ -1279,7 +1279,7 @@ Update types allowed for matching deps; replaces the earlier list (all five type
 - **Type:** list of strings
 - **Values:** `major`, `minor`, `patch`, `digest`, `pin`
 
-When no rule sets it, all five update types are allowed. A later matching rule replaces the list; `[]` allows none (security updates still apply).
+When no rule sets it, all five update types are allowed, except `major` for [travis](managers.md#travis) deps (Renovate disables their major updates: a `node_js` list is a test matrix); a rule such as `{managers: [travis], allowedUpdateTypes: [major, minor, patch]}` allows them. A later matching rule replaces the list; `[]` allows none (security updates still apply).
 
 ### `rules[].rangeStrategy`
 

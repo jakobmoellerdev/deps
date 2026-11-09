@@ -251,7 +251,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"rust-toolchain":      {"rusttoolchain"},
 		"devcontainer":        {"devcontainer", "docker", "toolversions"},
 		"bitbucket-pipelines": {"bitbucketpipelines", "docker"}, "woodpecker": {"woodpecker", "docker"}, "droneci": {"droneci", "docker"},
-		"circleci": {"circleci", "docker"}, "azure-pipelines": {"azurepipelines", "docker"},
+		"circleci": {"circleci", "docker"}, "azure-pipelines": {"azurepipelines", "docker"}, "travis": {"travis", "toolversions"},
 		"crow": {"woodpecker", "docker"}, "cloudbuild": {"cloudbuild", "docker"}, "velaci": {"velaci", "docker"},
 		"bazel-module": {"bazel"}, "bazelisk": {"bazel"}, "scalafmt": {"sbt"}, "mix": {"beam"}, "gleam": {"beam"},
 		"custom":  {"custom", filepath.Join("..", "datasource", "deb")},

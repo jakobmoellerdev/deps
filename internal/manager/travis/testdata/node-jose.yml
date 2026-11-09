@@ -1,0 +1,16 @@
+language: node_js
+script: gulp test:nodejs:single
+node_js:
+  - lts/dubnium
+  - lts/erbium
+  - stable
+jobs:
+  include:
+    - stage: Browser tests
+      script: gulp travis:browser
+      node_js: lts/erbium
+      addons:
+        sauce_connect: true
+    - stage: Lint
+      script: gulp test:lint
+      node_js: lts/erbium

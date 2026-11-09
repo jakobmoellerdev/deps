@@ -422,6 +422,26 @@ rules:
 	}
 }
 
+// Travis node_js lists are test matrices: majors are not allowed unless a rule allows them, as
+// in Renovate's travis manager.
+func TestPolicyTravisNoMajor(t *testing.T) {
+	d := dep.Dep{Manager: "travis", Name: "node"}
+	p := Default().Policy(d)
+	if ok, _ := p.Check(dep.Major, "24", nil); ok || !p.AllowedUpdateTypes[dep.Minor] || !p.AllowedUpdateTypes[dep.Patch] {
+		t.Errorf("travis default: %+v", p.AllowedUpdateTypes)
+	}
+	c, err := load(t, ".deps.yaml", "rules:\n  - managers: [travis]\n    allowedUpdateTypes: [major, minor, patch]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Policy(d).AllowedUpdateTypes[dep.Major] {
+		t.Error("rule does not allow travis majors")
+	}
+	if !Default().Policy(dep.Dep{Manager: "nvm", Name: "node"}).AllowedUpdateTypes[dep.Major] {
+		t.Error("nvm majors not allowed")
+	}
+}
+
 func TestPolicyRenovatePatterns(t *testing.T) {
 	c, err := load(t, ".deps.yaml", `rules:
   - names: ['/^k8s\.io\//', '!k8s.io/kube-openapi']

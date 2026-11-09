@@ -54,6 +54,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/swift"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/travis"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/velaci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/woodpecker"
@@ -117,6 +118,7 @@ var Builtin = []Entry{
 	{cloudbuild.Doc, cloudbuild.New},
 	{velaci.Doc, velaci.New},
 	{woodpecker.CrowDoc, woodpecker.NewCrow},
+	{travis.Doc, travis.New},
 	{vcpkg.Doc, vcpkg.New},
 	{elm.Doc, elm.New},
 	{composer.Doc, composer.New},

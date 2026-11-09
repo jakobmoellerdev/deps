@@ -299,7 +299,7 @@ func TestLoadRules(t *testing.T) {
     draftPR: true
     prCreation: status-success
   - # packageRules[2]
-    managers: [github-actions, gitlabci, bitbucket-pipelines, woodpecker, crow, droneci, circleci, azure-pipelines, cloudbuild, velaci]
+    managers: [github-actions, gitlabci, bitbucket-pipelines, woodpecker, crow, droneci, circleci, azure-pipelines, cloudbuild, velaci, travis]
     names: [x]
     abandonmentThreshold: 2 years
   - # packageRules[2]

@@ -58,6 +58,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`cloudbuild`](#cloudbuild)
 - [`velaci`](#velaci)
 - [`crow`](#crow)
+- [`travis`](#travis)
 - [`vcpkg`](#vcpkg)
 - [`elm`](#elm)
 - [`composer`](#composer)
@@ -2895,6 +2896,31 @@ Updates container images in Crow CI workflows (a Woodpecker fork; read like [woo
 **Details.**
 
 - Crow keeps Woodpecker's workflow format, so the files are read and edited exactly as the [woodpecker](#woodpecker) manager's; only the manager name and file locations differ.
+
+## travis
+
+Updates the Node.js versions of Travis CI configurations.
+
+**Files:**
+
+- `.travis.y(a)ml` at the repository root
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `node` | each version of `node_js` (a version or a list) at the top level and in the `jobs.include` and `matrix.include` entries (name `node`) | `node-version` | as [nvm](#nvm): `semver`; partial versions `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-version value` | an alias such as `node`, `stable`, `lts/*`, `lts/iron`: it floats to the newest matching release by itself |
+| `unsupported range` | anything else that is not a version with an optional operator or x-range |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Major updates are not allowed by default, as in Renovate: a `node_js` list is a test matrix, and moving each entry to the newest major would collapse it. `20.11` still moves to the newest `20.x` minor; a rule `{managers: [travis], allowedUpdateTypes: [major, minor, patch]}` allows majors.
+- Versions are classified as in the [nvm](#nvm) manager: a partial `20` keeps its precision, a full `20.11.1` uses `semver`, and only the version token is replaced (quotes stay).
 
 ## vcpkg
 

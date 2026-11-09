@@ -266,7 +266,7 @@ var managerMap = func() map[string][]expansion {
 		"custom.regex":      {{"custom", nil}},
 		"custom.jsonata":    {{"custom", nil}},
 	}
-	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker crow droneci circleci azure-pipelines cloudbuild velaci composer julia bazel-module bazelisk nuget homebrew ansible ansible-galaxy sbt scalafmt pub fvm mix gleam nix") {
+	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker crow droneci circleci azure-pipelines cloudbuild velaci travis composer julia bazel-module bazelisk nuget homebrew ansible ansible-galaxy sbt scalafmt pub fvm mix gleam nix") {
 		m[n] = []expansion{{n, nil}}
 	}
 	return m
@@ -282,7 +282,7 @@ var depTypeUniverse = map[string][]string{
 // categories maps Renovate manager categories (lib/modules/manager/*/index.ts) to the
 // mapped Renovate managers.
 var categories = map[string][]string{
-	"ci":         {"github-actions", "gitlabci", "gitlabci-include", "bitbucket-pipelines", "woodpecker", "crow", "droneci", "circleci", "azure-pipelines", "cloudbuild", "velaci"},
+	"ci":         {"github-actions", "gitlabci", "gitlabci-include", "bitbucket-pipelines", "woodpecker", "crow", "droneci", "circleci", "azure-pipelines", "cloudbuild", "velaci", "travis"},
 	"golang":     {"gomod"},
 	"docker":     {"dockerfile", "docker-compose", "devcontainer"},
 	"kubernetes": {"kubernetes", "helm-requirements", "helm-values", "helmv3", "helmfile", "flux", "argocd", "sveltos", "kustomize"},
