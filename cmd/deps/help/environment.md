@@ -36,6 +36,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_RUST_MANIFESTS_URL` | `rust-version` datasource | URL of the Rust manifest index (one `…/dist/<date>/channel-rust-<version>.toml` URL per line; default `https://static.rust-lang.org/manifests.txt`) |
 | `DEPS_GALAXY_URL` | `galaxy`, `galaxy-collection` datasources | Ansible Galaxy server of roles and of collections without a `source` (default `https://galaxy.ansible.com`; a Galaxy NG server or mirror) |
 | `DEPS_ELM_PACKAGE_URL` | `elm-package` datasource | base of the Elm package registry API (default `https://package.elm-lang.org`) |
+| `DEPS_POD_URL` | `pod` datasource | base of the CocoaPods trunk CDN, also for Podfiles naming trunk (default `https://cdn.cocoapods.org`; a mirror serving its `all_pods_versions_*.txt` layout) |
 | `DEPS_JULIA_REGISTRY_URL` | `julia-registry` datasource | raw file base of the Julia registry (default `https://raw.githubusercontent.com/JuliaRegistries/General/HEAD`; a mirror or another registry with General's layout, userinfo sent as basic auth) |
 | `BUNDLE_<HOST>` | `rubygems` datasource | Bundler's credentials for a gem server (`gems.example-corp.com` → `BUNDLE_GEMS__EXAMPLE___CORP__COM`): `user:password`, or a token; sent as basic auth to that host only |
 | `DEPS_CIRCLECI_URL`, `DEPS_CIRCLECI_TOKEN` | `orb` datasource | CircleCI host of the orb registry (default `https://circleci.com`; CircleCI server), and an API token for private orbs, sent as `Circle-Token` and bare `Authorization` to that host |

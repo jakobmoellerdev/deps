@@ -1,0 +1,13 @@
+83 simdjson pod range= constraint="" version="" source= skip=path dependency
+84 Gekidou pod range= constraint="" version="" source= skip=path dependency
+85 CocoaLumberjack pod range= constraint="" version="" source= skip=unspecified version
+86 TurboLogIOSNative git-tags range= constraint="" version="" source= skip=git dependency
+90 mattermost-intune pod range= constraint="" version="" source= skip=path dependency
+96 TurboLogIOSNative git-tags range= constraint="" version="" source= skip=git dependency
+97 Sentry pod range='9.12.1' constraint="9.12.1" version="9.12.1" source=
+98 Gekidou pod range= constraint="" version="" source= skip=path dependency
+99 react-native-network-client-session-attributes pod range= constraint="" version="" source= skip=path dependency
+104 Sentry pod range='9.12.1' constraint="9.12.1" version="9.12.1" source=
+105 Gekidou pod range= constraint="" version="" source= skip=path dependency
+106 OpenGraph pod range='1.4.1' constraint="1.4.1" version="1.4.1" source=
+107 react-native-network-client-session-attributes pod range= constraint="" version="" source= skip=path dependency

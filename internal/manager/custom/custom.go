@@ -97,7 +97,7 @@ type customManager struct {
 // regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
 // datasources keep an empty Source.
 var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name, "artifactory", forge.GitLabReleases, forge.GitLabTags, forge.GiteaReleases, forge.GiteaTags, forge.ForgejoReleases, forge.ForgejoTags, "endoflife-date",
-	galaxy.CollectionName, mavends.Name, sbtds.PackageName, sbtds.PluginName, "glasskube-packages"}
+	galaxy.CollectionName, mavends.Name, sbtds.PackageName, sbtds.PluginName, "glasskube-packages", "pod"}
 
 // setRegistry sets d.Source to registry when d's datasource takes a registry URL.
 func setRegistry(d *dep.Dep, registry string) {
@@ -564,6 +564,8 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //     missing repository).
 //   - apk: Name is the package; Source is the registryUrl (empty: the datasource reports the
 //     missing repository).
+//   - pod: Name is the pod; Source is the registryUrl (spec repositories), if any (empty:
+//     trunk).
 //   - artifactory: Name is the folder path below Source (Renovate `registryUrl=`), or the full
 //     `https://` or `http://` folder URL when Source is empty; slashes around both are trimmed.
 //   - gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases,
@@ -632,7 +634,7 @@ func (m *customManager) classify(d *dep.Dep) {
 		if _, err := forge.ParseRepo(d.Datasource, d.Name, d.Source); err != nil {
 			d.Skip = err.Error()
 		}
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob", galaxy.Name, "glasskube-packages":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob", galaxy.Name, "glasskube-packages", "pod":
 	case galaxy.CollectionName:
 		if f := strings.Fields(d.Source); len(f) > 0 {
 			if !httpURL(f[0]) {

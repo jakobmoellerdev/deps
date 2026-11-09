@@ -46,6 +46,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`homebrew`](#homebrew)
 - [`swift`](#swift)
 - [`bundler`](#bundler)
+- [`cocoapods`](#cocoapods)
 - [`ruby-version`](#ruby-version)
 - [`pyenv`](#pyenv)
 - [`runtime-version`](#runtime-version)
@@ -2567,6 +2568,59 @@ Updates gem requirements and the `ruby` directive in `Gemfile`s (and `gems.rb`) 
 
 With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `Gemfile.lock` (`gems.locked`) next to a scanned `Gemfile` (`gems.rb`) or gemspec is refreshed, once, with `bundle lock --update` in the temporary copy, which moves every locked gem, transitive ones included, to the newest version the requirements admit. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `Gemfile.lock` files; `minimumReleaseAge` does not apply to it.
 
+## cocoapods
+
+Updates the pod requirements and git tags of CocoaPods `Podfile`s and moves `Podfile.lock` with `pod install`, as Renovate does. Podfiles are read with the [bundler](#bundler) manager's Ruby lexer, so Ruby around the `pod` statements (methods, conditionals, `post_install` hooks, `require`s) is skipped; only the requirement strings that change are rewritten, and of those only the version where the operator stays.
+
+**Files:**
+
+- `Podfile` at any depth
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `pods` | `pod "Name", "~> 5.8"` statements at any depth (`target`, `abstract_target`, `def` blocks), with any number of requirement strings (`"> 0.1", "< 0.3"`), parentheses, options (`:configurations`, `:modular_headers`, …) in `:key => value` or `key:` syntax; subspecs `Name/Sub` are named as written and looked up as their pod; git pods `pod "Name", :git => "<url>", :tag => "<tag>"` (the tag is the version; any git host, the source is the repository's https URL) | `pod` (the Podfile's `source`s, else trunk; a pod's `:source`); `git-tags` for git pods with a tag | `ruby` (CocoaPods versions and requirements are Gem::Version and Gem::Requirement); `tag` for git pods | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unspecified version` | a pod without a requirement (`pod "Alamofire"`), as Renovate |
+| `git dependency` | a git pod with `:branch` or `:commit`, without `:tag`, or with a `:git`/`:tag` that is not a literal string |
+| `unrecognized git URL` | a git pod whose `:git` is no https/http/ssh/git or `git@host:path` URL |
+| `path dependency` | `:path` |
+| `podspec dependency` | `:podspec` |
+| `external source` | `:http`, `:hg` or `:svn` |
+| `non-literal source` | a `:source` that is not a literal string |
+| `non-literal requirement` | a requirement that is not a literal string: a variable, an interpolated or escaped string, the deprecated `:head` |
+| `unsupported requirement` | a requirement outside Gem::Requirement's grammar |
+| `no Podfile.lock version for a requirement without a floor` | a pod with only upper bounds and exclusions (`< 2`, `!= 1.3`) that the Podfile.lock next to it does not lock (or without a Podfile.lock) |
+
+**Spec repositories.**
+
+- `source "<url>"` statements are the spec repositories of every pod, in order (CocoaPods resolves a pod from the first that has it); without any, pods come from trunk. A pod's `:source` is its only spec repository. Trailing slashes are dropped.
+- The `pod` datasource reads trunk and http(s) spec repositories in the CDN layout, and spec repositories on github.com through the GitHub API; other git spec repositories fail the pod.
+
+**Requirements.**
+
+- Requirements are read and rewritten as a [bundler](#bundler) gem's: `=`, `!=`, `>`, `<`, `>=`, `<=` and the optimistic `~>`, none meaning `=`, every [rangeStrategy](configuration.md#rangestrategy) (`~> 5.8` → `~> 6.0` for 6.0.1, `5.8.1` → `6.0.1`).
+- `auto` is `replace`, as Renovate resolves it for CocoaPods (no lockfile-only updates): versions the requirements admit are left to `pod update`, others replace the requirements. With `update-lockfile`, `bump` or `in-range-only` admitted versions are lockfile-only updates from the version Podfile.lock locks (`, lockfile` in the report).
+- Subspecs of one pod (`Firebase/Analytics`, `Firebase/Crashlytics`) are separate deps; CocoaPods resolves them to one version, so group them (`{managers: [cocoapods], names: ["Firebase/**"], group: firebase}`) when their requirements must move together.
+
+**Podfile.lock (`apply`, `run`).**
+
+1. **Lockfile.** The lockfile of a `Podfile` is the `Podfile.lock` next to it; without one the Podfile is only patched.
+2. **Locked versions.** Before resolution each Podfile.lock is read: a pod (and its subspecs) gets the version of its entry under `PODS`. An unreadable lock is reported once and its pods are bumped.
+3. **Temporary copy.** The Podfile's directory is mirrored to a temp dir: the Podfile, Podfile.lock and every file of the Xcode projects and workspaces below it are copied (`pod install` integrates the pods into them), `Pods`, `build` and `.git` are left out, every other entry is symlinked; the directories above it up to the repository top are recreated with their entries symlinked, so `:path` pods and the scripts a React Native Podfile requires (`node_modules`) resolve as in the checkout.
+4. **Update.** `pod install` runs there (Renovate's command): CocoaPods resolves the pods whose requirements changed anew, to the newest version they admit, and keeps every other pod locked. Lockfile-only updates run `pod update <pods…>` instead, which unlocks those pods. Only `Podfile.lock` is taken back; a checked-in `Pods` directory is not updated.
+5. **Tool.** `pod` must be on `PATH` (CocoaPods runs on Linux, it needs `git` and `rsync`), with the plugins the Podfile names installed; deps adds `--allow-root` when it runs as root. CocoaPods records its own version under `COCOAPODS:`: provide the version the lock names to keep that line unchanged. Without `pod`, the Podfiles fail with `pod not found (needed to update Podfile.lock)`.
+6. **Failure.** A failed command reports `pod install in <dir>: <last 20 output lines>`, and the Podfile's changes are dropped.
+
+- `plan` does not run CocoaPods, and prints `note    Podfile.lock changes are computed by apply/run`.
+
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `Podfile.lock` next to a scanned `Podfile` is refreshed with `pod update` in the temporary copy, which moves every pod to the newest version the Podfile admits. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `Podfile.lock` files; `minimumReleaseAge` does not apply to it.
+
 ## ruby-version
 
 Updates the Ruby version in `.ruby-version` (rbenv, chruby, rvm, asdf, mise, Bundler's `ruby file: ".ruby-version"`): the first token of the first line that is neither blank nor a `#` comment. It shares the built-in `ruby` group with the Gemfile `ruby` directive and asdf/mise `ruby` (see [bundler](#bundler)), so a Ruby bump is one PR.
@@ -4410,6 +4464,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `glasskube-packages` | the Glasskube package name (`cert-manager`); the dep's source is the package repository URL of its `PackageRepository` (glasskube manager) or `registryUrl` (custom managers; whitespace-separated URLs are tried in order, the first that has the package wins), default `https://packages.dl.glasskube.dev/packages`. Versioning `glasskube` (`v1.17.0+2`, the revision after the version) | `GET <repository>/<name>/versions.yaml` once per repository and package (redirects are followed: the default repository answers from glasskube.github.io): every `versions[].version` is a version, `latestVersion` the release the repository recommends (majors above it are not proposed, as npm's `latest`); a repository answering HTTP 404 does not have the package. Source repository (release notes): `GET <repository>/<name>/<latestVersion>/package.yaml` once per package, only for versions in a pull request: its `references` entry labeled `GitHub`, else one labeled `Website` on a forge | userinfo of the repository URL (`https://user:token@host/…`) as basic auth; redacted in errors and logs | none: versions.yaml has no release times, so `minimumReleaseAge` treats every version as of unknown age (`minimumReleaseAgeBehaviour`) |
 | `clojure` | `groupId:artifactId`; the repositories are the dep's `<url>/` list, Clojars (`https://repo.clojars.org/`, `DEPS_CLOJARS_URL`) then Maven Central when empty | as the `maven` datasource: `GET <repository>/<group/path>/<artifactId>/maven-metadata.xml` per repository, versions merged in repository order; a 404 contributes nothing; `DEPS_MAVEN_CENTRAL_URL` replaces Maven Central | none | as the `maven` datasource (POM `Last-Modified`) |
 | `jenkins-plugins` | the plugin's artifact ID (`git`, `workflow-aggregator`) | `GET <DEPS_JENKINS_PLUGINS_URL or https://updates.jenkins.io>/current/plugin-versions.json` once per run (about 25 MB for the Jenkins update center), read as a stream and keeping only the plugins the run looks up; every member of a plugin's object is a version, in the file's order. A plugin the file lacks (its distribution stopped) skips the dep (`plugin not found on <site>`). Source repository (release notes): the plugin's `scm` in `GET <site>/current/update-center.actual.json`, once per run and only when a PR is opened | none | each version's `releaseTimestamp`, else its `buildDate` |
+| `pod` | pod name as in the Podfile (`Alamofire`; a subspec `Firebase/Analytics` is looked up as `Firebase`); the dep's source is its whitespace-separated spec repositories in lookup order ("" = trunk) | trunk (`trunk`, `https://cdn.cocoapods.org/`, `https://github.com/CocoaPods/Specs.git`) and other http(s) spec repositories serving the CDN layout (an Artifactory `api/pods` repository): `GET <DEPS_POD_URL or https://cdn.cocoapods.org>/all_pods_versions_<a>_<b>_<c>.txt` (`<a><b><c>` the first hex digits of the MD5 of the pod name) once per shard file, a `<pod>/<version>/…` line per pod; spec repositories on github.com (`https://github.com/<owner>/<repo>.git`, `git@github.com:<owner>/<repo>.git`): the GitHub contents API listing of `Specs/<a>/<b>/<c>/<pod>`, else `<a>/<b>/<c>/<pod>`, `Specs/<pod>`, `<pod>` (as Renovate), once per repository and pod. The first spec repository listing the pod answers; other git spec repositories are an error | the forge token for github.com spec repositories (GitHub API); credentials in a CDN URL (`https://user:token@host/…`) as Basic auth | none (neither layout records dates) |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `azure-tags` = `git-tags`, `bitbucket-server-tags` = `git-tags`, `bitbucket-tags` = `git-tags`, `github-digest` = `git-refs`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
 

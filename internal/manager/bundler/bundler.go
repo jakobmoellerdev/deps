@@ -1,6 +1,7 @@
 // Package bundler extracts the gems and the `ruby` directive of Ruby Gemfiles, reads the
 // versions Gemfile.lock locks them to, and updates Gemfile.lock after an update with `bundle
-// lock` (see Locker).
+// lock` (see Locker). It also holds the cocoapods manager: Podfiles are Ruby too, and pod
+// requirements are Gem::Requirements (see NewCocoaPods and PodLocker).
 package bundler
 
 import (

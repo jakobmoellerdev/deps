@@ -1,0 +1,145 @@
+def node_require(script)
+  # Resolve script with node to allow for hoisting
+  require Pod::Executable.execute_command('node', ['-p',
+    "require.resolve(
+      '#{script}',
+      {paths: [process.argv[1]]},
+    )", __dir__]).strip
+end
+
+require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")
+require File.join(File.dirname(`node --print "require.resolve('react-native/package.json')"`), "scripts/react_native_pods")
+node_require('react-native-permissions/scripts/setup.rb')
+
+require 'json'
+podfile_properties = JSON.parse(File.read(File.join(__dir__, 'Podfile.properties.json'))) rescue {}
+
+def ccache_enabled?(podfile_properties)
+  # Environment variable takes precedence
+  return ENV['USE_CCACHE'] == '1' if ENV['USE_CCACHE']
+
+  # Fall back to Podfile properties
+  podfile_properties['ccacheEnabled'] == 'true'
+end
+
+ENV['EX_DEV_CLIENT_NETWORK_INSPECTOR'] ||= podfile_properties['EX_DEV_CLIENT_NETWORK_INSPECTOR']
+ENV['RCT_USE_RN_DEP'] ||= '1' if podfile_properties['buildReactNativeFromSource'] != 'true'
+ENV['RCT_USE_PREBUILT_RNCORE'] ||= '1' if podfile_properties['buildReactNativeFromSource'] != 'true'
+ENV['EXPO_USE_PRECOMPILED_MODULES'] ||= '1' if podfile_properties['buildExpoModulesFromSource'] != 'true'
+ENV['RCT_HERMES_V1_ENABLED'] ||= '1' if podfile_properties['useHermesV1'] == 'true'
+
+app_deployment_target = podfile_properties['deploymentTarget'] || '18.0'
+platform :ios, app_deployment_target
+prepare_react_native_project!
+
+Pod::UI.puts "Configuring Pod with statically linked Frameworks".green
+use_frameworks! :linkage => :static
+
+setup_permissions([
+  "Camera",
+  "LocationWhenInUse",
+  "Microphone",
+  "Notifications",
+  "PhotoLibrary",
+  "Bluetooth"
+])
+
+# Conditional Intune MAM support
+intune_enabled = ENV['INTUNE_ENABLED'] == 'true' || ENV['INTUNE_ENABLED'] == '1'
+
+if intune_enabled
+  puts "🔐 Intune MAM features enabled"
+end
+
+if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
+  config_command = ['node', '-e', "process.argv=['', '', 'config'];require('@react-native-community/cli').run()"];
+else
+  config_command = [
+    'node',
+    '--no-warnings',
+    '--eval',
+    'require(\'expo/bin/autolinking\')',
+    'expo-modules-autolinking',
+    'react-native-config',
+    '--json',
+    '--platform',
+    'ios'
+  ]
+end
+
+config = use_native_modules!(config_command)
+
+target 'Mattermost' do
+  # Pods for Mattermost
+
+  use_expo_modules!
+
+  use_react_native!(
+    :path => config[:reactNativePath],
+    # An absolute path to your application root.
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+
+  pod 'simdjson', path: '../node_modules/@nozbe/simdjson', :modular_headers => true
+  pod 'Gekidou', :path => './Gekidou'
+  pod 'CocoaLumberjack', :modular_headers => true
+  pod 'TurboLogIOSNative', :git => 'https://github.com/larkox/react-native-turbo-log-ios-native.git', :modular_headers => true
+
+  # Conditional Intune MAM pod (internal builds only)
+  if intune_enabled
+    pod 'mattermost-intune', :path => '../libraries/@mattermost/intune'
+  end
+end
+
+target 'NotificationService' do
+  inherit! :search_paths
+  pod 'TurboLogIOSNative', :git => 'https://github.com/larkox/react-native-turbo-log-ios-native.git', :modular_headers => true
+  pod 'Sentry', '9.12.1'
+  pod 'Gekidou', :path => './Gekidou'
+  pod 'react-native-network-client-session-attributes', :path => '../node_modules/@mattermost/react-native-network-client'
+end
+
+target 'MattermostShare' do
+  inherit! :search_paths
+  pod 'Sentry', '9.12.1'
+  pod 'Gekidou', :path => './Gekidou'
+  pod 'OpenGraph', '1.4.1'
+  pod 'react-native-network-client-session-attributes', :path => '../node_modules/@mattermost/react-native-network-client'
+end
+
+post_install do |installer|
+  react_native_post_install(
+    installer,
+    config[:reactNativePath],
+    :mac_catalyst_enabled => false,
+    :ccache_enabled => ccache_enabled?(podfile_properties),
+  )
+
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |bc|
+      bc.build_settings['SWIFT_VERSION']        = '5.9'
+      bc.build_settings['OTHER_LDFLAGS']        = ['$(inherited)', '-ObjC']
+      bc.build_settings['STRIP_SWIFT_SYMBOLS']  = 'NO'
+      bc.build_settings['ENABLE_BITCODE']       = 'NO'
+    end
+
+  end
+
+    # ensure stdlib is embedded for Gekidou to work correctly in extensions
+    %w[NotificationService MattermostShare].each do |ext_name|
+      target = installer.aggregate_targets.flat_map(&:user_project).flat_map(&:targets).find { |x| x.name == ext_name }
+      next unless target
+      target.build_configurations.each do |c|
+        c.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
+        c.build_settings['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'YES'
+      end
+    end
+
+    # make sure the main app is NOT extension-only
+    app_target = installer.aggregate_targets.flat_map(&:user_project).flat_map(&:targets).find { |t| t.name == 'Mattermost' }
+    if app_target
+      app_target.build_configurations.each do |c|
+        c.build_settings.delete('APPLICATION_EXTENSION_API_ONLY')
+      end
+    end
+end

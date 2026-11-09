@@ -171,6 +171,9 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	}) {
 		fmt.Fprintln(stderr, "note    conda-lock.yml changes are computed by apply/run")
 	}
+	if !write && hasManager(res, bundler.NameCocoaPods) {
+		fmt.Fprintln(stderr, "note    Podfile.lock changes are computed by apply/run")
+	}
 	if write && slices.ContainsFunc(changes, func(c engine.FileChange) bool { return c.Gitlink }) {
 		fmt.Fprintln(stderr, "note    submodule commits are staged in the git index; run git submodule update to check them out")
 	}

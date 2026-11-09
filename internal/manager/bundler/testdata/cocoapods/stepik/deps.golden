@@ -1,0 +1,44 @@
+16 StepikModel pod range= constraint="" version="" source=https://github.com/CocoaPods/Specs.git skip=path dependency
+18 Alamofire pod range="5.10.1" constraint="5.10.1" version="5.10.1" source=https://github.com/CocoaPods/Specs.git
+19 Atributika pod range="4.10.1" constraint="4.10.1" version="4.10.1" source=https://github.com/CocoaPods/Specs.git
+20 SwiftyJSON pod range="5.0.2" constraint="5.0.2" version="5.0.2" source=https://github.com/CocoaPods/Specs.git
+21 SDWebImage pod range="5.19.7" constraint="5.19.7" version="5.19.7" source=https://github.com/CocoaPods/Specs.git
+22 SVGKit git-tags range= constraint="" version="" source=https://github.com/CocoaPods/Specs.git skip=git dependency
+23 DeviceKit pod range="5.5.0" constraint="5.5.0" version="5.5.0" source=https://github.com/CocoaPods/Specs.git
+24 PromiseKit pod range="8.0.0" constraint="8.0.0" version="8.0.0" source=https://github.com/CocoaPods/Specs.git
+25 SwiftLint pod range="0.57.0" constraint="0.57.0" version="0.57.0" source=https://github.com/CocoaPods/Specs.git
+28 FLEX git-tags range= constraint="" version="" source=https://github.com/CocoaPods/Specs.git skip=git dependency
+32 FLEX git-tags range= constraint="" version="" source=https://github.com/CocoaPods/Specs.git skip=git dependency
+42 SVProgressHUD pod range="2.3.1" constraint="2.3.1" version="2.3.1" source=https://github.com/CocoaPods/Specs.git
+43 SnapKit pod range="5.7.1" constraint="5.7.1" version="5.7.1" source=https://github.com/CocoaPods/Specs.git
+46 Firebase/Core pod range="10.29.0" constraint="10.29.0" version="10.29.0" source=https://github.com/CocoaPods/Specs.git
+47 Firebase/Messaging pod range="10.29.0" constraint="10.29.0" version="10.29.0" source=https://github.com/CocoaPods/Specs.git
+48 Firebase/Analytics pod range="10.29.0" constraint="10.29.0" version="10.29.0" source=https://github.com/CocoaPods/Specs.git
+49 Firebase/Crashlytics pod range="10.29.0" constraint="10.29.0" version="10.29.0" source=https://github.com/CocoaPods/Specs.git
+50 Firebase/RemoteConfig pod range="10.29.0" constraint="10.29.0" version="10.29.0" source=https://github.com/CocoaPods/Specs.git
+52 AppMetricaCore pod range="5.8.2" constraint="5.8.2" version="5.8.2" source=https://github.com/CocoaPods/Specs.git
+53 Amplitude pod range="8.22.0" constraint="8.22.0" version="8.22.0" source=https://github.com/CocoaPods/Specs.git
+54 BranchSDK pod range="3.6.5" constraint="3.6.5" version="3.6.5" source=https://github.com/CocoaPods/Specs.git
+56 BEMCheckBox pod range="1.4.1" constraint="1.4.1" version="1.4.1" source=https://github.com/CocoaPods/Specs.git
+58 IQKeyboardManagerSwift pod range="6.5.6" constraint="6.5.6" version="6.5.6" source=https://github.com/CocoaPods/Specs.git
+60 Kanna pod range="5.2.7" constraint="5.2.7" version="5.2.7" source=https://github.com/CocoaPods/Specs.git
+61 TUSafariActivity pod range="1.0.4" constraint="1.0.4" version="1.0.4" source=https://github.com/CocoaPods/Specs.git
+64 VK-ios-sdk pod range="1.6.2" constraint="1.6.2" version="1.6.2" source=https://github.com/CocoaPods/Specs.git
+67 GoogleSignIn pod range="6.1.0" constraint="6.1.0" version="6.1.0" source=https://github.com/CocoaPods/Specs.git
+69 Presentr git-tags range= constraint="" version="v1.9.1" source=https://github.com/ivan-magda/Presentr
+70 PanModal git-tags range= constraint="" version="" source=https://github.com/CocoaPods/Specs.git skip=git dependency
+72 Agrume pod range="5.8.0" constraint="5.8.0" version="5.8.0" source=https://github.com/CocoaPods/Specs.git
+73 Highlightr git-tags range= constraint="" version="v2.1.3" source=https://github.com/ivan-magda/Highlightr
+74 TTTAttributedLabel pod range="2.0.0" constraint="2.0.0" version="2.0.0" source=https://github.com/CocoaPods/Specs.git
+75 lottie-ios pod range="3.2.3" constraint="3.2.3" version="3.2.3" source=https://github.com/CocoaPods/Specs.git
+76 Koloda pod range="5.0.1" constraint="5.0.1" version="5.0.1" source=https://github.com/CocoaPods/Specs.git
+77 DGCharts pod range="5.1.0" constraint="5.1.0" version="5.1.0" source=https://github.com/CocoaPods/Specs.git
+78 EasyTipView pod range="2.1.0" constraint="2.1.0" version="2.1.0" source=https://github.com/CocoaPods/Specs.git
+79 ActionSheetPicker-3.0 pod range="2.7.4" constraint="2.7.4" version="2.7.4" source=https://github.com/CocoaPods/Specs.git
+80 Nuke pod range="10.7.1" constraint="10.7.1" version="10.7.1" source=https://github.com/CocoaPods/Specs.git
+81 STRegex pod range="2.1.1" constraint="2.1.1" version="2.1.1" source=https://github.com/CocoaPods/Specs.git
+82 Tabman pod range="3.2.0" constraint="3.2.0" version="3.2.0" source=https://github.com/CocoaPods/Specs.git
+83 SwiftDate pod range="6.3.1" constraint="6.3.1" version="6.3.1" source=https://github.com/CocoaPods/Specs.git
+87 Quick pod range="4.0.0" constraint="4.0.0" version="4.0.0" source=https://github.com/CocoaPods/Specs.git
+88 Nimble pod range="9.2.1" constraint="9.2.1" version="9.2.1" source=https://github.com/CocoaPods/Specs.git
+89 Mockingjay git-tags range= constraint="" version="" source=https://github.com/CocoaPods/Specs.git skip=git dependency

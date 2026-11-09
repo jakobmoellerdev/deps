@@ -122,6 +122,7 @@ var Builtin = []Entry{
 	{homebrew.Doc, homebrew.New},
 	{swift.Doc, swift.New},
 	{bundler.Doc, bundler.New},
+	{bundler.CocoaPodsDoc, bundler.NewCocoaPods},
 	{toolversions.DocRubyVersion, toolversions.NewRubyVersion},
 	{toolversions.DocPyenv, toolversions.NewPyenv},
 	{toolversions.DocRuntimeVersion, toolversions.NewRuntimeVersion},

@@ -696,7 +696,7 @@ func TestLoadTopLevel(t *testing.T) {
 		ignorePaths: ['foo', '**/bar/**', '!keep', '/^x/'], automergeStrategy: 'merge-commit', automergeType: 'branch',
 		minimumReleaseAge: '7 days', vulnerabilityAlerts: {enabled: false}, schedule: ['before 6am on monday', 'on the 1st through 7th day of the month'],
 		timezone: 'Europe/Berlin', lockFileMaintenance: {enabled: true, automerge: true}, labels: ['deps'],
-		pinDigests: true, rangeStrategy: 'pin', cocoapods: {enabled: true},
+		pinDigests: true, rangeStrategy: 'pin', batect: {enabled: true},
 		registryAliases: {'${HARBOR:-}/proxy': 'harbor.example.com/hub', '$CI_REGISTRY': 'registry.example.com'},
 	}`)
 	if err != nil {
@@ -740,7 +740,7 @@ rules:` + defaultExclusions + "\n"
 		"warn automergeType: deps automerges through the PR; dropped",
 		`warn schedule: schedule "on the 1st through 7th day of the month": want "on the <n> day of the month" or "of the week", got "on the 1st through 7th day of the month"; entry dropped`,
 		"info lockFileMaintenance.automerge: no deps equivalent; ignored",
-		"warn cocoapods: not supported; ignored",
+		"warn batect: not supported; ignored",
 	} {
 		if !slices.Contains(notes, n) {
 			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
@@ -1148,7 +1148,7 @@ func TestIsConfigName(t *testing.T) {
 // Settings only Renovate's built-in presets set are reported as info, the repository's own as
 // warnings.
 func TestLoadBuiltinPresetNotes(t *testing.T) {
-	res, err := load(t, `{extends: [':pinDevDependencies', ':ignoreModulesAndTests'], packageRules: [{matchDepTypes: ['devonly'], enabled: false}], cocoapods: {enabled: true}}`)
+	res, err := load(t, `{extends: [':pinDevDependencies', ':ignoreModulesAndTests'], packageRules: [{matchDepTypes: ['devonly'], enabled: false}], batect: {enabled: true}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1156,7 +1156,7 @@ func TestLoadBuiltinPresetNotes(t *testing.T) {
 	for _, n := range []string{
 		"info nuget.ignorePaths: not supported; ignored (from a built-in preset)",
 		"warn packageRules[0]: depType devonly has no deps equivalent; dropped",
-		"warn cocoapods: not supported; ignored",
+		"warn batect: not supported; ignored",
 	} {
 		if !slices.Contains(notes, n) {
 			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))

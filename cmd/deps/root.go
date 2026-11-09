@@ -58,6 +58,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/orb"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/osv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/packagist"
+	podds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pypi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/pythonversion"
 	rpmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rpm"
@@ -466,6 +467,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		nugetds.Name:            nugetds.New(client, sem, os.Getenv),
 		dotnetversion.Name:      dotnetversion.New(client, sem, os.Getenv),
 		javaversion.Name:        javaversion.New(client, sem, os.Getenv),
+		podds.Name:              podds.New(client, sem, gh, os.Getenv),
 		debds.Name:              debds.New(client, sem, auth),
 		artifactory.Name:        artifactory.New(client, sem, auth),
 		endoflife.Name:          endoflife.New(client, sem, os.Getenv),
