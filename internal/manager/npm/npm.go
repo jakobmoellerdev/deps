@@ -19,8 +19,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Masterminds/semver/v3"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/nodetool"
@@ -117,7 +115,7 @@ func (npmManager) Edits(u dep.Update) ([]patch.Edit, error) {
 		if !ok {
 			return nil, fmt.Errorf("unsupported range %q", d.Range)
 		}
-		nv, _ := semver.NewVersion(u.NewVersion) // nil when it is not a version: newRange keeps the range
+		nv, _ := newVersion(u.NewVersion) // nil when it is not a version: newRange keeps the range
 		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: r.newRange(nv, u.RangeStrategy)}}
 	case u.NewVersion != d.Version:
 		edits = []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}

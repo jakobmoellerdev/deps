@@ -1,7 +1,5 @@
 package npm
 
-import "github.com/Masterminds/semver/v3"
-
 // RangeAnchor returns the version that stands for the npm range rng (dep.Dep.Version): `^1.2`
 // → 1.2.0, `1.x` → 1.0.0, `<2` → 2.0.0. ok is false when rng is outside node-semver's grammar
 // or has no version (`*`). Other managers whose ranges are npm's share it.
@@ -26,7 +24,7 @@ func NewRange(rng, v, strategy string) (string, bool) {
 
 // rewrite is NewRange for the compiled range r.
 func rewrite(r *compiledRange, v, strategy string) (string, bool) {
-	nv, err := semver.NewVersion(v)
+	nv, err := newVersion(v)
 	if err != nil {
 		return "", false
 	}

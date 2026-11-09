@@ -205,8 +205,9 @@ func skipBlanks(s string, i int) int {
 	return i
 }
 
-// RangeMatcher is implemented by schemes with a range grammar of their own; ranges of other
-// schemes are Masterminds semver constraints.
+// RangeMatcher is implemented by schemes with a range grammar of their own, and by semver for
+// its Masterminds constraints (SemverRange); ranges of other schemes are Masterminds semver
+// constraints.
 type RangeMatcher interface {
 	// MatchRange returns whether a version of the scheme satisfies rng.
 	MatchRange(rng string) (func(v string) bool, error)

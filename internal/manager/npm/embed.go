@@ -1,8 +1,6 @@
 package npm
 
 import (
-	"github.com/Masterminds/semver/v3"
-
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
@@ -24,6 +22,6 @@ func InRange(d dep.Dep, v string) bool {
 	if !ok || cr.whole == nil {
 		return false
 	}
-	sv, err := semver.NewVersion(v)
+	sv, err := newVersion(v)
 	return err == nil && cr.whole.Check(sv)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // An npm range (node-semver's grammar) is a set of `||` alternatives; each is a hyphen range
@@ -259,8 +260,8 @@ func (r npmRange) anchor() string {
 // each alternative (each[i] for alts[i]), nil where Masterminds rejects one.
 type compiledRange struct {
 	npmRange
-	whole *semver.Constraints
-	each  []*semver.Constraints
+	whole *versioning.SemverRange
+	each  []*versioning.SemverRange
 }
 
 // compiled caches compileRange by range string (nil for a range parseRange rejects), and
@@ -284,7 +285,7 @@ func compileRangeIn(s string, commas bool) (*compiledRange, bool) {
 	}
 	var cr *compiledRange
 	if r, ok := parseRangeIn(s, commas); ok {
-		cr = &compiledRange{npmRange: r, whole: constraint(s), each: make([]*semver.Constraints, len(r.alts))}
+		cr = &compiledRange{npmRange: r, whole: constraint(s), each: make([]*versioning.SemverRange, len(r.alts))}
 		for i, a := range r.alts {
 			cr.each[i] = constraint(s[a.start:a.end])
 		}
@@ -294,12 +295,21 @@ func compileRangeIn(s string, commas bool) (*compiledRange, bool) {
 }
 
 // constraint compiles rng as a Masterminds constraint, nil if it is rejected.
-func constraint(rng string) *semver.Constraints {
-	c, err := semver.NewConstraint(rng)
+func constraint(rng string) *versioning.SemverRange {
+	c, err := versioning.NewSemverRange(rng)
 	if err != nil {
 		return nil
 	}
 	return c
+}
+
+// newVersion is semver.NewVersion, without its coercion regexp for a strict semver version
+// (most of them), which StrictNewVersion parses to the same version.
+func newVersion(v string) (*semver.Version, error) {
+	if sv, err := semver.StrictNewVersion(v); err == nil {
+		return sv, nil
+	}
+	return semver.NewVersion(v)
 }
 
 // generated caches the Masterminds constraints of the ranges admits checks (nil when rejected):
@@ -315,9 +325,9 @@ const maxGenerated = 1 << 14
 
 // admits reports whether the range admits v (as a Masterminds constraint).
 func admits(rng string, v *semver.Version) bool {
-	var c *semver.Constraints
+	var c *versioning.SemverRange
 	if e, hit := generated.Load(rng); hit {
-		c = e.(*semver.Constraints)
+		c = e.(*versioning.SemverRange)
 	} else {
 		c = constraint(rng)
 		if _, loaded := generated.LoadOrStore(rng, c); !loaded && generatedN.Add(1) >= maxGenerated {
@@ -420,7 +430,7 @@ func (r npmRange) render(a alternative, v *semver.Version, mode int) string {
 // below reports whether v is within upper bound c: `<V` below V, `<=V` and a hyphen range's
 // high end at or below it (partial: within its last written part, `- 2` admits 2.9.9).
 func below(v *semver.Version, c comparator, hyphen bool) bool {
-	bound, err := semver.NewVersion(c.ver.full())
+	bound, err := newVersion(c.ver.full())
 	if err != nil {
 		return true
 	}
