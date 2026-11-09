@@ -45,12 +45,14 @@ type want struct {
 	ds, name, source, version, extract, skip string
 	line, spans                              int
 	checksum, artifact                       string
+	deps                                     int // deps extracted in total; 0 = 1
 }
 
 func TestExtract(t *testing.T) {
 	const sum = "71b8d6e8f5fe81f6c6d0d110e3892251f6ce76ed095abd315e26e6e1193af3af"
 	for _, tc := range []struct {
 		name, src string
+		env       manager.Env
 		want      want
 	}{
 		{name: "gh", src: fixture(t, "gh.rb"), want: want{ds: "git-tags", name: "cli/cli", source: "https://github.com/cli/cli", version: "2.103.3", extract: `^v(?<version>\d.*)$`,
@@ -73,11 +75,11 @@ func TestExtract(t *testing.T) {
 				artifact: "https://github.com/owner/repo/releases/download/v{{version}}/repo-{{version}}-darwin.zip"}},
 		{name: "short archive, longer version elsewhere", src: "url \"https://github.com/o/r/archive/1.2.zip\"\nsha256 \"" + sum + "\"\n",
 			want: want{ds: "git-tags", name: "o/r", source: "https://github.com/o/r", version: "1.2", line: 1, spans: 1, checksum: sum, artifact: "https://github.com/o/r/archive/{{version}}.zip"}},
-		{name: "zlib", src: fixture(t, "zlib.rb"), want: want{name: "https://zlib.net/zlib-1.4.tar.gz", line: 4, skip: SkipUnsupported}},
+		{name: "zlib", src: fixture(t, "zlib.rb"), want: want{name: "https://zlib.net/zlib-1.4.tar.gz", line: 4, skip: SkipUnsupported, deps: 2}},
 		{name: "git url", src: "url \"https://github.com/o/r.git\", tag: \"v1.0.0\"\n", want: want{name: "https://github.com/o/r.git", line: 1, skip: SkipUnsupported}},
 		{name: "tag without digit", src: "url \"https://github.com/o/r/archive/main.tar.gz\"\nsha256 \"" + sum + "\"\n", want: want{name: "https://github.com/o/r/archive/main.tar.gz", line: 1, skip: SkipUnsupported}},
 		{name: "no sha256", src: "url \"https://github.com/o/r/archive/v1.tar.gz\"\nurl \"https://x\"\nsha256 \"" + sum + "\"\n",
-			want: want{ds: "git-tags", name: "o/r", source: "https://github.com/o/r", version: "1", extract: `^v(?<version>\d.*)$`, line: 1, skip: SkipNoSHA256}},
+			want: want{ds: "git-tags", name: "o/r", source: "https://github.com/o/r", version: "1", extract: `^v(?<version>\d.*)$`, line: 1, skip: SkipNoSHA256, deps: 2}},
 		{name: "bad sha256", src: "url \"https://github.com/o/r/archive/v1.tar.gz\"\nsha256 \"abc\"\n",
 			want: want{ds: "git-tags", name: "o/r", source: "https://github.com/o/r", version: "1", extract: `^v(?<version>\d.*)$`, line: 1, skip: SkipNoSHA256}},
 		{name: "digit in tag prefix", src: "url \"https://github.com/rockdaboot/wget2/archive/refs/tags/wget2-2.1.0.tar.gz\"\nsha256 \"" + sum + "\"\n",
@@ -100,10 +102,28 @@ func TestExtract(t *testing.T) {
 			want: want{ds: "npm", name: "@s/a-2", version: "3.0.0-rc.1", line: 1, spans: 1, checksum: sum, artifact: "https://registry.npmjs.org/@s/a-2/-/a-2-{{version}}.tgz"}},
 		{name: "npm filename of other package", src: "url \"https://registry.npmjs.org/@s/a/-/b-1.0.0.tgz\"\nsha256 \"" + sum + "\"\n",
 			want: want{name: "https://registry.npmjs.org/@s/a/-/b-1.0.0.tgz", line: 1, skip: SkipUnsupported}},
+		{name: "gitea release on the checkout's forge", env: manager.Env{ForgeURL: "https://git.example.org"},
+			src: "url \"https://git.example.org/o/r/releases/download/v1.2.3/r_darwin_arm64\"\nsha256 \"" + sum + "\"\n",
+			want: want{ds: "gitea-releases", name: "o/r", source: "https://git.example.org", version: "1.2.3", extract: `^v(?<version>\d.*)$`, line: 1, spans: 1, checksum: sum,
+				artifact: "https://git.example.org/o/r/releases/download/v{{version}}/r_darwin_arm64"}},
+		{name: "release on another forge", src: "url \"https://git.example.org/o/r/releases/download/v1.2.3/r\"\nsha256 \"" + sum + "\"\n",
+			want: want{name: "https://git.example.org/o/r/releases/download/v1.2.3/r", line: 1, skip: SkipUnsupported}},
+		{name: "codeberg release", src: "url \"https://codeberg.org/o/r/releases/download/1.2.3/r-1.2.3.tar.gz\"\nsha256 \"" + sum + "\"\n",
+			want: want{ds: "forgejo-releases", name: "o/r", source: "https://codeberg.org", version: "1.2.3", line: 1, spans: 2, checksum: sum,
+				artifact: "https://codeberg.org/o/r/releases/download/{{version}}/r-{{version}}.tar.gz"}},
+		{name: "codeberg archive", src: "url \"https://codeberg.org/o/r/archive/v2.0.tar.gz\"\nsha256 \"" + sum + "\"\n",
+			want: want{ds: "git-tags", name: "o/r", source: "https://codeberg.org/o/r", version: "2.0", extract: `^v(?<version>\d.*)$`, line: 1, spans: 1, checksum: sum,
+				artifact: "https://codeberg.org/o/r/archive/v{{version}}.tar.gz"}},
+		{name: "gitlab archive in a subgroup", src: "url \"https://gitlab.example.com/g/sub/p/-/archive/v1.4.0/p-v1.4.0.tar.bz2\"\nsha256 \"" + sum + "\"\n",
+			want: want{ds: "git-tags", name: "g/sub/p", source: "https://gitlab.example.com/g/sub/p", version: "1.4.0", extract: `^v(?<version>\d.*)$`, line: 1, spans: 2, checksum: sum,
+				artifact: "https://gitlab.example.com/g/sub/p/-/archive/v{{version}}/p-v{{version}}.tar.bz2"}},
+		{name: "gitlab release asset", src: "url \"https://gitlab.com/g/p/-/releases/v3.1.0/downloads/bin/p_linux_amd64\"\nsha256 \"" + sum + "\"\n",
+			want: want{ds: "gitlab-releases", name: "g/p", source: "https://gitlab.com", version: "3.1.0", extract: `^v(?<version>\d.*)$`, line: 1, spans: 1, checksum: sum,
+				artifact: "https://gitlab.com/g/p/-/releases/v{{version}}/downloads/bin/p_linux_amd64"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ds, err := New().Extract("Formula/x.rb", []byte(tc.src), manager.Env{})
-			if err != nil || len(ds) != 1 {
+			ds, err := New().Extract("Formula/x.rb", []byte(tc.src), tc.env)
+			if err != nil || len(ds) != max(tc.want.deps, 1) {
 				t.Fatalf("deps %+v, err %v", ds, err)
 			}
 			d, w := ds[0], tc.want
@@ -172,5 +192,89 @@ func TestEdits(t *testing.T) {
 	}
 	if _, err := New().Edits(dep.Update{Dep: ds[0], NewVersion: "1.9.0"}); err == nil {
 		t.Error("version update without checksum succeeded")
+	}
+}
+
+// TestExtractScopes covers per-platform downloads, mirrors, the version statement, resources
+// and the blocks whose statements are no downloads (head, livecheck, bottle, patch, method
+// bodies with heredocs, test).
+func TestExtractScopes(t *testing.T) {
+	src := fixture(t, "multi.rb")
+	ds, err := New().Extract("Formula/tool.rb", []byte(src), manager.Env{ForgeURL: "https://git.example.org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type got struct {
+		depType, ds, name, version string
+		line, spans                int
+		checksum                   bool
+	}
+	want := []got{
+		{DepType, "gitea-releases", "o/tool", "1.2.3", 15, 1, true},
+		{DepType, "gitea-releases", "o/tool", "1.2.3", 19, 1, true},
+		{DepType, "gitea-releases", "o/tool", "1.2.3", 25, 1, true},
+		{DepTypeMirror, "gitea-releases", "o/tool", "1.2.3", 26, 1, false},
+		{DepTypeVersion, "gitea-releases", "o/tool", "1.2.3", 4, 1, false},
+		{DepTypeResource, "git-tags", "o/docs", "4.5", 59, 2, true},
+	}
+	if len(ds) != len(want) {
+		t.Fatalf("%d deps, want %d: %+v", len(ds), len(want), ds)
+	}
+	for i, d := range ds {
+		n := 0
+		for _, s := range []dep.Span{d.RefSpan, d.VersionSpan, d.InputSpan} {
+			if s.End > s.Start {
+				n++
+				if src[s.Start:s.End] != d.Version {
+					t.Errorf("dep %d: span %v = %q", i, s, src[s.Start:s.End])
+				}
+			}
+		}
+		g := got{d.DepType, d.Datasource, d.Name, d.Version, d.Line, n, d.ChecksumSpan.End > d.ChecksumSpan.Start}
+		if g != want[i] || d.Skip != "" {
+			t.Errorf("dep %d = %+v (skip %q), want %+v", i, g, d.Skip, want[i])
+		}
+	}
+}
+
+// TestEditsFollowers updates every dep of a formula to one version, as the group of its
+// downloads does: the urls, their sha256, the mirror and the version statement move together.
+func TestEditsFollowers(t *testing.T) {
+	src := fixture(t, "multi.rb")
+	ds, err := New().Extract("Formula/tool.rb", []byte(src), manager.Env{ForgeURL: "https://git.example.org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const newSum = "abababababababababababababababababababababababababababababababab"
+	var edits []patch.Edit
+	for _, d := range ds[:5] {
+		u := dep.Update{Dep: d, NewVersion: "1.3.0"}
+		if d.ChecksumSource != nil {
+			u.NewChecksum = newSum
+		}
+		e, err := New().Edits(u)
+		if err != nil {
+			t.Fatalf("%s line %d: %v", d.DepType, d.Line, err)
+		}
+		edits = append(edits, e...)
+	}
+	out, err := patch.Apply([]byte(src), edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{
+		`version "1.3.0"`,
+		`url "https://git.example.org/o/tool/releases/download/v1.3.0/tool_darwin_arm64"`,
+		`url "https://git.example.org/o/tool/releases/download/v1.3.0/tool_linux_amd64"`,
+		`mirror "https://mirror.example.net/tool/11.2.3/1.3.0/tool_linux_amd64"`,
+		`url "https://git.example.org/o/tool/releases/download/v0.0.1/x"`,
+		`url "https://git.example.org/o/tool/releases/download/v9.9.9/never"`,
+	} {
+		if !strings.Contains(string(out), s) {
+			t.Errorf("missing %q in\n%s", s, out)
+		}
+	}
+	if n := strings.Count(string(out), `sha256 "`+newSum+`"`); n != 3 {
+		t.Errorf("%d sha256 updated, want 3", n)
 	}
 }

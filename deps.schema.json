@@ -1296,7 +1296,10 @@
               "depTypes": {
                 "items": {
                   "enum": [
-                    "formula"
+                    "formula",
+                    "resource",
+                    "mirror",
+                    "version"
                   ]
                 }
               }
@@ -3252,12 +3255,13 @@
               "wrapper",
               "maven",
               "formula",
+              "mirror",
+              "version",
               "package",
               "from",
               "majorVersion",
               "minorVersion",
               "exactVersion",
-              "version",
               "ruby",
               "development",
               "pods",
