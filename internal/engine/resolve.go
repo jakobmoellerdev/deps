@@ -376,11 +376,13 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	for _, j := range baselineOf {
 		resolved[j] = make(chan struct{})
 	}
-	resolveOne := func(i int, d dep.Dep) (Trace, []dep.Update, resolver) {
-		r := resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now,
+	// resolveOne fills t: Trace is large, and copies of it on every per-dep goroutine stack
+	// would grow those stacks.
+	resolveOne := func(i int, d dep.Dep, t *Trace) ([]dep.Update, *resolver) {
+		r := &resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now,
 			rewriter: rewriters[d.Manager], ranger: rangers[d.Manager], renamer: renamers[d.Manager]}
-		t, u := r.run(func() []Vuln { return sec.of(secIdx[i]) })
-		return t, u, r
+		u := r.run(t, func() []Vuln { return sec.of(secIdx[i]) })
+		return u, r
 	}
 	for i := range todo {
 		wg.Go(func() {
@@ -388,19 +390,19 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 				defer close(resolved[i])
 			}
 			d := todo[i]
+			t := &outs[i]
 			if pols[i].securityOnly && len(sec.of(secIdx[i])) == 0 {
-				d.Skip = pols[i].pre.IgnoreReason
-				outs[i] = Trace{Dep: d, Rules: pols[i].pre.Rules, Policy: pols[i].pre}
+				t.Dep, t.Rules, t.Policy = d, pols[i].pre.Rules, pols[i].pre
+				t.Dep.Skip = pols[i].pre.IgnoreReason
 				return
 			}
-			var t Trace
 			var u []dep.Update
-			var r resolver
+			var r *resolver
 			if j, ok := baselineOf[d.Baseline]; ok {
 				<-resolved[j]
-				t, u, r = portAtBaseline(d, ups[j], func(d dep.Dep) (Trace, []dep.Update, resolver) { return resolveOne(i, d) })
+				u, r = portAtBaseline(d, ups[j], func(d dep.Dep) ([]dep.Update, *resolver) { return resolveOne(i, d, t) })
 			} else {
-				t, u, r = resolveOne(i, d)
+				u, r = resolveOne(i, d, t)
 			}
 			if pols[i].securityOnly && t.Err == nil && u == nil {
 				t.Dep.Skip = pols[i].pre.IgnoreReason // no fix for its advisories
@@ -418,7 +420,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 					slog.DebugContext(ctx, "update found", "file", d.File, "line", d.Line, "name", d.Name, "from", d.Version, "to", up.NewVersion, "type", up.Type, "bucket", up.Bucket)
 				}
 			}
-			outs[i], ups[i], pend[i], warns[i] = t, u, r.pending, r.warnings
+			ups[i], pend[i], warns[i] = u, r.pending, r.warnings
 			prog.Done(PhaseResolve, t.Err)
 		})
 	}
@@ -1226,12 +1228,13 @@ func (r *resolver) installed(s versioning.Scheme) string {
 	return r.cur
 }
 
-// run resolves in order: datasource → candidates ranked under policy, one per PR bucket, with
-// the release-time guards → digest pin/refresh → security. vulns blocks until the advisories
-// of this dep are known. Trace.Updates is only filled when tracing.
-func (r *resolver) run(vulns func() []Vuln) (Trace, []dep.Update) {
-	t := Trace{Dep: r.d, Rules: r.pol.pre.Rules, Policy: r.pol.pre}
-	ups, err := r.resolve(&t, vulns)
+// run resolves in order into t: datasource → candidates ranked under policy, one per PR
+// bucket, with the release-time guards → digest pin/refresh → security. vulns blocks until
+// the advisories of this dep are known. Trace.Updates is only filled when tracing.
+func (r *resolver) run(t *Trace, vulns func() []Vuln) []dep.Update {
+	*t = Trace{} // set field by field: a Trace literal is built in a stack temporary first
+	t.Dep, t.Rules, t.Policy = r.d, r.pol.pre.Rules, r.pol.pre
+	ups, err := r.resolve(t, vulns)
 	t.Err = err
 	if r.trace && len(ups) > 0 {
 		t.Updates = make([]TraceUpdate, len(ups))
@@ -1239,7 +1242,7 @@ func (r *resolver) run(vulns func() []Vuln) (Trace, []dep.Update) {
 			t.Updates[i] = TraceUpdate{Update: u, Policy: r.pol.of(u.Type)}
 		}
 	}
-	return t, ups
+	return ups
 }
 
 func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) {

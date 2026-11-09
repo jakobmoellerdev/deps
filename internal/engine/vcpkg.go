@@ -29,7 +29,7 @@ func vcpkgBaselines(todo []dep.Dep) map[string]int {
 // at the new commit do not all share the baseline update's group (the built-in vcpkg group
 // unless a rule sets another) and bucket, or carry advisories (which leave groups), d is
 // resolved at its current baseline instead, as it is when the baseline does not move.
-func portAtBaseline(d dep.Dep, baseUps []dep.Update, resolve func(dep.Dep) (Trace, []dep.Update, resolver)) (Trace, []dep.Update, resolver) {
+func portAtBaseline(d dep.Dep, baseUps []dep.Update, resolve func(dep.Dep) ([]dep.Update, *resolver)) ([]dep.Update, *resolver) {
 	var moved *dep.Update
 	for k := range baseUps {
 		if u := &baseUps[k]; u.Type == dep.Digest && u.NewDigest != "" {
@@ -42,11 +42,11 @@ func portAtBaseline(d dep.Dep, baseUps []dep.Update, resolve func(dep.Dep) (Trac
 	}
 	at := d
 	at.Source = vcpkgds.RawBase(moved.Dep.Source, moved.NewDigest)
-	t, ups, r := resolve(at)
+	ups, r := resolve(at)
 	for _, u := range ups {
 		if u.Group != moved.Group || u.Bucket != moved.Bucket || len(u.Advisories) > 0 {
 			return resolve(d)
 		}
 	}
-	return t, ups, r
+	return ups, r
 }
