@@ -3,7 +3,6 @@ package httpx
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
 )
 
@@ -71,21 +70,5 @@ func TestAcquire(t *testing.T) {
 	release()
 	if len(sem) != 0 {
 		t.Errorf("slots taken after release = %d, want 0", len(sem))
-	}
-}
-
-func TestInFlight(t *testing.T) {
-	l := NewLimits(4)
-	if got := l.InFlight(); got != nil {
-		t.Fatalf("idle: %v", got)
-	}
-	for range 3 {
-		l.NPM <- struct{}{}
-	}
-	l.Default <- struct{}{}
-	l.Docker <- struct{}{}
-	want := []PoolUse{{"npm", 3}, {"docker", 1}, {"default", 1}}
-	if got := l.InFlight(); !reflect.DeepEqual(got, want) {
-		t.Errorf("InFlight = %v, want %v", got, want)
 	}
 }

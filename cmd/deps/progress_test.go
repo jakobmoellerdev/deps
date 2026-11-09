@@ -14,10 +14,10 @@ import (
 )
 
 // testStatusLine returns a status line on buf without ticker, on a clock tests advance.
-func testStatusLine(buf *bytes.Buffer, width int, pools ...httpx.PoolUse) (*progress, *logx.Writer, *time.Time) {
+func testStatusLine(buf *bytes.Buffer, width int, hosts ...httpx.HostUse) (*progress, *logx.Writer, *time.Time) {
 	w := logx.NewWriter(buf)
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
-	s := &progress{w: w, line: true, inFlight: func() []httpx.PoolUse { return pools }, width: func() int { return width }, now: func() time.Time { return now }}
+	s := &progress{w: w, line: true, inFlight: func() []httpx.HostUse { return hosts }, width: func() int { return width }, now: func() time.Time { return now }}
 	return s, w, &now
 }
 
@@ -27,9 +27,9 @@ const clearLine = "\r\x1b[2K"
 // refreshed by Redraw and removed when the phase ends; afterwards writes pass through.
 func TestStatusLineOverlay(t *testing.T) {
 	var buf bytes.Buffer
-	s, w, now := testStatusLine(&buf, 80, httpx.PoolUse{Name: "npm", N: 18})
+	s, w, now := testStatusLine(&buf, 100, httpx.HostUse{Host: "registry.npmjs.org", N: 18}, httpx.HostUse{Host: "api.github.com", N: 2})
 	s.Start(engine.PhaseResolve, 308)
-	line0 := "⠋ resolving 0/308 · npm 18 in flight · 0.0s"
+	line0 := "⠋ resolving 0/308 · 0.0s · in flight: registry.npmjs.org 18, api.github.com 2"
 	if got := buf.String(); got != line0 {
 		t.Fatalf("start: %q", got)
 	}
@@ -42,7 +42,7 @@ func TestStatusLineOverlay(t *testing.T) {
 	w.Redraw()
 	s.End(engine.PhaseResolve)
 	_, _ = w.Write([]byte("after\n"))
-	line1 := "⠙ resolving 213/308 · npm 18 in flight · 1 error · 2.1s"
+	line1 := "⠙ resolving 213/308 · 1 error · 2.1s · in flight: registry.npmjs.org 18, api.github.com 2"
 	want := line0 + clearLine + "record\n" + line0 + clearLine + line1 + clearLine + "after\n"
 	if got := buf.String(); got != want {
 		t.Errorf("output:\n%q\nwant\n%q", got, want)
@@ -77,7 +77,7 @@ func TestStatusLineCounting(t *testing.T) {
 	}
 	s.End(engine.PhaseExtract)
 
-	s, _, _ = testStatusLine(&buf, 20, httpx.PoolUse{Name: "npm", N: 1}, httpx.PoolUse{Name: "docker", N: 1})
+	s, _, _ = testStatusLine(&buf, 20, httpx.HostUse{Host: "registry.npmjs.org", N: 1}, httpx.HostUse{Host: "ghcr.io", N: 1})
 	s.Start(engine.PhaseDiscover, 0)
 	if got, want := s.render(), "⠋ discovering file…"; got != want {
 		t.Errorf("narrow: %q, want %q", got, want)
@@ -93,7 +93,7 @@ func TestStatusLineCounting(t *testing.T) {
 func TestStatusLineTicker(t *testing.T) {
 	var buf syncBuffer
 	w := logx.NewWriter(&buf)
-	s := newProgress(w, &buf, logx.NewStyle(false), httpx.NewLimits(1))
+	s := newProgress(w, &buf, logx.NewStyle(false), &httpx.HostCounter{})
 	s.line, s.tick = true, time.Millisecond
 	s.Start(engine.PhaseResolve, 1)
 	deadline := time.Now().Add(5 * time.Second)
@@ -118,24 +118,24 @@ func TestProgressSelection(t *testing.T) {
 	t.Cleanup(func() { actionsLog = &annotator{} })
 	w := logx.NewWriter(&bytes.Buffer{})
 	o := &rootOpts{stderr: w}
-	if o.progress(httpx.NewLimits(1)) != nil {
+	if o.progress(&httpx.HostCounter{}) != nil {
 		t.Error("progress on a pipe")
 	}
 	o.term.tty = true
 	t.Setenv("TERM", "dumb")
-	if o.progress(httpx.NewLimits(1)) != nil {
+	if o.progress(&httpx.HostCounter{}) != nil {
 		t.Error("status line with TERM=dumb")
 	}
 	t.Setenv("TERM", "xterm")
-	if p, _ := o.progress(httpx.NewLimits(1)).(*progress); p == nil || !p.line || p.groups != nil || p.heartbeat != 0 {
+	if p, _ := o.progress(&httpx.HostCounter{}).(*progress); p == nil || !p.line || p.groups != nil || p.heartbeat != 0 {
 		t.Errorf("terminal: %+v", p)
 	}
 	actionsLog = &annotator{on: true}
-	if p, _ := o.progress(httpx.NewLimits(1)).(*progress); p == nil || !p.line || p.groups == nil || p.heartbeat != 0 {
+	if p, _ := o.progress(&httpx.HostCounter{}).(*progress); p == nil || !p.line || p.groups == nil || p.heartbeat != 0 {
 		t.Errorf("actions on a terminal: %+v", p)
 	}
 	o.term.tty = false
-	if p, _ := o.progress(httpx.NewLimits(1)).(*progress); p == nil || p.line || p.groups == nil || p.heartbeat != heartbeatEvery {
+	if p, _ := o.progress(&httpx.HostCounter{}).(*progress); p == nil || p.line || p.groups == nil || p.heartbeat != heartbeatEvery {
 		t.Errorf("actions piped: %+v", p)
 	}
 }
@@ -145,7 +145,7 @@ func TestProgressSelection(t *testing.T) {
 func TestProgressActionsGroups(t *testing.T) {
 	var buf syncBuffer
 	w := logx.NewWriter(&buf)
-	p := newProgress(w, &buf, logx.NewStyle(false), httpx.NewLimits(1))
+	p := newProgress(w, &buf, logx.NewStyle(false), &httpx.HostCounter{})
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	p.now = func() time.Time { return now }
 	p.groups = &annotator{on: true, w: w}
@@ -181,7 +181,7 @@ func TestProgressActionsGroups(t *testing.T) {
 func TestProgressHeartbeat(t *testing.T) {
 	var buf syncBuffer
 	w := logx.NewWriter(&buf)
-	p := newProgress(w, &buf, logx.NewStyle(false), httpx.NewLimits(1))
+	p := newProgress(w, &buf, logx.NewStyle(false), &httpx.HostCounter{})
 	p.heartbeat = time.Millisecond
 	p.Start(engine.PhaseResolve, 308)
 	deadline := time.Now().Add(5 * time.Second)

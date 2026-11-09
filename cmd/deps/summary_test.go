@@ -118,6 +118,23 @@ func TestSummaryRender(t *testing.T) {
 			},
 		},
 		{
+			name: "skips merged across covering lines and rules",
+			s: summary{Command: "plan", Res: &engine.Result{Skipped: []dep.Dep{
+				{Name: "a", File: "f", Line: 1, Skip: "covered by custom match on line 9"},
+				{Name: "b", File: "f", Line: 2, Skip: "covered by custom match on line 73"},
+				{Name: "c", File: "f", Line: 3, Skip: "covered by custom regex match on line 4"},
+				{Name: "d", File: "f", Line: 4, Skip: "ignored by rule #56"},
+				{Name: "e", File: "f", Line: 5, Skip: "ignored by rule #56"},
+				{Name: "g", File: "f", Line: 6, Skip: "ignored by rule #51"},
+			}}},
+			text: []string{
+				"       3  ignored by rules #56 (2), #51  (a rule sets ignore: true; narrow or remove it)\n" +
+					"       2  covered by custom match  (an earlier custom entry matches the same version; drop the duplicate entry)\n" +
+					"       1  covered by custom regex match  (a custom manager updates these bytes instead)\n",
+			},
+			md: []string{"**covered by custom match**\n\n- `a` `f:1` (covered by custom match on line 9)\n- `b` `f:2` (covered by custom match on line 73)\n"},
+		},
+		{
 			name:         "empty",
 			s:            summary{Command: "plan", Res: &engine.Result{Deps: res.Deps, Skipped: res.Skipped}},
 			textExact:    "\nSummary: No updates: 3 dependencies up to date, 3 skipped.\n  Skipped (--show-skipped lists each dependency):\n",

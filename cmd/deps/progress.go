@@ -42,7 +42,7 @@ var phaseLabels = map[engine.Phase]string{
 type progress struct {
 	w         *logx.Writer
 	style     logx.Style
-	inFlight  func() []httpx.PoolUse // nil = not shown
+	inFlight  func() []httpx.HostUse // nil = not shown
 	width     func() int             // terminal columns
 	now       func() time.Time
 	line      bool          // the status line is on
@@ -66,8 +66,8 @@ type progress struct {
 
 // newProgress returns a progress writing to stderr w (out is the file behind it) with every
 // output off; the caller turns on the status line and the Actions groups and heartbeat.
-func newProgress(w *logx.Writer, out io.Writer, style logx.Style, limits httpx.Limits) *progress {
-	return &progress{w: w, style: style, inFlight: limits.InFlight, width: termWidth(out), now: time.Now}
+func newProgress(w *logx.Writer, out io.Writer, style logx.Style, hosts *httpx.HostCounter) *progress {
+	return &progress{w: w, style: style, inFlight: hosts.InFlight, width: termWidth(out), now: time.Now}
 }
 
 // termWidth returns the column count of the terminal out, 80 when unknown.
@@ -191,7 +191,7 @@ func (p *progress) Clear(w io.Writer) { _, _ = io.WriteString(w, "\r\x1b[2K") }
 // wraps (Clear only erases one line).
 func (p *progress) Draw(w io.Writer) { _, _ = io.WriteString(w, p.render()) }
 
-// render returns the status line: `⠹ resolving 212/308 · npm 18 in flight · 2.1s`.
+// render returns the status line: `⠹ resolving 212/308 · 2.1s · in flight: registry.npmjs.org 18`.
 func (p *progress) render() string {
 	p.mu.Lock()
 	elapsed := p.now().Sub(p.start)
@@ -201,8 +201,10 @@ func (p *progress) render() string {
 	return p.style.Paint(logx.Cyan, frame) + " " + p.style.Paint(logx.Dim, text)
 }
 
-// text describes the running phase: `resolving 212/308 · npm 18 in flight · 2.1s`; the
-// requests in flight only with inFlight (not in the final line of a phase).
+// text describes the running phase: `resolving 212/308 · 2.1s · in flight:
+// registry.npmjs.org 18, api.github.com 2`. The requests in flight (the three busiest
+// hosts) come last, so a narrow terminal cuts them first, and only with inFlight (not in
+// the final line of a phase).
 func (p *progress) text(inFlight bool) string {
 	p.mu.Lock()
 	now := p.now()
@@ -216,18 +218,6 @@ func (p *progress) text(inFlight bool) string {
 		fmt.Fprintf(&b, " · rate limited by %s, %ds", p.limitedHost, int(p.limitedUntil.Sub(now).Round(time.Second)/time.Second))
 	}
 	p.mu.Unlock()
-	if inFlight && p.inFlight != nil {
-		if pools := p.inFlight(); len(pools) > 0 {
-			b.WriteString(" · ")
-			for i, u := range pools[:min(len(pools), 3)] {
-				if i > 0 {
-					b.WriteString(", ")
-				}
-				b.WriteString(u.Name + " " + strconv.Itoa(u.N))
-			}
-			b.WriteString(" in flight")
-		}
-	}
 	if n := p.errs.Load(); n > 0 {
 		fmt.Fprintf(&b, " · %d error", n)
 		if n > 1 {
@@ -235,6 +225,17 @@ func (p *progress) text(inFlight bool) string {
 		}
 	}
 	fmt.Fprintf(&b, " · %.1fs", elapsed.Seconds())
+	if inFlight && p.inFlight != nil {
+		if hosts := p.inFlight(); len(hosts) > 0 {
+			b.WriteString(" · in flight: ")
+			for i, u := range hosts[:min(len(hosts), 3)] {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(u.Host + " " + strconv.Itoa(u.N))
+			}
+		}
+	}
 	return b.String()
 }
 

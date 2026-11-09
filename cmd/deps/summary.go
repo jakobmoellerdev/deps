@@ -70,6 +70,8 @@ var skipHints = []struct{ prefix, hint string }{
 	{"expression", "the value is computed at runtime"},
 	{dep.SkipUnknownRegistry + " ", "set `[registries.<name>] index` in `.cargo/config.toml` or `CARGO_REGISTRIES_<NAME>_INDEX`"},
 	{dep.SkipUnknownRegistry, "set `registryUrls` in a rule matching the package (Dockerfile `apt-get install` pins, `apk add` pins of an unknown Alpine release)"},
+	{"covered by custom match", "an earlier `custom` entry matches the same version; drop the duplicate entry"},
+	{"covered by ", "a custom manager updates these bytes instead"},
 }
 
 func skipHint(reason string) string {
@@ -81,7 +83,8 @@ func skipHint(reason string) string {
 	return ""
 }
 
-// skipReasons aggregates the skipped deps by reason, most frequent first.
+// skipReasons aggregates the skipped deps by exact reason, most frequent first (the JSON
+// report).
 func (s *summary) skipReasons() []skipReason {
 	idx := map[string]int{}
 	var out []skipReason
@@ -93,6 +96,60 @@ func (s *summary) skipReasons() []skipReason {
 			out = append(out, skipReason{Reason: d.Skip})
 		}
 		out[i].Deps = append(out[i].Deps, d)
+	}
+	slices.SortStableFunc(out, func(a, b skipReason) int {
+		return cmp.Or(len(b.Deps)-len(a.Deps), strings.Compare(a.Reason, b.Reason))
+	})
+	return out
+}
+
+// skipRows aggregates the skipped deps for people, most frequent first: as skipReasons, but
+// reasons that differ only in the line of the covering custom dep (`covered by custom match
+// on line <n>`) share one row without the line, and the deps ignored by pre-policy rules
+// share one row naming the rules, busiest first: `ignored by rules #56 (4), #51, #52`. The
+// deps of a merged row are ordered by file and line and keep their exact reason in Skip.
+func (s *summary) skipRows() []skipReason {
+	var rules []skipReason // per `ignored by rule #<i>` reason
+	idx := map[string]int{}
+	var out []skipReason
+	for _, r := range s.skipReasons() {
+		if rest, ok := strings.CutPrefix(r.Reason, "ignored by rule #"); ok && !strings.Contains(rest, " ") {
+			rules = append(rules, r)
+			continue
+		}
+		key := r.Reason
+		if i := strings.LastIndex(key, " on line "); strings.HasPrefix(key, "covered by ") && i > 0 {
+			key = key[:i]
+		}
+		i, ok := idx[key]
+		if !ok {
+			i = len(out)
+			idx[key] = i
+			out = append(out, skipReason{Reason: key})
+		}
+		out[i].Deps = append(out[i].Deps, r.Deps...)
+	}
+	if len(rules) > 0 {
+		row := skipReason{Reason: rules[0].Reason}
+		if len(rules) > 1 {
+			names := make([]string, len(rules))
+			for i, r := range rules {
+				names[i] = strings.TrimPrefix(r.Reason, "ignored by rule ")
+				if len(r.Deps) > 1 {
+					names[i] += " (" + strconv.Itoa(len(r.Deps)) + ")"
+				}
+			}
+			row.Reason = "ignored by rules " + strings.Join(names, ", ")
+		}
+		for _, r := range rules {
+			row.Deps = append(row.Deps, r.Deps...)
+		}
+		out = append(out, row)
+	}
+	for _, r := range out {
+		if slices.ContainsFunc(r.Deps, func(d dep.Dep) bool { return d.Skip != r.Reason }) {
+			slices.SortStableFunc(r.Deps, func(a, b dep.Dep) int { return cmp.Or(strings.Compare(a.File, b.File), a.Line-b.Line) })
+		}
 	}
 	slices.SortStableFunc(out, func(a, b skipReason) int {
 		return cmp.Or(len(b.Deps)-len(a.Deps), strings.Compare(a.Reason, b.Reason))
@@ -324,7 +381,7 @@ func (s *summary) writeText(w io.Writer) {
 			fmt.Fprintf(w, "      %s  %s:%d  %s: %s\n", d.Dep.Name, d.Dep.File, d.Dep.Line, d.Kind, d.Reason)
 		}
 	}
-	if rs := s.skipReasons(); len(rs) > 0 {
+	if rs := s.skipRows(); len(rs) > 0 {
 		fmt.Fprintln(w, "  Skipped (--show-skipped lists each dependency):")
 		for _, r := range rs {
 			fmt.Fprintf(w, "    %4d  %s", len(r.Deps), r.Reason)
@@ -454,7 +511,7 @@ func (s *summary) markdownAt(level int) string {
 		}
 		b.WriteString("\n</details>\n\n")
 	}
-	if rs := s.skipReasons(); len(rs) > 0 {
+	if rs := s.skipRows(); len(rs) > 0 {
 		b.WriteString("### Skipped\n\n| Reason | Count | How to update |\n|---|---|---|\n")
 		for _, r := range rs {
 			fmt.Fprintf(&b, "| %s | %d | %s |\n", mdCell(r.Reason), len(r.Deps), mdCell(skipHint(r.Reason)))
@@ -466,7 +523,11 @@ func (s *summary) markdownAt(level int) string {
 			for _, r := range rs {
 				fmt.Fprintf(&b, "**%s**\n\n", r.Reason)
 				for _, d := range r.Deps {
-					fmt.Fprintf(&b, "- `%s` `%s:%d`\n", d.Name, d.File, d.Line)
+					fmt.Fprintf(&b, "- `%s` `%s:%d`", d.Name, d.File, d.Line)
+					if d.Skip != r.Reason {
+						fmt.Fprintf(&b, " (%s)", d.Skip)
+					}
+					b.WriteString("\n")
 				}
 				b.WriteString("\n")
 			}

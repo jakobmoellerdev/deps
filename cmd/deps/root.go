@@ -388,6 +388,8 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	}
 	limits := httpx.NewLimits(o.concurrency)
 	sem := limits.Default
+	hosts := &httpx.HostCounter{}
+	client = hosts.Wrap(client)
 	fetcher := extendsFetcher(info, token, root)
 	defer func() {
 		if err != nil {
@@ -508,7 +510,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		gh:         gh,
 		sem:        sem,
 		conc:       o.concurrency,
-		progress:   o.progress(limits),
+		progress:   o.progress(hosts),
 		info:       info,
 		fetcher:    fetcher,
 		osv:        osvSource,
@@ -660,12 +662,12 @@ func (s *session) options() engine.Options {
 // stderr is a terminal that can redraw a line (TERM is not dumb); with the actions format a
 // log group per phase, plus a heartbeat line every 30s when stderr is no terminal. nil when
 // neither applies, so plain piped output is unchanged.
-func (o *rootOpts) progress(limits httpx.Limits) engine.Progress {
+func (o *rootOpts) progress(hosts *httpx.HostCounter) engine.Progress {
 	line := o.term.tty && os.Getenv("TERM") != "dumb"
 	if o.stderr == nil || !line && !actionsLog.on {
 		return nil
 	}
-	p := newProgress(o.stderr, o.rawStderr, o.term.style, limits)
+	p := newProgress(o.stderr, o.rawStderr, o.term.style, hosts)
 	if line {
 		p.line, p.tick = true, statusTick
 	}
