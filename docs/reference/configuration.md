@@ -1828,7 +1828,7 @@ RE2 regexp the selected values must match; its (?P\<version>) group, else the wh
 
 ## `lockFileMaintenance`
 
-Lock file maintenance: one PR (branch \<branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, npm-shrinkwrap.json, package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Julia manifests, mix.lock, Gleam manifest.toml, pubspec.lock, MODULE.bazel.lock, flake.lock, NuGet packages.lock.json, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests.
+Lock file maintenance: one PR (branch \<branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, npm-shrinkwrap.json, package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Julia manifests, mix.lock, Gleam manifest.toml, pubspec.lock, MODULE.bazel.lock, flake.lock, NuGet packages.lock.json, conda-lock.yml, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests.
 
 - **Type:** object
 

@@ -21,6 +21,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
@@ -163,6 +164,12 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	}
 	if !write && hasManager(res, nuget.Name) && len(nuget.Locker{}.ScopeSiblings(s.root)) > 0 {
 		fmt.Fprintln(stderr, "note    packages.lock.json changes are computed by apply/run")
+	}
+	if !write && slices.ContainsFunc(res.Updates, func(u dep.Update) bool {
+		_, ok := conda.Locker{}.Scope(ctx, s.root, u.Dep.File)
+		return u.Dep.Manager == conda.Name && ok
+	}) {
+		fmt.Fprintln(stderr, "note    conda-lock.yml changes are computed by apply/run")
 	}
 	if write && slices.ContainsFunc(changes, func(c engine.FileChange) bool { return c.Gitlink }) {
 		fmt.Fprintln(stderr, "note    submodule commits are staged in the git index; run git submodule update to check them out")

@@ -1,0 +1,11 @@
+name: demo
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy>=1.26
+  - pip
+  - pip:
+    - requests>=2.31
+platforms:
+  - linux-64

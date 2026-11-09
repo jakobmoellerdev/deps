@@ -9,7 +9,7 @@ import (
 var Doc = refdoc.Manager{
 	Name: Name,
 	Summary: "Updates the packages of conda environment files: the match specs of `dependencies`, looked up on the file's anaconda.org `channels`, and the requirements of the nested `pip:` list, looked up on PyPI (Dependabot's `conda` ecosystem; Renovate has no conda manager). " +
-		"The file is parsed as YAML with byte spans; only the version spec of an entry is rewritten. There is no lockfile (`conda-lock.yml` is not maintained).",
+		"The file is parsed as YAML with byte spans; only the version spec of an entry is rewritten. A `conda-lock.yml` next to the file is read for locked versions and refreshed with `conda-lock` in `apply` and `run` (see Lockfile below).",
 	Files: []string{"`environment.yml`, `environment.yaml` (any directory)"},
 	DepTypes: []refdoc.DepType{
 		{Name: DepTypeDependencies, What: "`dependencies` match specs: `numpy=1.26` (fuzzy: any 1.26.x), `numpy==1.26.4`, `numpy>=1.26,<2`, `numpy 1.26.*`, `numpy >=1.26`, with a channel prefix `conda-forge::numpy=1.26`", Versioning: "`conda`", Datasources: []string{"conda"}},
@@ -41,7 +41,7 @@ var Doc = refdoc.Manager{
 		{Title: "Version specs (`rangeStrategy`)", Items: []string{
 			"The dep's version is the spec's anchor: the first clause that is not `<`, `<=` or `!=`, else the first upper bound.",
 			"Matching follows conda's VersionSpec: clauses joined by `,` must all hold; `=1.26`, `1.26.*` and `1.26*` match the versions whose segments start with 1.26 (1.26, 1.26.0, 1.26.4, not 1.260); a bare version or `==` matches exactly (`1.26` = `1.26.0`); `~=1.4.5` is `>=1.4.5,1.4.*`.",
-			"There is no lockfile, so under `auto` (`update-lockfile`) and `replace` versions the spec admits are not proposed: `numpy>=1.26` never gets an update, `numpy=1.26` only once 1.27 is out.",
+			"Without a `conda-lock.yml` next to the file, under `auto` (`update-lockfile`) and `replace` versions the spec admits are not proposed: `numpy>=1.26` never gets an update, `numpy=1.26` only once 1.27 is out. With one, the locked version is the dep's current version, and under `auto` (`update-lockfile`) versions the spec admits are lockfile-only updates (`, lockfile` in the report; the environment file is unchanged), as for the Python managers: `numpy>=1.26` locked at 1.26.4 moves the lock to the newest numpy.",
 			"Rewrites: an exact spec (`==1.26.4`, `1.26.4`) or a fuzzy one (`=1.26`, `1.26.*`) takes the new version, a fuzzy one at its own precision (`=1.26` → `=2.3`); any other spec is rewritten with the pep440 rules of the Python managers (`>=1.26,<2` → `>=2.3,<3`), as Renovate's conda versioning delegates to pep440, when its versions are PEP 440 versions, else the update is not proposed. `pin` writes `==<version>`.",
 		}},
 		{Title: "pip requirements", Items: []string{
@@ -50,5 +50,12 @@ var Doc = refdoc.Manager{
 			"`--index-url`/`-i` and `--extra-index-url` entries of the list set the index of its requirements; other options (`-r requirements.txt`, `-e .`, `-c`) are no deps.",
 			"The `python` spec of `dependencies` (`python=3.11` → `==3.11.*`) is the requirements' Python constraint: releases that do not support it are dropped (see the `pypi` datasource).",
 		}},
+		{Title: "Lockfile (`apply`, `run`)", Items: []string{
+			"The lockfile of an environment file is the `conda-lock.yml` next to it (conda-lock's unified format, `version: 1`). Before resolution its `package` entries are read: a conda package or pip requirement gets the version locked for it (pip names compared PEP 503-normalized); a package locked to different versions on different platforms gets the lowest. An unreadable lockfile is reported once and its deps are bumped.",
+			"An update runs `conda-lock lock -f <source>… --lockfile conda-lock.yml -p <platform>… --update <name>…` in a temporary copy of the directory (environment file and lockfile copied, every other entry but `.git` symlinked), with the sources and platforms the lockfile's `metadata` records (the patched file when it records none), and `--update` naming every updated package, manifest and lockfile-only updates alike: those packages move to the newest versions the specs admit on every platform, every other package keeps its locked version, and the `content_hash` is recomputed. conda-lock does not take a version for `--update`, so a version held back by `minimumReleaseAge` can still be locked when it is the newest the spec admits, and a version the solver cannot install with the rest of the environment is replaced by the newest one it can.",
+			"`conda-lock` (and the conda, mamba or micromamba it solves with; conda-lock installs micromamba itself when none is found) must be on `PATH`, e.g. `pipx install conda-lock`. Without it, the environment file fails with `conda-lock not found (needed to update conda-lock.yml)`; a failed command reports `conda-lock lock in <dir>: <last 20 output lines>` and the file's changes are dropped. `plan` does not run conda-lock, and prints `note    conda-lock.yml changes are computed by apply/run`. Other lockfile names (`--lockfile`) and the per-platform explicit lockfiles (`--kind explicit`) are not maintained.",
+		}},
+		{Title: "Lock file maintenance (`run`)", Body: "With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `conda-lock.yml` next to a scanned environment file is re-solved with `conda-lock lock` (same options, without `--update`), which moves every locked package, transitive ones included, to the newest version the specs admit. " +
+			"All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `conda-lock.yml` files; `minimumReleaseAge` does not apply to it."},
 	},
 }
