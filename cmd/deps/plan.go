@@ -236,11 +236,14 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 		Unused: s.cfg.UnusedRules(res.Deps), Config: s.cfg, Report: o.report, Style: o.term.style}
 	sum.write(stderr)
 	reportErr := sum.writeMachine(stderr, o.report)
-	files := map[string]bool{}
-	for _, u := range res.Updates {
-		files[u.Dep.File] = true
+	// The counts line is for scripts and logs; on a terminal the summary headline says the same.
+	if !o.term.tty {
+		files := map[string]bool{}
+		for _, u := range res.Updates {
+			files[u.Dep.File] = true
+		}
+		fmt.Fprintf(stderr, "%d updates in %d files, %d skipped, %d errors\n", len(res.Updates), len(files), len(res.Skipped), len(errs))
 	}
-	fmt.Fprintf(stderr, "%d updates in %d files, %d skipped, %d errors\n", len(res.Updates), len(files), len(res.Skipped), len(errs))
 	if len(errs) > 0 {
 		return errReported
 	}

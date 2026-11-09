@@ -894,7 +894,7 @@ dashboard <status>  <title>  <url>                            (run, with depende
 ... (dry run: <w> would change, <m> would automerge)                                              (run --dry-run, appended)
 ```
 
-`rebased` counts as updated, `deleted` (obsolete branches without a PR) as closed. `<a>` counts auto-merge requests and direct merges, branch merges included (`automerge`, `merged`); the dashboard line is not counted.
+`rebased` counts as updated, `deleted` (obsolete branches without a PR) as closed. `<a>` counts auto-merge requests and direct merges, branch merges included (`automerge`, `merged`); the dashboard line is not counted. On a terminal `plan` and `apply` leave their counts line out: the summary headline above already gives the same counts.
 
 **On a terminal** (stderr is a TTY) the `update` lines are left out: the summary block below lists the same updates, grouped by the PR they go to. Everything else is printed as above. Piped or redirected stderr always gets the line format above, byte for byte, so scripts and CI logs see no change. With colors (`--color`, default `auto`: on a terminal unless `NO_COLOR` is set or `TERM=dumb`, and with the `actions` format unless `NO_COLOR` is set; `CLICOLOR_FORCE` or `FORCE_COLOR` force them, also when piped) `error` is red and the summary colors the branches, `<file>:<line>` (dim), the update types (major red, minor yellow, patch green, digest cyan), security advisories (bold red) and the error count (red). Colors never change the layout; `--color always` keeps the piped layout.
 
