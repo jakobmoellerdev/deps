@@ -1150,7 +1150,7 @@ Lockfile regeneration needs the package manager: the binary on `PATH`, else `npx
 
 ### GitHub workflow
 
-GitHub workflows cannot `uses:` an action hosted on Gitea. Either use the public GitHub mirror, `uses: jakobmoellerdev/deps@v0.5.0` (on github.com runners the defaults download from the mirror's releases), or download the binary directly (no Go needed):
+GitHub workflows cannot `uses:` an action hosted on Gitea. Either use the public GitHub mirror, `uses: jakobmoellerdev/deps@v0.6.0` (on github.com runners the defaults download from the mirror's releases), or download the binary directly (no Go needed):
 
 ```yaml
 on:
