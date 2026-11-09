@@ -104,7 +104,7 @@ func TestResolve(t *testing.T) {
 		dsPypi:   &fakeSource{repo: "https://github.com/psf/requests"},
 		dsMaven:  &fakeSource{repo: "https://github.com/FasterXML/jackson-databind"},
 	}
-	n := New(nil, nil, auth, nil, sources)
+	n := New(nil, nil, auth, nil, sources).WithGitLab([]string{"https://gitlab.com", "http://gl.example:8929"})
 	gh := func(o, r, prefix string) repoRef {
 		return repoRef{kind: github, host: "github.com", owner: o, name: r, tagPrefix: prefix}
 	}
@@ -123,7 +123,18 @@ func TestResolve(t *testing.T) {
 		{"gitea-tags registry", dep.Dep{Datasource: "gitea-tags", Name: "o/r", Source: "https://git.example:3000/"}, repoRef{kind: gitea, host: "git.example:3000", owner: "o", name: "r"}, true},
 		{"gitea-releases path prefix", dep.Dep{Datasource: "gitea-releases", Name: "o/r", Source: "https://example.com/gitea"}, repoRef{}, false},
 		{"forgejo-tags invalid", dep.Dep{Datasource: "forgejo-tags", Name: "o"}, repoRef{}, false},
-		{"gitlab-releases", dep.Dep{Datasource: "gitlab-releases", Name: "g/p"}, repoRef{}, false},
+		{"gitlab-releases", dep.Dep{Datasource: "gitlab-releases", Name: "g/p"}, repoRef{kind: gitlab, host: "gitlab.com", owner: "g", name: "p"}, true},
+		{"gitlab-tags http subgroup", dep.Dep{Datasource: "gitlab-tags", Name: "g/sub/p", Source: "http://gl.example:8929"},
+			repoRef{kind: gitlab, scheme: "http", host: "gl.example:8929", owner: "g/sub", name: "p"}, true},
+		{"gitlab-releases relative root", dep.Dep{Datasource: "gitlab-releases", Name: "g/p", Source: "https://example.com/gitlab/"},
+			repoRef{kind: gitlab, host: "example.com", root: "/gitlab", owner: "g", name: "p"}, true},
+		{"gitlab-tags invalid", dep.Dep{Datasource: "gitlab-tags", Name: "p"}, repoRef{}, false},
+		{"gitlab-tags invalid registry", dep.Dep{Datasource: "gitlab-tags", Name: "g/p", Source: "ftp://x"}, repoRef{}, false},
+		{"git-tags on a GitLab instance", dep.Dep{Datasource: dsGitTags, Source: "http://gl.example:8929/g/sub/p.git"},
+			repoRef{kind: gitlab, scheme: "http", host: "gl.example:8929", owner: "g/sub", name: "p"}, true},
+		{"go on gitlab.com", dep.Dep{Datasource: dsGo, Name: "gitlab.com/g/sub/p/v2"}, repoRef{kind: gitlab, host: "gitlab.com", owner: "g/sub", name: "p"}, true},
+		{"go on gitlab.com root", dep.Dep{Datasource: dsGo, Name: "gitlab.com/g/p"}, repoRef{kind: gitlab, host: "gitlab.com", owner: "g", name: "p"}, true},
+		{"go on gitlab.com short", dep.Dep{Datasource: dsGo, Name: "gitlab.com/g"}, repoRef{}, false},
 		{"go root", dep.Dep{Datasource: dsGo, Name: "github.com/spf13/cobra"}, gh("spf13", "cobra", ""), true},
 		{"go major", dep.Dep{Datasource: dsGo, Name: "github.com/Masterminds/semver/v3"}, gh("Masterminds", "semver", ""), true},
 		{"go subdir major", dep.Dep{Datasource: dsGo, Name: "github.com/o/r/sdk/go/v2"}, gh("o", "r", "sdk/go/"), true},
@@ -177,14 +188,21 @@ func TestParseRepo(t *testing.T) {
 		{"github:o/r", false, "", 0},
 		{"o/r", true, "github.com/o/r", github},
 		{"o/r", false, "", 0},
-		{"gitlab:o/r", true, "", 0},
+		{"gitlab:o/r", true, "gitlab.com/o/r", gitlab},
+		{"https://gitlab.com/g/sub/p/-/tree/main/x", false, "gitlab.com/g/sub/p", gitlab},
+		{"git@gitlab.com:g/sub/p.git", false, "gitlab.com/g/sub/p", gitlab},
+		{"git+ssh://git@GitLab.com/g/p.git", true, "gitlab.com/g/p", gitlab},
+		{"https://git.corp/gitlab/g/sub/p.git", false, "git.corp/g/sub/p", gitlab},
+		{"https://git.corp/other/g/p", false, "git.corp/other/g", gitea},
+		{"https://git.corp/gitlab", false, "", 0},
+		{"https://gitlab.com/g", true, "", 0},
 		{"ftp://example.com/o/r", true, "", 0},
 		{"https://github.com/o", true, "", 0},
 		{"https://%zz", true, "", 0},
 		{"", true, "", 0},
 	}
 	for _, tt := range tests {
-		r, ok := parseRepo(tt.raw, tt.shorthand)
+		r, ok := parseRepo(tt.raw, tt.shorthand, []string{"https://gitlab.com", "https://git.corp/gitlab"})
 		got := ""
 		if ok {
 			got = r.host + "/" + r.owner + "/" + r.name
@@ -323,6 +341,7 @@ func TestTruncate(t *testing.T) {
 func TestSanitize(t *testing.T) {
 	gh := repoRef{kind: github, host: "github.com", owner: "o", name: "r"}
 	gt := repoRef{kind: gitea, host: "git.example", owner: "o", name: "r"}
+	gl := repoRef{kind: gitlab, host: "gl.example", owner: "g/sub", name: "p"}
 	tests := []struct {
 		name, in, want string
 		r              repoRef
@@ -334,6 +353,10 @@ func TestSanitize(t *testing.T) {
 		{"cross repo", "see other/repo#5", "see [other/repo#5](https://redirect.github.com/other/repo/issues/5)", gh},
 		{"gitea cross repo", "see a/b#5", "see [a/b#5](https://git.example/a/b/issues/5)", gt},
 		{"not references", "## 1.2 #x [#9](u) a#1 #12abc a/b/c#1 /a#1 a/#1 a/b#", "## 1.2 #x [#9](u) a#1 #12abc a/b/c#1 /a#1 a/#1 a/b#", gt},
+		{"gitlab issue and merge request", "fixes #1 and (!2)", "fixes [#1](https://gl.example/g/sub/p/-/issues/1) and ([!2](https://gl.example/g/sub/p/-/merge_requests/2))", gl},
+		{"gitlab cross project", "see g/q#3 and a/b/c!4", "see [g/q#3](https://gl.example/g/q/-/issues/3) and [a/b/c!4](https://gl.example/a/b/c/-/merge_requests/4)", gl},
+		{"gitlab not references", "wow! !x a!1 a//b#1 /a!1", "wow! !x a!1 a//b#1 /a!1", gl},
+		{"no merge requests elsewhere", "see !5 and a/b!6", "see !5 and a/b!6", gt},
 		{"links", "in https://github.com/o/r/pull/1", "in https://redirect.github.com/o/r/pull/1", gh},
 		{"code untouched", "`@x #1`\n```\n@y #2\n```\n@z", "`@x #1`\n```\n@y #2\n```\n@\u200bz", gh},
 		{"trailing newline", "a\n", "a\n", gh},
@@ -589,6 +612,83 @@ func TestSectionGiteaHTTPRegistry(t *testing.T) {
 	}
 }
 
+// GitLab notes come from /api/v4/projects/<path>/releases with the host's token as Bearer (the
+// CI job token as JOB-TOKEN), link GitLab references and compare on /-/compare/ with the tags
+// of the gitlab-tags list. An upcoming release is left out.
+func TestSectionGitLab(t *testing.T) {
+	var reqs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs = append(reqs, r.Header.Get("Authorization")+r.Header.Get("JOB-TOKEN")+" "+r.URL.RequestURI())
+		if r.URL.EscapedPath() != "/gitlab/api/v4/projects/g%2Fsub%2Fp/releases" {
+			http.NotFound(w, r)
+			return
+		}
+		rel := func(tag, desc string, upcoming bool) map[string]any {
+			return map[string]any{"tag_name": tag, "description": desc, "upcoming_release": upcoming,
+				"_links": map[string]any{"self": "https://gl.example/g/sub/p/-/releases/" + tag}}
+		}
+		_ = json.MarshalWrite(w, []map[string]any{rel("v1.3.0", "upcoming", true), rel("v1.2.0", "fix !4", false), rel("v1.1.0", "feat #1 by @root", false), rel("v1.0.0", "old", false)})
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	base := srv.URL + "/gitlab"
+	tags := &fakeSource{tags: []string{"v1.0.0", "v1.1.0", "v1.2.0", "v1.3.0"}}
+	for _, tc := range []struct {
+		name string
+		ds   string
+		auth *httpx.Auth
+		want string
+	}{
+		{"platform token", "gitlab-tags", httpx.NewAuth(platform.Info{Kind: platform.GitLab, Host: u.Hostname()}, "tok", func(string) string { return "" }), "Bearer tok "},
+		// gitlab-releases compares on the tags of the gitlab-tags list too.
+		{"job token", "gitlab-releases", httpx.NewAuth(platform.Info{}, "", func(string) string { return "" }, httpx.WithToken(u.Hostname(), "gitlab-ci-token", "job")), "job "},
+		{"anonymous", "gitlab-tags", nil, " "},
+	} {
+		reqs = nil
+		up := dep.Update{Dep: dep.Dep{Datasource: tc.ds, Name: "g/sub/p", Source: base, Version: "v1.0.0"}, NewVersion: "v1.3.0"}
+		n := New(srv.Client(), nil, tc.auth, nil, map[string]datasource.Datasource{"gitlab-tags": tags}).WithGitLab([]string{base})
+		got := n.Section(t.Context(), []dep.Update{up})
+		for _, want := range []string{
+			"#### [v1.2.0](https://gl.example/g/sub/p/-/releases/v1.2.0)\n\nfix [!4](" + base + "/g/sub/p/-/merge_requests/4)",
+			"feat [#1](" + base + "/g/sub/p/-/issues/1) by @\u200broot",
+			"[Compare changes](" + base + "/g/sub/p/-/compare/v1.0.0...v1.3.0)",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: section lacks %q:\n%s", tc.name, want, got)
+			}
+		}
+		if strings.Contains(got, "upcoming") || strings.Contains(got, "old") {
+			t.Errorf("%s: section = %q, want neither the upcoming nor the current release", tc.name, got)
+		}
+		if want := tc.want + "/gitlab/api/v4/projects/g%2Fsub%2Fp/releases?per_page=100"; !slices.Equal(reqs, []string{want}) {
+			t.Errorf("%s: requests = %q, want %q", tc.name, reqs, want)
+		}
+	}
+}
+
+// A Go module on a GitLab instance is looked up as the project of its whole path; a compare
+// link needs that project's release list, as the path may name a subdirectory instead.
+func TestSectionGitLabGoModule(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/api/v4/projects/g%2Fsub%2Fp/releases" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.MarshalWrite(w, []map[string]any{{"tag_name": "v1.1.0", "description": "module notes"}})
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	n := New(srv.Client(), nil, nil, nil, nil).WithGitLab([]string{srv.URL})
+	root := dep.Update{Dep: dep.Dep{Datasource: dsGo, Name: u.Host + "/g/sub/p", Version: "v1.0.0"}, NewVersion: "v1.1.0"}
+	if got := n.Section(t.Context(), []dep.Update{root}); !strings.Contains(got, "module notes") || !strings.Contains(got, srv.URL+"/g/sub/p/-/compare/v1.0.0...v1.1.0") {
+		t.Errorf("project root: section = %q", got)
+	}
+	sub := dep.Update{Dep: dep.Dep{Datasource: dsGo, Name: u.Host + "/g/sub/p/tools", Version: "v1.0.0"}, NewVersion: "v1.1.0"}
+	if got := n.Section(t.Context(), []dep.Update{sub}); got != "" {
+		t.Errorf("subdirectory: section = %q, want none", got)
+	}
+}
+
 // With extractVersion, releases and compare tags are found by the extracted version: jq's
 // `jq-1.8.1` tag holds the notes of 1.7.1 → 1.8.1, other tags of the repository do not count.
 func TestSectionExtractVersion(t *testing.T) {
@@ -666,6 +766,9 @@ func TestFetchErrors(t *testing.T) {
 	}
 	if _, err := n.releases(t.Context(), repoRef{kind: gitea, host: "git.example", owner: "o", name: "r"}); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Errorf("gitea err = %v", err)
+	}
+	if _, err := n.releases(t.Context(), repoRef{kind: gitlab, host: "gl.example", owner: "g/sub", name: "p"}); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("gitlab err = %v", err)
 	}
 	n.gh = githubapi.New(c, nil, nil, githubapi.WithAPI("http://[::1", ""))
 	if _, err := n.fetchGitHub(t.Context(), repoRef{kind: github, host: "github.com", owner: "o", name: "r"}); err == nil {

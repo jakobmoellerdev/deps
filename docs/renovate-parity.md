@@ -79,7 +79,7 @@ Gap list between OCM's Renovate setup (`open-component-model/.github/renovate.js
 |---|---|---|---|---|
 | L1 | `branchPrefix: renovate/` | global | `branchPrefix` | done |
 | L2 | semantic commit types (`:semanticPrefixFixDepsChoreOthers`) | preset | `fix(deps)` for production deps, `chore(deps)` otherwise; `commitType`/`commitScope` per rule; custom titles and PR body header/footer via `prTitle`/`prHeader`/`prFooter` templates (top level and per rule) | done |
-| L3 | release notes in PR body | preset | GitHub/Gitea release bodies, compare link | done |
+| L3 | release notes in PR body | preset | GitHub/GitLab/Gitea release bodies, compare link | done |
 | L4 | age column in PR body (Mend "Age" badge) | preset | release time as text | done |
 | L5 | Mend adoption / passing / confidence badges | preset | needs Mend's service | open (decide: external badge URLs or drop) |
 | L6 | OpenSSF scorecard badge (`security:openssf-scorecard`) | preset | — | open |

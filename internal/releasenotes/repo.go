@@ -9,6 +9,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	forgeds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
 // Datasource names (see dep.Dep.Datasource).
@@ -28,6 +29,7 @@ type forgeKind int
 const (
 	github forgeKind = iota + 1 // REST v3: api.github.com or <host>/api/v3
 	gitea                       // Gitea/Forgejo: <host>/api/v1
+	gitlab                      // GitLab: <host>[<root>]/api/v4; owner may hold subgroups
 )
 
 // repoRef is a source repository whose releases are listed.
@@ -36,20 +38,69 @@ type repoRef struct {
 	host, owner, name string
 	// scheme is the URL scheme of the forge; empty means https.
 	scheme string
+	// root is the path of a GitLab instance under a relative URL root (`/gitlab`); "" at the
+	// host's root.
+	root string
 	// tagPrefix precedes the version in tag names (`sub/` for a Go module in a subdirectory).
 	tagPrefix string
 }
 
-// base returns the forge's origin, `<scheme>://<host>`.
+// base returns the forge's base URL, `<scheme>://<host>[<root>]`.
 func (r repoRef) base() string {
 	if r.scheme == "" {
-		return "https://" + r.host
+		return "https://" + r.host + r.root
 	}
-	return r.scheme + "://" + r.host
+	return r.scheme + "://" + r.host + r.root
 }
 
 // web returns the repository's web URL.
 func (r repoRef) web() string { return r.base() + "/" + r.owner + "/" + r.name }
+
+// compare returns the web URL comparing tags from and to.
+func (r repoRef) compare(from, to string) string {
+	sep := "/compare/"
+	if r.kind == gitlab {
+		sep = "/-/compare/"
+	}
+	return r.web() + sep + platform.EscapePath(from) + "..." + platform.EscapePath(to)
+}
+
+// gitlabRef returns the repository of the GitLab project path on the instance at base.
+func gitlabRef(base *url.URL, path string) (repoRef, bool) {
+	path = strings.Trim(path, "/")
+	i := strings.LastIndexByte(path, '/')
+	if i <= 0 || i == len(path)-1 || strings.Contains(path, "//") {
+		return repoRef{}, false
+	}
+	r := repoRef{kind: gitlab, host: base.Host, root: strings.TrimRight(base.Path, "/"), owner: path[:i], name: path[i+1:]}
+	if base.Scheme == "http" {
+		r.scheme = "http"
+	}
+	return r, true
+}
+
+// gitlabBase returns the GitLab instance of bases on host hostname whose path p lies under,
+// and the project path in p: up to GitLab's `/-/` page separator, without `.git`.
+func gitlabBase(bases []string, hostname, p string) (*url.URL, string, bool) {
+	for _, b := range bases {
+		u, err := url.Parse(b)
+		if err != nil || !strings.EqualFold(u.Hostname(), hostname) {
+			continue
+		}
+		rest := "/" + strings.Trim(p, "/")
+		if root := strings.TrimRight(u.Path, "/"); root != "" {
+			if len(rest) <= len(root) || rest[len(root)] != '/' || !strings.EqualFold(rest[:len(root)], root) {
+				continue
+			}
+			rest = rest[len(root):]
+		}
+		if i := strings.Index(rest+"/", "/-/"); i >= 0 {
+			rest = rest[:i]
+		}
+		return u, strings.TrimSuffix(strings.Trim(rest, "/"), ".git"), true
+	}
+	return nil, "", false
+}
 
 // goVanity maps module path prefixes without a forge host to their GitHub repositories. The
 // value is the "owner/repo" for an exact module or "owner/" for a prefix whose next path
@@ -67,14 +118,14 @@ var goVanity = map[string]string{
 func (n *Notes) resolve(ctx context.Context, d dep.Dep, version string) (repoRef, bool) {
 	switch d.Datasource {
 	case dsGitTags:
-		return parseRepo(d.Source, false)
+		return parseRepo(d.Source, false, n.gitlab)
 	case dsGitHubReleases:
 		src := d.Source
 		if src == "" {
 			src = d.Name
 		}
 		// github-releases always speaks the GitHub API, on GitHub Enterprise Server too.
-		r, ok := parseRepo(src, true)
+		r, ok := parseRepo(src, true, nil)
 		r.kind = github
 		return r, ok
 	case forgeds.GiteaReleases, forgeds.GiteaTags, forgeds.ForgejoReleases, forgeds.ForgejoTags:
@@ -93,6 +144,16 @@ func (n *Notes) resolve(ctx context.Context, d dep.Dep, version string) (repoRef
 			ref.scheme = "http"
 		}
 		return ref, true
+	case forgeds.GitLabReleases, forgeds.GitLabTags:
+		fr, err := forgeds.ParseRepo(d.Datasource, d.Name, d.Source)
+		if err != nil {
+			return repoRef{}, false
+		}
+		u, err := url.Parse(fr.Base)
+		if err != nil {
+			return repoRef{}, false
+		}
+		return gitlabRef(u, fr.Path)
 	case dsGo:
 		return n.goRepo(d.Name)
 	case dsNpm, dsDocker, dsPypi, dsMaven:
@@ -105,13 +166,15 @@ func (n *Notes) resolve(ctx context.Context, d dep.Dep, version string) (repoRef
 			slog.DebugContext(ctx, "release notes: source repository unknown", "name", d.Name, "err", err)
 			return repoRef{}, false
 		}
-		return parseRepo(raw, true)
+		return parseRepo(raw, true, n.gitlab)
 	}
 	return repoRef{}, false
 }
 
 // goRepo maps a module path to its repository: `github.com/<o>/<r>[/sub][/vN]`, the vanity
-// table, or `<host>/<o>/<r>[/sub]` on a host deps holds a token for (the Gitea/Forgejo
+// table, `<host>/<group>[/<subgroup>…]/<project>[/vN]` on a GitLab instance (WithGitLab; the
+// module path is taken as the project path, as a subdirectory cannot be told from a
+// subgroup), or `<host>/<o>/<r>[/sub]` on a host deps holds a token for (the Gitea/Forgejo
 // platform). Tags of a module in a subdirectory are prefixed with that directory.
 func (n *Notes) goRepo(mod string) (repoRef, bool) {
 	host, rest, _ := strings.Cut(mod, "/")
@@ -137,6 +200,12 @@ func (n *Notes) goRepo(mod string) (repoRef, bool) {
 			}
 			r = repoRef{kind: github, host: "github.com", owner: owner, name: repo, tagPrefix: subdir(strings.Split(strings.Trim(tail, "/"), "/"))}
 			return r, true
+		}
+		if u, _, ok := gitlabBase(n.gitlab, strings.Split(host, ":")[0], ""); ok && strings.Trim(u.Path, "/") == "" {
+			if k := len(segs); k > 2 && isMajor(segs[k-1]) {
+				segs = segs[:k-1]
+			}
+			return gitlabRef(u, strings.Join(segs, "/"))
 		}
 		if _, _, ok := n.auth.Static(strings.Split(host, ":")[0]); !ok {
 			return repoRef{}, false
@@ -175,19 +244,21 @@ func isMajor(s string) bool {
 }
 
 // parseRepo normalizes a repository reference: http(s)/git/git+https/git+ssh/ssh URLs,
-// scp-like `git@host:o/r.git`, and (with shorthand) npm's `github:o/r` and `o/r`. Only the
-// first two path elements are kept (`.../o/r/tree/main/pkg` → o/r). github.com repositories
-// use the GitHub API, every other host the Gitea/Forgejo API.
-func parseRepo(raw string, shorthand bool) (repoRef, bool) {
+// scp-like `git@host:o/r.git`, and (with shorthand) npm's `github:o/r`, `gitlab:g/p` and
+// `o/r`. github.com repositories use the GitHub API, those on one of the GitLab instances
+// gitlab the GitLab API with the whole project path (`.../g/sub/p/-/tree/main` → g/sub/p),
+// every other host the Gitea/Forgejo API with the first two path elements
+// (`.../o/r/tree/main/pkg` → o/r).
+func parseRepo(raw string, shorthand bool, gitlab []string) (repoRef, bool) {
 	raw = strings.TrimSpace(raw)
-	var host, p string
+	var host, hostname, p string
 	switch {
 	case strings.Contains(raw, "://"):
 		u, err := url.Parse(strings.TrimPrefix(raw, "git+"))
 		if err != nil || u.Hostname() == "" {
 			return repoRef{}, false
 		}
-		host, p = u.Hostname(), u.Path
+		host, hostname, p = u.Hostname(), u.Hostname(), u.Path
 		switch u.Scheme {
 		case "http", "https":
 			host = u.Host // a web port is part of the API address; an SSH port is not
@@ -200,13 +271,18 @@ func parseRepo(raw string, shorthand bool) (repoRef, bool) {
 		if !ok {
 			return repoRef{}, false
 		}
-		host, p = h, path
+		host, hostname, p = h, h, path
 	case shorthand && strings.HasPrefix(raw, "github:"):
-		host, p = "github.com", strings.TrimPrefix(raw, "github:")
+		host, hostname, p = "github.com", "github.com", strings.TrimPrefix(raw, "github:")
+	case shorthand && strings.HasPrefix(raw, "gitlab:"):
+		host, hostname, p = "gitlab.com", "gitlab.com", strings.TrimPrefix(raw, "gitlab:")
 	case shorthand && !strings.Contains(raw, ":") && strings.Count(raw, "/") == 1:
-		host, p = "github.com", raw
+		host, hostname, p = "github.com", "github.com", raw
 	default:
 		return repoRef{}, false
+	}
+	if u, path, ok := gitlabBase(gitlab, hostname, p); ok {
+		return gitlabRef(u, path)
 	}
 	owner, rest, _ := strings.Cut(strings.Trim(p, "/"), "/")
 	name, _, _ := strings.Cut(rest, "/")

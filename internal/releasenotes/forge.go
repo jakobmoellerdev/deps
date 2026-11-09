@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -17,10 +18,11 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
-// Page sizes of the one release page listed per repository: GitHub allows 100, Gitea caps at
-// MAX_RESPONSE_ITEMS (default 50).
+// Page sizes of the one release page listed per repository: GitHub and GitLab allow 100,
+// Gitea caps at MAX_RESPONSE_ITEMS (default 50).
 const (
 	githubNotes = 100
+	gitlabNotes = 100
 	giteaNotes  = 50
 )
 
@@ -31,9 +33,9 @@ type release struct {
 	draft, pre     bool
 }
 
-func newRelease(tag, url, body string, draft, pre bool) release {
+func newRelease(tag, link, body string, draft, pre bool) release {
 	body, cut := truncate(strings.TrimSpace(strings.ReplaceAll(body, "\r\n", "\n")), maxBody)
-	return release{tag: tag, url: url, body: body, cut: cut, draft: draft, pre: pre}
+	return release{tag: tag, url: link, body: body, cut: cut, draft: draft, pre: pre}
 }
 
 // releases lists the newest releases of r (one page) once per repository per run.
@@ -43,9 +45,12 @@ func (n *Notes) releases(ctx context.Context, r repoRef) ([]release, error) {
 		start := time.Now()
 		var rels []release
 		var err error
-		if r.kind == github {
+		switch r.kind {
+		case github:
 			rels, err = n.fetchGitHub(ctx, r)
-		} else {
+		case gitlab:
+			rels, err = n.fetchGitLab(ctx, r)
+		default:
 			rels, err = n.fetchGitea(ctx, r)
 		}
 		slog.DebugContext(ctx, "release notes listed", "repo", r.web(), "releases", len(rels), "duration", time.Since(start), "err", err)
@@ -67,20 +72,69 @@ func (n *Notes) fetchGitHub(ctx context.Context, r repoRef) ([]release, error) {
 // fetchGitea lists the releases of a Gitea/Forgejo repository (`<host>/api/v1`).
 func (n *Notes) fetchGitea(ctx context.Context, r repoRef) ([]release, error) {
 	target := r.base() + "/api/v1/repos/" + r.owner + "/" + r.name + "/releases?limit=" + strconv.Itoa(giteaNotes)
-	host := r.host
+	_, token, authed := n.auth.Static(hostname(r.host))
+	return fetchList(ctx, n, target, func(h http.Header) {
+		if authed {
+			h.Set("Authorization", "token "+token)
+		}
+	}, func(raw struct {
+		TagName    string `json:"tag_name"`
+		HTMLURL    string `json:"html_url"`
+		Body       string `json:"body"`
+		Draft      bool   `json:"draft"`
+		Prerelease bool   `json:"prerelease"`
+	},
+	) (release, bool) {
+		return newRelease(raw.TagName, raw.HTMLURL, raw.Body, raw.Draft, raw.Prerelease), raw.TagName != ""
+	})
+}
+
+// fetchGitLab lists the releases of a GitLab project (`<host>[<root>]/api/v4`), newest
+// first. The token of the host goes as `Authorization: Bearer`, the CI job token as
+// `JOB-TOKEN`. An upcoming release (released_at in the future) counts as a draft; GitLab has
+// no pre-releases.
+func (n *Notes) fetchGitLab(ctx context.Context, r repoRef) ([]release, error) {
+	target := r.base() + "/api/v4/projects/" + url.PathEscape(r.owner+"/"+r.name) + "/releases?per_page=" + strconv.Itoa(gitlabNotes)
+	user, token, authed := n.auth.Static(hostname(r.host))
+	return fetchList(ctx, n, target, func(h http.Header) {
+		switch {
+		case !authed:
+		case user == "gitlab-ci-token":
+			h.Set("JOB-TOKEN", token)
+		default:
+			h.Set("Authorization", "Bearer "+token)
+		}
+	}, func(raw struct {
+		TagName     string `json:"tag_name"`
+		Description string `json:"description"`
+		Upcoming    bool   `json:"upcoming_release"`
+		Links       struct {
+			Self string `json:"self"`
+		} `json:"_links"`
+	},
+	) (release, bool) {
+		return newRelease(raw.TagName, raw.Links.Self, raw.Description, raw.Upcoming, false), raw.TagName != ""
+	})
+}
+
+// hostname strips the port from host.
+func hostname(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
+		return h
 	}
-	_, token, authed := n.auth.Static(host)
+	return host
+}
+
+// fetchList GETs the release list at target with header's credentials and keeps the
+// releases conv accepts, decoding one element at a time.
+func fetchList[T any](ctx context.Context, n *Notes, target string, header func(http.Header), conv func(T) (release, bool)) ([]release, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	req.Header.Set("Accept", "application/json")
-	if authed {
-		req.Header.Set("Authorization", "token "+token)
-	}
+	header(req.Header)
 	done, err := httpx.Acquire(ctx, n.sem)
 	if err != nil {
 		return nil, err
@@ -103,18 +157,12 @@ func (n *Notes) fetchGitea(ctx context.Context, r repoRef) ([]release, error) {
 	}
 	var rels []release
 	for dec.PeekKind() != ']' {
-		var raw struct {
-			TagName    string `json:"tag_name"`
-			HTMLURL    string `json:"html_url"`
-			Body       string `json:"body"`
-			Draft      bool   `json:"draft"`
-			Prerelease bool   `json:"prerelease"`
-		}
+		var raw T
 		if err := json.UnmarshalDecode(dec, &raw); err != nil {
 			return nil, fmt.Errorf("GET %s: %w", req.URL.Redacted(), err)
 		}
-		if raw.TagName != "" {
-			rels = append(rels, newRelease(raw.TagName, raw.HTMLURL, raw.Body, raw.Draft, raw.Prerelease))
+		if rel, ok := conv(raw); ok {
+			rels = append(rels, rel)
 		}
 	}
 	return rels, nil

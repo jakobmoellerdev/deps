@@ -1,10 +1,10 @@
 // Package releasenotes renders the release age and upstream release notes of updates for pull
 // request bodies.
 //
-// Release notes come from the GitHub or Gitea/Forgejo releases API of the dependency's source
-// repository: the action's repository, a Go module's forge repository, an npm package's
-// `repository`, a PyPI project's source URL, a Maven POM's `<scm>`, or an image's
-// `org.opencontainers.image.source` label. One page of releases is listed per repository and
+// Release notes come from the GitHub, GitLab or Gitea/Forgejo releases API of the dependency's
+// source repository: the action's repository, a Go module's forge repository, an npm package's
+// `repository`, a PyPI project's source URL, a Maven POM's `<scm>`, an image's
+// `org.opencontainers.image.source` label, or the repository of a forge releases or tags dep. One page of releases is listed per repository and
 // run. Every failure only omits the notes; it never fails a PR.
 package releasenotes
 
@@ -21,10 +21,10 @@ import (
 	"unicode/utf8"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
+	forgeds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -43,6 +43,7 @@ type Notes struct {
 	gh      *githubapi.Client
 	sources map[string]datasource.Datasource
 	now     func() time.Time
+	gitlab  []string // GitLab instance URLs (WithGitLab)
 
 	// lists holds one page of releases per kind + repository URL; a listing failed by its
 	// caller's context (the per-PR deadline) is not shared.
@@ -56,8 +57,16 @@ type Notes struct {
 func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, gh *githubapi.Client, sources map[string]datasource.Datasource) *Notes {
 	return &Notes{
 		client: client, sem: sem, auth: auth, gh: gh, sources: sources,
-		now: time.Now,
+		now: time.Now, gitlab: []string{forgeds.DefaultGitLabURL},
 	}
+}
+
+// WithGitLab names the GitLab instances (`https://gitlab.com`, a self-managed
+// `https://host[/path]`) whose repositories' notes come from the GitLab API, replacing the
+// default gitlab.com.
+func (n *Notes) WithGitLab(bases []string) *Notes {
+	n.gitlab = bases
+	return n
 }
 
 // Age renders when u.NewVersion was released, e.g. "released 2026-10-30 (4 days ago)"; "" when
@@ -195,8 +204,11 @@ func (n *Notes) block(ctx context.Context, it item) block {
 	for _, p := range sel {
 		b.entries = append(b.entries, entry(p.rel, r))
 	}
-	if fromTag, toTag, ok := n.tagsFor(ctx, it.d, r, rels, vers, it.from, it.to); ok {
-		b.compare = r.web() + "/compare/" + platform.EscapePath(fromTag) + "..." + platform.EscapePath(toTag)
+	// The project of a Go module on GitLab is a guess (see goRepo): link only one whose
+	// release list was found.
+	guessed := it.d.Datasource == dsGo && r.kind == gitlab && err != nil
+	if fromTag, toTag, ok := n.tagsFor(ctx, it.d, r, rels, vers, it.from, it.to); ok && !guessed {
+		b.compare = r.compare(fromTag, toTag)
 	}
 	return b
 }
@@ -245,14 +257,19 @@ type tagVer struct {
 }
 
 // tagsFor returns the tags of versions from and to in r, ok when both exist: Go module
-// versions are tags by definition, git-tags versions are tag names (or extracted from them)
-// when the tag exists, and others must have a release. vers are the parsed tags of rels.
+// versions are tags by definition, git-tags and gitlab-releases/gitlab-tags versions are tag
+// names (or extracted from them) when the tag exists (in the git-tags, resp. gitlab-tags
+// list: a gitlab-releases version may start at a tag without a release), and others must
+// have a release. vers are the parsed tags of rels.
 func (n *Notes) tagsFor(ctx context.Context, d dep.Dep, r repoRef, rels []release, vers []tagVer, from, to string) (string, string, bool) {
 	switch d.Datasource {
 	case dsGo:
 		return r.tagPrefix + from, r.tagPrefix + to, true
-	case dsGitTags:
+	case dsGitTags, forgeds.GitLabReleases, forgeds.GitLabTags:
 		ds := n.sources[dsGitTags]
+		if d.Datasource != dsGitTags {
+			ds = n.sources[forgeds.GitLabTags]
+		}
 		if ds == nil {
 			return "", "", false
 		}
@@ -397,9 +414,10 @@ func redirect(s string) string {
 }
 
 // sanitize makes a release body safe to quote in a PR outside code: @mentions get a zero-width
-// space so nobody is notified, `#123` and `owner/repo#123` become links to the upstream
-// repository (a bare reference would point at the PR's repository), and github.com links
-// are redirected (see redirect).
+// space so nobody is notified, `#123` and `owner/repo#123` (on GitLab also merge requests
+// `!123` and `group/sub/project#123`/`!123`) become links to the upstream repository (a bare
+// reference would point at the PR's repository), and github.com links are redirected (see
+// redirect).
 func sanitize(body string, r repoRef) string {
 	base := r.web()
 	if r.host == "github.com" {
@@ -430,42 +448,64 @@ func sanitize(body string, r repoRef) string {
 				b.WriteString(seg)
 				continue
 			}
-			writeProse(&b, seg, base, r.base())
+			writeProse(&b, seg, base, r)
 		}
 	}
 	return redirect(b.String())
 }
 
-// writeProse writes s with mentions neutralized and issue references linked.
-func writeProse(b *strings.Builder, s, base, origin string) {
+// writeProse writes s with mentions neutralized and issue references of r's forge linked.
+func writeProse(b *strings.Builder, s, base string, r repoRef) {
+	origin := r.base()
+	gl := r.kind == gitlab
+	// ref reports whether s[i] starts a reference (#, or GitLab's ! for merge requests) and
+	// returns the path of its kind under a repository's web URL.
+	ref := func(i int) (string, bool) {
+		switch {
+		case s[i] == '#' && gl:
+			return "/-/issues/", true
+		case s[i] == '#':
+			return "/issues/", true
+		case s[i] == '!' && gl:
+			return "/-/merge_requests/", true
+		}
+		return "", false
+	}
 	boundary := func(i int) bool { // s[i-1] may start a mention or reference
 		return i == 0 || strings.IndexByte(" \t\n(", s[i-1]) >= 0
 	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
+		kind, isRef := ref(i)
 		switch {
 		case c == '@' && boundary(i) && i+1 < len(s) && isWord(s[i+1]):
 			b.WriteString("@\u200b")
-		case c == '#' && boundary(i):
+		case isRef && boundary(i):
 			if j := digitsEnd(s, i+1); j > i+1 && (j == len(s) || !isWord(s[j]) && s[j] != ']') {
-				fmt.Fprintf(b, "[%s](%s/issues/%s)", s[i:j], base, s[i+1:j])
+				fmt.Fprintf(b, "[%s](%s%s%s)", s[i:j], base, kind, s[i+1:j])
 				i = j - 1
 				continue
 			}
 			b.WriteByte(c)
 		case boundary(i) && isWord(c):
-			// owner/repo#123
+			// owner/repo#123; on GitLab also group/sub/project!123
 			k := i
 			for k < len(s) && (isWord(s[k]) || s[k] == '.' || s[k] == '/') {
 				k++
 			}
-			if ref := s[i:k]; k < len(s) && s[k] == '#' && strings.Count(ref, "/") == 1 && !strings.HasPrefix(ref, "/") && !strings.HasSuffix(ref, "/") {
+			repo := s[i:k]
+			slashes := strings.Count(repo, "/")
+			refKind, isRepoRef := "", false
+			if k < len(s) {
+				refKind, isRepoRef = ref(k)
+			}
+			if isRepoRef && (slashes == 1 || gl && slashes > 1) && !strings.HasPrefix(repo, "/") && !strings.HasSuffix(repo, "/") && !strings.Contains(repo, "//") {
 				if j := digitsEnd(s, k+1); j > k+1 && (j == len(s) || !isWord(s[j]) && s[j] != ']') {
-					repoBase := origin + "/" + ref
+					repoBase := origin + "/" + repo
 					if origin == "https://github.com" {
-						repoBase = "https://redirect.github.com/" + ref
+						repoBase = "https://redirect.github.com/" + repo
 					}
-					fmt.Fprintf(b, "[%s](%s/issues/%s)", s[i:j], repoBase, s[k+1:j])
+					fmt.Fprintf(b, "[%s](%s%s%s)", s[i:j], repoBase, refKind, s[k+1:j])
 					i = j - 1
 					continue
 				}
