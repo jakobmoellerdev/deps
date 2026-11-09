@@ -1,6 +1,7 @@
 package renovate
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -883,7 +884,7 @@ func TestLoadCustomJSONata(t *testing.T) {
 				datasourceTemplate: 'github-tags', extractVersionTemplate: '^v(?<version>.+)$', registryUrlTemplate: 'https://github.com', depTypeTemplate: 'tool',
 			},
 			{customType: 'jsonata', fileFormat: 'toml', managerFilePatterns: ['x'], matchStrings: ['a'], depNameTemplate: '{{{packageName}}}'},
-			{customType: 'jsonata', fileFormat: 'toml', managerFilePatterns: ['x'], matchStrings: ['a'], extractVersionTemplate: '{{{x}}}'},
+			{customType: 'jsonata', fileFormat: 'toml', managerFilePatterns: ['x'], matchStrings: ['a'], extractVersionTemplate: '{{#if x}}^v{{/if}}'},
 			{customType: 'jsonata', fileFormat: 'xml', managerFilePatterns: ['x'], matchStrings: ['a']},
 			{customType: 'jsonata', fileFormat: 'json', managerFilePatterns: ['x'], matchStrings: ['a('], currentValueTemplate: '1'},
 			{customType: 'regex', fileFormat: 'json', managerFilePatterns: ['x'], matchStrings: ['(?<currentValue>.)'], datasourceTemplate: 'npm', depNameTemplate: 'x'},
@@ -919,7 +920,7 @@ func TestLoadCustomJSONata(t *testing.T) {
 	for _, n := range []string{
 		"info customManagers[1].depTypeTemplate: no deps equivalent; ignored",
 		`warn customManagers[2]: depNameTemplate "{{{packageName}}}" is a template; dropped`,
-		"warn customManagers[3]: extractVersionTemplate has no deps equivalent; dropped",
+		`warn customManagers[3]: extractVersionTemplate "{{#if x}}^v{{/if}}": {{#if x}} has no JSONata translation (only {{field}} references do); dropped`,
 		"warn customManagers[5]: currentValueTemplate has no deps equivalent; dropped",
 	} {
 		if !slices.Contains(notes, n) {
@@ -1209,6 +1210,52 @@ func TestLoadRegistryURLTemplate(t *testing.T) {
 	}
 	if !slices.ContainsFunc(noteLines(res), func(s string) bool { return strings.Contains(s, "customManagers[1].registryUrlTemplate") }) {
 		t.Errorf("notes = %q", noteLines(res))
+	}
+}
+
+// Templated extractVersionTemplate and registryUrlTemplate of a jsonata manager become JSONata
+// expressions over the query's result; a regex manager's are dropped or ignored precisely.
+func TestLoadTemplatedJSONataFields(t *testing.T) {
+	res, err := load(t, `{customManagers: [
+		{customType: 'jsonata', fileFormat: 'json', managerFilePatterns: ['x'], matchStrings: ['charts.{"depName": name, "currentValue": version, "repo": repo, "prefix": prefix}'],
+			datasourceTemplate: 'helm', registryUrlTemplate: 'https://{{repo}}/charts', extractVersionTemplate: '^{{{ prefix }}}-(?<version>.+)$'},
+		{customType: 'jsonata', fileFormat: 'json', managerFilePatterns: ['x'], matchStrings: ['a'], datasourceTemplate: 'helm', registryUrlTemplate: '{{replace "a" "b" repo}}'},
+		{customType: 'regex', managerFilePatterns: ['x'], matchStrings: ['V=(?<currentValue>\\S+)'], datasourceTemplate: 'helm', depNameTemplate: 'c', registryUrlTemplate: 'https://{{host}}'},
+		{customType: 'regex', managerFilePatterns: ['x'], matchStrings: ['V=(?<currentValue>\\S+)'], datasourceTemplate: 'helm', depNameTemplate: 'c', extractVersionTemplate: '^v{{x}}'}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := section(t, res, "custom")
+	const query = `(charts.{"depName": name, "currentValue": version, "repo": repo, "prefix": prefix}) ~> $map(function($d) { $merge([$d, {"datasource": "helm", "registryUrl": "https://" & $d.repo & "/charts", "extractVersion": "^" & $d.prefix & "-(?<version>.+)$"}]) })`
+	if !strings.Contains(got, query) || strings.Count(got, "# customManagers") != 3 || strings.Contains(got, "customManagers[3]") {
+		t.Fatalf("custom:\n%s", got)
+	}
+	q, err := gnata.Compile(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := q.EvalBytes(t.Context(), []byte(`{"charts": [{"name": "a", "version": "1", "repo": "h.example", "prefix": "app"}, {"name": "b", "version": "2"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := json.Marshal(gnata.NormalizeValue(r))
+	if want := `[{"currentValue":"1","datasource":"helm","depName":"a","extractVersion":"^app-(?\u003cversion\u003e.+)$","prefix":"app","registryUrl":"https://h.example/charts","repo":"h.example"},{"currentValue":"2","datasource":"helm","depName":"b","extractVersion":"^-(?\u003cversion\u003e.+)$","registryUrl":"https:///charts"}]`; string(out) != want {
+		t.Errorf("result = %s\nwant %s", out, want)
+	}
+	notes := noteLines(res)
+	for _, n := range []string{
+		`info customManagers[1].registryUrlTemplate: templated registryUrlTemplate "{{replace \"a\" \"b\" repo}}": {{replace "a" "b" repo}} has no JSONata translation (only {{field}} references do); ignored`,
+		`info customManagers[2].registryUrlTemplate: templated registryUrlTemplate "https://{{host}}" has no deps equivalent in regex entries; ignored (capture the URL in a (?<registryUrl>) group instead)`,
+		"warn customManagers[3]: extractVersionTemplate has no deps equivalent in regex entries (only JSONata results carry extractVersion); dropped",
+	} {
+		if !slices.Contains(notes, n) {
+			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
+		}
+	}
+	for s, want := range map[string]string{"{{a}}": `"" & $d.a`, "x{{{a.b}}}y": `"x" & $d.a.b & "y"`, "{{a": "", "{{else}}": "", "a&b": `"a&b"`} {
+		if e, _ := templateJSONata(s); string(e) != want {
+			t.Errorf("templateJSONata(%q) = %q, want %q", s, e, want)
+		}
 	}
 }
 

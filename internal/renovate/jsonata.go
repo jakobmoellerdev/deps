@@ -104,11 +104,60 @@ func jsonataMerge(q string, merge omap) string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		v, _ := f.v.(string)
 		str(f.k)
 		b.WriteString(": ")
+		if e, ok := f.v.(jsonataExpr); ok {
+			b.WriteString(string(e))
+			continue
+		}
+		v, _ := f.v.(string)
 		str(v)
 	}
 	b.WriteString("}]) })")
 	return b.String()
+}
+
+// jsonataExpr is a merge value written as a JSONata expression over the result object $d
+// instead of as a string literal.
+type jsonataExpr string
+
+// templateJSONata converts a Renovate handlebars template whose expressions only reference
+// fields ({{depName}}, {{{packageName}}}) into a JSONata string concatenation over the query's
+// result object $d; a missing field renders as "" in both. Otherwise it returns the first
+// unsupported expression (a helper or block such as {{#if …}} or {{replace …}}).
+func templateJSONata(s string) (jsonataExpr, string) {
+	var parts []string
+	lit := false
+	for s != "" {
+		i := strings.Index(s, "{{")
+		if i < 0 {
+			i = len(s)
+		}
+		if i > 0 {
+			enc, _ := json.Marshal(s[:i]) // a string always encodes
+			parts = append(parts, strings.NewReplacer(`\u0026`, "&", `\u003c`, "<", `\u003e`, ">").Replace(string(enc)))
+			lit = true
+			s = s[i:]
+			continue
+		}
+		open, end := "{{", "}}"
+		if strings.HasPrefix(s, "{{{") {
+			open, end = "{{{", "}}}"
+		}
+		j := strings.Index(s[len(open):], end)
+		if j < 0 {
+			return "", s
+		}
+		expr := s[:len(open)+j+len(end)]
+		name := strings.TrimSpace(s[len(open) : len(open)+j])
+		if !jsonataFieldRe.MatchString(name) || name == "else" || name == "this" {
+			return "", expr
+		}
+		parts = append(parts, "$d."+name)
+		s = s[len(expr):]
+	}
+	if !lit { // & renders a missing field as "" and casts non-strings, as handlebars does
+		parts = append([]string{`""`}, parts...)
+	}
+	return jsonataExpr(strings.Join(parts, " & ")), ""
 }

@@ -992,7 +992,7 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 	}
 	var files, matches []string
 	var datasource, depName, pkgName, versioning, registry, fileFormat string
-	var extractVersion omap // jsonata: the literal extractVersionTemplate
+	var extractVersion, registryExpr omap // jsonata: extractVersionTemplate, templated registryUrlTemplate
 	for _, k := range slices.Sorted(mapKeys(m)) {
 		v := m[k]
 		s, _ := v.(string)
@@ -1038,21 +1038,36 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 				depName = s
 			}
 		case "extractVersionTemplate":
-			if !jsonata || strings.Contains(s, "{{") {
-				t.n.warn(origin, "%s has no deps equivalent; dropped", k)
+			if !jsonata {
+				t.n.warn(origin, "%s has no deps equivalent in regex entries (only JSONata results carry extractVersion); dropped", k)
 				return
 			}
-			extractVersion.set("extractVersion", s)
+			if !strings.Contains(s, "{{") {
+				extractVersion.set("extractVersion", s)
+				continue
+			}
+			e, bad := templateJSONata(s)
+			if bad != "" {
+				t.n.warn(origin, "%s %q: %s has no JSONata translation (only {{field}} references do); dropped", k, s, bad)
+				return
+			}
+			extractVersion.set("extractVersion", e)
 		case "currentValueTemplate", "autoReplaceStringTemplate":
 			t.n.warn(origin, "%s has no deps equivalent; dropped", k)
 			return
 		case "registryUrlTemplate":
 			switch {
 			case groupTemplate(k, s):
-			case strings.Contains(s, "{{"):
-				t.n.info(origin+"."+k, "templated registryUrlTemplate has no deps equivalent; ignored")
-			default:
+			case !strings.Contains(s, "{{"):
 				registry = s
+			case !jsonata:
+				t.n.info(origin+"."+k, "templated registryUrlTemplate %q has no deps equivalent in regex entries; ignored (capture the URL in a (?<registryUrl>) group instead)", s)
+			default:
+				if e, bad := templateJSONata(s); bad != "" {
+					t.n.info(origin+"."+k, "templated registryUrlTemplate %q: %s has no JSONata translation (only {{field}} references do); ignored", s, bad)
+				} else {
+					registryExpr.set("registryUrl", e)
+				}
 			}
 		case "depTypeTemplate":
 			t.n.info(origin+"."+k, "no deps equivalent; ignored")
@@ -1070,7 +1085,7 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 	fields := nonEmpty(omap{{"datasource", datasource}, {"name", cmp.Or(pkgName, depName)}, {"versioning", versioning}, {"registryUrl", registry}})
 	var merge omap
 	if jsonata {
-		merge = append(nonEmpty(omap{{"datasource", datasource}, {"depName", depName}, {"packageName", pkgName}, {"versioning", versioning}, {"registryUrl", registry}}), extractVersion...)
+		merge = append(nonEmpty(omap{{"datasource", datasource}, {"depName", depName}, {"packageName", pkgName}, {"versioning", versioning}, {"registryUrl", registry}}), append(registryExpr, extractVersion...)...)
 	}
 	for i, match := range matches {
 		c := append(omap{{"files", files}, {"match", match}}, fields...)
