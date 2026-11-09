@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
@@ -30,6 +31,9 @@ func render(ups []dep.Update) []string {
 	}
 	return out
 }
+
+// noPolicy is the empty policy of every update for unifyShared.
+func noPolicy(int, dep.UpdateType) *config.Policy { return &config.Policy{} }
 
 func TestUnifyShared(t *testing.T) {
 	adv := []dep.Advisory{{ID: "GHSA-1"}}
@@ -140,7 +144,7 @@ func TestUnifyShared(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			unifyShared(t.Context(), tt.ups)
+			unifyShared(t.Context(), tt.ups, noPolicy)
 			if got := render(tt.ups); !slices.Equal(got, tt.want) {
 				t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
 			}
@@ -181,7 +185,7 @@ func TestGroupUpdatesShared(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			unifyShared(t.Context(), tt.ups)
+			unifyShared(t.Context(), tt.ups, noPolicy)
 			var got []string
 			for _, g := range GroupUpdates(tt.ups, "") {
 				got = append(got, fmt.Sprintf("%s: %s (%d)", g.Branch, g.Title, len(g.Updates)))
@@ -300,5 +304,41 @@ func TestResolveSharedVersionOnePR(t *testing.T) {
 	}
 	if want := strings.Replace(pom, "2.15.0", "2.16.0", 1); string(changes[0].New) != want {
 		t.Errorf("pom.xml =\n%s\nwant\n%s", changes[0].New, want)
+	}
+}
+
+// TestResolveSharedSecurityLowered: a security update lowered to the version a sibling of its
+// shared definition reaches is no security update any more, so it takes the normal policy of
+// its new type: schedule, dashboard approval and the type's commit settings.
+func TestResolveSharedSecurityLowered(t *testing.T) {
+	const pom = "<project><properties><jackson.version>2.15.0</jackson.version></properties><dependencies>" +
+		"<artifactId>jackson-core</artifactId><version>${jackson.version}</version>" +
+		"<artifactId>jackson-databind</artifactId><version>${jackson.version}</version>" +
+		"</dependencies></project>"
+	root, cfg := setup(t, "dependencyDashboard: true\ndashboardApproval: true\nschedule: ['0 1 * * *']\n"+
+		"rules: [{updateTypes: [patch], commitType: build}]\n", map[string]string{"pom.xml": pom})
+	o := Options{
+		Managers: []manager.Manager{propManager{}},
+		Datasources: map[string]Datasource{"go": fakeGo{
+			"jackson-core":     {"2.15.0", "2.15.3", "2.16.0", "2.17.1"},
+			"jackson-databind": {"2.15.0", "2.15.3"},
+		}},
+		Security: &fakeSec{vulns: map[string][]Vuln{"jackson-core": {vuln("GHSA-1", "2.17.1")}}},
+	}
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil || len(res.Errors) != 0 || len(res.Updates) != 2 {
+		t.Fatalf("err %v, errors %v, updates %s", err, res.Errors, render(res.Updates))
+	}
+	for _, u := range res.Updates {
+		if u.NewVersion != "2.15.3" || u.Type != dep.Patch || len(u.Advisories) != 0 || u.SecurityGroup != "" {
+			t.Errorf("%s: %s %s advisories %d securityGroup %q, want 2.15.3 patch without advisories", u.Dep.Name, u.NewVersion, u.Type, len(u.Advisories), u.SecurityGroup)
+		}
+		if u.Schedule == nil || !u.DashboardApproval || u.CommitType != "build" {
+			t.Errorf("%s: schedule %v, dashboardApproval %v, commitType %q, want the normal patch policy", u.Dep.Name, u.Schedule, u.DashboardApproval, u.CommitType)
+		}
+	}
+	groups := GroupUpdates(res.Updates, "")
+	if len(groups) != 1 || groups[0].Title != "build(deps): update jackson.version to 2.15.3" || !groups[0].DashboardApproval {
+		t.Errorf("groups = %+v", groups)
 	}
 }

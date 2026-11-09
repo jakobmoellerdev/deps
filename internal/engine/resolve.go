@@ -403,6 +403,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	if err := sec.wait(); err != nil {
 		res.Errors = append(res.Errors, fmt.Errorf("security advisories: %w", err))
 	}
+	var upPols []*policies // the policies of res.Updates[i]
 	for i, t := range outs {
 		switch {
 		case t.Err != nil:
@@ -412,6 +413,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			res.Deps[depAt[i]].Skip = t.Dep.Skip
 		}
 		res.Updates = append(res.Updates, ups[i]...)
+		for range ups[i] {
+			upPols = append(upPols, pols[i])
+		}
 		res.Warnings = append(res.Warnings, warns[i]...)
 		if pend[i].Version != "" {
 			res.Pending = append(res.Pending, pend[i])
@@ -420,7 +424,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			o.Trace(t)
 		}
 	}
-	unifyShared(ctx, res.Updates)
+	unifyShared(ctx, res.Updates, func(i int, kind dep.UpdateType) *config.Policy { return upPols[i].of(kind) })
 	sortUpdates(res.Updates)
 	slog.InfoContext(ctx, "dependencies resolved", "updates", len(res.Updates), "errors", len(res.Errors), "duration", time.Since(start))
 	prog.End(PhaseResolve)
@@ -1239,30 +1243,34 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 	var decorate func([]dep.Update)
 	decorate = func(ups []dep.Update) {
 		for i := range ups {
-			// Commit, grouping and automerge settings come from the policy of the update's
-			// type; security updates follow it too, apart from schedule and group: they take
-			// the security group instead.
 			up := &ups[i]
 			if prefixed != nil && len(prefixed.names) > 0 {
 				up.Dep.ExtractVersion = prefixExpr // release notes look up the per-action tags
 			}
-			kp := r.pol.of(up.Type)
-			up.CommitType, up.CommitScope, up.Templates = kp.CommitType, kp.CommitScope, kp.Templates
-			up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
-			up.DraftPR, up.PRCreation = kp.DraftPR, kp.PRCreation
-			up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
-			up.Tasks = kp.Tasks
+			applyPolicy(up, r.pol.of(up.Type))
 			up.Warnings = warnings
-			if len(up.Advisories) == 0 {
-				up.Group, up.Schedule, up.DashboardApproval = kp.Group, kp.Schedule, kp.DashboardApproval
-			} else {
-				up.SecurityGroup = kp.SecurityGroup
-			}
 			decorate(up.Declined)
 		}
 	}
 	decorate(ups)
 	return ups, nil
+}
+
+// applyPolicy sets the fields of up that come from kp, the policy of its type: commit,
+// grouping and automerge settings. Security updates follow it too, apart from schedule, group
+// and dashboard approval: they take the security group instead. unifyShared applies it again
+// to an update it lowers.
+func applyPolicy(up *dep.Update, kp *config.Policy) {
+	up.CommitType, up.CommitScope, up.Templates = kp.CommitType, kp.CommitScope, kp.Templates
+	up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
+	up.DraftPR, up.PRCreation = kp.DraftPR, kp.PRCreation
+	up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
+	up.Tasks = kp.Tasks
+	if len(up.Advisories) == 0 {
+		up.Group, up.Schedule, up.DashboardApproval, up.SecurityGroup = kp.Group, kp.Schedule, kp.DashboardApproval, ""
+	} else {
+		up.SecurityGroup = kp.SecurityGroup
+	}
 }
 
 // usual resolves the dep's updates other than a replacement.

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"slices"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -28,15 +29,17 @@ func sharedMember(u *dep.Update) bool {
 //     bucket, the highest version all of them are known to reach (each dep's update is its
 //     best accepted candidate). A lowered member gets the Type of the new version under its
 //     scheme, the NewDigest and NewChecksum of the update it was lowered to, and loses its
-//     advisories (the fix is no longer known to be included). Buckets only some members reach
-//     are kept: one bucket is one PR, so its edits never conflict, and Local writes one
-//     version per definition.
+//     advisories (the fix is no longer known to be included); it then takes policy(i, Type),
+//     the policy of its dep and new type, as an update without advisories (applyPolicy):
+//     group, schedule, dashboard approval, commit and automerge settings. Buckets only some
+//     members reach are kept: one bucket is one PR, so its edits never conflict, and Local
+//     writes one version per definition.
 //   - every member gets one Group: the first member's policy group, else the VersionRef, so
 //     the definition's updates of a bucket become one PR (security updates included, see
 //     GroupUpdates). Differing policy groups are logged at debug level.
 //
 // ups is modified in place.
-func unifyShared(ctx context.Context, ups []dep.Update) {
+func unifyShared(ctx context.Context, ups []dep.Update, policy func(i int, kind dep.UpdateType) *config.Policy) {
 	var defs map[sharedKey][]int
 	for i := range ups {
 		u := &ups[i]
@@ -53,6 +56,9 @@ func unifyShared(ctx context.Context, ups []dep.Update) {
 		first := &ups[idx[0]]
 		if !slices.ContainsFunc(idx, func(i int) bool { return !sameDep(ups[i].Dep, first.Dep) }) {
 			continue // one dep's own buckets
+		}
+		if s, ok := versioning.Get(first.Dep.Versioning); ok {
+			lowerShared(ups, idx, s, policy)
 		}
 		group := ""
 		for _, i := range idx {
@@ -71,33 +77,35 @@ func unifyShared(ctx context.Context, ups []dep.Update) {
 		for _, i := range idx {
 			ups[i].Group = group
 		}
-		s, ok := versioning.Get(first.Dep.Versioning)
-		if !ok {
-			continue
+	}
+}
+
+// lowerShared lowers the members idx of one shared definition to the lowest NewVersion of
+// their bucket under s (see unifyShared).
+func lowerShared(ups []dep.Update, idx []int, s versioning.Scheme, policy func(i int, kind dep.UpdateType) *config.Policy) {
+	for n, i := range idx {
+		if slices.ContainsFunc(idx[:n], func(j int) bool { return ups[j].Bucket == ups[i].Bucket }) {
+			continue // bucket done
 		}
-		for n, i := range idx {
-			if slices.ContainsFunc(idx[:n], func(j int) bool { return ups[j].Bucket == ups[i].Bucket }) {
-				continue // bucket done
+		low := i
+		for _, j := range idx[n+1:] {
+			if ups[j].Bucket == ups[i].Bucket && s.Compare(ups[j].NewVersion, ups[low].NewVersion) < 0 {
+				low = j
 			}
-			low := i
-			for _, j := range idx[n+1:] {
-				if ups[j].Bucket == ups[i].Bucket && s.Compare(ups[j].NewVersion, ups[low].NewVersion) < 0 {
-					low = j
-				}
+		}
+		l := ups[low]
+		for _, j := range idx[n:] {
+			u := &ups[j]
+			if u.Bucket != l.Bucket || u.NewVersion == l.NewVersion {
+				continue
 			}
-			l := ups[low]
-			for _, j := range idx[n:] {
-				u := &ups[j]
-				if u.Bucket != l.Bucket || u.NewVersion == l.NewVersion {
-					continue
-				}
-				u.NewVersion, u.NewDigest, u.NewChecksum, u.Advisories = l.NewVersion, l.NewDigest, l.NewChecksum, nil
-				if us, ok := versioning.Get(u.Dep.Versioning); ok {
-					u.Type = us.Kind(u.Dep.Version, u.NewVersion)
-				} else {
-					u.Type = l.Type
-				}
+			u.NewVersion, u.NewDigest, u.NewChecksum, u.Advisories = l.NewVersion, l.NewDigest, l.NewChecksum, nil
+			if us, ok := versioning.Get(u.Dep.Versioning); ok {
+				u.Type = us.Kind(u.Dep.Version, u.NewVersion)
+			} else {
+				u.Type = l.Type
 			}
+			applyPolicy(u, policy(j, u.Type))
 		}
 	}
 }
