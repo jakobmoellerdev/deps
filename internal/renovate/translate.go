@@ -258,6 +258,9 @@ var managerMap = func() map[string][]expansion {
 		"helm-requirements": {{"helm", []string{"requirements"}}},
 		"flux":              {{"helm", []string{"flux"}}},
 		"argocd":            {{"helm", []string{"argocd"}}},
+		"sveltos":           {{"helm", []string{"sveltos"}}},
+		"bun":               {{"npm", nil}},
+		"pip-compile":       {{"pip_requirements", nil}},
 		"gitlabci-include":  {{"gitlabci", []string{"include"}}},
 		"regex":             {{"custom", nil}},
 		"custom.regex":      {{"custom", nil}},
@@ -272,7 +275,7 @@ var managerMap = func() map[string][]expansion {
 // depTypeUniverse lists the dep types of deps managers that several Renovate managers share.
 var depTypeUniverse = map[string][]string{
 	"docker":   {"dockerfile", "compose", "workflow", "action", "kubernetes", "helm"},
-	"helm":     {"chart", "requirements", "helmfile", "k0s", "flux", "argocd"},
+	"helm":     {"chart", "requirements", "helmfile", "k0s", "flux", "argocd", "sveltos"},
 	"gitlabci": {"image", "service", "include", "component"},
 }
 
@@ -282,13 +285,13 @@ var categories = map[string][]string{
 	"ci":         {"github-actions", "gitlabci", "gitlabci-include", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines"},
 	"golang":     {"gomod"},
 	"docker":     {"dockerfile", "docker-compose", "devcontainer"},
-	"kubernetes": {"kubernetes", "helm-requirements", "helm-values", "helmv3", "helmfile", "flux", "argocd", "kustomize"},
+	"kubernetes": {"kubernetes", "helm-requirements", "helm-values", "helmv3", "helmfile", "flux", "argocd", "sveltos", "kustomize"},
 	"helm":       {"helm-requirements", "helm-values", "helmv3", "helmfile"},
-	"cd":         {"helmfile", "flux", "argocd"},
-	"js":         {"npm", "nvm", "nodenv"},
+	"cd":         {"helmfile", "flux", "argocd", "sveltos"},
+	"js":         {"npm", "bun", "nvm", "nodenv"},
 	"node":       {"nvm", "nodenv"},
 	"rust":       {"cargo", "rust-toolchain"},
-	"python":     {"pip_requirements", "pep621", "pep723", "setup-cfg", "pip_setup", "poetry", "pipenv", "pyenv", "runtime-version", "homeassistant-manifest"},
+	"python":     {"pip_requirements", "pip-compile", "pep621", "pep723", "setup-cfg", "pip_setup", "poetry", "pipenv", "pyenv", "runtime-version", "homeassistant-manifest"},
 	"terraform":  {"terraform", "terraform-version", "tflint-plugin", "terragrunt"},
 	"iac":        {"terraform", "terragrunt", "ansible", "ansible-galaxy"},
 	"ansible":    {"ansible", "ansible-galaxy"},

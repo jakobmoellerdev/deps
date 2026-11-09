@@ -336,6 +336,22 @@ func TestLoadRules(t *testing.T) {
     ignore: true` + defaultExclusions,
 		},
 		{
+			name: "sveltos, bun and pip-compile managers",
+			src: `{packageRules: [{matchManagers: ['sveltos'], automerge: true},
+				{matchManagers: ['bun'], groupName: 'js'},
+				{matchManagers: ['pip-compile'], enabled: false}]}`,
+			rules: `  - # packageRules[0]
+    managers: [helm]
+    depTypes: [sveltos]
+    automerge: true
+  - # packageRules[1]
+    managers: [npm]
+    group: js
+  - # packageRules[2]
+    managers: [pip_requirements]
+    ignore: true` + defaultExclusions,
+		},
+		{
 			name: "matchCurrentValue regexes and exact strings are currentVersion",
 			src: `{packageRules: [{matchCurrentValue: '/^1/', matchPackageNames: ['a'], enabled: false},
 				{matchCurrentValue: '!/-rc/i', matchPackageNames: ['b'], enabled: false},
@@ -470,7 +486,7 @@ func TestLoadRules(t *testing.T) {
     ignore: true
   - # enabledManagers
     managers: [helm]
-    depTypes: [requirements, helmfile, k0s, flux, argocd]
+    depTypes: [requirements, helmfile, k0s, flux, argocd, sveltos]
     ignore: true
 ` + strings.Join(func() []string {
 				var out []string
