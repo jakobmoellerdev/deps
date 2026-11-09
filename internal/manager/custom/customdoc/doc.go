@@ -48,7 +48,7 @@ var Doc = refdoc.Manager{
 		{Reason: "invalid deb registry URL \"<url>\": <why>", When: "a `deb` registry URL that is not `http(s)` or lacks `suite`, `components` or `binaryArch`"},
 		{Reason: "invalid artifactory name \"<name>\"", When: "an `artifactory` dep whose registry URL joined with its name (or the name alone, without a registry URL) is no `https://` or `http://` URL"},
 		{Reason: "invalid <datasource> name \"<name>\"", When: "a `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases` or `forgejo-tags` dep whose name is not a project path (`owner/repo`; GitLab also `group/subgroup/project`) or a repository URL"},
-		{Reason: "invalid <datasource> registry URL \"<url>\"", When: "such a dep or an `endoflife-date` dep whose (first) `registryUrl` is not an `http(s)://` URL"},
+		{Reason: "invalid <datasource> registry URL \"<url>\"", When: "such a dep or an `endoflife-date` or `galaxy-collection` dep whose (first) `registryUrl` is not an `http(s)://` URL, or a `maven`, `sbt-package` or `sbt-plugin` dep with a `registryUrl` that is not one (sbt: also `ivy=<url>`)"},
 		{Reason: "invalid extractVersion: <err>", When: "a Renovate marker's `extractVersion=` or a JSONata result's `extractVersion` is not an RE2 regexp with a `version` group"},
 		{Reason: "unknown datasource \"<ds>\"", When: "the datasource is neither built in nor `custom.<name>` of `customDatasources`"},
 	},
@@ -65,7 +65,7 @@ var Doc = refdoc.Manager{
 			"Regex mode takes `<repository>/<chart>` as the name; JSONata results may give the repository as `registryUrl` and the chart as the name.",
 		}},
 		{Title: "Registry URLs", Items: []string{
-			"`helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `endoflife-date` and the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags deps take their registry from `registryUrl`: a Renovate marker's `registryUrl=`, else a regex `(?P<registryUrl>…)` group or a JSONata result's `registryUrl`, else the entry's `registryUrl` field. Other datasources ignore it.",
+			"`helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `endoflife-date`, `galaxy-collection`, `maven`, `sbt-package`, `sbt-plugin` and the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags deps take their registry from `registryUrl`: a Renovate marker's `registryUrl=`, else a regex `(?P<registryUrl>…)` group or a JSONata result's `registryUrl`, else the entry's `registryUrl` field. Other datasources ignore it.",
 			"`# renovate: datasource=gitlab-packages packageName=gitlab-org/cli:glab registryUrl=https://gitlab.com` (`<project>:<package>`; without a registry URL the configured GitLab instance).",
 			"`# renovate: datasource=rpm depName=golang registryUrl=https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/repodata/` (several whitespace-separated repositories are merged); rpm deps use the `rpm` versioning unless the marker, the regex group or the entry sets one.",
 			"`# renovate: datasource=apk depName=bash registryUrl=https://dl-cdn.alpinelinux.org/alpine?branch=v3.22&components=main&arch=x86_64` above `RUN apk add bash=5.2.37-r0` (one index per component); apk deps use the `apk` versioning unless the marker, the regex group or the entry sets one.",
@@ -79,6 +79,13 @@ var Doc = refdoc.Manager{
 		{Title: "GitLab, Gitea and Forgejo releases and tags", Items: []string{
 			"`gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases` and `forgejo-tags` take the project path as name and the instance as `registryUrl` (marker field, `custom[].registryUrl` or a `registryUrl` group): `# renovate: datasource=gitlab-releases depName=gitlab-org/cli registryUrl=https://gitlab.example.com`.",
 			"Without `registryUrl` they use Renovate's defaults: `https://gitlab.com`, `https://gitea.com` and `https://code.forgejo.org`. A repository URL as name (`https://codeberg.org/forgejo/forgejo`) names the instance too.",
+		}},
+		{Title: "Galaxy, Maven, sbt and GitHub runners", Items: []string{
+			"The datasources of the ansible-galaxy, maven, sbt and github-actions managers work from custom managers too, with the versioning of those managers unless the marker, the `versioning` group or the entry sets one: `galaxy` (`tag`), `galaxy-collection` (`pep440`), `maven`, `sbt-package` and `sbt-plugin` (`maven`), `github-runners` (`docker`).",
+			"`galaxy-collection`: `# renovate: datasource=galaxy-collection depName=community.general`; a `registryUrl` is the Galaxy server (only the first is used), else `DEPS_GALAXY_URL` or https://galaxy.ansible.com.",
+			"`maven`: `# renovate: datasource=maven depName=org.apache.maven:maven-core`; the `registryUrl`s are the repositories, in order, else Maven Central. settings.xml mirrors and credentials apply to maven and maven-wrapper deps only.",
+			"`sbt-package` (`org.typelevel:cats-core_2.13`, with the Scala suffix) and `sbt-plugin` (`org.scalameta:sbt-scalafmt`, looked up for sbt 1.x): `registryUrl`s are Maven repositories, `ivy=<url>` and the sbt plugin releases repository Ivy-layout ones. Without one, `sbt-package` uses Maven Central and `sbt-plugin` the sbt plugin releases repository, then Maven Central, as sbt does.",
+			"`github-runners`: the runner name (`ubuntu`, `macos`, `windows`, `xcode`) and its version (`24.04`).",
 		}},
 		{Title: "Release names (extractVersion)", Items: []string{
 			"A Renovate marker's `extractVersion=<RE2>` (or a rule's `extractVersion`, which overrides it) maps release names to versions: `# renovate: datasource=github-releases depName=jqlang/jq extractVersion=^jq-(?<version>.+)$`.",

@@ -899,3 +899,60 @@ func TestRegistryURLEndoflife(t *testing.T) {
 		{1, "endoflife-date", "nodejs", "https://a.example/api https://b.example/api", "semver", "24.11.0", "", ""},
 	})
 }
+
+// The datasources of the ansible-galaxy, maven, sbt and github-actions managers work from
+// custom managers: maven and sbt registryUrls are the repositories (sbt `ivy=` marks Ivy
+// layout, sbt-plugin defaults to sbt's plugin repositories), a galaxy-collection
+// registryUrl is the Galaxy server, and each datasource defaults to its manager's versioning.
+func TestManagerDatasources(t *testing.T) {
+	src := strings.Join([]string{
+		"# renovate: datasource=galaxy depName=geerlingguy.java", // 1
+		"JAVA_ROLE=2.5.0", // 2
+		"# renovate: datasource=galaxy-collection depName=community.general", // 3
+		"GENERAL=9.2.0", // 4
+		"# renovate: datasource=galaxy-collection depName=ansible.posix registryUrl=https://hub.example.com/api/galaxy/", // 5
+		"POSIX=1.6.2", // 6
+		"# renovate: datasource=galaxy-collection depName=a.b registryUrl=oci://x", // 7
+		"AB=1.0.0", // 8
+		"# renovate: datasource=maven depName=org.apache.maven:maven-core", // 9
+		"MAVEN=3.9.9", // 10
+		"# renovate: datasource=maven depName=com.example:lib registryUrl=https://repo.example.com/maven2", // 11
+		"LIB=1.2.3", // 12
+		"# renovate: datasource=sbt-package depName=org.typelevel:cats-core_2.13", // 13
+		"CATS=2.12.0", // 14
+		"# renovate: datasource=sbt-plugin depName=org.scalameta:sbt-scalafmt", // 15
+		"SCALAFMT=2.5.2", // 16
+		"# renovate: datasource=sbt-plugin depName=com.github.sbt:sbt-git registryUrl=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases", // 17
+		"GIT=2.1.0", // 18
+		"# renovate: datasource=sbt-package depName=x:y_2.13 registryUrl=ivy=https://ivy.example.com/releases", // 19
+		"Y=1.0.0", // 20
+		"# renovate: datasource=sbt-package depName=x:z_3 registryUrl=ivy=file:///repo", // 21
+		"Z=1.0.0", // 22
+		"# renovate: datasource=github-runners depName=ubuntu", // 23
+		"RUNNER=24.04", // 24
+	}, "\n")
+	m := one(t, config.Custom{Files: []string{"f"}})
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "galaxy", "geerlingguy.java", "", "tag", "2.5.0", "", ""},
+		{4, "galaxy-collection", "community.general", "", "pep440", "9.2.0", "", ""},
+		{6, "galaxy-collection", "ansible.posix", "https://hub.example.com/api/galaxy/", "pep440", "1.6.2", "", ""},
+		{8, "galaxy-collection", "a.b", "oci://x", "pep440", "", "", `invalid galaxy-collection registry URL "oci://x"`},
+		{10, "maven", "org.apache.maven:maven-core", "", "maven", "3.9.9", "", ""},
+		{12, "maven", "com.example:lib", "https://repo.example.com/maven2/", "maven", "1.2.3", "", ""},
+		{14, "sbt-package", "org.typelevel:cats-core_2.13", "", "maven", "2.12.0", "", ""},
+		{16, "sbt-plugin", "org.scalameta:sbt-scalafmt", "ivy=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ https://repo.maven.apache.org/maven2/", "maven", "2.5.2", "", ""},
+		{18, "sbt-plugin", "com.github.sbt:sbt-git", "ivy=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/", "maven", "2.1.0", "", ""},
+		{20, "sbt-package", "x:y_2.13", "ivy=https://ivy.example.com/releases/", "maven", "1.0.0", "", ""},
+		{22, "sbt-package", "x:z_3", "ivy=file:///repo", "maven", "", "", `invalid sbt-package registry URL "ivy=file:///repo"`},
+		{24, "github-runners", "ubuntu", "https://github.com/actions/runner-images", "docker", "24.04", "", ""},
+	})
+
+	re := one(t, config.Custom{Files: []string{"f"}, Match: `(?m)^(?P<datasource>\S+) (?P<name>\S+) (?P<version>\S+)$`,
+		RegistryURL: "https://repo.example.com/maven2 https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ ivy=http://ivy.example.com"})
+	src = "maven org.slf4j:slf4j-api 2.0.16\nsbt-plugin com.github.sbt:sbt-git 2.1.0\ngalaxy-collection community.general 9.2.0"
+	check(t, src, extract(t, re, src), DepTypeRegex, []want{
+		{1, "maven", "org.slf4j:slf4j-api", "https://repo.example.com/maven2 https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ ivy=http://ivy.example.com", "maven", "2.0.16", "", `invalid maven registry URL "ivy=http://ivy.example.com"`},
+		{2, "sbt-plugin", "com.github.sbt:sbt-git", "https://repo.example.com/maven2/ ivy=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ ivy=http://ivy.example.com/", "maven", "2.1.0", "", ""},
+		{3, "galaxy-collection", "community.general", "https://repo.example.com/maven2", "pep440", "9.2.0", "", ""},
+	})
+}

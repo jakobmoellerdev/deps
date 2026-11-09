@@ -36,6 +36,10 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	debds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deb"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/galaxy"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubrunners"
+	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
+	sbtds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/sbt"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom/customdoc"
@@ -92,7 +96,8 @@ type customManager struct {
 // registryURLDatasources are the datasources whose deps take a registryUrl (entry field,
 // regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
 // datasources keep an empty Source.
-var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name, "artifactory", forge.GitLabReleases, forge.GitLabTags, forge.GiteaReleases, forge.GiteaTags, forge.ForgejoReleases, forge.ForgejoTags, "endoflife-date"}
+var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name, "artifactory", forge.GitLabReleases, forge.GitLabTags, forge.GiteaReleases, forge.GiteaTags, forge.ForgejoReleases, forge.ForgejoTags, "endoflife-date",
+	galaxy.CollectionName, mavends.Name, sbtds.PackageName, sbtds.PluginName}
 
 // setRegistry sets d.Source to registry when d's datasource takes a registry URL.
 func setRegistry(d *dep.Dep, registry string) {
@@ -567,6 +572,12 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //     (forge.ParseRepo).
 //   - endoflife-date: Name is the endoflife.date product; Source is the registryUrl (the API
 //     base URL), if any; only its first URL is used.
+//   - galaxy: Name is the role `namespace.name`; Source is empty. galaxy-collection: Name is
+//     the collection `namespace.name`; Source is the first registryUrl (the Galaxy server), if
+//     any.
+//   - maven, sbt-package, sbt-plugin: Name is `groupId:artifactId` (mavenSource).
+//   - github-runners: Name is the runner name (`ubuntu`); Source is the runner-images
+//     repository, as for runs-on labels.
 //   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
 func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
@@ -619,7 +630,19 @@ func (m *customManager) classify(d *dep.Dep) {
 		if _, err := forge.ParseRepo(d.Datasource, d.Name, d.Source); err != nil {
 			d.Skip = err.Error()
 		}
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob", galaxy.Name:
+	case galaxy.CollectionName:
+		if f := strings.Fields(d.Source); len(f) > 0 {
+			if !httpURL(f[0]) {
+				d.Skip = fmt.Sprintf("invalid galaxy-collection registry URL %q", f[0])
+				return
+			}
+			d.Source = f[0]
+		}
+	case mavends.Name, sbtds.PackageName, sbtds.PluginName:
+		mavenSource(d)
+	case githubrunners.Name:
+		d.Source = githubrunners.SourceURL
 	case "endoflife-date":
 		if f := strings.Fields(d.Source); len(f) > 0 && !httpURL(f[0]) {
 			d.Skip = fmt.Sprintf("invalid endoflife-date registry URL %q", f[0])
@@ -658,6 +681,37 @@ func (m *customManager) classify(d *dep.Dep) {
 			d.Skip = fmt.Sprintf("unknown datasource %q", ds)
 		}
 	}
+}
+
+// mavenSource turns the registryUrls of a maven, sbt-package or sbt-plugin dep into its
+// Source: the `http(s)://` repository URLs with a trailing slash, Maven Central when there
+// are none (sbt-plugin: the sbt plugin releases Ivy repository, then Maven Central, as sbt
+// resolves plugins). sbt URLs are Maven-layout repositories unless written `ivy=<url>` or
+// the sbt plugin releases repository, which are Ivy-layout. Other URLs skip the dep.
+func mavenSource(d *dep.Dep) {
+	urls := strings.Fields(d.Source)
+	sbt := d.Datasource != mavends.Name
+	if len(urls) == 0 && d.Datasource == sbtds.PluginName {
+		urls = []string{sbtds.IvyID + "=" + sbtds.PluginReleases, mavends.Central}
+	}
+	for i, u := range urls {
+		ivy := false
+		if sbt {
+			u, ivy = strings.CutPrefix(u, sbtds.IvyID+"=")
+		}
+		if !httpURL(u) {
+			d.Skip = fmt.Sprintf("invalid %s registry URL %q", d.Datasource, urls[i])
+			return
+		}
+		if !strings.HasSuffix(u, "/") {
+			u += "/"
+		}
+		if sbt && (ivy || u == sbtds.PluginReleases) {
+			u = sbtds.IvyID + "=" + u
+		}
+		urls[i] = u
+	}
+	d.Source = strings.Join(urls, " ")
 }
 
 // helmRepository reports whether repo is a chart repository URL with a host.

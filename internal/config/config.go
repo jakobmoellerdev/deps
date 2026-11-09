@@ -565,19 +565,24 @@ type Custom struct {
 	FileFormat  string    `yaml:"fileFormat" jsonschema_description:"Format the jsonata query reads the file as: json (comments and trailing commas allowed), yaml (a list of the file's documents) or toml; required with jsonata."`
 	Datasource  string    `yaml:"datasource" jsonschema_description:"Datasource of the matched deps, or custom.<name> of customDatasources; required in regex mode unless match has a (?P<datasource>) group. Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) are aliases."`
 	Name        string    `yaml:"name" jsonschema_description:"Dependency name; required in regex mode unless match has a (?P<name>), (?P<depName>) or (?P<packageName>) group."`
-	Versioning  string    `yaml:"versioning" jsonschema:"default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version, pub for dart, hex for hex), else semver."` // default semver; see DefaultCustomVersioning
+	Versioning  string    `yaml:"versioning" jsonschema:"default=semver" jsonschema_description:"Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex or regex:<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version and galaxy-collection, pub for dart, hex for hex, maven for maven, sbt-package and sbt-plugin, tag for galaxy, docker for github-runners), else semver."` // default semver; see DefaultCustomVersioning
 	Checksum    *Checksum `yaml:"checksum" jsonschema_description:"Where the checksum of a new version comes from; regex mode only, requires a (?P<checksum>) group in match."`
-	RegistryURL string    `yaml:"registryUrl" jsonschema_description:"Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb, artifactory, gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases, forgejo-tags and endoflife-date datasources; a (?P<registryUrl>) group, a Renovate marker's registryUrl= or a JSONata result's registryUrl overrides it. Ignored for other datasources."`
+	RegistryURL string    `yaml:"registryUrl" jsonschema_description:"Registry URLs (whitespace-separated) of the matched deps, for the helm, gitlab-packages, rpm, apk, deb, artifactory, gitlab-releases, gitlab-tags, gitea-releases, gitea-tags, forgejo-releases, forgejo-tags, endoflife-date, galaxy-collection, maven, sbt-package and sbt-plugin datasources; a (?P<registryUrl>) group, a Renovate marker's registryUrl= or a JSONata result's registryUrl overrides it. Ignored for other datasources."`
 }
 
 // customVersionings are the default versionings of custom[] deps by datasource; deps of other
 // datasources default to semver.
-var customVersionings = map[string]string{"rpm": "rpm", "apk": "apk", "deb": "deb", "python-version": "pep440", "dart": "pub", "hex": "hex"}
+var customVersionings = map[string]string{
+	"rpm": "rpm", "apk": "apk", "deb": "deb", "python-version": "pep440", "dart": "pub", "hex": "hex",
+	"galaxy": "tag", "galaxy-collection": "pep440", "maven": "maven", "sbt-package": "maven", "sbt-plugin": "maven", "github-runners": "docker",
+}
 
 // DefaultCustomVersioning is the versioning of a custom[] dep of datasource (canonical name)
 // whose entry, marker and regex group set none: the datasource's own scheme (rpm for rpm,
 // RPM's epoch-version-release order; apk for apk, apk-tools' order;
 // deb for deb, dpkg's order; pep440 for python-version; pub for dart; hex for hex), else semver.
+// Deps of the datasources of built-in managers use that manager's scheme (galaxy tag,
+// galaxy-collection pep440, maven, sbt-package and sbt-plugin maven, github-runners docker).
 func DefaultCustomVersioning(datasource string) string {
 	return cmp.Or(customVersionings[datasource], "semver")
 }
