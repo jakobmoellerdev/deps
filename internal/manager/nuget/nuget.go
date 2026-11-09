@@ -72,7 +72,7 @@ func (*nugetManager) Name() string { return Name }
 
 // Match reports whether the slash path is an MSBuild project or import (`.csproj`, `.fsproj`,
 // `.vbproj`, `.props`, `.targets`, but not the `*.nuget.g.props` restore writes),
-// `global.json`, `dotnet-tools.json` or a `nuget.config` (any case).
+// `global.json`, `dotnet-tools.json`, a `nuget.config` or a `packages.config` (any case).
 func (*nugetManager) Match(p string) bool {
 	base := strings.ToLower(path.Base(p))
 	switch path.Ext(base) {
@@ -83,7 +83,7 @@ func (*nugetManager) Match(p string) bool {
 	case ".json":
 		return base == "global.json" || base == "dotnet-tools.json"
 	case ".config":
-		return base == "nuget.config"
+		return base == "nuget.config" || base == packagesConfig
 	}
 	return false
 }
@@ -91,9 +91,10 @@ func (*nugetManager) Match(p string) bool {
 // Extract returns one dep per versioned package item (PackageReference, PackageVersion,
 // GlobalPackageReference, PackageDownload, DotNetCliToolReference; `Include` or `Update`,
 // `VersionOverride` over `Version`, attribute or child element), MSBuild SDK (`<Project
-// Sdk="Name/Version">`, `<Sdk>`, `<Import Sdk>`), global.json SDK and msbuild-sdks entry, and
-// dotnet-tools.json tool. A `$(Name)` version is resolved through the file's own properties;
-// Link resolves the rest. A nuget.config yields no deps: Link applies its sources.
+// Sdk="Name/Version">`, `<Sdk>`, `<Import Sdk>`), global.json SDK and msbuild-sdks entry,
+// dotnet-tools.json tool and packages.config `<package>`. A `$(Name)` version is resolved
+// through the file's own properties; Link resolves the rest. A nuget.config yields no deps:
+// Link applies its sources.
 func (m *nugetManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	var items []item
 	var p *project
@@ -115,6 +116,8 @@ func (m *nugetManager) Extract(file string, src []byte, _ manager.Env) ([]dep.De
 		items, err = globalJSON(src)
 	case base == "dotnet-tools.json":
 		items, err = dotnetTools(src)
+	case base == packagesConfig:
+		items, err = parsePackagesConfig(src)
 	default:
 		p, err = parseProject(src)
 		if p != nil {

@@ -3049,10 +3049,11 @@ Updates NuGet package references, MSBuild project SDKs and .NET tools in MSBuild
 - `global.json` (comments allowed, as the .NET SDK reads it)
 - `dotnet-tools.json` (the local tool manifest, usually `.config/dotnet-tools.json`)
 - `nuget.config` (any case: `NuGet.Config`, `NuGet.config`): package sources only, no deps
+- `packages.config` (any case), the legacy per-project manifest
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `nuget` | `PackageReference`, `PackageVersion` (central package management), `GlobalPackageReference`, `PackageDownload` and `DotNetCliToolReference` items in an `<ItemGroup>` (conditions included) with `Include` or `Update` and a `Version` (or `VersionOverride`, which wins) attribute or child element; dotnet-tools.json `tools.<id>.version` | `nuget` (nuget.org, or the nuget.config package sources) | `nuget` | updated |
+| `nuget` | `PackageReference`, `PackageVersion` (central package management), `GlobalPackageReference`, `PackageDownload` and `DotNetCliToolReference` items in an `<ItemGroup>` (conditions included) with `Include` or `Update` and a `Version` (or `VersionOverride`, which wins) attribute or child element; dotnet-tools.json `tools.<id>.version`; packages.config `<package id="…" version="…">` | `nuget` (nuget.org, or the nuget.config package sources) | `nuget` | updated |
 | `msbuild-sdk` | `<Project Sdk="Microsoft.Build.NoTargets/3.7.134">` (each `;`-separated `Name/Version`), `<Sdk Name="…" Version="…" />`, `<Import Project="…" Sdk="…" Version="…" />`, global.json `msbuild-sdks` entries; SDKs without a version ship with the .NET SDK and are not deps | `nuget` (nuget.org, or the nuget.config package sources) | `nuget` | updated |
 | `dotnet-sdk` | global.json `sdk.version` (name `dotnet-sdk`); `rollForward` is kept | `dotnet-version` | `nuget` | updated |
 
@@ -3090,6 +3091,10 @@ Updates NuGet package references, MSBuild project SDKs and .NET tools in MSBuild
 
 - global.json's `sdk.version` is the .NET SDK (`dotnet-sdk`, datasource `dotnet-version`): updates move it to a newer SDK, feature bands included (`8.0.100` → `8.0.404`, a patch), and to newer majors as major updates; previews only from a preview. Its `msbuild-sdks` (`"Microsoft.Build.Traversal": "4.1.0"`) are NuGet packages of dep type `msbuild-sdk`.
 - dotnet-tools.json `tools.<id>.version` entries are NuGet packages of dep type `nuget` (`dotnet-ef`, `csharpier`); the `commands` are kept.
+
+**packages.config.**
+
+- Each `<package id version>` of a packages.config is a `nuget` dep; its `version` attribute is replaced (`targetFramework`, `allowedVersions` and `developmentDependency` are kept, `allowedVersions` is not read). The projects (`*.csproj`, `*.fsproj`, `*.vbproj`) in the same directory reference the installed package by its folder, `packages\<id>.<version>\`: every such path (`HintPath`, `<Import Project>`, the `EnsureNuGetPackageBuildImports` conditions) of the updated package moves to the new version in the same update, as `Update-Package` does. The assembly version of a `<Reference Include="…, Version=…">` and paths below the package folder (`lib\net45\`) are not changed; run `nuget restore` and a build to check that the new version still ships them.
 
 **Lockfile (`apply`, `run`).**
 
