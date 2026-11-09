@@ -9,7 +9,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -203,62 +202,7 @@ func vendorModule(ctx context.Context, tmp, dir, overlayArg, prefix string, out 
 	if _, err := run(ctx, dir, []string{"GOWORK=off", "GOFLAGS="}, args...); err != nil {
 		return inDir("go mod vendor", dir, err)
 	}
-	return diffTree(filepath.Join(dir, "vendor"), filepath.Join(tmp, "vendor"), prefix+"vendor", out)
-}
-
-// diffTree adds to out, under prefix plus their slash path below the directories, the
-// regular files of next whose content differs from, or is missing in, cur, and nil for the
-// files of cur missing in next. Contents are read one file at a time and kept only when
-// they changed; a size difference skips reading the old file.
-func diffTree(cur, next, prefix string, out map[string][]byte) error {
-	seen := map[string]bool{}
-	err := filepath.WalkDir(next, func(p string, e fs.DirEntry, err error) error {
-		if err != nil || !e.Type().IsRegular() {
-			return err
-		}
-		rel, err := filepath.Rel(next, p)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		seen[rel] = true
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		old := filepath.Join(cur, filepath.FromSlash(rel))
-		if st, err := os.Stat(old); err == nil && st.Mode().IsRegular() && st.Size() == int64(len(b)) {
-			ob, err := os.ReadFile(old)
-			if err != nil {
-				return err
-			}
-			if bytes.Equal(ob, b) {
-				return nil
-			}
-		}
-		out[prefix+"/"+rel] = b
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	err = filepath.WalkDir(cur, func(p string, e fs.DirEntry, err error) error {
-		if err != nil || e.IsDir() {
-			return err
-		}
-		rel, err := filepath.Rel(cur, p)
-		if err != nil {
-			return err
-		}
-		if rel = filepath.ToSlash(rel); !seen[rel] {
-			out[prefix+"/"+rel] = nil
-		}
-		return nil
-	})
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	return err
+	return toolrun.DiffTree(filepath.Join(dir, "vendor"), filepath.Join(tmp, "vendor"), prefix+"vendor", out)
 }
 
 // pathMismatch is the go command's refusal of a module version whose go.mod declares another
@@ -606,7 +550,7 @@ func processWorkspace(ctx context.Context, dir string, manifests, files map[stri
 	if _, err := run(ctx, dir, env, "work", "vendor", "-o", filepath.Join(tmp, "vendor"), arg); err != nil {
 		return nil, inDir("go work vendor", dir, err)
 	}
-	if err := diffTree(filepath.Join(dir, "vendor"), filepath.Join(tmp, "vendor"), "vendor", out); err != nil {
+	if err := toolrun.DiffTree(filepath.Join(dir, "vendor"), filepath.Join(tmp, "vendor"), "vendor", out); err != nil {
 		return nil, err
 	}
 	return out, nil

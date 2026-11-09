@@ -261,7 +261,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"bitbucket-pipelines": {"bitbucketpipelines", "docker"}, "woodpecker": {"woodpecker", "docker"}, "droneci": {"droneci", "docker"},
 		"circleci": {"circleci", "docker"}, "azure-pipelines": {"azurepipelines", "docker"}, "travis": {"travis", "toolversions"}, "buildkite": {"buildkite", "docker"}, "tekton": {"tekton", "docker"},
 		"crow": {"woodpecker", "docker"}, "cloudbuild": {"cloudbuild", "docker"}, "velaci": {"velaci", "docker"},
-		"bazel-module": {"bazel"}, "bazelisk": {"bazel"}, "scalafmt": {"sbt"}, "kotlin-script": {"kotlinscript"}, "leiningen": {"clojure"}, "deps-edn": {"clojure"}, "cake": {"nuget"}, "mix": {"beam"}, "gleam": {"beam"}, "cocoapods": {"bundler"}, "deno": {"deno", "npm"},
+		"bazel-module": {"bazel"}, "bazelisk": {"bazel"}, "scalafmt": {"sbt"}, "kotlin-script": {"kotlinscript"}, "leiningen": {"clojure"}, "deps-edn": {"clojure"}, "cake": {"nuget"}, "mix": {"beam"}, "gleam": {"beam"}, "cocoapods": {"bundler"}, "deno": {"deno", "npm"}, "jsonnet-bundler": {"jsonnetbundler"},
 		"custom":  {"custom", filepath.Join("..", "datasource", "deb")},
 		"ansible": {"ansible", "docker"}, "ansible-galaxy": {"ansible", "../pyreq"},
 		"quadlet": {"quadlet", "docker"}, "crossplane": {"crossplane", "docker"},

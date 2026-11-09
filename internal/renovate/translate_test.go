@@ -302,6 +302,11 @@ func TestLoadRules(t *testing.T) {
 			rules: "  - # packageRules[0]\n    managers: [deno]\n    datasources: [jsr, deno]\n    group: deno\n  - # packageRules[1]\n    managers: [npm, deno, nvm, nodenv, bun-version]\n    ignore: true" + defaultExclusions,
 		},
 		{
+			name:  "jsonnet-bundler manager and kubernetes category",
+			src:   `{packageRules: [{matchManagers: ['jsonnet-bundler'], groupName: 'jsonnet'}, {matchCategories: ['kubernetes'], matchManagers: ['jsonnet-bundler', 'kustomize'], enabled: false}]}`,
+			rules: "  - # packageRules[0]\n    managers: [jsonnet-bundler]\n    group: jsonnet\n  - # packageRules[1]\n    managers: [jsonnet-bundler, kustomize]\n    ignore: true" + defaultExclusions,
+		},
+		{
 			name:  "devcontainer manager",
 			src:   `{packageRules: [{matchManagers: ['devcontainer'], enabled: false}]}`,
 			rules: "  - # packageRules[0]\n    managers: [devcontainer]\n    ignore: true" + defaultExclusions,

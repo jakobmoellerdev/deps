@@ -42,6 +42,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homeassistant"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homebrew"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/jenkins"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/jsonnetbundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kotlinscript"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kubernetes"
@@ -178,6 +179,7 @@ var Builtin = []Entry{
 	{depsconfig.Doc, depsconfig.New},
 	{ocb.Doc, ocb.New},
 	{deno.Doc, deno.New},
+	{jsonnetbundler.Doc, jsonnetbundler.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,

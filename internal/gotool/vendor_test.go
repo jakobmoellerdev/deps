@@ -169,12 +169,3 @@ func TestProcessWorkspaceVendored(t *testing.T) {
 		t.Error("want error for a source file of an unpatched module")
 	}
 }
-
-func TestDiffTree(t *testing.T) {
-	next := t.TempDir()
-	writeTree(t, next, map[string]string{"a/x.go": "x"})
-	out := map[string][]byte{}
-	if err := diffTree(filepath.Join(t.TempDir(), "missing"), next, "vendor", out); err != nil || string(out["vendor/a/x.go"]) != "x" || len(out) != 1 {
-		t.Errorf("diffTree into a missing tree = %q, %v", out, err)
-	}
-}

@@ -2945,6 +2945,34 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "jsonnet-bundler"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "dependency"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "custom"
                   ]
                 },
@@ -3063,6 +3091,7 @@
               "deps-config",
               "ocb",
               "deno",
+              "jsonnet-bundler",
               "custom"
             ]
           },
@@ -3290,6 +3319,7 @@
               "compilerOptions.jsxImportSource",
               "compilerOptions.jsxImportSourceTypes",
               "lint.plugins",
+              "dependency",
               "annotation",
               "regex",
               "jsonata"

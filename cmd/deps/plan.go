@@ -24,6 +24,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/deno"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/jsonnetbundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
@@ -177,6 +178,9 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	}
 	if !write && hasManager(res, deno.Name) {
 		fmt.Fprintln(stderr, "note    deno.lock changes are computed by apply/run")
+	}
+	if !write && hasManager(res, jsonnetbundler.Name) {
+		fmt.Fprintln(stderr, "note    jsonnetfile.lock.json changes are computed by apply/run")
 	}
 	if write && slices.ContainsFunc(changes, func(c engine.FileChange) bool { return c.Gitlink }) {
 		fmt.Fprintln(stderr, "note    submodule commits are staged in the git index; run git submodule update to check them out")
