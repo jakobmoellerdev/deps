@@ -8,23 +8,23 @@
     let
       # The release binaries per Nix system. deps' nix manager moves the urls, hashes and the
       # version to each new release in one pull request.
-      version = "0.6.0";
+      version = "0.7.0";
       downloads = {
         x86_64-linux = {
-          url = "https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.6.0/deps_linux_amd64";
-          hash = "sha256-k+moQ2TujoZYi3Hb/BoGa46tjBl0rgAj65f1XPlATf0=";
+          url = "https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.7.0/deps_linux_amd64.tar.xz";
+          hash = "sha256-C0Gnc3JDO1AEdNdoYeKq4OV19yelyhckvIxfeRtT5cA=";
         };
         aarch64-linux = {
-          url = "https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.6.0/deps_linux_arm64";
-          hash = "sha256-x34KnFBYpKWFS+/QaGHTP5V3Dz1vUwIq39gBNOLqZ2A=";
+          url = "https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.7.0/deps_linux_arm64.tar.xz";
+          hash = "sha256-bWOGxOknpN4hdA6PQ6Zvq1PqaWyzqkTztHJVKNwwjzk=";
         };
         x86_64-darwin = {
-          url = "https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.6.0/deps_darwin_amd64";
-          hash = "sha256-wEvKwBN/1s/ZzkMs95N2l9NNk8zqqk97kv0ecgT4BIY=";
+          url = "https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.7.0/deps_darwin_amd64.tar.xz";
+          hash = "sha256-jaPxB59VpPALo+xqtKVfnP1viLkpqMpmfu8T4R+fd/s=";
         };
         aarch64-darwin = {
-          url = "https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.6.0/deps_darwin_arm64";
-          hash = "sha256-F3Ff9bOkt72fpe25r+hKNzyAPPgQ7WSKZsZMJaAhjKk=";
+          url = "https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.7.0/deps_darwin_arm64.tar.xz";
+          hash = "sha256-V5idnU2M6NqWROeKGdObznfbMM2vcebBHqjkoZQGlo4=";
         };
       };
       systems = builtins.attrNames downloads;
@@ -36,18 +36,16 @@
           pname = "deps";
           inherit version;
           src = pkgs.fetchurl downloads.${pkgs.stdenv.hostPlatform.system};
-          dontUnpack = true;
+          sourceRoot = ".";
           nativeBuildInputs = [ pkgs.installShellFiles ];
           installPhase = ''
             runHook preInstall
-            install -Dm755 "$src" "$out/bin/deps"
-            runHook postInstall
-          '';
-          postInstall = pkgs.lib.optionalString (pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform) ''
+            install -Dm755 deps "$out/bin/deps"
             installShellCompletion --cmd deps \
-              --bash <("$out/bin/deps" completion bash) \
-              --zsh <("$out/bin/deps" completion zsh) \
-              --fish <("$out/bin/deps" completion fish)
+              --bash completions/deps.bash \
+              --zsh completions/_deps \
+              --fish completions/deps.fish
+            runHook postInstall
           '';
           doInstallCheck = pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform;
           installCheckPhase = ''
