@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -37,6 +38,9 @@ type lockedPackage struct {
 	Dist    struct {
 		Type string `json:"type"`
 	} `json:"dist"`
+	Source struct {
+		URL string `json:"url"`
+	} `json:"source"`
 }
 
 // lockedPackages returns the entries of a composer.lock's `packages` and `packages-dev` by
@@ -63,18 +67,21 @@ func lockedPackages(b []byte) (map[string]lockedPackage, error) {
 // packages to (dep.Dep.Locked). A package the lock installs from a path repository (dist type
 // `path`) is skipped, a branch version (`dev-main`) is not a locked version. A constraint
 // without a lower bound (`*`, `<2.0`) takes the locked version as its Version, or is skipped
-// without one. An unreadable lockfile is reported once and its deps are bumped (LockUnread).
+// without one. A package the lock installs from a vcs repository of composer.json that has no
+// name (its `source.url`) is looked up as git-tags of that repository. An unreadable lockfile
+// is reported once and its deps are bumped (LockUnread).
 func (composerManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	type lockState struct {
-		pkgs map[string]lockedPackage
-		err  error
+		pkgs  map[string]lockedPackage
+		repos *repositories // composer.json's, read on first need
+		err   error
 	}
 	locks := map[string]*lockState{}
 	var errs []error
 	for _, f := range files {
 		for j := range f {
 			d := &f[j]
-			if d.Skip != "" || d.Range == "" {
+			if d.Skip != "" && d.Skip != skipNoRepository || d.Range == "" {
 				continue
 			}
 			file := lockPath(d.File)
@@ -91,9 +98,21 @@ func (composerManager) ReadLocks(root string, files [][]dep.Dep) []error {
 				}
 				locks[file] = st
 			}
+			p, locked := st.pkgs[strings.ToLower(d.Name)]
+			if locked && d.Datasource == Datasource && p.Source.URL != "" {
+				if st.repos == nil {
+					st.repos = manifestRepositories(filepath.Join(root, filepath.FromSlash(d.File)))
+				}
+				if src := st.repos.lockedSource(p.Source.URL); src != "" {
+					d.Datasource, d.Source, d.Skip = GitDatasource, src, ""
+				}
+			}
+			if d.Skip != "" {
+				continue
+			}
 			if st.err != nil {
 				d.LockUnread = true
-			} else if p, ok := st.pkgs[strings.ToLower(d.Name)]; ok {
+			} else if locked {
 				if p.Dist.Type == "path" {
 					d.Skip = skipPath
 					continue
@@ -274,4 +293,17 @@ func composer(ctx context.Context, dir, scope string, args ...string) error {
 	}
 	msg := cmp.Or(strings.ReplaceAll(toolrun.Tail(out.Bytes(), 20), dir, scope), err.Error())
 	return fmt.Errorf("composer %s in %s: %s", args[0], scope, msg)
+}
+
+// manifestRepositories reads the `repositories` of the composer.json at p (none when it is
+// unreadable: Extract reported that).
+func manifestRepositories(p string) *repositories {
+	var m struct {
+		Repositories jsontext.Value `json:"repositories"`
+	}
+	r := &repositories{}
+	if b, err := os.ReadFile(p); err == nil && json.Unmarshal(b, &m) == nil && len(m.Repositories) > 0 {
+		*r = parseRepositories(m.Repositories)
+	}
+	return r
 }

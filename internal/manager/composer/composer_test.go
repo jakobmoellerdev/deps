@@ -182,6 +182,15 @@ func TestExtractRepositories(t *testing.T) {
 	if d := find(deps, "x/y"); d.Datasource != GitDatasource || d.Source != "https://gitlab.com/x/y" {
 		t.Errorf("named vcs = %+v", d)
 	}
+	// A vcs repository without a name provides the package of its repository path.
+	deps = extract(t, "composer.json", []byte(`{"repositories": [{"type": "vcs", "url": "git@github.com:Acme/Tool.git"}, {"type": "vcs", "url": "file:///srv/x"}, {"type": "vcs"}],
+		"require": {"acme/tool": "^1.0", "acme/other": "^1.0"}}`))
+	if d := find(deps, "acme/tool"); d.Datasource != GitDatasource || d.Source != "https://github.com/Acme/Tool" {
+		t.Errorf("unnamed vcs = %+v", d)
+	}
+	if d := find(deps, "acme/other"); d.Datasource != Datasource || d.Source != "" {
+		t.Errorf("acme/other = %+v", d)
+	}
 }
 
 func TestExtractErrors(t *testing.T) {

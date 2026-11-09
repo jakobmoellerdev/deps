@@ -207,3 +207,34 @@ func TestMaintain(t *testing.T) {
 		t.Error("mirror of a missing dir")
 	}
 }
+
+func TestReadLocksUnnamedVCS(t *testing.T) {
+	root := t.TempDir()
+	manifest := `{"repositories": [{"packagist.org": false}, {"type": "vcs", "url": "https://gitlab.example.com/platform/php-sdk.git"}],
+	"require": {"acme/sdk": "^2.0", "acme/missing": "^1.0", "acme/none": "^1.0"}}`
+	write(t, root, map[string]string{
+		"app/composer.json": manifest,
+		"app/composer.lock": `{"packages": [
+			{"name": "acme/sdk", "version": "2.3.1", "source": {"type": "git", "url": "git@gitlab.example.com:platform/php-sdk.git", "reference": "abc"}},
+			{"name": "acme/missing", "version": "1.0.0", "source": {"type": "git", "url": "https://github.com/acme/missing.git"}}]}`,
+	})
+	deps := extract(t, "app/composer.json", []byte(manifest))
+	if d := find(deps, "acme/sdk"); d.Skip != skipNoRepository {
+		t.Fatalf("before ReadLocks: %+v", d)
+	}
+	if errs := New().(manager.LockReader).ReadLocks(root, [][]dep.Dep{deps}); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if d := find(deps, "acme/sdk"); d.Datasource != GitDatasource || d.Source != "https://gitlab.example.com/platform/php-sdk" || d.Skip != "" || d.Locked != "2.3.1" {
+		t.Errorf("acme/sdk = %+v", d)
+	}
+	for _, name := range []string{"acme/missing", "acme/none"} {
+		if d := find(deps, name); d.Datasource != Datasource || d.Skip != skipNoRepository {
+			t.Errorf("%s = %+v", name, d)
+		}
+	}
+	// An unreadable composer.json maps nothing.
+	if r := manifestRepositories(filepath.Join(root, "nope.json")); len(r.unnamed) != 0 {
+		t.Errorf("repos = %+v", r)
+	}
+}

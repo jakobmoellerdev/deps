@@ -2882,7 +2882,7 @@ Updates the version constraints of PHP packages in `composer.json` and moves `co
 **Repositories.**
 
 - `repositories` entries (array or object form) of type `composer` are searched in order with their `only`/`exclude` name patterns, then Packagist unless `"packagist.org": false` (or `"packagist": false`) disables it; the first repository that has the package answers, as Composer's canonical repositories do. See the `packagist` row under [Datasources](#datasources) for the repository formats and `COMPOSER_AUTH`.
-- A `vcs` (`git`, `github`, `gitlab`, `bitbucket`) repository keyed by a package name (object form, or with a `name`, as Renovate reads it) makes that package a `git-tags` dep of its URL; vcs repositories without a name are not mapped to packages (Composer reads their composer.json to find out), so their packages are still looked up in the composer repositories.
+- A `vcs` (`git`, `github`, `gitlab`, `bitbucket`) repository keyed by a package name (object form, or with a `name`, as Renovate reads it) makes that package a `git-tags` dep of its URL; a vcs repository without a name (Composer reads its composer.json to find out the package) provides the package that composer.lock installed from it (`source.url`), else the package named like its repository path (`acme/tool` from `https://github.com/acme/tool`); its other packages are still looked up in the composer repositories.
 
 **Constraints.**
 

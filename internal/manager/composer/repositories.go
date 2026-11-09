@@ -34,11 +34,16 @@ func (r composerRepo) admits(name string) bool {
 	return (len(r.only) == 0 || match(r.only)) && !match(r.exclude)
 }
 
+// vcsRepo is a vcs repository by its repository path (`acme/foo`) and git source
+// (manager.GitRepo).
+type vcsRepo struct{ path, src string }
+
 // repositories is what composer.json's `repositories` says about where packages come from.
 type repositories struct {
 	composer    []composerRepo
 	noPackagist bool              // `"packagist.org": false`
 	git         map[string]string // vcs repositories keyed by the package they provide → URL
+	unnamed     []vcsRepo         // vcs repositories without a name
 	path        map[string]bool   // path repositories keyed by the package they provide
 	inline      map[string]bool   // packages defined by package repositories
 }
@@ -78,9 +83,14 @@ func parseRepositories(raw jsontext.Value) repositories {
 				r.composer = append(r.composer, composerRepo{url: u, only: stringList(m["only"]), exclude: stringList(m["exclude"])})
 			}
 		case "vcs", "git", "github", "gitlab", "bitbucket":
-			if name != "" && u != "" {
+			switch {
+			case name != "" && u != "":
 				r.git = setDefault(r.git)
 				r.git[name] = u
+			case u != "":
+				if p, src := manager.GitRepo(u); src != "" {
+					r.unnamed = append(r.unnamed, vcsRepo{path: p, src: src})
+				}
 			}
 		case "path":
 			names := []string{name}
@@ -154,8 +164,9 @@ func stringList(v any) []string {
 }
 
 // apply sets where each dep is looked up: a package of a package repository or a path
-// repository is skipped, one of a vcs repository keyed by its name is looked up as git-tags of
-// that repository, any other in the composer repositories that admit it (in order), then
+// repository is skipped, one of a vcs repository keyed by its name, or of a vcs repository
+// without a name whose repository path is the package name (`acme/foo` from
+// `https://github.com/acme/foo`), is looked up as git-tags of that repository, any other in the composer repositories that admit it (in order), then
 // Packagist unless it is disabled (Source "" when only Packagist is left).
 func (r repositories) apply(deps []dep.Dep) {
 	for i := range deps {
@@ -180,6 +191,10 @@ func (r repositories) apply(deps []dep.Dep) {
 			}
 			continue
 		}
+		if src := r.unnamedSource(name); src != "" {
+			d.Datasource, d.Source = GitDatasource, src
+			continue
+		}
 		var srcs []string
 		for _, c := range r.composer {
 			if c.admits(name) {
@@ -194,4 +209,25 @@ func (r repositories) apply(deps []dep.Dep) {
 		}
 		d.Source = strings.Join(srcs, " ")
 	}
+}
+
+// unnamedSource returns the git source of the vcs repository without a name whose repository
+// path is the lower-case package name, "" when there is none.
+func (r repositories) unnamedSource(name string) string {
+	for _, v := range r.unnamed {
+		if strings.EqualFold(v.path, name) {
+			return v.src
+		}
+	}
+	return ""
+}
+
+// lockedSource returns the vcs repository without a name that the lock says a package was
+// installed from: the one whose git source is that of the package's `source.url`.
+func (r repositories) lockedSource(url string) string {
+	_, src := manager.GitRepo(url)
+	if src != "" && slices.ContainsFunc(r.unnamed, func(v vcsRepo) bool { return v.src == src }) {
+		return src
+	}
+	return ""
 }
