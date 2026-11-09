@@ -566,8 +566,7 @@ func TestSectionNoCompareWithoutTags(t *testing.T) {
 		t.Errorf("requests = %q", f.reqs)
 	}
 	// Without a git-tags datasource there is no tag list to check either.
-	n.sources = nil
-	n.lists = map[string]*listEntry{}
+	n = f.newNotes(nil, nil, nil)
 	if got := n.Section(t.Context(), []dep.Update{u}); strings.Contains(got, "compare") {
 		t.Errorf("compare link without tags: %q", got)
 	}
@@ -651,6 +650,11 @@ func TestSectionCanceled(t *testing.T) {
 	got := n.Section(ctx, []dep.Update{u})
 	if strings.Contains(got, "two") || len(f.reqs) != 0 {
 		t.Errorf("canceled section = %q, requests %q", got, f.reqs)
+	}
+	// The listing failed by the canceled caller is not shared: the next caller lists again.
+	<-sem
+	if got := n.Section(t.Context(), []dep.Update{u}); !strings.Contains(got, "two") {
+		t.Errorf("section after a canceled caller = %q, want the notes", got)
 	}
 }
 

@@ -119,6 +119,32 @@ func TestHelperCachesPerHost(t *testing.T) {
 	}
 }
 
+// A lookup failed by its caller's canceled context is not cached: the next caller asks again.
+func TestHelperCanceledNotCached(t *testing.T) {
+	calls := 0
+	a := NewAuth(platform.Info{}, "", func(string) string { return "" }, WithHelper(
+		func(ctx context.Context, _ string) (string, string, bool) {
+			calls++
+			if ctx.Err() != nil {
+				return "", "", false
+			}
+			return "u", "p", true
+		}))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, _, ok := a.Helper(ctx, "h"); ok {
+		t.Fatal("Helper(canceled) ok")
+	}
+	for range 2 {
+		if u, p, ok := a.Helper(t.Context(), "h"); !ok || u != "u" || p != "p" {
+			t.Fatalf("Helper after a canceled caller = %q, %q, %v", u, p, ok)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("helper calls = %d, want 2 (canceled, then once shared)", calls)
+	}
+}
+
 func TestNilAuth(t *testing.T) {
 	var a *Auth
 	if _, _, ok := a.Static("x"); ok {

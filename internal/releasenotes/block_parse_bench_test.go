@@ -17,12 +17,13 @@ func BenchmarkBlockParseTagsOnce(b *testing.B) {
 	if !ok {
 		b.Fatal("resolve")
 	}
-	e := &listEntry{}
-	e.once.Do(func() {})
+	rels := make([]release, 0, 100)
 	for i := 99; i >= 0; i-- {
-		e.rels = append(e.rels, release{tag: fmt.Sprintf("v1.%d.0", i), body: "notes", url: "https://github.com/acme/tool/releases/v1." + strconv.Itoa(i) + ".0"})
+		rels = append(rels, release{tag: fmt.Sprintf("v1.%d.0", i), body: "notes", url: "https://github.com/acme/tool/releases/v1." + strconv.Itoa(i) + ".0"})
 	}
-	n.lists[strconv.Itoa(int(r.kind))+" "+strings.ToLower(r.web())] = e
+	if _, err := n.lists.Do(b.Context(), strconv.Itoa(int(r.kind))+" "+strings.ToLower(r.web()), func() ([]release, error) { return rels, nil }); err != nil {
+		b.Fatal(err)
+	}
 	it := item{d: d, from: "v1.90.0", to: "v1.99.0"}
 	b.ReportAllocs()
 	for b.Loop() {

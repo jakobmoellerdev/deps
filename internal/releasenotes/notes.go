@@ -44,14 +44,9 @@ type Notes struct {
 	sources map[string]datasource.Datasource
 	now     func() time.Time
 
-	mu    sync.Mutex
-	lists map[string]*listEntry // kind + repository URL
-}
-
-type listEntry struct {
-	once sync.Once
-	rels []release
-	err  error
+	// lists holds one page of releases per kind + repository URL; a listing failed by its
+	// caller's context (the per-PR deadline) is not shared.
+	lists datasource.Memo[string, []release]
 }
 
 // New returns Notes using the shared client and request semaphore for Gitea/Forgejo and gh for
@@ -61,7 +56,7 @@ type listEntry struct {
 func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, gh *githubapi.Client, sources map[string]datasource.Datasource) *Notes {
 	return &Notes{
 		client: client, sem: sem, auth: auth, gh: gh, sources: sources,
-		now: time.Now, lists: make(map[string]*listEntry),
+		now: time.Now,
 	}
 }
 

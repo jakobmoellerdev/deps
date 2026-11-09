@@ -52,8 +52,11 @@ type Auth struct {
 
 type static struct{ user, token string }
 
+// cred is the git credential helper result for one host; mu serializes its lookups and done
+// marks user, pass and ok final.
 type cred struct {
-	once       sync.Once
+	mu         sync.Mutex
+	done       bool
 	user, pass string
 	ok         bool
 }
@@ -102,8 +105,10 @@ func (a *Auth) Static(host string) (user, pass string, ok bool) {
 	return s.user, s.token, true
 }
 
-// Helper asks the git credential helper for host once; success and failure are both cached.
-// host may include a port, as in the git credential protocol.
+// Helper asks the git credential helper for host once; success and failure are both cached,
+// except a failure that ended after ctx did (a canceled run or caller): the next caller asks
+// again with its own context, as datasource.Once does. host may include a port, as in the git
+// credential protocol.
 func (a *Auth) Helper(ctx context.Context, host string) (user, pass string, ok bool) {
 	if a == nil || a.fill == nil {
 		return "", "", false
@@ -115,14 +120,21 @@ func (a *Auth) Helper(ctx context.Context, host string) (user, pass string, ok b
 		a.helper[host] = c
 	}
 	a.mu.Unlock()
-	c.once.Do(func() {
-		c.user, c.pass, c.ok = a.fill(ctx, host)
-		if c.ok && a.onSecret != nil {
-			a.onSecret(c.pass)
-		}
-		slog.DebugContext(ctx, "git credential helper", "host", host, "found", c.ok)
-	})
-	return c.user, c.pass, c.ok
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done {
+		return c.user, c.pass, c.ok
+	}
+	user, pass, ok = a.fill(ctx, host)
+	slog.DebugContext(ctx, "git credential helper", "host", host, "found", ok)
+	if !ok && ctx.Err() != nil {
+		return "", "", false
+	}
+	if ok && a.onSecret != nil {
+		a.onSecret(pass)
+	}
+	c.user, c.pass, c.ok, c.done = user, pass, ok, true
+	return user, pass, ok
 }
 
 // gitCredentialFill runs `git credential fill` without any interactive prompt.

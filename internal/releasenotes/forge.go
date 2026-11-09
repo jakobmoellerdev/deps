@@ -39,23 +39,18 @@ func newRelease(tag, url, body string, draft, pre bool) release {
 // releases lists the newest releases of r (one page) once per repository per run.
 func (n *Notes) releases(ctx context.Context, r repoRef) ([]release, error) {
 	key := strconv.Itoa(int(r.kind)) + " " + strings.ToLower(r.web())
-	n.mu.Lock()
-	e := n.lists[key]
-	if e == nil {
-		e = &listEntry{}
-		n.lists[key] = e
-	}
-	n.mu.Unlock()
-	e.once.Do(func() {
+	return n.lists.Do(ctx, key, func() ([]release, error) {
 		start := time.Now()
+		var rels []release
+		var err error
 		if r.kind == github {
-			e.rels, e.err = n.fetchGitHub(ctx, r)
+			rels, err = n.fetchGitHub(ctx, r)
 		} else {
-			e.rels, e.err = n.fetchGitea(ctx, r)
+			rels, err = n.fetchGitea(ctx, r)
 		}
-		slog.DebugContext(ctx, "release notes listed", "repo", r.web(), "releases", len(e.rels), "duration", time.Since(start), "err", e.err)
+		slog.DebugContext(ctx, "release notes listed", "repo", r.web(), "releases", len(rels), "duration", time.Since(start), "err", err)
+		return rels, err
 	})
-	return e.rels, e.err
 }
 
 // fetchGitHub lists the releases of a GitHub repository (GraphQL when authenticated).
