@@ -33,7 +33,7 @@ func TestGitLabMRFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := PR{Number: 3, Title: "t", Body: "b", Head: "deps/a", HeadSHA: "abc", Base: "main", State: "open", URL: "https://gl/grp/sub/r/-/merge_requests/3",
-		CreatedAt: time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC), Labels: []string{"Rebase", "dependencies"}} // AutoMerge stays false
+		CreatedAt: time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC), Labels: []string{"Rebase", "dependencies"}, AutoMerge: true, PushCancelsAutoMerge: true}
 	if pr.Mergeable == nil || !*pr.Mergeable {
 		t.Errorf("mergeable = %v", pr.Mergeable)
 	}
@@ -364,10 +364,12 @@ func TestGitLabAutoMerge(t *testing.T) {
 	}{
 		{"scheduled", "auto", route{body: `{"iid":7,"merge_when_pipeline_succeeds":true}`}, "",
 			"map[auto_merge:true merge_when_pipeline_succeeds:true sha:abc should_remove_source_branch:true]"},
-		{"squash", "squash", route{body: `{}`}, "",
+		{"squash", "squash", route{body: `{"merge_when_pipeline_succeeds":true}`}, "",
 			"map[auto_merge:true merge_when_pipeline_succeeds:true sha:abc should_remove_source_branch:true squash:true]"},
-		{"merge", "merge", route{body: `{}`}, "",
+		{"merged right away", "merge", route{body: `{"state":"merged"}`}, "",
 			"map[auto_merge:true merge_when_pipeline_succeeds:true sha:abc should_remove_source_branch:true squash:false]"},
+		// GitLab answered without setting auto-merge (e.g. the push it awaits is still processed).
+		{"not set", "", route{body: `{"state":"opened","merge_when_pipeline_succeeds":false,"detailed_merge_status":"checking"}`}, "pending", ""},
 		{"not mergeable yet", "", route{code: http.StatusMethodNotAllowed, body: `{"message":"405 Method Not Allowed"}`}, "pending", ""},
 		{"conflicts", "rebase", route{code: http.StatusNotAcceptable, body: `{"message":"Branch cannot be merged"}`}, "pending", ""},
 		{"head moved", "", route{code: http.StatusConflict, body: `{"message":"SHA does not match HEAD of source branch"}`}, "pending", ""},

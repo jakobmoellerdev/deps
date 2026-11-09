@@ -55,6 +55,28 @@ func TestRunAutomerge(t *testing.T) {
 			wantA: AutomergeEnabled,
 		},
 		{
+			name:  "enabled on GitLab and not pushed is kept",
+			pc:    fakePC{open: freshA(platform.PR{AutoMerge: true, PushCancelsAutoMerge: true})},
+			wantA: AutomergeEnabled,
+		},
+		{
+			name:       "a push canceled GitLab's auto-merge: requested again",
+			pc:         fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "stale", HeadSHA: "aaaa", AutoMerge: true, PushCancelsAutoMerge: true}}},
+			wantA:      AutomergeRequested,
+			wantEnable: []string{"1:squash@" + pushed},
+		},
+		{
+			name:  "a push keeps GitHub's auto-merge",
+			pc:    fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "stale", HeadSHA: "aaaa", AutoMerge: true}}},
+			wantA: AutomergeEnabled,
+		},
+		{
+			name:   "dry run of a GitLab update would request again",
+			dryRun: true,
+			pc:     fakePC{open: []platform.PR{{Number: 1, Head: branchA, Title: titleA, Body: "stale", HeadSHA: "aaaa", AutoMerge: true, PushCancelsAutoMerge: true}}},
+			wantA:  AutomergeWould,
+		},
+		{
 			name:  "mixed group is not automerged",
 			group: true,
 			wantA: "",

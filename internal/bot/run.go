@@ -933,7 +933,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 			a.Status = StatusWouldCreate
 			return a, &platform.PR{}, nil
 		}
-		return a, pr, nil
+		return a, pushedPR(*pr, pr.HeadSHA), nil
 	}
 
 	commit, err := g.Commit(ctx, s.head, changes, commitMessage(grp), o.AuthorName, o.AuthorEmail)
@@ -945,9 +945,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 		return a, nil, err
 	}
 	if pr != nil {
-		pushed := *pr
-		pushed.HeadSHA = commit
-		target = &pushed
+		target = pushedPR(*pr, commit)
 	}
 	if rebase {
 		// Content and fingerprint are unchanged, so the PR title and body stay as they are
@@ -974,6 +972,14 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	a.Status, a.Number, a.URL = StatusCreated, np.Number, np.URL
 	np.HeadSHA = cmp.Or(np.HeadSHA, commit)
 	return a, &np, nil
+}
+
+// pushedPR returns pr after its branch was pushed to commit: on GitLab the push canceled its
+// auto-merge, so it is requested again.
+func pushedPR(pr platform.PR, commit string) *platform.PR {
+	pr.HeadSHA = commit
+	pr.AutoMerge = pr.AutoMerge && !pr.PushCancelsAutoMerge
+	return &pr
 }
 
 // withoutPR reports whether grp's branch is pushed without a PR: branch automerge, or a

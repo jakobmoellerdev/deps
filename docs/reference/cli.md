@@ -607,7 +607,7 @@ Only keys without a passphrase are supported; a protected key fails before any w
 | Outcome | Meaning |
 |---|---|
 | `automerge` | platform auto-merge requested (or already scheduled); the forge merges once required checks pass |
-| `automerge enabled` | GitHub reports auto-merge enabled already; not requested again |
+| `automerge enabled` | GitHub (`auto_merge`) or GitLab (`merge_when_pipeline_succeeds`) reports auto-merge enabled already, and this run did not push the branch (a push cancels it on GitLab); not requested again |
 | `automerge pending` | Gitea/Forgejo cannot schedule it yet (mergeability check of a fresh push still running), or GitLab refused it for now (draft, conflicts, failed or missing required pipeline, approvals, head moved); the next run asks again |
 | `automerge waiting for checks` | GitHub will not auto-merge (auto-merge disallowed, or nothing to wait for) and the PR is not mergeable yet or its statuses/check runs are not all green; the next run checks again |
 | `merged` | merged directly: the GitHub fallback (mergeable with all statuses and check runs green), or a branch automerge branch fast-forwarded into the base and deleted |

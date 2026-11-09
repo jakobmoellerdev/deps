@@ -100,23 +100,24 @@ type gitlabMR struct {
 	Labels       []string  `json:"labels"`
 	Draft        bool      `json:"draft"`
 	HasConflicts bool      `json:"has_conflicts"`
+	// MergeWhenPipelineSucceeds reports auto-merge as set (the MR JSON keeps this name after
+	// GitLab 17.11 renamed the request parameter to auto_merge).
+	MergeWhenPipelineSucceeds bool `json:"merge_when_pipeline_succeeds"`
 	// DetailedMergeStatus is mergeable, conflict, need_rebase, or why the MR waits (checking,
 	// ci_must_pass, not_approved, …).
 	DetailedMergeStatus string `json:"detailed_merge_status"`
 }
 
-// pr converts m. AutoMerge stays false although GitLab reports merge_when_pipeline_succeeds:
-// a push to the source branch cancels auto-merge (GitLab 19.5), and the bot keeps the flag
-// of the PR it listed when it pushes, so it asks again on every run; the request is
-// idempotent. Mergeable is false for conflicts and when a fast-forward project needs a
-// rebase (deps rebuilds the branch), true when GitLab reports it mergeable, and nil while
-// GitLab checks it or the MR waits for something else (pipeline, approvals, …).
+// pr converts m. AutoMerge is merge_when_pipeline_succeeds, which a push to the source branch
+// cancels (PushCancelsAutoMerge). Mergeable is false for conflicts and when a fast-forward
+// project needs a rebase (deps rebuilds the branch), true when GitLab reports it mergeable,
+// and nil while GitLab checks it or the MR waits for something else (pipeline, approvals, …).
 func (m *gitlabMR) pr() PR {
 	pr := PR{
 		Number: m.IID, Title: m.Title, Body: m.Description, Head: m.SourceBranch, HeadSHA: m.SHA,
 		Base: m.TargetBranch,
 		URL:  m.WebURL, CreatedAt: m.CreatedAt, Merged: m.State == "merged", Draft: m.Draft,
-		State: "open",
+		State: "open", AutoMerge: m.MergeWhenPipelineSucceeds, PushCancelsAutoMerge: true,
 	}
 	if m.State == "closed" || m.State == "merged" {
 		pr.State = "closed"
@@ -355,18 +356,23 @@ func (g *gitlabClient) RemovePRLabel(ctx context.Context, n int, label string) e
 // merge_when_pipeline_succeeds (auto_merge since GitLab 17.11, both are sent): GitLab merges
 // when the head pipeline succeeds, or right away when there is none to wait for. 405, 406, 409
 // and 422 (draft, conflicts, still checking, head moved, pipeline required but missing, not
-// approved, …) are ErrAutoMergePending: the next run asks again.
+// approved, …) are ErrAutoMergePending: the next run asks again. So is an answer with the MR
+// neither merged nor set to auto-merge.
 func (g *gitlabClient) EnableAutoMerge(ctx context.Context, pr PR, strategy string) error {
-	err := g.merge(ctx, pr, strategy, true)
-	if mergeRefused(err) {
+	m, err := g.merge(ctx, pr, strategy, true)
+	switch {
+	case mergeRefused(err):
 		return fmt.Errorf("enable auto-merge !%d: %w: %w", pr.Number, ErrAutoMergePending, err)
+	case err == nil && m.State != "merged" && !m.MergeWhenPipelineSucceeds:
+		return fmt.Errorf("enable auto-merge !%d: %w: merge_when_pipeline_succeeds still false (state %s, %s)", pr.Number, ErrAutoMergePending, m.State, m.DetailedMergeStatus)
 	}
 	return err
 }
 
 // MergePR merges with PUT /merge_requests/:iid/merge; sha makes GitLab refuse a head that moved.
 func (g *gitlabClient) MergePR(ctx context.Context, pr PR, strategy string) error {
-	return g.merge(ctx, pr, strategy, false)
+	_, err := g.merge(ctx, pr, strategy, false)
+	return err
 }
 
 func mergeRefused(err error) bool {
@@ -381,7 +387,7 @@ func mergeRefused(err error) bool {
 // merge maps strategy onto GitLab's squash flag: the merge method (merge commit, semi-linear,
 // fast-forward) is a project setting. squash squashes; merge and rebase do not; auto keeps
 // the project's squash default.
-func (g *gitlabClient) merge(ctx context.Context, pr PR, strategy string, whenPipelineSucceeds bool) error {
+func (g *gitlabClient) merge(ctx context.Context, pr PR, strategy string, whenPipelineSucceeds bool) (gitlabMR, error) {
 	in := map[string]any{"should_remove_source_branch": true}
 	switch strategy {
 	case "squash":
@@ -390,7 +396,7 @@ func (g *gitlabClient) merge(ctx context.Context, pr PR, strategy string, whenPi
 		in["squash"] = false
 	case "", "auto":
 	default:
-		return fmt.Errorf("unknown merge strategy %q", strategy)
+		return gitlabMR{}, fmt.Errorf("unknown merge strategy %q", strategy)
 	}
 	if whenPipelineSucceeds {
 		in["merge_when_pipeline_succeeds"] = true
@@ -399,7 +405,9 @@ func (g *gitlabClient) merge(ctx context.Context, pr PR, strategy string, whenPi
 	if pr.HeadSHA != "" {
 		in["sha"] = pr.HeadSHA
 	}
-	return g.do(ctx, http.MethodPut, g.mrPath(pr.Number)+"/merge", in, nil)
+	var m gitlabMR
+	err := g.do(ctx, http.MethodPut, g.mrPath(pr.Number)+"/merge", in, &m)
+	return m, err
 }
 
 // Checks combines the latest pipeline of each ref that ran for sha (branch and merge request

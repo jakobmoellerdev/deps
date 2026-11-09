@@ -43,10 +43,14 @@ type PR struct {
 	Mergeable *bool
 	CreatedAt time.Time // zero when the API omits created_at
 	NodeID    string    // GitHub GraphQL node id (node_id); "" on Gitea and Forgejo
-	// AutoMerge reports auto-merge as already enabled (GitHub auto_merge non-null). Gitea and
-	// Forgejo do not report it, so it is always false there and requests are idempotent.
+	// AutoMerge reports auto-merge as already enabled (GitHub auto_merge non-null, GitLab
+	// merge_when_pipeline_succeeds). Gitea and Forgejo do not report it, so it is always false
+	// there and requests are idempotent.
 	AutoMerge bool
-	Labels    []string // label names; nil when it has none
+	// PushCancelsAutoMerge reports that a push to the PR's branch cancels auto-merge (GitLab),
+	// so AutoMerge no longer holds once the branch is pushed.
+	PushCancelsAutoMerge bool
+	Labels               []string // label names; nil when it has none
 	// Draft reports a draft PR: GitHub's, Gitea's and GitLab's draft field, on Gitea and
 	// Forgejo also a title with a work-in-progress prefix (WIP: or [WIP]).
 	Draft bool

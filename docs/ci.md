@@ -727,7 +727,7 @@ jobs:
 
 **GitLab:**
 
-1. deps calls `PUT /merge_requests/{iid}/merge` with `merge_when_pipeline_succeeds` (and `auto_merge`, its name since GitLab 17.11). GitLab merges once the head pipeline succeeds and deletes the branch; the MR shows *Set to auto-merge*. A push to the branch cancels auto-merge, so deps requests it again on every run (`automerge`).
+1. deps calls `PUT /merge_requests/{iid}/merge` with `merge_when_pipeline_succeeds` (and `auto_merge`, its name since GitLab 17.11). GitLab merges once the head pipeline succeeds and deletes the branch; the MR shows *Set to auto-merge*. deps reads `merge_when_pipeline_succeeds` back: a run that finds it set reports `automerge enabled` and sends nothing. A push to the branch (update, rebase) cancels auto-merge, so after its own push deps requests it again (`automerge`); GitLab may still cancel that request while it processes the push, or answer 409 (`automerge pending`) before it has, and the next run, finding it unset, requests it again.
 2. If the head commit has no pipeline, GitLab merges **immediately**, unless *Settings → Merge requests → Pipelines must succeed* is on. Turn it on, and make CI run on the deps branches or their merge requests.
 3. Refusals (draft, conflicts, a failed or missing required pipeline, missing approvals, a head that moved) are reported as `automerge pending` and requested again on the next run.
 4. `automergeStrategy` only chooses squashing: `squash` squashes, `merge` and `rebase` don't, `auto` keeps the project's squash default. Merge commit, semi-linear history or fast-forward is the project's merge method.
