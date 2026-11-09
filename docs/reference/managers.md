@@ -2463,6 +2463,7 @@ Updates the downloads of Homebrew formulae: every `url` with its `sha256`, per p
 **Checksum.**
 
 - Neither forge archives and assets nor npm tarballs come with a sha256 to look up, so deps downloads each new URL and hashes it (see Checksums); the new `sha256` is written together with the URL.
+- The `url`s, `mirror`s and `version` statement of one repository in a formula move only together: a new version is proposed only when every one of them has an update to it. When a release lacks the asset of one `url` (renamed, not built for a platform), none is updated, and the run reports `<n> of <m> deps of <name> in <file> resolved to <version>, the others did not; updated none` besides the failed checksum download, rather than a formula whose `version` or platforms disagree.
 
 **Blocks.**
 
@@ -4163,6 +4164,7 @@ Moves the inputs of Nix flakes to the newest commit of the branch they track (a 
 - The version of a download is its tag after the non-numeric prefix (`v1.2.3` → `1.2.3`), as for the homebrew manager; every occurrence of it in the URL (tag and asset name) is replaced together.
 - Forge archives, release assets and npm tarballs come without a sha256 to look up, so deps downloads each new URL and hashes it (see Checksums): the hash is that of the file, as `fetchurl` checks it. A plain set passed to another fetcher (`fetchzip url-and-hash-set`) cannot be told apart: its hash would be wrong, and nix reports the mismatch.
 - The downloads of one repository share its name (`<owner>/<repo>`), so per-system sources (`x86_64-linux`, `aarch64-darwin`, …) and their `version` attribute are updated in one PR. `flake.lock` does not lock downloads: their updates alone leave it as it is, and need no `nix`.
+- They move only together: a new version is proposed only when every download of the repository in the `flake.nix` and every `version` attribute that follows them has an update to it. When a release lacks one system's asset, none is updated, and the run reports `<n> of <m> deps of <name> in <file> resolved to <version>, the others did not; updated none` besides the failed hash download.
 
 **Lockfile (`apply`, `run`).**
 

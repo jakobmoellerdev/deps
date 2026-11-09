@@ -56,6 +56,7 @@ var Doc = refdoc.Manager{
 			"The version of a download is its tag after the non-numeric prefix (`v1.2.3` → `1.2.3`), as for the homebrew manager; every occurrence of it in the URL (tag and asset name) is replaced together.",
 			"Forge archives, release assets and npm tarballs come without a sha256 to look up, so deps downloads each new URL and hashes it (see Checksums): the hash is that of the file, as `fetchurl` checks it. A plain set passed to another fetcher (`fetchzip url-and-hash-set`) cannot be told apart: its hash would be wrong, and nix reports the mismatch.",
 			"The downloads of one repository share its name (`<owner>/<repo>`), so per-system sources (`x86_64-linux`, `aarch64-darwin`, …) and their `version` attribute are updated in one PR. `flake.lock` does not lock downloads: their updates alone leave it as it is, and need no `nix`.",
+			"They move only together: a new version is proposed only when every download of the repository in the `flake.nix` and every `version` attribute that follows them has an update to it. When a release lacks one system's asset, none is updated, and the run reports `<n> of <m> deps of <name> in <file> resolved to <version>, the others did not; updated none` besides the failed hash download.",
 		}},
 		{Title: "Lockfile (`apply`, `run`)", Body: lockBody,
 			Items: []string{"`plan` does not run nix, and prints `note    flake.lock changes are computed by apply/run`."}},

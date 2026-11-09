@@ -111,6 +111,13 @@ type Dep struct {
 	// the git index, is the dep's Digest (git-submodules); an update moves it to NewDigest.
 	// "" = none.
 	Gitlink string
+	// Together marks deps that move only as a whole: the downloads of a Homebrew formula or a
+	// Nix flake (per-platform urls with their checksums) and the statements following them
+	// (mirrors, version attributes). An update of a Together dep to a new version is proposed
+	// only when every Together dep with its Manager, File and Name that is not skipped has an
+	// update to that version; otherwise none of them is, and the engine reports the group's
+	// failure (one error per group and version) besides the errors of the deps that failed.
+	Together bool
 
 	Checksum       string          // custom: current sha256/sha512 hex pinned next to the version
 	ChecksumSpan   Span            // custom: checksum token

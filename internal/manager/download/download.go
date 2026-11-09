@@ -33,7 +33,8 @@ var (
 
 // Locate sets the datasource, versioning, name, source, extractVersion, version and version
 // spans (RefSpan, VersionSpan, InputSpan: one to three) of d from the URL u at offset off of
-// the file, and the artifact template of its checksum; false = not a supported URL.
+// the file, and the artifact template of its checksum, and makes d Together (the downloads of
+// a file with d's name move only as a whole); false = not a supported URL.
 // The version is the tag after its prefix (`v1.2.3`, `jq-1.8.2`, `libpng16-1.6.43`), which
 // the dep's extractVersion maps back; every occurrence of it in the tag and asset is replaced.
 // An npm tarball is named `<unscoped name>-<version>.tgz`.
@@ -70,7 +71,7 @@ func Locate(d *dep.Dep, u string, off int, env manager.Env) bool {
 	for _, at := range slices.Backward(spans) {
 		tmpl = tmpl[:at] + "{{version}}" + tmpl[at+len(d.Version):]
 	}
-	d.ChecksumSource = &dep.ChecksumSource{Artifact: tmpl}
+	d.ChecksumSource, d.Together = &dep.ChecksumSource{Artifact: tmpl}, true
 	setSpans(d, spans, off, len(d.Version))
 	return true
 }
@@ -78,8 +79,8 @@ func Locate(d *dep.Dep, u string, off int, env manager.Env) bool {
 // Follow returns the dep of type depType of a statement whose string value is at offset off
 // (line line) of the file, a mirror URL or a version, that moves with the download of dep d:
 // d's manager, file and lookup, with spans at the occurrences of d's version in value (after
-// the host of a URL; one to three of them, not inside a longer version). false when d is
-// skipped or value has no such occurrences.
+// the host of a URL; one to three of them, not inside a longer version), Together with d.
+// false when d is skipped or value has no such occurrences.
 func Follow(d dep.Dep, depType, value string, off, line int) (dep.Dep, bool) {
 	if d.Skip != "" {
 		return dep.Dep{}, false
@@ -101,7 +102,7 @@ func Follow(d dep.Dep, depType, value string, off, line int) (dep.Dep, bool) {
 	}
 	f := dep.Dep{
 		Manager: d.Manager, DepType: depType, File: d.File, Line: line, Datasource: d.Datasource, Versioning: d.Versioning,
-		Name: d.Name, Source: d.Source, ExtractVersion: d.ExtractVersion, Version: d.Version,
+		Name: d.Name, Source: d.Source, ExtractVersion: d.ExtractVersion, Version: d.Version, Together: true,
 	}
 	setSpans(&f, spans, off, len(d.Version))
 	return f, true

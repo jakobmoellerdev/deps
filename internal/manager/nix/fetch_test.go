@@ -145,7 +145,7 @@ func TestExtractDownloads(t *testing.T) {
 			var got []string
 			for _, d := range deps {
 				if isDownload(d) {
-					if d.Manager != Name || d.File != "flake.nix" {
+					if d.Manager != Name || d.File != "flake.nix" || d.Skip == "" && !d.Together {
 						t.Errorf("bad dep %+v", d)
 					}
 					got = append(got, renderDownload(d, src))

@@ -53,6 +53,7 @@ var Doc = refdoc.Manager{
 		}},
 		{Title: "Checksum", Items: []string{
 			"Neither forge archives and assets nor npm tarballs come with a sha256 to look up, so deps downloads each new URL and hashes it (see Checksums); the new `sha256` is written together with the URL.",
+			"The `url`s, `mirror`s and `version` statement of one repository in a formula move only together: a new version is proposed only when every one of them has an update to it. When a release lacks the asset of one `url` (renamed, not built for a platform), none is updated, and the run reports `<n> of <m> deps of <name> in <file> resolved to <version>, the others did not; updated none` besides the failed checksum download, rather than a formula whose `version` or platforms disagree.",
 		}},
 		{Title: "Blocks", Items: []string{
 			"`stable`, `on_*` and other blocks are part of the formula; each `resource` block is a scope of its own (its `url`, `sha256`, `mirror` and `version`).",

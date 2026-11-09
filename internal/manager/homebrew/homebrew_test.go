@@ -231,8 +231,8 @@ func TestExtractScopes(t *testing.T) {
 			}
 		}
 		g := got{d.DepType, d.Datasource, d.Name, d.Version, d.Line, n, d.ChecksumSpan.End > d.ChecksumSpan.Start}
-		if g != want[i] || d.Skip != "" {
-			t.Errorf("dep %d = %+v (skip %q), want %+v", i, g, d.Skip, want[i])
+		if g != want[i] || d.Skip != "" || !d.Together {
+			t.Errorf("dep %d = %+v (skip %q, together %v), want %+v", i, g, d.Skip, d.Together, want[i])
 		}
 	}
 }

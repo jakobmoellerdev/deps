@@ -514,6 +514,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	if err := sec.wait(); err != nil {
 		res.Errors = append(res.Errors, fmt.Errorf("security advisories: %w", err))
 	}
+	res.Errors = append(res.Errors, holdTogether(todo, outs, ups)...)
 	nUp, nSkip, nWarn, nPend := 0, 0, 0, 0
 	for i := range outs {
 		if outs[i].Err == nil && outs[i].Dep.Skip != "" {
@@ -555,6 +556,60 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	slog.InfoContext(ctx, "dependencies resolved", "updates", len(res.Updates), "errors", len(res.Errors), "duration", time.Since(start))
 	prog.End(PhaseResolve)
 	return res, nil
+}
+
+// holdTogether drops the updates of Together deps (dep.Dep.Together) to a new version that not
+// every dep of their group has: the deps with equal Manager, File and Name that are not
+// skipped, of which one that failed or is up to date has none. ups[i] are the updates of
+// todo[i], outs[i] its outcome. It returns one DepError per group and dropped version, located
+// at the group's first dep; the errors of the deps that failed are reported on their own.
+func holdTogether(todo []dep.Dep, outs []Trace, ups [][]dep.Update) []error {
+	type key struct{ manager, file, name string }
+	var keys []key // in order of first appearance
+	groups := map[key][]int{}
+	for i := range todo {
+		d := &todo[i]
+		if !d.Together || outs[i].Err == nil && outs[i].Dep.Skip != "" {
+			continue
+		}
+		k := key{d.Manager, d.File, d.Name}
+		if _, ok := groups[k]; !ok {
+			keys = append(keys, k)
+		}
+		groups[k] = append(groups[k], i)
+	}
+	var errs []error
+	for _, k := range keys {
+		g := groups[k]
+		if len(g) < 2 {
+			continue
+		}
+		moved := map[string]int{} // per new version, the deps of g updated to it
+		var versions []string     // in order of first appearance
+		for _, i := range g {
+			for j, u := range ups[i] {
+				if slices.ContainsFunc(ups[i][:j], func(p dep.Update) bool { return p.NewVersion == u.NewVersion }) {
+					continue
+				}
+				if moved[u.NewVersion] == 0 {
+					versions = append(versions, u.NewVersion)
+				}
+				moved[u.NewVersion]++
+			}
+		}
+		for _, v := range versions {
+			if moved[v] == len(g) {
+				continue
+			}
+			for _, i := range g {
+				ups[i] = slices.DeleteFunc(ups[i], func(u dep.Update) bool { return u.NewVersion == v })
+			}
+			d := &todo[g[0]]
+			errs = append(errs, &DepError{File: d.File, Line: d.Line, Name: d.Name,
+				Err: fmt.Errorf("%d of %d deps of %s in %s resolved to %s, the others did not; updated none", moved[v], len(g), d.Name, d.File, v)})
+		}
+	}
+	return errs
 }
 
 // defaultConcurrency is the per-upstream request limit Options.Concurrency defaults to, that
