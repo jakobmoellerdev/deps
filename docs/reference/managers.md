@@ -94,6 +94,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`glasskube`](#glasskube)
 - [`jenkins`](#jenkins)
 - [`deps-config`](#deps-config)
+- [`ocb`](#ocb)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -4215,6 +4216,39 @@ Updates the `#<ref>` of the `extends` entries of the repository's deps configura
 - A version-tag ref (`org/deps-config#v1.2.0`) gets updates to newer tags of the repository at the tag's precision (`v1` → `v2`), with release notes and compare link; only the ref is rewritten.
 - A commit ref (`org/deps-config#<40 hex>`) gets `digest` updates to the head of the repository's default branch.
 - Renovate's renovate-config manager updates `github>`, `gitlab>`, `gitea>` and `forgejo>` presets with a tag; deps' `extends` entries name a repository directly, so any forge and plain git URLs work.
+
+## ocb
+
+Updates the Go modules of [OpenTelemetry Collector Builder](https://github.com/open-telemetry/opentelemetry-collector/tree/main/cmd/builder) (ocb) configurations: the component `gomod` entries and `dist.otelcol_version`.
+
+**Files:**
+
+- any `*.yaml` / `*.yml` with a top-level `dist` mapping (`builder-config.yaml`, `manifest.yaml`, …); other YAML files yield nothing. Renovate's ocb manager matches no file by default (`managerFilePatterns: []`)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `collector` | `dist.otelcol_version` (older builders), the version of `go.opentelemetry.io/collector` without `v` | `go` with extractVersion `^v(?<version>.+)$` | `semver` | updated |
+| `connectors` | `connectors[].gomod: <module> <version>` | `go` | `go` | updated |
+| `exporters` | `exporters[].gomod` (Renovate's dep type `exports`) | `go` | `go` | updated |
+| `extensions` | `extensions[].gomod` | `go` | `go` | updated |
+| `processors` | `processors[].gomod` | `go` | `go` | updated |
+| `providers` | `providers[].gomod` (confmap providers) | `go` | `go` | updated |
+| `receivers` | `receivers[].gomod` | `go` | `go` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `no version` | a `gomod` value without a version |
+| `local module` | the entry has a `path`: the builder replaces the module with that directory |
+| `replaced` | the module is replaced in the `replaces` list (`<module> => ../local`), as the gomod manager skips replaced requirements |
+| `cannot locate value` | the value is written with escapes or as a block scalar |
+
+**Updates.**
+
+- Only the version token of a `gomod` value or `otelcol_version` is replaced; the module path and the rest of the file are kept.
+- The collector's core and contrib modules are released together; group them with a rule (`names: ['go.opentelemetry.io/collector**', 'github.com/open-telemetry/opentelemetry-collector-contrib/**'], group: otelcol`) to bump a distribution in one PR.
+- `dist.version` (the distribution's own version) is no dependency; Renovate's `bumpVersion` for it has no deps equivalent.
 
 ## custom
 

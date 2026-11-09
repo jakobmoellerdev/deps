@@ -283,6 +283,8 @@ func (t *translator) rule(origin string, r map[string]any) {
 					d = "go"
 				case "require":
 					d = "direct"
+				case "exports": // the ocb manager's exporters
+					d = "exporters"
 				}
 				if slices.Contains(config.DepTypes, d) {
 					depTypes = appendNew(depTypes, d)

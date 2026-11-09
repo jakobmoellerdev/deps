@@ -205,6 +205,18 @@ func TestLoadRules(t *testing.T) {
     ignore: true` + defaultExclusions,
 		},
 		{
+			name: "ocb manager in the golang category, its exports depType is exporters",
+			src: `{packageRules: [{matchCategories: ['golang'], automerge: true},
+				{matchManagers: ['ocb'], matchDepTypes: ['exports', 'receivers'], enabled: false}]}`,
+			rules: `  - # packageRules[0]
+    managers: [gomod, ocb]
+    automerge: true
+  - # packageRules[1]
+    managers: [ocb]
+    depTypes: [exporters, receivers]
+    ignore: true` + defaultExclusions,
+		},
+		{
 			name: "pinDigest is pin; unknown update types are dropped",
 			src:  `{packageRules: [{matchUpdateTypes: ['pinDigest', 'bump'], groupName: 'pins'}]}`,
 			rules: `  - # packageRules[0]

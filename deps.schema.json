@@ -2785,6 +2785,40 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "ocb"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "collector",
+                    "connectors",
+                    "exporters",
+                    "extensions",
+                    "processors",
+                    "providers",
+                    "receivers"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "custom"
                   ]
                 },
@@ -2898,6 +2932,7 @@
               "glasskube",
               "jenkins",
               "deps-config",
+              "ocb",
               "custom"
             ]
           },
@@ -3104,6 +3139,13 @@
               "package",
               "clusterPackage",
               "extends",
+              "collector",
+              "connectors",
+              "exporters",
+              "extensions",
+              "processors",
+              "providers",
+              "receivers",
               "annotation",
               "regex",
               "jsonata"
