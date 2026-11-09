@@ -10,7 +10,6 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pytool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
@@ -29,8 +28,12 @@ const (
 
 var matchRe = regexp.MustCompile(`(^|/)pyproject\.toml$`)
 
-// poetryManager records the project names of its files for Link.
-type poetryManager struct{ projects pyreq.Projects }
+// poetryManager rewrites constraints with pyreq.Ranges and records the project names of its
+// files for Link.
+type poetryManager struct {
+	pyreq.Ranges
+	projects pyreq.Projects
+}
 
 // New returns the poetry manager.
 func New() manager.Manager { return &poetryManager{} }
@@ -41,17 +44,6 @@ func (*poetryManager) Name() string { return Name }
 // regexp for the paths that cannot match.
 func (*poetryManager) Match(p string) bool {
 	return strings.HasSuffix(p, "pyproject.toml") && matchRe.MatchString(p)
-}
-
-// Edits rewrites the constraint (pyreq.Edits).
-func (*poetryManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
-
-// InRange implements manager.RangeUpdater.
-func (*poetryManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
-
-// NewRange implements manager.RangeUpdater.
-func (*poetryManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	return pyreq.NewRange(d, v, strategy)
 }
 
 // ReadLocks records the versions poetry.lock locks the deps to (pytool.ReadLocks).

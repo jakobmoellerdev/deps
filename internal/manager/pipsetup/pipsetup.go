@@ -8,7 +8,6 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 )
 
@@ -39,7 +38,8 @@ var keywords = map[string]string{
 	"extras_require":   DepTypeExtra,
 }
 
-type pipSetupManager struct{}
+// pipSetupManager rewrites specifiers with pyreq.Ranges.
+type pipSetupManager struct{ pyreq.Ranges }
 
 // New returns the pip_setup manager.
 func New() manager.Manager { return pipSetupManager{} }
@@ -49,17 +49,6 @@ func (pipSetupManager) Name() string { return Name }
 // Match reports whether the slash path is a setup.py file.
 func (pipSetupManager) Match(p string) bool {
 	return strings.HasSuffix(p, "setup.py") && matchRe.MatchString(p)
-}
-
-// Edits rewrites the range (pyreq.Edits).
-func (pipSetupManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
-
-// InRange implements manager.RangeUpdater.
-func (pipSetupManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
-
-// NewRange implements manager.RangeUpdater.
-func (pipSetupManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	return pyreq.NewRange(d, v, strategy)
 }
 
 // Extract lexes src as Python and returns one dep per plain string literal that is a PEP 508
@@ -202,8 +191,7 @@ func (lx *lexer) literal(file string) (dep.Dep, bool) {
 	if !ok || r.URL != "" || r.Spec == "" || !strings.ContainsRune("<>=!~", rune(r.Spec[0])) || !isIdentStart(r.Name[0]) {
 		return dep.Dep{}, false
 	}
-	d := pyreq.NewDep(Name, "", file, r.Name, line)
-	pyreq.SetVersion(&d, r.Spec, contentStart+r.SpecStart, true, pyreq.PEP440)
+	d := r.Dep(Name, "", file, line, contentStart, true)
 	if d.Skip == pyreq.SkipRange {
 		return dep.Dep{}, false // no version: an entry point (`name=module:func`), not a requirement
 	}

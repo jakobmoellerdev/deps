@@ -12,7 +12,6 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jsonc"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 )
 
@@ -25,7 +24,8 @@ const DepTypeRequirements = "requirements"
 // SkipInvalid is the skip reason of a requirement that is no PEP 508 string.
 const SkipInvalid = "invalid dependency specification"
 
-type haManager struct{}
+// haManager rewrites specifiers with pyreq.Ranges.
+type haManager struct{ pyreq.Ranges }
 
 // New returns the homeassistant-manifest manager.
 func New() manager.Manager { return haManager{} }
@@ -36,17 +36,6 @@ func (haManager) Name() string { return Name }
 // manifests from other manifest.json files (web app, browser extension) by their content.
 func (haManager) Match(p string) bool {
 	return p == "manifest.json" || strings.HasSuffix(p, "/manifest.json")
-}
-
-// Edits rewrites the specifier (pyreq.Edits).
-func (haManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
-
-// InRange implements manager.RangeUpdater.
-func (haManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
-
-// NewRange implements manager.RangeUpdater.
-func (haManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	return pyreq.NewRange(d, v, strategy)
 }
 
 // Extract returns one dep per `requirements` string of a top-level object that has string
@@ -137,11 +126,5 @@ func requirement(file string, raw jsontext.Value, at, line int) dep.Dep {
 		d.Skip = SkipInvalid
 		return d
 	}
-	d := pyreq.NewDep(Name, DepTypeRequirements, file, r.Name, line)
-	if r.URL != "" {
-		pyreq.SetGitURL(&d, r.URL, at+r.URLStart, exact)
-		return d
-	}
-	pyreq.SetVersion(&d, r.Spec, at+r.SpecStart, exact, pyreq.PEP440)
-	return d
+	return r.GitDep(Name, DepTypeRequirements, file, line, at, exact)
 }

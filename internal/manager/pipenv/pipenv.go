@@ -8,7 +8,6 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pytool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
@@ -27,7 +26,8 @@ const (
 
 var matchRe = regexp.MustCompile(`(^|/)Pipfile$`)
 
-type pipenvManager struct{}
+// pipenvManager rewrites specifiers with pyreq.Ranges.
+type pipenvManager struct{ pyreq.Ranges }
 
 // New returns the pipenv manager.
 func New() manager.Manager { return pipenvManager{} }
@@ -38,17 +38,6 @@ func (pipenvManager) Name() string { return Name }
 // paths that cannot match.
 func (pipenvManager) Match(p string) bool {
 	return strings.HasSuffix(p, "Pipfile") && matchRe.MatchString(p)
-}
-
-// Edits rewrites the specifier (pyreq.Edits).
-func (pipenvManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
-
-// InRange implements manager.RangeUpdater.
-func (pipenvManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
-
-// NewRange implements manager.RangeUpdater.
-func (pipenvManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	return pyreq.NewRange(d, v, strategy)
 }
 
 // ReadLocks records the versions Pipfile.lock locks the deps to, by category

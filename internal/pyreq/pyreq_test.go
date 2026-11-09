@@ -85,6 +85,56 @@ func TestSetVersionAndEdits(t *testing.T) {
 	}
 }
 
+func TestRequirementDep(t *testing.T) {
+	for _, c := range []struct {
+		src, rng, skip, ds, ver string
+		exact, git              bool
+	}{
+		{src: `"requests>=2.31"`, rng: ">=2.31", ver: "2.31", ds: Datasource, exact: true},
+		{src: `"requests>=2.31"`, skip: SkipLocate, ds: Datasource},
+		{src: `"requests"`, skip: SkipUnconstrained, ds: Datasource, exact: true},
+		{src: `"x @ https://h/x.whl"`, skip: SkipURL, ds: Datasource, exact: true, git: true},
+		{src: `"x @ git+https://h/o/x@v1.0"`, skip: SkipGit, ds: Datasource, exact: true},
+		{src: `"x @ git+https://h/o/x@v1.0"`, ver: "v1.0", ds: GitTags, exact: true, git: true},
+	} {
+		r, ok := Parse(c.src[1 : len(c.src)-1])
+		if !ok {
+			t.Fatalf("%s: no requirement", c.src)
+		}
+		mk := r.Dep
+		if c.git {
+			mk = r.GitDep
+		}
+		d := mk("m", "t", "f", 3, 1, c.exact)
+		if d.Name != r.Name || d.Manager != "m" || d.DepType != "t" || d.File != "f" || d.Line != 3 ||
+			d.Range != c.rng || d.Skip != c.skip || d.Datasource != c.ds || d.Version != c.ver {
+			t.Errorf("%s exact=%v git=%v: %+v", c.src, c.exact, c.git, d)
+		}
+		if c.rng != "" && c.src[d.RefSpan.Start:d.RefSpan.End] != c.rng {
+			t.Errorf("%s: span %v", c.src, d.RefSpan)
+		}
+	}
+}
+
+func TestRanges(t *testing.T) {
+	var r Ranges
+	d := NewDep("pep621", "t", "f", "x", 1)
+	SetVersion(&d, ">=1.0,<2", 0, true, PEP440)
+	if !r.InRange(d, "1.5") || r.InRange(d, "2.0") {
+		t.Error("InRange")
+	}
+	if got, ok := r.NewRange(d, "2.1", "bump"); !ok || got != ">=2.1,<3" {
+		t.Errorf("NewRange = %q, %v", got, ok)
+	}
+	edits, err := r.Edits(dep.Update{Dep: d, NewVersion: "2.1", RangeStrategy: "bump"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := patch.Apply([]byte(d.Range), edits); string(got) != ">=2.1,<3" {
+		t.Errorf("Edits = %q", got)
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	for in, want := range map[string]string{
 		"Django": "django", "zope.interface": "zope-interface", "typing_extensions": "typing-extensions",

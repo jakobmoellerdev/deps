@@ -10,7 +10,6 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pytool"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
@@ -37,8 +36,12 @@ const (
 
 var matchRe = regexp.MustCompile(`(^|/)pyproject\.toml$`)
 
-// pep621Manager records the project names of its files for Link.
-type pep621Manager struct{ projects pyreq.Projects }
+// pep621Manager rewrites specifiers with pyreq.Ranges and records the project names of its
+// files for Link.
+type pep621Manager struct {
+	pyreq.Ranges
+	projects pyreq.Projects
+}
 
 // New returns the pep621 manager.
 func New() manager.Manager { return &pep621Manager{} }
@@ -49,17 +52,6 @@ func (*pep621Manager) Name() string { return Name }
 // regexp for the paths that cannot match.
 func (*pep621Manager) Match(p string) bool {
 	return strings.HasSuffix(p, "pyproject.toml") && matchRe.MatchString(p)
-}
-
-// Edits rewrites the range (pyreq.Edits).
-func (*pep621Manager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
-
-// InRange implements manager.RangeUpdater.
-func (*pep621Manager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
-
-// NewRange implements manager.RangeUpdater.
-func (*pep621Manager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	return pyreq.NewRange(d, v, strategy)
 }
 
 // ReadLocks records the versions uv.lock, poetry.lock or pdm.lock locks the deps to

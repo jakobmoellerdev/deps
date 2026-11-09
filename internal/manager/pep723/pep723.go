@@ -8,7 +8,6 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
 )
@@ -24,7 +23,8 @@ var (
 	closeLine = "# ///"
 )
 
-type pep723Manager struct{}
+// pep723Manager rewrites specifiers with pyreq.Ranges.
+type pep723Manager struct{ pyreq.Ranges }
 
 // New returns the pep723 manager.
 func New() manager.Manager { return pep723Manager{} }
@@ -33,17 +33,6 @@ func (pep723Manager) Name() string { return Name }
 
 // Match reports whether the slash path is a Python file.
 func (pep723Manager) Match(p string) bool { return strings.HasSuffix(p, ".py") }
-
-// Edits rewrites the range (pyreq.Edits).
-func (pep723Manager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
-
-// InRange implements manager.RangeUpdater.
-func (pep723Manager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
-
-// NewRange implements manager.RangeUpdater.
-func (pep723Manager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	return pyreq.NewRange(d, v, strategy)
-}
 
 // Extract returns one dep per PEP 508 string of the `dependencies` array of the script
 // block, with `requires-python` as Python constraint. A file without block has no deps.

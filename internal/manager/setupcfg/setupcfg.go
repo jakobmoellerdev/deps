@@ -9,7 +9,6 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 )
 
@@ -41,7 +40,8 @@ var markerNames = map[string]bool{
 	"platform_python_implementation": true, "implementation_name": true, "implementation_version": true, "extra": true,
 }
 
-type setupCfgManager struct{}
+// setupCfgManager rewrites specifiers with pyreq.Ranges.
+type setupCfgManager struct{ pyreq.Ranges }
 
 // New returns the setup-cfg manager.
 func New() manager.Manager { return setupCfgManager{} }
@@ -51,17 +51,6 @@ func (setupCfgManager) Name() string { return Name }
 // Match reports whether the slash path is a setup.cfg file.
 func (setupCfgManager) Match(p string) bool {
 	return strings.HasSuffix(p, "setup.cfg") && matchRe.MatchString(p)
-}
-
-// Edits rewrites the range (pyreq.Edits).
-func (setupCfgManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
-
-// InRange implements manager.RangeUpdater.
-func (setupCfgManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
-
-// NewRange implements manager.RangeUpdater.
-func (setupCfgManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	return pyreq.NewRange(d, v, strategy)
 }
 
 // Extract returns one dep per requirement of the requirement keys, as setuptools reads them:
@@ -165,11 +154,5 @@ func appendReq(deps []dep.Dep, file, depType, s string, at, line int) []dep.Dep 
 	if !ok {
 		return deps
 	}
-	d := pyreq.NewDep(Name, depType, file, r.Name, line)
-	if r.URL != "" {
-		d.Skip = pyreq.URLSkip(r.URL)
-	} else {
-		pyreq.SetVersion(&d, r.Spec, at+r.SpecStart, true, pyreq.PEP440)
-	}
-	return append(deps, d)
+	return append(deps, r.Dep(Name, depType, file, line, at, true))
 }

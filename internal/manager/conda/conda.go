@@ -183,9 +183,8 @@ func (x *extractor) pip(items []*yaml.Node) {
 		r, ok := pyreq.Parse(req)
 		switch {
 		case ok && r.URL != "":
-			d = pyreq.NewDep(Name, DepTypePip, x.file, r.Name, n.Line)
 			off := yamlspan.Locate(x.src, x.lines, n)
-			pyreq.SetGitURL(&d, r.URL, off+r.URLStart, off >= 0)
+			d = r.GitDep(Name, DepTypePip, x.file, n.Line, off, off >= 0)
 		case strings.HasPrefix(req, "git+"):
 			d = pyreq.NewDep(Name, DepTypePip, x.file, pyreq.GitName(req), n.Line)
 			off := yamlspan.Locate(x.src, x.lines, n)
@@ -197,10 +196,8 @@ func (x *extractor) pip(items []*yaml.Node) {
 			d = pyreq.NewDep(Name, DepTypePip, x.file, req, n.Line)
 			d.Skip = pyreq.SkipRange
 		default:
-			d = pyreq.NewDep(Name, DepTypePip, x.file, r.Name, n.Line)
 			off := yamlspan.Locate(x.src, x.lines, n)
-			at := off + r.SpecStart
-			pyreq.SetVersion(&d, r.Spec, at, off >= 0, pyreq.PEP440)
+			d = r.Dep(Name, DepTypePip, x.file, n.Line, off, off >= 0)
 		}
 		if d.Datasource != pyreq.GitTags {
 			d.Source, d.ExtraSources, d.PythonConstraint = index, extras, x.python

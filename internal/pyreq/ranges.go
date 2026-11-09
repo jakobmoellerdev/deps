@@ -12,6 +12,21 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
+// Ranges implements Edits and manager.RangeUpdater with the package's Edits, InRange and
+// NewRange; the Python managers embed it.
+type Ranges struct{}
+
+// Edits rewrites the specifier of u's dep (Edits).
+func (Ranges) Edits(u dep.Update) ([]patch.Edit, error) { return Edits(u) }
+
+// InRange implements manager.RangeUpdater (InRange).
+func (Ranges) InRange(d dep.Dep, v string) bool { return InRange(d, v) }
+
+// NewRange implements manager.RangeUpdater (NewRange).
+func (Ranges) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	return NewRange(d, v, strategy)
+}
+
 // pep440 compares versions.
 var pep440, _ = versioning.Get(Versioning)
 

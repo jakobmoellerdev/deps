@@ -33,8 +33,10 @@ const (
 // matchRe is Renovate's default pip_requirements file pattern.
 var matchRe = regexp.MustCompile(`(^|/)[\w-]*requirements([-.]\w+)?\.(txt|pip)$`)
 
-// pipManager records the compile graph sources of the files Extract sees until Link.
+// pipManager rewrites specifiers with pyreq.Ranges and records the compile graph sources of
+// the files Extract sees until Link.
 type pipManager struct {
+	pyreq.Ranges
 	mu   sync.Mutex
 	srcs map[string]source
 }
@@ -52,17 +54,6 @@ func (*pipManager) Match(p string) bool { return match(p) }
 
 func match(p string) bool {
 	return isInput(p) || strings.Contains(p, "requirements") && matchRe.MatchString(p)
-}
-
-// Edits rewrites the specifier (pyreq.Edits).
-func (*pipManager) Edits(u dep.Update) ([]patch.Edit, error) { return pyreq.Edits(u) }
-
-// InRange implements manager.RangeUpdater.
-func (*pipManager) InRange(d dep.Dep, v string) bool { return pyreq.InRange(d, v) }
-
-// NewRange implements manager.RangeUpdater.
-func (*pipManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
-	return pyreq.NewRange(d, v, strategy)
 }
 
 // Extract returns one dep per requirement line. Backslash continuations are joined, comments

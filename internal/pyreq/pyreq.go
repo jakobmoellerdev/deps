@@ -258,19 +258,36 @@ func TableSpec(t *tomlspan.Value) (spec *tomlspan.Value, skip string) {
 	return v, ""
 }
 
+// Dep returns the dep of manager m for r, parsed from the requirement string found at file
+// offset at (the string is src[at:…] when exact): a direct URL reference is skipped (URLSkip),
+// else the range is r's PEP 440 specifier (SetVersion).
+func (r Requirement) Dep(m, depType, file string, line, at int, exact bool) dep.Dep {
+	d := NewDep(m, depType, file, r.Name, line)
+	if r.URL != "" {
+		d.Skip = URLSkip(r.URL)
+		return d
+	}
+	SetVersion(&d, r.Spec, at+r.SpecStart, exact, PEP440)
+	return d
+}
+
+// GitDep is Dep, except that a direct reference pinning a git repository to a tag makes a
+// git-tags dep (SetGitURL).
+func (r Requirement) GitDep(m, depType, file string, line, at int, exact bool) dep.Dep {
+	d := r.Dep(m, depType, file, line, at, exact)
+	if r.URL != "" {
+		SetGitURL(&d, r.URL, at+r.URLStart, exact)
+	}
+	return d
+}
+
 // TOMLRequirement returns the dep of the PEP 508 requirement string item v (a TOML string).
 func TOMLRequirement(m, depType, file string, v *tomlspan.Value) (dep.Dep, bool) {
 	r, ok := Parse(v.Str)
 	if !ok {
 		return dep.Dep{}, false
 	}
-	d := NewDep(m, depType, file, r.Name, v.Line)
-	if r.URL != "" {
-		SetGitURL(&d, r.URL, v.Start+r.URLStart, v.Exact)
-		return d, true
-	}
-	SetVersion(&d, r.Spec, v.Start+r.SpecStart, v.Exact, PEP440)
-	return d, true
+	return r.GitDep(m, depType, file, v.Line, v.Start, v.Exact), true
 }
 
 // Normalize returns the PEP 503 normalized form of a project name: lowercase, with runs of

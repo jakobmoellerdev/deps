@@ -196,13 +196,7 @@ func (x *extractor) additional(depType string, v *yaml.Node) dep.Dep {
 			d.Skip = SkipInvalid
 			return d
 		}
-		d := pyreq.NewDep(Name, depType, x.file, r.Name, v.Line)
-		if r.URL != "" {
-			d.Skip = pyreq.URLSkip(r.URL)
-			return d
-		}
-		pyreq.SetVersion(&d, r.Spec, off+r.SpecStart, off >= 0, pyreq.PEP440)
-		return d
+		return r.Dep(Name, depType, x.file, v.Line, off, off >= 0)
 	}
 	d := dep.Dep{Manager: Name, DepType: depType, File: x.file, Line: v.Line, Name: s}
 	var at int // the offset of the version in s; 0 = none
