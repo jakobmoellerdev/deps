@@ -7,7 +7,7 @@ import (
 // Doc is the reference documentation of the apk datasource.
 var Doc = refdoc.Datasource{
 	Name:     Name,
-	NameForm: "the package name (`P:` in APKINDEX, `bash`); custom managers only, with `registryUrl`",
+	NameForm: "the package name (`P:` in APKINDEX, `bash`); custom managers with `registryUrl`, and the docker manager's Dockerfile `apk add` pins (registry from the base image, or `rules[].registryUrls`)",
 	Endpoints: "`GET <index URL>` of every repository index the dep's `registryUrl` names, once per index and run: " +
 		"Renovate's form `<base>?arch=<arch>[&branch=<branch>][&components=<c1>,<c2>]` expands to " +
 		"`<base>[/<branch>]/<component>/<arch>/APKINDEX.tar.gz` per component " +

@@ -357,7 +357,8 @@
                     "workflow",
                     "action",
                     "kubernetes",
-                    "helm"
+                    "helm",
+                    "install"
                   ]
                 }
               }
@@ -2227,6 +2228,7 @@
               "workflow",
               "kubernetes",
               "helm",
+              "install",
               "dependencies",
               "devDependencies",
               "optionalDependencies",
@@ -2271,7 +2273,6 @@
               "tool.uv.constraint-dependencies",
               "tool.uv.override-dependencies",
               "tool.uv.build-constraint-dependencies",
-              "install",
               "test",
               "extra",
               "other",
@@ -2560,6 +2561,14 @@
           "type": "string",
           "description": "RE2 regexp with a (?<version>) group extracting the version from the datasource's release names, e.g. '^jq-(?<version>.+)$' for jq-1.7.1 tags or '^kustomize/(?<version>.+)$'; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes.",
           "markdownDescription": "RE2 regexp with a (?\\<version>) group extracting the version from the datasource's release names, e.g. `^jq-(?<version>.+)$` for jq-1.7.1 tags or `^kustomize/(?<version>.+)$`; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes."
+        },
+        "registryUrls": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Registry URLs replacing those of matching apk, deb and rpm deps (Renovate's packageRules registryUrls), in the datasource's form (custom[].registryUrl): e.g. https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64 for the apt-get install pins of a Dockerfile, which are skipped as unknown registry without one, or another Alpine release for apk add pins. The last matching rule setting it wins; other datasources ignore it. Cannot be combined with updateTypes or currentAge.",
+          "markdownDescription": "Registry URLs replacing those of matching apk, deb and rpm deps (Renovate's packageRules registryUrls), in the datasource's form (custom[].registryUrl): e.g. https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64 for the apt-get install pins of a Dockerfile, which are skipped as unknown registry without one, or another Alpine release for apk add pins. The last matching rule setting it wins; other datasources ignore it. Cannot be combined with updateTypes or currentAge."
         },
         "replacementName": {
           "type": "string",

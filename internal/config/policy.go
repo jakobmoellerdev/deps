@@ -258,6 +258,23 @@ func (c *Config) versioningOf(d dep.Dep) string {
 	return v
 }
 
+// RegistryURLs returns the registry URLs (whitespace-separated, the dep Source form) the last
+// matching rule with registryUrls gives d, "" when none does or d's datasource takes none
+// (RegistryURLDatasources). Rules with registryUrls have neither updateTypes nor currentAge,
+// so it holds before the update type and the age of the current version are known.
+func (c *Config) RegistryURLs(d dep.Dep) string {
+	if !slices.Contains(RegistryURLDatasources, d.Datasource) {
+		return ""
+	}
+	var urls []string
+	for i := range c.Rules {
+		if r := &c.Rules[i]; len(r.RegistryURLs) > 0 && c.matches(r, d, "", UnknownAge) {
+			urls = r.RegistryURLs
+		}
+	}
+	return strings.Join(urls, " ")
+}
+
 // UnusedRules returns the indices of the rules that match none of deps (the deps of a run,
 // skipped ones included); updateTypes and currentAge are not considered, as a rule matching
 // a dep applies to it once an update of a listed type exists or its release time is known.

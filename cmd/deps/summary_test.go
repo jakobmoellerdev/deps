@@ -341,3 +341,14 @@ func TestSummaryStepFileLimit(t *testing.T) {
 		t.Errorf("truncateMarkdown = %q", got)
 	}
 }
+
+// Cargo's "unknown registry <name>" and the Dockerfile package pins' "unknown registry" get
+// their own hints.
+func TestSkipHintUnknownRegistry(t *testing.T) {
+	if h := skipHint("unknown registry corp"); !strings.Contains(h, "CARGO_REGISTRIES_<NAME>_INDEX") {
+		t.Errorf("cargo hint = %q", h)
+	}
+	if h := skipHint(dep.SkipUnknownRegistry); !strings.Contains(h, "registryUrls") {
+		t.Errorf("registry hint = %q", h)
+	}
+}

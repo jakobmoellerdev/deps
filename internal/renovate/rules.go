@@ -20,7 +20,7 @@ var updateTypeBlocks = []struct{ key, typ string }{
 }
 
 // effectOrder is the output order of rule effects (the field order of config.Rule).
-var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versioning", "extractVersion", "replacementName",
+var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versioning", "extractVersion", "registryUrls", "replacementName",
 	"replacementVersion", "replacementPrefix", "separateMajorMinor",
 	"separateMultipleMajor", "separateMinorPatch", "group", "commitType", "commitScope", "schedule",
 	"minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "automerge", "automergeStrategy", "automergeType",
@@ -384,7 +384,7 @@ func (t *translator) rule(origin string, r map[string]any) {
 
 	eff := t.effects(origin, r)
 	if len(updateTypes) > 0 {
-		for _, k := range []string{"pin", "rangeStrategy", "versioning", "extractVersion", "replacementName", "replacementVersion", "replacementPrefix"} {
+		for _, k := range []string{"pin", "rangeStrategy", "versioning", "extractVersion", "registryUrls", "replacementName", "replacementVersion", "replacementPrefix"} {
 			if e, ok := eff[k]; ok {
 				t.n.warn(origin+"."+e.src, "deps decides %s before the update type is known; dropped", k)
 				delete(eff, k)
@@ -395,13 +395,22 @@ func (t *translator) rule(origin string, r map[string]any) {
 	for _, c := range current {
 		ks := []string{"versioning"}
 		if c.k == "currentAge" {
-			ks = append(ks, "extractVersion")
+			ks = append(ks, "extractVersion", "registryUrls")
 		}
 		for _, k := range ks {
 			if e, ok := eff[k]; ok {
 				t.n.warn(origin+"."+e.src, "deps cannot combine %s with %s; dropped", k, c.k)
 				delete(eff, k)
 			}
+		}
+	}
+	if e, ok := eff["registryUrls"]; ok {
+		switch {
+		case len(datasources) > 0 && !slices.ContainsFunc(datasources, func(ds string) bool { return slices.Contains(config.RegistryURLDatasources, ds) }):
+			t.n.warn(origin+"."+e.src, "deps takes registryUrls for %s deps only; dropped", strings.Join(config.RegistryURLDatasources, ", "))
+			delete(eff, "registryUrls")
+		case len(datasources) == 0:
+			t.n.info(origin+"."+e.src, "deps applies registryUrls to %s deps only", strings.Join(config.RegistryURLDatasources, ", "))
 		}
 	}
 	if len(eff) == 0 {
@@ -547,6 +556,12 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			set("allow", v)
 		case "versioning", "extractVersion", "minimumReleaseAgeBehaviour":
 			set(k, v)
+		case "registryUrls":
+			if l, ok := strs(v); ok && len(l) > 0 {
+				set(k, l)
+			} else {
+				t.n.warn(p, "must be a non-empty list of strings; ignored")
+			}
 		case "labels", "addLabels", "reviewers", "assignees":
 			if l, ok := strs(v); ok {
 				set(k, l)

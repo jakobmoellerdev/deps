@@ -249,7 +249,7 @@ type expansion struct {
 var managerMap = func() map[string][]expansion {
 	m := map[string][]expansion{
 		"github-actions":    {{"github-actions", nil}, {"docker", []string{"workflow", "action"}}},
-		"dockerfile":        {{"docker", []string{"dockerfile"}}},
+		"dockerfile":        {{"docker", []string{"dockerfile", "install"}}},
 		"docker-compose":    {{"docker", []string{"compose"}}},
 		"kubernetes":        {{"docker", []string{"kubernetes"}}},
 		"helm-values":       {{"docker", []string{"helm"}}},
@@ -274,7 +274,7 @@ var managerMap = func() map[string][]expansion {
 
 // depTypeUniverse lists the dep types of deps managers that several Renovate managers share.
 var depTypeUniverse = map[string][]string{
-	"docker":   {"dockerfile", "compose", "workflow", "action", "kubernetes", "helm"},
+	"docker":   {"dockerfile", "compose", "workflow", "action", "kubernetes", "helm", "install"},
 	"helm":     {"chart", "requirements", "helmfile", "k0s", "flux", "argocd", "sveltos"},
 	"gitlabci": {"image", "service", "include", "component"},
 }

@@ -9,7 +9,7 @@ var Doc = refdoc.Datasource{
 	Name: Name,
 	NameForm: "binary package name (`curl`); the dep's source is one or more whitespace-separated registry URLs " +
 		"`<repository>?suite=<suite>&components=<c1,c2>&binaryArch=<arch>` (Renovate's; `release` is an alias of `suite`), " +
-		"default `" + DefaultRegistry + "`. Versioning `deb` (dpkg ordering)",
+		"default `" + DefaultRegistry + "`; the docker manager's Dockerfile `apt-get install` pins have no default and need `rules[].registryUrls`. Versioning `deb` (dpkg ordering)",
 	Endpoints: "`GET <repository>/dists/<suite>/<component>/binary-<arch>/Packages.gz` (a 404 tries `Packages.xz`, then `Packages`), " +
 		"once per component index and run, stream-scanned so only the asked-for packages are kept; every paragraph's `Version` is a release. " +
 		"Versions of all components and registry URLs are merged; a failing component is skipped when another lists the package",

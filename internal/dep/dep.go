@@ -68,6 +68,11 @@ type SkipError struct{ Reason string }
 
 func (e *SkipError) Error() string { return e.Reason }
 
+// SkipUnknownRegistry is the skip reason of a dep whose manager cannot tell which registry it
+// is looked up in (a Dockerfile `apk add` pin under an unknown base image, every `apt-get
+// install` pin); a rule's registryUrls supplies one and lifts the skip.
+const SkipUnknownRegistry = "unknown registry"
+
 // Dep is a single dependency occurrence extracted from a file.
 type Dep struct {
 	Manager    string // "github-actions" | "gomod" | "docker" | "npm" | "pip_requirements" | "pep621" | "pep723" | "setup-cfg" | "pip_setup" | "poetry" | "pipenv" | "helm" | "cargo" | "maven" | "gradle" | "gradle-wrapper" | "maven-wrapper" | "git-submodules" | "devcontainer" | "bitbucket-pipelines" | "woodpecker" | "droneci" | "circleci" | "azure-pipelines" | "vcpkg" | "custom"

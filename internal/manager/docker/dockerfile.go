@@ -29,6 +29,10 @@ type stageState struct {
 	used    map[int]bool    // ARG defaults already extracted
 	// substituted are the deps already extracted by substitute, by name and edited bytes.
 	substituted map[substKey]bool
+	// apkRegistry is the apk registry of the current stage's base image (stageRegistry),
+	// "" = unknown; registries are those of the named stages, by lowercased name.
+	apkRegistry string
+	registries  map[string]string
 }
 
 type substKey struct {
@@ -37,7 +41,8 @@ type substKey struct {
 	insertAt    int
 }
 
-// dockerfile extracts the images of FROM, `COPY --from=` and `RUN --mount=...,from=`.
+// dockerfile extracts the images of FROM, `COPY --from=` and `RUN --mount=...,from=`, and the
+// packages RUN pins with `apk add` and `apt-get install` (installs).
 // Instructions are case-insensitive and may span lines with the escape character (`\`, or
 // the `# escape=` directive's). scratch, stage names and stage indexes are not dependencies.
 // `$X`/`${X}` resolve to the default of `ARG X=<image>` in scope, extracted at the ARG; other
@@ -46,7 +51,7 @@ func (x *extractor) dockerfile() {
 	src := x.src
 	esc := byte('\\')
 	directives := true
-	st := stageState{stages: map[string]bool{}, globals: map[string]arg{}, used: map[int]bool{}, substituted: map[substKey]bool{}}
+	st := stageState{stages: map[string]bool{}, globals: map[string]arg{}, used: map[int]bool{}, substituted: map[substKey]bool{}, registries: map[string]string{}}
 	var toks []token
 	for i := 0; i < len(src); {
 		le := lineEnd(src, i)
@@ -79,27 +84,43 @@ func (x *extractor) dockerfile() {
 			x.flagImages(toks[1:], "--from=", &st)
 		case strings.EqualFold(kw, "RUN"):
 			x.flagImages(toks[1:], "--mount=", &st)
+			args := toks[1:]
+			for len(args) > 0 && strings.HasPrefix(x.text(args[0]), "--") {
+				args = args[1:]
+			}
+			if len(args) > 0 && !strings.HasPrefix(x.text(args[0]), "[") {
+				x.installs(args, &st)
+			}
 		}
 	}
 }
 
 // from handles the arguments of one FROM: `[--flag=...] <image> [AS <name>]`.
 func (x *extractor) from(args []token, st *stageState) {
+	platform := ""
 	for len(args) > 0 && strings.HasPrefix(x.text(args[0]), "--") {
+		if p, ok := strings.CutPrefix(x.text(args[0]), "--platform="); ok {
+			platform = p
+		}
 		args = args[1:]
 	}
 	if len(args) == 0 {
 		return
 	}
 	image := x.text(args[0])
+	name := ""
+	if len(args) >= 3 && strings.EqualFold(x.text(args[1]), "AS") {
+		name = x.text(args[2])
+	}
+	x.stageRegistry(image, platform, name, st)
 	if !x.variable(image, st) {
 		lower := strings.ToLower(image)
 		if lower != "scratch" && !st.stages[lower] && !(strings.Contains(image, "$") && x.substitute(args[0].start, image, st)) {
 			x.add(TypeDockerfile, x.lineOf(args[0].start), args[0].start, image)
 		}
 	}
-	if len(args) >= 3 && strings.EqualFold(x.text(args[1]), "AS") {
-		st.stages[strings.ToLower(x.text(args[2]))] = true
+	if name != "" {
+		st.stages[strings.ToLower(name)] = true
 	}
 }
 

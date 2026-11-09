@@ -68,7 +68,8 @@ var skipHints = []struct{ prefix, hint string }{
 	{"variable reference", "the value is computed at runtime"},
 	{"template value", "the value is computed at runtime"},
 	{"expression", "the value is computed at runtime"},
-	{"unknown registry", "set `[registries.<name>] index` in `.cargo/config.toml` or `CARGO_REGISTRIES_<NAME>_INDEX`"},
+	{dep.SkipUnknownRegistry + " ", "set `[registries.<name>] index` in `.cargo/config.toml` or `CARGO_REGISTRIES_<NAME>_INDEX`"},
+	{dep.SkipUnknownRegistry, "set `registryUrls` in a rule matching the package (Dockerfile `apt-get install` pins, `apk add` pins of an unknown Alpine release)"},
 }
 
 func skipHint(reason string) string {

@@ -134,8 +134,9 @@ type Pending struct {
 var digestManagers = map[string]bool{"github-actions": true, "docker": true, precommit.Name: true, gitsubmodules.Name: true, vcpkg.Name: true}
 
 // digestCapable reports whether d's digest can be refreshed, or pinned when d has none:
-// github-actions, docker, pre-commit hook repositories and git-submodules deps whatever their
-// versioning (a rule may override it), except setup-action version inputs and runner labels,
+// github-actions, docker images (not the packages a Dockerfile RUN installs), pre-commit hook
+// repositories and git-submodules deps whatever their versioning (a rule may override it),
+// except setup-action version inputs and runner labels,
 // which are plain values, and pre-commit additional_dependencies (npm, PyPI, Go); vcpkg registry
 // baselines (git-refs); npm git dependencies pinned to a commit (git-refs); images of
 // gitlabci, terraform (docker and kubernetes resources), ansible tasks and the CI pipeline managers, which are
@@ -161,7 +162,7 @@ func digestCapable(d dep.Dep) bool {
 			return d.Datasource == "git-refs" && d.Digest != ""
 		}
 		return d.Datasource == "docker"
-	case "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "ansible":
+	case "docker", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "ansible":
 		return d.Datasource == "docker"
 	case devcontainer.Name:
 		return d.DepType == devcontainer.DepTypeImage || d.DepType == devcontainer.DepTypeFeature && d.Digest != ""
@@ -436,8 +437,15 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 // already skipped. timed reports whether the dep's datasource has release times: when a
 // currentAge rule can match, the policy decisions wait for the age of the current version
 // (resolver.applyAge). With security lookups, a dep whose default ignore security updates
-// bypass (securityByDefault) is kept as securityOnly.
+// bypass (securityByDefault) is kept as securityOnly. A rule's registryUrls replace the
+// registry of apk, deb and rpm deps first, lifting an unknown registry skip.
 func classify(cfg *config.Config, d dep.Dep, kindRules, timed, security bool) (dep.Dep, *policies) {
+	if urls := cfg.RegistryURLs(d); urls != "" {
+		d.Source = urls
+		if d.Skip == dep.SkipUnknownRegistry {
+			d.Skip = ""
+		}
+	}
 	if d.Skip != "" {
 		return d, nil
 	}
@@ -719,7 +727,7 @@ func dedupeCovered(ex []extracted) {
 	for i := range ex {
 		for j := range ex[i].deps {
 			d := &ex[i].deps[j]
-			if d.Manager == custom.Name || d.Skip != "" {
+			if d.Manager == custom.Name || d.Skip != "" && d.Skip != dep.SkipUnknownRegistry {
 				continue
 			}
 			for _, c := range claims[d.File] {

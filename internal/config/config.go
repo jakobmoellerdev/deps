@@ -180,6 +180,9 @@ var (
 	// Versionings are the versioning scheme names; rules[].versioning and custom[].versioning
 	// also accept regex:<RE2> (versioning.RegexPrefix).
 	Versionings = versioning.Names
+	// RegistryURLDatasources are the datasources whose deps take rules[].registryUrls: the
+	// package repositories, which have no registry deps could assume.
+	RegistryURLDatasources = []string{"apk", "deb", "rpm"}
 	// CommitTypes are the accepted conventional-commit types of rules[].commitType.
 	CommitTypes = []string{"fix", "chore", "build", "ci", "docs", "feat", "perf", "refactor", "revert", "style", "test"}
 )
@@ -495,6 +498,8 @@ type Rule struct {
 	Versioning string `yaml:"versioning" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`
 	// ExtractVersion replaces the dep's release-name mapping before resolution (pre-policy).
 	ExtractVersion string `yaml:"extractVersion" jsonschema_description:"RE2 regexp with a (?<version>) group extracting the version from the datasource's release names, e.g. '^jq-(?<version>.+)$' for jq-1.7.1 tags or '^kustomize/(?<version>.+)$'; names that do not match are ignored and the extracted version is written to the file. Cannot be combined with updateTypes."`
+	// RegistryURLs replace the registry of apk, deb and rpm deps before resolution (pre-policy).
+	RegistryURLs []string `yaml:"registryUrls" jsonschema_description:"Registry URLs replacing those of matching apk, deb and rpm deps (Renovate's packageRules registryUrls), in the datasource's form (custom[].registryUrl): e.g. https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64 for the apt-get install pins of a Dockerfile, which are skipped as unknown registry without one, or another Alpine release for apk add pins. The last matching rule setting it wins; other datasources ignore it. Cannot be combined with updateTypes or currentAge."`
 	// ReplacementName and ReplacementVersion move matching deps to another package (Renovate's
 	// options of the same names); pre-policy fields.
 	ReplacementName    string `yaml:"replacementName" jsonschema_description:"Replace matching deps with this package (image, npm package, owner/repo[/path] action, Go module path, group:artifact, chart or registry address; with replacementPrefix, the new prefix) in one replacement update instead of their usual updates, which run proposes once the replacement's PR is closed. The version is kept unless replacementVersion is set, and the new package must have it (else the dep is skipped with the reason). Supported by the docker, gitlabci, kustomize, helm, terraform (providers, registry modules, images), terragrunt, tflint, maven, gradle, npm, github-actions and gomod managers where the name is written literally (see the managers reference). Overrides earlier rules and the built-in replacements. updates lists do not apply to replacements; select them with updateTypes: [replacement]. Cannot be combined with updateTypes or currentAge."`
@@ -1203,6 +1208,23 @@ func (c *Config) validateRule(i int, add addFunc) {
 		}
 		if len(r.UpdateTypes) > 0 {
 			add(f+".extractVersion", "cannot be combined with updateTypes: release names are mapped before the update type is known")
+		}
+	}
+	if r.RegistryURLs != nil {
+		switch {
+		case len(r.RegistryURLs) == 0:
+			add(f+".registryUrls", "must not be empty")
+		case len(r.UpdateTypes) > 0:
+			add(f+".registryUrls", "cannot be combined with updateTypes: the registry is decided before the update type is known")
+		case r.CurrentAge != "":
+			add(f+".registryUrls", "cannot be combined with currentAge: the registry is decided before the age of the current version is known")
+		case len(r.Datasources) > 0 && !slices.ContainsFunc(r.Datasources, func(ds string) bool { return slices.Contains(RegistryURLDatasources, CanonicalDatasource(ds)) }):
+			add(f+".registryUrls", "applies to %s deps only, which datasources does not select", strings.Join(RegistryURLDatasources, ", "))
+		}
+		for j, s := range r.RegistryURLs {
+			if u, err := url.Parse(s); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				add(fmt.Sprintf("%s.registryUrls[%d]", f, j), "must be an http(s) URL, got %q", s)
+			}
 		}
 	}
 	switch {

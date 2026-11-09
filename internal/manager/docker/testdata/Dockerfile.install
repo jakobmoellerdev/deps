@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+ARG ALPINE_VERSION=3.20
+FROM --platform=linux/arm64 node:22-alpine3.21 AS build
+RUN apk add --no-cache --virtual .build-deps \
+      bash=5.2.37-r0 \
+      "git=2.47.2-r0" \
+      python3 \
+    && apk del .build-deps
+
+FROM build AS test
+RUN set -eux; apk add --no-cache jq=1.7.1-r0; jq --version
+
+FROM alpine:${ALPINE_VERSION}
+RUN --mount=type=cache,target=/var/cache/apk apk -U add tzdata=2024b-r0 curl~8.12 openssl>=3 bash=${BASH_VERSION} so:libc.musl-x86_64.so.1
+RUN apk add --repository https://dl-cdn.alpinelinux.org/alpine/edge/testing rclone=1.68.2-r0
+RUN apk add nginx@edge=1.27.3-r0 && echo apk add fake=1
+
+FROM alpine:latest
+RUN /sbin/apk add --no-cache ca-certificates=20241121-r1
+
+FROM cgr.dev/chainguard/wolfi-base
+RUN apk add --no-cache curl=8.11.1-r0
+
+FROM debian:trixie-slim
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-confnew \
+       curl=8.14.1-2 \
+       git=1:2.47.3-0+deb13u1 \
+       'jq=1.7*' \
+       vim/trixie-backports \
+       ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+RUN ["apk", "add", "bash=5.2.37-r0"]

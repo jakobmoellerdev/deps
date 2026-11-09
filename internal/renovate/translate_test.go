@@ -125,12 +125,40 @@ func TestLoadRules(t *testing.T) {
     group: GitHub Actions` + defaultExclusions,
 		},
 		{
-			name: "dockerfile is docker with depType dockerfile",
+			name: "dockerfile is docker with depTypes dockerfile and install",
 			src:  `{packageRules: [{matchManagers: ['dockerfile'], enabled: false}]}`,
 			rules: `  - # packageRules[0]
     managers: [docker]
-    depTypes: [dockerfile]
+    depTypes: [dockerfile, install]
     ignore: true` + defaultExclusions,
+		},
+		{
+			name: "registryUrls of apk deps",
+			src:  `{packageRules: [{matchFileNames: ['Dockerfile'], matchDatasources: ['apk'], registryUrls: ['https://dl-cdn.alpinelinux.org/alpine?branch=v3.21&components=main,community&arch=x86_64']}]}`,
+			rules: `  - # packageRules[0]
+    paths: [Dockerfile]
+    datasources: [apk]
+    registryUrls: ['https://dl-cdn.alpinelinux.org/alpine?branch=v3.21&components=main,community&arch=x86_64']` + defaultExclusions,
+		},
+		{
+			name:  "registryUrls of other datasources are dropped",
+			src:   `{packageRules: [{matchDatasources: ['docker'], registryUrls: ['https://mirror.example.com']}]}`,
+			rules: strings.TrimPrefix(defaultExclusions, "\n"),
+			notes: []string{"warn packageRules[0].registryUrls: deps takes registryUrls for apk, deb, rpm deps only; dropped", "info packageRules[0]: no deps effect left; rule dropped"},
+		},
+		{
+			name: "registryUrls without datasources apply to package repositories",
+			src:  `{packageRules: [{matchPackageNames: ['curl'], registryUrls: ['https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64']}]}`,
+			rules: `  - # packageRules[0]
+    names: [curl]
+    registryUrls: ['https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64']` + defaultExclusions,
+			notes: []string{"info packageRules[0].registryUrls: deps applies registryUrls to apk, deb, rpm deps only"},
+		},
+		{
+			name:  "registryUrls with updateTypes are dropped",
+			src:   `{packageRules: [{matchDatasources: ['deb'], matchUpdateTypes: ['major'], registryUrls: ['https://deb.debian.org/debian?suite=trixie']}]}`,
+			rules: strings.TrimPrefix(defaultExclusions, "\n"),
+			notes: []string{"warn packageRules[0].registryUrls: deps decides registryUrls before the update type is known; dropped"},
 		},
 		{
 			name:  "unknown depTypes only drop the rule",
