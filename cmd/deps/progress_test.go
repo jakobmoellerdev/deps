@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,27 +19,38 @@ import (
 func testStatusLine(buf *bytes.Buffer, width int, hosts ...httpx.HostUse) (*progress, *logx.Writer, *time.Time) {
 	w := logx.NewWriter(buf)
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
-	s := &progress{w: w, line: true, inFlight: func() []httpx.HostUse { return hosts }, width: func() int { return width }, now: func() time.Time { return now }}
+	s := &progress{w: w, line: true, hosts: func() []httpx.HostUse { return hosts }, width: func() int { return width }, now: func() time.Time { return now }}
 	return s, w, &now
 }
 
-const clearLine = "\r\x1b[2K"
+// The terminal sequences of the status block: one synchronized update per overlay write.
+const (
+	syncBegin = "\x1b[?2026h"
+	syncEnd   = "\x1b[?2026l"
+)
 
 // clearBlock erases a status block of n lines.
-func clearBlock(n int) string { return clearLine + strings.Repeat("\x1b[1A\x1b[2K", n-1) }
+func clearBlock(n int) string { return "\r" + cursorUp(n-1) + "\x1b[J" }
+
+// updateBlock redraws a status block of n lines in place with lines.
+func updateBlock(n int, lines ...string) string {
+	return "\r" + cursorUp(n-1) + strings.Join(lines, "\x1b[K\n") + "\x1b[K\x1b[J"
+}
 
 // The block is drawn when the phase starts, cleared before and redrawn after every record,
-// refreshed by Redraw and removed when the phase ends; afterwards writes pass through. The
-// phase and every host with open requests get a bar.
+// updated in place by Redraw and removed when the phase ends; afterwards writes pass
+// through. The phase and every host with open requests get a bar.
 func TestStatusLineOverlay(t *testing.T) {
 	var buf bytes.Buffer
 	s, w, now := testStatusLine(&buf, 100, httpx.HostUse{Host: "registry.npmjs.org", Open: 18, Done: 6}, httpx.HostUse{Host: "api.github.com", Open: 2})
 	s.Start(engine.PhaseResolve, 308)
-	hosts := "\n  registry.npmjs.org  " + strings.Repeat("━", 5) + strings.Repeat("─", 15) + "  6/24 · 18 open" +
-		"\n  api.github.com      " + strings.Repeat("─", 20) + "  0/2 · 2 open"
-	block0 := "⠋ resolving           " + strings.Repeat("─", 20) + "  0/308 · 0.0s" + hosts
-	if got := buf.String(); got != block0 {
-		t.Fatalf("start:\n%s\nwant\n%s", got, block0)
+	hosts := []string{
+		"  registry.npmjs.org  " + strings.Repeat("━", 5) + strings.Repeat("─", 15) + "  6/24 · 18 open",
+		"  api.github.com      " + strings.Repeat("─", 20) + "  0/2 · 2 open",
+	}
+	block0 := strings.Join(append([]string{"⠋ resolving           " + strings.Repeat("─", 20) + "  0/308 · 0.0s"}, hosts...), "\n")
+	if got := buf.String(); got != syncBegin+block0+syncEnd {
+		t.Fatalf("start:\n%q\nwant\n%q", got, block0)
 	}
 	_, _ = w.Write([]byte("record\n"))
 	for range 212 {
@@ -49,10 +61,48 @@ func TestStatusLineOverlay(t *testing.T) {
 	w.Redraw()
 	s.End(engine.PhaseResolve)
 	_, _ = w.Write([]byte("after\n"))
-	block1 := "⠙ resolving           " + strings.Repeat("━", 13) + strings.Repeat("─", 7) + "  213/308 · 1 error · 2.1s" + hosts
-	want := block0 + clearBlock(3) + "record\n" + block0 + clearBlock(3) + block1 + clearBlock(3) + "after\n"
+	head1 := "⠙ resolving           " + strings.Repeat("━", 13) + strings.Repeat("─", 7) + "  213/308 · 1 error · 2.1s"
+	want := syncBegin + block0 + syncEnd +
+		syncBegin + clearBlock(3) + "record\n" + block0 + syncEnd +
+		syncBegin + updateBlock(3, append([]string{head1}, hosts...)...) + syncEnd +
+		syncBegin + clearBlock(3) + syncEnd + "after\n"
 	if got := buf.String(); got != want {
 		t.Errorf("output:\n%q\nwant\n%q", got, want)
+	}
+}
+
+// Host lines keep their place: a host whose requests finished stays, done, for hostLinger,
+// a new host takes the next line, and the name column does not shrink when a long host
+// name goes away.
+func TestStatusBlockLayout(t *testing.T) {
+	var buf bytes.Buffer
+	s, _, now := testStatusLine(&buf, 100)
+	hosts := []httpx.HostUse{{Host: "registry.npmjs.org", Open: 3, Done: 1}, {Host: "a.io", Open: 1}}
+	s.hosts = func() []httpx.HostUse { return hosts }
+	s.Start(engine.PhaseResolve, 10)
+	names := func() []string {
+		var out []string
+		for _, l := range s.render()[1:] {
+			out = append(out, strings.Fields(l)[0]+" "+l[strings.LastIndex(l, "  ")+2:])
+		}
+		return out
+	}
+	if got := names(); !slices.Equal(got, []string{"registry.npmjs.org 1/4 · 3 open", "a.io 0/1 · 1 open"}) {
+		t.Fatalf("start: %q", got)
+	}
+	// The busier newcomer goes below; the finished registry stays in place, done.
+	hosts = []httpx.HostUse{{Host: "b.io", Open: 9}, {Host: "a.io", Open: 1}, {Host: "registry.npmjs.org", Done: 4}}
+	*now = now.Add(time.Second)
+	if got := names(); !slices.Equal(got, []string{"registry.npmjs.org 4/4 · done", "a.io 0/1 · 1 open", "b.io 0/9 · 9 open"}) {
+		t.Errorf("after a burst: %q", got)
+	}
+	col := s.col
+	*now = now.Add(hostLinger)
+	if got := names(); !slices.Equal(got, []string{"a.io 0/1 · 1 open", "b.io 0/9 · 9 open"}) {
+		t.Errorf("after the linger: %q", got)
+	}
+	if s.col != col {
+		t.Errorf("name column shrank from %d to %d", col, s.col)
 	}
 }
 
@@ -88,7 +138,7 @@ func TestStatusLineCounting(t *testing.T) {
 	for _, h := range []string{"registry.npmjs.org", "ghcr.io", "a.example", "b.example", "c.example", "d.example", "e.example"} {
 		many = append(many, httpx.HostUse{Host: h, Open: 1})
 	}
-	s, _, _ = testStatusLine(&buf, 20, many...)
+	s, _, now = testStatusLine(&buf, 20, many...)
 	s.Start(engine.PhaseDiscover, 0)
 	got := s.render()
 	if got[0] != "⠋ discovering file…" || len(got) != 1+hostLines+1 || got[2] != "  ghcr.io  0/1 · 1…" || got[len(got)-1] != "  + 2 more hosts ·…" {
@@ -100,7 +150,8 @@ func TestStatusLineCounting(t *testing.T) {
 		}
 	}
 	s.End(engine.PhaseDiscover)
-	s.inFlight = nil
+	s.hosts = nil
+	*now = now.Add(2 * time.Second) // past the linger of the "+ 2 more hosts" line; spinner back at ⠋
 	s.style = logx.NewStyle(true)
 	if got, want := s.render(), "\x1b[36m⠋\x1b[0m \x1b[2mdiscovering file…\x1b[0m"; len(got) != 1 || got[0] != want {
 		t.Errorf("colored: %q, want %q", got, want)
@@ -115,16 +166,16 @@ func TestStatusLineTicker(t *testing.T) {
 	s.line, s.tick = true, time.Millisecond
 	s.Start(engine.PhaseResolve, 1)
 	deadline := time.Now().Add(5 * time.Second)
-	for strings.Count(buf.String(), clearLine) < 3 && time.Now().Before(deadline) {
+	for strings.Count(buf.String(), syncBegin) < 3 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	s.End(engine.PhaseResolve)
-	n := strings.Count(buf.String(), clearLine)
+	n := strings.Count(buf.String(), syncBegin)
 	if n < 3 {
 		t.Fatalf("%d redraws", n)
 	}
 	time.Sleep(5 * time.Millisecond)
-	if got := strings.Count(buf.String(), clearLine); got != n {
+	if got := strings.Count(buf.String(), syncBegin); got != n {
 		t.Errorf("redrawn after End: %d > %d", got, n)
 	}
 }

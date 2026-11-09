@@ -31,17 +31,17 @@ func TestHostCounter(t *testing.T) {
 	if _, err := c.Get("https://b.example/fail"); err == nil {
 		t.Fatal("no error")
 	}
-	if got, want := h.InFlight(), []HostUse{{"a.example", 2, 0}, {"b.example", 1, 1}}; !reflect.DeepEqual(got, want) {
-		t.Errorf("InFlight = %v, want %v", got, want)
+	if got, want := h.Hosts(), []HostUse{{"a.example", 2, 0}, {"b.example", 1, 1}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Hosts = %v, want %v", got, want)
 	}
 	_ = a1.Body.Close()
 	_ = a1.Body.Close()
 	_ = b.Body.Close()
-	if got, want := h.InFlight(), []HostUse{{"a.example", 1, 1}}; !reflect.DeepEqual(got, want) {
-		t.Errorf("InFlight = %v, want %v", got, want)
+	if got, want := h.Hosts(), []HostUse{{"a.example", 1, 1}, {"b.example", 0, 2}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Hosts = %v, want %v", got, want)
 	}
 	_ = a2.Body.Close()
-	if got := h.InFlight(); len(got) != 0 {
-		t.Errorf("idle: %v", got)
+	if got, want := h.Hosts(), []HostUse{{"a.example", 0, 2}, {"b.example", 0, 2}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("idle: %v, want %v", got, want)
 	}
 }

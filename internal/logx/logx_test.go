@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -167,21 +168,50 @@ type overlay struct{ text string }
 func (o *overlay) Clear(w io.Writer) { fmt.Fprint(w, "[clear]") }
 func (o *overlay) Draw(w io.Writer)  { fmt.Fprintf(w, "[%s]", o.text) }
 
+// updater redraws itself in place.
+type updater struct{ overlay }
+
+func (o *updater) Update(w io.Writer) { fmt.Fprintf(w, "[update %s]", o.text) }
+
+// writes records every Write call.
+type writes []string
+
+func (ws *writes) Write(p []byte) (int, error) {
+	*ws = append(*ws, string(p))
+	return len(p), nil
+}
+
+// Every overlay operation reaches the terminal as one write, framed as a synchronized
+// update; an Updater redraws in place.
 func TestWriterOverlay(t *testing.T) {
-	var b bytes.Buffer
-	w := NewWriter(&b)
+	var ws writes
+	w := NewWriter(&ws)
 	fmt.Fprint(w, "a\n")
 	o := &overlay{text: "1/3"}
 	w.SetOverlay(o)
 	fmt.Fprint(w, "b\n")
 	o.text = "2/3"
 	w.Redraw()
+	u := &updater{overlay{text: "3/3"}}
+	w.SetOverlay(u)
+	w.Redraw()
+	w.SetOverlay(nil)
 	w.SetOverlay(nil)
 	w.Redraw()
 	fmt.Fprint(w, "c\n")
-	want := "a\n[1/3][clear]b\n[1/3][clear][2/3][clear]c\n"
-	if got := b.String(); got != want {
-		t.Errorf("got  %q\nwant %q", got, want)
+	const b, e = "\x1b[?2026h", "\x1b[?2026l"
+	want := writes{
+		"a\n",
+		b + "[1/3]" + e,
+		b + "[clear]b\n[1/3]" + e,
+		b + "[clear][2/3]" + e,
+		b + "[clear][3/3]" + e,
+		b + "[update 3/3]" + e,
+		b + "[clear]" + e,
+		"c\n",
+	}
+	if !slices.Equal(ws, want) {
+		t.Errorf("writes\n%q\nwant\n%q", ws, want)
 	}
 }
 

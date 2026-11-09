@@ -1,8 +1,10 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,7 +35,7 @@ var phaseLabels = map[engine.Phase]string{
 }
 
 // progress is the engine.Progress of the command's stderr. On a terminal (line) it is the
-// live status line: the logx.Writer overlay, below every record, redrawn every tick until the
+// live status block: the logx.Writer overlay, below every record, redrawn every tick until the
 // phase ends and then removed. With the actions format (groups) every phase gets a
 // collapsible ::group:: (discover and extract share one; PRs are groups of their own) that
 // ends with the phase's final counts, and off a terminal a heartbeat line every heartbeat shows that a long phase still
@@ -42,7 +44,7 @@ var phaseLabels = map[engine.Phase]string{
 type progress struct {
 	w         *logx.Writer
 	style     logx.Style
-	inFlight  func() []httpx.HostUse // nil = not shown
+	hosts     func() []httpx.HostUse // requests per host (httpx.HostCounter.Hosts); nil = not shown
 	width     func() int             // terminal columns
 	now       func() time.Time
 	line      bool          // the status line is on
@@ -63,13 +65,24 @@ type progress struct {
 	stop    chan struct{}
 	stopped chan struct{}
 
-	drawn int // lines of the status block on screen; under the Writer's lock (Clear, Draw)
+	// The status block on screen; under the Writer's lock (Clear, Draw, Update), reset by
+	// Start. Its layout only changes slowly, so lines do not jump between redraws.
+	drawn        int        // lines
+	slots        []hostSlot // the host lines, in the order the hosts appeared
+	col, textCol int        // widest name and text so far; they never shrink
+	moreUntil    time.Time  // the "+ n more hosts" line stays until then
+}
+
+// hostSlot is a host line of the status block.
+type hostSlot struct {
+	host string
+	idle time.Time // since when the host has no open request; zero while it has
 }
 
 // newProgress returns a progress writing to stderr w (out is the file behind it) with every
 // output off; the caller turns on the status line and the Actions groups and heartbeat.
 func newProgress(w *logx.Writer, out io.Writer, style logx.Style, hosts *httpx.HostCounter) *progress {
-	return &progress{w: w, style: style, inFlight: hosts.InFlight, width: termWidth(out), now: time.Now}
+	return &progress{w: w, style: style, hosts: hosts.Hosts, width: termWidth(out), now: time.Now}
 }
 
 // termWidth returns the column count of the terminal out, 80 when unknown.
@@ -88,6 +101,7 @@ func (p *progress) Start(ph engine.Phase, total int) {
 	p.mu.Lock()
 	p.phase, p.total, p.start = ph, total, p.now()
 	p.limitedHost, p.limitedUntil = "", time.Time{}
+	p.drawn, p.slots, p.col, p.textCol, p.moreUntil = 0, nil, 0, 0, time.Time{}
 	p.mu.Unlock()
 	p.done.Store(0)
 	p.errs.Store(0)
@@ -188,7 +202,7 @@ func groupTitle(ph engine.Phase, total int) string {
 
 // Clear erases the status block; the cursor is at the start of its first line afterwards.
 func (p *progress) Clear(w io.Writer) {
-	_, _ = io.WriteString(w, "\r\x1b[2K"+strings.Repeat("\x1b[1A\x1b[2K", max(p.drawn-1, 0)))
+	_, _ = io.WriteString(w, "\r"+cursorUp(p.drawn-1)+"\x1b[J")
 	p.drawn = 0
 }
 
@@ -200,27 +214,54 @@ func (p *progress) Draw(w io.Writer) {
 	_, _ = io.WriteString(w, strings.Join(lines, "\n"))
 }
 
+// Update redraws the status block over the drawn one: every line is overwritten and its
+// rest erased, then whatever is below the new block, so no line is ever blank in between.
+func (p *progress) Update(w io.Writer) {
+	lines := p.render()
+	var b strings.Builder
+	b.WriteString("\r" + cursorUp(p.drawn-1))
+	for i, l := range lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(l + "\x1b[K")
+	}
+	b.WriteString("\x1b[J")
+	p.drawn = len(lines)
+	_, _ = io.WriteString(w, b.String())
+}
+
+// cursorUp moves the cursor n lines up; "" for n < 1.
+func cursorUp(n int) string {
+	if n < 1 {
+		return ""
+	}
+	return "\x1b[" + strconv.Itoa(n) + "A"
+}
+
 // Status block limits.
 const (
 	barWidth     = 20 // cells of every bar
 	hostLines    = 5
-	hostColumn   = 28 // widest host name shown; longer ones are cut
-	minBarLength = 5  // narrower bars are left out, on every line
+	hostColumn   = 28                      // widest host name shown; longer ones are cut
+	minBarLength = 5                       // narrower bars are left out, on every line
+	hostLinger   = 1500 * time.Millisecond // a host line stays this long after its last request
 )
 
 // render returns the lines of the status block: the phase with a progress bar of its items
-// and one line per host with open requests (the busiest hostLines), its bar the share of
-// the requests sent to it that are done. All bars have the same width and start in the
-// same column:
+// and one line per host (layout), its bar the share of the requests sent to it that are
+// done. All bars have the same width and start in the same column, which only moves right
+// during a phase (a longer name), so a redraw only changes what changed:
 //
 //	⠹ resolving           ━━━━━━━━━━━━━───────  212/308 · 1 error · 2.1s
 //	  registry.npmjs.org  ━━━━━━━━━━━━━━━━────  412/476 · 64 open
-//	  github.com          ━━━━━━━━━━━━━━━━━━━─  58/62 · 4 open
+//	  github.com          ━━━━━━━━━━━━━━━━━━━━  62/62 · done
 //	  + 2 more hosts · 3 open
 func (p *progress) render() []string {
 	width := p.width() - 1 // one free column
 	p.mu.Lock()
-	elapsed := p.now().Sub(p.start)
+	now := p.now()
+	elapsed := now.Sub(p.start)
 	total := p.total
 	p.mu.Unlock()
 	type row struct {
@@ -234,44 +275,89 @@ func (p *progress) render() []string {
 		done := int(p.done.Load())
 		head.done, head.total, head.text, head.sep = done, total, fmt.Sprintf("%d/%d · %s", done, total, head.text), " "
 	}
-	var hosts []httpx.HostUse
-	if p.inFlight != nil {
-		hosts = p.inFlight()
-	}
-	shown := hosts[:min(len(hosts), hostLines)]
+	shown, more := p.layout(now)
 	rows := make([]row, 1, 1+len(shown))
 	rows[0] = head
 	for _, u := range shown {
-		rows = append(rows, row{prefix: "  ", name: truncate(u.Host, hostColumn), text: fmt.Sprintf("%d/%d · %d open", u.Done, u.Done+u.Open, u.Open), sep: "  ", done: u.Done, total: u.Done + u.Open})
+		text := fmt.Sprintf("%d/%d · %d open", u.Done, u.Done+u.Open, u.Open)
+		if u.Open == 0 {
+			text = fmt.Sprintf("%d/%d · done", u.Done, u.Done)
+		}
+		rows = append(rows, row{prefix: "  ", name: truncate(u.Host, hostColumn), text: text, sep: "  ", done: u.Done, total: u.Done + u.Open})
 	}
 	// The name column fits the widest name; the bar gets what the longest text leaves.
-	col, textLen := 0, 0
 	for _, r := range rows {
-		col = max(col, 2+utf8.RuneCountInString(r.name)) // the prefix is two columns
-		textLen = max(textLen, utf8.RuneCountInString(r.text))
+		p.col = max(p.col, 2+utf8.RuneCountInString(r.name)) // the prefix is two columns
+		p.textCol = max(p.textCol, utf8.RuneCountInString(r.text))
 	}
-	bar := min(barWidth, width-col-4-textLen)
+	bar := min(barWidth, width-p.col-4-p.textCol)
 	lines := make([]string, 0, len(rows)+1)
 	for _, r := range rows {
 		if bar < minBarLength || r.total == 0 && len(rows) == 1 {
 			lines = append(lines, r.prefix+p.style.Paint(logx.Dim, truncate(r.name+r.sep+r.text, width-2)))
 			continue
 		}
-		name := r.name + strings.Repeat(" ", col-2-utf8.RuneCountInString(r.name))
+		name := r.name + strings.Repeat(" ", p.col-2-utf8.RuneCountInString(r.name))
 		b := strings.Repeat(" ", bar)
 		if r.total > 0 {
 			b = p.bar(r.done, r.total, bar)
 		}
 		lines = append(lines, r.prefix+p.style.Paint(logx.Dim, name)+"  "+b+"  "+p.style.Paint(logx.Dim, r.text))
 	}
-	if more := hosts[len(shown):]; len(more) > 0 {
+	if len(more) > 0 {
+		p.moreUntil = now.Add(hostLinger)
 		open := 0
 		for _, u := range more {
 			open += u.Open
 		}
 		lines = append(lines, "  "+p.style.Paint(logx.Dim, truncate(fmt.Sprintf("+ %s · %d open", plural(len(more), "more host", "more hosts"), open), width-2)))
+	} else if now.Before(p.moreUntil) {
+		lines = append(lines, "") // keeps the height while the other hosts pause
 	}
 	return lines
+}
+
+// layout returns the hosts of the host lines and the other hosts with open requests. A host
+// keeps its line, in the order the hosts appeared, until it had no open request for
+// hostLinger; a host with open requests takes a free line, busiest first. Lines thus neither
+// reorder nor blink when a host's requests come in bursts.
+func (p *progress) layout(now time.Time) (shown, more []httpx.HostUse) {
+	if p.hosts == nil {
+		return nil, nil
+	}
+	hosts := p.hosts() // open ones first, busiest first
+	byHost := make(map[string]httpx.HostUse, len(hosts))
+	for _, u := range hosts {
+		byHost[u.Host] = u
+	}
+	kept := p.slots[:0]
+	for _, s := range p.slots {
+		switch {
+		case byHost[s.host].Open > 0:
+			s.idle = time.Time{}
+		case s.idle.IsZero():
+			s.idle = now
+		case now.Sub(s.idle) >= hostLinger:
+			continue
+		}
+		kept = append(kept, s)
+	}
+	p.slots = kept
+	for _, u := range hosts {
+		if u.Open == 0 || slices.ContainsFunc(p.slots, func(s hostSlot) bool { return s.host == u.Host }) {
+			continue
+		}
+		if len(p.slots) < hostLines {
+			p.slots = append(p.slots, hostSlot{host: u.Host})
+		} else {
+			more = append(more, u)
+		}
+	}
+	shown = make([]httpx.HostUse, len(p.slots))
+	for i, s := range p.slots {
+		shown[i] = cmp.Or(byHost[s.host], httpx.HostUse{Host: s.host})
+	}
+	return shown, more
 }
 
 // bar is a progress bar of n cells, done of total filled.
@@ -317,18 +403,22 @@ func (p *progress) text(inFlight bool) string {
 		fmt.Fprintf(&b, " %d/%d", p.done.Load(), total)
 	}
 	b.WriteString(p.details())
-	if inFlight && p.inFlight != nil {
-		if hosts := p.inFlight(); len(hosts) > 0 {
-			total := 0
-			for _, u := range hosts {
+	if inFlight && p.hosts != nil {
+		var open []httpx.HostUse
+		total := 0
+		for _, u := range p.hosts() {
+			if u.Open > 0 {
+				open = append(open, u)
 				total += u.Open
 			}
+		}
+		if len(open) > 0 {
 			fmt.Fprintf(&b, " · %d open request", total)
 			if total > 1 {
 				b.WriteByte('s')
 			}
 			b.WriteString(": ")
-			for i, u := range hosts[:min(len(hosts), 3)] {
+			for i, u := range open[:min(len(open), 3)] {
 				if i > 0 {
 					b.WriteString(", ")
 				}

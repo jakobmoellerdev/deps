@@ -30,14 +30,13 @@ func (h *HostCounter) Wrap(c *http.Client) *http.Client {
 	return &w
 }
 
-// InFlight returns the hosts with open requests, busiest first (ties by name).
-func (h *HostCounter) InFlight() []HostUse {
+// Hosts returns every host requests were sent to, those with open requests first, busiest
+// first (ties by name).
+func (h *HostCounter) Hosts() []HostUse {
 	h.mu.Lock()
-	var out []HostUse
+	out := make([]HostUse, 0, len(h.n))
 	for _, u := range h.n {
-		if u.Open > 0 {
-			out = append(out, *u)
-		}
+		out = append(out, *u)
 	}
 	h.mu.Unlock()
 	slices.SortFunc(out, func(a, b HostUse) int { return cmp.Or(b.Open-a.Open, cmp.Compare(a.Host, b.Host)) })
