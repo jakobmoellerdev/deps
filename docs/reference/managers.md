@@ -78,6 +78,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`kotlin-script`](#kotlin-script)
 - [`leiningen`](#leiningen)
 - [`deps-edn`](#deps-edn)
+- [`ant`](#ant)
 - [`pub`](#pub)
 - [`fvm`](#fvm)
 - [`mix`](#mix)
@@ -3642,6 +3643,45 @@ Updates the libs of the Clojure CLI's `deps.edn` and Babashka's `bb.edn` as Reno
 **Repositories.**
 
 - `:mvn/repos {"name" {:url "…"}}` adds repositories after Maven Central and Clojars (the Clojure CLI's defaults); `"central"` or `"clojars"` with another `:url` replace a default, with `nil` remove it. Without `:mvn/repos` the `clojure` datasource's defaults apply. Credentials (`~/.m2/settings.xml`) are not used.
+
+## ant
+
+Updates the Maven dependencies of Apache Ant builds that use the Maven Ant Tasks or the Maven Resolver Ant Tasks, as Renovate's ant manager. Only the version bytes are rewritten: in the attribute, inside `coords`, or at the definition of the Ant property the version names, also in a properties file or an imported build file.
+
+**Files:**
+
+- `build.xml` at any depth
+- properties files (`<property file>`) and build files (`<import file>`) they read, which are no deps of their own
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `compile` | `<dependency groupId="…" artifactId="…" version="…"/>` or `<dependency coords="group:artifact[:extension[:classifier]]:version[:scope]"/>` (Maven Ant Tasks, Maven Resolver Ant Tasks; any namespace prefix, at any depth) whose scope (`scope` attribute, or the last part of `coords`) is absent, `compile` or not a Maven scope | `maven` | `maven` | updated |
+| `runtime` | `<dependency groupId="…" artifactId="…" version="…"/>` or `<dependency coords="group:artifact[:extension[:classifier]]:version[:scope]"/>` (Maven Ant Tasks, Maven Resolver Ant Tasks; any namespace prefix, at any depth) whose scope (`scope` attribute, or the last part of `coords`) is `runtime` | `maven` | `maven` | updated |
+| `test` | `<dependency groupId="…" artifactId="…" version="…"/>` or `<dependency coords="group:artifact[:extension[:classifier]]:version[:scope]"/>` (Maven Ant Tasks, Maven Resolver Ant Tasks; any namespace prefix, at any depth) whose scope (`scope` attribute, or the last part of `coords`) is `test` | `maven` | `maven` | updated |
+| `provided` | `<dependency groupId="…" artifactId="…" version="…"/>` or `<dependency coords="group:artifact[:extension[:classifier]]:version[:scope]"/>` (Maven Ant Tasks, Maven Resolver Ant Tasks; any namespace prefix, at any depth) whose scope (`scope` attribute, or the last part of `coords`) is `provided` | `maven` | `maven` | updated |
+| `system` | `<dependency groupId="…" artifactId="…" version="…"/>` or `<dependency coords="group:artifact[:extension[:classifier]]:version[:scope]"/>` (Maven Ant Tasks, Maven Resolver Ant Tasks; any namespace prefix, at any depth) whose scope (`scope` attribute, or the last part of `coords`) is `system` | `maven` | `maven` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unresolved property <ref>` | a `${name}` version no `<property>` or properties file of the build defines (Ant built-ins, `<condition>`/`<available>` properties, properties of files outside the repository); `<ref>` is the `${name}` as written |
+| `property cycle <ref>` | a `${name}` version whose properties refer to each other in a cycle |
+| `unsupported version <value>` | a version (or the property value it names) mixing a property with text (`${jetty.version}.v20240101`, `${major}.${minor}`) |
+| `unresolved property in <group:artifact>` | a groupId or artifactId with a `${name}` no property defines |
+| `cannot locate value` | a version written with XML entities, or a properties value with escapes or a continuation line |
+| `version range` | a Maven range Maven rejects (`[2.0,1.0)`); valid ranges are updated as by the maven manager |
+
+**Properties and imports.**
+
+- The build file and the files it imports are read in document order, as Ant does: `<property name="…" value="…"/>` and the keys of `<property file="…"/>` (a Java properties file; `prefix` honored) define properties, the first definition of a name wins (Ant properties are immutable), also inside targets.
+- `<import file="…"/>` reads the build file relative to the importing file; `<property file>` and `settingsFile` paths are relative to the project's `basedir`. `${name}` in these paths is expanded with the properties defined so far and `${basedir}`; paths outside the repository and undefined properties are ignored.
+- A `${name}` version follows `${a}` → `${b}` chains to the final definition, which the update edits; the dep's file and line are then the definition's. Deps sharing a definition are updated together (one version, one PR named after the property unless a rule groups them).
+- A build file imported by several build files (or itself a `build.xml`) yields its deps once.
+
+**Repositories.**
+
+- Deps are looked up in the repositories of their enclosing element (the nearest one declaring any): `<remoteRepository url="…"/>` children (`refid` naming an earlier `<remoteRepository id url>`) and the mirrors and profile repositories of a `settingsFile` Maven settings file, followed by Maven Central; without any, Maven Central. A URL with an undefined `${name}` is left out.
 
 ## pub
 

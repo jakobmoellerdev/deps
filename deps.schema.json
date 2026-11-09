@@ -2320,6 +2320,38 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "ant"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "compile",
+                    "runtime",
+                    "test",
+                    "provided",
+                    "system"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "pub"
                   ]
                 },
@@ -2678,6 +2710,7 @@
               "kotlin-script",
               "leiningen",
               "deps-edn",
+              "ant",
               "pub",
               "fvm",
               "mix",

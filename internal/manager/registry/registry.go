@@ -9,6 +9,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/ansible"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/ant"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/azurepipelines"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/beam"
@@ -149,6 +150,7 @@ var Builtin = []Entry{
 	{kotlinscript.Doc, kotlinscript.New},
 	{clojure.LeiningenDoc, clojure.NewLeiningen},
 	{clojure.DepsEdnDoc, clojure.NewDepsEdn},
+	{ant.Doc, ant.New},
 	{pub.Doc, pub.New},
 	{fvm.Doc, fvm.New},
 	{beam.DocMix, beam.NewMix},

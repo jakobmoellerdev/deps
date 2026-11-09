@@ -297,7 +297,12 @@ func TestLoadRules(t *testing.T) {
 		{
 			name:  "sbt and scalafmt managers, java category, sbt datasources",
 			src:   `{packageRules: [{matchManagers: ['sbt', 'scalafmt'], matchDatasources: ['sbt-package', 'sbt-plugin'], groupName: 'scala'}, {matchCategories: ['java'], enabled: false}]}`,
-			rules: "  - # packageRules[0]\n    managers: [sbt, scalafmt]\n    datasources: [sbt-package, sbt-plugin]\n    group: scala\n  - # packageRules[1]\n    managers: [maven, gradle, gradle-wrapper, maven-wrapper, sbt, scalafmt, osgi, smithy, kotlin-script, leiningen, deps-edn]\n    ignore: true" + defaultExclusions,
+			rules: "  - # packageRules[0]\n    managers: [sbt, scalafmt]\n    datasources: [sbt-package, sbt-plugin]\n    group: scala\n  - # packageRules[1]\n    managers: [maven, gradle, gradle-wrapper, maven-wrapper, sbt, scalafmt, osgi, smithy, kotlin-script, leiningen, deps-edn, ant]\n    ignore: true" + defaultExclusions,
+		},
+		{
+			name:  "ant manager",
+			src:   `{packageRules: [{matchManagers: ['ant'], matchDepTypes: ['test'], enabled: false}]}`,
+			rules: "  - # packageRules[0]\n    managers: [ant]\n    depTypes: [test]\n    ignore: true" + defaultExclusions,
 		},
 		{
 			name:  "leiningen and deps-edn managers, clojure datasource",

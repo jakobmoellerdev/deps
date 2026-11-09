@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project name="VBuilder" default="build"
+  xmlns:resolver="antlib:org.apache.maven.resolver.ant"
+  >
+
+  <property name="RELEASE" value="1"/>
+
+  <property name="annotationsVersion" value="20.1.0"/>
+  <property name="vtypesVersion" value="1"/>
+  <property name="vcollectionsVersion" value="1"/>
+  <property name="mavenResolverAntTasksVersion" value="1.5.0"/>
+
+  <taskdef resource="org/apache/maven/resolver/ant/antlib.xml"/>
+
+  <tstamp>
+    <format property="NOW" timezone="GMT" pattern="yyyy-MM-dd'T'HH:mm:ss'Z'"/>
+  </tstamp>
+
+  <property name="src.core" value="../core/src"/>
+  <property name="src.ant" value="../ant/src"/>
+  <property name="resourcesdir.core" value="../core/resources"/>
+  <property name="resourcesdir.ant" value="../ant/resources"/>
+
+  <property name="debug" value="true"/>
+  <property name="builddir" value="out"/>
+  <property name="distdir" value="dist"/>
+  <property name="classesdir" value="${builddir}/classes"/>
+  <property name="expanddir" value="${builddir}/expand"/>
+  
+  <property name="jarfilename-core" value="VBuilder.jar"/>
+  <property name="jarfilename-ant" value="VBuilderAnt.jar"/>
+  <property name="jarfilename-ant-uber" value="VBuilderAnt-uber.jar"/>
+
+  <property name="artifactname-core" value="vbuilder-core-${RELEASE}"/>
+  <property name="artifactname-ant" value="vbuilder-ant-${RELEASE}"/>
+  <property name="artifactname-ant-uber" value="vbuilder-ant-uber-${RELEASE}"/>
+
+  <target name="clean">
+    <delete includeEmptyDirs="true" failonerror="false">
+      <fileset dir="${builddir}/classes"/>
+      <fileset dir="${builddir}/expand"/>
+      <fileset dir="${expanddir}"/>
+      <fileset dir="${distdir}"/>
+    </delete>
+  </target>
+
+  <target name="saveIDs">
+    <echo file="${classesdir}/org/violetlib/vbuilder/RELEASE.txt" message="${RELEASE}"/>
+    <echo file="${classesdir}/org/violetlib/vbuilder/BUILD.txt" message="${NOW}"/>
+    <echo file="${classesdir}/org/violetlib/vbuilder/ant/RELEASE.txt" message="${RELEASE}"/>
+    <echo file="${classesdir}/org/violetlib/vbuilder/ant/BUILD.txt" message="${NOW}"/>
+  </target>
+
+  <target name="resolve-maven">
+    <resolver:resolve>
+      <dependencies>
+        <dependency coords="org.jetbrains:annotations:${annotationsVersion}"/>
+        <dependency coords="org.violetlib:vtypes:${vtypesVersion}"/>
+        <dependency coords="org.violetlib:vcollections:${vcollectionsVersion}"/>
+      </dependencies>
+      <path refid="maven.core.path" classpath="compile"/>
+    </resolver:resolve>
+    <resolver:resolve>
+      <dependencies>
+        <dependency coords="org.apache.maven.resolver:maven-resolver-ant-tasks:${mavenResolverAntTasksVersion}"/>
+        <dependency coords="commons-logging:commons-logging:1.3.0"/>
+      </dependencies>
+      <path refid="maven.ant.path" classpath="compile"/>
+    </resolver:resolve>
+  </target>
+
+  <path id="core-libs">
+    <path refid="maven.core.path"/>
+  </path>
+
+  <path id="ant-libs">
+    <fileset dir="/usr/local/ant/lib">
+      <include name="ant.jar"/>
+    </fileset>
+    <path refid="maven.core.path"/>
+    <path refid="maven.ant.path"/>
+  </path>
+  
+  <path id="uber-libs">
+    <path refid="maven.core.path"/>
+    <path refid="maven.ant.path"/>
+  </path>
+
+  <target name="compile-core-java" depends="resolve-maven">
+    <mkdir dir="${classesdir}"/>
+    <javac
+      classpathref="core-libs"
+      encoding="UTF-8"
+      srcdir="${src.core}"
+      destdir="${classesdir}"
+      debug="${debug}"
+      optimize="true"
+      includeantruntime="false"
+      fork="true"
+      >
+      <compilerarg value="--release"/>
+      <compilerarg value="11"/>
+      <patternset>
+        <include name="org/violetlib/vbuilder/*.java"/>
+      </patternset>
+    </javac>
+  </target>
+
+  <target name="compile-ant-java" depends="resolve-maven">
+    <mkdir dir="${classesdir}"/>
+    <javac
+      classpathref="ant-libs"
+      encoding="UTF-8"
+      srcdir="${src.ant}"
+      destdir="${classesdir}"
+      debug="${debug}"
+      optimize="true"
+      includeantruntime="false"
+      fork="true"
+      >
+      <compilerarg value="--release"/>
+      <compilerarg value="11"/>
+      <patternset>
+        <include name="org/violetlib/vbuilder/ant/*.java"/>
+      </patternset>
+    </javac>
+  </target>
+
+  <target name="build" depends="clean, saveIDs, compile-core-java, compile-ant-java">
+    <mkdir dir="${distdir}"/>
+    <mkdir dir="${expanddir}"/>
+    <delete file="${classesdir}/META-INF/MANIFEST.MF" quiet="true"/>
+
+    <jar jarfile="${distdir}/${jarfilename-core}" manifest="${resourcesdir.core}/Manifest">
+      <fileset dir="${classesdir}" includes="org/violetlib/vbuilder/*.*"/>
+      <fileset dir="${resourcesdir.core}" includes="org/violetlib/vbuilder/*.*" excludes="Manifest"/>
+    </jar>
+
+    <jar jarfile="${distdir}/${jarfilename-ant}" manifest="${resourcesdir.ant}/Manifest">
+      <fileset dir="${classesdir}" includes="org/violetlib/vbuilder/ant/*.*"/>
+      <fileset dir="${resourcesdir.ant}" includes="org/violetlib/vbuilder/ant/*.*" excludes="Manifest"/>
+    </jar>
+
+    <unjar dest="${expanddir}">
+      <path refid="uber-libs"/>
+    </unjar>
+
+    <jar jarfile="${distdir}/${jarfilename-ant-uber}" manifest="${resourcesdir.ant}/Manifest">
+      <fileset dir="${classesdir}"/>
+      <fileset dir="${resourcesdir.core}" excludes="Manifest"/>
+      <fileset dir="${resourcesdir.ant}" excludes="Manifest"/>
+      <fileset dir="${expanddir}"/>
+    </jar>
+    
+  </target>
+
+  <target name="javadoc" depends="resolve-maven">
+    <javadoc sourcepath="${src.core}:${src.ant}" destdir="${distdir}/java-html" classpathref="ant-libs"/>
+  </target>
+
+</project>

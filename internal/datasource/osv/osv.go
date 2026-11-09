@@ -36,7 +36,7 @@
 //     locked version (dep.Dep.Locked), else the range's anchor version; OSV matches
 //     server-side. Affected entries are matched by normalized name.
 //     Fixed versions are bare, as OSV lists them ("2.32.0").
-//   - maven-datasource deps (maven, gradle, osgi, smithy and kotlin-script managers, custom entries) and sbt-package deps
+//   - maven-datasource deps (maven, gradle, osgi, smithy, kotlin-script and ant managers, custom entries) and sbt-package deps
 //     (the sbt manager's libraries, named with their Scala suffix) and clojure-datasource deps
 //     (leiningen and deps-edn Maven libs) named `group:artifact` are
 //     queried as ecosystem "Maven" with that name and the locked version (dep.Dep.Locked),
