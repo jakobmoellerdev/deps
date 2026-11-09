@@ -124,7 +124,7 @@ func TestExtract(t *testing.T) {
 				if d.Manager != Name || d.DepType != DepTypeDependencies || d.Datasource != Datasource || d.Versioning != Versioning {
 					t.Errorf("dep %d: manager/type/datasource/versioning = %s/%s/%s/%s", i, d.Manager, d.DepType, d.Datasource, d.Versioning)
 				}
-				if d.Skip == "" && (d.ExtractVersion != extractVersion || !strings.HasPrefix(d.Source, "https://")) {
+				if d.Skip == "" && (d.ExtractVersion != ExtractVersion || !strings.HasPrefix(d.Source, "https://")) {
 					t.Errorf("dep %d: source %q, extractVersion %q", i, d.Source, d.ExtractVersion)
 				}
 			}

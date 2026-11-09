@@ -271,7 +271,7 @@ var managerMap = func() map[string][]expansion {
 		"renovate-config":   {{"deps-config", nil}},
 		"ocb":               {{"ocb", nil}},
 	}
-	for n := range strings.FieldsSeq("gomod kustomize npm deno nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version terragrunt-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version bun-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker crow droneci circleci azure-pipelines cloudbuild velaci travis buildkite bitrise composer julia bazel-module bazelisk nuget cake paket homebrew ansible ansible-galaxy sbt scalafmt kotlin-script ant pub fvm mix gleam nix quadlet crossplane tekton glasskube osgi smithy leiningen deps-edn jenkins cocoapods") {
+	for n := range strings.FieldsSeq("gomod kustomize npm deno nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version terragrunt-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift mint xcodegen bundler ruby-version bun-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker crow droneci circleci azure-pipelines cloudbuild velaci travis buildkite bitrise composer julia bazel-module bazelisk nuget cake paket homebrew ansible ansible-galaxy sbt scalafmt kotlin-script ant pub fvm mix gleam nix quadlet crossplane tekton glasskube osgi smithy leiningen deps-edn jenkins cocoapods") {
 		m[n] = []expansion{{n, nil}}
 	}
 	return m
@@ -302,7 +302,7 @@ var categories = map[string][]string{
 	"ansible":    {"ansible", "ansible-galaxy"},
 	"java":       {"maven", "gradle", "gradle-wrapper", "maven-wrapper", "sbt", "scalafmt", "osgi", "smithy", "kotlin-script", "leiningen", "deps-edn", "ant"},
 	"ruby":       {"bundler", "ruby-version"},
-	"swift":      {"swift", "cocoapods"},
+	"swift":      {"swift", "cocoapods", "mint", "xcodegen"},
 	"php":        {"composer"},
 	"julia":      {"julia"},
 	"bazel":      {"bazel-module", "bazelisk"},

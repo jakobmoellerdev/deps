@@ -1337,6 +1337,66 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "mint"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "package"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
+                    "xcodegen"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "from",
+                    "majorVersion",
+                    "minorVersion",
+                    "exactVersion",
+                    "version"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "bundler"
                   ]
                 },
@@ -2949,6 +3009,8 @@
               "maven-wrapper",
               "homebrew",
               "swift",
+              "mint",
+              "xcodegen",
               "bundler",
               "cocoapods",
               "ruby-version",
@@ -3132,6 +3194,12 @@
               "wrapper",
               "maven",
               "formula",
+              "package",
+              "from",
+              "majorVersion",
+              "minorVersion",
+              "exactVersion",
+              "version",
               "ruby",
               "development",
               "pods",
@@ -3205,7 +3273,6 @@
               "tekton-bundle",
               "tekton-step-image",
               "tekton-annotation",
-              "package",
               "clusterPackage",
               "extends",
               "collector",

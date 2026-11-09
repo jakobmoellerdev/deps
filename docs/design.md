@@ -64,6 +64,8 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 | `leiningen` | `project.clj` | `dependencies`, `managed-dependencies`, `plugins`, `pom-plugins`, `parent-project` | `clojure` / `maven` |
 | `deps-edn` | `deps.edn`, `bb.edn` | `deps`, `extra-deps`, `override-deps`, `replace-deps`, `default-deps` | `clojure` / `maven`; git libs `git-tags` / `tag` (`:git/tag`, with `:git/sha` as digest), `git-refs` / `tag` (`:git/sha` alone) |
 | `ant` | `build.xml` (and the properties and build files it reads) | `compile`, `runtime`, `test`, `provided`, `system` | `maven` / `maven` |
+| `mint` | `Mintfile` | `package` | `git-tags` / `tag` |
+| `xcodegen` | `project.yml` | `from`, `majorVersion`, `minorVersion`, `exactVersion`, `version` | `git-tags` / `semver` (`v` tags read as SwiftPM does) |
 | `homebrew` | `Formula/<name>.rb`, `Formula/<dir>/<name>.rb` | `formula` | GitHub archive `git-tags`, release asset `github-releases` / `loose`; npm tarball `npm` / `semver` |
 | `git-submodules` | `.gitmodules` | `submodule` | `git-refs` (a branch) or `git-tags` (a version-tag `branch`) / `tag` |
 | `pre-commit` | `.pre-commit-config.y(a)ml` | `repository`, `pre-commit-node`, `pre-commit-python`, `pre-commit-golang` | revs `git-tags` / `tag`; hook `additional_dependencies` `npm` / `semver`, `pypi` / `pep440`, `go` / `go` |

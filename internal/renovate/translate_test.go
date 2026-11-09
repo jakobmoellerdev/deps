@@ -395,6 +395,11 @@ func TestLoadRules(t *testing.T) {
 			rules: "  - # packageRules[0]\n    managers: [jenkins]\n    datasources: [jenkins-plugins]\n    group: jenkins" + defaultExclusions,
 		},
 		{
+			name:  "swift category; mint and xcodegen managers",
+			src:   `{packageRules: [{matchCategories: ['swift'], groupName: 'swift'}, {matchManagers: ['mint', 'xcodegen'], enabled: false}]}`,
+			rules: "  - # packageRules[0]\n    managers: [swift, cocoapods, mint, xcodegen]\n    group: swift\n  - # packageRules[1]\n    managers: [mint, xcodegen]\n    ignore: true" + defaultExclusions,
+		},
+		{
 			name: "postUpgradeTasks top level and per rule, Ruby and Swift managers, rangeStrategy widen",
 			src: `{postUpgradeTasks: {commands: ['make generate'], fileFilters: ['**/*.go'], executionMode: 'branch'},
 				packageRules: [{matchCategories: ['ruby'], rangeStrategy: 'widen', postUpgradeTasks: {commands: ['bundle exec rake']}},

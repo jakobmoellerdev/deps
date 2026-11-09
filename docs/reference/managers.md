@@ -45,6 +45,8 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`maven-wrapper`](#maven-wrapper)
 - [`homebrew`](#homebrew)
 - [`swift`](#swift)
+- [`mint`](#mint)
+- [`xcodegen`](#xcodegen)
 - [`bundler`](#bundler)
 - [`cocoapods`](#cocoapods)
 - [`ruby-version`](#ruby-version)
@@ -2493,6 +2495,63 @@ Updates the package requirements of Swift Package Manager manifests and moves th
 3. **Pins.** With an update (also in `plan`, which prints the `Package.resolved` diff) the pin of the package in each root's `Package.resolved` gets the new version and the commit of its tag, from the tags the `git-tags` datasource already listed: no Swift toolchain, no clone. A pin the new requirement admits that is at or above the new version is kept, so pins only move down to the exact version of a `pin` rewrite. Only the version, revision and origin hash strings are replaced; the file keeps its formatting. Pins of other packages stay: when the new version needs other versions of its own dependencies, SwiftPM notices on the next `swift package resolve` or build that the pins no longer satisfy the graph and re-resolves them, as it does for a manually edited manifest.
 4. **Origin hash.** SwiftPM 5.10+ (`Package.resolved` v3) stores `originHash`, the SHA-256 of the root manifest. When the root's own `Package.swift` changes and the stored hash matched it before, the hash of the new manifest is written, so `-only-use-versions-from-resolved-file` / `-disableAutomaticPackageResolution` builds accept the file. A hash that did not match (a version-specific manifest, an already stale file) is left alone.
 5. **Failure.** A commit that cannot be looked up fails the update, and the other Swift updates built with it, with `<dir>/Package.resolved: commit of <name> <version>: <error>`. Lock file maintenance is not supported.
+
+## mint
+
+Updates the versions of the Swift command line tools a [Mint](https://github.com/yonaskolb/Mint) `Mintfile` pins. Only the version is replaced; comments and other lines are kept.
+
+**Files:**
+
+- any `Mintfile`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `package` | every line `<repo>@<version>`, read as Mint reads it (whitespace trimmed, `#` starts a comment): `owner/repo` is a GitHub repository, `github.com/owner/repo` and `<host.tld>/owner/repo` are https URLs, and http(s), `ssh://` and `git@host:owner/repo` URLs are taken as written (`git@github.com:owner/repo.git@1.2.0`); the name is the URL path (`owner/repo`), the source its http(s) URL (https for `ssh://` and `git@host:`) without `.git`. The version is the tag Mint checks out | `git-tags` | `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unspecified version` | a line without `@<version>` (Mint installs the newest tag), as Renovate |
+| `unrecognized repository` | a repository that is neither `owner/repo` nor a git URL with an owner/repo path |
+
+**Versions.**
+
+- A branch or commit (`@main`, `@a1b2c3d`) is no version and is skipped by the engine (`non-version value`).
+- Nothing else is run: `mint bootstrap` installs the new versions.
+
+## xcodegen
+
+Updates the Swift package requirements of [XcodeGen](https://github.com/yonaskolb/XcodeGen) project specs: the top-level `packages:` of `project.yml`. Only the version string is replaced; the requirement key, quoting and comments are kept. The name is the URL path (`owner/repo`), the source its http(s) URL (https for `ssh://`, `git://` and `git@host:` URLs) without `.git`; `github: owner/repo` is `https://github.com/owner/repo`, and takes precedence over `url:`, as in XcodeGen.
+
+**Files:**
+
+- any `project.yml` (specs split with `include:` are read file by file; `project.json` is not read)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `from` | `packages:` entry `<name>: {url: … \| github: owner/repo, from: 1.2.3}`: up to the next major version (`>=1.2.3 <2.0.0`, also for 0.x versions, as SwiftPM) | `git-tags` | `semver`; tags are read as SwiftPM reads them: full `MAJOR.MINOR.PATCH[-pre][+build]` versions with an optional leading `v`, which is dropped (the dep's `extractVersion`) | updated |
+| `majorVersion` | `packages:` entry `<name>: {url: … \| github: owner/repo, majorVersion: 1.2.3}`: as `from:` | `git-tags` | `semver`; tags are read as SwiftPM reads them: full `MAJOR.MINOR.PATCH[-pre][+build]` versions with an optional leading `v`, which is dropped (the dep's `extractVersion`) | updated |
+| `minorVersion` | `packages:` entry `<name>: {url: … \| github: owner/repo, minorVersion: 1.2.3}`: up to the next minor version (`>=1.2.3 <1.3.0`) | `git-tags` | `semver`; tags are read as SwiftPM reads them: full `MAJOR.MINOR.PATCH[-pre][+build]` versions with an optional leading `v`, which is dropped (the dep's `extractVersion`) | updated |
+| `exactVersion` | `packages:` entry `<name>: {url: … \| github: owner/repo, exactVersion: 1.2.3}`: exactly that version | `git-tags` | `semver`; tags are read as SwiftPM reads them: full `MAJOR.MINOR.PATCH[-pre][+build]` versions with an optional leading `v`, which is dropped (the dep's `extractVersion`) | updated |
+| `version` | `packages:` entry `<name>: {url: … \| github: owner/repo, version: 1.2.3}`: as `exactVersion:` | `git-tags` | `semver`; tags are read as SwiftPM reads them: full `MAJOR.MINOR.PATCH[-pre][+build]` versions with an optional leading `v`, which is dropped (the dep's `extractVersion`) | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `local package` | `path:` (a local package) |
+| `unrecognized url` | neither `github:` nor `url:` holds an https/http/ssh/git or `git@host:path` URL with an owner/repo path |
+| `branch reference` | `branch:` |
+| `revision pin` | `revision:` |
+| `version range` | `minVersion:` with `maxVersion:`, as Renovate |
+| `unsupported requirement` | no requirement, or a version that is no full semantic version (`1.2`, which YAML also reads as a number) |
+| `cannot locate value` | the version is written with YAML escapes, as a block scalar or over several lines |
+
+**Requirements.**
+
+- The requirement is the first key present in XcodeGen's order: `exactVersion`, `version`, `revision`, `branch`, `minVersion` (with `maxVersion`), `minorVersion`, `majorVersion`, `from`.
+- `rangeStrategy` (default `auto` = `update-lockfile`, as for the swift manager without `Package.resolved`): only versions outside the range of `from:`, `majorVersion:` and `minorVersion:` are proposed, and replace its version, so a `from:` moves with new major versions. `bump` replaces the version with every newer one. `widen` and `pin` cannot be written without another key, so they are `replace`. The `Package.resolved` of the generated project is not read or moved: XcodeGen regenerates the project, and Xcode resolves the packages again.
 
 ## bundler
 

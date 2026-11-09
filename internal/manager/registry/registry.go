@@ -48,6 +48,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mint"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nuget"
@@ -75,6 +76,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/velaci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/woodpecker"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/xcodegen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
 
@@ -122,6 +124,8 @@ var Builtin = []Entry{
 	{mavenwrapper.Doc, mavenwrapper.New},
 	{homebrew.Doc, homebrew.New},
 	{swift.Doc, swift.New},
+	{mint.Doc, mint.New},
+	{xcodegen.Doc, xcodegen.New},
 	{bundler.Doc, bundler.New},
 	{bundler.CocoaPodsDoc, bundler.NewCocoaPods},
 	{toolversions.DocRubyVersion, toolversions.NewRubyVersion},

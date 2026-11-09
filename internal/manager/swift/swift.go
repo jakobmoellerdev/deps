@@ -32,9 +32,10 @@ const (
 	Versioning = "semver"
 )
 
-// extractVersion maps the repository's tags to the versions SwiftPM reads from them: full
+// ExtractVersion maps the repository's tags to the versions SwiftPM reads from them: full
 // semantic versions, with a leading "v" dropped (SwiftPM accepts `v1.2.3` tags as 1.2.3).
-const extractVersion = `^v?(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$`
+// Xcode resolves XcodeGen package requirements the same way.
+const ExtractVersion = `^v?(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$`
 
 // Skip reasons.
 const (
@@ -97,7 +98,7 @@ func (swiftManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, 
 func callDep(file string, src []byte, lines []int, c call, exactLabel bool) dep.Dep {
 	d := dep.Dep{
 		Manager: Name, Datasource: Datasource, Versioning: Versioning, DepType: DepTypeDependencies,
-		ExtractVersion: extractVersion, File: file, Line: yamlspan.LineOf(lines, c.start),
+		ExtractVersion: ExtractVersion, File: file, Line: yamlspan.LineOf(lines, c.start),
 	}
 	var u, req *arg
 	extra, named := false, false
