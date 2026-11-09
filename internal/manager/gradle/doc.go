@@ -16,7 +16,8 @@ var Doc = refdoc.Manager{
 		"versions may come from variables defined in the same build (see Variables), dynamic versions are read from `gradle.lockfile` (see Lockfiles and dynamic versions), " +
 		"and the repositories a build declares are queried (see Repositories).",
 	Files: []string{
-		"`*.versions.toml` (default `gradle/libs.versions.toml`) and any `.toml` below a `gradle/` directory (catalogs imported with `from(files(\"gradle/deps.toml\"))`), as Renovate matches them",
+		"`*.versions.toml` (default `gradle/libs.versions.toml`) and any `.toml` below a `gradle/` directory, as Renovate matches them; " +
+			"other catalog files a settings file imports with `from(files(\"…\"))` (relative to the settings file, inside the repository) are read and extracted with that settings file (the first one importing it)",
 		"`*.gradle`, `*.gradle.kts` (`build.gradle(.kts)`, `settings.gradle(.kts)`, applied scripts such as `gradle/dependencies.gradle`)",
 		"`gradle.properties` (variable definitions only)",
 		"`buildSrc/**/*.kt`, `buildSrc/**/*.groovy`; `*.kt` below `src/main/kotlin` of `build-logic`, `build-conventions` and `convention-plugins` included builds",
@@ -27,8 +28,9 @@ var Doc = refdoc.Manager{
 				"build-script string notation `implementation(\"group:name:version\")`, `api 'group:name:version[:classifier][@ext]'` " +
 				"for the common configurations (`implementation`, `api`, `compileOnly`, `runtimeOnly`, `test…`, `androidTestImplementation`, `debugImplementation`, `kapt`, `ksp`, " +
 				"`annotationProcessor`, `classpath`, `compile`, `testCompile`, `detektPlugins`, `lintChecks`, `checkstyle`, …) and `platform(…)`/`enforcedPlatform(…)`; " +
-				"map notation `implementation group: 'g', name: 'n', version: 'v'` (optional parentheses, any order, extra keys such as `classifier`/`ext` ignored) and " +
-				"Kotlin named arguments `implementation(group = \"g\", name = \"n\", version = \"v\")`; " +
+				"map notation `implementation group: 'g', name: 'n', version: 'v'` (optional parentheses, any order, extra keys such as `classifier`/`ext` ignored), " +
+				"Kotlin named arguments `implementation(group = \"g\", name = \"n\", version = \"v\")` and rich version blocks `implementation(\"group:name\") { version { strictly(\"v\") } }` " +
+				"(Groovy `implementation('group:name') { version { require 'v' } }`, also in `constraints { }`; exactly one of `strictly`, `require` and `prefer` is the version an update rewrites); " +
 				"coordinates assigned to variables or map entries (`def lib = \"g:n:v\"`, `libs += [x: \"g:n:$versions.x\"]`, `mapOf(\"x\" to \"g:n:v\")`); " +
 				"in `buildSrc`/convention-plugin sources every string literal of the form `group:name:version`; the name is `group:name`",
 			Versioning: "`maven`", Datasources: []string{"maven"}},
@@ -39,7 +41,7 @@ var Doc = refdoc.Manager{
 	},
 	Skips: []refdoc.Skip{
 		{Reason: "unresolved version.ref <k>", When: "a catalog entry (TOML or settings) references a version key that does not exist"},
-		{Reason: "rich version", When: "a catalog rich version (TOML table or settings `version(\"k\") { … }`/`.version { … }`) with more than one of `strictly`, `require` and `prefer`, or with `reject`/`rejectAll`; one of them alone is the version an update rewrites (`{ strictly = \"2.0.13\" }`), as in Renovate"},
+		{Reason: "rich version", When: "a rich version (catalog TOML table, settings `version(\"k\") { … }`/`.version { … }`, build-script `\"group:name\") { version { … } }`) with more than one of `strictly`, `require` and `prefer`, or with `reject`/`rejectAll`; one of them alone is the version an update rewrites (`{ strictly = \"2.0.13\" }`), as in Renovate (`multiple-constraint-dep`)"},
 		{Reason: "cannot locate value", When: "a TOML catalog version is not a single-line string or contains a backslash escape"},
 		{Reason: "unresolved variable <x>", When: "a version is exactly one variable reference and no literal definition of it is visible (see Variables)"},
 		{Reason: "version variable", When: "a coordinate's group or name, or a plugin id, is interpolated, or the version mixes variables with text (`${v}-jre`) or is an expression that is not a variable reference"},
@@ -105,7 +107,7 @@ var Doc = refdoc.Manager{
 		{Title: "Replacements", Body: "Literal coordinates (`\"g:a:v\"` strings, `group`/`name` maps, catalog `module` and `group`/`name`, settings `library(...)`) and plugin ids can be [replaced](configuration.md#rulesreplacementname); interpolated names, `kotlin(\"...\")` plugins and deps whose version variable lives in another file are not. A replacement version is not written to a shared `version.ref` or variable."},
 		{Title: "Not covered", Items: []string{
 			"Values computed from expressions (`\"$a.$b\"`, `if`/`?:`, `versions[\"a\"]!![\"b\"]`) have no single definition an update could rewrite; Renovate skips them too (`unspecified-version`). " +
-				"Catalog files imported with `from(files(…))` outside a `gradle/` directory and not named `*.versions.toml`, and `useModule(…)` in `resolutionStrategy`.",
+				"`useModule(…)` in `resolutionStrategy`, rich version blocks after map notation, catalog files outside the repository, and published catalogs (`from(\"g:catalog:1.0\")`).",
 			"Variables defined in `~/.gradle/gradle.properties` or by `-P`/environment are not in the repository; those of included builds other than `buildSrc` are not shared with the including build (Gradle does not either: an included build has its own properties).",
 			"`latest.<status>` for statuses other than release and integration (`latest.milestone`, custom statuses) depend on component metadata deps does not read; they are skipped even with a lockfile.",
 			"Prefixes without a dot (`1.2+`): Gradle matches the text before the `+` as a string prefix (https://docs.gradle.org/current/userguide/dependency_versions.html: " +

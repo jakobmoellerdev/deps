@@ -318,6 +318,22 @@ func TestExtractScript(t *testing.T) {
 			"/* open comment\nimplementation(\"g:hidden:1\")\n",
 			want: []want{lib("g:real", "1", 4, ""), lib("g:afterurl", "2", 5, ""), lib("g:afterchar", "4", 9, ""),
 				lib("g:next", "5", 11, "")}},
+		// Rich version blocks after a group:name, as in the Gradle user guide's
+		// rich_versions.html and dependency_constraints.html samples.
+		{name: "rich version blocks", src: "dependencies {\n" +
+			"  implementation(\"org.slf4j:slf4j-api\") {\n    version {\n      strictly(\"[1.7, 1.8[\")\n      prefer(\"1.7.25\")\n    }\n  }\n" +
+			"  constraints {\n    implementation(\"commons-codec:commons-codec\") {\n      version {\n        strictly(\"1.11\")\n      }\n" +
+			"      because(\"x\")\n    }\n  }\n" +
+			"  implementation('org.springframework:spring-core') { version { require '5.3.0' } }\n" +
+			"  implementation(\"g:var\") { version { prefer(springVersion) } }\n" +
+			"  implementation(\"g:noversion\") { because(\"managed\") }\n" +
+			"  implementation(\"g:reject\") { version { require(\"1.0\"); reject(\"1.0.1\") } }\n" +
+			"  implementation(\"g:empty\") { version { prefer(\"\") } }\n" +
+			"  implementation(\"$g:x\") { version { prefer(\"1\") } }\n" +
+			"}\n",
+			want: []want{lib("org.slf4j:slf4j-api", "", 2, "rich version"), lib("commons-codec:commons-codec", "1.11", 9, ""),
+				lib("org.springframework:spring-core", "5.3.0", 16, ""), lib("g:var", "", 17, "unresolved variable springVersion"),
+				lib("g:reject", "", 19, "rich version")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []want
@@ -370,6 +386,10 @@ func TestEdits(t *testing.T) {
 				"      library(\"slf4j\", \"org.slf4j\", \"slf4j-api\").versionRef(\"slf4j\")\n    }\n  }\n}\n"},
 		{name: "build script plugin", file: "settings.gradle.kts", src: "plugins { kotlin(\"jvm\") version \"2.0.0\" }\n", dep: "org.jetbrains.kotlin.jvm", to: "2.1.0",
 			want: "plugins { kotlin(\"jvm\") version \"2.1.0\" }\n"},
+		{name: "build script rich version", file: "build.gradle.kts",
+			src: "dependencies {\n  constraints {\n    implementation(\"commons-codec:commons-codec\") { version { strictly(\"1.11\") } }\n  }\n}\n",
+			dep: "commons-codec:commons-codec", to: "1.17.1",
+			want: "dependencies {\n  constraints {\n    implementation(\"commons-codec:commons-codec\") { version { strictly(\"1.17.1\") } }\n  }\n}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var d *dep.Dep

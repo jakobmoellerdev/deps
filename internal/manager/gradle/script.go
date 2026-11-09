@@ -70,7 +70,10 @@ func extractScript(file string, src []byte, kind fileKind) ([]dep.Dep, []depMeta
 		configLines := wordLines(s.code, configWords)
 		for m := range inLines(coordRe, s.code, configLines) {
 			if l, ok := s.lit(m[1]); ok {
-				x.coordinate(l, x.class(m[0], string(s.code[m[2]:m[3]])), false)
+				class := x.class(m[0], string(s.code[m[2]:m[3]]))
+				if !x.coordinate(l, class, false) {
+					x.richCoordinate(l, class)
+				}
 			}
 		}
 		for m := range inLines(mapRe, s.code, configLines) {
@@ -164,6 +167,59 @@ func (x *extractor) coordinate(l strLit, class depClass, strict bool) bool {
 	x.taken[l.start] = true
 	x.add(l.start, d, meta)
 	return true
+}
+
+// richCoordinate extracts `implementation("g:a") { version { strictly("1.0") } }` (Groovy
+// `implementation('g:a') { version { strictly '1.0' } }`, also in constraints) from the
+// `group:name` literal l: a rich version block stating exactly one of strictly, require and
+// prefer is the dep's version, rewritten in place (as in catalogs); other blocks are `rich
+// version`. A `group:name` without a version block is no dep (a platform manages it).
+func (x *extractor) richCoordinate(l strLit, class depClass) {
+	s := x.s
+	name := s.text(l)
+	g, a, ok := strings.Cut(name, ":")
+	if !ok || !gaRe.MatchString(g) || !gaRe.MatchString(a) {
+		return
+	}
+	i := s.skipSpace(l.end + 1)
+	if i < len(s.code) && s.code[i] == ')' {
+		i = s.skipBlank(i + 1)
+	}
+	b := -1
+	if i < len(s.code) && s.code[i] == '{' {
+		b = s.blockAt(i)
+	}
+	if b < 0 {
+		return
+	}
+	ver := -1
+	for c := b + 1; c < len(s.blocks) && s.blocks[c].open < s.blocks[b].end; c++ {
+		if s.blocks[c].parent == b && s.blocks[c].label == "version" {
+			ver = c
+			break
+		}
+	}
+	if ver < 0 {
+		return
+	}
+	d := newDep(x.file, DepTypeDependencies, s.lines.at(l.start))
+	d.Name = name
+	d.NameParts = []dep.NamePart{namePart(name, l.start, dep.NameWhole)}
+	meta := depMeta{class: class}
+	v, ok := x.richValue(s.blocks[ver].open)
+	if !ok {
+		d.Skip = "rich version"
+	} else {
+		x.catalogVersion(&d, &meta, v)
+		if v.isLit {
+			x.taken[v.lit.start] = true
+		}
+	}
+	if d.Skip == "" && d.Version == "" && meta.ref == "" {
+		return
+	}
+	x.taken[l.start] = true
+	x.add(l.start, d, meta)
 }
 
 // version sets the version of d from the literal content v at span: a literal, or a

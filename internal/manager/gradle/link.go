@@ -90,37 +90,51 @@ func (ix *index) consumer(file string) string {
 
 // Link resolves the variable references of the run's deps (moving resolved deps to the
 // definition) and sets their repositories, then forgets the run's files; what ReadLocks and
-// Rename need is kept until the next run.
+// Rename need is kept until the next run. The deps of a catalog a settings file imports are
+// linked as that catalog's (see levels).
 func (m *gradleManager) Link(files [][]dep.Dep) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ix := newIndex(m.files)
 	ls := lockState{dirs: make([][]string, len(files)), meta: make([][]depMeta, len(files)), settings: make([]bool, len(files))}
 	renames := map[namePos]nameRepos{}
+	var catalogs map[string]*repoLevels // imported catalog file → its levels
 	for fi, deps := range files {
 		if len(deps) == 0 {
 			continue
 		}
 		file := deps[0].File
+		if s, ok := m.imported[file]; ok { // a settings file without deps of its own
+			file = s
+		}
 		st := m.files[file]
 		if st == nil || len(st.meta) != len(deps) {
 			continue
 		}
 		lv := ix.levels(file, st)
 		for i := range deps {
-			d := &deps[i]
-			d.Source = lv.source(d.Name, st.meta[i].class)
+			d, l := &deps[i], &lv
+			if st.meta[i].imported {
+				if catalogs == nil {
+					catalogs = map[string]*repoLevels{}
+				}
+				if l = catalogs[d.File]; l == nil {
+					c := ix.levels(d.File, &fileState{kind: kindCatalog})
+					l, catalogs[d.File] = &c, &c
+				}
+			}
+			d.Source = l.source(d.Name, st.meta[i].class)
 			if key := st.meta[i].ref; key != "" {
 				ix.resolve(file, d, key)
 			}
 			if d.Renamable() {
-				renames[namePos{file, d.NameParts[0].Span.Start}] = nameRepos{levels: &lv, class: st.meta[i].class}
+				renames[namePos{d.File, d.NameParts[0].Span.Start}] = nameRepos{levels: l, class: st.meta[i].class}
 			}
 		}
 		ls.dirs[fi], ls.meta[fi], ls.settings[fi] = ix.lockDirs(file, st), st.meta, st.kind == kindSettings
 	}
 	m.lock, m.renames = ls, renames
-	m.files = map[string]*fileState{}
+	m.files, m.imported = map[string]*fileState{}, map[string]string{}
 }
 
 // resolve points d at the definition of key visible from file: the file itself, the build

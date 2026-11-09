@@ -85,8 +85,9 @@ const (
 
 // depMeta is what Link needs to know about an extracted dep beyond dep.Dep.
 type depMeta struct {
-	class depClass
-	ref   string // key of the variable the version refers to; "" = none
+	class    depClass
+	ref      string // key of the variable the version refers to; "" = none
+	imported bool   // a dep of a catalog file a settings file imports (from(files(…))), extracted with it
 }
 
 // fileState is what Extract recorded about one file for Link.
@@ -102,6 +103,9 @@ type gradleManager struct {
 	files   map[string]*fileState // every file extracted in this run
 	lock    lockState             // left by Link for ReadLocks
 	renames map[namePos]nameRepos // left by Link for Rename, by renamable dep
+	// imported maps a catalog file imported with from(files(…)) that Match does not match to
+	// the settings file whose Extract returned its deps (the first one importing it).
+	imported map[string]string
 }
 
 // namePos identifies a renamable dep: its file and the start of its first NamePart.
@@ -117,7 +121,9 @@ type nameRepos struct {
 }
 
 // New returns the gradle manager.
-func New() manager.Manager { return &gradleManager{files: map[string]*fileState{}} }
+func New() manager.Manager {
+	return &gradleManager{files: map[string]*fileState{}, imported: map[string]string{}}
+}
 
 func (*gradleManager) Name() string { return Name }
 
@@ -141,8 +147,10 @@ func (*gradleManager) Match(p string) bool {
 
 // Extract returns the deps of a version catalog, build script or buildSrc source and records
 // the file's variable definitions and repositories for Link; gradle.properties only defines
-// variables. A catalog that is not valid TOML is an error.
-func (m *gradleManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+// variables. A catalog that is not valid TOML is an error. A settings file also returns the
+// deps of the catalogs it imports with `from(files(…))` that Match does not match (read with
+// env.ReadFile; each by the first settings file importing it).
+func (m *gradleManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	st := &fileState{kind: kindOf(file)}
 	var deps []dep.Dep
 	switch st.kind {
@@ -151,21 +159,64 @@ func (m *gradleManager) Extract(file string, src []byte, _ manager.Env) ([]dep.D
 		if deps, err = extractCatalog(file, src); err != nil {
 			return nil, err
 		}
-		st.meta = make([]depMeta, len(deps))
-		for i, d := range deps {
-			if d.DepType == DepTypePlugin {
-				st.meta[i].class = classPlugin
-			}
-		}
+		st.meta = catalogMeta(deps, false)
 	case kindProperties:
 		st.defs = properties(src)
 	default:
 		deps, st.meta, st.defs, st.repos = extractScript(file, src, st.kind)
 	}
+	if st.kind == kindSettings && env.ReadFile != nil {
+		for _, p := range st.repos.imports {
+			cd, err := m.importCatalog(file, p, env.ReadFile)
+			if err != nil {
+				return nil, err
+			}
+			deps, st.meta = append(deps, cd...), append(st.meta, catalogMeta(cd, true)...)
+		}
+	}
 	m.mu.Lock()
 	m.files[file] = st
 	m.mu.Unlock()
 	return deps, nil
+}
+
+// importCatalog returns the deps of the catalog file p the settings file imports, unless Match
+// matches p (it is extracted itself), another settings file claimed it first or it cannot be
+// read; a catalog that is not valid TOML is an error.
+func (m *gradleManager) importCatalog(settings, p string, read func(string) ([]byte, error)) ([]dep.Dep, error) {
+	if catalogRe.MatchString(p) {
+		return nil, nil
+	}
+	m.mu.Lock()
+	_, dup := m.imported[p]
+	if !dup {
+		m.imported[p] = settings
+	}
+	m.mu.Unlock()
+	if dup {
+		return nil, nil
+	}
+	src, err := read(p)
+	if err != nil {
+		return nil, nil //nolint:nilerr // a missing catalog fails the Gradle build, not the scan
+	}
+	deps, err := extractCatalog(p, src)
+	if err != nil {
+		return nil, fmt.Errorf("catalog %s imported by %s: %w", p, settings, err)
+	}
+	return deps, nil
+}
+
+// catalogMeta returns the depMeta of catalog deps: plugins use the plugin repositories.
+func catalogMeta(deps []dep.Dep, imported bool) []depMeta {
+	meta := make([]depMeta, len(deps))
+	for i, d := range deps {
+		meta[i].imported = imported
+		if d.DepType == DepTypePlugin {
+			meta[i].class = classPlugin
+		}
+	}
+	return meta
 }
 
 // Edits replaces the version token; deps sharing a definition share the span. A range dep

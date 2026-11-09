@@ -87,7 +87,8 @@ func (m *gradleManager) ReadLocks(root string, files [][]dep.Dep) []error {
 				class = classPlugin
 			}
 			if aligned && len(ls.meta[fi]) == len(deps) {
-				dirs, class, settings = ls.dirs[fi], ls.meta[fi][i].class, ls.settings[fi]
+				meta := ls.meta[fi][i]
+				dirs, class, settings = ls.dirs[fi], meta.class, ls.settings[fi] && !meta.imported
 			}
 			kind, name := lockProject, d.Name
 			switch {

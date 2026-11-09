@@ -48,9 +48,9 @@ func loadDir(t *testing.T, dir string) map[string]string {
 	return files
 }
 
-// runBuild extracts the matched files in path order and links them; with locks it writes
-// every file to a temporary root and reads the lockfiles too. It returns the deps of every
-// file by its path and checks the spans of updatable deps.
+// runBuild extracts the matched files in path order (reading other files from files) and
+// links them; with locks it writes every file to a temporary root and reads the lockfiles too.
+// It returns the deps of every file by its path and checks the spans of updatable deps.
 func runBuild(t *testing.T, files map[string]string, locks bool) map[string][]dep.Dep {
 	t.Helper()
 	m := New()
@@ -60,9 +60,15 @@ func runBuild(t *testing.T, files map[string]string, locks bool) map[string][]de
 			paths = append(paths, p)
 		}
 	}
+	env := manager.Env{ReadFile: func(p string) ([]byte, error) {
+		if s, ok := files[p]; ok {
+			return []byte(s), nil
+		}
+		return nil, fs.ErrNotExist
+	}}
 	all := make([][]dep.Dep, len(paths))
 	for i, p := range paths {
-		ds, err := m.Extract(p, []byte(files[p]), manager.Env{})
+		ds, err := m.Extract(p, []byte(files[p]), env)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1221,5 +1227,45 @@ func TestLinkedRename(t *testing.T) {
 	}
 	if d := get(t, deps, "build.gradle.kts", "g:b"); d.Renamable() || d.File != "gradle.properties" {
 		t.Errorf("gradle.properties variable: %+v", d)
+	}
+}
+
+// A catalog imported in settings with from(files(…)) from a path the catalog patterns do not
+// match is extracted with the settings file, once, and linked as a catalog of the importing
+// builds.
+func TestImportedCatalogs(t *testing.T) {
+	files := map[string]string{
+		"settings.gradle.kts": "dependencyResolutionManagement {\n  repositories { mavenCentral() }\n  versionCatalogs {\n" +
+			"    create(\"libs\") { from(files(\"deps.toml\")) }\n" +
+			"    create(\"tools\") { from(files(\"gradle/tools.versions.toml\")) }\n" +
+			"    create(\"missing\") { from(files(\"missing.toml\")) }\n  }\n}\n",
+		"deps.toml":                  "[versions]\nx = \"1.0\"\n[libraries]\na = { module = \"g:a\", version.ref = \"x\" }\n[plugins]\np = { id = \"p.id\", version = \"2.0\" }\n",
+		"gradle/tools.versions.toml": "[libraries]\nt = \"g:t:3.0\"\n",
+		"sub/settings.gradle":        "dependencyResolutionManagement { versionCatalogs { libs { from(files('../deps.toml')) } } }\n",
+		"sub/build.gradle":           "repositories { maven { url 'https://sub.example' } }\n",
+	}
+	deps := runBuild(t, files, false)
+	a := get(t, deps, "settings.gradle.kts", "g:a")
+	if a.File != "deps.toml" || a.Version != "1.0" || a.VersionRef != "x" || a.Source != centralRepo+" https://sub.example/" || !a.Renamable() {
+		t.Errorf("g:a: %+v", a)
+	}
+	if p := get(t, deps, "settings.gradle.kts", "p.id"); p.File != "deps.toml" || p.Version != "2.0" || p.Source != PluginRepositories {
+		t.Errorf("p.id: %+v", p)
+	}
+	n := 0
+	for _, ds := range deps {
+		for _, d := range ds {
+			if d.Name == "g:a" || d.Name == "g:t" {
+				n++
+			}
+		}
+	}
+	if n != 2 || len(deps["sub/settings.gradle"]) != 0 {
+		t.Errorf("imported catalogs extracted %d times, sub/settings.gradle: %+v", n, deps["sub/settings.gradle"])
+	}
+	_, err := New().Extract("settings.gradle", []byte("dependencyResolutionManagement { versionCatalogs { libs { from(files('bad.toml')) } } }\n"),
+		manager.Env{ReadFile: func(string) ([]byte, error) { return []byte("[libraries\n"), nil }})
+	if err == nil || !strings.Contains(err.Error(), "catalog bad.toml imported by settings.gradle") {
+		t.Errorf("invalid imported catalog: %v", err)
 	}
 }
