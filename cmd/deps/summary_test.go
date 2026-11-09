@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/bot"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 )
@@ -149,8 +150,17 @@ func TestSummaryRender(t *testing.T) {
 		{
 			name:      "rules that matched no dependency",
 			s:         summary{Command: "plan", Res: &engine.Result{Deps: res.Deps[:1]}, Unused: []int{0, 3}},
-			textExact: "warn    rules[0] matched no dependency\nwarn    rules[3] matched no dependency\n\nSummary: No updates: 1 dependency up to date, 0 skipped.\n",
-			md:        []string{"### Warnings\n\n- `rules[0]` matched no dependency\n- `rules[3]` matched no dependency\n\n"},
+			textExact: "warn    rule rules[0] matched no dependency\nwarn    rule rules[3] matched no dependency\n\nSummary: No updates: 1 dependency up to date, 0 skipped.\n",
+			md:        []string{"### Warnings\n\n- rule `rules[0]` matched no dependency\n- rule `rules[3]` matched no dependency\n\n"},
+		},
+		{
+			name: "unused rules named by position, preset rules left out",
+			s: summary{Command: "plan", Res: &engine.Result{Deps: res.Deps[:1]}, Unused: []int{0, 1, 2}, Config: mustParse(t,
+				"version: 1\nrules:\n  - # :semanticPrefixFixDepsChoreOthers packageRules[0]\n    names: ['**']\n    commitType: chore\n"+
+					"  - # Renovate has no nix manager\n    managers: [nix]\n    ignore: true\n"+
+					"  - managers: [npm]\n    names: [react]\n    automerge: true\n")},
+			textExact: "warn    rule .deps.yaml:9 matched no dependency (managers=[npm] names=[react])\n\nSummary:",
+			md:        []string{"### Warnings\n\n- rule `.deps.yaml:9` matched no dependency (`managers=[npm] names=[react]`)\n\n"},
 		},
 	}
 	for _, tc := range tests {
@@ -368,4 +378,14 @@ func TestSkipHintUnknownRegistry(t *testing.T) {
 	if h := skipHint(dep.SkipUnknownRegistry); !strings.Contains(h, "registryUrls") {
 		t.Errorf("registry hint = %q", h)
 	}
+}
+
+// mustParse parses a .deps.yaml document.
+func mustParse(t *testing.T, src string) *config.Config {
+	t.Helper()
+	c, err := config.Parse([]byte(src), ".deps.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }

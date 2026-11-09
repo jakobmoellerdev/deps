@@ -65,7 +65,7 @@ The first line is the phase (discovering files, extracting files, resolving depe
 
 Text logs round durations to 0.1ms below a second and to 1ms above (`duration=23ms`, `duration=11.003s`); JSON logs keep them in nanoseconds.
 
-**Summary block.** Before the summary line, a `warn    rules[<i>] matched no dependency` line for every rule that matched none of the extracted dependencies (plan, apply, run), then a block starting with an empty line and `Summary: ` gives the overview:
+**Summary block.** Before the summary line, a `warn    rule <where> matched no dependency (<match fields>)` line for every rule of the repository's own config that matched none of the extracted dependencies (plan, apply, run; `<where>` is `<file>:<line>`, with `--renovate` `<Renovate file> packageRules[<i>]`; rules of extended configs and presets are only counted at `info` level), then a block starting with an empty line and `Summary: ` gives the overview:
 
 ```
 Summary: <n> dependencies, <u> updates in <g> PRs[, PRs: <count> <status>, ...][, <p> held back by minimumReleaseAge], <k> skipped, <e> errors (<duration>)
@@ -93,7 +93,7 @@ The PRs are the ones `run` opens: plan and apply group their updates the same wa
 - `command` (`plan`, `apply`, `run`, `run --dry-run`), `dependencies`, `durationMs`;
 - `prs[]`: `branch`, `title`, `updates[]` (`name`, `manager`, `file`, `line`, `from`, `to`, `type`, `lockfile`, `advisories` as IDs; a lock file maintenance has type `lockFileMaintenance` and no versions); for `run` also `status`, `automerge`, `prWait` (the PR creation outcome of a branch waiting for its checks), `number`, `url`, `waitsFor` (schedule entries: crons and time windows) and `reason` (why a `skipped: update cannot be applied` update cannot be applied; the label of a `skipped: stop-updating label` PR);
 - `otherActions[]`: closed obsolete PRs, obsolete PRs kept open by the `stopUpdatingLabel`, and the dashboard (`branch`, `title`, `status`, `number`, `url`, `dashboard`);
-- `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `warnings[]` (`name`, `file`, `line`, `kind` `deprecated` or `abandoned`, `reason`; see `abandonmentThreshold` and the dependency dashboard), `skipped[]` (`reason`, `count`), `unusedRules[]` (indices of the rules that matched no dependency), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error, `file` for a file that cannot be read or parsed);
+- `heldBack[]` (`name`, `file`, `line`, `version`, `reason`), `warnings[]` (`name`, `file`, `line`, `kind` `deprecated` or `abandoned`, `reason`; see `abandonmentThreshold` and the dependency dashboard), `skipped[]` (`reason`, `count`), `unusedRules[]` (indices of all rules that matched no dependency, also those of extended configs and presets), `errors[]` (`message`, plus `file` and `line` for a dependency's lookup error, `file` for a file that cannot be read or parsed);
 - `counts`: the step outputs below, by camelCase name.
 
 With `run --repositories` the file holds the whole run: `command`, `durationMs`, `repositories[]` (the object above per repository, with `repository` set to its `owner/name`), `errors[]` (repositories that failed before they had a result, a clone or config error, as `<owner/name>: <message>`) and `counts` summed over the repositories (a failed repository counts as one error).

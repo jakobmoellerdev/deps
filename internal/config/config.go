@@ -541,6 +541,7 @@ type Rule struct {
 	baseBranches       []branchPattern // parsed BaseBranches
 	source             string          // the file the rule is written in (Source)
 	line               int             // its line there
+	comment            string          // the comment above it (Comment)
 	allow              *Allowed
 	allowedUpdateTypes map[dep.UpdateType]bool // set of AllowedUpdateTypes; nil = not set
 	currentVersion     *Allowed                // parsed CurrentVersion; nil = not set
@@ -556,6 +557,12 @@ type Rule struct {
 // --dir, or the extends entry of another repository's file) and its line there; "" when the
 // rule was not loaded from a file.
 func (r *Rule) Source() (file string, line int) { return r.source, r.line }
+
+// Comment returns the comment written above the rule (`- # <comment>` or the line before
+// its first key), without `#`; "" when there is none. deps migrate and --renovate name
+// where a translated rule comes from there: `packageRules[3]` for the Renovate file's own
+// rules, `<preset> packageRules[0]` for a preset's, a reason for generated ones.
+func (r *Rule) Comment() string { return r.comment }
 
 // Custom is a custom manager: annotation mode when Match and JSONata are empty, regex mode
 // with Match, JSONata mode with JSONata.
@@ -910,17 +917,33 @@ func (c *Config) Files() []string {
 	return files
 }
 
-// setSources records the file and line of each rule.
+// setSources records the file, line and comment of each rule.
 func (c *Config) setSources(layers []layer) {
 	i := 0
 	for _, ly := range layers {
 		for _, n := range ly.sequence("rules") {
 			if i < len(c.Rules) {
-				c.Rules[i].source, c.Rules[i].line = ly.display, n.Line
+				r := &c.Rules[i]
+				r.source, r.line, r.comment = ly.display, n.Line, nodeComment(n)
 			}
 			i++
 		}
 	}
+}
+
+// nodeComment is the head comment of a list item: on the item, else on its first key.
+func nodeComment(n *yaml.Node) string {
+	c := n.HeadComment
+	if c == "" && n.Kind == yaml.MappingNode && len(n.Content) > 0 {
+		c = n.Content[0].HeadComment
+	}
+	var lines []string
+	for l := range strings.SplitSeq(c, "\n") {
+		if l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "#")); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return strings.Join(lines, " ")
 }
 
 // Validate checks every field and compiles rule constraints and schedules. The problems

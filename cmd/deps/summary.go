@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/logx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/renovate"
 )
 
 // summary is the end-of-run overview of plan, apply and run: the updates grouped by PR (the
@@ -334,13 +337,65 @@ func (s *summary) groupNotes(g engine.Group, link func(a bot.Action) string) []s
 	return notes
 }
 
+// unusedRule is a rule that matched no dependency, as the summary names it.
+type unusedRule struct {
+	index int
+	where string // "<file>:<line>"; in compatibility mode "<Renovate file> <origin>"; "rules[<i>]" when unknown
+	line  bool   // where has the rule's line in the config (for an annotation)
+	match string // its match fields, "managers=[npm] names=[react]"
+}
+
+// unusedRules splits Unused into the rules the repository's config wrote itself, which the
+// summary warns about, and the count of the others: rules of extended configs and Renovate
+// presets, and those deps generates for Renovate's defaults (renovate.Implicit). Those are
+// written for many repositories, so matching nothing in this one is expected.
+func (s *summary) unusedRules() (own []unusedRule, other int) {
+	c := s.Config
+	for _, i := range s.Unused {
+		u := unusedRule{index: i, where: fmt.Sprintf("rules[%d]", i)}
+		if c == nil || i >= len(c.Rules) {
+			own = append(own, u)
+			continue
+		}
+		r := &c.Rules[i]
+		file, line := r.Source()
+		comment := r.Comment()
+		if file != "" && !slices.Contains(c.Files(), file) || renovate.Implicit(comment) {
+			other++
+			continue
+		}
+		switch {
+		case renovate.IsConfigName(filepath.Base(file)) && comment != "":
+			u.where = file + " " + comment // the line is the translation's
+		case file != "":
+			u.where, u.line = file+":"+strconv.Itoa(line), true
+		}
+		match, _, _ := strings.Cut(strings.TrimPrefix(describeRule(*r), "match: "), "; apply:")
+		if match != "all" {
+			u.match = match
+		}
+		own = append(own, u)
+	}
+	return own, other
+}
+
 // writeText writes the warnings about unused rules and the summary block for stderr. It goes
 // before the counts line, so that line stays last. Skip reasons are counts only: --show-skipped prints the
 // per-dep skip lines; errors are already printed as error lines.
 func (s *summary) writeText(w io.Writer) {
-	for _, i := range s.Unused {
-		fmt.Fprintf(w, "warn    rules[%d] matched no dependency\n", i)
-		actionsLog.configWarning(s.Config, fmt.Sprintf("rules[%d]", i), "matched no dependency")
+	own, other := s.unusedRules()
+	for _, u := range own {
+		fmt.Fprintf(w, "warn    rule %s matched no dependency", u.where)
+		if u.match != "" {
+			fmt.Fprintf(w, " (%s)", u.match)
+		}
+		fmt.Fprintln(w)
+		if u.line {
+			actionsLog.configWarning(s.Config, fmt.Sprintf("rules[%d]", u.index), "matched no dependency")
+		}
+	}
+	if other > 0 {
+		slog.Info("rules of presets, extended configs and Renovate defaults matched no dependency", "rules", other)
 	}
 	st := s.Style
 	fmt.Fprintf(w, "\n%s %s\n", st.Paint(logx.Bold, "Summary:"), s.headline(st))
@@ -534,10 +589,14 @@ func (s *summary) markdownAt(level int) string {
 			b.WriteString("</details>\n\n")
 		}
 	}
-	if len(s.Unused) > 0 {
+	if own, _ := s.unusedRules(); len(own) > 0 {
 		b.WriteString("### Warnings\n\n")
-		for _, i := range s.Unused {
-			fmt.Fprintf(&b, "- `rules[%d]` matched no dependency\n", i)
+		for _, u := range own {
+			fmt.Fprintf(&b, "- rule `%s` matched no dependency", mdCell(u.where))
+			if u.match != "" {
+				fmt.Fprintf(&b, " (`%s`)", mdCell(u.match))
+			}
+			b.WriteString("\n")
 		}
 		b.WriteString("\n")
 	}

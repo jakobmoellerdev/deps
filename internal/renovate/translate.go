@@ -369,6 +369,21 @@ func builtinOrigin(origin string) bool {
 	return err == nil && ref.source == "internal"
 }
 
+// Implicit reports whether a translated rule, by its origin (the comment deps migrate writes
+// above it, config.Rule.Comment), was not written in the Renovate file itself: a rule of a
+// preset (`<preset> packageRules[i]`), a rule of the replacements presets, or an ignore rule
+// deps adds for managers Renovate does not run (`Renovate has no <m> manager`,
+// `<m> is disabled by default in Renovate`, `<m>.enabled: false`, `enabledManagers`). Such
+// rules matching no dependency of a repository is expected.
+func Implicit(origin string) bool {
+	return strings.Contains(origin, " packageRules[") ||
+		strings.HasPrefix(origin, "replacements:") ||
+		strings.HasPrefix(origin, "Renovate has no ") ||
+		strings.HasSuffix(origin, " is disabled by default in Renovate") ||
+		strings.HasSuffix(origin, ".enabled: false") ||
+		origin == "enabledManagers"
+}
+
 // builtinOnly reports whether top-level key k comes from Renovate's built-in presets only:
 // neither the repository nor a fetched preset sets it.
 func (t *translator) builtinOnly(k string) bool {

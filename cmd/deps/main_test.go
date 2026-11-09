@@ -429,7 +429,7 @@ func TestPlanRuleWarnings(t *testing.T) {
 		"warn    " + cfg + `: rules[0].depTypes[0]: dep type "devDependencies" is not produced by gomod, so it matches nothing` + "\n",
 		"warn    " + cfg + `: rules[0].datasources[0]: datasource "npm" is not used by gomod, so it matches nothing` + "\n",
 		"warn    " + cfg + ": rules[1]: is empty: no match field and no apply field\n",
-		"warn    rules[0] matched no dependency\nwarn    rules[2] matched no dependency\n\nSummary: ",
+		"warn    rule .deps.yaml:2 matched no dependency (managers=[gomod] depTypes=[devDependencies] datasources=[npm])\nwarn    rule .deps.yaml:4 matched no dependency (managers=[npm])\n\nSummary: ",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
