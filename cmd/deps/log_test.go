@@ -117,7 +117,7 @@ func TestTextLogRoundsDurations(t *testing.T) {
 		{"json", 12345678 * time.Nanosecond, `"duration":12345678`},
 	} {
 		var b bytes.Buffer
-		if _, err := setupLogger(logOpts{level: "info", format: tc.format, color: "never"}, logx.NewWriter(&b), false, func(string) string { return "" }); err != nil {
+		if _, err := setupLogger(logOpts{level: "info", format: tc.format, color: "never"}, logx.NewWriter(&b), false, false, func(string) string { return "" }); err != nil {
 			t.Fatal(err)
 		}
 		slog.Info("x", "duration", tc.d)
@@ -147,7 +147,7 @@ func TestPRLog(t *testing.T) {
 		if tc.actions {
 			format = "actions"
 		}
-		if _, err := setupLogger(logOpts{level: "info", format: format, color: "never"}, w, false, func(string) string { return "" }); err != nil {
+		if _, err := setupLogger(logOpts{level: "info", format: format, color: "never"}, w, false, false, func(string) string { return "" }); err != nil {
 			t.Fatal(err)
 		}
 		ctx, done := prLog(w)(t.Context(), "deps/x")

@@ -16,6 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/logx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/beam"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
@@ -53,6 +54,35 @@ func newPlan(o *rootOpts) *cli.Command {
 		},
 		Flags: scanFlags(o, scanResults),
 	}
+}
+
+// colorDiff colors a unified diff as git does: file headers bold, hunk headers cyan, added
+// lines green, removed lines red. Without colors it is d unchanged.
+func colorDiff(st logx.Style, d string) string {
+	if !st.Color() || d == "" {
+		return d
+	}
+	var b strings.Builder
+	b.Grow(len(d) + len(d)/4)
+	for line := range strings.SplitAfterSeq(d, "\n") {
+		text, nl := strings.CutSuffix(line, "\n")
+		sgr := ""
+		switch {
+		case strings.HasPrefix(text, "--- "), strings.HasPrefix(text, "+++ "):
+			sgr = logx.Bold
+		case strings.HasPrefix(text, "@@"):
+			sgr = logx.Cyan
+		case strings.HasPrefix(text, "+"):
+			sgr = logx.Green
+		case strings.HasPrefix(text, "-"):
+			sgr = logx.Red
+		}
+		b.WriteString(st.Paint(sgr, text))
+		if nl {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
 
 // local implements plan (write=false) and apply (write=true).
@@ -113,7 +143,7 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 			if c.Gitlink {
 				from, to = "Subproject commit "+from+"\n", "Subproject commit "+to+"\n"
 			}
-			if _, err := io.WriteString(out, diff.Unified("a/"+c.Path, "b/"+c.Path, from, to)); err != nil {
+			if _, err := io.WriteString(out, colorDiff(o.term.diff, diff.Unified("a/"+c.Path, "b/"+c.Path, from, to))); err != nil {
 				return fmt.Errorf("write diff: %w", err)
 			}
 		}

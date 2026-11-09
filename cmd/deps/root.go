@@ -147,7 +147,7 @@ func newRoot() *cli.Command {
 			cmd.ErrWriter = w
 			o.stderr, o.rawStderr = w, stderr
 			actionsLog = newAnnotator(os.Getenv, w, o.dir)
-			t, err := setupLogger(o.log, w, tty, os.Getenv)
+			t, err := setupLogger(o.log, w, tty, logx.IsTerminal(cmd.Writer), os.Getenv)
 			if err != nil {
 				return ctx, err
 			}
@@ -168,7 +168,7 @@ func newRoot() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "log-level", Destination: &o.log.level, Usage: "log level: debug, info, warn, error (when not set: debug with $RUNNER_DEBUG=1, else warn)"},
 			&cli.StringFlag{Name: "log-format", Value: "auto", Destination: &o.log.format, Usage: "log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups)"},
-			&cli.StringFlag{Name: "color", Value: "auto", Destination: &o.log.color, Usage: "color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never"},
+			&cli.StringFlag{Name: "color", Value: "auto", Destination: &o.log.color, Usage: "color stderr and the plan diff on stdout: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it on stderr only), always, never"},
 			&cli.StringFlag{Name: "cpuprofile", Hidden: true, Destination: &o.prof.cpu, Usage: "write a CPU profile to this file"},
 			&cli.StringFlag{Name: "memprofile", Hidden: true, Destination: &o.prof.mem, Usage: "write an allocation profile to this file on exit"},
 		},

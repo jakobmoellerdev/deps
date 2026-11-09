@@ -45,7 +45,7 @@ Every command accepts these flags.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--color` | string | `"auto"` | color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never |
+| `--color` | string | `"auto"` | color stderr and the plan diff on stdout: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it on stderr only), always, never |
 | `--log-format` | string | `"auto"` | log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups) |
 | `--log-level` | string | `""` | log level: debug, info, warn, error (when not set: debug with $RUNNER_DEBUG=1, else warn) |
 
@@ -815,7 +815,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_AUTHOR_NAME` | `config show`, `run` | default of `--author-name`: commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps[bot]) |
 | `DEPS_BASE` | `explain`, `preview`, `run` | default of `--base`: explain base branch <base> as run resolves it: from the tip of origin's branch (a temporary work tree unless the checkout is at it), its rules[].baseBranches matching it, with useBaseBranchConfig its config merged over the checkout's |
 | `DEPS_BASE_DIR` | `preview` | default of `--base-dir`: checkout of the base branch to compare with (required) |
-| `DEPS_COLOR` | all | default of `--color`: color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never |
+| `DEPS_COLOR` | all | default of `--color`: color stderr and the plan diff on stdout: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it on stderr only), always, never |
 | `DEPS_CONCURRENCY` | `apply`, `explain`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--concurrency`: maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `DEPS_CONFIG` | `apply`, `config check`, `config show`, `explain`, `init`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--config`: config file, which must exist (when not set: <dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
 | `DEPS_DIR` | `apply`, `config check`, `config show`, `explain`, `init`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--dir`: repository directory to scan |
@@ -900,6 +900,8 @@ dashboard <status>  <title>  <url>                            (run, with depende
 `rebased` counts as updated, `deleted` (obsolete branches without a PR) as closed. `<a>` counts auto-merge requests and direct merges, branch merges included (`automerge`, `merged`); the dashboard line is not counted.
 
 **On a terminal** (stderr is a TTY) the `update` lines are left out: the summary block below lists the same updates, grouped by the PR they go to. Everything else is printed as above. Piped or redirected stderr always gets the line format above, byte for byte, so scripts and CI logs see no change. With colors (`--color`, default `auto`: on a terminal unless `NO_COLOR` is set or `TERM=dumb`, and with the `actions` format unless `NO_COLOR` is set; `CLICOLOR_FORCE` or `FORCE_COLOR` force them, also when piped) `error` is red and the summary colors the branches, `<file>:<line>` (dim), the update types (major red, minor yellow, patch green, digest cyan), security advisories (bold red) and the error count (red). Colors never change the layout; `--color always` keeps the piped layout.
+
+`plan` colors its diff on stdout as git does (file headers bold, hunk headers cyan, added lines green, removed lines red) when stdout is a terminal and colors are on, or with `--color always`. `CLICOLOR_FORCE` and `FORCE_COLOR` do not color it, so `deps plan > deps.diff` stays a patch `git apply` accepts.
 
 Also on a terminal (unless `TERM=dumb`), a **status line** below the output shows the running phase while it runs, e.g. `⠹ resolving 212/308 · 2.1s · in flight: registry.npmjs.org 18, api.github.com 4`: discovering files, extracting (files), resolving (dependencies) and, in `run`, PRs (groups handled), with a rate-limit wait (`rate limited by <host>, <n>s`), the error count, the elapsed time and last the requests in flight to the three busiest hosts (until their response is read), which a narrow terminal cuts first. It is redrawn ten times a second, kept below every log record and removed when the phase ends, so it never stays in the output. Piped stderr never gets it.
 

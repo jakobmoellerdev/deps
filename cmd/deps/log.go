@@ -20,18 +20,21 @@ type logOpts struct {
 
 // terminal is how stderr renders the results: on a terminal (tty) the summary alone lists the
 // updates, grouped by PR, instead of also one flat update line each; style colors them.
-// Piped stderr keeps the documented line format byte for byte.
+// Piped stderr keeps the documented line format byte for byte. diff colors the diff plan
+// writes to stdout, by --color and whether stdout is a terminal.
 type terminal struct {
 	tty   bool
 	style logx.Style
+	diff  logx.Style
 }
 
 // errorLabel starts an error line: "error", red with colors.
 func (t terminal) errorLabel() string { return t.style.Paint(logx.Red, "error") }
 
 // setupLogger installs the default slog logger writing to w and returns how the results on
-// w are rendered. tty tells whether w is a terminal. An empty level is warn.
-func setupLogger(o logOpts, w *logx.Writer, tty bool, getenv func(string) string) (terminal, error) {
+// w are rendered. tty tells whether w is a terminal, outTTY whether stdout is. An empty level
+// is warn.
+func setupLogger(o logOpts, w *logx.Writer, tty, outTTY bool, getenv func(string) string) (terminal, error) {
 	lvl := slog.LevelWarn
 	if err := lvl.UnmarshalText([]byte(o.level)); o.level != "" && err != nil {
 		return terminal{}, &usageError{fmt.Errorf("--log-level: invalid value %q (debug, info, warn, error)", o.level)}
@@ -60,7 +63,10 @@ func setupLogger(o logOpts, w *logx.Writer, tty bool, getenv func(string) string
 		h = &annotatingHandler{Handler: h, a: actionsLog}
 	}
 	slog.SetDefault(slog.New(h))
-	return terminal{tty: tty, style: logx.NewStyle(color)}, nil
+	// The diff is colored on a terminal or with --color always, never by $FORCE_COLOR alone:
+	// `deps plan > x.diff` must stay a patch git can apply.
+	diff := c == logx.ColorAlways || outTTY && c.Enabled(true, getenv)
+	return terminal{tty: tty, style: logx.NewStyle(color), diff: logx.NewStyle(diff)}, nil
 }
 
 // prLog is bot.Options.PRLog: the records of each PR are held in a logx.Buffer and written to
