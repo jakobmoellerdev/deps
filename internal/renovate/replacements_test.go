@@ -70,7 +70,7 @@ func TestLoadReplacements(t *testing.T) {
 			name: "single presets become rules",
 			src:  `{extends: ['replacements:k8s-registry-move', 'replacements:cpx-to-maintenance-fork', 'replacements:` + nuget + `', 'replacements:nope']}`,
 			rules: `  - # replacements:k8s-registry-move
-    managers: [docker, gitlabci, kustomize, terraform, devcontainer, bitbucket-pipelines, woodpecker, droneci, circleci, azure-pipelines]
+    managers: [docker, gitlabci, kustomize, terraform, devcontainer, bitbucket-pipelines, woodpecker, droneci, circleci, azure-pipelines, quadlet, crossplane]
     names: [/^k8s\.gcr\.io/.+$/]
     replacementName: registry.k8s.io/
     replacementPrefix: k8s.gcr.io/

@@ -1,0 +1,29 @@
+# maybe-db.container
+[Unit]
+Description=Maybe Personal Finance Database
+Documentation=https://maybe.co
+Requires=podman.socket
+
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+Restart=always
+TimeoutStartSec=900
+
+[Container]
+Image=docker.io/postgres:16
+ContainerName=maybe-db
+HealthCmd=pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+HealthInterval=5s
+HealthRetries=5
+HealthTimeout=5s
+PublishPort=5432:5432
+Network=maybe.network
+Volume=maybe-db:/var/lib/postgresql/data
+Volume=/run/user/1000/podman/podman.sock:/var/run/docker.sock
+Notify=healthy
+Environment=SECRET_KEY_BASE=maybe
+Environment=POSTGRES_DB=maybe
+Environment=POSTGRES_USER=maybe
+Environment=POSTGRES_PASSWORD=maybe

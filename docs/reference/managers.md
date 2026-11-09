@@ -77,6 +77,8 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`mix`](#mix)
 - [`gleam`](#gleam)
 - [`nix`](#nix)
+- [`quadlet`](#quadlet)
+- [`crossplane`](#crossplane)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -3676,6 +3678,61 @@ Moves the inputs of Nix flakes to the newest commit of the branch they track (a 
 **Lock file maintenance (`run`).**
 
 With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `flake.lock` next to a scanned `flake.nix` is refreshed with `nix flake update` in the temporary copy, which moves every input, transitive ones included, to the newest commit its reference admits, as Renovate does. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`, which changes only `flake.lock` files; `minimumReleaseAge` does not apply to it.
+
+## quadlet
+
+Updates container images in Podman Quadlet units.
+
+**Files:**
+
+- `<name>.container`, `<name>.image` and `<name>.volume` in any directory
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | `Image=` of the `[Container]`, `[Image]` and `[Volume]` sections (the last assignment of a section, as in Quadlet); a `docker://` or `docker-daemon:` transport prefix is not part of the reference | `docker` | `docker` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `quadlet unit` | the image is another Quadlet unit: `[Container]` `Image=<name>.image` or `<name>.build`, `[Volume]` `Image=<name>.image` |
+| `local transport` | a `dir:`, `docker-archive:`, `oci-archive:`, `oci:`, `containers-storage:` or `sif:` image, which no registry serves |
+| `local image` | a `localhost/<name>` image (Podman's name for the images it builds); Renovate looks it up and fails |
+| `variable reference` | `$` in the image that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
+| `invalid reference` | the image reference does not parse |
+| `cannot locate value` | the value is continued on the next line (`\` at the end) |
+
+**Details.**
+
+- Images are parsed and edited like the docker manager's: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.
+- Units are read as systemd unit files: `#` and `;` comment lines, `[Section]` headers, `Key=Value` with blanks around the value dropped and a quoted value (`Image="…"`) unquoted. An empty `Image=` resets the key.
+
+## crossplane
+
+Updates the package images of Crossplane providers, configurations and functions.
+
+**Files:**
+
+- any `*.y(a)ml` containing `pkg.crossplane.io/`, parsed document by document (Renovate's crossplane matches no file unless `managerFilePatterns` are set; deps reads every YAML file and extracts nothing from files without such a resource)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `provider` | `spec.package` of a `Provider` (`pkg.crossplane.io/*`) | `docker` | `docker` | updated |
+| `configuration` | `spec.package` of a `Configuration` | `docker` | `docker` | updated |
+| `function` | `spec.package` of a `Function` | `docker` | `docker` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `variable reference` | `$` in the package that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
+| `invalid reference` | the package reference does not parse |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Packages are OCI images (`xpkg.crossplane.io/crossplane-contrib/provider-nop:v0.4.0`) and are parsed and edited like the docker manager's images: tags update, digests are refreshed or pinned, and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.
+- A file that does not parse as YAML (a template) yields no deps. Container images of a `DeploymentRuntimeConfig` are Kubernetes containers, which the docker manager finds.
 
 ## custom
 

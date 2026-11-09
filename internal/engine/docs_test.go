@@ -257,6 +257,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"bazel-module": {"bazel"}, "bazelisk": {"bazel"}, "scalafmt": {"sbt"}, "mix": {"beam"}, "gleam": {"beam"},
 		"custom":  {"custom", filepath.Join("..", "datasource", "deb")},
 		"ansible": {"ansible", "docker"}, "ansible-galaxy": {"ansible", "../pyreq"},
+		"quadlet": {"quadlet", "docker"}, "crossplane": {"crossplane", "docker"},
 	}
 	for _, m := range registry.Docs() {
 		dirs, ok := pkgDirs[m.Name]

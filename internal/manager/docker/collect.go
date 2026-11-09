@@ -11,9 +11,9 @@ import (
 
 // Images collects the image references of YAML scalars for the CI configuration managers
 // (bitbucket-pipelines, woodpecker, crow, droneci, circleci, azure-pipelines, cloudbuild, velaci,
-// buildkite) and ansible. The references are parsed like the docker manager's inline references
-// (ParseImage), so the docker manager's Edits and Rename apply to the deps. An alias resolves to
-// its anchored value, which is collected once, where it is written.
+// buildkite), ansible and crossplane. The references are parsed like the docker manager's inline
+// references (ParseImage), so the docker manager's Edits and Rename apply to the deps. An alias
+// resolves to its anchored value, which is collected once, where it is written.
 type Images struct {
 	Manager, File string
 	Src           []byte

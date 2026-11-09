@@ -335,6 +335,11 @@ func TestLoadRules(t *testing.T) {
 			rules: "  - # packageRules[0]\n    datasources: [gitlab-tags, gitea-tags, forgejo-tags, azure-tags, bitbucket-server-tags, github-digest]\n    group: git" + defaultExclusions,
 		},
 		{
+			name:  "quadlet and crossplane managers, iac category",
+			src:   `{packageRules: [{matchCategories: ['iac'], groupName: 'iac'}, {matchManagers: ['quadlet'], matchDepTypes: ['image'], enabled: false}]}`,
+			rules: "  - # packageRules[0]\n    managers: [terraform, terragrunt, ansible, ansible-galaxy, crossplane]\n    group: iac\n  - # packageRules[1]\n    managers: [quadlet]\n    depTypes: [image]\n    ignore: true" + defaultExclusions,
+		},
+		{
 			name: "postUpgradeTasks top level and per rule, Ruby and Swift managers, rangeStrategy widen",
 			src: `{postUpgradeTasks: {commands: ['make generate'], fileFilters: ['**/*.go'], executionMode: 'branch'},
 				packageRules: [{matchCategories: ['ruby'], rangeStrategy: 'widen', postUpgradeTasks: {commands: ['bundle exec rake']}},

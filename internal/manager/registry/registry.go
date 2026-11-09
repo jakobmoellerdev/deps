@@ -21,6 +21,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cloudbuild"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/crossplane"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom/customdoc"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
@@ -50,6 +51,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/poetry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/precommit"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pub"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/quadlet"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/rusttoolchain"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/sbt"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/setupcfg"
@@ -139,6 +141,8 @@ var Builtin = []Entry{
 	{beam.DocMix, beam.NewMix},
 	{beam.DocGleam, beam.NewGleam},
 	{nix.Doc, nix.New},
+	{quadlet.Doc, quadlet.New},
+	{crossplane.Doc, crossplane.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,
