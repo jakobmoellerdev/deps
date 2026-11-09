@@ -26,6 +26,15 @@ const RubyGroup = "ruby"
 // rubyDatasource is the datasource of the RubyGroup deps.
 const rubyDatasource = "ruby-version"
 
+// VcpkgGroup is the built-in group of the vcpkg manager's deps: the registry baselines and
+// the port versions read at them, so a baseline bump and the port versions it unlocks move in
+// one PR (a port version newer than the baseline does not install with the old one). Like the
+// monorepo groups it applies unless monorepos is false, and a rule setting group overrides it.
+const VcpkgGroup = "vcpkg"
+
+// vcpkgManager is the manager of the VcpkgGroup deps.
+const vcpkgManager = "vcpkg"
+
 var (
 	goMgr      = []string{"gomod"}
 	npmMgr     = []string{"npm"}

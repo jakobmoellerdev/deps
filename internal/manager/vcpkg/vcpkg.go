@@ -8,6 +8,7 @@ package vcpkg
 import (
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -48,6 +49,7 @@ var fileRe = regexp.MustCompile(`(^|/)vcpkg(-configuration)?\.json$`)
 // registry is where ports resolve to: the versions database at base, or skip.
 type registry struct {
 	base     string // vcpkg.RawBase of the repository at the baseline; "" = builtin without baseline
+	baseline string // BaselineKey of the baseline dep when it is updatable, else ""
 	builtin  bool
 	skip     string
 	packages []string // registries[] packages patterns
@@ -64,8 +66,9 @@ type config struct {
 
 // manifest is what Link needs of a vcpkg.json.
 type manifest struct {
-	baseline string // builtin-baseline
-	config   *config
+	baseline    string // builtin-baseline
+	baselineKey string // BaselineKey of the builtin-baseline dep when it is updatable, else ""
+	config      *config
 }
 
 type vcpkgManager struct {
@@ -113,7 +116,7 @@ func (m *vcpkgManager) Extract(file string, src []byte, env manager.Env) ([]dep.
 	var mf manifest
 	if b := root.get("builtin-baseline"); b != nil && b.kind == '"' {
 		mf.baseline = b.str
-		x.baseline(DepTypeBuiltinBaseline, BuiltinRepo, "", b)
+		mf.baselineKey = x.baseline(DepTypeBuiltinBaseline, BuiltinRepo, "", b)
 	}
 	if c := root.get("vcpkg-configuration"); c != nil && c.kind == '{' {
 		mf.config = x.config(c)
@@ -147,8 +150,8 @@ func (x *extractor) line(off int) int {
 }
 
 // baseline adds the dep of a registry baseline commit of the git repository repo, tracking
-// branch ref ("" = HEAD).
-func (x *extractor) baseline(depType, repo, ref string, b *node) {
+// branch ref ("" = HEAD). It returns the dep's BaselineKey when it is updatable, else "".
+func (x *extractor) baseline(depType, repo, ref string, b *node) string {
 	name, source := manager.GitRepo(repo)
 	d := dep.Dep{Manager: Name, Datasource: dsRefs, Versioning: "tag", DepType: depType, File: x.file, Line: x.line(b.start),
 		Name: name, Source: source, Version: headVersion, Digest: b.text(), DigestSpan: b.span}
@@ -166,6 +169,16 @@ func (x *extractor) baseline(depType, repo, ref string, b *node) {
 		d.Skip = "reference is a tag"
 	}
 	x.deps = append(x.deps, d)
+	if d.Skip != "" {
+		return ""
+	}
+	return BaselineKey(d)
+}
+
+// BaselineKey identifies the baseline dep d (its file and the offset of its commit); the
+// ports read at that baseline carry it as dep.Dep.Baseline.
+func BaselineKey(d dep.Dep) string {
+	return d.File + ":" + strconv.Itoa(d.DigestSpan.Start)
 }
 
 // config reads a configuration object, adding the deps of its registry baselines.
@@ -207,16 +220,16 @@ func (x *extractor) registry(depType string, r *node) registry {
 		if b == nil {
 			return registry{builtin: true}
 		}
-		x.baseline(depType, BuiltinRepo, "", b)
-		return registry{builtin: true, base: vcpkg.RawBase(BuiltinRepo, b.text())}
+		key := x.baseline(depType, BuiltinRepo, "", b)
+		return registry{builtin: true, base: vcpkg.RawBase(BuiltinRepo, b.text()), baseline: key}
 	case "git":
 		repo := r.get("repository").text()
 		if b == nil {
 			return registry{skip: "git registry without baseline"}
 		}
-		x.baseline(depType, repo, r.get("reference").text(), b)
+		key := x.baseline(depType, repo, r.get("reference").text(), b)
 		if _, source := manager.GitRepo(repo); source != "" && !strings.HasPrefix(repo, "git@") {
-			return registry{base: vcpkg.RawBase(source, b.text())}
+			return registry{base: vcpkg.RawBase(source, b.text()), baseline: key}
 		}
 		return registry{skip: "unrecognized registry repository"}
 	default:
@@ -281,9 +294,9 @@ func (m *vcpkgManager) Link(files [][]dep.Dep) {
 			case r.skip != "":
 				d.Skip = r.skip
 			case r.base != "":
-				d.Source = r.base
+				d.Source, d.Baseline = r.base, r.baseline
 			case mf.baseline != "" && manager.IsHex(mf.baseline, 40):
-				d.Source = vcpkg.RawBase(BuiltinRepo, mf.baseline)
+				d.Source, d.Baseline = vcpkg.RawBase(BuiltinRepo, mf.baseline), mf.baselineKey
 			default:
 				d.Skip = "no builtin-baseline"
 			}

@@ -3,7 +3,8 @@
 //
 // Release notes come from the GitHub, GitLab or Gitea/Forgejo releases API of the dependency's
 // source repository: the action's repository, a Go module's forge repository, an npm package's
-// `repository`, a PyPI project's source URL, a Maven POM's `<scm>`, an image's
+// `repository`, a PyPI project's source URL, a Maven POM's `<scm>`, a vcpkg port's forge
+// `homepage`, an image's
 // `org.opencontainers.image.source` label, or the repository of a forge releases or tags dep. One page of releases is listed per repository and
 // run. Every failure only omits the notes; it never fails a PR.
 package releasenotes

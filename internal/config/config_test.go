@@ -883,6 +883,34 @@ func TestRubyGroup(t *testing.T) {
 	}
 }
 
+// TestVcpkgGroup: every vcpkg dep (baselines and ports) joins the built-in vcpkg group unless
+// monorepos is false or a rule sets another group.
+func TestVcpkgGroup(t *testing.T) {
+	c, err := load(t, ".deps.yaml", "rules: [{managers: [vcpkg], names: [fmt], group: fmt}]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	off, err := load(t, ".deps.yaml", "monorepos: false\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		cfg             *Config
+		d               dep.Dep
+		group, registry string
+	}{
+		{c, dep.Dep{Manager: "vcpkg", Datasource: "git-refs", DepType: "builtin-baseline", Name: "microsoft/vcpkg"}, VcpkgGroup, VcpkgGroup},
+		{c, dep.Dep{Manager: "vcpkg", Datasource: "vcpkg", DepType: "dependencies", Name: "curl"}, VcpkgGroup, VcpkgGroup},
+		{c, dep.Dep{Manager: "vcpkg", Datasource: "vcpkg", DepType: "overrides", Name: "fmt"}, "fmt", VcpkgGroup},
+		{c, dep.Dep{Manager: "conda", Datasource: "conda", Name: "vcpkg"}, "", ""},
+		{off, dep.Dep{Manager: "vcpkg", Datasource: "vcpkg", DepType: "dependencies", Name: "curl"}, "", ""},
+	} {
+		if p := tc.cfg.Policy(tc.d); p.Group != tc.group || p.Registry != tc.registry {
+			t.Errorf("%s %s: group %q registry %q, want %q %q", tc.d.Datasource, tc.d.Name, p.Group, p.Registry, tc.group, tc.registry)
+		}
+	}
+}
+
 func TestMonorepoList(t *testing.T) {
 	seen := map[string]bool{}
 	for _, m := range Monorepos {

@@ -145,6 +145,11 @@ type Dep struct {
 	// (sbt 1.x: Scala 2.12 / sbt 1.0; sbt 2.x: sbt2 / Scala 3; sbt 0.13: Scala 2.10 / sbt
 	// 0.13); "" = sbt 1.x.
 	SbtVersion string
+
+	// vcpkg manager only (vcpkg datasource). Baseline: the key (vcpkg.BaselineKey) of the
+	// updatable registry baseline at which Source reads the port's versions; when that
+	// baseline moves in the same run, the port is looked up at its new commit. "" = none.
+	Baseline string
 }
 
 // Renamable reports whether d's name can be rewritten in its file (NameParts are set).

@@ -43,6 +43,7 @@ type Policy struct {
 	Rules              []int         // indices of the matching user rules, in order
 	Monorepo           string        // built-in monorepo that set the initial Group, "" = none
 	Toolchain          string        // built-in toolchain group (RubyGroup) that set the initial Group, "" = none
+	Registry           string        // built-in registry group (VcpkgGroup) that set the initial Group, "" = none
 	CommitType         string        // conventional commit type: fix for production deps, chore otherwise
 	CommitScope        string        // conventional commit scope, "" = none
 	// Templates are the prTitle, prHeader and prFooter templates; nil members use the defaults.
@@ -322,10 +323,13 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		p.CommitType = CommitFix
 	}
 	if c.MonoreposEnabled() {
-		if m := monorepoOf(d.Manager, d.Name); m != nil {
+		switch m := monorepoOf(d.Manager, d.Name); {
+		case m != nil:
 			p.Monorepo, p.Group = m.Name, MonorepoGroup(m.Name)
-		} else if d.Datasource == rubyDatasource {
+		case d.Datasource == rubyDatasource:
 			p.Toolchain, p.Group = RubyGroup, RubyGroup
+		case d.Manager == vcpkgManager:
+			p.Registry, p.Group = VcpkgGroup, VcpkgGroup
 		}
 	}
 	if c.ReplacementsEnabled() {

@@ -207,6 +207,44 @@ func TestRegistries(t *testing.T) {
 		"vcpkg.json:1 dependencies fmt 1 src= skip=overlay port")
 }
 
+// TestBaselineKeys: a port carries the BaselineKey of the updatable baseline its versions are
+// read at (the engine moves it with that baseline), none when the baseline cannot move.
+func TestBaselineKeys(t *testing.T) {
+	const c1 = "1111111111111111111111111111111111111111"
+	const c2 = "2222222222222222222222222222222222222222"
+	cfg := `{"registries": [
+  {"kind": "git", "repository": "https://github.com/a/reg", "baseline": "` + c2 + `", "packages": ["beicode"]},
+  {"kind": "git", "repository": "https://github.com/a/tagged", "reference": "v1.2.3", "baseline": "` + c2 + `", "packages": ["pinned"]}
+]}`
+	manifest := `{"builtin-baseline": "` + c1 + `", "dependencies": [
+  {"name": "fmt", "version>=": "10.0.0"},
+  {"name": "beicode", "version>=": "1.0.0"},
+  {"name": "pinned", "version>=": "1.0.0"}
+]}`
+	m := New()
+	cdeps, err := m.Extract("vcpkg-configuration.json", []byte(cfg), manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mdeps, err := m.Extract("vcpkg.json", []byte(manifest), manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.(manager.Linker).Link([][]dep.Dep{cdeps, mdeps})
+	want := map[string]string{"fmt": BaselineKey(mdeps[0]), "beicode": BaselineKey(cdeps[0]), "pinned": ""}
+	if mdeps[0].DepType != DepTypeBuiltinBaseline || cdeps[0].Name != "a/reg" || cdeps[1].Skip != "reference is a tag" {
+		t.Fatalf("baselines %+v %+v", mdeps[0], cdeps)
+	}
+	for _, d := range mdeps[1:] {
+		if d.Baseline != want[d.Name] || d.Skip != "" {
+			t.Errorf("%s: baseline %q, want %q (skip %q)", d.Name, d.Baseline, want[d.Name], d.Skip)
+		}
+	}
+	if BaselineKey(mdeps[0]) == BaselineKey(cdeps[0]) {
+		t.Error("baseline keys of different files collide")
+	}
+}
+
 func TestExtractMalformed(t *testing.T) {
 	m := New()
 	if _, err := m.Extract("vcpkg.json", []byte(`{"dependencies": [`), manager.Env{}); err == nil {

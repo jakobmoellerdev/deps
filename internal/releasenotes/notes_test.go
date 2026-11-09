@@ -103,6 +103,7 @@ func TestResolve(t *testing.T) {
 		dsDocker: &fakeSource{err: errors.New("no config")},
 		dsPypi:   &fakeSource{repo: "https://github.com/psf/requests"},
 		dsMaven:  &fakeSource{repo: "https://github.com/FasterXML/jackson-databind"},
+		dsVcpkg:  &fakeSource{repo: "https://github.com/fmtlib/fmt"},
 	}
 	n := New(nil, nil, auth, nil, sources).WithGitLab([]string{"https://gitlab.com", "http://gl.example:8929"})
 	gh := func(o, r, prefix string) repoRef {
@@ -153,6 +154,7 @@ func TestResolve(t *testing.T) {
 		{"pypi", dep.Dep{Datasource: dsPypi, Name: "requests"}, gh("psf", "requests", ""), true},
 		{"docker error", dep.Dep{Datasource: dsDocker, Name: "alpine"}, repoRef{}, false},
 		{"maven", dep.Dep{Datasource: dsMaven, Name: "com.fasterxml.jackson.core:jackson-databind"}, gh("FasterXML", "jackson-databind", ""), true},
+		{"vcpkg", dep.Dep{Datasource: dsVcpkg, Name: "fmt"}, gh("fmtlib", "fmt", ""), true},
 		{"toolchain", dep.Dep{Datasource: "go-toolchain", Name: "go"}, repoRef{}, false},
 	}
 	for _, tt := range tests {
@@ -240,6 +242,7 @@ func TestVersions(t *testing.T) {
 		{"1.2.3-rc.1", "1.2.3-rc.2", -1},
 		{"1.2", "1.2.1", -1},
 		{"1.2.3+build", "1.2.3", 0},
+		{"11.1.4#2", "11.1.4", 0},
 	}
 	for _, tt := range tests {
 		if got := compareAt(mustParse(tt.x), mustParse(tt.b)); got != tt.want {
@@ -565,6 +568,31 @@ func TestSectionMaven(t *testing.T) {
 		"#### [jackson-databind-2.18.2](https://redirect.github.com/o/r/releases/tag/jackson-databind-2.18.2)\n\npatch two\n\n" +
 			"#### [v2.18.1](https://redirect.github.com/o/r/releases/tag/v2.18.1)\n\npatch one\n\n",
 		"[Compare changes](https://github.com/FasterXML/jackson-databind/compare/jackson-databind-2.18.0...jackson-databind-2.18.2)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("section lacks\n%s\n--- got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "too new") || strings.Contains(got, "current") {
+		t.Errorf("section out of range:\n%s", got)
+	}
+}
+
+// TestSectionVcpkg: a vcpkg port's notes come from its manifest's homepage; the port version
+// suffix (`#1`) is not part of the release tag.
+func TestSectionVcpkg(t *testing.T) {
+	f := newForge(t)
+	f.rels["/repos/fmtlib/fmt"] = []map[string]any{
+		rel("12.0.0", "too new"),
+		rel("11.2.0", "minor"),
+		rel("11.1.4", "current"),
+	}
+	n := f.newNotes(nil, nil, map[string]datasource.Datasource{dsVcpkg: &fakeSource{repo: "https://github.com/fmtlib/fmt"}})
+	u := dep.Update{Dep: dep.Dep{Datasource: dsVcpkg, Name: "fmt", Version: "11.1.4#1"}, NewVersion: "11.2.0#2"}
+	got := n.Section(t.Context(), []dep.Update{u})
+	for _, want := range []string{
+		"#### [11.2.0](https://redirect.github.com/o/r/releases/tag/11.2.0)\n\nminor\n\n",
+		"[Compare changes](https://github.com/fmtlib/fmt/compare/11.1.4...11.2.0)",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("section lacks\n%s\n--- got:\n%s", want, got)

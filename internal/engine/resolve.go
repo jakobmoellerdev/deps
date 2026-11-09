@@ -366,17 +366,39 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			renamers[m.Name()] = rn
 		}
 	}
+	// A vcpkg port waits for the registry baseline it is read at (dep.Dep.Baseline): when the
+	// baseline moves, the port is looked up at the new commit (portAtBaseline).
+	baselineOf := vcpkgBaselines(todo)
+	resolved := make([]chan struct{}, len(todo))
+	for _, j := range baselineOf {
+		resolved[j] = make(chan struct{})
+	}
+	resolveOne := func(i int, d dep.Dep) (Trace, []dep.Update, resolver) {
+		r := resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now,
+			rewriter: rewriters[d.Manager], ranger: rangers[d.Manager], renamer: renamers[d.Manager]}
+		t, u := r.run(func() []Vuln { return sec.of(secIdx[i]) })
+		return t, u, r
+	}
 	for i := range todo {
 		wg.Go(func() {
+			if resolved[i] != nil {
+				defer close(resolved[i])
+			}
 			d := todo[i]
 			if pols[i].securityOnly && len(sec.of(secIdx[i])) == 0 {
 				d.Skip = pols[i].pre.IgnoreReason
 				outs[i] = Trace{Dep: d, Rules: pols[i].pre.Rules, Policy: pols[i].pre}
 				return
 			}
-			r := resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now,
-				rewriter: rewriters[d.Manager], ranger: rangers[d.Manager], renamer: renamers[d.Manager]}
-			t, u := r.run(func() []Vuln { return sec.of(secIdx[i]) })
+			var t Trace
+			var u []dep.Update
+			var r resolver
+			if j, ok := baselineOf[d.Baseline]; ok {
+				<-resolved[j]
+				t, u, r = portAtBaseline(d, ups[j], func(d dep.Dep) (Trace, []dep.Update, resolver) { return resolveOne(i, d) })
+			} else {
+				t, u, r = resolveOne(i, d)
+			}
 			if pols[i].securityOnly && t.Err == nil && u == nil {
 				t.Dep.Skip = pols[i].pre.IgnoreReason // no fix for its advisories
 			}

@@ -170,6 +170,9 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 	if t.Policy.Toolchain != "" {
 		line("builtin", "toolchain %s -> group %q", t.Policy.Toolchain, t.Policy.Toolchain)
 	}
+	if t.Policy.Registry != "" {
+		line("builtin", "registry %s -> group %q", t.Policy.Registry, t.Policy.Registry)
+	}
 	if t.Policy.Replacement != "" {
 		line("builtin", "replacement %s -> %s", t.Policy.Replacement, t.Policy.ReplacementName)
 	}
@@ -192,7 +195,7 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 			kindPolicies = append(kindPolicies, tu.Policy)
 		}
 	}
-	if len(t.Rules) == 0 && len(kindRules) == 0 && t.Policy.Monorepo == "" && t.Policy.Toolchain == "" && t.Policy.Replacement == "" {
+	if len(t.Rules) == 0 && len(kindRules) == 0 && t.Policy.Monorepo == "" && t.Policy.Toolchain == "" && t.Policy.Registry == "" && t.Policy.Replacement == "" {
 		line("rules", "none")
 	}
 	for i, r := range t.Rules {

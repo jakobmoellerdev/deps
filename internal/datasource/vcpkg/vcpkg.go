@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,7 @@ const Name = "vcpkg"
 type Source struct {
 	getter httpx.Getter
 	ports  datasource.Memo[string, []datasource.Release] // by version file URL
+	repos  datasource.Memo[string, string]               // by port manifest URL
 }
 
 // New returns the vcpkg datasource. sem bounds concurrent requests (nil = unbounded).
@@ -79,6 +81,46 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 // Digest is unsupported: port versions are not digest-pinned.
 func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 	return "", datasource.UnsupportedDigest(Name, d)
+}
+
+// SourceRepo implements datasource.SourceRepo with the `homepage` of the port's manifest
+// (`ports/<port>/vcpkg.json`) in the registry tree at d.Source when it is a repository on
+// github.com, gitlab.com or codeberg.org; "" otherwise (most homepages of other hosts are
+// project sites) and when the registry has no manifest for the port. Once per manifest URL.
+func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, error) {
+	if d.Source == "" || d.Name == "" {
+		return "", nil
+	}
+	target := strings.TrimSuffix(d.Source, "/") + "/ports/" + d.Name + "/vcpkg.json"
+	return s.repos.Do(ctx, target, func() (string, error) {
+		var m struct {
+			Homepage string `json:"homepage"`
+		}
+		err := s.getter.Stream(ctx, target, func(r io.Reader) error { return json.UnmarshalRead(r, &m) })
+		if errors.Is(err, httpx.ErrNotFound) {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if onForge(m.Homepage) {
+			return m.Homepage, nil
+		}
+		return "", nil
+	})
+}
+
+// onForge reports whether raw is an http(s) URL on github.com, gitlab.com or codeberg.org.
+func onForge(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "github.com", "gitlab.com", "codeberg.org":
+		return true
+	}
+	return false
 }
 
 func (s *Source) fetch(ctx context.Context, target, port string) ([]datasource.Release, error) {

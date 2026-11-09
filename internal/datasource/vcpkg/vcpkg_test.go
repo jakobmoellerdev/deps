@@ -91,3 +91,42 @@ func TestReleases(t *testing.T) {
 		t.Error("digest: no error")
 	}
 }
+
+// TestSourceRepo: the homepage of the port's manifest at the registry commit is the source
+// repository when it is on a forge (microsoft/vcpkg ports/fmt/vcpkg.json, ports/curl/vcpkg.json).
+func TestSourceRepo(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		switch r.URL.Path {
+		case "/c/ports/fmt/vcpkg.json":
+			_, _ = w.Write([]byte(`{"name": "fmt", "version": "12.2.0", "port-version": 1, "homepage": "https://github.com/fmtlib/fmt", "license": "MIT"}`))
+		case "/c/ports/curl/vcpkg.json":
+			_, _ = w.Write([]byte(`{"name": "curl", "version": "8.23.0", "homepage": "https://curl.se/"}`))
+		case "/c/ports/nohome/vcpkg.json":
+			_, _ = w.Write([]byte(`{"name": "nohome", "version": "1"}`))
+		case "/c/ports/bad/vcpkg.json":
+			_, _ = w.Write([]byte(`{`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	s := New(srv.Client(), nil)
+	for name, want := range map[string]string{"fmt": "https://github.com/fmtlib/fmt", "curl": "", "nohome": "", "missing": ""} {
+		for range 2 {
+			if got, err := s.SourceRepo(t.Context(), dep.Dep{Name: name, Source: srv.URL + "/c/"}, "1"); err != nil || got != want {
+				t.Errorf("%s: %q, %v; want %q", name, got, err, want)
+			}
+		}
+	}
+	if hits.Load() != 4 {
+		t.Errorf("%d requests, want 4", hits.Load())
+	}
+	if _, err := s.SourceRepo(t.Context(), dep.Dep{Name: "bad", Source: srv.URL + "/c"}, "1"); err == nil {
+		t.Error("malformed manifest: no error")
+	}
+	if got, err := s.SourceRepo(t.Context(), dep.Dep{Name: "fmt"}, "1"); err != nil || got != "" {
+		t.Errorf("no source: %q, %v", got, err)
+	}
+}

@@ -12,9 +12,11 @@ type version struct {
 	pre   string
 }
 
-// parseVersion accepts `[v]N(.N)*[-pre][+build]`.
+// parseVersion accepts `[v]N(.N)*[-pre][+build][#port-version]`; a vcpkg port version
+// (`1.3.1#2`, a revision of the port, not of the package) is dropped like build metadata.
 func parseVersion(s string) (version, bool) {
 	s = strings.TrimPrefix(s, "v")
+	s, _, _ = strings.Cut(s, "#")
 	s, _, _ = strings.Cut(s, "+")
 	s, pre, _ := strings.Cut(s, "-")
 	if s == "" {
