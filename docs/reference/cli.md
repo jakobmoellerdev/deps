@@ -472,18 +472,13 @@ Print the updates as a unified diff without writing files.
 deps plan [flags]
 ```
 
-Resolves every dependency and prints the report on stderr (see `deps help output`). Then writes a unified diff per changed file to stdout (`a/<path>` → `b/<path>`); `git apply` accepts it. Nothing is written to the repository.
-
-Post-processors do not run, so `go.sum` and lockfile changes are missing from the diff; `plan` notes this with `note    go.sum changes are computed by apply/run`, `note    package-lock.json changes are computed by apply/run`, `note    Cargo.lock changes are computed by apply/run`, `note    Gemfile.lock changes are computed by apply/run`, `note    composer.lock changes are computed by apply/run`, `note    Manifest.toml changes are computed by apply/run`, `note    pubspec.lock changes are computed by apply/run`, `note    MODULE.bazel.lock changes are computed by apply/run`, `note    mix.lock changes are computed by apply/run`, `note    manifest.toml changes are computed by apply/run`, `note    flake.lock changes are computed by apply/run`, `note    Podfile.lock changes are computed by apply/run`, `note    deno.lock changes are computed by apply/run`, `note    jsonnetfile.lock.json changes are computed by apply/run`, `note    copier template changes are computed by apply/run` and `note    .terraform.lock.hcl changes are computed by apply/run`. Use `deps apply` to get them.
-
-A dependency with updates in several PR buckets contributes one update to the files: the newest non-major one, else the lowest major. Its other updates are reported with `, separate PR`, as is the lock file maintenance update (`lockFileMaintenance`), which only `deps run` makes.
-
-The platform is only detected from CI environment variables. Locally, lookups run without a platform token unless one of the token variables is set (see `deps help environment`).
+On a terminal plan prints the summary only and names the changed files; --diff prints the diff there too. Piped or redirected stdout always gets the diff.
 
 ### deps plan examples
 
 ```sh
 deps plan > deps.diff && git apply --check deps.diff
+deps plan --diff
 deps plan --show-skipped --dir ../other-repo
 deps plan --config ci/deps.yaml --log-level info
 ```
@@ -494,6 +489,7 @@ deps plan --config ci/deps.yaml --log-level info
 |---|---|---|---|
 | `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
+| `--diff` | bool | `false` | print the diff when stdout is a terminal too (piped stdout always gets it) |
 | `--dir` | string | `"."` | repository directory to scan |
 | `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
 | `--report` | string | `""` | also write the result as JSON to this file (see deps help output) |
@@ -818,6 +814,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_COLOR` | all | default of `--color`: color stderr and the plan diff on stdout: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it on stderr only), always, never |
 | `DEPS_CONCURRENCY` | `apply`, `explain`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--concurrency`: maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `DEPS_CONFIG` | `apply`, `config check`, `config show`, `explain`, `init`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--config`: config file, which must exist (when not set: <dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
+| `DEPS_DIFF` | `plan` | default of `--diff`: print the diff when stdout is a terminal too (piped stdout always gets it) |
 | `DEPS_DIR` | `apply`, `config check`, `config show`, `explain`, `init`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--dir`: repository directory to scan |
 | `DEPS_DRY_RUN` | `run`, `submit` | default of `--dry-run`: report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token |
 | `DEPS_FORCE` | `init`, `migrate` | default of `--force`: overwrite an existing config file |
@@ -901,7 +898,7 @@ dashboard <status>  <title>  <url>                            (run, with depende
 
 **On a terminal** (stderr is a TTY) the `update` lines are left out: the summary block below lists the same updates, grouped by the PR they go to. Everything else is printed as above. Piped or redirected stderr always gets the line format above, byte for byte, so scripts and CI logs see no change. With colors (`--color`, default `auto`: on a terminal unless `NO_COLOR` is set or `TERM=dumb`, and with the `actions` format unless `NO_COLOR` is set; `CLICOLOR_FORCE` or `FORCE_COLOR` force them, also when piped) `error` is red and the summary colors the branches, `<file>:<line>` (dim), the update types (major red, minor yellow, patch green, digest cyan), security advisories (bold red) and the error count (red). Colors never change the layout; `--color always` keeps the piped layout.
 
-`plan` colors its diff on stdout as git does (file headers bold, hunk headers cyan, added lines green, removed lines red) when stdout is a terminal and colors are on, or with `--color always`. `CLICOLOR_FORCE` and `FORCE_COLOR` do not color it, so `deps plan > deps.diff` stays a patch `git apply` accepts.
+On a terminal (stdout is a TTY) `plan` leaves the diff out: the summary lists the updates, and a `note    diff of <n> changed files left out on a terminal (--diff prints it)` line on stderr says how many files the diff would change. `--diff` prints it there too. Piped or redirected stdout always gets the diff, so `deps plan > deps.diff` is unchanged. The diff is colored as git does (file headers bold, hunk headers cyan, added lines green, removed lines red) when stdout is a terminal and colors are on, or with `--color always`. `CLICOLOR_FORCE` and `FORCE_COLOR` do not color it, so `deps plan > deps.diff` stays a patch `git apply` accepts.
 
 Also on a terminal (unless `TERM=dumb`), a **status line** below the output shows the running phase while it runs, e.g. `⠹ resolving 212/308 · 2.1s · in flight: registry.npmjs.org 18, api.github.com 4`: discovering files, extracting (files), resolving (dependencies) and, in `run`, PRs (groups handled), with a rate-limit wait (`rate limited by <host>, <n>s`), the error count, the elapsed time and last the requests in flight to the three busiest hosts (until their response is read), which a narrow terminal cuts first. It is redrawn ten times a second, kept below every log record and removed when the phase ends, so it never stays in the output. Piped stderr never gets it.
 

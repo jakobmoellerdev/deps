@@ -20,12 +20,14 @@ type logOpts struct {
 
 // terminal is how stderr renders the results: on a terminal (tty) the summary alone lists the
 // updates, grouped by PR, instead of also one flat update line each; style colors them.
-// Piped stderr keeps the documented line format byte for byte. diff colors the diff plan
-// writes to stdout, by --color and whether stdout is a terminal.
+// Piped stderr keeps the documented line format byte for byte. outTTY tells whether stdout is
+// a terminal (plan leaves its diff out there unless --diff); diff colors the diff plan writes
+// to stdout, by --color and whether stdout is a terminal.
 type terminal struct {
-	tty   bool
-	style logx.Style
-	diff  logx.Style
+	tty    bool
+	outTTY bool
+	style  logx.Style
+	diff   logx.Style
 }
 
 // errorLabel starts an error line: "error", red with colors.
@@ -66,7 +68,7 @@ func setupLogger(o logOpts, w *logx.Writer, tty, outTTY bool, getenv func(string
 	// The diff is colored on a terminal or with --color always, never by $FORCE_COLOR alone:
 	// `deps plan > x.diff` must stay a patch git can apply.
 	diff := c == logx.ColorAlways || outTTY && c.Enabled(true, getenv)
-	return terminal{tty: tty, style: logx.NewStyle(color), diff: logx.NewStyle(diff)}, nil
+	return terminal{tty: tty, outTTY: outTTY, style: logx.NewStyle(color), diff: logx.NewStyle(diff)}, nil
 }
 
 // prLog is bot.Options.PRLog: the records of each PR are held in a logx.Buffer and written to

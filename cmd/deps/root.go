@@ -83,6 +83,7 @@ type rootOpts struct {
 	dir         string
 	config      string
 	showSkipped bool
+	showDiff    bool // plan --diff: print the diff also when stdout is a terminal
 	log         logOpts
 	term        terminal     // set up with the logger
 	stderr      *logx.Writer // stderr of the command, set up with the logger

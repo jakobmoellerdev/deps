@@ -45,14 +45,18 @@ func newPlan(o *rootOpts) *cli.Command {
 	return &cli.Command{
 		Name:  "plan",
 		Usage: "Print the updates as a unified diff without writing files",
+		Description: "On a terminal plan prints the summary only and names the changed files; --diff prints the diff there too. " +
+			"Piped or redirected stdout always gets the diff.",
 		Metadata: map[string]any{docgen.MetaExample: "  deps plan > deps.diff && git apply --check deps.diff\n" +
+			"  deps plan --diff\n" +
 			"  deps plan --show-skipped --dir ../other-repo\n" +
 			"  deps plan --config ci/deps.yaml --log-level info"},
 		ArgValidator: noArgs,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return local(ctx, cmd, o, false)
 		},
-		Flags: scanFlags(o, scanResults),
+		Flags: append(scanFlags(o, scanResults), &cli.BoolFlag{Name: "diff", Destination: &o.showDiff,
+			Usage: "print the diff when stdout is a terminal too (piped stdout always gets it)"}),
 	}
 }
 
@@ -118,7 +122,9 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 			buildErrs = append(buildErrs, denied) // no update is written without its tasks
 		}
 	}
-	if write && denied == nil {
+	diffHidden := !write && o.term.outTTY && !o.showDiff && len(changes) > 0
+	switch {
+	case write && denied == nil:
 		for _, c := range changes {
 			var err error
 			switch {
@@ -136,7 +142,7 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 		if err := engine.ApplyTasks(ctx, s.root, updates); err != nil {
 			buildErrs = append(buildErrs, err)
 		}
-	} else if !write {
+	case !write && !diffHidden:
 		out := cmd.Root().Writer
 		for _, c := range changes {
 			from, to := string(c.Old), string(c.New)
@@ -150,6 +156,9 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	}
 	errs := append(append([]error(nil), res.Errors...), buildErrs...)
 	report(stderr, o.term, o.showSkipped, res, errs, separate)
+	if diffHidden {
+		fmt.Fprintf(stderr, "note    diff of %s left out on a terminal (--diff prints it)\n", plural(len(changes), "changed file", "changed files"))
+	}
 	if !write && hasManager(res, gomod.Name) {
 		fmt.Fprintln(stderr, "note    go.sum changes are computed by apply/run")
 	}
