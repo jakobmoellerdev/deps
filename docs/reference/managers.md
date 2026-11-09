@@ -55,6 +55,9 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`droneci`](#droneci)
 - [`circleci`](#circleci)
 - [`azure-pipelines`](#azure-pipelines)
+- [`cloudbuild`](#cloudbuild)
+- [`velaci`](#velaci)
+- [`crow`](#crow)
 - [`vcpkg`](#vcpkg)
 - [`elm`](#elm)
 - [`composer`](#composer)
@@ -2815,6 +2818,83 @@ Updates container resources, GitHub repository resources and task versions in Az
 
 - Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes. The docker manager leaves `containers` entries with a `container` key to this manager.
 - Job-level `container:` values are not extracted: they can name a container resource instead of an image (as in Renovate).
+
+## cloudbuild
+
+Updates the builder images of Google Cloud Build configurations.
+
+**Files:**
+
+- `cloudbuild.y(a)ml`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | `name` (the builder image) of every entry of `steps` | `docker` | `docker` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `variable reference` | `$` in the image (substitutions such as `${_REPOSITORY}`) that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
+| `invalid reference` | the image reference does not parse |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.
+- `images` and `artifacts` name what the build pushes, not what it uses, and are not read. Templates such as `cloudbuild.yaml.hbs` are not matched (Renovate's pattern is not anchored at the end).
+
+## velaci
+
+Updates container images in Vela pipelines.
+
+**Files:**
+
+- `.vela.y(a)ml`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | `image` of the `steps` and of the `steps` of every `stages` entry | `docker` | `docker` | updated |
+| `service` | `image` of the `services` | `docker` | `docker` | updated |
+| `secret` | `origin.image` of the `secrets` (the secret plugin) | `docker` | `docker` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `variable reference` | `$` in the image that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
+| `invalid reference` | the image reference does not parse (an inline template such as `{{ .tag }}`) |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)), and [`registryAliases`](configuration.md#registryaliases) resolve registry prefixes.
+- Steps pulled in from `templates` are not read: they live in the template's repository.
+
+## crow
+
+Updates container images in Crow CI workflows (a Woodpecker fork; read like [woodpecker](#woodpecker)).
+
+**Files:**
+
+- `.crow.y(a)ml`, `.crow/<name>.y(a)ml` at the repository root
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `image` | `image` of the `steps`, `clone` and legacy `pipeline` steps (a list, or a mapping of step names) | `docker` | `docker` | updated |
+| `service` | `image` of the `services` (list or mapping) | `docker` | `docker` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `variable reference` | `$` in the image (matrix or environment variables) that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
+| `invalid reference` | the image reference does not parse |
+| `cannot locate value` | the value bytes were not found (escapes, block scalars) |
+
+**Details.**
+
+- Crow keeps Woodpecker's workflow format, so the files are read and edited exactly as the [woodpecker](#woodpecker) manager's; only the manager name and file locations differ.
 
 ## vcpkg
 

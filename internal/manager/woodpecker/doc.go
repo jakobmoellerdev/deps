@@ -27,3 +27,22 @@ var Doc = refdoc.Manager{
 		}},
 	},
 }
+
+// CrowDoc is the reference documentation of the crow manager (docs/reference/managers.md).
+var CrowDoc = refdoc.Manager{
+	Name:    CrowName,
+	Summary: "Updates container images in Crow CI workflows (a Woodpecker fork; read like [woodpecker](#woodpecker)).",
+	Files: []string{
+		"`.crow.y(a)ml`, `.crow/<name>.y(a)ml` at the repository root",
+	},
+	DepTypes: []refdoc.DepType{
+		{Name: "image", What: "`image` of the `steps`, `clone` and legacy `pipeline` steps (a list, or a mapping of step names)", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "service", What: "`image` of the `services` (list or mapping)", Versioning: "`docker`", Datasources: []string{"docker"}},
+	},
+	Skips: Doc.Skips,
+	Sections: []refdoc.Section{
+		{Title: "Details", Items: []string{
+			"Crow keeps Woodpecker's workflow format, so the files are read and edited exactly as the [woodpecker](#woodpecker) manager's; only the manager name and file locations differ.",
+		}},
+	},
+}

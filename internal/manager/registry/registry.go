@@ -16,6 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/circleci"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cloudbuild"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom/customdoc"
@@ -54,6 +55,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/velaci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/woodpecker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
@@ -112,6 +114,9 @@ var Builtin = []Entry{
 	{droneci.Doc, droneci.New},
 	{circleci.Doc, circleci.New},
 	{azurepipelines.Doc, azurepipelines.New},
+	{cloudbuild.Doc, cloudbuild.New},
+	{velaci.Doc, velaci.New},
+	{woodpecker.CrowDoc, woodpecker.NewCrow},
 	{vcpkg.Doc, vcpkg.New},
 	{elm.Doc, elm.New},
 	{composer.Doc, composer.New},

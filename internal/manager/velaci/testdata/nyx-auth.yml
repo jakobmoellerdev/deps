@@ -1,0 +1,169 @@
+version: "1"
+
+secrets:
+  - name: docker_username
+    key: zapplebee/nyx-auth/docker_username
+    engine: native
+    type: repo
+  - name: docker_password
+    key: zapplebee/nyx-auth/docker_password
+    engine: native
+    type: repo
+  - name: minio_access_key
+    key: zapplebee/nyx-auth/minio_access_key
+    engine: native
+    type: repo
+  - name: minio_secret_key
+    key: zapplebee/nyx-auth/minio_secret_key
+    engine: native
+    type: repo
+
+# nyx-auth is fully stateless — no database, no migration step.
+# Users and clients are driven by config files loaded at startup.
+services:
+  - name: nyx-auth
+    image: oven/bun:1.3.5
+    pull: always
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "until [ -f ${VELA_WORKSPACE}/package.json ]; do sleep 1; done && cd ${VELA_WORKSPACE} && bun install --frozen-lockfile && bun scripts/build-coverage.ts && bun dist-coverage/index.js"
+    environment:
+      NYX_SECRET: Y2ktbnl4LWF1dGgtdGVzdC1zZWNyZXQta2V5LTIwMjY=
+      NYX_URL: http://nyx-auth:3000
+      TRUSTED_ORIGINS: http://test-app:5173,http://cookie-test-app:5174
+      CLIENTS_CONFIG: ./clients.ci.yml
+      USERS_CONFIG: ./users.ci.yml
+      PORT: "3000"
+      COVERAGE: "1"
+
+  - name: test-app
+    image: node:20-alpine
+    pull: always
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "until [ -d ${VELA_WORKSPACE}/test-app ]; do sleep 1; done && cd ${VELA_WORKSPACE}/test-app && npm install && npx vite --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_AUTH_URL: http://nyx-auth:3000/api/auth
+      VITE_CLIENT_ID: ci-test
+      VITE_REDIRECT_URI: http://test-app:5173/callback
+
+  - name: cookie-test-app
+    image: oven/bun:1.3.5
+    pull: always
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "until [ -d ${VELA_WORKSPACE}/cookie-test-app ]; do sleep 1; done && cd ${VELA_WORKSPACE}/cookie-test-app && bun install --frozen-lockfile --production && bun server.js"
+    environment:
+      AUTH_URL: http://nyx-auth:3000
+      CLIENT_ID: ci-cookie-test
+      CLIENT_SECRET: ci-cookie-test-secret
+      BASE_URL: http://cookie-test-app:5174
+      PORT: "5174"
+
+steps:
+  - name: wait-for-services
+    image: alpine:latest
+    pull: always
+    commands:
+      - apk add --no-cache curl
+      - echo "Waiting for nyx-auth..."
+      - for i in $(seq 1 90); do curl -sf http://nyx-auth:3000/ && echo "nyx-auth ready" && break; [ $i -eq 90 ] && echo "nyx-auth never ready" && exit 1; sleep 2; done
+      - echo "Waiting for test-app..."
+      - for i in $(seq 1 90); do curl -sf http://test-app:5173/ && echo "test-app ready" && break; [ $i -eq 90 ] && echo "test-app never ready" && exit 1; sleep 2; done
+      - echo "Waiting for cookie-test-app..."
+      - for i in $(seq 1 90); do curl -sf http://cookie-test-app:5174/ && echo "cookie-test-app ready" && break; [ $i -eq 90 ] && echo "cookie-test-app never ready" && exit 1; sleep 2; done
+
+  - name: unit-test
+    image: oven/bun:1.3.5
+    pull: always
+    commands:
+      - cd ${VELA_WORKSPACE} && bun install --frozen-lockfile
+      - cd ${VELA_WORKSPACE} && bun test --coverage --coverage-reporter=lcov tests/
+
+  - name: cypress
+    image: cypress/included:latest
+    pull: always
+    environment:
+      CYPRESS_BASE_URL: http://test-app:5173
+      CYPRESS_AUTH_URL: http://nyx-auth:3000
+      CYPRESS_CI_EMAIL: ci@nyx.test
+      CYPRESS_CI_PASSWORD: TestPass1234!
+      CYPRESS_CI_OTP_SECRET: 5YIEQ5DAA6AGQMWT4X3LESW6FZYT4E2M
+    commands:
+      - cd test-app && cypress run --browser chrome
+
+  - name: cypress-cookie
+    image: cypress/included:latest
+    pull: always
+    environment:
+      CYPRESS_BASE_URL: http://cookie-test-app:5174
+      CYPRESS_AUTH_URL: http://nyx-auth:3000
+      CYPRESS_CI_EMAIL: ci@nyx.test
+      CYPRESS_CI_PASSWORD: TestPass1234!
+      CYPRESS_CI_OTP_SECRET: 5YIEQ5DAA6AGQMWT4X3LESW6FZYT4E2M
+    commands:
+      - cd cookie-test-app && npm install --ignore-scripts && cypress run --browser chrome
+
+  - name: merge-coverage
+    image: oven/bun:1.3.5
+    pull: always
+    ruleset:
+      status: [success, failure]
+    commands:
+      - cd ${VELA_WORKSPACE} && bun install --frozen-lockfile
+      - bun scripts/merge-coverage.ts
+
+  - name: upload-artifacts
+    image: alpine:latest
+    pull: always
+    ruleset:
+      status: [success, failure]
+    secrets: [minio_access_key, minio_secret_key]
+    commands:
+      - apk add --no-cache curl
+      - curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+      - mc alias set minio http://172.17.0.1:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+      - mc mb --ignore-existing minio/cypress-videos
+      - mc anonymous set download minio/cypress-videos
+      # ── Merged coverage HTML ─────────────────────────────────────────────────
+      - mc cp --recursive "${VELA_WORKSPACE}/coverage/merged/html/" "minio/cypress-videos/${VELA_BUILD_NUMBER}/coverage/" || echo "no merged coverage html to upload"
+      # ── Cypress videos/screenshots ───────────────────────────────────────────
+      - mc cp --recursive "${VELA_WORKSPACE}/test-app/cypress/videos/" "minio/cypress-videos/${VELA_BUILD_NUMBER}/test-app/videos/" || echo "no test-app videos to upload"
+      - mc cp --recursive "${VELA_WORKSPACE}/test-app/cypress/screenshots/" "minio/cypress-videos/${VELA_BUILD_NUMBER}/test-app/screenshots/" || echo "no test-app screenshots to upload"
+      - mc cp --recursive "${VELA_WORKSPACE}/cookie-test-app/cypress/videos/" "minio/cypress-videos/${VELA_BUILD_NUMBER}/cookie-test-app/videos/" || echo "no cookie-test-app videos to upload"
+      - mc cp --recursive "${VELA_WORKSPACE}/cookie-test-app/cypress/screenshots/" "minio/cypress-videos/${VELA_BUILD_NUMBER}/cookie-test-app/screenshots/" || echo "no cookie-test-app screenshots to upload"
+      - |
+        echo "=== Artifact download links ==="
+        echo "  Coverage: https://bucket.prettybird.zapplebee.online/cypress-videos/${VELA_BUILD_NUMBER}/coverage/index.html"
+        mc ls --recursive "minio/cypress-videos/${VELA_BUILD_NUMBER}/" | awk -v build="${VELA_BUILD_NUMBER}" '{print "  https://bucket.prettybird.zapplebee.online/cypress-videos/" build "/" $NF}'
+        echo "=== Console ==="
+        echo "  https://minio.prettybird.zapplebee.online/browser/cypress-videos/${VELA_BUILD_NUMBER}/"
+
+  - name: publish-push
+    ruleset:
+      event: push
+      branch: main
+    image: target/vela-docker:latest
+    pull: always
+    secrets: [docker_username, docker_password]
+    parameters:
+      registry: harbor.prettybird.zapplebee.online
+      repo: harbor.prettybird.zapplebee.online/library/nyx-auth
+      tags:
+        - harbor.prettybird.zapplebee.online/library/nyx-auth:latest
+        - harbor.prettybird.zapplebee.online/library/nyx-auth:${VELA_BUILD_COMMIT:0:8}
+
+  - name: publish-tag
+    ruleset:
+      event: tag
+    image: target/vela-docker:latest
+    pull: always
+    secrets: [docker_username, docker_password]
+    parameters:
+      registry: harbor.prettybird.zapplebee.online
+      repo: harbor.prettybird.zapplebee.online/library/nyx-auth
+      tags:
+        - harbor.prettybird.zapplebee.online/library/nyx-auth:${VELA_BUILD_TAG##v}

@@ -150,3 +150,65 @@ func TestEditsAndRename(t *testing.T) {
 		t.Errorf("Rename = %+v, %v", d, err)
 	}
 }
+
+func TestCrowMatch(t *testing.T) {
+	m := NewCrow()
+	if m.Name() != CrowName {
+		t.Errorf("Name = %q", m.Name())
+	}
+	for path, ok := range map[string]bool{
+		".crow.yml":             true,
+		".crow.yaml":            true,
+		".crow/image.yaml":      true,
+		".crow/sub/x.yml":       false,
+		"sub/.crow.yml":         false,
+		".woodpecker.yml":       false,
+		".crowrc.yml":           false,
+		".crow/README.md":       false,
+		"crow.yml":              false,
+		".woodpecker/build.yml": false,
+	} {
+		if got := m.Match(path); got != ok {
+			t.Errorf("Match(%q) = %v, want %v", path, got, ok)
+		}
+	}
+	if New().Match(".crow.yml") {
+		t.Error("woodpecker matches .crow.yml")
+	}
+}
+
+// The fixtures are real Crow workflows: dawn-winery/sophon-tools' .crow.yml (a plugin image
+// without a tag) and pat-s/backporter's .crow/image.yaml (the plugin image as an anchor).
+func TestCrowExtractFixtures(t *testing.T) {
+	for _, tt := range []struct {
+		file  string
+		n     int
+		wants map[int]want
+	}{
+		{"testdata/crow-sophon-tools.yml", 3, map[int]want{
+			0: {line: 15, depT: TypeImage, name: "rust", version: "trixie"},
+			1: {line: 55, depT: TypeImage, name: "rust", version: "trixie"},
+			2: {line: 86, depT: TypeImage, name: "woodpeckerci/plugin-release", version: "latest"},
+		}},
+		{"testdata/crow-backporter.yaml", 1, map[int]want{
+			0: {line: 2, depT: TypeImage, name: "codeberg.org/crow-plugins/docker-buildx", version: "2.0.1"},
+		}},
+	} {
+		t.Run(tt.file, func(t *testing.T) {
+			src, err := os.ReadFile(tt.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			deps, err := NewCrow().Extract(".crow.yml", src, manager.Env{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, d := range deps {
+				if d.Manager != CrowName || d.Datasource != "docker" {
+					t.Errorf("%d: %s/%s", i, d.Manager, d.Datasource)
+				}
+			}
+			check(t, deps, tt.n, tt.wants)
+		})
+	}
+}

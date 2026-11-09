@@ -163,7 +163,7 @@ func digestCapable(d dep.Dep) bool {
 			return d.Datasource == "git-refs" && d.Digest != ""
 		}
 		return d.Datasource == "docker"
-	case "docker", "bitbucket-pipelines", "woodpecker", "droneci", "circleci", "azure-pipelines", "ansible":
+	case "docker", "bitbucket-pipelines", "woodpecker", "crow", "droneci", "circleci", "azure-pipelines", "cloudbuild", "velaci", "ansible":
 		return d.Datasource == "docker"
 	case devcontainer.Name:
 		return d.DepType == devcontainer.DepTypeImage || d.DepType == devcontainer.DepTypeFeature && d.Digest != ""

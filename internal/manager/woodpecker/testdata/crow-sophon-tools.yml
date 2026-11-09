@@ -1,0 +1,94 @@
+when:
+  - event: push
+    branch: ${CI_REPO_DEFAULT_BRANCH}
+    path: ['.crow.yml', 'Cargo.toml', 'Cargo.lock', '**/*.rs']
+  - event: pull_request
+  - event: tag
+    ref: refs/tags/v*
+  - event: manual
+
+labels:
+  platform: linux/amd64
+
+steps:
+  - name: check
+    image: rust:trixie
+    commands:
+      - apt-get update
+      - apt-get install -y protobuf-compiler musl-tools jq
+      - ln -sf /usr/bin/musl-gcc /usr/local/bin/x86_64-unknown-linux-musl-gcc
+      - rustup target add x86_64-unknown-linux-musl
+      - cargo build --target x86_64-unknown-linux-musl --bin sophon-cli --verbose
+      - BINARY=target/x86_64-unknown-linux-musl/debug/sophon-cli
+
+      # api list-games: verify known game biz
+      - $BINARY api list-games --output-format json | jq -e '
+          [.[].game.biz] | contains(["nap_global", "hkrpg_global", "hk4e_global", "bh3_global"])
+        '
+
+      # api list-components: verify known component names
+      - $BINARY api list-components nap_global --output-format json | jq -e '
+          [.[].name] | contains(["game", "en-us", "zh-cn", "ja-jp", "ko-kr"])
+        '
+
+      # api game-versions: verify output is a non-empty array
+      - $BINARY api game-versions nap_global --output-format json | jq -e '
+          length > 0 and all(has("version") and has("hash_md5"))
+        '
+
+      # api game-download-info: verify structure of returned manifest and chunks
+      - $BINARY api game-download-info nap_global --output-format json | jq -e '
+          length > 0 and all(
+            has("path") and has("size") and has("hash_md5") and
+            (.chunks | length > 0 and all(
+              has("name") and has("offset") and
+              (.compressed | has("size") and has("hash_md5")) and
+              (.decompressed | has("size") and has("hash_md5"))
+            ))
+          )
+        '
+    when:
+      - event: [push, pull_request, manual]
+        path: ['Cargo.toml', 'Cargo.lock', '**/*.rs']
+
+  - name: build
+    image: rust:trixie
+    commands:
+      - apt-get update
+      - apt-get install -y protobuf-compiler musl-tools
+      - ln -sf /usr/bin/musl-gcc /usr/local/bin/x86_64-unknown-linux-musl-gcc
+      - rustup target add x86_64-unknown-linux-musl
+      - rustup component add llvm-tools-preview
+      - cargo install cargo-pgo
+      - BINARY=target/x86_64-unknown-linux-musl/release/sophon-cli
+      - REGEX="^mhypbase\\.dll|UnityPlayer\\.dll|ZenlessZoneZero\\.exe\$"
+
+      # Build instrumented binary
+      - cargo pgo build -- --target x86_64-unknown-linux-musl --bin sophon-cli
+
+      # Generate PGO profiles on common tasks
+      - $BINARY api list-games --output-format json || true
+      - $BINARY api list-components nap_global --output-format json || true
+      - $BINARY api game-versions nap_global --output-format json || true
+      - $BINARY api game-download-info nap_global --regex $REGEX --output-format json || true
+      - $BINARY download nap_global zzz --version 3.2.0 --regex $REGEX --output-format json || true
+      - $BINARY detect zzz --output-format json || true
+      - $BINARY verify nap_global zzz --version 3.2.0 --regex $REGEX --output-format json || true
+      - $BINARY update nap_global zzz --from-version 3.2.0 --regex $REGEX --output-format json || true
+
+      # Build optimized binary using PGO profiles
+      - cargo pgo optimize -- --target x86_64-unknown-linux-musl --bin sophon-cli --verbose
+      - mv target/x86_64-unknown-linux-musl/release/sophon-cli sophon-tools
+    when:
+      - event: [tag, manual]
+
+  - name: release
+    image: woodpeckerci/plugin-release
+    settings:
+      api_key:
+        from_secret: FORGEJO_TOKEN
+      files:
+        - sophon-tools
+      title: sophon-tools ${CI_COMMIT_TAG}
+    when:
+      - event: tag
