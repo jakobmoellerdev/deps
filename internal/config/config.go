@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/recolabs/gnata"
@@ -276,6 +277,9 @@ type Config struct {
 	// LockFileMaintenance configures Renovate's lockFileMaintenance: one PR refreshing every
 	// lockfile.
 	LockFileMaintenance LockFileMaintenance `yaml:"lockFileMaintenance" jsonschema_description:"Lock file maintenance: one PR (branch <branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, npm-shrinkwrap.json, package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Julia manifests, mix.lock, Gleam manifest.toml, pubspec.lock, MODULE.bazel.lock, flake.lock, NuGet packages.lock.json, conda-lock.yml, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests."`
+	// ComposerIgnorePlatformReqs are the platform requirements composer update ignores
+	// (Renovate's composerIgnorePlatformReqs); nil = deps' default (composer.Locker).
+	ComposerIgnorePlatformReqs []string `yaml:"composerIgnorePlatformReqs" jsonschema_description:"Platform requirements composer update ignores when it updates composer.lock, each passed as --ignore-platform-req=<req> (php, ext-intl, ext-*, lib-*); [] or null ignores none, so the runner's PHP and extensions must satisfy them. Unset, deps ignores every platform requirement, or only ext-* and lib-* when composer.json sets config.platform.php."`
 
 	path      string         // source path for error messages
 	layers    []layer        // the files of the config (its extends chain, the local file last); nil when not loaded from a file
@@ -798,6 +802,9 @@ func parse(ctx context.Context, src []byte, p, display string, fetch Fetcher) (*
 	if c.IgnorePaths == nil && mapValue(root, "ignorePaths") == nil {
 		c.IgnorePaths = slices.Clone(DefaultIgnorePaths)
 	}
+	if c.ComposerIgnorePlatformReqs == nil && mapValue(root, "composerIgnorePlatformReqs") != nil {
+		c.ComposerIgnorePlatformReqs = []string{} // set to null or []: ignore none
+	}
 	c.setSources(l.layers)
 	if c.Version == 0 {
 		c.Version = FormatVersion
@@ -875,6 +882,11 @@ func (c *Config) validate() []*Problem {
 	for i, e := range c.GitIgnoredAuthors {
 		if !emailRe.MatchString(e) {
 			add(fmt.Sprintf("gitIgnoredAuthors[%d]", i), "must be an email address, got %q", e)
+		}
+	}
+	for i, r := range c.ComposerIgnorePlatformReqs {
+		if r == "" || strings.ContainsFunc(r, unicode.IsSpace) {
+			add(fmt.Sprintf("composerIgnorePlatformReqs[%d]", i), "must be a platform package name or pattern such as ext-*, got %q", r)
 		}
 	}
 	if c.PRConcurrentLimit < 0 {

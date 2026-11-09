@@ -151,7 +151,12 @@ func (composerManager) LockRoots(root string, files []string) []manager.LockRoot
 // Locker is the composer post-processor (engine.PostProcessor, UpdatePinner and
 // LockMaintainer): it updates the composer.lock of a patched composer.json with `composer
 // update` in a temporary copy of the directory. The working tree is never touched.
-type Locker struct{}
+type Locker struct {
+	// IgnorePlatformReqs are the platform requirements every composer update ignores
+	// (composerIgnorePlatformReqs: `--ignore-platform-req=<req>` each; empty = none); nil is
+	// deps' default (flags).
+	IgnorePlatformReqs []string
+}
 
 // Siblings lists composer.lock.
 func (Locker) Siblings() []string { return []string{lockFile} }
@@ -174,7 +179,7 @@ func (l Locker) Process(ctx context.Context, dir string, manifests, files map[st
 // newer version the rewritten constraint admits. Composer before 2.7 lacks --minimal-changes
 // and runs without it (updateFlags). Without updates (a patched manifest only) `composer
 // update --lock` refreshes the lock's content-hash. It returns the lockfile when it changed.
-func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error) {
+func (l Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error) {
 	orig, ok := files[lockFile]
 	if !ok {
 		if len(locks) > 0 {
@@ -204,7 +209,7 @@ func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files m
 		}
 		args = slices.Concat([]string{"update"}, pkgs, extra)
 	}
-	return run(ctx, dir, src, orig, args)
+	return l.run(ctx, dir, src, orig, args)
 }
 
 // composerVersion matches the version `composer --version` prints ("Composer version 2.8.4
@@ -259,7 +264,7 @@ func readVersion(ctx context.Context, bin string) [2]int {
 // Maintain implements engine.LockMaintainer (lockFileMaintenance): `composer update` in a copy
 // of dir moves every locked package to the newest version the constraints admit; composer.json
 // is unchanged. It returns the lockfile when it changed; without one it does nothing.
-func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error) {
+func (l Locker) Maintain(ctx context.Context, dir string, files map[string][]byte) (map[string][]byte, error) {
 	lock, ok := files[lockFile]
 	if !ok {
 		return nil, nil
@@ -268,7 +273,7 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 	if err != nil {
 		return nil, err
 	}
-	return run(ctx, dir, src, lock, []string{"update"})
+	return l.run(ctx, dir, src, lock, []string{"update"})
 }
 
 // flatten returns the updates of every manifest, in manifest path order.
@@ -282,13 +287,13 @@ func flatten(byManifest map[string][]dep.Update) []dep.Update {
 
 // run runs `composer <args> <flags>` in a mirror of dir holding src as composer.json and lock
 // as composer.lock (mirrorDir) and returns composer.lock when it changed.
-func run(ctx context.Context, dir string, src, lock []byte, args []string) (map[string][]byte, error) {
+func (l Locker) run(ctx context.Context, dir string, src, lock []byte, args []string) (map[string][]byte, error) {
 	tmp, base, err := mirrorDir(dir, map[string][]byte{manifest: src, lockFile: lock})
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	if err := composer(ctx, base, dir, append(args, flags(src)...)...); err != nil {
+	if err := composer(ctx, base, dir, append(args, flags(src, l.IgnorePlatformReqs)...)...); err != nil {
 		return nil, err
 	}
 	out, err := os.ReadFile(filepath.Join(base, lockFile))
@@ -299,11 +304,18 @@ func run(ctx context.Context, dir string, src, lock []byte, args []string) (map[
 }
 
 // flags are the options of every composer update: only the lock is written (no install, no
-// scripts, plugins or audit), and platform requirements are ignored, since the runner's PHP
-// and extensions are not the project's; with a `config.platform.php` in composer.json, which
-// stands in for the PHP version, only extensions and libraries are.
-func flags(src []byte) []string {
+// scripts, plugins or audit), and the platform requirements ignore names are ignored. With
+// ignore nil every platform requirement is, since the runner's PHP and extensions are not the
+// project's; with a `config.platform.php` in composer.json, which stands in for the PHP
+// version, only extensions and libraries are.
+func flags(src []byte, ignore []string) []string {
 	out := []string{"--no-install", "--no-scripts", "--no-plugins", "--no-audit", "--no-interaction", "--no-ansi"}
+	if ignore != nil {
+		for _, req := range ignore {
+			out = append(out, "--ignore-platform-req="+req)
+		}
+		return out
+	}
 	var cfg struct {
 		Config struct {
 			Platform map[string]any `json:"platform"`

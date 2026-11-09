@@ -19,7 +19,11 @@ import (
 // testdata/psr-log.json is https://repo.packagist.org/p2/psr/log.json verbatim (minified
 // composer/2.0 metadata), testdata/drupal-packages.json https://packages.drupal.org/8/packages.json
 // and testdata/drupal-token.json https://packages.drupal.org/files/packages/8/p2/drupal/token.json
-// (not minified, without release times), all fetched 2026-11-05.
+// (not minified, without release times), all fetched 2026-11-05. The Composer 1 repository
+// asset-packagist.org (fetched 2026-11-09): testdata/asset-packagist-packages.json is its
+// packages.json and testdata/asset-packagist-left-pad.json the provider file of
+// npm-asset/left-pad verbatim, testdata/asset-packagist-provider-latest.json its provider
+// listing (p/provider-latest/<sha256>.json, 21 MB) cut down to three entries.
 func serve(t *testing.T, hits *atomic.Int32) *httptest.Server {
 	t.Helper()
 	read := func(name string) []byte {
@@ -30,6 +34,7 @@ func serve(t *testing.T, hits *atomic.Int32) *httptest.Server {
 		return b
 	}
 	psrLog, drupalIndex, token := read("psr-log.json"), read("drupal-packages.json"), read("drupal-token.json")
+	assetIndex, assetListing, leftPad := read("asset-packagist-packages.json"), read("asset-packagist-provider-latest.json"), read("asset-packagist-left-pad.json")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		if !strings.HasPrefix(r.Header.Get("User-Agent"), "deps/") {
@@ -68,8 +73,31 @@ func serve(t *testing.T, hits *atomic.Int32) *httptest.Server {
 				"includes":{"include/all$1.json":{"sha1":"x"}}}`)
 		case "/bearer/include/all$1.json":
 			fmt.Fprint(w, `{"packages":{"acme/tool":{"1.1.0":{"version":"1.1.0"},"1.0.0":{"version":"1.0.0"}},"acme/other":{"3.0.0":{"version":"v3.0.0"}}}}`)
+		case "/asset/packages.json":
+			w.Write(assetIndex)
+		case "/asset/p/provider-latest/94c8cdde70cbe4bf56d73b75bf2fffe24b0d0446d12166898c7ba5cb21e33eaf.json":
+			w.Write(assetListing)
+		case "/p/npm-asset/left-pad/703d74ebe5793865dcdbb77ef3f66c908fdb4942e49b8285b7236ab5f653309c.json":
+			w.Write(leftPad)
 		case "/v1/packages.json":
-			io.WriteString(w, `{"packages":[],"providers-url":"/p/%package%$%hash%.json"}`)
+			io.WriteString(w, `{"packages":[],"providers-url":"/v1/p/%package%$%hash%.json","provider-includes":{"p/missing$%hash%.json":{"sha256":"def"}}}`)
+		case "/v1ok/packages.json":
+			io.WriteString(w, `{"packages":[],"providers-url":"/v1/p/%package%$%hash%.json","providers-lazy-url":"../v1/p/%package%.json",
+				"providers":{"acme/hashed":{"sha256":"abc"}}}`)
+		case "/v1/p/acme/hashed$abc.json":
+			io.WriteString(w, `{"packages":{"acme/hashed":{"1.0.0":{"version":"1.0.0"},"1.1.0":{"version":"v1.1.0"}}}}`)
+		case "/v1/p/acme/lazy.json":
+			io.WriteString(w, `{"packages":{"acme/lazy":{"2.0.0":{"version":"2.0.0"}}}}`)
+		case "/v1lazy/packages.json":
+			io.WriteString(w, `{"providers-lazy-url":"/v1/p/%package%.json"}`)
+		case "/badprov/packages.json":
+			io.WriteString(w, `{"providers-url":"http://[::1/%package%"}`)
+		case "/badlazy/packages.json":
+			io.WriteString(w, `{"providers-lazy-url":"http://[::1/%package%"}`)
+		case "/badlisting/packages.json":
+			io.WriteString(w, `{"providers-url":"/p/%package%$%hash%.json","provider-includes":{"p/l$%hash%.json":{"sha256":"x"}}}`)
+		case "/badlisting/p/l$x.json":
+			io.WriteString(w, `{"providers":[]}`)
 		case "/broken/packages.json", "/p2/broken/pkg.json":
 			fmt.Fprint(w, `[1]`)
 		case "/p2/failing/pkg.json":
@@ -205,6 +233,54 @@ func TestComposerRepositories(t *testing.T) {
 	}
 }
 
+// TestComposer1Repositories: a repository serving only the Composer 1 API (asset-packagist.org)
+// is read through its provider listings; a package in packages.json `providers` needs no
+// listing, and providers-lazy-url serves the packages no listing names.
+func TestComposer1Repositories(t *testing.T) {
+	var hits atomic.Int32
+	srv := serve(t, &hits)
+	s := newSource(srv, nil)
+	asset := srv.URL + "/asset"
+	d := dep.Dep{Name: "npm-asset/left-pad", Source: asset + " https://packagist.org"}
+	rels, err := s.Releases(t.Context(), d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := versionsOf(rels); len(got) != 15 || !slices.Contains(got, "1.3.0") || !slices.Contains(got, "0.0.0") {
+		t.Errorf("versions = %v", got)
+	}
+	if n := hits.Load(); n != 3 {
+		t.Errorf("requests = %d, want 3 (packages.json, listing, provider file)", n)
+	}
+	// The listing is read once; psr/log is outside the available-package-patterns.
+	before := hits.Load()
+	if _, err := s.Releases(t.Context(), dep.Dep{Name: "psr/log", Source: asset + " https://packagist.org"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Releases(t.Context(), dep.Dep{Name: "npm-asset/unlisted", Source: asset}, ""); err == nil || err.Error() != "package npm-asset/unlisted not found" {
+		t.Errorf("unlisted: %v", err)
+	}
+	if n := hits.Load() - before; n != 1 {
+		t.Errorf("requests = %d, want 1 (psr/log on Packagist)", n)
+	}
+
+	// packages.json `providers` without a listing; providers-lazy-url for what it lacks.
+	v1 := newSource(srv, nil)
+	if rels, err := v1.Releases(t.Context(), dep.Dep{Name: "Acme/Hashed", Source: srv.URL + "/v1ok"}, ""); err != nil || !slices.Equal(versionsOf(rels), []string{"1.0.0", "v1.1.0"}) {
+		t.Errorf("hashed = %v, %v", versionsOf(rels), err)
+	}
+	if rels, err := v1.Releases(t.Context(), dep.Dep{Name: "acme/lazy", Source: srv.URL + "/v1ok"}, ""); err != nil || !slices.Equal(versionsOf(rels), []string{"2.0.0"}) {
+		t.Errorf("lazy fallback = %v, %v", versionsOf(rels), err)
+	}
+	lazy := newSource(srv, nil)
+	if rels, err := lazy.Releases(t.Context(), dep.Dep{Name: "acme/lazy", Source: srv.URL + "/v1lazy"}, ""); err != nil || !slices.Equal(versionsOf(rels), []string{"2.0.0"}) {
+		t.Errorf("lazy = %v, %v", rels, err)
+	}
+	if _, err := lazy.Releases(t.Context(), dep.Dep{Name: "acme/none", Source: srv.URL + "/v1lazy"}, ""); err == nil {
+		t.Error("lazy provider file missing")
+	}
+}
+
 func TestErrors(t *testing.T) {
 	var hits atomic.Int32
 	srv := serve(t, &hits)
@@ -213,7 +289,10 @@ func TestErrors(t *testing.T) {
 		d    dep.Dep
 		want string
 	}{
-		{dep.Dep{Name: "a/b", Source: srv.URL + "/v1"}, "only the Composer 1 providers API"},
+		{dep.Dep{Name: "a/b", Source: srv.URL + "/v1"}, "/v1/p/missing$def.json: provider listing not found"},
+		{dep.Dep{Name: "a/b", Source: srv.URL + "/badprov"}, "invalid providers-url"},
+		{dep.Dep{Name: "a/b", Source: srv.URL + "/badlazy"}, "invalid providers-lazy-url"},
+		{dep.Dep{Name: "a/b", Source: srv.URL + "/badlisting"}, "JSON array into Go map[string]packagist.providerHash"},
 		{dep.Dep{Name: "a/b", Source: srv.URL + "/broken"}, "JSON array into Go packagist.packagesJSON"},
 		{dep.Dep{Name: "broken/pkg"}, "not an object"},
 		{dep.Dep{Name: "failing/pkg"}, "HTTP 500"},

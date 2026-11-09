@@ -1,0 +1,107 @@
+{
+    "name": "georgringer/news",
+    "description": "News system - Versatile news system based on Extbase & Fluid and using the latest technologies provided by TYPO3 CMS.",
+    "license": "GPL-2.0-or-later",
+    "type": "typo3-cms-extension",
+    "keywords": [
+        "TYPO3",
+        "extension",
+        "article",
+        "news"
+    ],
+    "authors": [
+        {
+            "name": "Georg Ringer",
+            "homepage": "https://ringer.it",
+            "role": "Developer"
+        }
+    ],
+    "homepage": "https://extensions.typo3.org/extension/news",
+    "support": {
+        "issues": "https://github.com/georgringer/news/issues",
+        "source": "https://github.com/georgringer/news",
+        "docs": "https://docs.typo3.org/p/georgringer/news/main/en-us/"
+    },
+    "require": {
+        "php": ">= 8.2 < 8.6",
+        "symfony/console": "^5.4 || ^6.4 || ^7.0",
+        "typo3/cms-backend": "^13.4.29 || ^14.3",
+        "typo3/cms-core": "^13.4.29 || ^14.3",
+        "typo3/cms-extbase": "^13.4.29 || ^14.3",
+        "typo3/cms-fluid": "^13.4.29 || ^14.3",
+        "typo3/cms-frontend": "^13.4.29 || ^14.3",
+        "typo3/cms-install": "^13.4.29 || ^14.3"
+    },
+    "require-dev": {
+        "a9f/fractor": "~1.0.0",
+        "a9f/fractor-xliff": "~1.0.0",
+        "a9f/fractor-xml": "~1.0.0",
+        "a9f/typo3-fractor": "@dev",
+        "friendsofphp/php-cs-fixer": "^3.89.2",
+        "phpstan/phpdoc-parser": "^1.33.0",
+        "phpunit/phpunit": "^10.5.58",
+        "ssch/typo3-rector": "^3.7",
+        "typo3/cms-fluid-styled-content": "^13.4.29 || ^14.3",
+        "typo3/cms-seo": "^13.4.29 || ^14.3",
+        "typo3/coding-standards": "^0.8.0",
+        "typo3/testing-framework": "^8.3.1",
+        "webmozart/assert": "^1.12.1"
+    },
+    "conflict": {
+        "sebastian/recursion-context": "6.0.0 || 6.0.1 || 6.0.2"
+    },
+    "replace": {
+        "typo3-ter/news": "self.version"
+    },
+    "suggest": {
+        "georgringer/news-tagsuggest": "On the fly creation of tag records within a news record",
+        "georgringer/numbered-pagination": "Improved pagination API",
+        "reelworx/rx-shariff": "GDPR compliant social sharing",
+        "typo3/cms-scheduler": "XML and ICS import",
+        "typo3/cms-seo": "Sitemaps"
+    },
+    "autoload": {
+        "psr-4": {
+            "GeorgRinger\\News\\": "Classes"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "GeorgRinger\\News\\Tests\\": "Tests"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "a9f/fractor-extension-installer": true,
+            "sbuerk/typo3-cmscomposerinstallers-testingframework-bridge": true,
+            "typo3/class-alias-loader": true,
+            "typo3/cms-composer-installers": true
+        },
+        "bin-dir": ".Build/bin",
+        "lock": false,
+        "sort-packages": true,
+        "vendor-dir": ".Build/vendor"
+    },
+    "extra": {
+        "typo3/cms": {
+            "app-dir": ".Build",
+            "extension-key": "news",
+            "web-dir": ".Build/Web"
+        }
+    },
+    "scripts": {
+        "post-autoload-dump": [
+            "TYPO3\\TestingFramework\\Composer\\ExtensionTestEnvironment::prepare"
+        ],
+        "doc-init": "docker run --rm --pull always -v $(pwd):/project -it ghcr.io/typo3-documentation/render-guides:latest --config=Documentation",
+        "doc-make": "make docs",
+        "doc-watch": "docker run --rm -it --pull always \\\n  -v \"./Documentation:/project/Documentation\" \\\n  -v \"./Documentation-GENERATED-temp:/project/Documentation-GENERATED-temp\" \\\n  -p 5173:5173 ghcr.io/garvinhicking/typo3-documentation-browsersync:latest\nopen \"http://localhost:5173/Documentation-GENERATED-temp/Index.html\"",
+        "cs": "PHP_CS_FIXER_IGNORE_ENV=1 php ./.Build/bin/php-cs-fixer fix  --dry-run -v --config ./Build/php-cs-fixer/php-cs-fixer.php ./",
+        "csfix": "PHP_CS_FIXER_IGNORE_ENV=1 php ./.Build/bin/php-cs-fixer fix  -v --config ./Build/php-cs-fixer/php-cs-fixer.php ./"
+    },
+    "scripts-descriptions": {
+      "doc-init": "Initialize documentation rendering",
+      "doc-make": "Render documentation",
+      "doc-watch": "Render documentation including a watcher"
+    }
+}

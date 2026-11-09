@@ -167,6 +167,15 @@ func TestProcessOutcomes(t *testing.T) {
 	if err != nil || string(out["composer.lock"]) != "lock\nupdate --lock"+lockFlags+" --ignore-platform-req=ext-* --ignore-platform-req=lib-*\n" {
 		t.Errorf("Process = %q, %v", out["composer.lock"], err)
 	}
+	// composerIgnorePlatformReqs replaces the default, config.platform.php or not; [] ignores
+	// nothing.
+	l := Locker{IgnorePlatformReqs: []string{"ext-intl", "php"}}
+	if out, err := l.Process(t.Context(), dir, nil, files); err != nil || string(out["composer.lock"]) != "lock\nupdate --lock"+lockFlags+" --ignore-platform-req=ext-intl --ignore-platform-req=php\n" {
+		t.Errorf("configured reqs = %q, %v", out["composer.lock"], err)
+	}
+	if out, err := (Locker{IgnorePlatformReqs: []string{}}).Process(t.Context(), dir, nil, files); err != nil || string(out["composer.lock"]) != "lock\nupdate --lock"+lockFlags+"\n" {
+		t.Errorf("no reqs ignored = %q, %v", out["composer.lock"], err)
+	}
 	t.Setenv("STUB_NOOP", "1")
 	if out, err := (Locker{}).Process(t.Context(), dir, nil, files); err != nil || out != nil {
 		t.Errorf("unchanged lock = %v, %v", out, err)
@@ -238,6 +247,10 @@ func TestMaintain(t *testing.T) {
 	}
 	if out, err := (Locker{}).Maintain(t.Context(), dir, nil); out != nil || err != nil {
 		t.Errorf("no lock = %v, %v", out, err)
+	}
+	out, err = Locker{IgnorePlatformReqs: []string{"ext-*", "lib-*"}}.Maintain(t.Context(), dir, map[string][]byte{"composer.lock": []byte("lock\n")})
+	if err != nil || string(out["composer.lock"]) != "lock\nupdate"+lockFlags+" --ignore-platform-req=ext-* --ignore-platform-req=lib-*\n" {
+		t.Errorf("Maintain with composerIgnorePlatformReqs = %q, %v", out["composer.lock"], err)
 	}
 	if _, err := (Locker{}).Maintain(t.Context(), t.TempDir(), map[string][]byte{"composer.lock": nil}); err == nil {
 		t.Error("missing composer.json")

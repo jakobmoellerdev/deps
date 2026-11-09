@@ -961,19 +961,23 @@ type resolver struct {
 // Helm chart ranges of helm and kustomize (Renovate's helm managers have no lockfile-only
 // updates either), widen for elm package constraints (Dependabot's; Renovate has no Elm
 // manager) and gleam requirements, update-lockfile for npm, cargo and any other manager (widen
-// for npm peerDependencies and `||` ranges, for composer constraints with alternatives, for mix
-// requirements with several comparators and for julia compat entries without a locked
-// version, replace for the dependencies of a bundler gemspec, rangeStrategy).
+// for npm peerDependencies and `||` ranges, for composer constraints with alternatives and the
+// constraints of a TYPO3 extension (dep.Dep.AutoWiden), for mix requirements with several
+// comparators and for julia compat entries without a locked version, replace for the
+// dependencies of a bundler gemspec, rangeStrategy).
 var autoRange = map[string]string{"terraform": config.RangeReplace, "terragrunt": config.RangeReplace, "elm": config.RangeWiden, "pub": config.RangeReplace, beam.NameGleam: config.RangeWiden, "helm": config.RangeReplace, "kustomize": config.RangeReplace}
 
 // rangeStrategy is the effective rangeStrategy of the range dep: auto resolved per manager
 // (bump too for composer constraints with alternatives and mix and gleam requirements with
 // several comparators, which it widens as Renovate does),
 // widen and pin resolved to replace for managers that cannot write them (no
-// manager.RangeRewriter: terraform, Gradle) and for ranges that are never rewritten.
-func (r *resolver) rangeStrategy() string {
+// manager.RangeRewriter: terraform, Gradle) and for ranges that are never rewritten. lockfile
+// reports that the versions the range admits stay lockfile-only updates although the range is
+// widened for others: auto for a composer constraint with alternatives (`^1.0|^2.0`) is
+// update-lockfile that widens instead of replacing.
+func (r *resolver) rangeStrategy() (s string, lockfile bool) {
 	d := r.d
-	s := r.pol.pre.RangeStrategy
+	s = r.pol.pre.RangeStrategy
 	if s == config.RangeAuto {
 		s = cmp.Or(autoRange[d.Manager], config.RangeUpdateLockfile)
 		switch {
@@ -984,8 +988,10 @@ func (r *resolver) rangeStrategy() string {
 			// gem's own, picks one, so a new version only matters when the requirements
 			// exclude it.
 			s = config.RangeReplace
-		case d.Manager == composer.Name && strings.Contains(d.Range, "|"):
+		case d.Manager == composer.Name && d.AutoWiden:
 			s = config.RangeWiden
+		case d.Manager == composer.Name && strings.Contains(d.Range, "|"):
+			s, lockfile = config.RangeWiden, true
 		case d.Manager == beam.NameMix && beam.Complex(d.Range):
 			s = config.RangeWiden
 		case d.Manager == julia.Name && d.Locked == "" && !d.LockUnread:
@@ -1003,14 +1009,15 @@ func (r *resolver) rangeStrategy() string {
 	if (s == config.RangeWiden || s == config.RangePin) && (r.rewriter == nil || d.RangeFixed) {
 		s = config.RangeReplace
 	}
-	return s
+	return s, lockfile
 }
 
 // setRange applies the rangeStrategy of a range dep (dep.Dep.Range, read as Constraint when
 // set: npm and cargo dependencies, terraform constraints, Gradle dynamic versions); other deps
 // always replace their version. Under update-lockfile, replace and widen candidates are ranked
 // against the locked version (dep.Dep.Locked) when there is one; update-lockfile moves only the
-// lockfile for in-range candidates, replace and widen leave them alone. A lock root whose
+// lockfile for in-range candidates, replace and widen leave them alone (except where auto widens
+// a composer constraint with alternatives: rangeStrategy). A lock root whose
 // lockfile deps does not read (LockUnread) turns update-lockfile into bump, except for
 // peerDependencies, which never get lockfile-only updates: their in-range versions are left
 // alone. A range without a floor (it admits 0.0.0: `*`, `<2`) has nothing to bump, a range that
@@ -1025,7 +1032,8 @@ func (r *resolver) setRange(s versioning.Scheme, names []string) {
 	if d.Range == "" {
 		return
 	}
-	r.strategy = r.rangeStrategy()
+	var lockfile bool
+	r.strategy, lockfile = r.rangeStrategy()
 	if r.rewriter != nil {
 		r.rewrites = lastOf(func(v string) bool {
 			_, ok := r.rewriter.NewRange(d, v, r.strategy)
@@ -1070,7 +1078,7 @@ func (r *resolver) setRange(s versioning.Scheme, names []string) {
 	r.inRange = match
 	if d.Locked != "" && s.Valid(d.Locked) {
 		r.cur = d.Locked
-		r.lockOnly = !peer && !keeps
+		r.lockOnly = !peer && (!keeps || lockfile)
 	}
 }
 

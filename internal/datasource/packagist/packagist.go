@@ -1,6 +1,7 @@
 // Package packagist lists the releases of Composer packages: from Packagist (repo.packagist.org,
 // the Composer 2 metadata API) and from other Composer repositories (a composer.json
-// `repositories` entry of type composer: Private Packagist, Satis, packages.drupal.org).
+// `repositories` entry of type composer: Private Packagist, Satis, packages.drupal.org, and
+// Composer 1 provider repositories such as asset-packagist.org).
 // Lookups run once per (repository, package) and are shared by every dep and composer.json of
 // a run.
 package packagist
@@ -147,7 +148,9 @@ func isDefault(repo string) bool {
 }
 
 // fetch returns the listing of name in repo: Packagist's `GET <base>/p2/<name>.json`, another
-// repository's metadata-url, or the packages its packages.json lists inline or includes.
+// repository's metadata-url, the packages its packages.json lists inline or includes, or its
+// Composer 1 provider file (providers-url with the hash of its provider listing, else
+// providers-lazy-url).
 func (s *Source) fetch(ctx context.Context, repo, name string) (*pkg, error) {
 	if isDefault(repo) {
 		return s.metadata(ctx, s.base+"/p2/"+name+".json", name)
@@ -165,7 +168,60 @@ func (s *Source) fetch(ctx context.Context, repo, name string) (*pkg, error) {
 	if p := r.inline[name]; p != nil {
 		return p, nil
 	}
+	if r.providers != "" {
+		hashes, err := r.hashes.Do(ctx, func() (map[string]providerHash, error) { return s.providerHashes(ctx, r) })
+		if err != nil {
+			return nil, err
+		}
+		if h, ok := hashes[name]; ok {
+			return s.metadata(ctx, strings.NewReplacer("%package%", name, "%hash%", h.SHA256).Replace(r.providers), name)
+		}
+	}
+	if r.lazy != "" {
+		return s.metadata(ctx, strings.ReplaceAll(r.lazy, "%package%", name), name)
+	}
 	return nil, errNotFound
+}
+
+// providerHash is a provider listing's entry for a package (Composer 1).
+type providerHash struct {
+	SHA256 string `json:"sha256"`
+}
+
+// providerHashes reads the provider listings of r (its packages.json `providers` and the
+// files of its `provider-includes`, fetched concurrently: wpackagist.org has 21): the sha256 of
+// each package's provider file, by name. A listing the repository does not have is an error,
+// not a package it lacks.
+func (s *Source) providerHashes(ctx context.Context, r *repository) (map[string]providerHash, error) {
+	listings := make([]map[string]providerHash, len(r.includes))
+	errs := make([]error, len(r.includes))
+	var wg sync.WaitGroup
+	for i, inc := range r.includes {
+		wg.Go(func() {
+			var f struct {
+				Providers map[string]providerHash `json:"providers"`
+			}
+			err := s.get(ctx, inc, func(body io.Reader) error { return json.UnmarshalRead(body, &f) })
+			if errors.Is(err, errNotFound) {
+				err = fmt.Errorf("packagist %s: provider listing not found", httpx.Redact(inc))
+			}
+			listings[i], errs[i] = f.Providers, err
+		})
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	n := len(r.provided)
+	for _, l := range listings {
+		n += len(l)
+	}
+	hashes := make(map[string]providerHash, n)
+	maps.Copy(hashes, r.provided)
+	for _, l := range listings {
+		maps.Copy(hashes, l)
+	}
+	return hashes, nil
 }
 
 // metadata reads a Composer 2 metadata file (`p2/<name>.json`) once per URL.
@@ -370,6 +426,16 @@ type repository struct {
 	available map[string]bool // available-packages; nil = no list
 	patterns  []string        // available-package-patterns (`drupal/*`)
 	inline    map[string]*pkg // packages listed inline or in includes (repositories without metadata-url)
+
+	// Composer 1 repositories: providers is the providers-url resolved against the
+	// repository with `%package%` and `%hash%` kept, lazy the providers-lazy-url with
+	// `%package%` kept ("" = none). The hash of a package's provider file is in the
+	// packages.json `providers` (provided) or in a provider listing (the resolved URLs of
+	// `provider-includes`), read on the first lookup that needs it (hashes).
+	providers, lazy string
+	provided        map[string]providerHash
+	includes        []string
+	hashes          datasource.Once[map[string]providerHash]
 }
 
 // offers reports whether the repository may have name: its available-packages and
@@ -396,12 +462,16 @@ type packagesJSON struct {
 	AvailablePatterns []string                  `json:"available-package-patterns"`
 	Includes          map[string]jsontext.Value `json:"includes"`
 	ProvidersURL      string                    `json:"providers-url"`
+	ProvidersLazyURL  string                    `json:"providers-lazy-url"`
+	Providers         map[string]providerHash   `json:"providers"`
+	ProviderIncludes  map[string]providerHash   `json:"provider-includes"`
 	Packages          jsontext.Value            `json:"packages"`
 }
 
 // index reads `<repo>/packages.json` (the repository URL itself when it ends in `.json`):
-// its metadata-url, or else the packages it lists inline and in its includes (Satis). A
-// repository serving only Composer 1 providers is an error.
+// its metadata-url, or else the packages it lists inline and in its includes (Satis), and
+// the Composer 1 providers-url (with the provider listings in `providers` and
+// `provider-includes`) and providers-lazy-url.
 func (s *Source) index(ctx context.Context, repo string) (*repository, error) {
 	u, err := url.Parse(repo)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
@@ -427,12 +497,25 @@ func (s *Source) index(ctx context.Context, repo string) (*repository, error) {
 			r.available[strings.ToLower(n)] = true
 		}
 	}
-	if pj.MetadataURL != "" {
-		ref, err := url.Parse(strings.ReplaceAll(pj.MetadataURL, "%package%", "__deps_package__"))
-		if err != nil {
-			return nil, fmt.Errorf("packagist %s: invalid metadata-url", httpx.Redact(index))
+	// resolve resolves the URL template ref against the repository, keeping its placeholders.
+	resolve := func(key, ref string, placeholders ...string) (string, error) {
+		for i, p := range placeholders {
+			ref = strings.ReplaceAll(ref, p, fmt.Sprintf("__deps_%d__", i))
 		}
-		r.metadata = strings.ReplaceAll(base.ResolveReference(ref).String(), "__deps_package__", "%package%")
+		u, err := url.Parse(ref)
+		if err != nil {
+			return "", fmt.Errorf("packagist %s: invalid %s", httpx.Redact(index), key)
+		}
+		out := base.ResolveReference(u).String()
+		for i, p := range placeholders {
+			out = strings.ReplaceAll(out, fmt.Sprintf("__deps_%d__", i), p)
+		}
+		return out, nil
+	}
+	if pj.MetadataURL != "" {
+		if r.metadata, err = resolve("metadata-url", pj.MetadataURL, "%package%"); err != nil {
+			return nil, err
+		}
 		return r, nil
 	}
 	r.inline = map[string]*pkg{}
@@ -453,8 +536,23 @@ func (s *Source) index(ctx context.Context, repo string) (*repository, error) {
 			return nil, err
 		}
 	}
-	if len(r.inline) == 0 && pj.ProvidersURL != "" {
-		return nil, fmt.Errorf("packagist %s: only the Composer 1 providers API is served (no metadata-url)", httpx.Redact(index))
+	if pj.ProvidersLazyURL != "" {
+		if r.lazy, err = resolve("providers-lazy-url", pj.ProvidersLazyURL, "%package%"); err != nil {
+			return nil, err
+		}
+	}
+	if pj.ProvidersURL != "" {
+		if r.providers, err = resolve("providers-url", pj.ProvidersURL, "%package%", "%hash%"); err != nil {
+			return nil, err
+		}
+		r.provided = pj.Providers
+		for _, inc := range slices.Sorted(maps.Keys(pj.ProviderIncludes)) {
+			ref, err := resolve(fmt.Sprintf("provider-include %q", inc), strings.ReplaceAll(inc, "%hash%", pj.ProviderIncludes[inc].SHA256))
+			if err != nil {
+				return nil, err
+			}
+			r.includes = append(r.includes, ref)
+		}
 	}
 	return r, nil
 }

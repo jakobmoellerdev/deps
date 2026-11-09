@@ -14,7 +14,9 @@ import (
 // testdata/bookstack/composer.json is BookStackApp/BookStack's (branch development, fetched
 // 2026-11-05), its composer.lock that lock's entries of the packages composer.json requires
 // verbatim; testdata/symfony/composer.json is symfony/symfony's (branch 7.3) and
-// testdata/drupal/composer.json drupal/recommended-project's (branch 11.x).
+// testdata/drupal/composer.json drupal/recommended-project's (branch 11.x);
+// testdata/news/composer.json is the TYPO3 extension georgringer/news's (branch main, fetched
+// 2026-11-09).
 
 func read(t testing.TB, name string) []byte {
 	t.Helper()
@@ -124,6 +126,29 @@ func TestExtractSymfony(t *testing.T) {
 	}
 }
 
+// TestExtractTYPO3Extension: the deps of a `"type": "typo3-cms-extension"` are AutoWiden, any
+// other type's are not.
+func TestExtractTYPO3Extension(t *testing.T) {
+	deps := extract(t, "composer.json", read(t, "testdata/news/composer.json"))
+	if d := find(deps, "typo3/cms-core"); d.Skip != "" || d.Range != "^13.4.29 || ^14.3" || !d.AutoWiden {
+		t.Errorf("typo3/cms-core = %+v", d)
+	}
+	if d := find(deps, "phpunit/phpunit"); d.DepType != DepTypeRequireDev || !d.AutoWiden {
+		t.Errorf("phpunit/phpunit = %+v", d)
+	}
+	for _, src := range []string{
+		`{"type": "library", "require": {"a/b": "^1.0"}}`,
+		`{"type": ["typo3-cms-extension"], "require": {"a/b": "^1.0"}}`,
+	} {
+		if deps := extract(t, "composer.json", []byte(src)); len(deps) != 1 || deps[0].AutoWiden {
+			t.Errorf("%s: %+v", src, deps)
+		}
+	}
+	if deps := extract(t, "composer.json", []byte(`{"require": {"a/b": "^1.0"}, "type": "typo3-cms-extension"}`)); len(deps) != 1 || !deps[0].AutoWiden {
+		t.Errorf("type after require: %+v", deps)
+	}
+}
+
 func TestExtractRepositories(t *testing.T) {
 	deps := extract(t, "web/composer.json", read(t, "testdata/drupal/composer.json"))
 	if d := find(deps, "drupal/core-recommended"); d.Source != "https://packages.drupal.org/8 "+PackagistURL || d.Range != "^11" || d.Version != "11" {
@@ -194,7 +219,7 @@ func TestExtractRepositories(t *testing.T) {
 }
 
 func TestExtractErrors(t *testing.T) {
-	for _, src := range []string{`[]`, `{"require": {"a/b": "^1.0"`, `{"require": {"a/b"`, `{"require": {1: 2}}`, ``, `{"repositories": [`} {
+	for _, src := range []string{`[]`, `{"require": {"a/b": "^1.0"`, `{"require": {"a/b"`, `{"require": {1: 2}}`, ``, `{"repositories": [`, `{"type": "typo3`, `{"type": [`} {
 		if _, err := New().Extract("composer.json", []byte(src), manager.Env{}); err == nil {
 			t.Errorf("%q: no error", src)
 		}

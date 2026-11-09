@@ -53,6 +53,10 @@ const (
 
 const manifest = "composer.json"
 
+// typeTYPO3Extension is the package type whose constraints rangeStrategy auto widens
+// (Renovate's composer getRangeStrategy).
+const typeTYPO3Extension = "typo3-cms-extension"
+
 type composerManager struct{}
 
 // New returns the composer manager.
@@ -71,7 +75,8 @@ func (composerManager) Match(p string) bool {
 // takes the locked version then). Platform packages (`php`, `ext-*`, `lib-*`,
 // `composer-plugin-api`: names without a vendor) and constraints outside the grammar
 // (`dev-main`, `1.0 as 2.0`, `self.version`) are skipped. The `repositories` decide where a
-// package is looked up (repositories.apply).
+// package is looked up (repositories.apply). The deps of a `"type": "typo3-cms-extension"`
+// are AutoWiden.
 func (composerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	dec := jsontext.NewDecoder(bytes.NewReader(src), jsontext.AllowDuplicateNames(true))
 	x := extractor{file: file, src: src, dec: dec, line: 1}
@@ -82,6 +87,11 @@ func (composerManager) Extract(file string, src []byte, _ manager.Env) ([]dep.De
 		return nil, err
 	}
 	x.repos.apply(x.deps)
+	if x.typ == typeTYPO3Extension {
+		for i := range x.deps {
+			x.deps[i].AutoWiden = true
+		}
+	}
 	return x.deps, nil
 }
 
@@ -106,6 +116,7 @@ type extractor struct {
 	dec   *jsontext.Decoder
 	deps  []dep.Dep
 	repos repositories
+	typ   string // the package `type`
 
 	// line is the 1-based line of offset pos; offsets only grow, so lines are counted
 	// incrementally.
@@ -132,6 +143,15 @@ func (x *extractor) run() error {
 			var v jsontext.Value
 			if v, err = x.dec.ReadValue(); err == nil {
 				x.repos = parseRepositories(v)
+			}
+		case "type":
+			if x.dec.PeekKind() != '"' {
+				err = x.dec.SkipValue()
+				break
+			}
+			var tok jsontext.Token
+			if tok, err = x.dec.ReadToken(); err == nil {
+				x.typ = tok.String()
 			}
 		default:
 			err = x.dec.SkipValue()

@@ -83,6 +83,8 @@ func TestLoadErrors(t *testing.T) {
 		{"gitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com', 'a b@c']\n", "gitIgnoredAuthors[1]: must be an email address"},
 		{"gitIgnoredAuthors: ['Bot <b@example.com>']\n", "gitIgnoredAuthors[0]: must be an email address"},
 		{"gitIgnoredAuthors: [nope]\n", "gitIgnoredAuthors[0]: must be an email address"},
+		{"composerIgnorePlatformReqs: [php, '']\n", "composerIgnorePlatformReqs[1]: must be a platform package name or pattern"},
+		{"composerIgnorePlatformReqs: ['ext-* lib-*']\n", "composerIgnorePlatformReqs[0]: must be a platform package name or pattern"},
 		{"prConcurrentLimit: -1\n", "prConcurrentLimit: must be >= 0"},
 		{"prHourlyLimit: -2\n", "prHourlyLimit: must be >= 0"},
 		{"dashboardApproval: true\n", "dashboardApproval: requires dependencyDashboard: true"},
@@ -978,6 +980,28 @@ func TestDefaultIgnorePaths(t *testing.T) {
 	c.IgnorePaths[0] = "changed"
 	if DefaultIgnorePaths[0] != "**/node_modules/**" {
 		t.Error("Default aliases DefaultIgnorePaths")
+	}
+}
+
+// TestComposerIgnorePlatformReqs: unset is nil (deps' default), null and [] are an empty list
+// (ignore none), a list is kept.
+func TestComposerIgnorePlatformReqs(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want []string
+	}{
+		{"", nil},
+		{"composerIgnorePlatformReqs: []\n", []string{}},
+		{"composerIgnorePlatformReqs:\n", []string{}},
+		{"composerIgnorePlatformReqs: [ext-*, lib-*]\n", []string{"ext-*", "lib-*"}},
+	} {
+		c, err := load(t, ".deps.yaml", tc.body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(c.ComposerIgnorePlatformReqs, tc.want) || (c.ComposerIgnorePlatformReqs == nil) != (tc.want == nil) {
+			t.Errorf("%q: composerIgnorePlatformReqs = %#v, want %#v", tc.body, c.ComposerIgnorePlatformReqs, tc.want)
+		}
 	}
 }
 

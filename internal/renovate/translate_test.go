@@ -1149,6 +1149,33 @@ func TestLoadPRCreation(t *testing.T) {
 	}
 }
 
+// composerIgnorePlatformReqs: Renovate's [] (ext-* and lib-*) and null (none) are written out,
+// since unset means deps' own default.
+func TestLoadComposerIgnorePlatformReqs(t *testing.T) {
+	for _, tt := range []struct {
+		src, want string
+		notes     []string
+	}{
+		{src: `{composerIgnorePlatformReqs: []}`, want: "composerIgnorePlatformReqs: [ext-*, lib-*]\n"},
+		{src: `{composerIgnorePlatformReqs: null}`, want: "composerIgnorePlatformReqs: []\n"},
+		{src: `{composerIgnorePlatformReqs: ['ext-intl', 'php']}`, want: "composerIgnorePlatformReqs: [ext-intl, php]\n"},
+		{src: `{composerIgnorePlatformReqs: 3}`, notes: []string{"warn composerIgnorePlatformReqs: must be a list of strings or null; ignored"}},
+	} {
+		res, err := load(t, tt.src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, body, _ := strings.Cut(string(res.YAML), "\nignorePaths: ['**/node_modules/**', '**/bower_components/**']\n")
+		body, _, _ = strings.Cut(body, "rules:\n")
+		if body != tt.want {
+			t.Errorf("%s: top level after ignorePaths:\n%s\nwant:\n%s", tt.src, body, tt.want)
+		}
+		if notes := noteLines(res); !slices.Equal(notes[2:], tt.notes) {
+			t.Errorf("%s: notes = %q, want %q", tt.src, notes[2:], tt.notes)
+		}
+	}
+}
+
 // abandonments:recommended (in config:best-practices) becomes abandonmentThreshold rules.
 func TestLoadAbandonments(t *testing.T) {
 	res, err := load(t, `{extends: ['abandonments:recommended']}`)

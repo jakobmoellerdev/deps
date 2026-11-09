@@ -662,6 +662,19 @@ func (t *translator) translate(cfg map[string]any) omap {
 	if v, ok := get("abandonmentThreshold"); ok && v != nil {
 		emit("abandonmentThreshold", v) // null: Renovate's default, no abandonment check
 	}
+	if v, ok := get("composerIgnorePlatformReqs"); ok {
+		// Renovate: [] (its default) ignores ext-* and lib-*, null none, a list those.
+		switch l, isList := strs(v); {
+		case v == nil:
+			emit("composerIgnorePlatformReqs", []string{})
+		case !isList:
+			t.n.warn("composerIgnorePlatformReqs", "must be a list of strings or null; ignored")
+		case len(l) == 0:
+			emit("composerIgnorePlatformReqs", []string{"ext-*", "lib-*"})
+		default:
+			emit("composerIgnorePlatformReqs", l)
+		}
+	}
 	if v, ok := get("lockFileMaintenance"); ok {
 		if l, ok := t.lockFileMaintenance(v); ok {
 			emit("lockFileMaintenance", l)

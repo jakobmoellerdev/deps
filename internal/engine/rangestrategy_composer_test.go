@@ -41,15 +41,15 @@ const composerLock = `{
 
 var composerReleases = fakeGo{
 	"monolog/monolog":   {"2.9.1", "2.10.0", "3.8.1"},
-	"psr/log":           {"1.1.4", "2.0.0", "3.0.2"},
+	"psr/log":           {"1.1.4", "2.0.0", "2.0.1", "3.0.2"},
 	"guzzlehttp/guzzle": {"7.8.0", "7.9.2"},
 	"symfony/console":   {"v6.4.1", "v6.4.9", "v7.1.0"},
 	"phpunit/phpunit":   {"10.5.2", "10.5.38", "11.4.0"},
 }
 
 // TestComposerRangeStrategy resolves a composer.json with its composer.lock under each
-// rangeStrategy and builds the manifest changes: auto is update-lockfile, widen for a
-// constraint with alternatives.
+// rangeStrategy and builds the manifest changes: auto is update-lockfile, widen for versions
+// outside a constraint with alternatives.
 func TestComposerRangeStrategy(t *testing.T) {
 	for _, tt := range []struct {
 		name, cfg string
@@ -62,7 +62,7 @@ func TestComposerRangeStrategy(t *testing.T) {
 				"guzzlehttp/guzzle 7.8.0->7.9.2 minor",
 				"monolog/monolog 2.9->3.8.1 major", "monolog/monolog 2.9.1->2.10.0 minor lockfile",
 				"phpunit/phpunit 10.5->11.4.0 major", "phpunit/phpunit 10.5.2->10.5.38 patch lockfile",
-				"psr/log 2.0->3.0.2 major", // widened; 2.x versions are left alone
+				"psr/log 2.0->3.0.2 major", "psr/log 2.0.0->2.0.1 patch lockfile", // widened; 2.x versions move the lock
 				"symfony/console v6.4.1->v6.4.9 patch lockfile", "symfony/console v6.4.1->v7.1.0 major lockfile",
 			},
 			lines: []string{`"monolog/monolog": "^3.0",`, `"psr/log": "^1.1|^2.0|^3.0",`, `"guzzlehttp/guzzle": "7.9.2",`, `"phpunit/phpunit": "~11.0"`},
@@ -84,10 +84,10 @@ func TestComposerRangeStrategy(t *testing.T) {
 				"guzzlehttp/guzzle 7.8.0->7.9.2 minor",
 				"monolog/monolog 2.9->2.10.0 minor", "monolog/monolog 2.9->3.8.1 major",
 				"phpunit/phpunit 10.5->10.5.38 patch", "phpunit/phpunit 10.5->11.4.0 major",
-				"psr/log 2.0->3.0.2 major", "psr/log ^1.1|^2.0->2.0.0 pin",
+				"psr/log 2.0->2.0.1 patch", "psr/log 2.0->3.0.2 major",
 				"symfony/console v6.4.1->v6.4.9 patch", "symfony/console v6.4.1->v7.1.0 major",
 			},
-			lines: []string{`"monolog/monolog": "2.10.0",`, `"psr/log": "2.0.0",`, `"guzzlehttp/guzzle": "7.9.2",`, `"symfony/console": "6.4.9"`, `"phpunit/phpunit": "10.5.38"`},
+			lines: []string{`"monolog/monolog": "2.10.0",`, `"psr/log": "2.0.1",`, `"guzzlehttp/guzzle": "7.9.2",`, `"symfony/console": "6.4.9"`, `"phpunit/phpunit": "10.5.38"`},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -129,6 +129,43 @@ func TestComposerRangeStrategy(t *testing.T) {
 			}
 			if strings.Join(lines, "\n") != strings.Join(tt.lines, "\n") {
 				t.Errorf("composer.json changes\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(tt.lines, "\n"))
+			}
+		})
+	}
+}
+
+// TestComposerTYPO3Extension: auto widens every constraint of a TYPO3 extension, as Renovate
+// does, and leaves the versions they admit alone; other strategies apply as written.
+func TestComposerTYPO3Extension(t *testing.T) {
+	const manifest = `{
+    "name": "acme/ext",
+    "require": {"monolog/monolog": "^2.9", "psr/log": "^1.1|^2.0"},
+    "type": "typo3-cms-extension"
+}
+`
+	for _, tt := range []struct {
+		name, cfg string
+		want      []string
+	}{
+		{name: "auto", want: []string{"monolog/monolog 2.9->3.8.1 major", "psr/log 2.0->3.0.2 major"}},
+		{name: "bump", cfg: "rangeStrategy: bump\n", want: []string{"monolog/monolog 2.9->2.10.0 minor", "monolog/monolog 2.9->3.8.1 major", "psr/log 2.0->3.0.2 major"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root, cfg := setup(t, tt.cfg, map[string]string{"ext/composer.json": manifest, "ext/composer.lock": composerLock})
+			o := Options{Managers: []manager.Manager{composer.New()}, Datasources: map[string]Datasource{composer.Datasource: composerReleases}}
+			res, err := Resolve(t.Context(), root, cfg, env, o)
+			if err != nil || len(res.Errors) > 0 {
+				t.Fatal(err, res.Errors)
+			}
+			got := strings.Split(renderUpdates(res.Updates), "\n")
+			slices.Sort(got)
+			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") {
+				t.Errorf("updates =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
+			}
+			for _, u := range res.Updates {
+				if want := map[string]string{"auto": "widen", "bump": "bump"}[tt.name]; u.Dep.Name == "monolog/monolog" && u.RangeStrategy != want {
+					t.Errorf("%s %s: rangeStrategy %s, want %s", u.Dep.Name, u.NewVersion, u.RangeStrategy, want)
+				}
 			}
 		})
 	}

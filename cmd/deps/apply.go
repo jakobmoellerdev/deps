@@ -61,7 +61,7 @@ func newApply(o *rootOpts) *cli.Command {
 func postProcessors(s *session) map[string]engine.PostProcessor {
 	hashes, _ := s.sources[pypi.Name].(pytool.Hasher)
 	return map[string]engine.PostProcessor{
-		gomod.Name: gotool.Tidier{Imports: gotool.NewImportCache()}, npm.Name: nodetool.Locker{}, helm.Name: helm.Locker{}, cargo.Name: cargo.Locker{}, bundler.Name: bundler.Locker{}, composer.Name: composer.Locker{},
+		gomod.Name: gotool.Tidier{Imports: gotool.NewImportCache()}, npm.Name: nodetool.Locker{}, helm.Name: helm.Locker{}, cargo.Name: cargo.Locker{}, bundler.Name: bundler.Locker{}, composer.Name: composer.Locker{IgnorePlatformReqs: s.cfg.ComposerIgnorePlatformReqs},
 		terraform.Name: terraform.Locker{}, terraform.TerragruntName: terraform.TerragruntLocker{}, bazel.Name: bazel.Locker{},
 		pep621.Name: pytool.Locker{}, poetry.Name: pytool.Locker{}, pipenv.Name: pytool.Locker{},
 		piprequirements.Name: pytool.Compiler{Hashes: hashes},

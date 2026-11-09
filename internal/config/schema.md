@@ -1112,7 +1112,7 @@ Renovate's `lockFileMaintenance`. With `enabled: true`, `run` keeps one PR on th
   - gradle: the lockfiles of every Gradle build that uses dependency locking: `dependencies --write-locks` for every locked project, re-resolving dynamic versions; `gradle/verification-metadata.xml` is regenerated with them.
   - terraform: every `.terraform.lock.hcl` next to a scanned Terraform/OpenTofu configuration: `terraform init -upgrade -backend=false` (`tofu` for OpenTofu), with fresh hashes.
   - bundler: every `Gemfile.lock` next to a scanned `Gemfile`: `bundle lock --update`.
-  - composer: every `composer.lock` next to a scanned `composer.json`: `composer update --no-install` (no scripts or plugins, platform requirements ignored).
+  - composer: every `composer.lock` next to a scanned `composer.json`: `composer update --no-install` (no scripts or plugins, platform requirements ignored as [`composerIgnorePlatformReqs`](#composerignoreplatformreqs) says).
   - julia: every manifest of a scanned `Project.toml` (a workspace's once, through its root): `Pkg.update()`.
   - mix: every mix.lock of a scanned `mix.exs` (an umbrella's once): `mix deps.update --all`.
   - gleam: every `manifest.toml` next to a scanned `gleam.toml`: `gleam deps update`.
@@ -1137,3 +1137,16 @@ lockFileMaintenance:
 ## LockFileMaintenance.schedule
 
 Validated like the top-level `schedule` (`lockFileMaintenance.schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`); its time windows use [`timezone`](#timezone).
+
+## Config.composerIgnorePlatformReqs
+
+Renovate's `composerIgnorePlatformReqs`: the platform requirements (`php`, `ext-*`, `lib-*`, `composer-plugin-api`) `composer update` ignores when deps updates a `composer.lock` (`apply`, `run`, lock file maintenance; see the [composer manager](managers.md#composer)).
+
+- **Unset** (deps' default): every platform requirement is ignored (`--ignore-platform-reqs`), since the runner's PHP and extensions are not the project's. When composer.json sets `config.platform.php`, which stands in for the PHP version, only `ext-*` and `lib-*` are (`--ignore-platform-req=ext-* --ignore-platform-req=lib-*`).
+- **A list:** exactly these are ignored, each passed as `--ignore-platform-req=<req>`; patterns such as `ext-*` work as in Composer. The others are checked against the runner's PHP and extensions (or `config.platform`), and a package version they exclude fails the update.
+- **`[]` or `null`:** none is ignored.
+- Renovate's default `[]` means `ext-*` and `lib-*` there (with a PHP matching the project's installed by Renovate), and `null` none; `deps migrate` writes `[ext-*, lib-*]` for an explicit `[]` and `[]` for `null`.
+
+```yaml
+composerIgnorePlatformReqs: [ext-*, lib-*]
+```
