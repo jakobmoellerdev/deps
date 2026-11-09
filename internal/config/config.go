@@ -112,15 +112,20 @@ var AutomergeTypes = []string{AutomergeTypePR, AutomergeTypeBranch}
 
 // PR creation modes of prCreation: immediate opens the PR right after the branch is pushed;
 // not-pending once the branch's checks finished (passed or failed); status-success once they
-// all passed. Until then the branch waits without a PR.
+// all passed; approval once it is approved on the dependency dashboard. Until then the
+// branch waits without a PR.
 const (
 	PRCreationImmediate     = "immediate"
 	PRCreationNotPending    = "not-pending"
 	PRCreationStatusSuccess = "status-success"
+	PRCreationApproval      = "approval"
 )
 
 // PRCreations are the accepted prCreation values, from the least to the most waiting.
-var PRCreations = []string{PRCreationImmediate, PRCreationNotPending, PRCreationStatusSuccess}
+var PRCreations = []string{PRCreationImmediate, PRCreationNotPending, PRCreationStatusSuccess, PRCreationApproval}
+
+// DefaultPRNotPendingHours is prNotPendingHours when unset (Renovate's default).
+const DefaultPRNotPendingHours = 25
 
 // DefaultDashboardTitle is the dependency dashboard issue title when none is configured.
 const DefaultDashboardTitle = "Dependency Dashboard"
@@ -243,7 +248,8 @@ type Config struct {
 	AutomergeStrategy     string `yaml:"automergeStrategy" jsonschema:"default=auto" jsonschema_description:"Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase."`
 	AutomergeType         string `yaml:"automergeType" jsonschema:"default=pr" jsonschema_description:"How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail)."`
 	DraftPR               bool   `yaml:"draftPR" jsonschema:"default=false" jsonschema_description:"Open new update PRs as drafts (GitHub draft PRs; on Gitea and Forgejo the title starts with WIP:, on GitLab with Draft:). PRs that automerge are never drafts. Rules override it."`
-	PRCreation            string `yaml:"prCreation" jsonschema:"default=immediate" jsonschema_description:"When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed) or status-success (once they all passed). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it."`
+	PRCreation            string `yaml:"prCreation" jsonschema:"default=immediate" jsonschema_description:"When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dependencyDashboard). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it."`
+	PRNotPendingHours     *int   `yaml:"prNotPendingHours" jsonschema:"minimum=0,default=25" jsonschema_description:"With prCreation not-pending: hours after the last commit of a branch whose checks are still running or absent after which its PR is opened anyway."`
 	// Labels, Reviewers and Assignees are set on new update PRs; rules override them.
 	Labels    []string `yaml:"labels" jsonschema_description:"Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels)."`
 	Reviewers []string `yaml:"reviewers" jsonschema_description:"Reviewers requested on new update PRs: user names, or team:<slug> for a team of the repository's organization (not on GitLab). Rules replace them."`
@@ -284,6 +290,14 @@ type Config struct {
 	// baseBranches match against (ForBaseBranch), "" = none.
 	baseBranches []branchPattern
 	baseBranch   string
+}
+
+// NotPendingHours returns prNotPendingHours (default DefaultPRNotPendingHours).
+func (c *Config) NotPendingHours() int {
+	if c.PRNotPendingHours == nil {
+		return DefaultPRNotPendingHours
+	}
+	return *c.PRNotPendingHours
 }
 
 // SecurityEnabled reports whether OSV lookups are on (default true).
@@ -490,7 +504,7 @@ type Rule struct {
 	AutomergeType        string   `yaml:"automergeType" jsonschema_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
 	DashboardApproval    *bool    `yaml:"dashboardApproval" jsonschema_description:"Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does."`
 	DraftPR              *bool    `yaml:"draftPR" jsonschema_description:"Overrides the top-level draftPR for matching deps (with updateTypes: for updates of those types). A group's PR is a draft when any of its updates asks for one."`
-	PRCreation           string   `yaml:"prCreation" jsonschema_description:"Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (status-success over not-pending over immediate)."`
+	PRCreation           string   `yaml:"prCreation" jsonschema_description:"Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (approval over status-success over not-pending over immediate)."`
 	Labels               []string `yaml:"labels" jsonschema_description:"Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."`
 	AddLabels            []string `yaml:"addLabels" jsonschema_description:"Labels added to those of earlier rules and the top level for new PRs of matching deps."`
 	Reviewers            []string `yaml:"reviewers" jsonschema_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
@@ -869,6 +883,9 @@ func (c *Config) validate() []*Problem {
 	if c.PRHourlyLimit < 0 {
 		add("prHourlyLimit", "must be >= 0, got %d", c.PRHourlyLimit)
 	}
+	if c.PRNotPendingHours != nil && *c.PRNotPendingHours < 0 {
+		add("prNotPendingHours", "must be >= 0, got %d", *c.PRNotPendingHours)
+	}
 	if c.RebaseWhen != "" && !slices.Contains(RebaseWhens, c.RebaseWhen) {
 		add("rebaseWhen", "%s", oneOf("rebaseWhen", RebaseWhens, c.RebaseWhen))
 	}
@@ -940,9 +957,15 @@ func (c *Config) validate() []*Problem {
 		if c.DashboardApproval {
 			add("dashboardApproval", "requires dependencyDashboard: true")
 		}
+		if c.PRCreation == PRCreationApproval {
+			add("prCreation", "approval requires dependencyDashboard: true")
+		}
 		for i, r := range c.Rules {
 			if r.DashboardApproval != nil && *r.DashboardApproval {
 				add(fmt.Sprintf("rules[%d].dashboardApproval", i), "requires dependencyDashboard: true")
+			}
+			if r.PRCreation == PRCreationApproval {
+				add(fmt.Sprintf("rules[%d].prCreation", i), "approval requires dependencyDashboard: true")
 			}
 		}
 	}

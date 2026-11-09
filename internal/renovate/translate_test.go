@@ -294,7 +294,7 @@ func TestLoadRules(t *testing.T) {
   - # nix is disabled by default in Renovate
     managers: [nix]
     ignore: true`,
-			notes: []string{"warn packageRules[2].prCreation: approval is not supported (deps' dashboardApproval also holds back the branch); dropped"},
+			notes: []string{"warn packageRules[2].prCreation: dropped: prCreation: approval requires dependencyDashboard: true"},
 		},
 		{
 			name:  "ansible category; galaxy datasources",
@@ -1108,21 +1108,30 @@ func TestLoadBaseBranches(t *testing.T) {
 	}
 }
 
-// draftPR, prCreation and abandonmentThreshold keep their meaning; prCreation approval and a
-// null abandonmentThreshold (Renovate's default) have no deps setting.
+// draftPR, prCreation, prNotPendingHours and abandonmentThreshold keep their meaning;
+// prCreation approval needs the dashboard, and a null abandonmentThreshold (Renovate's
+// default) has no deps setting.
 func TestLoadPRCreation(t *testing.T) {
 	for _, tt := range []struct {
 		src, want string
 		notes     []string
 	}{
 		{
-			src:   `{draftPR: true, prCreation: 'not-pending', abandonmentThreshold: '2 years'}`,
-			want:  "draftPR: true\nprCreation: not-pending\nabandonmentThreshold: 2 years\n",
-			notes: []string{"warn prCreation: deps has no prNotPendingHours fallback: a branch without checks gets its PR only when ticked on the dashboard"},
+			src:  `{draftPR: true, prCreation: 'not-pending', abandonmentThreshold: '2 years'}`,
+			want: "draftPR: true\nprCreation: not-pending\nabandonmentThreshold: 2 years\n",
 		},
 		{
 			src:   `{prCreation: 'approval', abandonmentThreshold: null, prNotPendingHours: 4}`,
-			notes: []string{"warn prCreation: approval is not supported (deps' dashboardApproval also holds back the branch); dropped", "info prNotPendingHours: no deps equivalent; ignored"},
+			want:  "prNotPendingHours: 4\n",
+			notes: []string{"warn prCreation: dropped: prCreation: approval requires dependencyDashboard: true"},
+		},
+		{
+			src:  `{dependencyDashboard: true, prCreation: 'approval'}`,
+			want: "dependencyDashboard: true\nprCreation: approval\n",
+		},
+		{
+			src:   `{prNotPendingHours: -1}`,
+			notes: []string{"warn prNotPendingHours: must be a non-negative integer, got -1; dropped"},
 		},
 	} {
 		res, err := load(t, tt.src)

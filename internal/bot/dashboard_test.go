@@ -238,7 +238,7 @@ func TestDashboardApproval(t *testing.T) {
 		t.Fatalf("actions %+v pushed %v", acts, g.pushed)
 	}
 	body := pc.createdIssues[0].Body
-	want := "## Pending approval\n\nThese updates need approval (`dashboardApproval`). Tick one to create its PR.\n\n- [ ] <!-- deps:create=" + branchA + " --> " + titleA + "\n"
+	want := "## Pending approval\n\nThese updates need approval (`dashboardApproval`, `prCreation: approval`). Tick one to create its PR.\n\n- [ ] <!-- deps:create=" + branchA + " --> " + titleA + "\n"
 	if !strings.Contains(body, want) || strings.Index(body, "## Pending approval") > strings.Index(body, "## Open") {
 		t.Fatalf("body lacks %q before Open:\n%s", want, body)
 	}

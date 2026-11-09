@@ -551,7 +551,7 @@ deps run [flags]
 Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else from the `origin` remote), resolves every dependency, builds one commit per group on a temporary index (no checkout; the working tree is never modified), pushes it with `--force-with-lease`, and creates or updates the PRs. With platform commits (GitHub, see below) the commits are created and the branches moved through the GitHub API instead.
 
 - PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested. With `automergeType: branch` there is no PR: the branch is pushed, and once its checks pass the base branch is fast-forwarded to it (one branch per run); failed checks open the PR.
-- With `prCreation: not-pending` or `status-success` the branch is pushed without a PR, and a later run opens the PR once its checks finished or all passed. With `draftPR` new PRs are drafts (GitHub's draft flag; a `WIP: ` title prefix on Gitea and Forgejo, `Draft: ` on GitLab), unless they automerge.
+- With `prCreation: not-pending` or `status-success` the branch is pushed without a PR, and a later run opens the PR once its checks finished or all passed (`not-pending` also `prNotPendingHours`, default 25, after the branch's last commit while its checks are still running or absent). With `prCreation: approval` the PR is opened once the branch is approved on the dependency dashboard. With `draftPR` new PRs are drafts (GitHub's draft flag; a `WIP: ` title prefix on Gitea and Forgejo, `Draft: ` on GitLab), unless they automerge.
 - With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
 - With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every lockfile deps maintains (`Cargo.lock`, npm, pnpm, yarn and bun locks, `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `Gemfile.lock`, `composer.lock`, Julia manifests, `pubspec.lock`, `MODULE.bazel.lock`, `mix.lock`, Gleam `manifest.toml`, `flake.lock`, Gradle lockfiles, `.terraform.lock.hcl`, and the `// indirect` requirements of `go.mod` with `go.sum`) with the ecosystem's tool; it is closed when the lockfiles are current.
 - Obsolete PRs of the base under `branchPrefix` are closed and their branches deleted when the base's resolution had no errors, and obsolete branches without any PR (branch automerge, `prCreation`) are deleted when no base had any. PRs to other branches are left alone.
@@ -615,12 +615,13 @@ Only keys without a passphrase are supported; a protected key fails before any w
 | `branch automerge next run` | branch automerge: the checks passed, but another branch was merged in this run or the base moved; the next run rebases or merges it |
 | `would-automerge` | `--dry-run` |
 
-**PR creation outcomes** (appended to the status of a branch without a PR under `prCreation: not-pending` or `status-success`, e.g. `created, PR waiting for checks`):
+**PR creation outcomes** (appended to the status of a branch without a PR under `prCreation: not-pending`, `status-success` or `approval`, e.g. `created, PR waiting for checks`):
 
 | Outcome | Meaning |
 |---|---|
 | `PR waiting for checks` | the branch's checks have not finished or none are reported; the next run checks again |
 | `PR waiting for green checks` | `status-success`: a check failed; the PR is opened once they all pass, or when ticked on the dashboard |
+| `PR waiting for approval` | `approval`: the PR is opened once the branch is ticked under *Pending approval* on the dashboard |
 
 **Dashboard statuses** (the `dashboard` line): `created`, `updated`, `up-to-date` (body unchanged, not edited), `would-create`, `would-update` (`--dry-run`), and `skipped: issues disabled` (the repository has no issue tracker; not an error).
 

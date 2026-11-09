@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
@@ -105,6 +106,56 @@ func TestRunPRCreation(t *testing.T) {
 			pc:        fakePC{checks: platform.ChecksPending},
 			want:      "up-to-date, " + PRWaitChecks,
 			wantCheck: []string{tipA},
+		},
+		{
+			name:      "not-pending opens the PR on running checks after prNotPendingHours",
+			mode:      config.PRCreationNotPending,
+			opts:      Options{Now: dashNow, NotPendingHours: 25},
+			git:       datedGit(dashNow.Add(-25 * time.Hour)),
+			pc:        fakePC{checks: platform.ChecksPending},
+			want:      StatusCreated,
+			wantPRs:   []string{branchA},
+			wantCheck: []string{tipA},
+		},
+		{
+			name:      "not-pending opens the PR without checks after prNotPendingHours",
+			mode:      config.PRCreationNotPending,
+			opts:      Options{Now: dashNow, NotPendingHours: 25},
+			git:       datedGit(dashNow.Add(-26 * time.Hour)),
+			pc:        fakePC{checks: platform.ChecksNone},
+			want:      StatusCreated,
+			wantPRs:   []string{branchA},
+			wantCheck: []string{tipA},
+		},
+		{
+			name:      "not-pending waits within prNotPendingHours",
+			mode:      config.PRCreationNotPending,
+			opts:      Options{Now: dashNow, NotPendingHours: 25},
+			git:       datedGit(dashNow.Add(-24 * time.Hour)),
+			pc:        fakePC{checks: platform.ChecksPending},
+			want:      "up-to-date, " + PRWaitChecks,
+			wantCheck: []string{tipA},
+		},
+		{
+			name:      "status-success ignores prNotPendingHours",
+			opts:      Options{Now: dashNow, NotPendingHours: 1},
+			git:       datedGit(dashNow.Add(-48 * time.Hour)),
+			pc:        fakePC{checks: platform.ChecksPending},
+			want:      "up-to-date, " + PRWaitChecks,
+			wantCheck: []string{tipA},
+		},
+		{
+			name:     "approval pushes a new branch without a PR",
+			mode:     config.PRCreationApproval,
+			want:     "created, " + PRWaitApproval,
+			wantPush: []string{pushed + ":" + branchA + "@"},
+		},
+		{
+			name: "approval waits whatever the checks",
+			mode: config.PRCreationApproval,
+			git:  branchGit(branchA),
+			pc:   fakePC{checks: platform.ChecksSuccess},
+			want: "up-to-date, " + PRWaitApproval,
 		},
 		{
 			name:     "immediate opens the PR with the push",
@@ -310,6 +361,44 @@ func TestDashboardPendingStatusChecks(t *testing.T) {
 		t.Errorf("actions %+v, created %v, checked %v, pushes %v", acts, pc.created, pc.checked, g.pushes)
 	}
 	if body := pc.updatedIssues[0].Body; strings.Contains(body, "Pending status checks") {
+		t.Errorf("body after the PR was opened:\n%s", body)
+	}
+}
+
+// datedGit has branchA up to date, committed at date.
+func datedGit(date time.Time) fakeGit {
+	g := branchGit(branchA)
+	g.dates = map[string]time.Time{branchA: date}
+	return g
+}
+
+// prCreation approval lists the pushed branch under Pending approval; ticking it opens the PR
+// on the unchanged branch.
+func TestDashboardPRCreationApproval(t *testing.T) {
+	root, res := waitFixture(t, config.PRCreationApproval)
+	pc := &fakePC{checks: platform.ChecksSuccess}
+	g := branchGit(branchA)
+	if _, errs, _ := dashRun(t, Options{}, res, root, pc, &g); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	body := pc.createdIssues[0].Body
+	if want := "## Pending approval\n\nThese updates need approval (`dashboardApproval`, `prCreation: approval`). Tick one to create its PR.\n\n" +
+		"- [ ] <!-- deps:create=" + branchA + " --> " + titleA + "\n"; !strings.Contains(body, want) || len(pc.created) != 0 {
+		t.Fatalf("created %v, body lacks %q:\n%s", pc.created, want, body)
+	}
+
+	ticked := strings.ReplaceAll(body, "- [ ] <!-- deps:create=", "- [x] <!-- deps:create=")
+	pc = &fakePC{checks: platform.ChecksPending, issues: []platform.Issue{{Number: 7, Title: dashTitle, Body: ticked}}}
+	g = branchGit(branchA)
+	acts, errs, _ := dashRun(t, Options{}, res, root, pc, &g)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	i := slices.IndexFunc(acts, func(a Action) bool { return a.Branch == branchA })
+	if i < 0 || acts[i].Display() != StatusCreated || !slices.Equal(pc.created, []string{branchA}) || len(pc.checked) != 0 || len(g.pushes) != 0 {
+		t.Errorf("actions %+v, created %v, checked %v, pushes %v", acts, pc.created, pc.checked, g.pushes)
+	}
+	if body := pc.updatedIssues[0].Body; strings.Contains(body, "Pending approval") {
 		t.Errorf("body after the PR was opened:\n%s", body)
 	}
 }

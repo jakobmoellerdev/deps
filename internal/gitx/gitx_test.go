@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -331,7 +333,11 @@ func TestPushDeleteAuthor(t *testing.T) {
 	}
 
 	// Full clone: fetch must not make it shallow.
-	want := platform.Tip{Author: "bot@example.com", Parents: []string{parent}, Tree: git(t, clone, "rev-parse", c2+"^{tree}")}
+	ct, err := strconv.ParseInt(git(t, clone, "log", "-1", "--format=%ct", c2), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := platform.Tip{Author: "bot@example.com", Parents: []string{parent}, Tree: git(t, clone, "rev-parse", c2+"^{tree}"), Date: time.Unix(ct, 0)}
 	if got, err := r.BranchTip(ctx, br); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("BranchTip = %+v, %v; want %+v", got, err, want)
 	}
@@ -380,7 +386,8 @@ func TestParseCommitHeader(t *testing.T) {
 		name, obj string
 		want      platform.Tip
 	}{
-		{"root", "tree t\nauthor A B <a@b> 1 +0000\ncommitter C <c@d> 1 +0000\n\nmsg\n", platform.Tip{Author: "a@b", Tree: "t"}},
+		{"root", "tree t\nauthor A B <a@b> 1 +0000\ncommitter C <c@d> 1700000000 +0100\n\nmsg\n", platform.Tip{Author: "a@b", Tree: "t", Date: time.Unix(1700000000, 0)}},
+		{"malformed committer", "tree t\ncommitter C <c@d> soon\ncommitter C\n", platform.Tip{Tree: "t"}},
 		{"merge", "tree t\nparent p1\nparent p2\nauthor A <a@b> 1 +0000\n\nparent fake\n", platform.Tip{Author: "a@b", Parents: []string{"p1", "p2"}, Tree: "t"}},
 		{"malformed author", "tree t\nparent p\nauthor nobody\n", platform.Tip{Parents: []string{"p"}, Tree: "t"}},
 	} {

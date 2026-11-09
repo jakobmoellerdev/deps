@@ -765,6 +765,7 @@ rules:
 
 ```yaml
 prCreation: status-success  # or not-pending: also open the PR when a check failed
+prNotPendingHours: 25       # not-pending: open the PR anyway this long after the last commit while checks are pending or absent
 rules:
   - updateTypes: [major]
     prCreation: not-pending
@@ -774,6 +775,9 @@ rules:
 1. **CI on the branches.** The first run only pushes the branch; a later run reads its commit statuses and check runs. CI must therefore run on pushes to the update branches, not only on `pull_request`, or the branch waits forever (`PR waiting for checks`). As for [branch automerge](#branch-automerge): `on: push: branches: [main, 'deps/**']`, and an [App token or PAT](#github), since job-token pushes start no workflows.
 2. **A later run opens the PR.** deps does not wait within a run. Run it often enough, or [after CI](#merge-right-after-ci) with `workflow_run`, so PRs follow their checks closely.
 3. **Waiting branches** are listed on the [dependency dashboard](#dependency-dashboard) under *Pending status checks* (with `checks failed` for a failed branch under `status-success`); tick one to get its PR right away.
+4. **No checks.** Under `not-pending`, a branch whose checks are still running or absent gets its PR [`prNotPendingHours`](reference/configuration.md#prnotpendinghours) (default 25, as in Renovate) after its last commit; under `status-success` it waits until ticked.
+
+`prCreation: approval` pushes the branch too, so CI runs on it, but opens the PR only once it is approved on the [dependency dashboard](#dependency-dashboard) (needs `dependencyDashboard: true`): the branch is listed under *Pending approval*, whatever its checks, and ticking it opens the PR on the pushed commit. Unlike [`dashboardApproval`](reference/configuration.md#dashboardapproval), which holds back the branch as well, the checks have already run when you approve.
 
 ## Dependency dashboard
 

@@ -415,7 +415,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 	// emit validates the top-level key alone and adds it, or drops it with a note.
 	emit := func(k string, v any) {
 		frag := omap{{k, v}}
-		if k == "dashboardApproval" {
+		if k == "dashboardApproval" || k == "prCreation" {
 			frag = t.ruleContext(frag)
 		}
 		if msg := check(frag); msg != "" {
@@ -650,6 +650,13 @@ func (t *translator) translate(cfg map[string]any) omap {
 	if v, ok := get("prCreation"); ok {
 		if s, ok := t.prCreation("prCreation", v); ok {
 			emit("prCreation", s)
+		}
+	}
+	if v, ok := get("prNotPendingHours"); ok {
+		if f, isNum := v.(float64); isNum && f >= 0 && f == math.Trunc(f) && f <= math.MaxInt32 {
+			emit("prNotPendingHours", int(f))
+		} else {
+			t.n.warn("prNotPendingHours", "must be a non-negative integer, got %v; dropped", v)
 		}
 	}
 	if v, ok := get("abandonmentThreshold"); ok && v != nil {
@@ -1128,17 +1135,10 @@ func (t *translator) ruleContext(frag omap) omap {
 	return frag
 }
 
-// prCreation translates a prCreation value; approval has no deps equivalent.
+// prCreation translates a prCreation value.
 func (t *translator) prCreation(path string, v any) (string, bool) {
-	switch s, _ := v.(string); s {
-	case config.PRCreationImmediate, config.PRCreationStatusSuccess:
+	if s, _ := v.(string); slices.Contains(config.PRCreations, s) {
 		return s, true
-	case config.PRCreationNotPending:
-		t.n.warn(path, "deps has no prNotPendingHours fallback: a branch without checks gets its PR only when ticked on the dashboard")
-		return s, true
-	case "approval":
-		t.n.warn(path, "approval is not supported (deps' dashboardApproval also holds back the branch); dropped")
-		return "", false
 	}
 	t.n.warn(path, "unsupported value %v; dropped", v)
 	return "", false

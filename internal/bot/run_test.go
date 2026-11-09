@@ -46,9 +46,10 @@ type fakeGit struct {
 	pushed   []string // branches
 	pushes   []string // "<commit>:<branch>@<expected>"
 	deleted  []string
-	patterns []string          // LsRemote patterns
-	tips     []string          // BranchTip branches
-	objects  map[string]string // path -> object id at head; unset = "obj:<path>", "" = missing
+	patterns []string             // LsRemote patterns
+	tips     []string             // BranchTip branches
+	dates    map[string]time.Time // BranchTip committer dates by branch; zero = unknown
+	objects  map[string]string    // path -> object id at head; unset = "obj:<path>", "" = missing
 	// revObjects are the object ids at other revs (branch tips, written trees): rev -> path
 	// -> id, unset paths missing.
 	revObjects map[string]map[string]string
@@ -137,7 +138,7 @@ func (g *fakeGit) BranchTip(_ context.Context, branch string) (platform.Tip, err
 	if !ok {
 		parents = []string{head}
 	}
-	return platform.Tip{Author: g.authors[branch], Parents: parents, Tree: g.trees[branch]}, fail(g.fail, "BranchTip", branch)
+	return platform.Tip{Author: g.authors[branch], Parents: parents, Tree: g.trees[branch], Date: g.dates[branch]}, fail(g.fail, "BranchTip", branch)
 }
 
 type fakePC struct {

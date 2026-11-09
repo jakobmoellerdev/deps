@@ -275,7 +275,7 @@ flowchart LR
 - **Diffs you can trust.** Only version bytes change: no reformatting, no reordered keys, comments kept.
 - **A small, strict config.** Rules are read top to bottom, later rules override single fields. Unknown keys are errors with a line number, and a JSON Schema gives editor completion.
 - **Quiet pull requests.** One PR per dependency or group, split into major/minor/patch. Unchanged PRs are never pushed again; obsolete PRs are closed only after an error-free run. PR limits, automerge and a dashboard issue are built in.
-- **PRs when you want them.** Schedules as cron triggers or Renovate-style time windows (`before 6am on monday`) in your `timezone`; draft PRs; PRs opened only once the branch's checks finished or passed (`prCreation`); updates held back until approved on the dashboard (`dashboardApproval`).
+- **PRs when you want them.** Schedules as cron triggers or Renovate-style time windows (`before 6am on monday`) in your `timezone`; draft PRs; PRs opened only once the branch's checks finished or passed, or once approved on the dashboard (`prCreation`, `prNotPendingHours`); updates held back until approved on the dashboard (`dashboardApproval`).
 - **Warnings about stale dependencies.** The dashboard and the PRs flag abandoned dependencies (no release within `abandonmentThreshold`) and deprecated, yanked or archived ones.
 - **Security updates** from OSV advisories for Go, npm, Rust, PyPI, Maven, RubyGems, Packagist, NuGet, Pub, Hex, GitHub Actions and Terraform providers and CLIs, bypassing schedules and the minimum release age.
 - **Release notes in every PR:** notes, release ages and a compare link.

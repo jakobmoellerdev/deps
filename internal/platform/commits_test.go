@@ -134,7 +134,7 @@ func (f *fakeGitData) serve(w http.ResponseWriter, r *http.Request) {
 		for _, p := range c.parents {
 			parents = append(parents, map[string]string{"sha": p})
 		}
-		reply(map[string]any{"sha": sha, "commit": map[string]any{"author": map[string]string{"email": c.email}, "tree": map[string]string{"sha": c.tree}}, "author": account, "parents": parents})
+		reply(map[string]any{"sha": sha, "commit": map[string]any{"author": map[string]string{"email": c.email}, "committer": map[string]string{"date": "2026-01-02T03:04:05Z"}, "tree": map[string]string{"sha": c.tree}}, "author": account, "parents": parents})
 	case r.Method == http.MethodGet && strings.HasPrefix(p, "/repos/o/r/git/ref/heads/"):
 		sha, ok := f.refs["refs/"+strings.TrimPrefix(p, "/repos/o/r/git/ref/")]
 		if !ok {
@@ -282,7 +282,8 @@ func TestGitHubCommits(t *testing.T) {
 
 	// The tip GitHub links to the token's account is deps' own, whatever its email.
 	tip, err := g.BranchTip(ctx, branch)
-	if _, email := g.Author(); err != nil || tip.Author != email || len(tip.Parents) != 1 || tip.Parents[0] != "c0" || tip.Tree != f.commit(c1).tree {
+	if _, email := g.Author(); err != nil || tip.Author != email || len(tip.Parents) != 1 || tip.Parents[0] != "c0" || tip.Tree != f.commit(c1).tree ||
+		!tip.Date.Equal(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)) {
 		t.Errorf("BranchTip = %+v, %v", tip, err)
 	}
 	// A tip without a linked account reports its email.

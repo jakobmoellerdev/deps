@@ -11,6 +11,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 )
 
 // IsAppToken reports whether token is a GitHub App installation token, as GITHUB_TOKEN in
@@ -27,9 +28,10 @@ var (
 
 // Tip is the tip commit of a branch.
 type Tip struct {
-	Author  string   // author email; Author's email for commits of the token's account
-	Parents []string // parent ids
-	Tree    string   // tree id
+	Author  string    // author email; Author's email for commits of the token's account
+	Parents []string  // parent ids
+	Tree    string    // tree id
+	Date    time.Time // committer date; zero = unknown
 }
 
 // GitHubCommits creates commits and moves branches through the GitHub API instead of git
@@ -110,6 +112,9 @@ func (g *GitHubCommits) BranchTip(ctx context.Context, branch string) (Tip, erro
 			Author struct {
 				Email string `json:"email"`
 			} `json:"author"`
+			Committer struct {
+				Date time.Time `json:"date"`
+			} `json:"committer"`
 			Tree shaJSON `json:"tree"`
 		} `json:"commit"`
 		Author *struct {
@@ -120,7 +125,7 @@ func (g *GitHubCommits) BranchTip(ctx context.Context, branch string) (Tip, erro
 	if err := g.gh.do(ctx, http.MethodGet, "/repos/"+g.gh.repo+"/commits/refs/heads/"+EscapePath(branch), nil, &c, g.gh.headers); err != nil {
 		return Tip{}, err
 	}
-	t := Tip{Author: c.Commit.Author.Email, Tree: c.Commit.Tree.SHA}
+	t := Tip{Author: c.Commit.Author.Email, Tree: c.Commit.Tree.SHA, Date: c.Commit.Committer.Date}
 	if c.Author != nil && c.Author.ID == g.id {
 		t.Author = g.email
 	}

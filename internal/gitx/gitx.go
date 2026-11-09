@@ -367,6 +367,15 @@ func parseCommitHeader(obj string) platform.Tip {
 			if i, j := strings.IndexByte(a, '<'), strings.LastIndexByte(a, '>'); i >= 0 && j > i {
 				t.Author = a[i+1 : j]
 			}
+		} else if c, ok := strings.CutPrefix(line, "committer "); ok {
+			// "<name> <<email>> <unix seconds> <zone>"
+			if _, after, ok := strings.CutLast(c, ">"); ok {
+				if f := strings.Fields(after); len(f) > 0 {
+					if sec, err := strconv.ParseInt(f[0], 10, 64); err == nil {
+						t.Date = time.Unix(sec, 0)
+					}
+				}
+			}
 		}
 	}
 	return t

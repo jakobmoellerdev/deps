@@ -394,6 +394,7 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 		IgnoredAuthors:     ignored,
 		ConcurrentLimit:    s.cfg.PRConcurrentLimit,
 		HourlyLimit:        s.cfg.PRHourlyLimit,
+		NotPendingHours:    s.cfg.NotPendingHours(),
 		DryRun:             r.dryRun,
 		RebaseWhen:         s.cfg.RebaseWhen,
 		RebaseLabel:        s.cfg.RebaseLabelName(),

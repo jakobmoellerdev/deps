@@ -163,7 +163,7 @@ func dashboardItems(actions []Action) dashboardLists {
 			l.blocked = append(l.blocked, fmt.Sprintf("- %s (cannot be applied: %s)", a.Title, a.Reason))
 		case a.Status == StatusSkipStopped:
 			l.blocked = append(l.blocked, fmt.Sprintf("- %s (%s has the %#q label; deps leaves it alone until the label is removed)", a.Title, prLink(a), a.Reason))
-		case a.Status == StatusSkipApproval:
+		case a.Status == StatusSkipApproval, a.Number == 0 && a.PRWait == PRWaitApproval:
 			l.approval = append(l.approval, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s", a.Branch, a.Title))
 		case a.Status == StatusSkipSchedule && a.Number == 0:
 			l.schedule = append(l.schedule, fmt.Sprintf("- [ ] <!-- deps:create=%s --> %s (%s)", a.Branch, a.Title, waits(a.Waits)))
@@ -200,7 +200,7 @@ func renderDashboard(sections []dashboardSection, errs []error) string {
 			}
 			level = "###"
 		}
-		w.section(level, "Pending approval", "These updates need approval (`dashboardApproval`). Tick one to create its PR.", l.approval)
+		w.section(level, "Pending approval", "These updates need approval (`dashboardApproval`, `prCreation: approval`). Tick one to create its PR.", l.approval)
 		w.section(level, "Awaiting schedule", "These updates wait for a run triggered by one of their crons or inside one of their time windows. Tick one to create its PR now.", l.schedule)
 		w.section(level, "Rate-limited", "These updates wait for the PR limits. Tick one to create its PR now.", l.limited)
 		w.section(level, "Ignored or blocked", "", l.blocked)

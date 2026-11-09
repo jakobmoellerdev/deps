@@ -266,7 +266,7 @@ func (s *summary) groupNotes(g engine.Group, link func(a bot.Action) string) []s
 		if g.Draft {
 			notes = append(notes, "draft")
 		}
-		if (g.PRCreation == config.PRCreationNotPending || g.PRCreation == config.PRCreationStatusSuccess) && !g.AutomergeBranch {
+		if g.PRCreation != "" && g.PRCreation != config.PRCreationImmediate && !g.AutomergeBranch {
 			notes = append(notes, "prCreation "+g.PRCreation)
 		}
 		if sch := g.Updates[0].Schedule; sch != nil {

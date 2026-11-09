@@ -123,6 +123,7 @@ customDatasources:
 - [`automergeType`](#automergetype)
 - [`draftPR`](#draftpr)
 - [`prCreation`](#prcreation)
+- [`prNotPendingHours`](#prnotpendinghours)
 - [`labels`](#labels)
 - [`reviewers`](#reviewers)
 - [`assignees`](#assignees)
@@ -859,11 +860,11 @@ rules:
 
 ## `prCreation`
 
-When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed) or status-success (once they all passed). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it.
+When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dependencyDashboard). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it.
 
 - **Type:** string
 - **Default:** `immediate`
-- **Values:** `immediate`, `not-pending`, `status-success`
+- **Values:** `immediate`, `not-pending`, `status-success`, `approval`
 
 Renovate's `prCreation`. With `immediate` (the default) the PR is opened right after the branch is pushed. The other modes push the branch first and open its PR on a later run, once its commit statuses and check runs are in, so a PR arrives with its test results:
 
@@ -881,6 +882,14 @@ Renovate's `prCreation`. With `immediate` (the default) the PR is opened right a
 - CI must run on pushes to the update branches (`deps/**`); with workflows that only run on `pull_request` the branch never gets checks and never gets its PR. A repository without any checks waits forever too (Renovate's `prNotPendingHours` fallback is not offered); tick the branch on the dashboard to open its PR.
 - New branches count toward the PR limits of the run that pushes them, as does opening the PR of a waiting branch.
 - Once the PR is open, the branch is handled like any PR branch. Groups use the most waiting mode of their updates; [`automergeType: branch`](#automergetype) groups have no PR anyway and ignore it. Lock file maintenance follows the top-level value.
+
+## `prNotPendingHours`
+
+With prCreation not-pending: hours after the last commit of a branch whose checks are still running or absent after which its PR is opened anyway.
+
+- **Type:** integer
+- **Default:** `25`
+- **Minimum:** `0`
 
 ## `labels`
 
@@ -1438,10 +1447,10 @@ Overrides the top-level draftPR for matching deps (with updateTypes: for updates
 
 ### `rules[].prCreation`
 
-Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (status-success over not-pending over immediate).
+Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (approval over status-success over not-pending over immediate).
 
 - **Type:** string
-- **Values:** `immediate`, `not-pending`, `status-success`
+- **Values:** `immediate`, `not-pending`, `status-success`, `approval`
 
 ### `rules[].labels`
 

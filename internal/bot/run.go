@@ -72,7 +72,10 @@ type Options struct {
 	// IgnoredAuthors are emails (case-insensitive) whose branch tips count as the bot's own.
 	IgnoredAuthors []string
 	Managers       []manager.Manager // edit the updates' files (engine.Build)
-	Now            time.Time         // reference time of prHourlyLimit; zero = time.Now()
+	Now            time.Time         // reference time of prHourlyLimit and NotPendingHours; zero = time.Now()
+	// NotPendingHours is prNotPendingHours: a branch of prCreation not-pending whose checks
+	// are still running or absent this many hours after its last commit gets its PR anyway.
+	NotPendingHours int
 	// AllowTasks are the postUpgradeTasks commands that may run (engine.BuildWithTasks); a
 	// group with another command fails.
 	AllowTasks engine.TaskAllowlist
@@ -142,10 +145,12 @@ const (
 )
 
 // PR creation outcomes (Action.PRWait) of a branch pushed without a PR because its
-// prCreation (not-pending, status-success) waits for its checks; the next run checks again.
+// prCreation (not-pending, status-success, approval) waits for its checks or the dashboard;
+// the next run checks again.
 const (
-	PRWaitChecks = "PR waiting for checks"       // none reported yet, or still running
-	PRWaitFailed = "PR waiting for green checks" // status-success: a check failed
+	PRWaitChecks   = "PR waiting for checks"       // none reported yet, or still running
+	PRWaitFailed   = "PR waiting for green checks" // status-success: a check failed
+	PRWaitApproval = "PR waiting for approval"     // approval: not yet approved on the dashboard
 )
 
 // Action is what happened to one branch/PR, or to the dependency dashboard issue
@@ -283,7 +288,7 @@ func Run(ctx context.Context, o Options, bases []Base, post map[string]engine.Po
 		if multi {
 			bp = BasePrefix(prefix, b.Name)
 		}
-		s := &runState{base: b.Name, head: heads[i], branches: branches, open: ofBase(open, b.Name, bp, multi), closed: ofBase(closed, b.Name, bp, multi), budget: budget}
+		s := &runState{base: b.Name, head: heads[i], branches: branches, open: ofBase(open, b.Name, bp, multi), closed: ofBase(closed, b.Name, bp, multi), budget: budget, now: now}
 		slog.InfoContext(ctx, "bot state", "base", b.Name, "head", short(s.head), "depsBranches", len(branches), "openPRs", len(s.open), "closedPRs", len(s.closed))
 		runs[i] = &baseRun{Base: b, s: s, groups: engine.GroupUpdates(declineReplacements(b.Res.Updates, s.open, s.closed, bp, dash), bp)}
 		total += len(runs[i].groups)
@@ -718,6 +723,7 @@ type runState struct {
 	open, closed []platform.PR     // the PRs of base (ofBase)
 	budget       *prBudget         // shared by every base
 	merged       bool              // a branch was merged into base, which moved: no further branch merges
+	now          time.Time         // reference time of the run (Options.Now)
 }
 
 // prBudget counts the new PRs and automerge branches a run creates against its limit.
@@ -787,8 +793,10 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	}
 	// Branch automerge opens no PR; once one is open (its checks failed, or the dashboard
 	// asked for it), that PR is automerged like with automergeType pr. A prCreation waiting
-	// for checks opens the PR on a later run, or when the dashboard asks for it.
-	branchMode := pr == nil && withoutPR(grp) && !f.pr
+	// for checks opens the PR on a later run, or when the dashboard asks for it; approval
+	// only when the dashboard approves it (its create checkbox).
+	wantPR := f.pr || f.create && grp.PRCreation == config.PRCreationApproval
+	branchMode := pr == nil && withoutPR(grp) && !wantPR
 	switch {
 	case inSchedule:
 	case pr != nil && o.UpdateNotScheduled:
@@ -904,7 +912,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	if branchMode {
 		return handleBranch(ctx, o, s, grp, changes, fp, b.input, f, expected, exists, t, pc, g)
 	}
-	if pr == nil && exists && f.pr && !f.rebase {
+	if pr == nil && exists && wantPR && !f.rebase {
 		// The dashboard asked for the PR of a branch pushed without one: an unchanged branch
 		// gets its PR on the pushed commit, keeping the checks that already ran on it.
 		fresh, err := branchFresh(ctx, o, s, grp, changes, expected, t, g)
@@ -969,9 +977,18 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 }
 
 // withoutPR reports whether grp's branch is pushed without a PR: branch automerge, or a
-// prCreation that waits for the branch's checks.
+// prCreation that waits for the branch's checks or for approval.
 func withoutPR(grp engine.Group) bool {
-	return grp.AutomergeBranch || grp.PRCreation == config.PRCreationNotPending || grp.PRCreation == config.PRCreationStatusSuccess
+	return grp.AutomergeBranch || grp.PRCreation != "" && grp.PRCreation != config.PRCreationImmediate
+}
+
+// prWait is why a branch of grp, which is pushed without a PR and not a branch automerge
+// branch, has no PR yet before its checks were looked at.
+func prWait(grp engine.Group) string {
+	if grp.PRCreation == config.PRCreationApproval {
+		return PRWaitApproval
+	}
+	return PRWaitChecks
 }
 
 // handleBranch handles a group without a PR (withoutPR): a branch automerge group
@@ -995,7 +1012,7 @@ func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group,
 		case fresh && grp.AutomergeBranch:
 			return mergeBranch(ctx, o, s, grp, fp, input, f, expected, pc, g)
 		case fresh:
-			return awaitChecks(ctx, o, s, grp, fp, input, f, expected, pc)
+			return awaitChecks(ctx, o, s, grp, fp, input, f, expected, t, pc)
 		}
 		slog.DebugContext(ctx, "branch without a PR changed or behind base, rebuilding", "branch", grp.Branch, "parents", t.Parents, "head", short(s.head))
 	}
@@ -1008,7 +1025,7 @@ func handleBranch(ctx context.Context, o Options, s *runState, grp engine.Group,
 		a.Status = StatusUpdated
 	}
 	if !grp.AutomergeBranch {
-		a.PRWait = PRWaitChecks
+		a.PRWait = prWait(grp)
 	}
 	if o.DryRun {
 		a.Status = map[string]string{StatusCreated: StatusWouldCreate, StatusRebased: StatusWouldRebase, StatusUpdated: StatusWouldUpdate}[a.Status]
@@ -1072,10 +1089,16 @@ func sameChanges(ctx context.Context, g Git, sha, tree string, changes []engine.
 }
 
 // awaitChecks acts on an unchanged branch of a group whose prCreation waits for its checks,
-// sha its tip, by their state: passed (or, with not-pending, failed), the PR is opened; still
-// running or none reported (or failed, with status-success), it waits for the next run.
-func awaitChecks(ctx context.Context, o Options, s *runState, grp engine.Group, fp, input string, f force, sha string, pc platform.Client) (Action, *platform.PR, error) {
+// sha its tip t, by their state: passed (or, with not-pending, failed), the PR is opened; still
+// running or none reported (or failed, with status-success), it waits for the next run. Under
+// not-pending, a tip committed at least NotPendingHours ago gets its PR anyway. Under approval
+// it waits for the dashboard, whatever its checks.
+func awaitChecks(ctx context.Context, o Options, s *runState, grp engine.Group, fp, input string, f force, sha string, t platform.Tip, pc platform.Client) (Action, *platform.PR, error) {
 	a := Action{Branch: grp.Branch, Title: grp.Title, Status: StatusUpToDate}
+	if grp.PRCreation == config.PRCreationApproval {
+		a.PRWait = PRWaitApproval
+		return a, nil, nil
+	}
 	state, err := pc.Checks(ctx, sha)
 	if err != nil {
 		return a, nil, err
@@ -1086,6 +1109,9 @@ func awaitChecks(ctx context.Context, o Options, s *runState, grp engine.Group, 
 		return raisePR(ctx, o, s, grp, fp, input, f, sha, "", pc)
 	case state == platform.ChecksFailure:
 		a.PRWait = PRWaitFailed
+	case grp.PRCreation == config.PRCreationNotPending && !t.Date.IsZero() && s.now.Sub(t.Date) >= time.Duration(o.NotPendingHours)*time.Hour:
+		slog.DebugContext(ctx, "checks pending past prNotPendingHours, creating the PR", "branch", grp.Branch, "committed", t.Date, "hours", o.NotPendingHours)
+		return raisePR(ctx, o, s, grp, fp, input, f, sha, "", pc)
 	default:
 		a.PRWait = PRWaitChecks
 	}

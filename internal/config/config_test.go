@@ -214,8 +214,11 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{automergeStrategy: merge-commit}]\n", `rules[0].automergeStrategy: must be one of auto, merge, squash, rebase, got "merge-commit"`},
 		{"automergeType: pr-comment\n", `automergeType: must be one of pr, branch, got "pr-comment"`},
 		{"rules: [{automergeType: fast-forward}]\n", `rules[0].automergeType: must be one of pr, branch, got "fast-forward"`},
-		{"prCreation: approval\n", `prCreation: must be one of immediate, not-pending, status-success, got "approval"`},
-		{"rules: [{prCreation: later}]\n", `rules[0].prCreation: must be one of immediate, not-pending, status-success, got "later"`},
+		{"prCreation: later\n", `prCreation: must be one of immediate, not-pending, status-success, approval, got "later"`},
+		{"rules: [{prCreation: later}]\n", `rules[0].prCreation: must be one of immediate, not-pending, status-success, approval, got "later"`},
+		{"prCreation: approval\n", "prCreation: approval requires dependencyDashboard: true"},
+		{"rules: [{prCreation: approval}]\n", "rules[0].prCreation: approval requires dependencyDashboard: true"},
+		{"prNotPendingHours: -1\n", "prNotPendingHours: must be >= 0, got -1"},
 		{"draftPR: maybe\n", `draftPR: want a boolean, got "maybe"`},
 		{"automerge: sometimes\n", `automerge: want a boolean, got "sometimes"`},
 		{"dependencyDashboard: maybe\n", "dependencyDashboard: want a boolean"},
@@ -1224,10 +1227,10 @@ func TestDraftPRAndPRCreationPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := def.PolicyFor(checkout, dep.Major); p.DraftPR || p.PRCreation != PRCreationImmediate {
-		t.Errorf("defaults: %v %q", p.DraftPR, p.PRCreation)
+	if p := def.PolicyFor(checkout, dep.Major); p.DraftPR || p.PRCreation != PRCreationImmediate || def.NotPendingHours() != DefaultPRNotPendingHours {
+		t.Errorf("defaults: %v %q %d", p.DraftPR, p.PRCreation, def.NotPendingHours())
 	}
-	c, err := load(t, ".deps.yaml", "draftPR: true\nprCreation: not-pending\nrules:\n  - updateTypes: [major]\n    prCreation: status-success\n  - managers: [gomod]\n    draftPR: false\n    prCreation: immediate\n")
+	c, err := load(t, ".deps.yaml", "draftPR: true\nprCreation: not-pending\nprNotPendingHours: 0\ndependencyDashboard: true\nrules:\n  - updateTypes: [major]\n    prCreation: status-success\n  - updateTypes: [patch]\n    prCreation: approval\n  - managers: [gomod]\n    draftPR: false\n    prCreation: immediate\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1239,11 +1242,15 @@ func TestDraftPRAndPRCreationPolicy(t *testing.T) {
 	}{
 		{checkout, dep.Minor, true, PRCreationNotPending},
 		{checkout, dep.Major, true, PRCreationStatusSuccess},
+		{checkout, dep.Patch, true, PRCreationApproval},
 		{mod, dep.Major, false, PRCreationImmediate},
 	} {
 		if p := c.PolicyFor(tc.d, tc.kind); p.DraftPR != tc.draft || p.PRCreation != tc.mode {
 			t.Errorf("%s %s: draftPR %v prCreation %q, want %v %q", tc.d.Name, tc.kind, p.DraftPR, p.PRCreation, tc.draft, tc.mode)
 		}
+	}
+	if h := c.NotPendingHours(); h != 0 {
+		t.Errorf("prNotPendingHours = %d, want 0", h)
 	}
 }
 
