@@ -34,9 +34,10 @@ func WithSecretHook(fn func(secret string)) AuthOption { return func(a *Auth) { 
 
 // WithToken registers Basic credentials (user, token) for host (without port) unless host
 // already has a token: the platform token and DEPS_GITHUB_COM_TOKEN registered by NewAuth win,
-// then earlier WithToken options. An empty host or token registers nothing.
-func WithToken(host, user, token string) AuthOption {
-	return func(a *Auth) { a.add(host, user, token) }
+// then earlier WithToken options. An empty host or token registers nothing. source names
+// where the token comes from (an environment variable) in the credentials log note.
+func WithToken(host, user, token, source string) AuthOption {
+	return func(a *Auth) { a.add(host, user, token, source) }
 }
 
 // WithGHToken makes the GitHub CLI's login (`gh auth token --hostname github.com`) the
@@ -77,7 +78,7 @@ type Auth struct {
 	ghToken string
 }
 
-type static struct{ user, token string }
+type static struct{ user, token, source string }
 
 // cred is the git credential helper result for one host; mu serializes its lookups and done
 // marks user, pass and ok final.
@@ -97,9 +98,9 @@ func NewAuth(info platform.Info, platformToken string, getenv func(string) strin
 	if info.Kind == platform.GitLab {
 		user = gitlabUser
 	}
-	a.add(info.Host, user, platformToken)
+	a.add(info.Host, user, platformToken, "platform token")
 	if info.Host != "github.com" {
-		a.add("github.com", staticUser, getenv("DEPS_GITHUB_COM_TOKEN"))
+		a.add("github.com", staticUser, getenv("DEPS_GITHUB_COM_TOKEN"), "DEPS_GITHUB_COM_TOKEN")
 	}
 	for _, o := range opts {
 		o(a)
@@ -107,25 +108,27 @@ func NewAuth(info platform.Info, platformToken string, getenv func(string) strin
 	return a
 }
 
-// add registers (user, token) for host unless host is empty, token is empty or host already
-// has a token.
-func (a *Auth) add(host, user, token string) {
+// add registers (user, token) from source for host unless host is empty, token is empty or
+// host already has a token.
+func (a *Auth) add(host, user, token, source string) {
 	if host == "" || token == "" {
 		return
 	}
 	if _, ok := a.tokens[host]; !ok {
-		a.tokens[host] = static{user, token}
+		a.tokens[host] = static{user, token, source}
 	}
 }
 
 // Static returns the configured Basic credentials for host: (x-access-token or oauth2, token)
 // for the platform token, (x-access-token, token) for github.com, the registered user for
-// WithToken ones.
+// WithToken ones. The first use of a host's credentials is noted (NoteSource) with their
+// source.
 func (a *Auth) Static(host string) (user, pass string, ok bool) {
 	if a == nil {
 		return "", "", false
 	}
 	if s, ok := a.tokens[host]; ok {
+		NoteSource("credentials", "host", host, "source", s.source)
 		return s.user, s.token, true
 	}
 	if host == "github.com" && a.gh != nil {
@@ -137,6 +140,7 @@ func (a *Auth) Static(host string) (user, pass string, ok bool) {
 			}
 		})
 		if a.ghToken != "" {
+			NoteSource("credentials", "host", host, "source", "gh auth token")
 			return staticUser, a.ghToken, true
 		}
 	}
@@ -168,8 +172,11 @@ func (a *Auth) Helper(ctx context.Context, host string) (user, pass string, ok b
 	if !ok && ctx.Err() != nil {
 		return "", "", false
 	}
-	if ok && a.onSecret != nil {
-		a.onSecret(pass)
+	if ok {
+		NoteSource("credentials", "host", host, "source", "git credential fill")
+		if a.onSecret != nil {
+			a.onSecret(pass)
+		}
 	}
 	c.user, c.pass, c.ok, c.done = user, pass, ok, true
 	return user, pass, ok

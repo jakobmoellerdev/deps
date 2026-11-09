@@ -63,23 +63,23 @@ func TestWithTokenPrecedence(t *testing.T) {
 	}{
 		{
 			name: "registered user", info: platform.Info{Host: "git.example.com"}, token: "plat",
-			opts: []AuthOption{WithToken("gitlab.example.com", "oauth2", "gl")}, user: "oauth2", pass: "gl",
+			opts: []AuthOption{WithToken("gitlab.example.com", "oauth2", "gl", "test")}, user: "oauth2", pass: "gl",
 		},
 		{
 			name: "first option wins", opts: []AuthOption{
-				WithToken("gitlab.example.com", "oauth2", "gl"), WithToken("gitlab.example.com", "gitlab-ci-token", "job"),
+				WithToken("gitlab.example.com", "oauth2", "gl", "test"), WithToken("gitlab.example.com", "gitlab-ci-token", "job", "test"),
 			}, user: "oauth2", pass: "gl",
 		},
 		{
 			name: "empty token skipped", opts: []AuthOption{
-				WithToken("gitlab.example.com", "oauth2", ""), WithToken("gitlab.example.com", "gitlab-ci-token", "job"),
+				WithToken("gitlab.example.com", "oauth2", "", "test"), WithToken("gitlab.example.com", "gitlab-ci-token", "job", "test"),
 			}, user: "gitlab-ci-token", pass: "job",
 		},
 		{
 			name: "platform token wins", info: platform.Info{Host: "gitlab.example.com"}, token: "plat",
-			opts: []AuthOption{WithToken("gitlab.example.com", "oauth2", "gl")}, user: "x-access-token", pass: "plat",
+			opts: []AuthOption{WithToken("gitlab.example.com", "oauth2", "gl", "test")}, user: "x-access-token", pass: "plat",
 		},
-		{name: "empty host", opts: []AuthOption{WithToken("", "oauth2", "gl")}},
+		{name: "empty host", opts: []AuthOption{WithToken("", "oauth2", "gl", "test")}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -671,7 +671,7 @@ func TestSectionGitLab(t *testing.T) {
 	}{
 		{"platform token", "gitlab-tags", httpx.NewAuth(platform.Info{Kind: platform.GitLab, Host: u.Hostname()}, "tok", func(string) string { return "" }), "Bearer tok "},
 		// gitlab-releases compares on the tags of the gitlab-tags list too.
-		{"job token", "gitlab-releases", httpx.NewAuth(platform.Info{}, "", func(string) string { return "" }, httpx.WithToken(u.Hostname(), "gitlab-ci-token", "job")), "job "},
+		{"job token", "gitlab-releases", httpx.NewAuth(platform.Info{}, "", func(string) string { return "" }, httpx.WithToken(u.Hostname(), "gitlab-ci-token", "job", "test")), "job "},
 		{"anonymous", "gitlab-tags", nil, " "},
 	} {
 		reqs = nil

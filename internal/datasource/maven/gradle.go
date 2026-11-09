@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // gradleAuth returns the credentials of the Gradle repository named id by Gradle's
@@ -34,6 +36,7 @@ func (s *Source) gradleAuth(id string) (*auth, error) {
 			s.gradleErr = fmt.Errorf("gradle user properties: %w", err)
 		default:
 			s.gradleProps = parseProperties(b)
+			httpx.NoteSource("read config", "file", p, "datasource", Name)
 		}
 	})
 	if s.gradleErr != nil {

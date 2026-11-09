@@ -90,7 +90,14 @@ func dockerCredentials() credentials.CredentialFunc {
 			return credentials.EmptyCredential, fmt.Errorf("docker config: %w", err)
 		}
 	}
-	return remote.NewCredentialFunc(store)
+	creds := remote.NewCredentialFunc(store)
+	return func(ctx context.Context, r properties.Resource) (credentials.Credential, error) {
+		c, err := creds(ctx, r)
+		if err == nil && c != credentials.EmptyCredential {
+			httpx.NoteSource("credentials", "host", r.Registry, "source", "docker config")
+		}
+		return c, err
+	}
 }
 
 // hubPageSize is the tags/list page size for Docker Hub, which pages at 1000 by default but

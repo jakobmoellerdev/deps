@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // securityPassphrase decrypts the master password of settings-security.xml (Maven's
@@ -103,6 +105,7 @@ func (s *Source) masterPassword() (string, error) {
 				s.masterErr = fmt.Errorf("maven master password: %w", err)
 				return
 			}
+			httpx.NoteSource("read config", "file", p, "datasource", Name)
 			if sec.Relocation = strings.TrimSpace(sec.Relocation); sec.Relocation != "" {
 				p = sec.Relocation
 				continue

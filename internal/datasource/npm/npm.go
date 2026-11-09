@@ -341,6 +341,7 @@ func (s *Source) config(dir, root string) (*npmrc, error) {
 					e.err = fmt.Errorf("%s: %w", p, e.err)
 				}
 				slog.Debug("npmrc loaded", "path", p, "registry", e.rc.registry, "scopes", len(e.rc.scopes), "tokens", len(e.rc.tokens))
+				httpx.NoteSource("read config", "file", p, "datasource", Name)
 				return
 			}
 			if !errors.Is(err, fs.ErrNotExist) {

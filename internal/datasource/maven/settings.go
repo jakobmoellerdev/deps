@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // repoSettingsFiles are the in-repository settings looked for in each directory, in order.
@@ -177,6 +179,7 @@ func (s *Source) loadFile(p string) (*settingsXML, error) {
 		}
 		e.x = x
 		slog.Debug("maven settings loaded", "path", p, "mirrors", len(x.Mirrors), "servers", len(x.Servers), "profiles", len(x.Profiles))
+		httpx.NoteSource("read config", "file", p, "datasource", Name)
 	})
 	return e.x, e.err
 }

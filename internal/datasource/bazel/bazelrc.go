@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // readBazelrc returns the registries the `.bazelrc` of the workspace directory ws names, in
@@ -33,6 +35,7 @@ func readRC(file, ws, root string, seen map[string]bool, regs *[]string) error {
 	if err != nil {
 		return err
 	}
+	httpx.NoteSource("read config", "file", file, "datasource", Name)
 	for _, line := range rcLines(string(b)) {
 		words := rcWords(line)
 		if len(words) == 0 {

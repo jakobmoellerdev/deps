@@ -17,6 +17,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
 )
 
@@ -77,6 +78,7 @@ func (s *Source) loadConfig(dir, root string) (*cargoConfig, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", file, err)
 		}
+		httpx.NoteSource("read config", "file", file, "datasource", Name)
 		return v, nil
 	}
 	var dirs []string

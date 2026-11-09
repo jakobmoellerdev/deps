@@ -321,10 +321,11 @@ func noArgs(_ context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-// envToken returns the first token set in the environment.
+// envToken returns the first token set in the environment and notes which variable it is.
 func envToken() string {
 	for _, k := range []string{"DEPS_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "FORGEJO_TOKEN", "GITLAB_TOKEN"} {
 		if v := os.Getenv(k); v != "" {
+			httpx.NoteSource("platform token", "source", k)
 			return v
 		}
 	}
@@ -632,7 +633,7 @@ func gitLabAuth(gitlabURL string, getenv func(string) string) []httpx.AuthOption
 		return nil
 	}
 	host := u.Hostname()
-	opts := []httpx.AuthOption{httpx.WithToken(host, "oauth2", getenv("DEPS_GITLAB_TOKEN"))}
+	opts := []httpx.AuthOption{httpx.WithToken(host, "oauth2", getenv("DEPS_GITLAB_TOKEN"), "DEPS_GITLAB_TOKEN")}
 	ciHost := getenv("CI_SERVER_HOST")
 	if ciHost == "" {
 		if cu, err := url.Parse(getenv("CI_SERVER_URL")); err == nil {
@@ -640,7 +641,7 @@ func gitLabAuth(gitlabURL string, getenv func(string) string) []httpx.AuthOption
 		}
 	}
 	if ciHost != "" && strings.EqualFold(ciHost, host) {
-		opts = append(opts, httpx.WithToken(host, "gitlab-ci-token", getenv("CI_JOB_TOKEN")))
+		opts = append(opts, httpx.WithToken(host, "gitlab-ci-token", getenv("CI_JOB_TOKEN"), "CI_JOB_TOKEN"))
 	}
 	return opts
 }

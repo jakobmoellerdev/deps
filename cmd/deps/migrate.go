@@ -34,7 +34,13 @@ func (o *rootOpts) renovateMode() bool {
 // mode, translates the Renovate config in memory, logging every translation note.
 func loadConfig(ctx context.Context, o *rootOpts, root string, info platform.Info, client *http.Client, auth *httpx.Auth, gh *githubapi.Client, fetch config.Fetcher) (*config.Config, error) {
 	if !o.renovateMode() {
-		return config.Load(ctx, root, o.config, fetch)
+		cfg, err := config.Load(ctx, root, o.config, fetch)
+		if err == nil {
+			for _, f := range cfg.Files() {
+				httpx.NoteSource("read config", "file", f)
+			}
+		}
+		return cfg, err
 	}
 	res, err := renovate.Load(ctx, root, o.config, renovateFetcher(root, info, client, auth, gh))
 	if err != nil {

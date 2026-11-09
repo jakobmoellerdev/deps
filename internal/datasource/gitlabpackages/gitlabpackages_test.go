@@ -112,7 +112,7 @@ func TestReleasesFilterAndRegistries(t *testing.T) {
 	srv := serve(t, &hits, &headers)
 	host := strings.TrimPrefix(srv.URL, "http://")
 	host, _, _ = strings.Cut(host, ":")
-	auth := httpx.NewAuth(platform.Info{}, "", func(string) string { return "" }, httpx.WithToken(host, "oauth2", "pat"))
+	auth := httpx.NewAuth(platform.Info{}, "", func(string) string { return "" }, httpx.WithToken(host, "oauth2", "pat", "test"))
 	s := New(srv.Client(), nil, auth, "https://gitlab.invalid")
 	// The first registry lacks the project (404); the second, given with /api/v4, has it.
 	d := dep.Dep{Datasource: Name, Name: "42:lib", Source: srv.URL + "/missing " + srv.URL + "/api/v4/"}
@@ -127,7 +127,7 @@ func TestReleasesFilterAndRegistries(t *testing.T) {
 		t.Fatalf("auth headers = %q", h)
 	}
 
-	jobAuth := httpx.NewAuth(platform.Info{}, "", func(string) string { return "" }, httpx.WithToken(host, "gitlab-ci-token", "job"))
+	jobAuth := httpx.NewAuth(platform.Info{}, "", func(string) string { return "" }, httpx.WithToken(host, "gitlab-ci-token", "job", "test"))
 	if _, err := New(srv.Client(), nil, jobAuth, srv.URL).Releases(t.Context(), dep.Dep{Name: "42:lib"}, ""); err != nil {
 		t.Fatal(err)
 	}

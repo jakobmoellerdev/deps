@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // credential is the username and password of a package source.
@@ -90,6 +92,7 @@ func readCreds(dir, root string, getenv func(string) string) map[string]credenti
 			slog.Debug("nuget.config credentials not read", "path", p, "err", err)
 			continue
 		}
+		httpx.NoteSource("read config", "file", p, "datasource", Name)
 		if cleared {
 			clear(out)
 		}

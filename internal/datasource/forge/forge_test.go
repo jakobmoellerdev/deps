@@ -277,7 +277,7 @@ func TestAuth(t *testing.T) {
 				fmt.Fprint(w, `[{"tag_name":"v1","name":"v1","commit":{"id":"a","sha":"a"}}]`)
 			}))
 			defer srv.Close()
-			opt := httpx.WithToken("127.0.0.1", tc.user, "tok")
+			opt := httpx.WithToken("127.0.0.1", tc.user, "tok", "test")
 			if tc.helper {
 				opt = httpx.WithHelper(func(context.Context, string) (string, string, bool) {
 					helped.Add(1)
