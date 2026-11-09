@@ -8,6 +8,7 @@ import (
 
 	sbtds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/sbt"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // build is one sbt build: the files of a root directory (its *.sbt files and those of
@@ -302,6 +303,9 @@ func (b *build) dep(file string, st *fileState, mt depMeta) (d dep.Dep, keep boo
 		d = dep.Dep{Manager: Name, Datasource: "maven", Versioning: "maven", DepType: DepTypeScala,
 			File: file, Line: mt.scala.line, Name: "org.scala-lang:scala-library", Source: strings.Join(src, " ")}
 		b.version(&d, file, mt.scala.value)
+		if d.Range != "" { // scalaVersion is a fixed version
+			d.Skip, d.Version, d.Range = skipDynamic, d.Range, ""
+		}
 		if d.Skip == "" && strings.HasPrefix(d.Version, "3.") {
 			d.Name = "org.scala-lang:scala3-library_3"
 		}
@@ -345,7 +349,7 @@ func (b *build) moduleDep(file string, st *fileState, f found) (dep.Dep, bool) {
 		return dep.Dep{}, false
 	}
 	meta := st.kind == kindMeta
-	d := dep.Dep{Manager: Name, Datasource: sbtds.PackageName, Versioning: "maven", DepType: libraryDepType(m.config),
+	d := dep.Dep{Manager: Name, Datasource: sbtds.PackageName, Versioning: Versioning, DepType: libraryDepType(m.config),
 		File: file, Line: m.line, Name: g + ":" + a}
 	switch {
 	case f.plugin:
@@ -434,7 +438,27 @@ func (b *build) version(d *dep.Dep, file string, t term) {
 		d.Line = r.tok.line
 	}
 	d.RefSpan = dep.Span{Start: r.tok.start, End: r.tok.end}
-	if dynamic(d.Version) {
+	if versioning.IsIvyDynamic(d.Version) {
+		dynamicRevision(d)
+	}
+}
+
+// dynamicRevision reads the Ivy dynamic revision of d as Renovate's ivy versioning does: a
+// range of one restriction (`[1.0,2.0)`, `]1.0,2.0[`) or a sub-revision (`1.+`) becomes d's
+// Range, Version its anchor (versioning.IvyRevision.Anchor); an exact `[1.0]` is a plain
+// version; latest.<status>, which Ivy resolves to the newest version itself, and other forms
+// (`1.0+`, several restrictions) are skipped.
+func dynamicRevision(d *dep.Dep) {
+	r, ok := versioning.ParseIvyRevision(d.Version)
+	switch {
+	case !ok:
 		d.Skip = skipDynamic
+	case r.Kind == versioning.IvyLatest:
+		d.Skip = skipLatest
+	case r.Exact():
+		in := r.Range[0]
+		d.Version, d.RefSpan = in.Min, dep.Span{Start: d.RefSpan.Start + in.MinSpan.Start, End: d.RefSpan.Start + in.MinSpan.End}
+	default:
+		d.Range, d.Version = d.Version, r.Anchor()
 	}
 }

@@ -254,7 +254,7 @@ func TestNewErrors(t *testing.T) {
 	}{
 		{config.Custom{}, "custom[1]: files: must not be empty"},
 		{config.Custom{Files: []string{"a/[b"}}, `files: invalid glob "a/[b"`},
-		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex or regex:<RE2>, got "nope"`},
+		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex or regex:<RE2>, got "nope"`},
 		{config.Custom{Files: []string{"x"}, Versioning: "regex:(?<minor>1)"}, `versioning: regex: must have a (?<major>...) group`},
 		{config.Custom{Files: []string{"x"}, Datasource: "cpan"}, `datasource: unknown "cpan"`},
 		{config.Custom{Files: []string{"x"}, Datasource: "custom.envtest"}, `datasource: unknown "custom.envtest"`},
@@ -939,11 +939,11 @@ func TestManagerDatasources(t *testing.T) {
 		{8, "galaxy-collection", "a.b", "oci://x", "pep440", "", "", `invalid galaxy-collection registry URL "oci://x"`},
 		{10, "maven", "org.apache.maven:maven-core", "", "maven", "3.9.9", "", ""},
 		{12, "maven", "com.example:lib", "https://repo.example.com/maven2/", "maven", "1.2.3", "", ""},
-		{14, "sbt-package", "org.typelevel:cats-core_2.13", "", "maven", "2.12.0", "", ""},
-		{16, "sbt-plugin", "org.scalameta:sbt-scalafmt", "ivy=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ https://repo.maven.apache.org/maven2/", "maven", "2.5.2", "", ""},
-		{18, "sbt-plugin", "com.github.sbt:sbt-git", "ivy=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/", "maven", "2.1.0", "", ""},
-		{20, "sbt-package", "x:y_2.13", "ivy=https://ivy.example.com/releases/", "maven", "1.0.0", "", ""},
-		{22, "sbt-package", "x:z_3", "ivy=file:///repo", "maven", "", "", `invalid sbt-package registry URL "ivy=file:///repo"`},
+		{14, "sbt-package", "org.typelevel:cats-core_2.13", "", "ivy", "2.12.0", "", ""},
+		{16, "sbt-plugin", "org.scalameta:sbt-scalafmt", "ivy=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ https://repo.maven.apache.org/maven2/", "ivy", "2.5.2", "", ""},
+		{18, "sbt-plugin", "com.github.sbt:sbt-git", "ivy=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/", "ivy", "2.1.0", "", ""},
+		{20, "sbt-package", "x:y_2.13", "ivy=https://ivy.example.com/releases/", "ivy", "1.0.0", "", ""},
+		{22, "sbt-package", "x:z_3", "ivy=file:///repo", "ivy", "", "", `invalid sbt-package registry URL "ivy=file:///repo"`},
 		{24, "github-runners", "ubuntu", "https://github.com/actions/runner-images", "docker", "24.04", "", ""},
 	})
 
@@ -952,7 +952,7 @@ func TestManagerDatasources(t *testing.T) {
 	src = "maven org.slf4j:slf4j-api 2.0.16\nsbt-plugin com.github.sbt:sbt-git 2.1.0\ngalaxy-collection community.general 9.2.0"
 	check(t, src, extract(t, re, src), DepTypeRegex, []want{
 		{1, "maven", "org.slf4j:slf4j-api", "https://repo.example.com/maven2 https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ ivy=http://ivy.example.com", "maven", "2.0.16", "", `invalid maven registry URL "ivy=http://ivy.example.com"`},
-		{2, "sbt-plugin", "com.github.sbt:sbt-git", "https://repo.example.com/maven2/ ivy=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ ivy=http://ivy.example.com/", "maven", "2.1.0", "", ""},
+		{2, "sbt-plugin", "com.github.sbt:sbt-git", "https://repo.example.com/maven2/ ivy=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ ivy=http://ivy.example.com/", "ivy", "2.1.0", "", ""},
 		{3, "galaxy-collection", "community.general", "https://repo.example.com/maven2", "pep440", "9.2.0", "", ""},
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"cmp"
+	"fmt"
 	"path"
 	"regexp"
 	"slices"
@@ -17,10 +18,15 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jvmtool/properties"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Name is the manager name (Renovate's).
 const Name = "sbt"
+
+// Versioning is the versioning of library and plugin deps (Renovate's sbt-package and
+// sbt-plugin default): Maven's order, Ivy dynamic revisions as ranges (versioning.IvyRevision).
+const Versioning = "ivy"
 
 // Dep types. Library dep types are the first configuration of `% config`.
 const (
@@ -42,6 +48,7 @@ const central = "https://repo.maven.apache.org/maven2/"
 const (
 	skipNonLiteral   = "non-literal version"
 	skipDynamic      = "dynamic version"
+	skipLatest       = "latest revision"
 	skipScalaVersion = "unresolved Scala version"
 	skipCoordinates  = "unresolved group or artifact"
 )
@@ -180,7 +187,7 @@ func (m *sbtManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep,
 		for _, mt := range st.meta {
 			d, keep := b.dep(file, st, mt)
 			if !keep { // group or artifact refers to a definition of another file
-				d = dep.Dep{Manager: Name, Datasource: sbtds.PackageName, Versioning: "maven", DepType: libraryDepType(mt.found.mod.config),
+				d = dep.Dep{Manager: Name, Datasource: sbtds.PackageName, Versioning: Versioning, DepType: libraryDepType(mt.found.mod.config),
 					File: file, Line: mt.found.mod.line, Name: termText(mt.found.mod.group) + ":" + termText(mt.found.mod.artifact), Skip: skipCoordinates}
 			}
 			deps = append(deps, d)
@@ -192,10 +199,39 @@ func (m *sbtManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep,
 	return deps, nil
 }
 
-// Edits replaces the version; deps sharing a definition share the span.
-func (*sbtManager) Edits(u dep.Update) ([]patch.Edit, error) {
+// Edits replaces the version, or rewrites an Ivy range (NewRange); deps sharing a definition
+// share the span.
+func (m *sbtManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep
+	if d.Range != "" {
+		out, ok := m.NewRange(d, u.NewVersion, u.RangeStrategy)
+		if !ok {
+			return nil, fmt.Errorf("range %s cannot be rewritten for %s", d.Range, u.NewVersion)
+		}
+		return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Range, New: out}}, nil
+	}
 	return []patch.Edit{{Start: d.RefSpan.Start, End: d.RefSpan.End, Old: d.Version, New: u.NewVersion}}, nil
+}
+
+// InRange implements manager.RangeUpdater: whether Ivy resolves d's dynamic revision (a
+// range or a sub-revision `1.+`) to v.
+func (*sbtManager) InRange(d dep.Dep, v string) bool {
+	r, ok := versioning.ParseIvyRevision(d.Range)
+	return ok && r.Admits(v)
+}
+
+// NewRange implements manager.RangeUpdater as Renovate's ivy versioning does
+// (versioning.IvyRevision.Extend): pin writes v; a range v exceeds is extended to admit it,
+// keeping its brackets; a sub-revision is kept, as Ivy resolves it itself.
+func (*sbtManager) NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	if strategy == dep.RangePin {
+		return v, v != d.Range
+	}
+	r, ok := versioning.ParseIvyRevision(d.Range)
+	if !ok {
+		return "", false
+	}
+	return r.Extend(v)
 }
 
 // Link resolves the deps of each build against the definitions, settings and repositories
@@ -315,11 +351,6 @@ func libraryDepType(config string) string {
 		return DepTypeIt
 	}
 	return DepTypeCompile
-}
-
-// dynamic reports whether v is an Ivy dynamic revision (`latest.release`, `1.+`, `[1.0,2.0)`).
-func dynamic(v string) bool {
-	return strings.HasPrefix(v, "latest.") || strings.Contains(v, "+") || strings.ContainsAny(v[:1], "[]()")
 }
 
 // Scala version shapes, ported from sbt librarymanagement CrossVersionUtil.

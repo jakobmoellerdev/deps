@@ -3198,13 +3198,13 @@ Updates sbt builds as Renovate's sbt manager: library and plugin ModuleIDs of `*
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `compile` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is absent or not one below (`Compile`, `"compile"`, custom configurations) | `sbt-package` | `maven` | updated |
-| `test` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Test`/`"test"` (the first configuration of `"test->test"`, `"test;provided"`) | `sbt-package` | `maven` | updated |
-| `provided` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Provided`/`"provided"` | `sbt-package` | `maven` | updated |
-| `runtime` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Runtime`/`"runtime"` | `sbt-package` | `maven` | updated |
-| `optional` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Optional`/`"optional"` | `sbt-package` | `maven` | updated |
-| `it` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `IntegrationTest`/`"it"` | `sbt-package` | `maven` | updated |
-| `plugin` | `addSbtPlugin("group" % "artifact" % "version")` (named `group:artifact`, looked up for the build's sbt version), and compiler plugins `addCompilerPlugin(…)`/`compilerPlugin(…)` (cross-versioned as libraries) | `sbt-plugin` (addSbtPlugin), `sbt-package` (compiler plugins) | `maven` | updated |
+| `compile` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is absent or not one below (`Compile`, `"compile"`, custom configurations) | `sbt-package` | `ivy` | updated |
+| `test` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Test`/`"test"` (the first configuration of `"test->test"`, `"test;provided"`) | `sbt-package` | `ivy` | updated |
+| `provided` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Provided`/`"provided"` | `sbt-package` | `ivy` | updated |
+| `runtime` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Runtime`/`"runtime"` | `sbt-package` | `ivy` | updated |
+| `optional` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `Optional`/`"optional"` | `sbt-package` | `ivy` | updated |
+| `it` | ModuleIDs `"group" % "artifact" % "version"` (`%%`/`%%%` append the build's Scala binary version to the artifact: `cats-core_2.13`) anywhere in a file (`libraryDependencies += …`, `Seq(…)`, `val x = …`), whose `% <configuration>` is `IntegrationTest`/`"it"` | `sbt-package` | `ivy` | updated |
+| `plugin` | `addSbtPlugin("group" % "artifact" % "version")` (named `group:artifact`, looked up for the build's sbt version), and compiler plugins `addCompilerPlugin(…)`/`compilerPlugin(…)` (cross-versioned as libraries) | `sbt-plugin` (addSbtPlugin), `sbt-package` (compiler plugins) | `ivy` | updated |
 | `scala` | `scalaVersion := "2.13.16"` (also `ThisBuild / scalaVersion`, `scalaVersion in ThisBuild`, a `val`, `<seq>.head`): `org.scala-lang:scala-library`, `org.scala-lang:scala3-library_3` for Scala 3 | `maven` | `maven` | updated |
 | `sbt` | `sbt.version` of `project/build.properties` (name `sbt/sbt`) | `github-releases` (`sbt/sbt`) | `semver` | updated |
 
@@ -3215,7 +3215,8 @@ Updates sbt builds as Renovate's sbt manager: library and plugin ModuleIDs of `*
 | `non-literal version` | a version that is an expression (`sys.props.getOrElse(…)`, `(v + ".0")`), an interpolated or escaped string |
 | `unresolved version <ref>` | a version reference no `val` of the build defines as a string literal (`scalaVersion.value`, a setting key) |
 | `ambiguous version <ref>` | a version reference that neither an enclosing object nor a qualified path defines and that several definitions of the build end with (`cats` with `Compile.cats` and `Test.cats`) |
-| `dynamic version` | an Ivy dynamic revision: `latest.integration`, `1.+`, `[1.0,2.0)` |
+| `latest revision` | `latest.integration`, `latest.release`, `latest.<status>`: Ivy resolves the newest version itself, so there is nothing to write (Renovate's ivy versioning keeps them unchanged) |
+| `dynamic version` | an Ivy dynamic revision Renovate's ivy versioning does not read either (`1.0+`, `+`, a range with several restrictions `(,1.0],[1.2,)`), and any dynamic `scalaVersion` |
 | `unresolved Scala version` | a `%%`/`%%%` (or `CrossVersion.full`) ModuleID of a build whose `scalaVersion` and `crossScalaVersions` settings do not resolve to a literal |
 | `unresolved group or artifact` | only when a file is extracted alone: a ModuleID whose group or artifact refers to a `val` of another file; with the whole build, ModuleIDs whose group or artifact is not a string are not deps |
 
@@ -3225,6 +3226,12 @@ Updates sbt builds as Renovate's sbt manager: library and plugin ModuleIDs of `*
 - Versions, groups and artifacts may be `val`/`lazy val`/`var`/parameterless `def` references, also qualified by objects (`Dependencies.Versions.cats`, `V.cats` for an anonymous `val V = new { val cats = … }`) and across the files of a build; `val a = b` chains, `<module>.revision` (the version of another ModuleID `val`) and `<seq>.head` are followed. The update edits the definition; deps sharing it are grouped into one PR.
 - The Scala binary version of `%%` is that of the first `scalaVersion` that resolves to a literal (`*.sbt` at the build root first, then `project/*.scala`, then other `*.sbt`), else of the first element of `crossScalaVersions`; without either setting sbt's default (Scala 2.12 for sbt 1.x, Scala 3 for sbt 2.x). `.cross(CrossVersion.full)` appends the full Scala version, `for3Use2_13` and `for2_13Use3` swap 3 and 2.13, `disabled` none. Deps of `project/*.sbt` (the meta-build) use sbt's own Scala version.
 - Scala releases are compared with the `maven` versioning; Scala 3.8+ is also published as `scala-library`, so a Scala 2 project sees it as a major update (as in Renovate); a rule `{names: [org.scala-lang:scala-library], updates: [minor, patch]}` keeps Scala 2.
+
+**Ivy dynamic revisions.**
+
+- Library and plugin versions use the `ivy` versioning (Renovate's sbt-package and sbt-plugin default): fixed versions are ordered as Maven's, dynamic revisions are ranges (rangeStrategy applies).
+- A range of one restriction, in Maven's or Ivy's brackets (`[1.0,2.0)`, `[1.0,2.0[`, `]1.0,2.0]`, `[1.5,)`, `(,2.0]`), keeps the versions it admits (sbt resolves them itself) and is extended to admit a newer one as Renovate's ivy versioning does, keeping its brackets: `[1.0,2.0[` → `[1.0,2.6[` for 2.5.1, `[1,2)` → `[4,5)` for 4.3.2. An exact `[1.0]` is a plain version.
+- A sub-revision `1.2.+` admits the versions starting with `1.2.` and is never rewritten (Renovate's ivy versioning keeps it too), so it gets no updates; under rangeStrategy `pin` it is pinned to the newest version it admits.
 
 **Repositories.**
 
@@ -3556,7 +3563,7 @@ The version is replaced. A captured digest (`@sha256:` for docker markers, a `di
 
 **Galaxy, Maven, sbt and GitHub runners.**
 
-- The datasources of the ansible-galaxy, maven, sbt and github-actions managers work from custom managers too, with the versioning of those managers unless the marker, the `versioning` group or the entry sets one: `galaxy` (`tag`), `galaxy-collection` (`pep440`), `maven`, `sbt-package` and `sbt-plugin` (`maven`), `github-runners` (`docker`).
+- The datasources of the ansible-galaxy, maven, sbt and github-actions managers work from custom managers too, with the versioning of those managers unless the marker, the `versioning` group or the entry sets one: `galaxy` (`tag`), `galaxy-collection` (`pep440`), `maven` (`maven`), `sbt-package` and `sbt-plugin` (`ivy`), `github-runners` (`docker`).
 - `galaxy-collection`: `# renovate: datasource=galaxy-collection depName=community.general`; a `registryUrl` is the Galaxy server (only the first is used), else `DEPS_GALAXY_URL` or https://galaxy.ansible.com.
 - `maven`: `# renovate: datasource=maven depName=org.apache.maven:maven-core`; the `registryUrl`s are the repositories, in order, else Maven Central. settings.xml mirrors and credentials apply to maven and maven-wrapper deps only.
 - `sbt-package` (`org.typelevel:cats-core_2.13`, with the Scala suffix) and `sbt-plugin` (`org.scalameta:sbt-scalafmt`, looked up for sbt 1.x): `registryUrl`s are Maven repositories, `ivy=<url>` and the sbt plugin releases repository Ivy-layout ones. Without one, `sbt-package` uses Maven Central and `sbt-plugin` the sbt plugin releases repository, then Maven Central, as sbt does.

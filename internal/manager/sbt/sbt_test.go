@@ -203,8 +203,8 @@ libraryDependencies ++= Seq(
 		"org.foo:bar_2.13":                "1.0 compile ",
 		"org.foo:full_3.3.4":              "2.0 compile ",
 		"org.foo:nocross":                 "3.0 compile ",
-		"org.foo:dyn":                     "latest.release compile " + skipDynamic,
-		"org.foo:plus":                    "1.+ compile " + skipDynamic,
+		"org.foo:dyn":                     "latest.release compile " + skipLatest,
+		"org.foo:plus":                    "1 compile ",
 		"org.foo:interp":                  " compile " + skipNonLiteral,
 		"org.foo:escaped":                 " compile " + skipNonLiteral,
 		"org.foo:prov":                    "1 provided ",
@@ -452,6 +452,85 @@ func TestEditsAcrossFiles(t *testing.T) {
 	}
 }
 
+// TestIvyRevisions: Ivy dynamic revisions are read as Renovate's ivy versioning reads them.
+// Ranges become range deps that admitted versions keep and newer ones extend (brackets kept),
+// sub-revisions range deps that are never rewritten, `[v]` a plain version; latest.<status>
+// and forms Renovate rejects stay skipped.
+func TestIvyRevisions(t *testing.T) {
+	src := `libraryDependencies ++= Seq(
+  "a" % "range" % "[1.0,2.0)",
+  "a" % "ivy" % "]1.0,2.0[",
+  "a" % "open" % "[1.5,)",
+  "a" % "step" % "[1,2)",
+  "a" % "sub" % "1.2.+",
+  "a" % "exact" % "[1.0]",
+  "a" % "latest" % "latest.integration",
+  "a" % "plus" % "1.0+",
+  "a" % "multi" % "(,1.0],[1.2,)",
+)
+scalaVersion := "2.13.+"
+`
+	m := New()
+	deps, srcs := extractFiles(t, map[string]string{"build.sbt": src})
+	ru := m.(manager.RangeUpdater)
+	for _, tc := range []struct {
+		name, version, rng, skip string
+		in, out                  string // a version the range admits, one it does not
+		newVersion, want         string // NewVersion and the rewritten file text ("" = not rewritten)
+	}{
+		{name: "a:range", version: "1.0", rng: "[1.0,2.0)", in: "1.9.9", out: "2.0", newVersion: "2.5.1", want: `"[1.0,2.6)"`},
+		{name: "a:ivy", version: "1.0", rng: "]1.0,2.0[", in: "1.0.1", out: "1.0", newVersion: "2.5.1", want: `"]1.0,2.6["`},
+		{name: "a:open", version: "1.5", rng: "[1.5,)", in: "99", out: "1.4"},
+		{name: "a:step", version: "1", rng: "[1,2)", in: "1.5", out: "2.0", newVersion: "4.3.2", want: `"[4,5)"`},
+		{name: "a:sub", version: "1.2", rng: "1.2.+", in: "1.2.9", out: "1.20.0", newVersion: "1.3.0"},
+		{name: "a:exact", version: "1.0", newVersion: "1.1", want: `"[1.1]"`},
+		{name: "a:latest", version: "latest.integration", skip: skipLatest},
+		{name: "a:plus", version: "1.0+", skip: skipDynamic},
+		{name: "a:multi", version: "(,1.0],[1.2,)", skip: skipDynamic},
+		{name: "org.scala-lang:scala-library", version: "2.13.+", skip: skipDynamic},
+	} {
+		d := find(t, deps, "build.sbt", tc.name)
+		if d.Version != tc.version || d.Range != tc.rng || d.Skip != tc.skip {
+			t.Errorf("%s = %q %q %q, want %q %q %q", tc.name, d.Version, d.Range, d.Skip, tc.version, tc.rng, tc.skip)
+			continue
+		}
+		if d.Skip != "" {
+			continue
+		}
+		if tc.rng != "" {
+			if d.Versioning != Versioning || !ru.InRange(d, tc.in) || ru.InRange(d, tc.out) {
+				t.Errorf("%s: versioning %s, InRange(%s) or !InRange(%s)", tc.name, d.Versioning, tc.in, tc.out)
+			}
+			if _, ok := ru.NewRange(d, tc.in, ""); ok {
+				t.Errorf("%s: rewritten for admitted %s", tc.name, tc.in)
+			}
+			if got, ok := ru.NewRange(d, "3.0", dep.RangePin); !ok || got != "3.0" {
+				t.Errorf("%s: pin = %q, %v", tc.name, got, ok)
+			}
+		}
+		if tc.newVersion == "" {
+			continue
+		}
+		edits, err := m.Edits(dep.Update{Dep: d, NewVersion: tc.newVersion})
+		if tc.want == "" {
+			if err == nil {
+				t.Errorf("%s: edits %v for %s", tc.name, edits, tc.newVersion)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := patch.Apply(srcs[d.File], edits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(out), `"`+tc.name[2:]+`" % `+tc.want) {
+			t.Errorf("%s: %s", tc.name, out)
+		}
+	}
+}
+
 func TestScalafmt(t *testing.T) {
 	m := NewScalafmt()
 	for src, want := range map[string]string{
@@ -523,11 +602,6 @@ func TestHelpers(t *testing.T) {
 	for mode, want := range map[string]string{"patch": "_2.13.12", "full": "_2.13.12-bin-typelevel-4", "binary": "_2.13"} {
 		if got, ok := b.crossSuffix(&module{cross: "%", crossVersion: mode}, false); !ok || got != want {
 			t.Errorf("crossSuffix(%s) = %q, %v, want %q", mode, got, ok, want)
-		}
-	}
-	for v, want := range map[string]bool{"latest.integration": true, "[1.0,2.0)": true, "1.+": true, "1.0": false} {
-		if dynamic(v) != want {
-			t.Errorf("dynamic(%q)", v)
 		}
 	}
 	if got := libraryDepType(" Configurations.Test "); got != DepTypeTest {

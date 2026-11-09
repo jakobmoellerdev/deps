@@ -243,7 +243,7 @@ pin: digest
 
 ## `rangeStrategy`
 
-How npm, cargo, Python, bundler and composer dependency ranges, Swift package requirements, Elm package constraints, Julia compat entries, terraform version constraints, Gradle dynamic versions (1.+, [1.0,2.0)), Maven version ranges ([1.0,2.0)), NuGet floating versions and intervals (13.\*, [1.0,2.0)) and GitHub Actions setup input ranges (1.27.x, >=24) are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Manifest.toml, Package.resolved, .terraform.lock.hcl, gradle.lockfile) while the range admits the new version (rewriting the range otherwise, 1.+ -> 2.+), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,\<2 -> >=1.5.0,\<2, ~> 5.0 -> ~> 5.46; Gradle dynamic versions and ranges without a floor keep update-lockfile), in-range-only raises the range like bump but only to versions it admits, widen leaves admitted versions alone and widens the range to admit others (^1.2.3 -> ^1.2.3 || ^2.0.0, >=1.2,\<2 -> >=1.2,\<3, cargo 1.2 -> >=1.2, \<3, Ruby "~> 7.1" -> ">= 7.1", "\< 9"), pin writes the exact version (^1.2.3 -> 1.4.0, cargo =1.4.0, Python ==1.4.0, Swift exact: 1.4.0 or .exact(1.4.0), Ruby "= 1.4.0", NuGet 1.4.0): a pin update to the locked or newest admitted version, then each newer one (widen and pin are replace for terraform, terragrunt and Gradle; Swift from: is replaced under widen; NuGet ranges widen as replace, and deps reads no packages.lock.json, so update-lockfile proposes no version a NuGet range admits); auto is Renovate's default per manager: update-lockfile, widen for npm peerDependencies, || ranges, Elm package constraints and julia projects without a Manifest.toml, replace for terraform, terragrunt and gemspec dependencies.
+How npm, cargo, Python, bundler and composer dependency ranges, Swift package requirements, Elm package constraints, Julia compat entries, terraform version constraints, Gradle dynamic versions (1.+, [1.0,2.0)), Maven version ranges ([1.0,2.0)), sbt Ivy ranges and sub-revisions ([1.0,2.0[, 1.2.+), NuGet floating versions and intervals (13.\*, [1.0,2.0)) and GitHub Actions setup input ranges (1.27.x, >=24) are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Manifest.toml, Package.resolved, .terraform.lock.hcl, gradle.lockfile) while the range admits the new version (rewriting the range otherwise, 1.+ -> 2.+), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,\<2 -> >=1.5.0,\<2, ~> 5.0 -> ~> 5.46; Gradle dynamic versions and ranges without a floor keep update-lockfile), in-range-only raises the range like bump but only to versions it admits, widen leaves admitted versions alone and widens the range to admit others (^1.2.3 -> ^1.2.3 || ^2.0.0, >=1.2,\<2 -> >=1.2,\<3, cargo 1.2 -> >=1.2, \<3, Ruby "~> 7.1" -> ">= 7.1", "\< 9"), pin writes the exact version (^1.2.3 -> 1.4.0, cargo =1.4.0, Python ==1.4.0, Swift exact: 1.4.0 or .exact(1.4.0), Ruby "= 1.4.0", NuGet 1.4.0): a pin update to the locked or newest admitted version, then each newer one (widen and pin are replace for terraform, terragrunt and Gradle; Swift from: is replaced under widen; NuGet ranges widen as replace, and deps reads no packages.lock.json, so update-lockfile proposes no version a NuGet range admits; Maven and sbt ranges are extended under every strategy but pin, sbt sub-revisions never rewritten); auto is Renovate's default per manager: update-lockfile, widen for npm peerDependencies, || ranges, Elm package constraints and julia projects without a Manifest.toml, replace for terraform, terragrunt and gemspec dependencies.
 
 - **Type:** string
 - **Default:** `auto`
@@ -1281,17 +1281,17 @@ When no rule sets it, all five update types are allowed. A later matching rule r
 
 ### `rules[].rangeStrategy`
 
-Range strategy for matching npm, cargo, Python, Swift, bundler, Elm, composer, julia, NuGet, Maven and terraform deps, Gradle dynamic versions and GitHub Actions setup input ranges (see the top-level rangeStrategy). Cannot be combined with updateTypes.
+Range strategy for matching npm, cargo, Python, Swift, bundler, Elm, composer, julia, NuGet, Maven, sbt and terraform deps, Gradle dynamic versions and GitHub Actions setup input ranges (see the top-level rangeStrategy). Cannot be combined with updateTypes.
 
 - **Type:** string
 - **Values:** `auto`, `bump`, `replace`, `update-lockfile`, `widen`, `pin`, `in-range-only`
 
 ### `rules[].versioning`
 
-Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, or regex:\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\<name>) and (?P\<name>) syntax both work. Cannot be combined with updateTypes.
+Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, or regex:\<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?\<name>) and (?P\<name>) syntax both work. Cannot be combined with updateTypes.
 
 - **Type:** string
-- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|composer|julia|bazel-module|nuget|rpm|apk|deb|pub|hex|regex:.+)$`
+- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ivy|ruby|conda|composer|julia|bazel-module|nuget|rpm|apk|deb|pub|hex|regex:.+)$`
 
 The scheme validates the current value, ranks candidates, classifies update kinds, converts versions for `allow`, and computes security fixes. A current value that the new scheme cannot parse is skipped as `non-version value "<v>"`.
 
@@ -1710,11 +1710,11 @@ Dependency name; required in regex mode unless match has a (?P\<name>), (?P\<dep
 
 ### `custom[].versioning`
 
-Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version and galaxy-collection, pub for dart, hex for hex, maven for maven, sbt-package and sbt-plugin, tag for galaxy, docker for github-runners), else semver.
+Versioning scheme of the matched versions: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex or regex:\<RE2> (see rules[].versioning); annotation and regex-group versioning fields accept the scheme names. Without it, each dep uses its datasource's versioning (rpm for rpm, apk for apk, deb for deb, pep440 for python-version and galaxy-collection, pub for dart, hex for hex, maven for maven, ivy for sbt-package and sbt-plugin, tag for galaxy, docker for github-runners), else semver.
 
 - **Type:** string
 - **Default:** `semver`
-- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ruby|conda|composer|julia|bazel-module|nuget|rpm|apk|deb|pub|hex|regex:.+)$`
+- **Pattern:** `^(tag|go|docker|semver|loose|cargo|pep440|hashicorp|maven|ivy|ruby|conda|composer|julia|bazel-module|nuget|rpm|apk|deb|pub|hex|regex:.+)$`
 
 Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, `hex` for hex deps, else `semver`. A marker's `versioning=`, a `versioning` group or a JSONata result's `versioning` overrides the entry's.
 
