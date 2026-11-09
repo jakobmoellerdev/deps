@@ -73,6 +73,12 @@
 //     github.com/hashicorp/terraform and github.com/opentofu/opentofu, with the locked version
 //     (dep.Dep.Locked), else an exact constraint's; ranges are not queried. Fixed versions are
 //     rendered bare, in the dep version's style.
+//   - deb, apk and rpm deps are queried with the package name and version in the ecosystem of
+//     the distribution release their registry URL names (distroTarget: "Debian:12",
+//     "Ubuntu:22.04:LTS", "Alpine:v3.20", "Wolfi", "Rocky Linux:9", "AlmaLinux:9",
+//     "openSUSE:Leap 15.6"); OSV matches server-side. Red Hat releases are queried as "Red Hat"
+//     and only the release's "Red Hat:enterprise_linux:<n>:" streams count, evaluated locally
+//     with RPM ordering. Fixed versions are returned as published, without a "0:" epoch.
 //
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
@@ -159,10 +165,12 @@ type query struct {
 // target is what one dep is checked against: its queries (one per OSV package) and, for GitHub
 // Actions, partial crates.io requirements and Go toolchains, the version evaluated locally.
 type target struct {
-	qs  []query        // backed by buf
-	buf [2]query       // Go toolchains query two packages, the rest one
-	tag versioning.Tag // GitHub Actions: the dep version; crates.io, Go toolchains: the precision of fixes
-	cmp [3]int         // GitHub Actions: tag padded for range evaluation
+	qs     []query        // backed by buf
+	buf    [2]query       // Go toolchains query two packages, the rest one
+	tag    versioning.Tag // GitHub Actions: the dep version; crates.io, Go toolchains: the precision of fixes
+	cmp    [3]int         // GitHub Actions: tag padded for range evaluation
+	distro bool           // deb, apk, rpm: a distribution release's ecosystem
+	stream string         // Red Hat: the ecosystem prefix of the release's streams, ranges evaluated locally
 }
 
 func newTarget(qs ...query) *target {
@@ -289,6 +297,9 @@ func targetOf(d dep.Dep) *target {
 			return nil
 		}
 		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoHex}, Version: v})
+	}
+	if d.Datasource == "deb" || d.Datasource == "apk" || d.Datasource == "rpm" {
+		return distroTarget(d)
 	}
 	if t := terraformTarget(d); t != nil {
 		return t
@@ -660,11 +671,25 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 		if seen[v.ID] {
 			continue
 		}
-		entries := v.entries(t.qs[0].Package)
-		for _, q := range t.qs[1:] {
-			entries = append(entries, v.entries(q.Package)...)
+		var entries []affected
+		if t.stream != "" {
+			entries = v.streamEntries(t.qs[0].Package.Name, t.stream)
+		} else {
+			entries = v.entries(t.qs[0].Package)
+			for _, q := range t.qs[1:] {
+				entries = append(entries, v.entries(q.Package)...)
+			}
 		}
 		var fixed []string
+		switch {
+		case t.stream != "":
+			if !t.rpmAffected(entries) {
+				continue
+			}
+			fixed = distroFixed(entries)
+		case t.distro:
+			fixed = distroFixed(entries)
+		}
 		switch eco {
 		case ecoActions:
 			if !t.affectedBy(entries) {
