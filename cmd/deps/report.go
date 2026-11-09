@@ -280,8 +280,11 @@ type multiRun struct {
 	report jsonMultiReport
 }
 
+// newMultiRun starts the report with every count at zero, so a run whose repositories all fail
+// before they have a result still writes all step outputs.
 func newMultiRun(command string) *multiRun {
-	return &multiRun{report: jsonMultiReport{Command: command, Repositories: []jsonReport{}, Errors: []jsonError{}, Counts: map[string]int{}}}
+	zero := (&summary{Run: true, Res: &engine.Result{}}).counts()
+	return &multiRun{report: jsonMultiReport{Command: command, Repositories: []jsonReport{}, Errors: []jsonError{}, Counts: zero}}
 }
 
 // add records the result of one repository.

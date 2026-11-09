@@ -472,13 +472,18 @@ func validateRepositories(repos []string) error {
 // repository is listed once, where it first matches.
 func expandRepositories(ctx context.Context, info platform.Info, token string, client *http.Client, entries []string) ([]string, error) {
 	var out []string
+	seen := map[string]bool{} // lower-cased names in out; forges match them case-insensitively
+	add := func(r string) {
+		if k := strings.ToLower(r); !seen[k] {
+			seen[k] = true
+			out = append(out, r)
+		}
+	}
 	listed := map[string][]string{}
 	for _, e := range entries {
 		owner, pattern, _ := strings.Cut(e, "/")
 		if !strings.ContainsAny(pattern, "*?[\\") {
-			if !slices.ContainsFunc(out, func(r string) bool { return strings.EqualFold(r, e) }) {
-				out = append(out, e)
-			}
+			add(e)
 			continue
 		}
 		all, ok := listed[owner]
@@ -496,9 +501,7 @@ func expandRepositories(ctx context.Context, info platform.Info, token string, c
 				continue
 			}
 			matched++
-			if !slices.ContainsFunc(out, func(r string) bool { return strings.EqualFold(r, full) }) {
-				out = append(out, full)
-			}
+			add(full)
 		}
 		if matched == 0 {
 			slog.WarnContext(ctx, "no repository matches", "pattern", e)

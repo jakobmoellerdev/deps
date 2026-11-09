@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json/v2"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/bot"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
 func TestPlanReportAndOutputs(t *testing.T) {
@@ -109,5 +111,33 @@ func TestReportWarnings(t *testing.T) {
 	want := []jsonWarning{{Name: "example.com/vuln", File: "go.mod", Line: 6, Kind: "abandoned", Reason: "no release since 2020-01-01 (abandonmentThreshold 365 days)"}}
 	if !slices.Equal(r.Warnings, want) {
 		t.Errorf("warnings = %+v, want %+v", r.Warnings, want)
+	}
+}
+
+// A multi-repository run whose repositories all fail still writes every step output.
+func TestMultiRunCountsAllFailed(t *testing.T) {
+	cleanEnv(t)
+	p := filepath.Join(t.TempDir(), "out")
+	t.Setenv("GITHUB_OUTPUT", p)
+	m := newMultiRun("run")
+	m.fail("o/r", errors.New("clone failed"))
+	if err := m.write(io.Discard, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(p)
+	want := "updates=0\nprs=0\ncreated=0\nupdated=0\nclosed=0\nup-to-date=0\nautomerged=0\nprs-skipped=0\nheld-back=0\nskipped=0\nerrors=1\n"
+	if string(got) != want {
+		t.Errorf("outputs:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// Repositories are listed once, where they first appear, whatever their case.
+func TestExpandRepositoriesDedupe(t *testing.T) {
+	got, err := expandRepositories(t.Context(), platform.Info{}, "", nil, []string{"o/r", "o/s", "O/R", "o/S", "o/t", "o/r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"o/r", "o/s", "o/t"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }

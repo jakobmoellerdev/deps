@@ -101,3 +101,39 @@ func TestPreviewWithoutCheckRunPermission(t *testing.T) {
 		t.Errorf("exit %d:\n%s", code, stderr)
 	}
 }
+
+// A PR whose dependency file the base checkout failed to extract is not reported as new: it
+// may well be open on the base branch already.
+func TestPreviewBaseErrors(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	work := t.TempDir()
+	base, pr := filepath.Join(work, "base"), filepath.Join(work, "pr")
+	writeFiles(t, base, map[string]string{".github/workflows/ci.yml": workflow, "go.mod": "module x\n\nrequire (\n"})
+	writeFiles(t, pr, map[string]string{".github/workflows/ci.yml": workflow, "go.mod": gomodSrc})
+	summary := filepath.Join(work, "summary.md")
+	t.Setenv("GITHUB_STEP_SUMMARY", summary)
+
+	_, stderr, code := execute(t, "preview", "--dir", pr, "--base-dir", base)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		"unknown deps/gomod/example.com-a  fix(deps): update example.com/a to v1.1.0\n",
+		"base checkout: go.mod: ",
+		"0 new, 0 changed, 0 no longer opened, 1 the same, 1 not compared (",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, "new     ") {
+		t.Errorf("a PR of the failed file is new:\n%s", stderr)
+	}
+	md, _ := os.ReadFile(summary)
+	for _, want := range []string{"### Not compared\n", "#### fix(deps): update example.com/a to v1.1.0\n", "### Errors of the base checkout\n"} {
+		if !strings.Contains(string(md), want) {
+			t.Errorf("step summary lacks %q:\n%s", want, md)
+		}
+	}
+}

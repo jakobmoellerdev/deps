@@ -48,8 +48,11 @@ type previewPR struct {
 // previewDiff is what the PR changes about the update PRs.
 type previewDiff struct {
 	Added, Removed []previewPR
-	Changed        []previewChange
-	Unchanged      int
+	// Unknown are head PRs without a base counterpart whose dependencies the base checkout
+	// failed to extract or look up: they may well be open on the base branch already.
+	Unknown   []previewPR
+	Changed   []previewChange
+	Unchanged int
 }
 
 type previewChange struct{ Base, Head previewPR }
@@ -82,11 +85,15 @@ func samePR(a, b previewPR) bool {
 	return slices.Equal(ka, kb)
 }
 
-func diffPreview(base, head map[string]previewPR) previewDiff {
+// diffPreview compares the PRs of both sides; baseErrs are the errors of the base checkout.
+func diffPreview(base, head map[string]previewPR, baseErrs []error) previewDiff {
 	var d previewDiff
+	failed := failedOnBase(baseErrs)
 	for _, b := range slices.Sorted(maps.Keys(head)) {
 		h := head[b]
 		switch old, ok := base[b]; {
+		case !ok && slices.ContainsFunc(h.Updates, failed):
+			d.Unknown = append(d.Unknown, h)
 		case !ok:
 			d.Added = append(d.Added, h)
 		case samePR(old, h):
@@ -103,13 +110,34 @@ func diffPreview(base, head map[string]previewPR) previewDiff {
 	return d
 }
 
-func (d previewDiff) empty() bool { return len(d.Added)+len(d.Removed)+len(d.Changed) == 0 }
+// failedOnBase reports whether the base checkout failed to extract the file of an update
+// (engine.FileError) or to look up its dependency (engine.DepError).
+func failedOnBase(errs []error) func(dep.Update) bool {
+	files, deps := map[string]bool{}, map[[2]string]bool{}
+	for _, err := range errs {
+		if fe, ok := errors.AsType[*engine.FileError](err); ok {
+			files[fe.File] = true
+		}
+		if de, ok := errors.AsType[*engine.DepError](err); ok {
+			deps[[2]string{de.File, de.Name}] = true
+		}
+	}
+	return func(u dep.Update) bool { return files[u.Dep.File] || deps[[2]string{u.Dep.File, u.Dep.Name}] }
+}
+
+func (d previewDiff) empty() bool {
+	return len(d.Added)+len(d.Removed)+len(d.Changed)+len(d.Unknown) == 0
+}
 
 func (d previewDiff) headline() string {
 	if d.empty() {
 		return fmt.Sprintf("No change to the update PRs (%d the same).", d.Unchanged)
 	}
-	return fmt.Sprintf("%d new, %d changed, %d no longer opened, %d the same", len(d.Added), len(d.Changed), len(d.Removed), d.Unchanged)
+	h := fmt.Sprintf("%d new, %d changed, %d no longer opened, %d the same", len(d.Added), len(d.Changed), len(d.Removed), d.Unchanged)
+	if len(d.Unknown) > 0 {
+		h += fmt.Sprintf(", %d not compared", len(d.Unknown))
+	}
+	return h
 }
 
 func writePRTable(b *strings.Builder, p previewPR) {
@@ -125,13 +153,21 @@ func writePRTable(b *strings.Builder, p previewPR) {
 	b.WriteString("\n")
 }
 
-// markdown renders the preview; errs are the lookup errors of the PR's checkout.
-func (d previewDiff) markdown(errs []error) string {
+// markdown renders the preview; errs are the lookup errors of the PR's checkout, baseErrs
+// those of the base checkout.
+func (d previewDiff) markdown(errs, baseErrs []error) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## deps preview\n\n**%s**\n\n", d.headline())
 	if len(d.Added) > 0 {
 		b.WriteString("### New PRs\n\n")
 		for _, p := range d.Added {
+			fmt.Fprintf(&b, "#### %s\n\n", p.Title)
+			writePRTable(&b, p)
+		}
+	}
+	if len(d.Unknown) > 0 {
+		b.WriteString("### Not compared\n\nThe base checkout failed to extract or look up dependencies of these PRs, so they may already be open.\n\n")
+		for _, p := range d.Unknown {
 			fmt.Fprintf(&b, "#### %s\n\n", p.Title)
 			writePRTable(&b, p)
 		}
@@ -156,6 +192,13 @@ func (d previewDiff) markdown(errs []error) string {
 	if len(errs) > 0 {
 		b.WriteString("### Errors\n\n```\n")
 		for _, e := range errs {
+			fmt.Fprintln(&b, e)
+		}
+		b.WriteString("```\n")
+	}
+	if len(baseErrs) > 0 {
+		b.WriteString("### Errors of the base checkout\n\n```\n")
+		for _, e := range baseErrs {
 			fmt.Fprintln(&b, e)
 		}
 		b.WriteString("```\n")
@@ -189,9 +232,12 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 	if err != nil {
 		return fmt.Errorf("base checkout %s: %w", baseDir, err)
 	}
-	d := diffPreview(previewPRs(baseRes, base.cfg.Prefix()), previewPRs(headRes, head.cfg.Prefix()))
+	d := diffPreview(previewPRs(baseRes, base.cfg.Prefix()), previewPRs(headRes, head.cfg.Prefix()), baseRes.Errors)
 	for _, p := range d.Added {
 		fmt.Fprintf(stderr, "new     %s  %s\n", p.Branch, p.Title)
+	}
+	for _, p := range d.Unknown {
+		fmt.Fprintf(stderr, "unknown %s  %s\n", p.Branch, p.Title)
 	}
 	for _, c := range d.Changed {
 		fmt.Fprintf(stderr, "changed %s  %s\n", c.Head.Branch, c.Head.Title)
@@ -202,11 +248,14 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 	for _, e := range headRes.Errors {
 		reportError(stderr, o.term, e)
 	}
-	md := d.markdown(headRes.Errors)
+	for _, e := range baseRes.Errors {
+		reportError(stderr, o.term, fmt.Errorf("base checkout: %w", e))
+	}
+	md := d.markdown(headRes.Errors, baseRes.Errors)
 	appendStepSummary(stderr, func(room int) string { return truncateMarkdown(md, room, previewTruncated) })
 	if sha := pullRequestHead(os.Getenv); sha != "" && info.Kind == platform.GitHub {
 		conclusion := "success"
-		if len(headRes.Errors) > 0 {
+		if len(headRes.Errors)+len(baseRes.Errors) > 0 {
 			conclusion = "neutral"
 		}
 		url, err := platform.CreateCheckRun(ctx, info, token, client, platform.CheckRun{
