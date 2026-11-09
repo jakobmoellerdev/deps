@@ -200,63 +200,69 @@ func (p *progress) Draw(w io.Writer) {
 	_, _ = io.WriteString(w, strings.Join(lines, "\n"))
 }
 
-// Status block limits: bar widths and the host lines below the phase line.
+// Status block limits.
 const (
-	phaseBar     = 24
-	hostBar      = 16
+	barWidth     = 20 // cells of every bar
 	hostLines    = 5
 	hostColumn   = 28 // widest host name shown; longer ones are cut
-	minBarLength = 5  // a narrower bar is left out
+	minBarLength = 5  // narrower bars are left out, on every line
 )
 
-// render returns the lines of the status block: the phase with a progress bar of its items,
-//
-//	⠹ resolving ━━━━━━━━━━━━━━──────────  212/308 · 1 error · 2.1s
-//	  registry.npmjs.org  ━━━━━━━━━━━━────  412/476 · 64 open
-//	  github.com          ━━━━━━━━━━━━━━━─   58/62 · 4 open
-//	  + 2 more hosts · 3 open
-//
+// render returns the lines of the status block: the phase with a progress bar of its items
 // and one line per host with open requests (the busiest hostLines), its bar the share of
-// the requests sent to it that are done.
+// the requests sent to it that are done. All bars have the same width and start in the
+// same column:
+//
+//	⠹ resolving           ━━━━━━━━━━━━━───────  212/308 · 1 error · 2.1s
+//	  registry.npmjs.org  ━━━━━━━━━━━━━━━━────  412/476 · 64 open
+//	  github.com          ━━━━━━━━━━━━━━━━━━━─  58/62 · 4 open
+//	  + 2 more hosts · 3 open
 func (p *progress) render() []string {
 	width := p.width() - 1 // one free column
 	p.mu.Lock()
 	elapsed := p.now().Sub(p.start)
 	total := p.total
 	p.mu.Unlock()
+	type row struct {
+		prefix, name, text string
+		sep                string // between name and text without bars
+		done, total        int    // total 0: no bar
+	}
 	frame := spinner[int(max(elapsed, 0)/statusTick)%len(spinner)]
-	label, rest := phaseLabels[p.phase], p.details()
-	var head string
+	head := row{prefix: p.style.Paint(logx.Cyan, frame) + " ", name: phaseLabels[p.phase], text: strings.TrimPrefix(p.details(), " · "), sep: " · "}
 	if total > 0 {
-		rest = fmt.Sprintf("%d/%d", p.done.Load(), total) + rest
-		if n := min(phaseBar, width-4-utf8.RuneCountInString(label)-utf8.RuneCountInString(rest)); n >= minBarLength {
-			head = p.style.Paint(logx.Dim, label) + " " + p.bar(int(p.done.Load()), total, n) + "  " + p.style.Paint(logx.Dim, rest)
-		} else {
-			rest = " " + rest
-		}
+		done := int(p.done.Load())
+		head.done, head.total, head.text, head.sep = done, total, fmt.Sprintf("%d/%d · %s", done, total, head.text), " "
 	}
-	if head == "" {
-		head = p.style.Paint(logx.Dim, truncate(label+rest, width-2))
+	var hosts []httpx.HostUse
+	if p.inFlight != nil {
+		hosts = p.inFlight()
 	}
-	lines := []string{p.style.Paint(logx.Cyan, frame) + " " + head}
-	if p.inFlight == nil {
-		return lines
-	}
-	hosts := p.inFlight()
 	shown := hosts[:min(len(hosts), hostLines)]
-	col := 0
+	rows := make([]row, 1, 1+len(shown))
+	rows[0] = head
 	for _, u := range shown {
-		col = max(col, min(utf8.RuneCountInString(u.Host), hostColumn))
+		rows = append(rows, row{prefix: "  ", name: truncate(u.Host, hostColumn), text: fmt.Sprintf("%d/%d · %d open", u.Done, u.Done+u.Open, u.Open), sep: "  ", done: u.Done, total: u.Done + u.Open})
 	}
-	for _, u := range shown {
-		name := truncate(u.Host, col)
-		name += strings.Repeat(" ", col-utf8.RuneCountInString(name))
-		count := fmt.Sprintf("%d/%d · %d open", u.Done, u.Done+u.Open, u.Open)
-		if n := min(hostBar, width-6-col-utf8.RuneCountInString(count)); n >= minBarLength {
-			lines = append(lines, "  "+p.style.Paint(logx.Dim, name)+"  "+p.bar(u.Done, u.Done+u.Open, n)+"  "+p.style.Paint(logx.Dim, count))
-		} else {
-			lines = append(lines, "  "+p.style.Paint(logx.Dim, truncate(u.Host+"  "+count, width-2)))
+	// The name column fits the widest name; the bar gets what the longest text leaves.
+	col, textLen := 0, 0
+	for _, r := range rows {
+		col = max(col, 2+utf8.RuneCountInString(r.name)) // the prefix is two columns
+		textLen = max(textLen, utf8.RuneCountInString(r.text))
+	}
+	bar := min(barWidth, width-col-4-textLen)
+	lines := make([]string, 0, len(rows)+1)
+	for _, r := range rows {
+		if bar < minBarLength || r.total == 0 && len(rows) == 1 {
+			lines = append(lines, r.prefix+p.style.Paint(logx.Dim, truncate(r.name+r.sep+r.text, width-2)))
+			continue
 		}
+		name := r.name + strings.Repeat(" ", col-2-utf8.RuneCountInString(r.name))
+		b := strings.Repeat(" ", bar)
+		if r.total > 0 {
+			b = p.bar(r.done, r.total, bar)
+		}
+		lines = append(lines, r.prefix+p.style.Paint(logx.Dim, name)+"  "+b+"  "+p.style.Paint(logx.Dim, r.text))
 	}
 	if more := hosts[len(shown):]; len(more) > 0 {
 		open := 0

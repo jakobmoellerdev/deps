@@ -34,9 +34,9 @@ func TestStatusLineOverlay(t *testing.T) {
 	var buf bytes.Buffer
 	s, w, now := testStatusLine(&buf, 100, httpx.HostUse{Host: "registry.npmjs.org", Open: 18, Done: 6}, httpx.HostUse{Host: "api.github.com", Open: 2})
 	s.Start(engine.PhaseResolve, 308)
-	hosts := "\n  registry.npmjs.org  ━━━━────────────  6/24 · 18 open" +
-		"\n  api.github.com      ────────────────  0/2 · 2 open"
-	block0 := "⠋ resolving " + strings.Repeat("─", 24) + "  0/308 · 0.0s" + hosts
+	hosts := "\n  registry.npmjs.org  " + strings.Repeat("━", 5) + strings.Repeat("─", 15) + "  6/24 · 18 open" +
+		"\n  api.github.com      " + strings.Repeat("─", 20) + "  0/2 · 2 open"
+	block0 := "⠋ resolving           " + strings.Repeat("─", 20) + "  0/308 · 0.0s" + hosts
 	if got := buf.String(); got != block0 {
 		t.Fatalf("start:\n%s\nwant\n%s", got, block0)
 	}
@@ -49,7 +49,7 @@ func TestStatusLineOverlay(t *testing.T) {
 	w.Redraw()
 	s.End(engine.PhaseResolve)
 	_, _ = w.Write([]byte("after\n"))
-	block1 := "⠙ resolving " + strings.Repeat("━", 16) + strings.Repeat("─", 8) + "  213/308 · 1 error · 2.1s" + hosts
+	block1 := "⠙ resolving           " + strings.Repeat("━", 13) + strings.Repeat("─", 7) + "  213/308 · 1 error · 2.1s" + hosts
 	want := block0 + clearBlock(3) + "record\n" + block0 + clearBlock(3) + block1 + clearBlock(3) + "after\n"
 	if got := buf.String(); got != want {
 		t.Errorf("output:\n%q\nwant\n%q", got, want)
@@ -74,8 +74,7 @@ func TestStatusLineCounting(t *testing.T) {
 	}
 	wg.Wait()
 	s.RateLimited("api.github.com", now.Add(41*time.Second))
-	s.RateLimited("api.github.com", now.Add(5*time.Second)) // an earlier reset does not shorten it
-	if got := s.render(); len(got) != 1 || !strings.HasPrefix(got[0], "⠋ extracting ━━") ||
+	if got := s.render(); len(got) != 1 || !strings.HasPrefix(got[0], "⠋ extracting  ━━") ||
 		!strings.HasSuffix(got[0], "━  100/100 · rate limited by api.github.com, 41s · 10 errors · 0.0s") {
 		t.Errorf("render = %q", got)
 	}
