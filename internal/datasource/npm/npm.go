@@ -58,6 +58,7 @@ type Source struct {
 	rcs     map[string]*rcEntry // package.json directory -> effective .npmrc
 	wsDirs  map[string]*wsEntry // package.json directory -> names of its workspace's packages
 	wsRoots map[string]*wsEntry // workspace root directory -> names of its packages
+	wsConfs nodetool.WorkspaceConfigs
 }
 
 // location is the registry (with trailing slash) and token a dependency resolved against.
@@ -291,14 +292,14 @@ func (s *Source) workspacePackages(dir, root string) (map[string]bool, error) {
 			e.err = err
 			return
 		}
-		ws, ok := nodetool.WorkspaceRoot(root, filepath.ToSlash(rel))
+		ws, ok := s.wsConfs.Root(root, filepath.ToSlash(rel))
 		if !ok {
 			return
 		}
 		abs := filepath.Join(root, filepath.FromSlash(ws))
 		re := s.wsEntry(s.wsRoots, abs)
 		re.once.Do(func() {
-			if re.names, re.err = nodetool.WorkspacePackages(abs); re.err != nil {
+			if re.names, re.err = s.wsConfs.Packages(abs); re.err != nil {
 				re.err = fmt.Errorf("workspace %s: %w", abs, re.err)
 			}
 		})

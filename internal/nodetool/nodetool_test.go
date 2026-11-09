@@ -266,7 +266,7 @@ func TestScope(t *testing.T) {
 	}
 }
 
-func TestWorkspaceRoot(t *testing.T) {
+func TestWorkspaceConfigs(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, map[string]string{
 		"package.json":                 `{"name": "ws", "workspaces": ["packages/*"]}`,
@@ -278,6 +278,7 @@ func TestWorkspaceRoot(t *testing.T) {
 		"broken/package.json":          `{"workspaces": [`,
 		"broken/x/package.json":        "{}",
 	})
+	var confs WorkspaceConfigs
 	for _, c := range []struct{ dir, want string }{
 		{".", "."},
 		{"packages/a", "."},
@@ -287,25 +288,25 @@ func TestWorkspaceRoot(t *testing.T) {
 		{"broken/x", ""},
 		{"elsewhere", ""},
 	} {
-		got, ok := WorkspaceRoot(root, c.dir)
+		got, ok := confs.Root(root, c.dir)
 		if ok != (c.want != "") || got != c.want {
-			t.Errorf("WorkspaceRoot(%s) = %q, %v, want %q", c.dir, got, ok, c.want)
+			t.Errorf("Root(%s) = %q, %v, want %q", c.dir, got, ok, c.want)
 		}
 	}
 
 	// Unnamed and unparsable members are left out.
 	write(t, root, map[string]string{"packages/nameless/package.json": "{}", "packages/bad/package.json": "{"})
-	if names, err := WorkspacePackages(root); err != nil || len(names) != 2 || !names["ws"] || !names["a"] {
-		t.Errorf("WorkspacePackages = %v, %v; want ws and a", names, err)
+	if names, err := (&WorkspaceConfigs{}).Packages(root); err != nil || len(names) != 2 || !names["ws"] || !names["a"] {
+		t.Errorf("Packages = %v, %v; want ws and a", names, err)
 	}
-	if _, err := WorkspacePackages(filepath.Join(root, "broken")); err == nil {
+	if _, err := (&WorkspaceConfigs{}).Packages(filepath.Join(root, "broken")); err == nil {
 		t.Error("broken workspace: no error")
 	}
 	write(t, root, map[string]string{"dirpkg/package.json/x": "", "dirpkg/pnpm-workspace.yaml": "packages: [m]\n"})
-	if _, err := WorkspacePackages(filepath.Join(root, "dirpkg")); err == nil {
+	if _, err := (&WorkspaceConfigs{}).Packages(filepath.Join(root, "dirpkg")); err == nil {
 		t.Error("unreadable root package.json: no error")
 	}
-	if names, err := WorkspacePackages(filepath.Join(root, "none")); err != nil || len(names) != 0 {
+	if names, err := (&WorkspaceConfigs{}).Packages(filepath.Join(root, "none")); err != nil || len(names) != 0 {
 		t.Errorf("no workspace = %v, %v", names, err)
 	}
 }

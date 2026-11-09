@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"go.yaml.in/yaml/v4"
@@ -274,14 +275,44 @@ func readWorkspaces(dir string) (workspaces, error) {
 	return parseWorkspaces(m, pnpmWS)
 }
 
-// WorkspaceRoot returns the workspace root of the package.json directory dir (slash paths
-// relative to the absolute root): the nearest directory at or above dir, within root, that
-// declares workspaces (package.json `workspaces` or pnpm-workspace.yaml `packages`) and is dir
-// itself or includes dir in its globs. Unlike Scope it needs no lockfile. ok is false outside
-// any workspace.
-func WorkspaceRoot(root, dir string) (string, bool) {
+// WorkspaceConfigs reads the workspace configuration (package.json `workspaces` and
+// pnpm-workspace.yaml `packages`) of each directory once, so the members of one workspace share
+// the root's read and parse. The zero value is ready; it is safe for concurrent use.
+type WorkspaceConfigs struct {
+	mu sync.Mutex
+	m  map[string]*workspaceConfig // absolute directory
+}
+
+type workspaceConfig struct {
+	once sync.Once
+	ws   workspaces
+	err  error
+}
+
+// read is readWorkspaces of the absolute directory dir, read once.
+func (c *WorkspaceConfigs) read(dir string) (workspaces, error) {
+	c.mu.Lock()
+	e := c.m[dir]
+	if e == nil {
+		if c.m == nil {
+			c.m = map[string]*workspaceConfig{}
+		}
+		e = &workspaceConfig{}
+		c.m[dir] = e
+	}
+	c.mu.Unlock()
+	e.once.Do(func() { e.ws, e.err = readWorkspaces(dir) })
+	return e.ws, e.err
+}
+
+// Root returns the workspace root of the package.json directory dir (slash paths relative to
+// the absolute root): the nearest directory at or above dir, within root, that declares
+// workspaces (package.json `workspaces` or pnpm-workspace.yaml `packages`) and is dir itself or
+// includes dir in its globs. Unlike Scope it needs no lockfile. ok is false outside any
+// workspace.
+func (c *WorkspaceConfigs) Root(root, dir string) (string, bool) {
 	for ws := dir; ; ws = path.Dir(ws) {
-		w, err := readWorkspaces(filepath.Join(root, filepath.FromSlash(ws)))
+		w, err := c.read(filepath.Join(root, filepath.FromSlash(ws)))
 		switch {
 		case err != nil:
 			slog.Debug("workspace configuration unreadable", "dir", ws, "err", err)
@@ -297,11 +328,10 @@ func WorkspaceRoot(root, dir string) (string, bool) {
 	}
 }
 
-// WorkspacePackages returns the package names of the workspace rooted at the absolute
-// directory dir: the root package and every member. Unnamed or unparsable package.json files
-// are left out.
-func WorkspacePackages(dir string) (map[string]bool, error) {
-	w, err := readWorkspaces(dir)
+// Packages returns the package names of the workspace rooted at the absolute directory dir:
+// the root package and every member. Unnamed or unparsable package.json files are left out.
+func (c *WorkspaceConfigs) Packages(dir string) (map[string]bool, error) {
+	w, err := c.read(dir)
 	if err != nil {
 		return nil, err
 	}
