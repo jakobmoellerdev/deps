@@ -14,31 +14,59 @@ import (
 // DepTypeOpenTofuVersionFile is the DepType of tofuenv's .opentofu-version.
 const DepTypeOpenTofuVersionFile = "opentofu-version"
 
-var (
-	versionFileRe = regexp.MustCompile(`(^|/)\.(terraform|opentofu)-version$`)
-	tflintRe      = regexp.MustCompile(`(^|/)\.tflint\.hcl$`)
+// TerragruntVersionName is the name of the terragrunt-version manager, and
+// DepTypeTerragruntVersionFile the DepType of its tgenv .terragrunt-version.
+const (
+	TerragruntVersionName        = "terragrunt-version"
+	DepTypeTerragruntVersionFile = "terragrunt-version"
 )
 
-type versionManager struct{}
+// The Terragrunt CLI releases (.terragrunt-version).
+const (
+	terragruntRepo   = "gruntwork-io/terragrunt"
+	terragruntSource = "https://github.com/gruntwork-io/terragrunt"
+)
+
+var (
+	versionFileRe           = regexp.MustCompile(`(^|/)\.(terraform|opentofu)-version$`)
+	terragruntVersionFileRe = regexp.MustCompile(`(^|/)\.terragrunt-version$`)
+	tflintRe                = regexp.MustCompile(`(^|/)\.tflint\.hcl$`)
+)
+
+// versionManager reads a single-version file of a tfenv-style version manager: the version on
+// its first non-empty line.
+type versionManager struct {
+	name  string
+	match *regexp.Regexp
+}
 
 // NewVersion returns the terraform-version manager (tfenv's .terraform-version and tofuenv's
 // .opentofu-version).
-func NewVersion() manager.Manager { return versionManager{} }
+func NewVersion() manager.Manager { return versionManager{VersionName, versionFileRe} }
 
-func (versionManager) Name() string { return VersionName }
-
-// Match reports whether the slash path is a .terraform-version or .opentofu-version file. The
-// suffix check skips the regexp for the paths that cannot match.
-func (versionManager) Match(p string) bool {
-	return strings.HasSuffix(p, "-version") && versionFileRe.MatchString(p)
+// NewTerragruntVersion returns the terragrunt-version manager (tgenv's .terragrunt-version).
+func NewTerragruntVersion() manager.Manager {
+	return versionManager{TerragruntVersionName, terragruntVersionFileRe}
 }
 
-// Extract returns the version on the first non-empty line: a Terraform release, or an OpenTofu
-// release for .opentofu-version. tfenv/tofuenv keywords (`latest`, `latest:<regex>`,
-// `min-required`, `latest-allowed`) are skipped.
-func (versionManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+func (m versionManager) Name() string { return m.name }
+
+// Match reports whether the slash path is a version file of the manager. The suffix check
+// skips the regexp for the paths that cannot match.
+func (m versionManager) Match(p string) bool {
+	return strings.HasSuffix(p, "-version") && m.match.MatchString(p)
+}
+
+// Extract returns the version on the first non-empty line: a Terraform release, an OpenTofu
+// release for .opentofu-version or a Terragrunt release for .terragrunt-version.
+// tfenv/tofuenv/tgenv keywords (`latest`, `latest:<regex>`, `min-required`, `latest-allowed`)
+// are skipped.
+func (m versionManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	depType, name, source := DepTypeVersionFile, terraformRepo, terraformSource
-	if strings.HasSuffix(file, ".opentofu-version") {
+	switch {
+	case m.name == TerragruntVersionName:
+		depType, name, source = DepTypeTerragruntVersionFile, terragruntRepo, terragruntSource
+	case strings.HasSuffix(file, ".opentofu-version"):
 		depType, name, source = DepTypeOpenTofuVersionFile, opentofuRepo, opentofuSource
 	}
 	off := 0
@@ -51,7 +79,7 @@ func (versionManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep
 		if t := bytes.TrimSpace(line); len(t) > 0 {
 			start := off + bytes.Index(line, t)
 			d := dep.Dep{
-				Manager: VersionName, Datasource: "github-releases", Versioning: "hashicorp", DepType: depType,
+				Manager: m.name, Datasource: "github-releases", Versioning: "hashicorp", DepType: depType,
 				File: file, Line: lineAt(src, start), Name: name, Source: source, Version: string(t),
 			}
 			if versionRe.Match(t) {

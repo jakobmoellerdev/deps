@@ -1,7 +1,7 @@
 // Package toolversions extracts tool versions from version-manager files: `.nvmrc` (nvm),
 // `.node-version` (nodenv), `.ruby-version` (ruby-version), `.python-version` (pyenv),
-// `runtime.txt` (runtime-version), `.tool-versions` (asdf) and `mise.toml` (mise). Each file
-// format is its own manager; they share the tool table and the version classification.
+// `runtime.txt` (runtime-version), `.bun-version` (bun-version), `.tool-versions` (asdf) and
+// `mise.toml` (mise). Each file format is its own manager; they share the tool table and the version classification.
 package toolversions
 
 import (
@@ -24,14 +24,17 @@ const (
 	NameRubyVersion    = "ruby-version"
 	NamePyenv          = "pyenv"
 	NameRuntimeVersion = "runtime-version"
+	NameBunVersion     = "bun-version"
 	NameAsdf           = "asdf"
 	NameMise           = "mise"
 )
 
 // Dep types: the Node.js version of an nvm/nodenv file, the Ruby version of a ruby-version
-// file, the Python version of a pyenv/runtime-version file, and one tool of asdf/mise.
+// file, the Python version of a pyenv/runtime-version file, the Bun version of a bun-version
+// file, and one tool of asdf/mise.
 const (
 	DepTypeNode   = "node"
+	DepTypeBun    = "bun"
 	DepTypeRuby   = "ruby"
 	DepTypePython = "python"
 	DepTypeTool   = "tool"
@@ -43,6 +46,7 @@ var (
 	rubyVersionRe = regexp.MustCompile(`(^|/)\.ruby-version$`)
 	pyenvRe       = regexp.MustCompile(`(^|/)\.python-version$`)
 	runtimeRe     = regexp.MustCompile(`(^|/)runtime\.txt$`)
+	bunVersionRe  = regexp.MustCompile(`(^|/)\.bun-version$`)
 	asdfRe        = regexp.MustCompile(`(^|/)\.tool-versions$`)
 	miseRe        = regexp.MustCompile(`(^|/)(\.?mise\.toml|\.?mise/config\.toml|\.config/mise\.toml|\.config/mise/config\.toml)$`)
 )
@@ -90,6 +94,13 @@ func NewPyenv() manager.Manager {
 func NewRuntimeVersion() manager.Manager {
 	return &toolManager{name: NameRuntimeVersion, suffix: "runtime.txt", match: runtimeRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
 		return extractRuntime(file, src), nil
+	}}
+}
+
+// NewBunVersion returns the bun-version manager (`.bun-version`, read by oven-sh/setup-bun).
+func NewBunVersion() manager.Manager {
+	return &toolManager{name: NameBunVersion, suffix: ".bun-version", match: bunVersionRe, extract: func(file string, src []byte) ([]dep.Dep, error) {
+		return extractFirst(NameBunVersion, DepTypeBun, bunTool, file, src), nil
 	}}
 }
 
@@ -193,6 +204,9 @@ var (
 	goTool     = tool{datasource: dsGo, name: "go"}
 	rubyTool   = tool{datasource: dsRuby, name: "ruby"}
 	pythonTool = tool{datasource: dsPython, name: "python"}
+	// bunTool is the bun npm package (Renovate's bun-version datasource); its versions are
+	// Bun's releases without the `bun-v` tag prefix.
+	bunTool = npmTool("bun")
 	// The Maven distribution and Gradle use Maven's version order (3.9.9, 8.11, 8.11-rc-1).
 	mavenTool  = tool{datasource: dsMaven, name: "org.apache.maven:apache-maven"}
 	gradleTool = tool{datasource: dsGradle, name: "gradle"}
@@ -445,11 +459,11 @@ func ToolDep(mgr, depType, file string, line int, name, raw string, at int) dep.
 // X.Y).
 var derivesLines = map[string]bool{dsNode: true, dsGo: true, dsRuby: true, dsPython: true, dsCrate: true, dsRust: true, dsJava: true}
 
-// Partial reports whether d is a partial asdf/mise tool version (`1.55`, `3`) under tag
-// versioning whose datasource lists only full versions: the engine then derives the X.Y and
-// X release lines from the stable X.Y.Z releases, so the version keeps its precision.
+// Partial reports whether d is a partial asdf/mise/bun-version tool version (`1.55`, `3`)
+// under tag versioning whose datasource lists only full versions: the engine then derives the
+// X.Y and X release lines from the stable X.Y.Z releases, so the version keeps its precision.
 func Partial(d dep.Dep) bool {
-	if d.Manager != NameAsdf && d.Manager != NameMise || d.Versioning != "tag" || derivesLines[d.Datasource] {
+	if d.Manager != NameAsdf && d.Manager != NameMise && d.Manager != NameBunVersion || d.Versioning != "tag" || derivesLines[d.Datasource] {
 		return false
 	}
 	return partialRe.MatchString(d.Version)

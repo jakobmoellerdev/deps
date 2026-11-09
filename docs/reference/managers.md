@@ -36,6 +36,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`conda`](#conda)
 - [`terraform`](#terraform)
 - [`terraform-version`](#terraform-version)
+- [`terragrunt-version`](#terragrunt-version)
 - [`tflint-plugin`](#tflint-plugin)
 - [`terragrunt`](#terragrunt)
 - [`maven`](#maven)
@@ -48,6 +49,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`ruby-version`](#ruby-version)
 - [`pyenv`](#pyenv)
 - [`runtime-version`](#runtime-version)
+- [`bun-version`](#bun-version)
 - [`git-submodules`](#git-submodules)
 - [`rust-toolchain`](#rust-toolchain)
 - [`devcontainer`](#devcontainer)
@@ -2110,6 +2112,28 @@ Updates the Terraform version pinned in tfenv's `.terraform-version` file, or th
 
 A full version (`1.9.5`) moves to the newest release; a partial one (`1.9`) keeps its precision. The `v` style of the file is kept.
 
+## terragrunt-version
+
+Updates the Terragrunt version pinned in tgenv's `.terragrunt-version` file (the first non-empty line).
+
+**Files:**
+
+- `.terragrunt-version`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `terragrunt-version` | the version on the first non-empty line of `.terragrunt-version` | `github-releases` (`gruntwork-io/terragrunt`) | `hashicorp` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-version value` | tgenv keywords: `latest`, `latest:<regex>`, `min-required` |
+
+**Versions.**
+
+A full version (`0.67.4`) moves to the newest release (`v0.68.1` tags match with or without `v`, as Renovate's extractVersion `^v(?<version>.+)$`); a partial one (`0.67`) keeps its precision. The `v` style of the file is kept.
+
 ## tflint-plugin
 
 Updates the versions of tflint ruleset plugins in `.tflint.hcl`. Plugins without a `source` are bundled with tflint and not extracted.
@@ -2615,6 +2639,31 @@ Updates the Python version in `runtime.txt` (Heroku, Scalingo, Binder): `python-
 
 - `python-3.13.1` uses `pep440` versioning, `python-3.13` `tag` versioning at its precision; the `python-` prefix stays outside the replaced token.
 - Renovate uses the `docker` datasource (the `python` image tags) for these files; deps uses the python.org release list ([python-version](#datasources)), which asdf, mise and the devcontainer Python feature share.
+
+## bun-version
+
+Updates the Bun version in `.bun-version` (read by `oven-sh/setup-bun`'s `bun-version-file`): the first token of the first line that is neither blank nor a `#` comment. As in Renovate, the version comes from the `bun` npm package, whose versions are Bun's releases.
+
+**Files:**
+
+- any `.bun-version`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `bun` | the Bun version (name `bun`) | `npm` | `semver`; partial versions `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `non-version value` | empty or a word such as `latest` or `canary`: setup-bun resolves it by itself |
+| `unsupported range` | anything else that is not `[v]X[.Y[.Z[-pre]]]`, such as `>=1.1` or `1.x` |
+
+**Versions.**
+
+- A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style.
+- A partial `1` or `1.2` uses `tag` versioning and keeps its precision (`1.2` → `1.3`) from release lines deps derives from the stable releases, as for asdf; Renovate would replace it with a full version. A leading `v` stays outside the replaced token.
+- Only the version token is replaced; comments and the rest of the file are kept.
 
 ## git-submodules
 

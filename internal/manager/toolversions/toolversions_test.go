@@ -89,6 +89,10 @@ func TestMatch(t *testing.T) {
 		{NewRuntimeVersion(), "app/runtime.txt", true},
 		{NewRuntimeVersion(), "my-runtime.txt", false},
 		{NewRuntimeVersion(), "runtimeatxt", false},
+		{NewBunVersion(), ".bun-version", true},
+		{NewBunVersion(), "frontend/.bun-version", true},
+		{NewBunVersion(), "bun-version", false},
+		{NewBunVersion(), ".bun-version.bak", false},
 		{NewAsdf(), ".tool-versions", true},
 		{NewAsdf(), "svc/.tool-versions", true},
 		{NewAsdf(), "tool-versions", false},
@@ -113,7 +117,7 @@ func TestMatch(t *testing.T) {
 func TestNames(t *testing.T) {
 	for m, name := range map[manager.Manager]string{
 		NewNvm(): NameNvm, NewNodenv(): NameNodenv, NewRubyVersion(): NameRubyVersion, NewPyenv(): NamePyenv,
-		NewRuntimeVersion(): NameRuntimeVersion, NewAsdf(): NameAsdf, NewMise(): NameMise,
+		NewRuntimeVersion(): NameRuntimeVersion, NewBunVersion(): NameBunVersion, NewAsdf(): NameAsdf, NewMise(): NameMise,
 	} {
 		if m.Name() != name {
 			t.Errorf("Name() = %q, want %q", m.Name(), name)
@@ -261,6 +265,30 @@ func TestRuntimeTxt(t *testing.T) {
 				news = map[string]string{c.w[0].ver: c.new}
 			}
 			if out := check(t, NewRuntimeVersion(), "runtime.txt", c.in, c.w, news); out != c.out {
+				t.Errorf("patched = %q, want %q", out, c.out)
+			}
+		})
+	}
+}
+
+// The "real" case is frontend/.bun-version of github.com/redpanda-data/console@51c1a7b.
+func TestBunVersionFile(t *testing.T) {
+	for _, c := range []struct {
+		name, in string
+		w        want
+		new, out string // new version for w.ver, patched file
+	}{
+		{"real", "1.4.4\n", want{"bun", dsNpm, "semver", "1.4.4", "", 1}, "1.4.5", "1.4.5\n"},
+		{"v prefix", "v1.1.38\n", want{"bun", dsNpm, "semver", "v1.1.38", "", 1}, "v1.2.0", "v1.2.0\n"},
+		{"minor", "# setup-bun\n1.2\r\n", want{"bun", dsNpm, "tag", "1.2", "", 2}, "1.3", "# setup-bun\n1.3\r\n"},
+		{"canary pre-release", "1.3.0-canary.1\n", want{"bun", dsNpm, "semver", "1.3.0-canary.1", "", 1}, "1.3.0", "1.3.0\n"},
+		{"latest", "latest\n", want{"bun", dsNpm, "", "latest", "non-version value", 1}, "", "latest\n"},
+		{"canary", "canary\n", want{"bun", dsNpm, "", "canary", "non-version value", 1}, "", "canary\n"},
+		{"range", ">=1.1\n", want{"bun", dsNpm, "", ">=1.1", "unsupported range", 1}, "", ">=1.1\n"},
+		{"x-range", "1.x\n", want{"bun", dsNpm, "", "1.x", "unsupported range", 1}, "", "1.x\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if out := check(t, NewBunVersion(), "frontend/.bun-version", c.in, []want{c.w}, map[string]string{c.w.ver: c.new}); out != c.out {
 				t.Errorf("patched = %q, want %q", out, c.out)
 			}
 		})
@@ -576,6 +604,8 @@ func TestPartial(t *testing.T) {
 		{dep.Dep{Manager: NameMise, Datasource: dsRust, Versioning: "tag", Version: "1.82"}, false},
 		{dep.Dep{Manager: NameMise, Datasource: dsJava, Versioning: "tag", Version: "21"}, false},
 		{dep.Dep{Manager: NameNvm, Datasource: dsNode, Versioning: "tag", Version: "20"}, false},
+		{dep.Dep{Manager: NameBunVersion, Datasource: dsNpm, Versioning: "tag", Version: "1.2"}, true},
+		{dep.Dep{Manager: NameBunVersion, Datasource: dsNpm, Versioning: "semver", Version: "1.2.3"}, false},
 		{dep.Dep{Manager: "github-actions", Datasource: dsGitTags, Versioning: "tag", Version: "v4"}, false},
 	} {
 		if got := Partial(c.d); got != c.want {

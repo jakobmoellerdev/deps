@@ -114,6 +114,22 @@ var VersionDoc = refdoc.Manager{
 	},
 }
 
+// TerragruntVersionDoc is the reference documentation of the terragrunt-version manager.
+var TerragruntVersionDoc = refdoc.Manager{
+	Name:    TerragruntVersionName,
+	Summary: "Updates the Terragrunt version pinned in tgenv's `.terragrunt-version` file (the first non-empty line).",
+	Files:   []string{"`.terragrunt-version`"},
+	DepTypes: []refdoc.DepType{
+		{Name: DepTypeTerragruntVersionFile, What: "the version on the first non-empty line of `.terragrunt-version`", Datasource: "`github-releases` (`gruntwork-io/terragrunt`)", Versioning: "`hashicorp`", Datasources: []string{"github-releases"}},
+	},
+	Skips: []refdoc.Skip{
+		{Reason: "non-version value", When: "tgenv keywords: `latest`, `latest:<regex>`, `min-required`"},
+	},
+	Sections: []refdoc.Section{
+		{Title: "Versions", Body: "A full version (`0.67.4`) moves to the newest release (`v0.68.1` tags match with or without `v`, as Renovate's extractVersion `^v(?<version>.+)$`); a partial one (`0.67`) keeps its precision. The `v` style of the file is kept."},
+	},
+}
+
 // TFLintDoc is the reference documentation of the tflint-plugin manager.
 var TFLintDoc = refdoc.Manager{
 	Name:    TFLintName,

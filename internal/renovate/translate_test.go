@@ -429,6 +429,21 @@ func TestLoadRules(t *testing.T) {
     ignore: true` + defaultExclusions,
 		},
 		{
+			name: "bun-version and terragrunt-version managers, js and terraform categories",
+			src: `{packageRules: [{matchCategories: ['js'], automerge: true},
+				{matchCategories: ['terraform'], automerge: true},
+				{matchManagers: ['bun-version', 'terragrunt-version'], enabled: false}]}`,
+			rules: `  - # packageRules[0]
+    managers: [npm, nvm, nodenv, bun-version]
+    automerge: true
+  - # packageRules[1]
+    managers: [terraform, terraform-version, terragrunt-version, tflint-plugin, terragrunt]
+    automerge: true
+  - # packageRules[2]
+    managers: [bun-version, terragrunt-version]
+    ignore: true` + defaultExclusions,
+		},
+		{
 			name: "matchCurrentValue regexes and exact strings are currentVersion",
 			src: `{packageRules: [{matchCurrentValue: '/^1/', matchPackageNames: ['a'], enabled: false},
 				{matchCurrentValue: '!/-rc/i', matchPackageNames: ['b'], enabled: false},

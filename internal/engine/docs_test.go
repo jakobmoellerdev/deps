@@ -241,7 +241,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 	// custom the deb datasource's registry URL skip.
 	pkgDirs := map[string][]string{
 		actions.Name: {"actions"}, "pre-commit": {"precommit", "../pyreq", "npm"},
-		"nvm": {"toolversions"}, "nodenv": {"toolversions"}, "ruby-version": {"toolversions"}, "pyenv": {"toolversions"}, "runtime-version": {"toolversions"},
+		"nvm": {"toolversions"}, "nodenv": {"toolversions"}, "ruby-version": {"toolversions"}, "pyenv": {"toolversions"}, "runtime-version": {"toolversions"}, "bun-version": {"toolversions"},
 		"asdf": {"toolversions"}, "mise": {"toolversions"},
 		"kustomize": {"kustomize", "docker", "helm"}, "gitlabci": {"gitlabci", "docker"},
 		"cargo":              {"cargo", filepath.Join("..", "datasource", "crate")},
@@ -251,8 +251,8 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"pep723": {"pep723", "../pyreq"}, "setup-cfg": {"setupcfg", "../pyreq"}, "pip_setup": {"pipsetup", "../pyreq"},
 		"homeassistant-manifest": {"homeassistant", "../pyreq"},
 		terraform.Name:           {"terraform", "docker", "helm"}, terraform.VersionName: {"terraform"}, terraform.TFLintName: {"terraform"},
-		terraform.TerragruntName: {"terraform"},
-		gradlewrapper.Name:       {"gradlewrapper"}, mavenwrapper.Name: {"mavenwrapper"}, "git-submodules": {"gitsubmodules"},
+		terraform.TerragruntName: {"terraform"}, terraform.TerragruntVersionName: {"terraform"},
+		gradlewrapper.Name: {"gradlewrapper"}, mavenwrapper.Name: {"mavenwrapper"}, "git-submodules": {"gitsubmodules"},
 		"rust-toolchain":      {"rusttoolchain"},
 		"devcontainer":        {"devcontainer", "docker", "toolversions"},
 		"bitbucket-pipelines": {"bitbucketpipelines", "docker"}, "woodpecker": {"woodpecker", "docker"}, "droneci": {"droneci", "docker"},

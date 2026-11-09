@@ -1069,6 +1069,34 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "terragrunt-version"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "terragrunt-version"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "tflint-plugin"
                   ]
                 },
@@ -1410,6 +1438,34 @@
                 "items": {
                   "enum": [
                     "python"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
+                    "bun-version"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "bun"
                   ]
                 }
               }
@@ -2756,6 +2812,7 @@
               "conda",
               "terraform",
               "terraform-version",
+              "terragrunt-version",
               "tflint-plugin",
               "terragrunt",
               "maven",
@@ -2768,6 +2825,7 @@
               "ruby-version",
               "pyenv",
               "runtime-version",
+              "bun-version",
               "git-submodules",
               "rust-toolchain",
               "devcontainer",
@@ -2925,6 +2983,7 @@
               "kubernetes_replication_controller_v1",
               "terraform-version",
               "opentofu-version",
+              "terragrunt-version",
               "plugin",
               "github",
               "gitTags",
@@ -2944,6 +3003,7 @@
               "ruby",
               "development",
               "python",
+              "bun",
               "submodule",
               "feature",
               "feature-version",

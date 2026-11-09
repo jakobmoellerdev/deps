@@ -135,6 +135,27 @@ var DocRuntimeVersion = refdoc.Manager{
 	}}},
 }
 
+// DocBunVersion is the reference documentation of the bun-version manager
+// (docs/reference/managers.md).
+var DocBunVersion = refdoc.Manager{
+	Name: NameBunVersion,
+	Summary: "Updates the Bun version in `.bun-version` (read by `oven-sh/setup-bun`'s `bun-version-file`): the first token of the first line that is neither blank nor a `#` comment. " +
+		"As in Renovate, the version comes from the `bun` npm package, whose versions are Bun's releases.",
+	Files: []string{"any `.bun-version`"},
+	DepTypes: []refdoc.DepType{
+		{Name: DepTypeBun, What: "the Bun version (name `bun`)", Versioning: "`semver`; partial versions `tag`", Datasources: []string{dsNpm}},
+	},
+	Skips: []refdoc.Skip{
+		{Reason: "non-version value", When: "empty or a word such as `latest` or `canary`: setup-bun resolves it by itself"},
+		{Reason: "unsupported range", When: "anything else that is not `[v]X[.Y[.Z[-pre]]]`, such as `>=1.1` or `1.x`"},
+	},
+	Sections: []refdoc.Section{{Title: "Versions", Items: []string{
+		"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style.",
+		"A partial `1` or `1.2` uses `tag` versioning and keeps its precision (`1.2` → `1.3`) from release lines deps derives from the stable releases, as for asdf; Renovate would replace it with a full version. A leading `v` stays outside the replaced token.",
+		"Only the version token is replaced; comments and the rest of the file are kept.",
+	}}},
+}
+
 var toolVersionItems = []string{
 	"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`), pypi tools use `pep440`.",
 	"A partial version (`X`, `X.Y`) uses `tag` versioning and keeps its precision (`2.5` → `2.6`, `29` → `31`); a leading `v` stays outside the replaced token. node, go (`1.27`), ruby, python, rust (`1.82`) and crate list their release lines themselves; for the other datasources (github-releases, git-tags, npm, pypi, go, …) deps derives a line `X.Y` and `X` from every stable `[v]X.Y.Z` release (and the bare `X.Y` of a `vX.Y` release), dated by the line's first release. Renovate would replace a partial version by a full one.",

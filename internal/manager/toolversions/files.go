@@ -7,7 +7,7 @@ import (
 )
 
 // extractFirst returns the version of a single-version file (`.nvmrc`, `.node-version`,
-// `.ruby-version`, `.python-version`) as a dep of t: the first token of the first line that is
+// `.ruby-version`, `.python-version`, `.bun-version`) as a dep of t: the first token of the first line that is
 // neither blank nor a `#` comment. An operator-led token followed by another (`>=20 <22`) is
 // a compound range, kept whole so it is skipped.
 func extractFirst(mgr, depType string, t tool, file string, src []byte) []dep.Dep {
