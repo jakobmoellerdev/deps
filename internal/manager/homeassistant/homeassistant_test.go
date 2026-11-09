@@ -9,6 +9,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 )
 
 func render(ds []dep.Dep) string {
@@ -33,12 +34,19 @@ func extract(t *testing.T, file string, src []byte) []dep.Dep {
 		t.Fatal(err)
 	}
 	for _, d := range ds {
-		if d.Skip == "" {
+		if d.Skip == "" && d.Range != "" {
 			if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != d.Range {
 				t.Errorf("%s: RefSpan %q, want %q", d.Name, got, d.Range)
 			}
 		}
-		if d.Manager != Name || d.Versioning != "pep440" {
+		vs := "pep440"
+		if d.Datasource == pyreq.GitTags {
+			vs = "tag"
+			if got := string(src[d.RefSpan.Start:d.RefSpan.End]); got != d.Version {
+				t.Errorf("%s: RefSpan %q, want tag %q", d.Name, got, d.Version)
+			}
+		}
+		if d.Manager != Name || d.Versioning != vs {
 			t.Errorf("%s: manager %q versioning %q", d.Name, d.Manager, d.Versioning)
 		}
 	}
@@ -76,6 +84,8 @@ func TestExtractEdgeCases(t *testing.T) {
     "pyfoo[bar] == 1.2.3 ; python_version >= '3.12'",
     "unpinned",
     "lib @ git+https://github.com/o/lib@v1",
+    "branch @ git+https://github.com/o/branch@main",
+    "esctag @ git+https://github.com/o/esc\u0074ag@v2.0.0",
     "remote @ https://example.com/r.whl",
     "esc\u0061ped==1.0",
     "~not a name",
@@ -88,14 +98,44 @@ func TestExtractEdgeCases(t *testing.T) {
 }`)
 	want := `3 requirements pypi pyfoo 1.2.3 range="== 1.2.3"
 4 requirements pypi unpinned  skip="unconstrained"
-5 requirements pypi lib  skip="git dependency"
-6 requirements pypi remote  skip="url dependency"
-7 requirements pypi escaped  skip="cannot locate value"
-8 requirements pypi ~not a name  skip="invalid dependency specification"
-10 requirements pypi pkg 2.0 range=">=2.0"
+5 requirements git-tags lib v1
+6 requirements pypi branch  skip="git dependency"
+7 requirements pypi esctag  skip="cannot locate value"
+8 requirements pypi remote  skip="url dependency"
+9 requirements pypi escaped  skip="cannot locate value"
+10 requirements pypi ~not a name  skip="invalid dependency specification"
+12 requirements pypi pkg 2.0 range=">=2.0"
 `
 	if got := render(extract(t, "custom_components/x/manifest.json", src)); got != want {
 		t.Errorf("deps =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestGitTag: a requirement pinned to a version tag of an http(s) repository is a git-tags
+// dep of the repository whose tag is rewritten (Renovate's homeassistant-manifest does the
+// same).
+func TestGitTag(t *testing.T) {
+	src := []byte(`{"domain": "x", "name": "X", "requirements": [
+  "pyfoo @ git+https://github.com/org/pyfoo.git@v1.2.0#subdirectory=py"
+]}`)
+	ds := extract(t, "custom_components/x/manifest.json", src)
+	if len(ds) != 1 {
+		t.Fatalf("deps %v", ds)
+	}
+	d := ds[0]
+	if d.Source != "https://github.com/org/pyfoo" || d.Version != "v1.2.0" || d.Skip != "" {
+		t.Fatalf("dep %+v", d)
+	}
+	edits, err := New().Edits(dep.Update{Dep: d, NewVersion: "v1.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := patch.Apply(src, edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"pyfoo @ git+https://github.com/org/pyfoo.git@v1.3.0#subdirectory=py"`; !strings.Contains(string(out), want) {
+		t.Errorf("out = %s", out)
 	}
 }
 

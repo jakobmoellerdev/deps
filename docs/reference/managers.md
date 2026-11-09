@@ -1797,7 +1797,7 @@ Updates the PEP 508 `requirements` of Home Assistant integration manifests (`cus
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `requirements` | every string of `requirements` (`"alexapy==1.34.0"`, `"dictor>=0.1.12,<0.2"`); non-string items are ignored | `pypi` | `pep440` | updated |
+| `requirements` | every string of `requirements` (`"alexapy==1.34.0"`, `"dictor>=0.1.12,<0.2"`); non-string items are ignored | `pypi`; `git-tags` for git tags (`name @ git+https://…@<tag>`) | `pep440`; `tag` for git tags | updated |
 
 **Skips:**
 
@@ -1807,7 +1807,7 @@ Updates the PEP 508 `requirements` of Home Assistant integration manifests (`cus
 | `unsupported range` | a specifier that does not parse: a version that is not PEP 440 (`>=1.0-SNAPSHOT`, `===foobar`), a wildcard other than a trailing `.*` of `==` or `!=` (`~=1.*`, `>=1.*`), Poetry syntax (`^1.2`, `>=1 <2`, `\|\|`), or a bare version outside Pipfiles |
 | `cannot locate value` | a JSON string with escapes |
 | `url dependency` | `name @ https://…` |
-| `git dependency` | `name @ git+…` |
+| `git dependency` | `name @ git+…` not pinned to a version tag of an http(s) repository |
 | `local dependency` | `name @ file://…` |
 | `invalid dependency specification` | a requirement that does not start with a valid project name |
 
@@ -1826,6 +1826,10 @@ Updates the PEP 508 `requirements` of Home Assistant integration manifests (`cus
 - Rewrites follow Renovate's pep440 `getNewValue` (`lib/modules/versioning/pep440/range.ts`): an admitted version gets its `bump` rules, any other its `replace` rules (`widen` and `pin` aside, above), under every strategy (Renovate's `bump` would write the full new version as lower bound there too). Clause by clause: `!=` exclusions are kept verbatim; `<V` moves past the new version at the range's precision (`>=1.2,<2` with 3.1.0 → `>=3.1,<4`; with two clauses the precision is the first part in which the bounds differ, one finer for a major followed by `0`: `>=1.2.0,<2.0.0` with 3.1.4 → `>=3.1.4,<3.2.0`); `>=` and `>` take the new version at their own precision (`>=1.2` → `>=3.1`, a new version at or below them `>=<new>`); trailing zeros are trimmed when a clause has fewer than three parts; `~=`, `^` and `~` take the new version cut or zero-padded to their precision (`~=7.2` with 8.0.1 → `~=8.0`); `==`, `===`, `=`, a bare version and `<=` become the new version; wildcards keep `.*` at their precision (`==1.0.*` → `==1.2.*`).
 - A Poetry constraint with `||` alternatives gets a new alternative for a version outside all of them (`^1 || ^2` with 3.0.0 → `^1 || ^2 || ^3`, as Renovate widens npm `||` ranges); `bump` raises the alternative that admits the version.
 - Only the changed versions (and operators, `>` → `>=`) are rewritten; the bytes between clauses are kept. A rewrite that would not admit the new version (it is excluded by `!=`) is not proposed. Renovate's removal of a `>=` that a `==X.*` makes redundant is not done.
+
+**Git.**
+
+- A VCS reference that pins an http(s) git repository to a version tag (`name @ git+https://github.com/org/repo@v1.2.0`, optionally `.git` and a `#subdirectory=…` fragment) is a `git-tags` dep of `https://github.com/org/repo` (versioning `tag`) whose tag is replaced; a branch, a commit, no ref or an ssh URL is skipped as a `git dependency`.
 
 ## conda
 

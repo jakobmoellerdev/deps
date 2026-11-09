@@ -123,7 +123,8 @@ func (haManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, err
 }
 
 // requirement returns the dep of the JSON string raw (with quotes) whose content starts at
-// offset at. A string with escapes is read but cannot be rewritten.
+// offset at. A string with escapes is read but cannot be rewritten. A requirement pinned to a
+// version tag of an http(s) git repository is a git-tags dep (pyreq.SetGitURL).
 func requirement(file string, raw jsontext.Value, at, line int) dep.Dep {
 	s, exact := string(raw[1:len(raw)-1]), true
 	if bytes.IndexByte(raw, '\\') >= 0 {
@@ -138,7 +139,7 @@ func requirement(file string, raw jsontext.Value, at, line int) dep.Dep {
 	}
 	d := pyreq.NewDep(Name, DepTypeRequirements, file, r.Name, line)
 	if r.URL != "" {
-		d.Skip = pyreq.URLSkip(r.URL)
+		pyreq.SetGitURL(&d, r.URL, at+r.URLStart, exact)
 		return d
 	}
 	pyreq.SetVersion(&d, r.Spec, at+r.SpecStart, exact, pyreq.PEP440)
