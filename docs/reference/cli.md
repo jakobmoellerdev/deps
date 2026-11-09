@@ -373,6 +373,8 @@ The header names the manager, dep type, datasource and versioning. The other lin
 - `result` reads `skipped: <reason>`, `error: <err>`, `up to date`, or one `update` line per PR bucket, for example `update v6.0.0 -> v7.0.1 (major, bucket major)`.
 - Each advisory is printed as `security  <id>  <summary>  <url>`.
 
+**Base branch.** `--base <branch>` explains a base branch as `deps run` resolves it: from the tip of origin's branch (a temporary linked work tree, unless the checkout is at that tip), with its `rules[].baseBranches` matching it and, under `useBaseBranchConfig: merge`, the branch's own config file merged over the checkout's. stderr names the base and the config files applied (`base    release/1.x  config .deps.yaml + release/1.x:.deps.yaml`), and the base's rules read `(from release/1.x:.deps.yaml:<line>)`. A branch origin lacks exits 2.
+
 Config warnings (`warn    <config>: <field>: <msg>`) and errors go to stderr; see `deps help output`. A glob that matches no dependency fails with `no dependency matches <globs>` (exit 1). No globs, or an invalid glob, exits 2.
 
 ### deps explain examples
@@ -380,12 +382,14 @@ Config warnings (`warn    <config>: <field>: <msg>`) and errors go to stderr; se
 ```sh
 deps explain 'actions/*'
 deps explain 'k8s.io/**' github.com/spf13/cobra
+deps explain --base release/1.x 'actions/*'
 ```
 
 ### deps explain flags
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--base` | string | `""` | explain base branch \<base> as run resolves it: from the tip of origin's branch (a temporary work tree unless the checkout is at it), its rules[].baseBranches matching it, with useBaseBranchConfig its config merged over the checkout's |
 | `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
 | `--dir` | string | `"."` | repository directory to scan |
@@ -508,6 +512,7 @@ Resolves two checkouts of the repository, `--dir` (the pull request) and `--base
 Output lines (stderr):
 
 ```
+base    <base>[  config <files>]  (with a base branch, see below)
 new     <branch>  <title>
 changed <branch>  <title>
 unknown <branch>  <title>             (not compared: the base checkout failed on its dependencies)
@@ -516,6 +521,8 @@ error   <message>                    (lookup errors of --dir; those of --base-di
 check   <url>                        (the check run, GitHub)
 <n> new, <c> changed, <r> no longer opened, <s> the same[, <u> not compared] (<duration>)
 ```
+
+**Base branch.** `--base <branch>` (default: `$GITHUB_BASE_REF`, then `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME`) is the branch the pull request targets; both checkouts are resolved for it as `deps run` resolves that base: their `rules[].baseBranches` match it. When it is not the default branch (origin's `HEAD`) and the default branch's config file sets `useBaseBranchConfig: merge` (or `merge-if-present`), the config file of each checkout is merged over the default branch's (fetched from origin), as `run` merges the base's file over the default branch's checkout. The `base` line and the step summary name the files applied, e.g. `base    release/1.x  config main:.deps.yaml + release/1.x:.deps.yaml`. When the default branch or its config cannot be read, each checkout keeps its own config, with a warning; with `--renovate` it is not read.
 
 **Step summary.** The comparison is appended to `GITHUB_STEP_SUMMARY` (or `GITEA_STEP_SUMMARY`) as markdown, with an update table per new or changed PR.
 
@@ -534,6 +541,7 @@ deps preview --dir pr --base-dir base
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--base` | string | `""` | base branch the pull request targets, resolved as run resolves it: its rules[].baseBranches match, and with useBaseBranchConfig on the default branch the config of both checkouts is merged over the default branch's (default: $GITHUB_BASE_REF, then $CI_MERGE_REQUEST_TARGET_BRANCH_NAME) |
 | `--base-dir` | string | `""` | checkout of the base branch to compare with (required) |
 | `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
@@ -558,7 +566,7 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 - On an open PR, its ticked rebase checkbox or the `rebaseLabel` (default `rebase`) requests a rebuild like the dashboard's rebase checkbox; deps unticks the box and removes the label afterwards. The `stopUpdatingLabel` (default `stop-updating`) makes deps leave the PR alone.
 - With `--base` or the default branch, the local `HEAD` must be the tip of `origin/<base>`.
 
-**Base branches:** `--base`, else the config key `baseBranches`, else the repository's default branch. `baseBranches` lists names, `$default` and `/<RE2>/` regexes over the branches on origin (names origin lacks are skipped with a warning). Each base is resolved from its own tip, with the checkout's config, its `rules[].baseBranches` matching that base: the checkout serves the base it is the tip of, every other base gets a temporary linked work tree of its fetched tip. With more than one entry, or a regex one, branches carry the base (`<branchPrefix><base>/<manager>/<name>`), the log prints `base    <base>` before each base's updates, and the dashboard has a section per base; the PR limits count all bases together. `--base` overrides `baseBranches` with one base and the plain branch names.
+**Base branches:** `--base`, else the config key `baseBranches`, else the repository's default branch. `baseBranches` lists names, `$default` and `/<RE2>/` regexes over the branches on origin (names origin lacks are skipped with a warning). Each base is resolved from its own tip, with the checkout's config, its `rules[].baseBranches` matching that base: the checkout serves the base it is the tip of, every other base gets a temporary linked work tree of its fetched tip. With `useBaseBranchConfig: merge` (or `merge-if-present`) such a base's own config file is merged over the checkout's, and the log prints `base    <base>  config .deps.yaml + <base>:.deps.yaml` for it. With more than one entry, or a regex one, branches carry the base (`<branchPrefix><base>/<manager>/<name>`), the log prints `base    <base>` before each base's updates, and the dashboard has a section per base; the PR limits count all bases together. `--base` overrides `baseBranches` with one base and the plain branch names.
 
 **Token:** `--token`, then `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, then the password from `git credential fill` for the platform host. Without any token, `run` fails with `no token for <host>`, except with `--dry-run`, which uses the API anonymously. Git pushes use the checkout's credentials. On GitLab, PRs are merge requests and `--repo` takes the project path (`group/subgroup/name`).
 
@@ -800,7 +808,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_API_URL` | `run` | default of `--api-url`: API base URL (default: detected) |
 | `DEPS_AUTHOR_EMAIL` | `config show`, `run` | default of `--author-email`: commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps-bot@noreply.invalid) |
 | `DEPS_AUTHOR_NAME` | `config show`, `run` | default of `--author-name`: commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps[bot]) |
-| `DEPS_BASE` | `run` | default of `--base`: base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch) |
+| `DEPS_BASE` | `explain`, `preview`, `run` | default of `--base`: explain base branch <base> as run resolves it: from the tip of origin's branch (a temporary work tree unless the checkout is at it), its rules[].baseBranches matching it, with useBaseBranchConfig its config merged over the checkout's |
 | `DEPS_BASE_DIR` | `preview` | default of `--base-dir`: checkout of the base branch to compare with (required) |
 | `DEPS_COLOR` | all | default of `--color`: color stderr: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it), always, never |
 | `DEPS_CONCURRENCY` | `apply`, `explain`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--concurrency`: maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |

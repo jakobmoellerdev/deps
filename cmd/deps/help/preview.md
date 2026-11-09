@@ -3,6 +3,7 @@ Resolves two checkouts of the repository, `--dir` (the pull request) and `--base
 Output lines (stderr):
 
 ```
+base    <base>[  config <files>]  (with a base branch, see below)
 new     <branch>  <title>
 changed <branch>  <title>
 unknown <branch>  <title>             (not compared: the base checkout failed on its dependencies)
@@ -11,6 +12,8 @@ error   <message>                    (lookup errors of --dir; those of --base-di
 check   <url>                        (the check run, GitHub)
 <n> new, <c> changed, <r> no longer opened, <s> the same[, <u> not compared] (<duration>)
 ```
+
+**Base branch.** `--base <branch>` (default: `$GITHUB_BASE_REF`, then `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME`) is the branch the pull request targets; both checkouts are resolved for it as `deps run` resolves that base: their `rules[].baseBranches` match it. When it is not the default branch (origin's `HEAD`) and the default branch's config file sets `useBaseBranchConfig: merge` (or `merge-if-present`), the config file of each checkout is merged over the default branch's (fetched from origin), as `run` merges the base's file over the default branch's checkout. The `base` line and the step summary name the files applied, e.g. `base    release/1.x  config main:.deps.yaml + release/1.x:.deps.yaml`. When the default branch or its config cannot be read, each checkout keeps its own config, with a warning; with `--renovate` it is not read.
 
 **Step summary.** The comparison is appended to `GITHUB_STEP_SUMMARY` (or `GITEA_STEP_SUMMARY`) as markdown, with an update table per new or changed PR.
 

@@ -446,6 +446,16 @@ func (t *translator) translate(cfg map[string]any) omap {
 			break
 		}
 	}
+	if v, ok := get("useBaseBranchConfig"); ok {
+		switch v {
+		case config.BaseConfigMerge, config.BaseConfigMergeIfPresent:
+			emit("useBaseBranchConfig", v)
+			t.n.info("useBaseBranchConfig", "deps reads .deps.yaml on each base branch, not the Renovate config there: run deps migrate on those branches too")
+		case config.BaseConfigNone:
+		default:
+			t.n.warn("useBaseBranchConfig", "unsupported value %v; dropped", v)
+		}
+	}
 	if v, ok := get("gitAuthor"); ok {
 		emit("gitAuthor", v)
 	}

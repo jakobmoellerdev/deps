@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -132,6 +133,44 @@ func (r Repo) LsRemote(ctx context.Context, pattern string) (map[string]string, 
 		}
 	}
 	return refs, nil
+}
+
+// DefaultBranch returns the default branch of origin: the branch its HEAD points to.
+func (r Repo) DefaultBranch(ctx context.Context) (string, error) {
+	out, err := r.run(ctx, nil, nil, "ls-remote", "--symref", "origin", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	for line := range strings.Lines(out) {
+		ref, ok := strings.CutPrefix(line, "ref: ")
+		if !ok {
+			continue
+		}
+		ref, _, _ = strings.Cut(ref, "\t")
+		if branch, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
+			return branch, nil
+		}
+	}
+	return "", errors.New("origin has no HEAD branch")
+}
+
+// ReadFile returns the content of the file at p (a slash path relative to Dir) in commit
+// rev; an error wrapping fs.ErrNotExist when rev has none there.
+func (r Repo) ReadFile(ctx context.Context, rev, p string) ([]byte, error) {
+	ids, err := r.ObjectIDs(ctx, rev, []string{p})
+	if err != nil {
+		return nil, err
+	}
+	if ids[0] == "" {
+		return nil, fmt.Errorf("%s in %s: %w", p, rev, fs.ErrNotExist)
+	}
+	cmd := exec.CommandContext(ctx, "git", "cat-file", "blob", ids[0])
+	cmd.Dir = r.Dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git cat-file %s:%s: %w", rev, p, err)
+	}
+	return out, nil
 }
 
 // Prefix returns the path of Dir relative to the top of the work tree, with a trailing '/'

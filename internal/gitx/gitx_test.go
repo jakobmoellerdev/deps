@@ -3,6 +3,7 @@ package gitx
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -141,6 +142,43 @@ func TestFetchBranchAndWorktree(t *testing.T) {
 	}
 	if err := r.AddWorktree(ctx, tree, "nope"); err == nil {
 		t.Error("AddWorktree of a missing commit succeeded")
+	}
+}
+
+func TestDefaultBranchAndReadFile(t *testing.T) {
+	origin, clone := setup(t)
+	ctx := t.Context()
+	r := Repo{Dir: filepath.Join(clone, "sub")}
+	if b, err := r.DefaultBranch(ctx); err != nil || b != "main" {
+		t.Fatalf("DefaultBranch = %q, %v", b, err)
+	}
+	head := git(t, clone, "rev-parse", "HEAD")
+	// Leading blank lines and the trailing newline are kept: positions in the file must not move.
+	seed := filepath.Join(filepath.Dir(origin), "seed")
+	write(t, filepath.Join(seed, "sub", "a.txt"), "\n\na\n")
+	git(t, seed, "commit", "-qam", "blank lines")
+	git(t, seed, "push", "-q", "origin", "main")
+	tip, err := r.FetchBranch(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ rev, want string }{{head, "a\n"}, {tip, "\n\na\n"}} {
+		if b, err := r.ReadFile(ctx, tc.rev, "a.txt"); err != nil || string(b) != tc.want {
+			t.Errorf("ReadFile(%s) = %q, %v; want %q", tc.rev, b, err, tc.want)
+		}
+	}
+	if _, err := r.ReadFile(ctx, head, "gone.txt"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("ReadFile of a missing file: %v", err)
+	}
+	if _, err := (Repo{Dir: t.TempDir()}).DefaultBranch(ctx); err == nil {
+		t.Error("DefaultBranch without origin succeeded")
+	}
+	// An origin without HEAD (an empty bare repository) has no default branch.
+	empty := filepath.Join(t.TempDir(), "empty.git")
+	git(t, "", "init", "-q", "--bare", empty)
+	git(t, clone, "remote", "set-url", "origin", empty)
+	if b, err := r.DefaultBranch(ctx); err == nil {
+		t.Errorf("DefaultBranch of an empty origin = %q", b)
 	}
 }
 

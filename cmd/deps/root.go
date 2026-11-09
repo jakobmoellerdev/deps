@@ -339,6 +339,9 @@ type session struct {
 	client    *http.Client          // sibling sessions build their custom datasources on it
 	fetcher   *config.GitFetcher    // reads extended configs; shared by sibling sessions
 	osv       engine.SecuritySource // the OSV source security uses when the config enables it
+	// readConfig reads the config file at path in the checkout dir of a base branch
+	// (useBaseBranchConfig): translated from Renovate's with --renovate; nil = as it is.
+	readConfig func(ctx context.Context, dir, path string) ([]byte, error)
 }
 
 // extendsFetcher reads the configs of extends with git, sending the platform token (and
@@ -378,9 +381,14 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	}()
 	// Remote Renovate presets are fetched before the config (and its GitLab URL) is known.
 	auth := httpx.NewAuth(info, token, os.Getenv, httpx.WithSecretHook(actionsLog.mask))
-	cfg, err := loadConfig(ctx, o, root, info, client, auth, githubapi.New(client, auth, sem), fetcher)
+	renovateGH := githubapi.New(client, auth, sem)
+	cfg, err := loadConfig(ctx, o, root, info, client, auth, renovateGH, fetcher)
 	if err != nil {
 		return nil, err
+	}
+	var readConfig func(ctx context.Context, dir, path string) ([]byte, error)
+	if o.renovateMode() {
+		readConfig = renovateReader(info, client, auth, renovateGH)
 	}
 	logExtends(ctx, cfg)
 	printLint(stderr, cfg)
@@ -465,21 +473,22 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		return nil, err
 	}
 	return &session{
-		root:      root,
-		cfg:       cfg,
-		managers:  managers,
-		sources:   sources,
-		security:  security,
-		checksums: checksum.New(client, sem, releases, map[string]checksum.ArtifactOpener{mavends.Name: maven}),
-		env:       env,
-		client:    client,
-		auth:      auth,
-		gh:        gh,
-		sem:       sem,
-		progress:  o.progress(limits),
-		info:      info,
-		fetcher:   fetcher,
-		osv:       osvSource,
+		root:       root,
+		cfg:        cfg,
+		managers:   managers,
+		sources:    sources,
+		security:   security,
+		checksums:  checksum.New(client, sem, releases, map[string]checksum.ArtifactOpener{mavends.Name: maven}),
+		env:        env,
+		client:     client,
+		auth:       auth,
+		gh:         gh,
+		sem:        sem,
+		progress:   o.progress(limits),
+		info:       info,
+		fetcher:    fetcher,
+		osv:        osvSource,
+		readConfig: readConfig,
 	}, nil
 }
 
@@ -544,6 +553,12 @@ func (s *session) forCheckout(ctx context.Context, dir, configPath string, info 
 		return nil, err
 	}
 	logExtends(ctx, cfg)
+	return s.withConfig(ctx, root, cfg, info)
+}
+
+// withConfig is a session for the checkout root of the repository of info with cfg: its
+// managers, environment and custom datasources, the other datasources shared with s.
+func (s *session) withConfig(ctx context.Context, root string, cfg *config.Config, info platform.Info) (*session, error) {
 	managers, err := engine.Managers(cfg)
 	if err != nil {
 		return nil, err

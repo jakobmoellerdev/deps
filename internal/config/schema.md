@@ -287,10 +287,10 @@ To take over Renovate's open PRs, set `branchPrefix: renovate/` (see [branch pre
 
 - **Entries.** A branch name, `$default` (the repository's default branch), or an RE2 regex `/<RE2>/` (flag `i` allowed) matching branch names on origin, in their sorted order. The unfolded list keeps the order of the entries without duplicates. A name origin lacks is skipped with a warning (`base branch not found on origin, skipping it`); when nothing is left, `run` fails with `baseBranches: no branch on origin matches [...]`.
 - **Branch names.** With more than one entry, or a regex entry (it can match more branches later), every update branch carries its base: `<branchPrefix><base>/<manager>/<slug(name)>`, `<branchPrefix><base>/group/<slug(group)>`, e.g. `deps/release/1.x/gomod/golang.org-x-net`. A single named entry keeps the plain names. Switching from one base to several renames the branches: the open PRs of the old names are closed as obsolete in that run.
-- **Checkouts.** The checkout of `--dir` serves the base whose tip it is; every other base is fetched (shallow in a shallow clone) and checked out into a temporary linked work tree, removed when `run` ends. Every base is resolved with the config of the checkout (Renovate's default `useBaseBranchConfig: none`), its rules matching that base with [`rules[].baseBranches`](#rulesbasebranches).
+- **Checkouts.** The checkout of `--dir` serves the base whose tip it is; every other base is fetched (shallow in a shallow clone) and checked out into a temporary linked work tree, removed when `run` ends. Every base is resolved with the config of the checkout (Renovate's default `useBaseBranchConfig: none`), its rules matching that base with [`rules[].baseBranches`](#rulesbasebranches); with [`useBaseBranchConfig`](#usebasebranchconfig) each base's own config file is merged over it.
 - **Per base:** the PRs of a base are those targeting it, so its obsolete PRs are closed only when its own resolution had no error; branches without a PR are deleted only when no base had one. PRs to branches the run does not handle are left alone.
 - **For the run:** the PR limits ([`prConcurrentLimit`](#prconcurrentlimit), `prHourlyLimit`, `--max-new-prs`) count all bases together, and the [dashboard](#dependencydashboard) is one issue with a section per base.
-- `run --base <branch>` overrides the key: one base, the checkout's, with the plain branch names. `plan`, `apply`, `explain` and `preview` work on the checkout as before.
+- `run --base <branch>` overrides the key: one base, the checkout's, with the plain branch names. `plan` and `apply` work on the checkout as before; `explain --base <branch>` and `preview --base <branch>` resolve a base as `run` does.
 
 ```yaml
 baseBranches: [$default, '/^release\/v\d+$/']
@@ -298,6 +298,25 @@ rules:
   - baseBranches: ['/^release\//']   # release branches get no majors
     updateTypes: [major]
     ignore: true
+```
+
+## Config.useBaseBranchConfig
+
+Renovate's `useBaseBranchConfig`: which config `deps run` applies to a base branch of [`baseBranches`](#basebranches) that it checks out into its own work tree (every base but the one the checkout of `--dir` is at).
+
+| Value | Config of such a base |
+|---|---|
+| `none` (default) | the checkout's |
+| `merge` | the config file of the same name on the base branch (`.deps.yaml`, `.deps.yml`, the `--config` path inside `--dir`, with `--renovate` its Renovate file translated) merged over the checkout's; a base without it fails the run with a config error |
+| `merge-if-present` | as `merge`; a base without the file gets the checkout's config |
+
+- **Merge.** As an [`extends`](#extends) chain merges, with the base's file (and the files it extends) last: its top-level keys replace the checkout's, its `rules` and `custom` entries follow the checkout's, `customDatasources` and `registryAliases` are merged by name. The merged config is validated as a whole; a problem in the base's file names it `<base>:<file>`.
+- **Run-wide keys** stay the checkout's, as one run handles every base: `baseBranches`, `useBaseBranchConfig` (as in Renovate), `branchPrefix`, `gitAuthor`, `platformCommit`, `gitIgnoredAuthors`, `prConcurrentLimit`, `prHourlyLimit`, `rebaseWhen`, `rebaseLabel`, `stopUpdatingLabel`, `updateNotScheduled` and the dependency dashboard keys. A base that sets another value logs a warning (`the base branch's config sets a key that spans the run`).
+- **Which config applied.** `run` prints `base    <base>  config .deps.yaml + <base>:.deps.yaml` before the updates of a merged base; `explain --base <base>` prints the same line and names the base's rules `from <base>:.deps.yaml:<line>`; `preview --base <base>` (default `$GITHUB_BASE_REF`, `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME`) merges both checkouts' files over the default branch's config when the pull request targets another branch and the default branch's config sets `useBaseBranchConfig`, and names the files in its output and step summary.
+
+```yaml
+baseBranches: [$default, '/^release\//']
+useBaseBranchConfig: merge   # release branches add their own rules in their .deps.yaml
 ```
 
 ## Config.rebaseWhen
@@ -776,7 +795,7 @@ Renovate's `!pattern` works: `['actions/*', '!actions/cache']` matches every `ac
 
 ## Rule.baseBranches
 
-Renovate's `matchBaseBranches`. The base branch is the one `deps run` resolves: each of [`baseBranches`](#basebranches), the `--base` branch, else the default branch. Entries are exact names or RE2 regexes `/<RE2>/` (flag `i` allowed); a leading `!` excludes (`'!main'`, `'!/^release\//'`), exclusions win regardless of their position, and a list of only exclusions matches every other base. `plan`, `apply`, `explain` and `preview` resolve without a base branch, so a rule with `baseBranches` matches nothing there.
+Renovate's `matchBaseBranches`. The base branch is the one `deps run` resolves: each of [`baseBranches`](#basebranches), the `--base` branch, else the default branch. Entries are exact names or RE2 regexes `/<RE2>/` (flag `i` allowed); a leading `!` excludes (`'!main'`, `'!/^release\//'`), exclusions win regardless of their position, and a list of only exclusions matches every other base. `explain --base <branch>` and `preview --base <branch>` (default: the pull request's target from the CI environment) resolve that base; `plan`, `apply`, and `explain` and `preview` without one resolve without a base branch, so a rule with `baseBranches` matches nothing there.
 
 ## Rule.depTypes
 

@@ -1108,6 +1108,38 @@ func TestLoadBaseBranches(t *testing.T) {
 	}
 }
 
+// useBaseBranchConfig keeps its modes; none is deps' default and is not written.
+func TestLoadUseBaseBranchConfig(t *testing.T) {
+	for _, tt := range []struct {
+		mode, want, note string
+	}{
+		{"merge", "\nuseBaseBranchConfig: merge\n", "info useBaseBranchConfig: deps reads .deps.yaml on each base branch, not the Renovate config there: run deps migrate on those branches too"},
+		{"merge-if-present", "\nuseBaseBranchConfig: merge-if-present\n", "info useBaseBranchConfig: deps reads .deps.yaml on each base branch, not the Renovate config there: run deps migrate on those branches too"},
+		{"none", "", ""},
+		{"always", "", "warn useBaseBranchConfig: unsupported value always; dropped"},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			res, err := load(t, `{baseBranchPatterns: ['$default', '/^release\\//'], useBaseBranchConfig: '`+tt.mode+`'}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			y := string(res.YAML)
+			if tt.want != "" && !strings.Contains(y, tt.want) || tt.want == "" && strings.Contains(y, "\nuseBaseBranchConfig:") {
+				t.Errorf("YAML, want %q:\n%s", tt.want, y)
+			}
+			notes := noteLines(res)
+			if tt.note != "" && !slices.Contains(notes, tt.note) {
+				t.Errorf("notes %q lack %q", notes, tt.note)
+			}
+			if slices.ContainsFunc(notes, func(n string) bool {
+				return strings.Contains(n, "not supported") && strings.Contains(n, "useBaseBranchConfig")
+			}) {
+				t.Errorf("notes %q", notes)
+			}
+		})
+	}
+}
+
 // draftPR, prCreation, prNotPendingHours and abandonmentThreshold keep their meaning;
 // prCreation approval needs the dashboard, and a null abandonmentThreshold (Renovate's
 // default) has no deps setting.

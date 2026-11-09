@@ -1,10 +1,13 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"slices"
@@ -13,14 +16,16 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
 func newPreview(o *rootOpts) *cli.Command {
-	var base string
+	var base, baseBranch string
 	return &cli.Command{
 		Name:  "preview",
 		Usage: "Compare the PRs a pull request's checkout would get with those of the base branch",
@@ -31,10 +36,11 @@ func newPreview(o *rootOpts) *cli.Command {
 			if base == "" {
 				return &usageError{errors.New("--base-dir is required")}
 			}
-			return preview(ctx, cmd, o, base)
+			return preview(ctx, cmd, o, base, cmp.Or(baseBranch, pullRequestBase(os.Getenv)))
 		},
 		Flags: append(scanFlags(o, scanSession),
 			&cli.StringFlag{Name: "base-dir", Destination: &base, Usage: "checkout of the base branch to compare with (required)"},
+			&cli.StringFlag{Name: "base", Destination: &baseBranch, Usage: "base branch the pull request targets, resolved as run resolves it: its rules[].baseBranches match, and with useBaseBranchConfig on the default branch the config of both checkouts is merged over the default branch's (default: $GITHUB_BASE_REF, then $CI_MERGE_REQUEST_TARGET_BRANCH_NAME)"},
 		),
 	}
 }
@@ -154,10 +160,14 @@ func writePRTable(b *strings.Builder, p previewPR) {
 }
 
 // markdown renders the preview; errs are the lookup errors of the PR's checkout, baseErrs
-// those of the base checkout.
-func (d previewDiff) markdown(errs, baseErrs []error) string {
+// those of the base checkout, base the line naming the base branch and its config files
+// (previewBases), "" when unknown.
+func (d previewDiff) markdown(errs, baseErrs []error, base string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## deps preview\n\n**%s**\n\n", d.headline())
+	if base != "" {
+		fmt.Fprintf(&b, "%s\n\n", base)
+	}
 	if len(d.Added) > 0 {
 		b.WriteString("### New PRs\n\n")
 		for _, p := range d.Added {
@@ -209,7 +219,10 @@ func (d previewDiff) markdown(errs, baseErrs []error) string {
 // previewTruncated ends a preview cut to a size limit.
 const previewTruncated = "\n\n**Truncated; the job log has everything.**\n"
 
-func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string) error {
+// preview compares the update PRs of the checkouts of a pull request (--dir) and of its base
+// branch (baseDir); branch, when known, is the base branch the pull request targets
+// (previewBases).
+func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir, branch string) error {
 	start := time.Now()
 	stderr := cmd.Root().ErrWriter
 	info, _ := platform.FromEnv(os.Getenv)
@@ -223,6 +236,18 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 	base, err := head.sibling(ctx, baseDir)
 	if err != nil {
 		return fmt.Errorf("base checkout %s: %w", baseDir, err)
+	}
+	note := ""
+	if branch != "" {
+		if head, base, err = previewBases(ctx, head, base, branch); err != nil {
+			return err
+		}
+		fmt.Fprintln(stderr, baseLine(branch, base.cfg))
+		note = "Base branch `" + mdCell(branch) + "`"
+		if files := base.cfg.Files(); len(files) > 0 {
+			note += ", config `" + strings.Join(files, "` + `") + "`"
+		}
+		note += "."
 	}
 	headRes, err := head.resolve(ctx)
 	if err != nil {
@@ -251,7 +276,7 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 	for _, e := range baseRes.Errors {
 		reportError(stderr, o.term, fmt.Errorf("base checkout: %w", e))
 	}
-	md := d.markdown(headRes.Errors, baseRes.Errors)
+	md := d.markdown(headRes.Errors, baseRes.Errors, note)
 	appendStepSummary(stderr, func(room int) string { return truncateMarkdown(md, room, previewTruncated) })
 	if sha := pullRequestHead(os.Getenv); sha != "" && info.Kind == platform.GitHub {
 		conclusion := "success"
@@ -277,6 +302,89 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir string)
 		return errReported
 	}
 	return nil
+}
+
+// previewBases returns the sessions of the pull request's checkout head and of its base
+// branch's checkout base resolved as run resolves base branch branch: their rules with
+// baseBranches match it, and when it is not the default branch (origin's HEAD) and the default
+// branch's config file (of the name of each checkout's) sets useBaseBranchConfig, each
+// checkout's config file is merged over the default branch's config (mergeBaseConfig). When
+// the default branch or its config cannot be read, each checkout keeps its own config, with
+// a warning.
+func previewBases(ctx context.Context, head, base *session, branch string) (*session, *session, error) {
+	over := defaultBranchConfig(ctx, head, branch)
+	if over == nil {
+		return head.forBase(head.root, branch), base.forBase(base.root, branch), nil
+	}
+	sides := []*session{head, base}
+	for i, s := range sides {
+		cfg, err := s.mergeBaseConfig(ctx, over, branch, s.root)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", s.root, err)
+		}
+		if cfg != over {
+			if s, err = s.withConfig(ctx, s.root, cfg, s.info); err != nil {
+				return nil, nil, fmt.Errorf("%s: %w", s.root, err)
+			}
+		}
+		sides[i] = s.forBase(s.root, branch)
+	}
+	return sides[0], sides[1], nil
+}
+
+// defaultBranchConfig returns the config of the default branch of head's origin when branch
+// is not the default branch and that config sets useBaseBranchConfig to merge or
+// merge-if-present: the file of the name of head's config file at the default branch's
+// fetched tip, named <default>:<name>. Otherwise, or when it cannot be read, nil. With
+// --renovate it is nil: preview reads the base checkout's .deps.yaml, not its Renovate config.
+func defaultBranchConfig(ctx context.Context, head *session, branch string) *config.Config {
+	name := head.configName()
+	if name == "" {
+		return nil
+	}
+	if head.readConfig != nil {
+		slog.InfoContext(ctx, "preview --renovate does not apply useBaseBranchConfig")
+		return nil
+	}
+	repo := gitx.Repo{Dir: head.root}
+	def, err := repo.DefaultBranch(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "default branch unknown, the checkouts keep their config", "err", err)
+		return nil
+	}
+	if def == branch {
+		return nil
+	}
+	tip, err := repo.FetchBranch(ctx, def)
+	if err != nil {
+		slog.WarnContext(ctx, "default branch not fetched, the checkouts keep their config", "branch", def, "err", err)
+		return nil
+	}
+	src, err := repo.ReadFile(ctx, tip, name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		slog.WarnContext(ctx, "default branch config not read, the checkouts keep their config", "branch", def, "err", err)
+		return nil
+	}
+	display := def + ":" + name
+	cfg, err := config.Read(ctx, src, display, display, head.fetcher)
+	if err != nil {
+		slog.WarnContext(ctx, "default branch config invalid, the checkouts keep their config", "branch", def, "err", err)
+		return nil
+	}
+	if cfg.UseBaseBranchConfig != config.BaseConfigMerge && cfg.UseBaseBranchConfig != config.BaseConfigMergeIfPresent {
+		return nil
+	}
+	return cfg
+}
+
+// pullRequestBase is the base branch of the pull request that triggered the job:
+// $GITHUB_BASE_REF (GitHub, Gitea and Forgejo Actions), else
+// $CI_MERGE_REQUEST_TARGET_BRANCH_NAME (GitLab CI); "" for other events.
+func pullRequestBase(getenv func(string) string) string {
+	return cmp.Or(getenv("GITHUB_BASE_REF"), getenv("CI_MERGE_REQUEST_TARGET_BRANCH_NAME"))
 }
 
 // pullRequestHead is the head commit of the pull request that triggered the job (from the

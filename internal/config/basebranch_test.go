@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -101,5 +103,94 @@ func TestBaseBranchesValidation(t *testing.T) {
 				t.Errorf("err = %v, want it to contain %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestMergeBase(t *testing.T) {
+	c, _, err := loadExtends(t, "extends: [o/shared]\nbaseBranches: [$default, release/1.x]\nuseBaseBranchConfig: merge\npin: digest\nrules:\n  - names: [a]\n    group: checkout\n",
+		map[string]string{"o/shared//.deps.yaml": "rules:\n  - names: [s]\n    group: shared\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeFetcher{files: map[string]string{"o/base//.deps.yaml": "rangeStrategy: bump\n"}}
+	base := "extends: [o/base]\nbaseBranches: [other]\nuseBaseBranchConfig: none\npin: keep\nrules:\n  - names: [b]\n    group: release\n"
+	m, err := c.MergeBase(t.Context(), []byte(base), "release/1.x:.deps.yaml", "release/1.x:.deps.yaml", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Pin != PinKeep || m.RangeStrategy != "bump" || c.Pin != PinDigest {
+		t.Errorf("pin = %q, rangeStrategy = %q; the checkout's pin = %q", m.Pin, m.RangeStrategy, c.Pin)
+	}
+	if !slices.Equal(m.BaseBranches, c.BaseBranches) || m.UseBaseBranchConfig != BaseConfigMerge || !m.MultiBase() {
+		t.Errorf("baseBranches = %q, useBaseBranchConfig = %q: the checkout's must stay", m.BaseBranches, m.UseBaseBranchConfig)
+	}
+	var groups, sources []string
+	for i := range m.Rules {
+		groups = append(groups, m.Rules[i].Group)
+		file, line := m.Rules[i].Source()
+		sources = append(sources, fmt.Sprintf("%s:%d", file, line))
+	}
+	if want := []string{"shared", "checkout", "release"}; !slices.Equal(groups, want) {
+		t.Errorf("rule groups = %q, want %q", groups, want)
+	}
+	if want := []string{"o/shared//.deps.yaml:2", ".deps.yaml:6", "release/1.x:.deps.yaml:6"}; !slices.Equal(sources, want) {
+		t.Errorf("rule sources = %q, want %q", sources, want)
+	}
+	if got := m.Files(); !slices.Equal(got, []string{".deps.yaml", "release/1.x:.deps.yaml"}) {
+		t.Errorf("Files = %q", got)
+	}
+	if got := c.Files(); !slices.Equal(got, []string{".deps.yaml"}) {
+		t.Errorf("checkout Files = %q", got)
+	}
+	if got := m.KeyFile("rangeStrategy"); got != "o/base//.deps.yaml" {
+		t.Errorf("KeyFile(rangeStrategy) = %q", got)
+	}
+	if got := Default().Files(); got != nil {
+		t.Errorf("default Files = %q", got)
+	}
+}
+
+func TestMergeBaseErrors(t *testing.T) {
+	c, err := load(t, ".deps.yaml", "useBaseBranchConfig: merge\ncustomDatasources: {envtest: {url: 'https://x/y'}}\nrules:\n  - datasources: [custom.envtest]\n    group: g\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, base, want string }{
+		{"syntax", "rules: [", "b:.deps.yaml:"},
+		{"invalid value", "rangeStrategy: sideways\n", "b:.deps.yaml:1:16: rangeStrategy:"},
+		// The base drops the datasource the checkout's rule names: the problem is in the checkout's file.
+		{"problem in the checkout's file", "customDatasources: null\n", `.deps.yaml:4:19: rules[0].datasources[0]: customDatasources has no entry "envtest"`},
+		{"extends without fetcher", "extends: [o/x]\n", "extends is not supported by this command"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := c.MergeBase(t.Context(), []byte(tc.base), "b:.deps.yaml", "b:.deps.yaml", nil)
+			var cerr *Error
+			if !errors.As(err, &cerr) || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want *Error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestUseBaseBranchConfigValidation(t *testing.T) {
+	for _, v := range BaseConfigs {
+		if _, err := load(t, ".deps.yaml", "useBaseBranchConfig: "+v+"\n"); err != nil {
+			t.Errorf("%s: %v", v, err)
+		}
+	}
+	_, err := load(t, ".deps.yaml", "useBaseBranchConfig: always\n")
+	if err == nil || !strings.Contains(err.Error(), "useBaseBranchConfig: ") || !strings.Contains(err.Error(), "merge-if-present") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestRead(t *testing.T) {
+	f := &fakeFetcher{files: map[string]string{"o/x//.deps.yaml": "pin: digest\n"}}
+	c, err := Read(t.Context(), []byte("extends: [o/x]\nuseBaseBranchConfig: merge\n"), "main:.deps.yaml", "main:.deps.yaml", f)
+	if err != nil || c.Pin != PinDigest || c.UseBaseBranchConfig != BaseConfigMerge || c.Path() != "main:.deps.yaml" {
+		t.Fatalf("Read = %+v, %v", c, err)
+	}
+	if _, err := Read(t.Context(), []byte("pin: x\n"), "main:.deps.yaml", "main:.deps.yaml", nil); err == nil || !strings.Contains(err.Error(), "main:.deps.yaml:1:6: pin:") {
+		t.Errorf("err = %v", err)
 	}
 }

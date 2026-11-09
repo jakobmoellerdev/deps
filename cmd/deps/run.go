@@ -367,19 +367,25 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 		return err
 	}
 	defer closeBases(ctx, repo, bases)
-	// Every base is resolved with the checkout's config, its rules matching that base.
+	// Every base is resolved with the checkout's config (with useBaseBranchConfig its own
+	// config merged over it), its rules matching that base.
 	botBases := make([]bot.Base, len(bases))
 	var resErrs []error
 	var unused []int
 	for i, b := range bases {
-		bs := s.forBase(b.repo.Dir, b.name)
+		bs, err := s.baseSession(ctx, b)
+		if err != nil {
+			return err
+		}
 		res, err := bs.resolve(ctx)
 		if err != nil {
 			return err
 		}
 		errs := res.Errors
+		if multiBase || len(bs.cfg.Files()) > 1 {
+			fmt.Fprintln(stderr, baseLine(b.name, bs.cfg))
+		}
 		if multiBase {
-			fmt.Fprintf(stderr, "base    %s\n", b.name)
 			errs = make([]error, len(res.Errors))
 			for j, e := range res.Errors {
 				errs[j] = fmt.Errorf("%s: %w", b.name, e)
@@ -387,13 +393,14 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 		}
 		report(stderr, o.term, o.showSkipped, res, errs, nil)
 		resErrs = append(resErrs, errs...)
-		// A rule is unused when it matched no dependency on any base.
-		u := bs.cfg.UnusedRules(res.Deps)
+		// A rule is unused when it matched no dependency on any base. The rules a base's
+		// config adds follow the checkout's and are not the checkout's to report.
+		u := slices.DeleteFunc(bs.cfg.UnusedRules(res.Deps), func(r int) bool { return r >= len(s.cfg.Rules) })
 		if i > 0 {
 			u = slices.DeleteFunc(u, func(r int) bool { return !slices.Contains(unused, r) })
 		}
 		unused = u
-		botBases[i] = bot.Base{Name: b.name, Root: bs.root, Res: res, Git: gitOf(b.repo)}
+		botBases[i] = bot.Base{Name: b.name, Root: bs.root, Res: res, Git: gitOf(b.repo), Managers: bs.managers}
 	}
 	bo := bot.Options{
 		AuthorName:         name,

@@ -135,7 +135,8 @@ func (c *Config) ExpandBaseBranches(defaultBranch string, remote []string) []str
 }
 
 // ForBaseBranch returns a copy of c whose rules with baseBranches match against branch, the
-// base branch of a run. Without it (plan, apply, explain, preview) they match nothing.
+// base branch of a run (or of explain and preview --base). Without it (plan, apply) they
+// match nothing.
 func (c *Config) ForBaseBranch(branch string) *Config {
 	cp := *c
 	cp.baseBranch = branch

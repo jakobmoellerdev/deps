@@ -208,7 +208,8 @@ func TestHelpLayout(t *testing.T) {
 		stdout, _, code := execute(t, args...)
 		for _, want := range []string{
 			"\n\nUsage:\n  deps explain <name-glob>... [flags]\n\nExamples:\n  deps explain 'actions/*'\n",
-			"\n\nFlags:\n      --concurrency int",
+			"\n\nFlags:\n      --base string       explain base branch <base>",
+			"\n      --concurrency int",
 			"\n      --dir string        repository directory to scan (default \".\")\n  -h, --help              help for explain\n      --renovate          compatibility mode: ",
 			"\n\nGlobal Flags:\n",
 			"\n      --log-level string    log level: debug, info, warn, error (when not set: debug with $RUNNER_DEBUG=1, else warn)\n",

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/bot"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
@@ -117,6 +120,160 @@ func closeBases(ctx context.Context, repo gitx.Repo, bases []runBase) {
 			slog.WarnContext(ctx, "removing the base branch work tree", "branch", b.name, "dir", b.tree, "err", err)
 		}
 	}
+}
+
+// openBase returns the checkout of base branch name (explain --base): the checkout of repo
+// when it is at the tip of name on origin, else a linked work tree of the fetched tip, which
+// closeBases removes.
+func openBase(ctx context.Context, repo gitx.Repo, name string) (runBase, error) {
+	refs, err := repo.LsRemote(ctx, "refs/heads/"+name)
+	if err != nil {
+		return runBase{}, err
+	}
+	tip, ok := refs["refs/heads/"+name]
+	if !ok {
+		return runBase{}, &usageError{fmt.Errorf("base branch %s not found on origin", name)}
+	}
+	head, err := repo.RevParse(ctx, "HEAD")
+	if err != nil {
+		return runBase{}, err
+	}
+	if tip == head {
+		return runBase{name: name, repo: repo}, nil
+	}
+	prefix, err := repo.Prefix(ctx)
+	if err != nil {
+		return runBase{}, err
+	}
+	b, err := checkoutBase(ctx, repo, name, prefix)
+	if err != nil {
+		return runBase{}, fmt.Errorf("base branch %s: %w", name, err)
+	}
+	return b, nil
+}
+
+// runWideKeys are the top-level config keys that span all bases of a run (what bot.Options
+// and the branch names take from the config, and the base branches themselves): the config of
+// a base branch (useBaseBranchConfig) does not change them.
+var runWideKeys = []string{
+	"baseBranches", "useBaseBranchConfig", "branchPrefix", "gitAuthor", "platformCommit", "gitIgnoredAuthors",
+	"prConcurrentLimit", "prHourlyLimit", "rebaseWhen", "rebaseLabel", "stopUpdatingLabel", "updateNotScheduled",
+	"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels",
+}
+
+// baseSession is the session resolving base b, its rules with baseBranches matching b. The base
+// the checkout serves uses s's config; a base checked out into its own work tree gets the config
+// of s's useBaseBranchConfig with its config file there (mergeBaseConfig).
+func (s *session) baseSession(ctx context.Context, b runBase) (*session, error) {
+	if b.tree == "" {
+		return s.forBase(b.repo.Dir, b.name), nil
+	}
+	cfg, err := s.mergeBaseConfig(ctx, s.cfg, b.name, b.repo.Dir)
+	if err != nil {
+		return nil, fmt.Errorf("base branch %s: %w", b.name, err)
+	}
+	if cfg == s.cfg {
+		return s.forBase(b.repo.Dir, b.name), nil
+	}
+	bs, err := s.withConfig(ctx, b.repo.Dir, cfg, s.info)
+	if err != nil {
+		return nil, fmt.Errorf("base branch %s: %w", b.name, err)
+	}
+	return bs.forBase(b.repo.Dir, b.name), nil
+}
+
+// configName returns the path of the session's config file relative to its root, with
+// slashes; "" when it has none there (the built-in defaults, or --config outside --dir).
+func (s *session) configName() string {
+	if s.cfg.Path() == "" {
+		return ""
+	}
+	p, err := filepath.Abs(s.cfg.Path())
+	if err != nil {
+		return ""
+	}
+	rel, err := filepath.Rel(s.root, p)
+	if err != nil || !filepath.IsLocal(rel) {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}
+
+// mergeBaseConfig returns the config of base branch base under over's useBaseBranchConfig:
+// with merge or merge-if-present, the file of the name of s's config file in dir, the checkout
+// of the base's tip, read with s.readConfig (translated with --renovate), merged over over
+// (config.MergeBase; named <base>:<name> in explain and rule sources); with none, over. A base
+// without the file is a config error with merge and gets over with merge-if-present
+// (Renovate's modes). A base's other value of a key in runWideKeys is ignored with a warning.
+func (s *session) mergeBaseConfig(ctx context.Context, over *config.Config, base, dir string) (*config.Config, error) {
+	mode := over.UseBaseBranchConfig
+	if mode == "" || mode == config.BaseConfigNone {
+		return over, nil
+	}
+	name := s.configName()
+	if name == "" {
+		if mode == config.BaseConfigMergeIfPresent {
+			return over, nil
+		}
+		return nil, &config.Error{Err: errors.New("useBaseBranchConfig: merge: no config file to read on the base branch (the config must be a file inside --dir; merge-if-present uses the checkout's config then)")}
+	}
+	path := filepath.Join(dir, filepath.FromSlash(name))
+	read := s.readConfig
+	if read == nil {
+		read = func(_ context.Context, _, p string) ([]byte, error) { return os.ReadFile(p) }
+	}
+	src, err := read(ctx, dir, path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && mode == config.BaseConfigMergeIfPresent:
+		slog.InfoContext(ctx, "base branch has no config file, using the checkout's", "branch", base, "file", name)
+		return over, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, &config.Error{Err: fmt.Errorf("useBaseBranchConfig: merge: %s not found on the base branch (merge-if-present uses the checkout's config then)", name)}
+	case err != nil:
+		if _, ok := errors.AsType[*config.Error](err); ok {
+			return nil, err
+		}
+		return nil, &config.Error{Err: err}
+	}
+	display := base + ":" + name
+	cfg, err := over.MergeBase(ctx, src, display, display, s.fetcher)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range runWideKeys {
+		if cfg.KeyFile(k) == display && keyValue(cfg, k) != keyValue(over, k) {
+			slog.WarnContext(ctx, "the base branch's config sets a key that spans the run; the checkout's value applies", "branch", base, "key", k)
+		}
+	}
+	return cfg, nil
+}
+
+// keyValue is the YAML of the value of top-level key in cfg as written, "" when unset.
+func keyValue(cfg *config.Config, key string) string {
+	doc := cfg.Document()
+	if doc == nil {
+		return ""
+	}
+	for i := 0; i+1 < len(doc.Content); i += 2 {
+		if doc.Content[i].Value == key {
+			out, err := yaml.Marshal(doc.Content[i+1])
+			if err != nil {
+				return ""
+			}
+			return string(out)
+		}
+	}
+	return ""
+}
+
+// baseLine is the log line naming base and, when its config differs from the checkout's, the
+// config files applied to it ("base    release/1.x  config .deps.yaml + release/1.x:.deps.yaml").
+func baseLine(base string, cfg *config.Config) string {
+	files := cfg.Files()
+	if len(files) < 2 {
+		return "base    " + base
+	}
+	return "base    " + base + "  config " + strings.Join(files, " + ")
 }
 
 // runResult is what the summary of run covers: the results of every base side by side (the

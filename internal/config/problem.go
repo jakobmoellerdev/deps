@@ -88,11 +88,12 @@ type position struct{ line, col int }
 // configuration, such as rules[3].allow) in the loaded config file, or of its nearest
 // ancestor present in the file (customDatasources.x for a missing customDatasources.x.url).
 // A field written in an extended file is at the local extends entry it came through. 0, 0
-// without one.
+// without one, and for a field written in a file a base branch's config is merged over
+// (MergeBase), which is not the loaded file.
 func (c *Config) Position(field string) (line, col int) {
 	ly, f := c.written(field)
 	switch {
-	case ly == nil:
+	case ly == nil || ly.over:
 		return 0, 0
 	case ly.via >= 0:
 		return c.layers[len(c.layers)-1].position(fmt.Sprintf("extends[%d]", ly.via))

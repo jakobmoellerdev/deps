@@ -20,6 +20,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -28,17 +29,21 @@ import (
 const maxExamples = 3
 
 func newExplain(o *rootOpts) *cli.Command {
+	var base string
 	return &cli.Command{
 		Name:      "explain",
 		ArgsUsage: "<name-glob>...",
 		Usage:     "Explain the rules, candidates and decision for each matching dependency",
 		Metadata: map[string]any{docgen.MetaExample: "  deps explain 'actions/*'\n" +
-			"  deps explain 'k8s.io/**' github.com/spf13/cobra"},
+			"  deps explain 'k8s.io/**' github.com/spf13/cobra\n" +
+			"  deps explain --base release/1.x 'actions/*'"},
 		ArgValidator: globArgs,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return explain(ctx, cmd, o, cmd.Args().Slice())
+			return explain(ctx, cmd, o, base, cmd.Args().Slice())
 		},
-		Flags: scanFlags(o, scanSession),
+		Flags: append(scanFlags(o, scanSession),
+			&cli.StringFlag{Name: "base", Destination: &base, Usage: "explain base branch <base> as run resolves it: from the tip of origin's branch (a temporary work tree unless the checkout is at it), its rules[].baseBranches matching it, with useBaseBranchConfig its config merged over the checkout's"},
+		),
 	}
 }
 
@@ -55,13 +60,28 @@ func globArgs(_ context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-func explain(ctx context.Context, cmd *cli.Command, o *rootOpts, globs []string) error {
+// explain traces the deps matching globs; base, when set, is the base branch to explain
+// (openBase, session.baseSession), named with the config files applied on stderr.
+func explain(ctx context.Context, cmd *cli.Command, o *rootOpts, base string, globs []string) error {
 	info, _ := platform.FromEnv(os.Getenv)
 	s, err := newSession(ctx, o, info, envToken(), newHTTPClient(), cmd.Root().ErrWriter)
 	if err != nil {
 		return err
 	}
 	defer s.close()
+	stderr := cmd.Root().ErrWriter
+	if base != "" {
+		repo := gitx.Repo{Dir: s.root}
+		b, err := openBase(ctx, repo, base)
+		if err != nil {
+			return err
+		}
+		defer closeBases(ctx, repo, []runBase{b})
+		if s, err = s.baseSession(ctx, b); err != nil {
+			return err
+		}
+		fmt.Fprintln(stderr, baseLine(base, s.cfg))
+	}
 	matched := make([]bool, len(globs))
 	var traces []engine.Trace
 	// Filter and Trace run sequentially on the Resolve goroutine.
@@ -93,7 +113,6 @@ func explain(ctx context.Context, cmd *cli.Command, o *rootOpts, globs []string)
 	if _, err := cmd.Root().Writer.Write(out.Bytes()); err != nil {
 		return fmt.Errorf("write explanation: %w", err)
 	}
-	stderr := cmd.Root().ErrWriter
 	for _, e := range res.Errors {
 		reportError(stderr, o.term, e)
 	}

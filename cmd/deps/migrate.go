@@ -51,6 +51,22 @@ func loadConfig(ctx context.Context, o *rootOpts, root string, info platform.Inf
 	return config.Parse(res.YAML, res.Path)
 }
 
+// renovateReader reads the Renovate config file at path in the checkout dir of a base branch
+// translated into a .deps.yaml document, as loadConfig translates the checkout's
+// (useBaseBranchConfig with --renovate).
+func renovateReader(info platform.Info, client *http.Client, auth *httpx.Auth, gh *githubapi.Client) func(ctx context.Context, dir, path string) ([]byte, error) {
+	return func(ctx context.Context, dir, path string) ([]byte, error) {
+		if _, err := os.Stat(path); err != nil {
+			return nil, err
+		}
+		res, err := renovate.Load(ctx, dir, path, renovateFetcher(dir, info, client, auth, gh))
+		if err != nil {
+			return nil, err
+		}
+		return res.YAML, nil
+	}
+}
+
 // renovateFetcher fetches remote presets; the forge of local> presets is info, else
 // detected from the origin remote of root.
 func renovateFetcher(root string, info platform.Info, client *http.Client, auth *httpx.Auth, gh *githubapi.Client) *renovate.Fetcher {

@@ -527,7 +527,8 @@ rules:
     allowedUpdateTypes: [patch]
 ```
 
-- deps fetches every other base (shallow in a shallow clone, so the default `fetch-depth: 1` is fine) into a temporary linked work tree and resolves it with the default branch's config. The token needs write access to those branches like to the default one.
+- deps fetches every other base (shallow in a shallow clone, so the default `fetch-depth: 1` is fine) into a temporary linked work tree and resolves it with the default branch's config; with [`useBaseBranchConfig: merge`](reference/configuration.md#usebasebranchconfig) the base's own `.deps.yaml` is merged over it (the log prints `base    release/v2  config .deps.yaml + release/v2:.deps.yaml`). The token needs write access to those branches like to the default one.
+- `deps explain --base release/v2 '<glob>'` shows how a base resolves, and `deps preview` in a pull request job resolves both checkouts for the pull request's target (`$GITHUB_BASE_REF`).
 - Branches carry the base: `deps/main/gomod/golang.org-x-net`, `deps/release/v2/gomod/golang.org-x-net`. Run CI on `deps/**` pushes as before.
 - Each base has its own PRs and cleanup; the PR limits count all bases together, so raise `--max-new-prs`, `prConcurrentLimit` and `prHourlyLimit` with the number of bases. The dashboard lists each base in its own section.
 - Branch protection of the release branches applies as on the default branch (automerge, [branch automerge](#branch-automerge)).

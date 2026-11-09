@@ -326,6 +326,8 @@ type layer struct {
 	// via is the index of the local file's extends entry the layer was reached through;
 	// -1 for the local file.
 	via int
+	// over marks a file of the config a base branch's config is merged over (MergeBase).
+	over bool
 }
 
 // position returns the 1-based line and column of field in the layer's file, or of its

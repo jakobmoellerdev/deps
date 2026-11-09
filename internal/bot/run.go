@@ -201,6 +201,9 @@ type Base struct {
 	Root string         // directory the updates were resolved in, inside Git's work tree
 	Res  *engine.Result // the updates, dependencies and resolution errors of Root
 	Git  Git            // the checkout of Name's tip
+	// Managers edit the base's files when its config differs from the run's
+	// (useBaseBranchConfig); nil = Options.Managers.
+	Managers []manager.Manager
 }
 
 // BasePrefix is the prefix of the update branches of base when they carry it
@@ -399,6 +402,9 @@ func (r *baseRun) handleGroups(ctx context.Context, o Options, dash *dashboard, 
 	prog engine.Progress, wanted map[string]bool,
 ) []error {
 	groups, s, root, res := r.groups, r.s, r.Root, r.Res
+	if r.Managers != nil {
+		o.Managers = r.Managers
+	}
 	built := make([][]engine.FileChange, len(groups))
 	buildErrs := make([][]error, len(groups))
 	ran := make([]bool, len(groups))

@@ -79,6 +79,16 @@ const (
 // PlatformCommits are the accepted platformCommit values.
 var PlatformCommits = []string{PlatformCommitAuto, PlatformCommitEnabled, PlatformCommitDisabled}
 
+// Values of useBaseBranchConfig.
+const (
+	BaseConfigNone           = "none"
+	BaseConfigMerge          = "merge"
+	BaseConfigMergeIfPresent = "merge-if-present"
+)
+
+// BaseConfigs are the accepted useBaseBranchConfig values.
+var BaseConfigs = []string{BaseConfigNone, BaseConfigMerge, BaseConfigMergeIfPresent}
+
 // Automerge strategies of automergeStrategy; auto uses the repository's default merge style.
 const (
 	StrategyAuto   = "auto"
@@ -211,10 +221,12 @@ type Config struct {
 	Security      *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, allowedUpdateTypes and schedule."`
 	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
 	BaseBranches  []string `yaml:"baseBranches" jsonschema_description:"Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes '/<RE2>/' (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (<prefix><base>/<manager>/<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it."`
-	RebaseWhen    string   `yaml:"rebaseWhen" jsonschema:"default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
-	Monorepos     *bool    `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR, and the Ruby version (the Gemfile ruby directive, .ruby-version, asdf and mise ruby) into the group ruby; rules can override the group."`
-	Replacements  *bool    `yaml:"replacements" jsonschema:"default=true" jsonschema_description:"Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/* images to registry.k8s.io/*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep."`
-	GitAuthor     string   `yaml:"gitAuthor" jsonschema:"default=deps[bot] <deps-bot@noreply.invalid>" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified. Ignored for platform commits (platformCommit), whose author is the token's account; branches whose tip it authored still count as deps' own."`
+	// UseBaseBranchConfig is Renovate's useBaseBranchConfig.
+	UseBaseBranchConfig string `yaml:"useBaseBranchConfig" jsonschema:"default=none" jsonschema_description:"Config of the base branches run resolves from their own tip (baseBranches, explain --base, preview --base): none (the checkout's config), merge (the config file of the same name on the base branch is merged over the checkout's config as extends merges, the base's keys winning; a base without the file is a config error), merge-if-present (as merge, a base without the file uses the checkout's config). The keys that span the run (baseBranches, useBaseBranchConfig, branchPrefix, the PR limits, git and rebase settings, the dashboard) stay the checkout's."`
+	RebaseWhen          string `yaml:"rebaseWhen" jsonschema:"default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
+	Monorepos           *bool  `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR, and the Ruby version (the Gemfile ruby directive, .ruby-version, asdf and mise ruby) into the group ruby; rules can override the group."`
+	Replacements        *bool  `yaml:"replacements" jsonschema:"default=true" jsonschema_description:"Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/* images to registry.k8s.io/*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep."`
+	GitAuthor           string `yaml:"gitAuthor" jsonschema:"default=deps[bot] <deps-bot@noreply.invalid>" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified. Ignored for platform commits (platformCommit), whose author is the token's account; branches whose tip it authored still count as deps' own."`
 	// PlatformCommit creates commits through the GitHub API (Renovate's platformCommit).
 	PlatformCommit string `yaml:"platformCommit" jsonschema:"default=auto" jsonschema_description:"Create commits and move update branches through the GitHub API instead of git, so that GitHub signs them and shows them as verified, authored by the GitHub App (e.g. ocmbot[bot]). auto enables it on GitHub when the token is a GitHub App installation token (ghs_..., also GITHUB_TOKEN in Actions) and no signing key is set; enabled requires GitHub and no signing key; disabled always uses git. GitHub signs API commits only for App tokens; with a personal access token they stay unsigned. Overridden by $DEPS_PLATFORM_COMMIT."`
 	// GitIgnoredAuthors are emails whose commits on an update branch count as the bot's own.
@@ -465,7 +477,7 @@ type Rule struct {
 	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs (case-insensitive, as in Renovate), e.g. 'charts/**'. An entry starting with '!' excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after '!')."`
 	Datasources []string `yaml:"datasources" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) match their deps datasource."`
 	// BaseBranches matches the base branch of the run (Renovate's matchBaseBranches).
-	BaseBranches []string `yaml:"baseBranches" jsonschema_description:"Only match deps on these base branches of run (baseBranches, --base, else the default branch): names or RE2 regexes '/<RE2>/' (flag i allowed); an entry starting with '!' excludes the branches it matches, and a list of only exclusions matches every other branch. plan, apply, explain and preview have no base branch, so no rule with baseBranches matches there."`
+	BaseBranches []string `yaml:"baseBranches" jsonschema_description:"Only match deps on these base branches of run (baseBranches, --base, else the default branch), explain --base and preview --base: names or RE2 regexes '/<RE2>/' (flag i allowed); an entry starting with '!' excludes the branches it matches, and a list of only exclusions matches every other branch. plan, apply, and explain and preview without a base branch have none, so no rule with baseBranches matches there."`
 	// CurrentVersion and CurrentAge match the dep's current version (Renovate's
 	// matchCurrentVersion and matchCurrentAge).
 	CurrentVersion string   `yaml:"currentVersion" jsonschema_description:"Only match deps whose current version (the locked one when a lockfile has it) satisfies this Masterminds semver constraint (e.g. '< 2', converted with the dep's versioning scheme), or matches the regex form '/<RE2>/' as written ('!/<RE2>/' excludes matches; flag i allowed). Cannot be combined with versioning."`
@@ -776,10 +788,27 @@ func Parse(src []byte, path string) (*Config, error) {
 	return parse(context.Background(), src, path, path, nil)
 }
 
+// Read decodes and validates the config file src as Load does: path names it in errors,
+// display in deps explain; the files its extends entries name are read with fetch. All
+// failures are *Error.
+func Read(ctx context.Context, src []byte, path, display string, fetch Fetcher) (*Config, error) {
+	return parse(ctx, src, path, display, fetch)
+}
+
 // parse decodes and validates the document src of file p (display: its name in deps
 // explain), reading the files its extends entries name with fetch. The problems of every
 // file's content and of the merged configuration are reported together.
 func parse(ctx context.Context, src []byte, p, display string, fetch Fetcher) (*Config, error) {
+	l, err := loadChain(ctx, src, p, display, fetch)
+	if err != nil {
+		return nil, err
+	}
+	return build(p, l.layers, l.problems, l.extends)
+}
+
+// loadChain decodes the document src of file p and the files its extends entries name (read
+// with fetch) into layers; a chain that cannot be loaded completely is an *Error.
+func loadChain(ctx context.Context, src []byte, p, display string, fetch Fetcher) (*loader, error) {
 	l := &loader{ctx: ctx, fetch: fetch, path: p, seen: map[string]bool{}, fields: map[reflect.Type][]structField{}}
 	if err := l.add(src, p, display, -1); err != nil {
 		return nil, err
@@ -787,25 +816,30 @@ func parse(ctx context.Context, src []byte, p, display string, fetch Fetcher) (*
 	if l.incomplete {
 		return nil, &Error{joinProblems(l.problems)}
 	}
-	c := &Config{path: p, layers: l.layers}
-	root := l.layers[len(l.layers)-1].root
-	if len(l.layers) > 1 {
-		root = merge(l.layers)
+	return l, nil
+}
+
+// build decodes the layers, merged, into the configuration of file p (whose extends list is
+// extends) and validates it; probs are the problems of the files' content.
+func build(p string, layers []layer, probs []*Problem, extends []string) (*Config, error) {
+	c := &Config{path: p, layers: layers}
+	root := layers[len(layers)-1].root
+	if len(layers) > 1 {
+		root = merge(layers)
 	}
-	probs := l.problems
 	if root != nil {
 		if err := root.Decode(c); err != nil {
 			probs = append(probs, syntaxProblem(p, err))
 		}
 	}
-	c.Extends = l.extends // the merge drops the key
+	c.Extends = extends // the merge drops the key
 	if c.IgnorePaths == nil && mapValue(root, "ignorePaths") == nil {
 		c.IgnorePaths = slices.Clone(DefaultIgnorePaths)
 	}
 	if c.ComposerIgnorePlatformReqs == nil && mapValue(root, "composerIgnorePlatformReqs") != nil {
 		c.ComposerIgnorePlatformReqs = []string{} // set to null or []: ignore none
 	}
-	c.setSources(l.layers)
+	c.setSources(layers)
 	if c.Version == 0 {
 		c.Version = FormatVersion
 	}
@@ -817,6 +851,42 @@ func parse(ctx context.Context, src []byte, p, display string, fetch Fetcher) (*
 		return nil, &Error{err}
 	}
 	return c, nil
+}
+
+// MergeBase returns the configuration of a base branch under useBaseBranchConfig: src, the
+// config file on the base branch (path names it in errors, display in deps explain and rule
+// sources), and the files it extends merged over c as an extends chain merges, the base's
+// keys replacing c's and its rules and custom managers following c's. baseBranches and
+// useBaseBranchConfig stay c's (as in Renovate). The merged configuration is validated as a
+// whole; a problem in one of c's files names that file. All failures are *Error.
+func (c *Config) MergeBase(ctx context.Context, src []byte, path, display string, fetch Fetcher) (*Config, error) {
+	l, err := loadChain(ctx, src, path, display, fetch)
+	if err != nil {
+		return nil, err
+	}
+	layers := make([]layer, 0, len(c.layers)+len(l.layers))
+	for _, ly := range c.layers {
+		ly.over = true
+		layers = append(layers, ly)
+	}
+	m, err := build(path, append(layers, l.layers...), l.problems, l.extends)
+	if err != nil {
+		return nil, err
+	}
+	m.BaseBranches, m.baseBranches, m.UseBaseBranchConfig = c.BaseBranches, c.baseBranches, c.UseBaseBranchConfig
+	return m, nil
+}
+
+// Files returns the display names of the configuration's own files, without the files they
+// extend: the config file, then after MergeBase the base branch's file; nil without a file.
+func (c *Config) Files() []string {
+	var files []string
+	for _, ly := range c.layers {
+		if ly.via < 0 {
+			files = append(files, ly.display)
+		}
+	}
+	return files
 }
 
 // setSources records the file and line of each rule.
@@ -850,6 +920,13 @@ func (c *Config) validate() []*Problem {
 				return // the decoder reported the malformed value
 			}
 			pr.Field = f
+			if ly.over {
+				// A problem in a file the base branch's config is merged over (MergeBase).
+				pr.Path = ly.name
+				pr.Line, pr.Col = ly.position(f)
+				probs = append(probs, pr)
+				return
+			}
 			if ly.via >= 0 {
 				// A problem of an extended file, located at the local extends entry it came through.
 				pr.Line, pr.Col = ly.position(f)
@@ -874,6 +951,9 @@ func (c *Config) validate() []*Problem {
 		}
 	}
 	c.baseBranches = parseBranchPatterns("baseBranches", c.BaseBranches, false, true, add)
+	if c.UseBaseBranchConfig != "" && !slices.Contains(BaseConfigs, c.UseBaseBranchConfig) {
+		add("useBaseBranchConfig", "%s", oneOf("useBaseBranchConfig", BaseConfigs, c.UseBaseBranchConfig))
+	}
 	if c.GitAuthor != "" {
 		if _, err := ParseAuthor(c.GitAuthor); err != nil {
 			add("gitAuthor", "%v", err)
