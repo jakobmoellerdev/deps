@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -49,6 +50,8 @@ var condaScheme, _ = versioning.Get("conda")
 type Source struct {
 	getter httpx.Getter
 	base   string // the API base, without a trailing slash
+	getenv func(string) string
+	token  string // DEPS_CONDA_TOKEN, else ANACONDA_API_TOKEN
 
 	pkgs datasource.Memo[string, *pkg] // by channel + "\x00" + name
 }
@@ -62,9 +65,14 @@ type pkg struct {
 }
 
 // New returns the conda datasource. sem bounds concurrent requests (nil = unbounded); getenv
-// supplies DEPS_CONDA_URL.
+// supplies DEPS_CONDA_URL, the token DEPS_CONDA_TOKEN (else ANACONDA_API_TOKEN) and the
+// variables of `${VAR}` channel tokens.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, base: strings.TrimSuffix(cmp.Or(getenv("DEPS_CONDA_URL"), DefaultURL), "/")}
+	return &Source{
+		getter: httpx.Getter{Client: client, Sem: sem}, getenv: getenv,
+		base:  strings.TrimSuffix(cmp.Or(getenv("DEPS_CONDA_URL"), DefaultURL), "/"),
+		token: cmp.Or(getenv("DEPS_CONDA_TOKEN"), getenv("ANACONDA_API_TOKEN")),
+	}
 }
 
 // Releases lists the versions of d that have a file under the `main` label of the first
@@ -127,13 +135,31 @@ func split(d dep.Dep) (channels []string, name string) {
 // lookup returns the listing of d's package on the first of its channels that has it.
 func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 	channels, name := split(d)
-	for _, ch := range channels {
-		p, err := s.pkgs.Do(ctx, ch+"\x00"+name, func() (*pkg, error) { return s.fetch(ctx, ch, name) })
+	names := make([]string, len(channels))
+	for i, entry := range channels {
+		ch, token := s.channelToken(entry)
+		names[i] = ch
+		p, err := s.pkgs.Do(ctx, entry+"\x00"+name, func() (*pkg, error) { return s.fetch(ctx, ch, token, name) })
 		if !errors.Is(err, errNotFound) {
 			return p, err
 		}
 	}
-	return nil, fmt.Errorf("conda package %s not found in %s", name, strings.Join(channels, ", "))
+	return nil, fmt.Errorf("conda package %s not found in %s", name, strings.Join(names, ", "))
+}
+
+// channelToken splits a channel entry of d.Source into the channel and its token: the
+// `t/<token>/<channel>` form of a token channel URL (a `${VAR}` or `$VAR` token expanded from
+// the environment), else DEPS_CONDA_TOKEN or ANACONDA_API_TOKEN ("" = anonymous).
+func (s *Source) channelToken(entry string) (channel, token string) {
+	rest, ok := strings.CutPrefix(entry, "t/")
+	if !ok {
+		return entry, s.token
+	}
+	token, channel, ok = strings.Cut(rest, "/")
+	if !ok {
+		return entry, s.token
+	}
+	return channel, cmp.Or(os.Expand(token, s.getenv), s.token)
 }
 
 // response is the part of `GET /package/<channel>/<name>` deps reads; the files' descriptions
@@ -153,7 +179,7 @@ const uploadLayout = "2006-01-02 15:04:05.999999-07:00"
 
 // fetch reads `<base>/package/<channel>/<name>`. Versions come from the files under the main
 // label that are not marked broken; a listing without files falls back to `versions`.
-func (s *Source) fetch(ctx context.Context, channel, name string) (p *pkg, err error) {
+func (s *Source) fetch(ctx context.Context, channel, token, name string) (p *pkg, err error) {
 	start := time.Now()
 	defer func() {
 		n := 0
@@ -164,7 +190,7 @@ func (s *Source) fetch(ctx context.Context, channel, name string) (p *pkg, err e
 	}()
 	var resp response
 	target := s.base + "/package/" + url.PathEscape(channel) + "/" + url.PathEscape(name)
-	if err := s.get(ctx, target, func(r io.Reader) error { return json.UnmarshalRead(r, &resp) }); err != nil {
+	if err := s.get(ctx, target, token, func(r io.Reader) error { return json.UnmarshalRead(r, &resp) }); err != nil {
 		return nil, err
 	}
 	p = &pkg{times: map[string]time.Time{}}
@@ -197,9 +223,17 @@ func (s *Source) fetch(ctx context.Context, channel, name string) (p *pkg, err e
 	return p, nil
 }
 
-// get GETs target and passes the body to read. A 404 is errNotFound.
-func (s *Source) get(ctx context.Context, target string, read func(io.Reader) error) error {
-	err := s.getter.Stream(ctx, target, read)
+// get GETs target and passes the body to read. A 404 is errNotFound. A token is sent as
+// `Authorization: token <token>`, as anaconda-client does.
+func (s *Source) get(ctx context.Context, target, token string, read func(io.Reader) error) error {
+	g := s.getter
+	if token != "" {
+		g.Prepare = func(req *http.Request) error {
+			req.Header.Set("Authorization", "token "+token)
+			return nil
+		}
+	}
+	err := g.Stream(ctx, target, read)
 	if errors.Is(err, httpx.ErrNotFound) {
 		return errNotFound
 	}
@@ -210,7 +244,9 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 // `<channel>::` prefix writes it: a name (`conda-forge`, `bioconda`, with a `/label/<x>` or
 // `/<subdir>` suffix dropped), `defaults` (the `anaconda` channel, which mirrors Anaconda's
 // main repository), or a `https://conda.anaconda.org/<channel>` or
-// `https://repo.anaconda.com/pkgs/main` URL. ok is false for other URLs and local paths, which
+// `https://repo.anaconda.com/pkgs/main` URL. A private channel's token URL
+// (`https://conda.anaconda.org/t/<token>/<channel>`) is returned as `t/<token>/<channel>`,
+// which Releases reads the token from. ok is false for other URLs and local paths, which
 // the anaconda.org API does not serve, and for `nodefaults`.
 func Channel(s string) (string, bool) {
 	s = strings.TrimSpace(s)
@@ -222,6 +258,14 @@ func Channel(s string) (string, bool) {
 		switch strings.ToLower(u.Hostname()) {
 		case "conda.anaconda.org", "anaconda.org":
 			s = path
+			if rest, ok := strings.CutPrefix(path, "t/"); ok {
+				token, ch, _ := strings.Cut(rest, "/")
+				ch, _, _ = strings.Cut(ch, "/")
+				if token == "" || ch == "" {
+					return "", false
+				}
+				return "t/" + token + "/" + ch, true
+			}
 		case "repo.anaconda.com":
 			if path != "pkgs/main" {
 				return "", false

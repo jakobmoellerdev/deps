@@ -13,6 +13,6 @@ var Doc = refdoc.Datasource{
 		"a version is a release when one of its files is under the `main` label and not marked `broken` (files only under `rc`, `dev` or migration labels are not installed by default), the builds of every platform merged; " +
 		"the first channel that has the package answers (conda's strict channel priority), none → `conda package <name> not found in <channels>`. " +
 		"Source repository (release notes): the package's `dev_url`, an http(s) URL, from the same response",
-	Auth:         "none: public anaconda.org channels only",
+	Auth:         "the token of a private channel's `https://conda.anaconda.org/t/<token>/<channel>` URL (`${VAR}` and `$VAR` expanded from the environment), else `DEPS_CONDA_TOKEN`, else `ANACONDA_API_TOKEN`, sent to the API as `Authorization: token <token>` (anaconda.org answers a private package without a valid token with 404, so a missing token reads as not found). A token written into the environment file is part of the dep's source",
 	ReleaseTimes: "earliest `upload_time` of the version's main files; a version cut to a lower precision (`2.3` for 2.3.0) gets the time of the release it equals",
 }

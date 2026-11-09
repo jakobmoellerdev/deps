@@ -48,6 +48,13 @@ func serve(t *testing.T, hits *atomic.Int32) *httptest.Server {
 			fmt.Fprint(w, `{"versions":["1.9","1.21"],"dev_url":"not a url","files":[]}`)
 		case "/package/conda-forge/broken":
 			fmt.Fprint(w, `{"files":7}`)
+		case "/package/acme/internal":
+			// anaconda.org answers a private package without a valid token as not found.
+			if r.Header.Get("Authorization") != "token s3cret" {
+				http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+				return
+			}
+			fmt.Fprint(w, `{"versions":["0.1","0.2"],"files":[]}`)
 		case "/package/conda-forge/failing":
 			http.Error(w, "down", http.StatusInternalServerError)
 		default:
@@ -185,7 +192,8 @@ func TestChannel(t *testing.T) {
 	for in, want := range map[string]string{
 		"conda-forge": "conda-forge", "\tbioconda\t": "bioconda", "defaults": "anaconda", "conda-forge/label/rc": "conda-forge",
 		"conda-forge/linux-64": "conda-forge", "https://conda.anaconda.org/conda-forge": "conda-forge",
-		"https://conda.anaconda.org/pytorch/": "pytorch", "https://anaconda.org/nvidia": "nvidia", "https://repo.anaconda.com/pkgs/main": "anaconda",
+		"https://conda.anaconda.org/pytorch/": "pytorch", "https://conda.anaconda.org/t/abc-123/acme/label/main": "t/abc-123/acme",
+		"https://conda.anaconda.org/t/${TOKEN}/acme": "t/${TOKEN}/acme", "https://conda.anaconda.org/t//acme": "", "https://conda.anaconda.org/t/abc": "", "https://anaconda.org/nvidia": "nvidia", "https://repo.anaconda.com/pkgs/main": "anaconda",
 		"nodefaults": "", "https://repo.anaconda.com/pkgs/r": "", "https://prefix.dev/conda-forge": "", "file:///opt/channel": "",
 		"/opt/channel": "", "./channel": "", "local": "", "": "",
 	} {
@@ -193,5 +201,39 @@ func TestChannel(t *testing.T) {
 		if got != want || ok != (want != "") {
 			t.Errorf("Channel(%q) = %q, %v, want %q", in, got, ok, want)
 		}
+	}
+}
+
+func TestReleasesToken(t *testing.T) {
+	var hits atomic.Int32
+	srv := serve(t, &hits)
+	ctx := context.Background()
+	src := func(env map[string]string) *Source {
+		return New(srv.Client(), nil, func(k string) string {
+			if k == "DEPS_CONDA_URL" {
+				return srv.URL
+			}
+			return env[k]
+		})
+	}
+	for _, tt := range []struct {
+		name   string
+		env    map[string]string
+		source string
+	}{
+		{"url token", nil, "t/s3cret/acme"},
+		{"url token variable", map[string]string{"ACME_TOKEN": "s3cret"}, "t/${ACME_TOKEN}/acme"},
+		{"DEPS_CONDA_TOKEN", map[string]string{"DEPS_CONDA_TOKEN": "s3cret", "ANACONDA_API_TOKEN": "wrong"}, "acme"},
+		{"ANACONDA_API_TOKEN", map[string]string{"ANACONDA_API_TOKEN": "s3cret"}, "acme"},
+		{"unset variable falls back", map[string]string{"DEPS_CONDA_TOKEN": "s3cret"}, "t/$UNSET/acme"},
+	} {
+		rels, err := src(tt.env).Releases(ctx, dep.Dep{Name: "internal", Source: tt.source}, "")
+		if err != nil || !slices.Equal(versionsOf(rels), []string{"0.1", "0.2"}) {
+			t.Errorf("%s: %v, %v", tt.name, versionsOf(rels), err)
+		}
+	}
+	_, err := src(nil).Releases(ctx, dep.Dep{Name: "internal", Source: "t/wrong/acme"}, "")
+	if err == nil || err.Error() != "conda package internal not found in acme" {
+		t.Errorf("wrong token: %v", err)
 	}
 }

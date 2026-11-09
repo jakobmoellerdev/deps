@@ -364,3 +364,10 @@ func TestEdits(t *testing.T) {
 		t.Error("unchanged edit accepted")
 	}
 }
+
+func TestExtractTokenChannel(t *testing.T) {
+	deps := extract(t, "environment.yml", []byte("channels:\n  - https://conda.anaconda.org/t/${ACME_TOKEN}/acme\n  - conda-forge\ndependencies:\n  - internal=0.1\n"))
+	if len(deps) != 1 || deps[0].Source != "t/${ACME_TOKEN}/acme conda-forge" || deps[0].Skip != "" {
+		t.Errorf("deps = %+v", deps)
+	}
+}
