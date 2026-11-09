@@ -338,6 +338,65 @@ func TestMarkAcrossRefills(t *testing.T) {
 	}
 }
 
+// TestRelease scans documents with Scanners released in every state, mid-document with a
+// mark and open containers included, and checks a reused one starts afresh.
+func TestRelease(t *testing.T) {
+	const doc = `{"a":[1,{"b":"x\u00e9"}],"name":"left-pad"}`
+	for range 3 {
+		s := New(strings.NewReader(doc))
+		if err := s.Open('{'); err != nil {
+			t.Fatal(err)
+		}
+		if more, err := s.Next(); err != nil || !more {
+			t.Fatalf("Next() = %v, %v", more, err)
+		}
+		s.Mark()
+		if err := s.Open('['); err != nil {
+			t.Fatal(err)
+		}
+		s.Release() // mid-document, marked, two containers open
+
+		s = New(strings.NewReader(doc))
+		if s.Offset() != 0 || len(s.Buffered()) != 0 {
+			t.Fatalf("reused Scanner at offset %d with %q buffered", s.Offset(), s.Buffered())
+		}
+		if err := s.Open('{'); err != nil {
+			t.Fatal(err)
+		}
+		found, err := s.Find("name")
+		if err != nil || !found {
+			t.Fatalf("Find(name) = %v, %v", found, err)
+		}
+		if v, err := s.Str(); err != nil || v != "left-pad" {
+			t.Fatalf("Str() = %q, %v", v, err)
+		}
+		if more, err := s.Next(); err != nil || more {
+			t.Fatalf("Next() at the end = %v, %v", more, err)
+		}
+		if _, err := s.Peek(); err != io.EOF { //nolint:errorlint // Peek returns io.EOF itself
+			t.Fatalf("Peek() after the document = %v, want EOF", err)
+		}
+		s.Release()
+	}
+
+	// A buffer grown past maxPooledBuffer is dropped, not pooled.
+	big := New(strings.NewReader(`"` + strings.Repeat("x", maxPooledBuffer) + `"`))
+	if err := big.Skip(); err != nil {
+		t.Fatal(err)
+	}
+	if cap(big.buf) <= maxPooledBuffer {
+		t.Fatalf("buffer of %d bytes did not grow past %d", cap(big.buf), maxPooledBuffer)
+	}
+	big.Release()
+	for range 4 {
+		s := New(strings.NewReader(`1`))
+		if cap(s.buf) > maxPooledBuffer {
+			t.Fatalf("New reused a %d-byte buffer", cap(s.buf))
+		}
+		s.Release()
+	}
+}
+
 func BenchmarkSkip(b *testing.B) {
 	var doc strings.Builder
 	doc.WriteString(`{"versions":{`)

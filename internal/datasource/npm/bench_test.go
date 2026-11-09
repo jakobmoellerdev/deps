@@ -80,3 +80,16 @@ func BenchmarkDecodeMetadata(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkDecodeMetadataSmall decodes a document of a package with few versions, the common
+// case, where the scanner's buffers are a large share of the allocations.
+func BenchmarkDecodeMetadataSmall(b *testing.B) {
+	data := syntheticPackument(10, false)
+	b.SetBytes(int64(len(data)))
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, _, err := decodeMetadata(bytes.NewReader(data)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

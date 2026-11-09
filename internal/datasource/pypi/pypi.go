@@ -490,6 +490,7 @@ func (s *Source) get(ctx context.Context, target, name, accept string) (*http.Re
 // all of them are yanked.
 func decodeJSON(r io.Reader) (p project, yanked int, err error) {
 	s := jsonscan.New(r)
+	defer s.Release()
 	if err := open(s, '{'); err != nil {
 		return project{}, 0, err
 	}

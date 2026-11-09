@@ -19,6 +19,7 @@ import (
 	"math/bits"
 	"slices"
 	"strconv"
+	"sync"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -62,9 +63,31 @@ type Scanner struct {
 // hasMember marks an open container whose members are separated by commas from here on.
 const hasMember = 0x80
 
-// New returns a Scanner reading r.
+// scanners holds released Scanners, whose buffers New reuses.
+var scanners sync.Pool
+
+// maxPooledBuffer is the largest buffer Release keeps; a document that grew one beyond it
+// (a huge marked span) is rare, and pooling its buffer would pin that memory.
+const maxPooledBuffer = 1 << 20
+
+// New returns a Scanner reading r. Its buffers come from Scanners released before.
 func New(r io.Reader) *Scanner {
-	return &Scanner{r: r, buf: make([]byte, 0, bufferSize), mark: -1, tok: -1}
+	s, _ := scanners.Get().(*Scanner)
+	if s == nil {
+		return &Scanner{r: r, buf: make([]byte, 0, bufferSize), mark: -1, tok: -1}
+	}
+	*s = Scanner{r: r, buf: s.buf[:0], mark: -1, tok: -1, open: s.open[:0], skip: s.skip[:0], name: s.name[:0], str: s.str[:0]}
+	return s
+}
+
+// Release hands s's buffers to a later New. The caller must not use s, or bytes it returned
+// (StrBytes, Marked, Buffered), afterwards; strings it returned stay valid.
+func (s *Scanner) Release() {
+	if cap(s.buf) > maxPooledBuffer {
+		return
+	}
+	s.r = nil
+	scanners.Put(s)
 }
 
 // Offset is the stream offset of the next unread byte.

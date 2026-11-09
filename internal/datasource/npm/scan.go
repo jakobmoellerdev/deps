@@ -24,6 +24,7 @@ import (
 func decodeMetadata(r io.Reader) (metadata, int, error) {
 	s := metadataScanner{r: stickyReader{r: r}}
 	s.sc = jsonscan.New(&s.r)
+	defer s.sc.Release()
 	m, err := s.metadata()
 	if err != nil {
 		if exact, ok := errors.AsType[*exactError](err); ok {

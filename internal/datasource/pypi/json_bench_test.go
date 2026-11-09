@@ -44,3 +44,16 @@ func BenchmarkDecodeJSON(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkDecodeJSONSmall decodes a document of a project with few releases, the common
+// case, where the scanner's buffers are a large share of the allocations.
+func BenchmarkDecodeJSONSmall(b *testing.B) {
+	data := syntheticJSON(10)
+	b.SetBytes(int64(len(data)))
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, _, err := decodeJSON(bytes.NewReader(data)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
