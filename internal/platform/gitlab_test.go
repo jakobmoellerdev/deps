@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -108,6 +109,55 @@ func TestGitLabListPRs(t *testing.T) {
 	c, _ = gitlabTestClient(t, nil)
 	if _, err := c.ListPRs(t.Context(), "open", 1); err == nil || !strings.Contains(err.Error(), "404") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// A merge request for a branch GitLab does not know yet (its push is still processed) is
+// created again; other 400s and a canceled context end it.
+func TestGitLabCreatePRBranchRace(t *testing.T) {
+	const unknown = `{"message":{"source_branch":["does not exist"]}}`
+	for _, tc := range []struct {
+		name    string
+		answers []route
+		waits   int
+		want    string // error substring, "" = created
+		calls   int
+	}{
+		{"created after two refusals", []route{{http.StatusBadRequest, unknown}, {http.StatusBadRequest, unknown}, {http.StatusCreated, `{"iid":7}`}}, 4, "", 3},
+		{"gives up after the waits", []route{{http.StatusBadRequest, unknown}}, 2, "does not exist", 3},
+		{"other 400 is not retried", []route{{http.StatusBadRequest, `{"message":{"target_branch":["does not exist"]}}`}}, 4, "target_branch", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var n int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				a := tc.answers[min(n, len(tc.answers)-1)]
+				n++
+				w.WriteHeader(a.code)
+				io.WriteString(w, a.body)
+			}))
+			t.Cleanup(srv.Close)
+			c := newGitLab(Info{Kind: GitLab, APIURL: srv.URL + "/api/v4", Repo: "grp/sub/r"}, "tok", srv.Client())
+			c.branchWaits = make([]time.Duration, tc.waits)
+			pr, err := c.CreatePR(t.Context(), "deps/a", "main", "t", "b", false)
+			if tc.want == "" && (err != nil || pr.Number != 7) || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) || n != tc.calls {
+				t.Errorf("CreatePR = %+v, %v after %d calls", pr, err, n)
+			}
+		})
+	}
+	// The run is canceled while it waits.
+	ctx, cancel := context.WithCancel(t.Context())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		cancel()
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, unknown)
+	}))
+	t.Cleanup(srv.Close)
+	c := newGitLab(Info{Kind: GitLab, APIURL: srv.URL + "/api/v4", Repo: "grp/sub/r"}, "tok", srv.Client())
+	if len(c.branchWaits) != len(gitlabBranchWaits) {
+		t.Errorf("default waits = %v", c.branchWaits)
+	}
+	if _, err := c.CreatePR(ctx, "deps/a", "main", "t", "b", false); !errors.Is(err, context.Canceled) {
+		t.Errorf("canceled: %v", err)
 	}
 }
 

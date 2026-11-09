@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -22,7 +23,15 @@ type gitlabClient struct {
 	mu    sync.Mutex
 	info  *gitlabProject         // GET /projects/:id, cached after the first success
 	users map[string]*gitlabUser // lowercase username -> its lookup
+
+	branchWaits []time.Duration // CreatePR's pauses while the pushed branch is unknown
 }
+
+// gitlabBranchWaits are the pauses before CreatePR asks again while GitLab answers 400
+// {"source_branch":["does not exist"]}: GitLab learns of a push asynchronously (its
+// PostReceive job refreshes the project's cached branch names), so a merge request created
+// right after deps pushed its branch can be refused for a few seconds.
+var gitlabBranchWaits = []time.Duration{500 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second}
 
 // gitlabUser is the lookup of one username. mu is held across the request, so concurrent
 // callers of the name share it while other names proceed; a failed lookup is retried.
@@ -34,8 +43,9 @@ type gitlabUser struct {
 
 func newGitLab(info Info, token string, c *http.Client) *gitlabClient {
 	return &gitlabClient{
-		r:       rest{api: info.APIURL, repo: info.Repo, c: c, headers: gitlabHeaders(token)},
-		project: "/projects/" + url.PathEscape(info.Repo),
+		r:           rest{api: info.APIURL, repo: info.Repo, c: c, headers: gitlabHeaders(token)},
+		project:     "/projects/" + url.PathEscape(info.Repo),
+		branchWaits: gitlabBranchWaits,
 	}
 }
 
@@ -206,14 +216,30 @@ const gitlabDraftPrefix = "Draft: "
 var gitlabDraftPrefixes = []string{"DRAFT:", "[DRAFT]", "(DRAFT)", "DRAFT - "}
 
 // CreatePR opens a merge request that deletes its source branch when merged; a draft gets
-// the Draft: title prefix.
+// the Draft: title prefix. While GitLab does not know the just-pushed source branch yet, it
+// asks again after each of g.branchWaits.
 func (g *gitlabClient) CreatePR(ctx context.Context, head, base, title, body string, draft bool) (PR, error) {
 	in := map[string]any{
 		"source_branch": head, "target_branch": base, "title": draftTitle(title, draft, gitlabDraftPrefix, gitlabDraftPrefixes),
 		"description": body, "remove_source_branch": true,
 	}
 	var m gitlabMR
-	if err := g.do(ctx, http.MethodPost, g.project+"/merge_requests", in, &m); err != nil {
+	err := g.do(ctx, http.MethodPost, g.project+"/merge_requests", in, &m)
+	for _, wait := range g.branchWaits {
+		if !hasStatus(err, http.StatusBadRequest, `"source_branch":["does not exist"]`) {
+			break
+		}
+		slog.DebugContext(ctx, "source branch not known to GitLab yet, creating the merge request again", "branch", head, "wait", wait)
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return PR{}, ctx.Err()
+		case <-t.C:
+		}
+		err = g.do(ctx, http.MethodPost, g.project+"/merge_requests", in, &m)
+	}
+	if err != nil {
 		return PR{}, err
 	}
 	return m.pr(), nil
