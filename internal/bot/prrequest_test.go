@@ -45,7 +45,7 @@ func TestRebaseCheckbox(t *testing.T) {
 // fingerprint, so it never reads as new content.
 func TestPRBodyRebaseCheckbox(t *testing.T) {
 	_, res := fixture(t)
-	body := prBody(t.Context(), nil, engine.Group{Updates: res.Updates[:1]}, "abc", "def")
+	body := prBody(t.Context(), Options{}, engine.Group{Updates: res.Updates[:1]}, "abc", "def")
 	if strings.Count(body, rebaseCheckbox) != 1 || rebaseTicked(body) {
 		t.Fatalf("body lacks one unticked checkbox:\n%s", body)
 	}
@@ -55,6 +55,22 @@ func TestPRBodyRebaseCheckbox(t *testing.T) {
 	ticked := strings.Replace(body, "- [ ] <!-- deps:rebase -->", "- [x] <!-- deps:rebase -->", 1)
 	if !rebaseTicked(ticked) || bodyFingerprint(ticked) != "abc" || bodyInput(ticked) != "def" || untickRebase(ticked) != body {
 		t.Errorf("ticked body:\n%s", ticked)
+	}
+}
+
+// In a workflow run the body links it above the rule, the link text escaped; the checkbox
+// and the markers are unaffected.
+func TestPRBodyRunLink(t *testing.T) {
+	_, res := fixture(t)
+	o := Options{Run: platform.WorkflowRun{Workflow: "deps [nightly]", Number: "42", URL: "https://github.com/o/r/actions/runs/9/attempts/2"}}
+	body := prBody(t.Context(), o, engine.Group{Updates: res.Updates[:1]}, "abc", "")
+	want := "\n\nWritten by deps in [deps \\[nightly\\] #42](https://github.com/o/r/actions/runs/9/attempts/2).\n\n---\n\n" + rebaseCheckbox + "\n\n<!-- deps:fingerprint=abc -->\n"
+	if !strings.Contains(body, want) || bodyFingerprint(body) != "abc" || rebaseTicked(body) {
+		t.Errorf("body lacks %q:\n%s", want, body)
+	}
+	o.Run = platform.WorkflowRun{URL: "https://g.example/o/r/actions/runs/9"}
+	if body := prBody(t.Context(), o, engine.Group{Updates: res.Updates[:1]}, "abc", ""); !strings.Contains(body, "\nWritten by deps in [workflow run](https://g.example/o/r/actions/runs/9).\n") {
+		t.Errorf("body without workflow name and number:\n%s", body)
 	}
 }
 

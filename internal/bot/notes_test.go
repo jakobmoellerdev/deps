@@ -24,7 +24,7 @@ func (*fakeNotes) Age(_ context.Context, u dep.Update) string { return "age of "
 func TestPRBodyNotes(t *testing.T) {
 	n := &fakeNotes{}
 	u := dep.Update{Dep: dep.Dep{File: "go.mod", Line: 3, Name: "m", Version: "v1.0.0"}, Type: dep.Minor, NewVersion: "v1.1.0"}
-	body := prBody(t.Context(), n, engine.Group{Updates: []dep.Update{u}}, "fp", "")
+	body := prBody(t.Context(), Options{Notes: n}, engine.Group{Updates: []dep.Update{u}}, "fp", "")
 	for _, want := range []string{
 		"| File | From | To | Type | Age |\n",
 		"| `go.mod:3` | `v1.0.0` | `v1.1.0` | minor | age of v1.1.0 |\n",
@@ -55,7 +55,7 @@ func BenchmarkPRBodyAges(b *testing.B) {
 	}
 	n := &slowNotes{}
 	for b.Loop() {
-		prBody(b.Context(), n, engine.Group{Updates: ups}, "fp", "")
+		prBody(b.Context(), Options{Notes: n}, engine.Group{Updates: ups}, "fp", "")
 	}
 }
 

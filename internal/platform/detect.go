@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -64,6 +65,35 @@ func envInfo(k Kind, getenv func(string) string) Info {
 		APIURL:    getenv("GITHUB_API_URL"),
 		Repo:      getenv("GITHUB_REPOSITORY"),
 	}
+}
+
+// WorkflowRun is the Actions workflow run deps runs in.
+type WorkflowRun struct {
+	Workflow string // GITHUB_WORKFLOW, the workflow's name; "" = unknown
+	Number   string // GITHUB_RUN_NUMBER; "" = unknown
+	URL      string // the run's web page
+}
+
+// RunFromEnv returns the GitHub, Gitea or Forgejo Actions workflow run deps runs in, from
+// the variables FromEnv reads plus GITHUB_RUN_ID: <server>/<repository>/actions/runs/<id>
+// (Gitea and Forgejo address runs by id like GitHub), with /attempts/<n> on GitHub for a
+// re-run (GITHUB_RUN_ATTEMPT > 1; Gitea and Forgejo have no such page). Elsewhere, also on
+// GitLab CI, it is the zero WorkflowRun.
+func RunFromEnv(getenv func(string) string) WorkflowRun {
+	info, ok := FromEnv(getenv)
+	id := getenv("GITHUB_RUN_ID")
+	if !ok || info.Kind == GitLab || info.ServerURL == "" || info.Repo == "" || id == "" {
+		return WorkflowRun{}
+	}
+	run := WorkflowRun{
+		Workflow: getenv("GITHUB_WORKFLOW"),
+		Number:   getenv("GITHUB_RUN_NUMBER"),
+		URL:      info.ServerURL + "/" + info.Repo + "/actions/runs/" + url.PathEscape(id),
+	}
+	if n, err := strconv.Atoi(getenv("GITHUB_RUN_ATTEMPT")); info.Kind == GitHub && err == nil && n > 1 {
+		run.URL += "/attempts/" + strconv.Itoa(n)
+	}
+	return run
 }
 
 // apiURL derives the API base URL for a kind.

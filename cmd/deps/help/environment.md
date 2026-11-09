@@ -64,6 +64,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `GITHUB_STEP_SUMMARY`, `GITEA_STEP_SUMMARY` | all | step summary file (see `deps help output`) |
 | `GITHUB_OUTPUT` | `plan`, `apply`, `run` | step outputs file: the counts are appended (see `deps help output`) |
 | `GITHUB_WORKSPACE` | all | on GitHub Actions, annotation paths are made relative to it |
+| `GITHUB_RUN_ID`, `GITHUB_RUN_NUMBER`, `GITHUB_RUN_ATTEMPT`, `GITHUB_WORKFLOW` | `run` | on GitHub, Gitea and Forgejo Actions, PR bodies deps writes link the workflow run `<server>/<repository>/actions/runs/<GITHUB_RUN_ID>` (server and repository as for platform detection; `/attempts/<n>` appended on GitHub when `GITHUB_RUN_ATTEMPT` is above 1), labeled `<GITHUB_WORKFLOW> #<GITHUB_RUN_NUMBER>`; without `GITHUB_RUN_ID` there is no link (see `deps help run`) |
 
 On a 401 without a static token, git tag lookups call `git credential fill` once per host, with `GIT_TERMINAL_PROMPT=0` and a 10s timeout. Every `git` process deps runs has `GIT_TERMINAL_PROMPT=0`, so deps never prompts. npm lookups use `.npmrc` `_authToken` entries, PyPI index lookups the index URL's userinfo (`https://user:token@host/simple`), and docker lookups the Docker credential chain (`~/.docker/config.json` and credential helpers).
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -57,6 +58,48 @@ func TestFromEnv(t *testing.T) {
 			got, ok := FromEnv(envFunc(tt.env))
 			if ok != tt.ok || got != tt.want {
 				t.Fatalf("got %+v,%v want %+v,%v", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+func TestRunFromEnv(t *testing.T) {
+	github := map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "o/r",
+		"GITHUB_RUN_ID": "123", "GITHUB_RUN_NUMBER": "7", "GITHUB_WORKFLOW": "deps",
+	}
+	with := func(m map[string]string, kv ...string) map[string]string {
+		out := maps.Clone(m)
+		for i := 0; i < len(kv); i += 2 {
+			out[kv[i]] = kv[i+1]
+		}
+		return out
+	}
+	tests := []struct {
+		name string
+		env  map[string]string
+		want WorkflowRun
+	}{
+		{"github", github, WorkflowRun{"deps", "7", "https://github.com/o/r/actions/runs/123"}},
+		{"github first attempt", with(github, "GITHUB_RUN_ATTEMPT", "1"), WorkflowRun{"deps", "7", "https://github.com/o/r/actions/runs/123"}},
+		{"github re-run", with(github, "GITHUB_RUN_ATTEMPT", "2"), WorkflowRun{"deps", "7", "https://github.com/o/r/actions/runs/123/attempts/2"}},
+		{"gitea, trailing slash, no attempts page", with(github, "GITEA_ACTIONS", "true", "GITHUB_SERVER_URL", "https://g.example:3000/", "GITHUB_RUN_ATTEMPT", "2"),
+			WorkflowRun{"deps", "7", "https://g.example:3000/o/r/actions/runs/123"}},
+		{"forgejo native", with(github, "FORGEJO_ACTIONS", "true", "FORGEJO_SERVER_URL", "https://f.example", "FORGEJO_REPOSITORY", "f/r", "GITHUB_RUN_ATTEMPT", "2"),
+			WorkflowRun{"deps", "7", "https://f.example/f/r/actions/runs/123"}},
+		{"forgejo fallback", with(github, "FORGEJO_ACTIONS", "true", "GITHUB_SERVER_URL", "https://f.example"),
+			WorkflowRun{"deps", "7", "https://f.example/o/r/actions/runs/123"}},
+		{"without name and number", map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "1"},
+			WorkflowRun{URL: "https://github.com/o/r/actions/runs/1"}},
+		{"missing run id", with(github, "GITHUB_RUN_ID", ""), WorkflowRun{}},
+		{"missing repository", with(github, "GITHUB_REPOSITORY", ""), WorkflowRun{}},
+		{"local", map[string]string{"GITHUB_RUN_ID": "123"}, WorkflowRun{}},
+		{"gitlab", map[string]string{"GITLAB_CI": "true", "CI_SERVER_URL": "https://gitlab.com", "CI_PROJECT_PATH": "o/r", "GITHUB_RUN_ID": "1"}, WorkflowRun{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RunFromEnv(envFunc(tt.env)); got != tt.want {
+				t.Errorf("got %+v, want %+v", got, tt.want)
 			}
 		})
 	}

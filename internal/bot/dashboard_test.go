@@ -409,14 +409,14 @@ func TestDashboardWarnings(t *testing.T) {
 		{Dep: pad, Type: dep.Patch, NewVersion: "1.1.1", Warnings: ws},
 		{Dep: dep.Dep{Manager: "npm", File: "b/package.json", Name: "left-pad", Version: "1.1.0"}, Type: dep.Patch, NewVersion: "1.1.1", Warnings: ws},
 	}}
-	pr := prBody(t.Context(), nil, grp, "fp", "")
+	pr := prBody(t.Context(), Options{}, grp, "fp", "")
 	want := "\n### Warnings\n\nConsider replacing these dependencies rather than updating them.\n\n" +
 		"- `left-pad`: deprecated: package deprecated: use String.prototype.padStart()\n" +
 		"- `left-pad`: abandoned: no release since 2024-04-16\n\n---"
 	if !strings.Contains(pr, want) {
 		t.Errorf("PR body lacks %q:\n%s", want, pr)
 	}
-	if pr := prBody(t.Context(), nil, engine.Group{Updates: []dep.Update{{Dep: pad, Type: dep.Patch, NewVersion: "1.1.1"}}}, "fp", ""); strings.Contains(pr, "### Warnings") {
+	if pr := prBody(t.Context(), Options{}, engine.Group{Updates: []dep.Update{{Dep: pad, Type: dep.Patch, NewVersion: "1.1.1"}}}, "fp", ""); strings.Contains(pr, "### Warnings") {
 		t.Errorf("PR body without warnings has the section:\n%s", pr)
 	}
 }

@@ -4090,7 +4090,7 @@
     "prFooter": {
       "type": "string",
       "description": "Go text/template (the fields of prTitle) rendered at the end of update PR bodies, above the rebase checkbox; empty means none. Rules override it.",
-      "markdownDescription": "Go text/template (the fields of prTitle) rendered at the end of update PR bodies, above the rebase checkbox; empty means none. Rules override it.\n\nRendered below the release notes, above the rule and the rebase checkbox, with the fields of [`prTitle`](#prtitle); trimmed like [`prHeader`](#prheader)."
+      "markdownDescription": "Go text/template (the fields of prTitle) rendered at the end of update PR bodies, above the rebase checkbox; empty means none. Rules override it.\n\nRendered below the release notes, above the workflow run link (in Actions, see `deps help run`), the rule and the rebase checkbox, with the fields of [`prTitle`](#prtitle); trimmed like [`prHeader`](#prheader)."
     },
     "rebaseLabel": {
       "type": "string",

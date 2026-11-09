@@ -997,7 +997,7 @@ Go text/template (the fields of prTitle) rendered at the end of update PR bodies
 
 - **Type:** string
 
-Rendered below the release notes, above the rule and the rebase checkbox, with the fields of [`prTitle`](#prtitle); trimmed like [`prHeader`](#prheader).
+Rendered below the release notes, above the workflow run link (in Actions, see `deps help run`), the rule and the rebase checkbox, with the fields of [`prTitle`](#prtitle); trimmed like [`prHeader`](#prheader).
 
 ## `rebaseLabel`
 

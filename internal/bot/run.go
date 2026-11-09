@@ -83,6 +83,8 @@ type Options struct {
 	// their non-security updates' schedules (schedule.Set.Matches).
 	Trigger schedule.Trigger
 	Notes   Notes // release ages and notes in PR bodies; nil = none
+	// Run is the workflow run deps runs in, linked in the PR bodies it writes; zero = none.
+	Run platform.WorkflowRun
 	// Dashboard maintains the dependency dashboard issue; nil leaves an existing one alone.
 	Dashboard *DashboardOptions
 	// Progress observes the PR phase (engine.PhasePRs, one item per group, done once the
@@ -962,7 +964,7 @@ func handle(ctx context.Context, o Options, s *runState, grp engine.Group, b gro
 	}
 	// Notes are fetched only for PRs that are actually written; the fingerprint covers file
 	// contents only, so changing upstream notes never churns PRs.
-	body := prBody(ctx, o.Notes, grp, fp, b.input)
+	body := prBody(ctx, o, grp, fp, b.input)
 	if pr != nil {
 		if err := pc.UpdatePR(ctx, pr.Number, grp.Title, body, pr.Draft); err != nil {
 			return a, nil, err
@@ -1189,7 +1191,7 @@ func raisePR(ctx context.Context, o Options, s *runState, grp engine.Group, fp, 
 		a.Status = StatusWouldCreate
 		return a, &platform.PR{}, nil
 	}
-	body := prBody(ctx, o.Notes, grp, fp, input)
+	body := prBody(ctx, o, grp, fp, input)
 	if why != "" {
 		slog.InfoContext(ctx, "raising a PR for the automerge branch", "branch", grp.Branch, "reason", why)
 		body = "This update is configured to merge its branch without a PR (`automergeType: branch`), but " + why + ", so deps opened this PR.\n\n" + body
@@ -1333,9 +1335,11 @@ func bodyFingerprint(body string) string {
 }
 
 // prBody renders the body of grp's PR with content fingerprint fp and input fingerprint input
-// ("" = none): the group's header, the update table and notes, its footer, then the unticked
+// ("" = none): the group's header, the update table and release notes (o.Notes), its footer,
+// the line linking the workflow run writing it (o.Run), then a rule, the unticked
 // rebaseCheckbox and the markers.
-func prBody(ctx context.Context, notes Notes, grp engine.Group, fp, input string) string {
+func prBody(ctx context.Context, o Options, grp engine.Group, fp, input string) string {
+	notes := o.Notes
 	ups := grp.Updates
 	var b strings.Builder
 	if grp.Header != "" {
@@ -1431,6 +1435,9 @@ func prBody(ctx context.Context, notes Notes, grp engine.Group, fp, input string
 	if grp.Footer != "" {
 		b.WriteString("\n" + grp.Footer + "\n")
 	}
+	if l := runLine(o.Run); l != "" {
+		b.WriteString("\n" + l + "\n")
+	}
 	b.WriteString("\n---\n\n" + rebaseCheckbox + "\n")
 	fmt.Fprintf(&b, "\n<!-- deps:fingerprint=%s -->\n", fp)
 	if m := versionsMarker(ups); m != "" {
@@ -1440,6 +1447,22 @@ func prBody(ctx context.Context, notes Notes, grp engine.Group, fp, input string
 		fmt.Fprintf(&b, "<!-- deps:input=%s -->\n", input)
 	}
 	return b.String()
+}
+
+// linkTextEscaper escapes what would end or nest markdown link text.
+var linkTextEscaper = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`)
+
+// runLine is the PR body line linking the workflow run r that writes the body, "" without
+// one: "Written by deps in [<workflow> #<number>](<url>).".
+func runLine(r platform.WorkflowRun) string {
+	if r.URL == "" {
+		return ""
+	}
+	label := cmp.Or(r.Workflow, "workflow run")
+	if r.Number != "" {
+		label += " #" + r.Number
+	}
+	return "Written by deps in [" + linkTextEscaper.Replace(label) + "](" + r.URL + ")."
 }
 
 func commitMessage(grp engine.Group) string {

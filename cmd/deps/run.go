@@ -421,6 +421,7 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 		MultiBase:          multiBase,
 		AllowTasks:         sh.allowTasks,
 		Notes:              releasenotes.New(client, s.sem, s.auth, s.gh, s.sources).WithGitLab(gitLabBases(s.env.GitLabURL)),
+		Run:                platform.RunFromEnv(os.Getenv),
 		Progress:           s.progress,
 		PRLog:              prLog(stderr),
 	}

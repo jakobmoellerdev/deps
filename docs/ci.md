@@ -841,6 +841,8 @@ Each PR can be steered from the PR itself, without the dashboard:
 
 The request acts on the next run. To act right away, also run deps on `pull_request` events (`types: [edited, labeled]`) of `deps/` branches; `run` needs the base branch checked out (`actions/checkout` with `ref: ${{ github.event.repository.default_branch }}`), not the PR's merge commit. As with the [dashboard trigger](#run-when-the-dashboard-is-ticked), skip events whose `sender.type` is `Bot`, so deps' own body edits don't start runs. A label must exist before it can be added to a PR; create `rebase` and `stop-updating` (or your names) once.
 
+In GitHub, Gitea and Forgejo Actions, the PR body also links the workflow run that created the PR or last updated its content, above the rule: `Written by deps in [deps #42](https://<server>/<owner>/<repo>/actions/runs/<GITHUB_RUN_ID>).` Runs that leave the PR `up-to-date` or only rebase it keep the earlier link.
+
 ## Overlapping runs
 
 Two runs of the same repository can race on the same branches: two crons firing together, a manual dispatch during a scheduled run. The push is guarded with `--force-with-lease`, so a race fails with an error instead of losing commits, but the second run's work is wasted. Serialize the runs with a concurrency group:

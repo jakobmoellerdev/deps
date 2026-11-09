@@ -642,7 +642,7 @@ Rendered above the update table of every update PR body, with the fields of [`pr
 
 ## Config.prFooter
 
-Rendered below the release notes, above the rule and the rebase checkbox, with the fields of [`prTitle`](#prtitle); trimmed like [`prHeader`](#prheader).
+Rendered below the release notes, above the workflow run link (in Actions, see `deps help run`), the rule and the rebase checkbox, with the fields of [`prTitle`](#prtitle); trimmed like [`prHeader`](#prheader).
 
 ## Rule.postUpgradeTasks
 

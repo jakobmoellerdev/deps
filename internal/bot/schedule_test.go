@@ -225,7 +225,7 @@ func TestPRBodySecurity(t *testing.T) {
 		Advisories: []dep.Advisory{{ID: "GO-1", Summary: "rce", URL: "https://pkg.go.dev/vuln/GO-1"}, {ID: "GO-2", Summary: "dos"}},
 	}
 	dup := u
-	body := prBody(t.Context(), nil, engine.Group{Updates: []dep.Update{u, dup}}, "abc", "")
+	body := prBody(t.Context(), Options{}, engine.Group{Updates: []dep.Update{u, dup}}, "abc", "")
 	for _, want := range []string{"| `go.mod:3` | `v1.0.0` | `v1.0.1` | patch |", "### Security", "- [GO-1](https://pkg.go.dev/vuln/GO-1): rce\n", "- GO-2: dos\n", "<!-- deps:fingerprint=abc -->"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q:\n%s", want, body)
@@ -234,14 +234,14 @@ func TestPRBodySecurity(t *testing.T) {
 	if strings.Count(body, "GO-2") != 1 {
 		t.Errorf("advisory duplicated:\n%s", body)
 	}
-	if strings.Contains(prBody(t.Context(), nil, engine.Group{Updates: []dep.Update{{Dep: dep.Dep{Version: "v1"}, NewVersion: "v2"}}}, "x", ""), "Security") {
+	if strings.Contains(prBody(t.Context(), Options{}, engine.Group{Updates: []dep.Update{{Dep: dep.Dep{Version: "v1"}, NewVersion: "v2"}}}, "x", ""), "Security") {
 		t.Error("security section without advisories")
 	}
 }
 
 func TestPRBodyLockfileOnly(t *testing.T) {
 	u := dep.Update{Dep: dep.Dep{File: "package.json", Line: 4, Version: "5.2.8", Range: "^5.2.8", Locked: "5.3.0"}, Type: dep.Patch, NewVersion: "5.3.1", Lockfile: true}
-	if body := prBody(t.Context(), nil, engine.Group{Updates: []dep.Update{u}}, "abc", ""); !strings.Contains(body, "| `package.json:4` | `5.3.0` | `5.3.1` | patch (lockfile) |") {
+	if body := prBody(t.Context(), Options{}, engine.Group{Updates: []dep.Update{u}}, "abc", ""); !strings.Contains(body, "| `package.json:4` | `5.3.0` | `5.3.1` | patch (lockfile) |") {
 		t.Errorf("body:\n%s", body)
 	}
 }
@@ -252,7 +252,7 @@ func TestPRBodyModulePath(t *testing.T) {
 	}
 	other := u
 	other.Dep.File = "sub/go.mod"
-	body := prBody(t.Context(), nil, engine.Group{Updates: []dep.Update{u, other}}, "abc", "")
+	body := prBody(t.Context(), Options{}, engine.Group{Updates: []dep.Update{u, other}}, "abc", "")
 	for _, want := range []string{
 		"| `go.mod:3` | `v92.0.0` | `github.com/google/go-github/v93@v93.0.0` | major |",
 		"`github.com/google/go-github/v92` moves to the module path `github.com/google/go-github/v93`",
