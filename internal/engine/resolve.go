@@ -1932,7 +1932,8 @@ func (r *resolver) applySecurity(ups []dep.Update, s versioning.Scheme, names []
 	if sec < 0 {
 		var chosen string
 		for _, n := range names {
-			if s.Compatible(cur, n) && s.Compare(n, fix) >= 0 && (chosen == "" || s.Compare(n, chosen) < 0) {
+			// Compatible parses cur and n; the cheaper order checks run first.
+			if s.Compare(n, fix) >= 0 && (chosen == "" || s.Compare(n, chosen) < 0) && s.Compatible(cur, n) {
 				chosen = n
 			}
 		}
@@ -1962,7 +1963,7 @@ func (r *resolver) applySecurity(ups []dep.Update, s versioning.Scheme, names []
 func minFix(s versioning.Scheme, cur string, v Vuln) string {
 	var m string
 	for _, f := range v.Fixed {
-		if s.Compatible(cur, f) && (m == "" || s.Compare(f, m) < 0) {
+		if (m == "" || s.Compare(f, m) < 0) && s.Compatible(cur, f) {
 			m = f
 		}
 	}
