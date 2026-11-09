@@ -283,3 +283,30 @@ func BenchmarkReleaseTime(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkList measures listing a repository of many tags (Docker Hub's python has ~10k) on
+// one tags/list page: the tags and the release slice built from them.
+func BenchmarkList(b *testing.B) {
+	var page strings.Builder
+	page.WriteString(`{"name":"img","tags":[`)
+	for i := range 10000 {
+		if i > 0 {
+			page.WriteByte(',')
+		}
+		fmt.Fprintf(&page, `"3.%d.%d-slim-bookworm"`, i/100, i%100)
+	}
+	page.WriteString(`]}`)
+	body := page.String()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, body)
+	}))
+	b.Cleanup(srv.Close)
+	s := newSource(srv.Client(), nil, anon)
+	name := strings.TrimPrefix(srv.URL, "http://") + "/img"
+	b.ReportAllocs()
+	for b.Loop() {
+		if rels, _, err := s.list(b.Context(), name); err != nil || len(rels) != 10000 {
+			b.Fatalf("list = %d tags, %v", len(rels), err)
+		}
+	}
+}

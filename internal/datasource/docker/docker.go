@@ -471,21 +471,38 @@ func (s *Source) list(ctx context.Context, name string) (rels []datasource.Relea
 	if err != nil {
 		return nil, nil, fmt.Errorf("list tags %s: %w", name, err)
 	}
+	// The tags are collected in chunks, each as long as all before it (from minTagChunk), and
+	// copied into rels once their number is known: appending to rels directly reallocates and
+	// copies the whole list every 25% for the long listings (thousands of tags) many images have.
+	var chunks [][]string
+	n := 0
 	meta, err = s.listTags(ctx, repo, func(t string) {
-		rels = append(rels, datasource.Release{Version: t})
+		if len(chunks) == 0 || len(chunks[len(chunks)-1]) == cap(chunks[len(chunks)-1]) {
+			chunks = append(chunks, make([]string, 0, max(n, minTagChunk)))
+		}
+		chunks[len(chunks)-1] = append(chunks[len(chunks)-1], t)
+		n++
 	})
 	if errors.Is(err, errdef.ErrTooManyPages) {
-		slog.WarnContext(ctx, "image tag listing truncated", "repo", name, "pages", repo.TagListMaxPages, "tags", len(rels))
+		slog.WarnContext(ctx, "image tag listing truncated", "repo", name, "pages", repo.TagListMaxPages, "tags", n)
 		err = nil
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("list tags %s: %w", name, err)
 	}
-	for i := range rels {
-		rels[i].Digest = meta[rels[i].Version].digest
+	if n > 0 {
+		rels = make([]datasource.Release, 0, n)
+	}
+	for _, c := range chunks {
+		for _, t := range c {
+			rels = append(rels, datasource.Release{Version: t, Digest: meta[t].digest})
+		}
 	}
 	return rels, meta, nil
 }
+
+// minTagChunk is the length of the first chunk list collects tags in.
+const minTagChunk = 64
 
 // head resolves the digest with a HEAD request. A registry that omits the digest header gets a
 // GET, whose digest is computed from the manifest; HTTP and auth errors are not retried with GET,
