@@ -97,7 +97,7 @@ type customManager struct {
 // regex group or Renovate marker) as Source: whitespace-separated registry URLs. Other
 // datasources keep an empty Source.
 var registryURLDatasources = []string{"helm", "gitlab-packages", "rpm", "apk", debds.Name, "artifactory", forge.GitLabReleases, forge.GitLabTags, forge.GiteaReleases, forge.GiteaTags, forge.ForgejoReleases, forge.ForgejoTags, "endoflife-date",
-	galaxy.CollectionName, mavends.Name, sbtds.PackageName, sbtds.PluginName}
+	galaxy.CollectionName, mavends.Name, sbtds.PackageName, sbtds.PluginName, "glasskube-packages"}
 
 // setRegistry sets d.Source to registry when d's datasource takes a registry URL.
 func setRegistry(d *dep.Dep, registry string) {
@@ -578,6 +578,8 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //   - maven, sbt-package, sbt-plugin: Name is `groupId:artifactId` (mavenSource).
 //   - github-runners: Name is the runner name (`ubuntu`); Source is the runner-images
 //     repository, as for runs-on labels.
+//   - glasskube-packages: Name is the package; Source is the registryUrl (Glasskube package
+//     repositories, the first with the package wins), if any, else the public repository.
 //   - custom.<name> of a defined custom datasource: Name is free-form; Source is empty.
 func (m *customManager) classify(d *dep.Dep) {
 	ds := d.Datasource
@@ -630,7 +632,7 @@ func (m *customManager) classify(d *dep.Dep) {
 		if _, err := forge.ParseRepo(d.Datasource, d.Name, d.Source); err != nil {
 			d.Skip = err.Error()
 		}
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob", galaxy.Name:
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob", galaxy.Name, "glasskube-packages":
 	case galaxy.CollectionName:
 		if f := strings.Fields(d.Source); len(f) > 0 {
 			if !httpURL(f[0]) {

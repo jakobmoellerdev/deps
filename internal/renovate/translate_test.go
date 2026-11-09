@@ -277,6 +277,11 @@ func TestLoadRules(t *testing.T) {
 			rules: "  - # packageRules[0]\n    managers: [devcontainer]\n    ignore: true" + defaultExclusions,
 		},
 		{
+			name:  "glasskube manager, cd category, glasskube-packages datasource and versioning",
+			src:   `{packageRules: [{matchCategories: ['cd'], matchDatasources: ['glasskube-packages'], groupName: 'cd'}, {matchManagers: ['glasskube'], versioning: 'glasskube'}]}`,
+			rules: "  - # packageRules[0]\n    managers: [helm]\n    depTypes: [helmfile, flux, argocd, sveltos]\n    datasources: [glasskube-packages]\n    group: cd\n  - # packageRules[0]\n    managers: [tekton, glasskube]\n    datasources: [glasskube-packages]\n    group: cd\n  - # packageRules[1]\n    managers: [glasskube]\n    versioning: glasskube" + defaultExclusions,
+		},
+		{
 			name:  "sbt and scalafmt managers, java category, sbt datasources",
 			src:   `{packageRules: [{matchManagers: ['sbt', 'scalafmt'], matchDatasources: ['sbt-package', 'sbt-plugin'], groupName: 'scala'}, {matchCategories: ['java'], enabled: false}]}`,
 			rules: "  - # packageRules[0]\n    managers: [sbt, scalafmt]\n    datasources: [sbt-package, sbt-plugin]\n    group: scala\n  - # packageRules[1]\n    managers: [maven, gradle, gradle-wrapper, maven-wrapper, sbt, scalafmt]\n    ignore: true" + defaultExclusions,

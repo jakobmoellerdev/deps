@@ -30,6 +30,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/fvm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitlabci"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gitsubmodules"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/glasskube"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradle"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
@@ -145,6 +146,7 @@ var Builtin = []Entry{
 	{quadlet.Doc, quadlet.New},
 	{crossplane.Doc, crossplane.New},
 	{tekton.Doc, tekton.New},
+	{glasskube.Doc, glasskube.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,

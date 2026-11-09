@@ -39,6 +39,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/githubrunners"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gitlabpackages"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gittags"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/glasskubepackages"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/goproxy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gotoolchain"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/gradleversion"
@@ -467,6 +468,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		flutterversion.Name:     flutterversion.New(client, sem, os.Getenv),
 		hexds.Name:              hexds.New(client, sem, os.Getenv),
 		hexpmbob.Name:           hexpmbob.New(client, sem, os.Getenv),
+		glasskubepackages.Name:  glasskubepackages.New(client, sem),
 	}
 	for name, src := range forges {
 		sources[name] = src

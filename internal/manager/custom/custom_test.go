@@ -254,7 +254,7 @@ func TestNewErrors(t *testing.T) {
 	}{
 		{config.Custom{}, "custom[1]: files: must not be empty"},
 		{config.Custom{Files: []string{"a/[b"}}, `files: invalid glob "a/[b"`},
-		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs or regex:<RE2>, got "nope"`},
+		{config.Custom{Files: []string{"x"}, Versioning: "nope"}, `versioning: must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs, glasskube or regex:<RE2>, got "nope"`},
 		{config.Custom{Files: []string{"x"}, Versioning: "regex:(?<minor>1)"}, `versioning: regex: must have a (?<major>...) group`},
 		{config.Custom{Files: []string{"x"}, Datasource: "cpan"}, `datasource: unknown "cpan"`},
 		{config.Custom{Files: []string{"x"}, Datasource: "custom.envtest"}, `datasource: unknown "custom.envtest"`},
@@ -954,5 +954,23 @@ func TestManagerDatasources(t *testing.T) {
 		{1, "maven", "org.slf4j:slf4j-api", "https://repo.example.com/maven2 https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ ivy=http://ivy.example.com", "maven", "2.0.16", "", `invalid maven registry URL "ivy=http://ivy.example.com"`},
 		{2, "sbt-plugin", "com.github.sbt:sbt-git", "https://repo.example.com/maven2/ ivy=https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/ ivy=http://ivy.example.com/", "ivy", "2.1.0", "", ""},
 		{3, "galaxy-collection", "community.general", "https://repo.example.com/maven2", "pep440", "9.2.0", "", ""},
+	})
+}
+
+// glasskube-packages deps take their package repository from registryUrl (else the public
+// one) and default to glasskube versioning.
+func TestGlasskubePackages(t *testing.T) {
+	m := one(t, config.Custom{Files: []string{"f"}, Datasource: "glasskube-packages",
+		Match: `(?m)^(?P<name>[a-z-]+)(?: (?P<registryUrl>\S+))?=(?P<version>\S+)$`})
+	src := "cert-manager=v1.17.0+2\ncloudnative-pg https://packages.example/packages=v1.25.0+1\n"
+	check(t, src, extract(t, m, src), DepTypeRegex, []want{
+		{1, "glasskube-packages", "cert-manager", "", "glasskube", "v1.17.0+2", "", ""},
+		{2, "glasskube-packages", "cloudnative-pg", "https://packages.example/packages", "glasskube", "v1.25.0+1", "", ""},
+	})
+
+	m = one(t, config.Custom{Files: []string{"f"}})
+	src = "# renovate: datasource=glasskube-packages depName=cert-manager registryUrl=https://packages.example/packages/\nversion: v1.17.0+2\n"
+	check(t, src, extract(t, m, src), DepTypeAnnotation, []want{
+		{2, "glasskube-packages", "cert-manager", "https://packages.example/packages/", "glasskube", "v1.17.0+2", "", ""},
 	})
 }

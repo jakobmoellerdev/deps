@@ -80,6 +80,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`quadlet`](#quadlet)
 - [`crossplane`](#crossplane)
 - [`tekton`](#tekton)
+- [`glasskube`](#glasskube)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -3765,6 +3766,37 @@ Updates Tekton bundles, step images and the remote tasks and pipelines of Pipeli
 - Every document is read, a `List`'s `items`, a PipelineRun's inline `pipelineSpec` and a TriggerTemplate's `resourcetemplates` too. Like Renovate, a spec is read for the shapes of all kinds at once. References by name or through other resolvers (git, hub, cluster, http) are not deps.
 - Annotation values that are no such URL (Artifact Hub names such as `git-clone:0.9`, files of the repository) are not deps.
 
+## glasskube
+
+Updates the package versions of Glasskube `Package` and `ClusterPackage` resources from the package repository their `PackageRepository` names.
+
+**Files:**
+
+- every `*.y(a)ml` containing `packages.glasskube.dev/`, parsed document by document (only documents whose `apiVersion` is in that group). Renovate's manager has no default file pattern and needs `managerFilePatterns`; deps reads every YAML file
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `package` | `Package` (`packages.glasskube.dev/*`) `spec.packageInfo.version` of `spec.packageInfo.name` | `glasskube-packages` | `glasskube` | updated |
+| `clusterPackage` | `ClusterPackage` (`packages.glasskube.dev/*`) `spec.packageInfo.version` of `spec.packageInfo.name` | `glasskube-packages` | `glasskube` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unknown PackageRepository <name>` | no scanned `PackageRepository` has the `metadata.name` of the package's `spec.packageInfo.repositoryName` (Renovate's `unknown-registry`) |
+| `no default PackageRepository` | the package has no (or an empty) `repositoryName` and no scanned `PackageRepository` carries the annotation `packages.glasskube.dev/default-repository: "true"` (Renovate's `unknown-registry`) |
+| `no version` | `spec.packageInfo.version` is empty |
+| `cannot locate value` | the version bytes were not found (escapes, block scalars) |
+
+**Package repositories.**
+
+- A package is looked up in the `spec.url` of a `PackageRepository` (`packages.glasskube.dev/*`) of any scanned file, as Renovate's `extractAllPackageFiles`: the first, in path and document order, whose `metadata.name` is the package's `spec.packageInfo.repositoryName`, or, without one, the first carrying the default-repository annotation (Glasskube's install manifest declares `glasskube` at https://packages.dl.glasskube.dev/packages as the default).
+- As in Renovate, a package is not looked up in the public repository when the scanned files declare no matching `PackageRepository`: the cluster's repositories are not known. Commit the `PackageRepository` resources (or Glasskube's install manifest) next to the packages.
+
+**Edits.**
+
+- The version is replaced in place (`v1.17.0+1` → `v1.19.1+1`); the `+N` package revision is part of the version (see the `glasskube` versioning).
+
 ## custom
 
 User-defined managers: each `custom[]` entry is one manager instance; see [`custom`](configuration.md#custom).
@@ -3824,7 +3856,7 @@ The version is replaced. A captured digest (`@sha256:` for docker markers, a `di
 
 **Registry URLs.**
 
-- `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `endoflife-date`, `galaxy-collection`, `maven`, `sbt-package`, `sbt-plugin` and the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags deps take their registry from `registryUrl`: a Renovate marker's `registryUrl=`, else a regex `(?P<registryUrl>…)` group or a JSONata result's `registryUrl`, else the entry's `registryUrl` field. Other datasources ignore it.
+- `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `endoflife-date`, `galaxy-collection`, `maven`, `sbt-package`, `sbt-plugin`, `glasskube-packages` and the `gitlab-*`, `gitea-*` and `forgejo-*` releases and tags deps take their registry from `registryUrl`: a Renovate marker's `registryUrl=`, else a regex `(?P<registryUrl>…)` group or a JSONata result's `registryUrl`, else the entry's `registryUrl` field. Other datasources ignore it.
 - `# renovate: datasource=gitlab-packages packageName=gitlab-org/cli:glab registryUrl=https://gitlab.com` (`<project>:<package>`; without a registry URL the configured GitLab instance).
 - `# renovate: datasource=rpm depName=golang registryUrl=https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/repodata/` (several whitespace-separated repositories are merged); rpm deps use the `rpm` versioning unless the marker, the regex group or the entry sets one.
 - `# renovate: datasource=apk depName=bash registryUrl=https://dl-cdn.alpinelinux.org/alpine?branch=v3.22&components=main&arch=x86_64` above `RUN apk add bash=5.2.37-r0` (one index per component); apk deps use the `apk` versioning unless the marker, the regex group or the entry sets one.
@@ -3921,6 +3953,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `hexpm-bob` | `elixir` for Elixir, `otp/<os>-<version>` (`otp/ubuntu-22.04`) for the Erlang/OTP builds of that system. The [asdf](#asdf) and [mise](#mise) `elixir` tool uses `elixir`; use it from a [custom manager](#custom) (Renovate's name) for Dockerfile `ARG`s, CI files or the OTP builds. Elixir versions are listed without their `v` (`1.18.4`) and per OTP release (`1.18.4-otp-27`), OTP versions without `OTP-` (`27.3.4.1`, `27.0-rc1`); branch builds (`main`, `v1.18`, `maint-27`) are not versions. For a pinned `1.18.4-otp-27` that should stay on its OTP release, use `versioning: 'regex:^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<prerelease>[a-z]+\.\d+))?(?:-otp-(?<compatibility>\d+))?$'` (what the asdf/mise `elixir` tool uses); OTP's up to four parts need `loose` | `GET <DEPS_HEXPM_BOB_URL or https://builds.hex.pm>/builds/<name>/builds.txt`, once per name. Source repository (release notes): `https://github.com/elixir-lang/elixir` or `https://github.com/erlang/otp` | none | the build time of each build in the list |
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 | `java-version` | `java` or `java-jdk` (the JDK) or `java-jre` (the JRE), optionally followed by `?os=<os>&architecture=<arch>` (Renovate's form) | `GET <DEPS_JAVA_RELEASES_URL or https://api.adoptium.net/v3/info/release_versions>?image_type=<jdk\|jre>&project=jdk&release_type=ga&sort_method=DATE&sort_order=DESC&page_size=50&page=<n>` (Renovate's source, Eclipse Temurin) once per image type and filter per run, pages until a short page or a 404, at most 50: the GA versions as Adoptium semver (`21.0.5+11`), plus a derived `X.Y` and `X` per line | none | none: the Adoptium version list carries no dates (Renovate's has none either), so `minimumReleaseAge` treats versions as of unknown age (see `minimumReleaseAgeBehaviour`) |
+| `glasskube-packages` | the Glasskube package name (`cert-manager`); the dep's source is the package repository URL of its `PackageRepository` (glasskube manager) or `registryUrl` (custom managers; whitespace-separated URLs are tried in order, the first that has the package wins), default `https://packages.dl.glasskube.dev/packages`. Versioning `glasskube` (`v1.17.0+2`, the revision after the version) | `GET <repository>/<name>/versions.yaml` once per repository and package (redirects are followed: the default repository answers from glasskube.github.io): every `versions[].version` is a version, `latestVersion` the release the repository recommends (majors above it are not proposed, as npm's `latest`); a repository answering HTTP 404 does not have the package. Source repository (release notes): `GET <repository>/<name>/<latestVersion>/package.yaml` once per package, only for versions in a pull request: its `references` entry labeled `GitHub`, else one labeled `Website` on a forge | userinfo of the repository URL (`https://user:token@host/…`) as basic auth; redacted in errors and logs | none: versions.yaml has no release times, so `minimumReleaseAge` treats every version as of unknown age (`minimumReleaseAgeBehaviour`) |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `azure-tags` = `git-tags`, `bitbucket-server-tags` = `git-tags`, `bitbucket-tags` = `git-tags`, `github-digest` = `git-refs`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
 

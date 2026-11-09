@@ -883,6 +883,7 @@ The scheme validates the current value, ranks candidates, classifies update kind
 | `deb` | Debian package versions (deb-version(7)): `[epoch:]upstream_version[-debian_revision]`, the upstream version starting with a digit | ordered as `dpkg --compare-versions`: epoch first, then upstream version and revision, digit runs numerically and `~` below everything (`1.0~rc1` < `1.0` < `1.0+deb12u1`). Update types follow an epoch change (major) and the first three numbers after the epoch, revision included (`8.14.1-1` → `8.14.1-2` is patch); every valid version is a candidate. No ranges. The default of `deb` deps |
 | `hex` | SemVer 2.0 as Elixir's `Version` parses it: `MAJOR.MINOR.PATCH`, optional `-<prerelease>` and `+<build>`; no `v` prefix, no partial versions | ordered as SemVer 2.0 (the build is ignored); update types follow the three parts; prereleases only from a prerelease. Ranges are Elixir requirements (`~> 1.7`, `>= 1.0.0 and < 2.0.0`, `~> 1.0 or ~> 2.0`, `== 1.2.3`); a prerelease only satisfies an alternative naming one, as Hex resolves. The default of the mix and gleam managers |
 | `nixpkgs` | branches of NixOS/nixpkgs, as Renovate's `nixpkgs`: `^(nixos\|nixpkgs\|release)-(YY.MM\|unstable)(-(small\|aarch64\|darwin))?$` (`nixos-24.05`, `nixpkgs-24.05-darwin`, `release-24.11`, `nixos-unstable`) | candidates need the same prefix and suffix; releases ordered by year and month, `unstable` above every release but never proposed from one. A new year is `major` (`nixos-24.11` → `nixos-25.05`), a new month `minor`. A `git-refs` dep under it gets the repository's branches as candidates instead of its tags. No ranges. The default of the nix manager's NixOS/nixpkgs branches and release channels |
+| `glasskube` | Glasskube package versions: SemVer with an optional `v` and the package revision as the first build identifier (`v1.17.0+2`) | ordered as Renovate's: major, minor, patch, then the revision (absent = 0: `v1.17.0` < `v1.17.0+1` < `v1.17.0+2` < `v1.17.1+1`), then a prerelease below none; a new revision is a patch update; prereleases only from a prerelease. No ranges. The default of the glasskube manager and of `glasskube-packages` deps |
 | `regex:<RE2>` | the expression's named groups | `major` (required), `minor`, `patch`, `build`, `revision` (numeric, absent = 0), `prerelease`, `compatibility`; other names are errors. `(?<name>)` and `(?P<name>)` both work. Candidates must share `compatibility`. |
 
 Errors: `rules[i].versioning: regex: must have a (?<major>...) group`, `regex: unknown group "x" (allowed: ...)`, `regex: invalid RE2 regexp: ...`, and `cannot be combined with updateTypes: ...`.
@@ -987,7 +988,7 @@ custom:
 
 ## Custom.registryUrl
 
-Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags` and `endoflife-date` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group, a marker's `registryUrl=` or a JSONata result's `registryUrl` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
+Renovate's `registryUrlTemplate` (without templates) and `registryUrl` group or marker field: the registry the deps of `helm`, `gitlab-packages`, `rpm`, `apk`, `deb`, `artifactory`, `gitlab-releases`, `gitlab-tags`, `gitea-releases`, `gitea-tags`, `forgejo-releases`, `forgejo-tags`, `endoflife-date` and `glasskube-packages` are looked up in. It is the default of the entry's deps; a `(?P<registryUrl>…)` group, a marker's `registryUrl=` or a JSONata result's `registryUrl` overrides it. Other datasources ignore it. For `rpm` it is the repository's `repodata/` directory (or its root); several whitespace-separated URLs are merged, e.g. a distribution's base and updates repositories:
 
 ```yaml
 custom:
@@ -1063,7 +1064,7 @@ custom:
 
 ## Custom.versioning
 
-Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, `hex` for hex deps, else `semver`. A marker's `versioning=`, a `versioning` group or a JSONata result's `versioning` overrides the entry's.
+Accepts the schemes of [`rules[].versioning`](#rulesversioning). Without it, each dep uses its datasource's default: `rpm` for rpm deps, `apk` for apk deps, `deb` for deb deps, `hex` for hex deps, `glasskube` for glasskube-packages deps, else `semver`. A marker's `versioning=`, a `versioning` group or a JSONata result's `versioning` overrides the entry's.
 
 ## Custom.checksum
 
