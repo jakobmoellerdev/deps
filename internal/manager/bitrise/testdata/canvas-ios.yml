@@ -1,0 +1,63 @@
+---
+format_version: '13'
+default_step_lib_source: https://github.com/bitrise-io/bitrise-steplib.git
+project_type: ios
+include:
+  - path: .bitrise/pr_adhoc/workflow_pr_adhoc_builds.yml
+workflows:
+  _common_prepare_workspace:
+    steps:
+    - script@1:
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            # fail if any commands fails
+            set -e
+            # debug log
+            set -x
+
+            # write your script here
+            sudo systemsetup -settimezone America/Denver
+        title: Set System Time to America
+    - git::https://github.com/instructure/steps-verify-pr.git@master:
+        title: Verify PR
+    - git-clone:
+        inputs:
+        - reset_repository: 'Yes'
+    - script@1:
+        title: XcodeGen
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            # fail if any commands fails
+            set -ex
+            # make pipelines' return status equal the last command to exit with a non-zero status, or zero if all commands exit successfully
+            set -o pipefail
+
+            cd $BITRISE_SOURCE_DIR
+            make provision-ci
+            make sync-ci
+    - script@1:
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -e
+            # Set scheme to "All" and configuration to "Adhoc" to install all production secrets at once
+            envman add --key BITRISE_SCHEME --value All
+            envman add --key BITRISE_CONFIGURATION --value Adhoc
+            echo "BITRISE_SCHEME set to: All"
+            echo "BITRISE_CONFIGURATION set to: Adhoc"
+        title: Set Scheme and Configuration for Secrets Setup
+    - git::https://github.com/instructure/steps-canvas-ios-secrets.git@master:
+        title: Canvas iOS Secrets
+    summary: 'This step contains all the necessary steps to prepare the Xcode workspace
+      for building/testing.'
+meta:
+  bitrise.io:
+    machine_type_id: g2.mac.medium
+    stack: osx-xcode-26.4.x
+app:
+  envs:
+  - BITRISE_PROJECT_PATH: Canvas.xcworkspace
+    opts:
+      is_expand: false

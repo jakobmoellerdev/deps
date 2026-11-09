@@ -20,6 +20,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/artifactory"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/azuretasks"
 	bazelds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bazel"
+	bitriseds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bitrise"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
 	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
@@ -443,6 +444,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		rustversion.Name:        rustversion.New(client, sem, os.Getenv),
 		orb.Name:                orb.New(client, sem, os.Getenv),
 		azuretasks.Name:         azuretasks.New(client, sem, os.Getenv),
+		bitriseds.Name:          bitriseds.New(gh),
 		vcpkgds.Name:            vcpkgds.New(client, sem),
 		elmpackage.Name:         elmpackage.New(client, sem, os.Getenv),
 		gitlabpackages.Name:     gitlabpackages.New(client, sem, auth, env.GitLabURL),

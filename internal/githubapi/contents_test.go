@@ -42,3 +42,34 @@ func TestFile(t *testing.T) {
 		t.Error("directory listing: want error")
 	}
 }
+
+func TestDir(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.RequestURI() {
+		case "/repos/o/r/contents/steps/script":
+			_, _ = io.WriteString(w, `[{"name":"1.0.0","path":"steps/script/1.0.0","type":"dir"},{"name":"assets","type":"dir"},{"name":"README.md","type":"file"}]`)
+		case "/repos/o/r/contents/steps/file?ref=main":
+			_, _ = io.WriteString(w, `{"type":"file","encoding":"base64","content":""}`)
+		case "/repos/o/r/contents/steps/bad":
+			_, _ = io.WriteString(w, `[{"name":1}]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := New(srv.Client(), nil, make(chan struct{}, 1), WithAPI(srv.URL, srv.URL+"/graphql"))
+
+	es, err := c.Dir(t.Context(), oR, "steps/script", "")
+	if err != nil || len(es) != 3 || es[0] != (Entry{Name: "1.0.0", Type: "dir"}) || es[2] != (Entry{Name: "README.md", Type: "file"}) {
+		t.Errorf("Dir = %+v, %v", es, err)
+	}
+	if _, err := c.Dir(t.Context(), oR, "steps/missing", ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing: err = %v, want ErrNotFound", err)
+	}
+	if _, err := c.Dir(t.Context(), oR, "steps/file", "main"); err == nil || err.Error() != "o/r: steps/file is not a directory" {
+		t.Errorf("file: err = %v", err)
+	}
+	if _, err := c.Dir(t.Context(), oR, "steps/bad", ""); err == nil {
+		t.Error("malformed: want error")
+	}
+}

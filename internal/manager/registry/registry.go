@@ -13,6 +13,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/beam"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bitbucketpipelines"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bitrise"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/buildkite"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
@@ -121,6 +122,7 @@ var Builtin = []Entry{
 	{woodpecker.CrowDoc, woodpecker.NewCrow},
 	{travis.Doc, travis.New},
 	{buildkite.Doc, buildkite.New},
+	{bitrise.Doc, bitrise.New},
 	{vcpkg.Doc, vcpkg.New},
 	{elm.Doc, elm.New},
 	{composer.Doc, composer.New},

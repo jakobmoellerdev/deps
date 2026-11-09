@@ -60,6 +60,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`crow`](#crow)
 - [`travis`](#travis)
 - [`buildkite`](#buildkite)
+- [`bitrise`](#bitrise)
 - [`vcpkg`](#vcpkg)
 - [`elm`](#elm)
 - [`composer`](#composer)
@@ -2952,6 +2953,33 @@ Updates plugin versions and container images in Buildkite pipelines.
 - Images are parsed and edited like the docker manager: tags update, digests are refreshed or pinned; an image without a tag is its implicit `latest` (see [docker](#docker)).
 - YAML anchors are extracted where they are written; aliases add nothing.
 
+## bitrise
+
+Updates step versions in Bitrise configurations.
+
+**Files:**
+
+- `bitrise.y(a)ml`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `step` | the step references of `workflows.<name>.steps` and `step_bundles.<name>.steps` (also inside `with` groups): `<id>@<version>` (step library `default_step_lib_source`, else Bitrise's), `<steplib>::<id>@<version>`, and `git::<url>@<tag>` (Source the repository) | `bitrise`; `git-tags` for `git::` | `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `no version` | a step without `@<version>` (it runs the newest version) |
+| `local path` | `path::<dir>` |
+| `invalid step` | a `git::` reference that is no `http(s)://` or `git@<host>:<path>` URL |
+| `cannot locate value` | the reference bytes were not found (escapes) |
+
+**Details.**
+
+- Only the version after `@` is rewritten. A partial version (`script@1`, Bitrise's newest 1.x) keeps its precision: the bitrise datasource lists derived `X.Y` and `X` lines.
+- A git step's tag that is no version (a branch such as `@master`) is skipped by the engine as a non-version value.
+- `bundle::<name>` references a step bundle, whose steps are extracted where `step_bundles` defines them.
+
 ## vcpkg
 
 Moves vcpkg registry baselines to the newest commit of the registry repository (as Dependabot's vcpkg ecosystem does) and port version constraints (`version>=`, `overrides`) to the newest version in the registry's versions database at the baseline.
@@ -3780,6 +3808,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `rust-version` | any (`rust`) | `<DEPS_RUST_MANIFESTS_URL or https://static.rust-lang.org/manifests.txt>`, the index of every channel manifest rustup can install, once per run; stable `X.Y.Z`, numbered betas `X.Y.Z-beta.N` and dated nightlies `nightly-YYYY-MM-DD` from the manifest names (the stable and beta channel manifests such as `channel-rust-stable.toml` are not listed), plus a derived `X.Y` per stable line. Source repository (release notes): `rust-lang/rust` | none | the date directory of the version's first manifest (`dist/2024-10-17/channel-rust-1.82.0.toml`), day precision |
 | `orb` | orb name `<namespace>/<name>` (`circleci/node`) | `GET <DEPS_CIRCLECI_URL or https://circleci.com>/api/v3/orb/packages?filter[name]=<name>` (Renovate's endpoint), once per orb; the entry whose name matches exactly answers. After the listed versions a derived `X.Y` and `X` per release line, so partial versions (`@5`) are updated with their precision | `DEPS_CIRCLECI_TOKEN` (private orbs) as `Circle-Token` and bare `Authorization`, as Renovate's `Token-Only` host rule | `created_at` of the version; a derived `X.Y`/`X` has the time of the line's first release |
 | `azure-pipelines-tasks` | task name (`Bash`), task id, or `<publisher>.<extension>.<contribution>.<name\|id>`; case-insensitive | public lists (Renovate's): `GET <DEPS_AZURE_PIPELINES_TASKS_URL or https://raw.githubusercontent.com/renovatebot/azure-devops-marketplace/main>/azure-pipelines-builtin-tasks.json` once per run, and for tasks it lacks `…/azure-pipelines-marketplace-tasks.json` once (streamed; only the run's tasks are kept). With `DEPS_AZURE_DEVOPS_URL` and `DEPS_AZURE_DEVOPS_TOKEN`: `GET <DEPS_AZURE_DEVOPS_URL>/_apis/distributedtask/tasks/` once per run, the tasks installed in that organization or collection (Renovate's behavior on the Azure platform). After the versions a derived `X.Y` and `X` per release line, so major-only references (`Bash@3`) are updated with their precision | none for the public lists; Basic `deps:<DEPS_AZURE_DEVOPS_TOKEN>` (a personal access token) for the organization | none |
+| `bitrise` | step id (`script`, `git-clone`); the step library is the dep's Source, `https://github.com/bitrise-io/bitrise-steplib.git` by default | the GitHub contents API of the step library (github.com or GitHub Enterprise Server): `GET /repos/<owner>/<repo>/contents/steps/<id>` once per step lists the version directories (Renovate's endpoint); `steps/<id>/<version>/step.yml` only for the versions whose release time or source repository is asked for. After the listed versions a derived `X.Y` and `X` per release line, so partial versions (`script@1`) are updated with their precision | the GitHub token of the step library's host (as for `github-releases`) | `published_at` of the version's `step.yml`; a derived `X.Y`/`X` has the time of the line's first release |
 | `vcpkg` | port name (`fmt`); the dep's source is the registry's file tree at its baseline commit (`https://raw.githubusercontent.com/microsoft/vcpkg/<baseline>`, `<repository>/raw/<baseline>` off github.com), or at the new commit when the baseline moves in the same run | `GET <source>/versions/<first letter>-/<port>.json` once per (registry commit, port); each entry's `version`, `version-semver`, `version-date` or `version-string` is a release, only of the newest entry's scheme (relaxed and semver count as one; vcpkg does not order across schemes), `#<port-version>` appended when the port version is not 0 (`1.3.1#2`, as `version>=` writes it). A 404 fails the dep: the port is not in the registry at the baseline. For release notes, `GET <source>/ports/<port>/vcpkg.json` once per (registry commit, port): its `homepage` is the source repository when it is on github.com, gitlab.com or codeberg.org | none | none (the versions database records no dates) |
 | `elm-package` | `author/project` as in elm.json (`elm/json`) | `GET <DEPS_ELM_PACKAGE_URL or https://package.elm-lang.org>/packages/<author>/<project>/releases.json`, once per package; the registry answers an unknown package with HTTP 500. Source repository (release notes): `https://github.com/<author>/<project>`, the only place `elm publish` publishes from | none | the Unix time the registry lists for each version |
 | `gitlab-packages` | `<project>:<package>`: the project path or ID and the package name (`gitlab-org/cli:glab`); the registry is the dep's `registryUrl` (whitespace-separated GitLab instance URLs, the first listing the package wins), else the GitLab instance (`gitlabci.url`, `CI_SERVER_URL`, the GitLab platform, default `https://gitlab.com`) | `GET <instance>/api/v4/projects/<project>/packages?package_name=<package>&per_page=100`, every page (`X-Next-Page`), once per registry and package; `package_name` is a fuzzy match, so only packages named exactly `<package>` (Conan: `conan_package_name`) count. A registry URL ending in `/api/v4` is used as is | the GitLab instance token (`DEPS_GITLAB_TOKEN` as `Authorization: Bearer`, `CI_JOB_TOKEN` as `JOB-TOKEN` on the CI server's host, or the platform token), else the git credential helper after a 401, 403 or 404; public projects need none | the package's `created_at` |

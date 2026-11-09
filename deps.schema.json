@@ -74,6 +74,7 @@
                 "artifactory",
                 "azure-pipelines-tasks",
                 "bazel",
+                "bitrise",
                 "conda",
                 "crate",
                 "dart",
@@ -1763,6 +1764,34 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "bitrise"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "step"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "vcpkg"
                   ]
                 },
@@ -2330,6 +2359,7 @@
               "crow",
               "travis",
               "buildkite",
+              "bitrise",
               "vcpkg",
               "elm",
               "composer",
@@ -2483,6 +2513,7 @@
               "container",
               "task",
               "secret",
+              "step",
               "builtin-baseline",
               "default-registry",
               "registry",
@@ -2551,6 +2582,7 @@
                   "artifactory",
                   "azure-pipelines-tasks",
                   "bazel",
+                  "bitrise",
                   "conda",
                   "crate",
                   "dart",

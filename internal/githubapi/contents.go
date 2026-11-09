@@ -3,19 +3,41 @@ package githubapi
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 )
 
-// File returns the content of path at ref ("" = default branch) in r; a missing file wraps
-// ErrNotFound.
-func (c *Client) File(ctx context.Context, r Repo, path, ref string) ([]byte, error) {
-	if err := c.acquire(ctx); err != nil {
+// Entry is an entry of a directory listing: Type is "file", "dir", "symlink" or "submodule".
+type Entry struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// Dir lists the directory path at ref ("" = default branch) in r; a missing directory wraps
+// ErrNotFound. The contents API lists at most 1,000 entries.
+func (c *Client) Dir(ctx context.Context, r Repo, path, ref string) ([]Entry, error) {
+	var raw jsontext.Value
+	if err := c.restDo(ctx, r, contentsPath(r, path, ref), false, func(b io.Reader) error {
+		return json.UnmarshalRead(b, &raw)
+	}); err != nil {
 		return nil, err
 	}
-	defer c.release()
+	if len(raw) == 0 || raw[0] != '[' {
+		return nil, fmt.Errorf("%s: %s is not a directory", r.Path(), path)
+	}
+	var entries []Entry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("malformed response: %w", err)
+	}
+	return entries, nil
+}
+
+// contentsPath is the contents API path of path at ref ("" = default branch) in r.
+func contentsPath(r Repo, path, ref string) string {
 	segs := strings.Split(path, "/")
 	for i, s := range segs {
 		segs[i] = url.PathEscape(s)
@@ -24,7 +46,17 @@ func (c *Client) File(ctx context.Context, r Repo, path, ref string) ([]byte, er
 	if ref != "" {
 		p += "?ref=" + url.QueryEscape(ref)
 	}
-	resp, err := c.restGet(ctx, r, p)
+	return p
+}
+
+// File returns the content of path at ref ("" = default branch) in r; a missing file wraps
+// ErrNotFound.
+func (c *Client) File(ctx context.Context, r Repo, path, ref string) ([]byte, error) {
+	if err := c.acquire(ctx); err != nil {
+		return nil, err
+	}
+	defer c.release()
+	resp, err := c.restGet(ctx, r, contentsPath(r, path, ref))
 	if err != nil {
 		return nil, err
 	}
