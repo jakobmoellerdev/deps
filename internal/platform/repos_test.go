@@ -55,9 +55,55 @@ func TestListRepos(t *testing.T) {
 	if _, err := ListRepos(t.Context(), gh, "", srv.Client(), "org"); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("without token: %v", err)
 	}
+}
+
+func TestListReposGitLab(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.EscapedPath()+"?"+r.URL.RawQuery)
+		switch {
+		case r.Header.Get("Authorization") != "Bearer tok":
+			w.WriteHeader(http.StatusUnauthorized)
+		case r.URL.EscapedPath() == "/groups/group%2Fsub/projects" && r.URL.Query().Get("page") == "1":
+			// A full page (100), of which one is a pull mirror.
+			var b strings.Builder
+			b.WriteString(`[{"path_with_namespace":"group/sub/mirror","mirror":true}`)
+			for i := range 99 {
+				fmt.Fprintf(&b, `,{"path_with_namespace":"group/sub/deep/p%d"}`, i)
+			}
+			b.WriteString("]")
+			fmt.Fprint(w, b.String())
+		case r.URL.EscapedPath() == "/groups/group%2Fsub/projects":
+			fmt.Fprint(w, `[{"path_with_namespace":"group/sub/last"}]`)
+		case r.URL.Path == "/users/alice/projects":
+			fmt.Fprint(w, `[{"path_with_namespace":"alice/a"}]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	gl := Info{Kind: GitLab, APIURL: srv.URL}
+	got, err := ListRepos(t.Context(), gl, "tok", srv.Client(), "group/sub")
+	if err != nil || len(got) != 100 || got[0] != "group/sub/deep/p0" || got[99] != "group/sub/last" || slices.Contains(got, "group/sub/mirror") {
+		t.Fatalf("ListRepos(group/sub) = %v, %v", got, err)
+	}
+	const q = "per_page=100&archived=false&order_by=id&sort=asc"
+	if want := []string{
+		"/groups/group%2Fsub/projects?include_subgroups=true&with_shared=false&" + q + "&page=1",
+		"/groups/group%2Fsub/projects?include_subgroups=true&with_shared=false&" + q + "&page=2",
+	}; !slices.Equal(paths, want) {
+		t.Errorf("paths = %v, want %v", paths, want)
+	}
 	paths = nil
-	if _, err := ListRepos(t.Context(), Info{Kind: GitLab, APIURL: srv.URL}, "tok", srv.Client(), "group"); err == nil || !strings.Contains(err.Error(), "not supported on GitLab") || len(paths) != 0 {
-		t.Errorf("GitLab: %v, paths %v", err, paths)
+	got, err = ListRepos(t.Context(), gl, "tok", srv.Client(), "alice")
+	if err != nil || !slices.Equal(got, []string{"alice/a"}) {
+		t.Fatalf("ListRepos(alice) = %v, %v", got, err)
+	}
+	if want := []string{"/groups/alice/projects?include_subgroups=true&with_shared=false&" + q + "&page=1", "/users/alice/projects?" + q + "&page=1"}; !slices.Equal(paths, want) {
+		t.Errorf("paths = %v, want %v", paths, want)
+	}
+	if _, err := ListRepos(t.Context(), gl, "", srv.Client(), "group"); err == nil || !strings.Contains(err.Error(), "401") {
+		t.Errorf("without token: %v", err)
 	}
 }
 

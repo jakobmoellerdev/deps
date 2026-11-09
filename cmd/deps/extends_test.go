@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -174,6 +176,54 @@ func TestRunRepositoriesBaseBranches(t *testing.T) {
 	}
 }
 
+// On GitLab --repositories entries are project paths with subgroups, and a glob lists the
+// group's projects including those of its subgroups.
+func TestRunRepositoriesGitLab(t *testing.T) {
+	cleanEnv(t)
+	f := newFakeNet(t)
+	t.Setenv("GITLAB_CI", "true")
+	t.Setenv("CI_SERVER_URL", "https://git.test")
+	t.Setenv("CI_PROJECT_PATH", "g/ci")
+	t.Setenv("DEPS_TOKEN", "tok")
+	files := map[string]string{".github/workflows/ci.yml": workflow}
+	forge(t, map[string]map[string]string{"g/sub/a": files, "g/sub/deep/b": files, "g/c": files, "g/other": files})
+	var listed []string
+	f.mux.HandleFunc("GET git.test/api/v4/groups/{group}/projects", func(w http.ResponseWriter, r *http.Request) {
+		listed = append(listed, r.URL.EscapedPath())
+		io.WriteString(w, `[{"path_with_namespace":"g/sub/a"},{"path_with_namespace":"g/sub/deep/b"},{"path_with_namespace":"g/sub/old","archived":true}]`)
+	})
+	f.mux.HandleFunc("GET git.test/api/v4/projects/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"default_branch":"main"}`)
+	})
+	f.mux.HandleFunc("GET git.test/api/v4/projects/{id}/{rest...}", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, `[]`) })
+	for _, tt := range []struct {
+		entries string
+		want    []string
+	}{
+		{entries: "g/sub/**,g/c", want: []string{"g/sub/a", "g/sub/deep/b", "g/c"}},
+		{entries: "g/sub/*", want: []string{"g/sub/a"}},
+		{entries: "g/*/deep/?", want: []string{"g/sub/deep/b"}},
+	} {
+		listed = nil
+		_, stderr, code := execute(t, "run", "--dry-run", "--dir", t.TempDir(), "--repositories", tt.entries)
+		if code != 0 {
+			t.Fatalf("%s: exit %d\n%s", tt.entries, code, stderr)
+		}
+		var got []string
+		for line := range strings.Lines(stderr) {
+			if name, ok := strings.CutPrefix(line, "repository "); ok {
+				got = append(got, strings.TrimSpace(name))
+			}
+		}
+		if !slices.Equal(got, tt.want) || !strings.Contains(stderr, fmt.Sprintf("%d repositories, 0 failed\n", len(tt.want))) {
+			t.Errorf("%s: repositories %v, want %v\n%s", tt.entries, got, tt.want, stderr)
+		}
+		if len(listed) != 1 || listed[0] != "/api/v4/groups/"+url.PathEscape(strings.Split(tt.entries, "/*")[0])+"/projects" {
+			t.Errorf("%s: listed %v", tt.entries, listed)
+		}
+	}
+}
+
 func TestRunRepositoriesErrors(t *testing.T) {
 	cleanEnv(t)
 	f := newFakeNet(t)
@@ -190,6 +240,8 @@ func TestRunRepositoriesErrors(t *testing.T) {
 		{args: []string{"--repositories", "o"}, code: 2, want: `--repositories: "o" must be owner/name or owner/<glob>`},
 		{args: []string{"--repositories", "*/r"}, code: 2, want: `must be owner/name or owner/<glob>`},
 		{args: []string{"--repositories", "o/["}, code: 2, want: `syntax error in pattern`},
+		{args: []string{"--repositories", "o//r"}, code: 2, want: `must be owner/name or owner/<glob>`},
+		{args: []string{"--repositories", "o/sub/r"}, code: 2, want: `"o/sub/r": gitea repositories are owner/name; nested group paths exist only on GitLab`},
 		{args: []string{"--repositories", "o/r", "--repo", "o/r"}, code: 2, want: "--repo and --repositories are mutually exclusive"},
 		{args: []string{"--repositories", "none/*"}, code: 1, want: "--repositories: no repository matches none/*"},
 		{args: []string{"--repositories", "gone/*"}, code: 1, want: "--repositories: list the repositories of gone: GET /users/gone/repos"},

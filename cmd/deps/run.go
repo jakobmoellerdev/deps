@@ -60,7 +60,7 @@ func newRun(o *rootOpts) *cli.Command {
 			&cli.StringFlag{Name: "platform", Value: "auto", Destination: &r.platform, Usage: "forge type: auto|github|gitea|forgejo|gitlab (auto: from the CI environment, else the origin remote)"},
 			&cli.StringFlag{Name: "api-url", Destination: &r.apiURL, Usage: "API base URL (default: detected)"},
 			&cli.StringFlag{Name: "repo", Destination: &r.repo, Usage: "repository owner/name, or the GitLab project path (default: detected)"},
-			&cli.StringSliceFlag{Name: "repositories", Destination: &r.repositories, Usage: "run on these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, or owner/<glob> (e.g. 'my-org/*', 'my-org/svc-*') for the repositories of an organization or user the token can list (not on GitLab), without archived ones and mirrors (repeatable, comma-separated)"},
+			&cli.StringSliceFlag{Name: "repositories", Destination: &r.repositories, Usage: "run on these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, or owner/<glob> (e.g. 'my-org/*', 'my-org/svc-*') for the repositories of an organization or user the token can list (GitLab: group/sub/name, a glob covers subgroups, ** any number of path segments), without archived ones and mirrors (repeatable, comma-separated)"},
 			&cli.StringFlag{Name: "token", Destination: &r.token, Usage: "platform API token; git pushes use the checkout's credentials (when not set: $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, $GITLAB_TOKEN, then the git credential helper)"},
 			&cli.StringFlag{Name: "base", Destination: &r.base, Usage: "base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch)"},
 			&cli.StringFlag{Name: "author-name", Destination: &r.authorName, Usage: "commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then " + defaultAuthorName + ")"},
@@ -295,6 +295,13 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 		}
 		return err
 	}
+	if info.Kind != platform.GitLab {
+		for _, e := range repos {
+			if owner, _ := splitRepository(e); strings.Contains(owner, "/") {
+				return &usageError{fmt.Errorf("--repositories: %q: %s repositories are owner/name; nested group paths exist only on GitLab", e, info.Kind)}
+			}
+		}
+	}
 
 	sh.token = r.token
 	if sh.token == "" {
@@ -454,23 +461,62 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 }
 
 // validateRepositories checks the --repositories entries: owner/name, or owner/<glob> with
-// a path.Match glob in the name.
+// path.Match globs in the path after the owner, where ** matches any number of path
+// segments. GitLab's owner can be a group path (group/sub/name, group/sub/*, group/**).
 func validateRepositories(repos []string) error {
 	for _, e := range repos {
-		owner, name, ok := strings.Cut(e, "/")
-		if !ok || owner == "" || name == "" || strings.Contains(name, "/") || strings.ContainsAny(owner, "*?[\\") {
+		owner, pattern := splitRepository(e)
+		if owner == "" || pattern == "" || slices.Contains(strings.Split(e, "/"), "") {
 			return fmt.Errorf("--repositories: %q must be owner/name or owner/<glob>", e)
 		}
-		if _, err := path.Match(name, ""); err != nil {
-			return fmt.Errorf("--repositories: %q: %w", e, err)
+		for seg := range strings.SplitSeq(pattern, "/") {
+			if _, err := path.Match(seg, ""); seg != "**" && err != nil {
+				return fmt.Errorf("--repositories: %q: %w", e, err)
+			}
 		}
 	}
 	return nil
 }
 
-// expandRepositories resolves the --repositories entries to owner/name: a glob entry to the
-// matching repositories of its owner (platform.ListRepos), in the forge's order. Each
-// repository is listed once, where it first matches.
+// splitRepository splits a --repositories entry into its owner, the path segments before
+// the first one with a glob (or before the last), and the name pattern after it.
+func splitRepository(e string) (owner, pattern string) {
+	segs := strings.Split(e, "/")
+	i := slices.IndexFunc(segs, isGlob)
+	if i < 0 {
+		i = len(segs) - 1
+	}
+	return strings.Join(segs[:i], "/"), strings.Join(segs[i:], "/")
+}
+
+func isGlob(s string) bool { return strings.ContainsAny(s, "*?[\\") }
+
+// matchRepository reports whether the path segments name match those of pattern: each a
+// path.Match pattern, or ** for any number of segments.
+func matchRepository(pattern, name []string) bool {
+	if len(pattern) == 0 {
+		return len(name) == 0
+	}
+	if pattern[0] == "**" {
+		for i := range len(name) + 1 {
+			if matchRepository(pattern[1:], name[i:]) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(name) == 0 {
+		return false
+	}
+	if m, _ := path.Match(pattern[0], name[0]); !m {
+		return false
+	}
+	return matchRepository(pattern[1:], name[1:])
+}
+
+// expandRepositories resolves the --repositories entries to owner/name (GitLab project
+// paths): a glob entry to the matching repositories of its owner (platform.ListRepos), in the
+// forge's order. Each repository is listed once, where it first matches.
 func expandRepositories(ctx context.Context, info platform.Info, token string, client *http.Client, entries []string) ([]string, error) {
 	var out []string
 	seen := map[string]bool{} // lower-cased names in out; forges match them case-insensitively
@@ -482,8 +528,8 @@ func expandRepositories(ctx context.Context, info platform.Info, token string, c
 	}
 	listed := map[string][]string{}
 	for _, e := range entries {
-		owner, pattern, _ := strings.Cut(e, "/")
-		if !strings.ContainsAny(pattern, "*?[\\") {
+		owner, pattern := splitRepository(e)
+		if !isGlob(pattern) {
 			add(e)
 			continue
 		}
@@ -495,10 +541,11 @@ func expandRepositories(ctx context.Context, info platform.Info, token string, c
 			}
 			listed[owner] = all
 		}
+		segs := strings.Split(pattern, "/")
 		matched := 0
 		for _, full := range all {
-			_, name, _ := strings.Cut(full, "/")
-			if m, _ := path.Match(pattern, name); !m {
+			if len(full) <= len(owner) || full[len(owner)] != '/' || !strings.EqualFold(full[:len(owner)], owner) ||
+				!matchRepository(segs, strings.Split(full[len(owner)+1:], "/")) {
 				continue
 			}
 			matched++
