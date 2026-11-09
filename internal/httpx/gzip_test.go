@@ -3,11 +3,15 @@ package httpx
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -100,5 +104,94 @@ func TestGzipTransport(t *testing.T) {
 				t.Errorf("request headers changed to %v", req.Header)
 			}
 		})
+	}
+}
+
+// gzipped compresses doc with the standard library, as a registry would.
+func gzipped(tb testing.TB, doc []byte) []byte {
+	tb.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(doc); err != nil {
+		tb.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		tb.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// closeBody is a body that fails reads once closed, like a response body.
+type closeBody struct {
+	io.Reader
+	closed atomic.Bool
+}
+
+var errBodyClosed = errors.New("read on closed body")
+
+func (c *closeBody) Read(p []byte) (int, error) {
+	if c.closed.Load() {
+		return 0, errBodyClosed
+	}
+	return c.Reader.Read(p)
+}
+
+func (c *closeBody) Close() error { c.closed.Store(true); return nil }
+
+// TestGzipBodyReuse reads bodies one after another and interleaved, so pooled readers are
+// reset onto new bodies, and checks a body reads its closed body's error after Close.
+func TestGzipBodyReuse(t *testing.T) {
+	docs := [][]byte{[]byte(`{"a":1}`), bytes.Repeat([]byte(`{"name":"x","versions":{}}`), 5000), []byte(`[]`)}
+	for range 3 {
+		bodies := make([]*gzipBody, len(docs))
+		for i, doc := range docs {
+			bodies[i] = &gzipBody{body: &closeBody{Reader: bytes.NewReader(gzipped(t, doc))}}
+		}
+		for i, b := range bodies {
+			got, err := io.ReadAll(b)
+			if err != nil || !bytes.Equal(got, docs[i]) {
+				t.Fatalf("body %d = %d bytes, %v; want %d bytes", i, len(got), err, len(docs[i]))
+			}
+		}
+		for _, b := range bodies {
+			if err := b.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.Close(); err != nil {
+				t.Fatalf("second Close = %v", err)
+			}
+			if _, err := b.Read(make([]byte, 1)); !errors.Is(err, errBodyClosed) {
+				t.Fatalf("Read after Close = %v, want %v", err, errBodyClosed)
+			}
+		}
+	}
+}
+
+// TestGzipBodyConcurrentClose closes bodies while another goroutine reads them; under
+// -race this catches a reader going back to the pool while a Read still uses it.
+func TestGzipBodyConcurrentClose(t *testing.T) {
+	zipped := gzipped(t, bytes.Repeat([]byte(`{"name":"x","versions":{}}`), 20000))
+	var wg sync.WaitGroup
+	for range 20 {
+		b := &gzipBody{body: &closeBody{Reader: bytes.NewReader(zipped)}}
+		wg.Go(func() { _, _ = io.Copy(io.Discard, b) })
+		wg.Go(func() { _ = b.Close() })
+	}
+	wg.Wait()
+}
+
+func BenchmarkGzipBody(b *testing.B) {
+	doc, err := os.ReadFile("../datasource/npm/testdata/lodash.json")
+	if err != nil {
+		b.Fatal(err)
+	}
+	zipped := gzipped(b, doc)
+	b.ReportAllocs()
+	for b.Loop() {
+		body := &gzipBody{body: io.NopCloser(bytes.NewReader(zipped))}
+		if _, err := io.Copy(io.Discard, body); err != nil {
+			b.Fatal(err)
+		}
+		_ = body.Close()
 	}
 }

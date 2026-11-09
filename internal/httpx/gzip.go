@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/klauspost/compress/gzip"
 )
@@ -37,24 +38,55 @@ func (t gzipTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+// gzipReaders holds idle gzip readers. A reader carries a 32 KiB inflate window and Huffman
+// tables; resetting a pooled one instead of allocating them per response is most of what
+// decompressing a small registry document allocates.
+var gzipReaders sync.Pool
+
 // gzipBody decompresses body; it reads the gzip header on the first Read, so a broken one
-// fails reading the body, not the request.
+// fails reading the body, not the request. Its reader comes from gzipReaders on the first
+// Read and goes back on Close. mu keeps Close from returning the reader while a Read on
+// another goroutine still uses it; Close closes body before taking mu, so it still aborts
+// a Read that is blocked on the network.
 type gzipBody struct {
-	body io.ReadCloser
-	zr   *gzip.Reader
-	err  error // sticky error of reading the header
+	body   io.ReadCloser
+	mu     sync.Mutex
+	zr     *gzip.Reader
+	err    error // sticky error of reading the header
+	closed bool
 }
 
 func (b *gzipBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return b.body.Read(p) // the closed body's own error, as before pooling
+	}
 	if b.zr == nil {
 		if b.err != nil {
 			return 0, b.err
 		}
-		if b.zr, b.err = gzip.NewReader(b.body); b.err != nil {
+		zr, _ := gzipReaders.Get().(*gzip.Reader)
+		if zr == nil {
+			zr = new(gzip.Reader)
+		}
+		if b.err = zr.Reset(b.body); b.err != nil {
+			gzipReaders.Put(zr)
 			return 0, b.err
 		}
+		b.zr = zr
 	}
 	return b.zr.Read(p)
 }
 
-func (b *gzipBody) Close() error { return b.body.Close() }
+func (b *gzipBody) Close() error {
+	err := b.body.Close()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closed = true
+	if b.zr != nil {
+		gzipReaders.Put(b.zr)
+		b.zr = nil
+	}
+	return err
+}
