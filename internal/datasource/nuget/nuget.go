@@ -51,10 +51,15 @@ type Source struct {
 	pkgs     datasource.Memo[string, *pkg]     // by feed URL + "\x00" + lower-case id
 	merged   datasource.Memo[string, *pkg]     // by dep source + "\x00" + lower-case id
 	repos    datasource.Memo[string, string]   // by feed URL + "\x00" + lower-case id + "\x00" + version
+	creds    configCreds                       // nuget.config packageSourceCredentials
 }
 
-// feed is one package source of a dep: its nuget.config key ("" when none) and URL.
-type feed struct{ key, url string }
+// feed is one package source of a dep: its nuget.config key ("" when none), URL and the
+// nuget.config credentials of the key (nil when none).
+type feed struct {
+	key, url string
+	cred     *credential
+}
 
 // service is what a feed's service index names: the registration base (the SemVer 2.0 one
 // when the feed has it) and the flat container base, each "" when absent.
@@ -80,7 +85,10 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 // merged in feed order, as NuGet restores from all of them. Unlisted versions are left out. A
 // package none of the feeds has fails with `package <id> not found`; a dep whose feeds are all
 // v2 feeds is skipped. The result is shared and must not be modified.
-func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
+func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
+	if dir != "" && d.Source != "" {
+		s.creds.load(d.File, dir, datasource.RootOf(d.File, dir), s.getenv)
+	}
 	p, err := s.lookup(ctx, d)
 	if err != nil {
 		return nil, err
@@ -140,6 +148,7 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (str
 // is read from DEPS_NUGET_URL when that is set.
 func (s *Source) feeds(d dep.Dep) []feed {
 	var out []feed
+	creds := s.creds.of(d.File)
 	for e := range strings.FieldsSeq(d.Source) {
 		f := feed{url: e}
 		if k, u, ok := strings.Cut(e, "="); ok && !strings.Contains(k, "/") {
@@ -147,6 +156,9 @@ func (s *Source) feeds(d dep.Dep) []feed {
 			if err == nil {
 				f = feed{key: key, url: u}
 			}
+		}
+		if c, ok := creds[strings.ToLower(f.key)]; ok && f.key != "" {
+			f.cred = &c
 		}
 		if f.url == DefaultURL {
 			f.url = s.def
@@ -362,7 +374,8 @@ func (s *Source) flatVersions(ctx context.Context, f feed, base, id string) (*pk
 // get GETs target and passes the body to read (gunzipped when the server compressed it
 // unasked, as registration5-gz does). A 404 is errNotFound. Credentials, on requests to the
 // feed's host only: the target's userinfo (as basic auth, by net/http), else NuGet's
-// NuGetPackageSourceCredentials_<key> variable of the feed (`Username=<user>;Password=<password>`).
+// NuGetPackageSourceCredentials_<key> variable of the feed (`Username=<user>;Password=<password>`),
+// else the feed's nuget.config packageSourceCredentials.
 func (s *Source) get(ctx context.Context, f feed, target string, read func(io.Reader) error) error {
 	g := s.getter
 	if f.key != "" {
@@ -370,6 +383,8 @@ func (s *Source) get(ctx context.Context, f feed, target string, read func(io.Re
 			if req.URL.User == nil && sameHost(f.url, req.URL) {
 				if user, pass, ok := credentials(s.getenv(CredentialsEnv + f.key)); ok {
 					req.SetBasicAuth(user, pass)
+				} else if f.cred != nil {
+					req.SetBasicAuth(f.cred.user, f.cred.pass)
 				}
 			}
 			return nil

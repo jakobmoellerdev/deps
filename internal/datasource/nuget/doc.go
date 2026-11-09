@@ -13,6 +13,6 @@ var Doc = refdoc.Datasource{
 		"A feed without registration is read through its flat container `GET <base>/<id>/index.json` (every version, unlisted ones included). " +
 		"The versions of all of a dep's feeds are merged, as NuGet restores from all of them; none has the package → `package <id> not found`. v2 feeds (a URL not ending in `.json`, such as `https://www.powershellgallery.com/api/v2`) are not read; a dep with only v2 feeds is skipped. " +
 		"Source repository (release notes): the `<repository url>` of `GET <flat container>/<id>/<version>/<id>.nuspec`, else the registration's forge `projectUrl`, only for versions in a pull request",
-	Auth:         "userinfo of the feed URL as basic auth, else NuGet's `NuGetPackageSourceCredentials_<key>` variable of the nuget.config source (`Username=<user>;Password=<token>`), sent to the feed's host only; redacted in errors and logs. nuget.config `packageSourceCredentials` are not read",
+	Auth:         "userinfo of the feed URL as basic auth, else NuGet's `NuGetPackageSourceCredentials_<key>` variable of the nuget.config source (`Username=<user>;Password=<token>`), else the source's `<packageSourceCredentials>` of the nuget.config files from the dep's directory up to the repository root (nearer files win; `Username` and `ClearTextPassword`, `%VAR%` expanded from the environment; the encrypted `Password` is Windows DPAPI-only and skipped with a warning), sent to the feed's host only; redacted in errors and logs",
 	ReleaseTimes: "the registration's `published`; none from a flat container",
 }
