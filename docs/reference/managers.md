@@ -2844,7 +2844,8 @@ Updates the package dependencies and the compiler version of Elm 0.19 projects (
 
 **Applications.**
 
-- Every version is exact and replaced by the new one. The `indirect` versions pin the dependencies of the `direct` ones, which `elm make` checks against their constraints: they are ignored by default, as Go's indirect requirements, and a direct update whose new version needs newer indirect dependencies fails `elm make` until they are raised (`elm install` does that).
+- Every version is exact and replaced by the new one. The `indirect` versions pin the dependencies of the `direct` ones, which `elm make` checks against their constraints: they are ignored by default, as Go's indirect requirements.
+- deps runs no Elm dependency solver: an application update rewrites only that dependency's version. It does not raise, add or remove the `indirect` dependencies its new version needs, so a direct update whose new version needs a newer indirect dependency (or one the application does not list yet) fails `elm make` with a dependency problem until the PR branch's `indirect` versions are fixed. Opting the indirect dependencies in (`ignore: false`) only proposes each one's newest version on its own and does not solve them either; grouping them with the direct ones (`group`) puts the moves in one PR, which can still lack a newly needed indirect dependency or keep one that is no longer needed.
 
 **Package constraints.**
 
