@@ -89,6 +89,9 @@ type Options struct {
 	Trace       func(Trace)           // nil = off; called sequentially from the Resolve goroutine
 	Now         time.Time             // reference time of minimumReleaseAge; zero = time.Now()
 	Progress    Progress              // nil = off; discover, extract and resolve phases, rate-limit waits
+	// Concurrency is the per-upstream request limit of the datasources (cmd/deps
+	// --concurrency); it bounds how many deps are resolved at a time (resolveSlots). 0 = 32.
+	Concurrency int
 }
 
 // Trace explains the decision for one dep.
@@ -416,55 +419,91 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	names := newReleaseNames()
 	defer names.done()
 	// resolveOne fills t: Trace is large, and copies of it on every per-dep goroutine stack
-	// would grow those stacks.
-	resolveOne := func(i int, d dep.Dep, t *Trace) ([]dep.Update, *resolver) {
+	// would grow those stacks. free gives up the dep's slot before it waits for the
+	// advisories.
+	resolveOne := func(i int, d dep.Dep, t *Trace, free func()) ([]dep.Update, *resolver) {
 		r := &resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now,
 			rewriter: rewriters[d.Manager], ranger: rangers[d.Manager], renamer: renamers[d.Manager], names: names}
-		u := r.run(t, func() []Vuln { return sec.of(secIdx[i]) })
+		u := r.run(t, func() []Vuln {
+			if !sec.ready() {
+				free()
+			}
+			return sec.of(secIdx[i])
+		})
 		return u, r
 	}
-	for i := range todo {
-		wg.Go(func() {
-			if len(resolved) > 0 && resolved[i] != nil {
-				defer close(resolved[i])
+	resolveAt := func(i int, free func()) {
+		if len(resolved) > 0 && resolved[i] != nil {
+			defer close(resolved[i])
+		}
+		d := todo[i]
+		t := &outs[i]
+		if pols[i].securityOnly {
+			if !sec.ready() {
+				free()
 			}
-			d := todo[i]
-			t := &outs[i]
-			if pols[i].securityOnly && len(sec.of(secIdx[i])) == 0 {
+			if len(sec.of(secIdx[i])) == 0 {
 				t.Dep, t.Rules, t.Policy = d, pols[i].pre.Rules, pols[i].pre
 				t.Dep.Skip = pols[i].pre.IgnoreReason
 				return
 			}
-			var u []dep.Update
-			var r *resolver
-			if j, ok := baselineOf[d.Baseline]; ok {
-				<-resolved[j]
-				u, r = portAtBaseline(d, ups[j], func(d dep.Dep) ([]dep.Update, *resolver) { return resolveOne(i, d, t) })
-			} else {
-				u, r = resolveOne(i, d, t)
+		}
+		var u []dep.Update
+		var r *resolver
+		if j, ok := baselineOf[d.Baseline]; ok {
+			free()
+			<-resolved[j]
+			u, r = portAtBaseline(d, ups[j], func(d dep.Dep) ([]dep.Update, *resolver) { return resolveOne(i, d, t, free) })
+		} else {
+			u, r = resolveOne(i, d, t, free)
+		}
+		if pols[i].securityOnly && t.Err == nil && u == nil {
+			t.Dep.Skip = pols[i].pre.IgnoreReason // no fix for its advisories
+		}
+		var skip *dep.SkipError
+		switch {
+		case errors.As(t.Err, &skip):
+			t.Err, t.Dep.Skip = nil, skip.Reason
+		case t.Err != nil:
+			t.Err = &DepError{File: d.File, Line: d.Line, Name: d.Name, Err: t.Err}
+		case u == nil:
+			slog.DebugContext(ctx, "dependency up to date", "file", d.File, "line", d.Line, "name", d.Name, "version", d.Version)
+		default:
+			for _, up := range u {
+				slog.DebugContext(ctx, "update found", "file", d.File, "line", d.Line, "name", d.Name, "from", d.Version, "to", up.NewVersion, "type", up.Type, "bucket", up.Bucket)
 			}
-			if pols[i].securityOnly && t.Err == nil && u == nil {
-				t.Dep.Skip = pols[i].pre.IgnoreReason // no fix for its advisories
+		}
+		ups[i], warns[i] = u, r.warnings
+		if r.pending.Version != "" {
+			p := r.pending
+			pend[i] = &p
+		}
+		prog.Done(PhaseResolve, t.Err)
+	}
+	// Each dep is resolved on a goroutine of its own, which mostly waits for its lookups. At
+	// most resolveSlots deps of one datasource hold a slot (and a goroutine) at a time:
+	// thousands of waiting goroutines (a JavaScript monorepo) cost tens of MB of stack. Slots
+	// are per datasource, so deps waiting for a busy or rate-limited upstream do not hold up
+	// the lookups of the others. A dep gives up its slot before it waits for the result of
+	// another lookup (the advisories, its registry baseline), which may need the slot, and
+	// after slotHold: the deps of a package whose lookup stalls would otherwise take every
+	// slot, holding up the lookups of all other packages until it returns.
+	nSlots := resolveSlots(o.Concurrency)
+	for _, idx := range byDatasource(todo) {
+		wg.Go(func() {
+			slots := make(chan struct{}, nSlots)
+			for _, i := range idx {
+				slots <- struct{}{}
+				wg.Go(func() {
+					free := sync.OnceFunc(func() { <-slots })
+					hold := time.AfterFunc(slotHold, free)
+					defer func() {
+						hold.Stop()
+						free()
+					}()
+					resolveAt(i, free)
+				})
 			}
-			var skip *dep.SkipError
-			switch {
-			case errors.As(t.Err, &skip):
-				t.Err, t.Dep.Skip = nil, skip.Reason
-			case t.Err != nil:
-				t.Err = &DepError{File: d.File, Line: d.Line, Name: d.Name, Err: t.Err}
-			case u == nil:
-				slog.DebugContext(ctx, "dependency up to date", "file", d.File, "line", d.Line, "name", d.Name, "version", d.Version)
-			default:
-				for _, up := range u {
-					slog.DebugContext(ctx, "update found", "file", d.File, "line", d.Line, "name", d.Name, "from", d.Version, "to", up.NewVersion, "type", up.Type, "bucket", up.Bucket)
-				}
-			}
-			ups[i], warns[i] = u, r.warnings
-			if r.pending.Version != "" {
-				p := r.pending
-				pend[i] = &p
-			}
-			prog.Done(PhaseResolve, t.Err)
 		})
 	}
 	wg.Wait()
@@ -516,6 +555,42 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	slog.InfoContext(ctx, "dependencies resolved", "updates", len(res.Updates), "errors", len(res.Errors), "duration", time.Since(start))
 	prog.End(PhaseResolve)
 	return res, nil
+}
+
+// defaultConcurrency is the per-upstream request limit Options.Concurrency defaults to, that
+// of cmd/deps --concurrency.
+const defaultConcurrency = 32
+
+// resolveSlots is how many deps of one datasource Resolve looks up at a time under the
+// per-upstream request limit n (0 = defaultConcurrency): twice the request pool of the
+// busiest upstreams (npm's 2n), so the pool stays full while some deps wait for a lookup of
+// the same package another dep makes.
+func resolveSlots(n int) int {
+	if n < 1 {
+		n = defaultConcurrency
+	}
+	return 4 * n
+}
+
+// slotHold is how long a dep keeps its resolve slot: longer than most lookups take, short
+// enough that a stalled one delays the others by little.
+const slotHold = 2 * time.Second
+
+// byDatasource groups the indices of todo by datasource, in order of first appearance and
+// in discovery order within each group.
+func byDatasource(todo []dep.Dep) [][]int {
+	at := map[string]int{}
+	var groups [][]int
+	for i := range todo {
+		k, ok := at[todo[i].Datasource]
+		if !ok {
+			k = len(groups)
+			at[todo[i].Datasource] = k
+			groups = append(groups, nil)
+		}
+		groups[k] = append(groups[k], i)
+	}
+	return groups
 }
 
 // classify applies the pre-policy to an extracted dep and decides whether it is looked up:
@@ -857,6 +932,19 @@ func lookupSecurity(ctx context.Context, src SecuritySource, deps []dep.Dep) *se
 		slog.DebugContext(ctx, "security advisories", "deps", len(deps), "duration", time.Since(start), "err", s.err)
 	}()
 	return s
+}
+
+// ready reports whether the lookup finished, so of does not block; nil-safe.
+func (s *security) ready() bool {
+	if s == nil {
+		return true
+	}
+	select {
+	case <-s.done:
+		return true
+	default:
+		return false
+	}
 }
 
 // wait blocks until the lookup finished; nil-safe.

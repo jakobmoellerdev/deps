@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -220,6 +221,107 @@ func TestSecurityFailures(t *testing.T) {
 			t.Errorf("err = %v, calls = %d", err, sec.calls)
 		}
 	})
+}
+
+// announcingGo is fakeGo announcing each lookup on looked (dropped when it is full).
+type announcingGo struct {
+	fakeGo
+	looked chan string
+}
+
+func (a announcingGo) Releases(ctx context.Context, d dep.Dep, dir string) ([]Release, error) {
+	select {
+	case a.looked <- d.Name:
+	default:
+	}
+	return a.fakeGo.Releases(ctx, d, dir)
+}
+
+// gatedSec answers once every dep it is asked about was looked up, as an advisories lookup
+// slower than the release lookups does; it fails when they stall.
+type gatedSec struct{ looked chan string }
+
+func (g gatedSec) Advisories(_ context.Context, deps []dep.Dep) ([][]Vuln, error) {
+	for range deps {
+		select {
+		case <-g.looked:
+		case <-time.After(5 * time.Second):
+			return nil, errors.New("release lookups stalled")
+		}
+	}
+	return make([][]Vuln, len(deps)), nil
+}
+
+// requiring returns a go.mod requiring example.com/m0…m<n-1> at v1.0.0, and their versions.
+func requiring(n int) (string, fakeGo) {
+	var mod strings.Builder
+	mod.WriteString("module example.com/x\n\nrequire (\n")
+	gos := fakeGo{}
+	for i := range n {
+		name := "example.com/m" + strconv.Itoa(i)
+		mod.WriteString("\t" + name + " v1.0.0\n")
+		gos[name] = []string{"v1.0.0", "v1.1.0"}
+	}
+	mod.WriteString(")\n")
+	return mod.String(), gos
+}
+
+// A dep waiting for the advisories gives up its resolve slot: with --concurrency 1 (four
+// slots per datasource), the fifth dep is still looked up while the first four wait.
+func TestSecurityWaitFreesSlot(t *testing.T) {
+	if got := resolveSlots(0); got != resolveSlots(defaultConcurrency) {
+		t.Errorf("slots without a concurrency = %d, want those of the default", got)
+	}
+	const n = 5
+	mod, gos := requiring(n)
+	root, cfg := setup(t, "", map[string]string{"go.mod": mod})
+	looked := make(chan string, n)
+	o := sources(nil, nil)
+	o.Datasources["go"] = announcingGo{gos, looked}
+	o.Security = gatedSec{looked}
+	o.Concurrency = 1
+	if resolveSlots(o.Concurrency) >= n {
+		t.Fatalf("%d slots leave no dep waiting for one", resolveSlots(o.Concurrency))
+	}
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil || len(res.Errors) > 0 || len(res.Updates) != n {
+		t.Fatalf("err = %v, errors = %v, updates = %d", err, res.Errors, len(res.Updates))
+	}
+}
+
+// stallingGo is fakeGo whose lookups stall until the one of last.
+type stallingGo struct {
+	fakeGo
+	last string
+	done chan struct{} // closed by the lookup of last
+}
+
+func (s stallingGo) Releases(ctx context.Context, d dep.Dep, dir string) ([]Release, error) {
+	if d.Name == s.last {
+		close(s.done)
+	} else {
+		select {
+		case <-s.done:
+		case <-time.After(5 * time.Second):
+			return nil, errors.New("stalled")
+		}
+	}
+	return s.fakeGo.Releases(ctx, d, dir)
+}
+
+// A dep whose lookup stalls gives up its resolve slot after slotHold, so the stalled deps do
+// not hold up the others' lookups until they return.
+func TestStalledLookupFreesSlot(t *testing.T) {
+	const n = 5
+	mod, gos := requiring(n)
+	root, cfg := setup(t, "", map[string]string{"go.mod": mod})
+	o := sources(nil, nil)
+	o.Datasources["go"] = stallingGo{gos, "example.com/m" + strconv.Itoa(n-1), make(chan struct{})}
+	o.Concurrency = 1
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil || len(res.Errors) > 0 || len(res.Updates) != n {
+		t.Fatalf("err = %v, errors = %v, updates = %d", err, res.Errors, len(res.Updates))
+	}
 }
 
 func TestGroupAndScheduleFromPolicy(t *testing.T) {

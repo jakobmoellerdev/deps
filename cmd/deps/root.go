@@ -342,6 +342,7 @@ type session struct {
 	auth      *httpx.Auth
 	gh        *githubapi.Client // shared GitHub release lists (datasources and release notes)
 	sem       chan struct{}     // the default request pool (httpx.Limits.Default)
+	conc      int               // --concurrency (engine.Options.Concurrency)
 	progress  engine.Progress   // the live status line on a terminal; nil = none
 	info      platform.Info
 	client    *http.Client          // sibling sessions build their custom datasources on it
@@ -506,6 +507,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		auth:       auth,
 		gh:         gh,
 		sem:        sem,
+		conc:       o.concurrency,
 		progress:   o.progress(limits),
 		info:       info,
 		fetcher:    fetcher,
@@ -651,7 +653,7 @@ func gitLabBases(gitlabURL string) []string {
 
 // options returns the engine options of this session; callers add Filter/Trace.
 func (s *session) options() engine.Options {
-	return engine.Options{Managers: s.managers, Datasources: s.sources, Security: s.security, Checksums: s.checksums, Progress: s.progress}
+	return engine.Options{Managers: s.managers, Datasources: s.sources, Security: s.security, Checksums: s.checksums, Progress: s.progress, Concurrency: s.conc}
 }
 
 // progress returns the progress of the command (newProgress): the live status line when
