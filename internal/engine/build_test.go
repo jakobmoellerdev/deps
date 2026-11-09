@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
@@ -251,6 +253,38 @@ func TestBuildSharedPostProcessor(t *testing.T) {
 	_, errs = Build(t.Context(), root, []manager.Manager{pep621.New(), poetry.New()}, ups, map[string]PostProcessor{pep621.Name: p, poetry.Name: other})
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "updates of post-processed managers pep621 and poetry") {
 		t.Errorf("distinct post-processors: errs = %v", errs)
+	}
+}
+
+// sharedScopePost is a SharedScope post-processor that writes its manifest names to lock.
+type sharedScopePost struct{ runs *atomic.Int32 }
+
+func (sharedScopePost) Scope(_ context.Context, _, _ string) (string, bool) { return ".", true }
+func (sharedScopePost) Siblings() []string                                  { return []string{"lock"} }
+func (sharedScopePost) SharedScope()                                        {}
+func (p sharedScopePost) Process(_ context.Context, _ string, manifests, _ map[string][]byte) (map[string][]byte, error) {
+	p.runs.Add(1)
+	return map[string][]byte{"lock": []byte(strings.Join(slices.Sorted(maps.Keys(manifests)), ","))}, nil
+}
+
+// Files of two managers whose post-processor is a SharedScope (bazel-module's MODULE.bazel and
+// bazelisk's .bazelversion) are processed together, once, in one scope.
+func TestBuildSharedScope(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "MODULE.bazel", "bazel_dep(name = \"a\", version = \"1.0\")\n")
+	writeFile(t, root, ".bazelversion", "9.3.1\n")
+	writeFile(t, root, "lock", "")
+	ups := []dep.Update{
+		{Dep: dep.Dep{Manager: bazel.Name, File: "MODULE.bazel", Name: "a", Version: "1.0", RefSpan: dep.Span{Start: 33, End: 36}}, NewVersion: "1.1"},
+		{Dep: dep.Dep{Manager: bazel.BazeliskName, File: ".bazelversion", Name: "bazelbuild/bazel", Version: "9.3.1", RefSpan: dep.Span{Start: 0, End: 5}}, NewVersion: "9.4.0"},
+	}
+	p := sharedScopePost{runs: new(atomic.Int32)}
+	changes, errs := Build(t.Context(), root, []manager.Manager{bazel.New(), bazel.NewBazelisk()}, ups, map[string]PostProcessor{bazel.Name: p, bazel.BazeliskName: p})
+	if errs != nil || len(changes) != 3 || p.runs.Load() != 1 {
+		t.Fatalf("changes = %v, errs = %v, runs = %d", paths(changes), errs, p.runs.Load())
+	}
+	if changes[2].Path != "lock" || string(changes[2].New) != ".bazelversion,MODULE.bazel" {
+		t.Errorf("lock = %s: %q", changes[2].Path, changes[2].New)
 	}
 }
 

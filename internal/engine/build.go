@@ -52,6 +52,14 @@ type PostProcessor interface {
 	Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error)
 }
 
+// SharedScope is implemented by post-processors registered for several managers whose
+// manifests of one scope directory must be processed together, in one Process call: the
+// bazel-module and bazelisk managers' module files and `.bazelversion` all feed one
+// MODULE.bazel.lock. Without it each (manager, scope) is processed on its own.
+type SharedScope interface {
+	SharedScope()
+}
+
 // LockfileUpdater is implemented by post-processors that also apply lockfile-only updates
 // (dep.Update.Lockfile): the manifest keeps its range and only the lockfile moves to the new
 // version. ProcessLocked is Process plus those updates, by manifest path relative to dir;
@@ -374,7 +382,8 @@ func buildFile(ctx context.Context, root, file string, managers map[string]manag
 }
 
 // groupScopes groups the patched files by (post-processing manager, scope), in path order of
-// their first file. Files whose post-processor reports no scope are left alone.
+// their first file; managers sharing a SharedScope post-processor share the scope. Files whose
+// post-processor reports no scope are left alone.
 func groupScopes(ctx context.Context, root string, files []string, builds []fileBuild, post map[string]PostProcessor) []*postScope {
 	var scopes []*postScope
 	index := map[[2]string]*postScope{}
@@ -397,11 +406,19 @@ func groupScopes(ctx context.Context, root string, files []string, builds []file
 		}
 		key := [2]string{b.post, dir}
 		s := index[key]
+		if _, shared := post[b.post].(SharedScope); s == nil && shared {
+			for _, o := range scopes {
+				if o.dir == dir && samePost(post[o.manager], post[b.post]) {
+					s = o
+					break
+				}
+			}
+		}
 		if s == nil {
 			s = &postScope{manager: b.post, dir: dir}
-			index[key] = s
 			scopes = append(scopes, s)
 		}
+		index[key] = s
 		s.files = append(s.files, i)
 	}
 	return scopes

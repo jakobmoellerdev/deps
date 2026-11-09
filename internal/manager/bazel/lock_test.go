@@ -31,7 +31,7 @@ echo "$@" >> ` + log + `
 case "$2" in shutdown) exit 0;; esac
 if grep -q FAIL MODULE.bazel; then echo "ERROR: $PWD/MODULE.bazel: boom" >&2; exit 1; fi
 if [ -f MODULE.bazel.lock ]; then kept=kept; else kept=; fi
-{ cat MODULE.bazel; [ -f deps/a.MODULE.bazel ] && cat deps/a.MODULE.bazel; [ -n "$kept" ] && echo kept; } > out.tmp
+{ cat MODULE.bazel; [ -f deps/a.MODULE.bazel ] && cat deps/a.MODULE.bazel; [ -f .bazelversion ] && echo "bazel $(cat .bazelversion) via ` + name + `"; [ -n "$kept" ] && echo kept; } > out.tmp
 rm -f MODULE.bazel.lock; mv out.tmp MODULE.bazel.lock
 `
 	writeFile(t, filepath.Join(bin, name), script)
@@ -61,7 +61,10 @@ func TestLockerScopeAndRoots(t *testing.T) {
 	if !slices.Equal(l.Siblings(), []string{"MODULE.bazel.lock"}) {
 		t.Error("Siblings")
 	}
-	for manifest, want := range map[string]string{"ws/MODULE.bazel": "ws", "ws/deps/a.MODULE.bazel": "ws", "nolock/MODULE.bazel": "", "stray/x.MODULE.bazel": ""} {
+	for manifest, want := range map[string]string{
+		"ws/MODULE.bazel": "ws", "ws/deps/a.MODULE.bazel": "ws", "nolock/MODULE.bazel": "", "stray/x.MODULE.bazel": "",
+		"ws/.bazelversion": "ws", "ws/deps/.bazelversion": "", "nolock/.bazelversion": "", "stray/.bazelversion": "",
+	} {
 		dir, ok := l.Scope(t.Context(), root, manifest)
 		if ok != (want != "") || ok && dir != want {
 			t.Errorf("Scope(%s) = %q, %v", manifest, dir, ok)
@@ -127,5 +130,30 @@ func TestLockerBazeliskAndMissing(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if _, err := (Locker{}).Maintain(t.Context(), filepath.Join(root, "ws"), map[string][]byte{"MODULE.bazel.lock": []byte("old\n")}); err == nil || err.Error() != "bazel not found (needed to update MODULE.bazel.lock)" {
 		t.Errorf("without bazel: %v", err)
+	}
+}
+
+// A .bazelversion update regenerates the lockfile with Bazelisk even when a `bazel` is on PATH
+// (a plain Bazel would ignore the new version); module file updates keep using `bazel`.
+func TestLockerBazelVersion(t *testing.T) {
+	log := fakeBazel(t, "bazelisk")
+	writeFile(t, filepath.Join(filepath.Dir(log), "bazel"), "#!/bin/sh\necho plain bazel >&2\nexit 1\n")
+	if err := os.Chmod(filepath.Join(filepath.Dir(log), "bazel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := workspace(t)
+	dir := filepath.Join(root, "ws")
+	writeFile(t, filepath.Join(dir, ".bazelversion"), "9.3.1\n")
+	lock := map[string][]byte{"MODULE.bazel.lock": []byte("old\n")}
+	out, err := Locker{}.Process(t.Context(), dir, map[string][]byte{".bazelversion": []byte("9.4.0\n")}, lock)
+	want := "bazel_dep(name = \"a\", version = \"1\")\nbazel_dep(name = \"b\", version = \"1\")\nbazel 9.4.0 via bazelisk\nkept\n"
+	if err != nil || string(out["MODULE.bazel.lock"]) != want {
+		t.Fatalf("Process = %q, %v", out, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, ".bazelversion")); string(b) != "9.3.1\n" {
+		t.Errorf("working tree changed: %q", b)
+	}
+	if _, err := (Locker{}).Process(t.Context(), dir, map[string][]byte{"MODULE.bazel": []byte("bazel_dep(name = \"a\", version = \"2\")\n")}, lock); err == nil || !strings.Contains(err.Error(), "plain bazel") {
+		t.Errorf("module update without .bazelversion: %v", err)
 	}
 }

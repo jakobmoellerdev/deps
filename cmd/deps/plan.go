@@ -150,7 +150,7 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	if !write && hasManager(res, pub.Name) {
 		fmt.Fprintln(stderr, "note    pubspec.lock changes are computed by apply/run")
 	}
-	if !write && hasManager(res, bazel.Name) {
+	if !write && (hasManager(res, bazel.Name) || hasManager(res, bazel.BazeliskName)) {
 		fmt.Fprintln(stderr, "note    MODULE.bazel.lock changes are computed by apply/run")
 	}
 	if !write && hasManager(res, beam.NameMix) {

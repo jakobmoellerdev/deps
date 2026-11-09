@@ -50,11 +50,13 @@ var Doc = refdoc.Manager{
 			"Overrides apply to the bazel_dep of their `module_name` in every module file of the workspace: the files whose nearest directory holding a scanned `MODULE.bazel` is the same (the root module and its `*.MODULE.bazel` segments). A module with more than one override (an error in Bazel) keeps its bazel_dep updatable.",
 			"Module versions are looked up in the workspace's registries: the `--registry` flags of the `.bazelrc` next to the `MODULE.bazel`, else the Bazel Central Registry; a `single_version_override(registry = …)` replaces them for its module. See the `bazel` datasource in [Datasources](#datasources).",
 			"Versioning `bazel-module` orders versions as Bazel does: `RELEASE[-PRERELEASE][+BUILD]` with dot-separated identifiers, digit-only ones numerically and before the others (`1.2.3` < `1.2.3.1` < `1.2.3.bcr.1` < `1.2.4`; registry patches such as `1.8.2.bcr.1` are patch updates), a prerelease below its release, build metadata ignored. Update types follow the first three release identifiers. Prereleases (`1.5.6-9.bcr.2`, `2025-11-05.bcr.1`, whose release is `2025`) are only proposed from a prerelease.",
+			"Bazel registries (the BCR included) publish no release times: `metadata.json` lists versions only. `minimumReleaseAge` cannot hold back a new module version: under the default `minimumReleaseAgeBehaviour: timestamp-optional` every version passes, under `timestamp-required` every version is held back. PRs show no release age for `bazel_dep` updates.",
 		}},
 		{Title: "MODULE.bazel.lock", Items: []string{
-			"With an update of a module file whose workspace has a `MODULE.bazel.lock`, `apply` and `run` run `bazel --output_base=<tmp> mod deps --lockfile_mode=update` (`bazelisk` when `bazel` is not on `PATH`; Bazelisk uses the workspace's `.bazelversion`) in a temporary mirror of the workspace with the patched module files (other entries symlinked, so patches, `local_path_override` paths and `.bazelrc` resolve), then `bazel shutdown`. The new lockfile joins the update; a workspace without one gets none.",
-			"Without Bazel the update fails with `bazel not found (needed to update MODULE.bazel.lock)`; `plan` does not run Bazel and notes `note    MODULE.bazel.lock changes are computed by apply/run`.",
-			"`lockFileMaintenance` deletes and regenerates every `MODULE.bazel.lock` next to a scanned `MODULE.bazel` the same way, as Renovate does. `.bazelversion` updates (the [bazelisk](#bazelisk) manager) do not regenerate it.",
+			"With an update of a module file or of the workspace's `.bazelversion` (the [bazelisk](#bazelisk) manager) whose workspace has a `MODULE.bazel.lock`, `apply` and `run` run `bazel --output_base=<tmp> mod deps --lockfile_mode=update` in a temporary mirror of the workspace with the patched files (other entries symlinked, so patches, `local_path_override` paths and `.bazelrc` resolve), then `bazel shutdown`. The new lockfile joins the update; a workspace without one gets none. Module files and `.bazelversion` updated in one PR regenerate the lockfile once, together.",
+			"The tool is `bazel`, else `bazelisk` (Bazelisk uses the workspace's `.bazelversion`); for a `.bazelversion` update `bazelisk` comes first, so the lockfile is written by the new Bazel version (a `bazel` on `PATH` must be Bazelisk for that, as `bazel-contrib/setup-bazel` and npm's `@bazel/bazelisk` install it; a plain Bazel binary ignores `.bazelversion`).",
+			"Without either the update fails with `bazel not found (needed to update MODULE.bazel.lock)`; `plan` does not run Bazel and notes `note    MODULE.bazel.lock changes are computed by apply/run`.",
+			"`lockFileMaintenance` deletes and regenerates every `MODULE.bazel.lock` next to a scanned `MODULE.bazel` the same way, as Renovate does.",
 		}},
 	},
 }
@@ -70,5 +72,10 @@ var BazeliskDoc = refdoc.Manager{
 	Skips: []refdoc.Skip{
 		{Reason: skipFork, When: "`<fork>/<version>` (a Bazel fork Bazelisk downloads from another GitHub repository)"},
 		{Reason: skipRolling, When: "`latest`, `latest-<n>`, `last_green`, `last_rc`, `7.x`, `*`: Bazelisk resolves them itself"},
+	},
+	Sections: []refdoc.Section{
+		{Title: "MODULE.bazel.lock", Items: []string{
+			"A `.bazelversion` update in a directory holding a `MODULE.bazel` and a `MODULE.bazel.lock` regenerates the lockfile with the new Bazel version, as module file updates do (see [bazel-module](#bazel-module)); Renovate's bazelisk manager leaves it alone. A `.bazelversion` elsewhere (Bazelisk only reads the one at the workspace root) or a workspace without a lockfile changes only `.bazelversion`.",
+		}},
 	},
 }

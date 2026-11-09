@@ -23,24 +23,43 @@ import (
 // lockFile is the module lockfile next to the root MODULE.bazel.
 const lockFile = "MODULE.bazel.lock"
 
-// Locker is the bazel-module post-processor (engine.PostProcessor and LockMaintainer): it
-// updates the MODULE.bazel.lock of the workspace of a patched module file with
-// `bazel mod deps --lockfile_mode=update` in a temporary mirror of the workspace, as Renovate
-// does. The working tree is never touched. Without a MODULE.bazel.lock there is nothing to do.
+// Locker is the bazel-module and bazelisk post-processor (engine.PostProcessor and
+// LockMaintainer): it updates the MODULE.bazel.lock of the workspace of a patched module file
+// or `.bazelversion` with `bazel mod deps --lockfile_mode=update` in a temporary mirror of the
+// workspace, as Renovate does for module files. The working tree is never touched. Without a
+// MODULE.bazel.lock there is nothing to do.
 type Locker struct{}
 
 // Siblings lists MODULE.bazel.lock.
 func (Locker) Siblings() []string { return []string{lockFile} }
 
+// SharedScope implements engine.SharedScope: module files and the `.bazelversion` of one
+// workspace regenerate the same MODULE.bazel.lock, together.
+func (Locker) SharedScope() {}
+
 // Scope returns the workspace of a module file (the nearest directory from its own up to root
-// holding a MODULE.bazel) when it has a MODULE.bazel.lock.
+// holding a MODULE.bazel), or of a `.bazelversion` (its own directory, which Bazelisk reads it
+// from, when it holds a MODULE.bazel), when the workspace has a MODULE.bazel.lock.
 func (Locker) Scope(_ context.Context, root, manifest string) (string, bool) {
-	ws, ok := workspaceDir(root, manifest)
-	if !ok {
-		return "", false
+	var ws string
+	if path.Base(manifest) == bazelVersionFile {
+		ws = path.Dir(manifest)
+		if !regular(filepath.Join(root, filepath.FromSlash(ws), moduleFile)) {
+			return "", false
+		}
+	} else {
+		var ok bool
+		if ws, ok = workspaceDir(root, manifest); !ok {
+			return "", false
+		}
 	}
-	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(ws), lockFile))
-	return ws, err == nil && st.Mode().IsRegular()
+	return ws, regular(filepath.Join(root, filepath.FromSlash(ws), lockFile))
+}
+
+// regular reports whether p is a regular file.
+func regular(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Mode().IsRegular()
 }
 
 // workspaceDir returns the slash directory (relative to root) of the nearest MODULE.bazel from
@@ -96,8 +115,13 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 
 // regenerate runs `bazel mod deps --lockfile_mode=update` in a mirror of the workspace dir with
 // copies written over it (a MODULE.bazel.lock not among them is absent) and returns the new
-// lockfile when it differs from lock.
+// lockfile when it differs from lock. A patched `.bazelversion` among copies runs Bazelisk
+// first, so the lockfile is written by the new Bazel version.
 func regenerate(ctx context.Context, dir string, copies map[string][]byte, lock []byte) (map[string][]byte, error) {
+	bin, err := bazelBinary(copies[bazelVersionFile] != nil)
+	if err != nil {
+		return nil, err
+	}
 	tmp, err := os.MkdirTemp("", "deps-bazel-*")
 	if err != nil {
 		return nil, err
@@ -128,8 +152,8 @@ func regenerate(ctx context.Context, dir string, copies map[string][]byte, lock 
 		}
 	}
 	outBase := filepath.Join(tmp, "output")
-	runErr := runBazel(ctx, base, dir, outBase, "mod", "deps", "--lockfile_mode=update")
-	_ = runBazel(context.WithoutCancel(ctx), base, dir, outBase, "shutdown") // the server would idle for hours
+	runErr := runBazel(ctx, bin, base, dir, outBase, "mod", "deps", "--lockfile_mode=update")
+	_ = runBazel(context.WithoutCancel(ctx), bin, base, dir, outBase, "shutdown") // the server would idle for hours
 	if runErr != nil {
 		return nil, runErr
 	}
@@ -194,16 +218,26 @@ func materialize(src, dst, rel string) error {
 	return err
 }
 
-// runBazel runs `bazel --output_base=<outBase> args...` (`bazelisk` when there is no `bazel`
-// on PATH; Bazelisk picks the Bazel version of .bazelversion) in dir, the mirror of scope; a
-// failure carries the tail of Bazel's output with the mirror's paths shown as scope's.
-func runBazel(ctx context.Context, dir, scope, outBase string, args ...string) error {
-	bin, err := exec.LookPath("bazel")
-	if err != nil {
-		if bin, err = exec.LookPath("bazelisk"); err != nil {
-			return errors.New("bazel not found (needed to update " + lockFile + ")")
+// bazelBinary returns the path of `bazel`, else `bazelisk` (Bazelisk picks the Bazel version
+// of .bazelversion); with versionChanged (an updated .bazelversion) `bazelisk` comes first, as a
+// plain Bazel binary would ignore the new version (a `bazel` that is Bazelisk, as npm's
+// @bazel/bazelisk and most CI images install it, honors it too).
+func bazelBinary(versionChanged bool) (string, error) {
+	names := []string{"bazel", "bazelisk"}
+	if versionChanged {
+		names[0], names[1] = names[1], names[0]
+	}
+	for _, n := range names {
+		if bin, err := exec.LookPath(n); err == nil {
+			return bin, nil
 		}
 	}
+	return "", errors.New("bazel not found (needed to update " + lockFile + ")")
+}
+
+// runBazel runs `<bin> --output_base=<outBase> args...` in dir, the mirror of scope; a
+// failure carries the tail of Bazel's output with the mirror's paths shown as scope's.
+func runBazel(ctx context.Context, bin, dir, scope, outBase string, args ...string) error {
 	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"--output_base=" + outBase}, args...)...)
 	defer cancel()
 	cmd.Dir = dir
@@ -211,7 +245,7 @@ func runBazel(ctx context.Context, dir, scope, outBase string, args ...string) e
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()
-	err = cmd.Run()
+	err := cmd.Run()
 	slog.DebugContext(ctx, "bazel command", "args", args, "dir", scope, "duration", time.Since(start), "err", err)
 	if err == nil {
 		return nil
