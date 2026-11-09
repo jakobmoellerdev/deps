@@ -74,7 +74,7 @@ func TestReleases(t *testing.T) {
 	}
 	for name, want := range map[string]string{
 		"missing": "vcpkg port missing not found in the registry",
-		"bad":     "malformed response",
+		"bad":     "unexpected EOF",
 		"err":     "HTTP 500",
 	} {
 		if _, err := s.Releases(t.Context(), dep.Dep{Name: name, Source: srv.URL + "/c"}, ""); err == nil || !strings.Contains(err.Error(), want) {

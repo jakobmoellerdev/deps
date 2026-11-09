@@ -20,6 +20,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -37,8 +38,7 @@ var Channels = []string{"stable", "beta", "dev"}
 
 // Source lists the archive once per run.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	base   string
 
 	releases datasource.Once[[]datasource.Release]
@@ -47,7 +47,7 @@ type Source struct {
 // New returns the dart-version datasource. sem bounds concurrent requests (nil = unbounded);
 // getenv supplies DEPS_DART_ARCHIVE_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, base: strings.TrimSuffix(cmp.Or(getenv("DEPS_DART_ARCHIVE_URL"), DefaultURL), "/")}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, base: strings.TrimSuffix(cmp.Or(getenv("DEPS_DART_ARCHIVE_URL"), DefaultURL), "/")}
 }
 
 // Releases returns the SDK versions of every channel, oldest first: stable releases
@@ -116,7 +116,7 @@ func (s *Source) channel(ctx context.Context, ch string) ([]*semver.Version, err
 			q.Set("pageToken", token)
 		}
 		var page listing
-		err := datasource.GetStream(ctx, s.client, s.sem, s.base+"/storage/v1/b/dart-archive/o?"+q.Encode(), func(r io.Reader) error {
+		err := s.getter.Stream(ctx, s.base+"/storage/v1/b/dart-archive/o?"+q.Encode(), func(r io.Reader) error {
 			return json.UnmarshalRead(r, &page)
 		})
 		if err != nil {

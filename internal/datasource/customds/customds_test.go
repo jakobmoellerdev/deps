@@ -128,7 +128,7 @@ func TestFetchErrors(t *testing.T) {
 		{"wrong type", `{"releases":"1.0.0"}`, Spec{}, `cannot iterate over a string`},
 		{"object result", `{"releases":[{"version":{"a":1}}]}`, Spec{}, "yields an object, want strings"},
 		{"no versions", `{"releases":[]}`, Spec{}, "no versions"},
-		{"too large", strings.Repeat("1\n", MaxBody/2+1), Spec{Format: "plain"}, "larger than 10 MiB"},
+		{"too large", strings.Repeat("1\n", MaxBody/2+1), Spec{Format: "plain"}, "response larger than 10485760 bytes"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			srv := serve(t, c.body, nil)

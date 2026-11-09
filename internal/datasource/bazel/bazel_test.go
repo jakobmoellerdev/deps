@@ -93,7 +93,7 @@ func TestReleasesDefaultRegistry(t *testing.T) {
 	if err == nil || err.Error() != "bazel module missing not found in "+srv.URL {
 		t.Errorf("missing module: %v", err)
 	}
-	for name, want := range map[string]string{"broken": "malformed metadata.json", "down": "HTTP 502"} {
+	for name, want := range map[string]string{"broken": "unexpected EOF", "down": "HTTP 502"} {
 		if _, err := s.Releases(t.Context(), dep.Dep{Name: name, File: "MODULE.bazel"}, dir); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v, want %q", name, err, want)
 		}

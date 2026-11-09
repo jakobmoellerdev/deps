@@ -147,7 +147,7 @@ func TestReleasesErrors(t *testing.T) {
 	}{
 		{dep.Dep{Name: "missing"}, "gem missing not found"},
 		{dep.Dep{Name: "missing", Source: srv.URL + "/a " + srv.URL + "/b"}, "gem missing not found"},
-		{dep.Dep{Name: "broken"}, "malformed response"},
+		{dep.Dep{Name: "broken"}, "not an array"},
 		{dep.Dep{Name: "failing"}, "HTTP 500"},
 		{dep.Dep{Name: "odd", Source: srv.URL + "/compact"}, "not a compact index"},
 		{dep.Dep{Name: "nokogiri", Source: srv.URL + "/private"}, "HTTP 401"}, // no BUNDLE_<HOST> credentials

@@ -18,6 +18,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -34,8 +35,7 @@ const DefaultIndexURL = "https://builds.dotnet.microsoft.com/dotnet/release-meta
 
 // Source fetches the index once per run and each channel's releases at most once.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	url    string
 
 	channels datasource.Once[[]channel]
@@ -58,7 +58,7 @@ type releases struct {
 // New returns the dotnet-version datasource. sem bounds concurrent requests (nil =
 // unbounded); getenv supplies DEPS_DOTNET_RELEASES_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, url: cmp.Or(getenv("DEPS_DOTNET_RELEASES_URL"), DefaultIndexURL)}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, url: cmp.Or(getenv("DEPS_DOTNET_RELEASES_URL"), DefaultIndexURL)}
 }
 
 // Releases lists the versions of d (dotnet-sdk: every SDK feature band of every release;
@@ -148,7 +148,7 @@ func (s *Source) index(ctx context.Context) ([]channel, error) {
 			Releases string `json:"releases.json"`
 		} `json:"releases-index"`
 	}
-	err := datasource.GetStream(ctx, s.client, s.sem, s.url, func(r io.Reader) error { return json.UnmarshalRead(r, &ix) })
+	err := s.getter.Stream(ctx, s.url, func(r io.Reader) error { return json.UnmarshalRead(r, &ix) })
 	var channels []channel
 	for _, c := range ix.Index {
 		v, ok := majorMinor(c.Channel + ".")
@@ -178,7 +178,7 @@ func (s *Source) channel(ctx context.Context, u string) (*releases, error) {
 			SDKs    []version `json:"sdks"`
 		} `json:"releases"`
 	}
-	err := datasource.GetStream(ctx, s.client, s.sem, u, func(r io.Reader) error { return json.UnmarshalRead(r, &doc) })
+	err := s.getter.Stream(ctx, u, func(r io.Reader) error { return json.UnmarshalRead(r, &doc) })
 	slog.DebugContext(ctx, "dotnet channel releases", "url", u, "releases", len(doc.Releases), "duration", time.Since(start), "err", err)
 	if err != nil {
 		return nil, err

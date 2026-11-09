@@ -34,8 +34,7 @@ var errNotFound = errors.New("not found")
 
 // Source is the rubygems datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	getenv func(string) string
 	base   string // the rubygems.org API base, without a trailing slash
 
@@ -53,10 +52,12 @@ type gem struct {
 // New returns the rubygems datasource. sem bounds concurrent requests (nil = unbounded); getenv
 // supplies DEPS_RUBYGEMS_URL and the BUNDLE_<HOST> credentials of gem servers.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{
-		client: client, sem: sem, getenv: getenv,
+	s := &Source{
+		getter: httpx.Getter{Client: client, Sem: sem}, getenv: getenv,
 		base: strings.TrimSuffix(cmp.Or(getenv("DEPS_RUBYGEMS_URL"), DefaultURL), "/"),
 	}
+	s.getter.Prepare = s.credentials
+	return s
 }
 
 // Releases lists every published version of d (yanked versions are not listed by either
@@ -243,42 +244,23 @@ func (s *Source) compact(ctx context.Context, base, name string) (*gem, error) {
 	return g, nil
 }
 
-// get GETs target while holding a slot of the semaphore and passes a 200 body to read. A 404
-// is errNotFound. Credentials: the target's userinfo (as basic auth, by net/http), else
-// Bundler's BUNDLE_<HOST> setting (`user:password`, or a token as the user).
+// get GETs target and passes the body to read. A 404 is errNotFound.
 func (s *Source) get(ctx context.Context, target string, read func(io.Reader) error) error {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return err
+	err := s.getter.Stream(ctx, target, read)
+	if errors.Is(err, httpx.ErrNotFound) {
+		return errNotFound
 	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return fmt.Errorf("rubygems %s: invalid URL", httpx.Redact(target))
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
+	return err
+}
+
+// credentials authorizes req: by the target's userinfo (as basic auth, by net/http), else by
+// Bundler's BUNDLE_<HOST> setting (`user:password`, or a token as the user).
+func (s *Source) credentials(req *http.Request) error {
 	if req.URL.User == nil {
 		if cred := s.getenv(bundleKey(req.URL.Hostname())); cred != "" {
 			user, pass, _ := strings.Cut(cred, ":")
 			req.SetBasicAuth(user, pass)
 		}
-	}
-	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
-	if err != nil {
-		return fmt.Errorf("rubygems %s: %w", httpx.Redact(target), err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return errNotFound
-	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("rubygems %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
-	}
-	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("rubygems %s: malformed response: %w", httpx.Redact(target), err)
 	}
 	return nil
 }

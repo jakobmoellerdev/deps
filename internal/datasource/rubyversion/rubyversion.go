@@ -14,6 +14,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -25,8 +26,7 @@ const DefaultURL = "https://raw.githubusercontent.com/ruby/www.ruby-lang.org/mas
 
 // Source fetches the release list once per run.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	url    string
 
 	index datasource.Once[index]
@@ -41,7 +41,7 @@ type index struct {
 // New returns the ruby-version datasource. sem bounds concurrent requests (nil = unbounded);
 // getenv supplies DEPS_RUBY_RELEASES_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, url: cmp.Or(getenv("DEPS_RUBY_RELEASES_URL"), DefaultURL)}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, url: cmp.Or(getenv("DEPS_RUBY_RELEASES_URL"), DefaultURL)}
 }
 
 // Releases returns every release as listed (`3.4.7`, prereleases such as `3.5.0-preview1`
@@ -73,7 +73,7 @@ func (s *Source) load(ctx context.Context) (index, error) {
 	return s.index.Do(ctx, func() (index, error) {
 		start := time.Now()
 		var ix index
-		err := datasource.GetStream(ctx, s.client, s.sem, s.url, ix.read)
+		err := s.getter.Stream(ctx, s.url, ix.read)
 		if err != nil {
 			ix = index{}
 		}

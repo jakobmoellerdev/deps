@@ -134,7 +134,7 @@ func TestReleasesFallbackAndErrors(t *testing.T) {
 		want string
 	}{
 		{dep.Dep{Name: "nope", Source: "pytorch conda-forge"}, "conda package nope not found in pytorch, conda-forge"},
-		{dep.Dep{Name: "broken"}, "malformed response"},
+		{dep.Dep{Name: "broken"}, "JSON number into Go slice"},
 		{dep.Dep{Name: "failing"}, "HTTP 500"},
 	} {
 		_, err := s.Releases(ctx, tt.d, "")

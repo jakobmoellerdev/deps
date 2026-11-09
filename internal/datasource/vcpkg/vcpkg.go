@@ -24,14 +24,13 @@ const Name = "vcpkg"
 
 // Source is the vcpkg datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	ports  datasource.Memo[string, []datasource.Release] // by version file URL
 }
 
 // New returns the vcpkg datasource. sem bounds concurrent requests (nil = unbounded).
 func New(client *http.Client, sem chan struct{}) *Source {
-	return &Source{client: client, sem: sem}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}}
 }
 
 // RawBase returns the base URL serving the files of the git repository at https URL repo at
@@ -82,12 +81,10 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 	return "", datasource.UnsupportedDigest(Name, d)
 }
 
-var errNotFound = errors.New("not found")
-
 func (s *Source) fetch(ctx context.Context, target, port string) ([]datasource.Release, error) {
 	var f versionsFile
-	err := s.get(ctx, target, func(r io.Reader) error { return json.UnmarshalRead(r, &f) })
-	if errors.Is(err, errNotFound) {
+	err := s.getter.Stream(ctx, target, func(r io.Reader) error { return json.UnmarshalRead(r, &f) })
+	if errors.Is(err, httpx.ErrNotFound) {
 		return nil, fmt.Errorf("vcpkg port %s not found in the registry (%s)", port, target)
 	}
 	if err != nil {
@@ -126,35 +123,4 @@ func (s *Source) fetch(ctx context.Context, target, port string) ([]datasource.R
 		}
 	}
 	return rels, nil
-}
-
-func (s *Source) get(ctx context.Context, target string, read func(io.Reader) error) error {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return fmt.Errorf("vcpkg %s: invalid URL", target)
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("vcpkg: %w", err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return errNotFound
-	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("vcpkg %s: HTTP %d", target, resp.StatusCode)
-	}
-	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("vcpkg %s: malformed response: %w", target, err)
-	}
-	return nil
 }

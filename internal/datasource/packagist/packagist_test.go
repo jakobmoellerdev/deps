@@ -214,8 +214,8 @@ func TestErrors(t *testing.T) {
 		want string
 	}{
 		{dep.Dep{Name: "a/b", Source: srv.URL + "/v1"}, "only the Composer 1 providers API"},
-		{dep.Dep{Name: "a/b", Source: srv.URL + "/broken"}, "malformed response"},
-		{dep.Dep{Name: "broken/pkg"}, "malformed response"},
+		{dep.Dep{Name: "a/b", Source: srv.URL + "/broken"}, "JSON array into Go packagist.packagesJSON"},
+		{dep.Dep{Name: "broken/pkg"}, "not an object"},
 		{dep.Dep{Name: "failing/pkg"}, "HTTP 500"},
 		{dep.Dep{Name: "a/b", Source: srv.URL + "/missing"}, "no packages.json"},
 		{dep.Dep{Name: "a/b", Source: srv.URL + "/badmeta"}, "invalid metadata-url"},
@@ -223,7 +223,7 @@ func TestErrors(t *testing.T) {
 		{dep.Dep{Name: "a/b", Source: srv.URL + "/badinline"}, "malformed packages"},
 		{dep.Dep{Name: "a/b", Source: "ftp://x"}, "invalid composer repository URL"},
 		{dep.Dep{Name: "acme/lib", Source: srv.URL + "/private"}, "HTTP 401"}, // COMPOSER_AUTH unreadable
-		{dep.Dep{Name: "a/b", Source: "http://user:pw@127.0.0.1:1"}, "packagist http://user:xxxxx@127.0.0.1:1/packages.json"},
+		{dep.Dep{Name: "a/b", Source: "http://user:pw@127.0.0.1:1"}, `Get "http://user:***@127.0.0.1:1/packages.json"`},
 	} {
 		_, err := s.Releases(t.Context(), tt.d, "")
 		if err == nil || !strings.Contains(err.Error(), tt.want) {

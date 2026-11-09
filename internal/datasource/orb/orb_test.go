@@ -113,7 +113,7 @@ func TestErrors(t *testing.T) {
 	for name, want := range map[string]string{
 		"circleci/missing": "orb circleci/missing not found",
 		"circleci/empty":   "orb circleci/empty has no versions",
-		"circleci/broken":  "malformed response",
+		"circleci/broken":  "unexpected EOF",
 		"circleci/down":    "HTTP 502",
 	} {
 		_, err := s.Releases(t.Context(), dep.Dep{Name: name}, "")

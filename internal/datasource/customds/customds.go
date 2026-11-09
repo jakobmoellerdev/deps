@@ -53,8 +53,7 @@ type Spec struct {
 
 // Source fetches its document once per run.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	name   string // custom.<name>
 	spec   Spec
 	sel    Selector
@@ -66,7 +65,7 @@ type Source struct {
 
 // New returns the datasource custom.<name>. sem bounds concurrent requests (nil = unbounded).
 func New(client *http.Client, sem chan struct{}, name string, spec Spec) (*Source, error) {
-	s := &Source{client: client, sem: sem, name: Prefix + name, spec: spec}
+	s := &Source{getter: httpx.Getter{Client: client, Sem: sem, MaxBody: MaxBody}, name: Prefix + name, spec: spec}
 	if s.spec.Format == "" {
 		s.spec.Format = FormatJSON
 	}
@@ -114,7 +113,7 @@ func (s *Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) 
 func (s *Source) fetch(ctx context.Context) ([]datasource.Release, error) {
 	body, err := s.get(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s: GET %s: %w", s.name, s.spec.URL, err)
+		return nil, fmt.Errorf("%s: %w", s.name, err)
 	}
 	values, err := s.values(body)
 	if err != nil {
@@ -144,35 +143,12 @@ func (s *Source) fetch(ctx context.Context) ([]datasource.Release, error) {
 }
 
 func (s *Source) get(ctx context.Context) ([]byte, error) {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.spec.URL, http.NoBody)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxBody+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(body) > MaxBody {
-		return nil, fmt.Errorf("body larger than %d MiB", MaxBody>>20)
-	}
-	return body, nil
+	var body []byte
+	err := s.getter.Stream(ctx, s.spec.URL, func(r io.Reader) (err error) {
+		body, err = io.ReadAll(r)
+		return err
+	})
+	return body, err
 }
 
 // values decodes body per format and returns the selected values.

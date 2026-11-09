@@ -31,8 +31,7 @@ const DefaultURL = "https://endoflife.date/api"
 
 // Source is the endoflife-date datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	base   string           // API base URL without a trailing slash
 	now    func() time.Time // decides whether an eol or discontinued date has passed
 
@@ -56,7 +55,7 @@ type cycle struct {
 // New returns the endoflife-date datasource. sem bounds concurrent requests (nil =
 // unbounded); getenv supplies DEPS_ENDOFLIFE_DATE_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, now: time.Now,
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, now: time.Now,
 		base: strings.TrimSuffix(cmp.Or(getenv("DEPS_ENDOFLIFE_DATE_URL"), DefaultURL), "/")}
 }
 
@@ -152,7 +151,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*product, error) {
 func (s *Source) fetch(ctx context.Context, u string) (*product, error) {
 	p := &product{times: map[string]time.Time{}}
 	now := s.now()
-	err := datasource.GetStream(ctx, s.client, s.sem, u, func(r io.Reader) error {
+	err := s.getter.Stream(ctx, u, func(r io.Reader) error {
 		var es []entry
 		if err := json.UnmarshalRead(r, &es); err != nil {
 			return err

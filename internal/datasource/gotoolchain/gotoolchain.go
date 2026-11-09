@@ -15,6 +15,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name.
@@ -29,8 +30,7 @@ const (
 
 // Source fetches the release list once per run, and the release dates once on first use.
 type Source struct {
-	client     *http.Client
-	sem        chan struct{}
+	getter     httpx.Getter
 	url        string
 	historyURL string
 
@@ -40,7 +40,7 @@ type Source struct {
 
 // New returns the go-toolchain datasource. sem bounds concurrent requests (nil = unbounded).
 func New(client *http.Client, sem chan struct{}) datasource.Datasource {
-	return &Source{client: client, sem: sem, url: defaultURL, historyURL: defaultHistoryURL}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, url: defaultURL, historyURL: defaultHistoryURL}
 }
 
 // Releases returns every stable "X.Y.Z" plus a derived "X.Y" per stable minor, so 2-part
@@ -78,8 +78,10 @@ var historyRe = regexp.MustCompile(`Date:\s*Date\{(\d+),\s*(\d+),\s*(\d+)\},\s*V
 // releases before Go 1.21 and the derived minors of Releases.
 func (s *Source) history(ctx context.Context) (map[string]time.Time, error) {
 	var dates map[string]time.Time
-	err := datasource.GetStream(ctx, s.client, s.sem, s.historyURL, func(r io.Reader) error {
-		body, err := io.ReadAll(io.LimitReader(r, 4<<20))
+	g := s.getter
+	g.MaxBody = 4 << 20
+	err := g.Stream(ctx, s.historyURL, func(r io.Reader) error {
+		body, err := io.ReadAll(r)
 		if err != nil {
 			return err
 		}
@@ -106,7 +108,7 @@ func (s *Source) history(ctx context.Context) (map[string]time.Time, error) {
 
 func (s *Source) fetch(ctx context.Context) ([]datasource.Release, error) {
 	var out []datasource.Release
-	err := datasource.GetStream(ctx, s.client, s.sem, s.url, func(r io.Reader) error {
+	err := s.getter.Stream(ctx, s.url, func(r io.Reader) error {
 		var err error
 		out, err = parseReleases(r)
 		return err

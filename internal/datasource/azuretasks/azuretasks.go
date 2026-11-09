@@ -40,8 +40,7 @@ const (
 // Source fetches each task list once per run. The marketplace list (several MB) is fetched
 // only for tasks the built-in list lacks, and only the planned tasks are kept of it.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	base   string // public lists base, without trailing slash
 	org    string // Azure DevOps organization/collection URL, without trailing slash; "" = public lists
 	token  string // personal access token for org
@@ -60,7 +59,7 @@ type list = datasource.Once[map[string][]datasource.Release]
 // DEPS_AZURE_DEVOPS_TOKEN to list the tasks of an organization instead.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
 	s := &Source{
-		client: client, sem: sem,
+		getter: httpx.Getter{Client: client, Sem: sem},
 		base:   strings.TrimSuffix(cmp.Or(getenv("DEPS_AZURE_PIPELINES_TASKS_URL"), DefaultURL), "/"),
 		wanted: map[string]bool{},
 	}
@@ -141,7 +140,7 @@ func (s *Source) load(ctx context.Context, l *list, fetch func(context.Context) 
 // fetchList reads a public task list, keeping the tasks in want (nil = all).
 func (s *Source) fetchList(ctx context.Context, file string, want map[string]bool) (map[string][]datasource.Release, error) {
 	tasks := map[string][]datasource.Release{}
-	err := datasource.GetStream(ctx, s.client, s.sem, s.base+file, func(r io.Reader) error {
+	err := s.getter.Stream(ctx, s.base+file, func(r io.Reader) error {
 		dec := jsontext.NewDecoder(r)
 		if tok, err := dec.ReadToken(); err != nil {
 			return err
@@ -189,32 +188,15 @@ type serverTasks struct {
 // task's name and id, and with a contributionIdentifier (extension tasks) also under
 // `<contributionIdentifier>.<name|id>`, as Renovate matches them.
 func (s *Source) fetchServer(ctx context.Context) (map[string][]datasource.Release, error) {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	target := s.org + "/_apis/distributedtask/tasks/"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	req.SetBasicAuth("deps", s.token)
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: HTTP %d", target, resp.StatusCode)
+	g := s.getter
+	g.Prepare = func(req *http.Request) error {
+		req.SetBasicAuth("deps", s.token)
+		return nil
 	}
 	var body serverTasks
-	if err := json.UnmarshalRead(resp.Body, &body); err != nil {
-		return nil, fmt.Errorf("GET %s: malformed response: %w", target, err)
+	err := g.Stream(ctx, s.org+"/_apis/distributedtask/tasks/", func(r io.Reader) error { return json.UnmarshalRead(r, &body) })
+	if err != nil {
+		return nil, err
 	}
 	versions := map[string][]string{}
 	for _, t := range body.Value {

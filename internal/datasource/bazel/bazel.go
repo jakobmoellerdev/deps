@@ -37,8 +37,7 @@ var errNotFound = errors.New("not found")
 
 // Source is the bazel datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	auth   *httpx.Auth // credentials for registry hosts other than the default; nil = none
 	base   string      // the default registry, without a trailing slash
 
@@ -61,7 +60,7 @@ type module struct {
 // DEPS_BAZEL_REGISTRY_URL.
 func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, getenv func(string) string) *Source {
 	return &Source{
-		client: client, sem: sem, auth: auth,
+		getter: httpx.Getter{Client: client, Sem: sem}, auth: auth,
 		base:    strings.TrimSuffix(cmp.Or(getenv("DEPS_BAZEL_REGISTRY_URL"), DefaultURL), "/"),
 		located: map[string]*module{},
 	}
@@ -231,43 +230,26 @@ func repoURL(repos []string, homepage string) string {
 	return ""
 }
 
-// get GETs target while holding a slot of the semaphore and passes a 200 body to read; a 404
-// is errNotFound. Hosts other than the default registry's get the configured token of their
-// host (the platform token) as basic auth, unless the URL has userinfo.
+// get GETs target and passes the body to read; a 404 is errNotFound. Hosts other than the
+// default registry's get the configured token of their host (the platform token) as basic
+// auth, unless the URL has userinfo.
 func (s *Source) get(ctx context.Context, target string, read func(io.Reader) error) error {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return fmt.Errorf("bazel registry %s: invalid URL", httpx.Redact(target))
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	if req.URL.User == nil && !strings.HasPrefix(target, s.base+"/") {
-		if user, pass, ok := s.auth.Static(req.URL.Hostname()); ok {
-			req.SetBasicAuth(user, pass)
+	g := s.getter
+	if !strings.HasPrefix(target, s.base+"/") {
+		g.Prepare = func(req *http.Request) error {
+			if req.URL.User == nil {
+				if user, pass, ok := s.auth.Static(req.URL.Hostname()); ok {
+					req.SetBasicAuth(user, pass)
+				}
+			}
+			return nil
 		}
 	}
-	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
-	if err != nil {
-		return fmt.Errorf("bazel registry %s: %w", httpx.Redact(target), err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
+	err := g.Stream(ctx, target, read)
+	if errors.Is(err, httpx.ErrNotFound) {
 		return errNotFound
-	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("bazel registry %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
 	}
-	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("bazel registry %s: malformed metadata.json: %w", httpx.Redact(target), err)
-	}
-	return nil
+	return err
 }
 
 func redactAll(regs []string) []string {

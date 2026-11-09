@@ -42,8 +42,7 @@ var errNotFound = errors.New("not found")
 
 // Source is the packagist datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	getenv func(string) string
 	base   string // the Packagist metadata base, without a trailing slash
 
@@ -66,10 +65,12 @@ type pkg struct {
 // New returns the packagist datasource. sem bounds concurrent requests (nil = unbounded);
 // getenv supplies DEPS_PACKAGIST_URL and COMPOSER_AUTH.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{
-		client: client, sem: sem, getenv: getenv,
+	s := &Source{
+		getter: httpx.Getter{Client: client, Sem: sem}, getenv: getenv,
 		base: strings.TrimSuffix(cmp.Or(getenv("DEPS_PACKAGIST_URL"), DefaultURL), "/"),
 	}
+	s.getter.Prepare = s.credentials
+	return s
 }
 
 // Releases lists the tagged versions of d. d.Source holds the Composer repositories of the
@@ -491,17 +492,17 @@ type composerAuth struct {
 
 // credentials sets the COMPOSER_AUTH credentials of req's host on req, unless its URL has
 // userinfo (net/http sends that as basic auth). An unreadable COMPOSER_AUTH is logged once.
-func (s *Source) credentials(ctx context.Context, req *http.Request) {
+func (s *Source) credentials(req *http.Request) error {
 	s.authOnce.Do(func() {
 		if raw := s.getenv("COMPOSER_AUTH"); raw != "" {
 			if err := json.Unmarshal([]byte(raw), &s.auth); err != nil {
-				slog.WarnContext(ctx, "COMPOSER_AUTH is not valid JSON; ignored", "err", err)
+				slog.WarnContext(req.Context(), "COMPOSER_AUTH is not valid JSON; ignored", "err", err)
 				s.auth = composerAuth{}
 			}
 		}
 	})
 	if req.URL.User != nil {
-		return
+		return nil
 	}
 	host := strings.ToLower(req.URL.Hostname())
 	if c, ok := s.auth.HTTPBasic[host]; ok {
@@ -509,38 +510,14 @@ func (s *Source) credentials(ctx context.Context, req *http.Request) {
 	} else if t, ok := s.auth.Bearer[host]; ok {
 		req.Header.Set("Authorization", "Bearer "+t)
 	}
+	return nil
 }
 
-// get GETs target while holding a slot of the semaphore and passes a 200 body to read. A 404
-// is errNotFound.
+// get GETs target and passes the body to read. A 404 is errNotFound.
 func (s *Source) get(ctx context.Context, target string, read func(io.Reader) error) error {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return fmt.Errorf("packagist %s: invalid URL", httpx.Redact(target))
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	s.credentials(ctx, req)
-	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
-	if err != nil {
-		return fmt.Errorf("packagist %s: %w", httpx.Redact(target), err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
+	err := s.getter.Stream(ctx, target, read)
+	if errors.Is(err, httpx.ErrNotFound) {
 		return errNotFound
-	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("packagist %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
 	}
-	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("packagist %s: malformed response: %w", httpx.Redact(target), err)
-	}
-	return nil
+	return err
 }

@@ -173,7 +173,7 @@ func TestOrganization(t *testing.T) {
 	malformed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"value": [`)) }))
 	defer malformed.Close()
 	m := New(malformed.Client(), nil, env(map[string]string{"DEPS_AZURE_DEVOPS_URL": malformed.URL, "DEPS_AZURE_DEVOPS_TOKEN": "pat"}))
-	if _, err := m.Releases(t.Context(), dep.Dep{Name: "PowerShell"}, ""); err == nil || !strings.Contains(err.Error(), "malformed response") {
+	if _, err := m.Releases(t.Context(), dep.Dep{Name: "PowerShell"}, ""); err == nil || !strings.Contains(err.Error(), "unexpected EOF") {
 		t.Errorf("malformed: err = %v", err)
 	}
 	invalid := New(srv.Client(), nil, env(map[string]string{"DEPS_AZURE_DEVOPS_URL": "http://[::1", "DEPS_AZURE_DEVOPS_TOKEN": "pat"}))

@@ -133,8 +133,8 @@ func TestReleasesErrors(t *testing.T) {
 		{"not found", nil, "x/y", "provider x/y not found in {}"},
 		{"empty", map[string]string{"/v1/providers/x/y/versions": `{"versions":[]}`}, "x/y", "provider x/y not found in {}"},
 		{"server error", map[string]string{"/v1/providers/x/y/versions": "status:500"}, "x/y", "GET {}/v1/providers/x/y/versions: HTTP 500"},
-		{"malformed", map[string]string{"/v1/providers/x/y/versions": `{"versions":[`}, "x/y", "GET {}/v1/providers/x/y/versions: malformed response"},
-		{"no discovery", map[string]string{"discovery": "status"}, "x/y", "GET {}/.well-known/terraform.json: malformed response"},
+		{"malformed", map[string]string{"/v1/providers/x/y/versions": `{"versions":[`}, "x/y", "GET {}/v1/providers/x/y/versions: jsontext: unexpected EOF"},
+		{"no discovery", map[string]string{"discovery": "status"}, "x/y", "GET {}/.well-known/terraform.json: jsontext: invalid character"},
 		{"no service", map[string]string{"discovery": `{"modules.v1":"/m/"}`}, "x/y", "{} has no providers.v1 service"},
 		{"bad service URL", map[string]string{"discovery": `{"providers.v1":"http://[::1"}`}, "x/y", "providers.v1"},
 	} {

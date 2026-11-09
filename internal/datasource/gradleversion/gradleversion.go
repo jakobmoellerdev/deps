@@ -11,6 +11,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -24,8 +25,7 @@ const buildTimeLayout = "20060102150405-0700"
 
 // Source fetches the version index once per run.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	url    string
 
 	list datasource.Once[list]
@@ -44,7 +44,7 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 	if v := getenv("DEPS_GRADLE_VERSIONS_URL"); v != "" {
 		u = v
 	}
-	return &Source{client: client, sem: sem, url: u}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, url: u}
 }
 
 // Releases returns the published versions (`8.10.2`, `8.11-rc-1`, `9.0-milestone-1`) without
@@ -89,7 +89,7 @@ type release struct {
 
 func (s *Source) fetch(ctx context.Context) (list, error) {
 	var ix list
-	err := datasource.GetStream(ctx, s.client, s.sem, s.url, func(r io.Reader) error {
+	err := s.getter.Stream(ctx, s.url, func(r io.Reader) error {
 		ix.times = map[string]time.Time{}
 		err := datasource.DecodeArray(r, func(rel release) {
 			if rel.Version == "" || rel.Snapshot || rel.Nightly || rel.ReleaseNightly || rel.Broken {

@@ -20,6 +20,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -31,8 +32,7 @@ const DefaultURL = "https://package.elm-lang.org"
 
 // Source is the elm-package datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	base   string // registry base URL without a trailing slash
 
 	pkgs datasource.Memo[string, *pkg] // by package name
@@ -47,7 +47,7 @@ type pkg struct {
 // New returns the elm-package datasource. sem bounds concurrent requests (nil = unbounded);
 // getenv supplies DEPS_ELM_PACKAGE_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, base: strings.TrimSuffix(cmp.Or(getenv("DEPS_ELM_PACKAGE_URL"), DefaultURL), "/")}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, base: strings.TrimSuffix(cmp.Or(getenv("DEPS_ELM_PACKAGE_URL"), DefaultURL), "/")}
 }
 
 // Releases lists every published version of the package d.Name (`author/project`), oldest
@@ -101,7 +101,7 @@ func (s *Source) lookup(ctx context.Context, name string) (*pkg, error) {
 		start := time.Now()
 		u := s.base + "/packages/" + url.PathEscape(author) + "/" + url.PathEscape(project) + "/releases.json"
 		p := &pkg{times: map[string]time.Time{}}
-		err := datasource.GetStream(ctx, s.client, s.sem, u, func(r io.Reader) error {
+		err := s.getter.Stream(ctx, u, func(r io.Reader) error {
 			var raw map[string]int64
 			if err := json.UnmarshalRead(r, &raw); err != nil {
 				return err

@@ -40,8 +40,7 @@ const (
 // Registry shares service discovery, version lists and version documents between the
 // terraform-provider and terraform-module datasources.
 type Registry struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	creds  *credentials
 
 	services datasource.Memo[string, map[string]string]    // registry base URL -> service -> absolute base URL with trailing slash
@@ -60,7 +59,9 @@ type versionDoc struct {
 // datasources; getenv supplies TF_TOKEN_<host>, TF_CLI_CONFIG_FILE and HOME (APPDATA on Windows)
 // for the registry credentials.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Registry {
-	return &Registry{client: client, sem: sem, creds: newCredentials(getenv)}
+	r := &Registry{getter: httpx.Getter{Client: client, Sem: sem}, creds: newCredentials(getenv)}
+	r.getter.Prepare = r.authorize
+	return r
 }
 
 // Providers returns the terraform-provider datasource: d.Name is `namespace/type`, d.Source
@@ -390,40 +391,22 @@ func (r *Registry) discover(ctx context.Context, base string) (map[string]string
 
 // getJSON GETs target and decodes the JSON body into v; a 404 returns notFound.
 func (r *Registry) getJSON(ctx context.Context, target string, notFound error, v any) error {
-	release, err := httpx.Acquire(ctx, r.sem)
-	if err != nil {
-		return err
+	err := r.getter.Stream(ctx, target, func(body io.Reader) error { return json.UnmarshalRead(body, v) })
+	if errors.Is(err, httpx.ErrNotFound) {
+		return notFound
 	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return err
-	}
+	return err
+}
+
+// authorize asks for JSON and sends the registry token of req's host, if any.
+func (r *Registry) authorize(req *http.Request) error {
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	tok, err := r.creds.token(ctx, req.URL.Hostname())
+	tok, err := r.creds.token(req.Context(), req.URL.Hostname())
 	if err != nil {
 		return err
 	}
 	if tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return notFound
-	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("GET %s: HTTP %d", target, resp.StatusCode)
-	}
-	if err := json.UnmarshalRead(resp.Body, v); err != nil {
-		return fmt.Errorf("GET %s: malformed response: %w", target, err)
 	}
 	return nil
 }

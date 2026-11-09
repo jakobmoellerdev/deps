@@ -17,6 +17,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -38,8 +39,7 @@ var (
 
 // Source is the hexpm-bob datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	base   string // build host base URL without a trailing slash
 
 	lists datasource.Memo[string, *list] // by package name
@@ -54,7 +54,7 @@ type list struct {
 // New returns the hexpm-bob datasource. sem bounds concurrent requests (nil = unbounded);
 // getenv supplies DEPS_HEXPM_BOB_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, base: strings.TrimSuffix(cmp.Or(getenv("DEPS_HEXPM_BOB_URL"), DefaultURL), "/")}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, base: strings.TrimSuffix(cmp.Or(getenv("DEPS_HEXPM_BOB_URL"), DefaultURL), "/")}
 }
 
 // Releases lists the release builds of d.Name, `elixir` or `otp/<os>-<version>`, in the
@@ -111,7 +111,7 @@ func (s *Source) lookup(ctx context.Context, name string) (*list, error) {
 		start := time.Now()
 		u := s.base + "/builds/" + name + "/builds.txt"
 		l := &list{times: map[string]time.Time{}}
-		err := datasource.GetStream(ctx, s.client, s.sem, u, func(r io.Reader) error {
+		err := s.getter.Stream(ctx, u, func(r io.Reader) error {
 			sc := bufio.NewScanner(r)
 			for sc.Scan() {
 				f := strings.Fields(sc.Text())

@@ -47,8 +47,7 @@ var condaScheme, _ = versioning.Get("conda")
 
 // Source is the conda datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	base   string // the API base, without a trailing slash
 
 	pkgs datasource.Memo[string, *pkg] // by channel + "\x00" + name
@@ -65,7 +64,7 @@ type pkg struct {
 // New returns the conda datasource. sem bounds concurrent requests (nil = unbounded); getenv
 // supplies DEPS_CONDA_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, base: strings.TrimSuffix(cmp.Or(getenv("DEPS_CONDA_URL"), DefaultURL), "/")}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, base: strings.TrimSuffix(cmp.Or(getenv("DEPS_CONDA_URL"), DefaultURL), "/")}
 }
 
 // Releases lists the versions of d that have a file under the `main` label of the first
@@ -198,37 +197,13 @@ func (s *Source) fetch(ctx context.Context, channel, name string) (p *pkg, err e
 	return p, nil
 }
 
-// get GETs target while holding a slot of the semaphore and passes a 200 body to read. A 404
-// is errNotFound.
+// get GETs target and passes the body to read. A 404 is errNotFound.
 func (s *Source) get(ctx context.Context, target string, read func(io.Reader) error) error {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return fmt.Errorf("conda %s: invalid URL", target)
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("conda: %w", err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
+	err := s.getter.Stream(ctx, target, read)
+	if errors.Is(err, httpx.ErrNotFound) {
 		return errNotFound
-	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("conda %s: HTTP %d", target, resp.StatusCode)
 	}
-	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("conda %s: malformed response: %w", target, err)
-	}
-	return nil
+	return err
 }
 
 // Channel returns the anaconda.org channel name of a channel as an environment file or a

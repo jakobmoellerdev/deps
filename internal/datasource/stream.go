@@ -1,44 +1,11 @@
 package datasource
 
 import (
-	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"io"
-	"net/http"
-
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
-
-// GetStream GETs url with client while holding a slot of sem (nil = unbounded) and passes
-// the body of a 200 response to read, so large indexes are decoded as they arrive. Another
-// status is a *httpx.StatusError; errors of read get the "GET <url>: " prefix.
-func GetStream(ctx context.Context, client *http.Client, sem chan struct{}, url string, read func(io.Reader) error) error {
-	release, err := httpx.Acquire(ctx, sem)
-	if err != nil {
-		return err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer closeBody(resp)
-	if resp.StatusCode != http.StatusOK {
-		return &httpx.StatusError{URL: httpx.Redact(url), Code: resp.StatusCode}
-	}
-	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("GET %s: %w", req.URL.Redacted(), err)
-	}
-	return nil
-}
 
 // ErrNotArray matches (errors.Is) the error of DecodeArray for input that does not start
 // with a JSON array. Its message is the decoder's error, or "not an array" when the input
@@ -71,10 +38,4 @@ func DecodeArray[T any](r io.Reader, each func(T)) error {
 		each(v)
 	}
 	return nil
-}
-
-// closeBody drains a little of the body so the connection can be reused, then closes it.
-func closeBody(resp *http.Response) {
-	httpx.DrainBody(resp)
-	_ = resp.Body.Close()
 }

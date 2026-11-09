@@ -17,6 +17,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -27,8 +28,7 @@ const DefaultURL = "https://pub.dev"
 
 // Source is the dart datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	base   string // default repository base URL without a trailing slash
 
 	pkgs datasource.Memo[string, *pkg] // by repository base + "\x00" + package name
@@ -45,7 +45,7 @@ type pkg struct {
 // New returns the dart datasource. sem bounds concurrent requests (nil = unbounded); getenv
 // supplies PUB_HOSTED_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, base: strings.TrimSuffix(cmp.Or(getenv("PUB_HOSTED_URL"), DefaultURL), "/")}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, base: strings.TrimSuffix(cmp.Or(getenv("PUB_HOSTED_URL"), DefaultURL), "/")}
 }
 
 // Releases lists every version of the package d.Name that is not retracted, as the repository
@@ -110,7 +110,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		start := time.Now()
 		u := base + "/api/packages/" + url.PathEscape(d.Name)
 		p := &pkg{times: map[string]time.Time{}}
-		err := datasource.GetStream(ctx, s.client, s.sem, u, func(r io.Reader) error {
+		err := s.getter.Stream(ctx, u, func(r io.Reader) error {
 			var res response
 			if err := json.UnmarshalRead(r, &res); err != nil {
 				return err

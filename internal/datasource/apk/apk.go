@@ -31,8 +31,7 @@ const Name = "apk"
 
 // Source is the apk datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 
 	indexes datasource.Memo[string, index] // by APKINDEX.tar.gz URL
 }
@@ -48,7 +47,7 @@ type entry struct {
 
 // New returns the apk datasource. sem bounds concurrent requests (nil = unbounded).
 func New(client *http.Client, sem chan struct{}) *Source {
-	return &Source{client: client, sem: sem}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}}
 }
 
 // Releases lists every version of the package d.Name in the indexes of d.Source, oldest first
@@ -183,7 +182,7 @@ func IndexURLs(registry string) ([]string, error) {
 func (s *Source) fetch(ctx context.Context, u string) (index, error) {
 	start := time.Now()
 	var idx index
-	err := datasource.GetStream(ctx, s.client, s.sem, u, func(r io.Reader) error {
+	err := s.getter.Stream(ctx, u, func(r io.Reader) error {
 		var err error
 		idx, err = parseArchive(r)
 		return err

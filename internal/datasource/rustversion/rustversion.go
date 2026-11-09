@@ -16,6 +16,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -37,8 +38,7 @@ var manifestRe = regexp.MustCompile(`/dist/(\d{4}-\d{2}-\d{2})/channel-rust-(\d+
 
 // Source fetches the manifest index once per run.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	url    string
 
 	index datasource.Once[index]
@@ -53,7 +53,7 @@ type index struct {
 // New returns the rust-version datasource. sem bounds concurrent requests (nil = unbounded);
 // getenv supplies DEPS_RUST_MANIFESTS_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, url: cmp.Or(getenv("DEPS_RUST_MANIFESTS_URL"), DefaultURL)}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, url: cmp.Or(getenv("DEPS_RUST_MANIFESTS_URL"), DefaultURL)}
 }
 
 // Releases returns every stable and numbered beta release (`1.82.0`, `1.83.0-beta.5`; schemes
@@ -88,7 +88,7 @@ func (s *Source) load(ctx context.Context) (index, error) {
 	return s.index.Do(ctx, func() (index, error) {
 		start := time.Now()
 		var ix index
-		err := datasource.GetStream(ctx, s.client, s.sem, s.url, ix.read)
+		err := s.getter.Stream(ctx, s.url, ix.read)
 		if err != nil {
 			ix = index{}
 		}

@@ -12,6 +12,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's; the alias node maps to it).
@@ -22,8 +23,7 @@ const DefaultDistURL = "https://nodejs.org/dist"
 
 // Source fetches <dist>/index.json once per run.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	url    string
 
 	list datasource.Once[list]
@@ -42,7 +42,7 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 	if v := getenv("DEPS_NODE_DIST_URL"); v != "" {
 		base = v
 	}
-	return &Source{client: client, sem: sem, url: strings.TrimSuffix(base, "/") + "/index.json"}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, url: strings.TrimSuffix(base, "/") + "/index.json"}
 }
 
 // Releases returns every release as published (`v26.5.0`, prereleases included; schemes
@@ -89,7 +89,7 @@ type release struct {
 
 func (s *Source) fetch(ctx context.Context) (list, error) {
 	var ix list
-	err := datasource.GetStream(ctx, s.client, s.sem, s.url, func(r io.Reader) error {
+	err := s.getter.Stream(ctx, s.url, func(r io.Reader) error {
 		ix.times = map[string]time.Time{}
 		var derived []datasource.Release
 		err := datasource.DecodeArray(r, func(rel release) {

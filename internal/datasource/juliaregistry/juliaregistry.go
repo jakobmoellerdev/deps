@@ -39,8 +39,7 @@ var errNotFound = errors.New("not found")
 
 // Source is the julia-registry datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	base   string // without a trailing slash
 	shown  string // base with its password masked, for messages
 
@@ -57,7 +56,7 @@ type pkg struct {
 // getenv supplies DEPS_JULIA_REGISTRY_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
 	base := strings.TrimSuffix(cmp.Or(getenv("DEPS_JULIA_REGISTRY_URL"), DefaultURL), "/")
-	return &Source{client: client, sem: sem, base: base, shown: httpx.Redact(base)}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem, MaxBody: maxFile}, base: base, shown: httpx.Redact(base)}
 }
 
 // Path is the directory of the package name in a registry: `<first letter, upper-cased>/<name>`,
@@ -160,40 +159,25 @@ func str(t *tomlspan.Value, k string) string {
 	return ""
 }
 
-// get GETs target while holding a slot of the semaphore and parses the 200 body as TOML. A
-// 404 is errNotFound. Credentials in the base URL's userinfo are sent as basic auth.
+// get GETs target and parses the body as TOML. A 404 is errNotFound. Credentials in the base
+// URL's userinfo are sent as basic auth.
 func (s *Source) get(ctx context.Context, target string) (*tomlspan.Value, error) {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("julia-registry: invalid URL %s", httpx.Redact(target))
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
-	if err != nil {
-		return nil, fmt.Errorf("julia-registry: %w", err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
+	var t *tomlspan.Value
+	err := s.getter.Stream(ctx, target, func(r io.Reader) error {
+		b, err := io.ReadAll(r)
+		if err != nil {
+			return err
+		}
+		if t, err = tomlspan.Parse(b); err != nil {
+			return fmt.Errorf("malformed TOML: %w", err)
+		}
+		return nil
+	})
 	switch {
-	case resp.StatusCode == http.StatusNotFound:
+	case errors.Is(err, httpx.ErrNotFound):
 		return nil, errNotFound
-	case resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("julia-registry %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxFile))
-	if err != nil {
-		return nil, fmt.Errorf("julia-registry %s: %w", httpx.Redact(target), err)
-	}
-	t, err := tomlspan.Parse(b)
-	if err != nil {
-		return nil, fmt.Errorf("julia-registry %s: malformed TOML: %w", httpx.Redact(target), err)
+	case err != nil:
+		return nil, err
 	}
 	return t, nil
 }

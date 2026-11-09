@@ -18,6 +18,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // Name is the datasource name (Renovate's).
@@ -32,8 +33,7 @@ const Repo = "https://github.com/flutter/flutter"
 
 // Source reads the release list once per run.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	url    string
 
 	index datasource.Once[index]
@@ -49,7 +49,7 @@ type index struct {
 // unbounded); getenv supplies FLUTTER_STORAGE_BASE_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
 	base := strings.TrimSuffix(cmp.Or(getenv("FLUTTER_STORAGE_BASE_URL"), DefaultURL), "/")
-	return &Source{client: client, sem: sem, url: base + "/flutter_infra_release/releases/releases_linux.json"}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, url: base + "/flutter_infra_release/releases/releases_linux.json"}
 }
 
 // Releases returns every release of the list, oldest first: stable releases (`3.24.3`, the
@@ -82,7 +82,7 @@ func (s *Source) load(ctx context.Context) (index, error) {
 	return s.index.Do(ctx, func() (index, error) {
 		start := time.Now()
 		var ix index
-		err := datasource.GetStream(ctx, s.client, s.sem, s.url, ix.read)
+		err := s.getter.Stream(ctx, s.url, ix.read)
 		if err != nil {
 			ix = index{}
 		}
