@@ -301,14 +301,7 @@ func setPRMetadata(ctx context.Context, r *rest, h func(http.Header), repo strin
 		}
 	}
 	if len(m.Reviewers) > 0 {
-		users, teams := splitReviewers(m.Reviewers)
-		in := struct {
-			Reviewers []string `json:"reviewers,omitempty"`
-			Teams     []string `json:"team_reviewers,omitempty"`
-		}{users, teams}
-		if err := r.do(ctx, http.MethodPost, prPath(repo, n)+"/requested_reviewers", in, nil, h); err != nil {
-			errs = append(errs, fmt.Errorf("request reviewers of #%d: %w", n, err))
-		}
+		errs = append(errs, requestReviewers(ctx, r, h, repo, n, m.Reviewers)...)
 	}
 	if len(m.Assignees) > 0 {
 		if err := r.do(ctx, http.MethodPatch, issuePath(repo, n), map[string][]string{"assignees": m.Assignees}, nil, h); err != nil {
@@ -316,6 +309,35 @@ func setPRMetadata(ctx context.Context, r *rest, h func(http.Header), repo strin
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// requestReviewers requests reviews from users and "team:<slug>" teams in one request. The
+// forge rejects all of them with 422 when one cannot review (not a collaborator, the PR's
+// author, an unknown team), so on a 422 each is requested on its own: the valid ones still
+// get the request, and the error names the ones that failed.
+func requestReviewers(ctx context.Context, r *rest, h func(http.Header), repo string, n int, reviewers []string) []error {
+	post := func(rs []string) error {
+		users, teams := splitReviewers(rs)
+		in := struct {
+			Reviewers []string `json:"reviewers,omitempty"`
+			Teams     []string `json:"team_reviewers,omitempty"`
+		}{users, teams}
+		return r.do(ctx, http.MethodPost, prPath(repo, n)+"/requested_reviewers", in, nil, h)
+	}
+	err := post(reviewers)
+	if err == nil {
+		return nil
+	}
+	if len(reviewers) == 1 || !hasStatus(err, http.StatusUnprocessableEntity, "") {
+		return []error{fmt.Errorf("request reviewers of #%d: %w", n, err)}
+	}
+	var errs []error
+	for _, rv := range reviewers {
+		if err := post([]string{rv}); err != nil {
+			errs = append(errs, fmt.Errorf("request reviewer %s of #%d: %w", rv, n, err))
+		}
+	}
+	return errs
 }
 
 // githubUnavailableRe matches enablePullRequestAutoMerge errors after which GitHub will not

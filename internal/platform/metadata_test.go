@@ -1,9 +1,14 @@
 package platform
 
 import (
+	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -143,4 +148,40 @@ func TestRemovePRLabel(t *testing.T) {
 			t.Errorf("err = %v", err)
 		}
 	})
+}
+
+// GitHub rejects the whole review request with 422 when one reviewer cannot review; each is
+// then requested on its own, so the valid ones still get it.
+func TestSetPRMetadataInvalidReviewer(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Reviewers []string `json:"reviewers"`
+			Teams     []string `json:"team_reviewers"`
+		}
+		if err := json.UnmarshalRead(r.Body, &in); err != nil {
+			t.Error(err)
+		}
+		mu.Lock()
+		bodies = append(bodies, fmt.Sprint(in.Reviewers, in.Teams))
+		mu.Unlock()
+		if slices.Contains(in.Reviewers, "ghost") || r.URL.Path != "/repos/o/r/pulls/7/requested_reviewers" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			io.WriteString(w, `{"message":"Reviews may only be requested from collaborators. One or more of the users or teams you specified is not a collaborator of the o/r repository."}`)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, `{}`)
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(Info{Kind: GitHub, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client())
+	err := c.SetPRMetadata(t.Context(), 7, PRMetadata{Reviewers: []string{"alice", "ghost", "team:core"}})
+	if err == nil || !strings.Contains(err.Error(), "request reviewer ghost of #7") || strings.Contains(err.Error(), "alice") || strings.Contains(err.Error(), "core") {
+		t.Errorf("err = %v; want only ghost to fail", err)
+	}
+	want := []string{"[alice ghost] [core]", "[alice] []", "[ghost] []", "[] [core]"}
+	if !slices.Equal(bodies, want) {
+		t.Errorf("requests = %q, want %q", bodies, want)
+	}
 }
