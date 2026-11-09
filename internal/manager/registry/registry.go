@@ -56,6 +56,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/sbt"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/setupcfg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/swift"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/tekton"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/travis"
@@ -143,6 +144,7 @@ var Builtin = []Entry{
 	{nix.Doc, nix.New},
 	{quadlet.Doc, quadlet.New},
 	{crossplane.Doc, crossplane.New},
+	{tekton.Doc, tekton.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,

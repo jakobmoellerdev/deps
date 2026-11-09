@@ -1,0 +1,284 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: build-definitions-pull-request
+  annotations:
+    pipelinesascode.tekton.dev/on-cel-expression: (event == "pull_request" && target_branch == "main" && ( !has(body.pull_request) || !body.pull_request.draft) ) || (event == "push" && target_branch.startsWith("gh-readonly-queue/main/") && body.head_commit != "null" )
+    pipelinesascode.tekton.dev/task: "[.tekton/tasks/task-lint.yaml, .tekton/tasks/e2e-test.yaml, .tekton/tasks/task-switchboard.yaml]"
+    pipelinesascode.tekton.dev/max-keep-runs: "5"
+spec:
+  params:
+    - name: repo_url
+      value: "{{ repo_url }}"
+    - name: revision
+      value: "{{ revision }}"
+    - name: e2e_test_namespace
+      value: build-templates-e2e
+    - name: image-target
+      value: "quay.io/konflux-ci/task-runner:1.8.1@sha256:b9ef0479b57a494368a12a02886c650314c9ac7391c6228f21065865aab71c9e"
+  pipelineSpec:
+    params:
+      - name: repo_url
+      - name: revision
+      - name: e2e_test_namespace
+    workspaces:
+      - name: workspace
+    tasks:
+      - name: clone-repository
+        taskRef:
+          resolver: bundles
+          params:
+            - name: bundle
+              value: quay.io/konflux-ci/tekton-catalog/task-git-clone:0.2.4@sha256:bb787553da840e226ea72147a7ccbe8553f887efef2ca24664c9ba2052018adf
+            - name: name
+              value: git-clone
+            - name: kind
+              value: task
+        workspaces:
+          - name: output
+            workspace: workspace
+        params:
+          - name: url
+            value: $(params.repo_url)
+          - name: revision
+            value: $(params.revision)
+          - name: depth
+            value: "0"
+      - name: task-switchboard
+        taskRef:
+          name: task-switchboard
+        params:
+          - name: revision
+            value: "$(params.revision)"
+          - name: utils_image
+            value: "$(params.image-target)"
+          - name: expressions
+            value:
+              - tasks := strings.any_prefix_match(input, ["task/", "external-task/", "hack/", ".tekton/"])
+              - tasks_pipelines := strings.any_prefix_match(input, ["task/", "external-task/", "pipelines/", "hack/", ".tekton/"])
+              - check_partner_tasks := strings.any_prefix_match(input, ["partners/", "hack/", ".tekton/"])
+        runAfter:
+          - clone-repository
+        workspaces:
+          - name: source
+            workspace: workspace
+      - name: check-partner-tasks
+        when:
+          - input: "check_partner_tasks"
+            operator: "in"
+            values: ["$(tasks.task-switchboard.results.bindings[*])"]
+        runAfter:
+          - task-switchboard
+        taskSpec:
+          steps:
+            - name: check-task-structure
+              image: $(params.image-target)
+              workingDir: $(workspaces.source.path)/source
+              script: |
+                #!/usr/bin/env bash
+                ./hack/check-partner-tasks.sh > partner-tasks.out
+                echo $? > partner-tasks-code.out
+                cat partner-tasks.out
+            - name: create-comment
+              image: registry.access.redhat.com/ubi9/python-39:9.7-1776644933@sha256:ee2a11266ec90665de33302f74d913d556cf2dc67d68208cada62de15a6859b9
+              volumeMounts:
+                - name: infra-deployments-pr-creator
+                  mountPath: /secrets/deploy-key
+              workingDir: $(workspaces.source.path)/source
+              env:
+                - name: GITHUBAPP_KEY_PATH
+                  value: /secrets/deploy-key/private-key
+                - name: GITHUBAPP_APP_ID
+                  value: "305606"
+                # https://github.com/apps/rh-tap-build-team in https://github.com/konflux-ci
+                - name: GITHUBAPP_INSTALLATION_ID
+                  value: "51073377"
+                - name: GITHUB_API_URL
+                  value: https://api.github.com
+                - name: REPO_OWNER
+                  value: "{{repo_owner}}"
+                - name: REPO_NAME
+                  value: "{{repo_name}}"
+                - name: PULL_REQUEST_NUMBER
+                  value: "{{pull_request_number}}"
+              script: |
+                #!/usr/bin/env bash
+                exit_code=$(cat partner-tasks-code.out)
+                if [ $exit_code != "0" ]; then
+                  .tekton/scripts/github-update-comment.py partner-tasks.out
+                fi
+                exit $exit_code
+          workspaces:
+            - name: source
+          volumes:
+            - name: infra-deployments-pr-creator
+              secret:
+                secretName: infra-deployments-pr-creator
+        workspaces:
+          - name: source
+            workspace: workspace
+      - name: build-bundles
+        when:
+          - input: "tasks_pipelines"
+            operator: "in"
+            values: ["$(tasks.task-switchboard.results.bindings[*])"]
+        runAfter:
+          - task-switchboard
+        params:
+          - name: revision
+            value: "{{ revision }}"
+          - name: e2e_test_namespace
+            value: $(params.e2e_test_namespace)
+        workspaces:
+          - name: source
+            workspace: workspace
+        taskSpec:
+          params:
+            - name: revision
+              type: string
+            - name: e2e_test_namespace
+              type: string
+          results:
+          - name: custom-fbc-builder-bundle
+            description: "custom bundle for fbc-builder pipeline"
+          steps:
+            - name: build-bundles
+              image: $(params.image-target)
+              workingDir: $(workspaces.source.path)/source
+              script: |
+                #!/usr/bin/env bash
+                set -e
+                git config --global --add safe.directory /workspace/source/source
+
+                QUAY_NAMESPACE=konflux-ci \
+                TEST_REPO_NAME=pull-request-builds \
+                BUILD_TAG=$(params.revision) \
+                SKIP_BUILD=1 \
+                INSTALL_BUNDLE_NS=$(params.e2e_test_namespace) \
+                ENABLE_SOURCE_BUILD=1 \
+                ENABLE_HERMETIC_BUILD=1 \
+                hack/build-and-push.sh
+                eval "source bundle_values.env"
+                echo -n "$CUSTOM_FBC_BUILDER_PIPELINE_BUNDLE" | tee "$(results.custom-fbc-builder-bundle.path)"
+          workspaces:
+            - name: source
+      - name: e2e-tests
+        when:
+          - input: "$(tasks.task-switchboard.results.run-e2e)"
+            operator: "in"
+            values: ["execute_e2e"]
+        params:
+          - name: e2e_test_namespace
+            value: $(params.e2e_test_namespace)
+          - name: app_suffix
+            value: "ref-{{ revision }}"
+          - name: ec_pipelines_repo_url
+            value: "{{ source_url }}"
+          - name: ec_pipelines_repo_revision
+            value: "{{ revision }}"
+          - name: artifact_dir
+            value: /workspace/artifact-dir
+          - name: pipelinerun_name
+            value: $(context.pipelineRun.name)
+          - name: revision
+            value: "{{revision}}"
+          - name: scenarios
+            value: "$(tasks.task-switchboard.results.scenarios)"
+        runAfter:
+          - build-bundles
+        taskRef:
+          name: e2e-test
+        workspaces:
+          - name: source
+            workspace: workspace
+        # Added a timeout due to https://issues.redhat.com/browse/STONEBLD-2265
+        timeout: "2h"
+      - name: ec-task-checks
+        when:
+          - input: "tasks_pipelines"
+            operator: "in"
+            values: ["$(tasks.task-switchboard.results.bindings[*])"]
+        runAfter:
+          - task-switchboard
+        taskRef:
+          name: ec-checks
+        workspaces:
+          - name: source
+            workspace: workspace
+    finally:
+      - name: e2e-cleanup
+        when:
+          - input: "$(tasks.task-switchboard.results.run-e2e)"
+            operator: "in"
+            values: ["execute_e2e"]
+        params:
+          - name: e2e_test_namespace
+            value: $(params.e2e_test_namespace)
+        taskSpec:
+          params:
+            - name: e2e_test_namespace
+              type: string
+          steps:
+            - name: e2e-cleanup
+              image: registry.redhat.io/openshift4/ose-cli:v4.12@sha256:5ae89e3ac5763088c1d346e1cc44c5263f2d2d55668234513b0d2f3fc6b2a6c8
+              script: |
+                #!/usr/bin/env bash
+                # Perform cleanup of resources created by gitops service
+                oc delete --ignore-not-found deployment --all -n $(params.e2e_test_namespace)
+                oc delete --ignore-not-found eventlisteners --all -n $(params.e2e_test_namespace)
+      - name: pull-request-status-message
+        when:
+          - input: "$(tasks.task-switchboard.results.run-e2e)"
+            operator: "in"
+            values: ["execute_e2e"]
+        taskRef:
+          resolver: git
+          params:
+            - name: url
+              value: https://github.com/konflux-ci/tekton-integration-catalog.git
+            - name: revision
+              value: main
+            - name: pathInRepo
+              value: tasks/pull-request-comment/0.1/pull-request-comment.yaml
+        params:
+          - name: test-name
+            value: "$(context.pipelineRun.name)"
+          - name: oci-container
+            value: "quay.io/konflux-test-storage/konflux-team/build-definitions:{{ revision }}"
+          - name: pipeline-aggregate-status
+            value: "$(tasks.status)"
+          - name: pull-request-author
+            value: "{{sender}}"
+          - name: pull-request-number
+            value: "{{pull_request_number}}"
+          - name: git-repo
+            value: "{{repo_name}}"
+          - name: git-org
+            value: "{{repo_owner}}"
+          - name: git-revision
+            value: "{{revision}}"
+          - name: junit-report-name
+            value: e2e-report.xml
+          - name: e2e-log-name
+            value: e2e-tests.log
+          - name: cluster-provision-log-name
+            value: cluster-provision.log
+          - name: enable-test-results-analysis
+            value: "true"
+  # Added a timeout due to https://issues.redhat.com/browse/STONEBLD-2265
+  # If this timeout increases, the age of stale resources should be increased too.
+  # https://github.com/redhat-appstudio/infra-deployments/blob/main/components/tekton-ci/production/cleanup-cronjob.yaml
+  timeouts:
+    pipeline: "2h"
+  taskRunTemplate:
+    serviceAccountName: konflux-ci-sa
+  workspaces:
+    - name: workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 5Gi
