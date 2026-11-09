@@ -297,7 +297,7 @@ func TestLoadRules(t *testing.T) {
 		{
 			name:  "sbt and scalafmt managers, java category, sbt datasources",
 			src:   `{packageRules: [{matchManagers: ['sbt', 'scalafmt'], matchDatasources: ['sbt-package', 'sbt-plugin'], groupName: 'scala'}, {matchCategories: ['java'], enabled: false}]}`,
-			rules: "  - # packageRules[0]\n    managers: [sbt, scalafmt]\n    datasources: [sbt-package, sbt-plugin]\n    group: scala\n  - # packageRules[1]\n    managers: [maven, gradle, gradle-wrapper, maven-wrapper, sbt, scalafmt, osgi, smithy]\n    ignore: true" + defaultExclusions,
+			rules: "  - # packageRules[0]\n    managers: [sbt, scalafmt]\n    datasources: [sbt-package, sbt-plugin]\n    group: scala\n  - # packageRules[1]\n    managers: [maven, gradle, gradle-wrapper, maven-wrapper, sbt, scalafmt, osgi, smithy, kotlin-script]\n    ignore: true" + defaultExclusions,
 		},
 		{
 			name: "php, bazel and ci categories; julia datasource; draftPR, prCreation and abandonmentThreshold per rule; azure-pipelines opt-in",

@@ -2227,6 +2227,34 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "kotlin-script"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "dependencies"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "pub"
                   ]
                 },
@@ -2582,6 +2610,7 @@
               "scalafmt",
               "osgi",
               "smithy",
+              "kotlin-script",
               "pub",
               "fvm",
               "mix",
