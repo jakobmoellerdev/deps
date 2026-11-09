@@ -65,8 +65,9 @@ func maintainedLock(dir string) string {
 // lockfile is therefore not maintained.
 func LockRoots(root string, files []string, names ...string) []manager.LockRoot {
 	var out []manager.LockRoot
+	ws := workspaces{}
 	for _, f := range files {
-		dir, ok := Locker{}.Scope(context.Background(), root, f)
+		dir, ok := scope(context.Background(), root, f, ws)
 		if !ok {
 			continue
 		}

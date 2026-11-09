@@ -54,6 +54,11 @@ func (Locker) Siblings() []string { return []string{UVLock, PoetryLock, PDMLock,
 // pdm.lock, else the nearest directory above (within root) with uv.lock whose
 // `[tool.uv.workspace]` members match the manifest's directory.
 func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
+	return scope(ctx, root, manifest, nil)
+}
+
+// scope is Scope with the uv workspaces read so far (nil: none kept).
+func scope(ctx context.Context, root, manifest string, ws workspaces) (string, bool) {
 	member := path.Dir(manifest)
 	abs := func(dir, name string) string { return filepath.Join(root, filepath.FromSlash(dir), name) }
 	switch path.Base(manifest) {
@@ -71,16 +76,15 @@ func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
 		if !isFile(abs(dir, UVLock)) {
 			continue
 		}
-		src, err := os.ReadFile(abs(dir, Pyproject))
-		if err != nil {
+		w := ws.get(root, dir)
+		if w.unreadable {
 			return "", false
 		}
 		rel := member
 		if dir != "." {
 			rel = strings.TrimPrefix(member, dir+"/")
 		}
-		include, exclude := workspaceGlobs(src)
-		ok := matchAny(include, rel) && !matchAny(exclude, rel)
+		ok := matchAny(w.include, rel) && !matchAny(w.exclude, rel)
 		if !ok {
 			slog.DebugContext(ctx, "not a uv workspace member", "dir", dir, "manifest", manifest)
 		}
@@ -92,6 +96,33 @@ func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
 func isFile(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.Mode().IsRegular()
+}
+
+// workspaces holds the `[tool.uv.workspace]` globs of uv workspace roots by directory, so the
+// members of one workspace read and parse its pyproject.toml once.
+type workspaces map[string]*uvWorkspace
+
+type uvWorkspace struct {
+	include, exclude []string
+	unreadable       bool // reading pyproject.toml failed
+}
+
+// get returns the workspace of the uv.lock in dir, reading its pyproject.toml unless ws has it.
+func (ws workspaces) get(root, dir string) *uvWorkspace {
+	if w, ok := ws[dir]; ok {
+		return w
+	}
+	w := &uvWorkspace{}
+	src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(dir), Pyproject))
+	if err != nil {
+		w.unreadable = true
+	} else {
+		w.include, w.exclude = workspaceGlobs(src)
+	}
+	if ws != nil {
+		ws[dir] = w
+	}
+	return w
 }
 
 // workspaceGlobs returns the `[tool.uv.workspace]` members and exclude globs of a

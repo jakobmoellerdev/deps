@@ -25,6 +25,7 @@ func ReadLocks(root string, files [][]dep.Dep) []error {
 	locks := map[string]map[string]map[string]string{} // by slash path, then as parseLock
 	lockOf := map[string]string{}                      // lockfile slash path by manifest, "" = none
 	pipfiles := map[string]func(off int) string{}      // Pipfile categories by slash path
+	ws := workspaces{}
 	var errs []error
 	for _, f := range files {
 		for j := range f {
@@ -34,7 +35,7 @@ func ReadLocks(root string, files [][]dep.Dep) []error {
 			}
 			p, seen := lockOf[d.File]
 			if !seen {
-				if dir, ok := (Locker{}).Scope(context.Background(), root, d.File); ok {
+				if dir, ok := scope(context.Background(), root, d.File, ws); ok {
 					if name := lockName(root, dir, d.File); name != "" {
 						p = path.Join(dir, name)
 					}
