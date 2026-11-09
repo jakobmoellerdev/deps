@@ -13,6 +13,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/beam"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bitbucketpipelines"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/buildkite"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/circleci"
@@ -119,6 +120,7 @@ var Builtin = []Entry{
 	{velaci.Doc, velaci.New},
 	{woodpecker.CrowDoc, woodpecker.NewCrow},
 	{travis.Doc, travis.New},
+	{buildkite.Doc, buildkite.New},
 	{vcpkg.Doc, vcpkg.New},
 	{elm.Doc, elm.New},
 	{composer.Doc, composer.New},

@@ -1734,6 +1734,35 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "buildkite"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "plugin",
+                    "image"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "vcpkg"
                   ]
                 },
@@ -2300,6 +2329,7 @@
               "velaci",
               "crow",
               "travis",
+              "buildkite",
               "vcpkg",
               "elm",
               "composer",
@@ -3072,7 +3102,7 @@
       },
       "type": "object",
       "description": "Registry aliases by the prefix written in files, e.g. $CI_REGISTRY or ${REGISTRY}: an image reference '<alias>/<path>[:tag][@digest]' is looked up as '<value>/<path>' while the file keeps the alias. Extended files merge it by key.",
-      "markdownDescription": "Registry aliases by the prefix written in files, e.g. $CI_REGISTRY or ${REGISTRY}: an image reference `<alias>/<path>[:tag][@digest]` is looked up as `<value>/<path>` while the file keeps the alias. Extended files merge it by key.\n\nRenovate's `registryAliases`. A key is a prefix as written in files, usually a CI variable (`$CI_REGISTRY`, `${CI_REGISTRY}`, `${CI_REGISTRY:-}`) or a pull-through cache path; its value is the registry (with an optional path) it stands for, or `\"\"` for Docker Hub. A trailing slash on the value is ignored.\n\n- An image reference `<key>/<path>[:<tag>][@<digest>]` is looked up as `<value>/<path>`; a key ending in `}` also matches without the `/` (`${REGISTRY}alpine:3.22`). The longest matching key wins. A bare `$VAR` key does not match `$VAR_OTHER/…`.\n- The dep's name is the resolved image (`registry.example.com/team/app`), which rules match. Updates edit the tag and digest only, so the file keeps the alias; aliased images are not renamed by replacements.\n- It applies to the image references of the docker manager (Dockerfiles after ARG substitution, Compose files, workflows, actions, Kubernetes manifests, Helm values `repository`), gitlabci, kustomize, terraform, devcontainer, ansible and the CI pipeline managers (bitbucket-pipelines, woodpecker, crow, droneci, circleci, azure-pipelines, cloudbuild, velaci). Without a matching alias, a reference with a variable is skipped as `variable reference`.\n- **Helm** (Renovate's helm-v3 and flux): a Chart.yaml or requirements.yaml `repository: \"@<key>\"` (or `alias:<key>`) resolves to the chart repository `<value>` (an `https://`, `http://` or `oci://` URL), and a Flux HelmRelease `sourceRef` naming no scanned HelmRepository falls back to the entry of its name. Without an entry, a repositories.yaml in the repository, the Chart.lock and Renovate's default `stable: https://charts.helm.sh/stable` resolve the alias; see the [helm manager](managers.md#helm).\n- Extended files merge it by key, a later file's entry replacing an earlier one's.\n\n```yaml\nregistryAliases:\n  $CI_REGISTRY: registry.gitlab.example.com\n  ${HARBOR}/proxy: harbor.example.com/dockerhub-proxy\n```"
+      "markdownDescription": "Registry aliases by the prefix written in files, e.g. $CI_REGISTRY or ${REGISTRY}: an image reference `<alias>/<path>[:tag][@digest]` is looked up as `<value>/<path>` while the file keeps the alias. Extended files merge it by key.\n\nRenovate's `registryAliases`. A key is a prefix as written in files, usually a CI variable (`$CI_REGISTRY`, `${CI_REGISTRY}`, `${CI_REGISTRY:-}`) or a pull-through cache path; its value is the registry (with an optional path) it stands for, or `\"\"` for Docker Hub. A trailing slash on the value is ignored.\n\n- An image reference `<key>/<path>[:<tag>][@<digest>]` is looked up as `<value>/<path>`; a key ending in `}` also matches without the `/` (`${REGISTRY}alpine:3.22`). The longest matching key wins. A bare `$VAR` key does not match `$VAR_OTHER/…`.\n- The dep's name is the resolved image (`registry.example.com/team/app`), which rules match. Updates edit the tag and digest only, so the file keeps the alias; aliased images are not renamed by replacements.\n- It applies to the image references of the docker manager (Dockerfiles after ARG substitution, Compose files, workflows, actions, Kubernetes manifests, Helm values `repository`), gitlabci, kustomize, terraform, devcontainer, ansible and the CI pipeline managers (bitbucket-pipelines, woodpecker, crow, droneci, circleci, azure-pipelines, cloudbuild, velaci, buildkite). Without a matching alias, a reference with a variable is skipped as `variable reference`.\n- **Helm** (Renovate's helm-v3 and flux): a Chart.yaml or requirements.yaml `repository: \"@<key>\"` (or `alias:<key>`) resolves to the chart repository `<value>` (an `https://`, `http://` or `oci://` URL), and a Flux HelmRelease `sourceRef` naming no scanned HelmRepository falls back to the entry of its name. Without an entry, a repositories.yaml in the repository, the Chart.lock and Renovate's default `stable: https://charts.helm.sh/stable` resolve the alias; see the [helm manager](managers.md#helm).\n- Extended files merge it by key, a later file's entry replacing an earlier one's.\n\n```yaml\nregistryAliases:\n  $CI_REGISTRY: registry.gitlab.example.com\n  ${HARBOR}/proxy: harbor.example.com/dockerhub-proxy\n```"
     },
     "minimumReleaseAge": {
       "type": "string",
