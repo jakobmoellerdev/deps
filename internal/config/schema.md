@@ -212,11 +212,16 @@ Each entry is either a **cron trigger** or a **time window**; a group is in sche
 | `after 10pm and before 5am` | both: a range, wrapping past midnight when the start is later |
 | `every weekday`, `every weekend`, `every monday` | Monday to Friday, Saturday and Sunday, one day |
 | `on monday`, `on friday and saturday`, `on mon, wed`, `on monday through friday` | days of the week (full names, `mon`…`sun`, plurals) |
+| `on the first day of the week`, `on the 2nd day of the week`, `on the last day of the week` | day of the week, counted from Sunday as in later: Sunday, Monday, Saturday |
 | `on the first day of the month`, `on the 15th day of the month`, `on the last day of the month` | day of the month |
+| `every 2 weeks`, `every 3 weeks of the year` | ISO weeks of the year 1, 3, 5, … and 1, 4, 7, … (every n-th week from week 1, as later counts them) |
 | `every 3 months` | months 1, 4, 7 and 10 (every n-th month from January) |
+| `at 5am`, `at 5am and 6:30pm` | that minute of the day (Renovate: that second). The run must start in it; for runs at a fixed time a cron trigger such as `0 5 * * *` is more robust |
 | `at any time` | always |
 
-Examples: `before 6am on monday`, `after 10pm and before 5am every weekday`, `every weekend`, `before 4am on the first day of the month`, `every 3 months on the first day of the month`. A time needs `am`/`pm` or minutes (`6am`, `18:00`; not `6`). Errors look like `schedule[0]: "befor 6am": unknown word "befor" (want before, after, every, on or a cron)`.
+Windows joined by `also` are alternatives: `before 6am also after 10pm` is in schedule before 6am and after 10pm. `except` followed by windows (joined by `also`) excludes them: `after 9:00 except on saturday also on sunday`, `before 6am also after 10pm except on sunday`. An entry has at most one `except`, at the end. deps excludes every time an exception contains; Renovate's later evaluates exceptions as ranges and ignores some time-of-day exceptions (`on monday except before 6am` is in schedule on Monday at 5am there).
+
+Examples: `before 6am on monday`, `after 10pm and before 5am every weekday`, `every weekend`, `before 4am on the first day of the month`, `every 3 months on the first day of the month`, `every 2 weeks on monday before 6am`. A time needs `am`/`pm` or minutes (`6am`, `18:00`; not `6`). Errors look like `schedule[0]: "befor 6am": unknown word "befor" (want before, after, at, every, on, also, except or a cron)`.
 
 The schedule only gates creating new PRs and, with `updateNotScheduled: false`, updating existing ones. Security updates ignore schedules.
 

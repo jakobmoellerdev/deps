@@ -35,7 +35,7 @@ type Set struct {
 	src      []string // as written
 	norm     []string // whitespace-normalized
 	triggers []string // normalized trigger crons
-	windows  []window
+	windows  []entry
 	loc      *time.Location // of the windows
 }
 
@@ -59,14 +59,17 @@ var fields = [...]field{
 	{"day of week", 0, 7},
 }
 
-// window is a time window. A run time is inside when its hour, day of month, month and
-// day of week are in the masks and its minute of the day is within after/before.
+// window is a time window, one of later's schedules. A run time is inside when its hour,
+// day of month, month, day of week and ISO week are in the masks, its minute of the day
+// is within after/before and, with times, one of them.
 type window struct {
 	hours  uint32 // bit h: hour h
 	doms   uint32 // bit d: day of month d (1-31)
 	last   bool   // also the last day of the month
 	months uint16 // bit m: month m (1-12)
 	dows   uint8  // bit d: weekday d (0 = Sunday)
+	weeks  uint64 // bit w: ISO week of the year w (1-53)
+	times  []int  // `at`: minutes of the day; nil = any
 	// after and before bound the minute of the day: after <= m < before, wrapping past
 	// midnight when after >= before (`after 10pm and before 5am`); -1 = unbounded.
 	after, before int
@@ -77,10 +80,11 @@ const (
 	allDoms   = (1<<31 - 1) << 1
 	allMonths = (1<<12 - 1) << 1
 	allDows   = 1<<7 - 1
+	allWeeks  = (1<<53 - 1) << 1
 )
 
 func anyTime() window {
-	return window{hours: allHours, doms: allDoms, months: allMonths, dows: allDows, after: -1, before: -1}
+	return window{hours: allHours, doms: allDoms, months: allMonths, dows: allDows, weeks: allWeeks, after: -1, before: -1}
 }
 
 func (w *window) contains(t time.Time) bool {
@@ -90,7 +94,15 @@ func (w *window) contains(t time.Time) bool {
 	if w.doms&(1<<t.Day()) == 0 && (!w.last || t.AddDate(0, 0, 1).Day() != 1) {
 		return false
 	}
+	if w.weeks != allWeeks {
+		if _, wk := t.ISOWeek(); w.weeks&(1<<wk) == 0 {
+			return false
+		}
+	}
 	m := t.Hour()*60 + t.Minute()
+	if w.times != nil && !slices.Contains(w.times, m) {
+		return false
+	}
 	switch {
 	case w.after >= 0 && w.before >= 0 && w.after >= w.before:
 		return m >= w.after || m < w.before
@@ -98,6 +110,32 @@ func (w *window) contains(t time.Time) bool {
 		return false
 	case w.before >= 0 && m >= w.before:
 		return false
+	}
+	return true
+}
+
+// entry is a window entry: a run time is inside when one of its windows (later's
+// schedules, joined by `also`) contains it and none of its exceptions (after `except`)
+// does.
+type entry struct {
+	windows, except []window
+}
+
+func (e *entry) contains(t time.Time) bool {
+	in := false
+	for i := range e.windows {
+		if e.windows[i].contains(t) {
+			in = true
+			break
+		}
+	}
+	if !in {
+		return false
+	}
+	for i := range e.except {
+		if e.except[i].contains(t) {
+			return false
+		}
 	}
 	return true
 }
@@ -146,23 +184,23 @@ func ValidateCron(s string) error {
 
 // parseEntry classifies and parses one entry: text (first rune a letter) is a window,
 // a cron is a window when its minute field is "*" and a trigger otherwise.
-func parseEntry(s string) (w window, trigger bool, err error) {
+func parseEntry(s string) (e entry, trigger bool, err error) {
 	s = strings.TrimSpace(s)
 	if r, _ := utf8.DecodeRuneInString(s); unicode.IsLetter(r) {
-		w, err = parseText(s)
-		return w, false, err
+		e, err = parseText(s)
+		return e, false, err
 	}
 	masks, err := parseCron(s)
 	if err != nil {
-		return window{}, false, err
+		return entry{}, false, err
 	}
 	if strings.Fields(s)[0] != "*" {
-		return window{}, true, nil
+		return entry{}, true, nil
 	}
-	return window{
+	return entry{windows: []window{{
 		hours: uint32(masks[1]), doms: uint32(masks[2]), months: uint16(masks[3]),
-		dows: uint8(masks[4] | masks[4]>>7), after: -1, before: -1, // 7 = Sunday
-	}, false, nil
+		dows: uint8(masks[4] | masks[4]>>7), weeks: allWeeks, after: -1, before: -1, // 7 = Sunday
+	}}}, false, nil
 }
 
 func parseCron(s string) ([len(fields)]uint64, error) {
@@ -255,22 +293,63 @@ const (
 	weekendMask = 1<<time.Saturday | 1<<time.Sunday
 )
 
-// parseText parses a window in Renovate's later syntax subset: `at any time`, or clauses
-// in any order, joined by spaces or "and":
+// parseText parses an entry in Renovate's later syntax subset: `at any time`, or windows
+// joined by "also", optionally followed by "except" and exceptions joined by "also"
+// (`before 6am also after 10pm except on sunday`). A window is clauses in any order,
+// joined by spaces or "and":
 //
 //	before <time>, after <time>                  time of day; both: a range, wrapping past midnight
+//	at <time>[ and <time>...]                    those minutes of the day
 //	every weekday, every weekend, every <day>    days of the week
 //	on <day>[ and|, <day>...], on <day> through <day>
 //	on the <first|last|Nth> day of the month     day of the month
+//	on the <first|last|Nth> day of the week      day of the week, first = Sunday
+//	every <n> weeks [of the year]                ISO weeks 1, 1+n, ...
 //	every <n> months, every month, every day     months 1, 1+n, ...; no-ops
 //
 // Times are 6am, 6:30pm, 6 am or 24-hour 18:00.
-func parseText(s string) (window, error) {
+func parseText(s string) (entry, error) {
 	toks := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return unicode.IsSpace(r) || r == ',' })
-	w := anyTime()
 	if strings.Join(toks, " ") == "at any time" {
-		return w, nil
+		return entry{windows: []window{anyTime()}}, nil
 	}
+	var e entry
+	sep, start, except := "", 0, false
+	for i := 0; i <= len(toks); i++ {
+		if i < len(toks) && toks[i] != "also" && toks[i] != "except" {
+			continue
+		}
+		if i == start {
+			if sep != "" {
+				return e, fmt.Errorf("%q needs a clause after it", sep)
+			}
+			return e, fmt.Errorf("%q needs a clause before it", toks[i])
+		}
+		w, err := parseClauses(toks[start:i])
+		if err != nil {
+			return e, err
+		}
+		if except {
+			e.except = append(e.except, w)
+		} else {
+			e.windows = append(e.windows, w)
+		}
+		if i < len(toks) {
+			if toks[i] == "except" {
+				if except {
+					return e, errors.New(`"except" given twice (join exceptions with "also")`)
+				}
+				except = true
+			}
+			sep, start = toks[i], i+1
+		}
+	}
+	return e, nil
+}
+
+// parseClauses parses the clauses of one window (see parseText).
+func parseClauses(toks []string) (window, error) {
+	w := anyTime()
 	seen := map[string]bool{}
 	once := func(k string) error {
 		if seen[k] {
@@ -304,6 +383,26 @@ func parseText(s string) (window, error) {
 			} else {
 				w.after = m
 			}
+		case "at":
+			if err := once(tok); err != nil {
+				return w, err
+			}
+			for {
+				m, n, err := parseClock(toks[i+1:])
+				if err != nil {
+					return w, fmt.Errorf("at: %w", err)
+				}
+				w.times = append(w.times, m)
+				i += n
+				// "and" continues the list only when a time follows (`at 5am and 6pm`).
+				if i+2 >= len(toks) || toks[i+1] != "and" {
+					break
+				}
+				if _, _, err := parseClock(toks[i+2:]); err != nil {
+					break
+				}
+				i++
+			}
 		case "every":
 			switch arg := next(); arg {
 			case "weekday", "weekdays":
@@ -325,36 +424,30 @@ func parseText(s string) (window, error) {
 					w.dows = 1 << d
 					continue
 				}
-				n, err := strconv.Atoi(arg)
-				if err != nil || n < 1 || n > 12 || next() != "months" {
-					return w, fmt.Errorf(`"every" needs weekday, weekend, a day name or <n> months, got %q`, strings.Join(toks[i:], " "))
-				}
-				if err := once("months"); err != nil {
+				if err := parseEvery(toks[i:], &w, once); err != nil {
 					return w, err
 				}
-				w.months = 0
-				for m := 1; m <= 12; m += n {
-					w.months |= 1 << m
+				i++
+				if (toks[i] == "week" || toks[i] == "weeks") && i+3 < len(toks) && toks[i+1] == "of" && toks[i+2] == "the" && toks[i+3] == "year" {
+					i += 3
 				}
 			}
 		case "on":
 			if i+1 < len(toks) && toks[i+1] == "the" {
-				if err := once("day of month"); err != nil {
-					return w, err
-				}
 				i++
 				d, last, err := ordinal(next())
 				if err != nil {
 					return w, err
 				}
-				for _, want := range []string{"day", "of", "the", "month"} {
-					if got := next(); got != want {
-						return w, fmt.Errorf(`want "on the <n> day of the month", got %q`, s)
-					}
+				unit := ""
+				if i+4 < len(toks) && toks[i+1] == "day" && toks[i+2] == "of" && toks[i+3] == "the" {
+					unit, i = toks[i+4], i+4
 				}
-				w.doms, w.last = 0, last
-				if !last {
-					w.doms = 1 << d
+				if unit != "month" && unit != "week" {
+					return w, fmt.Errorf(`want "on the <n> day of the month" or "of the week", got %q`, strings.Join(toks, " "))
+				}
+				if err := onThe(unit == "week", d, last, &w, once); err != nil {
+					return w, err
 				}
 				continue
 			}
@@ -367,10 +460,71 @@ func parseText(s string) (window, error) {
 			}
 			w.dows, i = mask, i+n
 		default:
-			return w, fmt.Errorf("unknown word %q (want before, after, every, on or a cron)", tok)
+			return w, fmt.Errorf("unknown word %q (want before, after, at, every, on, also, except or a cron)", tok)
 		}
 	}
 	return w, nil
+}
+
+// parseEvery reads `<n> weeks` or `<n> months` from toks into w: the ISO weeks of the
+// year or months 1, 1+n, 1+2n, ..., as later counts them (`every 2 weeks` = weeks 1, 3,
+// 5, ...).
+func parseEvery(toks []string, w *window, once func(string) error) error {
+	n, err := strconv.Atoi(toks[0])
+	unit, maxN := "", 0
+	if len(toks) > 1 {
+		switch toks[1] {
+		case "week", "weeks":
+			unit, maxN = "weeks", 53
+		case "month", "months":
+			unit, maxN = "months", 12
+		}
+	}
+	if err != nil || unit == "" || n < 1 || n > maxN {
+		return fmt.Errorf(`"every" needs weekday, weekend, a day name, <n> weeks or <n> months, got %q`, strings.Join(toks, " "))
+	}
+	if err := once(unit); err != nil {
+		return err
+	}
+	if unit == "weeks" {
+		w.weeks = 0
+		for wk := 1; wk <= 53; wk += n {
+			w.weeks |= 1 << wk
+		}
+		return nil
+	}
+	w.months = 0
+	for m := 1; m <= 12; m += n {
+		w.months |= 1 << m
+	}
+	return nil
+}
+
+// onThe sets the day of `on the <ordinal> day of the month|week` in w: a day of the month,
+// or with week a day of the week counted from Sunday, as in later (first = Sunday, last =
+// Saturday).
+func onThe(week bool, d int, last bool, w *window, once func(string) error) error {
+	if !week {
+		if err := once("day of month"); err != nil {
+			return err
+		}
+		w.doms, w.last = 0, last
+		if !last {
+			w.doms = 1 << d
+		}
+		return nil
+	}
+	if err := once("day of week"); err != nil {
+		return err
+	}
+	switch {
+	case last:
+		d = 7
+	case d > 7:
+		return fmt.Errorf("want a day of the week from first to 7th, got day %d", d)
+	}
+	w.dows = 1 << (d - 1)
+	return nil
 }
 
 func weekday(s string) (time.Weekday, bool) {

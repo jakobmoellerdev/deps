@@ -589,7 +589,7 @@ func TestLoadTopLevel(t *testing.T) {
 	res, err := load(t, `{
 		branchPrefix: 'bot/', prConcurrentLimit: 3, prHourlyLimit: 1.5, automerge: true, rebaseWhen: 'auto',
 		ignorePaths: ['foo', '**/bar/**', '!keep', '/^x/'], automergeStrategy: 'merge-commit', automergeType: 'branch',
-		minimumReleaseAge: '7 days', vulnerabilityAlerts: {enabled: false}, schedule: ['before 6am on monday', 'every 2 weeks'],
+		minimumReleaseAge: '7 days', vulnerabilityAlerts: {enabled: false}, schedule: ['before 6am on monday', 'on the 1st through 7th day of the month'],
 		timezone: 'Europe/Berlin', lockFileMaintenance: {enabled: true, automerge: true}, labels: ['deps'],
 		pinDigests: true, rangeStrategy: 'pin', cocoapods: {enabled: true},
 		registryAliases: {'${HARBOR:-}/proxy': 'harbor.example.com/hub', '$CI_REGISTRY': 'registry.example.com'},
@@ -633,7 +633,7 @@ rules:` + defaultExclusions + "\n"
 		"warn prHourlyLimit: must be a non-negative integer, got 1.5; dropped",
 		"warn ignorePaths[2]: negation \"!keep\" is not supported in ignorePaths; dropped",
 		"warn automergeType: deps automerges through the PR; dropped",
-		`warn schedule: schedule "every 2 weeks": "every" needs weekday, weekend, a day name or <n> months, got "weeks"; entry dropped`,
+		`warn schedule: schedule "on the 1st through 7th day of the month": want "on the <n> day of the month" or "of the week", got "on the 1st through 7th day of the month"; entry dropped`,
 		"info lockFileMaintenance.automerge: no deps equivalent; ignored",
 		"warn cocoapods: not supported; ignored",
 	} {
@@ -1183,15 +1183,17 @@ func TestLoadAbandonments(t *testing.T) {
 // Renovate's schedules are time windows, which deps evaluates itself: they are kept as written.
 func TestLoadSchedules(t *testing.T) {
 	res, err := load(t, `{schedule: ['* 0-3 * * 1', 'after 10pm   every weekday', '0 5 * * *'],
-		packageRules: [{matchPackageNames: ['a'], schedule: ['at any time']}, {matchPackageNames: ['b'], schedule: ['0 4 * * *']}]}`)
+		packageRules: [{matchPackageNames: ['a'], schedule: ['at any time']}, {matchPackageNames: ['b'], schedule: ['0 4 * * *']},
+			{matchPackageNames: ['c'], schedule: ['every 2 weeks on monday', 'on the first day of the week at 5am', 'before 6am also after 10pm except on sunday']}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	y := string(res.YAML)
-	if !strings.Contains(y, "\nschedule: ['* 0-3 * * 1', after 10pm every weekday]\n") || !strings.Contains(y, "schedule: [at any time]") {
+	if !strings.Contains(y, "\nschedule: ['* 0-3 * * 1', after 10pm every weekday]\n") || !strings.Contains(y, "schedule: [at any time]") ||
+		!strings.Contains(y, "schedule: [every 2 weeks on monday, on the first day of the week at 5am, before 6am also after 10pm except on sunday]") {
 		t.Errorf("YAML:\n%s", y)
 	}
-	if !slices.Equal(res.Windows, []string{"* 0-3 * * 1", "after 10pm every weekday"}) {
+	if !slices.Equal(res.Windows, []string{"* 0-3 * * 1", "after 10pm every weekday", "before 6am also after 10pm except on sunday", "every 2 weeks on monday", "on the first day of the week at 5am"}) {
 		t.Errorf("windows = %v", res.Windows)
 	}
 	notes := noteLines(res)
