@@ -75,11 +75,11 @@ func (GradleWrapper) Process(ctx context.Context, dir string, manifests, files m
 		slog.WarnContext(ctx, "java not found: keeping the Gradle wrapper jar and scripts, only "+GradleWrapperProperties+" is updated", "dir", dir)
 		return nil, nil
 	}
-	tmp, err := copyBuild(dir, manifests, gradleSkip)
+	root, tmp, err := copyBuild(dir, manifests, gradleSkip)
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(filepath.Dir(tmp))
+	defer os.RemoveAll(root)
 	tool, err := toolPath(tmp, "gradlew", "gradle")
 	if err != nil {
 		return nil, errors.New("gradle not found (needed to regenerate the Gradle wrapper)")
@@ -135,11 +135,11 @@ func (MavenWrapper) Process(ctx context.Context, dir string, manifests, files ma
 		slog.WarnContext(ctx, "java not found: keeping the Maven wrapper scripts, only "+MavenWrapperProperties+" is updated", "dir", dir)
 		return nil, nil
 	}
-	tmp, err := copyBuild(dir, manifests, mavenSkip)
+	root, tmp, err := copyBuild(dir, manifests, mavenSkip)
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(filepath.Dir(tmp))
+	defer os.RemoveAll(root)
 	tool, err := toolPath(tmp, "mvnw", "mvn")
 	if err != nil {
 		return nil, errors.New("mvn not found (needed to regenerate the Maven wrapper)")

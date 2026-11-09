@@ -325,3 +325,32 @@ func TestGradleLockerMaintain(t *testing.T) {
 		})
 	}
 }
+
+// TestGradleLockerIncludedBuild runs Gradle on a build whose settings include a sibling build
+// (includeBuild("../shared")), which must resolve in the temporary copy as in the checkout.
+func TestGradleLockerIncludedBuild(t *testing.T) {
+	bin, log := toolEnv(t, false)
+	top := t.TempDir()
+	write(t, top, map[string]string{
+		".git/HEAD":              "",
+		"shared/settings.gradle": "",
+		"shared/build.gradle":    "",
+		"app/settings.gradle":    "includeBuild(\"../shared\")\nincludeFlat 'lib'\n",
+		"lib/build.gradle":       "",
+		"app/build.gradle":       "old\n",
+		"app/gradle.lockfile":    "a\n",
+	})
+	script(t, filepath.Join(bin, "gradle"), log, `[ -f ../shared/settings.gradle ] && [ -f ../lib/build.gradle ] && [ "${PWD##*/}" = app ] || { echo "FAILURE: ../shared or ../lib missing"; exit 1; }
+`+gradleStub)
+	dir := filepath.Join(top, "app")
+	out, err := GradleLocker{}.Maintain(t.Context(), dir, map[string][]byte{"gradle.lockfile": []byte("a\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out["gradle.lockfile"]) != "a\nupdated\n" {
+		t.Errorf("out = %q", out)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "gradle.lockfile")); string(b) != "a\n" {
+		t.Error("working tree touched")
+	}
+}

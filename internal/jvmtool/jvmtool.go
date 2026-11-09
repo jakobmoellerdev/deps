@@ -52,25 +52,32 @@ func toolPath(dir, wrapper, tool string) (string, error) {
 	return p, nil
 }
 
-// copyBuild copies the build tree at dir into a new temporary directory, named like dir so
-// that Gradle's default root project name stays the same, and writes overlay (slash paths
-// relative to dir) over it. Directories for which skip reports true are left out; file modes
-// and symlinks are kept. The caller removes filepath.Dir of the returned directory.
-func copyBuild(dir string, overlay map[string][]byte, skip func(path string, d fs.DirEntry) bool) (string, error) {
-	parent, err := os.MkdirTemp("", "deps-jvm-*")
-	if err != nil {
-		return "", err
+// copyBuild copies the build tree at dir into a new temporary directory root and writes
+// overlay (slash paths relative to dir) over it. The repository ancestors of dir are mirrored
+// first (toolrun.MirrorAncestors), so builds reaching outside dir (includeBuild("../shared"),
+// includeFlat, Maven <module>../x</module>) resolve as in the checkout; outside a repository
+// or at its top the copy is named like dir, so Gradle's default root project name stays the
+// same. Directories for which skip reports true are left out; file modes and symlinks are
+// kept. It returns root, which the caller removes, and the copy of dir.
+func copyBuild(dir string, overlay map[string][]byte, skip func(path string, d fs.DirEntry) bool) (root, tmp string, err error) {
+	if root, err = os.MkdirTemp("", "deps-jvm-*"); err != nil {
+		return "", "", err
 	}
-	tmp := filepath.Join(parent, filepath.Base(dir))
-	err = toolrun.CopyTree(dir, tmp, skip)
+	tmp, err = toolrun.MirrorAncestors(dir, root)
+	if err == nil && tmp == root {
+		tmp = filepath.Join(root, filepath.Base(dir))
+	}
+	if err == nil {
+		err = toolrun.CopyTree(dir, tmp, skip)
+	}
 	if err == nil {
 		err = toolrun.WriteFiles(tmp, overlay)
 	}
 	if err != nil {
-		os.RemoveAll(parent)
-		return "", err
+		os.RemoveAll(root)
+		return "", "", err
 	}
-	return tmp, nil
+	return root, tmp, nil
 }
 
 // hasAny reports whether dir contains one of names.

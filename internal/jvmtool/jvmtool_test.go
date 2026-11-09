@@ -121,13 +121,13 @@ func TestCopyBuild(t *testing.T) {
 	if err := os.Symlink("a.txt", filepath.Join(dir, "link")); err != nil {
 		t.Fatal(err)
 	}
-	tmp, err := copyBuild(dir, map[string][]byte{"m.txt": []byte("new"), "n/new.txt": []byte("n")}, func(p string, _ os.DirEntry) bool {
+	root, tmp, err := copyBuild(dir, map[string][]byte{"m.txt": []byte("new"), "n/new.txt": []byte("n")}, func(p string, _ os.DirEntry) bool {
 		return filepath.Base(p) == "skip"
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(filepath.Dir(tmp))
+	defer os.RemoveAll(root)
 	if filepath.Base(tmp) != filepath.Base(dir) {
 		t.Errorf("copy named %s", tmp)
 	}
