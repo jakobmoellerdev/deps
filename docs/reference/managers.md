@@ -93,6 +93,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`tekton`](#tekton)
 - [`glasskube`](#glasskube)
 - [`jenkins`](#jenkins)
+- [`deps-config`](#deps-config)
 - [`custom`](#custom)
 - [Datasources](#datasources)
 
@@ -4185,6 +4186,35 @@ Updates the Jenkins plugin versions of plugin lists in the input formats of the 
 - Versions are looked up with the `jenkins-plugins` datasource on the Jenkins update center (`DEPS_JENKINS_PLUGINS_URL` for a mirror or another update site) and compared as Maven versions, so the incremental `1234.v<commit>` versions of newer plugins order by their build number.
 - A plain YAML version is replaced as written; a new version that YAML would read as a number is written single-quoted (`'2.10'`).
 - A plugin's `requiredCore` (the minimum Jenkins version) is not checked against the controller's version, as in Renovate without `constraints.jenkins`.
+
+## deps-config
+
+Updates the `#<ref>` of the `extends` entries of the repository's deps configuration (see [Configuration](configuration.md)), as Renovate's renovate-config manager updates `extends` presets: a version tag moves to newer tags of the extended repository, a commit to the newest commit of its default branch. Entries without a ref follow the default branch already and are not pinned.
+
+**Files:**
+
+- `.deps.yaml`, `.deps.yml` at the root (the files deps reads its configuration from)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `extends` | an `extends` entry `<repo>[//<path>][#<ref>]`; the name is `owner/name` (on the forge of the checkout: the platform's server, else the origin remote's) or the URL path of a git URL, the source its `https://` URL | `git-tags`; `git-refs` for a 40-hex commit ref | `tag` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `invalid extends entry` | the entry does not parse (deps reports it when loading the configuration) |
+| `unsupported repository URL` | a `file://` URL or another git URL that is not https/http/ssh/git or `git@host:path` with an owner/repo path |
+| `unknown forge` | an `owner/name` entry while neither the platform nor the origin remote names the forge |
+| `no ref` | the entry has no `#<ref>`: it reads the default branch |
+| `non-version ref` | the ref is neither a version tag (`v1`, `1.2`, `v1.2.3`) nor a 40-hex commit (a branch such as `main`) |
+| `cannot locate value` | the entry is written with escapes or as a block scalar |
+
+**Updates.**
+
+- A version-tag ref (`org/deps-config#v1.2.0`) gets updates to newer tags of the repository at the tag's precision (`v1` → `v2`), with release notes and compare link; only the ref is rewritten.
+- A commit ref (`org/deps-config#<40 hex>`) gets `digest` updates to the head of the repository's default branch.
+- Renovate's renovate-config manager updates `github>`, `gitlab>`, `gitea>` and `forgejo>` presets with a tag; deps' `extends` entries name a repository directly, so any forge and plain git URLs work.
 
 ## custom
 

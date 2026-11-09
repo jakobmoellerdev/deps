@@ -551,7 +551,7 @@ rules:                            # these come after the shared rules, so they w
 
 - **Fetching.** deps fetches each file with git (a shallow fetch of the ref, then the file), sending the platform token to the platform host, and fails the config (exit 2, annotated at the `extends` entry) when a file is missing, does not decode strictly, is invalid or extends itself in a cycle.
 - **Tokens.** A public config repository needs nothing. A private one needs a token that can read it: on GitHub the job's `GITHUB_TOKEN` reads only its own repository, so pass an App token or PAT with access to the config repository as the action's `token` (it becomes `DEPS_TOKEN`). On Gitea and Forgejo the job token reads other private repositories of the owner only when they allow it under *Settings → Actions → General → Cross-Repository Access*.
-- **Pin it.** `#<tag>` or `#<commit>` makes a change of the shared config a reviewed bump in each repository; without a ref every run reads the default branch of the config repository.
+- **Pin it.** `#<tag>` or `#<commit>` makes a change of the shared config a reviewed bump in each repository; without a ref every run reads the default branch of the config repository. deps opens those bumps itself: the [`deps-config`](reference/managers.md#deps-config) manager moves a version-tag ref (`#v2` → `#v3`) to newer tags of the config repository and a commit ref to the head of its default branch, as Renovate's renovate-config manager does for presets.
 - **Which rule applied.** `deps explain <dep>` prints the file and line of every matching rule, e.g. `#0 names=[actions/*] allow=<7 (from my-org/deps-config//.deps.yaml:3)`.
 
 ### One job for many repositories

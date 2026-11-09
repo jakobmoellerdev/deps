@@ -351,21 +351,27 @@ type session struct {
 
 // extendsFetcher reads the configs of extends with git, sending the platform token (and
 // DEPS_GITHUB_COM_TOKEN) to their hosts. owner/name entries are on the forge of info, else
-// on the one of dir's origin remote.
+// on the one of dir's origin remote (forgeURL).
 func extendsFetcher(info platform.Info, token, dir string) *config.GitFetcher {
 	return &config.GitFetcher{
 		Auth: httpx.NewAuth(info, token, os.Getenv),
 		Server: func(ctx context.Context) (string, error) {
-			if info.ServerURL != "" {
-				return info.ServerURL, nil
-			}
-			remote, err := gitx.Repo{Dir: dir}.RemoteURL(ctx)
-			if err != nil {
-				return "", err
-			}
-			return platform.RemoteServerURL(remote)
+			return forgeURL(ctx, info, dir)
 		},
 	}
+}
+
+// forgeURL is the base URL of the forge owner/name extends entries are on: the server of
+// info, else the one of dir's origin remote.
+func forgeURL(ctx context.Context, info platform.Info, dir string) (string, error) {
+	if info.ServerURL != "" {
+		return info.ServerURL, nil
+	}
+	remote, err := gitx.Repo{Dir: dir}.RemoteURL(ctx)
+	if err != nil {
+		return "", err
+	}
+	return platform.RemoteServerURL(remote)
 }
 
 // newSession loads the config, prints its lint warnings (config.Lint) to stderr and as
@@ -401,7 +407,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	if err != nil {
 		return nil, err
 	}
-	env := configEnv(ctx, cfg, info)
+	env := configEnv(ctx, cfg, info, root)
 	auth = httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(env.GitLabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask))...)
 	gh := githubapi.New(client, auth, sem)
 	slog.DebugContext(ctx, "config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
@@ -510,15 +516,20 @@ func logExtends(ctx context.Context, cfg *config.Config) {
 }
 
 // configEnv is the manager environment of cfg: the actions default host (actionsHost) and the
-// GitLab URL (platform.GitLabURL), both logged with their source, the Terraform registry, and
-// Terragrunt's `tfr:///` registry ($TG_TF_DEFAULT_REGISTRY_HOST, as Terragrunt reads it).
-func configEnv(ctx context.Context, cfg *config.Config, info platform.Info) manager.Env {
+// GitLab URL (platform.GitLabURL), both logged with their source, the forge of the checkout
+// root (forgeURL; "" when unknown), the Terraform registry, and Terragrunt's `tfr:///`
+// registry ($TG_TF_DEFAULT_REGISTRY_HOST, as Terragrunt reads it).
+func configEnv(ctx context.Context, cfg *config.Config, info platform.Info, root string) manager.Env {
 	host, source := actionsHost(cfg, info)
 	slog.InfoContext(ctx, "actions default host", "host", host, "source", source)
 	gitlabURL, gitlabSource := platform.GitLabURL(cfg.GitLabCI.URL, info, os.Getenv)
 	slog.DebugContext(ctx, "gitlab url", "url", gitlabURL, "source", gitlabSource)
+	forge, err := forgeURL(ctx, info, root)
+	if err != nil {
+		slog.DebugContext(ctx, "no forge url", "err", err)
+	}
 	return manager.Env{
-		DefaultHost: host, GitLabURL: gitlabURL, TerraformRegistry: cfg.Terraform.DefaultRegistry,
+		DefaultHost: host, GitLabURL: gitlabURL, ForgeURL: strings.TrimSuffix(forge, "/"), TerraformRegistry: cfg.Terraform.DefaultRegistry,
 		TerragruntRegistry: os.Getenv("TG_TF_DEFAULT_REGISTRY_HOST"), RegistryAliases: cfg.RegistryAliases,
 	}
 }
@@ -583,7 +594,7 @@ func (s *session) withConfig(ctx context.Context, root string, cfg *config.Confi
 		return nil, err
 	}
 	sib := *s
-	sib.root, sib.cfg, sib.managers, sib.sources, sib.env, sib.info = root, cfg, managers, sources, configEnv(ctx, cfg, info), info
+	sib.root, sib.cfg, sib.managers, sib.sources, sib.env, sib.info = root, cfg, managers, sources, configEnv(ctx, cfg, info, root), info
 	sib.security = nil
 	if cfg.SecurityEnabled() {
 		sib.security = s.osv

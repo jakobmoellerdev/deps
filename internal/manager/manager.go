@@ -17,6 +17,10 @@ import (
 type Env struct {
 	DefaultHost string // actions default host
 	GitLabURL   string // GitLab instance base URL without trailing slash; "" means https://gitlab.com
+	// ForgeURL is the base URL of the forge of the checkout (the platform's server, else the
+	// one of the origin remote), without trailing slash; owner/name extends entries of the deps
+	// configuration are on it. "" = unknown.
+	ForgeURL string
 	// TerraformRegistry is the registry host of hostless provider and module addresses
 	// (config terraform.defaultRegistry); "" = the default of the file type.
 	TerraformRegistry string

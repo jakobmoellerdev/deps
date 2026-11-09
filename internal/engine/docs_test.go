@@ -262,6 +262,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"custom":  {"custom", filepath.Join("..", "datasource", "deb")},
 		"ansible": {"ansible", "docker"}, "ansible-galaxy": {"ansible", "../pyreq"},
 		"quadlet": {"quadlet", "docker"}, "crossplane": {"crossplane", "docker"},
+		"deps-config": {"depsconfig"},
 	}
 	for _, m := range registry.Docs() {
 		dirs, ok := pkgDirs[m.Name]

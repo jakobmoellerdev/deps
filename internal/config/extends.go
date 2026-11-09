@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path"
 	"reflect"
 	"regexp"
 	"slices"
@@ -21,100 +20,14 @@ import (
 
 	"go.yaml.in/yaml/v4"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config/extendref"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
-
-// DefaultExtendsPath is the file an extends entry without //<path> reads.
-const DefaultExtendsPath = ".deps.yaml"
-
-// Extend is one extends entry, written <repo>[//<path>][#<ref>].
-type Extend struct {
-	// Repo is owner/name of a repository on the forge of the checkout, or a git URL
-	// (https://, http://, ssh://, git://, file:// or user@host:path).
-	Repo string
-	Path string // slash path of the file in the repository; DefaultExtendsPath when not written
-	Ref  string // branch, tag or commit; "" = the repository's default branch
-}
-
-var (
-	// extendRepoRe is owner/name, with GitLab-style subgroups (group/sub/name).
-	extendRepoRe = regexp.MustCompile(`^[A-Za-z0-9_.][A-Za-z0-9_.-]*(/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+$`)
-	// scpRe is git's scp-like syntax user@host:path.
-	scpRe = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^/]`)
-	// extendRefRe is a git ref name or commit; a leading '-' would read as an option.
-	extendRefRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/+-]*$`)
-)
-
-// ParseExtend parses an extends entry.
-func ParseExtend(s string) (Extend, error) {
-	rest := strings.TrimSpace(s)
-	var e Extend
-	if i := strings.LastIndexByte(rest, '#'); i >= 0 {
-		rest, e.Ref = rest[:i], rest[i+1:]
-		if !extendRefRe.MatchString(e.Ref) || strings.Contains(e.Ref, "..") {
-			return Extend{}, fmt.Errorf("invalid ref %q after '#'", e.Ref)
-		}
-	}
-	start := 0
-	if i := strings.Index(rest, "://"); i >= 0 {
-		start = i + len("://")
-	}
-	e.Path = DefaultExtendsPath
-	if i := strings.Index(rest[start:], "//"); i >= 0 {
-		rest, e.Path = rest[:start+i], rest[start+i+2:]
-		if e.Path == "" || path.IsAbs(e.Path) || path.Clean(e.Path) != e.Path || e.Path == ".." || strings.HasPrefix(e.Path, "../") {
-			return Extend{}, fmt.Errorf("invalid path %q after '//': must be a clean relative slash path", e.Path)
-		}
-	}
-	e.Repo = rest
-	switch {
-	case start > 0:
-		u, err := url.Parse(rest)
-		if err != nil {
-			return Extend{}, fmt.Errorf("invalid repository URL: %w", err)
-		}
-		switch u.Scheme {
-		case "https", "http", "ssh", "git":
-			if u.Host == "" {
-				return Extend{}, fmt.Errorf("repository URL %q has no host", rest)
-			}
-		case "file":
-		default:
-			return Extend{}, fmt.Errorf("repository URL %q: scheme must be https, http, ssh, git or file", rest)
-		}
-		if strings.Trim(u.Path, "/") == "" {
-			return Extend{}, fmt.Errorf("repository URL %q has no path", rest)
-		}
-		if u.User != nil {
-			if _, hasPass := u.User.Password(); hasPass {
-				return Extend{}, fmt.Errorf("repository URL %q must not contain a password; the platform token or git credentials authenticate", u.Redacted())
-			}
-		}
-	case scpRe.MatchString(rest):
-	case extendRepoRe.MatchString(rest):
-	default:
-		return Extend{}, fmt.Errorf("repository %q must be owner/name or a git URL", rest)
-	}
-	return e, nil
-}
-
-// String renders e as <repo>//<path>[#<ref>], the name of the file in messages and in
-// deps explain.
-func (e Extend) String() string {
-	s := e.Repo + "//" + e.Path
-	if e.Ref != "" {
-		s += "#" + e.Ref
-	}
-	return s
-}
-
-// isURL reports whether e.Repo is a git URL rather than owner/name.
-func (e Extend) isURL() bool { return strings.Contains(e.Repo, "://") || scpRe.MatchString(e.Repo) }
 
 // Fetcher reads the files extends entries name.
 type Fetcher interface {
 	// Fetch returns the content of e.Path in repository e.Repo at e.Ref.
-	Fetch(ctx context.Context, e Extend) ([]byte, error)
+	Fetch(ctx context.Context, e extendref.Extend) ([]byte, error)
 }
 
 // GitFetcher reads extended files with git: a shallow fetch of the ref into a temporary bare
@@ -134,7 +47,7 @@ type GitFetcher struct {
 	server    string
 	serverErr error
 	serverSet bool
-	cache     map[Extend]fetched
+	cache     map[extendref.Extend]fetched
 	dir       string // the parent of the fetched repositories; "" before the first fetch
 	repos     map[gitRef]fetchedRepo
 }
@@ -153,7 +66,7 @@ type fetched struct {
 }
 
 // Fetch implements Fetcher.
-func (g *GitFetcher) Fetch(ctx context.Context, e Extend) ([]byte, error) {
+func (g *GitFetcher) Fetch(ctx context.Context, e extendref.Extend) ([]byte, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if r, ok := g.cache[e]; ok {
@@ -162,7 +75,7 @@ func (g *GitFetcher) Fetch(ctx context.Context, e Extend) ([]byte, error) {
 	data, err := g.fetch(ctx, e)
 	if ctx.Err() == nil { // a canceled fetch is not the file's state
 		if g.cache == nil {
-			g.cache = map[Extend]fetched{}
+			g.cache = map[extendref.Extend]fetched{}
 		}
 		g.cache[e] = fetched{data, err}
 	}
@@ -170,8 +83,8 @@ func (g *GitFetcher) Fetch(ctx context.Context, e Extend) ([]byte, error) {
 }
 
 // repoURL returns the git URL of e.Repo: the URL itself, or owner/name on the forge.
-func (g *GitFetcher) repoURL(ctx context.Context, e Extend) (string, error) {
-	if e.isURL() {
+func (g *GitFetcher) repoURL(ctx context.Context, e extendref.Extend) (string, error) {
+	if e.IsURL() {
 		return e.Repo, nil
 	}
 	if !g.serverSet {
@@ -188,7 +101,7 @@ func (g *GitFetcher) repoURL(ctx context.Context, e Extend) (string, error) {
 	return strings.TrimSuffix(g.server, "/") + "/" + e.Repo + ".git", nil
 }
 
-func (g *GitFetcher) fetch(ctx context.Context, e Extend) ([]byte, error) {
+func (g *GitFetcher) fetch(ctx context.Context, e extendref.Extend) ([]byte, error) {
 	u, err := g.repoURL(ctx, e)
 	if err != nil {
 		return nil, err
@@ -412,7 +325,7 @@ func (l *loader) add(src []byte, name, display string, via int) error {
 // extend loads the file of extends entry s, reached through the local file's entry via;
 // it returns why the entry cannot be loaded, or "".
 func (l *loader) extend(s string, via int) string {
-	e, err := ParseExtend(s)
+	e, err := extendref.Parse(s)
 	if err != nil {
 		msg := err.Error()
 		if renovatePresetRe.MatchString(s) {

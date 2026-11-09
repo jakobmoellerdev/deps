@@ -25,6 +25,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/crossplane"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom/customdoc"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/depsconfig"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/droneci"
@@ -167,6 +168,7 @@ var Builtin = []Entry{
 	{tekton.Doc, tekton.New},
 	{glasskube.Doc, glasskube.New},
 	{jenkins.Doc, jenkins.New},
+	{depsconfig.Doc, depsconfig.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,

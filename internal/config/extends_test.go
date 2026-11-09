@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config/extendref"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
@@ -22,7 +23,7 @@ type fakeFetcher struct {
 	calls []string
 }
 
-func (f *fakeFetcher) Fetch(_ context.Context, e Extend) ([]byte, error) {
+func (f *fakeFetcher) Fetch(_ context.Context, e extendref.Extend) ([]byte, error) {
 	f.calls = append(f.calls, e.String())
 	s, ok := f.files[e.String()]
 	if !ok {
@@ -40,49 +41,6 @@ func loadExtends(t *testing.T, body string, files map[string]string) (*Config, *
 	f := &fakeFetcher{files: files}
 	c, err := Load(t.Context(), dir, "", f)
 	return c, f, err
-}
-
-func TestParseExtend(t *testing.T) {
-	for _, tt := range []struct {
-		in   string
-		want Extend
-		err  string
-	}{
-		{in: "org/deps-config", want: Extend{Repo: "org/deps-config", Path: ".deps.yaml"}},
-		{in: "org/cfg//go.yaml#v1", want: Extend{Repo: "org/cfg", Path: "go.yaml", Ref: "v1"}},
-		{in: "group/sub/cfg//presets/base.yaml#release/1.x", want: Extend{Repo: "group/sub/cfg", Path: "presets/base.yaml", Ref: "release/1.x"}},
-		{in: "https://github.com/org/cfg.git//a.yaml#main", want: Extend{Repo: "https://github.com/org/cfg.git", Path: "a.yaml", Ref: "main"}},
-		{in: "file:///srv/git/cfg.git", want: Extend{Repo: "file:///srv/git/cfg.git", Path: ".deps.yaml"}},
-		{in: "git@github.com:org/cfg.git//x.yaml", want: Extend{Repo: "git@github.com:org/cfg.git", Path: "x.yaml"}},
-		{in: "ssh://git@host:2222/org/cfg.git", want: Extend{Repo: "ssh://git@host:2222/org/cfg.git", Path: ".deps.yaml"}},
-		{in: "cfg", err: "must be owner/name"},
-		{in: "org/cfg#", err: "invalid ref"},
-		{in: "org/cfg#-upload-pack=x", err: "invalid ref"},
-		{in: "org/cfg#a..b", err: "invalid ref"},
-		{in: "org/cfg//", err: "invalid path"},
-		{in: "org/cfg//../x.yaml", err: "invalid path"},
-		{in: "org/cfg///etc/passwd", err: "invalid path"},
-		{in: "org/cfg//a/./b.yaml", err: "invalid path"},
-		{in: "ftp://host/org/cfg", err: "scheme must be"},
-		{in: "https:///org/cfg", err: "no host"},
-		{in: "https://host", err: "no path"},
-		{in: "https://u:secret@host/org/cfg", err: "must not contain a password"},
-		{in: "-oops/x", err: "must be owner/name"},
-	} {
-		got, err := ParseExtend(tt.in)
-		if tt.err != "" {
-			if err == nil || !strings.Contains(err.Error(), tt.err) {
-				t.Errorf("ParseExtend(%q) = %+v, %v; want error containing %q", tt.in, got, err, tt.err)
-			}
-			continue
-		}
-		if err != nil || got != tt.want {
-			t.Errorf("ParseExtend(%q) = %+v, %v; want %+v", tt.in, got, err, tt.want)
-		}
-	}
-	if s := (Extend{Repo: "org/cfg", Path: ".deps.yaml", Ref: "v1"}).String(); s != "org/cfg//.deps.yaml#v1" {
-		t.Errorf("String = %q", s)
-	}
 }
 
 func TestLoadExtendsMerge(t *testing.T) {
@@ -332,16 +290,16 @@ func TestGitFetcher(t *testing.T) {
 	u := gitRepo(t, map[string]string{".deps.yaml": "pin: digest\n", "presets/go.yaml": "rules: [{managers: [gomod], group: go}]\n"})
 	g := &GitFetcher{}
 	for _, tt := range []struct {
-		e    Extend
+		e    extendref.Extend
 		want string
 		err  string
 	}{
-		{e: Extend{Repo: u, Path: ".deps.yaml"}, want: "pin: digest\n"},
-		{e: Extend{Repo: u, Path: "presets/go.yaml", Ref: "v1"}, want: "rules: [{managers: [gomod], group: go}]\n"},
-		{e: Extend{Repo: u, Path: "presets/go.yaml", Ref: "main"}, want: "rules: [{managers: [gomod], group: go}]\n"},
-		{e: Extend{Repo: u, Path: "missing.yaml"}, err: "no file missing.yaml at HEAD of " + u},
-		{e: Extend{Repo: u, Path: ".deps.yaml", Ref: "nope"}, err: "fetch " + u + " nope"},
-		{e: Extend{Repo: "org/cfg", Path: ".deps.yaml"}, err: "no forge to resolve owner/name against"},
+		{e: extendref.Extend{Repo: u, Path: ".deps.yaml"}, want: "pin: digest\n"},
+		{e: extendref.Extend{Repo: u, Path: "presets/go.yaml", Ref: "v1"}, want: "rules: [{managers: [gomod], group: go}]\n"},
+		{e: extendref.Extend{Repo: u, Path: "presets/go.yaml", Ref: "main"}, want: "rules: [{managers: [gomod], group: go}]\n"},
+		{e: extendref.Extend{Repo: u, Path: "missing.yaml"}, err: "no file missing.yaml at HEAD of " + u},
+		{e: extendref.Extend{Repo: u, Path: ".deps.yaml", Ref: "nope"}, err: "fetch " + u + " nope"},
+		{e: extendref.Extend{Repo: "org/cfg", Path: ".deps.yaml"}, err: "no forge to resolve owner/name against"},
 	} {
 		got, err := g.Fetch(t.Context(), tt.e)
 		if tt.err != "" {
@@ -372,7 +330,7 @@ func TestGitFetcherSharesFetch(t *testing.T) {
 	g := &GitFetcher{}
 	defer g.Close()
 	for _, ref := range []string{"", "v1"} {
-		if _, err := g.Fetch(t.Context(), Extend{Repo: u, Path: ".deps.yaml", Ref: ref}); err != nil {
+		if _, err := g.Fetch(t.Context(), extendref.Extend{Repo: u, Path: ".deps.yaml", Ref: ref}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -380,7 +338,7 @@ func TestGitFetcherSharesFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, ref := range []string{"", "v1"} {
-		e := Extend{Repo: u, Path: "presets/go.yaml", Ref: ref}
+		e := extendref.Extend{Repo: u, Path: "presets/go.yaml", Ref: ref}
 		if got, err := g.Fetch(t.Context(), e); err != nil || string(got) != "rules: [{managers: [gomod], group: go}]\n" {
 			t.Errorf("Fetch(%v) = %q, %v", e, got, err)
 		}
@@ -388,11 +346,11 @@ func TestGitFetcherSharesFetch(t *testing.T) {
 	if err := g.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.Fetch(t.Context(), Extend{Repo: u, Path: "missing.yaml"}); err == nil || !strings.Contains(err.Error(), "fetch "+u+" HEAD") {
+	if _, err := g.Fetch(t.Context(), extendref.Extend{Repo: u, Path: "missing.yaml"}); err == nil || !strings.Contains(err.Error(), "fetch "+u+" HEAD") {
 		t.Errorf("Fetch after Close = %v; want a new fetch", err)
 	}
 	// The content cache outlives Close.
-	if got, err := g.Fetch(t.Context(), Extend{Repo: u, Path: ".deps.yaml"}); err != nil || string(got) != "pin: digest\n" {
+	if got, err := g.Fetch(t.Context(), extendref.Extend{Repo: u, Path: ".deps.yaml"}); err != nil || string(got) != "pin: digest\n" {
 		t.Errorf("cached Fetch after Close = %q, %v", got, err)
 	}
 }
@@ -404,7 +362,7 @@ func BenchmarkGitFetcherSameRepo(b *testing.B) {
 	for b.Loop() {
 		g := &GitFetcher{}
 		for _, p := range []string{".deps.yaml", "presets/go.yaml"} {
-			if _, err := g.Fetch(b.Context(), Extend{Repo: u, Path: p, Ref: "v1"}); err != nil {
+			if _, err := g.Fetch(b.Context(), extendref.Extend{Repo: u, Path: p, Ref: "v1"}); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -422,7 +380,7 @@ func TestGitFetcherServer(t *testing.T) {
 	calls := 0
 	g := &GitFetcher{Server: func(context.Context) (string, error) { calls++; return server + "/", nil }}
 	for range 2 {
-		got, err := g.Fetch(t.Context(), Extend{Repo: parent + "/cfg", Path: ".deps.yaml"})
+		got, err := g.Fetch(t.Context(), extendref.Extend{Repo: parent + "/cfg", Path: ".deps.yaml"})
 		if err != nil || string(got) != "pin: digest\n" {
 			t.Fatalf("Fetch = %q, %v", got, err)
 		}
@@ -431,7 +389,7 @@ func TestGitFetcherServer(t *testing.T) {
 		t.Errorf("Server called %d times", calls)
 	}
 	g = &GitFetcher{Server: func(context.Context) (string, error) { return "", errors.New("no origin remote") }}
-	if _, err := g.Fetch(t.Context(), Extend{Repo: "org/cfg", Path: ".deps.yaml"}); err == nil || !strings.Contains(err.Error(), "no origin remote; write the repository as a git URL") {
+	if _, err := g.Fetch(t.Context(), extendref.Extend{Repo: "org/cfg", Path: ".deps.yaml"}); err == nil || !strings.Contains(err.Error(), "no origin remote; write the repository as a git URL") {
 		t.Errorf("Fetch without server: %v", err)
 	}
 }

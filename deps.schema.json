@@ -2757,6 +2757,34 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "deps-config"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "extends"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "custom"
                   ]
                 },
@@ -2869,6 +2897,7 @@
               "tekton",
               "glasskube",
               "jenkins",
+              "deps-config",
               "custom"
             ]
           },
@@ -3074,6 +3103,7 @@
               "tekton-annotation",
               "package",
               "clusterPackage",
+              "extends",
               "annotation",
               "regex",
               "jsonata"

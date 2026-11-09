@@ -98,6 +98,7 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 | `cake` | `*.cake` (`nuget.config` for sources) | `addin`, `tool`, `module`, `load` | `nuget` / `nuget` |
 | `paket` | `paket.dependencies` (lock: `paket.lock`) | `dependencies` | `nuget` / `nuget` (constraints matched by the manager) |
 | `jenkins` | `plugins.txt`, `plugins.y(a)ml` | `plugin` | `jenkins-plugins` / `maven` |
+| `deps-config` | `.deps.yaml`, `.deps.yml` at the root | `extends` | version-tag refs `git-tags` / `tag`; commit refs `git-refs` / `tag` (digest) |
 | `custom` | `custom[].files` globs | `annotation`, `regex`, `jsonata` | per entry, per match or per query result |
 
 **github-actions.** `uses:` values outside `with:`/`env:`. Skips: `local action` (`./`, `$/`), `docker reference (docker manager)`, `unrecognized uses`, `non-version ref` (an abbreviated SHA, or a ref starting like a version that is no tag: `@v1.x`), `pinned without version comment` (a SHA followed by a comment that is neither a version nor a single branch name), `cannot locate value`.

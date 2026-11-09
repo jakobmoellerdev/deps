@@ -444,6 +444,13 @@ func TestLoadRules(t *testing.T) {
     ignore: true` + defaultExclusions,
 		},
 		{
+			name: "renovate-config manager is deps-config",
+			src:  `{packageRules: [{matchManagers: ['renovate-config'], automerge: true}]}`,
+			rules: `  - # packageRules[0]
+    managers: [deps-config]
+    automerge: true` + defaultExclusions,
+		},
+		{
 			name: "matchCurrentValue regexes and exact strings are currentVersion",
 			src: `{packageRules: [{matchCurrentValue: '/^1/', matchPackageNames: ['a'], enabled: false},
 				{matchCurrentValue: '!/-rc/i', matchPackageNames: ['b'], enabled: false},
