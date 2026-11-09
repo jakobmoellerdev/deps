@@ -14,8 +14,6 @@ import (
 	"testing"
 	"testing/iotest"
 	"time"
-
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 )
 
 // The jsontext JSON API decoder that decodeJSON replaced, kept to check that the results did not
@@ -30,7 +28,6 @@ func decodeJSONText(r io.Reader) (p project, yanked int, err error) {
 	if err := expectDelim(dec, '{'); err != nil {
 		return project{}, 0, err
 	}
-	p.times, p.python = map[string]time.Time{}, map[string]string{}
 	for dec.PeekKind() != '}' {
 		tok, err := dec.ReadToken()
 		if err != nil {
@@ -105,14 +102,11 @@ func decodeReleasesText(dec *jsontext.Decoder, p *project) (yanked int, err erro
 			p.yanked[versionKey(v)] = true
 			continue
 		}
-		p.rels = append(p.rels, datasource.Release{Version: v})
-		k := versionKey(v)
-		if !first.IsZero() {
-			p.times[k] = first
-		}
+		m := relMeta{first: first}
 		if spec, ok := py.get(); ok {
-			p.python[k] = spec
+			m.python = spec
 		}
+		p.add(v, m)
 	}
 	_, err = dec.ReadToken()
 	return yanked, err
@@ -252,4 +246,46 @@ func FuzzJSONParity(f *testing.F) {
 	}
 	f.Add(syntheticJSON(3))
 	f.Fuzz(checkJSONParity)
+}
+
+// checkParseTime checks that parseTime agrees with time.Parse on s, for both input types: the
+// same Time, but for the Location time.Parse creates per call for a numeric offset.
+func checkParseTime(t *testing.T, s string) {
+	t.Helper()
+	want, err := time.Parse(time.RFC3339, s)
+	same := func(got time.Time) bool {
+		if want.Location() == time.UTC {
+			return reflect.DeepEqual(got, want) // the very same value, as decodeJSON's parity needs
+		}
+		return got.Equal(want) && got.String() == want.String()
+	}
+	if got, ok := parseTime(s); ok != (err == nil) || (ok && !same(got)) {
+		t.Fatalf("parseTime(%q) = %v, %t; time.Parse %v, %v", s, got, ok, want, err)
+	}
+	if got, ok := parseTime([]byte(s)); ok != (err == nil) || (ok && !same(got)) {
+		t.Fatalf("parseTime([]byte(%q)) = %v, %t; time.Parse %v, %v", s, got, ok, want, err)
+	}
+}
+
+var parseTimeInputs = []string{
+	"2023-05-22T15:12:42.313790Z", "2007-01-04T17:10:17Z", "2025-01-01T20:21:00.1Z", "2025-01-01T20:21:00.123456789Z",
+	"2025-01-01T20:21:00.1234567891Z", "2025-01-01T20:21:00.Z", "2025-01-01T20:21:00,5Z", "2025-01-01T20:21:00+02:00",
+	"2025-01-01T20:21:00.5-07:30", "2025-01-01t20:21:00z", "2024-02-29T00:00:00Z", "2023-02-29T00:00:00Z",
+	"1900-02-29T00:00:00Z", "2000-02-29T00:00:00Z", "2025-04-31T00:00:00Z", "2025-13-01T00:00:00Z", "2025-00-01T00:00:00Z",
+	"2025-01-00T00:00:00Z", "2025-01-01T24:00:00Z", "2025-01-01T23:60:00Z", "2025-01-01T23:59:60Z", "0000-01-01T00:00:00Z",
+	"0001-01-01T00:00:00Z", "2025-1-01T00:00:00Z", "+025-01-01T00:00:00Z", "2025-01-01T00:00:0aZ", "2025-01-01T00:00:00.-1Z",
+	"2025-01-01 00:00:00Z", "2025-01-01T00:00:00", "", "Z", "2025-01-01T00:00:00ZZ",
+}
+
+func TestParseTime(t *testing.T) {
+	for _, s := range parseTimeInputs {
+		checkParseTime(t, s)
+	}
+}
+
+func FuzzParseTime(f *testing.F) {
+	for _, s := range parseTimeInputs {
+		f.Add(s)
+	}
+	f.Fuzz(checkParseTime)
 }

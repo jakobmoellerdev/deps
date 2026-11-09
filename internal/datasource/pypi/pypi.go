@@ -84,14 +84,46 @@ type Source struct {
 
 // project is what deps keeps of a project document.
 type project struct {
-	rels   []datasource.Release
-	times  map[string]time.Time // versionKey -> earliest upload time
-	python map[string]string    // versionKey -> requires-python shared by all files not yanked
-	repo   string               // source repository URL as published (JSON API only)
+	rels []datasource.Release
+	// meta describes every release listed, in order: rels before filterPython. It is a slice
+	// rather than maps by versionKey, which cost a key and a map slot per release of every
+	// project fetched, to serve the few ReleaseTime lookups of its update candidates.
+	meta []relMeta
+	repo string // source repository URL as published (JSON API only)
 	// yanked are the versionKeys of releases whose files are all yanked; inactive marks a
 	// project classified `Development Status :: 7 - Inactive` (JSON API only).
 	yanked   map[string]bool
 	inactive bool
+}
+
+// relMeta is what deps keeps of a listed release besides its version.
+type relMeta struct {
+	version string
+	first   time.Time // earliest upload time; zero when unknown
+	python  string    // requires-python shared by all files not yanked; "" when none
+}
+
+// add lists version v with meta m.
+func (p *project) add(v string, m relMeta) {
+	m.version = v
+	p.rels = append(p.rels, datasource.Release{Version: v})
+	p.meta = append(p.meta, m)
+}
+
+// find returns the meta of version (as listed, else by versionKey), false when not listed.
+func (p *project) find(version string) (relMeta, bool) {
+	for _, m := range p.meta {
+		if m.version == version {
+			return m, true
+		}
+	}
+	k := versionKey(version)
+	for _, m := range p.meta {
+		if versionKey(m.version) == k {
+			return m, true
+		}
+	}
+	return relMeta{}, false
 }
 
 // entry is the outcome of fetching a project from one index.
@@ -127,7 +159,8 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 // any of d's indexes; zero when unknown.
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
 	p, err := s.view(ctx, d)
-	return p.times[versionKey(version)], err
+	m, _ := p.find(version)
+	return m.first, err
 }
 
 // SourceRepo implements datasource.SourceRepo from the JSON API's `info.project_urls` and
@@ -218,30 +251,27 @@ func merge(es []entry) (project, error) {
 	case 1:
 		return found[0].project, nil
 	}
-	p := project{times: map[string]time.Time{}, python: map[string]string{}}
-	listed := map[string]bool{}
+	var p project
+	listed := map[string]int{} // versionKey -> index in p.meta
 	for _, e := range found {
 		p.repo = cmp.Or(p.repo, e.repo)
 		p.inactive = p.inactive || e.inactive
-		for _, r := range e.rels {
-			k := versionKey(r.Version)
-			if !listed[k] {
-				listed[k] = true
-				p.rels = append(p.rels, r)
-				if py, ok := e.python[k]; ok {
-					p.python[k] = py
-				}
+		for _, m := range e.meta {
+			k := versionKey(m.version)
+			i, ok := listed[k]
+			if !ok {
+				listed[k] = len(p.meta)
+				p.add(m.version, m)
+				continue
 			}
-		}
-		for k, t := range e.times {
-			if cur, ok := p.times[k]; !ok || t.Before(cur) {
-				p.times[k] = t
+			if cur := p.meta[i].first; cur.IsZero() || (!m.first.IsZero() && m.first.Before(cur)) {
+				p.meta[i].first = m.first
 			}
 		}
 	}
 	for _, e := range found {
 		for k := range e.yanked {
-			if !listed[k] {
+			if _, ok := listed[k]; !ok {
 				if p.yanked == nil {
 					p.yanked = map[string]bool{}
 				}
@@ -262,8 +292,9 @@ func (s *Source) filterPython(ctx context.Context, p project, name, python strin
 	}
 	var kept []datasource.Release
 	var dropped []string
-	for i, r := range p.rels {
-		if req, ok := p.python[versionKey(r.Version)]; !ok || s.admitted(python, req) {
+	for i, m := range p.meta {
+		r := p.rels[i]
+		if m.python == "" || s.admitted(python, m.python) {
 			if kept != nil {
 				kept = append(kept, r)
 			}
@@ -494,7 +525,6 @@ func decodeJSON(r io.Reader) (p project, yanked int, err error) {
 	if err := open(s, '{'); err != nil {
 		return project{}, 0, err
 	}
-	p.times, p.python = map[string]time.Time{}, map[string]string{}
 	for {
 		more, err := s.Next()
 		if err != nil {
@@ -543,6 +573,7 @@ func decodeReleases(s *jsonscan.Scanner, p *project) (yanked int, err error) {
 		return 0, err
 	}
 	var python []byte
+	var last string
 	for {
 		more, err := s.Next()
 		if err != nil || !more {
@@ -552,7 +583,7 @@ func decodeReleases(s *jsonscan.Scanner, p *project) (yanked int, err error) {
 		if err := open(s, '['); err != nil {
 			return 0, err
 		}
-		var rel releaseSummary
+		rel := releaseSummary{last: last}
 		for {
 			more, err := s.Next()
 			if err != nil {
@@ -567,6 +598,8 @@ func decodeReleases(s *jsonscan.Scanner, p *project) (yanked int, err error) {
 		}
 		if p.addRelease(v, &rel) {
 			yanked++
+		} else if spec, ok := rel.py.get(); ok {
+			last = spec
 		}
 	}
 }
@@ -576,8 +609,8 @@ func decodeReleases(s *jsonscan.Scanner, p *project) (yanked int, err error) {
 // a Go value gives) and skipping the other members. A null file has none of them. python is
 // scratch space for requires_python, which is kept only when it differs from the release's.
 func decodeFile(s *jsonscan.Scanner, rel *releaseSummary, python *[]byte) error {
-	var yanked bool
-	var upload string
+	var yanked, uploaded bool
+	var upload time.Time
 	*python = (*python)[:0]
 	k, err := s.Peek()
 	if err != nil {
@@ -587,7 +620,7 @@ func decodeFile(s *jsonscan.Scanner, rel *releaseSummary, python *[]byte) error 
 		if err := s.Null(); err != nil {
 			return err
 		}
-		rel.add(false, "", nil)
+		rel.add(false, time.Time{}, false, nil)
 		return nil
 	}
 	if err := s.Open('{'); err != nil {
@@ -605,7 +638,9 @@ func decodeFile(s *jsonscan.Scanner, rel *releaseSummary, python *[]byte) error 
 		case s.NameIs("yanked"):
 			yanked, err = nullable(s, s.Bool)
 		case s.NameIs("upload_time_iso_8601"):
-			upload, err = nullable(s, s.Str)
+			var b []byte
+			b, err = nullable(s, s.StrBytes)
+			upload, uploaded = parseTime(b) // b is valid until the next read
 		case s.NameIs("requires_python"):
 			var b []byte
 			b, err = nullable(s, s.StrBytes)
@@ -617,7 +652,7 @@ func decodeFile(s *jsonscan.Scanner, rel *releaseSummary, python *[]byte) error 
 			return err
 		}
 	}
-	rel.add(yanked, upload, *python)
+	rel.add(yanked, upload, uploaded, *python)
 	return nil
 }
 
@@ -640,14 +675,15 @@ type releaseSummary struct {
 	anyKept bool // a file is not yanked
 	first   time.Time
 	py      pyReq
+	last    string // the requires-python of the previous release, shared when equal
 }
 
-func (r *releaseSummary) add(yanked bool, upload string, python []byte) {
+func (r *releaseSummary) add(yanked bool, upload time.Time, uploaded bool, python []byte) {
 	r.files++
 	r.anyKept = r.anyKept || !yanked
-	r.first = earliest(r.first, upload)
+	r.first = earlier(r.first, upload, uploaded)
 	if !yanked {
-		r.py.addBytes(python)
+		r.py.addBytes(python, r.last)
 	}
 }
 
@@ -664,14 +700,11 @@ func (p *project) addRelease(v string, rel *releaseSummary) (yanked bool) {
 		p.yanked[versionKey(v)] = true
 		return true
 	}
-	p.rels = append(p.rels, datasource.Release{Version: v})
-	k := versionKey(v)
-	if !rel.first.IsZero() {
-		p.times[k] = rel.first
-	}
+	m := relMeta{first: rel.first}
 	if spec, ok := rel.py.get(); ok {
-		p.python[k] = spec
+		m.python = spec
 	}
+	p.add(v, m)
 	return false
 }
 
@@ -693,11 +726,14 @@ func (r *pyReq) add(spec string) {
 	}
 }
 
-// addBytes is add for a spec in bytes, which it copies only to keep it.
-func (r *pyReq) addBytes(spec []byte) {
+// addBytes is add for a spec in bytes, which it copies only to keep it, and then not when it
+// equals last.
+func (r *pyReq) addBytes(spec []byte, last string) {
 	switch spec = bytes.TrimSpace(spec); {
 	case len(spec) == 0:
 		r.mixed = true
+	case !r.seen && string(spec) == last:
+		r.spec, r.seen = last, true
 	case !r.seen:
 		r.spec, r.seen = string(spec), true
 	case r.spec != string(spec):
@@ -767,7 +803,10 @@ func (pg *simplePage) project(versions []string) (p project, yanked int) {
 			versions[i] = pg.byKey[k].raw
 		}
 	}
-	p.times, p.python = map[string]time.Time{}, map[string]string{}
+	if len(versions) > 0 {
+		p.rels = make([]datasource.Release, 0, len(versions))
+		p.meta = make([]relMeta, 0, len(versions))
+	}
 	for _, v := range versions {
 		k := versionKey(v)
 		sv := pg.byKey[k]
@@ -782,13 +821,11 @@ func (pg *simplePage) project(versions []string) (p project, yanked int) {
 			p.yanked[k] = true
 			continue
 		}
-		p.rels = append(p.rels, datasource.Release{Version: v})
-		if !sv.first.IsZero() {
-			p.times[k] = sv.first
-		}
+		m := relMeta{first: sv.first}
 		if spec, ok := sv.py.get(); ok {
-			p.python[k] = spec
+			m.python = spec
 		}
+		p.add(v, m)
 	}
 	return p, yanked
 }
@@ -1050,11 +1087,82 @@ func fileVersion(filename, name string) (string, bool) {
 
 // earliest returns the earlier of cur and the RFC 3339 time s; unparsable times are ignored.
 func earliest(cur time.Time, s string) time.Time {
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil || (!cur.IsZero() && !t.Before(cur)) {
+	t, ok := parseTime(s)
+	return earlier(cur, t, ok)
+}
+
+// earlier returns the earlier of cur and t, cur when !ok.
+func earlier(cur, t time.Time, ok bool) time.Time {
+	if !ok || (!cur.IsZero() && !t.Before(cur)) {
 		return cur
 	}
 	return t
+}
+
+// parseTime parses the RFC 3339 time s as time.Parse does, without allocating for the UTC
+// form PyPI writes (2006-01-02T15:04:05.999999Z).
+func parseTime[T string | []byte](s T) (time.Time, bool) {
+	if t, ok := parseUTC(s); ok {
+		return t, true
+	}
+	t, err := time.Parse(time.RFC3339, string(s))
+	return t, err == nil
+}
+
+// parseUTC parses s of the form 2006-01-02T15:04:05Z with 0 to 9 fractional second digits;
+// false for anything else, including times out of range.
+func parseUTC[T string | []byte](s T) (time.Time, bool) {
+	n := len(s)
+	if n < len("2006-01-02T15:04:05Z") || s[4] != '-' || s[7] != '-' || s[10] != 'T' || s[13] != ':' || s[16] != ':' || s[n-1] != 'Z' {
+		return time.Time{}, false
+	}
+	year, ok1 := atoi(s[0:4])
+	month, ok2 := atoi(s[5:7])
+	day, ok3 := atoi(s[8:10])
+	hour, ok4 := atoi(s[11:13])
+	minute, ok5 := atoi(s[14:16])
+	sec, ok6 := atoi(s[17:19])
+	nsec, frac := 0, s[19:n-1]
+	if len(frac) > 0 {
+		var ok bool
+		if nsec, ok = atoi(frac[1:]); frac[0] != '.' || len(frac) < 2 || len(frac) > 10 || !ok {
+			return time.Time{}, false
+		}
+		for range 10 - len(frac) {
+			nsec *= 10
+		}
+	}
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 || month < 1 || month > 12 || day < 1 ||
+		day > daysIn(month, year) || hour > 23 || minute > 59 || sec > 59 {
+		return time.Time{}, false
+	}
+	return time.Date(year, time.Month(month), day, hour, minute, sec, nsec, time.UTC), true
+}
+
+// atoi parses the decimal digits s; false when s is empty or has another byte.
+func atoi[T string | []byte](s T) (int, bool) {
+	n := 0
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, false
+		}
+		n = n*10 + int(s[i]-'0')
+	}
+	return n, len(s) > 0
+}
+
+// daysIn returns the number of days of month in year.
+func daysIn(month, year int) int {
+	switch month {
+	case 2:
+		if year%4 == 0 && (year%100 != 0 || year%400 == 0) {
+			return 29
+		}
+		return 28
+	case 4, 6, 9, 11:
+		return 30
+	}
+	return 31
 }
 
 // repoKeys are the project URL labels naming the source repository, by preference, as
