@@ -573,10 +573,11 @@ func decodePackument(r io.Reader) (p packument, deprecated int, err error) {
 	return p, len(gone), nil
 }
 
-// decodeMetadata streams an abbreviated metadata document and keeps the versions that are not
-// deprecated, `dist-tags.latest` and the top-level `modified`; every other member is skipped
-// (see skipMembers). Duplicate-name checking is off, see decodePackument.
-func decodeMetadata(r io.Reader) (m metadata, deprecated int, err error) {
+// decodeMetadataTokens decodes an abbreviated metadata document like decodeMetadata, with the
+// jsontext Decoder: the reference decodeMetadata replays errors and rare shapes with. Every
+// member other than the kept ones is skipped (see skipMembers). Duplicate-name checking is off,
+// see decodePackument.
+func decodeMetadataTokens(r io.Reader) (m metadata, deprecated int, err error) {
 	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true))
 	if err := expectObject(dec); err != nil {
 		return metadata{}, 0, err
