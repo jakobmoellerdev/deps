@@ -42,8 +42,7 @@ var timeLayouts = []string{"02-Jan-2006 15:04", "02-Jan-2006 15:04:05", "2006-01
 
 // Source is the artifactory datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	auth   *httpx.Auth // nil = anonymous
 
 	folders datasource.Memo[string, *folder] // by folder URL
@@ -58,7 +57,7 @@ type folder struct {
 // New returns the artifactory datasource. sem bounds concurrent requests (nil = unbounded);
 // auth supplies Basic credentials for the listing hosts (nil = anonymous).
 func New(client *http.Client, sem chan struct{}, auth *httpx.Auth) *Source {
-	return &Source{client: client, sem: sem, auth: auth}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem, MaxBody: maxListing}, auth: auth}
 }
 
 // Releases lists the entries of the folder of d in every registry URL of d.Source, in listing
@@ -159,31 +158,15 @@ func (s *Source) fetch(ctx context.Context, u string) (*folder, error) {
 	if err != nil {
 		return nil, err
 	}
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
 	user, pass, ok := s.auth.Static(parsed.Hostname())
-	resp, err := s.get(ctx, u, user, pass, ok)
-	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+	body, err := s.get(ctx, u, user, pass, ok)
+	if se, isStatus := errors.AsType[*httpx.StatusError](err); isStatus && se.Code == http.StatusUnauthorized {
 		if user, pass, ok = s.auth.Helper(ctx, parsed.Host); ok {
-			httpx.DrainBody(resp)
-			resp.Body.Close()
-			resp, err = s.get(ctx, u, user, pass, ok)
+			body, err = s.get(ctx, u, user, pass, ok)
 		}
 	}
 	if err != nil {
 		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		httpx.DrainBody(resp)
-		return nil, fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxListing))
-	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", u, err)
 	}
 	f := parse(body)
 	if len(f.rels) == 0 {
@@ -192,17 +175,21 @@ func (s *Source) fetch(ctx context.Context, u string) (*folder, error) {
 	return f, nil
 }
 
-// get GETs u, with Basic credentials when auth is set.
-func (s *Source) get(ctx context.Context, u, user, pass string, auth bool) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
+// get GETs u, with Basic credentials when auth is set, and returns the body.
+func (s *Source) get(ctx context.Context, u, user, pass string, auth bool) ([]byte, error) {
+	g := s.getter
 	if auth {
-		req.SetBasicAuth(user, pass)
+		g.Prepare = func(req *http.Request) error {
+			req.SetBasicAuth(user, pass)
+			return nil
+		}
 	}
-	return s.client.Do(req)
+	var body []byte
+	err := g.Stream(ctx, u, func(r io.Reader) (err error) {
+		body, err = io.ReadAll(r)
+		return err
+	})
+	return body, err
 }
 
 // parse reads the entries of an HTML directory listing: the text of every link but the parent

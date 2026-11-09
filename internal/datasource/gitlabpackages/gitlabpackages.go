@@ -9,7 +9,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -31,8 +30,7 @@ const maxPages = 100
 
 // Source is the gitlab-packages datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	auth   *httpx.Auth
 	base   string // default GitLab instance URL without a trailing slash
 
@@ -50,7 +48,7 @@ type pkg struct {
 // auth supplies the instance token (a `gitlab-ci-token` user is sent as JOB-TOKEN, others as
 // PRIVATE-TOKEN).
 func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, base string) *Source {
-	return &Source{client: client, sem: sem, auth: auth, base: strings.TrimSuffix(cmp.Or(base, "https://gitlab.com"), "/")}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, auth: auth, base: strings.TrimSuffix(cmp.Or(base, "https://gitlab.com"), "/")}
 }
 
 // Releases lists the versions of d.Name (`<project path or id>:<package name>`), oldest
@@ -162,8 +160,8 @@ func (s *Source) page(ctx context.Context, u, name string, p *pkg) (string, erro
 	}
 	user, pass, authed := s.auth.Static(pu.Hostname())
 	for {
-		status, next, err := s.do(ctx, u, user, pass, authed, name, p)
-		if authed || status != http.StatusUnauthorized && status != http.StatusForbidden && status != http.StatusNotFound {
+		next, err := s.do(ctx, u, user, pass, authed, name, p)
+		if authed || !denied(err) {
 			return next, err
 		}
 		if user, pass, authed = s.auth.Helper(ctx, pu.Host); !authed {
@@ -172,42 +170,35 @@ func (s *Source) page(ctx context.Context, u, name string, p *pkg) (string, erro
 	}
 }
 
+// denied reports whether err is an HTTP 401, 403 or 404.
+func denied(err error) bool {
+	se, ok := errors.AsType[*httpx.StatusError](err)
+	return ok && (se.Code == http.StatusUnauthorized || se.Code == http.StatusForbidden || se.Code == http.StatusNotFound)
+}
+
 // do sends one GET of u, with the token as `Authorization: Bearer` when authed (`JOB-TOKEN`
-// for the CI job token user gitlab-ci-token), and reads a 200 page into p. status is the HTTP
-// status, 0 when no response arrived.
-func (s *Source) do(ctx context.Context, u, user, pass string, authed bool, name string, p *pkg) (status int, next string, err error) {
-	release, err := httpx.Acquire(ctx, s.sem)
+// for the CI job token user gitlab-ci-token), and reads the page into p.
+func (s *Source) do(ctx context.Context, u, user, pass string, authed bool, name string, p *pkg) (next string, err error) {
+	g := s.getter
+	g.Prepare = func(req *http.Request) error {
+		req.Header.Set("Accept", "application/json")
+		switch {
+		case !authed:
+		case user == "gitlab-ci-token":
+			req.Header.Set("JOB-TOKEN", pass)
+		default:
+			req.Header.Set("Authorization", "Bearer "+pass)
+		}
+		return nil
+	}
+	resp, err := g.Open(ctx, u)
 	if err != nil {
-		return 0, "", err
+		return "", err
 	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
-	if err != nil {
-		return 0, "", err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	req.Header.Set("Accept", "application/json")
-	switch {
-	case !authed:
-	case user == "gitlab-ci-token":
-		req.Header.Set("JOB-TOKEN", pass)
-	default:
-		req.Header.Set("Authorization", "Bearer "+pass)
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return 0, "", err
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, "", fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
-	}
+	defer resp.Body.Close()
 	var entries []entry
 	if err := json.UnmarshalRead(resp.Body, &entries); err != nil {
-		return resp.StatusCode, "", fmt.Errorf("GET %s: %w", u, err)
+		return "", fmt.Errorf("GET %s: %w", httpx.Redact(u), err)
 	}
 	for _, e := range entries {
 		if cmp.Or(e.ConanName, e.Name) != name || e.Version == "" {
@@ -222,7 +213,7 @@ func (s *Source) do(ctx context.Context, u, user, pass string, authed bool, name
 	}
 	next = resp.Header.Get("X-Next-Page")
 	if _, err := strconv.Atoi(next); next != "" && err != nil {
-		return resp.StatusCode, "", errors.New("invalid X-Next-Page " + strconv.Quote(next))
+		return "", errors.New("invalid X-Next-Page " + strconv.Quote(next))
 	}
-	return resp.StatusCode, next, nil
+	return next, nil
 }

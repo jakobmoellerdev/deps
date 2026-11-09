@@ -41,13 +41,9 @@ const (
 	maxPages = 50
 )
 
-// errNoPage is a 404 for a page after the first: the list has ended.
-var errNoPage = errors.New("no such page")
-
 // Source fetches the list of each image type (and os/architecture filter) once per run.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	url    string
 
 	lists datasource.Memo[string, []datasource.Release] // by query
@@ -56,7 +52,7 @@ type Source struct {
 // New returns the java-version datasource. sem bounds concurrent requests (nil = unbounded);
 // getenv supplies DEPS_JAVA_RELEASES_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, url: cmp.Or(getenv("DEPS_JAVA_RELEASES_URL"), DefaultURL)}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, url: cmp.Or(getenv("DEPS_JAVA_RELEASES_URL"), DefaultURL)}
 }
 
 // Query returns the Adoptium filter of a dep name: `java`/`java-jdk` (JDK) or `java-jre`
@@ -135,7 +131,7 @@ func (s *Source) list(ctx context.Context, query string) ([]datasource.Release, 
 			add(&derived, minor)
 			add(&derived, core[:strings.IndexByte(core, '.')])
 		})
-		if errors.Is(err, errNoPage) && page > 0 {
+		if errors.Is(err, httpx.ErrNotFound) && page > 0 { // a 404 after the first page: the list has ended
 			err = nil
 			break
 		}
@@ -155,39 +151,15 @@ func (s *Source) list(ctx context.Context, query string) ([]datasource.Release, 
 }
 
 // page GETs one page and passes each version's semver to each; it returns the number of
-// versions on the page. A 404 is errNoPage.
+// versions on the page. A 404 matches httpx.ErrNotFound.
 func (s *Source) page(ctx context.Context, target string, each func(string)) (int, error) {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return 0, err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return 0, fmt.Errorf("GET %s: HTTP 404: %w", target, errNoPage)
-	case resp.StatusCode != http.StatusOK:
-		return 0, fmt.Errorf("GET %s: HTTP %d", target, resp.StatusCode)
-	}
 	var doc struct {
 		Versions []struct {
 			Semver string `json:"semver"`
 		} `json:"versions"`
 	}
-	if err := json.UnmarshalRead(resp.Body, &doc); err != nil {
-		return 0, fmt.Errorf("GET %s: %w", target, err)
+	if err := s.getter.Stream(ctx, target, func(r io.Reader) error { return json.UnmarshalRead(r, &doc) }); err != nil {
+		return 0, err
 	}
 	for _, v := range doc.Versions {
 		each(v.Semver)

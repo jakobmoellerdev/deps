@@ -43,8 +43,7 @@ const maxPages = 100
 
 // Roles is the galaxy datasource: roles by `namespace.name`.
 type Roles struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	base   string // server URL without a trailing slash
 
 	roles datasource.Memo[string, *pkg]
@@ -53,8 +52,7 @@ type Roles struct {
 // Collections is the galaxy-collection datasource: collections by `namespace.name` on the
 // server of the dep's Source ("" = DEPS_GALAXY_URL or Ansible Galaxy).
 type Collections struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	base   string // default server URL without a trailing slash
 
 	apis       datasource.Memo[string, string]    // server → v3 API root URL (with trailing slash)
@@ -74,12 +72,12 @@ type pkg struct {
 // New returns the galaxy (role) datasource. sem bounds concurrent requests (nil = unbounded);
 // getenv supplies DEPS_GALAXY_URL.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Roles {
-	return &Roles{client: client, sem: sem, base: baseURL(getenv)}
+	return &Roles{getter: newGetter(client, sem), base: baseURL(getenv)}
 }
 
 // NewCollections returns the galaxy-collection datasource, as New.
 func NewCollections(client *http.Client, sem chan struct{}, getenv func(string) string) *Collections {
-	return &Collections{client: client, sem: sem, base: baseURL(getenv)}
+	return &Collections{getter: newGetter(client, sem), base: baseURL(getenv)}
 }
 
 func baseURL(getenv func(string) string) string {
@@ -154,7 +152,7 @@ func (s *Roles) lookup(ctx context.Context, name string) (*pkg, error) {
 		start := time.Now()
 		u := s.base + "/api/v1/roles/?owner__username=" + url.QueryEscape(ns) + "&name=" + url.QueryEscape(n)
 		var body roleV1
-		err := get(ctx, s.client, s.sem, u, &body)
+		err := get(ctx, s.getter, u, &body)
 		slog.DebugContext(ctx, "galaxy role", "name", name, "results", len(body.Results), "duration", time.Since(start), "err", err)
 		if err != nil {
 			return nil, err
@@ -233,7 +231,7 @@ func (s *Collections) SourceRepo(ctx context.Context, d dep.Dep, version string)
 				Repository string `json:"repository"`
 			} `json:"metadata"`
 		}
-		err := get(ctx, s.client, s.sem, p.versions+url.PathEscape(version)+"/", &v)
+		err := get(ctx, s.getter, p.versions+url.PathEscape(version)+"/", &v)
 		return v.Metadata.Repository, err
 	})
 }
@@ -262,7 +260,7 @@ func (s *Collections) api(ctx context.Context, server string) (string, error) {
 			var body struct {
 				Versions map[string]string `json:"available_versions"`
 			}
-			err := get(ctx, s.client, s.sem, root, &body)
+			err := get(ctx, s.getter, root, &body)
 			if err == nil && body.Versions["v3"] == "" {
 				err = fmt.Errorf("GET %s: no v3 API", root)
 			}
@@ -295,7 +293,7 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		var coll struct {
 			Deprecated bool `json:"deprecated"`
 		}
-		if err := get(ctx, s.client, s.sem, base, &coll); err != nil {
+		if err := get(ctx, s.getter, base, &coll); err != nil {
 			if errors.Is(err, errNotFound) {
 				return nil, &dep.SkipError{Reason: "collection not found on " + srv}
 			}
@@ -324,7 +322,7 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 					CreatedAt string `json:"created_at"`
 				} `json:"data"`
 			}
-			if err := get(ctx, s.client, s.sem, next, &page); err != nil {
+			if err := get(ctx, s.getter, next, &page); err != nil {
 				return nil, err
 			}
 			for _, v := range page.Data {
@@ -354,38 +352,22 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 // errNotFound marks an HTTP 404.
 var errNotFound = errors.New("not found")
 
-// get GETs target while holding a slot of sem and decodes a 200 JSON body into v; a 404 is
-// errNotFound.
-func get(ctx context.Context, client *http.Client, sem chan struct{}, target string, v any) error {
-	release, err := httpx.Acquire(ctx, sem)
-	if err != nil {
-		return err
+// newGetter returns the Getter of the galaxy datasources: JSON, bodies up to maxBody.
+func newGetter(client *http.Client, sem chan struct{}) httpx.Getter {
+	accept := func(req *http.Request) error {
+		req.Header.Set("Accept", "application/json")
+		return nil
 	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return err
+	return httpx.Getter{Client: client, Sem: sem, Prepare: accept, MaxBody: maxBody}
+}
+
+// get GETs target and decodes the JSON body into v; a 404 is errNotFound.
+func get(ctx context.Context, g httpx.Getter, target string, v any) error {
+	err := g.Stream(ctx, target, func(r io.Reader) error { return json.UnmarshalRead(r, v) })
+	if errors.Is(err, httpx.ErrNotFound) {
+		return fmt.Errorf("GET %s: %w", httpx.Redact(target), errNotFound)
 	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return fmt.Errorf("GET %s: %w", target, errNotFound)
-	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("GET %s: HTTP %d", target, resp.StatusCode)
-	}
-	if err := json.UnmarshalRead(io.LimitReader(resp.Body, maxBody), v); err != nil {
-		return fmt.Errorf("GET %s: %w", target, err)
-	}
-	return nil
+	return err
 }
 
 // maxBody bounds a response body (a role's version list, a page of 100 collection versions).

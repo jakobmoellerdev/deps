@@ -41,8 +41,7 @@ const Versioning = "rpm"
 
 // Source is the rpm datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 
 	mu      sync.Mutex
 	wanted  map[string]map[string]bool     // repository URL (without /repodata) → package names asked for
@@ -64,9 +63,11 @@ type pkg struct {
 	times []time.Time // parallel to rels; zero = unknown
 }
 
-// New returns the rpm datasource. sem bounds concurrent requests (nil = unbounded).
+// New returns the rpm datasource. sem bounds concurrent requests (nil = unbounded). Credentials
+// in a repository URL (`https://user:token@host/…`) are sent as basic auth and redacted in
+// errors. The primary metadata is not size-capped: a distribution's runs to hundreds of MB.
 func New(client *http.Client, sem chan struct{}) *Source {
-	return &Source{client: client, sem: sem, wanted: map[string]map[string]bool{}}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem, MaxBody: -1}, wanted: map[string]map[string]bool{}}
 }
 
 // Plan records the packages each repository will be asked for, so one scan keeps all of them
@@ -248,8 +249,10 @@ func (s *Source) fetch(ctx context.Context, base string, wanted map[string]bool)
 		slog.DebugContext(ctx, "rpm repository indexed", "repo", httpx.Redact(base), "packages", n, "duration", time.Since(start), "err", err)
 	}()
 	var md repomd
-	if err := s.get(ctx, base+"/repodata/repomd.xml", func(body io.Reader) error {
-		return xml.NewDecoder(io.LimitReader(body, maxRepomd)).Decode(&md)
+	g := s.getter
+	g.MaxBody = maxRepomd
+	if err := g.Stream(ctx, base+"/repodata/repomd.xml", func(body io.Reader) error {
+		return xml.NewDecoder(body).Decode(&md)
 	}); err != nil {
 		return nil, err
 	}
@@ -267,7 +270,7 @@ func (s *Source) fetch(ctx context.Context, base string, wanted map[string]bool)
 		return nil, fmt.Errorf("rpm %s: no primary metadata", httpx.Redact(base+"/repodata/repomd.xml"))
 	}
 	r = &repo{wanted: wanted, pkgs: map[string]*pkg{}}
-	err = s.get(ctx, primary, func(body io.Reader) error {
+	err = s.getter.Stream(ctx, primary, func(body io.Reader) error {
 		plain, closeFn, err := decompress(body)
 		if err != nil {
 			return err
@@ -347,37 +350,6 @@ func decompress(body io.Reader) (io.Reader, func(), error) {
 		return bzip2.NewReader(br), func() {}, nil
 	}
 	return br, func() {}, nil
-}
-
-// get GETs target while holding a slot of the semaphore and passes a 200 body to read.
-// Credentials in the URL (`https://user:token@host/…`) are sent as basic auth and redacted
-// in errors.
-func (s *Source) get(ctx context.Context, target string, read func(io.Reader) error) error {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return fmt.Errorf("rpm: invalid URL %s", httpx.Redact(target))
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
-	if err != nil {
-		return fmt.Errorf("rpm: %w", err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("rpm %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
-	}
-	if err := read(resp.Body); err != nil {
-		return fmt.Errorf("rpm %s: malformed metadata: %w", httpx.Redact(target), err)
-	}
-	return nil
 }
 
 // scanPrimary streams primary.xml and calls add for each `<package type="rpm">` whose `<name>`

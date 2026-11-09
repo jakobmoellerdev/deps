@@ -43,8 +43,7 @@ var errNotFound = errors.New("not found")
 
 // Source is the nuget datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	getenv func(string) string
 	def    string // the default feed's service index
 
@@ -74,7 +73,7 @@ type pkg struct {
 // New returns the nuget datasource. sem bounds concurrent requests (nil = unbounded); getenv
 // supplies DEPS_NUGET_URL and the NuGetPackageSourceCredentials_<key> credentials of feeds.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
-	return &Source{client: client, sem: sem, getenv: getenv, def: cmp.Or(getenv("DEPS_NUGET_URL"), DefaultURL)}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, getenv: getenv, def: cmp.Or(getenv("DEPS_NUGET_URL"), DefaultURL)}
 }
 
 // Releases lists every listed version of d on its feeds (d.Source, see feeds; "" = nuget.org),
@@ -360,52 +359,41 @@ func (s *Source) flatVersions(ctx context.Context, f feed, base, id string) (*pk
 	return p, nil
 }
 
-// get GETs target while holding a slot of the semaphore and passes a 200 body to read
-// (gunzipped when the server compressed it unasked, as registration5-gz does). A 404 is
-// errNotFound. Credentials, on requests to the feed's host only: the target's userinfo (as
-// basic auth, by net/http), else NuGet's NuGetPackageSourceCredentials_<key> variable of the
-// feed (`Username=<user>;Password=<password>`).
+// get GETs target and passes the body to read (gunzipped when the server compressed it
+// unasked, as registration5-gz does). A 404 is errNotFound. Credentials, on requests to the
+// feed's host only: the target's userinfo (as basic auth, by net/http), else NuGet's
+// NuGetPackageSourceCredentials_<key> variable of the feed (`Username=<user>;Password=<password>`).
 func (s *Source) get(ctx context.Context, f feed, target string, read func(io.Reader) error) error {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return fmt.Errorf("nuget %s: invalid URL", httpx.Redact(target))
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	if req.URL.User == nil && f.key != "" && sameHost(f.url, req.URL) {
-		if user, pass, ok := credentials(s.getenv(CredentialsEnv + f.key)); ok {
-			req.SetBasicAuth(user, pass)
+	g := s.getter
+	if f.key != "" {
+		g.Prepare = func(req *http.Request) error {
+			if req.URL.User == nil && sameHost(f.url, req.URL) {
+				if user, pass, ok := credentials(s.getenv(CredentialsEnv + f.key)); ok {
+					req.SetBasicAuth(user, pass)
+				}
+			}
+			return nil
 		}
 	}
-	resp, err := s.client.Do(req) // a *url.Error carries the URL without its password
-	if err != nil {
-		return fmt.Errorf("nuget %s: %w", httpx.Redact(target), err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
+	resp, err := g.Open(ctx, target)
 	switch {
-	case resp.StatusCode == http.StatusNotFound:
+	case errors.Is(err, httpx.ErrNotFound):
 		return errNotFound
-	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("nuget %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
+	case err != nil:
+		return err
 	}
+	defer resp.Body.Close()
 	body := io.Reader(resp.Body)
 	if !resp.Uncompressed && strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
 		zr, err := gzip.NewReader(resp.Body)
 		if err != nil {
-			return fmt.Errorf("nuget %s: malformed response: %w", httpx.Redact(target), err)
+			return fmt.Errorf("GET %s: %w", httpx.Redact(target), err)
 		}
 		defer zr.Close()
 		body = zr
 	}
 	if err := read(body); err != nil {
-		return fmt.Errorf("nuget %s: malformed response: %w", httpx.Redact(target), err)
+		return fmt.Errorf("GET %s: %w", httpx.Redact(target), err)
 	}
 	return nil
 }

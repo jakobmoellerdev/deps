@@ -30,8 +30,7 @@ import (
 
 // Source resolves module versions once per module path per run.
 type Source struct {
-	client       *http.Client
-	sem          chan struct{}
+	getter       httpx.Getter
 	env          func(ctx context.Context) (gotool.GoEnv, error)
 	list         func(ctx context.Context, dir, path string) ([]string, error)
 	info         func(ctx context.Context, dir, path, version string) (time.Time, error)
@@ -61,7 +60,7 @@ type entry struct {
 // shared with other datasources.
 func New(client *http.Client, sem chan struct{}) *Source {
 	return &Source{
-		client: client, sem: sem, env: gotool.Env, list: gotool.ListVersions, info: gotool.ModuleTime, latest: gotool.ModuleLatest,
+		getter: httpx.Getter{Client: client, Sem: sem}, env: gotool.Env, list: gotool.ListVersions, info: gotool.ModuleTime, latest: gotool.ModuleLatest,
 		dirs: make(map[string]string),
 	}
 }
@@ -146,7 +145,7 @@ func (s *Source) head(ctx context.Context, modPath, dir string) (datasource.Revi
 	var m gotool.Module
 	err := s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
 		if base == "" {
-			release, err := httpx.Acquire(ctx, s.sem)
+			release, err := httpx.Acquire(ctx, s.getter.Sem)
 			if err != nil {
 				return false, err
 			}
@@ -154,17 +153,8 @@ func (s *Source) head(ctx context.Context, modPath, dir string) (datasource.Revi
 			m, err = s.latest(ctx, dir, modPath)
 			return false, err
 		}
-		target := base + "/" + escaped + "/@latest"
-		resp, notFound, err := s.get2xx(ctx, target)
-		if err != nil {
-			return notFound, err
-		}
-		defer resp.Body.Close()
 		m = gotool.Module{}
-		if err := json.UnmarshalRead(io.LimitReader(resp.Body, 1<<20), &m); err != nil {
-			return false, fmt.Errorf("GET %s: %w", target, err)
-		}
-		return false, nil
+		return s.stream(ctx, base+"/"+escaped+"/@latest", maxInfo, func(r io.Reader) error { return json.UnmarshalRead(r, &m) })
 	})
 	if err != nil {
 		return datasource.Revision{}, err
@@ -343,7 +333,7 @@ func (s *Source) releaseTime(ctx context.Context, modPath, version, dir string) 
 	var t time.Time
 	err = s.walk(ctx, modPath, func(base, escaped string) (notFound bool, err error) {
 		if base == "" {
-			release, err := httpx.Acquire(ctx, s.sem)
+			release, err := httpx.Acquire(ctx, s.getter.Sem)
 			if err != nil {
 				return false, err
 			}
@@ -351,20 +341,14 @@ func (s *Source) releaseTime(ctx context.Context, modPath, version, dir string) 
 			t, err = s.info(ctx, dir, modPath, version)
 			return false, err
 		}
-		target := base + "/" + escaped + "/@v/" + escVersion + ".info"
-		resp, notFound, err := s.get2xx(ctx, target)
-		if err != nil {
-			return notFound, err
-		}
-		defer resp.Body.Close()
 		var info struct{ Time *time.Time }
-		if err := json.UnmarshalRead(io.LimitReader(resp.Body, 1<<20), &info); err != nil {
-			return false, fmt.Errorf("GET %s: %w", target, err)
-		}
-		if info.Time != nil {
+		notFound, err = s.stream(ctx, base+"/"+escaped+"/@v/"+escVersion+".info", maxInfo, func(r io.Reader) error {
+			return json.UnmarshalRead(r, &info)
+		})
+		if err == nil && info.Time != nil {
 			t = *info.Time
 		}
-		return false, nil
+		return notFound, err
 	})
 	return t, err
 }
@@ -394,18 +378,14 @@ func (s *Source) declaredPath(ctx context.Context, modPath, version string) (str
 		if base == "" {
 			return false, nil // unknown
 		}
-		target := base + "/" + escaped + "/@v/" + escVersion + ".mod"
-		resp, notFound, err := s.get2xx(ctx, target)
-		if err != nil {
-			return notFound, err
-		}
-		defer resp.Body.Close()
-		b, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-		if err != nil {
-			return false, fmt.Errorf("GET %s: %w", target, err)
-		}
-		declared = modfile.ModulePath(b)
-		return false, nil
+		return s.stream(ctx, base+"/"+escaped+"/@v/"+escVersion+".mod", maxMod, func(r io.Reader) error {
+			b, err := io.ReadAll(r)
+			if err != nil {
+				return err
+			}
+			declared = modfile.ModulePath(b)
+			return nil
+		})
 	})
 	return declared, err
 }
@@ -520,7 +500,7 @@ func (s *Source) walk(ctx context.Context, modPath string, step func(base, escap
 var errNoProxy = errors.New("no proxy has")
 
 func (s *Source) direct(ctx context.Context, dir, modPath string) ([]string, error) {
-	release, err := httpx.Acquire(ctx, s.sem)
+	release, err := httpx.Acquire(ctx, s.getter.Sem)
 	if err != nil {
 		return nil, err
 	}
@@ -528,41 +508,32 @@ func (s *Source) direct(ctx context.Context, dir, modPath string) ([]string, err
 	return s.list(ctx, dir, modPath)
 }
 
-// get2xx GETs url holding a semaphore slot until the response headers arrive; notFound reports
-// a 404 or 410. The caller closes the body of a successful response.
-func (s *Source) get2xx(ctx context.Context, url string) (resp *http.Response, notFound bool, err error) {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return nil, false, err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return nil, false, err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err = s.client.Do(req)
-	if err != nil {
-		return nil, false, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		_ = resp.Body.Close()
-		code := resp.StatusCode
-		return nil, code == http.StatusNotFound || code == http.StatusGone, fmt.Errorf("GET %s: HTTP %d", url, code)
-	}
-	return resp, false, nil
+// Body caps of the proxy endpoints: an `@latest` or `.info` document, a `.mod` file. A version
+// list (`@v/list`) gets httpx.DefaultMaxBody.
+const (
+	maxInfo = 1 << 20
+	maxMod  = 16 << 20
+)
+
+// stream GETs url with a body cap of limit bytes and passes the body to read, holding a
+// request slot until the body is read and closed; notFound reports a 404 or 410.
+func (s *Source) stream(ctx context.Context, url string, limit int64, read func(io.Reader) error) (notFound bool, err error) {
+	g := s.getter
+	g.MaxBody = limit
+	err = g.Stream(ctx, url, read)
+	se, ok := errors.AsType[*httpx.StatusError](err)
+	return ok && (se.Code == http.StatusNotFound || se.Code == http.StatusGone), err
 }
 
 // fetch GETs a proxy list endpoint; notFound reports a 404 or 410.
 func (s *Source) fetch(ctx context.Context, url string) (versions []string, notFound bool, err error) {
-	resp, notFound, err := s.get2xx(ctx, url)
+	var data []byte
+	notFound, err = s.stream(ctx, url, 0, func(r io.Reader) (err error) {
+		data, err = io.ReadAll(r)
+		return err
+	})
 	if err != nil {
 		return nil, notFound, err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, false, fmt.Errorf("GET %s: %w", url, err)
 	}
 	// One string for the whole body; versions are substrings of it.
 	body := string(data)

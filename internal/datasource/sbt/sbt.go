@@ -42,8 +42,7 @@ const maxListing = 4 << 20
 // platform artifacts Package.Releases fell back to.
 type core struct {
 	maven    *mavends.Source
-	client   *http.Client
-	sem      chan struct{}
+	getter   httpx.Getter
 	lists    datasource.Memo[string, listing]
 	platform sync.Map // dep name + "\x00" + Source -> the Scala.js/Native artifact name found
 }
@@ -66,7 +65,7 @@ type Plugin struct{ *core }
 // maven (its Maven Central override and caches apply); sem bounds the concurrent Ivy listing
 // requests (nil = unbounded).
 func New(maven *mavends.Source, client *http.Client, sem chan struct{}) (Package, Plugin) {
-	c := &core{maven: maven, client: client, sem: sem}
+	c := &core{maven: maven, getter: httpx.Getter{Client: client, Sem: sem, MaxBody: maxListing}}
 	return Package{c}, Plugin{c}
 }
 
@@ -318,30 +317,16 @@ var hrefRe = regexp.MustCompile(`(?i)<a\s[^>]*?href="([^"]+)"`)
 // list returns the subdirectories of the directory listing at u once per run.
 func (c *core) list(ctx context.Context, u string) (listing, error) {
 	return c.lists.Do(ctx, u, func() (listing, error) {
-		release, err := httpx.Acquire(ctx, c.sem)
-		if err != nil {
-			return listing{}, err
-		}
-		defer release()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
-		if err != nil {
-			return listing{}, err
-		}
-		req.Header.Set("User-Agent", httpx.UserAgent())
-		resp, err := c.client.Do(req)
-		if err != nil {
-			return listing{}, err
-		}
-		defer closeBody(resp)
-		switch {
-		case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
+		var b []byte
+		err := c.getter.Stream(ctx, u, func(r io.Reader) (err error) {
+			b, err = io.ReadAll(r)
+			return err
+		})
+		if se, ok := errors.AsType[*httpx.StatusError](err); ok && (se.Code == http.StatusNotFound || se.Code == http.StatusGone) {
 			return listing{notFound: true}, nil
-		case resp.StatusCode != http.StatusOK:
-			return listing{}, fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
 		}
-		b, err := io.ReadAll(io.LimitReader(resp.Body, maxListing))
 		if err != nil {
-			return listing{}, fmt.Errorf("GET %s: %w", u, err)
+			return listing{}, err
 		}
 		names := subdirs(string(b))
 		slog.DebugContext(ctx, "sbt directory listed", "url", u, "entries", len(names))
@@ -369,10 +354,4 @@ func withSlash(u string) string {
 		return u
 	}
 	return u + "/"
-}
-
-// closeBody drains a little of the body so the connection can be reused, then closes it.
-func closeBody(resp *http.Response) {
-	httpx.DrainBody(resp)
-	_ = resp.Body.Close()
 }

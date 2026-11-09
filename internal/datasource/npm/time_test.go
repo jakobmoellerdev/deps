@@ -86,7 +86,7 @@ func TestReleaseTimeAndSourceRepo(t *testing.T) {
 	if _, err := timer.ReleaseTime(t.Context(), str, "1.0.0"); err == nil || !strings.Contains(err.Error(), "package strrepo: time of 1.0.0") {
 		t.Errorf("bad time err = %v", err)
 	}
-	if _, err := timer.ReleaseTime(t.Context(), dep.Dep{Name: "bad"}, "1.0.0"); err == nil || !strings.Contains(err.Error(), "malformed response") {
+	if _, err := timer.ReleaseTime(t.Context(), dep.Dep{Name: "bad"}, "1.0.0"); err == nil || !strings.Contains(err.Error(), "/pub/bad: jsontext: unexpected EOF") {
 		t.Errorf("malformed err = %v", err)
 	}
 	if _, err := repoer.SourceRepo(t.Context(), dep.Dep{Name: "missing"}, "1.0.0"); err == nil || err.Error() != "package missing not found" {

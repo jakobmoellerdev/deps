@@ -124,8 +124,7 @@ const (
 
 // Source queries OSV. Advisory documents are fetched once per ID per run.
 type Source struct {
-	client  *http.Client
-	sem     chan struct{}
+	getter  httpx.Getter
 	baseURL string
 	batch   int
 
@@ -139,7 +138,11 @@ func New(client *http.Client, sem chan struct{}) datasource.SecuritySource {
 }
 
 func newSource(client *http.Client, sem chan struct{}, baseURL string) *Source {
-	return &Source{client: client, sem: sem, baseURL: baseURL, batch: batchSize}
+	accept := func(req *http.Request) error {
+		req.Header.Set("Accept", "application/json")
+		return nil
+	}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem, Prepare: accept}, baseURL: baseURL, batch: batchSize}
 }
 
 type pkg struct {
@@ -411,8 +414,8 @@ func (s *Source) lookup(ctx context.Context, queries []query) ([][]string, map[s
 		wg     sync.WaitGroup
 	)
 	n := maxFetchers
-	if s.sem != nil {
-		n = cap(s.sem)
+	if s.getter.Sem != nil {
+		n = cap(s.getter.Sem)
 	}
 	for range n {
 		wg.Go(func() {
@@ -539,7 +542,7 @@ func (s *Source) queryBatch(ctx context.Context, queries []query) ([]batchResult
 	var res struct {
 		Results []batchResult `json:"results"`
 	}
-	err = s.do(httpx.Idempotent(ctx), http.MethodPost, u, body, &res) // a read-only query: retry like a GET
+	err = s.post(httpx.Idempotent(ctx), u, body, &res) // a read-only query: retry like a GET
 	if err == nil && len(res.Results) != len(queries) {
 		err = fmt.Errorf("POST %s: got %d results for %d queries", u, len(res.Results), len(queries))
 	}
@@ -585,7 +588,7 @@ type vuln struct {
 func (s *Source) vuln(ctx context.Context, id string) (*vuln, error) {
 	return s.vulns.Do(ctx, id, func() (*vuln, error) {
 		var v vuln
-		err := s.do(ctx, http.MethodGet, s.baseURL+"/v1/vulns/"+url.PathEscape(id), nil, &v)
+		err := s.getter.Stream(ctx, s.baseURL+"/v1/vulns/"+url.PathEscape(id), func(r io.Reader) error { return json.UnmarshalRead(r, &v) })
 		slog.DebugContext(ctx, "osv vuln", "id", id, "withdrawn", v.Withdrawn != "", "err", err)
 		if err != nil {
 			return nil, err
@@ -594,36 +597,33 @@ func (s *Source) vuln(ctx context.Context, id string) (*vuln, error) {
 	})
 }
 
-// do sends one request (holding a sem slot) and decodes the JSON response into out.
-func (s *Source) do(ctx context.Context, method, u string, body []byte, out any) error {
-	release, err := httpx.Acquire(ctx, s.sem)
+// post sends one JSON POST (holding a request slot) and decodes the JSON response into out.
+func (s *Source) post(ctx context.Context, u string, body []byte, out any) error {
+	release, err := httpx.Acquire(ctx, s.getter.Sem)
 	if err != nil {
 		return err
 	}
 	defer release()
-	var r io.Reader = http.NoBody
-	if body != nil {
-		r = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, u, r)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", httpx.UserAgent())
 	req.Header.Set("Accept", "application/json")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := s.client.Do(req)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.getter.Client.Do(req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		httpx.DrainBody(resp)
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s %s: HTTP %d", method, u, resp.StatusCode)
+		return fmt.Errorf("POST %s: HTTP %d", u, resp.StatusCode)
 	}
 	if err := json.UnmarshalRead(resp.Body, out); err != nil {
-		return fmt.Errorf("%s %s: %w", method, u, err)
+		return fmt.Errorf("POST %s: %w", u, err)
 	}
 	return nil
 }

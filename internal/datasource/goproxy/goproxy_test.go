@@ -303,6 +303,57 @@ func TestVersionsCanceledWaitingForSlot(t *testing.T) {
 	}
 }
 
+// slotReader is a response body that fails a read made while sem has no slot held.
+type slotReader struct {
+	t   *testing.T
+	sem chan struct{}
+	r   io.Reader
+}
+
+func (b slotReader) Read(p []byte) (int, error) {
+	if len(b.sem) != 1 {
+		b.t.Error("body read without the request slot")
+	}
+	return b.r.Read(p)
+}
+
+// A proxy request holds its slot until the body is read and closed, not only until the
+// response headers arrive.
+func TestProxyRequestHoldsSlotWhileReadingBody(t *testing.T) {
+	sem := make(chan struct{}, 1)
+	bodies := map[string]string{
+		"/example.com/m/@v/list":        "v1.0.0\n",
+		"/example.com/m/@v/v1.0.0.info": `{"Time":"2024-01-02T03:04:05Z"}`,
+		"/example.com/m/@v/v1.0.0.mod":  "module example.com/m\n",
+		"/example.com/m/@latest":        `{"Version":"v1.0.0"}`,
+	}
+	s := New(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body, ok := bodies[r.URL.Path]
+		if !ok {
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(slotReader{t, sem, strings.NewReader(body)})}, nil
+	})}, sem)
+	s.env = func(context.Context) (gotool.GoEnv, error) { return gotool.GoEnv{Proxy: "https://proxy.test"}, nil }
+	ctx := t.Context()
+	if vs, err := s.Versions(ctx, "example.com/m", "."); err != nil || len(vs) != 1 {
+		t.Errorf("Versions = %v, %v", vs, err)
+	}
+	d := dep.Dep{Name: "example.com/m"}
+	if tm, err := s.ReleaseTime(ctx, d, "v1.0.0"); err != nil || tm.IsZero() {
+		t.Errorf("ReleaseTime = %v, %v", tm, err)
+	}
+	if p, err := s.DeclaredPath(ctx, "example.com/m", "v1.0.0"); err != nil || p != "example.com/m" {
+		t.Errorf("DeclaredPath = %q, %v", p, err)
+	}
+	if rev, err := s.Head(ctx, d, "."); err != nil || rev.Version != "v1.0.0" {
+		t.Errorf("Head = %v, %v", rev, err)
+	}
+	if len(sem) != 0 {
+		t.Error("request slot not released")
+	}
+}
+
 func TestReleaseTime(t *testing.T) {
 	when := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	var hits atomic.Int32

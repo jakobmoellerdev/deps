@@ -6,6 +6,7 @@ package forge
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -128,8 +129,7 @@ func ParseRepo(name, depName, registry string) (Repo, error) {
 type Source struct {
 	name   string
 	spec   spec
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	auth   *httpx.Auth
 	lists  datasource.Memo[Repo, *list]
 }
@@ -141,7 +141,7 @@ func New(name string, client *http.Client, sem chan struct{}, auth *httpx.Auth) 
 	if !ok {
 		panic("forge: unknown datasource " + name)
 	}
-	return &Source{name: name, spec: sp, client: client, sem: sem, auth: auth}
+	return &Source{name: name, spec: sp, getter: httpx.Getter{Client: client, Sem: sem}, auth: auth}
 }
 
 // list is a fetched release or tag list, newest first.
@@ -222,10 +222,10 @@ func (s *Source) Digest(ctx context.Context, d dep.Dep, version string) (string,
 		return "", err
 	}
 	var e entry
-	status, _, err := s.get(ctx, s.api(r, "/"+url.PathEscape(version)), func(body io.Reader) error {
+	_, err = s.get(ctx, s.api(r, "/"+url.PathEscape(version)), func(body io.Reader) error {
 		return json.UnmarshalRead(body, &e)
 	})
-	if status == http.StatusNotFound {
+	if errors.Is(err, httpx.ErrNotFound) {
 		return "", fmt.Errorf("tag %s %w", version, datasource.ErrVersionNotFound)
 	}
 	if err != nil {
@@ -256,8 +256,8 @@ func (s *Source) CommitTime(ctx context.Context, d dep.Dep, commit string) (time
 		CommittedDate time.Time `json:"committed_date"` // GitLab
 		Created       time.Time `json:"created"`        // Gitea
 	}
-	status, _, err := s.get(ctx, target, func(body io.Reader) error { return json.UnmarshalRead(body, &c) })
-	if status == http.StatusNotFound {
+	_, err = s.get(ctx, target, func(body io.Reader) error { return json.UnmarshalRead(body, &c) })
+	if errors.Is(err, httpx.ErrNotFound) {
 		return time.Time{}, nil
 	}
 	if err != nil {
@@ -307,7 +307,7 @@ func (s *Source) fetch(ctx context.Context, r Repo) (*list, error) {
 	}
 	for page := 1; page <= maxPages; page++ {
 		n := 0
-		status, next, err := s.get(ctx, s.api(r, query+strconv.Itoa(page)), func(body io.Reader) error {
+		next, err := s.get(ctx, s.api(r, query+strconv.Itoa(page)), func(body io.Reader) error {
 			return datasource.DecodeArray(body, func(e entry) {
 				n++
 				tag, commit, at, ok := s.version(e)
@@ -324,7 +324,7 @@ func (s *Source) fetch(ctx context.Context, r Repo) (*list, error) {
 				}
 			})
 		})
-		if status == http.StatusNotFound {
+		if errors.Is(err, httpx.ErrNotFound) {
 			return nil, fmt.Errorf("%s: repository %s not found (or not visible with the credentials for its host)", s.name, r.URL())
 		}
 		if err != nil {
@@ -337,66 +337,59 @@ func (s *Source) fetch(ctx context.Context, r Repo) (*list, error) {
 	return l, nil
 }
 
-// get GETs target with the credentials of its host and passes a 200 body to read. next
-// reports a next page (a Link rel="next"). Without static credentials (httpx.Auth.Static), a
-// 401, 403 or 404 asks the git credential helper once per host and retries with its answer:
-// forges answer 404 for private repositories. status is the final HTTP status, 0 when no
-// response arrived.
-func (s *Source) get(ctx context.Context, target string, read func(io.Reader) error) (status int, next bool, err error) {
+// get GETs target with the credentials of its host and passes the body to read. next reports
+// a next page (a Link rel="next"). Without static credentials (httpx.Auth.Static), a 401, 403
+// or 404 asks the git credential helper once per host and retries with its answer: forges
+// answer 404 for private repositories.
+func (s *Source) get(ctx context.Context, target string, read func(io.Reader) error) (next bool, err error) {
 	u, err := url.Parse(target)
 	if err != nil {
-		return 0, false, err
+		return false, err
 	}
 	user, pass, authed := s.auth.Static(u.Hostname())
 	for {
-		status, next, err = s.do(ctx, target, user, pass, authed, read)
-		if authed || status != http.StatusUnauthorized && status != http.StatusForbidden && status != http.StatusNotFound {
-			return status, next, err
+		next, err = s.do(ctx, target, user, pass, authed, read)
+		if authed || !denied(err) {
+			return next, err
 		}
 		if user, pass, authed = s.auth.Helper(ctx, u.Host); !authed {
-			return status, next, err
+			return next, err
 		}
 	}
+}
+
+// denied reports whether err is an HTTP 401, 403 or 404.
+func denied(err error) bool {
+	se, ok := errors.AsType[*httpx.StatusError](err)
+	return ok && (se.Code == http.StatusUnauthorized || se.Code == http.StatusForbidden || se.Code == http.StatusNotFound)
 }
 
 // do sends one GET of target, with user/pass when authed: GitLab gets the token as
 // `Authorization: Bearer` (`JOB-TOKEN` for the CI job token user gitlab-ci-token), Gitea and
 // Forgejo as Basic credentials.
-func (s *Source) do(ctx context.Context, target, user, pass string, authed bool, read func(io.Reader) error) (int, bool, error) {
-	release, err := httpx.Acquire(ctx, s.sem)
+func (s *Source) do(ctx context.Context, target, user, pass string, authed bool, read func(io.Reader) error) (bool, error) {
+	g := s.getter
+	g.Prepare = func(req *http.Request) error {
+		req.Header.Set("Accept", "application/json")
+		switch {
+		case !authed:
+		case !s.spec.gitlab:
+			req.SetBasicAuth(user, pass)
+		case user == "gitlab-ci-token":
+			req.Header.Set("JOB-TOKEN", pass)
+		default:
+			req.Header.Set("Authorization", "Bearer "+pass)
+		}
+		return nil
+	}
+	resp, err := g.Open(ctx, target)
 	if err != nil {
-		return 0, false, err
+		return false, err
 	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return 0, false, err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	req.Header.Set("Accept", "application/json")
-	switch {
-	case !authed:
-	case !s.spec.gitlab:
-		req.SetBasicAuth(user, pass)
-	case user == "gitlab-ci-token":
-		req.Header.Set("JOB-TOKEN", pass)
-	default:
-		req.Header.Set("Authorization", "Bearer "+pass)
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return 0, false, err
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, false, fmt.Errorf("GET %s: HTTP %d", target, resp.StatusCode)
-	}
+	defer resp.Body.Close()
 	next := strings.Contains(resp.Header.Get("Link"), `rel="next"`)
 	if err := read(resp.Body); err != nil {
-		return resp.StatusCode, false, fmt.Errorf("GET %s: %w", target, err)
+		return false, fmt.Errorf("GET %s: %w", httpx.Redact(target), err)
 	}
-	return resp.StatusCode, next, nil
+	return next, nil
 }

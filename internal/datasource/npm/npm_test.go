@@ -211,12 +211,12 @@ func TestReleasesErrors(t *testing.T) {
 	}{
 		{"missing", "", http.StatusNotFound, "package missing not found"},
 		{"server", "", http.StatusInternalServerError, "/server: HTTP 500"},
-		{"array", "[]", 200, "malformed response: expected {"},
-		{"versions array", `{"versions": []}`, 200, "malformed response: expected {"},
-		{"truncated", `{"versions": {"1.0.0": {`, 200, "malformed response"},
-		{"bad version", `{"versions": {"1.0.0": 5}}`, 200, "malformed response"},
-		{"bad other", `{"name": }`, 200, "malformed response"},
-		{"empty", ``, 200, "malformed response"},
+		{"array", "[]", 200, "/array: expected {"},
+		{"versions array", `{"versions": []}`, 200, "/versions%20array: expected {"},
+		{"truncated", `{"versions": {"1.0.0": {`, 200, "/truncated: jsontext: unexpected EOF"},
+		{"bad version", `{"versions": {"1.0.0": 5}}`, 200, "JSON number into Go"},
+		{"bad other", `{"name": }`, 200, "/bad%20other: jsontext: invalid character"},
+		{"empty", ``, 200, "/empty: EOF"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			reg := newRegistry(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -236,13 +236,13 @@ func TestReleasesTransportErrors(t *testing.T) {
 	d := dep.Dep{Name: "x", File: "package.json"}
 	t.Run("bad url", func(t *testing.T) {
 		s := New(http.DefaultClient, nil, env(map[string]string{"NPM_CONFIG_REGISTRY": "http://[::1"}))
-		if _, err := s.Releases(t.Context(), d, t.TempDir()); err == nil || !strings.HasPrefix(err.Error(), "npm registry ") {
+		if _, err := s.Releases(t.Context(), d, t.TempDir()); err == nil || !strings.HasPrefix(err.Error(), "GET <invalid URL>: ") {
 			t.Errorf("err = %v", err)
 		}
 	})
 	t.Run("refused", func(t *testing.T) {
 		s := New(http.DefaultClient, nil, env(map[string]string{"NPM_CONFIG_REGISTRY": "http://127.0.0.1:1"}))
-		if _, err := s.Releases(t.Context(), d, t.TempDir()); err == nil || !strings.HasPrefix(err.Error(), "npm registry http://127.0.0.1:1/x: ") {
+		if _, err := s.Releases(t.Context(), d, t.TempDir()); err == nil || !strings.HasPrefix(err.Error(), `Get "http://127.0.0.1:1/x": `) {
 			t.Errorf("err = %v", err)
 		}
 	})

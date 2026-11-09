@@ -100,8 +100,7 @@ func registries(d dep.Dep) []string {
 
 // Source is the deb datasource.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	auth   *httpx.Auth
 
 	mu      sync.Mutex
@@ -118,9 +117,12 @@ type index struct {
 
 // New returns the deb datasource. sem bounds concurrent requests (nil = unbounded); auth
 // supplies Basic credentials for the forge's host (a repository proxied by it); credentials in
-// a registry URL's userinfo are sent as Basic auth too.
+// a registry URL's userinfo are sent as Basic auth too. Index files are not size-capped: a
+// distribution's Packages file runs to tens of MB.
 func New(client *http.Client, sem chan struct{}, auth *httpx.Auth) *Source {
-	return &Source{client: client, sem: sem, auth: auth, wanted: map[string]map[string]bool{}}
+	s := &Source{getter: httpx.Getter{Client: client, Sem: sem, MaxBody: -1}, auth: auth, wanted: map[string]map[string]bool{}}
+	s.getter.Prepare = s.authorize
+	return s
 }
 
 // Plan records the packages each component index will be asked for, so one scan keeps all of
@@ -242,54 +244,42 @@ var errNotFound = errors.New("not found")
 
 // fetch GETs one index file and scans it, decompressed by the file's extension.
 func (s *Source) fetch(ctx context.Context, target, file string, wanted map[string]bool) (map[string][]string, error) {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
+	var pkgs map[string][]string
+	err := s.getter.Stream(ctx, target, func(r io.Reader) error {
+		switch {
+		case strings.HasSuffix(file, ".gz"):
+			zr, err := gzip.NewReader(r)
+			if err != nil {
+				return err
+			}
+			defer zr.Close()
+			r = zr
+		case strings.HasSuffix(file, ".xz"):
+			zr, err := xz.NewReader(bufio.NewReaderSize(r, 64<<10))
+			if err != nil {
+				return err
+			}
+			r = zr
+		}
+		found, err := scanIndex(r, wanted)
+		pkgs = found
+		return err
+	})
+	switch {
+	case errors.Is(err, httpx.ErrNotFound):
+		return nil, errNotFound
+	case err != nil:
 		return nil, err
 	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("deb index %s: %w", httpx.Redact(target), err)
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
+	return pkgs, nil
+}
+
+// authorize sends the forge's Basic credentials for req's host, unless its URL has userinfo.
+func (s *Source) authorize(req *http.Request) error {
 	if user, pass, ok := s.auth.Static(req.URL.Hostname()); ok && req.URL.User == nil {
 		req.SetBasicAuth(user, pass)
 	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("deb index: %w", err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return nil, errNotFound
-	case resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("deb index %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
-	}
-	var r io.Reader = resp.Body
-	switch {
-	case strings.HasSuffix(file, ".gz"):
-		zr, err := gzip.NewReader(r)
-		if err != nil {
-			return nil, fmt.Errorf("deb index %s: %w", httpx.Redact(target), err)
-		}
-		defer zr.Close()
-		r = zr
-	case strings.HasSuffix(file, ".xz"):
-		zr, err := xz.NewReader(bufio.NewReaderSize(r, 64<<10))
-		if err != nil {
-			return nil, fmt.Errorf("deb index %s: %w", httpx.Redact(target), err)
-		}
-		r = zr
-	}
-	pkgs, err := scanIndex(r, wanted)
-	if err != nil {
-		return nil, fmt.Errorf("deb index %s: %w", httpx.Redact(target), err)
-	}
-	return pkgs, nil
+	return nil
 }
 
 var (

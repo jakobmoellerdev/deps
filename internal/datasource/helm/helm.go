@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -46,8 +45,7 @@ type Release struct {
 
 // Source looks up chart versions; every index and tag list is fetched once per run.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	auth   *httpx.Auth           // nil = anonymous
 	oci    datasource.Datasource // lists OCI tags (the docker datasource)
 
@@ -83,12 +81,25 @@ func newResult(rels []Release, err error) *result {
 
 // New returns the helm datasource. Requests go through client; sem bounds concurrent requests
 // and is shared with the other datasources; auth supplies Basic credentials for classic
-// repositories on the forge's host; oci lists OCI tags (the docker datasource).
+// repositories on the forge's host; oci lists OCI tags (the docker datasource). Every 2xx
+// answer of index.yaml is read, and it is not size-capped: Bitnami's runs to tens of MB.
 func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, oci datasource.Datasource) *Source {
-	return &Source{
-		client: client, sem: sem, auth: auth, oci: oci,
+	s := &Source{
+		getter: httpx.Getter{Client: client, Sem: sem, MaxBody: -1, Accept2xx: true}, auth: auth, oci: oci,
 		wanted: map[string]map[string]bool{},
 	}
+	s.getter.Prepare = s.authorize
+	return s
+}
+
+// authorize sends the forge's Basic credentials for req's host.
+func (s *Source) authorize(req *http.Request) error {
+	if s.auth != nil {
+		if user, pass, ok := s.auth.Static(req.URL.Hostname()); ok {
+			req.SetBasicAuth(user, pass)
+		}
+	}
+	return nil
 }
 
 // Plan records the charts of the classic repositories the run will ask for, so one index scan
@@ -214,36 +225,14 @@ func (s *Source) scan(ctx context.Context, repo string, wanted map[string]bool) 
 	defer func() {
 		slog.DebugContext(ctx, "chart index scanned", "repo", repo, "wanted", len(wanted), "bytes", n.n, "duration", time.Since(start), "err", err)
 	}()
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("chart repository %s: %w", repo, err)
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	if u, err := url.Parse(target); err == nil && s.auth != nil {
-		if user, pass, ok := s.auth.Static(u.Hostname()); ok {
-			req.SetBasicAuth(user, pass)
-		}
-	}
-	resp, err := s.client.Do(req)
+	var found map[string][]Release
+	err = s.getter.Stream(ctx, target, func(body io.Reader) (scanErr error) {
+		n.r = body
+		found, scanErr = scanIndex(&n, wanted)
+		return scanErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("chart repository %s: %w", repo, err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("chart repository %s: GET index.yaml: HTTP %d", repo, resp.StatusCode)
-	}
-	n.r = resp.Body
-	found, err := scanIndex(&n, wanted)
-	if err != nil {
-		return nil, fmt.Errorf("chart repository %s: index.yaml: %w", repo, err)
 	}
 	charts = make(map[string]*result, len(wanted))
 	for name := range wanted {

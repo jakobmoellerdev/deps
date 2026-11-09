@@ -13,6 +13,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // testdata/jdk-page{0,1,2}.json are the three pages api.adoptium.net returned on 2026-11-06 for
@@ -134,7 +135,7 @@ func TestReleasesErrors(t *testing.T) {
 		t.Errorf("%d requests for invalid names", hits.Load())
 	}
 	// A 404 for the first page is an error, not an empty list.
-	if _, err := s.Releases(ctx, dep.Dep{Name: JDK}, ""); err == nil || !errors.Is(err, errNoPage) || !strings.Contains(err.Error(), "HTTP 404") {
+	if _, err := s.Releases(ctx, dep.Dep{Name: JDK}, ""); err == nil || !errors.Is(err, httpx.ErrNotFound) || !strings.Contains(err.Error(), "HTTP 404") {
 		t.Errorf("first page 404: err %v", err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -46,8 +46,7 @@ type ArtifactOpener interface {
 // Source fetches each checksum document and hashes each artifact once per run; concurrent
 // callers share the result.
 type Source struct {
-	client  *http.Client
-	sem     chan struct{}
+	getter  httpx.Getter
 	assets  Assets
 	openers map[string]ArtifactOpener
 
@@ -62,9 +61,10 @@ type doc struct {
 
 // New returns the checksum source. sem bounds concurrent requests (nil = unbounded); assets
 // may be nil when no github-releases datasource is available. openers download the artifacts
-// of deps by datasource name (nil = all with client).
+// of deps by datasource name (nil = all with client). Every 2xx answer is read; documents and
+// artifacts are bounded by their own limits (maxBody, maxArtifact), not by the Getter.
 func New(client *http.Client, sem chan struct{}, assets Assets, openers map[string]ArtifactOpener) datasource.ChecksumSource {
-	return &Source{client: client, sem: sem, assets: assets, openers: openers}
+	return &Source{getter: httpx.Getter{Client: client, Sem: sem, MaxBody: -1, Accept2xx: true}, assets: assets, openers: openers}
 }
 
 // Checksum returns the checksum of version per d.ChecksumSource. Templates expand version;
@@ -148,16 +148,20 @@ func (s *Source) hash(ctx context.Context, d dep.Dep, u string, h hash.Hash) (su
 		slog.DebugContext(ctx, "artifact hashed", "url", u, "bytes", n, "duration", time.Since(start), "err", err)
 	}()
 	var body io.Reader
-	var release func()
 	if o := s.openers[d.Datasource]; o != nil {
-		body, release, err = s.open(ctx, o, d, u)
+		var release func()
+		if body, release, err = s.open(ctx, o, d, u); err != nil {
+			return "", fmt.Errorf("artifact %s: %w", u, err)
+		}
+		defer release()
 	} else {
-		body, release, err = s.get(ctx, u)
+		resp, err := s.getter.Open(ctx, u)
+		if err != nil {
+			return "", fmt.Errorf("artifact: %w", err) // the error names u
+		}
+		defer resp.Body.Close()
+		body = resp.Body
 	}
-	if err != nil {
-		return "", fmt.Errorf("artifact %s: %w", u, err)
-	}
-	defer release()
 	if n, err = io.Copy(h, io.LimitReader(body, maxArtifact+1)); err != nil {
 		return "", fmt.Errorf("artifact %s: %w", u, err)
 	}
@@ -169,7 +173,7 @@ func (s *Source) hash(ctx context.Context, d dep.Dep, u string, h hash.Hash) (su
 
 // open opens u with o within the semaphore; release closes the body and frees the slot.
 func (s *Source) open(ctx context.Context, o ArtifactOpener, d dep.Dep, u string) (body io.Reader, release func(), err error) {
-	done, err := httpx.Acquire(ctx, s.sem)
+	done, err := httpx.Acquire(ctx, s.getter.Sem)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -186,46 +190,16 @@ func (s *Source) fetch(ctx context.Context, u string) (first string, files map[s
 	defer func() {
 		slog.DebugContext(ctx, "checksums fetched", "url", u, "entries", len(files), "duration", time.Since(start), "err", err)
 	}()
-	body, release, err := s.get(ctx, u)
+	resp, err := s.getter.Open(ctx, u)
 	if err != nil {
-		return "", nil, fmt.Errorf("checksums %s: %w", u, err)
+		return "", nil, fmt.Errorf("checksums: %w", err) // the error names u
 	}
-	defer release()
-	first, files, err = parse(io.LimitReader(body, maxBody+1))
+	defer resp.Body.Close()
+	first, files, err = parse(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
 		return "", nil, fmt.Errorf("checksums %s: %w", u, err)
 	}
 	return first, files, nil
-}
-
-// get requests u within the semaphore and returns the body of a 2xx response; release
-// drains and closes it and frees the semaphore slot.
-func (s *Source) get(ctx context.Context, u string) (body io.Reader, release func(), err error) {
-	done, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return nil, nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
-	if err != nil {
-		done()
-		return nil, nil, err
-	}
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	resp, err := s.client.Do(req)
-	if err != nil {
-		done()
-		return nil, nil, err
-	}
-	release = func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		_ = resp.Body.Close()
-		done()
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		release()
-		return nil, nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	return resp.Body, release, nil
 }
 
 // parse reads a sha256sum-style list ("<hex>  <name>" or "<hex> *<name>") line by line. first

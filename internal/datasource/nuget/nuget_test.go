@@ -174,7 +174,7 @@ func TestReleasesErrors(t *testing.T) {
 	for _, tt := range []struct{ source, name, want string }{
 		{"", "missing", "package missing not found"},
 		{srv.URL + "/empty/index.json", "x", "has no registration or package base address"},
-		{srv.URL + "/broken/index.json", "x", "malformed response"},
+		{srv.URL + "/broken/index.json", "x", "JSON array into Go nuget.index"},
 		{srv.URL + "/failing/index.json", "x", "HTTP 500"},
 		{srv.URL + "/gone/index.json", "x", "service index not found"},
 		{"https://user:pw@[bad/index.json", "x", "invalid URL"},

@@ -79,10 +79,10 @@ func TestChecksumURL(t *testing.T) {
 		{"bare digest", d("/bare", ""), h2, ""},
 		{"missing entry", d("/v{{version}}/sums.txt", "nope_{{version}}"), "", "no checksum for nope_1.2.0 in " + srv.URL + "/v1.2.0/sums.txt"},
 		{"empty body", d("/empty", ""), "", "no checksum in " + srv.URL + "/empty"},
-		{"404", d("/gone", ""), "", "checksums " + srv.URL + "/gone: HTTP 404"},
+		{"404", d("/gone", ""), "", "checksums: GET " + srv.URL + "/gone: HTTP 404"},
 		{"too large", d("/big", ""), "", "checksums " + srv.URL + "/big: larger than 1048576 bytes"},
 		{"too large lines", d("/biglines", ""), "", "checksums " + srv.URL + "/biglines: larger than 1048576 bytes"},
-		{"bad url", dep.Dep{ChecksumSource: &dep.ChecksumSource{URL: "http://[::1"}}, "", "checksums http://[::1: parse"},
+		{"bad url", dep.Dep{ChecksumSource: &dep.ChecksumSource{URL: "http://[::1"}}, "", "checksums: GET <invalid URL>: missing ']' in host"},
 		{"no source", dep.Dep{}, "", "dependency has no checksum source"},
 		{"empty source", dep.Dep{ChecksumSource: &dep.ChecksumSource{}}, "", "checksum source has neither asset, url nor artifact"},
 		{"asset without releases", dep.Dep{Datasource: "github-releases", ChecksumSource: &dep.ChecksumSource{Asset: "a"}}, "", "checksum asset requires the github-releases datasource"},
@@ -192,7 +192,7 @@ func TestChecksumArtifact(t *testing.T) {
 		{"sha512", art("/a/{{version}}/a-{{version}}.zip", h5), hex.EncodeToString(s512[:]), ""},
 		{"sha224", art("/a/{{version}}/a-{{version}}.zip", strings.Repeat("c", 56)), hex.EncodeToString(s224[:]), ""},
 		{"unknown length", art("/a/{{version}}/a-{{version}}.zip", "abc"), "", "artifact " + srv.URL + "/a/1.2.0/a-1.2.0.zip: pinned checksum is neither sha224, sha256 nor sha512 hex"},
-		{"404", art("/missing", h1), "", "artifact " + srv.URL + "/missing: HTTP 404"},
+		{"404", art("/missing", h1), "", "artifact: GET " + srv.URL + "/missing: HTTP 404"},
 		{"too large", art("/big", h1), "", "artifact " + srv.URL + "/big: larger than 268435456 bytes"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

@@ -47,8 +47,7 @@ const abbreviated = "application/vnd.npm.install-v1+json"
 // full packument at most once and only for release times and the source repository, and
 // parses each directory's .npmrc once; concurrent callers share the results.
 type Source struct {
-	client *http.Client
-	sem    chan struct{}
+	getter httpx.Getter
 	getenv func(string) string
 
 	packages datasource.Memo[string, *metadata] // registry + "\x00" + name: abbreviated metadata (nil = failed)
@@ -93,9 +92,11 @@ type wsEntry struct {
 
 // New returns the npm datasource. sem bounds concurrent requests; it is npm's own pool
 // (httpx.Limits.NPM). getenv supplies NPM_CONFIG_REGISTRY and the .npmrc ${VAR} expansions.
+// Every 2xx answer is read, and documents are not size-capped: they are decoded as they
+// arrive, and the full packuments of busy packages run to hundreds of MB.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) datasource.Datasource {
 	return &Source{
-		client: client, sem: sem, getenv: getenv,
+		getter: httpx.Getter{Client: client, Sem: sem, MaxBody: -1, Accept2xx: true}, getenv: getenv,
 		located: make(map[string]location),
 		rcs:     make(map[string]*rcEntry), wsDirs: make(map[string]*wsEntry), wsRoots: make(map[string]*wsEntry),
 	}
@@ -462,47 +463,19 @@ func (s *Source) fetch(ctx context.Context, loc location, name string) (p packum
 // stream GETs the document of package name from loc's registry as accept and hands its body
 // to decode, holding one of the datasource's request slots.
 func (s *Source) stream(ctx context.Context, loc location, name, accept string, decode func(io.Reader) error) error {
-	release, err := httpx.Acquire(ctx, s.sem)
-	if err != nil {
-		return err
+	g := s.getter
+	g.Prepare = func(req *http.Request) error {
+		req.Header.Set("Accept", accept)
+		if loc.token != "" {
+			req.Header.Set("Authorization", "Bearer "+loc.token)
+		}
+		return nil
 	}
-	defer release()
-	target := loc.reg + escapeName(name)
-	resp, err := s.get(ctx, target, name, accept, loc.token)
-	if err != nil {
-		return err
+	err := g.Stream(ctx, loc.reg+escapeName(name), decode)
+	if errors.Is(err, httpx.ErrNotFound) {
+		return fmt.Errorf("package %s not found", name)
 	}
-	defer closeBody(resp)
-	if err := decode(resp.Body); err != nil {
-		return fmt.Errorf("npm registry %s: malformed response: %w", target, err)
-	}
-	return nil
-}
-
-// get sends a GET for package name's document target and fails on a non-2xx status.
-func (s *Source) get(ctx context.Context, target, name, accept, token string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("npm registry %s: %w", target, err)
-	}
-	req.Header.Set("Accept", accept)
-	req.Header.Set("User-Agent", httpx.UserAgent())
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("npm registry %s: %w", target, err)
-	}
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		closeBody(resp)
-		return nil, fmt.Errorf("package %s not found", name)
-	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		closeBody(resp)
-		return nil, fmt.Errorf("npm registry %s: HTTP %d", target, resp.StatusCode)
-	}
-	return resp, nil
+	return err
 }
 
 // skipMembers skips the next value. An object is skipped member by member with ReadValue,
@@ -776,10 +749,4 @@ func expectObject(dec *jsontext.Decoder) error {
 		return fmt.Errorf("expected {, got %v", tok.Kind())
 	}
 	return nil
-}
-
-// closeBody drains a little of the body so the connection can be reused, then closes it.
-func closeBody(resp *http.Response) {
-	httpx.DrainBody(resp)
-	_ = resp.Body.Close()
 }
