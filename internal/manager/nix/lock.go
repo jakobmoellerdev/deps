@@ -30,6 +30,9 @@ var (
 	channelRe = regexp.MustCompile(`^https://(?:channels\.nixos\.org|nixos\.org/channels)/[^/]+/nixexprs\.tar\.(?:xz|zst|bz2|gz)$`)
 	// archiveRe matches a forge archive tarball (`https://<host>/<owner>/<repo>/archive/<ref>.tar.gz`).
 	archiveRe = regexp.MustCompile(`^https://([^/]+)/([^/]+)/([^/]+)/archive/.+\.tar\.gz$`)
+	// inputNameRe matches the input names `nix flake update` accepts (Nix's flakeIdRegex): it
+	// reads `a/b` as input b of input a and rejects `a.b`, so other names cannot be passed.
+	inputNameRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 )
 
 // flakeLock is a flake.lock: its nodes by key, root the key of the flake itself.
@@ -166,6 +169,10 @@ func (l *flakeLock) resolve(d *dep.Dep) {
 	}
 	if pin == "" {
 		d.Digest, d.DigestSpan = lk.Rev, dep.Span{}
+		if d.Datasource == dsRefs && !inputNameRe.MatchString(d.Name) {
+			// Only `nix flake update <input>` moves an unpinned branch: flake.nix is unchanged.
+			d.Skip = skipInputName
+		}
 		return
 	}
 	d.Digest = pin
@@ -243,9 +250,12 @@ func (l Locker) Process(ctx context.Context, dir string, manifests, files map[st
 
 // ProcessUpdates re-locks every updated input (manifest updates ups and lockfile-only ones
 // locks alike, by dep name) with `nix flake update <input>…`: a branch input moves to the
-// branch's newest commit, an input whose ref or rev flake.nix now names to that. Without
-// updates `nix flake lock` brings the lock in line with flake.nix. It returns flake.lock when
-// it changed; without one it does nothing.
+// branch's newest commit, an input whose ref or rev flake.nix now names to that. Inputs whose
+// name nix cannot address (`a.b`, `a/b`) are not named: they only have updates that change
+// flake.nix (ReadLocks skips their branch updates), and nix re-locks every input whose
+// reference changed anyway. Without updates, or without names, `nix flake lock` brings the
+// lock in line with flake.nix. It returns flake.lock when it changed; without one it does
+// nothing.
 func (l Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error) {
 	lock, ok := files[lockFile]
 	if !ok {
@@ -260,7 +270,7 @@ func (l Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files
 	}
 	var inputs []string
 	for _, u := range slices.Concat(ups[manifestName], locks[manifestName]) {
-		if !slices.Contains(inputs, u.Dep.Name) {
+		if inputNameRe.MatchString(u.Dep.Name) && !slices.Contains(inputs, u.Dep.Name) {
 			inputs = append(inputs, u.Dep.Name)
 		}
 	}

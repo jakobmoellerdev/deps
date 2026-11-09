@@ -53,6 +53,7 @@ const (
 	skipChannel     = "nixos channel (lockFileMaintenance)"
 	skipRefSpan     = "cannot locate ref"
 	skipRevSpan     = "cannot locate rev"
+	skipInputName   = "input name not addressable by nix flake update"
 	skipUnsupported = "unsupported input type "
 )
 

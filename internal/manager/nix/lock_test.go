@@ -88,6 +88,32 @@ func TestProcessUpdates(t *testing.T) {
 	}
 }
 
+// TestProcessUnaddressableNames: nix reads `a/b` as input b of input a and rejects `foo.bar`,
+// failing the whole command; such inputs are not named. Their updates change flake.nix, which
+// nix re-locks anyway (`nix flake lock` when no input is left to name).
+func TestProcessUnaddressableNames(t *testing.T) {
+	stub(t)
+	dir := t.TempDir()
+	write(t, dir, map[string]string{"flake.nix": "{}", "flake.lock": "lock\n"})
+	files := map[string][]byte{"flake.lock": []byte("lock\n")}
+	for _, c := range []struct {
+		names []string
+		args  string
+	}{
+		{[]string{"foo.bar", "a/b", "ok", "x_1-y", "1st"}, "flake update ok x_1-y --flake path:<mirror>"},
+		{[]string{"foo.bar", "a/b"}, "flake lock path:<mirror>"},
+	} {
+		var ups []dep.Update
+		for _, n := range c.names {
+			ups = append(ups, update(n))
+		}
+		out, err := Locker{}.ProcessUpdates(t.Context(), dir, nil, files, map[string][]dep.Update{"flake.nix": ups}, nil)
+		if want := "lock\n" + features + c.args + "\n"; err != nil || string(out["flake.lock"]) != want {
+			t.Errorf("%v: flake.lock = %q, %v; want %q", c.names, out["flake.lock"], err, want)
+		}
+	}
+}
+
 func TestProcessOutcomes(t *testing.T) {
 	log := stub(t)
 	dir := t.TempDir()

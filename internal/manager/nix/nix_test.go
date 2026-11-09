@@ -230,6 +230,38 @@ func TestReadLocksChannel(t *testing.T) {
 	}
 }
 
+// TestReadLocksInputNames: an unpinned branch input only moves with `nix flake update
+// <input>`, which cannot name `foo.bar` (rejected) or `a/b` (input b of input a): skipped.
+// Tag and rev updates of such inputs change flake.nix and stay.
+func TestReadLocksInputNames(t *testing.T) {
+	rev := strings.Repeat("1", 40)
+	src := []byte(`{ inputs."foo.bar".url = "github:acme/a"; inputs."a/b".url = "github:acme/b/v1.0.0"; inputs."x.y".url = "github:acme/c/` + rev + `"; inputs.ok_1-x.url = "github:acme/d"; }`)
+	deps, err := New().Extract("flake.nix", src, manager.Env{})
+	if err != nil || len(deps) != 4 {
+		t.Fatal(deps, err)
+	}
+	node := func(repo, ref, pin string) string {
+		return `{"locked": {"owner": "acme", "repo": "` + repo + `", "rev": "` + rev + `", "type": "github"}, "original": {"owner": "acme", "repo": "` + repo + `", "ref": "` + ref + `", "rev": "` + pin + `", "type": "github"}}`
+	}
+	l, err := parseLock([]byte(`{"nodes": {"a": ` + node("a", "", "") + `, "b": ` + node("b", "v1.0.0", "") + `, "c": ` + node("c", "", rev) + `, "d": ` + node("d", "", "") +
+		`, "root": {"inputs": {"foo.bar": "a", "a/b": "b", "x.y": "c", "ok_1-x": "d"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range deps {
+		l.resolve(&deps[i])
+	}
+	want := []string{
+		`1 foo.bar skip "input name not addressable by nix flake update"`,
+		"1 a/b git-tags v1.0.0@1111111 https://github.com/acme/b ref=v1.0.0 rev=-",
+		"1 x.y git-refs HEAD@1111111 https://github.com/acme/c ref=- rev=" + rev,
+		"1 ok_1-x git-refs HEAD@1111111 https://github.com/acme/d ref=- rev=-",
+	}
+	if got := renderAll(deps, src); !slices.Equal(got, want) {
+		t.Errorf("deps =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 func TestEdits(t *testing.T) {
 	src := []byte(`{ inputs.a.url = "github:acme/a/v1.0.0"; inputs.b.url = "github:acme/b/` + strings.Repeat("0", 40) + `"; inputs.c.url = "github:acme/c/main"; }`)
 	deps, err := New().Extract("flake.nix", src, manager.Env{})

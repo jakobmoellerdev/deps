@@ -29,6 +29,7 @@ var Doc = refdoc.Manager{
 		{Reason: skipTarball, When: "a tarball URL that is neither a NixOS channel nor a `…/<owner>/<repo>/archive/<ref>.tar.gz` archive"},
 		{Reason: skipRefSpan, When: "a version-tag ref `flake.nix` does not write verbatim (percent-encoded, escaped or interpolated), or that differs from `flake.lock`'s"},
 		{Reason: skipRevSpan, When: "a rev `flake.nix` pins but does not write verbatim, or that differs from `flake.lock`'s"},
+		{Reason: skipInputName, When: "an input tracking a branch without a pinned rev whose name `nix flake update` cannot address (only letters, digits, `_` and `-`, starting with a letter: nix reads `\"a/b\"` as input `b` of input `a` and rejects `\"a.b\"`), so its `flake.lock` cannot move alone. Its tag and rev updates change `flake.nix` and are re-locked without naming it"},
 		{Reason: skipUnsupported + "<type>", When: "a `file`, `hg` or other input type without a git repository"},
 	},
 	Sections: []refdoc.Section{
@@ -48,6 +49,6 @@ var Doc = refdoc.Manager{
 
 const lockBody = "1. **Lockfile.** The lockfile of a `flake.nix` is the `flake.lock` next to it; without one its inputs are skipped.\n" +
 	"2. **Temporary copy.** The directory is mirrored to a temp dir: flake.nix (patched) and flake.lock are copied, every other entry but `.git` is symlinked; the directories above it up to the repository top are recreated with their entries symlinked, so relative path inputs resolve as in the checkout. nix gets the copy as a `path:` flake, so it does not look for a git repository around it.\n" +
-	"3. **Update.** `nix --extra-experimental-features 'nix-command flakes' flake update <input>… --flake path:<copy>` re-locks every updated input, which needs Nix 2.19 or later: a branch input moves to the branch's newest commit at that time (which can be newer than the proposed digest, as in Renovate), an input whose ref or rev `flake.nix` now names moves to it. Other inputs keep their lock.\n" +
+	"3. **Update.** `nix --extra-experimental-features 'nix-command flakes' flake update <input>… --flake path:<copy>` re-locks every updated input, which needs Nix 2.19 or later: a branch input moves to the branch's newest commit at that time (which can be newer than the proposed digest, as in Renovate), an input whose ref or rev `flake.nix` now names moves to it. An input whose name nix cannot address (`\"a.b\"`, `\"a/b\"`) is not named: nix re-locks it because its reference in `flake.nix` changed (`nix flake lock` when no other input is named). Other inputs keep their lock.\n" +
 	"4. **Tool.** `nix` must be on `PATH`, e.g. from `cachix/install-nix-action` or `DeterminateSystems/nix-installer-action`; its own configuration (`NIX_CONFIG`, `nix.conf`) is in effect. deps adds its github.com token (the platform token on GitHub, else `DEPS_GITHUB_COM_TOKEN`) as `extra-access-tokens` to `NIX_CONFIG`, as Renovate passes `--extra-access-tokens`. Without nix, the flake.nix files fail with `nix not found (needed to update flake.lock)`.\n" +
 	"5. **Failure.** A failed command reports `nix flake update in <dir>: <last 20 output lines>`, and the flake.nix's changes are dropped."
