@@ -49,3 +49,18 @@ jobs:
     runs-on: ${{ matrix.os }}
   future:
     runs-on: ubuntu-28.04
+  included:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+          - runner: ubuntu-latest
+          - runner: [self-hosted, linux]
+    runs-on:
+      group: mac
+      labels: [self-hosted, "${{ matrix.runner }}", "${{ matrix.missing }}"]
+  reused:
+    strategy:
+      matrix:
+        os: [macos-14]
+    runs-on: ${{matrix.os}}

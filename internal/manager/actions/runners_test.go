@@ -46,6 +46,12 @@ func TestExtractRunners(t *testing.T) {
 				{"macos", "14-large", "macos-14-large", "", 29},
 				{"macos", "13", "macos-13", "", 32},
 				{"xcode", "27-xlarge", "xcode-27-xlarge", "", 34},
+				{"ubuntu", "22.04", "ubuntu-22.04", "", 44},
+				{"ubuntu", "22.04", "ubuntu-22.04", "", 48},
+				{"windows", "2025", "windows-2025", "", 48},
+				{"macos", "15", "macos-15", "", 56},
+				{"ubuntu", "latest", "", "non-version value", 57},
+				{"macos", "14", "macos-14", "", 65},
 			}
 			if len(got) != len(wants) {
 				t.Fatalf("got %d runner deps, want %d: %+v", len(got), len(wants), got)
@@ -97,7 +103,7 @@ func TestRunnerEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := map[string]string{"24.04": "26.04", "24.04-arm": "26.04-arm", "22.04": "24.04", "2022": "2025", "14-large": "15-large", "13": "26", "27-xlarge": "28-xlarge"}
+	next := map[string]string{"24.04": "26.04", "24.04-arm": "26.04-arm", "22.04": "24.04", "2022": "2025", "14-large": "15-large", "13": "26", "27-xlarge": "28-xlarge", "2025": "2026", "15": "26", "14": "15"}
 	var edits []patch.Edit
 	for _, d := range runnerDeps(t, ".github/workflows/ci.yml", src) {
 		if d.Skip != "" {
@@ -122,8 +128,11 @@ func TestRunnerEdits(t *testing.T) {
 		`runs-on: [self-hosted, "macos-15-large"]` + "\n",
 		"runs-on:\n      macos-26\n",
 		"runs-on: xcode-28-xlarge\n",
+		"group: ubuntu-runners\n      labels: ubuntu-24.04\n",
+		"os: [ubuntu-24.04, windows-2026]\n",
+		"- runner: macos-26\n",
+		"os: [macos-15]\n",
 		"runs-on: ubuntu-latest\n",
-		"labels: ubuntu-22.04\n",
 		"default: ubuntu-22.04\n",
 	} {
 		if !strings.Contains(string(out), line) {
