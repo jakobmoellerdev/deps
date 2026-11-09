@@ -493,15 +493,18 @@ With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, the lo
 
 ## helm
 
-Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), Helm v2 requirements.yaml (with requirements.lock), helmfiles and chart custom resources, from classic chart repositories and OCI registries.
+Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), Helm v2 requirements.yaml (with requirements.lock), helmfiles, chart custom resources, Rancher Fleet bundles, Helmsman desired state files and vendir configs, from classic chart repositories and OCI registries.
 
 **Files:**
 
 - `Chart.yaml` (DepType `chart`)
 - `requirements.y(a)ml` of Helm v2 (`apiVersion: v1`) charts (DepType `requirements`); files without `dependencies` (Ansible Galaxy) yield nothing
 - `helmfile.y(a)ml`, `helmfile.d/*.y(a)ml`, each optionally `.gotmpl` (DepType `helmfile`)
-- other `*.y(a)ml` containing the API group of a k0s, Flux, Argo CD or Sveltos resource below, parsed document by document (DepTypes `k0s`, `flux`, `argocd`, `sveltos`)
+- other `*.y(a)ml` containing the API group of a k0s, Flux, Argo CD, Sveltos or Fleet resource below, parsed document by document (DepTypes `k0s`, `flux`, `argocd`, `sveltos`, `fleet`)
 - `repositories.yaml` in Helm's repository config format (`repositories[]` with `name` and `url`): no deps, it resolves Chart.yaml repository aliases (below)
+- `fleet.y(a)ml` Rancher Fleet bundle configs (DepType `fleet`)
+- Helmsman desired state files: any other `*.y(a)ml` whose top level has a `helmRepos` mapping, or an `apps` mapping and `namespaces` (DepType `helmsman`; Renovate's helmsman matches no file unless `managerFilePatterns` are set; TOML desired state files are not read, as in Renovate)
+- `vendir.yml` with `apiVersion: vendir.k14s.io/*` and `kind: Config` (DepType `vendir`)
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
@@ -512,27 +515,33 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), Helm v
 | `flux` | `HelmRelease` (`helm.toolkit.fluxcd.io/v2*`) `spec.chart.spec.chart` + `version` from its `sourceRef` `HelmRepository` (`source.toolkit.fluxcd.io`, any file; `spec.type: oci` → `oci://`; none found: the [`registryAliases`](configuration.md#registryaliases) URL of the `sourceRef` name), the `OCIRepository` chart (`spec.url` + `spec.ref.semver`, else `spec.ref.tag`) a `spec.chartRef` names or whose `spec.layerSelector.mediaType` is the Helm chart type, and the `spec.ref.tag` of a `GitRepository` (`spec.url`, named after its path, `git-tags` with `tag` versioning) | `helm`, `git-tags` | `semver`; GitRepository: `tag` | updated |
 | `argocd` | `Application` `spec.source` / `spec.sources[]` and `ApplicationSet` `spec.template.spec.source(s)` with a `chart`: `repoURL` + `chart` + `targetRevision`; a `repoURL` without scheme is an OCI registry | `helm` | `semver` | updated |
 | `sveltos` | `ClusterProfile` and `Profile` (`config.projectsveltos.io`) `spec.helmCharts[]`, `ClusterPromotion` `spec.profileSpec.helmCharts[]` and `EventTrigger` (`lib.projectsveltos.io`) `spec.helmCharts[]`: `chartVersion` of `chartName` (without its `<repositoryName>/` prefix) in `repositoryURL`; an `oci://` `repositoryURL` is the chart reference itself | `helm` | `semver` | updated |
+| `fleet` | fleet.yaml `helm.chart` in `helm.repo` (a [`registryAliases`](configuration.md#registryaliases) key maps it, as in Renovate) or an `oci://` chart, at `helm.version`; each `targetCustomizations[]` entry whose `helm` sets `chart`, `repo` or `version` is a dep of its own, `chart` and `repo` defaulting to the bundle's (its version is never inherited); and the `spec.revision` of a `GitRepo` (`fleet.cattle.io`) of `spec.repo` | `helm`, `git-tags` | `semver`; GitRepo: `tag` | updated |
+| `helmsman` | `apps.<name>.chart` (`<repo>/<chart>` with `<repo>` a `helmRepos` name, or `oci://host/path/<chart>`) at `apps.<name>.version`, also through merge keys (`<<: *template`); a repo the file does not declare resolves to the `helmRepos` URL of the other scanned desired state files (Helmsman composes several), if they agree | `helm` | `semver` | updated |
+| `vendir` | `directories[].contents[]`: `helmChart` `name` in `repository.url` (http(s) or `oci://`) at `version`; `git` `url` at `ref` (a version tag, also as `origin/<tag>`); `githubRelease` `slug` at `tag` | `helm`, `git-tags`, `github-releases` | `semver`; git, githubRelease: `tag` | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
-| `unsupported range` | a version range deps cannot rewrite: `*`, `!=1.2.3` (see Version ranges); flux: a GitRepository `spec.ref.semver` |
+| `unsupported range` | a version range deps cannot rewrite: `*`, `!=1.2.3` (see Version ranges); flux: a GitRepository `spec.ref.semver`; vendir: a `refSelection` or `tagSelection` |
 | `no version` | the version is missing or empty |
 | `template value` | the version (or a resource's chart name, `repoURL` or `repositoryURL`) contains `{{` |
-| `local chart` | Chart.yaml, requirements.yaml: empty or `file://` repository; helmfile: a chart path (`./x`, `../x`, `/x`, no `/`); k0s: a chart path (`/x`, `./x`, `*.tgz`) |
+| `local chart` | Chart.yaml, requirements.yaml: empty or `file://` repository; helmfile: a chart path (`./x`, `../x`, `/x`, no `/`); k0s: a chart path (`/x`, `./x`, `*.tgz`); fleet: a chart without `repo` (a path in the bundle); helmsman: a chart path (`./x`, `/x`) |
 | `repository alias` | Chart.yaml, requirements.yaml: an `@name` or `alias:name` repository nothing resolves (see Repository aliases); the dep's source is the alias as written |
-| `unknown chart repository <repo>` | Chart.yaml: a repository that is no URL; helmfile: a `<repo>/` prefix not in `repositories[]`; k0s: an alias no scanned ClusterConfig declares |
-| `ambiguous chart repository <alias>` | k0s: ClusterConfigs in other files declare the alias with different URLs (the chart's own file declares none) |
-| `invalid chart reference` | helmfile and k0s: `oci://` without a path, or `<repo>/a/b`; k0s: a chart name without `/` |
+| `unknown chart repository <repo>` | Chart.yaml, fleet: a repository that is no http(s) or `oci://` URL; helmfile: a `<repo>/` prefix not in `repositories[]`; k0s: an alias no scanned ClusterConfig declares; helmsman: a repo no scanned desired state file declares, or whose URL is no http(s) or `oci://` URL (`s3://`, `gs://`) |
+| `ambiguous chart repository <alias>` | k0s: ClusterConfigs in other files declare the alias with different URLs (the chart's own file declares none); helmsman: other desired state files declare the repo with different URLs |
+| `invalid chart reference` | helmfile, k0s, fleet, helmsman: `oci://` without a path; helmfile, helmsman: `<repo>/a/b`; k0s, helmsman: a chart name without `/`; fleet, vendir: a chart name with `/` |
+| `chart archive URL` | fleet: a chart given as the URL of a chart archive (`https://…/chart-1.0.0.tgz`) |
+| `variable reference` | helmsman: `$` in the chart, the version or the repo URL (Helmsman substitutes environment variables) |
+| `no repository` | vendir: a `helmChart` without `repository.url` (vendir uses the machine's Helm repositories) |
 | `unknown HelmRepository <namespace>/<name>` | flux: no scanned HelmRepository matches the `sourceRef` |
 | `ambiguous HelmRepository <name>` | flux: the `sourceRef` matches HelmRepositories with different URLs |
 | `chart from <kind> source` | flux: the `sourceRef` is a `GitRepository` or `Bucket`: Flux ignores `version` for them and builds the chart at the source's revision, so the GitRepository's `spec.ref.tag` is the dep |
 | `no sourceRef` | flux: the HelmRelease chart has no `sourceRef` kind |
 | `pinned by digest` | flux: the OCIRepository selects `spec.ref.digest` |
-| `commit ref` | flux: a GitRepository with `spec.ref.commit` (Flux checks out the commit, whatever the tag) |
-| `non-version ref` | flux: a GitRepository following `spec.ref.name`, `spec.ref.branch` or no ref (the default branch) |
-| `unrecognized git URL` | flux: a GitRepository `spec.url` that is no https/ssh/git URL with a host and path |
+| `commit ref` | flux: a GitRepository with `spec.ref.commit` (Flux checks out the commit, whatever the tag); fleet, vendir: a 40-hex `revision` / `ref` |
+| `non-version ref` | flux: a GitRepository following `spec.ref.name`, `spec.ref.branch` or no ref (the default branch); fleet: a GitRepo without `spec.revision` (it follows `spec.branch`) or one that is no `v?N[.N[.N]]` tag; vendir: a `ref` or `tag` that is no such tag (`origin/main`, `latest`), or a git source without `ref` |
+| `unrecognized git URL` | flux, fleet, vendir: a git URL that is no https/ssh/git URL with a host and path |
 | `no repoURL` | argocd: a Helm source without `repoURL` |
 | `no repositoryURL` | sveltos: a `helmCharts[]` entry without `repositoryURL` |
 | `cannot locate value` | the version's bytes could not be found (escapes, block scalars) |
@@ -566,9 +575,15 @@ Updates Helm chart versions in Chart.yaml dependencies (with Chart.lock), Helm v
 - A Flux `OCIRepository` that neither a HelmRelease `chartRef` names nor declares the Helm chart media type is a Kustomization artifact, not a dep.
 - HelmReleases with a `chartRef` carry no version; the OCIRepository does. Container images in the same files (values) are found by the docker manager.
 
+**Fleet, Helmsman and vendir.**
+
+- Fleet: a bundle without `helm.chart` deploys the bundle directory (no dep); a targetCustomization that only sets values is no dep. A customization's own `chart`, `repo` and version are edited where it writes them; Renovate names a customization's dep after the customization, deps after the chart.
+- Helmsman: an app template shared by several apps (`<<: *tomcat`) is one dep at the template's `version`. A repo name an app's own file does not declare is resolved once every file was extracted, from the `helmRepos` of the other desired state files of the repository (one URL per name, trailing slashes ignored).
+- vendir: `vendir.lock.yml` and the synced directories are not updated: run `vendir sync` after the update (Renovate runs it in its artifact step). `http`, `image`, `imgpkgBundle`, `directory` and `manual` contents are no deps.
+
 **Replacements.**
 
-A chart is [replaced](configuration.md#rulesreplacementname) by a chart name (same repository), or `<http(s):// or oci:// URL>/<chart>` (or `host/path/<chart>` for OCI) to move it, where the repository is written next to the chart (Chart.yaml `repository`, Argo CD `repoURL`, Sveltos `repositoryURL`, Flux OCIRepository `url`, k0s `url`, `oci://` references); alias and `sourceRef` repositories only allow a new chart name, and Sveltos `oci://` charts, named in both `repositoryURL` and `chartName`, none. `Chart.lock` entries follow the renamed or moved chart.
+A chart is [replaced](configuration.md#rulesreplacementname) by a chart name (same repository), or `<http(s):// or oci:// URL>/<chart>` (or `host/path/<chart>` for OCI) to move it, where the repository is written next to the chart (Chart.yaml `repository`, Argo CD `repoURL`, Sveltos `repositoryURL`, Flux OCIRepository `url`, k0s `url`, Fleet `repo`, vendir `repository.url`, `oci://` references); alias, Helmsman `helmRepos` and `sourceRef` repositories only allow a new chart name, and Sveltos `oci://` charts, named in both `repositoryURL` and `chartName`, none. `Chart.lock` entries follow the renamed or moved chart.
 
 **Edits.**
 

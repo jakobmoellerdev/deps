@@ -1,0 +1,53 @@
+apiVersion: vendir.k14s.io/v1alpha1
+kind: Config
+directories:
+- path: vendor
+  contents:
+
+  # validates checksums automatically from release notes
+  - path: github.com/carvel-dev/kapp-controller
+    githubRelease:
+      slug: carvel-dev/kapp-controller
+      tag: v0.1.0
+
+  # skips checkum validation
+  - path: github.com/cert-manager/cert-manager
+    githubRelease:
+      slug: cert-manager/cert-manager
+      tag: v1.8.0
+      disableAutoChecksumValidation: true
+      assetNames: ["cert-manager.yaml"]
+    includePaths:
+    - cert-manager.yaml
+
+  # checkum validation only for one asset
+  - path: specific-asset-checksum-checked
+    githubRelease:
+      slug: carvel-dev/kapp-controller
+      tag: v0.35.0
+      checksums:
+        release.yml: 3abf5ddaa12eee028c60f30f3aa2bf066702cfed281adb65cf6d422bc83d0d35
+      assetNames: ["release.yml"]
+
+  # unpacks archive included in the release
+  - path: github.com/cloudfoundry-incubator/eirini-release
+    githubRelease:
+      slug: cloudfoundry-incubator/eirini-release
+      tag: v1.2.0
+      checksums:
+        eirini-cf.tgz: 819b37126f81ad479acc8dcd7e61e8b0e55153d8fa27aa9a04692c38d0c310fe
+        eirini-uaa.tgz: efe8a498c67368fac1c46fa52c484261cbf4e78b3291cff69e660cd863342674
+        eirini.tgz: b535d9434300e79d11d42acc417148d09054aa32808dab5f12264d3af59ad548
+      unpackArchive:
+        path: eirini.tgz
+
+  # templates http url with release tag
+  - path: github.com/kubernetes/kubectl
+    githubRelease:
+      slug: kubernetes/kubernetes
+      disableAutoChecksumValidation: true
+      tagSelection:
+        semver:
+          constraints: 1.23.x
+      http:
+        url: https://dl.k8s.io/release/{tag}/bin/linux/amd64/kubectl

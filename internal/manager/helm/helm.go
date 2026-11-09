@@ -1,8 +1,9 @@
 // Package helm updates Helm chart versions: Chart.yaml and Helm v2 requirements.yaml
-// dependencies (and the matching Chart.lock / requirements.lock entries and digest, see Locker), helmfile releases, and the chart references of
-// Kubernetes custom resources (k0s Chart, Flux HelmRelease, Argo CD Application). Charts are
-// looked up with the helm datasource in classic chart repositories (index.yaml) and OCI
-// registries.
+// dependencies (and the matching Chart.lock / requirements.lock entries and digest, see Locker), helmfile releases,
+// the chart references of Kubernetes custom resources (k0s Chart, Flux HelmRelease, Argo CD
+// Application, Sveltos, Fleet GitRepo), Rancher Fleet fleet.yaml bundles, Helmsman desired
+// state files and vendir.yml configs. Charts are looked up with the helm datasource in classic
+// chart repositories (index.yaml) and OCI registries.
 package helm
 
 import (
@@ -33,6 +34,9 @@ const (
 	TypeFlux         = "flux"
 	TypeArgoCD       = "argocd"
 	TypeSveltos      = "sveltos"
+	TypeFleet        = "fleet"
+	TypeHelmsman     = "helmsman"
+	TypeVendir       = "vendir"
 )
 
 var helmfileRe = regexp.MustCompile(`(^|/)(helmfile\.ya?ml|helmfile\.d/[^/]+\.ya?ml)(\.gotmpl)?$`)
@@ -76,6 +80,13 @@ func (m *helmManager) Extract(file string, src []byte, env manager.Env) ([]dep.D
 		return helmfileDeps(file, src)
 	case path.Base(file) == repositoriesFile:
 		m.repositoryConfig(file, src)
+	case isFleet(file):
+		return fleetDeps(file, src, env.RegistryAliases)
+	case path.Base(file) == vendirFile:
+		return vendirDeps(file, src), nil
+	}
+	if deps, ok := m.helmsman(file, src); ok {
+		return deps, nil
 	}
 	return m.manifests(file, src, env.RegistryAliases), nil
 }

@@ -36,6 +36,7 @@ var crdResources = map[string]func(x *crdExtractor, n, spec *yaml.Node){
 		x.sveltosCharts(yamlspan.Get(spec, "profileSpec"))
 	},
 	"lib.projectsveltos.io EventTrigger": func(x *crdExtractor, _, spec *yaml.Node) { x.sveltosCharts(spec) },
+	"fleet.cattle.io GitRepo":            func(x *crdExtractor, _, spec *yaml.Node) { x.fleetGitRepo(spec) },
 }
 
 // crdGroups are the distinct API groups of crdResources.

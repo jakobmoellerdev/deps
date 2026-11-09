@@ -1,0 +1,22 @@
+defaultNamespace: istio-system
+helm:
+  releaseName: rancher-istio
+  chart: "oci://dp.apps.rancher.io/charts/istio"
+  force: false
+  timeoutSeconds: 0
+  targetNamespace: istio-system
+  values:
+    global:
+      imagePullSecrets: [ "application-collection" ]
+diff:
+  comparePatches:
+  - apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingWebhookConfiguration
+    name: istio-validator-istio-system
+    operations:
+    - {"op": "remove", "path":"/webhooks"}
+  - apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingWebhookConfiguration
+    name: istiod-default-validator
+    operations:
+    - {"op": "remove", "path":"/webhooks"}

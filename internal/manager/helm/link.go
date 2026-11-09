@@ -8,15 +8,17 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
-// key names a repository: a Flux object (namespace, name) or a k0s alias (name only).
+// key names a repository: a Flux object (namespace, name) or a k0s or Helmsman alias (name
+// only).
 type key struct{ namespace, name string }
 
 type refKind uint8
 
 const (
-	refK0s  refKind = iota // the dep's repository is the k0s alias key.name
-	refFlux                // the dep's repository is the HelmRepository key
-	refOCI                 // the dep is the OCIRepository key: kept only if a chartRef names it
+	refK0s      refKind = iota // the dep's repository is the k0s alias key.name
+	refFlux                    // the dep's repository is the HelmRepository key
+	refOCI                     // the dep is the OCIRepository key: kept only if a chartRef names it
+	refHelmsman                // the dep's repository is the helmRepos name key.name of another file
 )
 
 // ref is a dep of a file whose repository (or whether it is a dep at all) Link decides.
@@ -31,11 +33,12 @@ type ref struct {
 
 // fileLinks are the definitions and references of one file.
 type fileLinks struct {
-	k0sRepos   map[string]string // k0s ClusterConfig repository alias → URL
-	helmRepos  map[key]string    // Flux HelmRepository → URL (oci:// for OCI registries)
-	chartRefs  []key             // OCIRepositories named by a HelmRelease chartRef
-	repoConfig map[string]string // Helm repository config (repositories.yaml) name → URL
-	refs       []ref
+	k0sRepos      map[string]string // k0s ClusterConfig repository alias → URL
+	helmRepos     map[key]string    // Flux HelmRepository → URL (oci:// for OCI registries)
+	chartRefs     []key             // OCIRepositories named by a HelmRelease chartRef
+	repoConfig    map[string]string // Helm repository config (repositories.yaml) name → URL
+	helmsmanRepos map[string]string // Helmsman desired state file helmRepos name → URL
+	refs          []ref
 }
 
 // k0sRepo is a k0s repository alias definition and the file declaring it.
@@ -44,17 +47,18 @@ type k0sRepo struct{ file, url string }
 // links collects the definitions and references of every file of a run (Extract runs
 // concurrently) until Link resolves them. It only holds repository names and URLs.
 type links struct {
-	mu         sync.Mutex
-	k0sRepos   map[string][]k0sRepo
-	helmRepos  map[key]string
-	chartRefs  map[key]bool
-	repoConfig map[string][]string // Helm repository config name → its distinct URLs
-	refs       map[string][]ref    // by file
+	mu            sync.Mutex
+	k0sRepos      map[string][]k0sRepo
+	helmRepos     map[key]string
+	chartRefs     map[key]bool
+	repoConfig    map[string][]string // Helm repository config name → its distinct URLs
+	helmsmanRepos map[string][]string // Helmsman helmRepos name → its distinct URLs
+	refs          map[string][]ref    // by file
 }
 
 // add merges the definitions and references of file.
 func (l *links) add(file string, f *fileLinks) {
-	if f.k0sRepos == nil && f.helmRepos == nil && f.chartRefs == nil && f.repoConfig == nil && f.refs == nil {
+	if f.k0sRepos == nil && f.helmRepos == nil && f.chartRefs == nil && f.repoConfig == nil && len(f.helmsmanRepos) == 0 && f.refs == nil {
 		return
 	}
 	l.mu.Lock()
@@ -71,6 +75,11 @@ func (l *links) add(file string, f *fileLinks) {
 	for name, url := range f.repoConfig {
 		if !slices.Contains(l.repoConfig[name], url) {
 			l.repoConfig = addTo(l.repoConfig, name, append(l.repoConfig[name], url))
+		}
+	}
+	for name, url := range f.helmsmanRepos {
+		if !slices.Contains(l.helmsmanRepos[name], url) {
+			l.helmsmanRepos = addTo(l.helmsmanRepos, name, append(l.helmsmanRepos[name], url))
 		}
 	}
 	if f.refs != nil {
@@ -90,6 +99,7 @@ func addTo[K comparable, V any](m map[K]V, k K, v V) map[K]V {
 // Link resolves the repository references of the run's deps: k0s chart aliases against the
 // ClusterConfig repositories, Flux HelmRelease sourceRefs against the HelmRepositories (else
 // registryAliases), Chart.yaml repository aliases against the repositories.yaml files (one
+// URL per name), Helmsman repos against the helmRepos of the other desired state files (one
 // URL per name), and drops the OCIRepositories that are not charts. Then it forgets the run's
 // definitions.
 func (m *helmManager) Link(files [][]dep.Dep) {
@@ -116,6 +126,8 @@ func (m *helmManager) Link(files [][]dep.Dep) {
 				if !l.chartRef(r.key) {
 					d.Manager, drop = "", true
 				}
+			case refHelmsman:
+				d.Source, d.Skip = l.helmsmanRepo(r.key.name)
 			}
 		}
 		for i := range deps {
@@ -129,7 +141,7 @@ func (m *helmManager) Link(files [][]dep.Dep) {
 			files[f] = slices.DeleteFunc(deps, func(d dep.Dep) bool { return d.Manager == "" })
 		}
 	}
-	l.k0sRepos, l.helmRepos, l.chartRefs, l.repoConfig, l.refs = nil, nil, nil, nil, nil
+	l.k0sRepos, l.helmRepos, l.chartRefs, l.repoConfig, l.helmsmanRepos, l.refs = nil, nil, nil, nil, nil, nil
 }
 
 // k0sRepo resolves a k0s repository alias used in file. One URL for the alias wins; with
@@ -149,6 +161,18 @@ func (l *links) k0sRepo(file, alias string) (url, skip string) {
 		return "", "ambiguous chart repository " + alias
 	}
 	return defs[0].url, ""
+}
+
+// helmsmanRepo resolves a Helmsman repo name its own file does not declare against the
+// helmRepos of the run's other desired state files (Helmsman composes several with -f).
+func (l *links) helmsmanRepo(name string) (url, skip string) {
+	switch urls := l.helmsmanRepos[name]; len(urls) {
+	case 0:
+		return "", "unknown chart repository " + name
+	case 1:
+		return helmsmanRepository(name, urls[0])
+	}
+	return "", "ambiguous chart repository " + name
 }
 
 // helmRepo resolves a HelmRelease sourceRef. Without an exact match, a HelmRepository of that

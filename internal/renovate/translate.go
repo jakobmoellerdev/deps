@@ -261,6 +261,9 @@ var managerMap = func() map[string][]expansion {
 		"sveltos":           {{"helm", []string{"sveltos"}}},
 		"bun":               {{"npm", nil}},
 		"pip-compile":       {{"pip_requirements", nil}},
+		"fleet":             {{"helm", []string{"fleet"}}},
+		"helmsman":          {{"helm", []string{"helmsman"}}},
+		"vendir":            {{"helm", []string{"vendir"}}},
 		"gitlabci-include":  {{"gitlabci", []string{"include"}}},
 		"regex":             {{"custom", nil}},
 		"custom.regex":      {{"custom", nil}},
@@ -275,7 +278,7 @@ var managerMap = func() map[string][]expansion {
 // depTypeUniverse lists the dep types of deps managers that several Renovate managers share.
 var depTypeUniverse = map[string][]string{
 	"docker":   {"dockerfile", "compose", "workflow", "action", "kubernetes", "helm", "install"},
-	"helm":     {"chart", "requirements", "helmfile", "k0s", "flux", "argocd", "sveltos"},
+	"helm":     {"chart", "requirements", "helmfile", "k0s", "flux", "argocd", "sveltos", "fleet", "helmsman", "vendir"},
 	"gitlabci": {"image", "service", "include", "component"},
 }
 
@@ -285,9 +288,9 @@ var categories = map[string][]string{
 	"ci":         {"github-actions", "gitlabci", "gitlabci-include", "bitbucket-pipelines", "woodpecker", "crow", "droneci", "circleci", "azure-pipelines", "cloudbuild", "velaci", "travis", "buildkite", "bitrise", "tekton"},
 	"golang":     {"gomod"},
 	"docker":     {"dockerfile", "docker-compose", "devcontainer", "quadlet"},
-	"kubernetes": {"kubernetes", "helm-requirements", "helm-values", "helmv3", "helmfile", "flux", "argocd", "sveltos", "kustomize", "crossplane", "glasskube"},
-	"helm":       {"helm-requirements", "helm-values", "helmv3", "helmfile"},
-	"cd":         {"helmfile", "flux", "argocd", "sveltos", "tekton", "glasskube"},
+	"kubernetes": {"kubernetes", "helm-requirements", "helm-values", "helmv3", "helmfile", "flux", "argocd", "sveltos", "kustomize", "crossplane", "glasskube", "fleet", "helmsman", "vendir"},
+	"helm":       {"helm-requirements", "helm-values", "helmv3", "helmfile", "helmsman", "vendir"},
+	"cd":         {"helmfile", "flux", "argocd", "sveltos", "tekton", "glasskube", "fleet", "helmsman"},
 	"js":         {"npm", "bun", "nvm", "nodenv"},
 	"node":       {"nvm", "nodenv"},
 	"rust":       {"cargo", "rust-toolchain"},

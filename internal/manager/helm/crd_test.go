@@ -26,7 +26,7 @@ func linkedEnv(t *testing.T, m manager.Manager, files map[string]string, env man
 	var out []string
 	for _, ds := range linkedDepsEnv(t, m, files, env) {
 		for _, d := range ds {
-			if d.Manager != Name || (d.Datasource != Datasource || d.Versioning != Versioning) && (d.Datasource != "git-tags" || d.Versioning != "tag") {
+			if d.Manager != Name || (d.Datasource != Datasource || d.Versioning != Versioning) && (d.Datasource != "git-tags" && d.Datasource != "github-releases" || d.Versioning != "tag") {
 				t.Errorf("%+v: wrong manager/datasource/versioning", d)
 			}
 			if d.Skip == "" {

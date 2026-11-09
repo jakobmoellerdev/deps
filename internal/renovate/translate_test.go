@@ -279,7 +279,7 @@ func TestLoadRules(t *testing.T) {
 		{
 			name:  "glasskube manager, cd category, glasskube-packages datasource and versioning",
 			src:   `{packageRules: [{matchCategories: ['cd'], matchDatasources: ['glasskube-packages'], groupName: 'cd'}, {matchManagers: ['glasskube'], versioning: 'glasskube'}]}`,
-			rules: "  - # packageRules[0]\n    managers: [helm]\n    depTypes: [helmfile, flux, argocd, sveltos]\n    datasources: [glasskube-packages]\n    group: cd\n  - # packageRules[0]\n    managers: [tekton, glasskube]\n    datasources: [glasskube-packages]\n    group: cd\n  - # packageRules[1]\n    managers: [glasskube]\n    versioning: glasskube" + defaultExclusions,
+			rules: "  - # packageRules[0]\n    managers: [helm]\n    depTypes: [helmfile, flux, argocd, sveltos, fleet, helmsman]\n    datasources: [glasskube-packages]\n    group: cd\n  - # packageRules[0]\n    managers: [tekton, glasskube]\n    datasources: [glasskube-packages]\n    group: cd\n  - # packageRules[1]\n    managers: [glasskube]\n    versioning: glasskube" + defaultExclusions,
 		},
 		{
 			name:  "sbt and scalafmt managers, java category, sbt datasources",
@@ -343,6 +343,11 @@ func TestLoadRules(t *testing.T) {
 			name:  "quadlet and crossplane managers, iac category",
 			src:   `{packageRules: [{matchCategories: ['iac'], groupName: 'iac'}, {matchManagers: ['quadlet'], matchDepTypes: ['image'], enabled: false}]}`,
 			rules: "  - # packageRules[0]\n    managers: [terraform, terragrunt, ansible, ansible-galaxy, crossplane]\n    group: iac\n  - # packageRules[1]\n    managers: [quadlet]\n    depTypes: [image]\n    ignore: true" + defaultExclusions,
+		},
+		{
+			name:  "fleet, helmsman and vendir managers",
+			src:   `{packageRules: [{matchManagers: ['fleet', 'helmsman', 'vendir'], groupName: 'cd'}]}`,
+			rules: "  - # packageRules[0]\n    managers: [helm]\n    depTypes: [fleet, helmsman, vendir]\n    group: cd" + defaultExclusions,
 		},
 		{
 			name: "postUpgradeTasks top level and per rule, Ruby and Swift managers, rangeStrategy widen",
@@ -530,7 +535,7 @@ func TestLoadRules(t *testing.T) {
     ignore: true
   - # enabledManagers
     managers: [helm]
-    depTypes: [requirements, helmfile, k0s, flux, argocd, sveltos]
+    depTypes: [requirements, helmfile, k0s, flux, argocd, sveltos, fleet, helmsman, vendir]
     ignore: true
 ` + strings.Join(func() []string {
 				var out []string

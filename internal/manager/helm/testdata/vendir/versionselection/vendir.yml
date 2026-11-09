@@ -1,0 +1,43 @@
+apiVersion: vendir.k14s.io/v1alpha1
+kind: Config
+minimumRequiredVersion: 0.11.0
+directories:
+- path: vendor
+  contents:
+  - path: github.com/cloudfoundry/cf-k8s-networking
+    git:
+      url: https://github.com/cloudfoundry/cf-for-k8s
+      refSelection:
+        semver:
+          constraints: ">0.2.0 <0.4.0"
+    includePaths:
+    - config/**/*
+
+  - path: without-prereleases
+    git:
+      url: https://github.com/cloudfoundry/cf-for-k8s
+      refSelection:
+        semver:
+          constraints: "<1.0.0"
+    includePaths:
+    - config/kpack/**/*
+
+  - path: with-filtered-prerelease
+    git:
+      url: https://github.com/cloudfoundry/cf-for-k8s
+      refSelection:
+        semver:
+          constraints: "<1.0.0"
+          prereleases:
+            identifiers: [rc]
+    includePaths:
+    - config/kpack/**/*
+
+  - path: github-release-tag-selection
+    githubRelease:
+      slug: carvel-dev/kapp-controller
+      tagSelection:
+        semver:
+          # version 0.1.0 and 0.2.0 don't show up in the first page (of 40 results), we paginate to fetch them
+          constraints: ">0.0.0 <0.3.0"
+      assetNames: ["release.yml"]
