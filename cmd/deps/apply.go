@@ -16,6 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/deno"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradle"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gradlewrapper"
@@ -55,7 +56,7 @@ func newApply(o *rootOpts) *cli.Command {
 // (terraform init; next to a terragrunt.hcl only by lock file maintenance), Gemfile.lock (bundle lock), composer.lock (composer update), Manifest.toml
 // (julia Pkg), pubspec.lock (dart pub), MODULE.bazel.lock (bazel mod deps, also for .bazelversion), mix.lock (mix deps.update),
 // manifest.toml (gleam deps update), flake.lock (nix flake update), packages.lock.json (dotnet
-// restore), conda-lock.yml (conda-lock lock), Podfile.lock (pod install), Gradle lockfiles and verification
+// restore), conda-lock.yml (conda-lock lock), Podfile.lock (pod install), deno.lock (deno install), Gradle lockfiles and verification
 // metadata and the Gradle and Maven wrapper files (jvmtool) on temporary copies, Chart.lock and
 // Package.resolved in process and requirements files (pytool.Compiler: pip-compile/uv output
 // regenerated, other hashes from the session's pypi datasource), for apply and run.
@@ -68,7 +69,7 @@ func postProcessors(s *session) map[string]engine.PostProcessor {
 		piprequirements.Name: pytool.Compiler{Hashes: hashes},
 		gradle.Name:          jvmtool.GradleLocker{}, gradlewrapper.Name: jvmtool.GradleWrapper{}, mavenwrapper.Name: jvmtool.MavenWrapper{},
 		swift.Name: swiftLocker(s), julia.Name: julia.Locker{}, pub.Name: pub.Locker{}, beam.NameMix: beam.MixLocker{}, beam.NameGleam: beam.GleamLocker{},
-		nix.Name: nixLocker(s), nuget.Name: nuget.Locker{}, conda.Name: conda.Locker{}, paket.Name: paket.Locker{}, bundler.NameCocoaPods: bundler.PodLocker{},
+		nix.Name: nixLocker(s), nuget.Name: nuget.Locker{}, conda.Name: conda.Locker{}, paket.Name: paket.Locker{}, bundler.NameCocoaPods: bundler.PodLocker{}, deno.Name: deno.Locker{},
 	}
 }
 

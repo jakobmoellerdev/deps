@@ -25,6 +25,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/crossplane"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom/customdoc"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/deno"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/depsconfig"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/docker"
@@ -172,6 +173,7 @@ var Builtin = []Entry{
 	{jenkins.Doc, jenkins.New},
 	{depsconfig.Doc, depsconfig.New},
 	{ocb.Doc, ocb.New},
+	{deno.Doc, deno.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,

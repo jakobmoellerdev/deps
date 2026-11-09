@@ -29,6 +29,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dart"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dartversion"
 	debds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deb"
+	denods "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deno"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
@@ -49,6 +50,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hexpmbob"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/javaversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/jenkinsplugins"
+	jsrds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/jsr"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/juliaregistry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/kubernetesapi"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
@@ -483,6 +485,8 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		glasskubepackages.Name:  glasskubepackages.New(client, sem),
 		clojureds.Name:          clojureds.New(maven, os.Getenv),
 		jenkinsplugins.Name:     jenkinsplugins.New(client, sem, os.Getenv),
+		jsrds.Name:              jsrds.New(client, sem, os.Getenv),
+		denods.Name:             denods.New(client, sem, os.Getenv),
 	}
 	for name, src := range forges {
 		sources[name] = src

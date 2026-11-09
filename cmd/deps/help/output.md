@@ -21,6 +21,7 @@ note    mix.lock changes are computed by apply/run            (plan, when a mix 
 note    manifest.toml changes are computed by apply/run       (plan, when a gleam update exists)
 note    flake.lock changes are computed by apply/run          (plan, when a nix update exists)
 note    Podfile.lock changes are computed by apply/run        (plan, when a cocoapods update exists)
+note    deno.lock changes are computed by apply/run           (plan, when a deno update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```

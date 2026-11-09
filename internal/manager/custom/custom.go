@@ -554,8 +554,10 @@ func (m *customManager) matches(file string, src []byte) []dep.Dep {
 //   - github-releases: Name is `owner/repo` (github.com) or `https://host/owner/repo` (GHES);
 //     Source is the repository URL.
 //   - go, go-toolchain, docker, npm, node-version, pypi, python-version, dart, dart-version,
-//     flutter-version, hex, hexpm-bob: Name is the module path, image or package (hex: `name`
-//     or `name:organization`; hexpm-bob: `elixir` or `otp/<os>-<version>`); Source is empty.
+//     flutter-version, hex, hexpm-bob, jsr, deno: Name is the module path, image or package
+//     (hex: `name` or `name:organization`; hexpm-bob: `elixir` or `otp/<os>-<version>`; jsr:
+//     `@scope/name`; deno: `https://deno.land/x/<module>` or `https://deno.land/std`); Source
+//     is empty.
 //   - helm: Name is `<repository>/<chart>`, or the chart when Source already holds the
 //     repository (annotation `deps: helm <repository> <chart>`, Renovate `registryUrl=`); the
 //     repository is an `https://`, `http://` or `oci://` URL and becomes Source, Name the chart.
@@ -634,7 +636,7 @@ func (m *customManager) classify(d *dep.Dep) {
 		if _, err := forge.ParseRepo(d.Datasource, d.Name, d.Source); err != nil {
 			d.Skip = err.Error()
 		}
-	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob", galaxy.Name, "glasskube-packages", "pod":
+	case "go", "go-toolchain", "docker", "npm", "node-version", "pypi", "python-version", "gitlab-packages", "rpm", "apk", "dart", "dart-version", "flutter-version", "hex", "hexpm-bob", galaxy.Name, "glasskube-packages", "pod", "jsr", "deno":
 	case galaxy.CollectionName:
 		if f := strings.Fields(d.Source); len(f) > 0 {
 			if !httpURL(f[0]) {

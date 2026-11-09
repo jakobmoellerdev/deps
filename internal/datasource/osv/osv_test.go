@@ -637,13 +637,16 @@ func TestAdvisoriesNpm(t *testing.T) {
 		{Manager: "npm", DepType: "dependencies", Name: "unversioned"},
 		// The locked version is queried, not the range floor: the same query as above.
 		{Manager: "npm", DepType: "dependencies", Name: "lodash", Version: "4.0.0", Locked: "4.17.20"},
+		// A deno npm: specifier is an npm package; jsr: ones have no OSV ecosystem.
+		{Manager: "deno", Datasource: "npm", DepType: "imports", Name: "lodash", Version: "4.0.0", Locked: "4.17.20"},
+		{Manager: "deno", Datasource: "jsr", DepType: "imports", Name: "@std/path", Version: "1.0.0"},
 	}
 	got, err := s.Advisories(t.Context(), deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lodash := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-35jh-r3h4-6jhm", Summary: "Command injection", URL: "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm"}, Fixed: []string{"4.17.21"}}}
-	want := [][]datasource.Vuln{lodash, nil, lodash}
+	want := [][]datasource.Vuln{lodash, nil, lodash, lodash, nil}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}

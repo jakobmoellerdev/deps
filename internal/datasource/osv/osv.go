@@ -23,9 +23,9 @@
 //     when every possible release of the line is. Fixed versions are rendered in the dep's
 //     style: its "v" prefix and its part count (padded with 0 or truncated, e.g. "41" →
 //     "v41.0.0" for "v35.0.0", "46.0.1" → "v46" for "v35").
-//   - npm deps are queried as ecosystem "npm" with the package name and the locked version
-//     (dep.Dep.Locked), else the bare version; OSV matches server-side. Fixed versions are
-//     bare semver ("4.17.21").
+//   - npm deps and the `npm:` specifiers of the deno manager are queried as ecosystem "npm"
+//     with the package name and the locked version (dep.Dep.Locked), else the bare version;
+//     OSV matches server-side. Fixed versions are bare semver ("4.17.21").
 //   - cargo deps of crates.io (datasource crate, no Source) are queried as ecosystem
 //     "crates.io" with the crate name and the version Cargo.lock locks (dep.Dep.Locked), else
 //     the requirement's version; OSV matches server-side. Without a lock a partial requirement
@@ -317,7 +317,10 @@ func targetOf(d dep.Dep) *target {
 			return goToolchain(d.Version)
 		}
 		return nil
-	case "npm":
+	case "npm", "deno":
+		if d.Datasource != "npm" && d.Manager == "deno" { // jsr and deno.land have no OSV ecosystem
+			return nil
+		}
 		// The version installs get is the locked one; the range floor only without a lockfile.
 		v := cmp.Or(d.Locked, d.Version)
 		if d.Name == "" || v == "" {

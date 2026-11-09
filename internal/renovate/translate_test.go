@@ -297,6 +297,11 @@ func TestLoadRules(t *testing.T) {
 			rules: "  - # packageRules[0]\n    managers: [pub, fvm]\n    datasources: [dart, flutter-version]\n    group: dart\n  - # packageRules[1]\n    managers: [fvm]\n    ignore: true" + defaultExclusions,
 		},
 		{
+			name:  "deno manager, js category; jsr and deno datasources",
+			src:   `{packageRules: [{matchManagers: ['deno'], matchDatasources: ['jsr', 'deno'], groupName: 'deno'}, {matchCategories: ['js'], enabled: false}]}`,
+			rules: "  - # packageRules[0]\n    managers: [deno]\n    datasources: [jsr, deno]\n    group: deno\n  - # packageRules[1]\n    managers: [npm, deno, nvm, nodenv, bun-version]\n    ignore: true" + defaultExclusions,
+		},
+		{
 			name:  "devcontainer manager",
 			src:   `{packageRules: [{matchManagers: ['devcontainer'], enabled: false}]}`,
 			rules: "  - # packageRules[0]\n    managers: [devcontainer]\n    ignore: true" + defaultExclusions,
@@ -446,7 +451,7 @@ func TestLoadRules(t *testing.T) {
 				{matchCategories: ['terraform'], automerge: true},
 				{matchManagers: ['bun-version', 'terragrunt-version'], enabled: false}]}`,
 			rules: `  - # packageRules[0]
-    managers: [npm, nvm, nodenv, bun-version]
+    managers: [npm, deno, nvm, nodenv, bun-version]
     automerge: true
   - # packageRules[1]
     managers: [terraform, terraform-version, terragrunt-version, tflint-plugin, terragrunt]

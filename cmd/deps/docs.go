@@ -23,6 +23,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dart"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dartversion"
 	debds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deb"
+	denods "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/deno"
 	dockerds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/docker"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/dotnetversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/elmpackage"
@@ -43,6 +44,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hexpmbob"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/javaversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/jenkinsplugins"
+	jsrds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/jsr"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/juliaregistry"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/kubernetesapi"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
@@ -183,7 +185,7 @@ const managersIntro = "A **manager** finds dependencies in files and edits them.
 // datasourceDocs documents the datasources newSession registers, in table order.
 func datasourceDocs() []refdoc.Datasource {
 	return []refdoc.Datasource{
-		gittags.Doc, gittags.RefsDoc, githubreleases.Doc, githubrunners.Doc, kubernetesapi.Doc, forgeds.GitLabReleasesDoc, forgeds.GitLabTagsDoc, forgeds.GiteaReleasesDoc, forgeds.GiteaTagsDoc, forgeds.ForgejoReleasesDoc, forgeds.ForgejoTagsDoc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, pythonversion.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, bitriseds.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, galaxy.Doc, galaxy.CollectionDoc, rpmds.Doc, apkds.Doc, debds.Doc, artifactory.Doc, endoflife.Doc, sbtds.PackageDoc, sbtds.PluginDoc, dart.Doc, dartversion.Doc, flutterversion.Doc, hexds.Doc, hexpmbob.Doc, customds.Doc,
+		gittags.Doc, gittags.RefsDoc, githubreleases.Doc, githubrunners.Doc, kubernetesapi.Doc, forgeds.GitLabReleasesDoc, forgeds.GitLabTagsDoc, forgeds.GiteaReleasesDoc, forgeds.GiteaTagsDoc, forgeds.ForgejoReleasesDoc, forgeds.ForgejoTagsDoc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, pythonversion.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, bitriseds.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, galaxy.Doc, galaxy.CollectionDoc, rpmds.Doc, apkds.Doc, debds.Doc, artifactory.Doc, endoflife.Doc, sbtds.PackageDoc, sbtds.PluginDoc, dart.Doc, dartversion.Doc, flutterversion.Doc, hexds.Doc, hexpmbob.Doc, jsrds.Doc, denods.Doc, customds.Doc,
 		javaversion.Doc, glasskubepackages.Doc, clojureds.Doc, jenkinsplugins.Doc, podds.Doc,
 	}
 }
