@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 const (
@@ -185,6 +186,8 @@ func cleanEnv(t *testing.T) {
 		}
 	}
 	t.Setenv("GOPROXY", "https://proxy.test")
+	ghToken = func() httpx.AuthOption { return func(*httpx.Auth) {} } // never the developer's GitHub CLI login
+	t.Cleanup(func() { ghToken = httpx.WithGHToken })
 	t.Setenv("GOFLAGS", "")
 	t.Setenv("CARGO_HOME", t.TempDir())
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)

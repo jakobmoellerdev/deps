@@ -195,3 +195,46 @@ func TestSecretHook(t *testing.T) {
 		t.Errorf("hook calls = %v, want %v (once per found secret)", masked, want)
 	}
 }
+
+// The GitHub CLI's token is the github.com fallback: asked once, at the first github.com
+// lookup, never when the platform token or DEPS_GITHUB_COM_TOKEN covers github.com, and never
+// for other hosts.
+func TestGHTokenFallback(t *testing.T) {
+	var calls atomic.Int32
+	gh := func(tok string) AuthOption {
+		return func(a *Auth) { a.gh = func() string { calls.Add(1); return tok } }
+	}
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	var masked []string
+	a := NewAuth(platform.Info{}, "", env(nil), WithSecretHook(func(s string) { masked = append(masked, s) }), gh("gho_cli"))
+	if _, _, ok := a.Static("gitea.example"); ok || calls.Load() != 0 {
+		t.Fatalf("other host: ok=%v, gh ran %d times", ok, calls.Load())
+	}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			if u, p, ok := a.Static("github.com"); !ok || u != staticUser || p != "gho_cli" {
+				t.Errorf("Static(github.com) = %q, %q, %v", u, p, ok)
+			}
+		})
+	}
+	wg.Wait()
+	if calls.Load() != 1 || !slices.Equal(masked, []string{"gho_cli"}) {
+		t.Errorf("gh ran %d times, masked %q", calls.Load(), masked)
+	}
+	calls.Store(0)
+	for _, b := range []*Auth{
+		NewAuth(platform.Info{}, "", env(map[string]string{"DEPS_GITHUB_COM_TOKEN": "env"}), gh("gho_cli")),
+		NewAuth(platform.Info{Kind: platform.GitHub, Host: "github.com"}, "platform", env(nil), gh("gho_cli")),
+	} {
+		if _, p, _ := b.Static("github.com"); p == "gho_cli" {
+			t.Errorf("gh token won over a configured one")
+		}
+	}
+	if calls.Load() != 0 {
+		t.Errorf("gh ran %d times with a configured token", calls.Load())
+	}
+	if _, _, ok := NewAuth(platform.Info{}, "", env(nil), gh("")).Static("github.com"); ok {
+		t.Error("a gh without login gave a token")
+	}
+}

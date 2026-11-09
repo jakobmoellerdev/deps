@@ -39,6 +39,29 @@ func WithToken(host, user, token string) AuthOption {
 	return func(a *Auth) { a.add(host, user, token) }
 }
 
+// WithGHToken makes the GitHub CLI's login (`gh auth token --hostname github.com`) the
+// github.com token when neither the platform token nor DEPS_GITHUB_COM_TOKEN is one. gh runs
+// once, at the first github.com lookup that needs a token; without gh on PATH or a login
+// there is none.
+func WithGHToken() AuthOption { return func(a *Auth) { a.gh = ghAuthToken } }
+
+// ghAuthToken runs `gh auth token --hostname github.com` without prompting; "" when gh is
+// missing, not logged in or slow.
+func ghAuthToken() string {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token", "--hostname", "github.com")
+	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // Auth holds static per-host tokens and a cache of git credential helper results.
 // A nil *Auth has no credentials.
 type Auth struct {
@@ -48,6 +71,10 @@ type Auth struct {
 
 	mu     sync.Mutex
 	helper map[string]*cred
+
+	gh      func() string // WithGHToken: the GitHub CLI's github.com token, "" = none
+	ghOnce  sync.Once
+	ghToken string
 }
 
 type static struct{ user, token string }
@@ -98,11 +125,22 @@ func (a *Auth) Static(host string) (user, pass string, ok bool) {
 	if a == nil {
 		return "", "", false
 	}
-	s, ok := a.tokens[host]
-	if !ok {
-		return "", "", false
+	if s, ok := a.tokens[host]; ok {
+		return s.user, s.token, true
 	}
-	return s.user, s.token, true
+	if host == "github.com" && a.gh != nil {
+		a.ghOnce.Do(func() {
+			a.ghToken = a.gh()
+			slog.Debug("github.com token from gh auth token", "found", a.ghToken != "")
+			if a.ghToken != "" && a.onSecret != nil {
+				a.onSecret(a.ghToken)
+			}
+		})
+		if a.ghToken != "" {
+			return staticUser, a.ghToken, true
+		}
+	}
+	return "", "", false
 }
 
 // Helper asks the git credential helper for host once; success and failure are both cached,

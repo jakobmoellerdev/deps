@@ -93,7 +93,7 @@ func renovateFetcher(root string, info platform.Info, client *http.Client, auth 
 func loadRenovate(ctx context.Context, root, path string, concurrency int) (*renovate.Result, error) {
 	client := newHTTPClient()
 	info, _ := platform.FromEnv(os.Getenv)
-	auth := httpx.NewAuth(info, envToken(), os.Getenv)
+	auth := httpx.NewAuth(info, envToken(), os.Getenv, ghToken())
 	gh := githubapi.New(client, auth, httpx.NewLimits(concurrency).Default)
 	return renovate.Load(ctx, root, path, renovateFetcher(root, info, client, auth, gh))
 }

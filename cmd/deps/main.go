@@ -27,6 +27,9 @@ var errReported = errors.New("errors reported")
 // newHTTPClient builds the one HTTP client of a command; tests replace it with a fake network.
 var newHTTPClient = httpx.NewClient
 
+// ghToken is the github.com fallback to the GitHub CLI's login; tests turn it off.
+var ghToken = httpx.WithGHToken
+
 // activeProfiler is set once flags are parsed so main can flush profiles after any outcome.
 var activeProfiler *profiler
 

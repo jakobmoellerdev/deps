@@ -359,7 +359,7 @@ type session struct {
 // on the one of dir's origin remote (forgeURL).
 func extendsFetcher(info platform.Info, token, dir string) *config.GitFetcher {
 	return &config.GitFetcher{
-		Auth: httpx.NewAuth(info, token, os.Getenv),
+		Auth: httpx.NewAuth(info, token, os.Getenv, ghToken()),
 		Server: func(ctx context.Context) (string, error) {
 			return forgeURL(ctx, info, dir)
 		},
@@ -398,7 +398,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		}
 	}()
 	// Remote Renovate presets are fetched before the config (and its GitLab URL) is known.
-	auth := httpx.NewAuth(info, token, os.Getenv, httpx.WithSecretHook(actionsLog.mask))
+	auth := httpx.NewAuth(info, token, os.Getenv, httpx.WithSecretHook(actionsLog.mask), ghToken())
 	renovateGH := githubapi.New(client, auth, sem)
 	cfg, err := loadConfig(ctx, o, root, info, client, auth, renovateGH, fetcher)
 	if err != nil {
@@ -415,7 +415,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		return nil, err
 	}
 	env := configEnv(ctx, cfg, info, root)
-	auth = httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(env.GitLabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask))...)
+	auth = httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(env.GitLabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask), ghToken())...)
 	gh := githubapi.New(client, auth, sem)
 	slog.DebugContext(ctx, "config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
 	osvSource := osv.New(client, limits.OSV)
