@@ -161,6 +161,19 @@ func TestLoadRules(t *testing.T) {
 			notes: []string{"warn packageRules[0].registryUrls: deps decides registryUrls before the update type is known; dropped"},
 		},
 		{
+			name: "kubernetes is docker's kubernetes images and the kubernetes manager's apiVersions",
+			src:  `{packageRules: [{matchManagers: ['kubernetes'], matchDatasources: ['kubernetes-api'], enabled: false}]}`,
+			rules: `  - # packageRules[0]
+    managers: [docker]
+    depTypes: [kubernetes]
+    datasources: [kubernetes-api]
+    ignore: true
+  - # packageRules[0]
+    managers: [kubernetes]
+    datasources: [kubernetes-api]
+    ignore: true` + defaultExclusions,
+		},
+		{
 			name:  "unknown depTypes only drop the rule",
 			src:   `{packageRules: [{matchManagers: ['dockerfile'], matchDepTypes: ['final', 'stage'], enabled: false}]}`,
 			rules: strings.TrimPrefix(defaultExclusions, "\n"),

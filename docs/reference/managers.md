@@ -17,6 +17,7 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`npm`](#npm)
 - [`helm`](#helm)
 - [`kustomize`](#kustomize)
+- [`kubernetes`](#kubernetes)
 - [`pre-commit`](#pre-commit)
 - [`gitlabci`](#gitlabci)
 - [`nvm`](#nvm)
@@ -636,6 +637,28 @@ An `images` entry is [replaced](configuration.md#rulesreplacementname) by rewrit
 **Edits.**
 
 The tag, chart version or ref is replaced in place; a digest-pinned image or commit ref also gets its new digest. [`pin: digest`](configuration.md#rulespin) pins an image with a `newTag` by appending the digest (`newTag: 1.2@sha256:…`, Renovate's `{{newValue}}@{{newDigest}}`), which kustomize applies as `image:1.2@sha256:…`.
+
+## kubernetes
+
+Updates the `apiVersion` of Kubernetes manifests within its API group and flags API versions that Kubernetes no longer serves or that a newer version supersedes. The manifests' container images are the docker manager's `kubernetes` deps.
+
+**Files:**
+
+- `*.y(a)ml` with a top-level `apiVersion` and `kind`
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `apiVersion` | a YAML document's top-level `apiVersion` when the `kubernetes-api` table lists it for the document's `kind` (the dep name): Kubernetes built-in kinds of the [API deprecation guide](https://kubernetes.io/docs/reference/using-api/deprecation-guide/), Flux and External Secrets resources | `kubernetes-api` | `kubernetes-api` | updated |
+
+**Extraction.**
+
+- Only `apiVersion` and `kind` lines at column 0 count, per document (`---` separates documents); nothing else is parsed. A document containing `{{` is a template and has no dep: Helm charts choose the apiVersion by cluster version there.
+- An apiVersion the table does not list for the kind (`Event` `v1`, `HorizontalPodAutoscaler` `autoscaling/v1`, a custom resource sharing a kind name) is no dep, so it is never moved to another API version.
+
+**Updates and warnings.**
+
+- As in Renovate, an update stays within the API group (`kubernetes-api` versioning: `apps/v1beta2` → `apps/v1`, `autoscaling/v2beta2` → `autoscaling/v2`). Only the `apiVersion` value is rewritten: fields that changed between the versions (an Ingress backend, a Deployment `selector`) need a manual fix in the PR.
+- A version Kubernetes no longer serves, or that a newer version of its group supersedes, gets a `deprecated` warning on the dependency dashboard and in its update PR, naming the version to use: `apiVersion extensions/v1beta1 of Deployment is no longer served since Kubernetes 1.16: use apps/v1`. Moves between groups (`extensions/v1beta1` → `apps/v1`) are only warned about, never proposed.
 
 ## pre-commit
 
@@ -3918,6 +3941,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `git-refs` | repository URL (`https://host/path`); the version is a branch, `HEAD` for the default branch, and the digest its commit (a version that is no branch is looked up as a tag: an action ref such as `@stable`) | as `git-tags`, with `ref-prefix HEAD` and `ref-prefix refs/heads/` for the branch commits (the tag listing only when the version is no branch); releases are the tags, or under `nixpkgs` versioning the branches (the nix manager's NixOS/nixpkgs release branches and channels: `nixos-24.05` → `nixos-24.11`), from the same branch listing; no other dep lists branches for its releases | as `git-tags` | none: branch commits are not dated, so `minimumReleaseAge` never holds a digest update back |
 | `github-releases` | `owner/repo` (github.com) or `https://host/owner/repo` (GHES) | with a token: GraphQL `releases` (`https://api.github.com/graphql`, GHES `<host>/api/graphql`); without: `GET /repos/{repo}/releases?per_page=100`. Newest first by creation; pages are fetched only until the current release (a prerelease too) is listed, since every release created after it precedes it, else up to 100 pages (10000 releases, Renovate's GraphQL query limit). Drafts and prereleases are dropped. The GraphQL list also reads the repository's `isArchived`: an archived repository is listed under the dashboard's deprecated dependencies. | token for the host | `publishedAt` |
 | `github-runners` | the runner name of a GitHub-hosted runner label: `ubuntu`, `macos`, `windows`, `xcode` | none: a table of the [runner images](https://github.com/actions/runner-images) in deps, like Renovate's; versions with a suffix (`24.04-arm`, `15-large`) only update within that suffix | none | the day GitHub announced the image generally available |
+| `kubernetes-api` | the resource `kind` (`Deployment`, `Ingress`, `HelmRelease`) | none: a table of the API versions of each kind in deps, Renovate's (the Kubernetes [API deprecation guide](https://kubernetes.io/docs/reference/using-api/deprecation-guide/), Flux and External Secrets resources) plus `autoscaling/v2beta2` and `flowcontrol.apiserver.k8s.io/v1beta3`/`v1` the guide added since | none | none |
 | `gitlab-releases` | project path (`group/subgroup/project`) on `registryUrl` (default `https://gitlab.com`), or a repository URL `https://host/group/project` | `GET <registryUrl>/api/v4/projects/<path>/releases?per_page=100`. Newest first; pages are followed while the response links a next one, at most 10. Upcoming releases are dropped; the version is the `tag_name`. `GET <registryUrl>/api/graphql?query=…project(fullPath:<path>){archived}` (the anonymous REST project has no `archived`; a project GitLab does not show is not archived), sent alongside the first page once per repository: an archived repository is listed under the dashboard's deprecated dependencies | the token registered for the host (the platform token, `DEPS_GITLAB_TOKEN` or `CI_JOB_TOKEN` for the GitLab instance) as `Authorization: Bearer`, the CI job token as `JOB-TOKEN`; without, on 401/403/404 `git credential fill` once per host | `released_at` |
 | `gitlab-tags` | project path (`group/subgroup/project`) on `registryUrl` (default `https://gitlab.com`), or a repository URL `https://host/group/project` | `GET <registryUrl>/api/v4/projects/<path>/repository/tags?per_page=100`. Newest first; pages are followed while the response links a next one, at most 10. The digest is the tag's `commit.id`; a pinned tag older than the listed pages is looked up with `GET …/repository/tags/<tag>`. `GET <registryUrl>/api/graphql?query=…project(fullPath:<path>){archived}` (the anonymous REST project has no `archived`; a project GitLab does not show is not archived), sent alongside the first page once per repository: an archived repository is listed under the dashboard's deprecated dependencies | the token registered for the host (the platform token, `DEPS_GITLAB_TOKEN` or `CI_JOB_TOKEN` for the GitLab instance) as `Authorization: Bearer`, the CI job token as `JOB-TOKEN`; without, on 401/403/404 `git credential fill` once per host | `commit.created_at` |
 | `gitea-releases` | `owner/repo` on `registryUrl` (default `https://gitea.com`), or a repository URL `https://host/owner/repo` | `GET <registryUrl>/api/v1/repos/<owner>/<repo>/releases?draft=false&limit=50`. Newest first; pages are followed while the response links a next one, at most 10. Drafts and prereleases are dropped; the version is the `tag_name`. `GET <registryUrl>/api/v1/repos/<owner>/<repo>` (`archived`), sent alongside the first page once per repository: an archived repository is listed under the dashboard's deprecated dependencies | Basic credentials registered for the host (the platform token, `x-access-token:<token>`); without, on 401/403/404 `git credential fill` once per host | `published_at` |
@@ -3977,6 +4001,11 @@ Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules
 - Images GitHub deprecated or removed (`ubuntu-20.04`, `macos-13`, `windows-2019`, …) are never update targets.
 - A dep on one gets a `deprecated` warning on the dependency dashboard and in its update PR.
 - New images and deprecations arrive with deps releases.
+
+### Deprecated API versions
+
+- An API version Kubernetes no longer serves (the guide's "Removed APIs by release") or that a newer version of its API group supersedes is reported as deprecated, with the version to use: the newest of its group, else the newest version of the kind Kubernetes still serves.
+- New API versions and removals arrive with deps releases.
 
 ### Go proxy environment
 

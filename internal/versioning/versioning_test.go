@@ -371,6 +371,8 @@ func TestRankCandidates(t *testing.T) {
 		{"semver", "1.2.3", []string{"v1.3.0"}, []Candidate{{"1.3.0", dep.Minor, ""}}},
 		{"loose", "1877.25", []string{"1877.28", "1878.1", "1880.0"}, []Candidate{{"1880.0", dep.Major, "1880"}, {"1878.1", dep.Major, "1878"}, {"1877.28", dep.Minor, ""}}},
 		{cosignRegex, "v3.1.4+ocm.6", []string{"v3.1.5+ocm.1", "v4.0.0-ocm.1"}, []Candidate{{"v4.0.0-ocm.1", dep.Major, "4"}, {"v3.1.5+ocm.1", dep.Patch, ""}}},
+		{"kubernetes-api", "apps/v1beta1", []string{"extensions/v1beta1", "apps/v1beta2", "apps/v1", "apps/v2alpha1"}, []Candidate{{"apps/v2alpha1", dep.Major, "2"}, {"apps/v1", dep.Patch, ""}, {"apps/v1beta2", dep.Patch, ""}}},
+		{"kubernetes-api", "autoscaling/v1", []string{"autoscaling/v2beta2", "autoscaling/v2"}, []Candidate{{"autoscaling/v2", dep.Major, "2"}}},
 		{"tag", "main", []string{"v1"}, nil},
 	} {
 		r := get(t, tc.scheme).Rank(tc.cur, tc.cands, nil, nil)
@@ -399,7 +401,7 @@ func TestParseScheme(t *testing.T) {
 		t.Error("(?P<name>) groups")
 	}
 	for in, want := range map[string]string{
-		"calver":                      `must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs, glasskube or regex:<RE2>, got "calver"`,
+		"calver":                      `must be one of tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs, glasskube, kubernetes-api or regex:<RE2>, got "calver"`,
 		"regex:(":                     "regex: invalid RE2 regexp: error parsing regexp",
 		`regex:^(?<minor>\d+)$`:       "regex: must have a (?<major>...) group",
 		`regex:(?<major>\d)(?<x>\d)`:  `regex: unknown group "x" (allowed: major, minor, patch, build, revision, prerelease, compatibility)`,

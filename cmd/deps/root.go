@@ -48,6 +48,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/hexpmbob"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/javaversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/juliaregistry"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/kubernetesapi"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/nodeversion"
 	npmds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/npm"
@@ -428,6 +429,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		"docker":                docker,
 		githubreleases.Name:     releases,
 		githubrunners.Name:      githubrunners.New(),
+		kubernetesapi.Name:      kubernetesapi.New(),
 		npmds.Name:              npmds.New(client, limits.NPM, os.Getenv),
 		nodeversion.Name:        nodeversion.New(client, sem, os.Getenv),
 		helmds.Name:             helmds.New(client, sem, auth, docker),

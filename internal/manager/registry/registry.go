@@ -38,6 +38,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homeassistant"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homebrew"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kubernetes"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
@@ -83,6 +84,7 @@ var Builtin = []Entry{
 	{npm.Doc, npm.New},
 	{helm.Doc, helm.New},
 	{kustomize.Doc, kustomize.New},
+	{kubernetes.Doc, kubernetes.New},
 	{precommit.Doc, precommit.New},
 	{gitlabci.Doc, gitlabci.New},
 	{toolversions.DocNvm, toolversions.NewNvm},

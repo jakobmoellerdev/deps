@@ -50,14 +50,15 @@ type Candidate struct {
 }
 
 // Names are the versioning scheme names; "regex:<RE2>" schemes come on top (RegexPrefix).
-var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven", "ivy", "ruby", "conda", "composer", "julia", "bazel-module", "nuget", "rpm", "apk", "deb", "pub", "hex", Nixpkgs, "glasskube"}
+var Names = []string{"tag", "go", "docker", "semver", "loose", "cargo", "pep440", "hashicorp", "maven", "ivy", "ruby", "conda", "composer", "julia", "bazel-module", "nuget", "rpm", "apk", "deb", "pub", "hex", Nixpkgs, "glasskube", "kubernetes-api"}
 
 // RegexPrefix starts a regex scheme name: "regex:" followed by an RE2 regexp with named groups.
 const RegexPrefix = "regex:"
 
 // Get returns the scheme registered under name ("tag", "go", "docker", "semver", "loose", "cargo",
-// "pep440", "hashicorp", "maven", "ivy", "ruby", "conda", "composer", "julia", "bazel-module", "nuget", "rpm", "apk",
-// "deb", "pub", "hex", "nixpkgs", "glasskube"), or the regex scheme of a valid "regex:<RE2>" name.
+// "pep440", "hashicorp", "maven", "ivy", "ruby", "conda", "composer", "julia", "bazel-module",
+// "nuget", "rpm", "apk", "deb", "pub", "hex", "nixpkgs", "glasskube", "kubernetes-api"), or the
+// regex scheme of a valid "regex:<RE2>" name.
 func Get(name string) (Scheme, bool) {
 	s, err := Parse(name)
 	return s, err == nil
@@ -106,20 +107,21 @@ var schemes = map[string]Scheme{
 	"maven":     impl[mavenVersion]{parse: parseMaven, compat: mavenCompat, cmp: compareMaven, kind: mavenKindOf, semver: mavenVersion.semver, major: mavenVersion.major},
 	// ivy is Renovate's ivy versioning: its versions are Maven's (Ivy dynamic revisions are
 	// ranges of the sbt manager, IvyRevision), so it orders them as maven.
-	"ivy":          impl[mavenVersion]{parse: parseMaven, compat: mavenCompat, cmp: compareMaven, kind: mavenKindOf, semver: mavenVersion.semver, major: mavenVersion.major},
-	"ruby":         rubyScheme{impl[rubyVersion]{parse: parseRuby, compat: rubyCompat, cmp: compareRuby, kind: rubyKind, semver: rubyVersion.semver, major: rubyVersion.major}},
-	"conda":        condaScheme{impl[condaVersion]{parse: parseConda, compat: condaCompat, cmp: compareConda, kind: condaKind, semver: condaVersion.semver, major: condaVersion.major}},
-	"composer":     composerScheme{impl[composerVersion]{parse: parseComposer, compat: composerCompat, cmp: compareComposer, kind: composerKind, semver: composerVersion.semver, major: composerVersion.major}},
-	"julia":        juliaScheme{impl[cargoVersion]{parse: parseCargo, compat: juliaCompat, cmp: compareJulia, kind: juliaKind, semver: cargoVersion.semver, major: cargoMajor}},
-	"bazel-module": impl[bazelVersion]{parse: parseBazel, compat: bazelCompat, cmp: compareBazel, kind: bazelKind, semver: bazelVersion.semver, major: bazelVersion.major},
-	"nuget":        nugetScheme{impl[nugetVersion]{parse: parseNuGet, compat: nugetCompat, cmp: compareNuGet, kind: nugetKind, semver: nugetVersion.semver, major: nugetVersion.major}},
-	"rpm":          rpmScheme{impl[rpmVersion]{parse: parseRPM, compat: rpmCompat, cmp: compareRPM, kind: rpmKind, semver: rpmVersion.semver, major: rpmVersion.major}},
-	"apk":          impl[apkVersion]{parse: parseApk, compat: apkCompat, cmp: compareApk, kind: apkKind, semver: apkVersion.semver, major: apkVersion.major},
-	"deb":          impl[debVersion]{parse: parseDeb, compat: debCompat, cmp: compareDeb, kind: debKind, semver: debVersion.semver, major: debVersion.major},
-	"pub":          pubScheme{impl[cargoVersion]{parse: parsePub, compat: pubCompat, cmp: compareJulia, kind: pubKind, semver: cargoVersion.semver, major: pubMajor}},
-	"hex":          hexScheme{impl[semverVersion]{parse: parseStrictSemver, compat: semverCompat, cmp: compareSemver, kind: semverKind, semver: semverVersion.semver, major: semverMajor}},
-	Nixpkgs:        impl[nixpkgsVersion]{parse: parseNixpkgs, compat: nixpkgsCompat, cmp: compareNixpkgs, kind: nixpkgsKind, semver: nixpkgsVersion.semver, major: nixpkgsVersion.majorNum},
-	"glasskube":    impl[glasskubeVersion]{parse: parseGlasskube, compat: glasskubeCompat, cmp: compareGlasskube, kind: glasskubeKind, semver: glasskubeVersion.semver, major: glasskubeMajor},
+	"ivy":            impl[mavenVersion]{parse: parseMaven, compat: mavenCompat, cmp: compareMaven, kind: mavenKindOf, semver: mavenVersion.semver, major: mavenVersion.major},
+	"ruby":           rubyScheme{impl[rubyVersion]{parse: parseRuby, compat: rubyCompat, cmp: compareRuby, kind: rubyKind, semver: rubyVersion.semver, major: rubyVersion.major}},
+	"conda":          condaScheme{impl[condaVersion]{parse: parseConda, compat: condaCompat, cmp: compareConda, kind: condaKind, semver: condaVersion.semver, major: condaVersion.major}},
+	"composer":       composerScheme{impl[composerVersion]{parse: parseComposer, compat: composerCompat, cmp: compareComposer, kind: composerKind, semver: composerVersion.semver, major: composerVersion.major}},
+	"julia":          juliaScheme{impl[cargoVersion]{parse: parseCargo, compat: juliaCompat, cmp: compareJulia, kind: juliaKind, semver: cargoVersion.semver, major: cargoMajor}},
+	"bazel-module":   impl[bazelVersion]{parse: parseBazel, compat: bazelCompat, cmp: compareBazel, kind: bazelKind, semver: bazelVersion.semver, major: bazelVersion.major},
+	"nuget":          nugetScheme{impl[nugetVersion]{parse: parseNuGet, compat: nugetCompat, cmp: compareNuGet, kind: nugetKind, semver: nugetVersion.semver, major: nugetVersion.major}},
+	"rpm":            rpmScheme{impl[rpmVersion]{parse: parseRPM, compat: rpmCompat, cmp: compareRPM, kind: rpmKind, semver: rpmVersion.semver, major: rpmVersion.major}},
+	"apk":            impl[apkVersion]{parse: parseApk, compat: apkCompat, cmp: compareApk, kind: apkKind, semver: apkVersion.semver, major: apkVersion.major},
+	"deb":            impl[debVersion]{parse: parseDeb, compat: debCompat, cmp: compareDeb, kind: debKind, semver: debVersion.semver, major: debVersion.major},
+	"pub":            pubScheme{impl[cargoVersion]{parse: parsePub, compat: pubCompat, cmp: compareJulia, kind: pubKind, semver: cargoVersion.semver, major: pubMajor}},
+	"hex":            hexScheme{impl[semverVersion]{parse: parseStrictSemver, compat: semverCompat, cmp: compareSemver, kind: semverKind, semver: semverVersion.semver, major: semverMajor}},
+	Nixpkgs:          impl[nixpkgsVersion]{parse: parseNixpkgs, compat: nixpkgsCompat, cmp: compareNixpkgs, kind: nixpkgsKind, semver: nixpkgsVersion.semver, major: nixpkgsVersion.majorNum},
+	"glasskube":      impl[glasskubeVersion]{parse: parseGlasskube, compat: glasskubeCompat, cmp: compareGlasskube, kind: glasskubeKind, semver: glasskubeVersion.semver, major: glasskubeMajor},
+	"kubernetes-api": mustRegexScheme(kubernetesAPIExpr),
 }
 
 // impl implements Scheme over a parsed version type T so every candidate is parsed once.

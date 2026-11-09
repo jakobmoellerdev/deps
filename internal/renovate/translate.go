@@ -251,7 +251,7 @@ var managerMap = func() map[string][]expansion {
 		"github-actions":    {{"github-actions", nil}, {"docker", []string{"workflow", "action"}}},
 		"dockerfile":        {{"docker", []string{"dockerfile", "install"}}},
 		"docker-compose":    {{"docker", []string{"compose"}}},
-		"kubernetes":        {{"docker", []string{"kubernetes"}}},
+		"kubernetes":        {{"docker", []string{"kubernetes"}}, {"kubernetes", nil}},
 		"helm-values":       {{"docker", []string{"helm"}}},
 		"helmv3":            {{"helm", []string{"chart"}}},
 		"helmfile":          {{"helm", []string{"helmfile"}}},
