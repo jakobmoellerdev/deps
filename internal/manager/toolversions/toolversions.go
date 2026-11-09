@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rustversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
@@ -103,6 +104,26 @@ func NewMise() manager.Manager {
 	return &toolManager{name: NameMise, suffix: ".toml", match: miseRe, extract: extractMise}
 }
 
+// MiseConfigs are the mise config files of one directory the mise manager reads, as slash
+// paths relative to it.
+var MiseConfigs = []string{"mise.toml", ".mise.toml", "mise/config.toml", ".mise/config.toml", ".config/mise.toml", ".config/mise/config.toml"}
+
+// MiseTool returns the version the `[tools]` table of the mise config src pins for tool name
+// of the tool table (`rust`); ok is false when src names no such version deps can update.
+func MiseTool(src []byte, name string) (version string, ok bool) {
+	deps, err := extractMise("", src)
+	if err != nil {
+		return "", false
+	}
+	t := lookup(name)
+	for _, d := range deps {
+		if d.Name == t.name && d.Datasource == t.datasource && d.Skip == "" {
+			return d.Version, true
+		}
+	}
+	return "", false
+}
+
 func (m *toolManager) Name() string { return m.name }
 
 // Match reports whether the slash path is a file of this manager.
@@ -158,6 +179,7 @@ const (
 	dsDart    = "dart-version"
 	dsFlutter = "flutter-version"
 	dsDotnet  = "dotnet-version"
+	dsRust    = "rust-version"
 	skipTool  = "unsupported tool"
 )
 
@@ -212,6 +234,7 @@ var tools = map[string]tool{
 	"flutter":              {datasource: dsFlutter, name: "flutter"},
 	"dotnet":               {datasource: dsDotnet, name: "dotnet-sdk"},
 	"dotnet-core":          {datasource: dsDotnet, name: "dotnet-sdk"},
+	"rust":                 {datasource: dsRust, name: "rust"},
 	"act":                  githubTool("nektos/act"),
 	"actionlint":           githubTool("rhysd/actionlint"),
 	"age":                  githubTool("FiloSottile/age"),
@@ -403,8 +426,8 @@ func ToolDep(mgr, depType, file string, line int, name, raw string, at int) dep.
 }
 
 // derivesLines are the datasources that list derived X.Y and X release lines themselves
-// (node, ruby, python, crate: for partial versions; go-toolchain: X.Y).
-var derivesLines = map[string]bool{dsNode: true, dsGo: true, dsRuby: true, dsPython: true, dsCrate: true}
+// (node, ruby, python, crate: for partial versions; go-toolchain, rust-version: X.Y).
+var derivesLines = map[string]bool{dsNode: true, dsGo: true, dsRuby: true, dsPython: true, dsCrate: true, dsRust: true}
 
 // Partial reports whether d is a partial asdf/mise tool version (`1.55`, `3`) under tag
 // versioning whose datasource lists only full versions: the engine then derives the X.Y and
@@ -444,6 +467,8 @@ var (
 	flutterChannelRe = regexp.MustCompile(`-(?:stable|beta|dev)$`)
 	// shaRe is a full git commit hash (a mise `go:` tool built at a commit).
 	shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	// nightlyRe is a dated Rust nightly (`nightly-2025-10-10`).
+	nightlyRe = regexp.MustCompile(`^nightly-\d{4}-\d{2}-\d{2}$`)
 )
 
 // classify returns the version token of raw for t (ver at byte offset off in raw), its
@@ -453,7 +478,8 @@ var (
 // a leading "v" stays outside the token. A Ruby version may carry the `ruby-` engine prefix
 // of `.ruby-version` files (`ruby-3.4.7`), which stays outside too. A Python version may end
 // in the free-threaded `t` (`3.13t`), which stays outside as well. A Node.js version may carry
-// an npm operator or x-range (`>=20`, `20.x`), which stay outside: the bound moves.
+// an npm operator or x-range (`>=20`, `20.x`), which stay outside: the bound moves. A dated
+// Rust nightly moves to the newest nightly (rustversion.NightlyVersioning).
 func classify(t tool, raw string) (ver string, off int, versioning, skip string) {
 	switch {
 	case t.refPrefix != "":
@@ -500,6 +526,10 @@ func classify(t tool, raw string) (ver string, off int, versioning, skip string)
 		return "", 0, "", "unsupported range" // 3.14-dev, >=3.12
 	case dsFlutter:
 		raw = flutterChannelRe.ReplaceAllString(raw, "")
+	case dsRust:
+		if nightlyRe.MatchString(raw) {
+			return raw, 0, rustversion.NightlyVersioning, ""
+		}
 	}
 	if raw == "" || wordRe.MatchString(raw) {
 		return "", 0, "", "non-version value"

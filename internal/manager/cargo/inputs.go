@@ -9,18 +9,25 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/tomlspan"
 )
+
+// scopeConfigs are the files of dir and its ancestors cargo update depends on: cargo's
+// configuration and what selects the toolchain it runs with (rustupToolchain).
+var scopeConfigs = slices.Concat([]string{".cargo/config", ".cargo/config.toml"}, toolchainFiles, toolversions.MiseConfigs)
 
 // ScopeInputs implements engine.ScopeInputLister. cargo update runs in a mirror of the
 // workspace root dir that copies its Cargo.toml files and symlinks everything else (mirror),
 // so it reads:
 //   - every Cargo.toml below dir, as the mirror walks it (.git, target and node_modules left
 //     out), with the directory of each path dependency outside dir, by its tree;
-//   - .cargo/config, .cargo/config.toml, rust-toolchain and rust-toolchain.toml in dir and its
-//     ancestors up to root, where cargo and rustup look for them;
+//   - .cargo/config, .cargo/config.toml, rust-toolchain, rust-toolchain.toml and the mise
+//     configs in dir and its ancestors up to root, where cargo, rustup and mise look for
+//     them (scopeConfigs);
 //   - of the other files below dir only their paths, as one digest: cargo needs their
 //     existence (auto-discovered targets, `path` and `build` entries) but not their content,
 //     so a source edit keeps the inputs and an added, removed or renamed file changes them.
@@ -64,7 +71,7 @@ func (Locker) ScopeInputs(_ context.Context, root, dir string, _ []string) (path
 		return nil, nil, err
 	}
 	for d := dir; ; d = path.Dir(d) {
-		for _, n := range []string{".cargo/config", ".cargo/config.toml", "rust-toolchain", "rust-toolchain.toml"} {
+		for _, n := range scopeConfigs {
 			p := path.Join(d, n)
 			if st, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err == nil && !st.IsDir() {
 				paths = append(paths, p)

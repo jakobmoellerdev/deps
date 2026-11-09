@@ -154,7 +154,8 @@ func process(ctx context.Context, dir string, manifests, files map[string][]byte
 	}
 	defer os.RemoveAll(tmp)
 	lockPath := filepath.Join(base, lockFile)
-	if err := cargo(ctx, base, dir, "update", "--workspace"); err != nil {
+	tc := rustupToolchain(ctx, dir)
+	if err := cargo(ctx, base, dir, tc, "update", "--workspace"); err != nil {
 		return nil, err
 	}
 	out, err := os.ReadFile(lockPath)
@@ -170,12 +171,12 @@ func process(ctx context.Context, dir string, manifests, files map[string][]byte
 		return nil, fmt.Errorf("%s: %w", lockFile, err)
 	}
 	if len(st) > 0 {
-		if err := pinStale(ctx, base, dir, manifests, st); err != nil {
+		if err := pinStale(ctx, base, dir, tc, manifests, st); err != nil {
 			return nil, err
 		}
 	}
 	for _, p := range pins {
-		if err := cargo(ctx, base, dir, "update", "--package", p.name+"@"+p.locked, "--precise", p.version); err != nil {
+		if err := cargo(ctx, base, dir, tc, "update", "--package", p.name+"@"+p.locked, "--precise", p.version); err != nil {
 			return nil, err
 		}
 	}
@@ -198,7 +199,7 @@ func process(ctx context.Context, dir string, manifests, files map[string][]byte
 			slog.DebugContext(ctx, "lockfile-only update already locked", "crate", p.name, "version", p.version)
 			continue
 		}
-		if err := cargo(ctx, base, dir, "update", "--package", p.name+"@"+from, "--precise", p.version); err != nil {
+		if err := cargo(ctx, base, dir, tc, "update", "--package", p.name+"@"+from, "--precise", p.version); err != nil {
 			return nil, err
 		}
 	}
@@ -247,7 +248,7 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	if err := cargo(ctx, base, dir, "update"); err != nil {
+	if err := cargo(ctx, base, dir, rustupToolchain(ctx, dir), "update"); err != nil {
 		return nil, err
 	}
 	out, err := os.ReadFile(filepath.Join(base, lockFile))
@@ -439,7 +440,7 @@ func stale(before, after []byte, ups map[string][]dep.Update) (map[string][]dep.
 // patched manifests are restored and resolved again, which keeps that version. Unlike
 // `cargo update --precise` on the locked entry, this leaves the old version locked for other
 // dependents that still require it (rustc_version 0.2 needs semver ^0.9).
-func pinStale(ctx context.Context, base, dir string, manifests map[string][]byte, st map[string][]dep.Update) error {
+func pinStale(ctx context.Context, base, dir, toolchain string, manifests map[string][]byte, st map[string][]dep.Update) error {
 	for rel, ups := range st {
 		src := manifests[rel]
 		deps, err := cargoManager{}.Extract(rel, src, manager.Env{})
@@ -464,7 +465,7 @@ func pinStale(ctx context.Context, base, dir string, manifests map[string][]byte
 			return err
 		}
 	}
-	if err := cargo(ctx, base, dir, "update", "--workspace"); err != nil {
+	if err := cargo(ctx, base, dir, toolchain, "update", "--workspace"); err != nil {
 		return err
 	}
 	for rel := range st {
@@ -472,7 +473,7 @@ func pinStale(ctx context.Context, base, dir string, manifests map[string][]byte
 			return err
 		}
 	}
-	return cargo(ctx, base, dir, "update", "--workspace")
+	return cargo(ctx, base, dir, toolchain, "update", "--workspace")
 }
 
 // compatible reports whether a and b are in the same Cargo compatibility range: the same
@@ -491,9 +492,10 @@ func compatible(a, b *semver.Version) bool {
 	return a.Patch() == b.Patch()
 }
 
-// cargo runs `cargo args...` in dir (the mirror of scope); a failure carries the tail of
-// cargo's output, with the mirror's paths shown as scope's.
-func cargo(ctx context.Context, dir, scope string, args ...string) error {
+// cargo runs `cargo args...` in dir (the mirror of scope), with RUSTUP_TOOLCHAIN set to
+// toolchain unless it is "" (rustupToolchain); a failure carries the tail of cargo's output,
+// with the mirror's paths shown as scope's.
+func cargo(ctx context.Context, dir, scope, toolchain string, args ...string) error {
 	bin, err := exec.LookPath("cargo")
 	if err != nil {
 		return fmt.Errorf("cargo not found (needed to update %s)", lockFile)
@@ -501,12 +503,16 @@ func cargo(ctx context.Context, dir, scope string, args ...string) error {
 	cmd, cancel := toolrun.Command(ctx, bin, args...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env("CARGO_TERM_COLOR=never", "CARGO_TERM_PROGRESS_WHEN=never")
+	env := []string{"CARGO_TERM_COLOR=never", "CARGO_TERM_PROGRESS_WHEN=never"}
+	if toolchain != "" {
+		env = append(env, "RUSTUP_TOOLCHAIN="+toolchain)
+	}
+	cmd.Env = toolrun.Env(env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()
 	err = cmd.Run()
-	slog.DebugContext(ctx, "cargo command", "args", args, "dir", scope, "duration", time.Since(start), "err", err)
+	slog.DebugContext(ctx, "cargo command", "args", args, "dir", scope, "toolchain", toolchain, "duration", time.Since(start), "err", err)
 	if err == nil {
 		return nil
 	}

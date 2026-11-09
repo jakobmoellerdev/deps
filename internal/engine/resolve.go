@@ -36,6 +36,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/precommit"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/rusttoolchain"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/toolversions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
@@ -460,7 +461,7 @@ func classify(cfg *config.Config, d dep.Dep, kindRules, timed, security bool) (d
 	}
 	pol.aged = timed && cfg.WantsCurrentAge(pol.d)
 	switch s, ok := versioning.Get(d.Versioning); {
-	case ok && !s.Valid(d.Version) && !tagOnly(d) && !goPseudo(d) && !config.UnversionedPin(d):
+	case ok && !s.Valid(d.Version) && !tagOnly(d) && !goPseudo(d) && !config.UnversionedPin(d) && !rusttoolchain.Channel(d):
 		d.Skip = "non-version value " + strconv.Quote(d.Version)
 	case config.UnversionedPin(d) && pol.pre.IgnoredByDefault:
 		// Looked up: a tag at the commit versions it, which is not ignored (commitUpdates).
@@ -1296,6 +1297,13 @@ func (r *resolver) usual(t *Trace, scheme versioning.Scheme, vulns func() []Vuln
 		return r.versionUpdates(t, scheme, vulns)
 	case config.UnversionedPin(r.d):
 		return r.commitUpdates(t, scheme, vulns)
+	case rusttoolchain.Channel(r.d):
+		// A channel names no release: only rangeStrategy pin writes one, the newest it admits
+		// (setPin), so other strategies need no lookup.
+		if s, _ := r.rangeStrategy(); s != config.RangePin {
+			return nil, nil
+		}
+		return r.versionUpdates(t, scheme, vulns)
 	case !scheme.Valid(r.d.Version):
 		// Resolve only lets non-version docker tags through (tagOnly): their digest is kept
 		// current; there are no releases to compare and no advisories to look up.

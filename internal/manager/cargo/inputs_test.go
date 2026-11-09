@@ -25,6 +25,7 @@ func TestLockerScopeInputs(t *testing.T) {
 	write(map[string]string{
 		".cargo/config.toml":           "",
 		"rust-toolchain.toml":          "",
+		".config/mise.toml":            "",
 		"ws/Cargo.toml":                "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.dependencies]\nshared = { path = \"../shared\" }\ninner = { path = \"crates/inner\" }\n",
 		"ws/Cargo.lock":                "",
 		"ws/.cargo/config.toml":        "",
@@ -45,7 +46,7 @@ func TestLockerScopeInputs(t *testing.T) {
 		return paths, digests
 	}
 	paths, digests := inputs()
-	want := []string{".cargo/config.toml", "other", "rust-toolchain.toml", "shared", "ws/.cargo/config.toml", "ws/Cargo.toml", "ws/crates/a/Cargo.toml", "ws/crates/inner/Cargo.toml"}
+	want := []string{".cargo/config.toml", ".config/mise.toml", "other", "rust-toolchain.toml", "shared", "ws/.cargo/config.toml", "ws/Cargo.toml", "ws/crates/a/Cargo.toml", "ws/crates/inner/Cargo.toml"}
 	if !slices.Equal(paths, want) {
 		t.Errorf("paths = %q, want %q", paths, want)
 	}

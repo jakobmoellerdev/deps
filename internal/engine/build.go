@@ -19,6 +19,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // FileChange is the new content of one file. Path is a slash path relative to the root;
@@ -170,6 +171,9 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 	wg.Wait()
 	dropLinked(files, builds, linked)
 
+	// Post-processors read the other files of the group as patched (cargo: the rust-toolchain
+	// file of a grouped toolchain update).
+	ctx = toolrun.WithPatched(ctx, patchedFiles(root, files, builds))
 	scopes := groupScopes(ctx, root, files, builds, post)
 	for _, s := range scopes {
 		wg.Go(func() { s.run(ctx, root, files, builds, post[s.manager]) })
@@ -215,6 +219,22 @@ func Build(ctx context.Context, root string, managers []manager.Manager, updates
 		}
 	}
 	return out, errList
+}
+
+// patchedFiles returns the new content of every file of builds that changed, by absolute
+// path; nil when none did.
+func patchedFiles(root string, files []string, builds []fileBuild) map[string][]byte {
+	var out map[string][]byte
+	for i, b := range builds {
+		if b.err != nil || b.dropped || bytes.Equal(b.changes[0].Old, b.changes[0].New) {
+			continue
+		}
+		if out == nil {
+			out = map[string][]byte{}
+		}
+		out[filepath.Join(root, filepath.FromSlash(files[i]))] = b.changes[0].New
+	}
+	return out
 }
 
 // otherEdits are the edits of one file that come from updates of other files' deps

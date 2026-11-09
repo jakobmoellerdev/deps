@@ -319,7 +319,7 @@ fi
 	if _, err := stale([]byte("[[package]\n"), nil, ups); err == nil {
 		t.Error("broken lock accepted")
 	}
-	if err := pinStale(t.Context(), dir, dir, map[string][]byte{"Cargo.toml": []byte("[dependencies\n")}, ups); err == nil {
+	if err := pinStale(t.Context(), dir, dir, "", map[string][]byte{"Cargo.toml": []byte("[dependencies\n")}, ups); err == nil {
 		t.Error("unparsable manifest accepted")
 	}
 	var _ engineUpdatePinner = Locker{}
@@ -381,6 +381,7 @@ test -L Cargo.toml && echo "symlinked Cargo.toml" >> "$STUB_LOG"
 test -e crates/a/Cargo.toml && ! test -L crates/a/Cargo.toml && echo "copied crates/a/Cargo.toml" >> "$STUB_LOG"
 test -e target || test -e .git || test -e crates/b/target || test -e crates/b/node_modules || echo "no target, no .git" >> "$STUB_LOG"
 test -e ../crates/x/Cargo.toml && echo "sibling visible" >> "$STUB_LOG"
+test -n "$RUSTUP_TOOLCHAIN" && echo "toolchain $RUSTUP_TOOLCHAIN" >> "$STUB_LOG"
 test -n "$STUB_FAIL" && { echo "warning: noise"; echo "error: boom in $(pwd)/Cargo.toml" >&2; exit 101; }
 if [ "$*" = "update --workspace" ]; then
   test -n "$STUB_LOCK" && ` + cp + ` "$STUB_LOCK" Cargo.lock
@@ -396,6 +397,7 @@ exit 0
 	t.Setenv("STUB_LOG", log)
 	t.Setenv("STUB_FAIL", "")
 	t.Setenv("STUB_LOCK", "")
+	t.Setenv("RUSTUP_TOOLCHAIN", "")
 	return log
 }
 

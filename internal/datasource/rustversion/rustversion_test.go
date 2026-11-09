@@ -67,13 +67,17 @@ func TestReleases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"1.8.0", "1.83.0-beta.1", "1.82.0", "1.83.0-beta.2", "1.83.0", "1.99.0", "1.99.1", "1.100.0-beta.10", "1.8", "1.82", "1.83", "1.99"}
+	want := []string{
+		"nightly-2016-04-12", "1.8.0", "nightly-2016-04-13", "nightly-2016-04-14", "1.83.0-beta.1", "nightly-2024-10-17", "1.82.0",
+		"nightly-2024-10-18", "nightly-2024-10-19", "1.83.0-beta.2", "1.83.0", "1.99.0", "1.99.1", "1.100.0-beta.10", "nightly-2026-11-05",
+		"1.8", "1.82", "1.83", "1.99",
+	}
 	if got := versions(rs); !slices.Equal(got, want) {
 		t.Fatalf("releases = %v, want %v", got, want)
 	}
 	for v, want := range map[string]string{
 		"1.8.0": "2016-04-12", "1.82.0": "2024-10-17", "1.82": "2024-10-17", "1.99.1": "2026-10-15", "1.99": "2026-10-01",
-		"1.100.0-beta.10": "2026-11-05", "stable": "", "nightly-2026-11-05": "",
+		"1.100.0-beta.10": "2026-11-05", "nightly-2026-11-05": "2026-11-05", "stable": "", "nightly": "",
 	} {
 		got, err := s.ReleaseTime(ctx, d, v)
 		if err != nil {
@@ -93,7 +97,8 @@ func TestReleases(t *testing.T) {
 		t.Error("Digest: no error")
 	}
 
-	// semver skips the betas and the derived lines; tag keeps the precision of a line.
+	// semver skips the betas, nightlies and the derived lines; tag keeps the precision of a
+	// line; NightlyVersioning moves a dated nightly to the newest, a patch update.
 	cands := versions(rs)
 	semver, _ := versioning.Get("semver")
 	if got, _ := semver.Best("1.82.0", cands, nil, nil); got != "1.99.1" {
@@ -102,6 +107,19 @@ func TestReleases(t *testing.T) {
 	tag, _ := versioning.Get("tag")
 	if got, _ := tag.Best("1.82", cands, nil, nil); got != "1.99" {
 		t.Errorf("tag best from 1.82 = %q", got)
+	}
+	nightly, err := versioning.Parse(NightlyVersioning)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := nightly.Best("nightly-2016-04-13", cands, nil, nil); got != "nightly-2026-11-05" {
+		t.Errorf("nightly best from nightly-2016-04-13 = %q", got)
+	}
+	if k := nightly.Kind("nightly-2016-04-13", "nightly-2026-11-05"); k != dep.Patch {
+		t.Errorf("nightly kind = %s, want patch", k)
+	}
+	if nightly.Valid("1.82.0") || nightly.Valid("nightly") {
+		t.Error("nightly versioning accepts a non-nightly")
 	}
 }
 
@@ -133,7 +151,7 @@ func TestReleasesAfterCanceledCaller(t *testing.T) {
 func TestReleasesErrors(t *testing.T) {
 	ctx := context.Background()
 	var hits atomic.Int32
-	s := newSource(t, "static.rust-lang.org/dist/2026-11-05/channel-rust-nightly.toml\n", &hits)
+	s := newSource(t, "static.rust-lang.org/dist/2026-11-05/channel-rust-stable.toml\n", &hits)
 	if _, err := s.Releases(ctx, dep.Dep{}, ""); err == nil || !strings.Contains(err.Error(), "no releases") {
 		t.Errorf("err %v, want no releases", err)
 	}

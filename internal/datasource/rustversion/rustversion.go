@@ -31,10 +31,18 @@ const DefaultURL = "https://static.rust-lang.org/manifests.txt"
 // release notes.
 const Repo = "https://github.com/rust-lang/rust"
 
-// manifestRe matches a release manifest URL: group 1 is its date, group 2 a stable `X.Y.Z` or
-// a numbered beta `X.Y.Z-beta.N`. Channel manifests (`channel-rust-stable.toml`, `-nightly`),
-// release-line aliases (`1.82`, `1.83-beta`) and unnumbered betas name no fixed release.
-var manifestRe = regexp.MustCompile(`/dist/(\d{4}-\d{2}-\d{2})/channel-rust-(\d+\.\d+\.\d+(?:-beta\.\d+)?)\.toml$`)
+// manifestRe matches a release manifest URL: group 1 is its date, group 2 a stable `X.Y.Z`, a
+// numbered beta `X.Y.Z-beta.N` or `nightly`, the nightly of that date. The stable and beta
+// channel manifests (`channel-rust-stable.toml`), release-line aliases (`1.82`, `1.83-beta`)
+// and unnumbered betas name no fixed release.
+var manifestRe = regexp.MustCompile(`/dist/(\d{4}-\d{2}-\d{2})/channel-rust-(\d+\.\d+\.\d+(?:-beta\.\d+)?|nightly)\.toml$`)
+
+// NightlyVersioning is the versioning of a dated nightly (`nightly-2025-10-10`): a regex scheme
+// that orders the dates and makes every newer nightly a patch update, as Renovate's
+// rust-release-channel versioning does (a nightly has no major or minor), so a new year does
+// not split the update into a major PR. The empty major group never takes part (0). Only
+// dated nightlies are valid under it.
+const NightlyVersioning = `regex:^nightly-(?<patch>\d{4})-(?<build>\d{2})-(?<revision>\d{2})(?<major>)??$`
 
 // Source fetches the manifest index once per run.
 type Source struct {
@@ -57,9 +65,10 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 }
 
 // Releases returns every stable and numbered beta release (`1.82.0`, `1.83.0-beta.5`; schemes
-// drop betas for stable current versions) in index order, then a derived "X.Y" per stable
-// release line, so a toolchain pinned to a line (`channel = "1.82"`) has candidates of its
-// precision under tag versioning.
+// drop betas for stable current versions) and every dated nightly (`nightly-2025-10-10`, valid
+// only under NightlyVersioning) in index order, then a derived "X.Y" per stable release line,
+// so a toolchain pinned to a line (`channel = "1.82"`) has candidates of its precision under
+// tag versioning.
 func (s *Source) Releases(ctx context.Context, _ dep.Dep, _ string) ([]datasource.Release, error) {
 	ix, err := s.load(ctx)
 	return ix.releases, err
@@ -108,6 +117,9 @@ func (ix *index) read(r io.Reader) error {
 			continue
 		}
 		version := m[2]
+		if version == "nightly" {
+			version += "-" + m[1]
+		}
 		if _, seen := ix.times[version]; seen {
 			continue // re-published manifest (1.8.0, 1.14.0): the first date is the release
 		}

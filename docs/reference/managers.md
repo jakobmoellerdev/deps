@@ -814,12 +814,13 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 **Versions.**
 
 - A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`), pypi tools use `pep440`.
-- A partial version (`X`, `X.Y`) uses `tag` versioning and keeps its precision (`2.5` → `2.6`, `29` → `31`); a leading `v` stays outside the replaced token. node, go (`1.27`), ruby, python and crate list their release lines themselves; for the other datasources (github-releases, git-tags, npm, pypi, go, …) deps derives a line `X.Y` and `X` from every stable `[v]X.Y.Z` release (and the bare `X.Y` of a `vX.Y` release), dated by the line's first release. Renovate would replace a partial version by a full one.
+- A partial version (`X`, `X.Y`) uses `tag` versioning and keeps its precision (`2.5` → `2.6`, `29` → `31`); a leading `v` stays outside the replaced token. node, go (`1.27`), ruby, python, rust (`1.82`) and crate list their release lines themselves; for the other datasources (github-releases, git-tags, npm, pypi, go, …) deps derives a line `X.Y` and `X` from every stable `[v]X.Y.Z` release (and the bare `X.Y` of a `vX.Y` release), dated by the line's first release. Renovate would replace a partial version by a full one.
 - `flutter` versions may carry asdf-flutter's channel suffix (`3.24.5-stable`), which stays outside the token.
 - `maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.
 - `ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).
 - `python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.
-- `java` stays an `unsupported tool` until deps has a java-version datasource; `rust`, `elixir` and `erlang` are tracked separately.
+- `rust` is read as in [rust-toolchain](#rust-toolchain): `X.Y.Z` uses `semver`, `X.Y` `tag` ([rust-version](#datasources) lists the release lines), and a dated nightly (`nightly-2025-10-10`) moves to the newest nightly as a patch update; the channels `stable`, `beta` and `nightly` are skipped as `non-version value`. A pinned `rust` of a mise config is the toolchain cargo resolves `Cargo.lock` with (see [cargo](#cargo)).
+- `java` stays an `unsupported tool` until deps has a java-version datasource; `elixir` and `erlang` are tracked separately.
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -960,6 +961,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `ruby` | `ruby-version` | `ruby` |  |
 | `ruff` | `github-releases` | `astral-sh/ruff` |  |
 | `rumdl` | `github-releases` | `rvben/rumdl` |  |
+| `rust` | `rust-version` | `rust` |  |
 | `sbt` | `github-releases` | `sbt/sbt` |  |
 | `scala` | `git-tags` | `scala/scala` |  |
 | `sccache` | `github-releases` | `mozilla/sccache` |  |
@@ -1057,12 +1059,13 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 **Versions.**
 
 - A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`), pypi tools use `pep440`.
-- A partial version (`X`, `X.Y`) uses `tag` versioning and keeps its precision (`2.5` → `2.6`, `29` → `31`); a leading `v` stays outside the replaced token. node, go (`1.27`), ruby, python and crate list their release lines themselves; for the other datasources (github-releases, git-tags, npm, pypi, go, …) deps derives a line `X.Y` and `X` from every stable `[v]X.Y.Z` release (and the bare `X.Y` of a `vX.Y` release), dated by the line's first release. Renovate would replace a partial version by a full one.
+- A partial version (`X`, `X.Y`) uses `tag` versioning and keeps its precision (`2.5` → `2.6`, `29` → `31`); a leading `v` stays outside the replaced token. node, go (`1.27`), ruby, python, rust (`1.82`) and crate list their release lines themselves; for the other datasources (github-releases, git-tags, npm, pypi, go, …) deps derives a line `X.Y` and `X` from every stable `[v]X.Y.Z` release (and the bare `X.Y` of a `vX.Y` release), dated by the line's first release. Renovate would replace a partial version by a full one.
 - `flutter` versions may carry asdf-flutter's channel suffix (`3.24.5-stable`), which stays outside the token.
 - `maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.
 - `ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).
 - `python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.
-- `java` stays an `unsupported tool` until deps has a java-version datasource; `rust`, `elixir` and `erlang` are tracked separately.
+- `rust` is read as in [rust-toolchain](#rust-toolchain): `X.Y.Z` uses `semver`, `X.Y` `tag` ([rust-version](#datasources) lists the release lines), and a dated nightly (`nightly-2025-10-10`) moves to the newest nightly as a patch update; the channels `stable`, `beta` and `nightly` are skipped as `non-version value`. A pinned `rust` of a mise config is the toolchain cargo resolves `Cargo.lock` with (see [cargo](#cargo)).
+- `java` stays an `unsupported tool` until deps has a java-version datasource; `elixir` and `erlang` are tracked separately.
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -1203,6 +1206,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `ruby` | `ruby-version` | `ruby` |  |
 | `ruff` | `github-releases` | `astral-sh/ruff` |  |
 | `rumdl` | `github-releases` | `rvben/rumdl` |  |
+| `rust` | `rust-version` | `rust` |  |
 | `sbt` | `github-releases` | `sbt/sbt` |  |
 | `scala` | `git-tags` | `scala/scala` |  |
 | `sccache` | `github-releases` | `mozilla/sccache` |  |
@@ -1315,7 +1319,7 @@ Updates crate requirements in `Cargo.toml`, moves `Cargo.lock` with `cargo updat
 2. **Locked versions.** Before resolution the root's Cargo.lock is read: each requirement gets the highest registry package of its crate that it admits. An unreadable lock is reported once and its requirements are bumped.
 3. **Temporary copy.** The root is mirrored to a temp dir: every `Cargo.toml` is copied (patched where changed) together with `Cargo.lock`; all other files are symlinked, and `.git`, `target` and `node_modules` are left out. When the root sits below the repository top (the nearest ancestor with `.git`), the directories above it are recreated with their other entries symlinked, so path dependencies outside the root (`path = "../crates/x"`) resolve as in the checkout.
 4. **Update.** `cargo update --workspace` re-resolves only the requirements that no longer match the lock. Then, for every rewritten requirement whose version is full, deps runs `cargo update --package <name>@<locked> --precise <version>` when Cargo just locked a newer version of the same compatibility range, so the lock holds the version the pull request names (for example when `minimumReleaseAge` held back the newest release). A version that was already locked is never downgraded, and partial requirements keep Cargo's newest match. A rewritten requirement that still admits the locked version (`<0.10` → `<2.0` with 0.9.0 locked) leaves the lock alone under `cargo update --workspace`; such a crate (also for a security update) is resolved once with its requirement written as `=<new>` in the temporary copy, then the rewritten requirement is restored and resolved again, so the lock holds the pull request's version while other dependents that still need the old version keep it locked beside it. A lockfile-only update runs `cargo update --package <name>@<from> --precise <new>`, from the entry earlier pins left in the locked version's compatibility range (pinning a crate can move its dependencies), and is skipped when that entry already has the version.
-5. **Tool.** `cargo` must be on `PATH` (with `rustup`, a `rust-toolchain.toml` in the root selects the toolchain). Without it the manifests of the root fail with `cargo not found (needed to update Cargo.lock)`.
+5. **Tool.** `cargo` must be on `PATH`. Without it the manifests of the root fail with `cargo not found (needed to update Cargo.lock)`. With `rustup`, cargo runs with the toolchain the repository pins (Renovate's `rust` constraint), set as `RUSTUP_TOOLCHAIN`: the `rust` of a [mise](#mise) config in the root or an ancestor up to the repository top, else the version of the nearest `rust-toolchain`/`rust-toolchain.toml` at or above the root (rustup's lookup; a channel such as `stable` or a `path` there pins none and hides the files above it). These files are read as the pull request changes them, so crate updates grouped with a [rust-toolchain](#rust-toolchain) update resolve with the new toolchain.
 6. **Failure.** A failed command reports `cargo update in <dir>: <last 20 output lines>`, and the root's changes are dropped.
 
 - `plan` does not run cargo, and prints `note    Cargo.lock changes are computed by apply/run`.
@@ -2585,14 +2589,14 @@ Updates the Rust toolchain rustup selects for a directory: `channel` of the `[to
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `toolchain` | the pinned toolchain version (name `rust`), `X.Y.Z` or `X.Y`, optionally followed by a host triple (`1.82.0-x86_64-unknown-linux-gnu`) | `rust-version` | `semver`; `X.Y` `tag` | updated |
+| `toolchain` | the pinned toolchain version (name `rust`), `X.Y.Z`, `X.Y` or a dated nightly `nightly-YYYY-MM-DD`, optionally followed by a host triple (`1.82.0-x86_64-unknown-linux-gnu`); or the `stable` or `nightly` channel, which only `rangeStrategy: pin` updates | `rust-version` | `semver`; `X.Y` `tag`; dated nightlies a `regex:` scheme of their dates | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
-| `unpinned channel` | a release channel that is no version: `stable`, `beta`, `nightly` (with or without a host triple) |
-| `dated channel` | a dated channel such as `nightly-2025-10-10` or `beta-2025-10-01` |
+| `unpinned channel` | the `beta` channel (with or without a host triple) |
+| `dated channel` | a dated stable or beta channel such as `beta-2025-10-01` |
 | `local path` | `[toolchain] path` (a custom toolchain directory) |
 | `no channel` | a `[toolchain]` table without a string `channel` |
 | `cannot locate value` | `channel` is written with escapes, so its bytes cannot be replaced in place |
@@ -2602,8 +2606,11 @@ Updates the Rust toolchain rustup selects for a directory: `channel` of the `[to
 
 - A full `X.Y.Z` uses `semver`; betas are never proposed.
 - A release line `X.Y` uses `tag` versioning and keeps its precision (`1.82` → `1.91`) against the `X.Y` lines the datasource derives.
+- A dated nightly (`nightly-2025-10-10`) moves to the newest nightly the datasource lists, as Renovate does; every newer nightly is a `patch` update, so a new year opens no separate major PR.
+- The `stable` and `nightly` channels follow the newest release by themselves and are up to date. Under [rangeStrategy](configuration.md#rangestrategy) `pin` (Renovate's toolchain pinning) they are pinned to the newest stable release (`stable` → `1.91.1`) or nightly (`nightly` → `nightly-2026-11-05`), a `pin` update; a host triple after the channel is kept.
 - Only the version is replaced; a host triple after it and the rest of the file are kept.
 - A file without a `[toolchain]` table has no dep.
+- The pinned toolchain is the one [cargo](#cargo) resolves `Cargo.lock` with in the same directory and below (Renovate's `rust` constraint), also in a branch that updates both.
 - `rust-version` in `Cargo.toml` (`package.rust-version`, `workspace.package.rust-version`), the minimum supported Rust version, is not extracted: neither Renovate nor Dependabot updates it.
 
 ## devcontainer
@@ -3613,7 +3620,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `gradle-version` | any (`gradle`) | `<DEPS_GRADLE_VERSIONS_URL or https://services.gradle.org/versions/all>`, once per run; snapshots, nightlies and broken releases are dropped, release candidates and milestones kept | none | `buildTime` |
 | `rubygems` | gem name (case-sensitive, as on the gem server); the dep's source is its whitespace-separated gem servers in lookup order ("" = rubygems.org) | rubygems.org (also when a Gemfile names `https://rubygems.org`): `GET <DEPS_RUBYGEMS_URL or https://rubygems.org>/api/v1/versions/<name>.json`; other gem servers: the compact index `GET <source>/info/<name>` (what Bundler reads), and on a 404 `GET <source>/api/v1/versions/<name>.json`; once per (server, gem); platform builds (`1.18.10-x86_64-linux-gnu`) count as their version; yanked versions are not listed by either API; the first server that has the gem answers, none → `gem <name> not found`. Source repository (release notes, rubygems.org only): `GET <base>/api/v1/gems/<name>.json` `source_code_uri`, else a forge `homepage_uri`, only for versions in a pull request | userinfo of the source URL (`https://user:pass@gems.example.com`) as basic auth, else Bundler's `BUNDLE_<HOST>` variable (`gems.example-corp.com` → `BUNDLE_GEMS__EXAMPLE___CORP__COM`) holding `user:password` or a token; redacted in errors and logs | rubygems.org `created_at` (the earliest of the version's platform builds); the compact index of other servers has none |
 | `ruby-version` | any (`ruby`) | `<DEPS_RUBY_RELEASES_URL or https://raw.githubusercontent.com/ruby/www.ruby-lang.org/master/_data/releases.yml>`, the list the ruby-lang.org release pages are built from, once per run; published versions plus a derived `X.Y` and `X` per stable line | none | `date` |
-| `rust-version` | any (`rust`) | `<DEPS_RUST_MANIFESTS_URL or https://static.rust-lang.org/manifests.txt>`, the index of every channel manifest rustup can install, once per run; stable `X.Y.Z` and numbered betas `X.Y.Z-beta.N` from the manifest names (channel manifests such as `channel-rust-stable.toml` and dated nightlies are not listed), plus a derived `X.Y` per stable line. Source repository (release notes): `rust-lang/rust` | none | the date directory of the version's first manifest (`dist/2024-10-17/channel-rust-1.82.0.toml`), day precision |
+| `rust-version` | any (`rust`) | `<DEPS_RUST_MANIFESTS_URL or https://static.rust-lang.org/manifests.txt>`, the index of every channel manifest rustup can install, once per run; stable `X.Y.Z`, numbered betas `X.Y.Z-beta.N` and dated nightlies `nightly-YYYY-MM-DD` from the manifest names (the stable and beta channel manifests such as `channel-rust-stable.toml` are not listed), plus a derived `X.Y` per stable line. Source repository (release notes): `rust-lang/rust` | none | the date directory of the version's first manifest (`dist/2024-10-17/channel-rust-1.82.0.toml`), day precision |
 | `orb` | orb name `<namespace>/<name>` (`circleci/node`) | `GET <DEPS_CIRCLECI_URL or https://circleci.com>/api/v3/orb/packages?filter[name]=<name>` (Renovate's endpoint), once per orb; the entry whose name matches exactly answers. After the listed versions a derived `X.Y` and `X` per release line, so partial versions (`@5`) are updated with their precision | `DEPS_CIRCLECI_TOKEN` (private orbs) as `Circle-Token` and bare `Authorization`, as Renovate's `Token-Only` host rule | `created_at` of the version; a derived `X.Y`/`X` has the time of the line's first release |
 | `azure-pipelines-tasks` | task name (`Bash`), task id, or `<publisher>.<extension>.<contribution>.<name\|id>`; case-insensitive | public lists (Renovate's): `GET <DEPS_AZURE_PIPELINES_TASKS_URL or https://raw.githubusercontent.com/renovatebot/azure-devops-marketplace/main>/azure-pipelines-builtin-tasks.json` once per run, and for tasks it lacks `…/azure-pipelines-marketplace-tasks.json` once (streamed; only the run's tasks are kept). With `DEPS_AZURE_DEVOPS_URL` and `DEPS_AZURE_DEVOPS_TOKEN`: `GET <DEPS_AZURE_DEVOPS_URL>/_apis/distributedtask/tasks/` once per run, the tasks installed in that organization or collection (Renovate's behavior on the Azure platform). After the versions a derived `X.Y` and `X` per release line, so major-only references (`Bash@3`) are updated with their precision | none for the public lists; Basic `deps:<DEPS_AZURE_DEVOPS_TOKEN>` (a personal access token) for the organization | none |
 | `vcpkg` | port name (`fmt`); the dep's source is the registry's file tree at its baseline commit (`https://raw.githubusercontent.com/microsoft/vcpkg/<baseline>`, `<repository>/raw/<baseline>` off github.com) | `GET <source>/versions/<first letter>-/<port>.json` once per (registry commit, port); each entry's `version`, `version-semver`, `version-date` or `version-string` is a release, only of the newest entry's scheme (relaxed and semver count as one; vcpkg does not order across schemes), `#<port-version>` appended when the port version is not 0 (`1.3.1#2`, as `version>=` writes it). A 404 fails the dep: the port is not in the registry at the baseline | none | none (the versions database records no dates) |

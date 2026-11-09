@@ -136,12 +136,14 @@ var DocRuntimeVersion = refdoc.Manager{
 
 var toolVersionItems = []string{
 	"A full `[v]X.Y.Z[-pre]` uses `semver`, and the update keeps the `v` style; go-toolchain tools use `tag`, `ruby` uses `ruby` (as in `.ruby-version`), `python` uses `pep440` (as in `.python-version`), pypi tools use `pep440`.",
-	"A partial version (`X`, `X.Y`) uses `tag` versioning and keeps its precision (`2.5` → `2.6`, `29` → `31`); a leading `v` stays outside the replaced token. node, go (`1.27`), ruby, python and crate list their release lines themselves; for the other datasources (github-releases, git-tags, npm, pypi, go, …) deps derives a line `X.Y` and `X` from every stable `[v]X.Y.Z` release (and the bare `X.Y` of a `vX.Y` release), dated by the line's first release. Renovate would replace a partial version by a full one.",
+	"A partial version (`X`, `X.Y`) uses `tag` versioning and keeps its precision (`2.5` → `2.6`, `29` → `31`); a leading `v` stays outside the replaced token. node, go (`1.27`), ruby, python, rust (`1.82`) and crate list their release lines themselves; for the other datasources (github-releases, git-tags, npm, pypi, go, …) deps derives a line `X.Y` and `X` from every stable `[v]X.Y.Z` release (and the bare `X.Y` of a `vX.Y` release), dated by the line's first release. Renovate would replace a partial version by a full one.",
 	"`flutter` versions may carry asdf-flutter's channel suffix (`3.24.5-stable`), which stays outside the token.",
 	"`maven` and `gradle` use `maven` versioning, under which `8.11` and `3.9` are full versions.",
 	"`ruby` shares the built-in `ruby` group with the Gemfile `ruby` directive and `.ruby-version` (see [bundler](#bundler)).",
 	"`python` is read as in [`.python-version`](#pyenv): `pypy3.10-7.3.17`, `miniconda3-latest` are skipped as `non-version value`, a free-threaded `3.13t` keeps its `t`.",
-	"`java` stays an `unsupported tool` until deps has a java-version datasource; `rust`, `elixir` and `erlang` are tracked separately.",
+	"`rust` is read as in [rust-toolchain](#rust-toolchain): `X.Y.Z` uses `semver`, `X.Y` `tag` ([rust-version](#datasources) lists the release lines), and a dated nightly (`nightly-2025-10-10`) moves to the newest nightly as a patch update; the channels `stable`, `beta` and `nightly` are skipped as `non-version value`. " +
+		"A pinned `rust` of a mise config is the toolchain cargo resolves `Cargo.lock` with (see [cargo](#cargo)).",
+	"`java` stays an `unsupported tool` until deps has a java-version datasource; `elixir` and `erlang` are tracked separately.",
 	"Only the version token is replaced; quotes, comments and the rest of the file are kept.",
 }
 

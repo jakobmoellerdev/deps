@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rustversion"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
@@ -333,6 +334,12 @@ func TestClassify(t *testing.T) {
 		{mavenTool, "3.9.9", "3.9.9", "maven", "", 0},
 		{mavenTool, "~3.9", "", "", "unsupported range", 0},
 		{mavenTool, "latest", "", "", "non-version value", 0},
+		{tools["rust"], "1.82.0", "1.82.0", "semver", "", 0},
+		{tools["rust"], "1.82", "1.82", "tag", "", 0},
+		{tools["rust"], "nightly-2025-10-10", "nightly-2025-10-10", rustversion.NightlyVersioning, "", 0},
+		{tools["rust"], "stable", "", "", "non-version value", 0},
+		{tools["rust"], "nightly", "", "", "non-version value", 0},
+		{tools["rust"], "nightly-2025-10", "", "", "non-version value", 0},
 	} {
 		ver, off, versioning, why := classify(c.t, c.raw)
 		if ver != c.ver || off != c.off || versioning != c.versioning || why != c.why {
@@ -459,6 +466,43 @@ func TestAsdfMoreTools(t *testing.T) {
 	}
 }
 
+// rust uses the rust-version datasource: releases, release lines and dated nightlies.
+func TestAsdfRust(t *testing.T) {
+	in := "rust 1.82.0\n" + "rust 1.82\n" + "rust nightly-2025-10-10\n" + "rust stable\n"
+	wants := []want{
+		{"rust", dsRust, "semver", "1.82.0", "", 1},
+		{"rust", dsRust, "tag", "1.82", "", 2},
+		{"rust", dsRust, rustversion.NightlyVersioning, "nightly-2025-10-10", "", 3},
+		{"rust", dsRust, "", "stable", "non-version value", 4},
+	}
+	news := map[string]string{"1.82.0": "1.99.1", "1.82": "1.99", "nightly-2025-10-10": "nightly-2026-11-05"}
+	got := check(t, NewAsdf(), ".tool-versions", in, wants, news)
+	if want := "rust 1.99.1\nrust 1.99\nrust nightly-2026-11-05\nrust stable\n"; got != want {
+		t.Errorf("patched = %q, want %q", got, want)
+	}
+}
+
+// MiseConfigs are files the mise manager reads; MiseTool finds a pinned tool in one.
+func TestMiseTool(t *testing.T) {
+	m := NewMise()
+	for _, n := range MiseConfigs {
+		if !m.Match("ws/" + n) {
+			t.Errorf("mise does not read %s", n)
+		}
+	}
+	for _, tc := range []struct{ src, want string }{
+		{"[tools]\nnode = \"22\"\nrust = \"1.82\"\n", "1.82"},
+		{"[tools]\nrust = { version = \"nightly-2025-10-10\", components = \"clippy\" }\n", "nightly-2025-10-10"},
+		{"[tools]\nrust = \"stable\"\n", ""},
+		{"[tools]\nnode = \"22\"\n", ""},
+		{"[tools\n", ""},
+	} {
+		if got, ok := MiseTool([]byte(tc.src), "rust"); got != tc.want || ok != (tc.want != "") {
+			t.Errorf("MiseTool(%q) = %q, %v", tc.src, got, ok)
+		}
+	}
+}
+
 func TestPartial(t *testing.T) {
 	for _, c := range []struct {
 		d    dep.Dep
@@ -469,6 +513,7 @@ func TestPartial(t *testing.T) {
 		{dep.Dep{Manager: NameMise, Datasource: dsGitHub, Versioning: "semver", Version: "2.6.0"}, false},
 		{dep.Dep{Manager: NameAsdf, Datasource: dsNode, Versioning: "tag", Version: "20"}, false},
 		{dep.Dep{Manager: NameAsdf, Datasource: dsCrate, Versioning: "tag", Version: "14"}, false},
+		{dep.Dep{Manager: NameMise, Datasource: dsRust, Versioning: "tag", Version: "1.82"}, false},
 		{dep.Dep{Manager: NameNvm, Datasource: dsNode, Versioning: "tag", Version: "20"}, false},
 		{dep.Dep{Manager: "github-actions", Datasource: dsGitTags, Versioning: "tag", Version: "v4"}, false},
 	} {
