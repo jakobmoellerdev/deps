@@ -160,9 +160,11 @@ func newOpenPGPSigner(ctx context.Context, content string) (*Signer, error) {
 	}
 	s.Fingerprint = fprs[0]
 	// A test signature fails for passphrase-protected or sign-incapable keys instead of
-	// prompting (pinentry-mode error), so commit-tree cannot hang or fail later.
+	// prompting (pinentry-mode error), so commit-tree cannot hang or fail later. The signature
+	// goes to stdout (discarded): with --output /dev/null, gpg unlinks its output file when
+	// signing fails, and as root that deletes /dev/null (seen in CI job containers).
 	if _, err := tool(ctx, s.env, []byte("deps"), gpg, "--batch", "--no-tty", "--pinentry-mode", "error",
-		"--local-user", s.Fingerprint, "--detach-sign", "--output", os.DevNull); err != nil {
+		"--local-user", s.Fingerprint, "--detach-sign", "--output", "-"); err != nil {
 		return nil, s.closeWith(fmt.Errorf("signing with the OpenPGP key without a passphrase (protected keys are not supported): %w", err))
 	}
 	s.config = []string{"-c", "gpg.format=openpgp", "-c", "gpg.openpgp.program=" + gpg, "-c", "user.signingkey=" + s.Fingerprint}
