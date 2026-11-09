@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -301,9 +302,29 @@ func constraint(rng string) *semver.Constraints {
 	return c
 }
 
+// generated caches the Masterminds constraints of the ranges admits checks (nil when rejected):
+// the same rewrite recurs for every dependency sharing a range and candidate versions (one
+// package in many workspaces). It holds generated ranges, so it is cleared once it reaches
+// maxGenerated entries.
+var (
+	generated  sync.Map
+	generatedN atomic.Int64
+)
+
+const maxGenerated = 1 << 14
+
 // admits reports whether the range admits v (as a Masterminds constraint).
 func admits(rng string, v *semver.Version) bool {
-	c := constraint(rng)
+	var c *semver.Constraints
+	if e, hit := generated.Load(rng); hit {
+		c = e.(*semver.Constraints)
+	} else {
+		c = constraint(rng)
+		if _, loaded := generated.LoadOrStore(rng, c); !loaded && generatedN.Add(1) >= maxGenerated {
+			generated.Clear()
+			generatedN.Store(0)
+		}
+	}
 	return c != nil && c.Check(v)
 }
 

@@ -123,3 +123,29 @@ func TestEditsRangeNotAVersion(t *testing.T) {
 		t.Errorf("edits = %+v, %v; want the range unchanged", edits, err)
 	}
 }
+
+// TestAdmitsCacheCap checks that the constraints admits caches are dropped once maxGenerated
+// distinct ranges were checked, and that a cleared cache still answers.
+func TestAdmitsCacheCap(t *testing.T) {
+	generated.Clear()
+	generatedN.Store(0)
+	t.Cleanup(func() { generated.Clear(); generatedN.Store(0) })
+	v := semver.MustParse("1.5.0")
+	for i := range maxGenerated - 1 {
+		if !admits(fmt.Sprintf(">=1.0.0 <%d.0.0", i+2), v) {
+			t.Fatalf("<%d.0.0 rejects 1.5.0", i+2)
+		}
+	}
+	if n := generatedN.Load(); n != maxGenerated-1 {
+		t.Fatalf("cached %d ranges, want %d", n, maxGenerated-1)
+	}
+	if admits("<1.0.0", v) || generatedN.Load() != 0 {
+		t.Errorf("cache not cleared at %d entries: %d", maxGenerated, generatedN.Load())
+	}
+	if _, hit := generated.Load(">=1.0.0 <2.0.0"); hit {
+		t.Error("old entry survived the clear")
+	}
+	if !admits(">=1.0.0 <2.0.0", v) || admits("not a range", v) {
+		t.Error("admits after clear")
+	}
+}
