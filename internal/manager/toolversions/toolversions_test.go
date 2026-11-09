@@ -350,6 +350,25 @@ func TestClassify(t *testing.T) {
 		{tools["erlang"], "26.2.5.4", "26.2.5.4", "loose", "", 0},
 		{tools["erlang"], "27.0-rc1", "27.0-rc1", "loose", "", 0},
 		{tools["erlang"], "27", "27", "tag", "", 0},
+		{javaTool, "temurin-21.0.5+11.0.LTS", "21.0.5+11.0.LTS", "semver", "", 8},
+		{javaTool, "temurin-jre-17.0.13+11", "17.0.13+11", "semver", "", 12},
+		{javaTool, "adoptopenjdk-11.0.15+10", "11.0.15+10", "semver", "", 13},
+		{javaTool, "adoptopenjdk-jre-8.0.432+6", "8.0.432+6", "semver", "", 17},
+		{javaTool, "temurin-21", "21", "tag", "", 8},
+		{javaTool, "21", "21", "tag", "", 0},
+		{javaTool, "21.0", "21.0", "tag", "", 0},
+		{javaTool, "openjdk-24", "24", "tag", "", 8},
+		{javaTool, "21.0.2", "", "", "unsupported distribution", 0},
+		{javaTool, "openjdk-21.0.2", "", "", "unsupported distribution", 0},
+		{javaTool, "corretto-21.0.5.11.1", "", "", "unsupported distribution", 0},
+		{javaTool, "zulu-21.38.21", "", "", "unsupported distribution", 0},
+		{javaTool, "oracle-graalvm-21.0.5", "", "", "unsupported distribution", 0},
+		{javaTool, "latest:temurin-21", "", "", "non-version value", 0},
+		{javaTool, "system", "", "", "non-version value", 0},
+		{javaTool, "", "", "", "non-version value", 0},
+		{javaTool, "prefix:21", "", "", "unsupported range", 0},
+		{javaTool, "ref:jdk-21+35", "", "", "git ref", 0},
+		{javaTool, "21.0.5-tem", "", "", "unsupported range", 0},
 	} {
 		ver, off, versioning, why := classify(c.t, c.raw)
 		if ver != c.ver || off != c.off || versioning != c.versioning || why != c.why {
@@ -426,15 +445,24 @@ func TestAsdf(t *testing.T) {
 	}
 }
 
+// Java versions of asdf-java (halcyon/asdf-java): Temurin and AdoptOpenJDK builds use the
+// java-version datasource, JDK or JRE by the vendor prefix, as Renovate's asdf manager.
 func TestAsdfJVMTools(t *testing.T) {
-	in := "java temurin-21.0.5+11.0.LTS\ngradle 8.10.2\nmaven 3.9.9\n"
+	in := "java temurin-21.0.5+11.0.LTS\ngradle 8.10.2\nmaven 3.9.9\n" +
+		"java temurin-jre-17.0.13+11\njava adoptopenjdk-11.0.15+10\njava corretto-21.0.5.11.1\n"
 	wants := []want{
-		{"java", "", "", "temurin-21.0.5+11.0.LTS", "unsupported tool", 1},
+		{"java-jdk", dsJava, "semver", "21.0.5+11.0.LTS", "", 1},
 		{"gradle", dsGradle, "maven", "8.10.2", "", 2},
 		{"org.apache.maven:apache-maven", dsMaven, "maven", "3.9.9", "", 3},
+		{"java-jre", dsJava, "semver", "17.0.13+11", "", 4},
+		{"java-jdk", dsJava, "semver", "11.0.15+10", "", 5},
+		{"java-jdk", dsJava, "", "corretto-21.0.5.11.1", "unsupported distribution", 6},
 	}
-	got := check(t, NewAsdf(), ".tool-versions", in, wants, map[string]string{"8.10.2": "8.11", "3.9.9": "3.9.11"})
-	if want := "java temurin-21.0.5+11.0.LTS\ngradle 8.11\nmaven 3.9.11\n"; got != want {
+	news := map[string]string{"8.10.2": "8.11", "3.9.9": "3.9.11", "21.0.5+11.0.LTS": "21.0.13+9.0.LTS", "17.0.13+11": "17.0.21+9"}
+	got := check(t, NewAsdf(), ".tool-versions", in, wants, news)
+	want := "java temurin-21.0.13+9.0.LTS\ngradle 8.11\nmaven 3.9.11\n" +
+		"java temurin-jre-17.0.21+9\njava adoptopenjdk-11.0.15+10\njava corretto-21.0.5.11.1\n"
+	if got != want {
 		t.Errorf("patched = %q, want %q", got, want)
 	}
 }
@@ -546,6 +574,7 @@ func TestPartial(t *testing.T) {
 		{dep.Dep{Manager: NameAsdf, Datasource: dsNode, Versioning: "tag", Version: "20"}, false},
 		{dep.Dep{Manager: NameAsdf, Datasource: dsCrate, Versioning: "tag", Version: "14"}, false},
 		{dep.Dep{Manager: NameMise, Datasource: dsRust, Versioning: "tag", Version: "1.82"}, false},
+		{dep.Dep{Manager: NameMise, Datasource: dsJava, Versioning: "tag", Version: "21"}, false},
 		{dep.Dep{Manager: NameNvm, Datasource: dsNode, Versioning: "tag", Version: "20"}, false},
 		{dep.Dep{Manager: "github-actions", Datasource: dsGitTags, Versioning: "tag", Version: "v4"}, false},
 	} {
@@ -655,6 +684,36 @@ experimental = true
 	}
 	if got != in {
 		t.Errorf("patched =\n%s\nwant\n%s", got, in)
+	}
+}
+
+// mise java versions: the openjdk shorthand (`21`) moves its release line, Temurin builds use
+// Adoptium's semver (JDK or JRE by the vendor prefix), other vendors are skipped.
+func TestMiseJava(t *testing.T) {
+	in := `[tools]
+java = "21"
+"core:java" = "temurin-21.0.5+11.0.LTS"
+java.version = "temurin-jre-17"
+[tools.java]
+version = "corretto-21.0.5.11.1"
+`
+	wants := []want{
+		{"java-jdk", dsJava, "tag", "21", "", 2},
+		{"java-jdk", dsJava, "semver", "21.0.5+11.0.LTS", "", 3},
+		{"java-jre", dsJava, "tag", "17", "", 4},
+		{"java-jdk", dsJava, "", "corretto-21.0.5.11.1", "unsupported distribution", 6},
+	}
+	news := map[string]string{"21": "25", "21.0.5+11.0.LTS": "21.0.13+9.0.LTS", "17": "21"}
+	got := check(t, NewMise(), "mise.toml", in, wants, news)
+	want := `[tools]
+java = "25"
+"core:java" = "temurin-21.0.13+9.0.LTS"
+java.version = "temurin-jre-21"
+[tools.java]
+version = "corretto-21.0.5.11.1"
+`
+	if got != want {
+		t.Errorf("patched =\n%s\nwant\n%s", got, want)
 	}
 }
 

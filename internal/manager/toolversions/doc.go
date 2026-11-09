@@ -35,6 +35,7 @@ var toolSkips = []refdoc.Skip{
 	{Reason: "local path", When: "`path:…`"},
 	{Reason: "unsupported range", When: "`prefix:…` or anything else that is not a version"},
 	{Reason: "partial version", When: "`X` for go (Go has no `go 1` line)"},
+	{Reason: "unsupported distribution", When: "a `java` version of a vendor other than Temurin/AdoptOpenJDK (`corretto-…`, `zulu-…`, `oracle-graalvm-…`), or a full version of mise's openjdk shorthand (`21.0.2`, `openjdk-21.0.2`): their builds are not in Adoptium's list"},
 }
 
 var nodeVersionItems = []string{
@@ -145,7 +146,7 @@ var toolVersionItems = []string{
 		"A pinned `rust` of a mise config is the toolchain cargo resolves `Cargo.lock` with (see [cargo](#cargo)).",
 	"`elixir` uses [hexpm-bob](#datasources), the builds asdf and mise install: a full `1.17.3` or `1.17.3-otp-27` uses a `regex:` versioning whose compatibility is the OTP release, so `1.17.3-otp-27` moves to the newest `-otp-27` build and a plain `1.17.3` to the newest plain one; release candidates (`1.18.0-rc.0`) only from a release candidate; a partial `1.17` keeps its precision. Branch builds (`main-otp-27`) are skipped as `non-version value`.",
 	"`erlang` uses the `OTP-<version>` tags of `erlang/otp` (Renovate's choice; asdf and mise build OTP from them) with `loose` versioning, as OTP releases have two to four parts (`27.1`, `27.1.2`, `26.2.5.4`); `27.0-rc1` is a pre-release, a single `27` keeps its precision.",
-	"`java` stays an `unsupported tool` until deps has a java-version datasource.",
+	"`java` uses the `java-version` datasource (Eclipse Temurin releases of the Adoptium API), as Renovate's asdf and mise tables: asdf-java's and mise's `temurin-` and `adoptopenjdk-` versions are dep `java-jdk`, `temurin-jre-` and `adoptopenjdk-jre-` ones `java-jre`; the vendor prefix stays outside the token, and a full version is Adoptium's semver (`temurin-21.0.5+11.0.LTS`, `semver`). mise's vendorless shorthand (openjdk, also `openjdk-`) is `java-jdk` at its release line only (`21` → `25`, `tag`).",
 	"Only the version token is replaced; quotes, comments and the rest of the file are kept.",
 }
 

@@ -88,6 +88,9 @@ const fixture = "\ufeff" + `// comment with "image": "ignored:1"
 		"ghcr.io/${localEnv:ORG}/f:1": {},
 		"ghcr.io/devcontainers/features/ruby:1.1": {"version": "\u0033.3"},
 		"ghcr.io/devcontainers/features/node:1.1": {"version": 20},
+		"ghcr.io/devcontainers/features/java:1": {"version": "21", "jdkDistro": "tem"},
+		"ghcr.io/devcontainers/features/java:1.1": {"jdkDistro": "ms", "version": "17.0.9"},
+		"ghcr.io/devcontainers/features/java:1.2": "21.0.5-tem",
 	},
 }
 `
@@ -128,6 +131,12 @@ func TestExtract(t *testing.T) {
 				"27 feature-version ruby skip=cannot locate value",
 				"28 feature ghcr.io/devcontainers/features/node docker docker 1.1 ref=1.1",
 				"28 feature-version node skip=no version",
+				"29 feature ghcr.io/devcontainers/features/java docker docker 1 ref=1",
+				"29 feature-version java-jdk java-version tag 21 ref=21",
+				"30 feature ghcr.io/devcontainers/features/java docker docker 1.1 ref=1.1",
+				"30 feature-version java-jdk skip=unsupported distribution",
+				"31 feature ghcr.io/devcontainers/features/java docker docker 1.2 ref=1.2",
+				"31 feature-version java-jdk skip=unsupported range",
 			}
 			if len(deps) != len(want) {
 				for _, d := range deps {
@@ -185,6 +194,7 @@ func TestRealWorld(t *testing.T) {
 		"templates-java.devcontainer.json": {
 			"6 image mcr.microsoft.com/devcontainers/java:3-${templateOption:imageVariant} skip=variable reference",
 			"9 feature ghcr.io/devcontainers/features/java docker docker 1 ref=1",
+			"10 feature-version java-jdk skip=non-version value",
 		},
 		"vscode.devcontainer.json": {
 			"7 feature ghcr.io/devcontainers/features/desktop-lite: skip=invalid reference",

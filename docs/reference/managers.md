@@ -810,6 +810,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `local path` | `path:…` |
 | `unsupported range` | `prefix:…` or anything else that is not a version |
 | `partial version` | `X` for go (Go has no `go 1` line) |
+| `unsupported distribution` | a `java` version of a vendor other than Temurin/AdoptOpenJDK (`corretto-…`, `zulu-…`, `oracle-graalvm-…`), or a full version of mise's openjdk shorthand (`21.0.2`, `openjdk-21.0.2`): their builds are not in Adoptium's list |
 
 **Versions.**
 
@@ -822,7 +823,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 - `rust` is read as in [rust-toolchain](#rust-toolchain): `X.Y.Z` uses `semver`, `X.Y` `tag` ([rust-version](#datasources) lists the release lines), and a dated nightly (`nightly-2025-10-10`) moves to the newest nightly as a patch update; the channels `stable`, `beta` and `nightly` are skipped as `non-version value`. A pinned `rust` of a mise config is the toolchain cargo resolves `Cargo.lock` with (see [cargo](#cargo)).
 - `elixir` uses [hexpm-bob](#datasources), the builds asdf and mise install: a full `1.17.3` or `1.17.3-otp-27` uses a `regex:` versioning whose compatibility is the OTP release, so `1.17.3-otp-27` moves to the newest `-otp-27` build and a plain `1.17.3` to the newest plain one; release candidates (`1.18.0-rc.0`) only from a release candidate; a partial `1.17` keeps its precision. Branch builds (`main-otp-27`) are skipped as `non-version value`.
 - `erlang` uses the `OTP-<version>` tags of `erlang/otp` (Renovate's choice; asdf and mise build OTP from them) with `loose` versioning, as OTP releases have two to four parts (`27.1`, `27.1.2`, `26.2.5.4`); `27.0-rc1` is a pre-release, a single `27` keeps its precision.
-- `java` stays an `unsupported tool` until deps has a java-version datasource.
+- `java` uses the `java-version` datasource (Eclipse Temurin releases of the Adoptium API), as Renovate's asdf and mise tables: asdf-java's and mise's `temurin-` and `adoptopenjdk-` versions are dep `java-jdk`, `temurin-jre-` and `adoptopenjdk-jre-` ones `java-jre`; the vendor prefix stays outside the token, and a full version is Adoptium's semver (`temurin-21.0.5+11.0.LTS`, `semver`). mise's vendorless shorthand (openjdk, also `openjdk-`) is `java-jdk` at its release line only (`21` → `25`, `tag`).
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -904,6 +905,7 @@ Updates `<tool> <version> [fallback versions…]` lines of `.tool-versions`. Onl
 | `hk` | `github-releases` | `jdx/hk` |  |
 | `idris` | `git-tags` | `idris-lang/Idris-dev` |  |
 | `istioctl` | `github-releases` | `istio/istio` |  |
+| `java` | `java-version` | `java-jdk` |  |
 | `jj` | `github-releases` | `jj-vcs/jj` |  |
 | `jq` | `github-releases` | `jqlang/jq` | extractVersion `^jq-(?<version>\d.*)$` |
 | `julia` | `github-releases` | `JuliaLang/julia` |  |
@@ -1044,6 +1046,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `local path` | `path:…` |
 | `unsupported range` | `prefix:…` or anything else that is not a version |
 | `partial version` | `X` for go (Go has no `go 1` line) |
+| `unsupported distribution` | a `java` version of a vendor other than Temurin/AdoptOpenJDK (`corretto-…`, `zulu-…`, `oracle-graalvm-…`), or a full version of mise's openjdk shorthand (`21.0.2`, `openjdk-21.0.2`): their builds are not in Adoptium's list |
 | `cannot locate value` | a string with escapes or a multi-line string |
 
 **Extracted.**
@@ -1071,7 +1074,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 - `rust` is read as in [rust-toolchain](#rust-toolchain): `X.Y.Z` uses `semver`, `X.Y` `tag` ([rust-version](#datasources) lists the release lines), and a dated nightly (`nightly-2025-10-10`) moves to the newest nightly as a patch update; the channels `stable`, `beta` and `nightly` are skipped as `non-version value`. A pinned `rust` of a mise config is the toolchain cargo resolves `Cargo.lock` with (see [cargo](#cargo)).
 - `elixir` uses [hexpm-bob](#datasources), the builds asdf and mise install: a full `1.17.3` or `1.17.3-otp-27` uses a `regex:` versioning whose compatibility is the OTP release, so `1.17.3-otp-27` moves to the newest `-otp-27` build and a plain `1.17.3` to the newest plain one; release candidates (`1.18.0-rc.0`) only from a release candidate; a partial `1.17` keeps its precision. Branch builds (`main-otp-27`) are skipped as `non-version value`.
 - `erlang` uses the `OTP-<version>` tags of `erlang/otp` (Renovate's choice; asdf and mise build OTP from them) with `loose` versioning, as OTP releases have two to four parts (`27.1`, `27.1.2`, `26.2.5.4`); `27.0-rc1` is a pre-release, a single `27` keeps its precision.
-- `java` stays an `unsupported tool` until deps has a java-version datasource.
+- `java` uses the `java-version` datasource (Eclipse Temurin releases of the Adoptium API), as Renovate's asdf and mise tables: asdf-java's and mise's `temurin-` and `adoptopenjdk-` versions are dep `java-jdk`, `temurin-jre-` and `adoptopenjdk-jre-` ones `java-jre`; the vendor prefix stays outside the token, and a full version is Adoptium's semver (`temurin-21.0.5+11.0.LTS`, `semver`). mise's vendorless shorthand (openjdk, also `openjdk-`) is `java-jdk` at its release line only (`21` → `25`, `tag`).
 - Only the version token is replaced; quotes, comments and the rest of the file are kept.
 
 **Tools.**
@@ -1153,6 +1156,7 @@ Updates the `[tools]` table of mise config files. The file is scanned as TOML wi
 | `hk` | `github-releases` | `jdx/hk` |  |
 | `idris` | `git-tags` | `idris-lang/Idris-dev` |  |
 | `istioctl` | `github-releases` | `istio/istio` |  |
+| `java` | `java-version` | `java-jdk` |  |
 | `jj` | `github-releases` | `jj-vcs/jj` |  |
 | `jq` | `github-releases` | `jqlang/jq` | extractVersion `^jq-(?<version>\d.*)$` |
 | `julia` | `github-releases` | `JuliaLang/julia` |  |
@@ -2624,7 +2628,7 @@ Updates the Rust toolchain rustup selects for a directory: `channel` of the `[to
 
 ## devcontainer
 
-Updates the image, the Dev Container Features and the node, go, python and ruby feature versions of devcontainer.json files.
+Updates the image, the Dev Container Features and the node, go, python, ruby and java feature versions of devcontainer.json files.
 
 **Files:**
 
@@ -2634,7 +2638,7 @@ Updates the image, the Dev Container Features and the node, go, python and ruby 
 |---|---|---|---|---|
 | `image` | the top-level `image` | `docker` | `docker` | updated |
 | `feature` | the keys of `features` that are OCI references (`ghcr.io/devcontainers/features/node:1`) | `docker` | `docker` | updated |
-| `feature-version` | the `version` option (or a string option value) of the features `ghcr.io/devcontainers/features/node` (name `node`), `…/go` (`go`), `…/python` (`python`) and `…/ruby` (`ruby`) | `node-version`, `go-toolchain`, `python-version`, `ruby-version` | as [asdf](#asdf): `semver`/`tag` (node), `tag` (go), `pep440`/`tag` (python), `ruby`/`tag` (ruby) | updated |
+| `feature-version` | the `version` option (or a string option value) of the features `ghcr.io/devcontainers/features/node` (name `node`), `…/go` (`go`), `…/python` (`python`), `…/ruby` (`ruby`) and `…/java` (`java-jdk`) | `node-version`, `go-toolchain`, `python-version`, `ruby-version`, `java-version` | as [asdf](#asdf): `semver`/`tag` (node), `tag` (go), `pep440`/`tag` (python), `ruby`/`tag` (ruby), `tag` (java) | updated |
 
 **Skips:**
 
@@ -2646,10 +2650,11 @@ Updates the image, the Dev Container Features and the node, go, python and ruby 
 | `variable reference` | `$` in the image or feature (`${localEnv:…}`) that no [`registryAliases`](configuration.md#registryaliases) entry resolves |
 | `invalid reference` | the image or feature reference does not parse |
 | `no tag` | a feature without tag or digest (features are never pinned) |
-| `no version` | a node, go, python or ruby feature without a `version` option (the feature's default, typically `lts` or `latest`) |
+| `no version` | a node, go, python, ruby or java feature without a `version` option (the feature's default, typically `lts` or `latest`) |
 | `non-version value` | a version option that is a word: `lts`, `latest`, `none`, `os-provided` |
 | `partial version` | a go version with one part (`1`) |
-| `unsupported range` | a version option that is no version (`>=18`) |
+| `unsupported distribution` | a full java version (`17.0.9`): the feature installs it from SDKMAN! for its `jdkDistro`, whose numbering is not Adoptium's |
+| `unsupported range` | a version option that is no version (`>=18`, a SDKMAN! identifier `21.0.5-tem`) |
 | `cannot locate value` | the string is written with JSON escapes |
 
 **Details.**
@@ -2657,7 +2662,7 @@ Updates the image, the Dev Container Features and the node, go, python and ruby 
 - The file is JSON with comments (`//`, `/* */`) and trailing commas; edits replace the version bytes only, so comments and formatting stay.
 - The image and the features are parsed and edited like the [docker](#docker) manager's references: the tag is updated, an image digest is refreshed or, with `pin: digest`, pinned; an image without a tag is its implicit `latest`. Features are never pinned (as Renovate's `pinDigests: false`); a digest already written after a feature tag, or after a feature without tag (`latest`), is refreshed.
 - Feature tags are usually a major (`:1`): docker versioning keeps the precision, so `:1` moves to `:2`.
-- Feature version options are read like the [asdf](#asdf) tools of the same name: `20` and `20.11` keep their precision (node, python, ruby), `1.22` and `1.22.3` are go-toolchain versions.
+- Feature version options are read like the [asdf](#asdf) tools of the same name: `20` and `20.11` keep their precision (node, python, ruby), `1.22` and `1.22.3` are go-toolchain versions. The java feature's version (any `jdkDistro`) moves at its release line (`21` → `25`) by the java-version datasource; Renovate does not update it.
 - `build.dockerfile` and `dockerComposeFile` are not read: the [docker](#docker) manager finds the Dockerfile (`Dockerfile`, `Dockerfile.<x>`, `<x>.Dockerfile`) and the Compose file on its own.
 
 ## bitbucket-pipelines

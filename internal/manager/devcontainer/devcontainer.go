@@ -1,6 +1,6 @@
 // Package devcontainer extracts the container image (`image`), the Dev Container Features
-// (`features` keys, OCI references) and the tool versions of the node, go, python and ruby
-// features (`version` options) from devcontainer.json files, which are JSON with comments.
+// (`features` keys, OCI references) and the tool versions of the node, go, python, ruby and
+// java features (`version` options) from devcontainer.json files, which are JSON with comments.
 package devcontainer
 
 import (
@@ -35,12 +35,14 @@ const (
 var fileRe = regexp.MustCompile(`(^|/)(\.devcontainer\.json|\.devcontainer/([^/]+/)?devcontainer\.json)$`)
 
 // featureTools maps the features whose `version` option is a tool version to the tool
-// (toolversions.ToolDep), as Renovate's devcontainer manager does.
+// (toolversions.ToolDep), as Renovate's devcontainer manager does (java is deps' own: the
+// feature's SDKMAN! version is versioned at its release line, `21`).
 var featureTools = map[string]string{
 	"ghcr.io/devcontainers/features/node":   "node",
 	"ghcr.io/devcontainers/features/go":     "go",
 	"ghcr.io/devcontainers/features/python": "python",
 	"ghcr.io/devcontainers/features/ruby":   "ruby",
+	"ghcr.io/devcontainers/features/java":   "java",
 }
 
 type devcontainerManager struct{}

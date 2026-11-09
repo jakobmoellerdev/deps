@@ -184,6 +184,7 @@ const (
 	dsDotnet  = "dotnet-version"
 	dsRust    = "rust-version"
 	dsHexBob  = "hexpm-bob"
+	dsJava    = "java-version"
 	skipTool  = "unsupported tool"
 )
 
@@ -200,6 +201,8 @@ var (
 	// Erlang/OTP releases are the OTP-<version> tags asdf and mise build from (Renovate's
 	// github-tags erlang/otp), of two to four parts (27.1, 27.1.2, 26.2.5.4): loose versioning.
 	erlangTool = tool{datasource: dsGitTags, name: "erlang/otp", source: "https://github.com/erlang/otp", extract: `^OTP-(?<version>\d.*)$`, versioning: "loose"}
+	// javaTool's name is java-jdk or java-jre by the version's vendor prefix (javaName).
+	javaTool = tool{datasource: dsJava, name: javaJDK}
 )
 
 func githubTool(repo string) tool {
@@ -246,6 +249,7 @@ var tools = map[string]tool{
 	"rust":                 {datasource: dsRust, name: "rust"},
 	"elixir":               elixirTool,
 	"erlang":               erlangTool,
+	"java":                 javaTool,
 	"act":                  githubTool("nektos/act"),
 	"actionlint":           githubTool("rhysd/actionlint"),
 	"age":                  githubTool("FiloSottile/age"),
@@ -437,8 +441,9 @@ func ToolDep(mgr, depType, file string, line int, name, raw string, at int) dep.
 }
 
 // derivesLines are the datasources that list derived X.Y and X release lines themselves
-// (node, ruby, python, crate: for partial versions; go-toolchain, rust-version: X.Y).
-var derivesLines = map[string]bool{dsNode: true, dsGo: true, dsRuby: true, dsPython: true, dsCrate: true, dsRust: true}
+// (node, ruby, python, crate, java-version: for partial versions; go-toolchain, rust-version:
+// X.Y).
+var derivesLines = map[string]bool{dsNode: true, dsGo: true, dsRuby: true, dsPython: true, dsCrate: true, dsRust: true, dsJava: true}
 
 // Partial reports whether d is a partial asdf/mise tool version (`1.55`, `3`) under tag
 // versioning whose datasource lists only full versions: the engine then derives the X.Y and
@@ -480,7 +485,61 @@ var (
 	shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	// nightlyRe is a dated Rust nightly (`nightly-2025-10-10`).
 	nightlyRe = regexp.MustCompile(`^nightly-\d{4}-\d{2}-\d{2}$`)
+	// javaFullRe is an Adoptium semver (`21.0.5`, `21.0.5+11.0.LTS`) after the vendor prefix;
+	// javaVendorRe is a version of another vendor (`corretto-21.0.5.11.1`, `zulu-21.38.21`).
+	javaFullRe   = regexp.MustCompile(`^\d+\.\d+\.\d+(?:\+[0-9A-Za-z.-]+)?$`)
+	javaVendorRe = regexp.MustCompile(`^[a-z][a-z0-9.-]*-\d`)
 )
+
+// Java dep names of the java-version datasource (Renovate's).
+const (
+	javaJDK = "java-jdk"
+	javaJRE = "java-jre"
+)
+
+// javaTemurin are the vendor prefixes of asdf-java and mise java versions whose builds are
+// Eclipse Temurin's (Adoptium, the java-version datasource), the JRE ones first, as in
+// Renovate's asdf and mise tables.
+var javaTemurin = []string{"temurin-jre-", "adoptopenjdk-jre-", "temurin-", "adoptopenjdk-"}
+
+// javaName returns the java-version dep name of java version raw: java-jre for a JRE vendor
+// prefix, else java-jdk.
+func javaName(raw string) string {
+	if strings.HasPrefix(raw, "temurin-jre-") || strings.HasPrefix(raw, "adoptopenjdk-jre-") {
+		return javaJRE
+	}
+	return javaJDK
+}
+
+// classifyJava classifies a java version of asdf-java or mise (`temurin-21.0.5+11.0.LTS`,
+// `21`). A Temurin vendor prefix (javaTemurin) stays outside the token; the full version is
+// Adoptium's semver. A version without vendor (mise's openjdk shorthand, a devcontainer
+// feature's SDKMAN! version) or with `openjdk-` is not a Temurin build: only its release line
+// (`21`, `21.0`) is updated, a full version is another vendor's numbering.
+func classifyJava(raw string) (ver string, off int, versioning, skip string) {
+	bare, temurin := raw, false
+	for _, p := range javaTemurin {
+		if b, ok := strings.CutPrefix(raw, p); ok {
+			bare, temurin = b, true
+			break
+		}
+	}
+	if !temurin {
+		bare = strings.TrimPrefix(raw, "openjdk-")
+	}
+	off = len(raw) - len(bare)
+	switch {
+	case rubyPartialRe.MatchString(bare):
+		return bare, off, "tag", ""
+	case javaFullRe.MatchString(bare) && temurin:
+		return bare, off, "semver", ""
+	case javaFullRe.MatchString(bare) || javaVendorRe.MatchString(raw):
+		return "", 0, "", "unsupported distribution"
+	case raw == "" || wordRe.MatchString(raw):
+		return "", 0, "", "non-version value" // latest, system, latest:temurin-21
+	}
+	return "", 0, "", "unsupported range"
+}
 
 // classify returns the version token of raw for t (ver at byte offset off in raw), its
 // versioning, or the reason raw is not updatable. Partial versions move at their precision
@@ -541,6 +600,8 @@ func classify(t tool, raw string) (ver string, off int, versioning, skip string)
 		if nightlyRe.MatchString(raw) {
 			return raw, 0, rustversion.NightlyVersioning, ""
 		}
+	case dsJava:
+		return classifyJava(raw)
 	}
 	if raw == "" || wordRe.MatchString(raw) {
 		return "", 0, "", "non-version value"
@@ -597,6 +658,9 @@ func newDep(mgr, depType, file string, line int, t tool, raw string, at int) dep
 	d := dep.Dep{
 		Manager: mgr, Datasource: t.datasource, DepType: depType, File: file, Line: line,
 		Name: t.name, Source: t.source, Version: raw, Skip: t.skip, ExtractVersion: t.extract,
+	}
+	if t.datasource == dsJava {
+		d.Name = javaName(raw)
 	}
 	if d.Skip != "" {
 		return d
