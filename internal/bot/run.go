@@ -224,7 +224,7 @@ func Run(ctx context.Context, o Options, bases []Base, post map[string]engine.Po
 			}
 			b.Name = name
 		}
-		head, err := checkoutHead(ctx, b.Git, b.Name)
+		head, err := checkoutHead(ctx, b.Git, b.Name, o.DryRun)
 		if err != nil {
 			return nil, []error{err}
 		}
@@ -343,8 +343,11 @@ func Run(ctx context.Context, o Options, bases []Base, post map[string]engine.Po
 	return actions, errs
 }
 
-// checkoutHead returns the HEAD of g, which must be the tip of base on origin.
-func checkoutHead(ctx context.Context, g Git, base string) (string, error) {
+// checkoutHead returns the HEAD of g, which must be the tip of base on origin. A dry run
+// accepts an older HEAD with a warning, because it pushes nothing: the base moves while a CI
+// job runs (another PR is merged between its checkout and the run), and failing the preview
+// for that would only make it flaky. base must exist on origin either way.
+func checkoutHead(ctx context.Context, g Git, base string, dryRun bool) (string, error) {
 	head, err := g.RevParse(ctx, "HEAD")
 	if err != nil {
 		return "", err
@@ -353,7 +356,12 @@ func checkoutHead(ctx context.Context, g Git, base string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if tip := remote["refs/heads/"+base]; tip != head {
+	tip := remote["refs/heads/"+base]
+	switch {
+	case tip == head:
+	case dryRun && tip != "":
+		slog.WarnContext(ctx, "dry run: checkout HEAD is not the tip of the base branch, reporting against the checkout", "base", base, "head", short(head), "tip", short(tip))
+	default:
 		return "", fmt.Errorf("checkout HEAD %s is not the tip of origin/%s (%s); check out the latest %s", short(head), base, short(tip), base)
 	}
 	return head, nil

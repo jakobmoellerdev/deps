@@ -693,12 +693,38 @@ func TestRun(t *testing.T) {
 	}
 }
 
-func TestRunRejectsStaleCheckout(t *testing.T) {
+// A run pushes only on the tip of the base; a dry run reports against an older checkout,
+// because the base moves while a PR's CI job runs (#296). A missing base fails both.
+func TestRunStaleCheckout(t *testing.T) {
 	root, res := fixture(t)
-	g := &staleGit{}
-	_, errs := Run(t.Context(), Options{MaxNewPRs: 10, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, &fakePC{})
-	if len(errs) != 1 || g.pushed != nil {
-		t.Fatalf("errs = %v, pushed = %v", errs, g.pushed)
+	const tip = "3333333333333333333333333333333333333333"
+	tests := []struct {
+		name    string
+		dryRun  bool
+		tip     string
+		wantErr string
+	}{
+		{"run", false, tip, "checkout HEAD 1111111 is not the tip of origin/main (3333333); check out the latest main"},
+		{"dry run", true, tip, ""},
+		{"dry run without base", true, "", "checkout HEAD 1111111 is not the tip of origin/main (); check out the latest main"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := &staleGit{tip: tt.tip}
+			acts, errs := Run(t.Context(), Options{MaxNewPRs: 10, Managers: managers, DryRun: tt.dryRun}, []Base{{Name: "main", Root: root, Res: res, Git: g}}, nil, &fakePC{})
+			if g.pushed != nil {
+				t.Fatalf("pushed = %v", g.pushed)
+			}
+			if tt.wantErr != "" {
+				if len(errs) != 1 || errs[0].Error() != tt.wantErr {
+					t.Fatalf("errs = %v, want %q", errs, tt.wantErr)
+				}
+				return
+			}
+			if len(errs) != 0 || len(acts) == 0 || acts[0].Status != StatusWouldCreate {
+				t.Fatalf("acts = %+v, errs = %v", acts, errs)
+			}
+		})
 	}
 }
 
@@ -943,10 +969,17 @@ func TestRunPostUpgradeTasks(t *testing.T) {
 	}
 }
 
-type staleGit struct{ fakeGit }
+// staleGit is a checkout whose HEAD is not tip, the remote main ("" = no main on origin).
+type staleGit struct {
+	fakeGit
+	tip string
+}
 
 func (g *staleGit) LsRemote(_ context.Context, pattern string) (map[string]string, error) {
-	return map[string]string{"refs/heads/main": "3333333333333333333333333333333333333333"}, nil
+	if pattern != "refs/heads/main" || g.tip == "" {
+		return map[string]string{}, nil
+	}
+	return map[string]string{"refs/heads/main": g.tip}, nil
 }
 
 func TestRunStateErrors(t *testing.T) {

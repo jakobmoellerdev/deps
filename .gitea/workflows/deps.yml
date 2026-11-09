@@ -36,8 +36,9 @@ jobs:
           args: run --log-level info
   # Builds deps from the PR and shows what it would do: `plan` on the PR (its .deps.yaml and
   # dependencies), `preview` (how the PR changes the update PRs against the base branch), then
-  # `run --dry-run` on the base branch, because run requires HEAD to be the tip of
-  # origin/<base>. Read-only; its own concurrency group, so it never waits for the deps job.
+  # `run --dry-run` on the base branch, which reports against its checkout (if main moves
+  # during the job, it only warns). Read-only; its own concurrency group, so it never waits
+  # for the deps job.
   dry-run:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

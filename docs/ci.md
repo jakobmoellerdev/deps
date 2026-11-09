@@ -479,7 +479,7 @@ For lockfiles, deps runs the tool from `PATH`. If it is missing, deps falls back
 
 `.terraform.lock.hcl` is refreshed with `terraform init -backend=false` (`tofu` for OpenTofu) when a provider constraint changes or a provider gets a lockfile-only update (`rangeStrategy: update-lockfile`), so put the CLI on the runner (`hashicorp/setup-terraform` or `opentofu/setup-opentofu`). There is no fallback; without it those directories fail with `terraform not found (needed to update .terraform.lock.hcl)`. The runner also needs to reach the provider registries and the sources of remote modules, which init downloads.
 
-**Checkout.** `deps run` requires the checked-out `HEAD` to be the tip of `origin/<base>`. A fresh `actions/checkout` of the default branch satisfies that; shallow clones are fine. To manage a branch other than the default, check it out and pass `--base <branch>`, or list it in [`baseBranches`](#several-base-branches).
+**Checkout.** `deps run` requires the checked-out `HEAD` to be the tip of `origin/<base>`. A fresh `actions/checkout` of the default branch satisfies that; shallow clones are fine. `--dry-run` only warns when the base moved since the checkout. To manage a branch other than the default, check it out and pass `--base <branch>`, or list it in [`baseBranches`](#several-base-branches).
 
 **Network.** The runner needs HTTPS access to:
 
@@ -921,7 +921,7 @@ Three kinds of PR checks are useful, and all only read:
 
 - **Config changes (most repositories).** The `plan` job above, limited to `.deps.yaml` with `paths:`. It checks the PR's config and lists the updates it leads to in the job summary.
 - **What a config change does to the PRs.** `deps preview` compares the PR's checkout with the base branch's: which update PRs would be new, which would change and which would no longer be opened. See below.
-- **The PRs deps would open.** `run --dry-run` lists each PR as `would-create`, `would-update`, `would-rebase` or `would-automerge`, in the log and the job summary. It doesn't work on the PR's own checkout: `run` requires `HEAD` to be the tip of `origin/<base>` and otherwise fails with `checkout HEAD <sha> is not the tip of origin/<base>`. Check out the base branch for it. The job token with read access is enough.
+- **The PRs deps would open.** `run --dry-run` lists each PR as `would-create`, `would-update`, `would-rebase` or `would-automerge`, in the log and the job summary. Run it on a checkout of the base branch, not on the PR's own checkout: it reports against whatever is checked out. If `HEAD` is not the tip of `origin/<base>`, which happens when the base moves while the job runs, the dry run logs a warning and reports against the checkout; only `run` without `--dry-run` fails then. The job token with read access is enough.
 
 **`deps preview`.** It needs both checkouts. On GitHub it also creates the check run *deps preview* on the PR's head commit, with the comparison as its report, so it appears on the PR's *Checks* tab; that takes `checks: write` and an App installation token (`GITHUB_TOKEN` works, a PAT can't create check runs). Without it, and on Gitea and Forgejo, the comparison is in the job summary. The check concludes `success`, or `neutral` when lookups failed; it never blocks a merge.
 
@@ -1076,7 +1076,7 @@ Run with `show-skipped: true` and `log-level: debug` to see every HTTP request, 
 
 | Symptom | Cause and fix |
 |---|---|
-| `checkout HEAD <sha> is not the tip of origin/<base> (<sha>); check out the latest <base>` | The job checked out a PR ref, a tag or an old commit. Check out the default branch (no `ref:`), or pass `--base`. |
+| `checkout HEAD <sha> is not the tip of origin/<base> (<sha>); check out the latest <base>` | The job checked out a PR ref, a tag or an old commit, or the base moved since the checkout. Check out the default branch (no `ref:`), or pass `--base`. A `--dry-run` only warns, unless `<base>` does not exist on origin. |
 | `cannot detect platform for <host>; pass --platform and --api-url` | Running outside Actions against a host whose API probes failed. Pass `--platform gitea --api-url https://host/api/v1` (and `--repo` if the remote is unusual). |
 
 **PR statuses:**
