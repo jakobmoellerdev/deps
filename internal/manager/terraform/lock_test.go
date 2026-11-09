@@ -60,6 +60,7 @@ func workspace(t *testing.T, lockHost string) (dir string, patched, lock []byte)
 		"env/shared/mod/notes.txt":      "",
 		"env/readme.md":                 "",
 		"top.txt":                       "",
+		".git/HEAD":                     "",
 	} {
 		p := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

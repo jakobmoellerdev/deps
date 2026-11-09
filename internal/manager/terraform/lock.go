@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -124,9 +125,7 @@ func refresh(ctx context.Context, dir string, manifests, files map[string][]byte
 		return nil, err
 	}
 	content := make(map[string][]byte, len(manifests)+2)
-	for rel, b := range manifests {
-		content[filepath.FromSlash(rel)] = b
-	}
+	maps.Copy(content, manifests)
 	content[LockFile] = stripped
 	if len(pins) > 0 {
 		if content[overrideFile], err = pinOverride(dir, manifests, pins); err != nil {
@@ -203,11 +202,11 @@ func lockTool(tofu bool) (tool, bin string, err error) {
 // initLock runs init (with args) on a mirror of dir holding content and returns the lock file
 // it wrote.
 func initLock(ctx context.Context, dir, tool, bin string, content map[string][]byte, args ...string) ([]byte, error) {
-	work, cleanup, err := mirror(dir, localDepth(dir), content)
+	tmp, work, err := toolrun.Mirror(dir, toolrun.MirrorOptions{Pattern: "deps-terraform-*", Files: content, Skip: skipData})
 	if err != nil {
 		return nil, err
 	}
-	defer cleanup()
+	defer os.RemoveAll(tmp)
 	if err := runInit(ctx, bin, work, args...); err != nil {
 		return nil, fmt.Errorf("%s init in %s: %w", tool, dir, err)
 	}
@@ -432,150 +431,9 @@ func readLock(p string) (map[string]string, error) {
 	return out, nil
 }
 
-// localDepth returns how many directories above dir the local module sources of the
-// configuration in dir (followed through the local modules) reach.
-func localDepth(dir string) int {
-	depth := 0
-	seen := map[string]bool{}
-	var walk func(rel string)
-	walk = func(rel string) {
-		if seen[rel] {
-			return
-		}
-		seen[rel] = true
-		up := 0
-		for p := range strings.SplitSeq(filepath.ToSlash(rel), "/") {
-			if p != ".." {
-				break
-			}
-			up++
-		}
-		depth = max(depth, up)
-		for _, src := range localSources(filepath.Join(dir, rel)) {
-			walk(filepath.Join(rel, filepath.FromSlash(src)))
-		}
-	}
-	walk(".")
-	return depth
-}
-
-// localSources returns the `./` and `../` module sources of the configuration in dir.
-func localSources(dir string) []string {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range entries {
-		if e.IsDir() || !isConfigFile(e.Name()) {
-			continue
-		}
-		src, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		b, err := parseHCL(src)
-		if err != nil {
-			continue
-		}
-		for _, blk := range b.blocks {
-			if blk.typ != "module" {
-				continue
-			}
-			for _, a := range blk.body.attrs {
-				if a.name == "source" && a.val.kind == kindString && (strings.HasPrefix(a.val.str, "./") || strings.HasPrefix(a.val.str, "../")) {
-					out = append(out, a.val.str)
-				}
-			}
-		}
-	}
-	return out
-}
-
-// mirror builds a temporary tree in which relative paths from the returned work directory
-// resolve as they do from dir: dir's regular files are copied (content overrides some by
-// name), its subdirectories are symlinked (its .terraform data directory is left out), and the
-// other entries of each of the depth directories above dir are symlinked next to the copy.
-func mirror(dir string, depth int, content map[string][]byte) (work string, cleanup func(), err error) {
-	tmp, err := os.MkdirTemp("", "deps-terraform-*")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup = func() { _ = os.RemoveAll(tmp) }
-	defer func() {
-		if err != nil {
-			cleanup()
-		}
-	}()
-	dir = filepath.Clean(dir)
-	// The path from the top mirrored ancestor down to dir.
-	var names []string
-	top := dir
-	for range depth {
-		parent := filepath.Dir(top)
-		if parent == top {
-			break
-		}
-		names = append([]string{filepath.Base(top)}, names...)
-		top = parent
-	}
-	orig, mirrored := top, tmp
-	for _, name := range names {
-		if err := linkEntries(orig, mirrored, name); err != nil {
-			return "", nil, err
-		}
-		orig, mirrored = filepath.Join(orig, name), filepath.Join(mirrored, name)
-		if err := os.Mkdir(mirrored, 0o755); err != nil {
-			return "", nil, err
-		}
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", nil, err
-	}
-	for _, e := range entries {
-		name, src, dst := e.Name(), filepath.Join(dir, e.Name()), filepath.Join(mirrored, e.Name())
-		switch {
-		case name == ".terraform":
-		case content[name] != nil:
-		case e.Type().IsRegular():
-			b, err := os.ReadFile(src)
-			if err != nil {
-				return "", nil, err
-			}
-			if err := os.WriteFile(dst, b, 0o644); err != nil {
-				return "", nil, err
-			}
-		default:
-			if err := os.Symlink(src, dst); err != nil {
-				return "", nil, err
-			}
-		}
-	}
-	for name, b := range content {
-		if err := os.WriteFile(filepath.Join(mirrored, name), b, 0o644); err != nil {
-			return "", nil, err
-		}
-	}
-	return mirrored, cleanup, nil
-}
-
-// linkEntries symlinks every entry of dir except skip into mirrored.
-func linkEntries(dir, mirrored, skip string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil && !errors.Is(err, fs.ErrPermission) {
-		return err
-	}
-	for _, e := range entries {
-		if e.Name() == skip {
-			continue
-		}
-		if err := os.Symlink(filepath.Join(dir, e.Name()), filepath.Join(mirrored, e.Name())); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+// skipData is a toolrun.MirrorOptions.Skip leaving out dir's .terraform data directory and
+// .git.
+func skipData(rel string, _ fs.DirEntry) bool { return rel == ".terraform" || rel == ".git" }
 
 // runInit runs `<bin> init -backend=false [args]` in work, non-interactively.
 func runInit(ctx context.Context, bin, work string, args ...string) error {

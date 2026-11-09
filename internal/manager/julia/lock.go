@@ -356,22 +356,17 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 // script with the project directories args (relative to dir) and returns the manifest under
 // name when it changed.
 func runPkg(ctx context.Context, dir, name string, projects map[string][]byte, lock []byte, script string, args []string) (map[string][]byte, error) {
-	tmp, err := os.MkdirTemp("", "deps-julia-*")
+	files, err := projectFiles(dir, projects)
+	if err != nil {
+		return nil, err
+	}
+	// Pkg picks a versioned manifest by its own Julia version: the copy is the one it reads.
+	files[manifestFile] = lock
+	tmp, base, err := toolrun.Mirror(dir, toolrun.MirrorOptions{Pattern: "deps-julia-*", Files: files, Skip: skip, Recreate: everyDir})
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	base, err := toolrun.MirrorAncestors(dir, tmp)
-	if err != nil {
-		return nil, err
-	}
-	if err := mirror(dir, base, projects); err != nil {
-		return nil, err
-	}
-	// Pkg picks a versioned manifest by its own Julia version: the copy is the one it reads.
-	if err := os.WriteFile(filepath.Join(base, manifestFile), lock, 0o644); err != nil {
-		return nil, err
-	}
 	for i, a := range args {
 		args[i] = filepath.Join(base, a)
 	}
@@ -389,37 +384,49 @@ func runPkg(ctx context.Context, dir, name string, projects map[string][]byte, l
 // CI runner), as Pkg.add would, so Pkg.resolve finds the packages too.
 const pkgPrelude = "import Pkg\nisempty(Pkg.Registry.reachable_registries()) && Pkg.Registry.add(\"General\")\n"
 
-// mirror recreates the tree below src in dst: directories are created, project files copied
-// (projects, by slash path, replace their content), manifests left out, other files
-// symlinked. .git and node_modules directories are left out.
-func mirror(src, dst string, projects map[string][]byte) error {
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+// skip is a toolrun.MirrorOptions.Skip leaving out the manifests next to the project and
+// .git and node_modules directories at any depth.
+func skip(rel string, d fs.DirEntry) bool {
+	if d.IsDir() {
+		return d.Name() == ".git" || d.Name() == "node_modules"
+	}
+	return rel == d.Name() && (d.Name() == manifestFile || d.Name() == juliaManifest || versionedRe.MatchString(d.Name()))
+}
+
+// everyDir is a toolrun.MirrorOptions.Recreate recreating every directory.
+func everyDir(string, fs.DirEntry) bool { return true }
+
+// projectFiles returns the project files below dir (by slash path, projects replacing their
+// content) outside the directories skip leaves out: Pkg may rewrite a project, so the mirror
+// holds copies, never symlinks to the checkout's.
+func projectFiles(dir string, projects map[string][]byte) (map[string][]byte, error) {
+	files := maps.Clone(projects)
+	if files == nil {
+		files = map[string][]byte{}
+	}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(src, p)
+		rel, err := filepath.Rel(dir, p)
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dst, rel)
+		rel = filepath.ToSlash(rel)
 		switch {
-		case d.IsDir() && rel != "." && (d.Name() == ".git" || d.Name() == "node_modules"):
+		case d.IsDir() && rel != "." && skip(rel, d):
 			return filepath.SkipDir
-		case d.IsDir():
-			return os.MkdirAll(target, 0o755)
-		case rel == d.Name() && (d.Name() == manifestFile || d.Name() == juliaManifest || versionedRe.MatchString(d.Name())):
+		case d.IsDir() || !slices.Contains(ProjectNames, d.Name()):
 			return nil
-		case slices.Contains(ProjectNames, d.Name()):
-			b, ok := projects[filepath.ToSlash(rel)]
-			if !ok {
-				if b, err = os.ReadFile(p); err != nil {
-					return err
-				}
-			}
-			return os.WriteFile(target, b, 0o644)
 		}
-		return os.Symlink(p, target)
+		if _, ok := files[rel]; !ok {
+			if files[rel], err = os.ReadFile(p); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
+	return files, err
 }
 
 // julia runs the Pkg script in dir (the mirror of scope) with args; precompilation is off. A

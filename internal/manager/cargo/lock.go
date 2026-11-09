@@ -257,24 +257,29 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 	return map[string][]byte{lockFile: out}, nil
 }
 
-// mirrorRoot mirrors the workspace root dir (toolrun.MirrorAncestors, mirror) with the patched
-// manifests and lock into a new temporary directory tmp, which the caller removes; base is
-// the mirror of dir.
+// mirrorRoot mirrors the workspace root dir (toolrun.Mirror) with the patched manifests and
+// lock into a new temporary directory tmp, which the caller removes; base is the mirror of
+// dir. Every directory is recreated so .git, target and node_modules directories are left
+// out at any depth; other entries are symlinked.
 func mirrorRoot(dir string, manifests map[string][]byte, lock []byte) (tmp, base string, err error) {
-	if tmp, err = os.MkdirTemp("", "deps-cargo-*"); err != nil {
-		return "", "", err
-	}
-	if base, err = toolrun.MirrorAncestors(dir, tmp); err == nil {
-		if err = mirror(dir, base, manifests); err == nil {
-			err = os.WriteFile(filepath.Join(base, lockFile), lock, 0o644)
-		}
-	}
-	if err != nil {
-		os.RemoveAll(tmp)
-		return "", "", err
-	}
-	return tmp, base, nil
+	files := make(map[string][]byte, len(manifests)+1)
+	maps.Copy(files, manifests)
+	files[lockFile] = lock
+	return toolrun.Mirror(dir, toolrun.MirrorOptions{Pattern: "deps-cargo-*", Files: files, Skip: skipDir, Recreate: everyDir})
 }
+
+// skipDir is a toolrun.MirrorOptions.Skip leaving out .git, target and node_modules
+// directories at any depth.
+func skipDir(_ string, d fs.DirEntry) bool {
+	switch d.Name() {
+	case ".git", "target", "node_modules":
+		return d.IsDir()
+	}
+	return false
+}
+
+// everyDir is a toolrun.MirrorOptions.Recreate recreating every directory.
+func everyDir(string, fs.DirEntry) bool { return true }
 
 // crateUpdate is a crates.io dependency whose requirement deps changed.
 type crateUpdate struct{ name, version string }
@@ -484,39 +489,6 @@ func compatible(a, b *semver.Version) bool {
 		return true
 	}
 	return a.Patch() == b.Patch()
-}
-
-// mirror recreates the tree below src in dst: directories are created, Cargo.toml files are
-// copied (manifests replace their content), other files are symlinked. .git, target and
-// node_modules directories are left out.
-func mirror(src, dst string, manifests map[string][]byte) error {
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, p)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		switch {
-		case d.IsDir() && rel != "." && (d.Name() == ".git" || d.Name() == "target" || d.Name() == "node_modules"):
-			return filepath.SkipDir
-		case d.IsDir():
-			return os.MkdirAll(target, 0o755)
-		case d.Name() == lockFile && rel == lockFile:
-			return nil
-		case d.Name() == manifestFile:
-			b, ok := manifests[filepath.ToSlash(rel)]
-			if !ok {
-				if b, err = os.ReadFile(p); err != nil {
-					return err
-				}
-			}
-			return os.WriteFile(target, b, 0o644)
-		}
-		return os.Symlink(p, target)
-	})
 }
 
 // cargo runs `cargo args...` in dir (the mirror of scope); a failure carries the tail of

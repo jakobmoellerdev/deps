@@ -377,8 +377,9 @@ func stub(t *testing.T) (log string) {
 	script := `#!/bin/sh
 echo "args: $*" >> "$STUB_LOG"
 test -L src/lib.rs && echo "symlinked src/lib.rs" >> "$STUB_LOG"
-test -L Cargo.toml || echo "copied Cargo.toml" >> "$STUB_LOG"
-test -e target || test -e .git || echo "no target, no .git" >> "$STUB_LOG"
+test -L Cargo.toml && echo "symlinked Cargo.toml" >> "$STUB_LOG"
+test -e crates/a/Cargo.toml && ! test -L crates/a/Cargo.toml && echo "copied crates/a/Cargo.toml" >> "$STUB_LOG"
+test -e target || test -e .git || test -e crates/b/target || test -e crates/b/node_modules || echo "no target, no .git" >> "$STUB_LOG"
 test -e ../crates/x/Cargo.toml && echo "sibling visible" >> "$STUB_LOG"
 test -n "$STUB_FAIL" && { echo "warning: noise"; echo "error: boom in $(pwd)/Cargo.toml" >&2; exit 101; }
 if [ "$*" = "update --workspace" ]; then
@@ -403,12 +404,15 @@ func TestProcessStub(t *testing.T) {
 	dir := t.TempDir()
 	before := lockOf("anyhow@1.0.80", "serde@1.0.228")
 	write(t, dir, map[string]string{
-		"Cargo.toml":          "[workspace]\nmembers = [\"crates/a\"]\n",
-		"crates/a/Cargo.toml": "[dependencies]\nanyhow = \"1.0.80\"\nserde = \"1.0\"\n",
-		"src/lib.rs":          "",
-		"target/debug/x":      "",
-		".git/HEAD":           "",
-		"Cargo.lock":          "on disk, ignored",
+		"Cargo.toml":                "[workspace]\nmembers = [\"crates/*\"]\n",
+		"crates/a/Cargo.toml":       "[dependencies]\nanyhow = \"1.0.80\"\nserde = \"1.0\"\n",
+		"crates/b/Cargo.toml":       "[package]\nname = \"b\"\n",
+		"crates/b/target/debug/x":   "",
+		"crates/b/node_modules/x/y": "",
+		"src/lib.rs":                "",
+		"target/debug/x":            "",
+		".git/HEAD":                 "",
+		"Cargo.lock":                "on disk, ignored",
 	})
 	resolved := filepath.Join(t.TempDir(), "resolved.lock")
 	write(t, filepath.Dir(resolved), map[string]string{"resolved.lock": lockOf("anyhow@1.0.104", "serde@1.0.228")})
@@ -427,8 +431,8 @@ func TestProcessStub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantLog := "args: update --workspace\nsymlinked src/lib.rs\ncopied Cargo.toml\nno target, no .git\n" +
-		"args: update --package anyhow@1.0.104 --precise 1.0.102\nsymlinked src/lib.rs\ncopied Cargo.toml\nno target, no .git\n"
+	wantLog := "args: update --workspace\nsymlinked src/lib.rs\nsymlinked Cargo.toml\ncopied crates/a/Cargo.toml\nno target, no .git\n" +
+		"args: update --package anyhow@1.0.104 --precise 1.0.102\nsymlinked src/lib.rs\nsymlinked Cargo.toml\ncopied crates/a/Cargo.toml\nno target, no .git\n"
 	if string(b) != wantLog {
 		t.Errorf("log:\n%s", b)
 	}
@@ -562,7 +566,7 @@ func TestMaintainStub(t *testing.T) {
 	if got := string(out["Cargo.lock"]); got != lock+"# update\n" {
 		t.Errorf("Cargo.lock:\n%s", got)
 	}
-	if b, _ := os.ReadFile(log); string(b) != "args: update\nsymlinked src/lib.rs\ncopied Cargo.toml\nno target, no .git\n" {
+	if b, _ := os.ReadFile(log); string(b) != "args: update\nsymlinked src/lib.rs\nsymlinked Cargo.toml\nno target, no .git\n" {
 		t.Errorf("log:\n%s", b)
 	}
 	if out, err := (Locker{}).Maintain(t.Context(), dir, map[string][]byte{}); out != nil || err != nil {
