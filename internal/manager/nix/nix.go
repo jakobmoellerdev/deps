@@ -3,7 +3,9 @@
 // Gitea/Forgejo archive tarballs) is a dep, tracking a branch (digest updates of flake.lock)
 // or a version tag (ref updates of flake.nix). Release branches of NixOS/nixpkgs and release
 // channels move to the next release (nixpkgs versioning). flake.lock moves with
-// `nix flake update <input>` (Locker).
+// `nix flake update <input>` (Locker). The fixed-output downloads written in a flake.nix (a
+// set with a `url` and its `hash` or `sha256`) are deps too: forge archives, release assets
+// and npm tarballs (package download), whose new hash deps computes.
 package nix
 
 import (
@@ -22,8 +24,16 @@ import (
 // Name is the manager name (Renovate's).
 const Name = "nix"
 
-// DepTypeInput is the dep type of every flake input.
-const DepTypeInput = "input"
+// Dep types.
+const (
+	// DepTypeInput is the dep type of every flake input.
+	DepTypeInput = "input"
+	// DepTypeDownload is a fixed-output download: a set with a `url` and a `hash` or `sha256`.
+	DepTypeDownload = "download"
+	// DepTypeVersion is a `version` attribute equal to the version of a download in the same
+	// or a nested set: it moves with that download.
+	DepTypeVersion = "version"
+)
 
 // Datasource names: git-tags for an input whose ref is a version tag, git-refs for a branch.
 const (
@@ -55,6 +65,10 @@ const (
 	skipRevSpan     = "cannot locate rev"
 	skipInputName   = "input name not addressable by nix flake update"
 	skipUnsupported = "unsupported input type "
+	skipDownloadURL = "unsupported download url"
+	skipNoHash      = "no hash"
+	skipHashFormat  = "unsupported hash format"
+	skipUnpacked    = "hash of unpacked content"
 )
 
 type nixManager struct{}
@@ -81,9 +95,11 @@ type input struct {
 // Extract returns one dep per input of the flake.nix that names a source (an input with only
 // `follows` is none). The ref and rev written in its url (or its `ref`/`rev` attributes) are
 // the dep's Version and Digest with their spans; ReadLocks completes the dep from flake.lock.
-func (nixManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+// The deps of the file's fixed-output downloads follow (downloads).
+func (nixManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	var inputs []*input
-	for _, b := range parseInputs(src) {
+	bindings := parseInputs(src)
+	for _, b := range bindings {
 		// inputs.<name>.<attr>; deeper paths are the input's own inputs (follows).
 		if len(b.path) != 2 || b.path[0] == "" {
 			continue
@@ -126,13 +142,17 @@ func (nixManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 			Version: r.ref, RefSpan: r.refSpan, Digest: r.rev, DigestSpan: r.revSpan,
 		})
 	}
-	return deps, nil
+	return append(deps, downloads(file, src, env, bindings)...), nil
 }
 
 // Edits rewrites the ref of an input tracking a version tag or a nixpkgs release branch (or
 // channel) and the rev of an input pinned to a commit in flake.nix; flake.lock moves with
-// every update (Locker), so an update of an unpinned branch input has no edits.
+// every update (Locker), so an update of an unpinned branch input has no edits. A download
+// gets its version and hash rewritten (downloadEdits).
 func (nixManager) Edits(u dep.Update) ([]patch.Edit, error) {
+	if isDownload(u.Dep) {
+		return downloadEdits(u)
+	}
 	d := u.Dep
 	var edits []patch.Edit
 	if u.NewVersion != "" && u.NewVersion != d.Version {

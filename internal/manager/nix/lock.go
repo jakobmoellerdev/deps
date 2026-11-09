@@ -77,10 +77,10 @@ func parseLock(b []byte) (*flakeLock, error) {
 	return &l, nil
 }
 
-// ReadLocks completes the deps of each flake.nix from the flake.lock next to it: the repository
-// (Source) of the input's original reference, the branch or version tag it tracks and the
-// commit it is locked to (Digest), unless flake.nix pins one. An unreadable flake.lock is
-// reported once and its deps are skipped.
+// ReadLocks completes the input deps of each flake.nix from the flake.lock next to it: the
+// repository (Source) of the input's original reference, the branch or version tag it tracks
+// and the commit it is locked to (Digest), unless flake.nix pins one. An unreadable flake.lock
+// is reported once and its inputs are skipped. Downloads do not depend on flake.lock.
 func (nixManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	var errs []error
 	for _, deps := range files {
@@ -103,7 +103,7 @@ func (nixManager) ReadLocks(root string, files [][]dep.Dep) []error {
 			continue
 		}
 		for i := range deps {
-			if deps[i].Skip == "" {
+			if deps[i].Skip == "" && !isDownload(deps[i]) {
 				l.resolve(&deps[i])
 			}
 		}
@@ -113,7 +113,7 @@ func (nixManager) ReadLocks(root string, files [][]dep.Dep) []error {
 
 func skipAll(deps []dep.Dep, reason string) {
 	for i := range deps {
-		if deps[i].Skip == "" {
+		if deps[i].Skip == "" && !isDownload(deps[i]) {
 			deps[i].Skip = reason
 		}
 	}
@@ -292,11 +292,12 @@ func (l Locker) Process(ctx context.Context, dir string, manifests, files map[st
 // name nix cannot address (`a.b`, `a/b`) are not named: they only have updates that change
 // flake.nix (ReadLocks skips their branch updates), and nix re-locks every input whose
 // reference changed anyway. Without updates, or without names, `nix flake lock` brings the
-// lock in line with flake.nix. It returns flake.lock when it changed; without one it does
-// nothing.
+// lock in line with flake.nix. Updates of downloads only leave flake.lock as it is (nix is
+// not run). It returns flake.lock when it changed; without one it does nothing.
 func (l Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error) {
 	lock, ok := files[lockFile]
-	if !ok {
+	all := slices.Concat(ups[manifestName], locks[manifestName])
+	if !ok || len(all) > 0 && !slices.ContainsFunc(all, func(u dep.Update) bool { return !isDownload(u.Dep) }) {
 		return nil, nil
 	}
 	src, ok := manifests[manifestName]
@@ -307,8 +308,8 @@ func (l Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files
 		}
 	}
 	var inputs []string
-	for _, u := range slices.Concat(ups[manifestName], locks[manifestName]) {
-		if inputNameRe.MatchString(u.Dep.Name) && !slices.Contains(inputs, u.Dep.Name) {
+	for _, u := range all {
+		if !isDownload(u.Dep) && inputNameRe.MatchString(u.Dep.Name) && !slices.Contains(inputs, u.Dep.Name) {
 			inputs = append(inputs, u.Dep.Name)
 		}
 	}

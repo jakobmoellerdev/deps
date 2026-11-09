@@ -201,7 +201,7 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	if !write && hasManager(res, beam.NameGleam) {
 		fmt.Fprintln(stderr, "note    manifest.toml changes are computed by apply/run")
 	}
-	if !write && hasManager(res, nix.Name) {
+	if !write && slices.ContainsFunc(res.Updates, func(u dep.Update) bool { return u.Dep.Manager == nix.Name && u.Dep.DepType == nix.DepTypeInput }) {
 		fmt.Fprintln(stderr, "note    flake.lock changes are computed by apply/run")
 	}
 	if !write && hasManager(res, nuget.Name) && len(nuget.Locker{}.ScopeSiblings(s.root)) > 0 {

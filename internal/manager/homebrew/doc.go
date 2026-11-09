@@ -1,18 +1,9 @@
 package homebrew
 
 import (
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/forge"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/download"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/refdoc"
 )
-
-const downloads = "`https://<host>/<owner>/<repo>/archive/[refs/tags/]<tag>.tar.gz` (also `.zip`, `.tgz`; GitHub, Gitea, Forgejo): name `<owner>/<repo>`, tags of the repository; " +
-	"`https://<host>/<path>/-/archive/<tag>/<file>` (GitLab, `.tar.gz`, `.tar.bz2`, `.tar`, `.tgz`, `.zip`): name the project path, its tags; " +
-	"`https://<host>/<owner>/<repo>/releases/download/<tag>/<asset>` (GitHub, Gitea, Forgejo): name `<owner>/<repo>`, its releases; " +
-	"`https://<host>/<path>/-/releases/<tag>/downloads/<asset>` (GitLab release asset links): name the project path, its releases; " +
-	"`https://registry.npmjs.org/[@<scope>/]<package>/-/<package>-<version>.tgz`: name the package. " +
-	"GitHub is `github.com`; Gitea and Forgejo are the checkout's forge (the platform's server, else the origin remote's host), `gitea.com`, `codeberg.org` and `code.forgejo.org`; GitLab is any host"
-
-const datasources = "archives: `git-tags`; releases: `github-releases`, `gitea-releases` (`forgejo-releases` on codeberg.org and code.forgejo.org, registry the host), `gitlab-releases` (registry the host); npm tarball: `npm`"
 
 // Doc is the reference documentation of the homebrew manager (docs/reference/managers.md).
 var Doc = refdoc.Manager{
@@ -23,31 +14,31 @@ var Doc = refdoc.Manager{
 	DepTypes: []refdoc.DepType{
 		{
 			Name:        DepType,
-			What:        "each `url \"…\"` of the formula outside `resource` blocks (the stable download, also one per platform block) with the first `sha256 \"…\"` after it; " + downloads,
-			Datasource:  datasources,
-			Versioning:  "forges: `loose`; npm: `semver`",
-			Datasources: []string{"git-tags", "github-releases", forge.GiteaReleases, forge.ForgejoReleases, forge.GitLabReleases, "npm"},
+			What:        "each `url \"…\"` of the formula outside `resource` blocks (the stable download, also one per platform block) with the first `sha256 \"…\"` after it; " + download.DocURLs,
+			Datasource:  download.DocDatasource,
+			Versioning:  download.DocVersioning,
+			Datasources: download.Datasources,
 		},
 		{
 			Name:        DepTypeResource,
 			What:        "the `url \"…\"` of a `resource \"<name>\" do … end` block with the first `sha256 \"…\"` after it; the URL forms of `formula`",
-			Datasource:  datasources,
+			Datasource:  download.DocDatasource,
 			Versioning:  "as `formula`",
-			Datasources: []string{"git-tags", "github-releases", forge.GiteaReleases, forge.ForgejoReleases, forge.GitLabReleases, "npm"},
+			Datasources: download.Datasources,
 		},
 		{
 			Name:        DepTypeMirror,
 			What:        "a `mirror \"…\"` after a supported `url`, on any host, when the URL's version occurs in its path one to three times (not inside a longer version): moves with that `url`",
-			Datasource:  "the `url`'s: " + datasources,
+			Datasource:  "the `url`'s: " + download.DocDatasource,
 			Versioning:  "the `url`'s",
-			Datasources: []string{"git-tags", "github-releases", forge.GiteaReleases, forge.ForgejoReleases, forge.GitLabReleases, "npm"},
+			Datasources: download.Datasources,
 		},
 		{
 			Name:        DepTypeVersion,
 			What:        "a `version \"…\"` statement equal to the version of a supported `url` of the formula (or of the same resource), needed when Homebrew cannot read the version from the URL (bare binaries): moves with that `url`",
-			Datasource:  "the `url`'s: " + datasources,
+			Datasource:  "the `url`'s: " + download.DocDatasource,
 			Versioning:  "the `url`'s",
-			Datasources: []string{"git-tags", "github-releases", forge.GiteaReleases, forge.ForgejoReleases, forge.GitLabReleases, "npm"},
+			Datasources: download.Datasources,
 		},
 	},
 	Skips: []refdoc.Skip{

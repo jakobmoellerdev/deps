@@ -2,17 +2,18 @@ package nix
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 )
 
-// binding is a string attribute below the top-level `inputs` of a flake.nix: path is its
-// attribute path below `inputs` (`nixpkgs.url` = ["nixpkgs", "url"]; a `${…}` element is ""),
-// value the string. span locates value when the file holds it verbatim (a "…" string without
-// escapes or interpolation, a single-line ”…” string without escapes, or a URI literal);
-// value is "" and span zero otherwise.
+// binding is a string attribute of a flake.nix: below the top-level `inputs`, path is its
+// attribute path below `inputs` (`nixpkgs.url` = ["nixpkgs", "url"]; a `${…}` element is "");
+// in a download's set (parseSets), its name. value is the string. span locates value when the
+// file holds it verbatim (a "…" string without escapes or interpolation, a single-line ”…”
+// string without escapes, or a URI literal); value is "" and span zero otherwise.
 type binding struct {
 	path  []string
 	value string
@@ -448,3 +449,166 @@ func parseRef(s string, off int) refParts {
 
 // isCommit reports whether s is a full SHA-1 or SHA-256 commit hash.
 func isCommit(s string) bool { return manager.IsHex(s, 40, 64) }
+
+// attrSet is an attribute set (or argument set, `fetchurl { … }`) or let block of a
+// flake.nix with the string attributes a fixed-output download is made of.
+type attrSet struct {
+	parent int    // index of the enclosing set or let block; -1 for none
+	callee string // the function applied to the set (`fetchurl` of `pkgs.fetchurl { … }`); "" for none
+	// attrs are the `url`, `hash`, `sha256` and `version` attributes bound to a string, in
+	// file order (path the attribute name; value and span as for the inputs' bindings).
+	attrs []binding
+	// unpacked reports a `postFetch`, `downloadToTemp` or `recursiveHash` attribute: the hash
+	// is not the plain file's.
+	unpacked bool
+}
+
+// attr returns the first attribute of s named name.
+func (s attrSet) attr(name string) (binding, bool) {
+	for _, b := range s.attrs {
+		if b.path[0] == name {
+			return b, true
+		}
+	}
+	return binding{}, false
+}
+
+// within reports whether set i is set anc or nested in it.
+func within(sets []attrSet, i, anc int) bool {
+	for ; i >= 0; i = sets[i].parent {
+		if i == anc {
+			return true
+		}
+	}
+	return false
+}
+
+// keywords are the identifiers that are no function a set could be applied to.
+var keywords = []string{"if", "then", "else", "assert", "with", "let", "in", "rec", "inherit", "or"}
+
+// parseSets returns the attribute sets and let blocks of src that bind a download attribute
+// (`url = "…";`, `hash`, `sha256`, `version`) to a string, in file order, with their
+// enclosing sets. Only bindings of a single attribute name count; strings and comments are
+// skipped as tokens, so nothing inside them is a binding.
+func parseSets(src []byte) []attrSet {
+	l := lexer{src: src}
+	var toks []token
+	for t := l.next(); t.kind != tEOF; t = l.next() {
+		toks = append(toks, t)
+	}
+	type open struct {
+		kind byte // '{' a set, 'l' a let block, '(' '[' brackets, '$' an interpolated attribute name
+		set  int
+	}
+	var stack []open
+	var sets []attrSet
+	used := map[int]bool{} // sets with a download attribute, and their enclosing ones
+	parent := func() int {
+		for _, o := range slices.Backward(stack) {
+			if o.kind == '{' || o.kind == 'l' {
+				return o.set
+			}
+		}
+		return -1
+	}
+	pop := func(kind byte) {
+		for len(stack) > 0 {
+			k := stack[len(stack)-1].kind
+			stack = stack[:len(stack)-1]
+			if k == kind || kind == '{' && k == '$' {
+				return
+			}
+		}
+	}
+	for i, t := range toks {
+		switch t.kind {
+		case '{':
+			if i > 0 && toks[i-1].kind == '$' {
+				stack = append(stack, open{'$', -1})
+				continue
+			}
+			s := attrSet{parent: parent()}
+			if j := i - 1; j >= 0 {
+				if toks[j].kind == tIdent && toks[j].text == "rec" {
+					j--
+				}
+				if j >= 0 && toks[j].kind == tIdent && !slices.Contains(keywords, toks[j].text) {
+					s.callee = toks[j].text
+				}
+			}
+			sets = append(sets, s)
+			stack = append(stack, open{'{', len(sets) - 1})
+			continue
+		case '}':
+			pop('{')
+			continue
+		case '(', '[':
+			stack = append(stack, open{t.kind, -1})
+			continue
+		case ')':
+			pop('(')
+			continue
+		case ']':
+			pop('[')
+			continue
+		case tIdent:
+			switch t.text {
+			case "let":
+				sets = append(sets, attrSet{parent: parent()})
+				stack = append(stack, open{'l', len(sets) - 1})
+				continue
+			case "in":
+				if len(stack) > 0 && stack[len(stack)-1].kind == 'l' {
+					stack = stack[:len(stack)-1]
+				}
+				continue
+			}
+		default:
+			continue
+		}
+		// An identifier: a binding when it starts one in a set or let block.
+		if len(stack) == 0 || i == 0 || i+1 >= len(toks) || toks[i+1].kind != '=' {
+			continue
+		}
+		top := stack[len(stack)-1]
+		if top.kind != '{' && top.kind != 'l' {
+			continue
+		}
+		if prev := toks[i-1]; prev.kind != ';' && prev.kind != '{' && !(prev.kind == tIdent && prev.text == "let") {
+			continue
+		}
+		s := &sets[top.set]
+		switch t.text {
+		case "postFetch", "downloadToTemp", "recursiveHash":
+			s.unpacked = true
+		case "url", "hash", "sha256", "version":
+			if i+3 >= len(toks) || toks[i+2].kind != tString || toks[i+3].kind != ';' {
+				continue
+			}
+			v := toks[i+2]
+			b := binding{path: []string{t.text}, line: 1 + bytes.Count(src[:v.start], []byte{'\n'})}
+			if v.plain {
+				b.value, b.span = v.text, v.content
+			}
+			s.attrs = append(s.attrs, b)
+			for j := top.set; j >= 0 && !used[j]; j = sets[j].parent {
+				used[j] = true
+			}
+		}
+	}
+	// Keep the sets that matter, renumbering the parents.
+	index := make([]int, len(sets))
+	var out []attrSet
+	for i, s := range sets {
+		index[i] = -1
+		if !used[i] {
+			continue
+		}
+		if s.parent >= 0 {
+			s.parent = index[s.parent]
+		}
+		index[i] = len(out)
+		out = append(out, s)
+	}
+	return out
+}
