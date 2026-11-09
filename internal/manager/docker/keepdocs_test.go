@@ -60,6 +60,28 @@ var keepDocsSeeds = []string{
 	"%YAML 1.2\n---\ncontainers:\n- image: a:2\n...\n---\nkind: C\r\n",
 	"kind: A\n--- |\n  text\n--- x\ncontainers: [{image: \"q:1\"}]\n",
 	"sidecarImage:\n  registry: ghcr.io\n  repository: o/r\n  tag: v1\n---\nkind: D\n",
+	"packages:\n  html-to-image@1.11.11:\n    resolution: {integrity: sha512-x}\n  '@rollup/plugin-image@3.0.3':\n" +
+		"    dependencies:\n      '@napi-rs/image': '*'\n---\ncontainers: [{name: a,image: b:1}]\n",
+	"controller-image:\n  repository: o/c\n  tag: v2\n---\nfoo.image:\n  image: x:1\n",
+}
+
+func TestHasKey(t *testing.T) {
+	for doc, want := range map[string]bool{
+		"image: a:1":                    true,
+		"- image: a":                    true,
+		"{name: a,image: b}":            true,
+		`"image" : a`:                   true,
+		"\n'image':\n":                  true,
+		"html-to-image:\n  version: 1":  false,
+		"'@rollup/plugin-image': '*'":   false,
+		"foo.image: a\nmyimage: b":      false,
+		"an image: of prose; image: no": true,
+		"image of the world":            false,
+	} {
+		if got := hasKey([]byte(doc), "image"); got != want {
+			t.Errorf("hasKey(%q) = %v, want %v", doc, got, want)
+		}
+	}
 }
 
 func TestManifestsKeepDocumentsParity(t *testing.T) {

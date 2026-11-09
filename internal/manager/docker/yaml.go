@@ -112,17 +112,22 @@ func mayHaveImage(doc []byte) bool {
 		bytes.Contains(doc, []byte("docker-image://")) || bytes.Contains(doc, []byte("{{"))
 }
 
-// hasKey reports whether word occurs in doc followed by ':', optionally after a closing quote
-// and blanks: the shape of a YAML key word (plain, quoted or in a flow mapping). Prose
-// mentioning word rarely matches.
+// hasKey reports whether word occurs in doc as a whole token followed by ':', optionally after
+// a closing quote and blanks: the shape of a YAML key word (plain, quoted or in a flow
+// mapping). Prose mentioning word rarely matches, nor does a longer key ending in word
+// (`html-to-image:` of a lockfile): manifests reads exact "image" and "repository" keys only.
 func hasKey(doc []byte, word string) bool {
-	for {
-		i := bytes.Index(doc, []byte(word))
+	for off := 0; ; {
+		i := bytes.Index(doc[off:], []byte(word))
 		if i < 0 {
 			return false
 		}
-		doc = doc[i+len(word):]
-		rest := doc
+		start := off + i
+		off = start + len(word)
+		if start > 0 && wordByte(doc[start-1]) {
+			continue
+		}
+		rest := doc[off:]
 		if len(rest) > 0 && (rest[0] == '"' || rest[0] == '\'') {
 			rest = rest[1:]
 		}
@@ -131,6 +136,13 @@ func hasKey(doc []byte, word string) bool {
 			return true
 		}
 	}
+}
+
+// wordByte reports whether c joins a following key word into a longer plain or quoted
+// scalar (`html-to-image`, `@rollup/plugin-image`, `foo.image`).
+func wordByte(c byte) bool {
+	return c == '-' || c == '_' || c == '.' || c == '/' || c == '@' ||
+		'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9'
 }
 
 var containerKeys = map[string]bool{"containers": true, "initContainers": true, "ephemeralContainers": true}
