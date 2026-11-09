@@ -14,6 +14,7 @@
 package pypi
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json/jsontext"
@@ -36,6 +37,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/jsonscan"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -482,143 +484,194 @@ func (s *Source) get(ctx context.Context, target, name, accept string) (*http.Re
 	return resp, nil
 }
 
-// decodeJSON streams a PyPI JSON API document. `releases` maps each version to its files; one
-// file object is buffered at a time, which keeps projects with thousands of releases (boto3)
-// cheap. A version is dropped when it has no files or all of them are yanked.
-// Duplicate-name checking is off: it keeps a name set per object.
+// decodeJSON streams a PyPI JSON API document with jsonscan, one token at a time, which keeps
+// projects with thousands of releases (boto3) cheap: the file objects of `releases` are
+// validated and skipped without decoding them. A version is dropped when it has no files or
+// all of them are yanked.
 func decodeJSON(r io.Reader) (p project, yanked int, err error) {
-	dec := jsontext.NewDecoder(r, jsontext.AllowDuplicateNames(true))
-	if err := expectDelim(dec, '{'); err != nil {
+	s := jsonscan.New(r)
+	if err := open(s, '{'); err != nil {
 		return project{}, 0, err
 	}
 	p.times, p.python = map[string]time.Time{}, map[string]string{}
-	for dec.PeekKind() != '}' {
-		tok, err := dec.ReadToken()
+	for {
+		more, err := s.Next()
 		if err != nil {
 			return project{}, 0, err
 		}
-		switch tok.String() {
-		case "info":
-			var info struct {
-				HomePage    string            `json:"home_page"`
-				ProjectURLs map[string]string `json:"project_urls"`
-				Classifiers []string          `json:"classifiers"`
-			}
-			if err := json.UnmarshalDecode(dec, &info); err != nil {
-				return project{}, 0, err
-			}
-			p.repo = sourceRepo(info.ProjectURLs, info.HomePage)
-			p.inactive = slices.Contains(info.Classifiers, "Development Status :: 7 - Inactive")
-		case "releases":
-			if yanked, err = decodeReleases(dec, &p); err != nil {
-				return project{}, 0, err
-			}
+		if !more {
+			return p, yanked, nil
+		}
+		switch {
+		case s.NameIs("info"):
+			err = decodeInfo(s, &p)
+		case s.NameIs("releases"):
+			yanked, err = decodeReleases(s, &p)
 		default:
-			if err := dec.SkipValue(); err != nil {
-				return project{}, 0, err
-			}
+			err = s.Skip()
+		}
+		if err != nil {
+			return project{}, 0, err
 		}
 	}
-	if _, err := dec.ReadToken(); err != nil {
-		return project{}, 0, err
+}
+
+// decodeInfo reads the `info` object into p.
+func decodeInfo(s *jsonscan.Scanner, p *project) error {
+	s.Mark()
+	defer s.Unmark()
+	if err := s.Skip(); err != nil {
+		return err
 	}
-	return p, yanked, nil
+	var info struct {
+		HomePage    string            `json:"home_page"`
+		ProjectURLs map[string]string `json:"project_urls"`
+		Classifiers []string          `json:"classifiers"`
+	}
+	if err := json.Unmarshal(s.Marked(), &info, jsontext.AllowDuplicateNames(true)); err != nil {
+		return err
+	}
+	p.repo = sourceRepo(info.ProjectURLs, info.HomePage)
+	p.inactive = slices.Contains(info.Classifiers, "Development Status :: 7 - Inactive")
+	return nil
 }
 
 // decodeReleases reads the `releases` object (version -> files) into p.
-func decodeReleases(dec *jsontext.Decoder, p *project) (yanked int, err error) {
-	if err := expectDelim(dec, '{'); err != nil {
+func decodeReleases(s *jsonscan.Scanner, p *project) (yanked int, err error) {
+	if err := open(s, '{'); err != nil {
 		return 0, err
 	}
-	var f releaseFile
-	for dec.PeekKind() != '}' {
-		tok, err := dec.ReadToken()
-		if err != nil {
+	var python []byte
+	for {
+		more, err := s.Next()
+		if err != nil || !more {
+			return yanked, err
+		}
+		v := s.Name()
+		if err := open(s, '['); err != nil {
 			return 0, err
 		}
-		v := tok.String() // tokens are only valid until the next read
-		if err := expectDelim(dec, '['); err != nil {
-			return 0, err
-		}
-		files, allYanked, first, py := 0, true, time.Time{}, pyReq{}
-		for dec.PeekKind() != ']' {
-			if err := decodeFile(dec, &f); err != nil {
+		var rel releaseSummary
+		for {
+			more, err := s.Next()
+			if err != nil {
 				return 0, err
 			}
-			files++
-			allYanked = allYanked && f.Yanked
-			first = earliest(first, f.Upload)
-			if !f.Yanked {
-				py.add(f.RequiresPython)
+			if !more {
+				break
+			}
+			if err := decodeFile(s, &rel, &python); err != nil {
+				return 0, err
 			}
 		}
-		if _, err := dec.ReadToken(); err != nil {
-			return 0, err
-		}
-		switch {
-		case files == 0:
-			continue
-		case allYanked:
+		if p.addRelease(v, &rel) {
 			yanked++
-			if p.yanked == nil {
-				p.yanked = map[string]bool{}
-			}
-			p.yanked[versionKey(v)] = true
-			continue
-		}
-		p.rels = append(p.rels, datasource.Release{Version: v})
-		k := versionKey(v)
-		if !first.IsZero() {
-			p.times[k] = first
-		}
-		if spec, ok := py.get(); ok {
-			p.python[k] = spec
 		}
 	}
-	_, err = dec.ReadToken()
-	return yanked, err
 }
 
-// releaseFile is what deps keeps of one file of a release (unnamed, as in unmarshal errors).
-type releaseFile = struct {
-	Yanked         bool   `json:"yanked"`
-	Upload         string `json:"upload_time_iso_8601"`
-	RequiresPython string `json:"requires_python"`
-}
-
-// decodeFile reads one file object of a release into f, which it resets first; f is reused so
-// that unmarshaling its fields does not allocate. The kept members are unmarshaled one by one
-// and the others consumed with ReadValue: unmarshaling the whole object into a struct looks up
-// every unknown name (also case-folded) and skips nested values (`digests`) token by token.
-func decodeFile(dec *jsontext.Decoder, f *releaseFile) error {
-	*f = releaseFile{}
-	if dec.PeekKind() != '{' {
-		return json.UnmarshalDecode(dec, f) // null, or the unmarshal error
-	}
-	if _, err := dec.ReadToken(); err != nil {
+// decodeFile reads one file object of a release into rel, keeping `yanked`,
+// `upload_time_iso_8601` and `requires_python` (null is false or "", as unmarshaling it into
+// a Go value gives) and skipping the other members. A null file has none of them. python is
+// scratch space for requires_python, which is kept only when it differs from the release's.
+func decodeFile(s *jsonscan.Scanner, rel *releaseSummary, python *[]byte) error {
+	var yanked bool
+	var upload string
+	*python = (*python)[:0]
+	k, err := s.Peek()
+	if err != nil {
 		return err
 	}
-	for dec.PeekKind() != '}' {
-		name, err := dec.ReadToken()
+	if k == 'n' {
+		if err := s.Null(); err != nil {
+			return err
+		}
+		rel.add(false, "", nil)
+		return nil
+	}
+	if err := s.Open('{'); err != nil {
+		return err
+	}
+	for {
+		more, err := s.Next()
 		if err != nil {
 			return err
 		}
-		switch name.String() {
-		case "yanked":
-			err = json.UnmarshalDecode(dec, &f.Yanked)
-		case "upload_time_iso_8601":
-			err = json.UnmarshalDecode(dec, &f.Upload)
-		case "requires_python":
-			err = json.UnmarshalDecode(dec, &f.RequiresPython)
+		if !more {
+			break
+		}
+		switch {
+		case s.NameIs("yanked"):
+			yanked, err = nullable(s, s.Bool)
+		case s.NameIs("upload_time_iso_8601"):
+			upload, err = nullable(s, s.Str)
+		case s.NameIs("requires_python"):
+			var b []byte
+			b, err = nullable(s, s.StrBytes)
+			*python = append((*python)[:0], b...)
 		default:
-			_, err = dec.ReadValue()
+			err = s.Skip()
 		}
 		if err != nil {
 			return err
 		}
 	}
-	_, err := dec.ReadToken()
-	return err
+	rel.add(yanked, upload, *python)
+	return nil
+}
+
+// nullable reads the next value with read, or null as the zero value.
+func nullable[T any](s *jsonscan.Scanner, read func() (T, error)) (T, error) {
+	var zero T
+	k, err := s.Peek()
+	if err != nil {
+		return zero, err
+	}
+	if k == 'n' {
+		return zero, s.Null()
+	}
+	return read()
+}
+
+// releaseSummary accumulates the files of one release.
+type releaseSummary struct {
+	files   int
+	anyKept bool // a file is not yanked
+	first   time.Time
+	py      pyReq
+}
+
+func (r *releaseSummary) add(yanked bool, upload string, python []byte) {
+	r.files++
+	r.anyKept = r.anyKept || !yanked
+	r.first = earliest(r.first, upload)
+	if !yanked {
+		r.py.addBytes(python)
+	}
+}
+
+// addRelease adds version v with files rel to p and reports whether all its files are yanked;
+// a version without files is dropped.
+func (p *project) addRelease(v string, rel *releaseSummary) (yanked bool) {
+	switch {
+	case rel.files == 0:
+		return false
+	case !rel.anyKept:
+		if p.yanked == nil {
+			p.yanked = map[string]bool{}
+		}
+		p.yanked[versionKey(v)] = true
+		return true
+	}
+	p.rels = append(p.rels, datasource.Release{Version: v})
+	k := versionKey(v)
+	if !rel.first.IsZero() {
+		p.times[k] = rel.first
+	}
+	if spec, ok := rel.py.get(); ok {
+		p.python[k] = spec
+	}
+	return false
 }
 
 // pyReq accumulates the requires-python of a version's files that are not yanked; it has a
@@ -635,6 +688,18 @@ func (r *pyReq) add(spec string) {
 	case !r.seen:
 		r.spec, r.seen = spec, true
 	case r.spec != spec:
+		r.mixed = true
+	}
+}
+
+// addBytes is add for a spec in bytes, which it copies only to keep it.
+func (r *pyReq) addBytes(spec []byte) {
+	switch spec = bytes.TrimSpace(spec); {
+	case len(spec) == 0:
+		r.mixed = true
+	case !r.seen:
+		r.spec, r.seen = string(spec), true
+	case r.spec != string(spec):
 		r.mixed = true
 	}
 }
@@ -1048,6 +1113,19 @@ func expectDelim(dec *jsontext.Decoder, d jsontext.Kind) error {
 		return fmt.Errorf("expected %v, got %v", d, tok.Kind())
 	}
 	return nil
+}
+
+// open is expectDelim for a jsonscan.Scanner: it enters the object or array kind ('{' or '[')
+// and fails with expectDelim's error when another value is next.
+func open(s *jsonscan.Scanner, kind byte) error {
+	c, err := s.Peek()
+	if err != nil || c == kind {
+		return s.Open(kind) // the scanner reports the end of the input
+	}
+	if c == '-' || c >= '0' && c <= '9' {
+		c = '0'
+	}
+	return fmt.Errorf("expected %v, got %v", jsontext.Kind(kind), jsontext.Kind(c))
 }
 
 // closeBody drains a little of the body so the connection can be reused, then closes it.
