@@ -191,6 +191,22 @@ func TestRangeStrategyTrace(t *testing.T) {
 	}
 }
 
+// An unparsable range that is never rewritten (RangeFixed) rejects its candidates as not
+// rewritten, not with the in-range-only reason of a strategy that is not set.
+func TestRangeStrategyUnparsableFixedRange(t *testing.T) {
+	m := stubManager{name: "custom", deps: []dep.Dep{{Datasource: "npm", Versioning: "semver", Name: "a", Version: "1.0.0", Range: "1.0.0 ?? 2", RangeFixed: true, Line: 1}}}
+	root, cfg := setup(t, "", map[string]string{"stub.txt": "1.0.0 ?? 2\n"})
+	var traces []Trace
+	o := Options{Managers: []manager.Manager{m}, Datasources: map[string]Datasource{"npm": rangeReleases}, Trace: func(t Trace) { traces = append(traces, t) }}
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil || len(res.Errors) > 0 || len(res.Updates) != 0 {
+		t.Fatal(err, res.Errors, res.Updates)
+	}
+	if len(traces) != 1 || strings.Join(traces[0].Rejected["policy: outside range 1.0.0 ?? 2 (not rewritten)"], " ") != "1.1.0 1.2.0 2.0.0" {
+		t.Errorf("rejected = %v", traces[0].Rejected)
+	}
+}
+
 func TestRangeStrategyBrokenLockfile(t *testing.T) {
 	root, cfg := setup(t, "", map[string]string{"web/package.json": rangePkg, "web/package-lock.json": "{"})
 	o := Options{Managers: []manager.Manager{npm.New()}, Datasources: map[string]Datasource{"npm": rangeReleases}}

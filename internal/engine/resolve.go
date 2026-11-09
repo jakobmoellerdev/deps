@@ -1039,6 +1039,8 @@ func (r *resolver) setRange(s versioning.Scheme, names []string) {
 		slog.DebugContext(r.ctx, "range not understood", "name", d.Name, "range", d.Range, "err", err)
 		if d.RangeFixed || strategy == config.RangeInRangeOnly {
 			r.inRange = func(string) bool { return false }
+		}
+		if strategy == config.RangeInRangeOnly {
 			r.within = r.inRange
 		}
 		return
