@@ -2,3 +2,19 @@
 # deps' own config. Everything else is the default; .gitea/workflows/deps.yml has issues: write for the dashboard.
 version: 1
 dependencyDashboard: true
+# The deps release pinned in the examples of the README and the docs. All share the name of the
+# action pin in .gitea/workflows/deps.yml, so each release gets one docs PR next to that one.
+# Sentences about older releases ("up to v0.6.0", the backfill example) don't match.
+custom:
+  # `uses: …/deps@vX.Y.Z`, `go install …/cmd/deps@vX.Y.Z` and the `@<sha> # vX.Y.Z` form.
+  - files: [README.md, 'docs/*.md']
+    match: 'jakobmoellerdev/deps(?:/cmd/deps)?@(?P<version>v\d+\.\d+\.\d+)\b'
+    datasource: gitea-releases
+    registryUrl: https://git.jakob-moeller.cloud
+    name: jakobmoellerdev/deps
+  # `DEPS_VERSION: vX.Y.Z` and the `version: vX.Y.Z` input next to a digest-pinned action.
+  - files: [README.md, 'docs/*.md']
+    match: '(?m)(?:DEPS_VERSION: |(?:^\s+|`)version: |@<sha> # )(?P<version>v\d+\.\d+\.\d+)\b'
+    datasource: gitea-releases
+    registryUrl: https://git.jakob-moeller.cloud
+    name: jakobmoellerdev/deps
