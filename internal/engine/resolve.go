@@ -291,9 +291,19 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	if cfg.LockFileMaintenance.Enabled && o.Filter == nil {
 		res.Updates = maintenanceUpdates(cfg, root, o.Managers, found, ex)
 	}
-	var todo []dep.Dep
-	var pols []*policies
-	var depAt []int // index of todo[i] in res.Deps
+	// Dep, Update and Pending are hundreds of bytes and append grows large slices by a
+	// quarter: the slices below are sized up front, counting first where the length is only
+	// known after a pass.
+	n := 0
+	for _, e := range ex {
+		n += len(e.deps)
+	}
+	var allPols []*policies // the policies of res.Deps[i]
+	if n > 0 {
+		res.Deps = make([]dep.Dep, 0, n)
+		allPols = make([]*policies, 0, n)
+	}
+	skipped := 0
 	kindRules := cfg.HasUpdateTypeRules()
 	for i, e := range ex {
 		if e.err != nil {
@@ -308,8 +318,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			_, timed := o.Datasources[d.Datasource].(datasource.Timer)
 			d, pol := classify(cfg, d, kindRules, timed, o.Security != nil)
 			res.Deps = append(res.Deps, d)
+			allPols = append(allPols, pol)
 			if d.Skip != "" {
-				res.Skipped = append(res.Skipped, d)
+				skipped++
 				if o.Trace != nil {
 					t := Trace{Dep: d}
 					if pol != nil {
@@ -317,11 +328,25 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 					}
 					o.Trace(t)
 				}
-				continue
 			}
-			todo = append(todo, d)
-			pols = append(pols, pol)
-			depAt = append(depAt, len(res.Deps)-1)
+		}
+	}
+	var todo []dep.Dep
+	var pols []*policies
+	var depAt []int // index of todo[i] in res.Deps
+	if skipped > 0 {
+		res.Skipped = make([]dep.Dep, 0, skipped)
+	}
+	if m := len(res.Deps) - skipped; m > 0 {
+		todo, pols, depAt = make([]dep.Dep, 0, m), make([]*policies, 0, m), make([]int, 0, m)
+	}
+	for i := range res.Deps {
+		if d := &res.Deps[i]; d.Skip != "" {
+			res.Skipped = append(res.Skipped, *d)
+		} else {
+			todo = append(todo, *d)
+			pols = append(pols, allPols[i])
+			depAt = append(depAt, i)
 		}
 	}
 	slog.InfoContext(ctx, "dependencies extracted", "files", len(jobs), "updatable", len(todo), "skipped", len(res.Skipped), "duration", time.Since(start))
@@ -335,13 +360,22 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	// Non-version tags have no version to look up, nor do bare commit pins before resolution.
 	// Deps ignored by default whose security updates still apply (securityByDefault) are
 	// looked up; they are resolved only when affected.
-	var secDeps []dep.Dep
 	secIdx := make([]int, len(todo))
+	nSec := 0
 	for i, d := range todo {
 		secIdx[i] = -1
 		if (!pols[i].pre.Ignore || pols[i].aged || pols[i].securityOnly) && !tagOnly(d) && !config.UnversionedPin(d) {
-			secIdx[i] = len(secDeps)
-			secDeps = append(secDeps, d)
+			secIdx[i] = nSec
+			nSec++
+		}
+	}
+	var secDeps []dep.Dep
+	if nSec > 0 {
+		secDeps = make([]dep.Dep, 0, nSec)
+		for i, d := range todo {
+			if secIdx[i] >= 0 {
+				secDeps = append(secDeps, d)
+			}
 		}
 	}
 	now := o.Now
@@ -352,7 +386,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	sec := lookupSecurity(ctx, o.Security, secDeps)
 	outs := make([]Trace, len(todo))
 	ups := make([][]dep.Update, len(todo))
-	pend := make([]Pending, len(todo))
+	pend := make([]*Pending, len(todo)) // nil = none held back
 	warns := make([][]Warning, len(todo))
 	var wg sync.WaitGroup
 	rewriters := map[string]manager.RangeRewriter{}
@@ -372,21 +406,26 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	// A vcpkg port waits for the registry baseline it is read at (dep.Dep.Baseline): when the
 	// baseline moves, the port is looked up at the new commit (portAtBaseline).
 	baselineOf := vcpkgBaselines(todo)
-	resolved := make([]chan struct{}, len(todo))
-	for _, j := range baselineOf {
-		resolved[j] = make(chan struct{})
+	var resolved []chan struct{}
+	if len(baselineOf) > 0 {
+		resolved = make([]chan struct{}, len(todo))
+		for _, j := range baselineOf {
+			resolved[j] = make(chan struct{})
+		}
 	}
+	names := newReleaseNames()
+	defer names.done()
 	// resolveOne fills t: Trace is large, and copies of it on every per-dep goroutine stack
 	// would grow those stacks.
 	resolveOne := func(i int, d dep.Dep, t *Trace) ([]dep.Update, *resolver) {
 		r := &resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now,
-			rewriter: rewriters[d.Manager], ranger: rangers[d.Manager], renamer: renamers[d.Manager]}
+			rewriter: rewriters[d.Manager], ranger: rangers[d.Manager], renamer: renamers[d.Manager], names: names}
 		u := r.run(t, func() []Vuln { return sec.of(secIdx[i]) })
 		return u, r
 	}
 	for i := range todo {
 		wg.Go(func() {
-			if resolved[i] != nil {
+			if len(resolved) > 0 && resolved[i] != nil {
 				defer close(resolved[i])
 			}
 			d := todo[i]
@@ -420,7 +459,11 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 					slog.DebugContext(ctx, "update found", "file", d.File, "line", d.Line, "name", d.Name, "from", d.Version, "to", up.NewVersion, "type", up.Type, "bucket", up.Bucket)
 				}
 			}
-			ups[i], pend[i], warns[i] = u, r.pending, r.warnings
+			ups[i], warns[i] = u, r.warnings
+			if r.pending.Version != "" {
+				p := r.pending
+				pend[i] = &p
+			}
 			prog.Done(PhaseResolve, t.Err)
 		})
 	}
@@ -432,7 +475,22 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	if err := sec.wait(); err != nil {
 		res.Errors = append(res.Errors, fmt.Errorf("security advisories: %w", err))
 	}
-	var upPols []*policies // the policies of res.Updates[i]
+	nUp, nSkip, nWarn, nPend := 0, 0, 0, 0
+	for i := range outs {
+		if outs[i].Err == nil && outs[i].Dep.Skip != "" {
+			nSkip++
+		}
+		nUp += len(ups[i])
+		nWarn += len(warns[i])
+		if pend[i] != nil {
+			nPend++
+		}
+	}
+	res.Skipped = slices.Grow(res.Skipped, nSkip)
+	res.Updates = slices.Grow(res.Updates, nUp)
+	res.Warnings = slices.Grow(res.Warnings, nWarn)
+	res.Pending = slices.Grow(res.Pending, nPend)
+	upPols := make([]*policies, 0, nUp) // the policies of res.Updates[i]
 	for i, t := range outs {
 		switch {
 		case t.Err != nil:
@@ -446,8 +504,8 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			upPols = append(upPols, pols[i])
 		}
 		res.Warnings = append(res.Warnings, warns[i]...)
-		if pend[i].Version != "" {
-			res.Pending = append(res.Pending, pend[i])
+		if pend[i] != nil {
+			res.Pending = append(res.Pending, *pend[i])
 		}
 		if o.Trace != nil {
 			o.Trace(t)
@@ -966,6 +1024,7 @@ type resolver struct {
 	base Datasource
 
 	rels     []Release
+	names    *releaseNames        // shared with the other resolvers of the run
 	times    map[string]time.Time // release times asked so far; zero = unknown
 	pending  Pending              // newest candidate held back by minimumReleaseAge
 	warnings []Warning            // checkLifecycle's findings
@@ -1064,7 +1123,7 @@ func (r *resolver) rangeStrategy() (s string, lockfile bool) {
 // versions the range admits; pin goes to setPin. Deps of a manager.RangeUpdater go to
 // setRewritten.
 func (r *resolver) setRange(s versioning.Scheme, names []string) {
-	d := r.d
+	d := &r.d // not a copy: the closures below would move it to the heap
 	if d.Range == "" {
 		return
 	}
@@ -1072,7 +1131,7 @@ func (r *resolver) setRange(s versioning.Scheme, names []string) {
 	r.strategy, lockfile = r.rangeStrategy()
 	if r.rewriter != nil {
 		r.rewrites = lastOf(func(v string) bool {
-			_, ok := r.rewriter.NewRange(d, v, r.strategy)
+			_, ok := r.rewriter.NewRange(*d, v, r.strategy)
 			return ok
 		})
 	}
@@ -1124,9 +1183,9 @@ func (r *resolver) setRange(s versioning.Scheme, names []string) {
 // versions are lockfile-only updates except under replace and widen. Candidates are ranked
 // against the locked version under every strategy; pin goes to setPin.
 func (r *resolver) setRewritten(s versioning.Scheme, names []string) {
-	d := r.d
+	d := &r.d
 	strategy := r.strategy
-	match := func(v string) bool { return r.ranger.InRange(d, v) }
+	match := func(v string) bool { return r.ranger.InRange(*d, v) }
 	switch strategy {
 	case config.RangePin:
 		r.setPin(s, names, match)
@@ -1353,9 +1412,9 @@ func (r *resolver) usual(t *Trace, scheme versioning.Scheme, vulns func() []Vuln
 // skipped with the reason of the newest one (*dep.SkipError): it needs a manual move to the
 // new path, which the dashboard and the run report show.
 func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func() []Vuln) ([]dep.Update, error) {
-	d := r.d
+	d := &r.d // not a copy: the closures below would move it to the heap
 	dir := filepath.Join(r.root, filepath.FromSlash(path.Dir(d.File)))
-	rels, err := r.ds.Releases(r.ctx, d, dir)
+	rels, err := r.ds.Releases(r.ctx, *d, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -1367,16 +1426,13 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	r.checkLifecycle(scheme)
 	r.declared, _ = r.ds.(datasource.DeclaredPathSource)
 	t.Candidates = len(rels)
-	names := make([]string, len(rels))
-	for i, rel := range rels {
-		names[i] = rel.Version
-	}
+	names := r.names.of(rels)
 	var reject func(v, reason string)
 	if r.trace {
 		t.Rejected = map[string][]string{}
 		reject = func(v, reason string) { t.Rejected[reason] = append(t.Rejected[reason], v) }
 	}
-	pseudo := goPseudo(d)
+	pseudo := goPseudo(*d)
 	if pseudo {
 		r.cur, names = pseudoCandidates(d.Version, names, reject)
 	}
@@ -1405,7 +1461,7 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		return r.pol.check(kind, v, semverOf)
 	}
 
-	digests := digestCapable(d)
+	digests := digestCapable(*d)
 	wantDigest := digests && (d.Digest != "" || r.pol.pre.Pin == config.PinDigest)
 
 	ups := r.picks(scheme, names, accept, reject)
