@@ -22,20 +22,22 @@ func UserAgent() string { return "deps/" + Version }
 // NewClient returns the HTTP client shared by all packages (HTTP/2, keep-alive, proxy from
 // environment). Idempotent requests are retried (see Idempotent) and rate limits waited out
 // briefly; every attempt is logged at debug level. RequestTimeout bounds single requests.
-// Requests to an HTTPS host wait for its first connection (see firstConnTransport).
+// Requests to an HTTPS host wait for its first connection (see firstConnTransport); gzip
+// responses are decompressed with klauspost/compress (see gzipTransport).
 func NewClient() *http.Client {
-	return &http.Client{Transport: timeoutTransport{newRetryTransport(logTransport{&firstConnTransport{next: &http.Transport{
+	return &http.Client{Transport: timeoutTransport{newRetryTransport(logTransport{&firstConnTransport{next: gzipTransport{&http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
+		DisableCompression:    true, // gzipTransport
 		MaxIdleConnsPerHost:   16,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
-	}}})}}
+	}}}})}}
 }
 
 // logTransport logs method, URL (without credentials), status, time to first response byte and
