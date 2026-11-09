@@ -41,6 +41,16 @@ mkdir -p ~/.local/bin && curl -fsSL -o ~/.local/bin/deps "https://github.com/jak
 </details>
 
 <details>
+<summary><img src="https://cdn.simpleicons.org/homebrew" height="16" alt=""> <b>macOS / Linux</b> (Homebrew)</summary>
+
+```sh
+brew tap jakobmoellerdev/deps https://git.jakob-moeller.cloud/jakobmoellerdev/deps
+brew install jakobmoellerdev/deps/deps
+```
+
+</details>
+
+<details>
 <summary><img src="https://cdn.simpleicons.org/debian" height="16" alt=""> <img src="https://cdn.simpleicons.org/ubuntu" height="16" alt=""> <b>Debian / Ubuntu</b> (apt)</summary>
 
 ```sh

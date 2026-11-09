@@ -82,6 +82,14 @@ jobs:
         run: |
           gt release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md --no-input \
             dist/deps_linux_* dist/deps_darwin_* dist/deps_windows_* dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/*.apk dist/deps.schema.json dist/checksums.txt
+      - name: Homebrew formula pull request
+        # The repository is its own Homebrew tap; main is protected, so a pull request sets
+        # Formula/deps.rb to the release files above. It is opened with deps-bot's token, since
+        # pull requests of the job token start no CI and so cannot pass the required checks.
+        # Pre-release tags leave the formula alone.
+        env:
+          PR_TOKEN: ${{ secrets.DEPS_BOT_TOKEN }}
+        run: task release:homebrew VERSION="${GITHUB_REF_NAME}"
       - name: Attach the GitHub attestations
         # Gitea has no Actions OIDC, so the release is attested on the GitHub mirror, which builds the
         # same bytes. Waits (up to 30 min) for the GitHub release, verifies every bundle against

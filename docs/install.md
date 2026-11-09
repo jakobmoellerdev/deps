@@ -2,11 +2,23 @@
 
 In CI you don't need to install anything: the composite action downloads, verifies and caches the release binary ([Running deps in CI](ci.md)). Install deps to run it on your machine, in a container image, or in a plain `run:` step.
 
+- [Homebrew (macOS, Linux)](#homebrew)
 - [Packages](#packages)
 - [Static binary](#static-binary)
 - [From source](#from-source)
 - [Verify a download](#verify-a-download)
 - [Local usage](#local-usage)
+
+## Homebrew
+
+On macOS (Apple silicon and Intel) and Linux (amd64, arm64). The deps repository is its own tap (`Formula/deps.rb`):
+
+```sh
+brew tap jakobmoellerdev/deps https://git.jakob-moeller.cloud/jakobmoellerdev/deps
+brew install jakobmoellerdev/deps/deps
+```
+
+The formula installs the release binary as `deps` with bash, zsh and fish completions and checks it against the release's sha256. Each release opens a pull request that moves the formula to it; once merged, `brew upgrade deps` picks up the new version. Pre-releases are not in the formula. `deps run` needs `git`, which macOS ships with the Command Line Tools.
 
 ## Packages
 
@@ -64,7 +76,7 @@ curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
 grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 ~/.local/bin/deps
 ```
 
-On macOS use `shasum -a 256 -c` instead of `sha256sum -c`. The composite action and the packages stay Linux-only.
+On macOS use `shasum -a 256 -c` instead of `sha256sum -c`, or install with [Homebrew](#homebrew). The composite action and the Debian, RPM, Arch Linux and Alpine packages stay Linux-only.
 
 ## From source
 
