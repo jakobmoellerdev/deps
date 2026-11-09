@@ -25,6 +25,10 @@ func TestMatch(t *testing.T) {
 		{"negated regex", []string{"**", `!/openapi/`}, "k8s.io/kube-openapi", false},
 		{"slash alone is a glob", []string{"/"}, "/", true},
 		{"slashes without a regex end are a glob", []string{"/.github/workflows/**/*.yml"}, "/.github/workflows/a/b.yml", true},
+		{"glob ignores case", []string{"actions/*"}, "Actions/Checkout", true},
+		{"glob pattern case ignored", []string{"Newtonsoft.*"}, "newtonsoft.json", true},
+		{"glob class ignores case", []string{"[A-C]*"}, "beta", true},
+		{"negated glob ignores case", []string{"!actions/**"}, "ACTIONS/x", false},
 		{"other flags make a glob", []string{"/a/g"}, "/a/g", true},
 	}
 	for _, tt := range tests {
@@ -37,6 +41,23 @@ func TestMatch(t *testing.T) {
 				t.Errorf("Compile(%q).Match(%q) = %v, want %v", tt.patterns, tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCompileCaseSensitive(t *testing.T) {
+	l, err := CompileCaseSensitive([]string{"**/node_modules/**", "/^Docs//i"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for in, want := range map[string]bool{
+		"a/node_modules/x": true, "a/Node_Modules/x": false, "docs/x": true,
+	} {
+		if got := l.Match(in); got != want {
+			t.Errorf("Match(%q) = %v, want %v", in, got, want)
+		}
+	}
+	if _, err := CompileCaseSensitive([]string{"["}); err == nil {
+		t.Error("want error for invalid glob")
 	}
 }
 

@@ -1,5 +1,6 @@
 // Package pattern matches strings against Renovate-style pattern lists: doublestar globs,
-// `/RE2/` regexes and `!`-negations.
+// `/RE2/` regexes and `!`-negations. Globs match case-insensitively, as Renovate's minimatch
+// globs (nocase); regexes are case-sensitive unless written `/expr/i`.
 package pattern
 
 import (
@@ -15,20 +16,30 @@ import (
 type List struct{ pos, neg []matcher }
 
 type matcher struct {
-	glob string
-	re   *regexp.Regexp
+	glob   string // lower-cased when nocase
+	re     *regexp.Regexp
+	nocase bool
 }
 
 func (m matcher) match(s string) bool {
 	if m.re != nil {
 		return m.re.MatchString(s)
 	}
+	if m.nocase {
+		s = strings.ToLower(s)
+	}
 	return doublestar.MatchUnvalidated(m.glob, s)
 }
 
 // Compile compiles patterns. An entry is a negation when it starts with `!`, a regex when it
-// has the form `/expr/` or `/expr/i`, and a doublestar glob otherwise.
-func Compile(patterns []string) (*List, error) {
+// has the form `/expr/` or `/expr/i`, and a case-insensitive doublestar glob otherwise.
+func Compile(patterns []string) (*List, error) { return compileList(patterns, true) }
+
+// CompileCaseSensitive is Compile with case-sensitive globs, for Renovate settings matched
+// with minimatch without nocase (ignorePaths).
+func CompileCaseSensitive(patterns []string) (*List, error) { return compileList(patterns, false) }
+
+func compileList(patterns []string, nocase bool) (*List, error) {
 	l := &List{}
 	var errs []error
 	for _, p := range patterns {
@@ -37,7 +48,7 @@ func Compile(patterns []string) (*List, error) {
 			errs = append(errs, fmt.Errorf("invalid glob %q: missing pattern after %s", p, "!"))
 			continue
 		}
-		m, err := compile(body, p)
+		m, err := compile(body, p, nocase)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -55,7 +66,7 @@ func Compile(patterns []string) (*List, error) {
 }
 
 // compile compiles p; errors name the entry as written (with its "!").
-func compile(p, entry string) (matcher, error) {
+func compile(p, entry string, nocase bool) (matcher, error) {
 	// As in Renovate (isRegexMatch), only "/expr/" and "/expr/i" are regexes: "/.github/**/*.yml"
 	// is a glob.
 	if expr, flags, ok := Regex(p); ok && (flags == "" || flags == "i") {
@@ -71,7 +82,10 @@ func compile(p, entry string) (matcher, error) {
 	if !doublestar.ValidatePattern(p) {
 		return matcher{}, fmt.Errorf("invalid glob %q: %w", entry, doublestar.ErrBadPattern)
 	}
-	return matcher{glob: p}, nil
+	if nocase {
+		p = strings.ToLower(p)
+	}
+	return matcher{glob: p, nocase: nocase}, nil
 }
 
 // Match reports whether s matches: false for a nil or empty list or when any negation

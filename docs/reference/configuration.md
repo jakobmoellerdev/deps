@@ -717,7 +717,7 @@ rules:
 
 ## `ignorePaths`
 
-Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes.
+Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes.
 
 - **Type:** list of strings
 - **Default:** `**/node_modules/**`, `**/bower_components/**`, `**/vendor/**`, `**/examples/**`, `**/__tests__/**`, `**/test/**`, `**/tests/**`, `**/__fixtures__/**`
@@ -1117,7 +1117,7 @@ Manager names as in [managers.md](managers.md); `custom` matches the deps of eve
 
 ### `rules[].names`
 
-Only match deps whose name matches any of these doublestar globs (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates). An entry starting with `!` excludes the names its glob matches (Renovate's `!pattern`); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after `!`).
+Only match deps whose name matches any of these doublestar globs, compared case-insensitively as in Renovate (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates). An entry starting with `!` excludes the names its glob matches (Renovate's `!pattern`); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after `!`).
 
 - **Type:** list of strings
 
@@ -1134,7 +1134,7 @@ Only match deps of these types; with managers set to one manager, the schema off
 
 ### `rules[].paths`
 
-Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. `charts/**`. An entry starting with `!` excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after `!`).
+Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs (case-insensitive, as in Renovate), e.g. `charts/**`. An entry starting with `!` excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after `!`).
 
 - **Type:** list of strings
 
@@ -1570,7 +1570,7 @@ RUN go install golang.org/x/tools/cmd/goimports@v0.38.0
 
 ### `custom[].files`
 
-Doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !\<pattern> excludes (a negation-only list matches everything else).
+Case-insensitive doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !\<pattern> excludes (a negation-only list matches everything else).
 
 - **Type:** list of strings
 - **Minimum entries:** 1

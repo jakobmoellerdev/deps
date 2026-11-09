@@ -42,8 +42,8 @@
           },
           "type": "array",
           "minItems": 1,
-          "description": "Doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !<pattern> excludes (a negation-only list matches everything else).",
-          "markdownDescription": "Doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !\\<pattern> excludes (a negation-only list matches everything else).\n\nMust not be empty."
+          "description": "Case-insensitive doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !<pattern> excludes (a negation-only list matches everything else).",
+          "markdownDescription": "Case-insensitive doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !\\<pattern> excludes (a negation-only list matches everything else).\n\nMust not be empty."
         },
         "match": {
           "type": "string",
@@ -2208,8 +2208,8 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates). An entry starting with '!' excludes the names its glob matches (Renovate's '!pattern'); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after '!').",
-          "markdownDescription": "Only match deps whose name matches any of these doublestar globs (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates). An entry starting with `!` excludes the names its glob matches (Renovate's `!pattern`); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after `!`).\n\nRenovate's `!pattern` works: `['actions/*', '!actions/cache']` matches every `actions/` dep but `actions/cache`, and a list of only exclusions (`['!k8s.io/**']`) matches every other name. Exclusions win regardless of their position. `paths` works the same on the dep's file. A bare `!` is a config error (`rules[i].names[j]: invalid glob \"!\": missing pattern after !`)."
+          "description": "Only match deps whose name matches any of these doublestar globs, compared case-insensitively as in Renovate ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates). An entry starting with '!' excludes the names its glob matches (Renovate's '!pattern'); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after '!').",
+          "markdownDescription": "Only match deps whose name matches any of these doublestar globs, compared case-insensitively as in Renovate (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates). An entry starting with `!` excludes the names its glob matches (Renovate's `!pattern`); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after `!`).\n\nRenovate's `!pattern` works: `['actions/*', '!actions/cache']` matches every `actions/` dep but `actions/cache`, and a list of only exclusions (`['!k8s.io/**']`) matches every other name. Exclusions win regardless of their position. `paths` works the same on the dep's file. A bare `!` is a config error (`rules[i].names[j]: invalid glob \"!\": missing pattern after !`)."
         },
         "depTypes": {
           "items": {
@@ -2387,8 +2387,8 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'. An entry starting with '!' excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after '!').",
-          "markdownDescription": "Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. `charts/**`. An entry starting with `!` excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after `!`)."
+          "description": "Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs (case-insensitive, as in Renovate), e.g. 'charts/**'. An entry starting with '!' excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after '!').",
+          "markdownDescription": "Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs (case-insensitive, as in Renovate), e.g. `charts/**`. An entry starting with `!` excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after `!`)."
         },
         "datasources": {
           "items": {
@@ -2958,7 +2958,7 @@
         "type": "string"
       },
       "type": "array",
-      "description": "Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes.",
+      "description": "Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes.",
       "default": [
         "**/node_modules/**",
         "**/bower_components/**",
@@ -2969,7 +2969,7 @@
         "**/tests/**",
         "**/__fixtures__/**"
       ],
-      "markdownDescription": "Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes.\n\n- When the key is **absent**, Renovate's `:ignoreModulesAndTests` list (the default above) applies.\n- Any explicit list, including `[]` or a null value, replaces that default.\n- Independently of `ignorePaths`, discovery always prunes `.git`, `node_modules`, `vendor` and `testdata` directories.\n- Each entry must be a valid doublestar glob or a `/RE2/` regex (flag `i` allowed) matched anywhere in the path; `!` negations are rejected.\n\n```yaml\nignorePaths: ['**/node_modules/**', 'docs/**']\n```"
+      "markdownDescription": "Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes.\n\n- When the key is **absent**, Renovate's `:ignoreModulesAndTests` list (the default above) applies.\n- Any explicit list, including `[]` or a null value, replaces that default.\n- Independently of `ignorePaths`, discovery always prunes `.git`, `node_modules`, `vendor` and `testdata` directories.\n- Each entry must be a valid doublestar glob or a `/RE2/` regex (flag `i` allowed) matched anywhere in the path; `!` negations are rejected.\n\n```yaml\nignorePaths: ['**/node_modules/**', 'docs/**']\n```"
     },
     "separateMajorMinor": {
       "type": "boolean",

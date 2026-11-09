@@ -232,7 +232,7 @@ type Config struct {
 	// AbandonmentThreshold flags deps whose newest release is older than it (Renovate's
 	// abandonmentThreshold); a string like MinimumReleaseAge.
 	AbandonmentThreshold string   `yaml:"abandonmentThreshold" jsonschema_description:"Age of a dependency's newest release after which the dependency dashboard and its PRs flag it as abandoned, e.g. '1 year' or '18 months' (units of minimumReleaseAge, plus months of 30 days and years of 365 days); empty or '0' turns the check off. It costs at most one release time lookup per dep (npm: none when its modified time is old enough)."`
-	IgnorePaths          []string `yaml:"ignorePaths" jsonschema_description:"Doublestar globs on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes."`
+	IgnorePaths          []string `yaml:"ignorePaths" jsonschema_description:"Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes."`
 	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
 	// same names); rules override them.
 	SeparateMajorMinor    *bool  `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update."`
@@ -442,9 +442,9 @@ type Terraform struct {
 type Rule struct {
 	// Match fields.
 	Managers    []string `yaml:"managers" jsonschema_description:"Only match deps of these managers."`
-	Names       []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates). An entry starting with '!' excludes the names its glob matches (Renovate's '!pattern'); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after '!')."`
+	Names       []string `yaml:"names" jsonschema_description:"Only match deps whose name matches any of these doublestar globs, compared case-insensitively as in Renovate ('*' stays within a path segment, '**' crosses segments, '{a,b}' alternates). An entry starting with '!' excludes the names its glob matches (Renovate's '!pattern'); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after '!')."`
 	DepTypes    []string `yaml:"depTypes" jsonschema_description:"Only match deps of these types; with managers set to one manager, the schema offers that manager's dep types."`
-	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs, e.g. 'charts/**'. An entry starting with '!' excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ or /RE2/i (also after '!')."`
+	Paths       []string `yaml:"paths" jsonschema_description:"Only match deps whose file (slash path relative to --dir) matches any of these doublestar globs (case-insensitive, as in Renovate), e.g. 'charts/**'. An entry starting with '!' excludes the files its glob matches; a list of only exclusions matches every other file. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after '!')."`
 	Datasources []string `yaml:"datasources" jsonschema_description:"Only match deps looked up with these datasources, or custom.<name> of customDatasources; Renovate names (golang-version, github-tags, github-release-attachments, node, bitbucket-tags, azure-tags, bitbucket-server-tags, github-digest) match their deps datasource."`
 	// BaseBranches matches the base branch of the run (Renovate's matchBaseBranches).
 	BaseBranches []string `yaml:"baseBranches" jsonschema_description:"Only match deps on these base branches of run (baseBranches, --base, else the default branch): names or RE2 regexes '/<RE2>/' (flag i allowed); an entry starting with '!' excludes the branches it matches, and a list of only exclusions matches every other branch. plan, apply, explain and preview have no base branch, so no rule with baseBranches matches there."`
@@ -524,7 +524,7 @@ func (r *Rule) Source() (file string, line int) { return r.source, r.line }
 // Custom is a custom manager: annotation mode when Match and JSONata are empty, regex mode
 // with Match, JSONata mode with JSONata.
 type Custom struct {
-	Files       []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !<pattern> excludes (a negation-only list matches everything else)."`
+	Files       []string  `yaml:"files" jsonschema:"required,minItems=1" jsonschema_description:"Case-insensitive doublestar globs of the files this manager scans. Entries may also be Renovate regexes /RE2/ or /RE2/i; !<pattern> excludes (a negation-only list matches everything else)."`
 	Match       string    `yaml:"match" jsonschema_description:"RE2 regexp with a (?P<version>) or (?P<currentValue>) group and optional name (or depName/packageName), datasource, digest and checksum groups; empty means annotation mode (or JSONata mode with jsonata)."`
 	JSONata     string    `yaml:"jsonata" jsonschema_description:"JSONata query run over the file parsed as fileFormat; it returns dep objects (or a list of them) with string fields currentValue (alias version), depName/packageName (alias name), datasource, versioning, currentDigest (alias digest), extractVersion and registryUrl. Exclusive with match."`
 	FileFormat  string    `yaml:"fileFormat" jsonschema_description:"Format the jsonata query reads the file as: json (comments and trailing commas allowed), yaml (a list of the file's documents) or toml; required with jsonata."`
@@ -928,7 +928,7 @@ func (c *Config) validate() []*Problem {
 	for i, g := range c.IgnorePaths {
 		if strings.HasPrefix(g, "!") {
 			add(fmt.Sprintf("ignorePaths[%d]", i), "negation is not supported in ignorePaths, got %q", g)
-		} else if _, err := pattern.Compile([]string{g}); err != nil {
+		} else if _, err := pattern.CompileCaseSensitive([]string{g}); err != nil {
 			add(fmt.Sprintf("ignorePaths[%d]", i), "%v", err)
 		}
 	}

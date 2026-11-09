@@ -20,7 +20,7 @@ var prunedDirs = map[string]bool{".git": true, "node_modules": true, "vendor": t
 // manager, indexed like managers.
 func discover(root string, ignore []string, managers []manager.Manager) ([][]string, error) {
 	out := make([][]string, len(managers))
-	ign, err := pattern.Compile(ignore)
+	ign, err := pattern.CompileCaseSensitive(ignore)
 	if err != nil {
 		return nil, err
 	}

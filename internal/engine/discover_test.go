@@ -40,6 +40,7 @@ func TestDiscoverIgnorePaths(t *testing.T) {
 	}{
 		{"defaults prune dirs at any depth", config.DefaultIgnorePaths, []string{"a/testing/go.mod", "go.mod", "lib/go.mod", "testx/go.mod"}},
 		{"explicit empty list scans everything", []string{}, slices.Sorted(slices.Values(files))},
+		{"globs keep case", []string{"A/**", "LIB/go.mod"}, slices.Sorted(slices.Values(files))},
 		{"custom dir glob", []string{"a/**"}, []string{"examples/x/go.mod", "go.mod", "lib/go.mod", "pkg/__fixtures__/go.mod", "pkg/__tests__/go.mod", "test/go.mod", "testx/go.mod", "web/bower_components/go.mod"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

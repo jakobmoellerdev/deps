@@ -29,6 +29,10 @@ func TestRuleNegatedGlobs(t *testing.T) {
 		{"exclusion wins in any order", "names: ['!actions/cache', '**']", dep.Dep{Name: "actions/cache"}, false},
 		{"paths exclusion only", "paths: ['!test/**']", dep.Dep{File: "go.mod"}, true},
 		{"paths exclusion only: excluded", "paths: ['!test/**']", dep.Dep{File: "test/e2e/go.mod"}, false},
+		{"names glob ignores case", "names: ['newtonsoft.*']", dep.Dep{Name: "Newtonsoft.Json"}, true},
+		{"names exclusion ignores case", "names: ['!actions/*']", dep.Dep{Name: "Actions/Checkout"}, false},
+		{"names regex keeps case", "names: ['/^newtonsoft/']", dep.Dep{Name: "Newtonsoft.Json"}, false},
+		{"paths glob ignores case", "paths: ['docs/**']", dep.Dep{File: "Docs/package.json"}, true},
 		{"paths include and exclude", "paths: ['charts/**', '!charts/legacy/**']", dep.Dep{File: "charts/legacy/values.yaml"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
