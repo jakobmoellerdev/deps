@@ -23,6 +23,7 @@ var CollectionDoc = refdoc.Datasource{
 		"whose `available_versions.v3` is the v3 API; then once per (server, collection) `GET <v3>collections/<namespace>/<name>/` (`deprecated`; a 404 skips the dep) " +
 		"and `GET <v3>collections/<namespace>/<name>/versions/?limit=100`, following `links.next`. " +
 		"Source repository (release notes): `metadata.repository` of `GET <v3>collections/<namespace>/<name>/versions/<version>/`, only for versions that end up in a PR",
-	Auth:         "none",
+	Auth: "a token for the server's host: `DEPS_GALAXY_TOKEN` for the default server (`DEPS_GALAXY_URL`), and the servers of ansible-galaxy's `ANSIBLE_GALAXY_SERVER_LIST` (`ANSIBLE_GALAXY_SERVER_<NAME>_URL`, `…_TOKEN`), sent as `Authorization: Token <token>`. " +
+		"With an SSO endpoint (`DEPS_GALAXY_AUTH_URL`, `ANSIBLE_GALAXY_SERVER_<NAME>_AUTH_URL`, e.g. Red Hat SSO's `https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token` for Automation Hub) the token is an offline token, exchanged once per run as ansible-galaxy does (`POST` `grant_type=refresh_token`, `client_id=cloud-services`) for an access token sent as `Bearer <access token>`",
 	ReleaseTimes: "each version's `created_at`",
 }

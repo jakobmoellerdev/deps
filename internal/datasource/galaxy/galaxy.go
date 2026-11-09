@@ -54,7 +54,9 @@ type Roles struct {
 type Collections struct {
 	getter httpx.Getter
 	base   string // default server URL without a trailing slash
+	auths  []serverAuth
 
+	access     datasource.Memo[string, string]    // SSO endpoint + "\x00" + offline token → access token
 	apis       datasource.Memo[string, string]    // server → v3 API root URL (with trailing slash)
 	colls      datasource.Memo[[2]string, *pkg]   // (server, name)
 	repos      datasource.Memo[[3]string, string] // (server, name, version) → metadata.repository
@@ -75,9 +77,11 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Ro
 	return &Roles{getter: newGetter(client, sem), base: baseURL(getenv)}
 }
 
-// NewCollections returns the galaxy-collection datasource, as New.
+// NewCollections returns the galaxy-collection datasource, as New; getenv also supplies the
+// server tokens (serverAuths).
 func NewCollections(client *http.Client, sem chan struct{}, getenv func(string) string) *Collections {
-	return &Collections{getter: newGetter(client, sem), base: baseURL(getenv)}
+	base := baseURL(getenv)
+	return &Collections{getter: newGetter(client, sem), base: base, auths: serverAuths(getenv, base)}
 }
 
 func baseURL(getenv func(string) string) string {
@@ -231,7 +235,7 @@ func (s *Collections) SourceRepo(ctx context.Context, d dep.Dep, version string)
 				Repository string `json:"repository"`
 			} `json:"metadata"`
 		}
-		err := get(ctx, s.getter, p.versions+url.PathEscape(version)+"/", &v)
+		err := s.get(ctx, p.versions+url.PathEscape(version)+"/", &v)
 		return v.Metadata.Repository, err
 	})
 }
@@ -260,7 +264,7 @@ func (s *Collections) api(ctx context.Context, server string) (string, error) {
 			var body struct {
 				Versions map[string]string `json:"available_versions"`
 			}
-			err := get(ctx, s.getter, root, &body)
+			err := s.get(ctx, root, &body)
 			if err == nil && body.Versions["v3"] == "" {
 				err = fmt.Errorf("GET %s: no v3 API", root)
 			}
@@ -293,7 +297,7 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		var coll struct {
 			Deprecated bool `json:"deprecated"`
 		}
-		if err := get(ctx, s.getter, base, &coll); err != nil {
+		if err := s.get(ctx, base, &coll); err != nil {
 			if errors.Is(err, errNotFound) {
 				return nil, &dep.SkipError{Reason: "collection not found on " + srv}
 			}
@@ -322,7 +326,7 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 					CreatedAt string `json:"created_at"`
 				} `json:"data"`
 			}
-			if err := get(ctx, s.getter, next, &page); err != nil {
+			if err := s.get(ctx, next, &page); err != nil {
 				return nil, err
 			}
 			for _, v := range page.Data {
@@ -351,6 +355,23 @@ func (s *Collections) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 
 // errNotFound marks an HTTP 404.
 var errNotFound = errors.New("not found")
+
+// get GETs target with the Authorization of its server (authorization) as get does.
+func (s *Collections) get(ctx context.Context, target string, v any) error {
+	authz, err := s.authorization(ctx, target)
+	if err != nil {
+		return err
+	}
+	g := s.getter
+	if authz != "" {
+		accept := g.Prepare
+		g.Prepare = func(req *http.Request) error {
+			req.Header.Set("Authorization", authz)
+			return accept(req)
+		}
+	}
+	return get(ctx, g, target, v)
+}
 
 // newGetter returns the Getter of the galaxy datasources: JSON, bodies up to maxBody.
 func newGetter(client *http.Client, sem chan struct{}) httpx.Getter {
