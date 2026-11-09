@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"slices"
+	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -191,5 +192,36 @@ func TestUpdateTypeRuleOptsIn(t *testing.T) {
 	const why = "policy: ignored by default (indirect; enable with a rule setting ignore: false)"
 	if !slices.Equal(tr.Rejected[why], []string{"v1.1.0", "v1.2.0"}) || !tr.Policy.Ignore {
 		t.Errorf("trace: policy %+v rejected %v", tr.Policy, tr.Rejected)
+	}
+}
+
+// TestDigestAlongsideMajor checks that a pinned image whose only version update is a major
+// in its own PR also gets the digest refresh of its current tag (Renovate parity, #403).
+func TestDigestAlongsideMajor(t *testing.T) {
+	old := "sha256:" + strings.Repeat("0", 64)
+	root, cfg := setup(t, "", map[string]string{"Dockerfile": "FROM img:1.25@" + old + "\n"})
+	o := Options{
+		Managers:    []manager.Manager{docker.New()},
+		Datasources: map[string]Datasource{"docker": fakeDocker{"img": {"1.25", "2.0"}}},
+	}
+	res, err := Resolve(t.Context(), root, cfg, env, o)
+	if err != nil || len(res.Errors) > 0 {
+		t.Fatalf("err = %v, errors = %v", err, res.Errors)
+	}
+	type got struct {
+		kind            dep.UpdateType
+		version, digest string
+		bucket          string
+	}
+	var ups []got
+	for _, u := range res.Updates {
+		ups = append(ups, got{u.Type, u.NewVersion, u.NewDigest, u.Bucket})
+	}
+	want := []got{
+		{dep.Digest, "1.25", imageDigest("img", "1.25"), ""},
+		{dep.Major, "2.0", imageDigest("img", "2.0"), "major"},
+	}
+	if !slices.Equal(ups, want) {
+		t.Errorf("updates:\n%+v\nwant:\n%+v", ups, want)
 	}
 }

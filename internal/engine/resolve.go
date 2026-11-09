@@ -1292,8 +1292,10 @@ func (r *resolver) usual(t *Trace, scheme versioning.Scheme, vulns func() []Vuln
 }
 
 // versionUpdates resolves a dep with a valid version: the best candidate under policy per PR
-// bucket, else the digest refresh or pin of the current version (for a Go pseudo-version the
-// newer pseudo-version of the module's head), then security, the digest and checksum of every
+// bucket, plus the digest refresh or pin of the current version when no update sits in the
+// digest's bucket (Renovate proposes it next to a major under separateMajorMinor; for a Go
+// pseudo-version, without updates, the newer pseudo-version of the module's head), then
+// security, the digest and checksum of every
 // resulting version, and Go major module path updates. Updates are ordered by version, lowest
 // first. A dep left without updates because candidates declare another module path is
 // skipped with the reason of the newest one (*dep.SkipError): it needs a manual move to the
@@ -1363,8 +1365,9 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		if ups, err = r.headUpdate(dir, reject); err != nil {
 			return nil, err
 		}
-	case len(ups) == 0 && digests:
-		if ups, err = r.digestUpdate(); err != nil {
+	case digests:
+		ups, err = r.digestAlongside(ups)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -1435,6 +1438,22 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 		return nil, &dep.SkipError{Reason: r.renamed}
 	}
 	return ups, nil
+}
+
+// digestAlongside prepends the digest refresh or pin of the current version (digestUpdate)
+// to ups unless an update already sits in its PR bucket, the test pinUpdate uses: a version
+// update there writes the new digest itself. Its version is the current one, the lowest.
+func (r *resolver) digestAlongside(ups []dep.Update) ([]dep.Update, error) {
+	b := r.pol.bucket(versioning.Candidate{Kind: dep.Digest}).label()
+	if slices.ContainsFunc(ups, func(u dep.Update) bool { return u.Bucket == b }) {
+		return ups, nil
+	}
+	du, err := r.digestUpdate()
+	if err != nil || len(du) == 0 {
+		return ups, err
+	}
+	du[0].Bucket = b
+	return append(du, ups...), nil
 }
 
 // digestUpdate keeps the current version and refreshes its digest when pinned (Type digest,
