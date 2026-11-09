@@ -162,6 +162,81 @@ func rpmCompat(cur, next rpmVersion) string {
 	return ""
 }
 
+// rpmScheme is RPM's EVR. Best and Rank take a cur without an epoch (files usually write
+// `<name>-<ver>-<rel>`, as dnf takes it, while the rpm datasource lists `<epoch>:` versions)
+// to have the epoch of the candidate with its version and release, the highest when
+// several do: `1.5.10-34.fc41` listed as `1.5.10-34.fc41` is epoch 0, so an epoch bump that
+// lowered the version (`1:0.8.0-1.fc43`) is newer, as dnf orders it. Without such a
+// candidate the epochs of cur and the candidates are ignored (Renovate's order). Candidates
+// are written in cur's form: without the epoch when cur has none, with it (`0:` for none)
+// when cur has one.
+type rpmScheme struct{ impl[rpmVersion] }
+
+func (s rpmScheme) Best(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) (string, bool) {
+	in, c := s.against(cur, cands)
+	best, ok := in.Best(c, cands, accept, reject)
+	if !ok {
+		return "", false
+	}
+	return rpmStyle(cur, best), true
+}
+
+func (s rpmScheme) Rank(cur string, cands []string, accept func(string, dep.UpdateType) (bool, string), reject func(string, string)) Ranking {
+	in, c := s.against(cur, cands)
+	r := in.rank(c, cands, accept, reject)
+	r.style = func(v string) string { return rpmStyle(cur, v) }
+	return r
+}
+
+func (s rpmScheme) Compatible(cur, next string) bool {
+	in, c := s.against(cur, []string{next})
+	return in.Compatible(c, next)
+}
+
+// against returns the scheme and the current version cands are ranked against: cur and
+// the full scheme when cur has an epoch; else the candidate with cur's version and release
+// and the highest epoch; else cur and the scheme ignoring epochs.
+func (s rpmScheme) against(cur string, cands []string) (impl[rpmVersion], string) {
+	if strings.IndexByte(cur, ':') >= 0 {
+		return s.impl, cur
+	}
+	match, epoch, found := "", uint64(0), false
+	for _, v := range cands {
+		if v != cur && (len(v) <= len(cur) || v[len(v)-len(cur)-1] != ':' || !strings.HasSuffix(v, cur)) {
+			continue
+		}
+		if n, ok := parseRPM(v); ok && (!found || n.epoch > epoch) {
+			match, epoch, found = v, n.epoch, true
+		}
+	}
+	if found {
+		return s.impl, match
+	}
+	in := s.impl
+	in.parse = parseRPMIgnoringEpoch
+	return in, cur
+}
+
+// parseRPMIgnoringEpoch is parseRPM with the epoch dropped.
+func parseRPMIgnoringEpoch(s string) (rpmVersion, bool) {
+	v, ok := parseRPM(s)
+	v.epoch = 0
+	return v, ok
+}
+
+// rpmStyle writes the candidate v in cur's form: without its epoch when cur has none, with
+// `0:` when cur has an epoch and v none.
+func rpmStyle(cur, v string) string {
+	_, rest, epoch := strings.Cut(v, ":")
+	switch curEpoch := strings.IndexByte(cur, ':') >= 0; {
+	case epoch && !curEpoch:
+		return rest
+	case !epoch && curEpoch:
+		return "0:" + v
+	}
+	return v
+}
+
 // num is the leading number of the i-th part of the version, parts separated by ".", "_" or
 // "+" and ending at a "~" or "^" (`1.2.3a~rc1` → 1, 2, 3): 0 when absent or not starting with
 // a digit; huge values saturate.

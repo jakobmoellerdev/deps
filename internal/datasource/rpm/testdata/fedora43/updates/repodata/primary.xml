@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="1">
+<package type="rpm">
+  <name>libtpcimgio</name>
+  <arch>x86_64</arch>
+  <version epoch="1" ver="0.8.0" rel="1.fc43"/>
+  <checksum type="sha256" pkgid="YES">a4431207c669fcbd02ca9e2d3f0857bad08eb6b5abe5744a3576692cdbe168d6</checksum>
+  <summary>Turku PET Centre for image file input and output procedures</summary>
+  <description>The libtpcimgio library is a collection of commonly used C files
+in Turku PET Centre for image file input and output procedures.
+Libtpcimgio library supports Analyze 7.5, Ecat 6.x, Ecat 7.x and
+partly interfile formats.</description>
+  <packager>Fedora Project</packager>
+  <url>https://gitlab.utu.fi/vesoik/tpcclib</url>
+  <time file="1770731407" build="1770731138"/>
+  <size package="220155" installed="586636" archive="589120"/>
+  <location href="Packages/l/libtpcimgio-0.8.0-1.fc43.x86_64.rpm"/>
+  <format>
+    <rpm:license>GPL-3.0-or-later</rpm:license>
+    <rpm:vendor>Fedora Project</rpm:vendor>
+    <rpm:group>Unspecified</rpm:group>
+    <rpm:buildhost>buildvm-x86-22.rdu3.fedoraproject.org</rpm:buildhost>
+    <rpm:sourcerpm>libtpcimgio-0.8.0-1.fc43.src.rpm</rpm:sourcerpm>
+    <rpm:header-range start="4504" end="11097"/>
+    <rpm:provides>
+      <rpm:entry name="libtpcimgio" flags="EQ" epoch="1" ver="0.8.0" rel="1.fc43"/>
+      <rpm:entry name="libtpcimgio(x86-64)" flags="EQ" epoch="1" ver="0.8.0" rel="1.fc43"/>
+      <rpm:entry name="libtpcimgio.so.0()(64bit)"/>
+    </rpm:provides>
+    <rpm:requires>
+      <rpm:entry name="libm.so.6()(64bit)"/>
+      <rpm:entry name="libm.so.6(GLIBC_2.2.5)(64bit)"/>
+      <rpm:entry name="libm.so.6(GLIBC_2.29)(64bit)"/>
+      <rpm:entry name="libtpcmisc.so.0()(64bit)"/>
+      <rpm:entry name="rtld(GNU_HASH)"/>
+      <rpm:entry name="libc.so.6(GLIBC_2.38)(64bit)"/>
+    </rpm:requires>
+    <file>/usr/bin/libtpcimgio</file>
+    <file>/usr/bin/libtpcimgiobig</file>
+  </format>
+</package>
+</metadata>

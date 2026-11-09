@@ -146,22 +146,28 @@ func TestReleases(t *testing.T) {
 		t.Errorf("requests = %d, want 2", n)
 	}
 
-	// zstd; versions omit the epoch (docker-ce has epoch 3), as Renovate writes them.
+	// zstd; versions carry the epoch (docker-ce has epoch 3); the rpm versioning orders by it
+	// and writes the file's epoch-less form, as Renovate writes them.
 	rels, err := s.Releases(ctx, dep.Dep{Name: "docker-ce", Source: srv.URL + "/docker/repodata/"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	vs := versions(rels)
-	if len(vs) != 40 || vs[0] != "28.5.0-1.fc43" || !slices.Contains(vs, "29.0.0-1.fc43") {
+	if len(vs) != 40 || vs[0] != "3:28.5.0-1.fc43" || !slices.Contains(vs, "3:29.0.0-1.fc43") {
 		t.Errorf("docker-ce = %v", vs)
 	}
 	scheme, _ := versioning.Get(Versioning)
-	if best, ok := scheme.Best("28.5.0-1.fc43", vs, nil, nil); !ok || best != slices.MaxFunc(vs, scheme.Compare) {
+	if best, ok := scheme.Best("28.5.0-1.fc43", vs, nil, nil); !ok || "3:"+best != slices.MaxFunc(vs, scheme.Compare) {
 		t.Errorf("Best = %s", best)
 	}
-	at, err := s.ReleaseTime(ctx, dep.Dep{Name: "docker-ce", Source: srv.URL + "/docker/repodata/"}, "28.5.1-1.fc43")
-	if err != nil || !at.Equal(time.Unix(1759927578, 0)) {
-		t.Errorf("ReleaseTime = %v, %v", at, err)
+	if best, ok := scheme.Best("3:28.5.0-1.fc43", vs, nil, nil); !ok || best != slices.MaxFunc(vs, scheme.Compare) {
+		t.Errorf("Best with an epoch = %s", best)
+	}
+	for _, v := range []string{"28.5.1-1.fc43", "3:28.5.1-1.fc43"} {
+		at, err := s.ReleaseTime(ctx, dep.Dep{Name: "docker-ce", Source: srv.URL + "/docker/repodata/"}, v)
+		if err != nil || !at.Equal(time.Unix(1759927578, 0)) {
+			t.Errorf("ReleaseTime(%s) = %v, %v", v, at, err)
+		}
 	}
 	if at, err := s.ReleaseTime(ctx, dep.Dep{Name: "docker-ce", Source: srv.URL + "/docker"}, "1.0-1"); err != nil || !at.IsZero() {
 		t.Errorf("ReleaseTime of an unknown version = %v, %v", at, err)
@@ -172,6 +178,41 @@ func TestReleases(t *testing.T) {
 		if err != nil || len(rels) != 155 {
 			t.Errorf("%s: %d releases, %v", dir, len(rels), err)
 		}
+	}
+}
+
+// testdata/fedora43/{releases,updates}/repodata/primary.xml are the libtpcimgio <package>
+// entries of https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os
+// and …/updates/43/Everything/x86_64, verbatim, fetched 2026-11-09 (repomd.xml names them).
+// Fedora 43 ships libtpcimgio 1.5.10-34.fc41; its update 1:0.8.0-1.fc43 bumped the epoch to
+// lower the version: dnf upgrades to it, so must deps.
+func TestReleasesEpochBump(t *testing.T) {
+	var hits atomic.Int32
+	srv := serve(t, &hits)
+	s := New(srv.Client(), nil)
+	ctx := context.Background()
+	d := dep.Dep{Name: "libtpcimgio", Source: srv.URL + "/fedora43/releases/repodata/ " + srv.URL + "/fedora43/updates/repodata/"}
+	rels, err := s.Releases(ctx, d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vs := versions(rels); !slices.Equal(vs, []string{"1.5.10-34.fc41", "1:0.8.0-1.fc43"}) {
+		t.Fatalf("versions = %v", vs)
+	}
+	scheme, _ := versioning.Get(Versioning)
+	for cur, want := range map[string]string{"1.5.10-34.fc41": "0.8.0-1.fc43", "0:1.5.10-34.fc41": "1:0.8.0-1.fc43"} {
+		r := scheme.Rank(cur, versions(rels), nil, nil)
+		if r.Len() != 1 || r.At(0).Version != want || r.At(0).Kind != dep.Major {
+			t.Errorf("Rank(%s) = %d candidates", cur, r.Len())
+			continue
+		}
+		at, err := s.ReleaseTime(ctx, d, r.At(0).Version)
+		if err != nil || !at.Equal(time.Unix(1770731407, 0)) {
+			t.Errorf("ReleaseTime(%s) = %v, %v", r.At(0).Version, at, err)
+		}
+	}
+	if best, ok := scheme.Best("1:0.8.0-1.fc43", versions(rels), nil, nil); ok {
+		t.Errorf("Best of the epoch bump = %s", best)
 	}
 }
 
@@ -319,14 +360,14 @@ func TestScanPrimary(t *testing.T) {
 		{in: `<?xml version="1.0"?><!-- c --><metadata packages="4">` +
 			`<package type="rpm"><name> a&amp;b </name><version epoch="1" ver='1.0' rel="2.el9"/><time file="7" build="3"/></package>` +
 			`<package type="rpm"><name>noRel</name><version  ver = "2.0" /></package>` +
-			`<package type="rpm"><name>emptyRel</name><version ver="3.0" rel=""/><time file="x"/></package>` +
+			`<package type="rpm"><name>emptyRel</name><version epoch="00" ver="3.0" rel=""/><time file="x"/></package>` +
 			`<package type="rpm"><name>noVer</name><version epoch="0"/></package>` +
 			`<package type="rpm"><name/><version ver="9"/></package>` +
 			`<package type="other"><name>skip</name><version ver="1"/></package>` +
 			`<package type="rpm"><name>esc</name><version ver="1&#46;0" rel="a&amp;b"/>` +
 			`<format><rpm:entry name="ignored" ver="9" rel="9"/><file>/x</file></format></package>` +
 			`</metadata>`,
-			want: []entry{{"a&b", "1.0-2.el9", 7}, {"noRel", "2.0", 0}, {"emptyRel", "3.0", 0}, {"esc", "1.0-a&b", 0}}},
+			want: []entry{{"a&b", "1:1.0-2.el9", 7}, {"noRel", "2.0", 0}, {"emptyRel", "3.0", 0}, {"esc", "1.0-a&b", 0}}},
 		{in: "", err: true},
 		{in: "<metadata><package type=\"rpm\"><name>a", err: true},
 		{in: "<metadata><package type=\"rpm\"><name>a</name><version ver=\"1\"/></package>", err: true},

@@ -94,8 +94,10 @@ func (s *Source) want(base, name string) {
 // Releases lists the versions of d.Name in the repositories of d.Source (whitespace-separated
 // repository URLs, Renovate's registryUrls, each the repository root or its `repodata/`
 // directory), merged as Renovate's `merge` registry strategy does: a distribution's release
-// and updates repositories together. A version is `<ver>-<rel>` (`<ver>` when the package has
-// no release), without the epoch, as Renovate writes it. The result must not be modified.
+// and updates repositories together. A version is `[<epoch>:]<ver>-<rel>` (`<ver>` when the
+// package has no release; the epoch when it is not 0), so the rpm versioning orders an epoch
+// bump as dnf does; it writes candidates in the file's form (without the epoch when the file
+// has none, as Renovate writes them). The result must not be modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
 	p, err := s.lookup(ctx, d)
 	if err != nil {
@@ -105,18 +107,23 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 }
 
 // ReleaseTime implements datasource.Timer with the earliest `<time file>` (when the build was
-// added to the repository) of the version's builds.
+// added to the repository) of the version's builds. A version without an epoch also matches
+// a listed version with one (the rpm versioning writes candidates without it).
 func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (time.Time, error) {
 	p, err := s.lookup(ctx, d)
 	if err != nil {
 		return time.Time{}, err
 	}
+	var t time.Time
 	for i, r := range p.rels {
 		if r.Version == version {
 			return p.times[i], nil
 		}
+		if _, rest, ok := strings.Cut(r.Version, ":"); ok && rest == version && t.IsZero() {
+			t = p.times[i]
+		}
 	}
-	return time.Time{}, nil
+	return t, nil
 }
 
 // Digest is unsupported: RPM versions are not digest-pinned.
@@ -374,12 +381,12 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 }
 
 // scanPrimary streams primary.xml and calls add for each `<package type="rpm">` whose `<name>`
-// want accepts, with its name, its version (`<version ver rel>` as `ver-rel`, `ver` without a
-// release) and its `<time file>`. It reads tags with a byte scanner instead of encoding/xml: a
-// distribution's primary.xml is hundreds of MB, of which only these three elements matter, and
-// tens of thousands of packages, of which a run asks for a few. Element texts other than the
-// name are skipped unread; attribute values and the name are unescaped. The version is built
-// at the end of a package, only for a wanted one, so unwanted packages allocate nothing.
+// want accepts, with its name, its version (versionOf) and its `<time file>`. It reads tags
+// with a byte scanner instead of encoding/xml: a distribution's primary.xml is hundreds of
+// MB, of which only these three elements matter, and tens of thousands of packages, of which
+// a run asks for a few. Element texts other than the name are skipped unread; attribute
+// values and the name are unescaped. The version is built at the end of a package, only for
+// a wanted one, so unwanted packages allocate nothing.
 func scanPrimary(r io.Reader, want func(name []byte) bool, add func(name []byte, version string, t time.Time)) error {
 	s := tagScanner{br: bufio.NewReaderSize(r, 64<<10)}
 	if _, err := s.until('<', false); err != nil {
@@ -438,12 +445,16 @@ func scanPrimary(r io.Reader, want func(name []byte) bool, add func(name []byte,
 	}
 }
 
-// versionOf returns the version of a `<version ver rel>` tag's content: `ver-rel`, `ver`
-// without a release, "" without a ver.
+// versionOf returns the version of a `<version epoch ver rel>` tag's content:
+// `epoch:ver-rel`, without `epoch:` when it is 0 or absent and `-rel` without a release; ""
+// without a ver.
 func versionOf(tag []byte) string {
 	ver, _ := attrOK(tag, "ver")
 	if ver == "" {
 		return ""
+	}
+	if epoch, _ := attrOK(tag, "epoch"); epoch != "" && strings.TrimLeft(epoch, "0") != "" {
+		ver = epoch + ":" + ver
 	}
 	if rel, _ := attrOK(tag, "rel"); rel != "" {
 		return ver + "-" + rel

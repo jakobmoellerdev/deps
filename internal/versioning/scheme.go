@@ -110,7 +110,7 @@ var schemes = map[string]Scheme{
 	"julia":        juliaScheme{impl[cargoVersion]{parse: parseCargo, compat: juliaCompat, cmp: compareJulia, kind: juliaKind, semver: cargoVersion.semver, major: cargoMajor}},
 	"bazel-module": impl[bazelVersion]{parse: parseBazel, compat: bazelCompat, cmp: compareBazel, kind: bazelKind, semver: bazelVersion.semver, major: bazelVersion.major},
 	"nuget":        nugetScheme{impl[nugetVersion]{parse: parseNuGet, compat: nugetCompat, cmp: compareNuGet, kind: nugetKind, semver: nugetVersion.semver, major: nugetVersion.major}},
-	"rpm":          impl[rpmVersion]{parse: parseRPM, compat: rpmCompat, cmp: compareRPM, kind: rpmKind, semver: rpmVersion.semver, major: rpmVersion.major},
+	"rpm":          rpmScheme{impl[rpmVersion]{parse: parseRPM, compat: rpmCompat, cmp: compareRPM, kind: rpmKind, semver: rpmVersion.semver, major: rpmVersion.major}},
 	"apk":          impl[apkVersion]{parse: parseApk, compat: apkCompat, cmp: compareApk, kind: apkKind, semver: apkVersion.semver, major: apkVersion.major},
 	"deb":          impl[debVersion]{parse: parseDeb, compat: debCompat, cmp: compareDeb, kind: debKind, semver: debVersion.semver, major: debVersion.major},
 	"pub":          pubScheme{impl[cargoVersion]{parse: parsePub, compat: pubCompat, cmp: compareJulia, kind: pubKind, semver: cargoVersion.semver, major: pubMajor}},

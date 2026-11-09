@@ -111,8 +111,32 @@ func TestRPMKindAndSemver(t *testing.T) {
 	if s.Semver("x") != nil {
 		t.Error("Semver of an invalid version")
 	}
-	r := s.Rank("1.8-1", []string{"1:1.8-2", "2.0-1", "1.9-1"}, nil, nil)
+	// "1.8-1" is listed as epoch 0, so the epoch counts.
+	r := s.Rank("1.8-1", []string{"1.8-1", "1:1.8-2", "2.0-1", "1.9-1"}, nil, nil)
 	if r.Len() != 3 || r.At(0).Major != "1:1" || r.At(1).Major != "2" || r.At(2).Major != "" {
 		t.Errorf("Rank majors = %+v %+v %+v", r.At(0), r.At(1), r.At(2))
+	}
+}
+
+// libtpcimgio is Fedora 43's: 1.5.10-34.fc41 in the release, 1:0.8.0-1.fc43 in updates.
+func TestRPMEpoch(t *testing.T) {
+	bump := []string{"1.5.10-34.fc41", "1:0.8.0-1.fc43"}
+	docker := []string{"28.5.0-1", "3:28.5.0-1", "3:28.5.1-1", "28.6-1"}
+	runBest(t, "rpm", []bestCase{
+		{"1.5.10-34.fc41", "0.8.0-1.fc43", bump, nil},     // listed as epoch 0: the bump is newer
+		{"0:1.5.10-34.fc41", "1:0.8.0-1.fc43", bump, nil}, // the file's epoch is kept
+		{"1:0.8.0-1.fc43", "", bump, nil},
+		{"0.8.0-1.fc43", "", bump, nil},               // listed as epoch 1
+		{"1.5.9-1.fc40", "1.5.10-34.fc41", bump, nil}, // not listed: epochs are ignored
+		{"28.5.0-1", "28.5.1-1", docker, nil},         // the highest epoch listing it
+		{"0:1.0-1", "0:1.1-1", []string{"1.1-1"}, nil},
+	})
+	s := get(t, "rpm")
+	if s.Compatible("1.5.10-34.fc41", "1:0.8.0-1.fc43") || !s.Compatible("1.0-1", "1:1.1-1") || !s.Compatible("1:1.0-1", "1:1.1-1") {
+		t.Error("Compatible ignores the epochs of an epoch-less cur without its listing")
+	}
+	r := s.Rank("1.5.10-34.fc41", bump, nil, nil)
+	if r.Len() != 1 || r.At(0) != (Candidate{Version: "0.8.0-1.fc43", Kind: dep.Major, Major: "1:0"}) {
+		t.Errorf("Rank = %d candidates", r.Len())
 	}
 }
