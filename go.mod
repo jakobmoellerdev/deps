@@ -15,7 +15,7 @@ require (
 	github.com/ulikunitz/xz v0.5.17
 	github.com/urfave/cli/v3 v3.14.0
 	go.yaml.in/yaml/v4 v4.0.0
-	golang.org/x/mod v0.42.0
+	golang.org/x/mod v0.43.0
 	golang.org/x/term v0.47.0
 )
 
