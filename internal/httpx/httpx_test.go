@@ -95,6 +95,30 @@ func TestClientLogging(t *testing.T) {
 	})
 }
 
+func TestClientResumesTLSSessions(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(srv.Close)
+	c := NewClient()
+	tr := c.Transport.(timeoutTransport).next.(*retryTransport).next.(logTransport).next.(*firstConnTransport).next.(gzipTransport).next.(*http.Transport)
+	tr.TLSClientConfig.RootCAs = srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+
+	for i, want := range []bool{false, true} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, http.NoBody)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.TLS.DidResume != want {
+			t.Errorf("connection %d: DidResume = %v, want %v", i+1, resp.TLS.DidResume, want)
+		}
+		tr.CloseIdleConnections() // the next request dials again
+	}
+}
+
 func TestUserAgent(t *testing.T) {
 	prev := Version
 	t.Cleanup(func() { Version = prev })

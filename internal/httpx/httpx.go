@@ -2,6 +2,7 @@
 package httpx
 
 import (
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
@@ -31,6 +32,10 @@ func NewClient() *http.Client {
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
+		// Resumed TLS sessions skip the certificate verification (P-384 ECDSA for Maven
+		// Central and the Gradle plugin portal) that dominates a full handshake's CPU: the
+		// HTTP/1.1 connections after the first one to a host resume its session.
+		TLSClientConfig:       &tls.Config{ClientSessionCache: tls.NewLRUClientSessionCache(0)},
 		ForceAttemptHTTP2:     true,
 		DisableCompression:    true, // gzipTransport
 		MaxIdleConnsPerHost:   16,
