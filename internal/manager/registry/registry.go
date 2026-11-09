@@ -23,6 +23,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cloudbuild"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/copier"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/crossplane"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom/customdoc"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/deno"
@@ -180,6 +181,7 @@ var Builtin = []Entry{
 	{ocb.Doc, ocb.New},
 	{deno.Doc, deno.New},
 	{jsonnetbundler.Doc, jsonnetbundler.New},
+	{copier.Doc, copier.New},
 }
 
 // Docs returns the reference documentation of the built-in managers and the custom manager,

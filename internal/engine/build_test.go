@@ -371,3 +371,28 @@ func TestBuildTrees(t *testing.T) {
 		t.Errorf("gone: %+v", c)
 	}
 }
+
+// TestBuildTreesWholeScope regenerates the tree "." (copier): any file of the scope may
+// change, the manifest's result replaces the patched manifest.
+func TestBuildTreesWholeScope(t *testing.T) {
+	root := t.TempDir()
+	up := pkgUpdate(t, root, "p/package.json")
+	writeFile(t, root, "p/README.md", "old\n")
+	writeFile(t, root, "other/x", "x\n")
+	post := map[string]PostProcessor{npm.Name: treePost{
+		postFunc: postFunc{f: func(context.Context, string, map[string][]byte, map[string][]byte) (map[string][]byte, error) {
+			return map[string][]byte{"package.json": []byte("{}\n"), "README.md": []byte("new\n"), "src/a.go": []byte("package a\n")}, nil
+		}},
+		trees: []string{"."},
+	}}
+	changes, errs := Build(t.Context(), root, []manager.Manager{npm.New()}, []dep.Update{up}, post)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if got := paths(changes); !slices.Equal(got, []string{"p/README.md", "p/package.json", "p/src/a.go"}) {
+		t.Fatalf("changes = %v", got)
+	}
+	if c := changes[1]; string(c.New) != "{}\n" {
+		t.Errorf("package.json: %q", c.New)
+	}
+}

@@ -432,7 +432,7 @@ func TestLoadRules(t *testing.T) {
 			src: `{packageRules: [{matchCategories: ['python'], automerge: true},
 				{matchManagers: ['pyenv', 'runtime-version'], matchDatasources: ['python-version'], enabled: false}]}`,
 			rules: `  - # packageRules[0]
-    managers: [pip_requirements, pep621, pep723, setup-cfg, pip_setup, poetry, pipenv, pyenv, runtime-version, homeassistant-manifest]
+    managers: [pip_requirements, pep621, pep723, setup-cfg, pip_setup, poetry, pipenv, pyenv, runtime-version, homeassistant-manifest, copier]
     automerge: true
   - # packageRules[1]
     managers: [pyenv, runtime-version]

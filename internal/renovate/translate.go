@@ -271,7 +271,7 @@ var managerMap = func() map[string][]expansion {
 		"renovate-config":   {{"deps-config", nil}},
 		"ocb":               {{"ocb", nil}},
 	}
-	for n := range strings.FieldsSeq("gomod kustomize npm deno nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version terragrunt-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift mint xcodegen bundler ruby-version bun-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker crow droneci circleci azure-pipelines cloudbuild velaci travis buildkite bitrise composer julia bazel-module bazelisk nuget cake paket homebrew ansible ansible-galaxy sbt scalafmt kotlin-script ant pub fvm mix gleam nix quadlet crossplane tekton glasskube osgi smithy leiningen deps-edn jenkins cocoapods jsonnet-bundler") {
+	for n := range strings.FieldsSeq("gomod kustomize npm deno nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version terragrunt-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift mint xcodegen bundler ruby-version bun-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker crow droneci circleci azure-pipelines cloudbuild velaci travis buildkite bitrise composer julia bazel-module bazelisk nuget cake paket homebrew ansible ansible-galaxy sbt scalafmt kotlin-script ant pub fvm mix gleam nix quadlet crossplane tekton glasskube osgi smithy leiningen deps-edn jenkins cocoapods jsonnet-bundler copier") {
 		m[n] = []expansion{{n, nil}}
 	}
 	return m
@@ -296,7 +296,7 @@ var categories = map[string][]string{
 	"js":         {"npm", "bun", "deno", "nvm", "nodenv", "bun-version"},
 	"node":       {"nvm", "nodenv"},
 	"rust":       {"cargo", "rust-toolchain"},
-	"python":     {"pip_requirements", "pip-compile", "pep621", "pep723", "setup-cfg", "pip_setup", "poetry", "pipenv", "pyenv", "runtime-version", "homeassistant-manifest"},
+	"python":     {"pip_requirements", "pip-compile", "pep621", "pep723", "setup-cfg", "pip_setup", "poetry", "pipenv", "pyenv", "runtime-version", "homeassistant-manifest", "copier"},
 	"terraform":  {"terraform", "terraform-version", "terragrunt-version", "tflint-plugin", "terragrunt"},
 	"iac":        {"terraform", "terragrunt", "ansible", "ansible-galaxy", "crossplane"},
 	"ansible":    {"ansible", "ansible-galaxy"},

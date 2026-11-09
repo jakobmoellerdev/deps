@@ -104,7 +104,8 @@ type ScopeSiblingLister interface {
 
 // TreeRegenerator is implemented by post-processors that also regenerate whole directories
 // of a scope, too large to pass in as siblings (the vendor directory of a Go module). Trees
-// lists them as slash paths relative to dir, the absolute scope directory. The result of
+// lists them as slash paths relative to dir, the absolute scope directory; "." is the whole
+// scope (a copier template update may change any file of its project). The result of
 // Process or Maintain may hold a file below one of them under its slash path relative to dir:
 // its new content, or nil when the file is deleted; only changed files need to be listed.
 type TreeRegenerator interface {
@@ -571,7 +572,7 @@ func treeChanges(root, dir, abs string, p PostProcessor, out map[string][]byte, 
 	var changes []FileChange
 	for rel, b := range out {
 		if slices.Contains(rels, rel) || slices.Contains(names, rel) ||
-			!slices.ContainsFunc(trees, func(t string) bool { return strings.HasPrefix(rel, t+"/") }) {
+			!slices.ContainsFunc(trees, func(t string) bool { return t == "." || strings.HasPrefix(rel, t+"/") }) {
 			continue
 		}
 		c := FileChange{Path: path.Join(dir, rel), Mode: 0o644, New: b}

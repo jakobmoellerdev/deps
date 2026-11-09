@@ -2973,6 +2973,34 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "copier"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "template"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "custom"
                   ]
                 },
@@ -3092,6 +3120,7 @@
               "ocb",
               "deno",
               "jsonnet-bundler",
+              "copier",
               "custom"
             ]
           },
@@ -3320,6 +3349,7 @@
               "compilerOptions.jsxImportSourceTypes",
               "lint.plugins",
               "dependency",
+              "template",
               "annotation",
               "regex",
               "jsonata"

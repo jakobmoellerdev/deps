@@ -23,6 +23,7 @@ note    flake.lock changes are computed by apply/run          (plan, when a nix 
 note    Podfile.lock changes are computed by apply/run        (plan, when a cocoapods update exists)
 note    deno.lock changes are computed by apply/run           (plan, when a deno update exists)
 note    jsonnetfile.lock.json changes are computed by apply/run (plan, when a jsonnet-bundler update exists)
+note    copier template changes are computed by apply/run (plan, when a copier update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
 dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
 ```
