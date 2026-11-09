@@ -3,6 +3,7 @@ package versioning
 import (
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -431,6 +432,10 @@ var semverCorpus = []string{
 	"1.2.3-alpha", "1.2.3-alpha.1", "1.2.3-alpha.beta", "1.2.3-beta.2", "1.2.3-beta.11",
 	"1.2.3-rc.1", "1.2.3-1", "1.2.3-2", "1.2.3-10", "1.2.3-a.1.2", "1.2.3-a.1", "1.2.3-99999999999999999999",
 	"1.2.3-B", "1.2.3-b", "1.2.3-é", "1.2.3-0", "18446744073709551615.0.0", "18446744073709551616.0.0",
+	// Coercible forms from openclaw's registries.
+	"v26.13.0", "4.0", "26.0", "2.7.10rc1", "v27.0.0-alpha.0.0.0", "v0.0.1-rc.1+sha.abc",
+	"v01.002", "007", "1.2-a", "1-a", "1+b", "v1.2+b.c", "1.2.", "1..2", "vv1", "v-1", "1.2.3-a+",
+	"1.2.3-a+b+c", "v1.2.3-01", "1.18446744073709551616", "1.2.3-a_b", " 1.2.3", "1.2.3 ",
 }
 
 // TestParseMastermindsStrictFirstEquivalent guards the strict-first fast path in
@@ -476,6 +481,9 @@ func checkSemverEquivalent(t testing.TB, a, b string) {
 	if okA != (errA == nil) || okB != (errB == nil) {
 		t.Fatalf("parseSemver(%q, %q) ok = %v %v, NewVersion err = %v %v", a, b, okA, okB, errA, errB)
 	}
+	if okA && (va.major != ma.Major() || va.minor != ma.Minor() || va.patch != ma.Patch() || va.pre != ma.Prerelease()) {
+		t.Fatalf("parseSemver(%q) = %+v, NewVersion = %#v", a, va, ma)
+	}
 	if !okA || !okB {
 		return
 	}
@@ -495,6 +503,19 @@ func TestSemverVersionMatchesMasterminds(t *testing.T) {
 	}
 }
 
+// TestSemverCoercibleMatchesMasterminds checks the coercible versions (not strict semver)
+// ranked in an openclaw plan, each against itself and its neighbor.
+func TestSemverCoercibleMatchesMasterminds(t *testing.T) {
+	b, err := os.ReadFile("testdata/semver-coercible.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	for i, a := range vs {
+		checkSemverEquivalent(t, a, vs[(i+1)%len(vs)])
+	}
+}
+
 func FuzzSemverVersionMatchesMasterminds(f *testing.F) {
 	for i, a := range semverCorpus {
 		f.Add(a, semverCorpus[(i+1)%len(semverCorpus)])
@@ -503,7 +524,7 @@ func FuzzSemverVersionMatchesMasterminds(f *testing.F) {
 }
 
 // benchSemverCorpus mimics a large npm packument: mostly strict versions
-// with prereleases, plus a few v-prefixed tags that take the fallback.
+// with prereleases, plus a few v-prefixed tags that only NewVersion's coercion accepts.
 func benchSemverCorpus() []string {
 	var out []string
 	for i := range 4000 {

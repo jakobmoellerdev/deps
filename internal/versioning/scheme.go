@@ -444,28 +444,68 @@ func (v semverVersion) semver() *msemver.Version {
 	return sv
 }
 
-// parseSemver parses s as Masterminds' NewVersion would. A strict semver version, the bulk
-// of any registry, is parsed without allocating (parseStrictSemver); anything else, such
-// as a leading "v" or a partial version like "1.2", goes through parseMasterminds.
+// parseSemver parses s as Masterminds' NewVersion (coerceNewVersion) would, without its
+// regexp or allocations: an optional "v", MAJOR[.MINOR[.PATCH]] with leading zeros allowed
+// and missing parts read as 0, then an optional "-" prerelease and "+" metadata checked as
+// validatePrerelease and validateMetadata do. Registries list many such versions ("v1.2.3",
+// "4.0"), so they must not fall back to Masterminds.
 func parseSemver(s string) (semverVersion, bool) {
-	if v, ok := parseStrictSemver(s); ok {
-		return v, true
-	}
-	sv, ok := parseMasterminds(s)
-	if !ok {
+	if len(s) > msemver.MaxVersionLen {
 		return semverVersion{}, false
 	}
-	return semverVersion{major: sv.Major(), minor: sv.Minor(), patch: sv.Patch(), pre: sv.Prerelease(), orig: s}, true
+	v := semverVersion{orig: s}
+	rest := strings.TrimPrefix(s, "v")
+	var ok bool
+	if v.major, rest, ok = looseSemverNumber(rest); !ok {
+		return semverVersion{}, false
+	}
+	if rest != "" && rest[0] == '.' {
+		if v.minor, rest, ok = looseSemverNumber(rest[1:]); !ok {
+			return semverVersion{}, false
+		}
+		if rest != "" && rest[0] == '.' {
+			if v.patch, rest, ok = looseSemverNumber(rest[1:]); !ok {
+				return semverVersion{}, false
+			}
+		}
+	}
+	if i := strings.IndexByte(rest, '+'); i >= 0 {
+		if !semverIdents(rest[i+1:], false) {
+			return semverVersion{}, false
+		}
+		rest = rest[:i]
+	}
+	if rest != "" {
+		if rest[0] != '-' || !semverIdents(rest[1:], true) {
+			return semverVersion{}, false
+		}
+		v.pre = rest[1:]
+	}
+	return v, true
 }
 
-// parseMasterminds parses s leniently. It tries StrictNewVersion first because
-// NewVersion runs a coercion regex that dominates CPU and allocations when
-// a package has thousands of releases. Whenever strict parsing succeeds the
-// result is identical to NewVersion's (same Original, Prerelease, Metadata
-// and ordering); anything strict rejects falls back to NewVersion.
+// looseSemverNumber parses the leading decimal digits of s: at least one, leading zeros
+// allowed, within uint64, as coerceNewVersion's [0-9]+ group and ParseUint.
+func looseSemverNumber(s string) (n uint64, rest string, ok bool) {
+	i := 0
+	for i < len(s) && '0' <= s[i] && s[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return 0, s, false
+	}
+	n, err := strconv.ParseUint(s[:i], 10, 64)
+	return n, s[i:], err == nil
+}
+
+// parseMasterminds parses s as NewVersion. A strict version goes through
+// StrictNewVersion, whose result is identical (same Original, Prerelease, Metadata and
+// ordering) without NewVersion's coercion regexp; parseStrictSemver decides that up
+// front, so no input is parsed by both.
 func parseMasterminds(s string) (*msemver.Version, bool) {
-	if v, err := msemver.StrictNewVersion(s); err == nil {
-		return v, true
+	if _, ok := parseStrictSemver(s); ok {
+		v, err := msemver.StrictNewVersion(s)
+		return v, err == nil
 	}
 	v, err := msemver.NewVersion(s)
 	return v, err == nil
