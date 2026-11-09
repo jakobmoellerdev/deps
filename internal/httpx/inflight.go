@@ -8,17 +8,19 @@ import (
 	"sync"
 )
 
-// HostUse is the number of requests in flight to one host.
+// HostUse is the request count of one host: Open requests in flight, Done finished ones
+// (read to the end, or failed). Open+Done were sent.
 type HostUse struct {
-	Host string
-	N    int
+	Host       string
+	Open, Done int
 }
 
-// HostCounter counts the requests in flight per host of the clients it wraps, from the
-// request until its response body is closed (or the request fails), retries included.
+// HostCounter counts the requests per host of the clients it wraps: a request is open from
+// the request until its response body is closed (or the request fails), retries included,
+// and done afterwards.
 type HostCounter struct {
 	mu sync.Mutex
-	n  map[string]int
+	n  map[string]*HostUse
 }
 
 // Wrap returns a copy of c whose requests h counts; c is unchanged.
@@ -28,27 +30,41 @@ func (h *HostCounter) Wrap(c *http.Client) *http.Client {
 	return &w
 }
 
-// InFlight returns the hosts with requests in flight, busiest first (ties by name).
+// InFlight returns the hosts with open requests, busiest first (ties by name).
 func (h *HostCounter) InFlight() []HostUse {
 	h.mu.Lock()
-	out := make([]HostUse, 0, len(h.n))
-	for host, n := range h.n {
-		out = append(out, HostUse{host, n})
+	var out []HostUse
+	for _, u := range h.n {
+		if u.Open > 0 {
+			out = append(out, *u)
+		}
 	}
 	h.mu.Unlock()
-	slices.SortFunc(out, func(a, b HostUse) int { return cmp.Or(b.N-a.N, cmp.Compare(a.Host, b.Host)) })
+	slices.SortFunc(out, func(a, b HostUse) int { return cmp.Or(b.Open-a.Open, cmp.Compare(a.Host, b.Host)) })
 	return out
 }
 
-func (h *HostCounter) add(host string, d int) {
+// open counts a new request to host; done ends it.
+func (h *HostCounter) open(host string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.n == nil {
-		h.n = map[string]int{}
+		h.n = map[string]*HostUse{}
 	}
-	if h.n[host] += d; h.n[host] <= 0 {
-		delete(h.n, host)
+	u := h.n[host]
+	if u == nil {
+		u = &HostUse{Host: host}
+		h.n[host] = u
 	}
+	u.Open++
+}
+
+func (h *HostCounter) done(host string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	u := h.n[host]
+	u.Open--
+	u.Done++
 }
 
 type countTransport struct {
@@ -58,13 +74,13 @@ type countTransport struct {
 
 func (t countTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	host := req.URL.Hostname()
-	t.h.add(host, 1)
+	t.h.open(host)
 	resp, err := t.next.RoundTrip(req)
 	if err != nil || resp.Body == nil {
-		t.h.add(host, -1)
+		t.h.done(host)
 		return resp, err
 	}
-	resp.Body = &countedBody{ReadCloser: resp.Body, done: func() { t.h.add(host, -1) }}
+	resp.Body = &countedBody{ReadCloser: resp.Body, done: func() { t.h.done(host) }}
 	return resp, nil
 }
 

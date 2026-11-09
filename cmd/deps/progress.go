@@ -62,6 +62,8 @@ type progress struct {
 	grouped bool // a phase group is open; phase goroutine only
 	stop    chan struct{}
 	stopped chan struct{}
+
+	drawn int // lines of the status block on screen; under the Writer's lock (Clear, Draw)
 }
 
 // newProgress returns a progress writing to stderr w (out is the file behind it) with every
@@ -184,37 +186,104 @@ func groupTitle(ph engine.Phase, total int) string {
 	return "Discovering and extracting dependency files"
 }
 
-// Clear erases the status line; the cursor is at its start afterwards.
-func (p *progress) Clear(w io.Writer) { _, _ = io.WriteString(w, "\r\x1b[2K") }
-
-// Draw writes the status line without a newline, cut to the terminal width so it never
-// wraps (Clear only erases one line).
-func (p *progress) Draw(w io.Writer) { _, _ = io.WriteString(w, p.render()) }
-
-// render returns the status line: `⠹ resolving 212/308 · 2.1s · 20 open requests:
-// registry.npmjs.org 18, api.github.com 2`.
-func (p *progress) render() string {
-	p.mu.Lock()
-	elapsed := p.now().Sub(p.start)
-	p.mu.Unlock()
-	frame := spinner[int(max(elapsed, 0)/statusTick)%len(spinner)]
-	text := truncate(p.text(true), p.width()-3) // spinner, space and one free column
-	return p.style.Paint(logx.Cyan, frame) + " " + p.style.Paint(logx.Dim, text)
+// Clear erases the status block; the cursor is at the start of its first line afterwards.
+func (p *progress) Clear(w io.Writer) {
+	_, _ = io.WriteString(w, "\r\x1b[2K"+strings.Repeat("\x1b[1A\x1b[2K", max(p.drawn-1, 0)))
+	p.drawn = 0
 }
 
-// text describes the running phase: `resolving 212/308 · 2.1s · 20 open requests:
-// registry.npmjs.org 18, api.github.com 2`: the number of HTTP requests open now, then how
-// many of them go to each of the three busiest hosts. They come last, so a narrow terminal
-// cuts them first, and only with inFlight (not in the final line of a phase).
-func (p *progress) text(inFlight bool) string {
+// Draw writes the status block without a trailing newline, every line cut to the terminal
+// width so none wraps (Clear erases the lines it drew).
+func (p *progress) Draw(w io.Writer) {
+	lines := p.render()
+	p.drawn = len(lines)
+	_, _ = io.WriteString(w, strings.Join(lines, "\n"))
+}
+
+// Status block limits: bar widths and the host lines below the phase line.
+const (
+	phaseBar     = 24
+	hostBar      = 16
+	hostLines    = 5
+	hostColumn   = 28 // widest host name shown; longer ones are cut
+	minBarLength = 5  // a narrower bar is left out
+)
+
+// render returns the lines of the status block: the phase with a progress bar of its items,
+//
+//	⠹ resolving ━━━━━━━━━━━━━━──────────  212/308 · 1 error · 2.1s
+//	  registry.npmjs.org  ━━━━━━━━━━━━────  412/476 · 64 open
+//	  github.com          ━━━━━━━━━━━━━━━─   58/62 · 4 open
+//	  + 2 more hosts · 3 open
+//
+// and one line per host with open requests (the busiest hostLines), its bar the share of
+// the requests sent to it that are done.
+func (p *progress) render() []string {
+	width := p.width() - 1 // one free column
+	p.mu.Lock()
+	elapsed := p.now().Sub(p.start)
+	total := p.total
+	p.mu.Unlock()
+	frame := spinner[int(max(elapsed, 0)/statusTick)%len(spinner)]
+	label, rest := phaseLabels[p.phase], p.details()
+	var head string
+	if total > 0 {
+		rest = fmt.Sprintf("%d/%d", p.done.Load(), total) + rest
+		if n := min(phaseBar, width-4-utf8.RuneCountInString(label)-utf8.RuneCountInString(rest)); n >= minBarLength {
+			head = p.style.Paint(logx.Dim, label) + " " + p.bar(int(p.done.Load()), total, n) + "  " + p.style.Paint(logx.Dim, rest)
+		} else {
+			rest = " " + rest
+		}
+	}
+	if head == "" {
+		head = p.style.Paint(logx.Dim, truncate(label+rest, width-2))
+	}
+	lines := []string{p.style.Paint(logx.Cyan, frame) + " " + head}
+	if p.inFlight == nil {
+		return lines
+	}
+	hosts := p.inFlight()
+	shown := hosts[:min(len(hosts), hostLines)]
+	col := 0
+	for _, u := range shown {
+		col = max(col, min(utf8.RuneCountInString(u.Host), hostColumn))
+	}
+	for _, u := range shown {
+		name := truncate(u.Host, col)
+		name += strings.Repeat(" ", col-utf8.RuneCountInString(name))
+		count := fmt.Sprintf("%d/%d · %d open", u.Done, u.Done+u.Open, u.Open)
+		if n := min(hostBar, width-6-col-utf8.RuneCountInString(count)); n >= minBarLength {
+			lines = append(lines, "  "+p.style.Paint(logx.Dim, name)+"  "+p.bar(u.Done, u.Done+u.Open, n)+"  "+p.style.Paint(logx.Dim, count))
+		} else {
+			lines = append(lines, "  "+p.style.Paint(logx.Dim, truncate(u.Host+"  "+count, width-2)))
+		}
+	}
+	if more := hosts[len(shown):]; len(more) > 0 {
+		open := 0
+		for _, u := range more {
+			open += u.Open
+		}
+		lines = append(lines, "  "+p.style.Paint(logx.Dim, truncate(fmt.Sprintf("+ %s · %d open", plural(len(more), "more host", "more hosts"), open), width-2)))
+	}
+	return lines
+}
+
+// bar is a progress bar of n cells, done of total filled.
+func (p *progress) bar(done, total, n int) string {
+	filled := 0
+	if total > 0 {
+		filled = min(done, total) * n / total
+	}
+	return p.style.Paint(logx.Cyan, strings.Repeat("━", filled)) + p.style.Paint(logx.Dim, strings.Repeat("─", n-filled))
+}
+
+// details is the rate-limit wait, error count and elapsed time of the running phase, each
+// after " · ".
+func (p *progress) details() string {
 	p.mu.Lock()
 	now := p.now()
 	elapsed := now.Sub(p.start)
 	var b strings.Builder
-	b.WriteString(phaseLabels[p.phase])
-	if p.total > 0 {
-		fmt.Fprintf(&b, " %d/%d", p.done.Load(), p.total)
-	}
 	if p.limitedHost != "" && now.Before(p.limitedUntil) {
 		fmt.Fprintf(&b, " · rate limited by %s, %ds", p.limitedHost, int(p.limitedUntil.Sub(now).Round(time.Second)/time.Second))
 	}
@@ -226,11 +295,27 @@ func (p *progress) text(inFlight bool) string {
 		}
 	}
 	fmt.Fprintf(&b, " · %.1fs", elapsed.Seconds())
+	return b.String()
+}
+
+// text describes the running phase on one line, for heartbeats and the final line of a
+// phase group: `resolving 212/308 · 2.1s · 20 open requests: registry.npmjs.org 18,
+// api.github.com 2`, the open requests (the three busiest hosts) only with inFlight.
+func (p *progress) text(inFlight bool) string {
+	var b strings.Builder
+	b.WriteString(phaseLabels[p.phase])
+	p.mu.Lock()
+	total := p.total
+	p.mu.Unlock()
+	if total > 0 {
+		fmt.Fprintf(&b, " %d/%d", p.done.Load(), total)
+	}
+	b.WriteString(p.details())
 	if inFlight && p.inFlight != nil {
 		if hosts := p.inFlight(); len(hosts) > 0 {
 			total := 0
 			for _, u := range hosts {
-				total += u.N
+				total += u.Open
 			}
 			fmt.Fprintf(&b, " · %d open request", total)
 			if total > 1 {
@@ -241,7 +326,7 @@ func (p *progress) text(inFlight bool) string {
 				if i > 0 {
 					b.WriteString(", ")
 				}
-				b.WriteString(u.Host + " " + strconv.Itoa(u.N))
+				b.WriteString(u.Host + " " + strconv.Itoa(u.Open))
 			}
 		}
 	}

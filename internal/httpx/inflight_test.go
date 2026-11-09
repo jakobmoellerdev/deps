@@ -31,13 +31,13 @@ func TestHostCounter(t *testing.T) {
 	if _, err := c.Get("https://b.example/fail"); err == nil {
 		t.Fatal("no error")
 	}
-	if got, want := h.InFlight(), []HostUse{{"a.example", 2}, {"b.example", 1}}; !reflect.DeepEqual(got, want) {
+	if got, want := h.InFlight(), []HostUse{{"a.example", 2, 0}, {"b.example", 1, 1}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("InFlight = %v, want %v", got, want)
 	}
 	_ = a1.Body.Close()
 	_ = a1.Body.Close()
 	_ = b.Body.Close()
-	if got, want := h.InFlight(), []HostUse{{"a.example", 1}}; !reflect.DeepEqual(got, want) {
+	if got, want := h.InFlight(), []HostUse{{"a.example", 1, 1}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("InFlight = %v, want %v", got, want)
 	}
 	_ = a2.Body.Close()

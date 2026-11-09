@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
@@ -23,15 +24,21 @@ func testStatusLine(buf *bytes.Buffer, width int, hosts ...httpx.HostUse) (*prog
 
 const clearLine = "\r\x1b[2K"
 
-// The line is drawn when the phase starts, cleared before and redrawn after every record,
-// refreshed by Redraw and removed when the phase ends; afterwards writes pass through.
+// clearBlock erases a status block of n lines.
+func clearBlock(n int) string { return clearLine + strings.Repeat("\x1b[1A\x1b[2K", n-1) }
+
+// The block is drawn when the phase starts, cleared before and redrawn after every record,
+// refreshed by Redraw and removed when the phase ends; afterwards writes pass through. The
+// phase and every host with open requests get a bar.
 func TestStatusLineOverlay(t *testing.T) {
 	var buf bytes.Buffer
-	s, w, now := testStatusLine(&buf, 100, httpx.HostUse{Host: "registry.npmjs.org", N: 18}, httpx.HostUse{Host: "api.github.com", N: 2})
+	s, w, now := testStatusLine(&buf, 100, httpx.HostUse{Host: "registry.npmjs.org", Open: 18, Done: 6}, httpx.HostUse{Host: "api.github.com", Open: 2})
 	s.Start(engine.PhaseResolve, 308)
-	line0 := "⠋ resolving 0/308 · 0.0s · 20 open requests: registry.npmjs.org 18, api.github.com 2"
-	if got := buf.String(); got != line0 {
-		t.Fatalf("start: %q", got)
+	hosts := "\n  registry.npmjs.org  ━━━━────────────  6/24 · 18 open" +
+		"\n  api.github.com      ────────────────  0/2 · 2 open"
+	block0 := "⠋ resolving " + strings.Repeat("─", 24) + "  0/308 · 0.0s" + hosts
+	if got := buf.String(); got != block0 {
+		t.Fatalf("start:\n%s\nwant\n%s", got, block0)
 	}
 	_, _ = w.Write([]byte("record\n"))
 	for range 212 {
@@ -42,18 +49,18 @@ func TestStatusLineOverlay(t *testing.T) {
 	w.Redraw()
 	s.End(engine.PhaseResolve)
 	_, _ = w.Write([]byte("after\n"))
-	line1 := "⠙ resolving 213/308 · 1 error · 2.1s · 20 open requests: registry.npmjs.org 18, api.github.com 2"
-	want := line0 + clearLine + "record\n" + line0 + clearLine + line1 + clearLine + "after\n"
+	block1 := "⠙ resolving " + strings.Repeat("━", 16) + strings.Repeat("─", 8) + "  213/308 · 1 error · 2.1s" + hosts
+	want := block0 + clearBlock(3) + "record\n" + block0 + clearBlock(3) + block1 + clearBlock(3) + "after\n"
 	if got := buf.String(); got != want {
 		t.Errorf("output:\n%q\nwant\n%q", got, want)
 	}
 }
 
-// Done from many goroutines counts every item; rate-limit waits show until they end; the
-// line never exceeds the terminal width.
+// Done from many goroutines counts every item; rate-limit waits show until they end; no
+// line exceeds the terminal width; hosts beyond the shown ones are summed up.
 func TestStatusLineCounting(t *testing.T) {
 	var buf bytes.Buffer
-	s, _, now := testStatusLine(&buf, 80)
+	s, _, now := testStatusLine(&buf, 120)
 	s.Start(engine.PhaseExtract, 100)
 	var wg sync.WaitGroup
 	for i := range 100 {
@@ -68,23 +75,35 @@ func TestStatusLineCounting(t *testing.T) {
 	wg.Wait()
 	s.RateLimited("api.github.com", now.Add(41*time.Second))
 	s.RateLimited("api.github.com", now.Add(5*time.Second)) // an earlier reset does not shorten it
-	if got, want := s.render(), "⠋ extracting 100/100 · rate limited by api.github.com, 41s · 10 errors · 0.0s"; got != want {
-		t.Errorf("render = %q, want %q", got, want)
+	if got := s.render(); len(got) != 1 || !strings.HasPrefix(got[0], "⠋ extracting ━━") ||
+		!strings.HasSuffix(got[0], "━  100/100 · rate limited by api.github.com, 41s · 10 errors · 0.0s") {
+		t.Errorf("render = %q", got)
 	}
 	*now = now.Add(42 * time.Second)
-	if got := s.render(); strings.Contains(got, "rate limited") {
+	if got := s.render(); strings.Contains(got[0], "rate limited") {
 		t.Errorf("rate limit shown after it ended: %q", got)
 	}
 	s.End(engine.PhaseExtract)
 
-	s, _, _ = testStatusLine(&buf, 20, httpx.HostUse{Host: "registry.npmjs.org", N: 1}, httpx.HostUse{Host: "ghcr.io", N: 1})
+	var many []httpx.HostUse
+	for _, h := range []string{"registry.npmjs.org", "ghcr.io", "a.example", "b.example", "c.example", "d.example", "e.example"} {
+		many = append(many, httpx.HostUse{Host: h, Open: 1})
+	}
+	s, _, _ = testStatusLine(&buf, 20, many...)
 	s.Start(engine.PhaseDiscover, 0)
-	if got, want := s.render(), "⠋ discovering file…"; got != want {
-		t.Errorf("narrow: %q, want %q", got, want)
+	got := s.render()
+	if got[0] != "⠋ discovering file…" || len(got) != 1+hostLines+1 || got[2] != "  ghcr.io  0/1 · 1…" || got[len(got)-1] != "  + 2 more hosts ·…" {
+		t.Errorf("narrow: %q", got)
+	}
+	for _, l := range got {
+		if utf8.RuneCountInString(l) > 19 {
+			t.Errorf("line wider than the terminal: %q", l)
+		}
 	}
 	s.End(engine.PhaseDiscover)
+	s.inFlight = nil
 	s.style = logx.NewStyle(true)
-	if got, want := s.render(), "\x1b[36m⠋\x1b[0m \x1b[2mdiscovering file…\x1b[0m"; got != want {
+	if got, want := s.render(), "\x1b[36m⠋\x1b[0m \x1b[2mdiscovering file…\x1b[0m"; len(got) != 1 || got[0] != want {
 		t.Errorf("colored: %q, want %q", got, want)
 	}
 }
