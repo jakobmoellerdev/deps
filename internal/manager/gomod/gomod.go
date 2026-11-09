@@ -4,8 +4,10 @@ package gomod
 
 import (
 	"bytes"
+	"errors"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -157,6 +159,7 @@ func (gomodManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edi
 	old := []byte(u.Dep.Name)
 	base := filepath.Join(root, filepath.FromSlash(path.Dir(u.Dep.File)))
 	var out map[string][]patch.Edit
+	var buf []byte // reused: most .go files do not mention the module
 	err := filepath.WalkDir(base, func(p string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -176,7 +179,8 @@ func (gomodManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edi
 		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".go") {
 			return nil
 		}
-		src, err := os.ReadFile(p)
+		src, err := readFile(p, buf)
+		buf = src
 		if err != nil {
 			return err
 		}
@@ -201,6 +205,29 @@ func (gomodManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edi
 		return nil
 	})
 	return out, err
+}
+
+// readFile is os.ReadFile into buf (reused, grown as needed).
+func readFile(p string, buf []byte) ([]byte, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return buf, err
+	}
+	defer f.Close()
+	buf = buf[:0]
+	for {
+		if len(buf) == cap(buf) {
+			buf = append(buf, 0)[:len(buf)]
+		}
+		n, err := f.Read(buf[len(buf):cap(buf)])
+		buf = buf[:len(buf)+n]
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return buf, nil
+			}
+			return buf, err
+		}
+	}
 }
 
 // importEdits returns the edits replacing the import paths old and old/... with newPath in

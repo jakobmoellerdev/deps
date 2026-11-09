@@ -1,6 +1,7 @@
 package gomod
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"slices"
@@ -261,6 +262,30 @@ func TestFileEdits(t *testing.T) {
 	}
 	if _, err := fe.FileEdits(filepath.Join(root, "missing"), u); err == nil {
 		t.Error("want walk error")
+	}
+}
+
+// TestReadFile checks that readFile returns what os.ReadFile does, whatever the buffer it is
+// handed, and its errors.
+func TestReadFile(t *testing.T) {
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.go")
+	want := []byte(strings.Repeat("package x // filler\n", 5000))
+	if err := os.WriteFile(big, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, buf := range [][]byte{nil, make([]byte, 3, 16), make([]byte, 0, len(want)), make([]byte, 0, 1<<20)} {
+		got, err := readFile(big, buf)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Errorf("readFile(cap %d) = %d bytes, %v; want %d bytes", cap(buf), len(got), err, len(want))
+		}
+	}
+	for _, p := range []string{filepath.Join(dir, "missing.go"), dir} {
+		_, err := readFile(p, nil)
+		_, wantErr := os.ReadFile(p)
+		if err == nil || err.Error() != wantErr.Error() {
+			t.Errorf("readFile(%s) error %v, want %v", p, err, wantErr)
+		}
 	}
 }
 
